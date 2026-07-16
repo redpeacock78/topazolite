@@ -9,3 +9,6 @@ compiled/
 
 # macOS
 .DS_Store
+
+# プラグイン成果物
+.memsearch/
