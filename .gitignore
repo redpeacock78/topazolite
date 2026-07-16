@@ -1,0 +1,11 @@
+# ホワイトペーパー草稿（追跡対象外: ユーザー指示）
+draft/
+
+# superpowers 設計文書（追跡対象外: ユーザー指示）
+docs/superpowers/
+
+# Racket
+compiled/
+
+# macOS
+.DS_Store
