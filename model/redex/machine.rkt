@@ -177,6 +177,26 @@
                (select-branch K (v_arg ...) (br ...)))
         R-Eliminate)
 
+   (--> (cfg (in-hole E
+                      (Recur f (x ...) c_body c_next))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (where v_recur (RecurVal f (x ...) c_body))
+        (where c_result (substitute c_next f v_recur))
+        R-RecurBind)
+
+   (--> (cfg (in-hole E
+                      (Apply (RecurVal f (x ...) c_body)
+                             v_arg ...))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (where v_recur (RecurVal f (x ...) c_body))
+        (where c_result
+               (substitute* c_body
+                            (f x ...)
+                            (v_recur v_arg ...)))
+        R-RecurUnfold)
+
    (--> (cfg (in-hole E (Move p)) H Ω θ)
         (cfg (in-hole E v_result) H Ω_new θ)
         (where Available ,(table-ref (term Ω) (term p)))
