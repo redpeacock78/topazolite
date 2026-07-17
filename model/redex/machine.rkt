@@ -70,10 +70,10 @@
             entry))
       (append table (list (list key value)))))
 
-(define (fresh-place heap)
-  (if (null? heap)
-      0
-      (add1 (apply max (map first heap)))))
+(define (fresh-place heap states)
+  (for/fold ([next 0])
+            ([entry (in-list (append heap states))])
+    (max next (add1 (first entry)))))
 
 (define (finalize/proc places states trace)
   (define-values (final-states reversed-events)
@@ -160,7 +160,7 @@
                              (in-hole G_inner c_result)))
              H_new Ω_new θ)
         (side-condition (owned-type? (term τ_owned)))
-        (where p_new ,(fresh-place (term H)))
+        (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
         (where H_new
                ,(table-set (term H) (term p_new) (term v_bound)))

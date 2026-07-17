@@ -81,7 +81,19 @@
            ())))
   (match (apply-reduction-relation -->g1 source)
     [(list actual) (check-true (alpha-equivalent? G1m actual expected))]
-    [actual (fail-check (format "expected one successor, got ~e" actual))]))
+    [actual (fail-check (format "expected one successor, got ~e" actual))])
+  (check-equal?
+   (run
+    (term (cfg (Scope ()
+                      (Let (x (Owned Res)) (resource 1) 42))
+               ()
+               ((0 Moved))
+               ()))
+    fuel)
+   (term (cfg 42
+              ((1 (resource 1)))
+              ((0 Moved) (1 Dropped))
+              ((fin 1))))))
 
 (test-case "OWN-002: scope finalizes available places once in reverse order"
   (check-equal?
