@@ -63,14 +63,15 @@
          (Drop c)
          (Curry c c))
   (v ::= l
-         (Lam O (x ...) c)
-         (PrimVal O nm)
-         (CurryVal O v v)
-         (RecurVal f (x ...) c)
+         ov
          (Construct K v ...)
-         (resource n)
-         (TypeRep O t κ)
-         (ProofRep O φ)))
+         (resource n))
+  (ov ::= (Lam O (x ...) c)
+          (PrimVal O nm)
+          (CurryVal O v v)
+          (RecurVal f (x ...) c)
+          (TypeRep O t κ)
+          (ProofRep O φ)))
 
 (define-extended-language G1m G1
   (p ::= natural)

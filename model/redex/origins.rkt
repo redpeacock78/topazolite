@@ -74,15 +74,6 @@
   kindOf : t -> κ
   [(kindOf t) ,(kind-of/proc (term t))])
 
-(define-metafunction G1
-  origin-of : v -> O
-  [(origin-of (Lam O (x ...) c)) O]
-  [(origin-of (PrimVal O nm)) O]
-  [(origin-of (CurryVal O v_1 v_2)) O]
-  [(origin-of (TypeRep O t κ)) O]
-  [(origin-of (ProofRep O φ)) O]
-  [(origin-of (RecurVal f (x ...) c)) User])
-
 (define (lookup table key)
   (match (assoc key table)
     [(list _ value) value]
@@ -95,31 +86,35 @@
     [`(Derived ,parent ,_) (valid-origin? r0 parent)]
     [_ #f]))
 
-(define (origin-of/proc value)
+(define (origin-data/proc value)
   (match value
-    [`(Lam ,origin ,_ ,_) origin]
-    [`(PrimVal ,origin ,_) origin]
-    [`(CurryVal ,origin ,_ ,_) origin]
-    [`(TypeRep ,origin ,_ ,_) origin]
-    [`(ProofRep ,origin ,_) origin]
-    [`(RecurVal ,_ ,_ ,_) 'User]
+    [`(Lam ,origin ,_ ,_) `(Lam ,origin)]
+    [`(PrimVal ,origin ,primitive) `(PrimVal ,origin ,primitive)]
+    [`(CurryVal ,origin ,function ,argument)
+     `(CurryVal ,origin ,function ,argument)]
+    [`(TypeRep ,origin ,type-form ,kind)
+     `(TypeRep ,origin ,type-form ,kind)]
+    [`(ProofRep ,origin ,proposition)
+     `(ProofRep ,origin ,proposition)]
+    [`(RecurVal ,_ ,_ ,_) '(RecurVal User)]
     [_ #f]))
 
-(define (reserved-type-rep? value)
-  (for/or ([entry (in-list Δ0)])
-    (equal? value (second entry))))
+(define (origin-of/proc value)
+  (define data (origin-data/proc value))
+  (and data (second data)))
+
+(define-metafunction G1
+  origin-of : ov -> O
+  [(origin-of ov) ,(origin-of/proc (term ov))])
+
+(define (reserved-type-rep? type-form value)
+  (equal? (lookup Δ0 type-form) value))
 
 (define (origin-shape-valid? r0 value)
-  (match value
-    [`(PrimVal ,origin ,primitive)
-     (and (valid-origin? r0 origin)
-          (match origin
-            [`(Reserved ,id)
-             (equal? (lookup r0 id) `(prim ,primitive))]
-            [_ #f]))]
-    [`(Lam ,origin ,_ ,_)
-     (and (valid-origin? r0 origin)
-          (eq? origin 'User))]
+  (match (origin-data/proc value)
+    [`(PrimVal (Reserved ,id) ,primitive)
+     (equal? (lookup r0 id) `(prim ,primitive))]
+    [`(Lam ,origin) (eq? origin 'User)]
     [`(CurryVal ,origin ,function ,argument)
      (define parent (origin-of/proc function))
      (and parent
@@ -128,21 +123,25 @@
     [`(TypeRep ,origin ,type-form ,kind)
      (and (valid-origin? r0 origin)
           (equal? kind (kind-of/proc type-form))
-          (or (and (match origin [`(Reserved ,_) #t] [_ #f])
-                   (reserved-type-rep? value))
-              (match origin
-                [`(Derived (Reserved o-type-narrative) (Make ,made))
-                 (equal? made type-form)]
-                [_ #f])))]
+          (match origin
+            [`(Reserved ,id)
+             (and (equal? (lookup r0 id) `(type ,type-form))
+                  (reserved-type-rep? type-form value))]
+            [`(Derived (Reserved o-type-narrative) (Make ,made))
+             (and (eq? (lookup r0 'o-type-narrative) 'typeNarrative)
+                  (equal? made type-form))]
+            [_ #f]))]
     [`(ProofRep ,origin ,proposition)
-     (and (valid-origin? r0 origin)
-          (equal? origin '(Reserved o-type-narrative))
+     (and (equal? origin '(Reserved o-type-narrative))
+          (eq? (lookup r0 'o-type-narrative) 'typeNarrative)
           (eq? proposition 'TypeNarrativeCap))]
-    [_ #t]))
+    [_ #f]))
 
-(define (origin-bearing-value? value)
+(define origin-bearing-heads '(Lam PrimVal CurryVal TypeRep ProofRep))
+
+(define (origin-bearing-head? value)
   (and (pair? value)
-       (memq (car value) '(Lam PrimVal CurryVal TypeRep ProofRep))))
+       (memq (car value) origin-bearing-heads)))
 
 (define (verify-origins/proc r0 core)
   (define (walk-list terms)
@@ -155,9 +154,10 @@
            result)]))
   (define (walk term)
     (cond
-      [(and (origin-bearing-value? term)
-            (not (origin-shape-valid? r0 term)))
-       `(forged ,term)]
+      [(origin-bearing-head? term)
+       (if (origin-shape-valid? r0 term)
+           (walk-list term)
+           `(forged ,term))]
       [(list? term) (walk-list term)]
       [else 'ok]))
   (walk core))
