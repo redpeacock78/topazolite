@@ -71,7 +71,17 @@
           (CurryVal O v v)
           (RecurVal f (x ...) c)
           (TypeRep O t κ)
-          (ProofRep O φ)))
+          (ProofRep O φ))
+
+  #:binding-forms
+  (Lam O (x ...) c #:refers-to (shadow x ...))
+  (Let (x τ) c_1 c_2 #:refers-to x)
+  (K (x ...) -> c #:refers-to (shadow x ...))
+  (x -> c #:refers-to x)
+  (Recur f (x ...)
+         c_1 #:refers-to (shadow f x ...)
+         c_2 #:refers-to f)
+  (RecurVal f (x ...) c #:refers-to (shadow f x ...)))
 
 (define-extended-language G1m G1
   (p ::= natural)
