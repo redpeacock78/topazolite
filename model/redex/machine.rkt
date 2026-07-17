@@ -37,27 +37,44 @@
   [(substitute* c_body (x ...) (v_arg ...))
    (substitute c_body (x v_arg) ...)
    (side-condition
-    (= (length (term (x ...)))
-       (length (term (v_arg ...)))))]
+    (and (= (length (term (x ...)))
+            (length (term (v_arg ...))))
+         (not (check-duplicates (term (x ...))))))]
   [(substitute* c_body (x ...) (v_arg ...)) #f])
 
 (define-metafunction G1m
   select-branch : K (v ...) (br ...) -> any
   [(select-branch K (v_arg ...)
-                  (br_before ...
-                   (K (x ...) -> c_body)
-                   br_after ...))
+                  ((K (x ...) -> c_body) br_rest ...))
    (substitute* c_body (x ...) (v_arg ...))]
-  [(select-branch K (v_arg ...) (br ...)) #f])
+  [(select-branch K (v_arg ...)
+                  ((K_other (x_other ...) -> c_other) br_rest ...))
+   (select-branch K (v_arg ...) (br_rest ...))]
+  [(select-branch K (v_arg ...) ()) #f])
 
 (define (owned-type? type)
   (match type
     [`(Owned ,_) #t]
     [_ #f]))
 
+(define (unique-binders? term)
+  (and (match term
+         [`(Lam ,_ ,parameters ,_)
+          (not (check-duplicates parameters))]
+         [`(Recur ,_ ,parameters ,_ ,_)
+          (not (check-duplicates parameters))]
+         [`(RecurVal ,_ ,parameters ,_)
+          (not (check-duplicates parameters))]
+         [`(,_ ,parameters -> ,_)
+          #:when (list? parameters)
+          (not (check-duplicates parameters))]
+         [_ #t])
+       (or (not (list? term))
+           (andmap unique-binders? term))))
+
 ;; Construct fields are evaluated by E; (Construct K v ...) is already a value,
 ;; so the data rule needs no separate administrative transition.
-(define -->g1
+(define -->g1/rules
   (reduction-relation
    G1m
    #:domain config
@@ -105,6 +122,23 @@
         (where c_result
                (select-branch K (v_arg ...) (br ...)))
         R-Eliminate)))
+
+;; Binding-aware matching freshens binders before destructuring.  Check the raw
+;; configuration first so repeated source binders cannot be freshened apart.
+(define (raw-steps config)
+  (if (unique-binders? config)
+      (apply-reduction-relation -->g1/rules config)
+      '()))
+
+(define -->g1
+  (reduction-relation
+   G1m
+   #:domain config
+   (--> config_before
+        config_after
+        (where (config_prefix ... config_after config_suffix ...)
+               ,(raw-steps (term config_before)))
+        R-Step)))
 
 (define (inject core)
   (unless (redex-match? G1 c core)
