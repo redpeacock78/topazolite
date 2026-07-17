@@ -8,12 +8,15 @@
 
 (define fuel 20)
 
+(define (final-config core)
+  (term (cfg ,core () () ())))
+
 (define (scoped core)
   (term (cfg (Scope () ,core) () () ())))
 
 (define (run-core core)
   (match (run (inject core) fuel)
-    [`(cfg (Scope () ,result) () () ()) result]
+    [`(cfg ,result () () ()) result]
     [result (error 'run-core "unexpected result: ~e" result)]))
 
 (test-case "R-Delta: primitive delta rules reduce applications"
@@ -34,12 +37,12 @@
                                         9))
                            (term (resource 9)))))])
     (match-define (list core expected) case)
-    (check-equal? (run (inject core) fuel) (scoped expected))))
+    (check-equal? (run (inject core) fuel) (final-config expected))))
 
 (test-case "R-Beta/R-Let: capture-avoiding substitution"
   (check-equal?
    (run (inject (term (Apply (Lam User (x) x) 5))) fuel)
-   (scoped (term 5)))
+   (final-config (term 5)))
   (check-equal?
    (run-core
     (term (Let (x Int) 3
@@ -101,8 +104,9 @@
   (define reducible
     (inject (term (Apply (Lam User (x) x) 5))))
   (check-equal? (run reducible 0) 'timeout)
-  (check-equal? (run (scoped (term 5)) 0)
-                (scoped (term 5))))
+  (check-equal? (run (scoped (term 5)) 0) 'timeout)
+  (check-equal? (run (final-config (term 5)) 0)
+                (final-config (term 5))))
 
 (test-case "pure reduction: malformed redexes remain stuck"
   (define (successors core)
@@ -112,6 +116,7 @@
          (in-list
           (term ((Apply (Lam User (x) x) 1 2)
                  (Apply (Lam User (x x) x) 3 5)
+                 (Apply (Lam User (x) x) (RecurVal f (f) f))
                  (Apply (PrimVal (Reserved o-add) add) 1)
                  (Curry 1 2)
                  (Let (x (Owned Res)) (resource 1) x)

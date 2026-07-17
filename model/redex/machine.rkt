@@ -57,14 +57,48 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+(define (table-ref table key)
+  (match (assoc key table)
+    [(list _ value) value]
+    [_ #f]))
+
+(define (table-set table key value)
+  (if (assoc key table)
+      (for/list ([entry (in-list table)])
+        (if (equal? (first entry) key)
+            (list key value)
+            entry))
+      (append table (list (list key value)))))
+
+(define (fresh-place heap)
+  (if (null? heap)
+      0
+      (add1 (apply max (map first heap)))))
+
+(define (finalize/proc places states trace)
+  (define-values (final-states reversed-events)
+    (for/fold ([states states]
+               [events '()])
+              ([place (in-list (reverse places))])
+      (if (eq? (table-ref states place) 'Available)
+          (values (table-set states place 'Dropped)
+                  (cons (list 'fin place) events))
+          (values states events))))
+  (list final-states (append trace (reverse reversed-events))))
+
+(define-metafunction G1m
+  finalize : π Ω θ -> any
+  [(finalize π Ω θ)
+   ,(finalize/proc (term π) (term Ω) (term θ))])
+
 (define (unique-binders? term)
   (and (match term
          [`(Lam ,_ ,parameters ,_)
           (not (check-duplicates parameters))]
-         [`(Recur ,_ ,parameters ,_ ,_)
-          (not (check-duplicates parameters))]
-         [`(RecurVal ,_ ,parameters ,_)
-          (not (check-duplicates parameters))]
+         [`(Recur ,function ,parameters ,_ ,_)
+          (not (check-duplicates (cons function parameters)))]
+         [`(RecurVal ,function ,parameters ,_)
+          (not (check-duplicates (cons function parameters)))]
          [`(,_ ,parameters -> ,_)
           #:when (list? parameters)
           (not (check-duplicates parameters))]
@@ -114,6 +148,26 @@
         (where c_result (substitute c_body x v_bound))
         R-Let)
 
+   (--> (cfg (in-hole E_outer
+                      (Scope (p_managed ...)
+                             (in-hole G_inner
+                                      (Let (x τ_owned)
+                                           v_bound
+                                           c_body))))
+             H Ω θ)
+        (cfg (in-hole E_outer
+                      (Scope (p_managed ... p_new)
+                             (in-hole G_inner c_result)))
+             H_new Ω_new θ)
+        (side-condition (owned-type? (term τ_owned)))
+        (where p_new ,(fresh-place (term H)))
+        (where c_result (substitute c_body x p_new))
+        (where H_new
+               ,(table-set (term H) (term p_new) (term v_bound)))
+        (where Ω_new
+               ,(table-set (term Ω) (term p_new) 'Available))
+        R-LetOwned)
+
    (--> (cfg (in-hole E
                       (Eliminate (Construct K v_arg ...)
                                  (br ...)))
@@ -121,7 +175,53 @@
         (cfg (in-hole E c_result) H Ω θ)
         (where c_result
                (select-branch K (v_arg ...) (br ...)))
-        R-Eliminate)))
+        R-Eliminate)
+
+   (--> (cfg (in-hole E (Move p)) H Ω θ)
+        (cfg (in-hole E v_result) H Ω_new θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_result ,(table-ref (term H) (term p)))
+        (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
+        R-Move)
+
+   (--> (cfg (in-hole E (Move p)) H Ω θ)
+        (cfg (in-hole E (Error p)) H Ω θ)
+        (where state_old ,(table-ref (term Ω) (term p)))
+        (side-condition (memq (term state_old) '(Moved Dropped)))
+        R-MoveError)
+
+   (--> (cfg (in-hole E (Drop v_arg)) H Ω θ)
+        (cfg (in-hole E unit) H Ω θ)
+        R-Drop)
+
+   (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω θ)
+        (cfg (in-hole E_outer v_result) H Ω_final θ_final)
+        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        R-ScopeValue)
+
+   (--> (cfg (in-hole E_outer
+                      (Scope π_managed
+                             (in-hole F_inner (Perform op v_arg))))
+             H Ω θ)
+        (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final θ_final)
+        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        R-ScopeAbort)
+
+   (--> (cfg (in-hole E_outer
+                      (Scope π_managed
+                             (in-hole F_inner (Error p_error))))
+             H Ω θ)
+        (cfg (in-hole E_outer (Error p_error)) H Ω_final θ_final)
+        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        R-ScopeError)
+
+   (--> (cfg (in-hole E_outer
+                      (Handle op
+                              (x -> c_handler)
+                              (in-hole F_inner (Error p_error))))
+             H Ω θ)
+        (cfg (in-hole E_outer (Error p_error)) H Ω θ)
+        R-HandleError)))
 
 ;; Binding-aware matching freshens binders before destructuring.  Check the raw
 ;; configuration first so repeated source binders cannot be freshened apart.
