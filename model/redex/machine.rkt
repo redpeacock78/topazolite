@@ -218,6 +218,35 @@
    (--> (cfg (in-hole E_outer
                       (Handle op
                               (x -> c_handler)
+                              v_result))
+             H Ω θ)
+        (cfg (in-hole E_outer v_result) H Ω θ)
+        R-HandleValue)
+
+   (--> (cfg (in-hole E_outer
+                      (Handle (Return b τ)
+                              (x -> c_handler)
+                              (in-hole F_inner
+                                       (Perform (Return b τ) v_arg))))
+             H Ω θ)
+        (cfg (in-hole E_outer c_result) H Ω θ)
+        (where c_result (substitute c_handler x v_arg))
+        R-HandleReturn)
+
+   (--> (cfg (in-hole E_outer
+                      (Handle op_handler
+                              (x -> c_handler)
+                              (in-hole F_inner
+                                       (Perform op_performed v_arg))))
+             H Ω θ)
+        (cfg (in-hole E_outer (Perform op_performed v_arg)) H Ω θ)
+        (side-condition
+         (not (equal? (term op_handler) (term op_performed))))
+        R-HandleSkip)
+
+   (--> (cfg (in-hole E_outer
+                      (Handle op
+                              (x -> c_handler)
                               (in-hole F_inner (Error p_error))))
              H Ω θ)
         (cfg (in-hole E_outer (Error p_error)) H Ω θ)
