@@ -194,6 +194,16 @@
         (cfg (in-hole E unit) H Ω θ)
         R-Drop)
 
+   (--> (cfg (in-hole E (Yield v_observed c_next))
+             H Ω (event_old ...))
+        (cfg (in-hole E c_next)
+             H Ω (event_old ... (obs v_observed)))
+        R-Yield)
+
+   (--> (cfg (in-hole E (Suspend c_next)) H Ω θ)
+        (cfg (in-hole E c_next) H Ω θ)
+        R-Suspend)
+
    (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω θ)
         (cfg (in-hole E_outer v_result) H Ω_final θ_final)
         (where (Ω_final θ_final) (finalize π_managed Ω θ))
