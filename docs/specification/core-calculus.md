@@ -1223,6 +1223,13 @@ guard 部品条件が `Return<_, _>` と `Own` を除くのは、観測列を途
 Move / Drop の検査を構文上の出現ではなく row の `Own` で行うのは、Move / Drop が部品から呼ぶ関数の body に隠れうるためである。
 row に現れない OwnershipError はない（`Own` は一度入った row から消えない。§4.7）ので、row の検査は呼び先の中の Move / Drop も本体を見ずに検出する。
 
+guard 部品条件が検査する「合成 row」は、部分項の完全な型ではなく row だけを要求する。
+Redex 実装が「項を生んだ elaboration の導出を参照する」（1147 行目）手段として `core-type-of` による型合成を使う場合、Typed Core の `Construct` は elaboration が型引数を消去するため（§4.2 E-Construct-Check、合成位置は checking-only）、期待型のない合成位置の `Construct` は row を復元できない。
+guard 部品条件が扱う部分項のうち、`Apply(f, a1, …, ak)` の各 ai と `Yield(cv, …)` の cv は、f 自身の宣言済み NFn 型（i 番目の引数型、および row に含まれる `Yield<τ>` の τ）を期待型として使えるため、この消去の影響を受けずに row を得られる。
+`guarded(f, c)` の第二項（`Eliminate(c0, …)` の c0）にはこの局所的な期待型が一般に存在しない。
+この経路で row が定まらない場合、classify は guard 部品条件を不成立として扱い Unknown 側へ倒してよい。
+これは C-Unknown の commentary（後述、1238 行目相当）が述べる「この解析は sound だが complete ではない」の一例であり、健全性を損なわない。
+
 **(C-Unknown)** [REQ: REC-001]
 
 ```text
