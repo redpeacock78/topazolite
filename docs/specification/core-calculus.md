@@ -144,7 +144,7 @@ c ::= v                                          値
     | Perform(op, c)                             Effect の発生
     | Handle(op, x -> ch, c)                     abortive handler
     | Scope(π, c)                                finalization 境界
-    | Recur(f, (x1, …, xk), c1, c2)              再帰定義
+    | Recur(r, f, (x1, …, xk), c1, c2)           再帰定義（r は callable ID）
     | Yield(c1, c2)                              観測値の生成
     | Suspend(c)                                 生産性の区切り
     | Move(w)                                    affine 資源の消費（w は変数または place）
@@ -155,10 +155,10 @@ c ::= v                                          値
 op ::= Return<b, τ>                              G1 の handler 対象 Effect
 
 v ::= l                                          リテラル
-    | Lam(O, (x1, …, xk), c)                     関数値（origin 付き）
+    | Lam(O, ℓ, (x1, …, xk), c)                  関数値（origin と callable ID 付き）
     | PrimVal(O, name)                           primitive 値（origin 付き）
     | CurryVal(O, vf, va)                        部分適用値（origin 付き）
-    | RecurVal(f, (x1, …, xk), c)                再帰関数値
+    | RecurVal(r, f, (x1, …, xk), c)             再帰関数値
     | Construct(K, v1, …, vk)                    構成済みデータ
     | resource(n)                                affine 資源値（acquire が生成、§3.5）
     | TypeRep(O, t, κ)                           型情報値（origin 付き）
@@ -171,6 +171,36 @@ G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `Yield` と `Suspend` は Perform ではなく専用ノードで表し、観測関係（§6.1）で意味を与える。
 `Error(p)` は elaboration の出力には現れず、簡約（§5.5 R-MoveError）だけが生成する。
 `resource(n)` は G1 で唯一の `Owned` 型の値であり、primitive `acquire`（§3.5）だけが導入する。
+
+`Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, ε, Q>` を項から消去する（`RecurVal` も同様）。
+この消去は `Lam` にも及ぶ。`Curry`/`Apply` の呼び出し先位置に置かれた `Lam(O, ℓ, (x̄), c)` は、その位置の期待型（curry 後の返り値型や apply の結果型）だけからは元の全パラメータ列を復元できない。
+たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, {}, ⟨⟩>` であり、固定した第一引数の型 `List<Int>` を含まない。
+この情報は elaboration の E-Lambda（§4.3）・E-Recur（§4.6）がそれぞれ `NFn` シグネチャを組み立てる際にしか現れず、Typed Core の項単独からは回復できない。
+
+f は表層名にすぎず、同じ表層名を持つ複数の `recur` が同一の CoreArtifact 内に現れうる（E-Recur は f を内部的に改名しない。例：`recur f(x: Int) -> Int ! {} = 0 in 0` と `recur f(x: Bool) -> Int ! {} = 0 in 0` が同じ scope 中の兄弟式として現れる場合）。
+そのためシグネチャを f の表層名で indexしても一意には取り出せない。origin で代用することもできない。`verify-origins`（§3.4）は `Lam` に対し常に `O = User` を要求しており、origin は個体識別に使えない。
+
+この不足を補うため、elaboration は `Lam`・`Recur`・`RecurVal` の各インスタンスへ **CallableId** と呼ぶ新規のフィールドを割り当てる。
+CallableId はプログラム中の束縛子（変数名、f の表層名）から独立した、elaboration が生成する不透明な識別子であり、origin（§3.4）とは無関係である。
+`ℓ` は `Lam` インスタンスの、`r` は `Recur`/`RecurVal` インスタンスの CallableId を指す慣用の記法であり、両者は同じ名前空間を共有する。
+
+**(GUN: Global Uniqueness of Names)**：一つの CoreArtifact に含まれるすべての CallableId は相異なる。
+これは「表層上の名前が一意である」という条件ではなく、CoreArtifact 内の CallableId が変数束縛子とは独立にグローバルに一意であるという条件である。
+表層で同じ名前の `recur f(...)` が複数 scope に現れても、対応する各 `Recur` ノードは相異なる r を持つため、Φ の一意性は表層名の改名に頼らずに保たれる。
+同様に、パラメータ列が空、または互いに等しい複数の `Lam` が同一の CoreArtifact 中に現れても、それぞれ相異なる ℓ を持つ。
+
+elaboration の出力を c 単体ではなく組 **CoreArtifact** で表す。
+
+```text
+Φ : CallableId ⇀ NFnSignature
+CoreArtifact ::= ⟨Φ, c⟩
+```
+
+Φ は、e0 の elaboration 導出中に現れるすべての E-Lambda・E-Recur 適用が組み立てる `(ι, NFn<(τ1, …, τk), τ, ε', Q>)` を集めた有限写像である（E-Lambda は ι = ℓ かつ Q = ⟨⟩ を、E-Recur は ι = r かつ Q = ⟨⟩ を組み立てる。§4.3、§4.6）。
+GUN により Φ は関数である。すなわち同じ CallableId に二つの異なるシグネチャが対応することはない。
+Φ は Ξ（place typing、§5.1）と同じ立場の補助環境であり、特定の elaboration アルゴリズムに依存せず、Typed Core の項に外部から付随するデータとして扱う。
+手書きの Typed Core を検査する場合も、対応する Φ を項と揃えて与える必要があり、項中のすべての ℓ/r が Φ の定義域に属し、かつ GUN を満たすことが前提となる。
+Ξ とは異なり、Φ は簡約が始まる前の初期構成（Γ = ∅ の時点）から既に必要になりうる。elaboration の出力自体が `Lam`/`Recur` を含みうるためである。
 
 ### 3.4 origin model
 
@@ -216,24 +246,27 @@ R0 は初期環境だけが定め、elaboration にも簡約にも R0 を拡張�
 値の origin を取り出す metafunction **origin(v)** を次で定める。
 
 ```text
-origin(Lam(O, (x̄), c))       = O
+origin(Lam(O, ℓ, (x̄), c))     = O
 origin(PrimVal(O, name))      = O
 origin(CurryVal(O, vf, va))   = O
 origin(TypeRep(O, t, κ))      = O
 origin(ProofRep(O, φ))        = O
-origin(RecurVal(f, (x̄), c))  = User
+origin(RecurVal(r, f, (x̄), c)) = User
 ```
 
 `RecurVal` は origin 成分を持たない。
 `recur` はユーザー構文なので、その関数値の origin は `User` とする。
 curry の対象が RecurVal である場合、R-CurryVal（§5.3）はこの clause を経由して `Derived(User, Curry(va))` を作る。
 
+`Lam`/`Recur`/`RecurVal` が持つ CallableId（ℓ/r、§3.3）は origin とは独立な成分であり、`origin` metafunction にも `valid-origin`/`verify-origins` にも現れない。
+`Lam` の origin は個体によらず常に `User`（次項）であるのに対し、ℓ は個体ごとに相異なる（GUN、§3.3）。両者は別の目的を持つ独立した情報である。
+
 Typed Core の項 c に対する **origin 検証** `verify-origins(R0, c)` を、次の二つがともに成り立つこととして定義する。
 
 - c に出現するすべての origin 注釈が valid-origin を満たす。
 - origin 付きの値について、値の形と origin の sort が次のとおり整合する。
   - `PrimVal(O, name)`：O = Reserved(id) かつ R0(id) = prim(name)。
-  - `Lam(O, (x̄), c')`：O = User。
+  - `Lam(O, ℓ, (x̄), c')`：O = User（ℓ には制約を課さない。CallableId は origin の管轄外である、§3.4）。
   - `CurryVal(O, vf, va)`：O = Derived(origin(vf), Curry(va))。
   - `TypeRep(O, t, κ)`：κ = kindOf(t)（§3.2）であり、かつ次のいずれかが成り立つ。O = Reserved(id) であって、ある型名 T について Δ0(T) = TypeRep(Reserved(id), t, κ)（初期環境の triple と完全一致、§3.5）。または O = Derived(Reserved(o-type-narrative), Make(t))（step が記録する型式と本体の型式が一致）。
   - `ProofRep(O, φ)`：O = Reserved(o-type-narrative) かつ φ = TypeNarrativeCap（G1 の ProofRep はこの一形に限る）。
@@ -343,6 +376,7 @@ ng<τ, σ>  : (σ) -> Result<τ, σ>
 プログラム全体の elaboration は `∅; Δ0; Π0; ⟨⟩ ⊢ e0 ⇒ τ0 ! ε0 ⟹ c0` として行う。
 Γ の初期値は空であり、Γ0（§3.5）は Γ の一部ではない。
 primitive 名は E-Prim（§4.2）が PrimVal へ解決するため、初期 Γ に primitive の束縛は要らない。
+この導出中に現れる E-Lambda（§4.3）・E-Recur（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` / `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
 
 **(E-Sub)**
 
@@ -456,6 +490,7 @@ G1 の Owned 値は、引数と捕捉のどちらの経路でも関数境界を�
 各 τi は Owned<_> の形でない
 e の自由変数のうち x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
 b fresh
+ℓ fresh                                            （CallableId、§3.3）
 εdecl' = resolveReturn(B, εdecl)                  （§4.5 の Return ラベル解決）
 B' = push(B, FunctionBoundary(b, τ))
 Γ, x1 : τ1, …, xk : τk; Δ; Π; B' ⊢ e ⇐ τ ! εbody ⟹ c
@@ -463,13 +498,15 @@ B' = push(B, FunctionBoundary(b, τ))
 --------------------------------
 Γ; Δ; Π; B ⊢ fn(x1 : τ1, …, xk : τk) -> τ ! εdecl  e
   ⇒ NFn<(τ1, …, τk), τ, εdecl', ⟨⟩> ! {}
-  ⟹ Lam(User, (x1, …, xk),
+  ⟹ Lam(User, ℓ, (x1, …, xk),
        Handle(Return<b, τ>, x -> x, Scope(∅, c)))
+  かつ Φ(ℓ) = NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>
 ```
 
 関数抽象は自身の FunctionBoundary を push し、body を Return handler と Scope で包む。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
+ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 **(E-Apply)**
 
@@ -566,21 +603,24 @@ B' = push(B, ExpressionBoundary(b, τ))
 ```text
 各 τi は Owned<_> の形でない
 e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
+r fresh                                            （CallableId、§3.3。表層名 f とは別に割り当てる）
 ε' = resolveReturn(B, εdecl)
 Γf = Γ, f : NFn<(τ1, …, τk), τ, ε', ⟨⟩>
 Γf, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇐ τ ! εbody ⟹ c1
 εbody ⊆ ε'
 Γf; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
-Recur(f, (x1, …, xk), c1, c2) ⇓class κc        （§6.2）
+Recur(r, f, (x1, …, xk), c1, c2) ⇓class κc      （§6.2）
 κc = Unknown ならば Partial ∈ ε'
 --------------------------------
 Γ; Δ; Π; B ⊢ recur f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
-  ⇒ τ2 ! ε2 ⟹ Recur(f, (x1, …, xk), c1, c2)
+  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (x1, …, xk), c1, c2)
+  かつ Φ(r) = NFn<(τ1, …, τk), τ, ε', ⟨⟩>
 ```
 
 Owned 引数と Owned 束縛の捕捉の禁止は Lambda と同じ理由による（§4.3）。
 R-RecurUnfold（§5.4）も引数値を body へ直接置換し、f の適用のたびに body（外側の place への Move を含みうる）を複製するためである。
 計算分類は、継続 c2 を含む Recur 項全体に対して行う（C-Guarded は c2 が f の適用であることも検査する。§6.2）。
+r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 `recur` は loop の lowering 先となる内部 marker であり、関数境界を push しない（RET-003 の適用対象）。
 body の中の `return` は外側の最寄りの境界へ解決される。
@@ -711,16 +751,19 @@ Proof term の同値上の扱いは §6.3 で定める。
 メタ理論性質（§7）の検査には、elaboration と独立に Typed Core を型付けする judgment が要る。
 
 ```text
-Γ; Δ; Π; Ξ ⊢core c : τ ! ε
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε
 ```
 
-この judgment は §4 の elaboration 規則から入力構文と B を除き、place typing Ξ（§2）を加えたものに一致する。
+この judgment は §4 の elaboration 規則から入力構文と B を除き、place typing Ξ（§2）と Φ（§3.3 の CoreArtifact）を加えたものに一致する。
 boundary stack が不要なのは、Typed Core では境界が `Handle` ノードとして陽に現れるためである。
 変数を型付けする規則は E-Var 対応だけであり、E-Prim に対応する規則はない。
 E-Prim は裸の primitive 名を PrimVal へ解決する変換規則であり、⊢core では T-Prim（下記）が PrimVal 値そのものを型付けする。
 machine は変数の lookup 規則を持たないため、閉じた構成に裸の変数を残す手書きの Typed Core は well-typed にならず、stuck もこの型付けの失敗として排除される。
 elaboration の出力は閉じており place を含まないため、Γ = ∅、Ξ = ∅ で型付けできる。
 Ξ が要るのは簡約途中の構成の検査（⊢config、本節末尾）だけである。
+一方 Φ は Ξ と異なり、この初期時点で既に空とは限らない。
+elaboration 済みの c が `Recur` ノードを含む限り、その `f` の署名は Φ にしか残っていないためである（§3.3）。
+Φ は CoreArtifact `⟨Φ, c⟩` の一部として elaboration 時点で確定し、以後の簡約はこれを一切変更しない。
 elaboration 規則と重複しない規則だけを挙げる。
 
 **(T-Prim)**
@@ -728,24 +771,24 @@ elaboration 規則と重複しない規則だけを挙げる。
 ```text
 Γ0(name) = τ        Γ0 の name の値が PrimVal(Reserved(o), name)
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core PrimVal(Reserved(o), name) : τ ! {}
+Γ; Δ; Π; Ξ; Φ ⊢core PrimVal(Reserved(o), name) : τ ! {}
 ```
 
 **(T-Handle)**
 
 ```text
-Γ; Δ; Π; Ξ ⊢core c : τ ! ε
-Γ, x : τ; Δ; Π; Ξ ⊢core ch : τ ! εh
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε
+Γ, x : τ; Δ; Π; Ξ; Φ ⊢core ch : τ ! εh
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
+Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
 ```
 
 **(T-Perform)** [REQ: RET-002]
 
 ```text
-Γ; Δ; Π; Ξ ⊢core c : τ ! ε
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core Perform(Return<b, τ>, c) : Never ! ε ∪ {Return<b, τ>}
+Γ; Δ; Π; Ξ; Φ ⊢core Perform(Return<b, τ>, c) : Never ! ε ∪ {Return<b, τ>}
 ```
 
 Perform が運ぶ値の型は op の型成分 τ と一致する。
@@ -754,10 +797,10 @@ Perform が運ぶ値の型は op の型成分 τ と一致する。
 **(T-Scope)**
 
 ```text
-Γ; Δ; Π; Ξ ⊢core c : τ ! ε
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε
 π の各 place は dom(Ξ) に含まれる
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core Scope(π, c) : τ ! ε
+Γ; Δ; Π; Ξ; Φ ⊢core Scope(π, c) : τ ! ε
 ```
 
 **(T-MovePlace)** [REQ: OWN-001]
@@ -765,13 +808,13 @@ Perform が運ぶ値の型は op の型成分 τ と一致する。
 ```text
 Ξ(p) = τ
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core Move(p) : Owned<τ> ! {Own}
+Γ; Δ; Π; Ξ; Φ ⊢core Move(p) : Owned<τ> ! {Own}
 ```
 
 **(T-Resource)**
 
 ```text
-Γ; Δ; Π; Ξ ⊢core resource(n) : Owned<Res> ! {}
+Γ; Δ; Π; Ξ; Φ ⊢core resource(n) : Owned<Res> ! {}
 ```
 
 **(T-Error)**
@@ -779,26 +822,76 @@ Perform が運ぶ値の型は op の型成分 τ と一致する。
 ```text
 p ∈ dom(Ξ)
 --------------------------------
-Γ; Δ; Π; Ξ ⊢core Error(p) : τ ! {}
+Γ; Δ; Π; Ξ; Φ ⊢core Error(p) : τ ! {}
 ```
 
 `Error(p)` は伝播して終端構成に至るだけのノードなので、`Never` と同様に任意の型で型付けする。
 これにより Error を含む構成でも Preservation（§7 性質 1）が文脈の下で成り立つ。
 
-**(T-Val)**：その他の値の型付けは、リテラルの typeof と、Lam、CurryVal、RecurVal、Construct への §4 対応規則で定める。
+**(T-Recur)**
+
+```text
+Φ(r) = NFn(τ1, ..., τk, τ, ε', Q)
+Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c1 : τ ! εbody
+εbody ⊆ ε'
+Γ, f : NFn(τ1, ..., τk, τ, ε', Q); Δ; Π; Ξ; Φ ⊢core c2 : τ2 ! ε2
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Recur(r, f, (x1, ..., xk), c1, c2) : τ2 ! ε2
+```
+
+f の署名は項から消去されているため、この規則は CallableId `r` を鍵に Φ から読み出す（§3.3、§4.6 E-Recur）。表層名 f は Γ を拡張する束縛子としてのみ使い、Φ の検索には使わない（f は他の `Recur` ノードと衝突しうるため。§3.3）。
+`c1` を Φ 由来の署名で実際に検査するのは、手書きの Typed Core が signature と body の食い違う `Recur` を偽造できないようにするためである。
+
+**(T-RecurVal)**
+
+```text
+Φ(r) = NFn(τ1, ..., τk, τ, ε', Q)
+Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
+εbody ⊆ ε'
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core RecurVal(r, f, (x1, ..., xk), c) : NFn(τ1, ..., τk, τ, ε', Q) ! {}
+```
+
+RecurVal は R-RecurBind（§5.4）が Recur から作る値であり、その型付けは対応する T-Recur の body 側 premise と同じ形をとる。r は Recur から引き継がれる（§5.4）。
+
+**(T-Lam)**
+
+```text
+Φ(ℓ) = NFn(τ1, ..., τk, τ, ε', Q)
+Γ, x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
+εbody ⊆ ε'
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Lam(O, ℓ, (x1, ..., xk), c) : NFn(τ1, ..., τk, τ, ε', Q) ! {}
+```
+
+Lam のパラメータ・返り値型・宣言 row は項から消去されているため、この規則は CallableId `ℓ` を鍵に Φ から読み出す（§3.3、§4.3 E-Lambda）。T-RecurVal と同様、body を Φ 由来の署名で検査することで、手書きの Typed Core が signature と body の食い違う `Lam` を偽造できないようにする。O には制約を課さない（§3.4 の verify-origins が別途 O = User を要求する）。
+
+**(T-CurryVal)** [REQ: CUR-002]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core vf : NFn(τ1, τ2, ..., τk, τ, ε, Q) ! {}        （k ≥ 1）
+Γ; Δ; Π; Ξ; Φ ⊢core va : τ1 ! {}
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core CurryVal(O, vf, va) : NFn(τ2, ..., τk, τ, ε, specialize(Q, va)) ! {}
+```
+
+`vf` は値なので T-Lam・T-RecurVal・T-CurryVal のいずれかで再帰的に synthesize でき、`Curry`/`Apply` の呼び出し先位置に直接置かれた生の `Lam`/`RecurVal`（Φ(ℓ)/Φ(r) 経由）も、この位置の期待型を経由せず単独で型付けできる。O の整合は verify-origins（§3.4）が別途検査する。
+
+**(T-Val)**：その他の値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal、Construct への §4 E-Construct-Check 対応規則で定める。
 `TypeRep(O, t, κ)` は `TypeInfo<κ>`、`ProofRep(O, φ)` は `Proof<φ>` で型付けする。
 
 構成の well-formedness **⊢config** を次で定める。
 
 ```text
 dom(Ξ) = dom(H) = dom(Ω)
-各 p ∈ dom(H) について ∅; Δ0; Π0; Ξ ⊢core H(p) : Owned<Ξ(p)> ! {}
-∅; Δ0; Π0; Ξ ⊢core c : τ ! ε
+各 p ∈ dom(H) について ∅; Δ0; Π0; Ξ; Φ ⊢core H(p) : Owned<Ξ(p)> ! {}
+∅; Δ0; Π0; Ξ; Φ ⊢core c : τ ! ε
 --------------------------------
-Ξ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε
+Ξ; Φ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε
 ```
 
-Preservation（§7 性質 1）は、この judgment が簡約で保存されることとして述べる。
+ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
+簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
 
 ### 5.2 machine 構成と評価文脈
 
@@ -841,8 +934,10 @@ E[Apply(PrimVal(O, opname), v1, …, vk)] → E[δ(opname, v1, …, vk)]
 **(R-Beta)**
 
 ```text
-E[Apply(Lam(O, (x1, …, xk), c), v1, …, vk)] → E[c[v1/x1, …, vk/xk]]
+E[Apply(Lam(O, ℓ, (x1, …, xk), c), v1, …, vk)] → E[c[v1/x1, …, vk/xk]]
 ```
+
+ℓ は束縛子ではないため置換の対象にならず、単に破棄される。
 
 **(R-CurryVal)** [REQ: CUR-002]
 
@@ -890,14 +985,16 @@ E[Eliminate(Construct(Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
 **(R-RecurBind)**
 
 ```text
-E[Recur(f, (x̄), c1, c2)] → E[c2[RecurVal(f, (x̄), c1)/f]]
+E[Recur(r, f, (x̄), c1, c2)] → E[c2[RecurVal(r, f, (x̄), c1)/f]]
 ```
+
+r はそのまま RecurVal へ引き継がれる。
 
 **(R-RecurUnfold)**
 
 ```text
-E[Apply(RecurVal(f, (x1, …, xk), c), v1, …, vk)]
-  → E[c[RecurVal(f, (x̄), c)/f, v1/x1, …, vk/xk]]
+E[Apply(RecurVal(r, f, (x1, …, xk), c), v1, …, vk)]
+  → E[c[RecurVal(r, f, (x̄), c)/f, v1/x1, …, vk/xk]]
 ```
 
 **(R-Yield)**
@@ -1074,14 +1171,16 @@ c ⇓class Finite(no-recursion)
 **(C-Structural)** [REQ: REC-001]
 
 ```text
-Recur(f, (x1, …, xk), c1, c2) について、
+Recur(r, f, (x1, …, xk), c1, c2) について、
 pre(f, c1) かつ pre(f, c2) であり、
 c1 と c2 内の f のすべての自由な出現は直接適用 Apply(f, a1, …, ak) の形であり、
 ある引数位置 j が存在して、c1 内のすべての適用で
 aj は xj を Eliminate で分解して得た field 変数（またはその再分解）である
 --------------------------------
-Recur(f, (x1, …, xk), c1, c2) ⇓class Finite(structural)
+Recur(r, f, (x1, …, xk), c1, c2) ⇓class Finite(structural)
 ```
+
+r は分類に関与しない（Recur の識別だけに使い、条件には現れない）。
 
 引数位置 j は c1 内のすべての適用で共通とする。
 継続 c2 の適用には引数位置の条件を課さない。
@@ -1101,7 +1200,7 @@ guard 条件 `guarded(f, c)` を次の帰納で定める。
 guarded(f, c1)
 c2 = Apply(f, a1, …, ak) であり、各 ai が guard 部品条件を満たす
 --------------------------------
-Recur(f, (x1, …, xk), c1, c2) ⇓class Productive(guarded)
+Recur(r, f, (x1, …, xk), c1, c2) ⇓class Productive(guarded)
 ```
 
 guarded な body のすべての経路は、観測を一つ生成した直後の tail 位置で f を呼ぶ。
@@ -1159,7 +1258,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 探索の上限値と seed は `model/redex/README.md` に固定した値を正とする。
 反例が見つからないことは性質の証明ではなく、設定した探索範囲での反例未発見を意味する。
 
-1. **Preservation**：`Ξ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε`（§5.1）かつ `⟨c, H, Ω, θ⟩ → ⟨c', H', Ω', θ'⟩` ならば、ある Ξ' ⊇ Ξ について `Ξ' ⊢config ⟨c', H', Ω', θ'⟩ : τ ! ε'` かつ `ε' ⊆ ε` が成り立つ。
+1. **Preservation**：`Ξ; Φ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε`（§5.1）かつ `⟨c, H, Ω, θ⟩ → ⟨c', H', Ω', θ'⟩` ならば、ある Ξ' ⊇ Ξ について `Ξ'; Φ ⊢config ⟨c', H', Ω', θ'⟩ : τ ! ε'` かつ `ε' ⊆ ε` が成り立つ。Φ は簡約で変化しないため同じ Φ を使い回せる（§5.1）。
 2. **Progress modulo effects**：well-typed で closed なプログラム c0 の初期構成 `⟨Scope(∅, c0), ∅, ∅, ⟨⟩⟩` から到達可能な構成は、値であるか、OwnershipError（`⟨Error(p), H, Ω, θ⟩` の形の終端構成、§5.5）であるか、次の step を持つ。top-level に到達した `Perform(op, v)` は、op が初期宣言 row に含まれる場合のみ許容される終端とする。到達可能性で量化するのは、R-LetOwned の割り当て先となる Scope の存在（§5.2）を初期構成の形が保証するためである。
 3. **Origin integrity**：elaboration の出力 c と、そこから到達可能なすべての構成は `verify-origins(R0, ·)` を満たす。すなわち簡約は偽造 origin を生成しない。 [REQ: NAR-001] [REQ: NAR-002]
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
