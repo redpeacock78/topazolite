@@ -11,7 +11,7 @@
           (Eliminate xs
                      ((nil () -> 0)
                       (cons (head tail) -> (Apply loop tail))))
-          (Apply loop (Construct nil))))
+          (Apply loop (Construct (List Int) nil))))
 
 (test-case "REC-001: no recursion and structural descent are Finite"
   (check-equal? (classify '(Apply (PrimVal (Reserved o-add) add) 1 2)
@@ -28,12 +28,12 @@
   (define map-loop
     '(Recur map-loop-id go (values)
             (Eliminate values
-             ((nil () -> (Construct nil))
+             ((nil () -> (Construct (List Int) nil))
               (cons (head tail) ->
-                    (Construct cons
+                    (Construct (List Int) cons
                                (Apply mapper head)
                                (Apply go tail)))))
-            (Apply go (Construct nil))))
+            (Apply go (Construct (List Int) nil))))
   (check-equal? (classify map-loop map-environment map-callables)
                 '(Finite structural)))
 
@@ -54,8 +54,9 @@
                       ((nil () -> 0)
                        (cons (head tail) ->
                              (Apply loop xs tail choose-left)))))))
-            (Apply loop (Construct nil) (Construct nil)
-                   (Construct true))))
+            (Apply loop (Construct (List Int) nil)
+                   (Construct (List Int) nil)
+                   (Construct Bool true))))
   (check-equal? (classify no-common-position '() callables) 'Unknown))
 
 (test-case "REC-001: structural descent follows fields, not arbitrary uses of f"
@@ -69,7 +70,7 @@
                     (Eliminate tail
                      ((nil () -> 0)
                       (cons (next rest) -> (Apply loop rest)))))))
-            (Apply loop (Construct nil))))
+            (Apply loop (Construct (List Int) nil))))
   (check-equal? (classify nested-descent '() callables)
                 '(Finite structural))
 

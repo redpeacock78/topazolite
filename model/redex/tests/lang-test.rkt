@@ -19,7 +19,7 @@
   (for ([core (in-list
                (term ((Apply 1 2)
                       (Let (x Int) 1 x)
-                      (Eliminate (Construct some 1)
+                      (Eliminate (Construct (Option Int) some 1)
                                  ((some (x) -> x)))
                       (Move x)
                       (Drop 1)
@@ -29,7 +29,7 @@
                       (Handle (Return b Int) (x -> x) 1)
                       (Scope () 1)
                       (Recur recur-id f (x) x (Apply f 0))
-                      (Construct cons 1 2))))])
+                      (Construct (List Int) cons 1 2))))])
     (check-true (redex-match? G1 c core)))
   (check-true (redex-match? G1m c (term (Scope (0) (Move 0)))))
   (check-true (redex-match? G1m c (term (Error 0)))))

@@ -26,8 +26,9 @@
                         (cons (head tail) ->
                               (Apply ,add 1 (Apply walk tail)))))
             (Apply walk
-                   (Construct cons 10
-                              (Construct cons 20 (Construct nil)))))))
+                   (Construct (List Int) cons 10
+                              (Construct (List Int) cons 20
+                                         (Construct (List Int) nil)))))))
   (check-equal?
    (run (inject length-two) fuel)
    (term (cfg 2 () () ()))))

@@ -325,7 +325,11 @@
     [`(ProofRep ,_ ,proposition)
      (list `(Proof ,proposition) '())]
 
-    [`(Construct ,_ ,_ ...) #f]
+    [`(Construct ,data-type ,constructor ,fields ...)
+     (define row
+       (check-construct constructor fields data-type
+                        environment places callables))
+     (and row (list data-type row))]
 
     [`(resource ,_) (list '(Owned Res) '())]
 
@@ -475,9 +479,10 @@
 
 (define (check-as core expected environment places callables)
   (match core
-    [`(Construct ,constructor ,fields ...)
-     (check-construct constructor fields expected
-                      environment places callables)]
+    [`(Construct ,data-type ,constructor ,fields ...)
+     (and (type-equiv? data-type expected)
+          (check-construct constructor fields data-type
+                           environment places callables))]
 
     [`(Error ,place)
      (and (exact-nonnegative-integer? place)

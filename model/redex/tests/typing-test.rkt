@@ -97,36 +97,42 @@
     empty callable-types)
    'ill-typed))
 
-(test-case "T-Val/T-Eliminate: checking supplies erased constructor types"
-  (check-equal? (core-type-of (term (Construct nil)) empty empty)
-                'ill-typed)
+(test-case "T-Construct/T-Eliminate: retained data types synthesize"
+  (check-equal?
+   (core-type-of (term (Construct (List Int) nil)) empty empty)
+   (term ((List Int) ())))
   (check-true
-   (core-check (term (Construct nil))
+   (core-check (term (Construct (List Int) nil))
                empty empty (term (List Int)) empty))
   (check-equal?
-   (core-check-row (term (Construct nil))
+   (core-check-row (term (Construct (List Int) nil))
                    empty empty (term (List Int)))
    empty)
   (check-true
-   (core-check (term (Construct cons 1 (Construct nil)))
+   (core-check (term (Construct (List Int) cons 1
+                                (Construct (List Int) nil)))
                empty empty (term (List Int)) empty))
   (check-false
-   (core-check (term (Construct cons unit (Construct nil)))
+   (core-check (term (Construct (List Int) cons unit
+                                (Construct (List Int) nil)))
                empty empty (term (List Int)) empty))
+  (check-false
+   (core-check (term (Construct (List Int) nil))
+               empty empty (term (Option Int)) empty))
+  (check-equal?
+   (core-type-of (term (Construct (List Int) some 1)) empty empty)
+   'ill-typed)
   (check-equal?
    (core-type-of
-    (term (Let (xs (List Int))
-               (Construct nil)
-               (Eliminate xs
-                          ((nil () -> 0)
-                           (cons (head tail) -> head)))))
+    (term (Eliminate (Construct (List Int) nil)
+                     ((nil () -> 0)
+                      (cons (head tail) -> head))))
     empty empty)
    (term (Int ())))
   (check-equal?
    (core-type-of
-    (term (Let (xs (List Int))
-               (Construct nil)
-               (Eliminate xs ((nil () -> 0)))))
+    (term (Eliminate (Construct (List Int) nil)
+                     ((nil () -> 0))))
     empty empty)
    'ill-typed))
 

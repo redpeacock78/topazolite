@@ -16,16 +16,16 @@
   [(δ mul n_1 n_2) ,(* (term n_1) (term n_2))]
   [(δ lt n_1 n_2)
    ,(if (< (term n_1) (term n_2))
-        (term (Construct true))
-        (term (Construct false)))]
+        (term (Construct Bool true))
+        (term (Construct Bool false)))]
   [(δ le n_1 n_2)
    ,(if (<= (term n_1) (term n_2))
-        (term (Construct true))
-        (term (Construct false)))]
+        (term (Construct Bool true))
+        (term (Construct Bool false)))]
   [(δ eq n_1 n_2)
    ,(if (= (term n_1) (term n_2))
-        (term (Construct true))
-        (term (Construct false)))]
+        (term (Construct Bool true))
+        (term (Construct Bool false)))]
   [(δ acquire n) (resource n)]
   [(δ nm v ...) undefined])
 
@@ -106,7 +106,7 @@
        (or (not (list? term))
            (andmap unique-binders? term))))
 
-;; Construct fields are evaluated by E; (Construct K v ...) is already a value,
+;; Construct fields are evaluated by E; (Construct τ K v ...) is already a value,
 ;; so the data rule needs no separate administrative transition.
 (define -->g1/rules
   (reduction-relation
@@ -169,7 +169,7 @@
         R-LetOwned)
 
    (--> (cfg (in-hole E
-                      (Eliminate (Construct K v_arg ...)
+                      (Eliminate (Construct τ K v_arg ...)
                                  (br ...)))
              H Ω θ)
         (cfg (in-hole E c_result) H Ω θ)

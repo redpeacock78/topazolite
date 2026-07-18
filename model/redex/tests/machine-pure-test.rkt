@@ -28,11 +28,11 @@
                      (list (term (Apply (PrimVal (Reserved o-mul) mul) 7 3))
                            (term 21))
                      (list (term (Apply (PrimVal (Reserved o-lt) lt) 1 2))
-                           (term (Construct true)))
+                           (term (Construct Bool true)))
                      (list (term (Apply (PrimVal (Reserved o-le) le) 2 1))
-                           (term (Construct false)))
+                           (term (Construct Bool false)))
                      (list (term (Apply (PrimVal (Reserved o-eq) eq) 2 2))
-                           (term (Construct true)))
+                           (term (Construct Bool true)))
                      (list (term (Apply (PrimVal (Reserved o-acquire) acquire)
                                         9))
                            (term (resource 9)))))])
@@ -75,24 +75,25 @@
   (check-equal?
    (run-core
     (term (Apply (Curry (PrimVal (Reserved o-lt) lt) 1) 2)))
-   (term (Construct true))))
+   (term (Construct Bool true))))
 
 (test-case "R-Eliminate: constructor branch selection and field binding"
   (check-equal?
    (run-core
-    (term (Eliminate (Construct nil)
+    (term (Eliminate (Construct (List Int) nil)
                      ((nil () -> 41)
                       (cons (head tail) -> 0)))))
    (term 41))
   (check-equal?
    (run-core
-    (term (Eliminate (Construct nil)
+    (term (Eliminate (Construct (List Int) nil)
                      ((nil () -> 1)
                       (nil () -> 2)))))
    (term 1))
   (check-equal?
    (run-core
-    (term (Eliminate (Construct cons 3 (Construct nil))
+    (term (Eliminate (Construct (List Int) cons 3
+                                (Construct (List Int) nil))
                      ((nil () -> 0)
                       (cons (head tail) ->
                             (Apply (PrimVal (Reserved o-add) add)
@@ -121,10 +122,11 @@
                  (Apply (PrimVal (Reserved o-add) add) 1)
                  (Curry 1 2)
                  (Let (x (Owned Res)) (resource 1) x)
-                 (Eliminate (Construct nil)
+                 (Eliminate (Construct (List Int) nil)
                             ((cons (head tail) -> head)))
-                 (Eliminate (Construct cons 1 (Construct nil))
+                 (Eliminate (Construct (List Int) cons 1
+                                       (Construct (List Int) nil))
                             ((cons (head) -> head)))
-                 (Eliminate (Construct cons 3 5)
+                 (Eliminate (Construct (List Int) cons 3 5)
                             ((cons (head head) -> head))))))])
     (check-equal? (successors core) '())))

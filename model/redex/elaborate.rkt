@@ -334,7 +334,7 @@
       (define results
         (check-many fields field-types
                     environment delta propositions boundaries))
-      (judgment `(Construct ,constructor
+      (judgment `(Construct ,expected ,constructor
                             ,@(map judgment-core results))
                 expected
                 (rows-union (map judgment-row results))))

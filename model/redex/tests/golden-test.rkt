@@ -81,7 +81,7 @@
    find-positive
    '(Result Int Unit)
    '((values (List Int)))
-   '(Construct ok 2)))
+   '(Construct (Result Int Unit) ok 2)))
 
 (test-case "CUR-001/CUR-002/REC-001/NAR-001/NAR-002: map golden program"
   (check-golden
@@ -89,7 +89,9 @@
    '(List Int)
    '((f (NFn (Int) Int () ()))
      (values (List Int)))
-   '(Construct cons -2 (Construct cons 4 (Construct nil))))
+   '(Construct (List Int) cons -2
+               (Construct (List Int) cons 4
+                          (Construct (List Int) nil))))
 
   (match-define (list curry-core _ _ _) (elab '(Curry mul 2)))
   (match-define `(cfg ,curried () () ())

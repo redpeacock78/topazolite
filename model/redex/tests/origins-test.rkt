@@ -57,7 +57,7 @@
     (check-equal? (term (origin-of ,value)) expected))
   (check-true (in-domain? (origin-of (PrimVal (Reserved o-lt) lt))))
   (check-false (in-domain? (origin-of 5)))
-  (check-false (in-domain? (origin-of (Construct true)))))
+  (check-false (in-domain? (origin-of (Construct Bool true)))))
 
 (test-case "NAR-001: reserved origin and value sort agree"
   (check-equal? (verify (term (PrimVal (Reserved o-lt) lt))) 'ok)
@@ -167,7 +167,7 @@
                 (term (Handle (Return b Int)
                               (x -> ,forged-prim)
                               0))
-                (term (Eliminate (Construct some 1)
+                (term (Eliminate (Construct (Option Int) some 1)
                                  ((some (x) -> ,forged-prim))))))])
     (check-equal? (verify nested) (term (forged ,forged-prim)))))
 

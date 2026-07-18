@@ -52,7 +52,7 @@
          x
          (Apply c c ...)
          (Let (x τ) c c)
-         (Construct K c ...)
+         (Construct τ K c ...)
          (Eliminate c (br ...))
          (Perform op c)
          (Handle op h c)
@@ -65,7 +65,7 @@
          (Curry c c))
   (v ::= l
          ov
-         (Construct K v ...)
+         (Construct τ K v ...)
          (resource n))
   (ov ::= (Lam O cid (x ...) c)
           (PrimVal O nm)
@@ -100,7 +100,7 @@
   (F ::= hole
          (Apply v ... F c ...)
          (Let (x τ) F c)
-         (Construct K v ... F c ...)
+         (Construct τ K v ... F c ...)
          (Eliminate F (br ...))
          (Perform op F)
          (Drop F)
@@ -110,7 +110,7 @@
   (E ::= hole
          (Apply v ... E c ...)
          (Let (x τ) E c)
-         (Construct K v ... E c ...)
+         (Construct τ K v ... E c ...)
          (Eliminate E (br ...))
          (Perform op E)
          (Drop E)
@@ -122,7 +122,7 @@
   (G ::= hole
          (Apply v ... G c ...)
          (Let (x τ) G c)
-         (Construct K v ... G c ...)
+         (Construct τ K v ... G c ...)
          (Eliminate G (br ...))
          (Perform op G)
          (Drop G)

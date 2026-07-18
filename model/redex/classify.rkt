@@ -115,7 +115,7 @@
       [`(TypeRep ,_ ,_ ,_) #t]
       [`(ProofRep ,_ ,_) #t]
       [`(resource ,_) #t]
-      [`(Construct ,_ ,fields ...)
+      [`(Construct ,_ ,_ ,fields ...)
        (andmap (lambda (field)
                  (walk field environment target-visible?))
                fields)]
@@ -206,7 +206,7 @@
       [`(TypeRep ,_ ,_ ,_) no-uses]
       [`(ProofRep ,_ ,_) no-uses]
       [`(resource ,_) no-uses]
-      [`(Construct ,_ ,fields ...)
+      [`(Construct ,_ ,_ ,fields ...)
        (combine-uses
         (map (lambda (field) (walk field target-visible?)) fields))]
       [`(Apply ,function ,arguments ...)
@@ -293,7 +293,7 @@
       [`(TypeRep ,_ ,_ ,_) #t]
       [`(ProofRep ,_ ,_) #t]
       [`(resource ,_) #t]
-      [`(Construct ,_ ,fields ...)
+      [`(Construct ,_ ,_ ,fields ...)
        (andmap (lambda (field)
                  (walk field decomposable strict target-visible?))
                fields)]

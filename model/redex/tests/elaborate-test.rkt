@@ -229,7 +229,7 @@
 (test-case "E-Construct/E-Eliminate: expected and explicit type arguments"
   (check-equal?
    (elab '(Construct nil (Types Int)))
-   '((Construct nil) (List Int) () ()))
+   '((Construct (List Int) nil) (List Int) () ()))
   (check-true (elaboration-error? (elab '(Construct nil))))
   (match-define (list core type row callables)
     (success
