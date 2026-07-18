@@ -374,7 +374,7 @@
             (check body expected
                    (extend environment parameters field-types)
                    delta propositions boundaries))
-          (list `(,constructor (,parameters ...) -> ,(judgment-core result))
+          (list `(,constructor ,parameters -> ,(judgment-core result))
                 (judgment-row result))))
       (judgment
        `(Eliminate ,(judgment-core scrutinee-result)

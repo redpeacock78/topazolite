@@ -1,13 +1,19 @@
 #lang racket
 
 (require racket/match
+         redex/reduction-semantics
          rackunit
          "../elaborate.rkt"
+         "../lang.rkt"
          "../typing.rkt")
 
 (define (success result)
   (match result
-    [(list _ _ _ _) result]
+    [(list core _ _ _)
+     (check-true
+      (redex-match? G1 c core)
+      (format "elaboration produced malformed Typed Core: ~s" core))
+     result]
     [_ (fail-check (format "expected elaboration success, got ~s" result))]))
 
 (define (elaboration-error? result)
