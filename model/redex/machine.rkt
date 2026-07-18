@@ -93,11 +93,11 @@
 
 (define (unique-binders? term)
   (and (match term
-         [`(Lam ,_ ,parameters ,_)
+         [`(Lam ,_ ,_ ,parameters ,_)
           (not (check-duplicates parameters))]
-         [`(Recur ,function ,parameters ,_ ,_)
+         [`(Recur ,_ ,function ,parameters ,_ ,_)
           (not (check-duplicates (cons function parameters)))]
-         [`(RecurVal ,function ,parameters ,_)
+         [`(RecurVal ,_ ,function ,parameters ,_)
           (not (check-duplicates (cons function parameters)))]
          [`(,_ ,parameters -> ,_)
           #:when (list? parameters)
@@ -118,7 +118,7 @@
         (where v_result (δ nm v_arg ...))
         R-Delta)
 
-   (--> (cfg (in-hole E (Apply (Lam O (x ...) c_body)
+   (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
                                v_arg ...))
              H Ω θ)
         (cfg (in-hole E c_result) H Ω θ)
@@ -178,19 +178,19 @@
         R-Eliminate)
 
    (--> (cfg (in-hole E
-                      (Recur f (x ...) c_body c_next))
+                      (Recur cid_recur f (x ...) c_body c_next))
              H Ω θ)
         (cfg (in-hole E c_result) H Ω θ)
-        (where v_recur (RecurVal f (x ...) c_body))
+        (where v_recur (RecurVal cid_recur f (x ...) c_body))
         (where c_result (substitute c_next f v_recur))
         R-RecurBind)
 
    (--> (cfg (in-hole E
-                      (Apply (RecurVal f (x ...) c_body)
+                      (Apply (RecurVal cid_recur f (x ...) c_body)
                              v_arg ...))
              H Ω θ)
         (cfg (in-hole E c_result) H Ω θ)
-        (where v_recur (RecurVal f (x ...) c_body))
+        (where v_recur (RecurVal cid_recur f (x ...) c_body))
         (where c_result
                (substitute* c_body
                             (f x ...)

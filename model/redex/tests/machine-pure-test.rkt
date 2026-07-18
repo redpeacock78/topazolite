@@ -41,7 +41,7 @@
 
 (test-case "R-Beta/R-Let: capture-avoiding substitution"
   (check-equal?
-   (run (inject (term (Apply (Lam User (x) x) 5))) fuel)
+   (run (inject (term (Apply (Lam User identity-id (x) x) 5))) fuel)
    (final-config (term 5)))
   (check-equal?
    (run-core
@@ -51,15 +51,15 @@
 
   (define result
     (run-core
-     (term (Apply (Lam User (x)
-                         (Lam User (y) (Apply x y)))
-                  (Lam User (z) y)))))
+     (term (Apply (Lam User outer-id (x)
+                         (Lam User inner-id (y) (Apply x y)))
+                  (Lam User argument-id (z) y)))))
   (check-true
    (alpha-equivalent?
     G1
     result
-    (term (Lam User (fresh)
-               (Apply (Lam User (z) y) fresh))))))
+    (term (Lam User inner-id (fresh)
+               (Apply (Lam User argument-id (z) y) fresh))))))
 
 (test-case "CUR-001/CUR-002: curry records provenance and completes application"
   (define curried
@@ -102,7 +102,7 @@
 
 (test-case "run: timeout only when another step remains"
   (define reducible
-    (inject (term (Apply (Lam User (x) x) 5))))
+    (inject (term (Apply (Lam User identity-id (x) x) 5))))
   (check-equal? (run reducible 0) 'timeout)
   (check-equal? (run (scoped (term 5)) 0) 'timeout)
   (check-equal? (run (final-config (term 5)) 0)
@@ -114,9 +114,10 @@
                               (term (cfg ,core () () ()))))
   (for ([core
          (in-list
-          (term ((Apply (Lam User (x) x) 1 2)
-                 (Apply (Lam User (x x) x) 3 5)
-                 (Apply (Lam User (x) x) (RecurVal f (f) f))
+          (term ((Apply (Lam User arity-id (x) x) 1 2)
+                 (Apply (Lam User duplicate-id (x x) x) 3 5)
+                 (Apply (Lam User argument-id (x) x)
+                        (RecurVal duplicate-recur-id f (f) f))
                  (Apply (PrimVal (Reserved o-add) add) 1)
                  (Curry 1 2)
                  (Let (x (Owned Res)) (resource 1) x)

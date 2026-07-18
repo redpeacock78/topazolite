@@ -10,9 +10,9 @@
                        (TypeRep User Int Type)
                        (ProofRep User ValidNarrativeTrait)
                        (resource 0)
-                       (Lam User (x) x)
+                       (Lam User lam-id (x) x)
                        (CurryVal User 1 2)
-                       (RecurVal f (x) x))))])
+                       (RecurVal recur-id f (x) x))))])
     (check-true (redex-match? G1 v value))))
 
 (test-case "RET-002/REC-001/OWN-001: Typed Core terms"
@@ -28,7 +28,7 @@
                       (Perform (Return b Int) 1)
                       (Handle (Return b Int) (x -> x) 1)
                       (Scope () 1)
-                      (Recur f (x) x (Apply f 0))
+                      (Recur recur-id f (x) x (Apply f 0))
                       (Construct cons 1 2))))])
     (check-true (redex-match? G1 c core)))
   (check-true (redex-match? G1m c (term (Scope (0) (Move 0)))))

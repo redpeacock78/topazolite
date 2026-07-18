@@ -88,7 +88,7 @@
 
 (define (origin-data/proc value)
   (match value
-    [`(Lam ,origin ,_ ,_) `(Lam ,origin)]
+    [`(Lam ,origin ,_ ,_ ,_) `(Lam ,origin)]
     [`(PrimVal ,origin ,primitive) `(PrimVal ,origin ,primitive)]
     [`(CurryVal ,origin ,function ,argument)
      `(CurryVal ,origin ,function ,argument)]
@@ -96,7 +96,7 @@
      `(TypeRep ,origin ,type-form ,kind)]
     [`(ProofRep ,origin ,proposition)
      `(ProofRep ,origin ,proposition)]
-    [`(RecurVal ,_ ,_ ,_) '(RecurVal User)]
+    [`(RecurVal ,_ ,_ ,_ ,_) '(RecurVal User)]
     [_ #f]))
 
 (define (origin-of/proc value)

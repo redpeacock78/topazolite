@@ -34,7 +34,7 @@
   (check-equal? (term (kindOf Result))
                 (term (Type -> (Type -> Type))))
   (check-equal? (term (kindOf (List Int))) (term Type))
-  (check-equal? (term (origin-of (RecurVal f (x) x)))
+  (check-equal? (term (origin-of (RecurVal recur-id f (x) x)))
                 (term User))
   (for ([entry (in-list Γ0)])
     (check-equal? (verify (second (second entry))) 'ok))
@@ -44,7 +44,7 @@
 (test-case "NAR-002: origin-of covers every origin-bearing value"
   (define derived (term (Derived (Reserved o-lt) (Curry 1))))
   (for ([case (in-list
-               (list (list (term (Lam User (x) x)) (term User))
+               (list (list (term (Lam User lam-id (x) x)) (term User))
                      (list (term (PrimVal (Reserved o-lt) lt))
                            (term (Reserved o-lt)))
                      (list (term (CurryVal ,derived 1 2)) derived)
@@ -65,8 +65,8 @@
                 (term (forged (PrimVal (Reserved forged-id) lt))))
   (check-equal? (verify (term (PrimVal (Reserved o-add) lt)))
                 (term (forged (PrimVal (Reserved o-add) lt))))
-  (check-equal? (verify (term (Lam (Reserved o-lt) (x) x)))
-                (term (forged (Lam (Reserved o-lt) (x) x)))))
+  (check-equal? (verify (term (Lam (Reserved o-lt) lam-id (x) x)))
+                (term (forged (Lam (Reserved o-lt) lam-id (x) x)))))
 
 (test-case "NAR-002/CUR-002: derived curry origin is exact"
   (define valid
@@ -77,7 +77,7 @@
   (check-equal?
    (verify
     (term (CurryVal (Derived User (Curry 1))
-                    (RecurVal f (x) x)
+                    (RecurVal recur-id f (x) x)
                     1)))
    'ok)
   (check-equal?
@@ -163,7 +163,7 @@
   (for ([nested
          (in-list
           (list (term (Apply 0 ,forged-prim))
-                (term (Lam User () ,forged-prim))
+                (term (Lam User lam-id () ,forged-prim))
                 (term (Handle (Return b Int)
                               (x -> ,forged-prim)
                               0))

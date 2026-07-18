@@ -16,6 +16,7 @@
   (K ::= variable-not-otherwise-mentioned)
   (nm ::= variable-not-otherwise-mentioned)
   (id ::= variable-not-otherwise-mentioned)
+  (cid ::= variable-not-otherwise-mentioned)
   (n ::= integer)
   (l ::= integer unit string)
 
@@ -56,7 +57,7 @@
          (Perform op c)
          (Handle op h c)
          (Scope π c)
-         (Recur f (x ...) c c)
+         (Recur cid f (x ...) c c)
          (Yield c c)
          (Suspend c)
          (Move w)
@@ -66,22 +67,22 @@
          ov
          (Construct K v ...)
          (resource n))
-  (ov ::= (Lam O (x ...) c)
+  (ov ::= (Lam O cid (x ...) c)
           (PrimVal O nm)
           (CurryVal O v v)
-          (RecurVal f (x ...) c)
+          (RecurVal cid f (x ...) c)
           (TypeRep O t κ)
           (ProofRep O φ))
 
   #:binding-forms
-  (Lam O (x ...) c #:refers-to (shadow x ...))
+  (Lam O cid (x ...) c #:refers-to (shadow x ...))
   (Let (x τ) c_1 c_2 #:refers-to x)
   (K (x ...) -> c #:refers-to (shadow x ...))
   (x -> c #:refers-to x)
-  (Recur f (x ...)
+  (Recur cid f (x ...)
          c_1 #:refers-to (shadow f x ...)
          c_2 #:refers-to f)
-  (RecurVal f (x ...) c #:refers-to (shadow f x ...)))
+  (RecurVal cid f (x ...) c #:refers-to (shadow f x ...)))
 
 (define-extended-language G1m G1
   (p ::= natural)
