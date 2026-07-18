@@ -730,6 +730,9 @@ authorized(Π)
 
 TypeRep の構成は elaboration 時に完了するため、出力の Typed Core は c2 だけである。
 Compile Effect は結果 row に残し、型 phase の計算を行ったことを宣言に反映させる。
+`⊢core`（§5.1）はこの `Compile` を復元できない。
+T-Val は `TypeRep(O, t, κ)` を `TypeInfo<κ> ! {}` で型付けし、letType の出力 `c2` 単体から `Compile` を導く規則もないためである。
+この乖離は §5.1 の一般対応の例外であり、`Compile` を検査する classify 規則がないため ⇓class の健全性には影響しない（§6.2）。
 Δ を拡張する規則はこれと初期環境だけである。
 初期環境の TypeRep は type sort の `Reserved` origin を持ち、letType が導入する TypeRep は `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）を持つ（TYP-001、§7 性質 5）。
 手書きの `TypeRep(User, …)` や偽造 origin の TypeRep を Δ へ入れる経路は存在しない。
@@ -755,6 +758,7 @@ Proof term の同値上の扱いは §6.3 で定める。
 ```
 
 この judgment は §4 の elaboration 規則から入力構文と B を除き、place typing Ξ（§2）と Φ（§3.3 の CoreArtifact）を加えたものに一致する。
+ただし E-TypeMake・E-LetType（§4.8）が row に加える `Compile` はこの対応の例外であり、⊢core 側からは復元できない（§4.8 末尾）。
 boundary stack が不要なのは、Typed Core では境界が `Handle` ノードとして陽に現れるためである。
 変数を型付けする規則は E-Var 対応だけであり、E-Prim に対応する規則はない。
 E-Prim は裸の primitive 名を PrimVal へ解決する変換規則であり、⊢core では T-Prim（下記）が PrimVal 値そのものを型付けする。
@@ -1142,6 +1146,8 @@ Productive の意味はこの関係で与える。
 place や RecurVal を含む簡約途中の項には適用しない。
 判定は、項を生んだ elaboration の導出を参照して行う。
 以下の規則が言う「潜在 row」「合成 row」は、その導出が部分項へ与えた row を指す。
+pre(f, c)（下記）も guard 部品条件（下記）も、row のうち `Partial`・`Yield<_>`・`Return<_, _>`・`Own` だけを検査し、`Compile` は見ない。
+そのため TypeMake・LetType が ⊢core から `Compile` を消去する事実（§4.8、§5.1）は、⇓class の健全性に影響しない。
 
 ```text
 c ⇓class Finite(p)
