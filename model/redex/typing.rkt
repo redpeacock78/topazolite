@@ -3,10 +3,12 @@
 (require racket/match
          redex/reduction-semantics
          "lang.rkt"
-         "origins.rkt")
+         "origins.rkt"
+         "type-equiv.rkt")
 
 (provide core-type-of
          core-check
+         core-check-row
          config-ok?)
 
 (define (lookup table key)
@@ -34,11 +36,10 @@
   (term (row-⊆ ,left ,right)))
 
 (define (row=? left right)
-  (and (row-subset? left right)
-       (row-subset? right left)))
+  (row-equiv? left right))
 
 (define (type-compatible? actual expected)
-  (or (equal? actual expected)
+  (or (type-equiv? actual expected)
       (eq? actual 'Never)))
 
 (define (type? value)
@@ -72,6 +73,13 @@
            [(list callable `(NFn ,_ ,_ ,_ ,_))
             (and (callable-id? callable)
                  (type? (second entry)))]
+           [_ #f]))))
+
+(define (valid-environment? environment)
+  (and (list? environment)
+       (for/and ([entry (in-list environment)])
+         (match entry
+           [(list (? symbol?) type) (type? type)]
            [_ #f]))))
 
 (define (extend environment names types)
@@ -530,21 +538,26 @@
         (and (type-compatible? actual expected) row)]
        [_ #f])]))
 
-(define (core-type-of core places callables)
+(define (core-type-of core places callables [environment '()])
   (if (and (redex-match? G1m c core)
+           (valid-environment? environment)
            (valid-places? places)
            (valid-callables? callables))
-      (or (infer core '() places callables) 'ill-typed)
+      (or (infer core environment places callables) 'ill-typed)
       'ill-typed))
 
-(define (core-check core places callables expected row)
+(define (core-check-row core places callables expected [environment '()])
   (and (redex-match? G1m c core)
+       (valid-environment? environment)
        (valid-places? places)
        (valid-callables? callables)
        (type? expected)
-       (row? row)
+       (check-as core expected environment places callables)))
+
+(define (core-check core places callables expected row [environment '()])
+  (and (row? row)
        (let ([actual-row
-              (check-as core expected '() places callables)])
+              (core-check-row core places callables expected environment)])
          (and actual-row (row=? actual-row row)))))
 
 (define (config-ok? configuration callables expected row)

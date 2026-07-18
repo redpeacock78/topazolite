@@ -88,6 +88,36 @@
      (elab '(Fn () Unit ((Yield Int)) (Yield 1 unit)))))
   (check-equal? type '(NFn () Unit ((Yield Int)) ())))
 
+(test-case "REC-001/REC-002: recur uses the real classifier"
+  (check-false
+   (elaboration-error?
+    (elab
+     '(Recur loop ((xs (List Int))) Int ()
+             (Eliminate xs
+              ((nil () -> 0)
+               (cons (head tail) -> (Apply loop tail))))
+             (Apply loop (Construct nil (Types Int)))))))
+  (check-false
+   (elaboration-error?
+    (elab
+     '(Recur nats ((n Int)) Unit ((Yield Int))
+             (Yield n (Apply nats (Apply add n 1)))
+             (Apply nats 0)))))
+  (check-false
+   (elaboration-error?
+    (elab
+     '(Recur loop ((xs (List Int))) Unit ((Yield Int))
+             (Yield 1
+                    (Apply loop (Construct nil (Types Int))))
+             (Apply loop (Construct nil (Types Int)))))))
+  (check-false
+   (elaboration-error?
+    (elab
+     '(Recur loop ((xs (List Int))) Unit ((Yield (List Int)))
+             (Yield (Construct nil (Types Int))
+                    (Apply loop (Construct nil (Types Int))))
+             (Apply loop (Construct nil (Types Int))))))))
+
 (test-case "OWN-001/OWN-002: function boundaries reject affine crossings"
   (check-true
    (elaboration-error?
@@ -248,6 +278,10 @@
                    add
                    (Apply add 1 2)
                    (Fn ((x Int)) Int () x)
+                   (Apply
+                    (Fn ((g (NFn () Unit (Suspend Own) ())))
+                        Unit () unit)
+                    (Fn () Unit (Own Suspend) unit))
                    (Yield 1 (Suspend unit))))])
     (match-define (list core type row callables)
       (success (elab source)))

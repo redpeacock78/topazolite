@@ -3,12 +3,12 @@
 (require racket/match
          racket/set
          redex/reduction-semantics
+         "classify.rkt"
          "lang.rkt"
          "origins.rkt")
 
 (provide UCore
-         elab
-         classify-stub)
+         elab)
 
 ;; S-expression encoding of the untyped reduced Core from specification §3.1.
 ;; Explicit constructor type arguments use (Types ...), and applied type specs
@@ -99,8 +99,7 @@
     (row-union normalized (list label))))
 
 (define (type-compatible? actual expected)
-  ;; Task 11 replaces structural equality with type-equiv?.
-  (or (equal? actual expected)
+  (or (type-equiv? actual expected)
       (eq? actual 'Never)))
 
 (define (resolve-annotation annotation delta)
@@ -291,9 +290,6 @@
     (set-intersect
      (set-subtract (free-vars expression) (list->set locally-bound))
      outer-owned))))
-
-(define (classify-stub _core)
-  'Unknown)
 
 (define (elab expression)
   (with-handlers ([exn:fail:elab?
@@ -543,7 +539,9 @@
            `(Recur ,callable ,function ,parameters
                    ,(judgment-core body-result)
                    ,(judgment-core continuation-result)))
-         (define classification (classify-stub recur-core))
+         (define classification
+           (classify recur-core environment
+                     (reverse reversed-callables)))
          (when (and (eq? classification 'Unknown)
                     (not (row-member? 'Partial declared-row)))
            (reject 'unknown-recur-requires-partial))

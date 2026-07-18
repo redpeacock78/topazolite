@@ -103,6 +103,10 @@
   (check-true
    (core-check (term (Construct nil))
                empty empty (term (List Int)) empty))
+  (check-equal?
+   (core-check-row (term (Construct nil))
+                   empty empty (term (List Int)))
+   empty)
   (check-true
    (core-check (term (Construct cons 1 (Construct nil)))
                empty empty (term (List Int)) empty))
@@ -206,3 +210,14 @@
     (term ((identity-id (NFn (Int) Int () ()))
            (identity-id (NFn (Bool) Bool () ())))))
    'ill-typed))
+
+(test-case "typing accepts an explicit elaboration Γ"
+  (define environment (term ((x Int) (item (Owned Res)))))
+  (check-equal?
+   (core-type-of (term x) empty empty environment)
+   (term (Int ())))
+  (check-equal?
+   (core-type-of (term (Move item)) empty empty environment)
+   (term ((Owned Res) (Own))))
+  (check-true
+   (core-check (term x) empty empty (term Int) empty environment)))
