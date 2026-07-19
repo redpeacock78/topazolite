@@ -139,7 +139,7 @@ c ::= v                                          値
     | x                                          変数
     | Apply(c0, c1, …, ck)                       適用
     | Let(x : τ, c1, c2)                         束縛（型注釈付き）
-    | Construct(K, c1, …, ck)                    constructor 適用
+    | Construct(D, K, c1, …, ck)                 constructor 適用（D は具体化されたデータ型）
     | Eliminate(c0, (K1(x̄1) -> c1), …, (Kn(x̄n) -> cn))   場合分け
     | Perform(op, c)                             Effect の発生
     | Handle(op, x -> ch, c)                     abortive handler
@@ -159,7 +159,7 @@ v ::= l                                          リテラル
     | PrimVal(O, name)                           primitive 値（origin 付き）
     | CurryVal(O, vf, va)                        部分適用値（origin 付き）
     | RecurVal(r, f, (x1, …, xk), c)             再帰関数値
-    | Construct(K, v1, …, vk)                    構成済みデータ
+    | Construct(D, K, v1, …, vk)                 構成済みデータ
     | resource(n)                                affine 資源値（acquire が生成、§3.5）
     | TypeRep(O, t, κ)                           型情報値（origin 付き）
     | ProofRep(O, φ)                             Proof 値（origin 付き）
@@ -174,7 +174,7 @@ G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 
 `Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, ε, Q>` を項から消去する（`RecurVal` も同様）。
 この消去は `Lam` にも及ぶ。`Curry`/`Apply` の呼び出し先位置に置かれた `Lam(O, ℓ, (x̄), c)` は、その位置の期待型（curry 後の返り値型や apply の結果型）だけからは元の全パラメータ列を復元できない。
-たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, {}, ⟨⟩>` であり、固定した第一引数の型 `List<Int>` を含まない。
+たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(List<Int>, nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, {}, ⟨⟩>` であり、固定した第一引数の型 `List<Int>` を含まない。
 この情報は elaboration の E-Lambda（§4.3）・E-Recur（§4.6）がそれぞれ `NFn` シグネチャを組み立てる際にしか現れず、Typed Core の項単独からは回復できない。
 
 f は表層名にすぎず、同じ表層名を持つ複数の `recur` が同一の CoreArtifact 内に現れうる（E-Recur は f を内部的に改名しない。例：`recur f(x: Int) -> Int ! {} = 0 in 0` と `recur f(x: Bool) -> Int ! {} = 0 in 0` が同じ scope 中の兄弟式として現れる場合）。
@@ -188,6 +188,10 @@ CallableId はプログラム中の束縛子（変数名、f の表層名）か�
 これは「表層上の名前が一意である」という条件ではなく、CoreArtifact 内の CallableId が変数束縛子とは独立にグローバルに一意であるという条件である。
 表層で同じ名前の `recur f(...)` が複数 scope に現れても、対応する各 `Recur` ノードは相異なる r を持つため、Φ の一意性は表層名の改名に頼らずに保たれる。
 同様に、パラメータ列が空、または互いに等しい複数の `Lam` が同一の CoreArtifact 中に現れても、それぞれ相異なる ℓ を持つ。
+
+`Construct` は D をノード自身のフィールドとして保持するため、この CallableId のような側路の識別子を必要としない。
+`NFn` シグネチャは呼び出し先位置の期待型だけからは元のパラメータ列を復元できない場合があった（上記の curry の例）のに対し、`Construct(D, K, c1, …, ck)` の D は constructor 適用が elaboration される時点（E-Construct-Check の検査位置、または E-Construct-Synth の明示型引数注釈）で必ず単一の具体化されたデータ型として確定しており、部分適用のような多段の呼び出しを経由しない。
+そのため D は Φ のような別表を介さず、ノード自身のフィールドとしてそのまま保持できる。
 
 elaboration の出力を c 単体ではなく組 **CoreArtifact** で表す。
 
@@ -350,7 +354,7 @@ ok<τ, σ>  : (τ) -> Result<τ, σ>
 ng<τ, σ>  : (σ) -> Result<τ, σ>
 ```
 
-**δ規則**（§5.3 で使う。`true()` は値 `Construct(true)` の略記、`false()` も同様）：
+**δ規則**（§5.3 で使う。`true()` は値 `Construct(Bool, true)` の略記、`false()` も同様）：
 
 ```text
 δ(add, m, n) = m + n
@@ -448,11 +452,24 @@ C0(K) の宣言を期待型 D の型引数で具体化して (σ1, …, σk) -> 
 Γ; Δ; Π; B ⊢ ei ⇐ σi ! εi ⟹ ci        （i = 1 … k）
 --------------------------------
 Γ; Δ; Π; B ⊢ construct K(e1, …, ek) ⇐ D ! ε1 ∪ … ∪ εk
-  ⟹ Construct(K, c1, …, ck)
+  ⟹ Construct(D, K, c1, …, ck)
 ```
 
 constructor 適用は原則として検査位置で使う。
-合成位置では型引数注釈 `construct K<τ̄>(ē)` を必須とし、C0 の宣言を τ̄ で具体化して同じ前提を検査する（E-Construct-Synth）。
+
+**(E-Construct-Synth)**
+
+```text
+C0(K) の宣言を型引数注釈 τ̄ で具体化して (σ1, …, σk) -> D を得る
+各 σi は Owned<_> の形でない
+Γ; Δ; Π; B ⊢ ei ⇐ σi ! εi ⟹ ci        （i = 1 … k）
+--------------------------------
+Γ; Δ; Π; B ⊢ construct K<τ̄>(e1, …, ek) ⇒ D ! ε1 ∪ … ∪ εk
+  ⟹ Construct(D, K, c1, …, ck)
+```
+
+合成位置では型引数注釈 `construct K<τ̄>(ē)` を必須とする。
+D は C0(K) の宣言を具体化して得られる型そのものであり、Typed Core の `Construct` ノードは検査位置・合成位置のどちらを経由しても、この D を自身のフィールドとして保持する。
 
 field 型への `Owned<_>` の禁止は G1 の制限である。
 構成済みデータは通常の値として複製されうる（R-Let の置換など）ため、affine 資源を field に入れると place を経由しない複製経路が生まれる。
@@ -881,7 +898,20 @@ Lam のパラメータ・返り値型・宣言 row は項から消去されて�
 
 `vf` は値なので T-Lam・T-RecurVal・T-CurryVal のいずれかで再帰的に synthesize でき、`Curry`/`Apply` の呼び出し先位置に直接置かれた生の `Lam`/`RecurVal`（Φ(ℓ)/Φ(r) 経由）も、この位置の期待型を経由せず単独で型付けできる。O の整合は verify-origins（§3.4）が別途検査する。
 
-**(T-Val)**：その他の値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal、Construct への §4 E-Construct-Check 対応規則で定める。
+**(T-Construct)**
+
+```text
+C0(K) の宣言を D の型引数で具体化して (σ1, …, σk) -> D を得る
+各 σi は Owned<_> の形でない
+Γ; Δ; Π; Ξ; Φ ⊢core vi : σi ! {}        （i = 1 … k）
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Construct(D, K, v1, …, vk) : D ! {}
+```
+
+`Construct` も `D` を自身のフィールドとして保持するため、`vf` と同様に外部の期待型を経由せず単独で synthesize できる。
+これは E-Construct-Check・E-Construct-Synth（§4.2）双方の前提をそのまま Typed Core の型付けへ転写した規則であり、手書きの Typed Core が D と K・field の型を食い違わせて偽造することも防ぐ。
+
+**(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
 `TypeRep(O, t, κ)` は `TypeInfo<κ>`、`ProofRep(O, φ)` は `Proof<φ>` で型付けする。
 
 構成の well-formedness **⊢config** を次で定める。
@@ -912,7 +942,7 @@ dom(Ξ) = dom(H) = dom(Ω)
 ```text
 F ::= []                                          純粋文脈（Scope と Handle を含まない）
     | Apply(v̄, F, c̄) | Let(x : τ, F, c)
-    | Construct(K, v̄, F, c̄) | Eliminate(F, br̄)
+    | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄)
     | Perform(op, F) | Drop(F) | Yield(F, c)
     | Curry(F, c) | Curry(v, F)
 
@@ -982,7 +1012,7 @@ Owned 値の束縛は place を確保し、最も内側の Scope の管理列 π
 **(R-Eliminate)**
 
 ```text
-E[Eliminate(Construct(Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
+E[Eliminate(Construct(D, Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
   → E[ci[v1/xi1, …, vk/xik]]
 ```
 
@@ -1224,11 +1254,15 @@ Move / Drop の検査を構文上の出現ではなく row の `Own` で行う�
 row に現れない OwnershipError はない（`Own` は一度入った row から消えない。§4.7）ので、row の検査は呼び先の中の Move / Drop も本体を見ずに検出する。
 
 guard 部品条件が検査する「合成 row」は、部分項の完全な型ではなく row だけを要求する。
-Redex 実装が「項を生んだ elaboration の導出を参照する」（1147 行目）手段として `core-type-of` による型合成を使う場合、Typed Core の `Construct` は elaboration が型引数を消去するため（§4.2 E-Construct-Check、合成位置は checking-only）、期待型のない合成位置の `Construct` は row を復元できない。
-guard 部品条件が扱う部分項のうち、`Apply(f, a1, …, ak)` の各 ai と `Yield(cv, …)` の cv は、f 自身の宣言済み NFn 型（i 番目の引数型、および row に含まれる `Yield<τ>` の τ）を期待型として使えるため、この消去の影響を受けずに row を得られる。
-`guarded(f, c)` の第二項（`Eliminate(c0, …)` の c0）にはこの局所的な期待型が一般に存在しない。
-この経路で row が定まらない場合、classify は guard 部品条件を不成立として扱い Unknown 側へ倒してよい。
-これは C-Unknown の commentary（後述、1238 行目相当）が述べる「この解析は sound だが complete ではない」の一例であり、健全性を損なわない。
+
+`guarded(f, c)` の第二項（`Eliminate(c0, …)` の c0）には、`Apply(f, a1, …, ak)` の各 ai や `Yield(cv, …)` の cv が持つような局所的な期待型が一般に存在しない。
+
+以前の版では、Typed Core の `Construct` が elaboration によって型引数を消去される（合成位置は checking-only である）ため、期待型のない合成位置の `Construct` は row を復元できないとしていた。
+しかし `Construct` は D（具体化されたデータ型）を自身のフィールドとして保持する（§4.2 E-Construct-Synth、§5.1 T-Construct）。
+そのため c0 が合成位置の `Construct` であっても、`core-type-of` は D から直接 row を復元でき、この経路で row が定まらない事態は生じない。
+
+それでも classify がある項形式について row を復元できない場合、guard 部品条件は不成立として扱い Unknown 側へ倒してよい。
+これは C-Unknown の commentary（後述）が述べる「この解析は sound だが complete ではない」の一例であり、健全性を損なわない。
 
 **(C-Unknown)** [REQ: REC-001]
 
