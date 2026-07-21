@@ -1,8 +1,8 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G1 執筆版（codex レビュー前）
+**状態**：G2a 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/glossary.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/glossary.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -16,7 +16,7 @@
 ## 2. 記載形式
 
 各要件は `### <ID>` の見出しで始まり、次の項目と本文を持つ。
-状態と由来は必須、検証は任意である。
+状態と由来は必須、正典と検証は任意である。
 
 - **状態**：その ID を扱うサイクルまたは Phase。値は次のいずれかとする。
   - `G1`：Phase 0 サイクル G1（用語集、Core calculus、Redex model 中核部）の対象。
@@ -28,12 +28,14 @@
   - `Phase 2 以降`：表面構文と backend を実装する Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
 - **由来**：`ホワイトペーパー §15` か、`新規（<起こした文書>）` のいずれか。
+- **正典**：（任意）要件を担当する正典文書と節。
 - **検証**：（任意）状態のサイクルで仕様と契約を定めるが、実行可能な検証が後の Phase の成果物に依存する場合、その Phase を書く。この項目を持つ ID は、状態のサイクルでは仕様書の規則注釈だけを要求し、テストは検証 Phase で要求する。
 
 本文はホワイトペーパー §15 の文言をそのまま転記する。
 新規 ID の本文は起こした時点の文言を正とする。
 
 状態が `G1` の ID は、`core-calculus.md` の規則注釈と Redex model のテストの両方で参照されなければならない。
+状態が `G2` で G2a の明示集合に含まれる ID は、`structural-row.md` の規則注釈と G2a テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -105,6 +107,7 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.3、§3.4
 
 ユーザー record type は構造 row を公開するが、予約 Narrative と予約基本型の内部表現は structural matching の対象外である。
 
@@ -112,6 +115,7 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.2
 
 `const x : T = e` では、T と互換な必須 row を除く残余 row は空でなければならない。
 
@@ -119,6 +123,7 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.1、§3.2
 
 `let x : T = e` では、T と同名 field の型・可変性・ownership が互換である限り、残余 row を contextual type として保持できる。
 
@@ -126,6 +131,7 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.5
 
 制御フロー合流時の row merge は、全経路で安全に利用可能であることを Proof できる field のみを無条件利用可能として残す。
 
@@ -133,6 +139,7 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.1、§3.3
 
 mutable field は代入安全性を守るため既定で不変として扱う。
 

@@ -1,0 +1,419 @@
+# Topazolite 構造 row 仕様（G2a）
+
+**状態**：G2a 執筆版（codex 実装、claude レビュー前）
+**基底仕様**：`docs/specification/core-calculus.md`（以下、G1 仕様）
+**参照**：`draft/topazolite_whitepaper_draft_0.4.md`（以下、ホワイトペーパー）§4.5、§17.4
+**関連文書**：`docs/specification/glossary.md`、`docs/specification/requirements.md`
+
+## 1. 本仕様の位置づけ
+
+本文書は、G1 仕様へ record 型、field row、binding policy、構造互換性、制御フロー合流、record の簡約意味論を追加する差分仕様である。
+本文書に定義がない構文、型付け規則、簡約規則、Effect row は G1 仕様に従う。
+Redex model の G2a 実装は本文書を正とし、実装との乖離が見つかった場合は本文書を先に修正する。
+G1 仕様へ統合せず差分文書に分けることで、G1 の規則と G2a の coverage 対象を混同しない。
+
+G2a はユーザー record を構造で照合する最小コアだけを扱う。
+trait、Proof search、Policy Narrative は、この構造 row を利用する後続層で定める。
+
+規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
+要件 ID の本文は `requirements.md` を正とする。
+
+## 2. 型と Core 構文
+
+### 2.1 record 型と field row
+
+型 τ へ record 型を追加する。
+
+```text
+τ ::= ... | (Record r)
+r ::= ((label1 τ1 m1) ... (labeln τn mn))
+m ::= imm | mut
+```
+
+**field row** r は、field ラベル、field 型、可変性の三つ組からなる有限集合である。
+`imm` は immutable field を表し、`mut` は mutable field を表す。
+省略時の可変性は `imm` とする。
+
+field row r は Effect row ε と異なる sort である。
+Effect row の `row-∪`、`row-⊆`、`row-∈`、`row-\` は field row に適用しない。
+field row はラベルを鍵に型と可変性も照合するため、§2.2 の専用演算を使う。
+
+`(Record r)` は closed と open の区別を型成分に持たない。
+closed と open の違いは §3.2 の binding policy が決める。
+この分離により、簡約前後で保存すべき型は一種類の `(Record r)` だけになる。
+
+G2a の field はすべて required である。
+optional field は §6 の後続層で導入する。
+
+### 2.2 field row の well-formedness と演算
+
+well-formed な field row は、同じラベルを二度以上含まない。
+field row の同値、参照、差分はラベルを鍵とし、記述順に依存しない。
+
+field row 専用の演算を次のように定める。
+
+- **結合 `r ⊕ ρ`**：ラベル集合が互いに素な二つの field row を結合する。
+  ラベルが重複するときは未定義である。
+- **参照 `lookup(r, label)`**：指定ラベルの field 型と可変性を返す。
+  指定ラベルが存在しないときは未定義である。
+- **残余 `residual(r_b, r_T)`**：`r_b` のうち、ラベルが `r_T` に存在しない field だけを返す。
+- **同値 `row-equiv?(r_1, r_2)`**：ラベル集合が一致し、各ラベルの型が `type-equiv?` で一致し、可変性も一致するときに真を返す。
+- **交差 `r_1 ⋂ r_2`**：両方に存在し、型が `type-equiv?` で一致し、可変性も一致する field だけを返す。
+
+`residual(r_b, r_T)` のラベルは定義上 `r_T` に存在しないため、`r_T ⊕ residual(r_b, r_T)` は常に結合の前提を満たす。
+
+### 2.3 未型付き縮小 Core
+
+G1 の未型付き縮小 Core へ record 型注釈、record 構築、射影、binding mode 付き束縛を追加する。
+
+```text
+uτ    ::= ... | (Record ur)
+ur    ::= ((label1 uτ1 m1) ... (labeln uτn mn))
+bmode ::= const | let
+
+e ::= ...
+    | (Rec ((label1 m1 e1) ... (labeln mn en)))
+    | (Proj e label)
+    | (Let (x bmode uτ) e1 e2)
+```
+
+この構文は Surface 構文ではない。
+Surface の record リテラル、`const`、`let`、`let mut` から未型付き縮小 Core への変換は Phase 1 で定める。
+
+### 2.4 Typed Core
+
+G1 の Typed Core へ次の項と値を追加する。
+
+```text
+bmode ::= const | let
+
+c ::= ...
+    | (Rec ((label1 m1 c1) ... (labeln mn cn)))
+    | (Proj c label)
+    | (Let (x bmode τ) c1 c2)
+
+v ::= ...
+    | (Rec ((label1 m1 v1) ... (labeln mn vn)))
+```
+
+`Rec` は record の各 field と可変性を保持する。
+`Proj` は record の field をラベルで射影する。
+binding mode 付き `Let` は `const` と `let` の静的な row policy を区別する。
+
+G1 の binding mode を持たない `Let(x : τ, c1, c2)` は存置する。
+この旧形式は意味論上 `const` と同じ policy を持つが、G1 の項を新形式へ書き換えない。
+
+## 3. 型付け
+
+### 3.1 record の構築と射影
+
+`Rec` は各 field を synthesis して record 型を構築する。
+
+**(T-Rec)** [REQ: ROW-004]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core ci : τi ! εi        (i = 1 ... n)
+label1, ..., labeln は互いに相異なる
+どの τi も Owned<τ> の形でない
+------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core
+  (Rec ((labeli mi ci) ...))
+  : (Record ((labeli τi mi) ...)) ! ⋃i εi
+```
+
+`Rec` が可変性を値に保持するため、`mut` field を持つ record 型にも well-typed な値が存在する。
+record 値の field に `Owned` を許すと affine 検査を record 内部へ迂回できるため、G2a は先頭型が `Owned` の field を拒否する。
+この制限は G1 が constructor field、関数引数、closure capture から `Owned` を除外する方針を保つ。
+
+`Proj` は scrutinee を synthesis し、field row から結果型を得る。
+
+**(T-Proj)**
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : (Record r) ! ε
+lookup(r, label) = (τ, m)
+------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core (Proj c label) : τ ! ε
+```
+
+指定ラベルが r に存在しなければ型エラーである。
+`let` が保持する残余 field も束縛変数の平坦な field row に含まれるため、合流前の現在の flow では射影できる。
+必須 field と残余 field を型の中で二層に分ける表現は採らない。
+G2a では平坦な field row だけで安全に射影でき、二層表現は Proof witness を導入する後続層まで必要ないためである。
+
+### 3.2 binding policy
+
+**binding policy** は、注釈型が要求する field と bound が持つ余剰 field の扱いを決める静的規則である。
+binding mode 付き `Let` は record 型以外にも使える。
+
+注釈型 T が record 型でない場合、`const` と `let` はどちらも bound を T で checking し、x を T で束縛する。
+非 record 型には残余 row がないため、この場合の二つの mode に型付け上の差はない。
+
+注釈型が `(Record r_T)` の場合、bound を synthesis して得た `(Record r_b)` と §3.3 の `compat?` を照合する。
+このときの**残余 row**は `ρ = residual(r_b, r_T)` である。
+
+**(T-LetConstRecord)** [REQ: ROW-001]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core cb : (Record r_b) ! εb
+compat?((Record r_b), (Record r_T))
+ρ = residual(r_b, r_T) = ∅
+Γ, x : (Record r_T); Δ; Π; Ξ; Φ ⊢core cbody : τ ! εbody
+------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core
+  (Let (x const (Record r_T)) cb cbody) : τ ! εb ∪ εbody
+```
+
+`const` は残余 row が空であることを要求する closed binding である。
+残余があれば型エラーとする。
+
+**(T-LetOpenRecord)** [REQ: ROW-002]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core cb : (Record r_b) ! εb
+compat?((Record r_b), (Record r_T))
+ρ = residual(r_b, r_T)
+Γ, x : (Record (r_T ⊕ ρ)); Δ; Π; Ξ; Φ ⊢core cbody : τ ! εbody
+------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core
+  (Let (x let (Record r_T)) cb cbody) : τ ! εb ∪ εbody
+```
+
+`let` は必須 field を注釈型へ narrow し、互換な残余 row を contextual type として保持する open binding である。
+束縛変数の型は必須 field と残余を合わせた平坦な `(Record (r_T ⊕ ρ))` になる。
+
+bound の型が `Never` の場合は、record 型を要求せず任意の注釈型に対して受理する。
+この場合は body へ到達しないため、残余を空として x を注釈型で束縛しても射影の安全性と矛盾しない。
+
+G2a の `let` は immutable binding であり、再代入を意味しない。
+再代入を持つ `let mut` は §6 の対象である。
+
+### 3.3 構造互換性
+
+**構造互換性** `compat?(sub, sup)` は、sub が sup の要求を満たすかを判定する方向付きの関係である。
+この関係は対称ではない。
+
+`compat?` を型の形に対する全域判定として次のように定める。
+
+```text
+compat?(Never, sup) = true
+
+compat?((Record r_sub), (Record r_sup)) =
+  r_sup の各 (label : τ_sup @ m_sup) について、次をすべて満たす
+    lookup(r_sub, label) = (τ_sub, m_sub) が存在する
+    m_sub = m_sup
+    m_sup = imm なら compat?(τ_sub, τ_sup)
+    m_sup = mut なら type-equiv?(τ_sub, τ_sup)
+
+compat?(Owned<τ_sub>, Owned<τ_sup>) = type-equiv?(τ_sub, τ_sup)
+compat?(NFn_sub, NFn_sup) = type-equiv?(NFn_sub, NFn_sup)
+compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
+```
+
+record の sub は、sup が要求する field をすべて満たす限り余剰 field を持てる。
+この width subsumption によって型同値でない二つの record 型が互換になりうる。
+
+`imm` field は共変に再帰照合する。
+`mut` field は読みと書きの双方に使われるため、field 型が `type-equiv?` で一致する場合だけ互換とする。
+一方だけが `Owned` である field 型は互換でなく、双方が `Owned` の場合も内部型を不変に照合する。
+`NFn` field は G2a では `type-equiv?` による不変一致に制限する。
+
+予約基本型と予約 Narrative は record の分岐へ入らず、最後の `type-equiv?` 分岐だけで照合する。 [REQ: TYP-003]
+したがってユーザー record の構造公開は、予約型の内部表現に structural matching を適用する権限を与えない。
+
+checking 位置で実際の型と期待型がともに record 型なら、`check-as` は `type-equiv?` ではなく `compat?(actual, expected)` を使う。
+この接続により、record を関数引数や branch の期待型へ渡す位置でも width subsumption が働く。
+`Eliminate` が交差型へ型付けされた後に、field の多い実 record 値へ簡約しても、その値は期待する交差型と互換なので Preservation を保つ。
+
+### 3.4 型同値との分離
+
+`type-equiv?` は definitional equality であり、`compat?` は方向付きの subsumption である。
+この二つは別の判定として実装する。
+
+record 型の `type-equiv?` は `row-equiv?` に帰着する。
+したがって両 record 型のラベル集合、各 field の型、可変性がすべて一致するときだけ型同値である。
+
+`compat?` が余剰 field を許すことを理由に `type-equiv?` まで width subtyping へ変えてはならない。
+型同値は G1 の型正規化と opaque identity の規則を引き続き担うためである。
+
+### 3.5 制御フロー合流
+
+`Eliminate` の非 `Never` 枝がすべて record 型を返す場合、結果型を field row の構造的交差で求める。
+
+**(T-EliminateRecordMerge)** [REQ: ROW-003]
+
+```text
+各枝 ci の型を τi とする
+Never の枝を merge 入力から除外する
+残る型が (Record r1), ..., (Record rn) なら
+  r = r1 ⋂ ... ⋂ rn
+------------------------------------------------------------
+Eliminate(c0, branches) : (Record r)
+```
+
+交差に残す field は全枝に存在し、型が `type-equiv?` で一致し、可変性も一致する field だけである。
+`compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
+
+非 `Never` 枝が一つもなければ結果型は `Never` である。
+非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
+非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
+
+この構造的交差は、全経路で同じ型と可変性を持つ field だけを残す decidable な近似である。
+型が異なる field の join と Proof witness による field 回復は §6 の後続層で扱う。
+
+## 4. elaboration
+
+G2a の elaboration は未型付き縮小 Core の record 構文を §2.4 の Typed Core へ変換する。
+
+```text
+Γ; Δ; Π; B ⊢ (Rec ((labeli mi ei) ...)) ⇒ (Record r) ! ε ⟹ (Rec ((labeli mi ci) ...))
+Γ; Δ; Π; B ⊢ (Proj e label) ⇒ τ ! ε ⟹ (Proj c label)
+Γ; Δ; Π; B ⊢ (Let (x bmode uτ) e1 e2) ⇒ τ ! ε ⟹ (Let (x bmode T) c1 c2)
+```
+
+`Rec` は各 field を synthesis し、ラベル一意性と `Owned` field の禁止を検査して、field 型と Effect row を合成する。
+`Proj` は scrutinee を synthesis し、field row の参照から結果型を得る。
+binding mode 付き `Let` は注釈を T へ解決し、bound を synthesis して §3.2 の policy を適用する。
+
+Typed Core の binding mode 付き `Let` が保持する注釈は宣言型 T である。
+`let` の残余 row は body を型付けする Γ の x にだけ保持し、Typed Core の注釈へ書き戻さない。
+Typed Core を独立に型付けするときは bound を再び synthesis して残余 row を復元する。
+
+binding mode を明示しない G1 由来の `let x = e1 in e2` は default const として検査する。
+この形式は bound の完全な合成型を x の型にするため、その型自身に対する残余は空である。
+elaboration の出力は G1 の `Let(x : τ, c1, c2)` のまま保ち、binding mode 付きの新形式へ正規化しない。
+
+`Rec` と `Proj` は synthesis によって field から型を復元できる。
+したがって `Construct(D, K, ...)` の D に相当する record 型をノードへ埋め込まない。
+`Construct` は constructor 名と field だけでは具体化されたデータ型 D を復元できないが、`Rec` は各 field の型を直接 synthesis できるためである。
+
+## 5. 動的意味論
+
+### 5.1 G2m と評価文脈
+
+G2a の machine 言語 G2m は G1m を拡張し、§2 の型、項、値を加える。
+評価文脈 E、F、G のすべてへ `Rec`、`Proj`、binding mode 付き `Let` の文脈を加える。
+
+```text
+E ::= ... | (Rec ((label m v) ... (label m E) (label m c) ...)) | (Proj E label) | (Let (x bmode τ) E c)
+F ::= ... | (Rec ((label m v) ... (label m F) (label m c) ...)) | (Proj F label) | (Let (x bmode τ) F c)
+G ::= ... | (Rec ((label m v) ... (label m G) (label m c) ...)) | (Proj G label) | (Let (x bmode τ) G c)
+```
+
+`Rec` の field は記述順に左から右へ評価する。
+binding mode 付き `Let` は bound を body より先に評価する。
+
+E は `Scope` と `Handle` を含む一般の簡約文脈である。
+F は `Scope` と `Handle` をまたがない未捕捉文脈である。
+G は `Handle` を含められるが `Scope` をまたがない文脈である。
+三つすべてを拡張することで、record field 内の `Perform` と `Error` を正しい境界が処理し、field 内の Owned binding を最寄りの `Scope` が管理する。
+
+binding mode 付き `Let` は body だけで x を束縛する。
+G2m の binding form は次の形であり、bound の c1 では x を束縛しない。
+
+```text
+(Let (x bmode τ) c1 c2)    x refers to c2
+```
+
+### 5.2 射影
+
+record 値から指定ラベルの値を取り出す。
+
+**(R-Proj)**
+
+```text
+labels は重複しない
+proj-lookup(⟨labeli = vi⟩, labelk) = vk
+------------------------------------------------------------
+E[(Proj (Rec ((labeli mi vi) ...)) labelk)] → E[vk]
+```
+
+`proj-lookup` は先頭から走査し、一致する値を返す全域の metafunction である。
+指定ラベルが存在しなければ `#f` を返し、R-Proj は発火しない。
+ラベルが重複する record に対しても R-Proj は発火しない。
+この二つの不正項は例外を起こさず stuck に留まるが、well-typed な項ではラベル一意性と field の存在が保証される。
+
+### 5.3 binding mode 付き Let
+
+binding mode は実行時の代入規則を変えない。
+`const` と `let` の差は §3.2 の静的 policy だけであり、G2a は再代入を持たないためである。
+
+**(R-LetB)**
+
+```text
+τ は Owned<τ'> の形でない
+------------------------------------------------------------
+E[(Let (x bmode τ) v c)] → E[c[x := v]]
+```
+
+**(R-LetOwnedB)**
+
+```text
+τ = Owned<τ'>
+pnew は H と Ω の domain にない
+------------------------------------------------------------
+E[Scope(π, G[(Let (x bmode τ) v c)])], H, Ω, θ
+  → E[Scope(π · pnew, G[c[x := pnew]])],
+    H[pnew ↦ v], Ω[pnew ↦ Available], θ
+```
+
+`owned-type?` の正負で R-LetB と R-LetOwnedB を排他的にする。
+この分岐は record 型と非 record 型に共通である。
+
+### 5.4 Effect row
+
+G2a が追加する項の Effect row は G1 の `row-∪` で合成する。
+
+- `Rec` の Effect row は、各 field の Effect row を評価順に結合した row である。
+- `Proj` の Effect row は、scrutinee の Effect row である。
+- binding mode 付き `Let` の Effect row は、bound と body の Effect row の和である。
+
+field row の演算はこの Effect 合成に使わない。
+
+### 5.5 簡約関係の拡張
+
+規則本体 `-->g2/rules` は、G1 の内部規則関係 `-->g1/rules` を G2m 上へ拡張し、R-Proj、R-LetB、R-LetOwnedB を加える。
+公開する `-->g2` は G1 と同じく binder 一意性を検査してから内部規則を適用する R-Step ラッパーである。
+公開 `-->g1` 自体を拡張元にしないのは、その関係が R-Step 一規則だけを公開し、β簡約などの規則本体を含まないためである。
+
+G1 の `δ`、`substitute*`、`select-branch` は G1m を domain とするため、G2m 用に `δ/g2`、`substitute*/g2`、`select-branch/g2` へ拡張する。
+R-Delta、R-Beta、R-RecurUnfold、R-Eliminate は `-->g2/rules` で同名規則を差し替え、G2m domain の metafunction を呼ぶ。
+`select-branch/g2` は branch body の置換に `substitute*/g2` を使い、再帰呼び出しも `select-branch/g2` 自身へ向ける。
+
+R-Let、R-LetOwned、R-RecurBind、R-HandleReturn と G2a の二つの Let 規則は、拡張言語の binding form を解釈する組み込み substitution を使う。
+これらの規則には独自の domain 拡張を加えない。
+
+G1 の `inject`、`run`、bounded trace、観測関係は存置する。
+G2a は G2m と `-->g2` を使う G2 版の各ドライバを追加し、G1 の項と `-->g1` の挙動を変えない。
+
+## 6. 範囲外の規則
+
+G2a は次の規則を導入しない。
+送り先は、その規則が必要とする意味論に合わせて定める。
+
+- **optional field**：G2a の field はすべて required とする。
+  optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う。
+- **Union と Intersection**：trait の Intersection が Proof を持つ合成であるため、trait 層で扱う。
+- **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
+- **join 型と Proof 付き merge**：型が異なる branch field の上位型と field 常在性の witness を要するため、Proof 層で扱う。
+- **関数 field の完全な variance**：引数反変、返り値共変、latent Effect、Proof obligation の substitutability は G2 の後続層で定める。
+  G2a は `NFn` を `type-equiv?` の不変一致で扱う。
+- **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
+- **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
+- **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。
+
+必須 field と残余 field を二層に分けた record 型は採らない。
+G2a の現在の flow では平坦な field row から安全に射影でき、合流後の field 回復は Proof witness 側で表現できるためである。
+
+closed と open を record 型の mode として保持する表現も採らない。
+二つの違いは束縛時の残余処理だけであり、型へ mode を埋め込むと Preservation が不要な型の分岐を持つためである。
+
+## 7. 要件と規則の対応
+
+| 要件 ID | 対応する規則、定義 |
+|---|---|
+| TYP-003 | §3.3 の `compat?` 全域 dispatch、§3.4 の型同値との分離 |
+| ROW-001 | §3.2 T-LetConstRecord |
+| ROW-002 | §3.1 T-Proj、§3.2 T-LetOpenRecord |
+| ROW-003 | §3.5 T-EliminateRecordMerge |
+| ROW-004 | §3.1 T-Rec、§3.3 の `mut` field 不変性 |

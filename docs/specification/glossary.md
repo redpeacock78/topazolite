@@ -1,8 +1,8 @@
 # Topazolite 用語集
 
-**状態**：G1 執筆版（codex レビュー前）
+**状態**：G2a 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` 付録 A（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/requirements.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/requirements.md`
 
 ## 1. 本用語集の位置づけ
 
@@ -101,6 +101,34 @@
 - **定義**：`type` により定義され、ユーザーがフィールド row を参照、合成、射影できる構造型。
 - **参照**：ホワイトペーパー §4.5.1、付録 A。
 - **関連要件 ID**：TYP-003（G2）。
+
+### Field row
+
+- **定義**：record の field ラベル、field 型、可変性からなる有限集合。
+  Effect row とは別の sort であり、ラベル一意性と順序独立性を満たす。
+- **参照**：ホワイトペーパー §4.5、structural-row.md §2。
+- **関連要件 ID**：TYP-003、ROW-001、ROW-002、ROW-003、ROW-004（G2a）。
+
+### 構造互換性
+
+- **定義**：実際の型が期待型の構造上の要求を満たすかを判定する方向付きの関係。
+  record では期待側の field をすべて要求し、実際側の余剰 field を許す。
+- **参照**：ホワイトペーパー §4.5.1、structural-row.md §3.3。
+- **関連要件 ID**：TYP-003、ROW-002、ROW-004（G2a）。
+
+### Binding policy
+
+- **定義**：型注釈が要求する field を除いた残余 row を、束縛時に拒否するか contextual type として保持するかを決める静的規則。
+  G2a では `const` が拒否し、`let` が保持する。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §3.2。
+- **関連要件 ID**：ROW-001、ROW-002（G2a）。
+
+### 残余 row
+
+- **定義**：bound の field row から注釈型と同名の field を除いた row。
+  `residual(r_b, r_T)` と書き、`let` binding の現在の flow で保持する。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §2.2、§3.2。
+- **関連要件 ID**：ROW-001、ROW-002（G2a）。
 
 ### Proof-bearing User Trait
 

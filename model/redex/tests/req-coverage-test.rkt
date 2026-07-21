@@ -1,6 +1,8 @@
 #lang racket
 
 (require racket/file
+         racket/set
+         racket/string
          rackunit
          "../../../tools/req-coverage.rkt")
 
@@ -9,8 +11,8 @@
     (lambda (output) (display content output))
     #:exists 'truncate))
 
-(define (registry-entry id)
-  (format "### ~a\n\n- **状態**：G1\n" id))
+(define (registry-entry id [state "G1"])
+  (format "### ~a\n\n- **状態**：~a\n" id state))
 
 (define (with-fixture registry spec test procedure)
   (define root (make-temporary-file "req-coverage~a" 'directory))
@@ -29,14 +31,92 @@
 ;; This file is scanned as a test input, so fixture IDs must not be literal
 ;; requirement references that could make the real coverage check pass.
 (define known-id (string-append "NAR" "-001"))
+(define typ-003 (string-append "TYP" "-003"))
+(define row-001 (string-append "ROW" "-001"))
+(define row-002 (string-append "ROW" "-002"))
+(define row-003 (string-append "ROW" "-003"))
+(define row-004 (string-append "ROW" "-004"))
+(define trt-001 (string-append "TRT" "-001"))
+
+(define expected-g2a-ids
+  (set typ-003 row-001 row-002 row-003 row-004))
+
+(define (registry-entries ids state)
+  (apply string-append
+         (for/list ([id (in-list ids)])
+           (registry-entry id state))))
+
+(define (spec-references ids)
+  (string-join
+   (for/list ([id (in-list ids)])
+     (format "[REQ: ~a]" id))
+   "\n"))
+
+(define (test-references ids)
+  (string-join
+   (for/list ([id (in-list ids)])
+     (format "(test-case ~s (void))" id))
+   "\n"))
+
+(define g2a-ids (sort (set->list expected-g2a-ids) string<?))
+(define g2a-ids-missing (remove row-004 g2a-ids))
+(define g2a-ids-replaced (sort (cons trt-001 g2a-ids-missing) string<?))
+
+(define g2a-registry (registry-entries g2a-ids "G2"))
+(define g2a-spec (spec-references g2a-ids))
+(define g2a-test (test-references g2a-ids))
+(define g2a-registry-missing (registry-entries g2a-ids-missing "G2"))
+(define g2a-spec-missing (spec-references g2a-ids-missing))
+(define g2a-test-missing (test-references g2a-ids-missing))
+(define g2a-registry-replaced (registry-entries g2a-ids-replaced "G2"))
+(define g2a-spec-replaced (spec-references g2a-ids-replaced))
+(define g2a-test-replaced (test-references g2a-ids-replaced))
 
 (define (fixture-errors registry spec test
-                        #:expected-g1-count [expected-g1-count #f])
+                        #:expected-g1-count [expected-g1-count #f]
+                        #:expected-g2a-ids [expected-g2a-ids #f])
   (with-fixture
    registry spec test
    (lambda (registry-path spec-paths test-paths)
-     (coverage-errors registry-path spec-paths test-paths
-                      #:expected-g1-count expected-g1-count))))
+     (if expected-g2a-ids
+         (coverage-errors registry-path '() '()
+                          #:g2a-spec-paths spec-paths
+                          #:g2a-test-paths test-paths
+                          #:expected-g2a-ids expected-g2a-ids)
+         (coverage-errors registry-path spec-paths test-paths
+                          #:expected-g1-count expected-g1-count)))))
+
+(test-case "G2a coverage requires the exact ID set"
+  (check-equal?
+   (fixture-errors g2a-registry g2a-spec g2a-test
+                   #:expected-g2a-ids expected-g2a-ids)
+   '())
+  (check-not-false
+   (member
+    (format "G2a spec ID set missing expected ID: ~a" row-004)
+    (fixture-errors g2a-registry-missing
+                    g2a-spec-missing
+                    g2a-test-missing
+                    #:expected-g2a-ids expected-g2a-ids)))
+  ;; A five-for-five replacement must report both halves of the symmetric
+  ;; difference instead of passing on count alone.
+  (define replaced-errors
+    (fixture-errors g2a-registry-replaced
+                    g2a-spec-replaced
+                    g2a-test-replaced
+                    #:expected-g2a-ids expected-g2a-ids))
+  (check-not-false
+   (member (format "G2a spec ID set missing expected ID: ~a" row-004)
+           replaced-errors))
+  (check-not-false
+   (member (format "G2a spec ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors))
+  (check-not-false
+   (member (format "G2a test ID set missing expected ID: ~a" row-004)
+           replaced-errors))
+  (check-not-false
+   (member (format "G2a test ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors)))
 
 (test-case "normal coverage passes"
   (check-equal?
@@ -130,5 +210,5 @@
   (define errors (open-output-string))
   (check-equal? (main output errors) 0)
   (check-equal? (get-output-string output)
-                "Requirement coverage OK: 18 G1 IDs\n")
+                "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs\n")
   (check-equal? (get-output-string errors) ""))

@@ -50,8 +50,10 @@
 (define (sorted-ids ids)
   (sort (set->list ids) string<?))
 
-(define (coverage-analysis registry-path spec-paths test-paths
-                           expected-g1-count)
+(define (coverage-analysis registry-path g1-spec-paths g1-test-paths
+                           expected-g1-count
+                           g2a-spec-paths g2a-test-paths
+                           expected-g2a-ids)
   (define definitions (registry-definitions registry-path))
   (define counts (make-hash))
   (for ([definition (in-list definitions)])
@@ -62,9 +64,26 @@
      (for/list ([definition (in-list definitions)]
                 #:when (equal? (cdr definition) "G1"))
        (car definition))))
-  (define specs (list->set (spec-ids spec-paths)))
-  (define tests (list->set (test-ids test-paths)))
+  (define g2
+    (list->set
+     (for/list ([definition (in-list definitions)]
+                #:when (equal? (cdr definition) "G2"))
+       (car definition))))
+  (define g1-specs (list->set (spec-ids g1-spec-paths)))
+  (define g1-tests (list->set (test-ids g1-test-paths)))
+  (define g2a-spec-references (list->set (spec-ids g2a-spec-paths)))
+  (define g2a-test-references (list->set (test-ids g2a-test-paths)))
+  ;; G2a property tests may restate G1 invariants, so G1 references are
+  ;; allowed in the mapped files.  Every other reference must be in the
+  ;; explicit G2a set; this also rejects accidental G3/Phase IDs.
+  (define g2a-specs (set-subtract g2a-spec-references g1))
+  (define g2a-tests (set-subtract g2a-test-references g1))
+  (define all-references
+    (set-union g1-specs g1-tests
+               g2a-spec-references g2a-test-references))
   (define g1-count (set-count g1))
+  (define g2a-count
+    (if expected-g2a-ids (set-count expected-g2a-ids) 0))
   (define duplicates
     (sort
      (for/list ([(id count) (in-hash counts)] #:when (> count 1)) id)
@@ -74,8 +93,17 @@
      (for/list ([definition (in-list definitions)]
                 #:unless (set-member? valid-states (cdr definition)))
        (car definition))))
+  (define (set-difference-errors actual expected source)
+    (append
+     (for/list ([id (in-list
+                     (sorted-ids (set-subtract expected actual)))])
+       (format "~a ID set missing expected ID: ~a" source id))
+     (for/list ([id (in-list
+                     (sorted-ids (set-subtract actual expected)))])
+       (format "~a ID set contains unexpected ID: ~a" source id))))
   (values
    g1-count
+   g2a-count
    (append
     (for/list ([id (in-list duplicates)])
       (format "duplicate requirement ID: ~a" id))
@@ -87,29 +115,54 @@
                       expected-g1-count g1-count))
         '())
     (for/list ([id (in-list
-                    (sorted-ids
-                     (set-subtract (set-union specs tests) known)))])
+                    (sorted-ids (set-subtract all-references known)))])
       (format "unknown requirement ID: ~a" id))
-    (for/list ([id (in-list (sorted-ids (set-subtract g1 specs)))])
+    (for/list ([id (in-list (sorted-ids (set-subtract g1 g1-specs)))])
       (format "G1 requirement lacks spec annotation: ~a" id))
-    (for/list ([id (in-list (sorted-ids (set-subtract g1 tests)))])
-      (format "G1 requirement lacks test reference: ~a" id)))))
+    (for/list ([id (in-list (sorted-ids (set-subtract g1 g1-tests)))])
+      (format "G1 requirement lacks test reference: ~a" id))
+    (if expected-g2a-ids
+        (append
+         (for/list ([id (in-list
+                         (sorted-ids
+                          (set-subtract expected-g2a-ids g2)))])
+           (format "G2a expected ID is absent or not state G2: ~a" id))
+         (set-difference-errors g2a-specs expected-g2a-ids
+                                "G2a spec")
+         (set-difference-errors g2a-tests expected-g2a-ids
+                                "G2a test"))
+        '()))))
 
-(define (coverage-errors registry-path spec-paths test-paths
-                         #:expected-g1-count [expected-g1-count #f])
-  (define-values (_ errors)
-    (coverage-analysis registry-path spec-paths test-paths expected-g1-count))
+(define (coverage-errors registry-path g1-spec-paths g1-test-paths
+                         #:expected-g1-count [expected-g1-count #f]
+                         #:g2a-spec-paths [g2a-spec-paths '()]
+                         #:g2a-test-paths [g2a-test-paths '()]
+                         #:expected-g2a-ids [expected-g2a-ids #f])
+  (define-values (_g1-count _g2a-count errors)
+    (coverage-analysis registry-path g1-spec-paths g1-test-paths
+                       expected-g1-count
+                       g2a-spec-paths g2a-test-paths
+                       expected-g2a-ids))
   errors)
 
-(define (run-coverage registry-path spec-paths test-paths
+(define (run-coverage registry-path g1-spec-paths g1-test-paths
                       [output (current-output-port)]
                       [error-output (current-error-port)]
-                      #:expected-g1-count [expected-g1-count #f])
-  (define-values (g1-count errors)
-    (coverage-analysis registry-path spec-paths test-paths expected-g1-count))
+                      #:expected-g1-count [expected-g1-count #f]
+                      #:g2a-spec-paths [g2a-spec-paths '()]
+                      #:g2a-test-paths [g2a-test-paths '()]
+                      #:expected-g2a-ids [expected-g2a-ids #f])
+  (define-values (g1-count g2a-count errors)
+    (coverage-analysis registry-path g1-spec-paths g1-test-paths
+                       expected-g1-count
+                       g2a-spec-paths g2a-test-paths
+                       expected-g2a-ids))
   (cond
     [(null? errors)
-     (fprintf output "Requirement coverage OK: ~a G1 IDs\n" g1-count)
+     (fprintf output "Requirement coverage OK: ~a G1 IDs" g1-count)
+     (when expected-g2a-ids
+       (fprintf output ", ~a G2a IDs" g2a-count))
+     (newline output)
      0]
     [else
      (for ([message (in-list errors)])
@@ -131,15 +184,30 @@
 ;; Update this when the registry intentionally gains or removes a G1 ID.
 (define expected-g1-count 18)
 
+;; Update this only when the G2a scope intentionally gains or removes an ID.
+(define expected-g2a-ids
+  (set "TYP-003" "ROW-001" "ROW-002" "ROW-003" "ROW-004"))
+
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
   (define root (simplify-path (build-path tools-directory 'up)))
   (define registry (build-path root "docs/specification/requirements.md"))
-  (define specs (list (build-path root "docs/specification/core-calculus.md")))
-  (define tests
+  (define g1-specs
+    (list (build-path root "docs/specification/core-calculus.md")))
+  (define g1-tests
     (matching-files (build-path root "model/redex/tests") #rx"[.]rkt$"))
-  (run-coverage registry specs tests output error-output
-                #:expected-g1-count expected-g1-count))
+  (define g2a-specs
+    (list (build-path root "docs/specification/structural-row.md")))
+  (define g2a-tests
+    (for/list ([name (in-list '("properties-record-test.rkt"
+                                "properties-test.rkt"
+                                "typing-binding-test.rkt"))])
+      (build-path root "model/redex/tests" name)))
+  (run-coverage registry g1-specs g1-tests output error-output
+                #:expected-g1-count expected-g1-count
+                #:g2a-spec-paths g2a-specs
+                #:g2a-test-paths g2a-tests
+                #:expected-g2a-ids expected-g2a-ids))
 
 (module+ main
   (exit (main)))
