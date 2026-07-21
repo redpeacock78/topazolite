@@ -2,8 +2,10 @@
 
 (require racket/match
          redex/reduction-semantics
+         "compat.rkt"
          "lang.rkt"
          "origins.rkt"
+         "rows.rkt"
          "schema.rkt"
          "type-equiv.rkt")
 
@@ -40,11 +42,36 @@
   (row-equiv? left right))
 
 (define (type-compatible? actual expected)
-  (or (type-equiv? actual expected)
-      (eq? actual 'Never)))
+  (match* (actual expected)
+    [(`(Record ,_) `(Record ,_)) (compat? actual expected)]
+    [(_ _) (or (type-equiv? actual expected)
+               (eq? actual 'Never))]))
+
+(define (record-rows-unique? type)
+  (match type
+    [`(Record ,row)
+     (and (field-row-unique? row)
+          (for/and ([field (in-list row)])
+            (record-rows-unique? (second field))))]
+    [`(List ,element) (record-rows-unique? element)]
+    [`(Option ,element) (record-rows-unique? element)]
+    [`(Result ,ok-type ,error-type)
+     (and (record-rows-unique? ok-type)
+          (record-rows-unique? error-type))]
+    [`(Owned ,inner) (record-rows-unique? inner)]
+    [`(NFn ,parameters ,return-type ,row ,_)
+     (and (andmap record-rows-unique? parameters)
+          (record-rows-unique? return-type)
+          (for/and ([label (in-list row)])
+            (match label
+              [`(Return ,_ ,type) (record-rows-unique? type)]
+              [`(Yield ,type) (record-rows-unique? type)]
+              [_ #t])))]
+    [_ #t]))
 
 (define (type? value)
-  (redex-match? G1m τ value))
+  (and (redex-match? G2m τ value)
+       (record-rows-unique? value)))
 
 (define (row? value)
   (redex-match? G1m ε value))
@@ -323,6 +350,30 @@
 
     [`(resource ,_) (list '(Owned Res) '())]
 
+    [`(Rec (,fields ...))
+     (and (field-row-unique? fields)
+          (let ([results
+                 (for/list ([field (in-list fields)])
+                   (infer (third field) environment places callables))])
+            (and (andmap identity results)
+                 (not (ormap (lambda (result)
+                               (owned-type? (first result)))
+                             results))
+                 (list
+                  `(Record
+                    ,(for/list ([field (in-list fields)]
+                                [result (in-list results)])
+                       `(,(first field) ,(first result) ,(second field))))
+                  (rows-union (map second results))))))]
+
+    [`(Proj ,record ,label)
+     (match (infer record environment places callables)
+       [(list `(Record ,row) record-row)
+        (match (field-row-lookup row label)
+          [(list field-type _) (list field-type record-row)]
+          [_ #f])]
+       [_ #f])]
+
     [`(Apply ,function ,arguments ...)
      (match (infer function environment places callables)
        [(list `(NFn ,parameter-types
@@ -534,7 +585,7 @@
        [_ #f])]))
 
 (define (core-type-of core places callables [environment '()])
-  (if (and (redex-match? G1m c core)
+  (if (and (redex-match? G2m c core)
            (valid-environment? environment)
            (valid-places? places)
            (valid-callables? callables))
@@ -542,7 +593,7 @@
       'ill-typed))
 
 (define (core-check-row core places callables expected [environment '()])
-  (and (redex-match? G1m c core)
+  (and (redex-match? G2m c core)
        (valid-environment? environment)
        (valid-places? places)
        (valid-callables? callables)
