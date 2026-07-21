@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "lang.rkt"
          "origins.rkt"
+         "schema.rkt"
          "type-equiv.rkt")
 
 (provide core-type-of
@@ -97,17 +98,6 @@
   (andmap (λ (proposition) (member proposition propositions))
           obligations))
 
-(define (constructor-schema type)
-  (match type
-    ['Bool '((true ()) (false ()))]
-    [`(List ,element)
-     `((nil ()) (cons (,element (List ,element))))]
-    [`(Option ,element)
-     `((none ()) (some (,element)))]
-    [`(Result ,ok-type ,error-type)
-     `((ok (,ok-type)) (ng (,error-type)))]
-    [_ #f]))
-
 (define (check-many cores types environment places callables)
   (and (= (length cores) (length types))
        (let ([rows
@@ -116,9 +106,9 @@
                 (check-as core type environment places callables))])
          (and (andmap identity rows) rows))))
 
-(define (check-construct constructor fields expected
+(define (check-construct constructor fields data-type
                          environment places callables)
-  (define schema (constructor-schema expected))
+  (define schema (constructor-schema data-type))
   (define field-types (and schema (lookup schema constructor)))
   (and field-types
        (not (ormap owned-type? field-types))

@@ -2,6 +2,7 @@
 
 (require racket/match
          racket/set
+         "schema.rkt"
          "type-equiv.rkt"
          "typing.rkt")
 
@@ -24,17 +25,6 @@
 (define (without-owned environment)
   (filter (lambda (entry) (not (owned-type? (second entry))))
           environment))
-
-(define (constructor-schema type)
-  (match type
-    ['Bool '((true ()) (false ()))]
-    [`(List ,element)
-     `((nil ()) (cons (,element (List ,element))))]
-    [`(Option ,element)
-     `((none ()) (some (,element)))]
-    [`(Result ,ok-type ,error-type)
-     `((ok (,ok-type)) (ng (,error-type)))]
-    [_ #f]))
 
 (define (callable-contexts callable function parameters
                            environment callables)

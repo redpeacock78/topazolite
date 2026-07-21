@@ -5,7 +5,8 @@
          redex/reduction-semantics
          "classify.rkt"
          "lang.rkt"
-         "origins.rkt")
+         "origins.rkt"
+         "schema.rkt")
 
 (provide UCore
          elab)
@@ -206,17 +207,6 @@
     (match entry
       [`(,_ (TypeNarrativeCap ,_)) #t]
       [_ #f])))
-
-(define (constructor-schema data-type)
-  (match data-type
-    ['Bool '((true ()) (false ()))]
-    [`(List ,element)
-     `((nil ()) (cons (,element (List ,element))))]
-    [`(Option ,element)
-     `((none ()) (some (,element)))]
-    [`(Result ,ok-type ,error-type)
-     `((ok (,ok-type)) (ng (,error-type)))]
-    [_ #f]))
 
 (define (constructor-result constructor type-arguments)
   (match (cons constructor type-arguments)
