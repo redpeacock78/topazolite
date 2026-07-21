@@ -6,8 +6,11 @@
          "origins.rkt")
 
 (provide -->g1
+         -->g2
          inject
-         run)
+         inject-g2
+         run
+         run-g2)
 
 (define-metafunction G1m
   δ : nm v ... -> any
@@ -51,6 +54,42 @@
                   ((K_other (x_other ...) -> c_other) br_rest ...))
    (select-branch K (v_arg ...) (br_rest ...))]
   [(select-branch K (v_arg ...) ()) #f])
+
+(define-metafunction/extension δ
+  G2m
+  δ/g2 : nm v ... -> any)
+
+(define-metafunction/extension substitute*
+  G2m
+  substitute*/g2 : c (x ...) (v ...) -> any)
+
+(define-metafunction/extension select-branch
+  G2m
+  select-branch/g2 : K (v ...) (br ...) -> any
+  [(select-branch/g2 K (v_arg ...)
+                     ((K (x ...) -> c_body) br_rest ...))
+   (substitute*/g2 c_body (x ...) (v_arg ...))]
+  [(select-branch/g2 K (v_arg ...)
+                     ((K_other (x_other ...) -> c_other) br_rest ...))
+   (select-branch/g2 K (v_arg ...) (br_rest ...))]
+  [(select-branch/g2 K (v_arg ...) ()) #f])
+
+(define-metafunction G2m
+  proj-lookup : ((label v) ...) label -> any
+  [(proj-lookup ((label_target v_target)
+                 (label_rest v_rest) ...)
+                label_target)
+   v_target]
+  [(proj-lookup ((label_head v_head)
+                 (label_rest v_rest) ...)
+                label_target)
+   (proj-lookup ((label_rest v_rest) ...) label_target)]
+  [(proj-lookup () label_target) #f])
+
+(define-metafunction G2m
+  unique-labels? : (label ...) -> boolean
+  [(unique-labels? (label ...))
+   ,(not (check-duplicates (term (label ...))))])
 
 (define (owned-type? type)
   (match type
@@ -282,11 +321,96 @@
         (cfg (in-hole E_outer (Error p_error)) H Ω θ)
         R-HandleError)))
 
+(define -->g2/rules
+  (extend-reduction-relation
+   -->g1/rules
+   G2m
+   #:domain config
+
+   (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
+        (cfg (in-hole E v_result) H Ω θ)
+        (where v_result (δ/g2 nm v_arg ...))
+        R-Delta)
+
+   (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
+                               v_arg ...))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (where c_result
+               (substitute*/g2 c_body (x ...) (v_arg ...)))
+        R-Beta)
+
+   (--> (cfg (in-hole E
+                      (Eliminate (Construct τ K v_arg ...)
+                                 (br ...)))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (where c_result
+               (select-branch/g2 K (v_arg ...) (br ...)))
+        R-Eliminate)
+
+   (--> (cfg (in-hole E
+                      (Apply (RecurVal cid_recur f (x ...) c_body)
+                             v_arg ...))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (where v_recur (RecurVal cid_recur f (x ...) c_body))
+        (where c_result
+               (substitute*/g2 c_body
+                              (f x ...)
+                              (v_recur v_arg ...)))
+        R-RecurUnfold)
+
+   (--> (cfg (in-hole E
+                      (Proj (Rec ((label_field m v_field) ...))
+                            label_target))
+             H Ω θ)
+        (cfg (in-hole E v_result) H Ω θ)
+        (side-condition
+         (term (unique-labels? (label_field ...))))
+        (where v_result
+               (proj-lookup ((label_field v_field) ...)
+                            label_target))
+        R-Proj)
+
+   (--> (cfg (in-hole E
+                      (Let (x bmode τ) v_bound c_body))
+             H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (side-condition (not (owned-type? (term τ))))
+        (where c_result (substitute c_body x v_bound))
+        R-LetB)
+
+   (--> (cfg (in-hole E_outer
+                      (Scope (p_managed ...)
+                             (in-hole G_inner
+                                      (Let (x bmode τ_owned)
+                                           v_bound
+                                           c_body))))
+             H Ω θ)
+        (cfg (in-hole E_outer
+                      (Scope (p_managed ... p_new)
+                             (in-hole G_inner c_result)))
+             H_new Ω_new θ)
+        (side-condition (owned-type? (term τ_owned)))
+        (where p_new ,(fresh-place (term H) (term Ω)))
+        (where c_result (substitute c_body x p_new))
+        (where H_new
+               ,(table-set (term H) (term p_new) (term v_bound)))
+        (where Ω_new
+               ,(table-set (term Ω) (term p_new) 'Available))
+        R-LetOwnedB)))
+
 ;; Binding-aware matching freshens binders before destructuring.  Check the raw
 ;; configuration first so repeated source binders cannot be freshened apart.
 (define (raw-steps config)
   (if (unique-binders? config)
       (apply-reduction-relation -->g1/rules config)
+      '()))
+
+(define (raw-steps-g2 config)
+  (if (unique-binders? config)
+      (apply-reduction-relation -->g2/rules config)
       '()))
 
 (define -->g1
@@ -299,9 +423,24 @@
                ,(raw-steps (term config_before)))
         R-Step)))
 
+(define -->g2
+  (reduction-relation
+   G2m
+   #:domain config
+   (--> config_before
+        config_after
+        (where (config_prefix ... config_after config_suffix ...)
+               ,(raw-steps-g2 (term config_before)))
+        R-Step)))
+
 (define (inject core)
   (unless (redex-match? G1 c core)
     (raise-argument-error 'inject "G1 core term" core))
+  `(cfg (Scope () ,core) () () ()))
+
+(define (inject-g2 core)
+  (unless (redex-match? G2 c core)
+    (raise-argument-error 'inject-g2 "G2 core term" core))
   `(cfg (Scope () ,core) () () ()))
 
 (define (run config fuel)
@@ -321,6 +460,27 @@
       [(null? (cdr next)) (loop (car next) (sub1 remaining))]
       [else
        (error 'run
+              "nondeterministic reduction from ~e to ~e"
+              current
+              next)])))
+
+(define (run-g2 config fuel)
+  (unless (redex-match? G2m config config)
+    (raise-argument-error 'run-g2 "G2m configuration" config))
+  (unless (exact-nonnegative-integer? fuel)
+    (raise-argument-error 'run-g2 "exact-nonnegative-integer?" fuel))
+  (let loop ([current config]
+             [remaining fuel])
+    (define next
+      (remove-duplicates
+       (apply-reduction-relation -->g2 current)
+       equal?))
+    (cond
+      [(null? next) current]
+      [(zero? remaining) 'timeout]
+      [(null? (cdr next)) (loop (car next) (sub1 remaining))]
+      [else
+       (error 'run-g2
               "nondeterministic reduction from ~e to ~e"
               current
               next)])))

@@ -672,7 +672,7 @@
          (and actual-row (row=? actual-row row)))))
 
 (define (config-ok? configuration callables expected row)
-  (and (redex-match? G1m config configuration)
+  (and (redex-match? G2m config configuration)
        (valid-callables? callables)
        (type? expected)
        (row? row)
