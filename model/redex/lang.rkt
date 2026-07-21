@@ -5,6 +5,7 @@
 (provide G1
          G2
          G1m
+         G2m
          row-∪
          row-⊆
          row-∈
@@ -88,8 +89,17 @@
 (define-extended-language G2 G1
   (label ::= variable-not-otherwise-mentioned)
   (m ::= imm mut)
+  (bmode ::= const let)
   (r ::= ((label τ m) ...))
-  (τ ::= .... (Record r)))
+  (τ ::= .... (Record r))
+  (c ::= ....
+         (Rec ((label m c) ...))
+         (Proj c label)
+         (Let (x bmode τ) c c))
+  (v ::= .... (Rec ((label m v) ...)))
+
+  #:binding-forms
+  (Let (x bmode τ) c_1 c_2 #:refers-to x))
 
 (define-extended-language G1m G1
   (p ::= natural)
@@ -137,6 +147,34 @@
          (Curry G c)
          (Curry v G)
          (Handle op h G)))
+
+(define-extended-language G2m G1m
+  (label ::= variable-not-otherwise-mentioned)
+  (m ::= imm mut)
+  (bmode ::= const let)
+  (r ::= ((label τ m) ...))
+  (τ ::= .... (Record r))
+  (c ::= ....
+         (Rec ((label m c) ...))
+         (Proj c label)
+         (Let (x bmode τ) c c))
+  (v ::= .... (Rec ((label m v) ...)))
+
+  (F ::= ....
+         (Rec ((label m v) ... (label m F) (label m c) ...))
+         (Proj F label)
+         (Let (x bmode τ) F c))
+  (E ::= ....
+         (Rec ((label m v) ... (label m E) (label m c) ...))
+         (Proj E label)
+         (Let (x bmode τ) E c))
+  (G ::= ....
+         (Rec ((label m v) ... (label m G) (label m c) ...))
+         (Proj G label)
+         (Let (x bmode τ) G c))
+
+  #:binding-forms
+  (Let (x bmode τ) c_1 c_2 #:refers-to x))
 
 (define-metafunction G1
   row-∈ : ℓ ε -> boolean

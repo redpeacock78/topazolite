@@ -4,8 +4,10 @@
          racket/set
          redex/reduction-semantics
          "classify.rkt"
+         "compat.rkt"
          "lang.rkt"
          "origins.rkt"
+         "rows.rkt"
          "schema.rkt")
 
 (provide UCore
@@ -17,6 +19,10 @@
 (define-extended-language UCore G1
   (T ::= variable-not-otherwise-mentioned)
   (A ::= Int Bool Unit String Never Res List Option Result T)
+  (label ::= variable-not-otherwise-mentioned)
+  (m ::= imm mut)
+  (bmode ::= const let)
+  (ur ::= ((label uτ m) ...))
   (uτ ::= Int Bool Unit String Never Res
           T
           (List uτ)
@@ -25,7 +31,8 @@
           (Owned uτ)
           (NFn (uτ ...) uτ tε Q)
           (TypeInfo κ)
-          (Proof φ))
+          (Proof φ)
+          (Record ur))
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own)
   (tε ::= (tℓ ...))
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own)
@@ -37,6 +44,9 @@
          (Fn ((x uτ) ...) uτ uε e)
          (Apply e e ...)
          (Let x e e)
+         (Let (x bmode uτ) e e)
+         (Rec ((label m e) ...))
+         (Proj e label)
          (Construct K e ...)
          (Construct K (Types uτ ...) e ...)
          (Eliminate e (ubr ...))
@@ -74,8 +84,31 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+(define (record-rows-unique? type)
+  (match type
+    [`(Record ,row)
+     (and (field-row-unique? row)
+          (for/and ([field (in-list row)])
+            (record-rows-unique? (second field))))]
+    [`(List ,element) (record-rows-unique? element)]
+    [`(Option ,element) (record-rows-unique? element)]
+    [`(Result ,ok-type ,error-type)
+     (and (record-rows-unique? ok-type)
+          (record-rows-unique? error-type))]
+    [`(Owned ,inner) (record-rows-unique? inner)]
+    [`(NFn ,parameters ,return-type ,row ,_)
+     (and (andmap record-rows-unique? parameters)
+          (record-rows-unique? return-type)
+          (for/and ([label (in-list row)])
+            (match label
+              [`(Return ,_ ,type) (record-rows-unique? type)]
+              [`(Yield ,type) (record-rows-unique? type)]
+              [_ #t])))]
+    [_ #t]))
+
 (define (type? value)
-  (redex-match? G1 τ value))
+  (and (redex-match? G2 τ value)
+       (record-rows-unique? value)))
 
 (define (row-union left right)
   (term (row-∪ ,left ,right)))
@@ -100,12 +133,18 @@
     (row-union normalized (list label))))
 
 (define (type-compatible? actual expected)
-  (or (type-equiv? actual expected)
-      (eq? actual 'Never)))
+  (compat? actual expected))
 
 (define (resolve-annotation annotation delta)
   (define resolved
     (match annotation
+      [`(Record ,row)
+       (unless (field-row-unique? row)
+         (reject 'duplicate-record-label row))
+       `(Record
+         ,(for/list ([field (in-list row)])
+            (match-define `(,label ,type ,mutability) field)
+            `(,label ,(resolve-annotation type delta) ,mutability)))]
       [`(List ,element)
        `(List ,(resolve-annotation element delta))]
       [`(Option ,element)
@@ -230,9 +269,19 @@
      (set-subtract (free-vars body) (list->set names))]
     [`(Apply ,terms ...)
      (sets-union (map free-vars terms))]
+    [`(Let (,name ,_ ,_) ,bound ,body)
+     (set-union (free-vars bound)
+                (set-remove (free-vars body) name))]
     [`(Let ,name ,bound ,body)
      (set-union (free-vars bound)
                 (set-remove (free-vars body) name))]
+    [`(Rec (,fields ...))
+     (sets-union
+      (for/list ([field (in-list fields)])
+        (match field
+          [`(,_ ,_ ,body) (free-vars body)]
+          [_ (set)])))]
+    [`(Proj ,record ,_) (free-vars record)]
     [`(Construct ,_ (Types ,_ ...) ,fields ...)
      (sets-union (map free-vars fields))]
     [`(Construct ,_ ,fields ...)
@@ -446,6 +495,78 @@
                       (map judgment-row argument-results)
                       (list latent-row))))]
            [_ (reject 'apply-non-function (judgment-type function-result))])]
+
+        [`(Rec (,fields ...))
+         (unless (field-row-unique? fields)
+           (reject 'duplicate-record-label fields))
+         (define field-results
+           (for/list ([field (in-list fields)])
+             (match-define `(,label ,mutability ,field-expression) field)
+             (define result
+               (synth field-expression environment delta propositions boundaries))
+             (when (owned-type? (judgment-type result))
+               (reject 'owned-record-field label))
+             (list label mutability result)))
+         (judgment
+          `(Rec
+            ,(for/list ([field (in-list field-results)])
+               (match-define (list label mutability result) field)
+               `(,label ,mutability ,(judgment-core result))))
+          `(Record
+            ,(for/list ([field (in-list field-results)])
+               (match-define (list label mutability result) field)
+               `(,label ,(judgment-type result) ,mutability)))
+          (rows-union
+           (for/list ([field (in-list field-results)])
+             (judgment-row (third field)))))]
+
+        [`(Proj ,record ,label)
+         (define record-result
+           (synth record environment delta propositions boundaries))
+         (match (judgment-type record-result)
+           [`(Record ,row)
+            (match (field-row-lookup row label)
+              [(list field-type _)
+               (judgment `(Proj ,(judgment-core record-result) ,label)
+                         field-type
+                         (judgment-row record-result))]
+              [_ (reject 'unknown-record-label label)])]
+           [_ (reject 'project-non-record (judgment-type record-result))])]
+
+        [`(Let (,name ,binding-mode ,raw-type) ,bound ,body)
+         (define declared-type (resolve-annotation raw-type delta))
+         (define bound-result
+           (synth bound environment delta propositions boundaries))
+         (define actual-type (judgment-type bound-result))
+         (define binding-type
+           (cond
+             [(eq? actual-type 'Never) declared-type]
+             [else
+              (unless (type-compatible? actual-type declared-type)
+                (reject 'type-mismatch actual-type declared-type))
+              (match declared-type
+                [`(Record ,declared-row)
+                 (match-define `(Record ,actual-row) actual-type)
+                 (define residual
+                   (field-row-residual actual-row declared-row))
+                 (when (and (eq? binding-mode 'const)
+                            (pair? residual))
+                   (reject 'const-record-residual residual))
+                 (if (eq? binding-mode 'let)
+                     `(Record ,(append declared-row residual))
+                     declared-type)]
+                [_ declared-type])]))
+         (define body-result
+           (synth body
+                  (extend environment (list name) (list binding-type))
+                  delta propositions boundaries))
+         (judgment
+          `(Let (,name ,binding-mode ,declared-type)
+                ,(judgment-core bound-result)
+                ,(judgment-core body-result))
+          (judgment-type body-result)
+          (row-union (judgment-row bound-result)
+                     (judgment-row body-result)))]
 
         [`(Let ,name ,bound ,body)
          (define bound-result
