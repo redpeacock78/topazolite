@@ -109,6 +109,12 @@
        (andmap (lambda (field)
                  (walk field environment target-visible?))
                fields)]
+      [`(Rec (,fields ...))
+       (andmap (lambda (field)
+                 (walk (third field) environment target-visible?))
+               fields)]
+      [`(Proj ,record ,_)
+       (walk record environment target-visible?)]
       [`(Apply ,function ,arguments ...)
        (and (or (and target-visible?
                      (eq? function target))
@@ -118,6 +124,12 @@
                       (walk argument environment target-visible?))
                     arguments))]
       [`(Let (,name ,type) ,bound ,body)
+       (and (walk bound environment target-visible?)
+            (walk body
+                  (extend environment (list name)
+                          (list type))
+                  (and target-visible? (not (eq? name target)))))]
+      [`(Let (,name ,_ ,type) ,bound ,body)
        (and (walk bound environment target-visible?)
             (walk body
                   (extend environment (list name)
@@ -199,6 +211,13 @@
       [`(Construct ,_ ,_ ,fields ...)
        (combine-uses
         (map (lambda (field) (walk field target-visible?)) fields))]
+      [`(Rec (,fields ...))
+       (combine-uses
+        (map (lambda (field)
+               (walk (third field) target-visible?))
+             fields))]
+      [`(Proj ,record ,_)
+       (walk record target-visible?)]
       [`(Apply ,function ,arguments ...)
        (cond
          [(and target-visible? (eq? function target))
@@ -213,6 +232,11 @@
            (map (lambda (term) (walk term target-visible?))
                 (cons function arguments)))])]
       [`(Let (,name ,_) ,bound ,body)
+       (combine-uses
+        (list (walk bound target-visible?)
+              (walk body
+                    (and target-visible? (not (eq? name target))))))]
+      [`(Let (,name ,_ ,_) ,bound ,body)
        (combine-uses
         (list (walk bound target-visible?)
               (walk body
@@ -287,6 +311,13 @@
        (andmap (lambda (field)
                  (walk field decomposable strict target-visible?))
                fields)]
+      [`(Rec (,fields ...))
+       (andmap (lambda (field)
+                 (walk (third field)
+                       decomposable strict target-visible?))
+               fields)]
+      [`(Proj ,record ,_)
+       (walk record decomposable strict target-visible?)]
       [`(Apply ,function ,arguments ...)
        (and
         (if (and target-visible? (eq? function target))
@@ -298,6 +329,12 @@
                   (walk argument decomposable strict target-visible?))
                 arguments))]
       [`(Let (,name ,_) ,bound ,body)
+       (and (walk bound decomposable strict target-visible?)
+            (walk body
+                  (set-remove decomposable name)
+                  (set-remove strict name)
+                  (and target-visible? (not (eq? name target)))))]
+      [`(Let (,name ,_ ,_) ,bound ,body)
        (and (walk bound decomposable strict target-visible?)
             (walk body
                   (set-remove decomposable name)

@@ -162,7 +162,7 @@
       [else 'ok]))
   (walk core))
 
-(define-metafunction G1m
+(define-metafunction G2m
   verify-origins : any c -> any
   [(verify-origins any_R0 c)
    ,(verify-origins/proc (term any_R0) (term c))])

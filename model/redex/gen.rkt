@@ -10,6 +10,7 @@
          "typing.rkt")
 
 (provide G1gen
+         G2gen
          (struct-out bounds)
          (struct-out execution)
          (struct-out search-counts)
@@ -20,6 +21,7 @@
          note-accepted!
          elaboration-result
          bounded-trace
+         bounded-trace-g2
          config-core
          config-heap
          config-states
@@ -103,6 +105,84 @@
          g-boundary
          g-own
          g-type))
+
+;; Record generation is deliberately finite by construction: every row has at
+;; most three fields, and nested record types/terms have at most two Rec/Record
+;; layers.  The general Redex size bound still controls surrounding syntax.
+(define-extended-language G2gen G1gen
+  (gr-leaf ::= ()
+               ((a Int imm))
+               ((a Int imm) (extra Unit mut))
+               ((a Int imm) (extra Unit mut) (flag Bool imm)))
+  (gr-nested ::= gr-leaf
+                 ((nested (Record gr-leaf) imm))
+                 ((nested (Record gr-leaf) imm) (a Int mut)))
+  (g-record-type ::= (Record gr-leaf)
+                     (Record gr-nested))
+
+  (g-rec-leaf ::= (Rec ((a imm gn)))
+                  (Rec ((a imm gn) (extra mut unit)))
+                  (Rec ((a imm gn) (extra mut unit) (flag imm g-bool))))
+  (g-rec ::= g-rec-leaf
+             (Rec ((nested imm g-rec-leaf)))
+             (Rec ((nested imm g-rec-leaf) (a mut gn))))
+  (g-record ::= g-rec
+                (Proj g-rec-leaf a)
+                (Proj (Rec ((a imm gn) (extra mut unit))) extra)
+                (Proj (Rec ((nested imm g-rec-leaf))) nested)
+                (Let (record let (Record ((a Int imm))))
+                     (Rec ((a imm gn) (extra mut unit)))
+                     (Proj record extra)))
+
+  ;; Dedicated sources keep the G2a laws reachable without arbitrary invalid
+  ;; record syntax dominating the discard budget.
+  (g-row-const ::=
+               (Let (record const (Record ((a Int imm))))
+                    (Rec ((a imm gn) (extra mut unit)))
+                    (Proj record a)))
+  (g-row-let ::=
+             (Let (record let (Record ((a Int imm))))
+                  (Rec ((a imm gn) (extra mut unit)))
+                  (Proj record extra)))
+  (g-row-merge ::=
+               (Eliminate (Construct Bool true)
+                          ((true () ->
+                                 (Rec ((a imm gn) (extra imm unit))))
+                           (false () ->
+                                  (Rec ((a imm gn) (flag imm unit)))))))
+  (g-row-mut ::= (Rec ((a mut gn))))
+
+  (g-boundary ::= ....
+                (Apply
+                 (Fn () Int ()
+                     (NarrativeExpr
+                      (Proj (Rec ((result imm (Return gn)))) result)))))
+  (g-own ::= ....
+           (Let record g-rec-leaf
+                (Let item (Apply acquire gn) (Drop item))))
+  (g-type ::= ....
+            (Let (record const (Record ((a Int imm))))
+                 (Rec ((a imm gn)))
+                 gt)
+            (Let (record const
+                         (Record
+                          ((nested (Record ((a Int imm))) imm))))
+                 (Rec ((nested imm (Rec ((a imm gn))))))
+                 gt))
+  (g-analysis ::= ....
+                (Recur loop ((items (List Int))) Int ()
+                       (Eliminate items
+                        ((nil () -> 0)
+                         (cons (head tail) ->
+                               (Let (next const Int)
+                                    (Proj
+                                     (Rec ((value imm (Apply loop tail))))
+                                     value)
+                                    next))))
+                       (Apply loop ga-list)))
+  (g ::= ....
+         g-record
+         g-row-let))
 
 (struct bounds (attempts term-depth fuel observation-depth discard-limit seed)
   #:transparent)
@@ -197,10 +277,10 @@
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))
 
-(define (bounded-trace initial fuel)
+(define (bounded-trace/using who relation initial fuel)
   (hash-ref!
    trace-cache
-   (list initial fuel)
+   (list who initial fuel)
    (lambda ()
      (let loop ([current initial]
                 [remaining fuel]
@@ -208,7 +288,7 @@
        (define configs (cons current reversed-configs))
        (define successors
          (remove-duplicates
-          (apply-reduction-relation -->g1 current)
+          (apply-reduction-relation relation current)
           equal?))
        (cond
          [(null? successors)
@@ -218,7 +298,13 @@
          [(null? (cdr successors))
           (loop (car successors) (sub1 remaining) configs)]
          [else
-          (error 'bounded-trace
+          (error who
                  "nondeterministic reduction from ~e to ~e"
                  current
                  successors)])))))
+
+(define (bounded-trace initial fuel)
+  (bounded-trace/using 'bounded-trace -->g1 initial fuel))
+
+(define (bounded-trace-g2 initial fuel)
+  (bounded-trace/using 'bounded-trace-g2 -->g2 initial fuel))
