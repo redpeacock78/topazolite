@@ -297,6 +297,30 @@
                  function-environment)))]
     [_ #f]))
 
+(define (binding-context binding-mode declared-type bound
+                         environment places callables)
+  (match declared-type
+    [`(Record ,declared-row)
+     (match (infer bound environment places callables)
+       [(list 'Never bound-row)
+        (list bound-row declared-type)]
+       [(list `(Record ,actual-row) bound-row)
+        (and (compat? `(Record ,actual-row) declared-type)
+             (let* ([residual
+                     (field-row-residual actual-row declared-row)]
+                    [binding-row
+                     (case binding-mode
+                       [(const) (and (null? residual) declared-row)]
+                       [(let) (field-row-⊕ declared-row residual)]
+                       [else #f])])
+               (and binding-row
+                    (list bound-row `(Record ,binding-row)))))]
+       [_ #f])]
+    [_
+     (define bound-row
+       (check-as bound declared-type environment places callables))
+     (and bound-row (list bound-row declared-type))]))
+
 (define (infer core environment places callables)
   (match core
     [(? integer?) (list 'Int '())]
@@ -389,6 +413,19 @@
                     (append (list function-row)
                             argument-rows
                             (list latent-row)))))]
+       [_ #f])]
+
+    [`(Let (,name ,binding-mode ,type) ,bound ,body)
+     (match (binding-context binding-mode type bound
+                             environment places callables)
+       [(list bound-row binding-type)
+        (match (infer body
+                      (extend environment (list name) (list binding-type))
+                      places
+                      callables)
+          [(list body-type body-row)
+           (list body-type (row-union bound-row body-row))]
+          [_ #f])]
        [_ #f])]
 
     [`(Let (,name ,type) ,bound ,body)
@@ -529,6 +566,19 @@
      (and (exact-nonnegative-integer? place)
           (assoc place places)
           '())]
+
+    [`(Let (,name ,binding-mode ,type) ,bound ,body)
+     (match (binding-context binding-mode type bound
+                             environment places callables)
+       [(list bound-row binding-type)
+        (define body-row
+          (check-as body
+                    expected
+                    (extend environment (list name) (list binding-type))
+                    places
+                    callables))
+        (and body-row (row-union bound-row body-row))]
+       [_ #f])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-row
