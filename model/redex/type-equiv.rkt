@@ -1,6 +1,7 @@
 #lang racket
 
-(require racket/match)
+(require racket/match
+         "rows.rkt")
 
 (provide row-equiv?
          type-equiv?)
@@ -40,6 +41,8 @@
           (type-equiv? left-error right-error))]
     [(`(Owned ,left-inner) `(Owned ,right-inner))
      (type-equiv? left-inner right-inner)]
+    [(`(Record ,left-row) `(Record ,right-row))
+     (field-row-equiv? left-row right-row type-equiv?)]
     [(`(NFn ,left-parameters ,left-return ,left-row ,left-obligations)
       `(NFn ,right-parameters ,right-return ,right-row ,right-obligations))
      (and (types-equiv? left-parameters right-parameters)

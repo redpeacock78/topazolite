@@ -3,6 +3,7 @@
 (require redex/reduction-semantics)
 
 (provide G1
+         G2
          G1m
          row-∪
          row-⊆
@@ -83,6 +84,12 @@
          c_1 #:refers-to (shadow f x ...)
          c_2 #:refers-to f)
   (RecurVal cid f (x ...) c #:refers-to (shadow f x ...)))
+
+(define-extended-language G2 G1
+  (label ::= variable-not-otherwise-mentioned)
+  (m ::= imm mut)
+  (r ::= ((label τ m) ...))
+  (τ ::= .... (Record r)))
 
 (define-extended-language G1m G1
   (p ::= natural)
