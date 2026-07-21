@@ -24,6 +24,11 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+(define (record-type? type)
+  (match type
+    [`(Record ,_) #t]
+    [_ #f]))
+
 (define (row-union left right)
   (term (row-∪ ,left ,right)))
 
@@ -208,14 +213,24 @@
                                places
                                callables))]
                      [non-never
-                      (for/first ([result (in-list attempts)]
-                                  #:when
-                                  (and result
-                                       (not (eq? (first result) 'Never))))
-                        (first result))]
+                      (and (andmap identity attempts)
+                           (filter (lambda (result)
+                                     (not (eq? (first result) 'Never)))
+                                   attempts))]
+                     [types (and non-never (map first non-never))]
                      [result-type
-                      (or non-never
-                          (and (andmap identity attempts) 'Never))])
+                      (cond
+                        [(not types) #f]
+                        [(null? types) 'Never]
+                        [(andmap record-type? types)
+                         `(Record
+                           ,(for/fold
+                                ([merged-row (second (first types))])
+                                ([type (in-list (rest types))])
+                              (field-row-intersection
+                               merged-row (second type) type-equiv?)))]
+                        [(ormap record-type? types) #f]
+                        [else (first types)])])
                 (and result-type
                      (let ([branch-rows
                             (for/list ([context (in-list contexts)])
