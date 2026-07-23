@@ -47,3 +47,35 @@
 (check-equal? (entry-sid e) 'root)
 (check-equal? (entry-pid e) 'default)
 (check-equal? (entry-hook e) '())
+
+; project: root scope から可視な entry を候補へ写す
+(check-equal?
+ (project Γ-pc0 '(root))
+ '((Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+              typeNarrativeCap root default ())))
+
+; 可視でない scope の entry は候補にしない
+(check-equal? (project Γ-pc0 '(other)) '())
+
+; 候補アクセサ
+(define c (first (project Γ-pc0 '(root))))
+(check-equal? (candidate-proof c) '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+(check-equal? (candidate-prop c) 'TypeNarrativeCap)
+(check-equal? (candidate-origin c) '(Reserved o-type-narrative))
+(check-equal? (candidate-cid c) 'typeNarrativeCap)
+(check-equal? (candidate-identity c)
+              '(TypeNarrativeCap (Reserved o-type-narrative) typeNarrativeCap root default))
+
+; wf-candidate: 命題整合・origin 正当・scope 可視・hook 空
+(define goalT (make-goal 'TypeNarrativeCap))
+(check-true (wf-candidate? c goalT))
+; 命題が食い違う候補は wf でない
+(check-false (wf-candidate? c (make-goal 'ValidNarrativeTrait)))
+; forge した origin（verify-origins を通らない）は wf でない
+(define forged
+  '(Candidate (ProofRep (Reserved o-bogus) TypeNarrativeCap) x root default ()))
+(check-false (wf-candidate? forged goalT))
+
+; wf-Σ: project の返す候補環境は wf
+(check-true (wf-Σ? (project Γ-pc0 '(root)) goalT))
+(check-false (wf-Σ? (list forged) goalT))
