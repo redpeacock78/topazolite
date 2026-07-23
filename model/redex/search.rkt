@@ -17,7 +17,8 @@
          resolve-candidates
          make-classifier make-oracle make-cert cert-valid? unique?
          default-classifier default-oracle
-         admissible?)
+         admissible?
+         discharge? current-search-log search-log-snapshot reset-search-log!)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
 (define (make-goal phi) (list 'Goal phi '⊥ext))
@@ -159,3 +160,39 @@
     [(_ 'Absent) #f]
     [(_ (list 'Ambiguous _)) #f]
     [(_ _) #f]))
+
+;; 探索起動の記録: 空虚な合格の防止。どの class・SR 枝と採否を通したかを覚える。
+(define current-search-log (make-parameter (make-hash)))
+(define (reset-search-log!) (current-search-log (make-hash)))
+(define (search-log-snapshot) (hash-copy (current-search-log)))
+(define (log-branch! key) (hash-set! (current-search-log) key #t))
+
+(define (log-outcome! class sr accepted?)
+  (define tag
+    (if (eq? class 'Unknown)
+        'unknown-reject
+        (string->symbol
+         (format "~a-~a-~a"
+                 (string-downcase (symbol->string class))
+                 (cond [(resolved? sr) 'resolved]
+                       [(absent? sr) 'absent]
+                       [else 'ambiguous])
+                 (if accepted? 'accept 'reject)))))
+  (log-branch! tag))
+
+;; discharge?: 義務充足の judgment。χ で class を得て、class に応じて SR と証拠を得る。
+(define (discharge? gamma-pc chi omega goal [sc-ctx '(root)])
+  (define class (chi goal gamma-pc))
+  (define-values (sr ev)
+    (case class
+      [(Finite)
+       (define sigma (project gamma-pc sc-ctx))
+       (values (resolve-candidates goal sigma) sigma)]
+      [(Productive)
+       (match (omega goal gamma-pc)
+         [(list sr cert) (values sr cert)]
+         [_ (values Absent #f)])]
+      [else (values Absent #f)]))
+  (define accepted? (admissible? goal gamma-pc class sr ev))
+  (log-outcome! class sr accepted?)
+  accepted?)
