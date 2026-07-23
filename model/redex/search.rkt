@@ -13,7 +13,8 @@
          project scope-visible?
          candidate-proof candidate-prop candidate-origin
          candidate-cid candidate-sid candidate-pid candidate-identity
-         wf-candidate? wf-Σ?)
+         wf-candidate? wf-Σ?
+         resolve-candidates)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
 (define (make-goal phi) (list 'Goal phi '⊥ext))
@@ -92,3 +93,19 @@
 ;; wf-Σ: すべての候補が wf-candidate を満たす。Finite 完全性は project が構成上保証する。
 (define (wf-Σ? sigma goal)
   (andmap (lambda (c) (wf-candidate? c goal)) sigma))
+
+;; resolve-candidates: Finite closed-world の候補解決。全域で、wf-Σ を前提とする。
+(define (resolve-candidates goal sigma)
+  (define phi (goal-proposition goal))
+  ;; goal の命題に shape が一致する候補を集める
+  (define matched
+    (filter (lambda (c) (equal? (candidate-prop c) phi)) sigma))
+  ;; 候補同一性で重複排除（同一性の組が等しい候補だけ一つへ畳む）
+  (define deduped (remove-duplicates matched #:key candidate-identity))
+  ;; cid の canonical order で並べる（順序非依存）
+  (define sorted
+    (sort deduped symbol<?
+          #:key (lambda (c) (candidate-cid c))))
+  (cond [(null? sorted) Absent]
+        [(null? (cdr sorted)) (resolved (candidate-proof (car sorted)))]
+        [else (ambiguous (map candidate-proof sorted))]))

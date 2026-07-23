@@ -79,3 +79,24 @@
 ; wf-Σ: project の返す候補環境は wf
 (check-true (wf-Σ? (project Γ-pc0 '(root)) goalT))
 (check-false (wf-Σ? (list forged) goalT))
+
+(define PT '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+(define cT '(Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+                       typeNarrativeCap root default ()))
+; provenance と cid の異なる第二候補
+(define cT2 '(Candidate (ProofRep (Reserved o-type-narrative-b) TypeNarrativeCap)
+                        other root default ()))
+(define PT2 '(ProofRep (Reserved o-type-narrative-b) TypeNarrativeCap))
+
+; 0 候補 → Absent
+(check-equal? (resolve-candidates goalT '()) 'Absent)
+; 1 候補 → Resolved
+(check-equal? (resolve-candidates goalT (list cT)) (list 'Resolved PT))
+; 命題が一致しない候補は集めない
+(check-equal? (resolve-candidates (make-goal 'ValidNarrativeTrait) (list cT)) 'Absent)
+; 同一性の等しい重複候補は一つへ畳む → Resolved
+(check-equal? (resolve-candidates goalT (list cT cT)) (list 'Resolved PT))
+; 同一性の異なる複数候補 → Ambiguous、canonical order（cid: other < typeNarrativeCap）
+(check-equal? (resolve-candidates goalT (list cT cT2)) (list 'Ambiguous (list PT2 PT)))
+; 順序非依存: 並べ替えても同じ SR
+(check-equal? (resolve-candidates goalT (list cT2 cT)) (list 'Ambiguous (list PT2 PT)))
