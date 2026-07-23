@@ -100,3 +100,30 @@
 (check-equal? (resolve-candidates goalT (list cT cT2)) (list 'Ambiguous (list PT2 PT)))
 ; 順序非依存: 並べ替えても同じ SR
 (check-equal? (resolve-candidates goalT (list cT2 cT)) (list 'Ambiguous (list PT2 PT)))
+
+(define goalV (make-goal 'ValidNarrativeTrait))
+
+; χ fixture: goal → class
+(define chi (make-classifier (list (cons goalT 'Finite) (cons goalV 'Unknown))))
+(check-equal? (chi goalT Γ-pc0) 'Finite)
+(check-equal? (chi goalV Γ-pc0) 'Unknown)
+; 既定 χ: G1 の 2 命題を Finite に写す（SR とは独立に class を定める）
+(check-equal? (default-classifier goalT Γ-pc0) 'Finite)
+(check-equal? (default-classifier goalV Γ-pc0) 'Finite)
+
+; Ω fixture と certificate
+(define cert (make-cert goalT Γ-pc0 PT))
+(define omega (make-oracle (list (cons goalT (list (list 'Resolved PT) cert)))))
+(check-equal? (omega goalT Γ-pc0) (list (list 'Resolved PT) cert))
+(check-false (omega goalV Γ-pc0))
+(check-false (default-oracle goalT Γ-pc0))
+
+; cert-valid: 同じ goal・Γ_pc・P に束縛されたときだけ有効
+(check-true  (cert-valid? cert goalT Γ-pc0 PT))
+(check-false (cert-valid? cert goalV Γ-pc0 PT))          ; 別 goal の流用は不可
+(check-false (cert-valid? cert goalT Γ-pc0 '(ProofRep (Reserved o-x) TypeNarrativeCap)))
+
+; unique?: 完全な Σ から (Resolved P) が出れば一意性導出
+(define sigmaT (project Γ-pc0 '(root)))
+(check-true  (unique? goalT sigmaT PT))
+(check-false (unique? goalT '() PT))

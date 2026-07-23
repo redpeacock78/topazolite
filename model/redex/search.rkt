@@ -14,7 +14,9 @@
          candidate-proof candidate-prop candidate-origin
          candidate-cid candidate-sid candidate-pid candidate-identity
          wf-candidate? wf-Σ?
-         resolve-candidates)
+         resolve-candidates
+         make-classifier make-oracle make-cert cert-valid? unique?
+         default-classifier default-oracle)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
 (define (make-goal phi) (list 'Goal phi '⊥ext))
@@ -109,3 +111,34 @@
   (cond [(null? sorted) Absent]
         [(null? (cdr sorted)) (resolved (candidate-proof (car sorted)))]
         [else (ambiguous (map candidate-proof sorted))]))
+
+;; χ: goal と候補文脈から計算クラスへの trusted な写像。SR を参照しない。
+;; goal を key に引くため、同値な goal（equal?）は同じ class を得る。
+(define (make-classifier table)
+  (lambda (goal gamma-pc)
+    (cond [(assoc goal table) => cdr]
+          [else 'Unknown])))
+
+;; 既定 χ: G1 の 2 命題を Finite に写す。class は SR と独立に φ で定まる。
+(define default-classifier
+  (make-classifier
+   (list (cons (make-goal 'TypeNarrativeCap) 'Finite)
+         (cons (make-goal 'ValidNarrativeTrait) 'Finite))))
+
+;; Ω: Productive 探索の結果と certificate を返す trusted な写像。無ければ #f。
+(define (make-oracle table)
+  (lambda (goal gamma-pc)
+    (cond [(assoc goal table) => cdr]
+          [else #f])))
+
+;; 既定 Ω: Productive 候補を持たない。
+(define default-oracle (make-oracle '()))
+
+;; 一意性 certificate: goal・Γ_pc・候補 P・計算クラスに束縛された証拠。
+(define (make-cert goal gamma-pc P) (list 'Cert goal gamma-pc P 'Productive))
+(define (cert-valid? cert goal gamma-pc P)
+  (equal? cert (list 'Cert goal gamma-pc P 'Productive)))
+
+;; Finite の一意性: 完全な Σ に対して resolve が (Resolved P) を返すことが導出。
+(define (unique? goal sigma P)
+  (equal? (resolve-candidates goal sigma) (resolved P)))
