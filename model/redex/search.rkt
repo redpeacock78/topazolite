@@ -16,7 +16,8 @@
          wf-candidate? wf-Σ?
          resolve-candidates
          make-classifier make-oracle make-cert cert-valid? unique?
-         default-classifier default-oracle)
+         default-classifier default-oracle
+         admissible?)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
 (define (make-goal phi) (list 'Goal phi '⊥ext))
@@ -142,3 +143,19 @@
 ;; Finite の一意性: 完全な Σ に対して resolve が (Resolved P) を返すことが導出。
 (define (unique? goal sigma P)
   (equal? (resolve-candidates goal sigma) (resolved P)))
+
+;; admissible?: 暗黙充足の可否。SR が (Resolved P) の枝だけで真になりうる。
+;; ev は現在の探索に束縛された証拠（Finite: 完全な Σ、Productive: certificate）。
+(define (admissible? goal gamma-pc class sr ev)
+  (match* (class sr)
+    [('Finite (list 'Resolved P))
+     ;; 完全な Σ からの一意性導出があり、その P が SR の P と一致（PSR-002）。
+     ;; unique? が resolve の (Resolved P) 一致を含むため、P の照合はこれで足りる。
+     (and ev (unique? goal ev P))]
+    [('Productive (list 'Resolved P))
+     ;; Ω の certificate が同じ goal・Γ_pc・P に束縛（PSR-002）
+     (and ev (cert-valid? ev goal gamma-pc P))]
+    [('Unknown _) #f]
+    [(_ 'Absent) #f]
+    [(_ (list 'Ambiguous _)) #f]
+    [(_ _) #f]))
