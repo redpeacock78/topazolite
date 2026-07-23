@@ -7,6 +7,7 @@
          "origins.rkt"
          "rows.rkt"
          "schema.rkt"
+         "search.rkt"
          "type-equiv.rkt")
 
 (provide core-type-of
@@ -121,14 +122,6 @@
 (define (without-owned environment)
   (filter (λ (entry) (not (owned-type? (second entry))))
           environment))
-
-(define propositions
-  (for/list ([entry (in-list Π0)])
-    (first (second entry))))
-
-(define (obligations-satisfied? obligations)
-  (andmap (λ (proposition) (member proposition propositions))
-          obligations))
 
 (define (check-many cores types environment places callables)
   (and (= (length cores) (length types))
@@ -421,7 +414,7 @@
         (define argument-rows
           (check-many arguments parameter-types
                       environment places callables))
-        (and (obligations-satisfied? obligations)
+        (and (obligations-dischargeable? obligations Γ-pc0)
              argument-rows
              (list return-type
                    (rows-union

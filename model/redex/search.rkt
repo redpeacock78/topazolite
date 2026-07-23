@@ -18,7 +18,8 @@
          make-classifier make-oracle make-cert cert-valid? unique?
          default-classifier default-oracle
          admissible?
-         discharge? current-search-log search-log-snapshot reset-search-log!)
+         discharge? current-search-log search-log-snapshot reset-search-log!
+         obligations-dischargeable?)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
 (define (make-goal phi) (list 'Goal phi '⊥ext))
@@ -196,3 +197,10 @@
   (define accepted? (admissible? goal gamma-pc class sr ev))
   (log-outcome! class sr accepted?)
   accepted?)
+
+;; 義務列の全 φ が候補文脈から暗黙充足できるか。typing と elaborate の共有経路。
+(define (obligations-dischargeable? obligations gamma-pc
+                                    [chi default-classifier]
+                                    [omega default-oracle])
+  (for/and ([phi (in-list obligations)])
+    (discharge? gamma-pc chi omega (make-goal phi))))

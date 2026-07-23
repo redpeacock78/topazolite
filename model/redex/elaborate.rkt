@@ -8,7 +8,8 @@
          "lang.rkt"
          "origins.rkt"
          "rows.rkt"
-         "schema.rkt")
+         "schema.rkt"
+         "search.rkt")
 
 (provide UCore
          elab)
@@ -479,9 +480,9 @@
            (synth function environment delta propositions boundaries))
          (match (judgment-type function-result)
            [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
-            (unless (for/and ([obligation (in-list obligations)])
-                      (for/or ([entry (in-list propositions)])
-                        (equal? obligation (first (second entry)))))
+            (unless (obligations-dischargeable?
+                     obligations
+                     (candidateize propositions))
               (reject 'unsatisfied-proof-obligation obligations))
             (define argument-results
               (check-many arguments parameter-types
