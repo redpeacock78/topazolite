@@ -3,7 +3,8 @@
 (require racket/match
          "rows.rkt")
 
-(provide row-equiv?
+(provide effect-equiv?
+         row-equiv?
          type-equiv?)
 
 (define (effect-equiv? left right)

@@ -1,6 +1,6 @@
 #lang racket
 
-(require rackunit "../rows.rkt")
+(require rackunit "../rows.rkt" "../compat.rkt")
 
 (define r1 '((a Int imm) (b Bool mut)))
 (define r2 '((c String imm)))
@@ -26,3 +26,7 @@
 
 (check-true  (field-row-unique? r1))
 (check-false (field-row-unique? '((a Int imm) (a Bool mut))))
+
+; G2c 回帰: NFn 分岐の変更が record width subsumption を変えない
+(check-true  (compat? '(Record ((a Int imm) (b Bool mut))) '(Record ((a Int imm)))))
+(check-false (compat? '(Record ((a Int imm))) '(Record ((a Int imm) (b Bool mut)))))
