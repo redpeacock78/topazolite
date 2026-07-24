@@ -47,11 +47,10 @@
 (define (row=? left right)
   (row-equiv? left right))
 
+;; VAR-001..003: checking は elaboration と同じ compat? を全型で共有する。
+;; Never の bottom 受理は compat? の Never 分岐が担う。
 (define (type-compatible? actual expected)
-  (match* (actual expected)
-    [(`(Record ,_) `(Record ,_)) (compat? actual expected)]
-    [(_ _) (or (type-equiv? actual expected)
-               (eq? actual 'Never))]))
+  (compat? actual expected))
 
 (define (record-rows-unique? type)
   (match type
