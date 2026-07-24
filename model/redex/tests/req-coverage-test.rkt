@@ -39,12 +39,17 @@
 (define psr-001 (string-append "PSR" "-001"))
 (define psr-002 (string-append "PSR" "-002"))
 (define psr-003 (string-append "PSR" "-003"))
+(define var-001 (string-append "VAR" "-001"))
+(define var-002 (string-append "VAR" "-002"))
+(define var-003 (string-append "VAR" "-003"))
 (define trt-001 (string-append "TRT" "-001"))
 
 (define expected-g2a-ids
   (set typ-003 row-001 row-002 row-003 row-004))
 (define expected-g2b-ids
   (set psr-001 psr-002 psr-003))
+(define expected-g2c-ids
+  (set var-001 var-002 var-003))
 
 (define (registry-entries ids state)
   (apply string-append
@@ -81,6 +86,10 @@
 (define g2b-ids-missing (remove psr-003 g2b-ids))
 (define g2b-ids-replaced (sort (cons trt-001 g2b-ids-missing) string<?))
 
+(define g2c-ids (sort (set->list expected-g2c-ids) string<?))
+(define g2c-ids-missing (remove var-003 g2c-ids))
+(define g2c-ids-replaced (sort (cons trt-001 g2c-ids-missing) string<?))
+
 (define (fixture-errors registry spec test
                         #:expected-g1-count [expected-g1-count #f]
                         #:expected-g2a-ids [expected-g2a-ids #f])
@@ -103,6 +112,15 @@
                       #:g2b-spec-paths spec-paths
                       #:g2b-test-paths test-paths
                       #:expected-g2b-ids expected-g2b-ids))))
+
+(define (fixture-errors-g2c registry spec test)
+  (with-fixture
+   registry spec test
+   (lambda (registry-path spec-paths test-paths)
+     (coverage-errors registry-path '() '()
+                      #:g2c-spec-paths spec-paths
+                      #:g2c-test-paths test-paths
+                      #:expected-g2c-ids expected-g2c-ids))))
 
 (test-case "G2a coverage requires the exact ID set"
   (check-equal?
@@ -161,6 +179,51 @@
   (check-not-false
    (member (format "G2b test ID set contains unexpected ID: ~a" trt-001)
            replaced-errors)))
+
+(test-case "G2c coverage requires the exact ID set"
+  (check-equal?
+   (fixture-errors-g2c
+    (registry-entries g2c-ids "G2")
+    (spec-references g2c-ids)
+    (test-references g2c-ids))
+   '())
+  (check-not-false
+   (member
+    (format "G2c spec ID set missing expected ID: ~a" var-003)
+    (fixture-errors-g2c
+     (registry-entries g2c-ids-missing "G2")
+     (spec-references g2c-ids-missing)
+     (test-references g2c-ids-missing))))
+  (define replaced-errors
+    (fixture-errors-g2c
+     (registry-entries g2c-ids-replaced "G2")
+     (spec-references g2c-ids-replaced)
+     (test-references g2c-ids-replaced)))
+  (check-not-false
+   (member (format "G2c spec ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors))
+  (check-not-false
+   (member (format "G2c test ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors)))
+
+;; structural-row.md は G2a と G2c の正典を兼ねる。同一ファイルを両 gate の
+;; spec/test に渡しても、G2a 側が G2c の明示集合を除外して green になること。
+(test-case "G2a canon file may also carry G2c references"
+  (with-fixture
+   (string-append (registry-entries g2a-ids "G2")
+                  (registry-entries g2c-ids "G2"))
+   (string-append (spec-references g2a-ids) "\n" (spec-references g2c-ids))
+   (string-append (test-references g2a-ids) "\n" (test-references g2c-ids))
+   (lambda (registry-path spec-paths test-paths)
+     (check-equal?
+      (coverage-errors registry-path '() '()
+                       #:g2a-spec-paths spec-paths
+                       #:g2a-test-paths test-paths
+                       #:expected-g2a-ids expected-g2a-ids
+                       #:g2c-spec-paths spec-paths
+                       #:g2c-test-paths test-paths
+                       #:expected-g2c-ids expected-g2c-ids)
+      '()))))
 
 (test-case "normal coverage passes"
   (check-equal?
@@ -254,5 +317,5 @@
   (define errors (open-output-string))
   (check-equal? (main output errors) 0)
   (check-equal? (get-output-string output)
-                "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, 3 G2b IDs\n")
+                "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, 3 G2b IDs, 3 G2c IDs\n")
   (check-equal? (get-output-string errors) ""))

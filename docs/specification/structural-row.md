@@ -1,6 +1,6 @@
-# Topazolite 構造 row 仕様（G2a）
+# Topazolite 構造 row 仕様（G2a / G2c）
 
-**状態**：G2a 執筆版（codex 実装、claude レビュー前）
+**状態**：G2c 執筆版（codex 実装、claude レビュー前）
 **基底仕様**：`docs/specification/core-calculus.md`（以下、G1 仕様）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md`（以下、ホワイトペーパー）§4.5、§17.4
 **関連文書**：`docs/specification/glossary.md`、`docs/specification/requirements.md`
@@ -11,6 +11,7 @@
 本文書に定義がない構文、型付け規則、簡約規則、Effect row は G1 仕様に従う。
 Redex model の G2a 実装は本文書を正とし、実装との乖離が見つかった場合は本文書を先に修正する。
 G1 仕様へ統合せず差分文書に分けることで、G1 の規則と G2a の coverage 対象を混同しない。
+G2c は本文書へ §6 の関数 variance を追加する差分であり、それ以外の節の規則を変えない（§3.3 と §3.4 の `NFn` と checking への言及だけを §6 へ付け替える）。
 
 G2a はユーザー record を構造で照合する最小コアだけを扱う。
 trait、Proof search、Policy Narrative は、この構造 row を利用する後続層で定める。
@@ -43,7 +44,7 @@ closed と open の違いは §3.2 の binding policy が決める。
 この分離により、簡約前後で保存すべき型は一種類の `(Record r)` だけになる。
 
 G2a の field はすべて required である。
-optional field は §6 の後続層で導入する。
+optional field は §7 の後続層で導入する。
 
 ### 2.2 field row の well-formedness と演算
 
@@ -186,7 +187,7 @@ bound の型が `Never` の場合は、record 型を要求せず任意の注釈�
 この場合は body へ到達しないため、残余を空として x を注釈型で束縛しても射影の安全性と矛盾しない。
 
 G2a の `let` は immutable binding であり、再代入を意味しない。
-再代入を持つ `let mut` は §6 の対象である。
+再代入を持つ `let mut` は §7 の対象である。
 
 ### 3.3 構造互換性
 
@@ -206,7 +207,7 @@ compat?((Record r_sub), (Record r_sup)) =
     m_sup = mut なら type-equiv?(τ_sub, τ_sup)
 
 compat?(Owned<τ_sub>, Owned<τ_sup>) = type-equiv?(τ_sub, τ_sup)
-compat?(NFn_sub, NFn_sup) = type-equiv?(NFn_sub, NFn_sup)
+compat?(NFn_sub, NFn_sup) = §6.1 の関数互換性
 compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
 ```
 
@@ -216,12 +217,12 @@ record の sub は、sup が要求する field をすべて満たす限り余剰
 `imm` field は共変に再帰照合する。
 `mut` field は読みと書きの双方に使われるため、field 型が `type-equiv?` で一致する場合だけ互換とする。
 一方だけが `Owned` である field 型は互換でなく、双方が `Owned` の場合も内部型を不変に照合する。
-`NFn` field は G2a では `type-equiv?` による不変一致に制限する。
+`NFn` field の照合は §6.3 が定める（`imm` は関数 variance、`mut` は不変一致）。
 
 予約基本型と予約 Narrative は record の分岐へ入らず、最後の `type-equiv?` 分岐だけで照合する。 [REQ: TYP-003]
 したがってユーザー record の構造公開は、予約型の内部表現に structural matching を適用する権限を与えない。
 
-checking 位置で実際の型と期待型がともに record 型なら、`check-as` は `type-equiv?` ではなく `compat?(actual, expected)` を使う。
+checking 位置の `check-as` は、実際の型と期待型の形にかかわらず `compat?(actual, expected)` を使う（§6.4）。
 この接続により、record を関数引数や branch の期待型へ渡す位置でも width subsumption が働く。
 `Eliminate` が交差型へ型付けされた後に、field の多い実 record 値へ簡約しても、その値は期待する交差型と互換なので Preservation を保つ。
 
@@ -259,7 +260,7 @@ Eliminate(c0, branches) : (Record r)
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
 
 この構造的交差は、全経路で同じ型と可変性を持つ field だけを残す decidable な近似である。
-型が異なる field の join と Proof witness による field 回復は §6 の後続層で扱う。
+型が異なる field の join と Proof witness による field 回復は §7 の後続層で扱う。
 
 ## 4. elaboration
 
@@ -386,7 +387,63 @@ R-Let、R-LetOwned、R-RecurBind、R-HandleReturn と G2a の二つの Let 規�
 G1 の `inject`、`run`、bounded trace、観測関係は存置する。
 G2a は G2m と `-->g2` を使う G2 版の各ドライバを追加し、G1 の項と `-->g1` の挙動を変えない。
 
-## 6. 範囲外の規則
+## 6. 関数型の variance
+
+### 6.1 関数互換性の規則
+
+`compat?` の `NFn` 分岐を、型同値への委譲から次の規則へ置き換える。 [REQ: VAR-001]
+
+```text
+compat?((NFn (A_sub_1 ... A_sub_n) R_sub E_sub Q_sub),
+        (NFn (A_sup_1 ... A_sup_m) R_sup E_sup Q_sup)) =
+  n = m
+  各 i について compat?(A_sup_i, A_sub_i)     （引数は反変）
+  compat?(R_sub, R_sup)                       （返り値は共変）
+  E_sub ⊆ E_sup                               （§6.2）
+  Q_sub ⊆ Q_sup                               （§6.2）
+```
+
+引数が反変であるのは、期待側が渡すどの引数も実際側が受け取れなければならないためである。
+返り値が共変であるのは、実際側が返すどの値も期待側の文脈で使えなければならないためである。
+引数個数は一致を要求する。
+可変長引数や省略可能引数は G2c の型に存在しないためである。
+
+引数と返り値の照合は `compat?` へ再帰する。
+record 型を引数や返り値に持つ関数型では、この再帰によって §3.3 の width subsumption と関数 variance が相互に入れ子になる。
+引数位置の引数位置のように、再帰のたびに極性は反転する。
+
+### 6.2 latent Effect と Proof obligation の包含
+
+`NFn` の Effect row E と Proof obligation 集合 Q は、集合包含で照合する。 [REQ: VAR-002]
+
+E は共変である。
+実際側が起こしうる作用は、期待側が宣言した作用の範囲に収まらなければならないためである。
+E の要素の同一性は、型同値の Effect row 照合と同じ `effect-equiv?` を使う。
+これにより、`Yield` や `Return` の payload 型の field 順序だけが違うラベルを別の作用と数えない。
+
+Q は E と向きが逆の包含である（`Q_sub ⊆ Q_sup`）。
+Q は呼び出し側が discharge すべき前提の宣言であり、期待側が引き受けると宣言した obligation の範囲内でだけ、実際側は discharge を要求できるためである。
+Q の要素 φ は exact 一致で照合する。
+φ は Proof search 仕様（`proof-search.md`）の命題であり、G2c の φ には構造的同値を要する内部構造がないためである。
+
+### 6.3 field の可変性との交差
+
+record field の照合（§3.3）が field 型として関数型に到達したときの規則を定める。 [REQ: VAR-003]
+
+- `imm` field の関数型は、§3.3 の `imm` 再帰がそのまま §6.1 の関数 variance で照合する。
+- `mut` field の関数型は、`type-equiv?` の不変一致に留まる。
+
+`mut` field が不変に留まるのは、ROW-004 の代入安全性と同じ理由である。
+読み手はより広い関数を期待でき、書き手はより狭い関数を格納しうるため、双方向の利用に安全な照合は同値だけになる。
+
+### 6.4 checking 位置の統一
+
+checking 位置の `check-as` は、実際の型と期待型の形にかかわらず `compat?(actual, expected)` を使う。 [REQ: VAR-001]
+elaboration と ⊢core が同じ判定を共有しない場合、elaboration が受理した項の簡約途中に現れる互換非同値の関数値を ⊢core が拒否し、Preservation が破れるためである。
+`Never` の bottom 受理は `compat?` の `Never` 分岐が引き続き担う。
+`type-equiv?` の判定はこの統一で変わらない（§3.4 の分離を維持する）。
+
+## 7. 範囲外の規則
 
 G2a は次の規則を導入しない。
 送り先は、その規則が必要とする意味論に合わせて定める。
@@ -396,11 +453,11 @@ G2a は次の規則を導入しない。
 - **Union と Intersection**：trait の Intersection が Proof を持つ合成であるため、trait 層で扱う。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
 - **join 型と Proof 付き merge**：型が異なる branch field の上位型と field 常在性の witness を要するため、Proof 層で扱う。
-- **関数 field の完全な variance**：引数反変、返り値共変、latent Effect、Proof obligation の substitutability は G2 の後続層で定める。
-  G2a は `NFn` を `type-equiv?` の不変一致で扱う。
 - **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
 - **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。
+
+G2a で範囲外とした関数 field の variance は、G2c が §6 として導入した。
 
 必須 field と残余 field を二層に分けた record 型は採らない。
 G2a の現在の flow では平坦な field row から安全に射影でき、合流後の field 回復は Proof witness 側で表現できるためである。
@@ -408,7 +465,7 @@ G2a の現在の flow では平坦な field row から安全に射影でき、�
 closed と open を record 型の mode として保持する表現も採らない。
 二つの違いは束縛時の残余処理だけであり、型へ mode を埋め込むと Preservation が不要な型の分岐を持つためである。
 
-## 7. 要件と規則の対応
+## 8. 要件と規則の対応
 
 | 要件 ID | 対応する規則、定義 |
 |---|---|
@@ -417,3 +474,6 @@ closed と open を record 型の mode として保持する表現も採らな�
 | ROW-002 | §3.1 T-Proj、§3.2 T-LetOpenRecord |
 | ROW-003 | §3.5 T-EliminateRecordMerge |
 | ROW-004 | §3.1 T-Rec、§3.3 の `mut` field 不変性 |
+| VAR-001 | §6.1 関数互換性の規則、§6.4 checking 位置の統一 |
+| VAR-002 | §6.2 latent Effect と Proof obligation の包含 |
+| VAR-003 | §6.3 field の可変性との交差、§3.3 の `NFn` field 照合 |

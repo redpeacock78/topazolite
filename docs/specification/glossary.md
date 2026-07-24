@@ -1,6 +1,6 @@
 # Topazolite 用語集
 
-**状態**：G2a 執筆版（codex 実装、claude レビュー前）
+**状態**：G2c 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` 付録 A（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/requirements.md`
 
@@ -115,6 +115,34 @@
   record では期待側の field をすべて要求し、実際側の余剰 field を許す。
 - **参照**：ホワイトペーパー §4.5.1、structural-row.md §3.3。
 - **関連要件 ID**：TYP-003、ROW-002、ROW-004（G2a）。
+
+### 共変
+
+- **定義**：合成型の互換方向が成分型の互換方向と同じ向きになる位置の性質。
+  関数型の返り値と latent Effect row が該当する。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §6.1、§6.2。
+- **関連要件 ID**：VAR-001、VAR-002（G2c）。
+
+### 反変
+
+- **定義**：合成型の互換方向が成分型の互換方向と逆向きになる位置の性質。
+  関数型の引数と Proof obligation 集合が該当する。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §6.1、§6.2。
+- **関連要件 ID**：VAR-001、VAR-002（G2c）。
+
+### Substitutability
+
+- **定義**：期待型の値が使える文脈で、実際の型の値を代わりに使っても安全であるという、互換判定の意味論的根拠。
+  関数 variance の引数反変と返り値共変はこの根拠から導かれる。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §6。
+- **関連要件 ID**：VAR-001（G2c）。
+
+### 関数 variance
+
+- **定義**：関数型どうしの構造互換性の判定規則。
+  引数は反変、返り値は共変、latent Effect は共変の集合包含、Proof obligation は反変の集合包含で照合する。
+- **参照**：ホワイトペーパー §4.5.2、structural-row.md §6。
+- **関連要件 ID**：VAR-001、VAR-002、VAR-003（G2c）。
 
 ### Binding policy
 
