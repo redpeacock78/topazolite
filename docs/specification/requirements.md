@@ -1,6 +1,6 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G2b 執筆版（codex 実装、claude レビュー前）
+**状態**：G2c 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/glossary.md`
 
@@ -37,6 +37,7 @@
 状態が `G1` の ID は、`core-calculus.md` の規則注釈と Redex model のテストの両方で参照されなければならない。
 状態が `G2` で G2a の明示集合に含まれる ID は、`structural-row.md` の規則注釈と G2a テストの両方で参照されなければならない。
 状態が `G2` で G2b の明示集合に含まれる ID は、`proof-search.md` の規則注釈と G2b テストの両方で参照されなければならない。
+状態が `G2` で G2c の明示集合に含まれる ID は、`structural-row.md` §6 の規則注釈と G2c テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -143,6 +144,30 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 - **正典**：`docs/specification/structural-row.md` §3.1、§3.3
 
 mutable field は代入安全性を守るため既定で不変として扱う。
+
+### VAR-001
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/structural-row.md`）
+- **正典**：`docs/specification/structural-row.md` §6.1
+
+関数型の互換性は引数に反変、返り値に共変でなければならない。引数個数は一致を要求する。
+
+### VAR-002
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/structural-row.md`）
+- **正典**：`docs/specification/structural-row.md` §6.2
+
+関数型の latent effect は共変の集合包含、Proof obligation は反変の集合包含で判定しなければならない。Effect ラベルの同一性は型同値の Effect row 照合と同じ同値を使う。
+
+### VAR-003
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/structural-row.md`）
+- **正典**：`docs/specification/structural-row.md` §6.3
+
+関数型を持つ field の判定は可変性と交差する。imm field の関数型は関数 variance で判定し、mut field の関数型は型同値の不変に留まる。
 
 ### TRT-001
 
