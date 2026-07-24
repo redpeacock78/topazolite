@@ -5,7 +5,7 @@
 (define goalT (make-goal 'TypeNarrativeCap))
 (define goalV (make-goal 'ValidNarrativeTrait))
 
-; Finite/Resolved/unique → 充足
+; PSR-002: Finite/Resolved/unique → 充足
 (check-true (discharge? Γ-pc0 default-classifier default-oracle goalT))
 ; ValidNarrativeTrait は候補が無く Absent → 却下（class は既定 χ で Finite でも SR が Absent）
 (check-false (discharge? Γ-pc0 default-classifier default-oracle goalV))

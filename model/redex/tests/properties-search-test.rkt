@@ -44,7 +44,7 @@
                 goalT))
   (check-false (scope-visible? 'deep '(root))))                     ; 不可視 scope（補助）
 
-;; artifact 境界: 手書き artifact が Unknown を Finite と偽っても、
+;; PSR-003 artifact 境界: 手書き artifact が Unknown を Finite と偽っても、
 ;; trusted な χ が Unknown を返すため discharge? は充足を認めない。
 (test-case "artifact 境界で Unknown 拒否が保たれる"
   (define chiU (make-classifier (list (cons goalT 'Unknown))))

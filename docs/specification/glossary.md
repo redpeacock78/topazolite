@@ -237,6 +237,61 @@
 - **参照**：ホワイトペーパー §7.1、core-calculus.md §6。
 - **関連要件 ID**：REC-001、REC-002。
 
+### SearchResult
+
+- **定義**：暗黙 Proof 探索の結果を表す meta-sort。
+  `Resolved P`、`Absent`、`Ambiguous (P ...)` の三形を持ち、型 τ は拡張しない。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §2.1。
+- **関連要件 ID**：PSR-001、PSR-002、PSR-003（G2b）。
+
+### Goal descriptor
+
+- **定義**：暗黙 Proof 探索が充足する命題と特殊化情報を保持する記述子。
+  G2b では `(Goal φ ⊥ext)` とし、φ だけを充填する。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §3.1。
+- **関連要件 ID**：PSR-001、PSR-002（G2b）。
+
+### 候補文脈
+
+- **定義**：暗黙充足に利用できる Proof 候補の有限写像。
+  G2b では固定の Π0 から `candidateize` が決定的に構成する Γ_pc⁰ を使う。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §3.2。
+- **関連要件 ID**：PSR-001、PSR-002（G2b）。
+
+### 候補同一性
+
+- **定義**：二つの Proof 候補を同じ候補として畳めるかを決める関係。
+  G2b では命題、origin、候補識別子、scope 識別子、priority 識別子の組で判定する。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §3.3。
+- **関連要件 ID**：PSR-002（G2b）。
+
+### 採択可能性
+
+- **定義**：計算クラス、SearchResult、一意性の証拠から、探索結果を暗黙充足に使えるかを判定する関係。
+  `admissible?` と書く。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §5。
+- **関連要件 ID**：PSR-002、PSR-003（G2b）。
+
+### 分類 oracle
+
+- **定義**：goal と候補文脈から探索計算の ComputationClass を返す型検査器側の信頼環境。
+  χ と書き、検査対象の artifact からは供給しない。
+- **参照**：proof-search.md §2.3。
+- **関連要件 ID**：PSR-001、PSR-003（G2b）。
+
+### 探索 oracle
+
+- **定義**：Productive な探索の SearchResult と一意性 certificate を返す型検査器側の信頼環境。
+  `Ω_search` と書き、地の文では Ωs と略記する。
+- **参照**：proof-search.md §4.2。
+- **関連要件 ID**：PSR-002（G2b）。
+
+### 一意性 certificate
+
+- **定義**：Productive な探索結果が同じ goal、候補文脈、Proof 候補に対して一意であることを示す信頼済み証拠。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §4.3。
+- **関連要件 ID**：PSR-002（G2b）。
+
 ### ⇒ / ⇐（elaboration judgment）
 
 - **定義**：`Γ; Δ; Π; B ⊢ e ⇒ τ ! ε ⟹ c` は項 e の型 τ と Effect row ε を合成（synthesize）し、Typed Core の c へ変換することを表す。`⇐` は期待型に対する検査（check）を表す。

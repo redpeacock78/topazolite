@@ -1,7 +1,7 @@
 #lang racket
 (require rackunit "../typing.rkt" "../search.rkt")
 
-;; TypeNarrativeCap 義務を持つ NFn への Apply は、Γ_pc⁰ の候補で discharge され受理される。
+;; PSR-002: TypeNarrativeCap 義務は、Γ_pc⁰ の一意な候補で discharge され受理される。
 (define callables
   '((cap-id (NFn (Int) Int () (TypeNarrativeCap)))))
 (reset-search-log!)

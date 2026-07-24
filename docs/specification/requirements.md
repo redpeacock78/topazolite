@@ -1,8 +1,8 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G2a 執筆版（codex 実装、claude レビュー前）
+**状態**：G2b 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/glossary.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/glossary.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -36,6 +36,7 @@
 
 状態が `G1` の ID は、`core-calculus.md` の規則注釈と Redex model のテストの両方で参照されなければならない。
 状態が `G2` で G2a の明示集合に含まれる ID は、`structural-row.md` の規則注釈と G2a テストの両方で参照されなければならない。
+状態が `G2` で G2b の明示集合に含まれる ID は、`proof-search.md` の規則注釈と G2b テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -168,6 +169,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/proof-search.md` §2.3
 
 暗黙 Proof search は ComputationClass と SearchResult を独立に返さなければならない。
 
@@ -175,6 +177,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/proof-search.md` §4.3、§5.1
 
 標準暗黙挿入は Finite<Resolved<Unique<P>>>、または有限時間で一意性が確定すると Proof された Productive search のみを採用する。
 
@@ -182,6 +185,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/proof-search.md` §5.2
 
 Unknown search は暗黙に継続せず、明示 Proof、探索境界、または termination Proof を要求する。
 

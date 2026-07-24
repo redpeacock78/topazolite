@@ -10,7 +10,7 @@
 (check-false (goal? '(Foo)))
 (check-equal? (goal-proposition (make-goal 'ValidNarrativeTrait)) 'ValidNarrativeTrait)
 
-; SearchResult コンストラクタと述語
+; PSR-001: SearchResult は ComputationClass と独立した meta-sort
 (check-equal? (resolved P) (list 'Resolved P))
 (check-equal? Absent 'Absent)
 (check-equal? (ambiguous (list P P)) (list 'Ambiguous (list P P)))
