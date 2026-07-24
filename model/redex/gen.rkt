@@ -28,7 +28,11 @@
          config-events
          config-places
          runtime-row
-         row-subset?)
+         row-subset?
+         random-variance-type
+         narrow-variance-type
+         widen-variance-type
+         permute-variance-type)
 
 ;; Every generated form is a closed UCore term.  Separate nonterminals make the
 ;; seven searches hit the rules they are intended to check instead of spending
@@ -308,3 +312,113 @@
 
 (define (bounded-trace-g2 initial fuel)
   (bounded-trace/using 'bounded-trace-g2 -->g2 initial fuel))
+
+;; ---------------------------------------------------------------------------
+;; G2c: variance 型生成器。compat? の性質検査（properties-variance-test.rkt）
+;; 専用で、項は生成しない。narrow は compat?(narrow(t), t) を、widen は
+;; compat?(t, widen(t)) を、permute は type-equiv?(t, permute(t)) を構成的に
+;; 保つ変換である。
+;; ---------------------------------------------------------------------------
+
+(define variance-leaves '(Int Bool Unit String))
+(define variance-effect-pool
+  '(Own Suspend (Yield Int) (Yield (Record ((a Int imm) (b Bool imm))))))
+(define variance-obligation-pool '(ValidNarrativeTrait TypeNarrativeCap))
+(define variance-extra-labels '(x y z))
+
+(define (pick-one items)
+  (list-ref items (random (length items))))
+
+;; pool の並び順を保った部分列を返す。E/Q が常に pool 順の部分列になるため、
+;; 相互包含が成り立つ二つの E/Q は同一リストになり、性質 4 の反対称性検査が
+;; type-equiv? の equal? 比較（Q は順序敏感）と衝突しない。
+(define (random-subset items)
+  (for/list ([item (in-list items)] #:when (zero? (random 2))) item))
+
+(define (append-missing row pool)
+  (append row
+          (for/list ([item (in-list pool)]
+                     #:unless (member item row))
+            item)))
+
+(define (map-imm-fields row transform)
+  (for/list ([field (in-list row)])
+    (match field
+      [(list label field-type 'imm) (list label (transform field-type) 'imm)]
+      [_ field])))
+
+(define (random-variance-row depth)
+  (for/list ([label (in-list (take '(a b c) (add1 (random 3))))])
+    (list label (random-variance-type depth) (pick-one '(imm mut)))))
+
+(define (random-variance-type depth)
+  (cond
+    [(or (zero? depth) (zero? (random 3))) (pick-one variance-leaves)]
+    [(zero? (random 2)) `(Record ,(random-variance-row (sub1 depth)))]
+    [else `(NFn (,(random-variance-type (sub1 depth)))
+                ,(random-variance-type (sub1 depth))
+                ,(random-subset variance-effect-pool)
+                ,(random-subset variance-obligation-pool))]))
+
+;; 部分型方向: Record は imm field の narrow か余剰 field 追加、NFn は
+;; 引数 widen・返り値 narrow・E/Q の部分列化。mut field は触らない。
+(define (narrow-variance-type type)
+  (cond
+    [(zero? (random 4)) 'Never]
+    [else
+     (match type
+       [`(Record ,row)
+        (define fresh-labels
+          (for/list ([label (in-list variance-extra-labels)]
+                     #:unless (assq label row))
+            label))
+        (if (and (pair? fresh-labels) (zero? (random 2)))
+            `(Record ,(append row (list (list (first fresh-labels) 'Int 'imm))))
+            `(Record ,(map-imm-fields row narrow-variance-type)))]
+       [`(NFn ,parameters ,return-type ,row ,obligations)
+        `(NFn ,(map widen-variance-type parameters)
+              ,(narrow-variance-type return-type)
+              ,(random-subset row)
+              ,(random-subset obligations))]
+       [_ type])]))
+
+;; 上位型方向: Never は任意型へ、Record は先頭 field 削除か imm field の
+;; widen、NFn は引数 narrow・返り値 widen・E/Q へ pool の残りを追加。
+(define (widen-variance-type type)
+  (match type
+    ['Never (random-variance-type 1)]
+    [`(Record ,row)
+     (if (and (pair? row) (zero? (random 2)))
+         `(Record ,(rest row))
+         `(Record ,(map-imm-fields row widen-variance-type)))]
+    [`(NFn ,parameters ,return-type ,row ,obligations)
+     `(NFn ,(map narrow-variance-type parameters)
+           ,(widen-variance-type return-type)
+           ,(append-missing row variance-effect-pool)
+           ,(append-missing obligations variance-obligation-pool))]
+    [_ type]))
+
+(define (permute-effect-label label)
+  (match label
+    [`(Yield ,payload) `(Yield ,(permute-variance-type payload))]
+    [`(Return ,boundary ,payload)
+     `(Return ,boundary ,(permute-variance-type payload))]
+    [_ label]))
+
+;; type-equiv? を保つ並び替え。field row と Effect row は順序独立なので
+;; reverse する。Q は type-equiv? が equal? で比較するため順序を保存する。
+(define (permute-variance-type type)
+  (match type
+    [`(Record ,row)
+     `(Record ,(reverse
+                (for/list ([field (in-list row)])
+                  (match field
+                    [(list label field-type mutability)
+                     (list label (permute-variance-type field-type)
+                           mutability)]))))]
+    [`(NFn ,parameters ,return-type ,row ,obligations)
+     `(NFn ,(map permute-variance-type parameters)
+           ,(permute-variance-type return-type)
+           ,(reverse (map permute-effect-label row))
+           ,obligations)]
+    [_ type]))
