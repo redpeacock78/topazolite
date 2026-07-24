@@ -36,10 +36,15 @@
 (define row-002 (string-append "ROW" "-002"))
 (define row-003 (string-append "ROW" "-003"))
 (define row-004 (string-append "ROW" "-004"))
+(define psr-001 (string-append "PSR" "-001"))
+(define psr-002 (string-append "PSR" "-002"))
+(define psr-003 (string-append "PSR" "-003"))
 (define trt-001 (string-append "TRT" "-001"))
 
 (define expected-g2a-ids
   (set typ-003 row-001 row-002 row-003 row-004))
+(define expected-g2b-ids
+  (set psr-001 psr-002 psr-003))
 
 (define (registry-entries ids state)
   (apply string-append
@@ -72,6 +77,10 @@
 (define g2a-spec-replaced (spec-references g2a-ids-replaced))
 (define g2a-test-replaced (test-references g2a-ids-replaced))
 
+(define g2b-ids (sort (set->list expected-g2b-ids) string<?))
+(define g2b-ids-missing (remove psr-003 g2b-ids))
+(define g2b-ids-replaced (sort (cons trt-001 g2b-ids-missing) string<?))
+
 (define (fixture-errors registry spec test
                         #:expected-g1-count [expected-g1-count #f]
                         #:expected-g2a-ids [expected-g2a-ids #f])
@@ -85,6 +94,15 @@
                           #:expected-g2a-ids expected-g2a-ids)
          (coverage-errors registry-path spec-paths test-paths
                           #:expected-g1-count expected-g1-count)))))
+
+(define (fixture-errors-g2b registry spec test)
+  (with-fixture
+   registry spec test
+   (lambda (registry-path spec-paths test-paths)
+     (coverage-errors registry-path '() '()
+                      #:g2b-spec-paths spec-paths
+                      #:g2b-test-paths test-paths
+                      #:expected-g2b-ids expected-g2b-ids))))
 
 (test-case "G2a coverage requires the exact ID set"
   (check-equal?
@@ -116,6 +134,32 @@
            replaced-errors))
   (check-not-false
    (member (format "G2a test ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors)))
+
+(test-case "G2b coverage requires the exact ID set"
+  (check-equal?
+   (fixture-errors-g2b
+    (registry-entries g2b-ids "G2")
+    (spec-references g2b-ids)
+    (test-references g2b-ids))
+   '())
+  (check-not-false
+   (member
+    (format "G2b spec ID set missing expected ID: ~a" psr-003)
+    (fixture-errors-g2b
+     (registry-entries g2b-ids-missing "G2")
+     (spec-references g2b-ids-missing)
+     (test-references g2b-ids-missing))))
+  (define replaced-errors
+    (fixture-errors-g2b
+     (registry-entries g2b-ids-replaced "G2")
+     (spec-references g2b-ids-replaced)
+     (test-references g2b-ids-replaced)))
+  (check-not-false
+   (member (format "G2b spec ID set contains unexpected ID: ~a" trt-001)
+           replaced-errors))
+  (check-not-false
+   (member (format "G2b test ID set contains unexpected ID: ~a" trt-001)
            replaced-errors)))
 
 (test-case "normal coverage passes"
@@ -210,5 +254,5 @@
   (define errors (open-output-string))
   (check-equal? (main output errors) 0)
   (check-equal? (get-output-string output)
-                "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs\n")
+                "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, 3 G2b IDs\n")
   (check-equal? (get-output-string errors) ""))
