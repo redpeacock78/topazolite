@@ -8,12 +8,18 @@
 (define certT (make-cert goalT Γ-pc0 PT))
 
 ;; --- Finite ---
-; (Finite, Resolved P): 完全な Σ からの一意性導出があり P が一致 → 採択
+; PSR-002: (Finite, Resolved P) は完全な Σ から一意性を導出できるときだけ採択
 (check-true  (admissible? goalT Γ-pc0 'Finite (resolved PT) sigmaT))
 ; 一意性導出はあるが SR の P が Σ 由来の P と食い違う → 却下
 (check-false (admissible? goalT Γ-pc0 'Finite (resolved PT2) sigmaT))
 ; 完全でない Σ（空）では一意性導出が無い → 却下
 (check-false (admissible? goalT Γ-pc0 'Finite (resolved PT) '()))
+; 現在の Γ_pc に複数候補がある場合、1 候補だけの不完全な Σ は証拠にならない
+(define gamma-pc2
+  '((first (TypeNarrativeCap (Reserved o-type-narrative) first root default ()))
+    (second (TypeNarrativeCap (Reserved o-type-narrative) second root default ()))))
+(define incomplete-sigma (list (first (project gamma-pc2 '(root)))))
+(check-false (admissible? goalT gamma-pc2 'Finite (resolved PT) incomplete-sigma))
 ; 一意性証拠が無い → 却下
 (check-false (admissible? goalT Γ-pc0 'Finite (resolved PT) #f))
 ; (Finite, Absent) → 却下

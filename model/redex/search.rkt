@@ -153,7 +153,10 @@
     [('Finite (list 'Resolved P))
      ;; 完全な Σ からの一意性導出があり、その P が SR の P と一致（PSR-002）。
      ;; unique? が resolve の (Resolved P) 一致を含むため、P の照合はこれで足りる。
-     (and ev (unique? goal ev P))]
+     (and ev
+          (equal? ev (project gamma-pc '(root)))
+          (wf-Σ? ev goal)
+          (unique? goal ev P))]
     [('Productive (list 'Resolved P))
      ;; Ω の certificate が同じ goal・Γ_pc・P に束縛（PSR-002）
      (and ev (cert-valid? ev goal gamma-pc P))]
