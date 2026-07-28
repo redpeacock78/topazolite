@@ -3,7 +3,8 @@
 (require racket/match
          redex/reduction-semantics
          "lang.rkt"
-         "origins.rkt")
+         "origins.rkt"
+         "validators.rkt")
 
 (provide -->g1
          -->g2
@@ -55,9 +56,42 @@
    (select-branch K (v_arg ...) (br_rest ...))]
   [(select-branch K (v_arg ...) ()) #f])
 
+;; RFN-001: カーネル primitive の δ。成否はペイロード駆動で決定的であり、
+;; 乱数や環境参照を使わない。判定表に無い名前と形の合わない引数は undefined を
+;; 返し、R-Delta の where が不発火になる。
+(define (kernel-delta/proc name argument)
+  (cond
+    [(validator-row-by-name name)
+     => (lambda (row)
+          (define payload-type (validator-payload-type row))
+          (define proposition (validator-proposition row))
+          (define result-type
+            `(Result (Refined ,payload-type ,proposition) String))
+          (match argument
+            [`(UVal ,payload)
+             (if ((validator-check row) payload)
+                 `(Construct ,result-type ok
+                             (RVal (ProofRep (Reserved ,(validator-oid row))
+                                             ,proposition)
+                                   ,payload))
+                 `(Construct ,result-type ng
+                             ,(validator-error-message name)))]
+            [_ 'undefined]))]
+    ;; 値を未検証と宣言する操作は安全であるため check を伴わない。
+    [(introduction-row-by-name name) `(UVal ,argument)]
+    ;; Proof を捨てて弱める操作であるため無条件に安全である。
+    [(projection-row-by-name name)
+     (match argument
+       [`(RVal (ProofRep ,_ ,_) ,payload) payload]
+       [_ 'undefined])]
+    [else 'undefined]))
+
 (define-metafunction/extension δ
   G2m
-  δ/g2 : nm v ... -> any)
+  δ/g2 : nm v ... -> any
+  [(δ/g2 nm v)
+   ,(kernel-delta/proc (term nm) (term v))
+   (side-condition (kernel-primitive-name? (term nm)))])
 
 (define-metafunction/extension substitute*
   G2m

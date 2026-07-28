@@ -2,7 +2,8 @@
 
 (require racket/match
          redex/reduction-semantics
-         "lang.rkt")
+         "lang.rkt"
+         "validators.rkt")
 
 (provide Δ0
          Γ0
@@ -12,40 +13,84 @@
          origin-of
          verify-origins)
 
+;; 判定表の行と、導入・射影 primitive の行から R0 の追加分を生成する。
+;; oid は primitive の発行者であると同時に ProofRep の発行者でもある。
+(define kernel-r0-entries
+  (append
+   (for/list ([row (in-list validator-table)])
+     (list (validator-oid row) (list 'prim (validator-name row))))
+   (for/list ([row (in-list introduction-table)])
+     (list (first row) (list 'prim (second row))))
+   (for/list ([row (in-list projection-table)])
+     (list (first row) (list 'prim (second row))))))
+
 (define R0
-  (term ((o-add (prim add))
-         (o-sub (prim sub))
-         (o-mul (prim mul))
-         (o-lt (prim lt))
-         (o-le (prim le))
-         (o-eq (prim eq))
-         (o-acquire (prim acquire))
-         (o-int (type Int))
-         (o-bool (type Bool))
-         (o-unit (type Unit))
-         (o-string (type String))
-         (o-never (type Never))
-         (o-res (type Res))
-         (o-list (type List))
-         (o-option (type Option))
-         (o-result (type Result))
-         (o-type-narrative typeNarrative))))
+  (append
+   (term ((o-add (prim add))
+          (o-sub (prim sub))
+          (o-mul (prim mul))
+          (o-lt (prim lt))
+          (o-le (prim le))
+          (o-eq (prim eq))
+          (o-acquire (prim acquire))
+          (o-int (type Int))
+          (o-bool (type Bool))
+          (o-unit (type Unit))
+          (o-string (type String))
+          (o-never (type Never))
+          (o-res (type Res))
+          (o-list (type List))
+          (o-option (type Option))
+          (o-result (type Result))
+          (o-type-narrative typeNarrative)))
+   kernel-r0-entries
+   ;; RFN-002: merge が発行する常在性 witness の発行者。primitive を持たない
+   ;; ため (prim ...) ではなく単独の id として登録する。
+   (term ((o-merge merge)))))
+
+;; RFN-001: validate primitive の型は行ごとの単相型である。latent effect と
+;; obligation は空とする。判定は純粋な全域計算であるためである。
+(define kernel-gamma0-entries
+  (append
+   (for/list ([row (in-list validator-table)])
+     (define payload-type (validator-payload-type row))
+     (list (validator-name row)
+           (list `(NFn ((Untrusted ,payload-type))
+                       (Result (Refined ,payload-type
+                                        ,(validator-proposition row))
+                               String)
+                       () ())
+                 `(PrimVal (Reserved ,(validator-oid row))
+                           ,(validator-name row)))))
+   (for/list ([row (in-list introduction-table)])
+     (match-define (list oid name payload-type) row)
+     (list name
+           (list `(NFn (,payload-type) (Untrusted ,payload-type) () ())
+                 `(PrimVal (Reserved ,oid) ,name))))
+   (for/list ([row (in-list projection-table)])
+     (match-define (list oid name proposition payload-type) row)
+     (list name
+           (list `(NFn ((Refined ,payload-type ,proposition))
+                       ,payload-type () ())
+                 `(PrimVal (Reserved ,oid) ,name))))))
 
 (define Γ0
-  (term ((add ((NFn (Int Int) Int () ())
-               (PrimVal (Reserved o-add) add)))
-         (sub ((NFn (Int Int) Int () ())
-               (PrimVal (Reserved o-sub) sub)))
-         (mul ((NFn (Int Int) Int () ())
-               (PrimVal (Reserved o-mul) mul)))
-         (lt ((NFn (Int Int) Bool () ())
-              (PrimVal (Reserved o-lt) lt)))
-         (le ((NFn (Int Int) Bool () ())
-              (PrimVal (Reserved o-le) le)))
-         (eq ((NFn (Int Int) Bool () ())
-              (PrimVal (Reserved o-eq) eq)))
-         (acquire ((NFn (Int) (Owned Res) () ())
-                   (PrimVal (Reserved o-acquire) acquire))))))
+  (append
+   (term ((add ((NFn (Int Int) Int () ())
+                (PrimVal (Reserved o-add) add)))
+          (sub ((NFn (Int Int) Int () ())
+                (PrimVal (Reserved o-sub) sub)))
+          (mul ((NFn (Int Int) Int () ())
+                (PrimVal (Reserved o-mul) mul)))
+          (lt ((NFn (Int Int) Bool () ())
+               (PrimVal (Reserved o-lt) lt)))
+          (le ((NFn (Int Int) Bool () ())
+               (PrimVal (Reserved o-le) le)))
+          (eq ((NFn (Int Int) Bool () ())
+               (PrimVal (Reserved o-eq) eq)))
+          (acquire ((NFn (Int) (Owned Res) () ())
+                    (PrimVal (Reserved o-acquire) acquire)))))
+   kernel-gamma0-entries))
 
 (define Δ0
   (term ((Int (TypeRep (Reserved o-int) Int Type))
