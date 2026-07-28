@@ -184,26 +184,26 @@
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))
 
-(define-metafunction G1
+(define-metafunction G2
   row-∈ : ℓ ε -> boolean
   [(row-∈ ℓ ()) #f]
   [(row-∈ ℓ (ℓ ℓ_rest ...)) #t]
   [(row-∈ ℓ (ℓ_other ℓ_rest ...))
    (row-∈ ℓ (ℓ_rest ...))])
 
-(define-metafunction G1
+(define-metafunction G2
   row-add : ε ℓ -> ε
   [(row-add (ℓ_0 ...) ℓ) (ℓ_0 ...)
    (where #t (row-∈ ℓ (ℓ_0 ...)))]
   [(row-add (ℓ_0 ...) ℓ) (ℓ_0 ... ℓ)])
 
-(define-metafunction G1
+(define-metafunction G2
   row-∪ : ε ε -> ε
   [(row-∪ ε ()) ε]
   [(row-∪ ε (ℓ ℓ_rest ...))
    (row-∪ (row-add ε ℓ) (ℓ_rest ...))])
 
-(define-metafunction G1
+(define-metafunction G2
   row-⊆ : ε ε -> boolean
   [(row-⊆ () ε) #t]
   [(row-⊆ (ℓ ℓ_rest ...) ε)
@@ -211,7 +211,7 @@
    (where #t (row-∈ ℓ ε))]
   [(row-⊆ (ℓ ℓ_rest ...) ε) #f])
 
-(define-metafunction G1
+(define-metafunction G2
   row-\\ : ε ε -> ε
   [(row-\\ () ε) ()]
   [(row-\\ (ℓ ℓ_rest ...) ε)
