@@ -8,7 +8,8 @@
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
-         "type-equiv.rkt")
+         "type-equiv.rkt"
+         "validators.rkt")
 
 (provide core-type-of
          core-check
@@ -52,31 +53,38 @@
 (define (type-compatible? actual expected)
   (compat? actual expected))
 
-(define (record-rows-unique? type)
+;; 型の整形式性。record のラベル一意性に加えて、RFN-001 の Owned-free 制限を
+;; Untrusted と Refined のペイロードへ課す。type? が型全体に対してこれを呼ぶ
+;; ため、注釈から入ってきた (Untrusted (Owned Res)) もここで落ちる。
+(define (type-shape-ok? type)
   (match type
     [`(Record ,row)
      (and (field-row-unique? row)
           (for/and ([field (in-list row)])
-            (record-rows-unique? (second field))))]
-    [`(List ,element) (record-rows-unique? element)]
-    [`(Option ,element) (record-rows-unique? element)]
+            (type-shape-ok? (second field))))]
+    [`(List ,element) (type-shape-ok? element)]
+    [`(Option ,element) (type-shape-ok? element)]
     [`(Result ,ok-type ,error-type)
-     (and (record-rows-unique? ok-type)
-          (record-rows-unique? error-type))]
-    [`(Owned ,inner) (record-rows-unique? inner)]
+     (and (type-shape-ok? ok-type)
+          (type-shape-ok? error-type))]
+    [`(Owned ,inner) (type-shape-ok? inner)]
+    [`(Untrusted ,inner)
+     (and (owned-free? inner) (type-shape-ok? inner))]
+    [`(Refined ,inner ,_)
+     (and (owned-free? inner) (type-shape-ok? inner))]
     [`(NFn ,parameters ,return-type ,row ,_)
-     (and (andmap record-rows-unique? parameters)
-          (record-rows-unique? return-type)
+     (and (andmap type-shape-ok? parameters)
+          (type-shape-ok? return-type)
           (for/and ([label (in-list row)])
             (match label
-              [`(Return ,_ ,type) (record-rows-unique? type)]
-              [`(Yield ,type) (record-rows-unique? type)]
+              [`(Return ,_ ,type) (type-shape-ok? type)]
+              [`(Yield ,type) (type-shape-ok? type)]
               [_ #t])))]
     [_ #t]))
 
 (define (type? value)
   (and (redex-match? G2m τ value)
-       (record-rows-unique? value)))
+       (type-shape-ok? value)))
 
 (define (row? value)
   (redex-match? G1m ε value))
@@ -396,6 +404,24 @@
                                 [result (in-list results)])
                        `(,(first field) ,(first result) ,(second field))))
                   (rows-union (map second results))))))]
+
+    ;; RFN-001: 未検証の値。ペイロードの型をそのまま Untrusted で包む。
+    ;; effect row はペイロードのものを引き継ぐ。
+    [`(UVal ,value)
+     (match (infer value environment places callables)
+       [(list value-type value-row)
+        (and (owned-free? value-type)
+             (list `(Untrusted ,value-type) value-row))]
+       [_ #f])]
+
+    ;; RFN-001: 検証済みの値。witness の命題を型へ持ち上げる。発行者が正当か
+    ;; どうかは成果物検証（verify-origins）の担当であり、ここでは見ない。
+    [`(RVal (ProofRep ,_ ,proposition) ,value)
+     (match (infer value environment places callables)
+       [(list value-type value-row)
+        (and (owned-free? value-type)
+             (list `(Refined ,value-type ,proposition) value-row))]
+       [_ #f])]
 
     [`(Proj ,record ,label)
      (match (infer record environment places callables)
