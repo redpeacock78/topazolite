@@ -10,7 +10,8 @@
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
-         "type-shape.rkt")
+         "type-shape.rkt"
+         "validators.rkt")
 
 (provide UCore
          elab)
@@ -25,15 +26,21 @@
   (m ::= imm mut)
   (bmode ::= const let)
   (ur ::= ((label uτ m) ...))
+  ;; RFN-001: 表層に書ける命題。判定表の (Prop id) を足す。常在性 witness の
+  ;; (Presence label) は含めない。merge の局所検査だけで立つ命題である。
+  (uφ ::= ValidNarrativeTrait TypeNarrativeCap (Prop id))
+  (uQ ::= (uφ ...))
   (uτ ::= Int Bool Unit String Never Res
           T
           (List uτ)
           (Option uτ)
           (Result uτ uτ)
           (Owned uτ)
-          (NFn (uτ ...) uτ tε Q)
+          (Untrusted uτ)
+          (Refined uτ uφ)
+          (NFn (uτ ...) uτ tε uQ)
           (TypeInfo κ)
-          (Proof φ)
+          (Proof uφ)
           (Record ur))
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own)
   (tε ::= (tℓ ...))
@@ -115,6 +122,21 @@
 (define (type-compatible? actual expected)
   (compat? actual expected))
 
+;; RFN-001/002: 表層注釈に書いてよい命題。判定表の (Prop id) と G1 の 2 命題を
+;; 許し、(Presence label) は許さない。文法でも外しているが、注釈は Redex の
+;; パターンを経ずに渡る経路があるため、解決時にも同じ線引きを課す。
+(define (annotation-proposition? proposition)
+  (match proposition
+    [(or 'ValidNarrativeTrait 'TypeNarrativeCap) #t]
+    [`(Prop ,_) (and (validator-row-by-proposition proposition) #t)]
+    [_ #f]))
+
+(define (resolve-obligations obligations)
+  (for/list ([proposition (in-list obligations)])
+    (unless (annotation-proposition? proposition)
+      (reject 'invalid-obligation proposition))
+    proposition))
+
 (define (resolve-annotation annotation delta)
   (define resolved
     (match annotation
@@ -134,14 +156,23 @@
                 ,(resolve-annotation error-type delta))]
       [`(Owned ,inner)
        `(Owned ,(resolve-annotation inner delta))]
+      [`(Untrusted ,inner)
+       `(Untrusted ,(resolve-annotation inner delta))]
+      [`(Refined ,inner ,proposition)
+       (unless (annotation-proposition? proposition)
+         (reject 'invalid-proposition proposition))
+       `(Refined ,(resolve-annotation inner delta) ,proposition)]
       [`(NFn (,parameters ...) ,return-type ,row ,obligations)
        `(NFn ,(for/list ([parameter (in-list parameters)])
                 (resolve-annotation parameter delta))
              ,(resolve-annotation return-type delta)
              ,(resolve-type-row row delta)
-             ,obligations)]
+             ,(resolve-obligations obligations))]
       [`(TypeInfo ,kind) `(TypeInfo ,kind)]
-      [`(Proof ,proposition) `(Proof ,proposition)]
+      [`(Proof ,proposition)
+       (unless (annotation-proposition? proposition)
+         (reject 'invalid-proposition proposition))
+       `(Proof ,proposition)]
       [(? symbol? name)
        (match (lookup delta name)
          [`(TypeRep ,_ ,type-form Type)
