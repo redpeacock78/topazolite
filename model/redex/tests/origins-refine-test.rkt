@@ -53,7 +53,9 @@
 (check-equal? (verify `(RVal ,empty-witness 8080))
               `(forged (RVal ,empty-witness 8080)))
 
-;; RFN-002: 出現許可。常在性 witness はどちらの層にも現れてはならない。
+;; RFN-002: 出現許可が拒むのは常在性 witness だけである。
+(check-equal? (verify port-witness) 'ok)
+;; 常在性 witness はどちらの層にも現れてはならない。
 (check-equal? (verify merge-witness) `(forged ,merge-witness))
 (check-equal? (verify-initial merge-witness) `(forged ,merge-witness))
 (check-equal? (verify `(Let (x (Proof (Presence a))) ,merge-witness x))
