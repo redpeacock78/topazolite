@@ -113,7 +113,8 @@
     (and (origin-ok? (entry-origin e) (entry-phi e))
          (null? (entry-hook e)))))
 
-;; wf-Σ: すべての候補が wf-candidate を満たす。Finite 完全性は project が構成上保証する。
+;; wf-Σ: すべての候補が wf-candidate を満たす。goal についての Finite 完全性は
+;; project-goal が構成上保証する。
 (define (wf-Σ? sigma goal)
   (andmap (lambda (c) (wf-candidate? c goal)) sigma))
 

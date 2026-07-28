@@ -15,7 +15,9 @@
 (provide core-type-of
          core-check
          core-check-row
-         config-ok?)
+         config-ok?
+         merge-record-types
+         merge-witnesses-dischargeable?)
 
 (define (lookup table key)
   (match (assoc key table)
@@ -171,6 +173,34 @@
                       (cons (second scrutinee-result)
                             branch-rows))))))))
 
+;; RFN-002: merge が立てる常在性 witness の集合 W。merge ごとの局所的な値で
+;; あり、成果物にも型にも載せない。(Presence f) は merge の位置を持たないため、
+;; artifact 全体で集約すると別の merge の witness と重なってしまう。
+;; 探索の候補文脈と同じ形（(name entry) の列）で返し、そのまま
+;; obligations-dischargeable? へ渡せるようにする。
+(define (merge-witness-context labels)
+  (for/list ([label (in-list labels)])
+    (list label
+          (list `(Presence ,label) '(Reserved o-merge)
+                label 'root 'default '()))))
+
+;; RFN-002: record 型の列を field の交差へ畳み込み、残った field の常在性
+;; witness を併せて返す。types は空でないことを呼び出し側が保証する。
+(define (merge-record-types types)
+  (define merged-row
+    (for/fold ([merged-row (second (first types))])
+              ([type (in-list (rest types))])
+      (field-row-intersection merged-row (second type) type-equiv?)))
+  (values `(Record ,merged-row)
+          (merge-witness-context (map first merged-row))))
+
+;; RFN-002: merge の局所検査。その merge が立てた W だけを候補文脈として、
+;; 要求された常在性の義務が充足できるかを見る。型付けの受理条件ではなく、
+;; merge ごとに成り立つ性質として検査する。
+(define (merge-witnesses-dischargeable? types obligations)
+  (define-values (_merged witnesses) (merge-record-types types))
+  (obligations-dischargeable? obligations witnesses))
+
 (define (infer-eliminate scrutinee branches environment places callables)
   (define scrutinee-result
     (infer scrutinee environment places callables))
@@ -195,12 +225,11 @@
                         [(not types) #f]
                         [(null? types) 'Never]
                         [(andmap record-type? types)
-                         `(Record
-                           ,(for/fold
-                                ([merged-row (second (first types))])
-                                ([type (in-list (rest types))])
-                              (field-row-intersection
-                               merged-row (second type) type-equiv?)))]
+                         ;; RFN-002: W は merge の局所検査だけで使う。型へは
+                         ;; 載せないため、ここでは捨てる。
+                         (define-values (merged _witnesses)
+                           (merge-record-types types))
+                         merged]
                         [(ormap record-type? types) #f]
                         [else (first types)])])
                 (and result-type
