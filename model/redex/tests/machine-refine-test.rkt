@@ -74,6 +74,12 @@
  (term (Construct (Result (Refined String (Prop NonEmpty)) String)
                   ng
                   "nonEmpty: rejected")))
+;; RFN-001: 判定は型不一致も検証失敗として扱い、stuck にはならない。
+(check-equal?
+ (run-g2-core (term (Apply ,(prim 'nonEmpty 'o-non-empty) (UVal 1))))
+ (term (Construct (Result (Refined String (Prop NonEmpty)) String)
+                  ng
+                  "nonEmpty: rejected")))
 (check-equal?
  (run-g2-core (term (Apply ,(prim 'nonEmpty 'o-non-empty) (UVal "a"))))
  (term (Construct (Result (Refined String (Prop NonEmpty)) String)
