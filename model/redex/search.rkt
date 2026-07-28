@@ -2,7 +2,8 @@
 
 (require racket/match
          redex/reduction-semantics
-         "origins.rkt")
+         "origins.rkt"
+         "validators.rkt")
 
 (provide make-goal goal? goal-proposition
          resolved Absent ambiguous
@@ -10,10 +11,10 @@
          resolved-proof ambiguous-proofs
          candidateize Γ-pc0
          entry-phi entry-origin entry-cid entry-sid entry-pid entry-hook
-         project scope-visible?
+         project project-goal scope-visible?
          candidate-proof candidate-prop candidate-origin
          candidate-cid candidate-sid candidate-pid candidate-identity
-         wf-candidate? wf-Σ?
+         wf-candidate? wf-context? wf-Σ?
          resolve-candidates
          make-classifier make-oracle make-cert cert-valid? unique?
          default-classifier default-oracle
@@ -68,6 +69,13 @@
           (list 'ProofRep (entry-origin e) (entry-phi e))
           (entry-cid e) (entry-sid e) (entry-pid e) (entry-hook e))))
 
+;; project-goal: goal の命題に一致する entry だけを Σ へ写す。Γ_pc に別命題の
+;; 候補が同居すると、それらが wf-Σ? を落として無関係な goal の discharge を
+;; 妨げる。抽出の段階で goal 単位に絞る。
+(define (project-goal gamma-pc sc-ctx goal)
+  (filter (lambda (c) (equal? (candidate-prop c) (goal-proposition goal)))
+          (project gamma-pc sc-ctx)))
+
 (define (scope-visible? sid sc-ctx) (and (member sid sc-ctx) #t))
 
 ;; cand = (Candidate (ProofRep O φ) cid sid pid hook)
@@ -97,6 +105,14 @@
 (define (origin-ok? O phi)
   (proof-issuer-ok? R0 O phi))
 
+;; wf-context?: Γ_pc の各 entry が単独で整合であること。goal に依らない判定で
+;; あり、goal との一致は wf-Σ? が抽出後に見る。
+(define (wf-context? gamma-pc)
+  (for/and ([binding (in-list gamma-pc)])
+    (define e (second binding))
+    (and (origin-ok? (entry-origin e) (entry-phi e))
+         (null? (entry-hook e)))))
+
 ;; wf-Σ: すべての候補が wf-candidate を満たす。Finite 完全性は project が構成上保証する。
 (define (wf-Σ? sigma goal)
   (andmap (lambda (c) (wf-candidate? c goal)) sigma))
@@ -118,17 +134,27 @@
         [else (ambiguous (map candidate-proof sorted))]))
 
 ;; χ: goal と候補文脈から計算クラスへの trusted な写像。SR を参照しない。
-;; goal を key に引くため、同値な goal（equal?）は同じ class を得る。
-(define (make-classifier table)
+;; goal を key に引くほか、key の有限列挙ができない命題のために shape 規則を
+;; 持つ。どちらも SR を見ないため、trusted 性は変わらない。
+(define (make-classifier table [shape-rule (lambda (goal gamma-pc) #f)])
   (lambda (goal gamma-pc)
     (cond [(assoc goal table) => cdr]
+          [(shape-rule goal gamma-pc) => values]
           [else 'Unknown])))
 
-;; 既定 χ: G1 の 2 命題を Finite に写す。class は SR と独立に φ で定まる。
+;; 既定 χ: G1 の 2 命題と判定表の各命題を Finite に写す。常在性の命題は label
+;; ごとに無限個あって表に列挙できないため、shape 規則で Finite に写す。
 (define default-classifier
   (make-classifier
-   (list (cons (make-goal 'TypeNarrativeCap) 'Finite)
-         (cons (make-goal 'ValidNarrativeTrait) 'Finite))))
+   (append
+    (list (cons (make-goal 'TypeNarrativeCap) 'Finite)
+          (cons (make-goal 'ValidNarrativeTrait) 'Finite))
+    (for/list ([row (in-list validator-table)])
+      (cons (make-goal (validator-proposition row)) 'Finite)))
+   (lambda (goal gamma-pc)
+     (match (goal-proposition goal)
+       [`(Presence ,_) 'Finite]
+       [_ #f]))))
 
 ;; Ω: Productive 探索の結果と certificate を返す trusted な写像。無ければ #f。
 (define (make-oracle table)
@@ -154,9 +180,10 @@
   (match* (class sr)
     [('Finite (list 'Resolved P))
      ;; 完全な Σ からの一意性導出があり、その P が SR の P と一致（PSR-002）。
-     ;; unique? が resolve の (Resolved P) 一致を含むため、P の照合はこれで足りる。
+     ;; ev は goal 単位に抽出した Σ である。project の全体と比べると、別命題の
+     ;; 候補が同居する Γ_pc で恒偽になる。
      (and ev
-          (equal? ev (project gamma-pc '(root)))
+          (equal? ev (project-goal gamma-pc '(root) goal))
           (wf-Σ? ev goal)
           (unique? goal ev P))]
     [('Productive (list 'Resolved P))
@@ -186,20 +213,24 @@
                  (if accepted? 'accept 'reject)))))
   (log-branch! tag))
 
-;; discharge?: 義務充足の judgment。χ で class を得て、class に応じて SR と証拠を得る。
+;; discharge?: 義務充足の judgment。χ で class を得て、class に応じて SR と
+;; 証拠を得る。文脈そのものの整合（wf-context?）は class と SR に依らないため、
+;; 抽出の前に一度だけ見る。
 (define (discharge? gamma-pc chi omega goal [sc-ctx '(root)])
   (define class (chi goal gamma-pc))
   (define-values (sr ev)
     (case class
       [(Finite)
-       (define sigma (project gamma-pc sc-ctx))
+       (define sigma (project-goal gamma-pc sc-ctx goal))
        (values (resolve-candidates goal sigma) sigma)]
       [(Productive)
        (match (omega goal gamma-pc)
          [(list sr cert) (values sr cert)]
          [_ (values Absent #f)])]
       [else (values Absent #f)]))
-  (define accepted? (admissible? goal gamma-pc class sr ev))
+  (define accepted?
+    (and (wf-context? gamma-pc)
+         (admissible? goal gamma-pc class sr ev)))
   (log-outcome! class sr accepted?)
   accepted?)
 
