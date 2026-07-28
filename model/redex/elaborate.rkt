@@ -9,7 +9,8 @@
          "origins.rkt"
          "rows.rkt"
          "schema.rkt"
-         "search.rkt")
+         "search.rkt"
+         "type-shape.rkt")
 
 (provide UCore
          elab)
@@ -85,31 +86,9 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
-(define (record-rows-unique? type)
-  (match type
-    [`(Record ,row)
-     (and (field-row-unique? row)
-          (for/and ([field (in-list row)])
-            (record-rows-unique? (second field))))]
-    [`(List ,element) (record-rows-unique? element)]
-    [`(Option ,element) (record-rows-unique? element)]
-    [`(Result ,ok-type ,error-type)
-     (and (record-rows-unique? ok-type)
-          (record-rows-unique? error-type))]
-    [`(Owned ,inner) (record-rows-unique? inner)]
-    [`(NFn ,parameters ,return-type ,row ,_)
-     (and (andmap record-rows-unique? parameters)
-          (record-rows-unique? return-type)
-          (for/and ([label (in-list row)])
-            (match label
-              [`(Return ,_ ,type) (record-rows-unique? type)]
-              [`(Yield ,type) (record-rows-unique? type)]
-              [_ #t])))]
-    [_ #t]))
-
 (define (type? value)
   (and (redex-match? G2 τ value)
-       (record-rows-unique? value)))
+       (type-shape-ok? value)))
 
 (define (row-union left right)
   (term (row-∪ ,left ,right)))

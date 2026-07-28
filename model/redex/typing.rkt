@@ -9,6 +9,7 @@
          "schema.rkt"
          "search.rkt"
          "type-equiv.rkt"
+         "type-shape.rkt"
          "validators.rkt")
 
 (provide core-type-of
@@ -52,35 +53,6 @@
 ;; Never の bottom 受理は compat? の Never 分岐が担う。
 (define (type-compatible? actual expected)
   (compat? actual expected))
-
-;; 型の整形式性。record のラベル一意性に加えて、RFN-001 の Owned-free 制限を
-;; Untrusted と Refined のペイロードへ課す。type? が型全体に対してこれを呼ぶ
-;; ため、注釈から入ってきた (Untrusted (Owned Res)) もここで落ちる。
-(define (type-shape-ok? type)
-  (match type
-    [`(Record ,row)
-     (and (field-row-unique? row)
-          (for/and ([field (in-list row)])
-            (type-shape-ok? (second field))))]
-    [`(List ,element) (type-shape-ok? element)]
-    [`(Option ,element) (type-shape-ok? element)]
-    [`(Result ,ok-type ,error-type)
-     (and (type-shape-ok? ok-type)
-          (type-shape-ok? error-type))]
-    [`(Owned ,inner) (type-shape-ok? inner)]
-    [`(Untrusted ,inner)
-     (and (owned-free? inner) (type-shape-ok? inner))]
-    [`(Refined ,inner ,_)
-     (and (owned-free? inner) (type-shape-ok? inner))]
-    [`(NFn ,parameters ,return-type ,row ,_)
-     (and (andmap type-shape-ok? parameters)
-          (type-shape-ok? return-type)
-          (for/and ([label (in-list row)])
-            (match label
-              [`(Return ,_ ,type) (type-shape-ok? type)]
-              [`(Yield ,type) (type-shape-ok? type)]
-              [_ #t])))]
-    [_ #t]))
 
 (define (type? value)
   (and (redex-match? G2m τ value)
