@@ -39,6 +39,7 @@
 ;; 既存型の判定は変えない。
 (check-true (type-equiv? '(Owned Res) '(Owned Res)))
 (check-false (type-equiv? '(Owned Res) 'Res))
+(check-false (type-equiv? '(Refined Int (Prop ValidPort)) 'Int))
 
 ;; RFN-001: compat? は φ の一致と τ の compat? 再帰で判定する。
 (check-true (compat? '(Refined Never (Prop ValidPort))
@@ -47,6 +48,8 @@
                       '(Refined Int (Prop NonEmpty))))
 (check-true (compat? '(Untrusted Never) '(Untrusted Int)))
 (check-false (compat? '(Untrusted Int) '(Refined Int (Prop ValidPort))))
+(check-false (compat? '(Untrusted Int) 'Int))
+(check-false (compat? 'Int '(Untrusted Int)))
 ;; record field 経由でも新構成子の互換が伝播する。
 (check-true (compat? '(Record ((a (Refined Never (Prop ValidPort)) imm)))
                      '(Record ((a (Refined Int (Prop ValidPort)) imm)))))
