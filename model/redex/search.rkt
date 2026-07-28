@@ -91,9 +91,11 @@
        (scope-visible? (candidate-sid c) '(root))
        (null? (candidate-hook c))))
 
-;; verify-origins を単一 ProofRep に対して通す。
+;; RFN-003: 候補の witness には発行者対応だけを課す。出現許可は成果物の判定
+;; であり、探索文脈の候補には適用しない。Redex の metafunction を経由しない
+;; ため、候補ごとの往復も減る。
 (define (origin-ok? O phi)
-  (eq? (term (verify-origins ,R0 (ProofRep ,O ,phi))) 'ok))
+  (proof-issuer-ok? R0 O phi))
 
 ;; wf-Σ: すべての候補が wf-candidate を満たす。Finite 完全性は project が構成上保証する。
 (define (wf-Σ? sigma goal)

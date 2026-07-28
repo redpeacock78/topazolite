@@ -11,7 +11,9 @@
          R0
          kindOf
          origin-of
-         verify-origins)
+         proof-issuer-ok?
+         verify-origins
+         verify-initial-origins)
 
 ;; 判定表の行と、導入・射影 primitive の行から R0 の追加分を生成する。
 ;; oid は primitive の発行者であると同時に ProofRep の発行者でもある。
@@ -141,6 +143,8 @@
      `(TypeRep ,origin ,type-form ,kind)]
     [`(ProofRep ,origin ,proposition)
      `(ProofRep ,origin ,proposition)]
+    [`(RVal (ProofRep ,origin ,proposition) ,payload)
+     `(RVal ,origin ,proposition ,payload)]
     [`(RecurVal ,_ ,_ ,_ ,_) '(RecurVal User)]
     [_ #f]))
 
@@ -154,6 +158,46 @@
 
 (define (reserved-type-rep? type-form value)
   (equal? (lookup Δ0 type-form) value))
+
+;; RFN-003: 発行者対応。「この origin はこの φ を発行してよいか」だけを見る。
+;; 出現許可（どの層に置いてよいか）は含めない。探索側の候補 wf はこの判定
+;; だけを参照する。両方を混ぜると、merge が立てた常在性 witness が候補 wf を
+;; 通らず、(Goal (Presence f)) を局所検査で discharge できなくなる。
+(define (proof-issuer-ok? r0 origin proposition)
+  (match proposition
+    ['TypeNarrativeCap
+     (and (equal? origin '(Reserved o-type-narrative))
+          (eq? (lookup r0 'o-type-narrative) 'typeNarrative))]
+    [`(Prop ,_)
+     (match origin
+       [`(Reserved ,id)
+        (define row (validator-row-by-oid id))
+        (and row
+             (equal? (validator-proposition row) proposition)
+             (equal? (lookup r0 id) `(prim ,(validator-name row))))]
+       [_ #f])]
+    [`(Presence ,_)
+     (and (equal? origin '(Reserved o-merge))
+          (eq? (lookup r0 'o-merge) 'merge))]
+    [_ #f]))
+
+;; RFN-002: 出現許可。常在性 witness は merge の局所検査のためだけに立つ値で
+;; あり、初期成果物にも到達成果物にも現れてはならない。artifact に現れたら
+;; merge の位置情報が失われ、φ の集約が merge をまたいでしまう。
+(define (proof-occurrence-ok? proposition)
+  (match proposition
+    [`(Presence ,_) #f]
+    [_ #t]))
+
+;; RFN-001: RVal のペイロード束縛検査。witness の命題が判定表の行に対応し、
+;; ペイロードのリテラル型がその行の τ と一致し、check がそのペイロードを
+;; 受理することを求める。validate を通さずに手で組んだ RVal をここで落とす。
+(define (refined-value-valid? r0 origin proposition payload)
+  (define row (validator-row-by-proposition proposition))
+  (and row
+       (proof-issuer-ok? r0 origin proposition)
+       (equal? (literal-type payload) (validator-payload-type row))
+       (and ((validator-check row) payload) #t)))
 
 (define (origin-shape-valid? r0 value)
   (match (origin-data/proc value)
@@ -177,12 +221,13 @@
                   (equal? made type-form))]
             [_ #f]))]
     [`(ProofRep ,origin ,proposition)
-     (and (equal? origin '(Reserved o-type-narrative))
-          (eq? (lookup r0 'o-type-narrative) 'typeNarrative)
-          (eq? proposition 'TypeNarrativeCap))]
+     (and (proof-issuer-ok? r0 origin proposition)
+          (proof-occurrence-ok? proposition))]
+    [`(RVal ,origin ,proposition ,payload)
+     (refined-value-valid? r0 origin proposition payload)]
     [_ #f]))
 
-(define origin-bearing-heads '(Lam PrimVal CurryVal TypeRep ProofRep))
+(define origin-bearing-heads '(Lam PrimVal CurryVal TypeRep ProofRep RVal))
 
 (define (origin-bearing-head? value)
   (and (pair? value)
@@ -211,3 +256,24 @@
   verify-origins : any c -> any
   [(verify-origins any_R0 c)
    ,(verify-origins/proc (term any_R0) (term c))])
+
+;; RFN-001: 初期成果物の層。UCore は UVal と RVal の構文を持たないため、
+;; elaboration の出力にこれらが現れることはない。到達成果物では validate が
+;; 作るので許す。層ごとに許す値が違うため入口を分ける。
+(define (initial-layer-violation core)
+  (let walk ([subject core])
+    (cond
+      [(and (pair? subject) (memq (car subject) '(UVal RVal)))
+       `(forged ,subject)]
+      [(list? subject)
+       (for/or ([element (in-list subject)]) (walk element))]
+      [else #f])))
+
+(define (verify-initial-origins/proc r0 core)
+  (or (initial-layer-violation core)
+      (verify-origins/proc r0 core)))
+
+(define-metafunction G2m
+  verify-initial-origins : any c -> any
+  [(verify-initial-origins any_R0 c)
+   ,(verify-initial-origins/proc (term any_R0) (term c))])
