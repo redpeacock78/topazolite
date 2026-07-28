@@ -51,6 +51,13 @@
      (record-compatible? sub-row sup-row)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
      (type-equiv? sub-type sup-type)]
+    [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
+     (compat? sub-payload sup-payload)]
+    ;; RFN-001: φ は一致を要求し、ペイロード型だけ compat? で再帰する。
+    [(`(Refined ,sub-payload ,sub-proposition)
+      `(Refined ,sup-payload ,sup-proposition))
+     (and (equal? sub-proposition sup-proposition)
+          (compat? sub-payload sup-payload))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
       `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations

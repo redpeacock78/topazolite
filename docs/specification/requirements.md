@@ -1,8 +1,8 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G2c 執筆版（codex 実装、claude レビュー前）
+**状態**：G2d 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/glossary.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/glossary.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -38,6 +38,7 @@
 状態が `G2` で G2a の明示集合に含まれる ID は、`structural-row.md` の規則注釈と G2a テストの両方で参照されなければならない。
 状態が `G2` で G2b の明示集合に含まれる ID は、`proof-search.md` の規則注釈と G2b テストの両方で参照されなければならない。
 状態が `G2` で G2c の明示集合に含まれる ID は、`structural-row.md` §6 の規則注釈と G2c テストの両方で参照されなければならない。
+状態が `G2` で G2d の明示集合に含まれる ID は、`proof-value.md` の規則注釈と G2d テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -168,6 +169,30 @@ mutable field は代入安全性を守るため既定で不変として扱う。
 - **正典**：`docs/specification/structural-row.md` §6.3
 
 関数型を持つ field の判定は可変性と交差する。imm field の関数型は関数 variance で判定し、mut field の関数型は型同値の不変に留まる。
+
+### RFN-001
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/proof-value.md`）
+- **正典**：`docs/specification/proof-value.md` §3.3、§4.1、§4.2、§7
+
+外部由来の値は Untrusted として型付け、validate を経由しない限り Refined にならない。Refined 値は判定表に登録された validator の予約 origin を持つ Proof を伴い、その Proof が保証する命題とペイロードの対応を成果物検証で確かめられなければならない。ホワイトペーパー §4.6 の Refinement と §6 の信頼境界を根拠とする。
+
+### RFN-002
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/proof-value.md`）
+- **正典**：`docs/specification/proof-value.md` §5.1、§5.2
+
+制御フロー合流は、全 non-Never branch に同じ型と同じ可変性で常在する field に対してのみ常在性の Proof を発行しなければならない。発行した Proof は merge 位置の局所文脈としてのみ使い、型にも成果物にも載せない。ホワイトペーパー §6 の合流時の安全性を根拠とする。
+
+### RFN-003
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/proof-value.md`）
+- **正典**：`docs/specification/proof-value.md` §6.1、§6.3
+
+Proof obligation の反変判定は、上位型の明示記載による充足に加え、大域候補文脈からの discharge による充足も認めなければならない。判定に使う文脈は位置に依存しない大域文脈に限る。ホワイトペーパー §6 の暗黙 Proof の充足を根拠とする。
 
 ### TRT-001
 

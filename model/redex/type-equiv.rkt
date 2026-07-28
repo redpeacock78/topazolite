@@ -42,6 +42,13 @@
           (type-equiv? left-error right-error))]
     [(`(Owned ,left-inner) `(Owned ,right-inner))
      (type-equiv? left-inner right-inner)]
+    [(`(Untrusted ,left-payload) `(Untrusted ,right-payload))
+     (type-equiv? left-payload right-payload)]
+    ;; RFN-001: witness の実体は型同一性に関与しない。φ は名前の一致だけを見る。
+    [(`(Refined ,left-payload ,left-proposition)
+      `(Refined ,right-payload ,right-proposition))
+     (and (type-equiv? left-payload right-payload)
+          (equal? left-proposition right-proposition))]
     [(`(Record ,left-row) `(Record ,right-row))
      (field-row-equiv? left-row right-row type-equiv?)]
     [(`(NFn ,left-parameters ,left-return ,left-row ,left-obligations)

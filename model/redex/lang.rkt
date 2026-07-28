@@ -91,12 +91,16 @@
   (m ::= imm mut)
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
-  (τ ::= .... (Record r))
+  (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ))
+  (φ ::= .... (Prop id) (Presence label))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
          (Let (x bmode τ) c c))
-  (v ::= .... (Rec ((label m v) ...)))
+  (v ::= ....
+         (Rec ((label m v) ...))
+         (UVal v)
+         (RVal (ProofRep O φ) v))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))
@@ -153,12 +157,16 @@
   (m ::= imm mut)
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
-  (τ ::= .... (Record r))
+  (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ))
+  (φ ::= .... (Prop id) (Presence label))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
          (Let (x bmode τ) c c))
-  (v ::= .... (Rec ((label m v) ...)))
+  (v ::= ....
+         (Rec ((label m v) ...))
+         (UVal v)
+         (RVal (ProofRep O φ) v))
 
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))
