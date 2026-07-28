@@ -96,6 +96,17 @@
           (map second introduction-table)
           (map second projection-table)))
 
+(let ([oids (append (map validator-oid validator-table)
+                    (map first introduction-table)
+                    (map first projection-table))])
+  (unless (= (length oids) (length (remove-duplicates oids)))
+    (error 'validators "duplicate origin id in the tables: ~a" oids)))
+
+(unless (= (length kernel-primitive-names)
+           (length (remove-duplicates kernel-primitive-names)))
+  (error 'validators "duplicate primitive name in the tables: ~a"
+         kernel-primitive-names))
+
 (define (kernel-primitive-name? name)
   (and (memq name kernel-primitive-names) #t))
 
@@ -106,6 +117,12 @@
 ;; Untrusted と Refined のペイロード型は Owned を部分に含まない型に限る。
 ;; wrapper が affine 制約を隠すと、外層しか見ない既存の Owned 判定を素通りして
 ;; 資源を複製できてしまう。NFn の内部も含めて再帰する。
+(define (effect-owned-free? effect)
+  (match effect
+    [`(Return ,_ ,type) (owned-free? type)]
+    [`(Yield ,type) (owned-free? type)]
+    [_ #t]))
+
 (define (owned-free? type)
   (match type
     [`(Owned ,_) #f]
@@ -117,9 +134,10 @@
     [`(Refined ,payload ,_) (owned-free? payload)]
     [`(Record ,row)
      (for/and ([field (in-list row)]) (owned-free? (second field)))]
-    [`(NFn (,parameters ...) ,return-type ,_ ,_)
+    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
      (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
-          (owned-free? return-type))]
+          (owned-free? return-type)
+          (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
     [_ #t]))
 
 ;; リテラルの型。判定表の τ に載りうる型だけを返し、それ以外は #f を返す。
