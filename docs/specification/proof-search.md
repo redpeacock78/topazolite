@@ -135,8 +135,9 @@ trait 由来の同一性成分が空の間も provenance と cid を含めるた
 - cid と pid が `candidateize` の決定規則に従う。
 - hook が空である。
 
-**wf-context** は、Γ_pc のすべての entry が候補単体の条件を満たすことを表す。
-wf-context は特定の goal との命題一致を要求しない。
+**wf-context** は、Γ_pc のすべての entry について、O が φ の正当な発行者であり、hook が空であることを表す。
+wf-context は sid の可視性、cid と pid の構成、特定の goal との命題一致を検査しない。
+sid の可視性は `project` と `project-goal` が抽出時に検査し、命題一致は抽出後の wf-Σ が検査する。
 
 goal ごとの候補集合を次で定める。
 

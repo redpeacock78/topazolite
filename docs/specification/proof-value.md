@@ -229,37 +229,53 @@ check は型の合わない値にも偽を返すため、その場合も stuck �
 
 型変数を持たない G2 の型言語に合わせて、導入と射影は有限の単相 primitive とする。
 
+**導入表**は、ペイロード型ごとの Untrusted 導入 primitive を定める。
+
+| oid | nm | τ |
+|---|---|---|
+| `o-untrusted-int` | `untrustedInt` | `Int` |
+| `o-untrusted-string` | `untrustedString` | `String` |
+
+**射影表**は、validator 正典表の命題ごとの Refined 射影 primitive を定める。
+
+| oid | nm | φ | τ |
+|---|---|---|---|
+| `o-unrefine-port` | `unrefinePort` | `(Prop ValidPort)` | `Int` |
+| `o-unrefine-non-empty` | `unrefineNonEmpty` | `(Prop NonEmpty)` | `String` |
+
+導入表は validator 正典表に現れる各ペイロード型を一行ずつ持つ。
+射影表は validator 正典表の各行と同じ φ および τ を持つ行を一つずつ持つ。
+表の読み込み時にこの網羅性と、三表を通じた oid および primitive 名の一意性を検査する。
+
+各表の行から次の単相型を導く。
+
 ```text
-untrustedInt :
-  NFn<Int, Untrusted<Int>, {}, {}>
+(oid, nm, τ) ∈ introduction-table
+------------------------------------------------------------
+nm : NFn<τ, Untrusted<τ>, {}, {}>
 
-untrustedString :
-  NFn<String, Untrusted<String>, {}, {}>
-
-unrefinePort :
-  NFn<Refined<Int, Prop<ValidPort>>, Int, {}, {}>
-
-unrefineNonEmpty :
-  NFn<Refined<String, Prop<NonEmpty>>, String, {}, {}>
+(oid, nm, φ, τ) ∈ projection-table
+------------------------------------------------------------
+nm : NFn<Refined<τ, φ>, τ, {}, {}>
 ```
 
 導入の δ 規則は値 v を `UVal(v)` で包む。
 値を未検証と宣言する操作は check を必要としない。
 
 ```text
-δ(PrimVal(Reserved(oid), untrustedInt), v) = UVal(v)
-δ(PrimVal(Reserved(oid), untrustedString), v) = UVal(v)
+(oid, nm, τ) ∈ introduction-table
+------------------------------------------------------------
+δ(PrimVal(Reserved(oid), nm), v) = UVal(v)
 ```
 
 射影の δ 規則は、対応する単相型を型検査が保証した `RVal` からペイロードを取り出す。
 Proof を捨てて弱める操作であるため、check を再実行しない。
 
 ```text
-δ(PrimVal(Reserved(oid), unrefinePort),
-  RVal(ProofRep(O, φ), v)) = v
-
-δ(PrimVal(Reserved(oid), unrefineNonEmpty),
-  RVal(ProofRep(O, φ), v)) = v
+(oid, nm, φ, τ) ∈ projection-table
+------------------------------------------------------------
+δ(PrimVal(Reserved(oid), nm),
+  RVal(ProofRep(O, φ'), v)) = v
 ```
 
 すべての primitive は既存の `Apply` と R-Delta を使う。
@@ -325,7 +341,7 @@ Q_sub は Q_sup の下で互換
 `Q_sup` に明示された命題は従来どおり充足済みとして扱う。
 明示されていない命題は、候補文脈 Γ_pc から `obligations-dischargeable?` で充足できるときに限って受理する。
 
-`compat?` は Γ_pc を引数に取り、record の `imm` field、NFn の引数、返り値、obligation の再帰へ同じ文脈を伝える。
+`compat?` は Γ_pc を引数に取り、record の `imm` field、`Untrusted` と `Refined` のペイロード、NFn の引数、返り値、obligation の再帰へ同じ文脈を伝える。
 `mut` field は型同値で不変に照合するため、`compat?` の文脈を使わない。
 
 型付けは固定の初期候補文脈 Γ_pc⁰ を渡す。
@@ -359,7 +375,8 @@ merge の W で obligation を discharge して関数型の互換を認めると
 `project-goal` は scope から可視な候補を射影し、その後で goal の命題と一致する候補をすべて抽出する。
 
 候補文脈全体の well-formedness と、抽出後の Σ_goal の well-formedness を分ける。
-`wf-context?` は各 entry の origin、sid、cid、pid、hook を検査し、goal との命題一致を要求しない。
+`wf-context?` は各 entry の発行者対応と hook の空性を検査し、goal との命題一致を要求しない。
+sid の可視性は `project` と `project-goal` が抽出時に検査する。
 `wf-Σ?` は Σ_goal の各候補が goal の命題と一致し、候補単体の条件も満たすことを要求する。
 
 Finite な探索の evidence は `ev = Σ_goal` でなければならない。
@@ -383,7 +400,7 @@ UCore に両者の構文がないため、正当な elaboration 出力には現�
 `RVal(ProofRep(O, φ), v)` は、validator 正典表に φ の行があり、O がその行の oid に対応し、v のリテラル型が行の τ と一致し、check(v) が真であるときに限って正当である。
 
 forge の拒否は **発行者対応** と **出現許可** に分ける。
-発行者対応 `proof-issuer-ok?` は、validator 行の oid と φ の組、および `o-merge` と `Presence(f)` の組を正当とする。
+発行者対応 `proof-issuer-ok?` は、G2b までの `o-type-narrative` と `TypeNarrativeCap` の組に加え、validator 行の oid と φ の組、および `o-merge` と `Presence(f)` の組を正当とする。
 出現許可は `Presence(f)` の ProofRep を初期成果物と到達成果物のどちらでも拒否する。
 
 探索側の候補 well-formedness は発行者対応だけを見る。
