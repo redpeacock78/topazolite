@@ -57,7 +57,9 @@
                            g2b-spec-paths g2b-test-paths
                            expected-g2b-ids
                            g2c-spec-paths g2c-test-paths
-                           expected-g2c-ids)
+                           expected-g2c-ids
+                           g2d-spec-paths g2d-test-paths
+                           expected-g2d-ids)
   (define definitions (registry-definitions registry-path))
   (define counts (make-hash))
   (for ([definition (in-list definitions)])
@@ -81,6 +83,8 @@
   (define g2b-test-references (list->set (test-ids g2b-test-paths)))
   (define g2c-spec-references (list->set (spec-ids g2c-spec-paths)))
   (define g2c-test-references (list->set (test-ids g2c-test-paths)))
+  (define g2d-spec-references (list->set (spec-ids g2d-spec-paths)))
+  (define g2d-test-references (list->set (test-ids g2d-test-paths)))
   ;; G2a property tests may restate G1 invariants, so G1 references are
   ;; allowed in the mapped files.  The G2a canon structural-row.md also
   ;; carries the G2c variance section, so explicit G2c IDs are excluded
@@ -104,11 +108,21 @@
     (set-subtract g2c-spec-references g2c-earlier-ids))
   (define g2c-tests
     (set-subtract g2c-test-references g2c-earlier-ids))
+  (define g2d-earlier-ids
+    (set-union g1
+               (or expected-g2a-ids (set))
+               (or expected-g2b-ids (set))
+               (or expected-g2c-ids (set))))
+  (define g2d-specs
+    (set-subtract g2d-spec-references g2d-earlier-ids))
+  (define g2d-tests
+    (set-subtract g2d-test-references g2d-earlier-ids))
   (define all-references
     (set-union g1-specs g1-tests
                g2a-spec-references g2a-test-references
                g2b-spec-references g2b-test-references
-               g2c-spec-references g2c-test-references))
+               g2c-spec-references g2c-test-references
+               g2d-spec-references g2d-test-references))
   (define g1-count (set-count g1))
   (define g2a-count
     (if expected-g2a-ids (set-count expected-g2a-ids) 0))
@@ -116,6 +130,8 @@
     (if expected-g2b-ids (set-count expected-g2b-ids) 0))
   (define g2c-count
     (if expected-g2c-ids (set-count expected-g2c-ids) 0))
+  (define g2d-count
+    (if expected-g2d-ids (set-count expected-g2d-ids) 0))
   (define duplicates
     (sort
      (for/list ([(id count) (in-hash counts)] #:when (> count 1)) id)
@@ -138,6 +154,7 @@
    g2a-count
    g2b-count
    g2c-count
+   g2d-count
    (append
     (for/list ([id (in-list duplicates)])
       (format "duplicate requirement ID: ~a" id))
@@ -187,6 +204,17 @@
                                 "G2c spec")
          (set-difference-errors g2c-tests expected-g2c-ids
                                 "G2c test"))
+        '())
+    (if expected-g2d-ids
+        (append
+         (for/list ([id (in-list
+                         (sorted-ids
+                          (set-subtract expected-g2d-ids g2)))])
+           (format "G2d expected ID is absent or not state G2: ~a" id))
+         (set-difference-errors g2d-specs expected-g2d-ids
+                                "G2d spec")
+         (set-difference-errors g2d-tests expected-g2d-ids
+                                "G2d test"))
         '()))))
 
 (define (coverage-errors registry-path g1-spec-paths g1-test-paths
@@ -199,8 +227,12 @@
                          #:expected-g2b-ids [expected-g2b-ids #f]
                          #:g2c-spec-paths [g2c-spec-paths '()]
                          #:g2c-test-paths [g2c-test-paths '()]
-                         #:expected-g2c-ids [expected-g2c-ids #f])
-  (define-values (_g1-count _g2a-count _g2b-count _g2c-count errors)
+                         #:expected-g2c-ids [expected-g2c-ids #f]
+                         #:g2d-spec-paths [g2d-spec-paths '()]
+                         #:g2d-test-paths [g2d-test-paths '()]
+                         #:expected-g2d-ids [expected-g2d-ids #f])
+  (define-values (_g1-count _g2a-count _g2b-count _g2c-count _g2d-count
+                            errors)
     (coverage-analysis registry-path g1-spec-paths g1-test-paths
                        expected-g1-count
                        g2a-spec-paths g2a-test-paths
@@ -208,7 +240,9 @@
                        g2b-spec-paths g2b-test-paths
                        expected-g2b-ids
                        g2c-spec-paths g2c-test-paths
-                       expected-g2c-ids))
+                       expected-g2c-ids
+                       g2d-spec-paths g2d-test-paths
+                       expected-g2d-ids))
   errors)
 
 (define (run-coverage registry-path g1-spec-paths g1-test-paths
@@ -223,8 +257,11 @@
                       #:expected-g2b-ids [expected-g2b-ids #f]
                       #:g2c-spec-paths [g2c-spec-paths '()]
                       #:g2c-test-paths [g2c-test-paths '()]
-                      #:expected-g2c-ids [expected-g2c-ids #f])
-  (define-values (g1-count g2a-count g2b-count g2c-count errors)
+                      #:expected-g2c-ids [expected-g2c-ids #f]
+                      #:g2d-spec-paths [g2d-spec-paths '()]
+                      #:g2d-test-paths [g2d-test-paths '()]
+                      #:expected-g2d-ids [expected-g2d-ids #f])
+  (define-values (g1-count g2a-count g2b-count g2c-count g2d-count errors)
     (coverage-analysis registry-path g1-spec-paths g1-test-paths
                        expected-g1-count
                        g2a-spec-paths g2a-test-paths
@@ -232,7 +269,9 @@
                        g2b-spec-paths g2b-test-paths
                        expected-g2b-ids
                        g2c-spec-paths g2c-test-paths
-                       expected-g2c-ids))
+                       expected-g2c-ids
+                       g2d-spec-paths g2d-test-paths
+                       expected-g2d-ids))
   (cond
     [(null? errors)
      (fprintf output "Requirement coverage OK: ~a G1 IDs" g1-count)
@@ -242,6 +281,8 @@
        (fprintf output ", ~a G2b IDs" g2b-count))
      (when expected-g2c-ids
        (fprintf output ", ~a G2c IDs" g2c-count))
+     (when expected-g2d-ids
+       (fprintf output ", ~a G2d IDs" g2d-count))
      (newline output)
      0]
     [else
@@ -276,6 +317,10 @@
 (define expected-g2c-ids
   (set "VAR-001" "VAR-002" "VAR-003"))
 
+;; Update this only when the G2d scope intentionally gains or removes an ID.
+(define expected-g2d-ids
+  (set "RFN-001" "RFN-002" "RFN-003"))
+
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
   (define root (simplify-path (build-path tools-directory 'up)))
@@ -305,6 +350,20 @@
     (for/list ([name (in-list '("variance-test.rkt"
                                 "properties-variance-test.rkt"))])
       (build-path root "model/redex/tests" name)))
+  (define g2d-specs
+    (list (build-path root "docs/specification/proof-value.md")))
+  (define g2d-tests
+    (for/list ([name (in-list '("refine-lang-test.rkt"
+                                "validators-test.rkt"
+                                "machine-refine-test.rkt"
+                                "typing-refine-test.rkt"
+                                "origins-refine-test.rkt"
+                                "elaborate-refine-test.rkt"
+                                "search-goal-test.rkt"
+                                "typing-witness-test.rkt"
+                                "compat-discharge-test.rkt"
+                                "properties-refine-test.rkt"))])
+      (build-path root "model/redex/tests" name)))
   (run-coverage registry g1-specs g1-tests output error-output
                 #:expected-g1-count expected-g1-count
                 #:g2a-spec-paths g2a-specs
@@ -315,7 +374,10 @@
                 #:expected-g2b-ids expected-g2b-ids
                 #:g2c-spec-paths g2c-specs
                 #:g2c-test-paths g2c-tests
-                #:expected-g2c-ids expected-g2c-ids))
+                #:expected-g2c-ids expected-g2c-ids
+                #:g2d-spec-paths g2d-specs
+                #:g2d-test-paths g2d-tests
+                #:expected-g2d-ids expected-g2d-ids))
 
 (module+ main
   (exit (main)))
