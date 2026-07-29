@@ -452,7 +452,10 @@ G2a は次の規則を導入しない。
   optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う。
 - **Union と Intersection**：trait の Intersection が Proof を持つ合成であるため、trait 層で扱う。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
+  G2d が `proof-value.md` §3 と §4 として導入した。
 - **join 型と Proof 付き merge**：型が異なる branch field の上位型と field 常在性の witness を要するため、Proof 層で扱う。
+  field 常在性の witness は G2d が `proof-value.md` §5 として導入した。
+  branch で型が異なる field の join 型と、witness による型付き field 回復は trait 層に残る。
 - **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
 - **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。

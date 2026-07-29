@@ -281,6 +281,9 @@ TypeRep の検査を型式の先頭名の比較にとどめると、`TypeRep(Res
 このため Reserved は初期環境の triple との完全一致まで、Derived は Make が記録する型式と本体の一致まで検査し、どちらの場合も kindOf による kind の整合を要求する。
 Redex model の負例テストはこの拒否を確認する。
 
+G2d は origin 検証を初期成果物の層と到達成果物の層に分け、validator 正典表に基づく Refined 値の検査を足した。
+規則は `proof-value.md` §7 に置く（本節では二重に定義しない）。
+
 ホワイトペーパー §11.5.2 は適用規則の前提に `valid-origin(O)` を置くが、G1 では origin を型成分から外したため、この前提を `verify-origins` による Typed Core 全体の一括検査へ再配置した。
 origin を型成分として引数位置の関数に固定すると、異なる origin の関数を同じ高階関数へ渡せなくなるためである。
 

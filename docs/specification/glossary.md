@@ -182,6 +182,33 @@
 - **参照**：ホワイトペーパー §3.2、§11.5.4、付録 A。
 - **関連要件 ID**：RET-001、RET-002、RET-003。
 
+### Refinement
+
+- **定義**：値が満たす命題の Proof を型に保持する機構。
+  `Refined τ φ` は τ の値と φ の Proof の対であり、φ の Proof は実行時に検査されない。
+- **参照**：ホワイトペーパー §4.6、proof-value.md §3.2、§3.4。
+- **関連要件 ID**：RFN-001（G2）。
+
+### Untrusted
+
+- **定義**：外部由来で未検証の値を表す型。
+  `Untrusted τ` の値は判定表に登録された validator を経由してのみ Refined になる。
+- **参照**：ホワイトペーパー §6、proof-value.md §3.2、§4.2。
+- **関連要件 ID**：RFN-001（G2）。
+
+### 常在性 witness
+
+- **定義**：制御フロー合流の全 non-Never branch に同じ型と可変性で存在した field について、その常在性を述べる命題 `Presence(label)` の Proof。
+  merge 位置の局所文脈としてのみ使う。
+- **参照**：ホワイトペーパー §6、proof-value.md §5.1、§5.2。
+- **関連要件 ID**：RFN-002（G2）。
+
+### discharge 互換
+
+- **定義**：Proof obligation の反変判定において、上位型の明示記載に加えて大域候補文脈からの discharge による充足も認める互換判定。
+- **参照**：ホワイトペーパー §6、proof-value.md §6.1、§6.3。
+- **関連要件 ID**：RFN-003（G2）。
+
 ## 3. calculus 仕様の記法
 
 以下は `core-calculus.md` が使う記法である。

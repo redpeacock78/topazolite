@@ -129,15 +129,26 @@ trait 由来の同一性成分が空の間も provenance と cid を含めるた
 
 **wf-candidate** は候補が次の条件をすべて満たすことを表す。
 
-- 候補 P が `(ProofRep O φ)` の形であり、φ が goal の命題と一致する。
-- O が G1 の `verify-origins` を通り、forge された origin でない。
+- 候補 P が `(ProofRep O φ)` の形である。
+- O が φ の正当な発行者であり、forge された origin でない。
 - sid が探索位置から可視である。
 - cid と pid が `candidateize` の決定規則に従う。
 - hook が空である。
 
-**wf-Σ** は、Σ のすべての候補が wf-candidate を満たすことを表す。
-Finite な探索では、Σ が可視候補を漏れなく含む完全な集合であることも要求する。
-`project` は Γ_pc から構成上 wf-Σ を満たす Σ を返す。
+**wf-context** は、Γ_pc のすべての entry が候補単体の条件を満たすことを表す。
+wf-context は特定の goal との命題一致を要求しない。
+
+goal ごとの候補集合を次で定める。
+
+```text
+Σ_goal = project-goal(Γ_pc, sc-ctx, goal)
+```
+
+`project-goal` は scope から可視な候補のうち、命題が goal と一致する候補を漏れなく抽出する。
+
+**wf-Σ** は、Σ_goal のすべての候補が wf-candidate を満たし、命題が goal と一致することを表す。
+Finite な探索では、Σ_goal がその goal に対する可視候補を漏れなく含む完全な集合であることも要求する。
+`project-goal` は Γ_pc から構成上 wf-Σ を満たす Σ_goal を返す。
 
 ## 4. 候補解決と一意性
 
@@ -199,10 +210,10 @@ certificate は検査対象の artifact が供給する裸の項ではない。
 admissible?(goal, Γ_pc, class, SR, ev) = #t | #f
 ```
 
-ev は Finite では完全な Σ から得た一意性の導出であり、Productive では Ωs が返す certificate である。
+ev は Finite では goal ごとに抽出した完全な Σ_goal から得た一意性の導出であり、Productive では Ωs が返す certificate である。
 採択規則を次で定める。
 
-- `(Finite, Resolved P)` は、`ev = project(Γ_pc, root)` が wf-Σ を満たし、`unique(goal, ev, P)` を再検査できるときに採択する。
+- `(Finite, Resolved P)` は、`ev = Σ_goal` が wf-Σ を満たし、`unique(goal, ev, P)` を再検査できるときに採択する。
 - `(Productive, Resolved P)` は、certificate が同じ goal、Γ_pc、P に対して有効なときに採択する。
 - `Absent` と `Ambiguous` は計算クラスによらず採択しない。
 
@@ -263,8 +274,8 @@ G2b は暗黙 Proof 探索の静的な骨格に範囲を限る。
 
 - trait 型と `impl` または `derive` を使う暗黙 trait resolution。
 - trait origin と `impl` または `derive` Proof を含む候補同一性。
-- **異種命題の候補文脈**：G2b の wf-candidate と wf-Σ は、固定の Π0 が単一命題だけを持つ前提で goal との命題一致を全候補に要求する。
-  trait 層では goal ごとの候補抽出と候補文脈全体の well-formedness を分けて再定義する。
+- **異種命題の候補文脈**：カーネル命題の範囲は G2d が `proof-value.md` §6.3 として回収し、goal ごとの候補抽出と候補文脈全体の well-formedness を分けた。
+  trait 由来の候補同一性は trait 層に残る。
 - 局所 Proof 束縛による候補文脈の成長と scope ごとの統合性質。
 - 実際の探索計算、その `⇓class` 導出、Productive の SR と certificate の構築。
 - Unknown を有限化する探索境界と termination Proof。
