@@ -2,11 +2,12 @@
 
 (require racket/match
          "rows.rkt"
+         "search.rkt"
          "type-equiv.rkt")
 
 (provide compat?)
 
-(define (record-compatible? sub-row sup-row)
+(define (record-compatible? sub-row sup-row gamma-pc)
   (for/and ([field (in-list sup-row)])
     (match field
       [(list label sup-type sup-mutability)
@@ -14,7 +15,7 @@
          [(list sub-type sub-mutability)
           (and (eq? sub-mutability sup-mutability)
                (case sup-mutability
-                 [(imm) (compat? sub-type sup-type)]
+                 [(imm) (compat? sub-type sup-type gamma-pc)]
                  [(mut) (type-equiv? sub-type sup-type)]
                  [else #f]))]
          [_ #f])]
@@ -27,39 +28,47 @@
     (for/or ([sup-label (in-list sup-row)])
       (effect-equiv? label sup-label))))
 
-;; VAR-002: Proof obligation は反変の集合包含。φ は exact 一致で照合する。
+;; VAR-002/RFN-003: Proof obligation は反変の集合包含であるが、候補文脈が
+;; 既に witness を持つ義務は包含が無くても充足できる。discharge に使う文脈は
+;; 呼び出し側が渡す大域の Γ_pc⁰ に限る。merge の W を混ぜると、その merge の
+;; 外へ関数値が逃げたときに義務の根拠が消え、Preservation が壊れる。
 ;; member はリストか #f を返すため、rackunit へ渡る値を厳密な boolean に落とす。
-(define (obligations-subset? sub-obligations sup-obligations)
+(define (obligations-subset? sub-obligations sup-obligations gamma-pc)
   (for/and ([obligation (in-list sub-obligations)])
-    (and (member obligation sup-obligations) #t)))
+    (or (and (member obligation sup-obligations) #t)
+        (obligations-dischargeable? (list obligation) gamma-pc))))
 
 ;; VAR-001: 引数反変・返り値共変・引数個数一致。
 (define (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
-                         sup-parameters sup-return sup-row sup-obligations)
+                         sup-parameters sup-return sup-row sup-obligations
+                         gamma-pc)
   (and (= (length sub-parameters) (length sup-parameters))
        (for/and ([sub-parameter (in-list sub-parameters)]
                  [sup-parameter (in-list sup-parameters)])
-         (compat? sup-parameter sub-parameter))
-       (compat? sub-return sup-return)
+         (compat? sup-parameter sub-parameter gamma-pc))
+       (compat? sub-return sup-return gamma-pc)
        (effect-row-subset? sub-row sup-row)
-       (obligations-subset? sub-obligations sup-obligations)))
+       (obligations-subset? sub-obligations sup-obligations gamma-pc)))
 
-(define (compat? sub sup)
+;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
+;; G2c までの挙動と一致する。
+(define (compat? sub sup [gamma-pc '()])
   (match* (sub sup)
     [('Never _) #t]
     [(`(Record ,sub-row) `(Record ,sup-row))
-     (record-compatible? sub-row sup-row)]
+     (record-compatible? sub-row sup-row gamma-pc)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
      (type-equiv? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
-     (compat? sub-payload sup-payload)]
+     (compat? sub-payload sup-payload gamma-pc)]
     ;; RFN-001: φ は一致を要求し、ペイロード型だけ compat? で再帰する。
     [(`(Refined ,sub-payload ,sub-proposition)
       `(Refined ,sup-payload ,sup-proposition))
      (and (equal? sub-proposition sup-proposition)
-          (compat? sub-payload sup-payload))]
+          (compat? sub-payload sup-payload gamma-pc))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
       `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
-                      sup-parameters sup-return sup-row sup-obligations)]
+                      sup-parameters sup-return sup-row sup-obligations
+                      gamma-pc)]
     [(_ _) (type-equiv? sub sup)]))

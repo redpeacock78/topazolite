@@ -119,8 +119,10 @@
             ([label (in-list row)])
     (row-union normalized (list label))))
 
-(define (type-compatible? actual expected)
-  (compat? actual expected))
+;; RFN-003: elaboration では、その位置で見えている命題文脈を候補へ変換して
+;; 渡す。typing の Γ_pc⁰ に対応する。
+(define (type-compatible? actual expected propositions)
+  (compat? actual expected (candidateize propositions)))
 
 ;; RFN-001/002: 表層注釈に書いてよい命題。判定表の (Prop id) と G1 の 2 命題を
 ;; 許し、(Presence label) は許さない。文法でも外しているが、注釈は Redex の
@@ -553,7 +555,7 @@
            (cond
              [(eq? actual-type 'Never) declared-type]
              [else
-              (unless (type-compatible? actual-type declared-type)
+              (unless (type-compatible? actual-type declared-type propositions)
                 (reject 'type-mismatch actual-type declared-type))
               (match declared-type
                 [`(Record ,declared-row)
@@ -772,7 +774,8 @@
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
            (synth expression environment delta propositions boundaries))
-         (unless (type-compatible? (judgment-type result) expected)
+         (unless (type-compatible? (judgment-type result) expected
+                                   propositions)
            (reject 'type-mismatch (judgment-type result) expected))
          (judgment (judgment-core result) expected (judgment-row result))]
 
@@ -801,7 +804,8 @@
         [_
          (define result
            (synth expression environment delta propositions boundaries))
-         (unless (type-compatible? (judgment-type result) expected)
+         (unless (type-compatible? (judgment-type result) expected
+                                   propositions)
            (reject 'type-mismatch (judgment-type result) expected))
          (judgment (judgment-core result) expected (judgment-row result))]))
 

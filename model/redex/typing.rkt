@@ -53,8 +53,9 @@
 
 ;; VAR-001..003: checking は elaboration と同じ compat? を全型で共有する。
 ;; Never の bottom 受理は compat? の Never 分岐が担う。
+;; RFN-003: discharge に使う文脈は大域の Γ_pc⁰ に限る。merge の W は渡さない。
 (define (type-compatible? actual expected)
-  (compat? actual expected))
+  (compat? actual expected Γ-pc0))
 
 (define (type? value)
   (and (redex-match? G2m τ value)
@@ -321,7 +322,7 @@
        [(list 'Never bound-row)
         (list bound-row declared-type)]
        [(list `(Record ,actual-row) bound-row)
-        (and (compat? `(Record ,actual-row) declared-type)
+        (and (compat? `(Record ,actual-row) declared-type Γ-pc0)
              (let* ([residual
                      (field-row-residual actual-row declared-row)]
                     [binding-row
