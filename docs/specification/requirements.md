@@ -218,20 +218,24 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 ### CMP-001
 
 - **状態**：G2
-- **由来**：ホワイトペーパー §15
+- **由来**：新規（`docs/specification/trait.md`）
 - **正典**：`docs/specification/trait.md`
 
-Union 型は構成要素の順序と重複によらず一意の正規形を持つ。
+有限に正規化できる Union 型は、構成要素の順序と重複によらず一意の正規形を持つ。
 正規化に失敗する型を成果物の境界へ通してはならない。
+ホワイトペーパー §4.5.3 の正規化分類を根拠とする。
+recursive Union の opaque identity は Phase 1 以降で扱う。
 
 ### CMP-002
 
 - **状態**：G2
-- **由来**：ホワイトペーパー §15
+- **由来**：新規（`docs/specification/trait.md`）
 - **正典**：`docs/specification/trait.md`
 
-Intersection 型は行の合成によって消去される。
+構造型の Intersection は行の合成によって消去される。
 行が衝突する Intersection は型として成立しない。
+ホワイトペーパー §4.5.3 の構造 row 合成を根拠とする。
+trait の Intersection は Proof-bearing trait composition として TRT 群が扱い、この規則の対象外とする。
 
 ### PSR-001
 
