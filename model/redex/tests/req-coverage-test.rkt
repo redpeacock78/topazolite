@@ -56,6 +56,9 @@
 (define expected-g2d-ids
   (set rfn-001 rfn-002 rfn-003))
 
+(define (descriptor-ids ids)
+  (map string->symbol (sort (set->list ids) string<?)))
+
 (define (registry-entries ids state)
   (apply string-append
          (for/list ([id (in-list ids)])
@@ -106,39 +109,51 @@
    registry spec test
    (lambda (registry-path spec-paths test-paths)
      (if expected-g2a-ids
-         (coverage-errors registry-path '() '()
-                          #:g2a-spec-paths spec-paths
-                          #:g2a-test-paths test-paths
-                          #:expected-g2a-ids expected-g2a-ids)
-         (coverage-errors registry-path spec-paths test-paths
-                          #:expected-g1-count expected-g1-count)))))
+         (coverage-errors
+          registry-path
+          #:cycles
+          (list
+           (cycle-descriptor 'G2a spec-paths test-paths #f
+                             (descriptor-ids expected-g2a-ids))))
+         (coverage-errors
+          registry-path
+          #:cycles
+          (list
+           (cycle-descriptor 'G1 spec-paths test-paths
+                             expected-g1-count #f)))))))
 
 (define (fixture-errors-g2b registry spec test)
   (with-fixture
    registry spec test
    (lambda (registry-path spec-paths test-paths)
-     (coverage-errors registry-path '() '()
-                      #:g2b-spec-paths spec-paths
-                      #:g2b-test-paths test-paths
-                      #:expected-g2b-ids expected-g2b-ids))))
+     (coverage-errors
+      registry-path
+      #:cycles
+      (list
+       (cycle-descriptor 'G2b spec-paths test-paths #f
+                         (descriptor-ids expected-g2b-ids)))))))
 
 (define (fixture-errors-g2c registry spec test)
   (with-fixture
    registry spec test
    (lambda (registry-path spec-paths test-paths)
-     (coverage-errors registry-path '() '()
-                      #:g2c-spec-paths spec-paths
-                      #:g2c-test-paths test-paths
-                      #:expected-g2c-ids expected-g2c-ids))))
+     (coverage-errors
+      registry-path
+      #:cycles
+      (list
+       (cycle-descriptor 'G2c spec-paths test-paths #f
+                         (descriptor-ids expected-g2c-ids)))))))
 
 (define (fixture-errors-g2d registry spec test)
   (with-fixture
    registry spec test
    (lambda (registry-path spec-paths test-paths)
-     (coverage-errors registry-path '() '()
-                      #:g2d-spec-paths spec-paths
-                      #:g2d-test-paths test-paths
-                      #:expected-g2d-ids expected-g2d-ids))))
+     (coverage-errors
+      registry-path
+      #:cycles
+      (list
+       (cycle-descriptor 'G2d spec-paths test-paths #f
+                         (descriptor-ids expected-g2d-ids)))))))
 
 (test-case "G2a coverage requires the exact ID set"
   (check-equal?
@@ -275,13 +290,14 @@
    (string-append (test-references g2a-ids) "\n" (test-references g2c-ids))
    (lambda (registry-path spec-paths test-paths)
      (check-equal?
-      (coverage-errors registry-path '() '()
-                       #:g2a-spec-paths spec-paths
-                       #:g2a-test-paths test-paths
-                       #:expected-g2a-ids expected-g2a-ids
-                       #:g2c-spec-paths spec-paths
-                       #:g2c-test-paths test-paths
-                       #:expected-g2c-ids expected-g2c-ids)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list
+        (cycle-descriptor 'G2a spec-paths test-paths #f
+                          (descriptor-ids expected-g2a-ids))
+        (cycle-descriptor 'G2c spec-paths test-paths #f
+                          (descriptor-ids expected-g2c-ids))))
       '()))))
 
 (test-case "normal coverage passes"
@@ -364,7 +380,10 @@
      (define output (open-output-string))
      (define errors (open-output-string))
      (check-equal?
-      (run-coverage registry-path spec-paths test-paths output errors)
+      (run-coverage
+       registry-path output errors
+       #:cycles
+       (list (cycle-descriptor 'G1 spec-paths test-paths #f #f)))
       1)
      (check-equal? (get-output-string output) "")
      (check-true
@@ -380,3 +399,21 @@
                  "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, "
                  "3 G2b IDs, 3 G2c IDs, 3 G2d IDs\n"))
   (check-equal? (get-output-string errors) ""))
+
+(test-case "cycle-descriptors covers every declared sub-cycle"
+  (define ds (default-cycle-descriptors))
+  (check-equal? (map cycle-descriptor-name ds) '(G1 G2a G2b G2c G2d))
+  (define (by-name n)
+    (findf (lambda (d) (eq? (cycle-descriptor-name d) n)) ds))
+  (check-equal? (cycle-descriptor-expected-count (by-name 'G1)) 18)
+  (check-false (cycle-descriptor-expected-ids (by-name 'G1)))
+  (check-equal? (cycle-descriptor-expected-ids (by-name 'G2d))
+                '(RFN-001 RFN-002 RFN-003))
+  (check-false (cycle-descriptor-expected-count (by-name 'G2d))))
+
+(test-case "every descriptor carries its own spec and test paths"
+  (for ([d (in-list (default-cycle-descriptors))])
+    (check-true (list? (cycle-descriptor-spec-paths d))
+                (format "~s" (cycle-descriptor-name d)))
+    (check-true (list? (cycle-descriptor-test-paths d))
+                (format "~s" (cycle-descriptor-name d)))))

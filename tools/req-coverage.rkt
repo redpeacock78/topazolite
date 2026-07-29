@@ -3,9 +3,17 @@
 (require racket/file
          racket/runtime-path)
 
-(provide coverage-errors
+(provide (struct-out cycle-descriptor)
+         coverage-errors
+         default-cycle-descriptors
          main
          run-coverage)
+
+;; サブサイクル 1 件分の入力と期待値。
+;; expected-count と expected-ids は、使わない側へ #f を入れる。
+(struct cycle-descriptor
+  (name spec-paths test-paths expected-count expected-ids)
+  #:transparent)
 
 (define heading-rx #px"^### ([A-Z]{3}-[0-9]{3})(?: +.*)?$")
 (define state-rx #px"^- \\*\\*状態\\*\\*： *(.+?) *$")
@@ -50,16 +58,7 @@
 (define (sorted-ids ids)
   (sort (set->list ids) string<?))
 
-(define (coverage-analysis registry-path g1-spec-paths g1-test-paths
-                           expected-g1-count
-                           g2a-spec-paths g2a-test-paths
-                           expected-g2a-ids
-                           g2b-spec-paths g2b-test-paths
-                           expected-g2b-ids
-                           g2c-spec-paths g2c-test-paths
-                           expected-g2c-ids
-                           g2d-spec-paths g2d-test-paths
-                           expected-g2d-ids)
+(define (coverage-analysis registry-path cycles)
   (define definitions (registry-definitions registry-path))
   (define counts (make-hash))
   (for ([definition (in-list definitions)])
@@ -75,63 +74,58 @@
      (for/list ([definition (in-list definitions)]
                 #:when (equal? (cdr definition) "G2"))
        (car definition))))
-  (define g1-specs (list->set (spec-ids g1-spec-paths)))
-  (define g1-tests (list->set (test-ids g1-test-paths)))
-  (define g2a-spec-references (list->set (spec-ids g2a-spec-paths)))
-  (define g2a-test-references (list->set (test-ids g2a-test-paths)))
-  (define g2b-spec-references (list->set (spec-ids g2b-spec-paths)))
-  (define g2b-test-references (list->set (test-ids g2b-test-paths)))
-  (define g2c-spec-references (list->set (spec-ids g2c-spec-paths)))
-  (define g2c-test-references (list->set (test-ids g2c-test-paths)))
-  (define g2d-spec-references (list->set (spec-ids g2d-spec-paths)))
-  (define g2d-test-references (list->set (test-ids g2d-test-paths)))
-  ;; G2a property tests may restate G1 invariants, so G1 references are
-  ;; allowed in the mapped files.  The G2a canon structural-row.md also
-  ;; carries the G2c variance section, so explicit G2c IDs are excluded
-  ;; from the G2a comparison as well.  Every other reference must be in
-  ;; the explicit G2a set; this also rejects accidental G3/Phase IDs.
-  (define g2a-specs
-    (set-subtract g2a-spec-references g1 (or expected-g2c-ids (set))))
-  (define g2a-tests
-    (set-subtract g2a-test-references g1 (or expected-g2c-ids (set))))
-  (define earlier-cycle-ids
-    (set-union g1 (or expected-g2a-ids (set))))
-  (define g2b-specs
-    (set-subtract g2b-spec-references earlier-cycle-ids))
-  (define g2b-tests
-    (set-subtract g2b-test-references earlier-cycle-ids))
-  (define g2c-earlier-ids
-    (set-union g1
-               (or expected-g2a-ids (set))
-               (or expected-g2b-ids (set))))
-  (define g2c-specs
-    (set-subtract g2c-spec-references g2c-earlier-ids))
-  (define g2c-tests
-    (set-subtract g2c-test-references g2c-earlier-ids))
-  (define g2d-earlier-ids
-    (set-union g1
-               (or expected-g2a-ids (set))
-               (or expected-g2b-ids (set))
-               (or expected-g2c-ids (set))))
-  (define g2d-specs
-    (set-subtract g2d-spec-references g2d-earlier-ids))
-  (define g2d-tests
-    (set-subtract g2d-test-references g2d-earlier-ids))
+
+  (define (expected-id-set cycle)
+    (and (cycle-descriptor-expected-ids cycle)
+         (list->set
+          (for/list ([id (in-list (cycle-descriptor-expected-ids cycle))])
+            (if (symbol? id) (symbol->string id) id)))))
+  (define expected-sets (map expected-id-set cycles))
+  (define owned-sets
+    (for/list ([cycle (in-list cycles)]
+               [expected (in-list expected-sets)])
+      (cond
+        [expected expected]
+        [(eq? (cycle-descriptor-name cycle) 'G1) g1]
+        [else (set)])))
+  (define spec-reference-sets
+    (for/list ([cycle (in-list cycles)])
+      (list->set (spec-ids (cycle-descriptor-spec-paths cycle)))))
+  (define test-reference-sets
+    (for/list ([cycle (in-list cycles)])
+      (list->set (test-ids (cycle-descriptor-test-paths cycle)))))
+
+  ;; サイクルの正典やテストは、先行要件を回帰として再掲したり、同じ文書に後続
+  ;; サイクルの要件を置いたりできる。宣言順から自身以外の既知サイクル ID を
+  ;; 引き、そのサイクル固有の参照だけを残す。
+  (define (cycle-local-references references index)
+    (for/fold ([local references])
+              ([ids (in-list owned-sets)]
+               [other-index (in-naturals)]
+               #:unless (= index other-index))
+      (set-subtract local ids)))
+  (define cycle-specs
+    (for/list ([references (in-list spec-reference-sets)]
+               [index (in-naturals)])
+      (cycle-local-references references index)))
+  (define cycle-tests
+    (for/list ([references (in-list test-reference-sets)]
+               [index (in-naturals)])
+      (cycle-local-references references index)))
+
   (define all-references
-    (set-union g1-specs g1-tests
-               g2a-spec-references g2a-test-references
-               g2b-spec-references g2b-test-references
-               g2c-spec-references g2c-test-references
-               g2d-spec-references g2d-test-references))
-  (define g1-count (set-count g1))
-  (define g2a-count
-    (if expected-g2a-ids (set-count expected-g2a-ids) 0))
-  (define g2b-count
-    (if expected-g2b-ids (set-count expected-g2b-ids) 0))
-  (define g2c-count
-    (if expected-g2c-ids (set-count expected-g2c-ids) 0))
-  (define g2d-count
-    (if expected-g2d-ids (set-count expected-g2d-ids) 0))
+    (for/fold ([references (set)])
+              ([cycle-references
+                (in-list (append spec-reference-sets test-reference-sets))])
+      (set-union references cycle-references)))
+  (define cycle-counts
+    (for/list ([cycle (in-list cycles)]
+               [owned (in-list owned-sets)])
+      (if (cycle-descriptor-expected-count cycle)
+          (if (eq? (cycle-descriptor-name cycle) 'G1)
+              (set-count g1)
+              (set-count g2))
+          (set-count owned))))
   (define duplicates
     (sort
      (for/list ([(id count) (in-hash counts)] #:when (> count 1)) id)
@@ -149,22 +143,50 @@
      (for/list ([id (in-list
                      (sorted-ids (set-subtract actual expected)))])
        (format "~a ID set contains unexpected ID: ~a" source id))))
+  (define g1-index
+    (for/first ([cycle (in-list cycles)]
+                [index (in-naturals)]
+                #:when (eq? (cycle-descriptor-name cycle) 'G1))
+      index))
+  (define g1-specs
+    (if g1-index (list-ref spec-reference-sets g1-index) (set)))
+  (define g1-tests
+    (if g1-index (list-ref test-reference-sets g1-index) (set)))
+  (define count-errors
+    (append-map
+     (lambda (cycle count)
+       (define expected (cycle-descriptor-expected-count cycle))
+       (if (and expected (not (= expected count)))
+           (list
+            (format "expected ~a ~a requirements, found ~a"
+                    expected (cycle-descriptor-name cycle) count))
+           '()))
+     cycles cycle-counts))
+  (define exact-set-errors
+    (append-map
+     (lambda (cycle expected actual-specs actual-tests)
+       (if expected
+           (let ([name (cycle-descriptor-name cycle)])
+             (append
+              (for/list ([id (in-list
+                              (sorted-ids
+                               (set-subtract expected g2)))])
+                (format "~a expected ID is absent or not state G2: ~a"
+                        name id))
+              (set-difference-errors actual-specs expected
+                                     (format "~a spec" name))
+              (set-difference-errors actual-tests expected
+                                     (format "~a test" name))))
+           '()))
+     cycles expected-sets cycle-specs cycle-tests))
   (values
-   g1-count
-   g2a-count
-   g2b-count
-   g2c-count
-   g2d-count
+   cycle-counts
    (append
     (for/list ([id (in-list duplicates)])
       (format "duplicate requirement ID: ~a" id))
     (for/list ([id (in-list (sorted-ids invalid-states))])
       (format "invalid or missing requirement state: ~a" id))
-    (if (and expected-g1-count
-             (not (= expected-g1-count g1-count)))
-        (list (format "expected ~a G1 requirements, found ~a"
-                      expected-g1-count g1-count))
-        '())
+    count-errors
     (for/list ([id (in-list
                     (sorted-ids (set-subtract all-references known)))])
       (format "unknown requirement ID: ~a" id))
@@ -172,117 +194,28 @@
       (format "G1 requirement lacks spec annotation: ~a" id))
     (for/list ([id (in-list (sorted-ids (set-subtract g1 g1-tests)))])
       (format "G1 requirement lacks test reference: ~a" id))
-    (if expected-g2a-ids
-        (append
-         (for/list ([id (in-list
-                         (sorted-ids
-                          (set-subtract expected-g2a-ids g2)))])
-           (format "G2a expected ID is absent or not state G2: ~a" id))
-         (set-difference-errors g2a-specs expected-g2a-ids
-                                "G2a spec")
-         (set-difference-errors g2a-tests expected-g2a-ids
-                                "G2a test"))
-        '())
-    (if expected-g2b-ids
-        (append
-         (for/list ([id (in-list
-                         (sorted-ids
-                          (set-subtract expected-g2b-ids g2)))])
-           (format "G2b expected ID is absent or not state G2: ~a" id))
-         (set-difference-errors g2b-specs expected-g2b-ids
-                                "G2b spec")
-         (set-difference-errors g2b-tests expected-g2b-ids
-                                "G2b test"))
-        '())
-    (if expected-g2c-ids
-        (append
-         (for/list ([id (in-list
-                         (sorted-ids
-                          (set-subtract expected-g2c-ids g2)))])
-           (format "G2c expected ID is absent or not state G2: ~a" id))
-         (set-difference-errors g2c-specs expected-g2c-ids
-                                "G2c spec")
-         (set-difference-errors g2c-tests expected-g2c-ids
-                                "G2c test"))
-        '())
-    (if expected-g2d-ids
-        (append
-         (for/list ([id (in-list
-                         (sorted-ids
-                          (set-subtract expected-g2d-ids g2)))])
-           (format "G2d expected ID is absent or not state G2: ~a" id))
-         (set-difference-errors g2d-specs expected-g2d-ids
-                                "G2d spec")
-         (set-difference-errors g2d-tests expected-g2d-ids
-                                "G2d test"))
-        '()))))
+    exact-set-errors)))
 
-(define (coverage-errors registry-path g1-spec-paths g1-test-paths
-                         #:expected-g1-count [expected-g1-count #f]
-                         #:g2a-spec-paths [g2a-spec-paths '()]
-                         #:g2a-test-paths [g2a-test-paths '()]
-                         #:expected-g2a-ids [expected-g2a-ids #f]
-                         #:g2b-spec-paths [g2b-spec-paths '()]
-                         #:g2b-test-paths [g2b-test-paths '()]
-                         #:expected-g2b-ids [expected-g2b-ids #f]
-                         #:g2c-spec-paths [g2c-spec-paths '()]
-                         #:g2c-test-paths [g2c-test-paths '()]
-                         #:expected-g2c-ids [expected-g2c-ids #f]
-                         #:g2d-spec-paths [g2d-spec-paths '()]
-                         #:g2d-test-paths [g2d-test-paths '()]
-                         #:expected-g2d-ids [expected-g2d-ids #f])
-  (define-values (_g1-count _g2a-count _g2b-count _g2c-count _g2d-count
-                            errors)
-    (coverage-analysis registry-path g1-spec-paths g1-test-paths
-                       expected-g1-count
-                       g2a-spec-paths g2a-test-paths
-                       expected-g2a-ids
-                       g2b-spec-paths g2b-test-paths
-                       expected-g2b-ids
-                       g2c-spec-paths g2c-test-paths
-                       expected-g2c-ids
-                       g2d-spec-paths g2d-test-paths
-                       expected-g2d-ids))
+(define (coverage-errors registry-path
+                         #:cycles [cycles (default-cycle-descriptors)])
+  (define-values (_counts errors)
+    (coverage-analysis registry-path cycles))
   errors)
 
-(define (run-coverage registry-path g1-spec-paths g1-test-paths
+(define (run-coverage registry-path
                       [output (current-output-port)]
                       [error-output (current-error-port)]
-                      #:expected-g1-count [expected-g1-count #f]
-                      #:g2a-spec-paths [g2a-spec-paths '()]
-                      #:g2a-test-paths [g2a-test-paths '()]
-                      #:expected-g2a-ids [expected-g2a-ids #f]
-                      #:g2b-spec-paths [g2b-spec-paths '()]
-                      #:g2b-test-paths [g2b-test-paths '()]
-                      #:expected-g2b-ids [expected-g2b-ids #f]
-                      #:g2c-spec-paths [g2c-spec-paths '()]
-                      #:g2c-test-paths [g2c-test-paths '()]
-                      #:expected-g2c-ids [expected-g2c-ids #f]
-                      #:g2d-spec-paths [g2d-spec-paths '()]
-                      #:g2d-test-paths [g2d-test-paths '()]
-                      #:expected-g2d-ids [expected-g2d-ids #f])
-  (define-values (g1-count g2a-count g2b-count g2c-count g2d-count errors)
-    (coverage-analysis registry-path g1-spec-paths g1-test-paths
-                       expected-g1-count
-                       g2a-spec-paths g2a-test-paths
-                       expected-g2a-ids
-                       g2b-spec-paths g2b-test-paths
-                       expected-g2b-ids
-                       g2c-spec-paths g2c-test-paths
-                       expected-g2c-ids
-                       g2d-spec-paths g2d-test-paths
-                       expected-g2d-ids))
+                      #:cycles [cycles (default-cycle-descriptors)])
+  (define-values (counts errors)
+    (coverage-analysis registry-path cycles))
   (cond
     [(null? errors)
-     (fprintf output "Requirement coverage OK: ~a G1 IDs" g1-count)
-     (when expected-g2a-ids
-       (fprintf output ", ~a G2a IDs" g2a-count))
-     (when expected-g2b-ids
-       (fprintf output ", ~a G2b IDs" g2b-count))
-     (when expected-g2c-ids
-       (fprintf output ", ~a G2c IDs" g2c-count))
-     (when expected-g2d-ids
-       (fprintf output ", ~a G2d IDs" g2d-count))
+     (display "Requirement coverage OK: " output)
+     (for ([cycle (in-list cycles)]
+           [count (in-list counts)]
+           [index (in-naturals)])
+       (unless (zero? index) (display ", " output))
+       (fprintf output "~a ~a IDs" count (cycle-descriptor-name cycle)))
      (newline output)
      0]
     [else
@@ -307,24 +240,22 @@
 
 ;; Update this only when the G2a scope intentionally gains or removes an ID.
 (define expected-g2a-ids
-  (set "TYP-003" "ROW-001" "ROW-002" "ROW-003" "ROW-004"))
+  '(TYP-003 ROW-001 ROW-002 ROW-003 ROW-004))
 
 ;; Update this only when the G2b scope intentionally gains or removes an ID.
 (define expected-g2b-ids
-  (set "PSR-001" "PSR-002" "PSR-003"))
+  '(PSR-001 PSR-002 PSR-003))
 
 ;; Update this only when the G2c scope intentionally gains or removes an ID.
 (define expected-g2c-ids
-  (set "VAR-001" "VAR-002" "VAR-003"))
+  '(VAR-001 VAR-002 VAR-003))
 
 ;; Update this only when the G2d scope intentionally gains or removes an ID.
 (define expected-g2d-ids
-  (set "RFN-001" "RFN-002" "RFN-003"))
+  '(RFN-001 RFN-002 RFN-003))
 
-(define (main [output (current-output-port)]
-              [error-output (current-error-port)])
+(define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
-  (define registry (build-path root "docs/specification/requirements.md"))
   (define g1-specs
     (list (build-path root "docs/specification/core-calculus.md")))
   (define g1-tests
@@ -364,20 +295,18 @@
                                 "compat-discharge-test.rkt"
                                 "properties-refine-test.rkt"))])
       (build-path root "model/redex/tests" name)))
-  (run-coverage registry g1-specs g1-tests output error-output
-                #:expected-g1-count expected-g1-count
-                #:g2a-spec-paths g2a-specs
-                #:g2a-test-paths g2a-tests
-                #:expected-g2a-ids expected-g2a-ids
-                #:g2b-spec-paths g2b-specs
-                #:g2b-test-paths g2b-tests
-                #:expected-g2b-ids expected-g2b-ids
-                #:g2c-spec-paths g2c-specs
-                #:g2c-test-paths g2c-tests
-                #:expected-g2c-ids expected-g2c-ids
-                #:g2d-spec-paths g2d-specs
-                #:g2d-test-paths g2d-tests
-                #:expected-g2d-ids expected-g2d-ids))
+  (list
+   (cycle-descriptor 'G1 g1-specs g1-tests expected-g1-count #f)
+   (cycle-descriptor 'G2a g2a-specs g2a-tests #f expected-g2a-ids)
+   (cycle-descriptor 'G2b g2b-specs g2b-tests #f expected-g2b-ids)
+   (cycle-descriptor 'G2c g2c-specs g2c-tests #f expected-g2c-ids)
+   (cycle-descriptor 'G2d g2d-specs g2d-tests #f expected-g2d-ids)))
+
+(define (main [output (current-output-port)]
+              [error-output (current-error-port)])
+  (define root (simplify-path (build-path tools-directory 'up)))
+  (define registry (build-path root "docs/specification/requirements.md"))
+  (run-coverage registry output error-output))
 
 (module+ main
   (exit (main)))
