@@ -211,6 +211,11 @@
                 `(Reserved ,(validator-oid row))
                 (validator-name row) 'root 'default '()))))
 
+;; 判定表の一部だけを持つ候補文脈。global-context は全命題を持つため生成した
+;; 組がすべて受理され、性質3 の拒否側を探索が一度も踏まない。片方だけを持つ
+;; 文脈を並べて、拒否側も探索で踏ませる。
+(define partial-context (list (first global-context)))
+
 (define (nfn obligations) `(NFn (Int) Int () ,obligations))
 
 (test-case "RFN-003: Γ_pc⁰ は G1 の命題を候補の有無で分ける"
@@ -235,17 +240,28 @@
          (compat? (nfn sub-obligations) (nfn sup-obligations)
                   global-context))
        (check-equal? result dischargeable?)
-       (if result
-           (set-box! accepted-count (add1 (unbox accepted-count)))
-           (set-box! rejected-count (add1 (unbox rejected-count))))
+       (when result
+         (set-box! accepted-count (add1 (unbox accepted-count))))
+       ;; 同じ組を片方の witness しか持たない文脈で見る。sup に無い
+       ;; (Prop NonEmpty) を sub が持つ組が拒否側へ落ちる。
+       (define partial-dischargeable?
+         (for/and ([proposition (in-list sub-obligations)])
+           (or (and (member proposition sup-obligations) #t)
+               (obligations-dischargeable? (list proposition)
+                                           partial-context))))
+       (define partial-result
+         (compat? (nfn sub-obligations) (nfn sup-obligations)
+                  partial-context))
+       (check-equal? partial-result partial-dischargeable?)
+       (unless partial-result
+         (set-box! rejected-count (add1 (unbox rejected-count))))
        ;; Γ_pc⁰ にも Q_sup にも無い φ を持つ組は必ず拒否される。
        (check-false
         (compat? (nfn (cons '(Prop ValidHost) sub-obligations))
                  (nfn sup-obligations)
                  global-context)))
      (check-true (positive? (unbox accepted-count)))
-     ;; global-context は判定表の全命題を持つため、生成した組はすべて受理
-     ;; される。拒否側は上の (Prop ValidHost) の検査が担う。
+     (check-true (positive? (unbox rejected-count)))
      (printf "discharge direction: attempts=~a accepted=~a rejected=~a seed=~a\n"
              attempts (unbox accepted-count) (unbox rejected-count)
              (bounds-seed limits)))))
