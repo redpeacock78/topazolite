@@ -76,8 +76,8 @@
   '(Candidate (ProofRep (Reserved o-bogus) TypeNarrativeCap) x root default ()))
 (check-false (wf-candidate? forged goalT))
 
-; wf-Σ: project の返す候補環境は wf
-(check-true (wf-Σ? (project Γ-pc0 '(root)) goalT))
+; wf-Σ: goal ごとの射影が返す候補環境は wf
+(check-true (wf-Σ? (project-goal Γ-pc0 '(root) goalT) goalT))
 (check-false (wf-Σ? (list forged) goalT))
 
 (define PT '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
@@ -124,6 +124,6 @@
 (check-false (cert-valid? cert goalT Γ-pc0 '(ProofRep (Reserved o-x) TypeNarrativeCap)))
 
 ; unique?: 完全な Σ から (Resolved P) が出れば一意性導出
-(define sigmaT (project Γ-pc0 '(root)))
+(define sigmaT (project-goal Γ-pc0 '(root) goalT))
 (check-true  (unique? goalT sigmaT PT))
 (check-false (unique? goalT '() PT))
