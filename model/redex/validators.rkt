@@ -78,10 +78,15 @@
            "introduction-table does not cover the payload types: ~a vs ~a"
            payload-types introduced)))
 
-(unless (equal? (map validator-proposition validator-table)
-                (map third projection-table))
+(unless (equal?
+         (map (lambda (row)
+                (list (validator-proposition row)
+                      (validator-payload-type row)))
+              validator-table)
+         (map (lambda (row) (list (third row) (fourth row)))
+              projection-table))
   (error 'validators
-         "projection-table does not cover the validator rows"))
+         "projection-table does not cover the validator rows (proposition and type)"))
 
 ;; ペイロード型はリテラルで表せる型に限る。Owned-free でもリテラルを持たない
 ;; 型は payload 束縛検査が判定できないため、ここで落とす。

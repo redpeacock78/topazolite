@@ -47,6 +47,15 @@
 (check-false (introduction-row-by-name 'unrefinePort))
 (check-false (projection-row-by-name 'untrustedInt))
 
+(test-case "projection coverage compares (proposition type) pairs"
+  ;; validator 行と projection 行は命題と型の両方で一致していなければならない。
+  (check-equal?
+   (map (lambda (v)
+          (list (validator-proposition v) (validator-payload-type v)))
+        validator-table)
+   (map (lambda (p) (list (third p) (fourth p)))
+        projection-table)))
+
 ;; RFN-001: カーネル primitive 名は G2d が足した 6 個だけである。
 (for ([name (in-list '(validPort nonEmpty untrustedInt untrustedString
                        unrefinePort unrefineNonEmpty))])
