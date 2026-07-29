@@ -139,6 +139,8 @@
     [`(Refined ,payload ,_) (owned-free? payload)]
     [`(Record ,row)
      (for/and ([field (in-list row)]) (owned-free? (second field)))]
+    [`(Union ,left ,right) (and (owned-free? left) (owned-free? right))]
+    [`(Intersection ,left ,right) (and (owned-free? left) (owned-free? right))]
     [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
      (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
           (owned-free? return-type)
