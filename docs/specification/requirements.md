@@ -215,6 +215,24 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 暗黙 trait resolution は一意な候補を確定できなければならない。Ambiguous candidate はエラーとする。
 
+### CMP-001
+
+- **状態**：G2
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md`
+
+Union 型は構成要素の順序と重複によらず一意の正規形を持つ。
+正規化に失敗する型を成果物の境界へ通してはならない。
+
+### CMP-002
+
+- **状態**：G2
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md`
+
+Intersection 型は行の合成によって消去される。
+行が衝突する Intersection は型として成立しない。
+
 ### PSR-001
 
 - **状態**：G2
