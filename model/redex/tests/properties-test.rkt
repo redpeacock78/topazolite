@@ -17,6 +17,7 @@
 
 (provide preservation-g2?
          progress-g2?
+         initial-origin-ok?
          origin-integrity-g2?
          boundary-safe-g2?
          type-info-integrity-g2?
@@ -138,11 +139,19 @@
 (define (origin-ok? core)
   (equal? (term (verify-origins ,R0 ,core)) 'ok))
 
+;; G2d: 初期成果物には UVal と RVal が現れない。到達成果物では validate が
+;; 作るため、層ごとに入口を変える。
+;; このファイルは req-coverage の g2a-tests に含まれる。裸の RFN-00x を書くと
+;; G2a の期待 ID 集合を超えて gate が落ちる。要件 ID は
+;; properties-refine-test.rkt 側に置く。
+(define (initial-origin-ok? core)
+  (equal? (term (verify-initial-origins ,R0 ,core)) 'ok))
+
 (define (origin-integrity/using source inject-core trace)
   (define-values (core _type _declared-row _callables) (artifact source))
   (define result
     (trace (inject-core core) (bounds-fuel limits)))
-  (and (origin-ok? core)
+  (and (initial-origin-ok? core)
        (for/and ([configuration (in-list (execution-configs result))])
          (and (origin-ok? (config-core configuration))
               ;; Property 3 ranges over the whole configuration, including

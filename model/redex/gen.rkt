@@ -7,7 +7,8 @@
          "elaborate.rkt"
          "lang.rkt"
          "machine.rkt"
-         "typing.rkt")
+         "typing.rkt"
+         "validators.rkt")
 
 (provide G1gen
          G2gen
@@ -29,6 +30,13 @@
          config-places
          runtime-row
          row-subset?
+         pick-one
+         refine-propositions
+         random-validator-row
+         random-payload-for
+         random-refine-row
+         random-branch-rows
+         random-obligation-subset
          random-variance-type
          narrow-variance-type
          widen-variance-type
@@ -422,3 +430,39 @@
            ,(reverse (map permute-effect-label row))
            ,obligations)]
     [_ type]))
+
+;; ---------------------------------------------------------------------------
+;; G2d: refinement 生成器。properties-refine-test.rkt 専用で、項は生成しない。
+;; ペイロードは判定表の check を通る値と落ちる値の両方を含む。片方だけだと
+;; 性質 1 の ng 側または ok 側が空洞になる。
+;; ---------------------------------------------------------------------------
+
+(define refine-propositions
+  (for/list ([row (in-list validator-table)])
+    (validator-proposition row)))
+
+(define refine-labels '(a b c d))
+(define refine-field-types '(Int Bool String))
+
+(define (random-validator-row)
+  (pick-one validator-table))
+
+(define (random-payload-for row)
+  (case (validator-payload-type row)
+    [(Int) (pick-one '(-1 0 1 80 8080 65535 65536))]
+    [(String) (pick-one '("" " " "a" "localhost"))]
+    [else 'unit]))
+
+(define (random-refine-row)
+  (for/list ([label (in-list refine-labels)]
+             #:when (zero? (random 2)))
+    (list label (pick-one refine-field-types) (pick-one '(imm mut)))))
+
+(define (random-branch-rows)
+  (for/list ([_i (in-range (add1 (random 3)))])
+    (random-refine-row)))
+
+(define (random-obligation-subset)
+  (for/list ([proposition (in-list refine-propositions)]
+             #:when (zero? (random 2)))
+    proposition))
