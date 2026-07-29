@@ -118,14 +118,7 @@
               ([cycle-references
                 (in-list (append spec-reference-sets test-reference-sets))])
       (set-union references cycle-references)))
-  (define cycle-counts
-    (for/list ([cycle (in-list cycles)]
-               [owned (in-list owned-sets)])
-      (if (cycle-descriptor-expected-count cycle)
-          (if (eq? (cycle-descriptor-name cycle) 'G1)
-              (set-count g1)
-              (set-count g2))
-          (set-count owned))))
+  (define cycle-counts (map set-count owned-sets))
   (define duplicates
     (sort
      (for/list ([(id count) (in-hash counts)] #:when (> count 1)) id)
