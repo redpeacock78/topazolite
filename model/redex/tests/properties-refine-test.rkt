@@ -164,6 +164,32 @@
   (call-with-search-seed
    limits
    (lambda ()
+     (define (expected-field-witnesses rows label)
+       (define fields
+         (for/list ([row (in-list rows)])
+           (assoc label row)))
+       (cond
+         [(not (andmap values fields)) '()]
+         [else
+          (define first-field (first fields))
+          (define mutability (third first-field))
+          (define same-mutability?
+            (for/and ([field (in-list (rest fields))])
+              (eq? (third field) mutability)))
+          (define normalized-types
+            (map normalize-type (map second fields)))
+          (define distinct-types
+            (and (andmap values normalized-types)
+                 (sort-then-dedup normalized-types)))
+          (cond
+            [(or (not same-mutability?) (not distinct-types)) '()]
+            [(null? (rest distinct-types))
+             (list `(Presence ,label))]
+            [(eq? mutability 'imm)
+             (cons `(Presence ,label)
+                   (for/list ([type (in-list distinct-types)])
+                     `(FieldType ,label ,type)))]
+            [else '()])]))
      (define issued-count (box 0))
      (define dropped-count (box 0))
      (for ([_i (in-range attempts)])
@@ -174,29 +200,43 @@
        (define issued
          (for/list ([binding (in-list witnesses)])
            (entry-phi (second binding))))
-       ;; 過剰発行が無い: witness の label は全 branch に同じ型と可変性で
-       ;; 常在する field だけである。
-       (for ([proposition (in-list issued)])
+       (define expected-issued
+         (append-map
+          (lambda (field)
+            (expected-field-witnesses rows (first field)))
+          (first rows)))
+       (check-equal? issued expected-issued)
+       (define presence-issued
+         (filter (lambda (proposition)
+                   (match proposition
+                     [`(Presence ,_) #t]
+                     [_ #f]))
+                 issued))
+       ;; 過剰発行が無い: 3 分類で残る field にだけ Presence が立つ。
+       (for ([proposition (in-list presence-issued)])
          (match-define `(Presence ,label) proposition)
          (set-box! issued-count (add1 (unbox issued-count)))
-         (define first-field (assoc label (first rows)))
          (check-true
-          (for/and ([row (in-list rows)])
-            (equal? (assoc label row) first-field))))
-       ;; 過少発行が無い: 全 branch に常在する field には必ず witness が立つ。
+          (and (member `(Presence ,label)
+                       (expected-field-witnesses rows label))
+               #t)))
+       ;; 過少発行が無い: merge 規則で残る field には必ず Presence が立つ。
        (for ([field (in-list (first rows))])
          (define label (first field))
+         (define expected
+           (expected-field-witnesses rows label))
          (cond
-           [(for/and ([row (in-list rows)])
-              (equal? (assoc label row) field))
-            (check-true (and (member `(Presence ,label) issued) #t))]
+           [(member `(Presence ,label) expected)
+            (check-true
+             (and (member `(Presence ,label) presence-issued) #t))]
            [else
             (set-box! dropped-count (add1 (unbox dropped-count)))
-            (check-false (member `(Presence ,label) issued))]))
+            (check-false
+             (member `(Presence ,label) presence-issued))]))
        ;; W を局所文脈として合流すると、各 witness の goal が discharge できる。
        (check-true (wf-context? witnesses))
        (check-true (merge-witnesses-dischargeable? types issued))
-       (check-equal? (length merged-row) (length issued)))
+       (check-equal? (length merged-row) (length presence-issued)))
      (check-true (positive? (unbox issued-count)))
      (check-true (positive? (unbox dropped-count)))
      (printf "merge witness: attempts=~a issued=~a dropped=~a seed=~a\n"

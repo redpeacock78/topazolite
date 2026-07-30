@@ -16,6 +16,10 @@
          core-check
          core-check-row
          config-ok?
+         join-types
+         merge-field
+         presence-binding-name
+         field-type-binding-name
          merge-record-types
          merge-witnesses-dischargeable?)
 
@@ -176,28 +180,95 @@
                       (cons (second scrutinee-result)
                             branch-rows))))))))
 
-;; RFN-002: merge が立てる常在性 witness の集合 W。merge ごとの局所的な値で
-;; あり、成果物にも型にも載せない。(Presence f) は merge の位置を持たないため、
-;; artifact 全体で集約すると別の merge の witness と重なってしまう。
-;; 探索の候補文脈と同じ形（(name entry) の列）で返し、そのまま
-;; obligations-dischargeable? へ渡せるようにする。
-(define (merge-witness-context labels)
-  (for/list ([label (in-list labels)])
-    (list label
-          (list `(Presence ,label) '(Reserved o-merge)
-                label 'root 'default '()))))
+;; CMP-001: 2 つの型を Union で合わせ、同値な構成要素を正規化で畳む。
+(define (join-types left right)
+  (normalize-type `(Union ,left ,right)))
 
-;; RFN-002: record 型の列を field の交差へ畳み込み、残った field の常在性
-;; witness を併せて返す。types は空でないことを呼び出し側が保証する。
+;; CMP-001/ROW-004: 同じ label と可変性を持つ field を合わせる。
+;; 異型を join できるのは imm だけであり、異型 mut と可変性不一致は落とす。
+(define (merge-field left right)
+  (merge-fields (list left right)))
+
+(define (presence-binding-name label)
+  (string->symbol (format "presence-~a" label)))
+
+(define (field-type-binding-name label index)
+  (string->symbol (format "field-type-~a-~a" label index)))
+
+(define (merge-witness-binding name proposition)
+  (list name
+        (list proposition '(Reserved o-merge)
+              name 'root 'default '())))
+
+;; branch 型を正規化し、Union 正規化と同じ順序・同値判定で重複を畳む。
+(define (distinct-normal-types types)
+  (define normalized (map normalize-type types))
+  (and (andmap values normalized)
+       (sort-then-dedup normalized)))
+
+;; RFN-002/CMP-001: merge が立てる局所 witness 文脈。
+;; 各 field の Presence に加え、異型 join には branch 型ごとの FieldType を置く。
+(define (merge-witness-context types merged-row)
+  (append-map
+   (lambda (field)
+     (define label (first field))
+     (define branch-types
+       (for/list ([type (in-list types)])
+         (first (field-row-lookup (second type) label))))
+     (define distinct-types (distinct-normal-types branch-types))
+     (define presence-name (presence-binding-name label))
+     (cons
+      (merge-witness-binding presence-name `(Presence ,label))
+      (if (> (length distinct-types) 1)
+          (for/list ([type (in-list distinct-types)]
+                     [index (in-naturals)])
+            (define name (field-type-binding-name label index))
+            (merge-witness-binding name `(FieldType ,label ,type)))
+          '())))
+   merged-row))
+
+(define (merge-fields fields)
+  (define first-field (first fields))
+  (define label (first first-field))
+  (define mutability (third first-field))
+  (define types (distinct-normal-types (map second fields)))
+  (and
+   (for/and ([field (in-list fields)])
+     (and (eq? (first field) label)
+          (eq? (third field) mutability)))
+   types
+   (cond
+     [(null? (rest types))
+      (list label (first types) mutability)]
+     [(eq? mutability 'imm)
+      (define joined
+        (for/fold ([joined (first types)])
+                  ([type (in-list (rest types))])
+          (join-types joined type)))
+      (and joined (list label joined 'imm))]
+     ;; #f は merge 全体の失敗ではなく、この field の脱落を表す。
+     [else #f])))
+
+(define (merge-common-field types first-field)
+  (define label (first first-field))
+  (define fields
+    (for/list ([type (in-list types)])
+      (assoc label (second type))))
+  (and (andmap values fields)
+       (merge-fields fields)))
+
+;; RFN-002/CMP-001: 全 branch に常在する field を合わせる。異型 imm は Union
+;; join し、異型 mut と可変性不一致は field 単位で落とす。
+;; types は空でないことを呼び出し側が保証する。
 (define (merge-record-types types)
   (define merged-row
-    (for/fold ([merged-row (second (first types))])
-              ([type (in-list (rest types))])
-      (field-row-intersection merged-row (second type) type-equiv?)))
+    (filter-map
+     (lambda (field) (merge-common-field types field))
+     (second (first types))))
   (define merged-type (normalize-type `(Record ,merged-row)))
   (if merged-type
       (values merged-type
-              (merge-witness-context (map first merged-row)))
+              (merge-witness-context types (second merged-type)))
       (values #f '())))
 
 ;; RFN-002: merge の局所検査。その merge が立てた W だけを候補文脈として、

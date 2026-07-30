@@ -127,9 +127,14 @@
   (define candidate-z
     `(Candidate (ProofRep (Reserved o-test) ,permuted)
                 test root default ()))
+  (define expected
+    (resolved `(ProofRep (Reserved o-test) ,normalized)))
   (check-equal?
    (resolve-candidates (goal normalized) (list candidate-a candidate-z))
-   (resolve-candidates (goal normalized) (list candidate-z candidate-a))))
+   expected)
+  (check-equal?
+   (resolve-candidates (goal normalized) (list candidate-z candidate-a))
+   expected))
 
 (test-case "project and candidate wf use canonical proposition equality"
   (define normalized

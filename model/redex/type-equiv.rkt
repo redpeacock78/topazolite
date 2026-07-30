@@ -10,6 +10,7 @@
          normalize-proposition
          canonical-proposition-key
          proposition-equiv?
+         sort-then-dedup
          union-members
          type-normal?)
 
