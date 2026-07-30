@@ -3,7 +3,7 @@
 **状態**：G2b 執筆版（codex 実装、claude レビュー前）
 **基底仕様**：`docs/specification/core-calculus.md`（以下、G1 仕様）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md`（以下、ホワイトペーパー）§6.3、§6.4、§7.1
-**関連文書**：`docs/specification/structural-row.md`、`docs/specification/glossary.md`、`docs/specification/requirements.md`
+**関連文書**：`docs/specification/structural-row.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/glossary.md`、`docs/specification/requirements.md`
 
 ## 1. 本仕様の位置づけ
 
@@ -107,6 +107,14 @@ G2b の初期候補文脈を次で定める。
 cid は name、sid は `root`、pid は `default` から決定的に構成する。
 実行ごとに変わる gensym や counter は使わない。
 
+G2e は、`impl-table` から作る global 候補を末尾へ加える。
+
+```text
+Γ_pc⁰ = append(candidateize(Π0), trait-global-bindings())
+```
+
+`candidateize` 自体の写像規則は変えない。
+
 G2b の Core には局所 Proof 束縛がないため、候補文脈は項を降りても成長しない。
 すべての義務位置は同じ Γ_pc⁰ を使う。
 
@@ -125,17 +133,19 @@ G2b の通常の探索位置では `root` が可視である。
 
 **候補同一性**は、二つの候補を同じ候補として畳める条件である。
 G2b は `(φ, O, cid, sid, pid)` の五つ組が一致するときに限って候補を同一視する。
-trait 由来の同一性成分が空の間も provenance と cid を含めるため、判別できない候補を誤って一つに畳まない。
+G2e は φ を `trait.md` §3.4 の正準鍵で比較し、trait origin と実装 origin の組である hook を同一性へ加える。
+G2b までの候補は空 hook を持つため、既存の同一性は変わらない。
 
 **wf-candidate** は候補が次の条件をすべて満たすことを表す。
 
 - 候補 P が `(ProofRep O φ)` の形である。
 - O が φ の正当な発行者であり、forge された origin でない。
 - sid が探索位置から可視である。
-- cid と pid が `candidateize` の決定規則に従う。
-- hook が空である。
+- cid と pid が `candidateize` または正典表からの決定規則に従う。
+- hook が命題の形に対応すること。
+  `Implements` 候補は trait origin と実装 origin の組を持ち、それ以外の候補は空 hook を持つ。
 
-**wf-context** は、Γ_pc のすべての entry について、O が φ の正当な発行者であり、hook が空であることを表す。
+**wf-context** は、Γ_pc のすべての entry について、O が φ の正当な発行者であり、hook が命題の形に対応することを表す。
 wf-context は sid の可視性、cid と pid の構成、特定の goal との命題一致を検査しない。
 sid の可視性は `project` と `project-goal` が抽出時に検査し、命題一致は抽出後の wf-Σ が検査する。
 
@@ -146,6 +156,7 @@ goal ごとの候補集合を次で定める。
 ```
 
 `project-goal` は scope から可視な候補のうち、命題が goal と一致する候補を漏れなく抽出する。
+G2e の `Implements` 候補には、trait または対象型の生成 scope が現在の系譜から可視であることも要求する。
 
 **wf-Σ** は、Σ_goal のすべての候補が wf-candidate を満たし、命題が goal と一致することを表す。
 Finite な探索では、Σ_goal がその goal に対する可視候補を漏れなく含む完全な集合であることも要求する。
@@ -161,16 +172,16 @@ Finite な closed-world 探索の解決を次の全域メタ関数で定める�
 resolve-candidates(goal, Σ) = SR
 ```
 
-`resolve-candidates` は goal の φ と一致する候補を集め、§3.3 の候補同一性で重複を除く。
+`resolve-candidates` は goal の φ と一致する候補を集め、外部表現で整列してから、§3.3 の候補同一性で重複を除く。
 残る候補が 0 個なら `Absent`、1 個なら `Resolved`、2 個以上なら `Ambiguous` を返す。
-`Ambiguous` の候補は cid の順に並べる。
+`Ambiguous` の候補は候補同一性全体の canonical order に並べる。
 この集合演算と canonical order により、結果は Σ の記述順に依存しない。
 
 ### 4.2 計算クラスごとの探索結果
 
 Finite と Productive は候補空間の性質が異なるため、SR の入手経路を分ける。
 
-- **Finite**：χ が `Finite` を返し、`resolve-candidates(goal, project(Γ_pc, sc-ctx))` から SR を得る。
+- **Finite**：χ が `Finite` を返し、`resolve-candidates(goal, project-goal(Γ_pc, sc-ctx, goal))` から SR を得る。
 - **Productive**：χ が `Productive` を返し、SR と一意性 certificate を探索 oracle Ωs から得る。
 - **Unknown**：χ が `Unknown` を返し、探索を起動せず却下する。
 
@@ -252,7 +263,7 @@ Proof obligation の暗黙充足を次の judgment で表す。
 NFn の Proof obligation 列 Q に含まれるすべての φ は、対応する `(Goal φ ⊥ext)` に対して `⊢discharge` を満たさなければならない。
 一つでも充足できなければ、適用は型エラーになる。
 
-elaboration と `⊢core` は、どちらも固定の Π0 から `candidateize` した Γ_pc⁰ と、同じ χ と Ωs を使う。
+elaboration と `⊢core` は、どちらも固定の Π0 から `candidateize` した候補と G2e の表由来の trait 候補を合わせた Γ_pc⁰、および同じ χ と Ωs を使う。
 Γ_pc⁰ の識別子は決定的なので、両経路は同じ候補文脈を再構成する。
 この共有により、elaboration が受理した義務は `⊢core` の再検査でも同じ結果になる。
 
@@ -273,10 +284,11 @@ Proof term の provenance は PRF-003 により relevant である。
 G2b は暗黙 Proof 探索の静的な骨格に範囲を限る。
 次の機能は後続層で定める。
 
-- trait 型と `impl` または `derive` を使う暗黙 trait resolution。
-- trait origin と `impl` または `derive` Proof を含む候補同一性。
+- trait 型と `impl` または `derive` を使う暗黙 trait resolution は、G2e が `trait.md` §6 として導入した。
+  `RequiresBoth` の implicit discharge と合成 trait への `Implements` 導出は未回収である。
+- trait origin と `impl` または `derive` Proof を含む候補同一性は、G2e が `trait.md` §6.1、§6.2 として導入した。
 - **異種命題の候補文脈**：カーネル命題の範囲は G2d が `proof-value.md` §6.3 として回収し、goal ごとの候補抽出と候補文脈全体の well-formedness を分けた。
-  trait 由来の候補同一性は trait 層に残る。
+  trait 由来の候補同一性は G2e が `trait.md` §6.2 として導入した。
 - 局所 Proof 束縛による候補文脈の成長と scope ごとの統合性質。
 - 実際の探索計算、その `⇓class` 導出、Productive の SR と certificate の構築。
 - Unknown を有限化する探索境界と termination Proof。

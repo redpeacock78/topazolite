@@ -1,8 +1,8 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G2d 執筆版（codex 実装、claude レビュー前）
+**状態**：G2e 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/glossary.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/glossary.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -39,6 +39,7 @@
 状態が `G2` で G2b の明示集合に含まれる ID は、`proof-search.md` の規則注釈と G2b テストの両方で参照されなければならない。
 状態が `G2` で G2c の明示集合に含まれる ID は、`structural-row.md` §6 の規則注釈と G2c テストの両方で参照されなければならない。
 状態が `G2` で G2d の明示集合に含まれる ID は、`proof-value.md` の規則注釈と G2d テストの両方で参照されなければならない。
+状態が `G2` で G2e の明示集合に含まれる ID は、`trait.md` の規則注釈と G2e テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -198,6 +199,7 @@ Proof obligation の反変判定は、上位型の明示記載による充足に
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §5.1
 
 trait requirement の shape 一致だけでは Implements Proof を生成してはならない。
 
@@ -205,6 +207,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §5.2
 
 `impl` / `derive` は正規 origin を持つ Proof<Implements<T, Trait>> を返さなければならない。
 
@@ -212,6 +215,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §6.1、§6.2、§6.3
 
 暗黙 trait resolution は一意な候補を確定できなければならない。Ambiguous candidate はエラーとする。
 
@@ -219,7 +223,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：新規（`docs/specification/trait.md`）
-- **正典**：`docs/specification/trait.md`
+- **正典**：`docs/specification/trait.md` §3.2
 
 有限に正規化できる Union 型は、構成要素の順序と重複によらず一意の正規形を持つ。
 正規化に失敗する型を成果物の境界へ通してはならない。
@@ -230,7 +234,7 @@ recursive Union の opaque identity は Phase 1 以降で扱う。
 
 - **状態**：G2
 - **由来**：新規（`docs/specification/trait.md`）
-- **正典**：`docs/specification/trait.md`
+- **正典**：`docs/specification/trait.md` §3.3
 
 構造型の Intersection は行の合成によって消去される。
 行が衝突する Intersection は型として成立しない。

@@ -3,7 +3,7 @@
 **状態**：G2c 執筆版（codex 実装、claude レビュー前）
 **基底仕様**：`docs/specification/core-calculus.md`（以下、G1 仕様）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md`（以下、ホワイトペーパー）§4.5、§17.4
-**関連文書**：`docs/specification/glossary.md`、`docs/specification/requirements.md`
+**関連文書**：`docs/specification/trait.md`、`docs/specification/glossary.md`、`docs/specification/requirements.md`
 
 ## 1. 本仕様の位置づけ
 
@@ -14,7 +14,7 @@ G1 仕様へ統合せず差分文書に分けることで、G1 の規則と G2a 
 G2c は本文書へ §6 の関数 variance を追加する差分であり、それ以外の節の規則を変えない（§3.3 と §3.4 の `NFn` と checking への言及だけを §6 へ付け替える）。
 
 G2a はユーザー record を構造で照合する最小コアだけを扱う。
-trait、Proof search、Policy Narrative は、この構造 row を利用する後続層で定める。
+trait 層は、この構造 row を基礎として G2e の `trait.md` が定める。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
 要件 ID の本文は `requirements.md` を正とする。
@@ -260,7 +260,8 @@ Eliminate(c0, branches) : (Record r)
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
 
 この構造的交差は、全経路で同じ型と可変性を持つ field だけを残す decidable な近似である。
-型が異なる field の join と Proof witness による field 回復は §7 の後続層で扱う。
+型が異なる `imm` field の Union join は、G2e が `trait.md` §7 として導入した。
+Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
 ## 4. elaboration
 
@@ -423,8 +424,9 @@ E の要素の同一性は、型同値の Effect row 照合と同じ `effect-equ
 
 Q は E と向きが逆の包含である（`Q_sub ⊆ Q_sup`）。
 Q は呼び出し側が discharge すべき前提の宣言であり、期待側が引き受けると宣言した obligation の範囲内でだけ、実際側は discharge を要求できるためである。
-Q の要素 φ は exact 一致で照合する。
-φ は Proof search 仕様（`proof-search.md`）の命題であり、G2c の φ には構造的同値を要する内部構造がないためである。
+G2c の Q の要素 φ は exact 一致で照合する。
+G2e は型を内包する trait 命題を導入したため、`trait.md` §3.4 の命題同値を使う。
+G2c までの命題では正準鍵が構文と同じになるため、既存の判定結果は変わらない。
 
 ### 6.3 field の可変性との交差
 
@@ -450,12 +452,15 @@ G2a は次の規則を導入しない。
 
 - **optional field**：G2a の field はすべて required とする。
   optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う。
-- **Union と Intersection**：trait の Intersection が Proof を持つ合成であるため、trait 層で扱う。
+- **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
+  trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
   G2d が `proof-value.md` §3 と §4 として導入した。
 - **join 型と Proof 付き merge**：型が異なる branch field の上位型と field 常在性の witness を要するため、Proof 層で扱う。
   field 常在性の witness は G2d が `proof-value.md` §5 として導入した。
-  branch で型が異なる field の join 型と、witness による型付き field 回復は trait 層に残る。
+  branch で型が異なる `imm` field の Union join と `FieldType` witness は、G2e が `trait.md` §7 として導入した。
+  witness による型付き field 回復は未回収であり、同仕様 §9 へ送る。
+  異型 `mut` field の脱落は実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
 - **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
 - **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。

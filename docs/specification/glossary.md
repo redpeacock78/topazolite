@@ -1,8 +1,8 @@
 # Topazolite 用語集
 
-**状態**：G2c 執筆版（codex 実装、claude レビュー前）
+**状態**：G2e 執筆版（codex 実装、claude レビュー前）
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` 付録 A（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/requirements.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/requirements.md`
 
 ## 1. 本用語集の位置づけ
 
@@ -309,16 +309,44 @@
 ### 候補文脈
 
 - **定義**：暗黙充足に利用できる Proof 候補の有限写像。
-  G2b では固定の Π0 から `candidateize` が決定的に構成する Γ_pc⁰ を使う。
-- **参照**：ホワイトペーパー §6.4、proof-search.md §3.2。
-- **関連要件 ID**：PSR-001、PSR-002（G2b）。
+  G2b の固定 Π0 から作る候補と、G2e の impl 正典表から作る global 候補を決定的に合わせた Γ_pc⁰ を使う。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §3.2、trait.md §6.1。
+- **関連要件 ID**：PSR-001、PSR-002、TRT-002、TRT-003（G2）。
 
 ### 候補同一性
 
 - **定義**：二つの Proof 候補を同じ候補として畳めるかを決める関係。
-  G2b では命題、origin、候補識別子、scope 識別子、priority 識別子の組で判定する。
-- **参照**：ホワイトペーパー §6.4、proof-search.md §3.3。
-- **関連要件 ID**：PSR-002（G2b）。
+  G2e では命題の正準鍵、origin、候補識別子、scope 識別子、priority 識別子、trait hook の組で判定する。
+- **参照**：ホワイトペーパー §6.4、proof-search.md §3.3、trait.md §6.2。
+- **関連要件 ID**：PSR-002、TRT-003（G2）。
+
+### trait requirement template
+
+- **定義**：trait が要求する field row の雛形。
+  型位置に meta-level placeholder `Self` を持ち、実装対象の型で具体化した後にだけ通常の field row になる。
+- **参照**：ホワイトペーパー §8.1、trait.md §4.1。
+- **関連要件 ID**：TRT-001、TRT-002（G2）。
+
+### trait hook
+
+- **定義**：暗黙 trait 候補を、trait origin と `impl` または `derive` origin の組へ束縛する候補成分。
+  候補同一性と well-formedness の両方で使う。
+- **参照**：ホワイトペーパー §6.4、trait.md §6.1、§6.2。
+- **関連要件 ID**：TRT-002、TRT-003（G2）。
+
+### Union 正規形
+
+- **定義**：有限な Union を平坦化し、外部表現で整列し、型同値な要素を除き、右結合へ戻した型。
+  一要素だけなら Union 構成子を残さない。
+- **参照**：ホワイトペーパー §4.5.3、trait.md §3.2。
+- **関連要件 ID**：CMP-001（G2）。
+
+### FieldType witness
+
+- **定義**：merge の特定 field が特定の branch 型を持っていたことを表す局所 Proof。
+  `FieldType(label, τ)` と書き、merge 位置を越えて型や成果物へ保存しない。
+- **参照**：ホワイトペーパー §4.5.3、trait.md §7.2。
+- **関連要件 ID**：RFN-002、CMP-001（G2）。
 
 ### 採択可能性
 

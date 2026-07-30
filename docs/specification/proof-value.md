@@ -2,7 +2,7 @@
 
 **状態**：G2d 執筆版（codex 実装、claude レビュー前）
 **参照**：draft/topazolite_whitepaper_draft_0.4.md §4.6、§6
-**関連文書**：core-calculus.md、structural-row.md、proof-search.md、requirements.md、glossary.md
+**関連文書**：core-calculus.md、structural-row.md、proof-search.md、trait.md、requirements.md、glossary.md
 
 ## 1. 本仕様の位置づけ
 
@@ -413,11 +413,15 @@ User origin、命題と oid の不一致、型の違うペイロード、check �
 
 ## 8. 範囲外の規則
 
-次の規則は後続層へ送る。
+次の規則は後続層へ送るか、後続層が定めた境界に従う。
 
-- **join 型と型付き field 回復**：常在性 witness が示す field を join 型で回復する規則は trait 層で扱う。
-- **Union と Intersection**：trait resolution と併せて trait 層で扱う。
-- **trait resolution**：trait 由来の候補同一性と `impl` または `derive` Proof を含むため、trait 層で扱う。
+- **join 型と型付き field 回復**：異型 `imm` field の Union join と局所 `FieldType` witness は、G2e が `trait.md` §7 として導入した。
+  witness による型付き field 回復は未回収であり、`trait.md` §9 へ送る。
+  異型 `mut` field の脱落は実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
+- **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
+  trait の合成は型の Intersection ではなく、正典表と `RequiresBoth` Proof で表す。
+- **trait resolution**：表由来の `Implements` 候補、trait hook、候補同一性、scope による coherence は、G2e が `trait.md` §6 として導入した。
+  `RequiresBoth` の implicit discharge と合成 trait への `Implements` 導出は未回収である。
 - **探索動力学**：探索計算、`⇓class`、certificate、termination Proof、priority、provenance の実体化は探索の後続層で扱う。
 - **局所 Proof 束縛**：merge 位置を越えた witness の保存、scope 付き照合、位置依存文脈の `compat?` への供給と併せて後続層で扱う。
 - **多相 primitive**：型変数と型 scheme を導入する Phase 1 以降で扱う。

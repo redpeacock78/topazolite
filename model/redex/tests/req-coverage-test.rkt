@@ -397,12 +397,12 @@
   (check-equal? (get-output-string output)
                 (string-append
                  "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, "
-                 "3 G2b IDs, 3 G2c IDs, 3 G2d IDs\n"))
+                 "3 G2b IDs, 3 G2c IDs, 3 G2d IDs, 5 G2e IDs\n"))
   (check-equal? (get-output-string errors) ""))
 
 (test-case "cycle-descriptors covers every declared sub-cycle"
   (define ds (default-cycle-descriptors))
-  (check-equal? (map cycle-descriptor-name ds) '(G1 G2a G2b G2c G2d))
+  (check-equal? (map cycle-descriptor-name ds) '(G1 G2a G2b G2c G2d G2e))
   (define (by-name n)
     (findf (lambda (d) (eq? (cycle-descriptor-name d) n)) ds))
   (check-equal? (cycle-descriptor-expected-count (by-name 'G1)) 18)
@@ -410,6 +410,19 @@
   (check-equal? (cycle-descriptor-expected-ids (by-name 'G2d))
                 '(RFN-001 RFN-002 RFN-003))
   (check-false (cycle-descriptor-expected-count (by-name 'G2d))))
+
+(test-case "G2e descriptor covers the trait and composite requirements"
+  (define descriptor
+    (findf (lambda (d) (eq? (cycle-descriptor-name d) 'G2e))
+           (default-cycle-descriptors)))
+  (check-not-false descriptor)
+  (check-equal? (cycle-descriptor-expected-ids descriptor)
+                '(TRT-001 TRT-002 TRT-003 CMP-001 CMP-002))
+  (check-true
+   (for/or ([path (in-list (cycle-descriptor-spec-paths descriptor))])
+     (regexp-match? #rx"docs/specification/trait[.]md$"
+                    (path->string path)))
+   "G2e descriptor must point at trait.md"))
 
 (test-case "every descriptor carries its own spec and test paths"
   (for ([d (in-list (default-cycle-descriptors))])

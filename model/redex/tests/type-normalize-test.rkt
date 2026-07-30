@@ -38,12 +38,12 @@
    (canonical-proposition-key
     '(Implements (Untrusted (Record ((z Int imm) (a Int imm)))) P))))
 
-(test-case "intersection is erased by row composition"
+(test-case "CMP-002: intersection is erased by row composition"
   (check-equal? (normalize-type '(Intersection (Record ((a Int imm)))
                                                (Record ((b Int imm)))))
                 '(Record ((a Int imm) (b Int imm)))))
 
-(test-case "colliding intersection fails to normalize"
+(test-case "CMP-002: colliding intersection fails to normalize"
   (check-false (normalize-type '(Intersection (Record ((a Int imm)))
                                               (Record ((a Bool imm))))))
   (check-false (normalize-type '(Intersection Int String))))
