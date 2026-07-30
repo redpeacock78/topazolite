@@ -1,6 +1,7 @@
 #lang racket/base
 
 (require rackunit
+         redex/reduction-semantics
          "../elaborate.rkt"
          "../typing.rkt")
 
@@ -73,3 +74,77 @@
                 (merge-record-types
                  (list '(Record ((z Int imm) (a Int imm)))))])
     (check-equal? merged record-type)))
+
+(test-case "UCore carries public trait propositions"
+  (check-true
+   (redex-match? UCore uφ '(ValidNarrativeTrait Printable)))
+  (check-true
+   (redex-match? UCore uφ '(Implements Int Printable)))
+  (check-true
+   (redex-match? UCore uφ '(RequiresBoth Printable Sizable)))
+  ;; merge の局所命題は表層注釈へ出さない。
+  (check-false
+   (redex-match? UCore uφ '(FieldType f Int)))
+  (check-false
+   (redex-match? UCore uφ '(Presence f))))
+
+(test-case "UCore carries composite types"
+  (check-true
+   (redex-match? UCore uτ '(Union Int String)))
+  (check-true
+   (redex-match?
+    UCore
+    uτ
+    '(Intersection (Record ((a Int imm)))
+                   (Record ((b Int imm)))))))
+
+(test-case "elaboration normalizes composite annotations"
+  (check-equal?
+   (elab '(Let (x let (Union String Int)) 1 x))
+   (elab '(Let (x let (Union Int String)) 1 x)))
+  (define record-type
+    '(Record ((a Int imm) (b Int imm))))
+  (check-equal?
+   (elab
+    '(Let (x let
+             (Intersection (Record ((a Int imm)))
+                           (Record ((b Int imm)))))
+       (Rec ((a imm 1) (b imm 2)))
+       x))
+   `((Let (x let ,record-type)
+           (Rec ((a imm 1) (b imm 2)))
+           x)
+     ,record-type
+     ()
+     ()))
+  (check-equal?
+   (elab '(Let (x let (Intersection Int String)) 1 x))
+   '(err (invalid-resolved-type (Intersection Int String)))))
+
+(test-case "elaboration normalizes trait propositions in every type position"
+  (define source
+    '(Fn ((proof (Proof (RequiresBoth Sizable Printable)))
+          (refined
+           (Refined Int
+                    (Implements (Union String Int) Printable)))
+          (function
+           (NFn () Unit ()
+                ((ValidNarrativeTrait Printable)
+                 (Implements (Union String Int) Printable)
+                 (RequiresBoth Sizable Printable)))))
+       Unit
+       ()
+       unit))
+  (check-equal?
+   (cadr (elab source))
+   '(NFn
+     ((Proof (RequiresBoth Printable Sizable))
+      (Refined Int
+               (Implements (Union Int String) Printable))
+      (NFn () Unit ()
+           ((ValidNarrativeTrait Printable)
+            (Implements (Union Int String) Printable)
+            (RequiresBoth Printable Sizable))))
+     Unit
+     ()
+     ())))

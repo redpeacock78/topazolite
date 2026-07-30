@@ -26,10 +26,14 @@
   (label ::= variable-not-otherwise-mentioned)
   (m ::= imm mut)
   (bmode ::= const let)
+  (tn ::= id)
   (ur ::= ((label uτ m) ...))
   ;; RFN-001: 表層に書ける命題。判定表の (Prop id) を足す。常在性 witness の
   ;; (Presence label) は含めない。merge の局所検査だけで立つ命題である。
-  (uφ ::= ValidNarrativeTrait TypeNarrativeCap (Prop id))
+  (uφ ::= ValidNarrativeTrait TypeNarrativeCap (Prop id)
+          (ValidNarrativeTrait tn)
+          (Implements uτ tn)
+          (RequiresBoth tn tn))
   (uQ ::= (uφ ...))
   (uτ ::= Int Bool Unit String Never Res
           T
@@ -42,7 +46,9 @@
           (NFn (uτ ...) uτ tε uQ)
           (TypeInfo κ)
           (Proof uφ)
-          (Record ur))
+          (Record ur)
+          (Union uτ uτ)
+          (Intersection uτ uτ))
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own)
   (tε ::= (tℓ ...))
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own)
@@ -132,13 +138,25 @@
   (match proposition
     [(or 'ValidNarrativeTrait 'TypeNarrativeCap) #t]
     [`(Prop ,_) (and (validator-row-by-proposition proposition) #t)]
+    [`(ValidNarrativeTrait ,_) #t]
+    [`(Implements ,_ ,_) #t]
+    [`(RequiresBoth ,_ ,_) #t]
     [_ #f]))
 
-(define (resolve-obligations obligations)
+(define (resolve-proposition proposition delta invalid-reason)
+  (unless (annotation-proposition? proposition)
+    (reject invalid-reason proposition))
+  (define resolved
+    (match proposition
+      [`(Implements ,type ,trait)
+       `(Implements ,(resolve-annotation type delta) ,trait)]
+      [_ proposition]))
+  (or (normalize-proposition resolved)
+      (reject invalid-reason proposition)))
+
+(define (resolve-obligations obligations delta)
   (for/list ([proposition (in-list obligations)])
-    (unless (annotation-proposition? proposition)
-      (reject 'invalid-obligation proposition))
-    proposition))
+    (resolve-proposition proposition delta 'invalid-obligation)))
 
 (define (resolve-annotation annotation delta)
   (define resolved
@@ -162,20 +180,25 @@
       [`(Untrusted ,inner)
        `(Untrusted ,(resolve-annotation inner delta))]
       [`(Refined ,inner ,proposition)
-       (unless (annotation-proposition? proposition)
-         (reject 'invalid-proposition proposition))
-       `(Refined ,(resolve-annotation inner delta) ,proposition)]
+       `(Refined
+         ,(resolve-annotation inner delta)
+         ,(resolve-proposition proposition delta 'invalid-proposition))]
+      [`(Union ,left ,right)
+       `(Union ,(resolve-annotation left delta)
+               ,(resolve-annotation right delta))]
+      [`(Intersection ,left ,right)
+       `(Intersection ,(resolve-annotation left delta)
+                      ,(resolve-annotation right delta))]
       [`(NFn (,parameters ...) ,return-type ,row ,obligations)
        `(NFn ,(for/list ([parameter (in-list parameters)])
                 (resolve-annotation parameter delta))
              ,(resolve-annotation return-type delta)
              ,(resolve-type-row row delta)
-             ,(resolve-obligations obligations))]
+             ,(resolve-obligations obligations delta))]
       [`(TypeInfo ,kind) `(TypeInfo ,kind)]
       [`(Proof ,proposition)
-       (unless (annotation-proposition? proposition)
-         (reject 'invalid-proposition proposition))
-       `(Proof ,proposition)]
+       `(Proof
+         ,(resolve-proposition proposition delta 'invalid-proposition))]
       [(? symbol? name)
        (match (lookup delta name)
          [`(TypeRep ,_ ,type-form Type)
