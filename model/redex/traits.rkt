@@ -3,7 +3,8 @@
 (require racket/list
          racket/match
          "rows.rkt"
-         "type-equiv.rkt")
+         "type-equiv.rkt"
+         "type-shape.rkt")
 
 (provide trait-table
          impl-table
@@ -225,8 +226,11 @@
       (error 'traits "requirements of ~s have duplicate labels" (impl-name row)))
     (for ([field (in-list requirements)])
       (define type (second field))
-      (unless (equal? (normalize-type type) type)
-        (error 'traits "requirement of ~s is not normal" (impl-name row)))))
+      (unless (and (equal? (normalize-type type) type)
+                   (type-shape-ok? type))
+        (error 'traits
+               "requirement of ~s is not a well-formed normal type"
+               (impl-name row)))))
 
   (for ([row (in-list intersect-table)])
     (define left (trait-row-by-name (intersect-left row)))

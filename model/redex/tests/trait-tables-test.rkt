@@ -4,7 +4,8 @@
          racket/list
          "../traits.rkt"
          "../type-equiv.rkt"
-         "../rows.rkt")
+         "../rows.rkt"
+         "../type-shape.rkt")
 
 (test-case "trait names are unique"
   (define names (map trait-name trait-table))
@@ -53,6 +54,22 @@
   (for ([field (in-list row)])
     (define type (second field))
     (check-equal? (normalize-type type) type)))
+
+(test-case "duplicate labels in an impl target type are rejected"
+  (define bad-impl
+    '(o-bad impl-bad impl Printable
+            (Record ((a Int imm) (a Bool imm)))
+            root))
+  (define trait-row (trait-row-by-name (impl-trait-name bad-impl)))
+  (define requirements
+    (instantiate-requirements
+     (trait-template trait-row)
+     (impl-target-type bad-impl)))
+  (for ([field (in-list requirements)])
+    (define type (second field))
+    (check-false
+     (and (equal? (normalize-type type) type)
+          (type-shape-ok? type)))))
 
 (test-case "instantiate-requirements leaves no Self behind"
   (for ([trait-row (in-list trait-table)])
