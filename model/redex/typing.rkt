@@ -59,10 +59,12 @@
 
 (define (type? value)
   (and (redex-match? G2m τ value)
-       (type-shape-ok? value)))
+       (type-shape-ok? value)
+       (type-normal? value)))
 
 (define (row? value)
-  (redex-match? G1m ε value))
+  (and (redex-match? G2m ε value)
+       (effect-row-normal? value)))
 
 (define (callable-id? value)
   (redex-match? G1 cid value))
@@ -192,15 +194,19 @@
     (for/fold ([merged-row (second (first types))])
               ([type (in-list (rest types))])
       (field-row-intersection merged-row (second type) type-equiv?)))
-  (values `(Record ,merged-row)
-          (merge-witness-context (map first merged-row))))
+  (define merged-type (normalize-type `(Record ,merged-row)))
+  (if merged-type
+      (values merged-type
+              (merge-witness-context (map first merged-row)))
+      (values #f '())))
 
 ;; RFN-002: merge の局所検査。その merge が立てた W だけを候補文脈として、
 ;; 要求された常在性の義務が充足できるかを見る。型付けの受理条件ではなく、
 ;; merge ごとに成り立つ性質として検査する。
 (define (merge-witnesses-dischargeable? types obligations)
-  (define-values (_merged witnesses) (merge-record-types types))
-  (obligations-dischargeable? obligations witnesses))
+  (define-values (merged witnesses) (merge-record-types types))
+  (and merged
+       (obligations-dischargeable? obligations witnesses)))
 
 (define (infer-eliminate scrutinee branches environment places callables)
   (define scrutinee-result
@@ -671,14 +677,20 @@
 
 (define (core-type-of core places callables [environment '()])
   (if (and (redex-match? G2m c core)
+           (core-types-normal? core)
            (valid-environment? environment)
            (valid-places? places)
            (valid-callables? callables))
-      (or (infer core environment places callables) 'ill-typed)
+      (match (infer core environment places callables)
+        [(list type row)
+         (define normalized (normalize-type type))
+         (if normalized (list normalized row) 'ill-typed)]
+        [_ 'ill-typed])
       'ill-typed))
 
 (define (core-check-row core places callables expected [environment '()])
   (and (redex-match? G2m c core)
+       (core-types-normal? core)
        (valid-environment? environment)
        (valid-places? places)
        (valid-callables? callables)
@@ -693,6 +705,7 @@
 
 (define (config-ok? configuration callables expected row)
   (and (redex-match? G2m config configuration)
+       (core-types-normal? configuration)
        (valid-callables? callables)
        (type? expected)
        (row? row)

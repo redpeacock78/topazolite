@@ -10,6 +10,7 @@
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
+         "type-equiv.rkt"
          "type-shape.rkt"
          "validators.rkt")
 
@@ -185,8 +186,9 @@
           (reject 'unsaturated-type name kind)]
          [_ (reject 'unknown-type name)])]
       [_ (reject 'invalid-type-annotation annotation)]))
-  (if (type? resolved)
-      resolved
+  (define normalized (normalize-type resolved))
+  (if (and normalized (type? normalized))
+      normalized
       (reject 'invalid-resolved-type resolved)))
 
 (define (resolve-type-row row delta)
@@ -433,6 +435,16 @@
               (map second branch-results)))))
 
     (define (synth expression environment delta propositions boundaries)
+      (define result
+        (synth/raw expression environment delta propositions boundaries))
+      (define normalized (normalize-type (judgment-type result)))
+      (unless normalized
+        (reject 'non-normalizable-type (judgment-type result)))
+      (judgment (judgment-core result)
+                normalized
+                (judgment-row result)))
+
+    (define (synth/raw expression environment delta propositions boundaries)
       (match expression
         [(? integer?) (judgment expression 'Int '())]
         [(? string?) (judgment expression 'String '())]
