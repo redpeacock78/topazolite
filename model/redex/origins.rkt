@@ -3,6 +3,8 @@
 (require racket/match
          redex/reduction-semantics
          "lang.rkt"
+         "traits.rkt"
+         "type-equiv.rkt"
          "validators.rkt")
 
 (provide Δ0
@@ -12,6 +14,7 @@
          kindOf
          origin-of
          proof-issuer-ok?
+         trait-global-bindings
          verify-origins
          verify-initial-origins)
 
@@ -25,6 +28,15 @@
      (list (first row) (list 'prim (second row))))
    (for/list ([row (in-list projection-table)])
      (list (first row) (list 'prim (second row))))))
+
+(define trait-r0-entries
+  (append
+   (for/list ([row (in-list trait-table)])
+     (list (trait-origin row) (list 'trait (trait-name row))))
+   (for/list ([row (in-list impl-table)])
+     (list (impl-oid row) (list 'prim (impl-name row))))
+   (for/list ([row (in-list intersect-table)])
+     (list (intersect-oid row) (list 'prim (intersect-name row))))))
 
 (define R0
   (append
@@ -48,7 +60,8 @@
    kernel-r0-entries
    ;; RFN-002: merge が発行する常在性 witness の発行者。primitive を持たない
    ;; ため (prim ...) ではなく単独の id として登録する。
-   (term ((o-merge merge)))))
+   (term ((o-merge merge)))
+   trait-r0-entries))
 
 ;; RFN-001: validate primitive の型は行ごとの単相型である。latent effect と
 ;; obligation は空とする。判定は純粋な全域計算であるためである。
@@ -76,6 +89,38 @@
                        ,payload-type () ())
                  `(PrimVal (Reserved ,oid) ,name))))))
 
+(define (trait-constant-name row)
+  (string->symbol (format "~a-trait" (trait-name row))))
+
+(define trait-gamma0-entries
+  (append
+   (for/list ([row (in-list trait-table)])
+     (define proposition `(ValidNarrativeTrait ,(trait-name row)))
+     (list (trait-constant-name row)
+           (list `(Proof ,proposition)
+                 `(ProofRep (Reserved ,(trait-origin row)) ,proposition))))
+   (for/list ([row (in-list impl-table)])
+     (define trait-row (trait-row-by-name (impl-trait-name row)))
+     (define requirements
+       (instantiate-requirements
+        (trait-template trait-row)
+        (impl-target-type row)))
+     (list (impl-name row)
+           (list `(NFn ((Record ,requirements))
+                       (Proof (Implements ,(impl-target-type row)
+                                          ,(impl-trait-name row)))
+                       () ())
+                 `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row)))))
+   (for/list ([row (in-list intersect-table)])
+     (list (intersect-name row)
+           (list `(NFn ((Proof (ValidNarrativeTrait ,(intersect-left row)))
+                        (Proof (ValidNarrativeTrait ,(intersect-right row))))
+                       (Proof (RequiresBoth ,(intersect-left row)
+                                            ,(intersect-right row)))
+                       () ())
+                 `(PrimVal (Reserved ,(intersect-oid row))
+                           ,(intersect-name row)))))))
+
 (define Γ0
   (append
    (term ((add ((NFn (Int Int) Int () ())
@@ -92,7 +137,8 @@
                (PrimVal (Reserved o-eq) eq)))
           (acquire ((NFn (Int) (Owned Res) () ())
                     (PrimVal (Reserved o-acquire) acquire)))))
-   kernel-gamma0-entries))
+   kernel-gamma0-entries
+   trait-gamma0-entries))
 
 (define Δ0
   (term ((Int (TypeRep (Reserved o-int) Int Type))
@@ -107,9 +153,41 @@
                           Result
                           (Type -> (Type -> Type)))))))
 
-(define Π0
+(define kernel-pi0-entries
   (term ((typeNarrativeCap
           (TypeNarrativeCap (Reserved o-type-narrative))))))
+
+(define trait-pi0-entries
+  (for/list ([row (in-list trait-table)])
+    (list (trait-constant-name row)
+          (list `(ValidNarrativeTrait ,(trait-name row))
+                `(Reserved ,(trait-origin row))))))
+
+(define Π0 (append kernel-pi0-entries trait-pi0-entries))
+
+;; traits.rkt は 3 表の内部だけを検査する。kernel 行との衝突は、表を既存の
+;; 環境へ足した後にだけ検査できる。
+(define (check-unique-keys! who table message)
+  (define keys (map car table))
+  (unless (= (length keys) (length (remove-duplicates keys)))
+    (error who message)))
+
+(check-unique-keys! 'origins R0 "trait rows collide with kernel R0 entries")
+(check-unique-keys! 'origins Γ0 "trait rows collide with kernel Γ0 entries")
+
+;; Γ-pc⁰ へ足す global 候補。entry は (φ O cid sid pid hook) の 6 要素で、
+;; origin と hook は同じ impl 行へ決定的に結び付く。
+(define (trait-global-bindings)
+  (for/list ([row (in-list impl-table)])
+    (define trait-row (trait-row-by-name (impl-trait-name row)))
+    (list (impl-name row)
+          (list `(Implements ,(impl-target-type row)
+                             ,(impl-trait-name row))
+                `(Reserved ,(impl-oid row))
+                (impl-name row)
+                'root
+                'default
+                (list (trait-origin trait-row) (impl-oid row))))))
 
 (define (kind-of/proc type-form)
   (case type-form
@@ -176,9 +254,50 @@
              (equal? (validator-proposition row) proposition)
              (equal? (lookup r0 id) `(prim ,(validator-name row))))]
        [_ #f])]
+    [`(ValidNarrativeTrait ,trait)
+     (match origin
+       [`(Reserved ,id)
+        (define row (trait-row-by-name trait))
+        (and row
+             (eq? (trait-origin row) id)
+             (equal? (lookup r0 id) `(trait ,trait)))]
+       [_ #f])]
+    [`(Implements ,_ ,_)
+     (match origin
+       [`(Reserved ,id)
+        (define row (impl-row-by-oid id))
+        (define actual-key (canonical-proposition-key proposition))
+        (define expected-key
+          (and row
+               (canonical-proposition-key
+                `(Implements ,(impl-target-type row)
+                             ,(impl-trait-name row)))))
+        (and row
+             actual-key
+             expected-key
+             (equal? actual-key expected-key)
+             (equal? (lookup r0 id) `(prim ,(impl-name row))))]
+       [_ #f])]
+    [`(RequiresBoth ,_ ,_)
+     (match origin
+       [`(Reserved ,id)
+        (define row (intersect-row-by-oid id))
+        (define actual-key (canonical-proposition-key proposition))
+        (define expected-key
+          (and row
+               (canonical-proposition-key
+                `(RequiresBoth ,(intersect-left row)
+                               ,(intersect-right row)))))
+        (and row
+             actual-key
+             expected-key
+             (equal? actual-key expected-key)
+             (equal? (lookup r0 id) `(prim ,(intersect-name row))))]
+       [_ #f])]
     [`(Presence ,_)
      (and (equal? origin '(Reserved o-merge))
           (eq? (lookup r0 'o-merge) 'merge))]
+    [`(FieldType ,_ ,_) #f]
     [_ #f]))
 
 ;; RFN-002: 出現許可。常在性 witness は merge の局所検査のためだけに立つ値で
@@ -187,6 +306,7 @@
 (define (proof-occurrence-ok? proposition)
   (match proposition
     [`(Presence ,_) #f]
+    [`(FieldType ,_ ,_) #f]
     [_ #t]))
 
 ;; RFN-001: RVal のペイロード束縛検査。witness の命題が判定表の行に対応し、

@@ -28,19 +28,33 @@
 (check-equal? (ambiguous-proofs (ambiguous (list P P))) (list P P))
 
 ; candidateize は Π0 の各束縛から entry を一つ作る。
-; Π0 = ((typeNarrativeCap (TypeNarrativeCap (Reserved o-type-narrative))))
+; G2e は parametric な trait 妥当性の束縛を末尾へ追加する。
 (check-equal?
  (candidateize Π0)
  '((typeNarrativeCap
     (TypeNarrativeCap (Reserved o-type-narrative)
-                      typeNarrativeCap root default ()))))
+                      typeNarrativeCap root default ()))
+   (Printable-trait
+    ((ValidNarrativeTrait Printable) (Reserved o-trait-printable)
+                                        Printable-trait root default ()))
+   (Sizable-trait
+    ((ValidNarrativeTrait Sizable) (Reserved o-trait-sizable)
+                                      Sizable-trait root default ()))
+   (PrintableSizable-trait
+    ((ValidNarrativeTrait PrintableSizable)
+     (Reserved o-trait-printable-sizable)
+     PrintableSizable-trait root default ()))
+   (Taggable-trait
+    ((ValidNarrativeTrait Taggable) (Reserved o-trait-taggable)
+                                      Taggable-trait root default ()))))
 
 ; 決定性: 同じ Π0 に対して同じ Γ_pc⁰ を与える（gensym/counter を使わない）
 (check-equal? (candidateize Π0) (candidateize Π0))
 (check-equal? Γ-pc0 (candidateize Π0))
 
 ; entry アクセサ
-(define e (second (first Γ-pc0)))
+(define gamma-pc-one (list (assoc 'typeNarrativeCap Γ-pc0)))
+(define e (second (first gamma-pc-one)))
 (check-equal? (entry-phi e) 'TypeNarrativeCap)
 (check-equal? (entry-origin e) '(Reserved o-type-narrative))
 (check-equal? (entry-cid e) 'typeNarrativeCap)
@@ -50,15 +64,15 @@
 
 ; project: root scope から可視な entry を候補へ写す
 (check-equal?
- (project Γ-pc0 '(root))
+ (project gamma-pc-one '(root))
  '((Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
               typeNarrativeCap root default ())))
 
 ; 可視でない scope の entry は候補にしない
-(check-equal? (project Γ-pc0 '(other)) '())
+(check-equal? (project gamma-pc-one '(other)) '())
 
 ; 候補アクセサ
-(define c (first (project Γ-pc0 '(root))))
+(define c (first (project gamma-pc-one '(root))))
 (check-equal? (candidate-proof c) '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
 (check-equal? (candidate-prop c) 'TypeNarrativeCap)
 (check-equal? (candidate-origin c) '(Reserved o-type-narrative))

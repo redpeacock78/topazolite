@@ -12,10 +12,10 @@
   (term (verify-origins ,r0 ,core)))
 
 (test-case "NAR-001/TYP-001: initial origin environments"
-  (check-equal? (length R0) 24)
-  (check-equal? (length Γ0) 13)
+  (check-equal? (length R0) 34)
+  (check-equal? (length Γ0) 23)
   (check-equal? (length Δ0) 9)
-  (check-equal? (length Π0) 1)
+  (check-equal? (length Π0) 5)
   (check-equal? (assoc 'o-type-narrative R0)
                 (term (o-type-narrative typeNarrative)))
   (check-equal? (assoc 'lt Γ0)
