@@ -101,6 +101,22 @@
   (check-false (type-equiv? `(Refined Int ,bad) `(Refined Int ,other)))
   (check-true (type-equiv? `(Refined Int ,bad) `(Refined Int ,bad))))
 
+(test-case "normalization does not reorder effect rows or obligations"
+  ;; 作用列と義務列の並びは正規形の条件に入らない。Task 12 で type? が
+  ;; type-normal? を要求するため、ここで整列を求めると
+  ;; elaborate-test.rkt:282-283 の型と VAR-002 の型が成立しなくなる。
+  (check-true (type-normal? '(NFn () Unit (Suspend Own) ())))
+  (check-true (type-normal? '(NFn () Unit (Own Suspend) ())))
+  (check-true (type-normal? '(NFn () Int () ((Implements Int Sizable)
+                                            (Implements Int Printable)))))
+  ;; 作用列は集合、義務列は列。type-equiv? の扱いに鍵を一致させる。
+  (check-true (type-equiv? '(NFn () Unit (Suspend Own) ())
+                           '(NFn () Unit (Own Suspend) ())))
+  (check-false (type-equiv? '(NFn () Int () ((Implements Int Sizable)
+                                             (Implements Int Printable)))
+                            '(NFn () Int () ((Implements Int Printable)
+                                             (Implements Int Sizable))))))
+
 (test-case "core-types-normal? rejects a non-normal type hidden in an annotation"
   (check-false
    (core-types-normal? '(Let (x (Union String Int)) 1 x)))

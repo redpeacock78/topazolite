@@ -54,7 +54,7 @@
       (and type (list (car field) type (caddr field)))))
   (and (andmap values normalized) normalized))
 
-;; 作用列を整列して重複を除く。Return/Yield は内包型も正規化する。
+;; 作用列の並びと重複を保ったまま、Return/Yield の内包型を正規化する。
 (define (normalize-effect-row row)
   (define normalized
     (for/list ([label (in-list row)])
@@ -66,12 +66,7 @@
          (define result (normalize-type type))
          (and result `(Yield ,result))]
         [_ label])))
-  (and (andmap values normalized)
-       (remove-duplicates (sort normalized external<?))))
-
-;; 義務列を外部表現順で整列して重複を除く。
-(define (sort-obligations obligations)
-  (remove-duplicates (sort obligations external<?)))
+  (and (andmap values normalized) normalized))
 
 ;; 型を正規形へ写す。正規化できない型には #f を返す。
 (define (normalize-type type)
@@ -130,7 +125,7 @@
           `(NFn ,normalized-parameters
                 ,normalized-return
                 ,normalized-row
-                ,(sort-obligations normalized-obligations)))]
+                ,normalized-obligations))]
     [`(Proof ,proposition)
      (define normalized (normalize-proposition proposition))
      (and normalized `(Proof ,normalized))]
@@ -190,7 +185,7 @@
      `(NFn ,(map canonical-key/normal parameters)
            ,(canonical-key/normal return-type)
            ,(canonical-effect-row-key row)
-           ,(sort (map canonical-proposition-key obligations) external<?))]
+           ,(map canonical-proposition-key obligations))]
     [`(Proof ,proposition)
      `(Proof ,(canonical-proposition-key proposition))]
     [`(Refined ,payload ,proposition)
