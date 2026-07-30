@@ -1,5 +1,5 @@
 #lang racket/base
-(require rackunit "../compat.rkt")
+(require rackunit "../compat.rkt" "../type-equiv.rkt")
 
 (test-case "compat? is reflexive on unions"
   (define u '(Union Int String))
@@ -30,3 +30,18 @@
   (check-true (compat?
                (nfn '((Implements (Intersection Int String) Printable)))
                (nfn '((Implements (Intersection Int String) Printable))))))
+
+(test-case "type-equiv? implies compat? on Refined propositions"
+  ;; φ の表記だけが違う二つの Refined は type-equiv? で同値である。
+  ;; compat? が構文比較のままだと非互換になり、VAR-002 性質2 が破れる。
+  ;; properties-variance-test.rkt の生成器は Refined を作らないので、
+  ;; この反例は性質テストでは観測できない。
+  (define left
+    '(Refined Int (Implements (Record ((a Int imm) (z Int imm))) Printable)))
+  (define right
+    '(Refined Int (Implements (Record ((z Int imm) (a Int imm))) Printable)))
+  (check-true (type-equiv? left right))
+  (check-true (compat? left right))
+  (check-true (compat? right left))
+  ;; φ が別命題なら非互換のまま。
+  (check-false (compat? left '(Refined Int (Implements Int Printable)))))

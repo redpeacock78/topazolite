@@ -75,10 +75,11 @@
      (type-equiv? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
      (compat? sub-payload sup-payload gamma-pc)]
-    ;; RFN-001: φ は一致を要求し、ペイロード型だけ compat? で再帰する。
+    ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。
+    ;; type-equiv? と同じ proposition-equiv? を使い、同値型の互換性を保つ。
     [(`(Refined ,sub-payload ,sub-proposition)
       `(Refined ,sup-payload ,sup-proposition))
-     (and (equal? sub-proposition sup-proposition)
+     (and (proposition-equiv? sub-proposition sup-proposition)
           (compat? sub-payload sup-payload gamma-pc))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
       `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
