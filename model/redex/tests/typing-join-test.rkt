@@ -116,7 +116,12 @@
   (check-false
    (merge-witnesses-dischargeable?
     types
-    '((FieldType a Bool)))))
+    '((FieldType a Bool))))
+  ;; join 型そのものは branch 型 witness ではない。
+  (check-false
+   (merge-witnesses-dischargeable?
+    types
+    `((FieldType a ,joined-type)))))
 
 (test-case "witness binding names follow the declared scheme"
   (check-equal? (presence-binding-name 'a) 'presence-a)

@@ -204,7 +204,7 @@
          (append-map
           (lambda (field)
             (expected-field-witnesses rows (first field)))
-          (first rows)))
+          (sort (first rows) symbol<? #:key first)))
        (check-equal? issued expected-issued)
        (define presence-issued
          (filter (lambda (proposition)
