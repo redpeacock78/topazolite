@@ -75,3 +75,26 @@
   (check-false
    (type-equiv? '(NFn () Unit () (ValidNarrativeTrait TypeNarrativeCap))
                 '(NFn () Unit () (TypeNarrativeCap ValidNarrativeTrait)))))
+
+(test-case "union equivalence is set equality, not multiset"
+  ;; CMP-001 は重複が正規形を分けないと述べる。type-equiv? も同じ扱いにする。
+  (check-true
+   (type-equiv? '(Union Int (Union Int String)) '(Union Int String)))
+  ;; 片方だけが Union でも、包含が破れるので非同値になる。
+  (check-false (type-equiv? '(Union Int String) 'Int)))
+
+(test-case "canonicalization falls back to syntax when no key exists"
+  ;; Intersection の被演算子が Record でないと正規化に失敗し、鍵は #f になる。
+  ;; 鍵の #f どうしを一致とみなすと別命題が同値になり、不一致とみなすと反射律が
+  ;; 壊れる。どちらも起きないことを固定する。
+  (define bad '(Implements (Intersection Int String) P))
+  (define other '(Implements (Intersection Bool Unit) Q))
+  (check-false (canonical-proposition-key bad))
+  (check-false (type-equiv? `(Proof ,bad) `(Proof ,other)))
+  (check-true (type-equiv? `(Proof ,bad) `(Proof ,bad)))
+  (check-false
+   (type-equiv? `(NFn () Unit () (,bad)) `(NFn () Unit () (,other))))
+  (check-true
+   (type-equiv? `(NFn () Unit () (,bad)) `(NFn () Unit () (,bad))))
+  (check-false (type-equiv? `(Refined Int ,bad) `(Refined Int ,other)))
+  (check-true (type-equiv? `(Refined Int ,bad) `(Refined Int ,bad))))

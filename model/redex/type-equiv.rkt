@@ -250,20 +250,25 @@
                  [right-type (in-list right)])
          (type-equiv? left-type right-type))))
 
+;; 命題の同値。正準鍵が作れない命題は旧来どおり構文で比べる。
+(define (proposition-equiv? left right)
+  (define left-key (canonical-proposition-key left))
+  (define right-key (canonical-proposition-key right))
+  (if (and left-key right-key)
+      (equal? left-key right-key)
+      (equal? left right)))
+
 (define (propositions-equiv? left right)
   (and (= (length left) (length right))
        (for/and ([left-proposition (in-list left)]
                  [right-proposition (in-list right)])
-         (define left-key (canonical-proposition-key left-proposition))
-         (define right-key (canonical-proposition-key right-proposition))
-         (and left-key right-key (equal? left-key right-key)))))
+         (proposition-equiv? left-proposition right-proposition))))
 
 ;; Union は要素の集合として比べる。
 (define (union-type-equiv? left right)
   (define left-members (union-members left))
   (define right-members (union-members right))
-  (and (= (length left-members) (length right-members))
-       (for/and ([left-member (in-list left-members)])
+  (and (for/and ([left-member (in-list left-members)])
          (for/or ([right-member (in-list right-members)])
            (type-equiv? left-member right-member)))
        (for/and ([right-member (in-list right-members)])
@@ -289,8 +294,7 @@
     [(`(Refined ,left-payload ,left-proposition)
       `(Refined ,right-payload ,right-proposition))
      (and (type-equiv? left-payload right-payload)
-          (equal? (canonical-proposition-key left-proposition)
-                  (canonical-proposition-key right-proposition)))]
+          (proposition-equiv? left-proposition right-proposition))]
     [(`(Record ,left-row) `(Record ,right-row))
      (field-row-equiv? left-row right-row type-equiv?)]
     [(`(NFn ,left-parameters ,left-return ,left-row ,left-obligations)
@@ -302,8 +306,7 @@
     [(`(TypeInfo ,left-kind) `(TypeInfo ,right-kind))
      (equal? left-kind right-kind)]
     [(`(Proof ,left-proposition) `(Proof ,right-proposition))
-     (equal? (canonical-proposition-key left-proposition)
-             (canonical-proposition-key right-proposition))]
+     (proposition-equiv? left-proposition right-proposition)]
     ;; Future type-level computations remain opaque unless their syntax is
     ;; identical. G1 has no reducible type form beyond constructor specs.
     [(_ _) (equal? left right)]))
