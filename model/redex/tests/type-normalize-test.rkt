@@ -1,5 +1,7 @@
 #lang racket/base
-(require rackunit "../type-equiv.rkt")
+(require rackunit
+         "../type-equiv.rkt"
+         "../type-shape.rkt")
 
 (test-case "union flattens, sorts, dedups, and right-associates"
   (check-equal? (normalize-type '(Union String Int))
@@ -98,3 +100,40 @@
    (type-equiv? `(NFn () Unit () (,bad)) `(NFn () Unit () (,bad))))
   (check-false (type-equiv? `(Refined Int ,bad) `(Refined Int ,other)))
   (check-true (type-equiv? `(Refined Int ,bad) `(Refined Int ,bad))))
+
+(test-case "core-types-normal? rejects a non-normal type hidden in an annotation"
+  (check-false
+   (core-types-normal? '(Let (x (Union String Int)) 1 x)))
+  (check-true
+   (core-types-normal? '(Let (x Int) 1 x)))
+  (check-false
+   (core-types-normal? '(Let (x let (Union String Int)) 1 x)))
+  (check-true
+   (core-types-normal? '(Let (x let Int) 1 x))))
+
+(test-case "core-types-normal? rejects a residual Intersection"
+  (check-false
+   (core-types-normal?
+    '(Let (x (Intersection (Record ((a Int imm)))
+                           (Record ((b Int imm)))))
+       1
+       x))))
+
+(test-case "proposition-types-normal? recurses into embedded types"
+  (check-false
+   (proposition-types-normal? '(Implements (Union String Int) Printable)))
+  (check-true
+   (proposition-types-normal? '(Implements Int Printable))))
+
+(test-case "effect-row-normal? recurses into embedded types"
+  (check-false (effect-row-normal? '((Return boundary (Union String Int)))))
+  (check-true (effect-row-normal? '((Return boundary Int)))))
+
+(test-case "type-shape-ok? recurses into composite and proposition types"
+  (define duplicate-row '(Record ((a Int imm) (a Bool imm))))
+  (check-false (type-shape-ok? `(Union Int ,duplicate-row)))
+  (check-false (type-shape-ok? `(Intersection Int ,duplicate-row)))
+  (check-true (type-shape-ok? '(Union Int (Record ((a Int imm))))))
+  (check-false (type-shape-ok? `(Proof (FieldType f ,duplicate-row))))
+  (check-false (type-shape-ok? `(Refined Int (FieldType f ,duplicate-row))))
+  (check-false (type-shape-ok? `(NFn () Unit () ((FieldType f ,duplicate-row))))))

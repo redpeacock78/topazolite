@@ -2,9 +2,26 @@
 
 (require racket/match
          "rows.rkt"
+         "type-equiv.rkt"
          "validators.rkt")
 
-(provide type-shape-ok?)
+(provide type-shape-ok?
+         core-types-normal?
+         proposition-types-normal?
+         effect-row-normal?)
+
+(define (proposition-shape-ok? proposition)
+  (match proposition
+    [`(Implements ,type ,_) (type-shape-ok? type)]
+    [`(FieldType ,_ ,type) (type-shape-ok? type)]
+    [_ #t]))
+
+(define (effect-row-shape-ok? row)
+  (for/and ([label (in-list row)])
+    (match label
+      [`(Return ,_ ,type) (type-shape-ok? type)]
+      [`(Yield ,type) (type-shape-ok? type)]
+      [_ #t])))
 
 ;; 型の整形式性。record のラベル一意性に加えて、RFN-001 の Owned-free 制限を
 ;; Untrusted と Refined のペイロードへ課す。
@@ -22,14 +39,127 @@
     [`(Owned ,inner) (type-shape-ok? inner)]
     [`(Untrusted ,inner)
      (and (owned-free? inner) (type-shape-ok? inner))]
-    [`(Refined ,inner ,_)
-     (and (owned-free? inner) (type-shape-ok? inner))]
-    [`(NFn ,parameters ,return-type ,row ,_)
+    [`(Refined ,inner ,proposition)
+     (and (owned-free? inner)
+          (type-shape-ok? inner)
+          (proposition-shape-ok? proposition))]
+    [`(Union ,left ,right)
+     (and (type-shape-ok? left) (type-shape-ok? right))]
+    [`(Intersection ,left ,right)
+     (and (type-shape-ok? left) (type-shape-ok? right))]
+    [`(Proof ,proposition)
+     (proposition-shape-ok? proposition)]
+    [`(NFn ,parameters ,return-type ,row ,obligations)
      (and (andmap type-shape-ok? parameters)
           (type-shape-ok? return-type)
-          (for/and ([label (in-list row)])
-            (match label
-              [`(Return ,_ ,type) (type-shape-ok? type)]
-              [`(Yield ,type) (type-shape-ok? type)]
-              [_ #t])))]
+          (effect-row-shape-ok? row)
+          (andmap proposition-shape-ok? obligations))]
     [_ #t]))
+
+;; 命題に埋め込まれた型が全て正規形か。
+(define (proposition-types-normal? proposition)
+  (and (equal? (normalize-proposition proposition) proposition)
+       (match proposition
+         [`(Implements ,type ,_) (type-normal? type)]
+         [`(FieldType ,_ ,type) (type-normal? type)]
+         [_ #t])))
+
+;; 作用列の Return/Yield に埋め込まれた型が全て正規形か。
+(define (effect-row-normal? row)
+  (for/and ([label (in-list row)])
+    (match label
+      [`(Return ,_ ,type) (type-normal? type)]
+      [`(Yield ,type) (type-normal? type)]
+      [_ #t])))
+
+;; Core 項と設定に現れる全ての型保持位置を明示的に走査する。
+(define (core-types-normal? subject)
+  (define (walk-origin origin)
+    (match origin
+      ['User #t]
+      [`(Reserved ,_) #t]
+      [`(Derived ,parent ,step)
+       (and (walk-origin parent) (walk-step step))]
+      [_ (error 'core-types-normal? "unhandled origin form: ~s" origin)]))
+
+  (define (walk-step step)
+    (match step
+      [`(Curry ,value) (walk value)]
+      [`(Make ,type) (type-normal? type)]
+      [`(Expand ,_) #t]
+      [_ (error 'core-types-normal? "unhandled origin step: ~s" step)]))
+
+  (define (walk-branch branch)
+    (match branch
+      [`(,_ (,_ ...) -> ,body) (walk body)]
+      [_ (error 'core-types-normal? "unhandled branch form: ~s" branch)]))
+
+  (define (walk-record-field field)
+    (match field
+      [`(,_ ,_ ,core) (walk core)]
+      [_ (error 'core-types-normal? "unhandled record field: ~s" field)]))
+
+  (define (walk-heap-entry entry)
+    (match entry
+      [`(,_ ,value) (walk value)]
+      [_ (error 'core-types-normal? "unhandled heap entry: ~s" entry)]))
+
+  (define (walk-event event)
+    (match event
+      [`(obs ,value) (walk value)]
+      [`(fin ,_) #t]
+      [_ (error 'core-types-normal? "unhandled event form: ~s" event)]))
+
+  (define (walk value)
+    (cond
+      [(or (exact-integer? value) (string? value) (symbol? value)) #t]
+      [else
+       (match value
+         [`(cfg ,core ,heap ,_ ,events)
+          (and (walk core)
+               (andmap walk-heap-entry heap)
+               (andmap walk-event events))]
+         [`(Apply ,function ,arguments ...)
+          (and (walk function) (andmap walk arguments))]
+         [`(Let (,_ ,_ ,type) ,bound ,body)
+          (and (type-normal? type) (walk bound) (walk body))]
+         [`(Let (,_ ,type) ,bound ,body)
+          (and (type-normal? type) (walk bound) (walk body))]
+         [`(Construct ,type ,_ ,fields ...)
+          (and (type-normal? type) (andmap walk fields))]
+         [`(Eliminate ,scrutinee ,branches)
+          (and (walk scrutinee) (andmap walk-branch branches))]
+         [`(Perform (Return ,_ ,type) ,argument)
+          (and (type-normal? type) (walk argument))]
+         [`(Handle (Return ,_ ,type) (,_ -> ,handler-body) ,body)
+          (and (type-normal? type) (walk handler-body) (walk body))]
+         [`(Scope ,_ ,body) (walk body)]
+         [`(Recur ,_ ,_ (,_ ...) ,body ,continuation)
+          (and (walk body) (walk continuation))]
+         [`(Yield ,observed ,next)
+          (and (walk observed) (walk next))]
+         [`(Suspend ,body) (walk body)]
+         [`(Move ,_) #t]
+         [`(Drop ,argument) (walk argument)]
+         [`(Curry ,function ,argument)
+          (and (walk function) (walk argument))]
+         [`(Error ,_) #t]
+         [`(Rec ,fields) (andmap walk-record-field fields)]
+         [`(Proj ,record ,_) (walk record)]
+         [`(resource ,_) #t]
+         [`(UVal ,payload) (walk payload)]
+         [`(RVal ,proof ,payload) (and (walk proof) (walk payload))]
+         [`(Lam ,origin ,_ (,_ ...) ,body)
+          (and (walk-origin origin) (walk body))]
+         [`(PrimVal ,origin ,_) (walk-origin origin)]
+         [`(CurryVal ,origin ,function ,argument)
+          (and (walk-origin origin) (walk function) (walk argument))]
+         [`(RecurVal ,_ ,_ (,_ ...) ,body) (walk body)]
+         [`(TypeRep ,origin ,type ,_)
+          (and (walk-origin origin) (type-normal? type))]
+         [`(ProofRep ,origin ,proposition)
+          (and (walk-origin origin)
+               (proposition-types-normal? proposition))]
+         [_ (error 'core-types-normal? "unhandled core form: ~s" value)])]))
+
+  (walk subject))
