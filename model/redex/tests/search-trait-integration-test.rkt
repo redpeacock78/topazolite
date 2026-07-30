@@ -52,6 +52,13 @@
    '(ProofRep (Reserved o-intersect-print-size)
               (RequiresBoth Printable Sizable))))
 
+(test-case "trait intersection remains explicit"
+  ;; 設計 §8.2: 合成 trait への所属の導出は G2e では未回収である。
+  (check-false
+   (obligations-dischargeable?
+    '((RequiresBoth Printable Sizable))
+    Γ-pc0)))
+
 (define (check-apply-obligation proposition expected branch)
   (reset-search-log!)
   (define callables

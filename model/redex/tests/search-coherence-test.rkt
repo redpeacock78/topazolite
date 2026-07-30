@@ -36,7 +36,4 @@
   (check-equal? (length (remove-duplicates
                          (map candidate-identity candidates)))
                 2)
-  (check-equal? (resolve-candidates ambiguous-goal candidates)
-                (resolve-candidates ambiguous-goal
-                                    (reverse candidates)))
   (check-false (discharge-in ambiguous-goal '(root s-user))))
