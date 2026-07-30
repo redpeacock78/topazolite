@@ -157,13 +157,7 @@
   (term ((typeNarrativeCap
           (TypeNarrativeCap (Reserved o-type-narrative))))))
 
-(define trait-pi0-entries
-  (for/list ([row (in-list trait-table)])
-    (list (trait-constant-name row)
-          (list `(ValidNarrativeTrait ,(trait-name row))
-                `(Reserved ,(trait-origin row))))))
-
-(define Π0 (append kernel-pi0-entries trait-pi0-entries))
+(define Π0 kernel-pi0-entries)
 
 ;; traits.rkt は 3 表の内部だけを検査する。kernel 行との衝突は、表を既存の
 ;; 環境へ足した後にだけ検査できる。
@@ -297,7 +291,9 @@
     [`(Presence ,_)
      (and (equal? origin '(Reserved o-merge))
           (eq? (lookup r0 'o-merge) 'merge))]
-    [`(FieldType ,_ ,_) #f]
+    [`(FieldType ,_ ,_)
+     (and (equal? origin '(Reserved o-merge))
+          (eq? (lookup r0 'o-merge) 'merge))]
     [_ #f]))
 
 ;; RFN-002: 出現許可。常在性 witness は merge の局所検査のためだけに立つ値で

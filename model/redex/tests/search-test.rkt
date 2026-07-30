@@ -28,25 +28,11 @@
 (check-equal? (ambiguous-proofs (ambiguous (list P P))) (list P P))
 
 ; candidateize は Π0 の各束縛から entry を一つ作る。
-; G2e は parametric な trait 妥当性の束縛を末尾へ追加する。
 (check-equal?
  (candidateize Π0)
  '((typeNarrativeCap
     (TypeNarrativeCap (Reserved o-type-narrative)
-                      typeNarrativeCap root default ()))
-   (Printable-trait
-    ((ValidNarrativeTrait Printable) (Reserved o-trait-printable)
-                                        Printable-trait root default ()))
-   (Sizable-trait
-    ((ValidNarrativeTrait Sizable) (Reserved o-trait-sizable)
-                                      Sizable-trait root default ()))
-   (PrintableSizable-trait
-    ((ValidNarrativeTrait PrintableSizable)
-     (Reserved o-trait-printable-sizable)
-     PrintableSizable-trait root default ()))
-   (Taggable-trait
-    ((ValidNarrativeTrait Taggable) (Reserved o-trait-taggable)
-                                      Taggable-trait root default ()))))
+                      typeNarrativeCap root default ()))))
 
 ; 決定性: 同じ Π0 に対して同じ Γ_pc⁰ を与える（gensym/counter を使わない）
 (check-equal? (candidateize Π0) (candidateize Π0))
@@ -69,7 +55,7 @@
               typeNarrativeCap root default ())))
 
 ; 可視でない scope の entry は候補にしない
-(check-equal? (project gamma-pc-one '(other)) '())
+(check-equal? (project Γ-pc0 '(other)) '())
 
 ; 候補アクセサ
 (define c (first (project gamma-pc-one '(root))))

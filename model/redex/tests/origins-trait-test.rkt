@@ -27,13 +27,6 @@
                         (list 'prim (intersect-name row))))))
 
 (test-case "the trait tables contribute Γ0 entries"
-  (for ([row (in-list trait-table)])
-    (define proposition `(ValidNarrativeTrait ,(trait-name row)))
-    (check-equal?
-     (assoc (trait-constant-name row) Γ0)
-     (list (trait-constant-name row)
-           (list `(Proof ,proposition)
-                 `(ProofRep (Reserved ,(trait-origin row)) ,proposition)))))
   (for ([row (in-list impl-table)])
     (define trait-row (trait-row-by-name (impl-trait-name row)))
     (define requirements
@@ -66,14 +59,16 @@
   (check-equal? (length (map car Γ0))
                 (length (remove-duplicates (map car Γ0)))))
 
-(test-case "Π0 declares every trait as valid"
+(test-case "Γ0 holds the sole source of trait validity proofs"
   (for ([row (in-list trait-table)])
     (define name (trait-constant-name row))
+    (define proposition `(ValidNarrativeTrait ,(trait-name row)))
     (check-equal?
-     (assoc name Π0)
+     (assoc name Γ0)
      (list name
-           (list `(ValidNarrativeTrait ,(trait-name row))
-                 `(Reserved ,(trait-origin row)))))))
+           (list `(Proof ,proposition)
+                 `(ProofRep (Reserved ,(trait-origin row)) ,proposition)))
+     (format "~s" (trait-name row)))))
 
 (test-case "proof-issuer-ok? accepts trait-table issuers"
   (check-true
@@ -111,7 +106,7 @@
 (test-case "FieldType is local-only"
   (define witness
     '(ProofRep (Reserved o-merge) (FieldType f Int)))
-  (check-false
+  (check-true
    (proof-issuer-ok? R0 '(Reserved o-merge) '(FieldType f Int)))
   (check-equal? (verify-initial witness) `(forged ,witness)))
 
