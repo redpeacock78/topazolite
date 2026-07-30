@@ -3,17 +3,20 @@
 (require racket/match
          redex/reduction-semantics
          "origins.rkt"
+         "traits.rkt"
+         "type-equiv.rkt"
          "validators.rkt")
 
 (provide make-goal goal? goal-proposition
          resolved Absent ambiguous
          search-result? resolved? absent? ambiguous?
          resolved-proof ambiguous-proofs
-         candidateize Γ-pc0
+         candidateize initial-candidate-context Γ-pc0
          entry-phi entry-origin entry-cid entry-sid entry-pid entry-hook
          project project-goal scope-visible?
          candidate-proof candidate-prop candidate-origin
-         candidate-cid candidate-sid candidate-pid candidate-identity
+         candidate-cid candidate-sid candidate-pid candidate-hook
+         candidate-identity hook-ok?
          wf-candidate? wf-context? wf-Σ?
          resolve-candidates
          make-classifier make-oracle make-cert cert-valid? unique?
@@ -50,7 +53,12 @@
     (match-define (list name (list phi origin)) binding)
     (list name (list phi origin name 'root 'default '()))))
 
-(define Γ-pc0 (candidateize Π0))
+;; 探索と elaboration が共有する初期候補文脈。propositions を省略した場合は
+;; typing が使う固定の Π0 から作る。
+(define (initial-candidate-context [propositions Π0])
+  (append (candidateize propositions) (trait-global-bindings)))
+
+(define Γ-pc0 (initial-candidate-context))
 
 ;; entry = (φ O cid sid pid hook)
 (define (entry-phi e)    (first e))
@@ -73,7 +81,9 @@
 ;; 候補が同居すると、それらが wf-Σ? を落として無関係な goal の discharge を
 ;; 妨げる。抽出の段階で goal 単位に絞る。
 (define (project-goal gamma-pc sc-ctx goal)
-  (filter (lambda (c) (equal? (candidate-prop c) (goal-proposition goal)))
+  (filter (lambda (c)
+            (and (candidate-matches? c goal)
+                 (coherent-candidate? c sc-ctx)))
           (project gamma-pc sc-ctx)))
 
 (define (scope-visible? sid sc-ctx) (and (member sid sc-ctx) #t))
@@ -87,17 +97,69 @@
 (define (candidate-pid c)    (fifth c))
 (define (candidate-hook c)   (sixth c))
 
-;; 候補同一性: requirement shape・provenance・cid・sid・pid。trait 成分 hook は空のため除く。
+;; 命題の同値。正準鍵が作れない場合は type-equiv? と同じ構文比較へ落ちる。
+(define (candidate-matches? c goal)
+  (proposition-equiv? (candidate-prop c) (goal-proposition goal)))
+
+;; hook は Implements 候補を trait 行・impl 行・発行者へ束縛する。それ以外の
+;; 候補は G2b までと同じ空 hook だけを持つ。
+(define (hook-ok?/parts proposition origin hook)
+  (match proposition
+    [`(Implements ,_ ,trait)
+     (match hook
+       [(list tid oid)
+        (define trait-row (trait-row-by-name trait))
+        (define impl-row (impl-row-by-oid oid))
+        (and trait-row
+             impl-row
+             (equal? origin `(Reserved ,oid))
+             (eq? tid (trait-origin trait-row))
+             (eq? trait (impl-trait-name impl-row))
+             (proposition-equiv?
+              proposition
+              `(Implements ,(impl-target-type impl-row)
+                           ,(impl-trait-name impl-row))))]
+       [_ #f])]
+    [_ (null? hook)]))
+
+(define (hook-ok? c)
+  (hook-ok?/parts (candidate-prop c)
+                  (candidate-origin c)
+                  (candidate-hook c)))
+
+;; Implements 候補は trait または target type の生成 scope が現在の系譜から
+;; 可視な場合だけ採る。entry 自体の root 可視性とは別の条件である。
+(define (coherent-candidate? c sc-ctx)
+  (match (candidate-prop c)
+    [`(Implements ,_ ,_)
+     (and (hook-ok? c)
+          (match (candidate-hook c)
+            [(list tid oid)
+             (define trait-row (trait-row-by-oid tid))
+             (define impl-row (impl-row-by-oid oid))
+             (and trait-row
+                  impl-row
+                  (or (scope-visible? (trait-scope trait-row) sc-ctx)
+                      (scope-visible? (impl-target-scope impl-row) sc-ctx)))]
+            [_ #f]))]
+    [_ #t]))
+
+;; 候補同一性: requirement shape・provenance・cid・sid・pid・trait hook。
 (define (candidate-identity c)
-  (list (candidate-prop c) (candidate-origin c)
-        (candidate-cid c) (candidate-sid c) (candidate-pid c)))
+  (list (or (canonical-proposition-key (candidate-prop c))
+            (candidate-prop c))
+        (candidate-origin c)
+        (candidate-cid c)
+        (candidate-sid c)
+        (candidate-pid c)
+        (candidate-hook c)))
 
 ;; wf-candidate: 一つの候補が整合であること。
-(define (wf-candidate? c goal)
-  (and (equal? (candidate-prop c) (goal-proposition goal))
+(define (wf-candidate? c goal [sc-ctx '(root)])
+  (and (candidate-matches? c goal)
        (origin-ok? (candidate-origin c) (candidate-prop c))
-       (scope-visible? (candidate-sid c) '(root))
-       (null? (candidate-hook c))))
+       (scope-visible? (candidate-sid c) sc-ctx)
+       (hook-ok? c)))
 
 ;; RFN-003: 候補の witness には発行者対応だけを課す。出現許可は成果物の判定
 ;; であり、探索文脈の候補には適用しない。Redex の metafunction を経由しない
@@ -111,25 +173,29 @@
   (for/and ([binding (in-list gamma-pc)])
     (define e (second binding))
     (and (origin-ok? (entry-origin e) (entry-phi e))
-         (null? (entry-hook e)))))
+         (hook-ok?/parts (entry-phi e)
+                         (entry-origin e)
+                         (entry-hook e)))))
 
 ;; wf-Σ: すべての候補が wf-candidate を満たす。goal についての Finite 完全性は
 ;; project-goal が構成上保証する。
-(define (wf-Σ? sigma goal)
-  (andmap (lambda (c) (wf-candidate? c goal)) sigma))
+(define (wf-Σ? sigma goal [sc-ctx '(root)])
+  (andmap (lambda (c) (wf-candidate? c goal sc-ctx)) sigma))
 
 ;; resolve-candidates: Finite closed-world の候補解決。全域で、wf-Σ を前提とする。
 (define (resolve-candidates goal sigma)
-  (define phi (goal-proposition goal))
   ;; goal の命題に shape が一致する候補を集める
   (define matched
-    (filter (lambda (c) (equal? (candidate-prop c) phi)) sigma))
-  ;; 候補同一性で重複排除（同一性の組が等しい候補だけ一つへ畳む）
-  (define deduped (remove-duplicates matched #:key candidate-identity))
-  ;; cid の canonical order で並べる（順序非依存）
+    (filter (lambda (c) (candidate-matches? c goal)) sigma))
+  ;; raw 表現を先に整列し、同一性が同じ候補の代表を入力順に依存させない。
+  (define raw-sorted
+    (sort matched string<? #:key (lambda (c) (format "~s" c))))
+  (define deduped
+    (remove-duplicates raw-sorted #:key candidate-identity))
+  ;; 同一性全体の canonical order で並べる。
   (define sorted
-    (sort deduped symbol<?
-          #:key (lambda (c) (candidate-cid c))))
+    (sort deduped string<?
+          #:key (lambda (c) (format "~s" (candidate-identity c)))))
   (cond [(null? sorted) Absent]
         [(null? (cdr sorted)) (resolved (candidate-proof (car sorted)))]
         [else (ambiguous (map candidate-proof sorted))]))
@@ -155,6 +221,10 @@
    (lambda (goal gamma-pc)
      (match (goal-proposition goal)
        [`(Presence ,_) 'Finite]
+       [`(FieldType ,_ ,_) 'Finite]
+       [`(Implements ,_ ,_) 'Finite]
+       [`(ValidNarrativeTrait ,_) 'Finite]
+       [`(RequiresBoth ,_ ,_) 'Finite]
        [_ #f]))))
 
 ;; Ω: Productive 探索の結果と certificate を返す trusted な写像。無ければ #f。
@@ -177,15 +247,15 @@
 
 ;; admissible?: 暗黙充足の可否。SR が (Resolved P) の枝だけで真になりうる。
 ;; ev は現在の探索に束縛された証拠（Finite: 完全な Σ、Productive: certificate）。
-(define (admissible? goal gamma-pc class sr ev)
+(define (admissible? goal gamma-pc class sr ev [sc-ctx '(root)])
   (match* (class sr)
     [('Finite (list 'Resolved P))
      ;; 完全な Σ からの一意性導出があり、その P が SR の P と一致（PSR-002）。
      ;; ev は goal 単位に抽出した Σ である。project の全体と比べると、別命題の
      ;; 候補が同居する Γ_pc で恒偽になる。
      (and ev
-          (equal? ev (project-goal gamma-pc '(root) goal))
-          (wf-Σ? ev goal)
+          (equal? ev (project-goal gamma-pc sc-ctx goal))
+          (wf-Σ? ev goal sc-ctx)
           (unique? goal ev P))]
     [('Productive (list 'Resolved P))
      ;; Ω の certificate が同じ goal・Γ_pc・P に束縛（PSR-002）
@@ -231,7 +301,7 @@
       [else (values Absent #f)]))
   (define accepted?
     (and (wf-context? gamma-pc)
-         (admissible? goal gamma-pc class sr ev)))
+         (admissible? goal gamma-pc class sr ev sc-ctx)))
   (log-outcome! class sr accepted?)
   accepted?)
 

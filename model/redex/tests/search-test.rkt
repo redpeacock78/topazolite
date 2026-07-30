@@ -36,7 +36,7 @@
 
 ; 決定性: 同じ Π0 に対して同じ Γ_pc⁰ を与える（gensym/counter を使わない）
 (check-equal? (candidateize Π0) (candidateize Π0))
-(check-equal? Γ-pc0 (candidateize Π0))
+(check-equal? Γ-pc0 (initial-candidate-context))
 
 ; entry アクセサ
 (define gamma-pc-one (list (assoc 'typeNarrativeCap Γ-pc0)))
@@ -64,9 +64,10 @@
 (check-equal? (candidate-origin c) '(Reserved o-type-narrative))
 (check-equal? (candidate-cid c) 'typeNarrativeCap)
 (check-equal? (candidate-identity c)
-              '(TypeNarrativeCap (Reserved o-type-narrative) typeNarrativeCap root default))
+              '(TypeNarrativeCap (Reserved o-type-narrative)
+                                 typeNarrativeCap root default ()))
 
-; wf-candidate: 命題整合・origin 正当・scope 可視・hook 空
+; wf-candidate: 命題整合・origin 正当・scope 可視・hook 整合
 (define goalT (make-goal 'TypeNarrativeCap))
 (check-true (wf-candidate? c goalT))
 ; 命題が食い違う候補は wf でない
@@ -96,10 +97,10 @@
 (check-equal? (resolve-candidates (make-goal 'ValidNarrativeTrait) (list cT)) 'Absent)
 ; 同一性の等しい重複候補は一つへ畳む → Resolved
 (check-equal? (resolve-candidates goalT (list cT cT)) (list 'Resolved PT))
-; 同一性の異なる複数候補 → Ambiguous、canonical order（cid: other < typeNarrativeCap）
-(check-equal? (resolve-candidates goalT (list cT cT2)) (list 'Ambiguous (list PT2 PT)))
+; 同一性の異なる複数候補 → Ambiguous、同一性全体の canonical order
+(check-equal? (resolve-candidates goalT (list cT cT2)) (list 'Ambiguous (list PT PT2)))
 ; 順序非依存: 並べ替えても同じ SR
-(check-equal? (resolve-candidates goalT (list cT2 cT)) (list 'Ambiguous (list PT2 PT)))
+(check-equal? (resolve-candidates goalT (list cT2 cT)) (list 'Ambiguous (list PT PT2)))
 
 (define goalV (make-goal 'ValidNarrativeTrait))
 

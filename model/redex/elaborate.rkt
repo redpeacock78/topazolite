@@ -129,7 +129,7 @@
 ;; RFN-003: elaboration では、その位置で見えている命題文脈を候補へ変換して
 ;; 渡す。typing の Γ_pc⁰ に対応する。
 (define (type-compatible? actual expected propositions)
-  (compat? actual expected (candidateize propositions)))
+  (compat? actual expected (initial-candidate-context propositions)))
 
 ;; RFN-001/002: 表層注釈に書いてよい命題。判定表の (Prop id) と G1 の 2 命題を
 ;; 許し、(Presence label) は許さない。文法でも外しているが、注釈は Redex の
@@ -529,7 +529,7 @@
            [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
             (unless (obligations-dischargeable?
                      obligations
-                     (candidateize propositions))
+                     (initial-candidate-context propositions))
               (reject 'unsatisfied-proof-obligation obligations))
             (define argument-results
               (check-many arguments parameter-types

@@ -100,8 +100,8 @@
 
 (test-case "elaboration normalizes composite annotations"
   (check-equal?
-   (elab '(Let (x let (Union String Int)) 1 x))
-   (elab '(Let (x let (Union Int String)) 1 x)))
+   (car (elab '(Let (x let (Union String Int)) 1 x)))
+   '(Let (x let (Union Int String)) 1 x))
   (define record-type
     '(Record ((a Int imm) (b Int imm))))
   (check-equal?
@@ -148,3 +148,29 @@
      Unit
      ()
      ())))
+
+(test-case "elaboration uses the shared trait candidate context"
+  (define (error? result)
+    (and (pair? result) (eq? (car result) 'err)))
+  (check-false
+   (error?
+    (elab
+     '(Fn ((f (NFn () Int () ((Implements Int Printable)))))
+        Int
+        ()
+        (Apply f)))))
+  ;; checking 側の NFn 互換性も同じ候補文脈を使う。
+  (check-false
+   (error?
+    (elab
+     '(Fn ((f (NFn () Int () ((Implements Int Printable)))))
+        Unit
+        ()
+        (Let (g let (NFn () Int () ())) f unit)))))
+  (check-true
+   (error?
+    (elab
+     '(Fn ((f (NFn () Int () ((Implements String Printable)))))
+        Int
+        ()
+        (Apply f))))))
