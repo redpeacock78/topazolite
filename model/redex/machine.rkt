@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "lang.rkt"
          "origins.rkt"
+         "traits.rkt"
          "validators.rkt")
 
 (provide -->g1
@@ -11,7 +12,8 @@
          inject
          inject-g2
          run
-         run-g2)
+         run-g2
+         g2-primitive-name?)
 
 (define-metafunction G1m
   δ : nm v ... -> any
@@ -56,42 +58,64 @@
    (select-branch K (v_arg ...) (br_rest ...))]
   [(select-branch K (v_arg ...) ()) #f])
 
-;; RFN-001: カーネル primitive の δ。成否はペイロード駆動で決定的であり、
-;; 乱数や環境参照を使わない。判定表に無い名前と形の合わない引数は undefined を
-;; 返し、R-Delta の where が不発火になる。
-(define (kernel-delta/proc name argument)
-  (cond
-    [(validator-row-by-name name)
-     => (lambda (row)
-          (define payload-type (validator-payload-type row))
-          (define proposition (validator-proposition row))
-          (define result-type
-            `(Result (Refined ,payload-type ,proposition) String))
-          (match argument
-            [`(UVal ,payload)
-             (if ((validator-check row) payload)
-                 `(Construct ,result-type ok
-                             (RVal (ProofRep (Reserved ,(validator-oid row))
-                                             ,proposition)
-                                   ,payload))
-                 `(Construct ,result-type ng
-                             ,(validator-error-message name)))]
-            [_ 'undefined]))]
-    ;; 値を未検証と宣言する操作は安全であるため check を伴わない。
-    [(introduction-row-by-name name) `(UVal ,argument)]
-    ;; Proof を捨てて弱める操作であるため無条件に安全である。
-    [(projection-row-by-name name)
-     (match argument
-       [`(RVal (ProofRep ,_ ,_) ,payload) payload]
-       [_ 'undefined])]
-    [else 'undefined]))
+;; カーネル primitive の δ。primitive ごとに異なる引数個数を受け、名前または
+;; arity が合わなければ undefined を返して R-Delta を不発火にする。
+(define (kernel-delta/proc name . arguments)
+  (match arguments
+    [(list argument)
+     (cond
+       [(validator-row-by-name name)
+        => (lambda (row)
+             (define payload-type (validator-payload-type row))
+             (define proposition (validator-proposition row))
+             (define result-type
+               `(Result (Refined ,payload-type ,proposition) String))
+             (match argument
+               [`(UVal ,payload)
+                (if ((validator-check row) payload)
+                    `(Construct ,result-type ok
+                                (RVal
+                                 (ProofRep (Reserved ,(validator-oid row))
+                                           ,proposition)
+                                 ,payload))
+                    `(Construct ,result-type ng
+                                ,(validator-error-message name)))]
+               [_ 'undefined]))]
+       ;; 値を未検証と宣言する操作は安全であるため check を伴わない。
+       [(introduction-row-by-name name) `(UVal ,argument)]
+       ;; Proof を捨てて弱める操作であるため無条件に安全である。
+       [(projection-row-by-name name)
+        (match argument
+          [`(RVal (ProofRep ,_ ,_) ,payload) payload]
+          [_ 'undefined])]
+       ;; impl と derive は同じ規則で Implements Proof を返す。
+       [(impl-row-by-name name)
+        => (lambda (row)
+             `(ProofRep (Reserved ,(impl-oid row))
+                        (Implements ,(impl-target-type row)
+                                    ,(impl-trait-name row))))]
+       [else 'undefined])]
+    [(list _ _)
+     (cond
+       [(intersect-row-by-name name)
+        => (lambda (row)
+             `(ProofRep (Reserved ,(intersect-oid row))
+                        (RequiresBoth ,(intersect-left row)
+                                      ,(intersect-right row))))]
+       [else 'undefined])]
+    [_ 'undefined]))
+
+;; δ/g2 の側条件。既存の判定 primitive と trait primitive だけを拡張節へ通す。
+(define (g2-primitive-name? name)
+  (or (kernel-primitive-name? name)
+      (trait-primitive-name? name)))
 
 (define-metafunction/extension δ
   G2m
   δ/g2 : nm v ... -> any
-  [(δ/g2 nm v)
-   ,(kernel-delta/proc (term nm) (term v))
-   (side-condition (kernel-primitive-name? (term nm)))])
+  [(δ/g2 nm v ...)
+   ,(apply kernel-delta/proc (term nm) (term (v ...)))
+   (side-condition (g2-primitive-name? (term nm)))])
 
 (define-metafunction/extension substitute*
   G2m
