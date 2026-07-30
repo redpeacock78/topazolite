@@ -9,6 +9,7 @@
          normalize-type
          normalize-proposition
          canonical-proposition-key
+         proposition-equiv?
          union-members
          type-normal?)
 

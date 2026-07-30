@@ -32,10 +32,13 @@
 ;; 既に witness を持つ義務は包含が無くても充足できる。discharge に使う文脈は
 ;; 呼び出し側が渡す大域の Γ_pc⁰ に限る。merge の W を混ぜると、その merge の
 ;; 外へ関数値が逃げたときに義務の根拠が消え、Preservation が壊れる。
-;; member はリストか #f を返すため、rackunit へ渡る値を厳密な boolean に落とす。
+;; 包含は proposition-equiv? で判定する。表記の違う同値命題を別物にしないが、
+;; 正準鍵が作れない命題どうしは構文一致へ落ちるため、旧来の member と同じ強さを
+;; 保つ。正準鍵を直接比べると #f どうしが一致して偽陽性になる。
 (define (obligations-subset? sub-obligations sup-obligations gamma-pc)
   (for/and ([obligation (in-list sub-obligations)])
-    (or (and (member obligation sup-obligations) #t)
+    (or (for/or ([sup-obligation (in-list sup-obligations)])
+          (proposition-equiv? obligation sup-obligation))
         (obligations-dischargeable? (list obligation) gamma-pc))))
 
 ;; VAR-001: 引数反変・返り値共変・引数個数一致。
@@ -53,6 +56,17 @@
 ;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
 ;; G2c までの挙動と一致する。
 (define (compat? sub sup [gamma-pc '()])
+  ;; Union は節順に預けず、sub の各要素が sup のいずれかと互換かで判定する。
+  (if (or (union? sub) (union? sup))
+      (for/and ([sub-member (in-list (union-members sub))])
+        (for/or ([sup-member (in-list (union-members sup))])
+          (compat? sub-member sup-member gamma-pc)))
+      (compat?/non-union sub sup gamma-pc)))
+
+(define (union? type)
+  (and (pair? type) (eq? (car type) 'Union)))
+
+(define (compat?/non-union sub sup gamma-pc)
   (match* (sub sup)
     [('Never _) #t]
     [(`(Record ,sub-row) `(Record ,sup-row))
