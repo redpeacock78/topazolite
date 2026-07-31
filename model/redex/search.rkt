@@ -79,6 +79,48 @@
           (list 'ProofRep (entry-origin e) (entry-phi e))
           (entry-cid e) (entry-sid e) (entry-pid e) (entry-hook e))))
 
+;; TRT-004: 合成 trait への所属。goal の τ について、その trait を出力する
+;; intersect 行ごとに成分候補の直積を作る。Γ_pc へは入れない。Γ_pc は正典表
+;; から機械的に導く固定の表であり、goal の τ に依存する候補を置く場所ではない。
+;; 停止性は intersect-table の非巡回性（intersect-acyclic?）から従う。
+(define (compose-candidates gamma-pc sc-ctx goal)
+  (match (goal-proposition goal)
+    [`(Implements ,type ,tn-out)
+     (define trait-row (trait-row-by-name tn-out))
+     (cond
+       [(not trait-row) '()]
+       [else
+        (define tid (trait-origin trait-row))
+        (append*
+         (for/list ([row (in-list intersect-table)]
+                    #:when (eq? (intersect-output row) tn-out))
+           (define iid (intersect-oid row))
+           (define left
+             (project-goal/impl
+              gamma-pc sc-ctx
+              (make-goal `(Implements ,type ,(intersect-left row)))))
+           (define right
+             (project-goal/impl
+              gamma-pc sc-ctx
+              (make-goal `(Implements ,type ,(intersect-right row)))))
+           (for*/list ([a (in-list left)] [b (in-list right)])
+             (define origin
+               `(Derived (Reserved ,iid)
+                         (Compose ,tn-out
+                                  ,(candidate-origin a)
+                                  ,(candidate-origin b))))
+             (define hook
+               (list 'compose tid iid
+                     (list (candidate-origin a) (candidate-hook a))
+                     (list (candidate-origin b) (candidate-hook b))))
+             (list 'Candidate
+                   (list 'ProofRep origin `(Implements ,type ,tn-out))
+                   `(compose ,iid ,(candidate-cid a) ,(candidate-cid b))
+                   'root
+                   'default
+                   hook))))])]
+    [_ '()]))
+
 ;; project-goal: goal の命題に一致する entry だけを Σ へ写す。Γ_pc に別命題の
 ;; 候補が同居すると、それらが wf-Σ? を落として無関係な goal の discharge を
 ;; 妨げる。抽出の段階で goal 単位に絞る。
@@ -86,7 +128,8 @@
   (filter (lambda (c)
             (and (candidate-matches? c goal)
                  (coherent-candidate? c sc-ctx)))
-          (project gamma-pc sc-ctx)))
+          (append (project gamma-pc sc-ctx)
+                  (compose-candidates gamma-pc sc-ctx goal))))
 
 ;; POL-002/TRT-003: 返る候補はすべて wf であり、系譜から可視な行だけを含む。
 ;; 空リストは候補が無い場合の fail-closed 返却であり、そのまま真とする。

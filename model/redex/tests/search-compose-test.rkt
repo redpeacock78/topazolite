@@ -195,8 +195,68 @@
    (obligations-dischargeable?
     '((RequiresBoth Printable Sizable))
     Γ-pc0))
+  (check-true
+   (obligations-dischargeable?
+    '((RequiresBoth Printable Taggable))
+    Γ-pc0))
   ;; 正典表に無い組は依然として解けない。
   (check-false
    (obligations-dischargeable?
     '((RequiresBoth Sizable Taggable))
     Γ-pc0)))
+
+;; TRT-004: 合成 trait への所属が候補として立つ。
+(test-case "TRT-004: composite Implements is dischargeable"
+  (check-true
+   (obligations-dischargeable?
+    '((Implements Int PrintableSizable))
+    Γ-pc0)))
+
+(test-case "TRT-004: project-goal yields exactly one composite candidate"
+  (define goal (make-goal '(Implements Int PrintableSizable)))
+  (define sigma (project-goal Γ-pc0 '(root) goal))
+  (check-equal? (length sigma) 1)
+  (define c (first sigma))
+  (check-equal? (candidate-prop c) '(Implements Int PrintableSizable))
+  (check-equal? (candidate-origin c)
+                '(Derived (Reserved o-intersect-print-size)
+                          (Compose PrintableSizable
+                                   (Reserved o-impl-printable-int)
+                                   (Reserved o-derive-sizable-int))))
+  (check-equal? (candidate-cid c)
+                '(compose o-intersect-print-size
+                          impl-printable-int
+                          derive-sizable-int))
+  (check-equal? (candidate-sid c) 'root)
+  (check-equal? (candidate-pid c) 'default))
+
+(test-case "TRT-004: the product of two Printable rows yields Ambiguous"
+  ;; String は Printable を 2 行、Sizable を Task 9 の derive-sizable-str で
+  ;; 1 行持つ。直積は 2 件になり、一意に解けない。
+  (define goal (make-goal '(Implements String PrintableSizable)))
+  (define sigma (project-goal Γ-pc0 '(root) goal))
+  (check-equal? (length sigma) 2)
+  (check-true (ambiguous? (resolve-candidates goal sigma)))
+  (check-false
+   (obligations-dischargeable? '((Implements String PrintableSizable)) Γ-pc0)))
+
+(test-case "TRT-004: a missing component blocks the composite"
+  ;; Bool は Printable を実装しない。片側が欠ければ直積は空になる。
+  (define goal (make-goal '(Implements Bool PrintableSizable)))
+  (check-equal? (project-goal Γ-pc0 '(root) goal) '())
+  (check-false
+   (obligations-dischargeable? '((Implements Bool PrintableSizable)) Γ-pc0)))
+
+(test-case "TRT-004: composite candidates are stable across runs"
+  (define goal (make-goal '(Implements Int PrintableSizable)))
+  (check-equal? (project-goal Γ-pc0 '(root) goal)
+                (project-goal Γ-pc0 '(root) goal)))
+
+(test-case "TRT-004: an invisible component scope blocks the composite"
+  ;; impl-taggable-int の target scope は s-user、Taggable の生成 scope
+  ;; は s-kernel である。root だけの系譜では Taggable 成分が coherent になら
+  ;; ず、合成も立たない。Printable 成分は両方の系譜で見えているため、動いて
+  ;; いるのは Taggable 側の可視性だけである。
+  (define goal (make-goal '(Implements Int PrintableTaggable)))
+  (check-equal? (length (project-goal Γ-pc0 '(root) goal)) 0)
+  (check-equal? (length (project-goal Γ-pc0 '(root s-user) goal)) 1))
