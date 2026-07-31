@@ -260,7 +260,7 @@
              (eq? (trait-origin row) id)
              (equal? (lookup r0 id) `(trait ,trait)))]
        [_ #f])]
-    [`(Implements ,_ ,_)
+    [`(Implements ,type ,trait)
      (match origin
        [`(Reserved ,id)
         (define row (impl-row-by-oid id))
@@ -275,6 +275,20 @@
              expected-key
              (equal? actual-key expected-key)
              (equal? (lookup r0 id) `(prim ,(impl-name row))))]
+       ;; TRT-004: 合成 trait への所属。親は intersect 行の oid であり、
+       ;; 成分の origin は step の中に残る。成果物の検証層は origin しか
+       ;; 見ないため、成分を落とすと手書きの合成 origin が検証を通る。
+       ;; 停止性は intersect-table の非巡回性（intersect-acyclic?）から従う。
+       [`(Derived (Reserved ,iid) (Compose ,output ,origin-left ,origin-right))
+        (define row (intersect-row-by-oid iid))
+        (and row
+             (eq? output trait)
+             (eq? (intersect-output row) trait)
+             (equal? (lookup r0 iid) `(prim ,(intersect-name row)))
+             (proof-issuer-ok? r0 origin-left
+                               `(Implements ,type ,(intersect-left row)))
+             (proof-issuer-ok? r0 origin-right
+                               `(Implements ,type ,(intersect-right row))))]
        [_ #f])]
     [`(RequiresBoth ,_ ,_)
      (match origin
