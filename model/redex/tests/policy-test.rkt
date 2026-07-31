@@ -3,8 +3,10 @@
 (require racket/list
          rackunit
          "../policy.rkt"
+         "../search.rkt"
          "../type-equiv.rkt"
-         "../compat.rkt")
+         "../compat.rkt"
+         "../typing.rkt")
 
 ;; 予約 Narrative を正しく束縛した R0 の最小 fixture。
 (define r0-ok
@@ -139,3 +141,27 @@
   (check-true (check-compat-return '(Int String) '(#f)))
   (check-true (check-compat-return '(Int String) '(#t)))
   (check-false (check-compat-return '(Int Int) '(#f))))
+
+(test-case "POL-002/RowPolicy: 合流 row は label 一意かつ昇順である"
+  (let-values ([(merged witnesses)
+                (merge-record-types
+                 (list '(Record ((z Int imm) (a Int imm)))
+                       '(Record ((a Int imm) (z Int imm)))))])
+    (check-equal? merged '(Record ((a Int imm) (z Int imm))))
+    (check-true (wf-context? witnesses))))
+
+(test-case "RowPolicy: 空 row の合流は fail-closed ではない"
+  ;; typing-join-test.rkt の mutable 衝突と同じ形。(Record ()) は成功返却で
+  ;; あり、検査述語は不変条件を実際に適用する。
+  (define applied (box 0))
+  (let-values ([(merged witnesses)
+                (merge-record-types
+                 (list '(Record ((a Int mut)))
+                       '(Record ((a String mut)))))])
+    (check-equal? merged '(Record ()))
+    (check-equal? witnesses '())
+    (when (equal? merged '(Record ())) (set-box! applied (add1 (unbox applied)))))
+  (check-equal? (unbox applied) 1)
+  ;; 検査述語の側でも、#f だけが fail-closed であることを固定する。
+  (check-true (check-merge-return '(()) (list #f '())))
+  (check-false (check-merge-return '(()) (list '(Record ((b Int imm) (a Int imm))) '()))))

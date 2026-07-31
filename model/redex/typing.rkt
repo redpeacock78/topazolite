@@ -5,6 +5,7 @@
          "compat.rkt"
          "lang.rkt"
          "origins.rkt"
+         "policy.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
@@ -21,6 +22,7 @@
          presence-binding-name
          field-type-binding-name
          merge-record-types
+         check-merge-return
          merge-witnesses-dischargeable?)
 
 (define (lookup table key)
@@ -260,7 +262,7 @@
 ;; RFN-002/CMP-001: 全 branch に常在する field を合わせる。異型 imm は Union
 ;; join し、異型 mut と可変性不一致は field 単位で落とす。
 ;; types は空でないことを呼び出し側が保証する。
-(define (merge-record-types types)
+(define (merge-record-types/impl types)
   (define merged-row
     (filter-map
      (lambda (field) (merge-common-field types field))
@@ -271,11 +273,33 @@
               (merge-witness-context types (second merged-type)))
       (values #f '())))
 
+;; POL-002/ROW-004: 合流 row の label は一意で昇順、witness 列は wf-context? を
+;; 満たし束縛名が重複しない。#f だけが fail-closed 返却である。(Record ()) は
+;; 共通 field が残らない正常な合流であり、成功返却として不変条件を適用する。
+;; 両者を同じ形と見なすと、正規化失敗が「空 row の合流に成功した」として素通り
+;; する。
+(define (check-merge-return args returns)
+  (match returns
+    [(list #f '()) #t]
+    [(list `(Record ,row) witnesses)
+     (define labels (map first row))
+     (define names (map first witnesses))
+     (and (field-row-unique? row)
+          (equal? labels (sort labels symbol<?))
+          (wf-context? witnesses)
+          (= (length names) (length (remove-duplicates names))))]
+    [_ #f]))
+
+(define merge-record-types
+  (policy-wrap 'RowPolicy 'merge-record-types
+               merge-record-types/impl
+               check-merge-return))
+
 ;; RFN-002: merge の局所検査。その merge が立てた W だけを候補文脈として、
 ;; 要求された常在性の義務が充足できるかを見る。型付けの受理条件ではなく、
 ;; merge ごとに成り立つ性質として検査する。
 (define (merge-witnesses-dischargeable? types obligations)
-  (define-values (merged witnesses) (merge-record-types types))
+  (define-values (merged witnesses) (merge-record-types/impl types))
   (and merged
        (obligations-dischargeable? obligations witnesses)))
 
@@ -306,7 +330,7 @@
                          ;; RFN-002: W は merge の局所検査だけで使う。型へは
                          ;; 載せないため、ここでは捨てる。
                          (define-values (merged _witnesses)
-                           (merge-record-types types))
+                           (merge-record-types/impl types))
                          merged]
                         [(ormap record-type? types) #f]
                         [else (first types)])])
