@@ -17,7 +17,7 @@
          project project-goal scope-visible?
          candidate-proof candidate-prop candidate-origin
          candidate-cid candidate-sid candidate-pid candidate-hook
-         candidate-identity hook-ok?
+         candidate-identity hook-ok? hook-ok?/parts coherent-candidate?
          wf-candidate? wf-context? wf-Σ?
          resolve-candidates
          check-project-goal-return check-resolve-return check-discharge-return
@@ -120,11 +120,12 @@
 (define (candidate-matches? c goal)
   (proposition-equiv? (candidate-prop c) (goal-proposition goal)))
 
-;; hook は Implements 候補を trait 行・impl 行・発行者へ束縛する。それ以外の
-;; 候補は G2b までと同じ空 hook だけを持つ。
+;; hook は Implements 候補を trait 行・impl 行・発行者へ束縛する。合成候補は
+;; intersect 行と成分の (origin hook) を保持する。それ以外の候補は G2b までと
+;; 同じ空 hook だけを持つ。
 (define (hook-ok?/parts proposition origin hook)
   (match proposition
-    [`(Implements ,_ ,trait)
+    [`(Implements ,type ,trait)
      (match hook
        [(list tid oid)
         (define trait-row (trait-row-by-name trait))
@@ -138,7 +139,38 @@
               proposition
               `(Implements ,(impl-target-type impl-row)
                            ,(impl-trait-name impl-row))))]
+       ;; TRT-004: 合成候補。hook は成分の origin と hook を再帰的に持ち、
+       ;; origin 内の Compose と一致しなければならない。origin だけを見ると
+       ;; 成分の hook が偽装でき、coherence 判定の錨が外れる。
+       [(list 'compose tid iid (list origin-a hook-a) (list origin-b hook-b))
+        (define row (intersect-row-by-oid iid))
+        (define trait-row (trait-row-by-name trait))
+        (and row
+             trait-row
+             (eq? (intersect-output row) trait)
+             (eq? tid (trait-origin trait-row))
+             (match origin
+               [`(Derived (Reserved ,iid2) (Compose ,tn-out ,o-a ,o-b))
+                (and (eq? iid2 iid)
+                     (eq? tn-out trait)
+                     (equal? o-a origin-a)
+                     (equal? o-b origin-b))]
+               [_ #f])
+             (hook-ok?/parts `(Implements ,type ,(intersect-left row))
+                             origin-a hook-a)
+             (hook-ok?/parts `(Implements ,type ,(intersect-right row))
+                             origin-b hook-b))]
        [_ #f])]
+    ;; TRT-005: 暗黙充足された RequiresBoth は、その intersect 行の oid を持つ。
+    [`(RequiresBoth ,left ,right)
+     (match hook
+       [(list iid)
+        (define row (intersect-row-by-oid iid))
+        (and row
+             (eq? (intersect-left row) left)
+             (eq? (intersect-right row) right)
+             (equal? origin `(Reserved ,iid)))]
+       [_ (null? hook)])]
     [_ (null? hook)]))
 
 (define (hook-ok? c)
@@ -148,11 +180,12 @@
 
 ;; Implements 候補は trait または target type の生成 scope が現在の系譜から
 ;; 可視な場合だけ採る。entry 自体の root 可視性とは別の条件である。
-(define (coherent-candidate? c sc-ctx)
-  (match (candidate-prop c)
-    [`(Implements ,_ ,_)
-     (and (hook-ok? c)
-          (match (candidate-hook c)
+;; 合成候補は成分を再帰的に見るため、候補ではなく命題・origin・hook を取る。
+(define (coherent-parts? proposition origin hook sc-ctx)
+  (match proposition
+    [`(Implements ,type ,_)
+     (and (hook-ok?/parts proposition origin hook)
+          (match hook
             [(list tid oid)
              (define trait-row (trait-row-by-oid tid))
              (define impl-row (impl-row-by-oid oid))
@@ -160,8 +193,28 @@
                   impl-row
                   (or (scope-visible? (trait-scope trait-row) sc-ctx)
                       (scope-visible? (impl-target-scope impl-row) sc-ctx)))]
+            ;; 合成候補には impl 行が無い。出力 trait の生成 scope が可視で
+            ;; あり、かつ成分が二つとも coherent であることを錨にする。
+            [(list 'compose tid iid (list origin-a hook-a) (list origin-b hook-b))
+             (define trait-row (trait-row-by-oid tid))
+             (define row (intersect-row-by-oid iid))
+             (and trait-row
+                  row
+                  (scope-visible? (trait-scope trait-row) sc-ctx)
+                  (coherent-parts? `(Implements ,type ,(intersect-left row))
+                                   origin-a hook-a sc-ctx)
+                  (coherent-parts? `(Implements ,type ,(intersect-right row))
+                                   origin-b hook-b sc-ctx))]
             [_ #f]))]
+    [`(RequiresBoth ,_ ,_)
+     (hook-ok?/parts proposition origin hook)]
     [_ #t]))
+
+(define (coherent-candidate? c sc-ctx)
+  (coherent-parts? (candidate-prop c)
+                   (candidate-origin c)
+                   (candidate-hook c)
+                   sc-ctx))
 
 ;; 候補同一性: requirement shape・provenance・cid・sid・pid・trait hook。
 (define (candidate-identity c)
