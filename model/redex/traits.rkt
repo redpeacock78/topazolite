@@ -31,6 +31,7 @@
          impl-rows-by-trait
          intersect-row-by-oid
          intersect-row-by-name
+         intersect-acyclic?
          instantiate-requirements
          trait-primitive-name?
          trait-primitive-names)
@@ -201,6 +202,25 @@
                  (template-type? type))]
            [_ #f]))))
 
+;; TRT-004: 出力 trait から成分 trait へ向かう辺が非巡回であること。
+;; 合成候補の生成（search.rkt）と合成 origin の発行者判定（origins.rkt）は、
+;; どちらもこの辺を降りる再帰であり、巡回があると停止しない。
+;; 祖先の連なりだけを path に積むため、同じ trait が別の枝に現れる表
+;; （成分の共有）は巡回と見なさない。
+(define (intersect-acyclic? [rows intersect-table])
+  (define (rows-for trait)
+    (filter (lambda (row) (eq? (intersect-output row) trait)) rows))
+  (define (descend trait path)
+    (cond
+      [(memq trait path) #f]
+      [else
+       (define next (cons trait path))
+       (for/and ([row (in-list (rows-for trait))])
+         (and (descend (intersect-left row) next)
+              (descend (intersect-right row) next)))]))
+  (for/and ([row (in-list rows)])
+    (descend (intersect-output row) '())))
+
 ;; 3 表の内部整合を load 時に検査する。
 ;; R0 と Γ0 との衝突は origins.rkt が append 後に検査する。
 (define (check-tables!)
@@ -261,6 +281,9 @@
              (intersect-name row)))
     (unless (field-row-equiv? composed (trait-template output) type-equiv?)
       (error 'traits "intersect ~s does not match its output trait"
-             (intersect-name row)))))
+             (intersect-name row))))
+
+  (unless (intersect-acyclic?)
+    (error 'traits "intersect rows form a cycle in the trait name graph")))
 
 (check-tables!)
