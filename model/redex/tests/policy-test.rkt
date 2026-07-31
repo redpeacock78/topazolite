@@ -4,6 +4,8 @@
          rackunit
          "../policy.rkt"
          "../search.rkt"
+         "../origins.rkt"
+         "../policy-check.rkt"
          "../type-equiv.rkt"
          "../compat.rkt"
          "../typing.rkt")
@@ -198,3 +200,113 @@
   (check-true (check-resolve-return (list goal sigma) (list result)))
   (check-false (check-resolve-return (list goal sigma) (list (list 'Ambiguous '(p)))))
   (check-false (check-resolve-return (list goal '()) (list (list 'Resolved 'p)))))
+
+;; ---- 本物の R0 に対する POL-001 ----
+
+(test-case "POL-001: R0 は policy 由来の id を持たない"
+  (define r0-ids (map first R0))
+  (define r0-values (map second R0))
+  (for ([row (in-list policy-table)])
+    (define nm (policy-name row))
+    ;; policy 名そのものを値に持つ entry も、(policy nm) の形の entry も無い。
+    (check-false (and (memq nm r0-values) #t) (format "~s" nm))
+    (check-false (and (member (list 'policy nm) r0-values) #t) (format "~s" nm))
+    ;; policy 名から機械的に作れる id も R0 に無い。
+    (check-false
+     (and (memq (string->symbol (format "o-policy-~a" nm)) r0-ids) #t)
+     (format "~s" nm)))
+  ;; policy 層が R0 へ足したのは予約 Narrative 1 件だけである。
+  (check-equal? (assoc 'o-language-narrative R0)
+                '(o-language-narrative languageNarrative))
+  (check-equal? (assoc 'o-type-narrative R0)
+                '(o-type-narrative typeNarrative)))
+
+(test-case "POL-001: 本物の R0 で全行の origin が通る"
+  (check-true (policy-origins-ok? R0 policy-table)))
+
+(test-case "POL-001: 予約 Narrative を別の値へ束縛した R0 では全行が落ちる"
+  (define rebound
+    (for/list ([entry (in-list R0)])
+      (if (eq? (first entry) 'o-language-narrative)
+          (list 'o-language-narrative 'someOtherValue)
+          entry)))
+  (define rejected (box 0))
+  (for ([row (in-list policy-table)])
+    (unless (policy-origin-ok? rebound row)
+      (set-box! rejected (add1 (unbox rejected)))))
+  (check-equal? (unbox rejected) (length policy-table))
+  (check-false (policy-origins-ok? rebound policy-table)))
+
+;; ---- 包み忘れの検出 ----
+
+(test-case "POL-002: 5 行が宣言した操作はすべて包まれている"
+  (check-true (policy-wrap-complete?))
+  ;; 宣言側の内訳を固定する。行が操作を増やしたのに包まない差分は下で落ちる。
+  (check-equal?
+   (sort (map (lambda (p) (format "~a.~a" (car p) (cdr p)))
+              (declared-policy-operations))
+         string<?)
+   '("Normalization.normalize-type"
+     "ProofSearch.discharge?"
+     "RowPolicy.merge-record-types"
+     "TraitResolution.project-goal"
+     "TraitResolution.resolve-candidates"
+     "VariancePolicy.compat?")))
+
+(test-case "POL-002: 宣言した操作を包み忘れた行は policy-wrap-complete? が捉える"
+  (define rows-with-extra
+    (for/list ([row (in-list policy-table)])
+      (if (eq? (policy-name row) 'RowPolicy)
+          (list (policy-name row)
+                (policy-origin row)
+                (policy-parents row)
+                (append (policy-operations row) '(never-wrapped))
+                (policy-module row))
+          row)))
+  (check-false (policy-wrap-complete? rows-with-extra)))
+
+;; ---- fail-closed 返却が素通りすること ----
+
+(test-case "POL-002: normalize-type の #f 返却は例外にならない"
+  ;; 行が衝突する Intersection と、構造型でない Intersection。
+  (check-false (normalize-type '(Intersection (Record ((a Int imm)))
+                                              (Record ((a Bool imm))))))
+  (check-false (normalize-type '(Intersection Int String))))
+
+(test-case "POL-002: 正規化できない field 型は field 脱落として合流に成功する"
+  ;; 現行の挙動を固定する検査であり、意図した最終仕様ではない。
+  ;; merge-fields は distinct-normal-types が #f を返したとき、その field を
+  ;; 落として合流を続ける。正規化の失敗と可変性の不一致を同じ #f で表すため、
+  ;; 正規化できない field 型は「共通 field が残らない合流の成功」になる。
+  ;; ROW-004 側の意味の問題であり、G2f では挙動を変えない。回収しない範囲として
+  ;; Task 16 の policy-narrative.md へ書く。
+  (define-values (merged witnesses)
+    (merge-record-types (list '(Record ((a (Intersection Int String) imm))))))
+  (check-equal? merged '(Record ()))
+  (check-equal? witnesses '()))
+
+(test-case "POL-002: 空 row の合流は fail-closed 扱いされない"
+  ;; typing-join-test.rkt の mutable 衝突と同じ形。(Record ()) は成功返却で
+  ;; あり、検査述語は不変条件を実際に適用する。
+  (define-values (merged witnesses)
+    (merge-record-types (list '(Record ((a Int mut)))
+                              '(Record ((a Bool mut))))))
+  (check-equal? merged '(Record ()))
+  (check-equal? witnesses '()))
+
+;; ---- 検査述語が公開名を呼ばないこと ----
+
+(test-case "POL-002: 包んだ normalize-type は有限時間で終わる"
+  ;; 検査述語が公開名を呼ぶと無限再帰になり、テストは落ちるのではなく止まる。
+  ;; そのため別スレッドと時間上限で囲む。
+  (define result (box 'not-finished))
+  (define worker
+    (thread (lambda ()
+              (set-box! result
+                        (normalize-type
+                         '(Union Int (Union String (Union Bool Int))))))))
+  (check-not-false (sync/timeout 10 worker)
+                   "normalize-type が 10 秒で終わらない")
+  (check-not-false (unbox result))
+  ;; 冪等であること。ここが返るのも、公開名が再帰していない証拠である。
+  (check-equal? (normalize-type (unbox result)) (unbox result)))
