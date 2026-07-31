@@ -12,12 +12,14 @@
   (term (verify-origins ,r0 ,core)))
 
 (test-case "NAR-001/TYP-001: initial origin environments"
-  (check-equal? (length R0) 34)
+  (check-equal? (length R0) 35)
   (check-equal? (length Γ0) 23)
   (check-equal? (length Δ0) 9)
   (check-equal? (length Π0) 1)
   (check-equal? (assoc 'o-type-narrative R0)
                 (term (o-type-narrative typeNarrative)))
+  (check-equal? (assoc 'o-language-narrative R0)
+                (term (o-language-narrative languageNarrative)))
   (check-equal? (assoc 'lt Γ0)
                 (term (lt ((NFn (Int Int) Bool () ())
                            (PrimVal (Reserved o-lt) lt)))))
@@ -186,3 +188,11 @@
    (term (forged ,derived-type)))
   (check-equal? (verify-with (term ((o-type-narrative (prim add)))) proof)
                 (term (forged ,proof))))
+
+(test-case "G2f: R0 は予約 Narrative を 2 件持ち、policy 由来の id を持たない"
+  (check-equal? (lookup R0 'o-language-narrative) 'languageNarrative)
+  (check-equal? (lookup R0 'o-type-narrative) 'typeNarrative)
+  ;; POL-001 の構成上の事実。policy 名を冠した id は R0 に 1 件も無い。
+  (for ([entry (in-list R0)])
+    (check-false (regexp-match? #rx"^o-policy-" (symbol->string (first entry)))
+                 (format "~s" (first entry)))))

@@ -12,6 +12,7 @@
          Π0
          R0
          kindOf
+         lookup
          origin-of
          proof-issuer-ok?
          trait-global-bindings
@@ -56,7 +57,10 @@
           (o-list (type List))
           (o-option (type Option))
           (o-result (type Result))
-          (o-type-narrative typeNarrative)))
+          (o-type-narrative typeNarrative)
+          ;; POL-001: 標準 Policy Narrative の二つの親のうち、まだ R0 に無い
+          ;; 方。policy 自身は id を持たない。
+          (o-language-narrative languageNarrative)))
    kernel-r0-entries
    ;; RFN-002: merge が発行する常在性 witness の発行者。primitive を持たない
    ;; ため (prim ...) ではなく単独の id として登録する。
