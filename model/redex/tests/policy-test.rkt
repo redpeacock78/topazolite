@@ -165,3 +165,36 @@
   ;; 検査述語の側でも、#f だけが fail-closed であることを固定する。
   (check-true (check-merge-return '(()) (list #f '())))
   (check-false (check-merge-return '(()) (list '(Record ((b Int imm) (a Int imm))) '()))))
+
+(test-case "POL-002/ProofSearch: discharge? は真偽値 1 値を返し続ける"
+  (check-true (discharge? Γ-pc0 default-classifier default-oracle
+                          (make-goal '(Implements Int Printable))))
+  (check-false (discharge? Γ-pc0 default-classifier default-oracle
+                           (make-goal '(Implements Bool Printable)))))
+
+(test-case "ProofSearch: 受理は Finite/Productive かつ Resolved に限る"
+  (check-true  (check-discharge-return '() (list #t 'Finite '(Resolved p))))
+  (check-true  (check-discharge-return '() (list #f 'Finite 'Absent)))
+  (check-false (check-discharge-return '() (list #t 'Finite 'Absent)))
+  (check-false (check-discharge-return '() (list #t 'Unknown '(Resolved p))))
+  (check-false (check-discharge-return '() (list #t 'Finite '(Ambiguous (p q))))))
+
+(test-case "POL-002/TraitResolution: project-goal の返却はすべて wf である"
+  (define goal (make-goal '(Implements Int Printable)))
+  (define sigma (project-goal Γ-pc0 '(root) goal))
+  (check-equal? (length sigma) 1)
+  (check-true (wf-Σ? sigma goal '(root)))
+  (check-true (check-project-goal-return (list Γ-pc0 '(root) goal) (list sigma)))
+  ;; 空リストは fail-closed 返却であり素通りする。
+  (check-equal? (project-goal Γ-pc0 '(root)
+                             (make-goal '(Implements Bool Printable)))
+                '()))
+
+(test-case "TraitResolution: Resolved は 1 件、Ambiguous は 2 件以上"
+  (define goal (make-goal '(Implements String Printable)))
+  (define sigma (project-goal Γ-pc0 '(root) goal))
+  (define result (resolve-candidates goal sigma))
+  (check-true (ambiguous? result))
+  (check-true (check-resolve-return (list goal sigma) (list result)))
+  (check-false (check-resolve-return (list goal sigma) (list (list 'Ambiguous '(p)))))
+  (check-false (check-resolve-return (list goal '()) (list (list 'Resolved 'p)))))

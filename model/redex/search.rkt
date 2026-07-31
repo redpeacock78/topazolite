@@ -3,6 +3,7 @@
 (require racket/match
          redex/reduction-semantics
          "origins.rkt"
+         "policy.rkt"
          "traits.rkt"
          "type-equiv.rkt"
          "validators.rkt")
@@ -19,6 +20,7 @@
          candidate-identity hook-ok?
          wf-candidate? wf-context? wf-Σ?
          resolve-candidates
+         check-project-goal-return check-resolve-return check-discharge-return
          make-classifier make-oracle make-cert cert-valid? unique?
          default-classifier default-oracle
          admissible?
@@ -80,11 +82,28 @@
 ;; project-goal: goal の命題に一致する entry だけを Σ へ写す。Γ_pc に別命題の
 ;; 候補が同居すると、それらが wf-Σ? を落として無関係な goal の discharge を
 ;; 妨げる。抽出の段階で goal 単位に絞る。
-(define (project-goal gamma-pc sc-ctx goal)
+(define (project-goal/impl gamma-pc sc-ctx goal)
   (filter (lambda (c)
             (and (candidate-matches? c goal)
                  (coherent-candidate? c sc-ctx)))
           (project gamma-pc sc-ctx)))
+
+;; POL-002/TRT-003: 返る候補はすべて wf であり、系譜から可視な行だけを含む。
+;; 空リストは候補が無い場合の fail-closed 返却であり、そのまま真とする。
+(define (check-project-goal-return args returns)
+  (match* (args returns)
+    [((list _gamma-pc sc-ctx goal) (list sigma))
+     (and (list? sigma)
+          (or (null? sigma)
+              (and (wf-Σ? sigma goal sc-ctx)
+                   (for/and ([c (in-list sigma)])
+                     (coherent-candidate? c sc-ctx)))))]
+    [(_ _) #f]))
+
+(define project-goal
+  (policy-wrap 'TraitResolution 'project-goal
+               project-goal/impl
+               check-project-goal-return))
 
 (define (scope-visible? sid sc-ctx) (and (member sid sc-ctx) #t))
 
@@ -183,7 +202,7 @@
   (andmap (lambda (c) (wf-candidate? c goal sc-ctx)) sigma))
 
 ;; resolve-candidates: Finite closed-world の候補解決。全域で、wf-Σ を前提とする。
-(define (resolve-candidates goal sigma)
+(define (resolve-candidates/impl goal sigma)
   ;; goal の命題に shape が一致する候補を集める
   (define matched
     (filter (lambda (c) (candidate-matches? c goal)) sigma))
@@ -199,6 +218,27 @@
   (cond [(null? sorted) Absent]
         [(null? (cdr sorted)) (resolved (candidate-proof (car sorted)))]
         [else (ambiguous (map candidate-proof sorted))]))
+
+;; POL-002/TRT-003: Resolved は候補 1 件、Ambiguous は 2 件以上。返した Proof は
+;; いずれも Σ の候補が実際に抱えていたものである。件数の導出そのものを検査で
+;; 組み直すと resolve-candidates の再実装になるため、返却と Σ の対応だけを見る。
+(define (check-resolve-return args returns)
+  (define (from-sigma? sigma P)
+    (for/or ([c (in-list sigma)]) (equal? (candidate-proof c) P)))
+  (match* (args returns)
+    [((list _goal _sigma) (list 'Absent)) #t]
+    [((list _goal sigma) (list (list 'Resolved P)))
+     (from-sigma? sigma P)]
+    [((list _goal sigma) (list (list 'Ambiguous ps)))
+     (and (>= (length ps) 2)
+          (= (length ps) (length (remove-duplicates ps)))
+          (for/and ([P (in-list ps)]) (from-sigma? sigma P)))]
+    [(_ _) #f]))
+
+(define resolve-candidates
+  (policy-wrap 'TraitResolution 'resolve-candidates
+               resolve-candidates/impl
+               check-resolve-return))
 
 ;; χ: goal と候補文脈から計算クラスへの trusted な写像。SR を参照しない。
 ;; goal を key に引くほか、key の有限列挙ができない命題のために shape 規則を
@@ -243,7 +283,7 @@
 
 ;; Finite の一意性: 完全な Σ に対して resolve が (Resolved P) を返すことが導出。
 (define (unique? goal sigma P)
-  (equal? (resolve-candidates goal sigma) (resolved P)))
+  (equal? (resolve-candidates/impl goal sigma) (resolved P)))
 
 ;; admissible?: 暗黙充足の可否。SR が (Resolved P) の枝だけで真になりうる。
 ;; ev は現在の探索に束縛された証拠（Finite: 完全な Σ、Productive: certificate）。
@@ -254,7 +294,7 @@
      ;; ev は goal 単位に抽出した Σ である。project の全体と比べると、別命題の
      ;; 候補が同居する Γ_pc で恒偽になる。
      (and ev
-          (equal? ev (project-goal gamma-pc sc-ctx goal))
+          (equal? ev (project-goal/impl gamma-pc sc-ctx goal))
           (wf-Σ? ev goal sc-ctx)
           (unique? goal ev P))]
     [('Productive (list 'Resolved P))
@@ -287,13 +327,17 @@
 ;; discharge?: 義務充足の judgment。χ で class を得て、class に応じて SR と
 ;; 証拠を得る。文脈そのものの整合（wf-context?）は class と SR に依らないため、
 ;; 抽出の前に一度だけ見る。
-(define (discharge? gamma-pc chi omega goal [sc-ctx '(root)])
+;; 分類と探索結果は返却値から読めない。検査述語の中で χ を計算し直すと
+;; ProofSearch policy が自分自身を呼ぶことになるため、実装の側を厚くする。
+;; log-outcome! の記録を読む形にしないのは、検証が計測用の仕組みへ依存し、
+;; ログを初期化し忘れた場合に検査が黙って通るためである。
+(define (discharge?/impl gamma-pc chi omega goal [sc-ctx '(root)])
   (define class (chi goal gamma-pc))
   (define-values (sr ev)
     (case class
       [(Finite)
-       (define sigma (project-goal gamma-pc sc-ctx goal))
-       (values (resolve-candidates goal sigma) sigma)]
+       (define sigma (project-goal/impl gamma-pc sc-ctx goal))
+       (values (resolve-candidates/impl goal sigma) sigma)]
       [(Productive)
        (match (omega goal gamma-pc)
          [(list sr cert) (values sr cert)]
@@ -303,7 +347,24 @@
     (and (wf-context? gamma-pc)
          (admissible? goal gamma-pc class sr ev sc-ctx)))
   (log-outcome! class sr accepted?)
-  accepted?)
+  (values accepted? class sr))
+
+;; POL-002/PSR-002: 受理したなら分類は Finite か Productive であり、探索結果は
+;; Resolved である。#f は fail-closed 返却であり素通りする。
+(define (check-discharge-return args returns)
+  (match returns
+    [(list accepted? class sr)
+     (and (boolean? accepted?)
+          (search-result? sr)
+          (or (not accepted?)
+              (and (memq class '(Finite Productive)) (resolved? sr) #t)))]
+    [_ #f]))
+
+(define discharge?
+  (policy-wrap 'ProofSearch 'discharge?
+               discharge?/impl
+               check-discharge-return
+               #:project (lambda (vs) (list (first vs)))))
 
 ;; 義務列の全 φ が候補文脈から暗黙充足できるか。typing と elaborate の共有経路。
 (define (obligations-dischargeable? obligations gamma-pc
