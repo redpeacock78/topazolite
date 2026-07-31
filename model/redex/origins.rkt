@@ -174,18 +174,30 @@
 (check-unique-keys! 'origins Γ0 "trait rows collide with kernel Γ0 entries")
 
 ;; Γ-pc⁰ へ足す global 候補。entry は (φ O cid sid pid hook) の 6 要素で、
-;; origin と hook は同じ impl 行へ決定的に結び付く。
+;; origin と hook は同じ表の行へ決定的に結び付く。
+;; TRT-005: intersect 行は RequiresBoth 候補も供給する。合成 trait が正典表に
+;; 載っている以上、その二項要求は利用側が明示的に Apply しなくても立つ。
 (define (trait-global-bindings)
-  (for/list ([row (in-list impl-table)])
-    (define trait-row (trait-row-by-name (impl-trait-name row)))
-    (list (impl-name row)
-          (list `(Implements ,(impl-target-type row)
-                             ,(impl-trait-name row))
-                `(Reserved ,(impl-oid row))
-                (impl-name row)
-                'root
-                'default
-                (list (trait-origin trait-row) (impl-oid row))))))
+  (append
+   (for/list ([row (in-list impl-table)])
+     (define trait-row (trait-row-by-name (impl-trait-name row)))
+     (list (impl-name row)
+           (list `(Implements ,(impl-target-type row)
+                              ,(impl-trait-name row))
+                 `(Reserved ,(impl-oid row))
+                 (impl-name row)
+                 'root
+                 'default
+                 (list (trait-origin trait-row) (impl-oid row)))))
+   (for/list ([row (in-list intersect-table)])
+     (list (intersect-name row)
+           (list `(RequiresBoth ,(intersect-left row)
+                                ,(intersect-right row))
+                 `(Reserved ,(intersect-oid row))
+                 (intersect-name row)
+                 'root
+                 'default
+                 (list (intersect-oid row)))))))
 
 (define (kind-of/proc type-form)
   (case type-form

@@ -110,9 +110,10 @@
    (proof-issuer-ok? R0 '(Reserved o-merge) '(FieldType f Int)))
   (check-equal? (verify-initial witness) `(forged ,witness)))
 
-(test-case "trait-global-bindings derives one Implements entry per impl row"
+(test-case "trait-global-bindings derives one entry per impl row and intersect row"
   (define bindings (trait-global-bindings))
-  (check-equal? (length bindings) (length impl-table))
+  (check-equal? (length bindings)
+                (+ (length impl-table) (length intersect-table)))
   (for ([row (in-list impl-table)])
     (define trait-row (trait-row-by-name (impl-trait-name row)))
     (check-equal?
@@ -124,7 +125,19 @@
                  (impl-name row)
                  'root
                  'default
-                 (list (trait-origin trait-row) (impl-oid row)))))))
+                 (list (trait-origin trait-row) (impl-oid row))))))
+  ;; TRT-005: intersect 行は RequiresBoth 候補を供給する。
+  (for ([row (in-list intersect-table)])
+    (check-equal?
+     (assoc (intersect-name row) bindings)
+     (list (intersect-name row)
+           (list `(RequiresBoth ,(intersect-left row)
+                                ,(intersect-right row))
+                 `(Reserved ,(intersect-oid row))
+                 (intersect-name row)
+                 'root
+                 'default
+                 (list (intersect-oid row)))))))
 
 (test-case "trait-derived Γ0 values pass initial origin verification"
   (define names

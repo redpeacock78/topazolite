@@ -189,3 +189,14 @@
    (hook-ok?/parts '(RequiresBoth Printable Sizable)
                    '(Reserved o-intersect-print-size)
                    '())))
+
+(test-case "TRT-005: RequiresBoth is implicit only for a declared intersect row"
+  (check-true
+   (obligations-dischargeable?
+    '((RequiresBoth Printable Sizable))
+    Γ-pc0))
+  ;; 正典表に無い組は依然として解けない。
+  (check-false
+   (obligations-dischargeable?
+    '((RequiresBoth Sizable Taggable))
+    Γ-pc0)))

@@ -52,11 +52,23 @@
    '(ProofRep (Reserved o-intersect-print-size)
               (RequiresBoth Printable Sizable))))
 
-(test-case "trait intersection remains explicit"
-  ;; 設計 §8.2: 合成 trait への所属の導出は G2e では未回収である。
-  (check-false
+(test-case "trait intersection is implicitly dischargeable"
+  ;; 設計 §5.3: intersect 行は Γ-pc⁰ へ RequiresBoth 候補を供給する。
+  ;; G2e ではここが check-false であった。反転がそのまま証拠である。
+  ;; 要件 ID は search-compose-test.rkt 側に置く。
+  (check-true
    (obligations-dischargeable?
     '((RequiresBoth Printable Sizable))
+    Γ-pc0))
+  ;; 左右を入れ替えても同じ候補で解ける。正準鍵が symbol 順に並べるためである。
+  (check-true
+   (obligations-dischargeable?
+    '((RequiresBoth Sizable Printable))
+    Γ-pc0))
+  ;; 正典表に無い組は依然として解けない。
+  (check-false
+   (obligations-dischargeable?
+    '((RequiresBoth Sizable Taggable))
     Γ-pc0)))
 
 (define (check-apply-obligation proposition expected branch)
