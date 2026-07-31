@@ -219,6 +219,23 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 暗黙 trait resolution は一意な候補を確定できなければならない。Ambiguous candidate はエラーとする。
 
+### TRT-004
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/trait.md`）
+
+合成 trait への所属は、成分 trait への所属の候補から導かなければならない。
+導いた候補の origin は、対応する intersect 行の oid を発行者とし、成分の origin を保持しなければならない。
+成分が現在の系譜から見えない場合、合成の候補も立ててはならない。
+
+### TRT-005
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/trait.md`）
+
+正典表に対応する intersect 行がある `RequiresBoth` は、明示的な Apply なしに充足できなければならない。
+行が無い組を充足してはならない。
+
 ### CMP-001
 
 - **状態**：G2
