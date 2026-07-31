@@ -215,7 +215,7 @@ O ::= Reserved(id)                               予約 origin。id ∈ dom(R0) 
     | Derived(O, step)                           派生 origin
     | User                                       ユーザー由来
 
-step ::= Curry(v) | Make(t) | Expand(name)
+step ::= Curry(v) | Make(t) | Expand(name) | Policy(name) | Compose(name, O, O)
 
 sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与える種別
 ```

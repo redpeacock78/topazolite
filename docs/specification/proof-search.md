@@ -107,13 +107,15 @@ G2b の初期候補文脈を次で定める。
 cid は name、sid は `root`、pid は `default` から決定的に構成する。
 実行ごとに変わる gensym や counter は使わない。
 
-G2e は、`impl-table` から作る global 候補を末尾へ加える。
+G2e は、`impl-table` から作る global 候補と、`intersect-table` から作る `RequiresBoth` 候補を末尾へ加える。
 
 ```text
 Γ_pc⁰ = append(candidateize(Π0), trait-global-bindings())
 ```
 
 `candidateize` 自体の写像規則は変えない。
+`trait-global-bindings` は impl 行の `Implements` entry と intersect 行の `RequiresBoth` entry を決定的な順序で返す。
+合成 `Implements` 候補は goal の対象型に依存するため Γ_pc⁰ へ入れず、`project-goal` が成分候補の直積から構成する。
 
 G2b の Core には局所 Proof 束縛がないため、候補文脈は項を降りても成長しない。
 すべての義務位置は同じ Γ_pc⁰ を使う。
@@ -143,7 +145,9 @@ G2b までの候補は空 hook を持つため、既存の同一性は変わら�
 - sid が探索位置から可視である。
 - cid と pid が `candidateize` または正典表からの決定規則に従う。
 - hook が命題の形に対応すること。
-  `Implements` 候補は trait origin と実装 origin の組を持ち、それ以外の候補は空 hook を持つ。
+  `Implements` 候補は trait origin と実装 origin の組を持ち、`RequiresBoth` 候補は intersect origin を持つ。
+  合成 `Implements` 候補は `Compose` step の左右 origin と各成分 hook を持つ。
+  それ以外の候補は空 hook を持つ。
 
 **wf-context** は、Γ_pc のすべての entry について、O が φ の正当な発行者であり、hook が命題の形に対応することを表す。
 wf-context は sid の可視性、cid と pid の構成、特定の goal との命題一致を検査しない。
@@ -176,6 +180,11 @@ resolve-candidates(goal, Σ) = SR
 残る候補が 0 個なら `Absent`、1 個なら `Resolved`、2 個以上なら `Ambiguous` を返す。
 `Ambiguous` の候補は候補同一性全体の canonical order に並べる。
 この集合演算と canonical order により、結果は Σ の記述順に依存しない。
+
+`Implements τ tn_out` の goal では、`project-goal` が `tn_out` を出力する各 intersect 行について左右の Σ を取り、その直積から合成候補を作る。
+合成候補の hook は出力 trait の origin、intersect 行の `iid`、左右成分の origin と hook を保持する。
+出力 trait の scope と成分二つの coherence がともに成立しなければ候補を返さない。
+直接の impl 候補と合成候補に優先順位はなく、両方が表にあれば `Ambiguous` になる。
 
 ### 4.2 計算クラスごとの探索結果
 
@@ -284,8 +293,10 @@ Proof term の provenance は PRF-003 により relevant である。
 G2b は暗黙 Proof 探索の静的な骨格に範囲を限る。
 次の機能は後続層で定める。
 
-- trait 型と `impl` または `derive` を使う暗黙 trait resolution は、G2e が `trait.md` §6 として導入した。
-  `RequiresBoth` の implicit discharge と合成 trait への `Implements` 導出は未回収である。
+- trait 型と `impl` または `derive` を使う暗黙 trait resolution、`RequiresBoth` の implicit discharge、合成 trait の候補生成は、G2e と G2f が `trait.md` §6 として導入した。
+  合成 `Implements` の Proof 値を生成して項へ渡す primitive は未回収である。
+- 合成候補の origin は intersect 行の左右順を保持する。
+  `proof-issuer-ok?` は成分 origin へ再帰できるが、正典表に合成 trait を成分とする行がないため、入れ子の経路は fixture で未到達である。
 - trait origin と `impl` または `derive` Proof を含む候補同一性は、G2e が `trait.md` §6.1、§6.2 として導入した。
 - **異種命題の候補文脈**：カーネル命題の範囲は G2d が `proof-value.md` §6.3 として回収し、goal ごとの候補抽出と候補文脈全体の well-formedness を分けた。
   trait 由来の候補同一性は G2e が `trait.md` §6.2 として導入した。

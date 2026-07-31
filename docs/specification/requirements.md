@@ -1,8 +1,8 @@
 # Topazolite 要件 ID レジストリ
 
-**状態**：G2e 執筆版（codex 実装、claude レビュー前）
+**状態**：G2f 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/glossary.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/policy-narrative.md`、`docs/specification/glossary.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -40,6 +40,7 @@
 状態が `G2` で G2c の明示集合に含まれる ID は、`structural-row.md` §6 の規則注釈と G2c テストの両方で参照されなければならない。
 状態が `G2` で G2d の明示集合に含まれる ID は、`proof-value.md` の規則注釈と G2d テストの両方で参照されなければならない。
 状態が `G2` で G2e の明示集合に含まれる ID は、`trait.md` の規則注釈と G2e テストの両方で参照されなければならない。
+状態が `G2` で G2f の明示集合に含まれる ID は、担当する正典文書の規則注釈と G2f テストの両方で参照されなければならない。
 延期された ID は、担当サイクルまたは Phase の設計時に同じ規則で扱う。
 
 ## 3. 要件一覧
@@ -69,6 +70,7 @@
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/policy-narrative.md` §3、§4
 
 標準 Policy Narrative は LanguageNarrative / TypeNarrative から派生し、新たな trusted root を作ってはならない。
 
@@ -76,6 +78,7 @@
 
 - **状態**：G2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/policy-narrative.md` §6
 
 Policy Narrative の返却値は kernel kind / Proof / Core invariant の検証を通過しなければならない。
 
@@ -223,6 +226,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：新規（`docs/specification/trait.md`）
+- **正典**：`docs/specification/trait.md` §6.5
 
 合成 trait への所属は、成分 trait への所属の候補から導かなければならない。
 導いた候補の origin は、対応する intersect 行の oid を発行者とし、成分の origin を保持しなければならない。
@@ -232,6 +236,7 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 
 - **状態**：G2
 - **由来**：新規（`docs/specification/trait.md`）
+- **正典**：`docs/specification/trait.md` §6.6
 
 正典表に対応する intersect 行がある `RequiresBoth` は、明示的な Apply なしに充足できなければならない。
 行が無い組を充足してはならない。

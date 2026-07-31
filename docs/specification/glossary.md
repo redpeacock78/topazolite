@@ -1,6 +1,6 @@
 # Topazolite 用語集
 
-**状態**：G2e 執筆版（codex 実装、claude レビュー前）
+**状態**：G2f 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` 付録 A（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/requirements.md`
 
@@ -173,7 +173,7 @@
 ### Policy Narrative
 
 - **定義**：row、variance、trait resolution、Proof search、ownership narrowing、normalization 等の方針を実装する、予約 Narrative から派生した Proof 付き trait。新たな trusted root ではない。
-- **参照**：ホワイトペーパー §2.1.5、付録 A。
+- **参照**：ホワイトペーパー §2.1.5、`policy-narrative.md` §3、§5、§6。
 - **関連要件 ID**：POL-001、POL-002（G2）。
 
 ### Boundary
@@ -309,14 +309,14 @@
 ### 候補文脈
 
 - **定義**：暗黙充足に利用できる Proof 候補の有限写像。
-  G2b の固定 Π0 から作る候補と、G2e の impl 正典表から作る global 候補を決定的に合わせた Γ_pc⁰ を使う。
+  G2b の固定 Π0 から作る候補と、G2e/G2f の正典表から作る global 候補を決定的に合わせた Γ_pc⁰ を使う。
 - **参照**：ホワイトペーパー §6.4、proof-search.md §3.2、trait.md §6.1。
 - **関連要件 ID**：PSR-001、PSR-002、TRT-002、TRT-003（G2）。
 
 ### 候補同一性
 
 - **定義**：二つの Proof 候補を同じ候補として畳めるかを決める関係。
-  G2e では命題の正準鍵、origin、候補識別子、scope 識別子、priority 識別子、trait hook の組で判定する。
+  G2e/G2f では命題の正準鍵、origin、候補識別子、scope 識別子、priority 識別子、trait hook の組で判定する。
 - **参照**：ホワイトペーパー §6.4、proof-search.md §3.3、trait.md §6.2。
 - **関連要件 ID**：PSR-002、TRT-003（G2）。
 
@@ -333,6 +333,20 @@
   候補同一性と well-formedness の両方で使う。
 - **参照**：ホワイトペーパー §6.4、trait.md §6.1、§6.2。
 - **関連要件 ID**：TRT-002、TRT-003（G2）。
+
+### 合成 trait 候補
+
+- **定義**：`Implements τ tn_out` の goal に対して、対応する intersect 行の左右成分候補の直積から作る候補。
+  Γ_pc へ事前登録せず、`project-goal` の中で生成する。
+- **参照**：`trait.md` §6.5、`proof-search.md` §4.1。
+- **関連要件 ID**：TRT-004（G2）。
+
+### Compose origin
+
+- **定義**：合成 trait 候補の由来を表す `Derived(Reserved(iid), Compose(tn_out, O_A, O_B))`。
+  `O_A` と `O_B` は intersect 行の左右成分候補から保持する。
+- **参照**：`core-calculus.md` §3.4、`trait.md` §5.3、`proof-value.md` §7。
+- **関連要件 ID**：TRT-004（G2）。
 
 ### Union 正規形
 

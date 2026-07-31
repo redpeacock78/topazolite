@@ -409,6 +409,12 @@ forge の拒否は **発行者対応** と **出現許可** に分ける。
 したがって `o-merge` の witness は §5.2 の局所候補として正当であるが、成果物の値としては不正である。
 User origin、命題と oid の不一致、型の違うペイロード、check に失敗するペイロードを持つ `RVal` は到達層で拒否する。
 
+G2f では、合成 trait の候補が持つ `ProofRep` も発行者対応の対象に含める。
+`Implements τ tn_out` の origin は、対応する intersect 行の `iid` を親とする `Derived(Reserved(iid), Compose(tn_out, O_A, O_B))` でなければならない。
+`O_A` と `O_B` は intersect 行の左右の trait に対する `Implements` の発行者検査を再帰的に満たす。
+intersect 行の primitive binding と出力 trait も同時に照合する。
+この再帰の停止性は trait 表の非巡回性に依存する。
+
 [REQ: RFN-001]
 
 ## 8. 範囲外の規則
@@ -420,8 +426,11 @@ User origin、命題と oid の不一致、型の違うペイロード、check �
   異型 `mut` field の脱落は実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の合成は型の Intersection ではなく、正典表と `RequiresBoth` Proof で表す。
-- **trait resolution**：表由来の `Implements` 候補、trait hook、候補同一性、scope による coherence は、G2e が `trait.md` §6 として導入した。
-  `RequiresBoth` の implicit discharge と合成 trait への `Implements` 導出は未回収である。
+- **trait resolution**：表由来の `Implements` 候補、`RequiresBoth` の implicit discharge、合成候補、trait hook、候補同一性、scope による coherence は、G2e と G2f が `trait.md` §6 として導入した。
+  合成 trait の `ProofRep` を値として生成する primitive は未回収である。
+- **合成 trait の origin**：`Compose` の成分 origin は左右の intersect 行の順序を保持し、入れ子の成分へ再帰できる。
+  正典表に入れ子の行がないため、その経路は fixture で未到達である。
+- **Policy Narrative**：既存方針を包む Policy の origin と返却値検査は、`policy-narrative.md` §3 から §7 に従う。
 - **探索動力学**：探索計算、`⇓class`、certificate、termination Proof、priority、provenance の実体化は探索の後続層で扱う。
 - **局所 Proof 束縛**：merge 位置を越えた witness の保存、scope 付き照合、位置依存文脈の `compat?` への供給と併せて後続層で扱う。
 - **多相 primitive**：型変数と型 scheme を導入する Phase 1 以降で扱う。

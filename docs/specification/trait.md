@@ -1,14 +1,14 @@
 # Topazolite trait 層仕様
 
-**状態**：G2e 執筆版（codex 実装、claude レビュー前）
+**状態**：G2f 執筆版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §4.5.3、§6.4、§8.1、§15（以下、ホワイトペーパー）
-**関連文書**：`core-calculus.md`、`structural-row.md`、`proof-search.md`、`proof-value.md`、`requirements.md`、`glossary.md`
+**関連文書**：`core-calculus.md`、`structural-row.md`、`proof-search.md`、`proof-value.md`、`policy-narrative.md`、`requirements.md`、`glossary.md`
 
 ## 1. 本仕様の位置づけ
 
 本文書は、G2 の型へ有限な Union と構造型の Intersection を加え、正典表から trait の型、Proof、暗黙候補を導く差分仕様である。
 本文書に定義がない型付け規則、簡約規則、候補探索規則、成果物検証規則は、関連文書に従う。
-Redex model の G2e 実装は本文書を正とし、実装との乖離が見つかった場合は本文書を先に修正する。
+Redex model の G2f 実装は本文書を正とし、実装との乖離が見つかった場合は本文書を先に修正する。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
 要件 ID の本文は `requirements.md` を正とする。
@@ -110,7 +110,7 @@ record 行は鍵の内部だけで label 順に並べ、プログラム中の re
 `template` は requirement field の行であり、型位置に meta-level placeholder `Self` を持てる。
 `Self` は型文法に属さず、実装対象の型 τ で `instantiate-requirements(template, τ)` を行った後にだけ通常の field row になる。
 
-G2e の表は、次の五行を持つ。
+G2f の正典表は、次の五行を持つ。
 
 ```text
 (o-trait-printable Printable root
@@ -144,7 +144,7 @@ kind ::= impl | derive
 行は、`Record(instantiate-requirements(template-of(tn), τ))` の shape が検査済みである信頼された宣言である。
 実装 record の値自体は表に保存しない。
 
-G2e の表は、次の七行を持つ。
+G2f の正典表は、次の七行を持つ。
 
 ```text
 (o-impl-printable-int impl-printable-int impl Printable Int root)
@@ -173,7 +173,7 @@ G2e の表は、次の七行を持つ。
 逆順の入力は命題の正準化で同じ対へ写す。
 両辺の requirement template は衝突なく合成でき、その結果が `tn_out` の template と一致しなければならない。
 
-G2e の表は、次の二行を持つ。
+G2f の正典表は、次の二行を持つ。
 
 ```text
 (o-intersect-print-size intersect-printable-sizable
@@ -187,6 +187,7 @@ G2e の表は、次の二行を持つ。
 表の読み込み時に、trait 名、origin 識別子、primitive 名の一意性を検査する。
 各行が参照する trait の存在、template の label 一意性、`Self` の出現位置、具体化後の型の整形式性と正規性も検査する。
 合成行については、trait 名の順序、row 合成の成功、出力 template との一致を検査する。
+intersect 行の trait 名は symbol 順でなければならず、`intersect-acyclic?` が trait 名の依存グラフの非巡回性を検査する。
 R0 と Γ0 へ追加した後に、既存 kernel 行との key 衝突も検査する。
 
 各 trait 行から、次の Γ0 定数を導く。
@@ -241,7 +242,11 @@ impl-table に (oid, nm, kind, tn, τ, sid_target) がある
 `ValidNarrativeTrait tn` は、対応する trait 行の `tid` だけが発行できる。
 `Implements τ tn` は、対応する impl 行の `oid` だけが発行できる。
 `RequiresBoth A B` は、対応する intersect 行の `oid` だけが発行できる。
+合成 `Implements τ tn_out` は、対応する intersect 行の `iid` を親に持つ `Compose` step と、成分二つの origin を含む origin だけが発行できる。
 発行者対応は R0 の登録内容も照合する。
+
+`Compose` の発行者検査は、intersect 行の出力 trait と primitive binding を照合し、命題から復元した左右の `Implements` を成分 origin へ再帰的に適用する。
+この再帰は intersect-table の非巡回性に依存する。
 
 これら三形の ProofRep は、発行者対応を満たす限り初期成果物と到達成果物に現れてよい。
 正しい origin と命題を持つ ProofRep の再表明は、正典表にない事実を増やさないためである。
@@ -254,13 +259,19 @@ impl-table に (oid, nm, kind, tn, τ, sid_target) がある
 ### 6.1 初期候補と hook
 
 初期候補文脈は、Π0 を `candidateize` した候補の後ろへ、`impl-table` の各行から作る global 候補を追加する。
-trait 定数と intersect 行は global 候補へ追加しない。
-したがって、`ValidNarrativeTrait tn` と `RequiresBoth A B` は暗黙には充足されない。
+intersect-table の各行から作る `RequiresBoth` 候補も、その後ろへ追加する。
+trait 定数は global 候補へ追加しないため、`ValidNarrativeTrait tn` は引き続き Γ0 の定数からだけ供給する。
 
 impl 行から作る entry は、次の形を持つ。
 
 ```text
 (Implements τ tn, Reserved(oid), nm, root, default, (tid oid))
+```
+
+intersect 行から作る entry は、次の形を持つ。
+
+```text
+(RequiresBoth tn_left tn_right, Reserved(iid), nm, root, default, (iid))
 ```
 
 hook `(tid oid)` は、命題、trait 行、impl 行、entry の Proof origin を同じ二つの origin へ束縛する。
@@ -287,11 +298,47 @@ entry の sid は global 可視性のため `root` とする。
 production の `obligations-dischargeable?` は `root` を使うため、production で暗黙利用する表の行は trait または対象型の少なくとも一方が `root` に属さなければならない。
 両方が non-root の行は、`sc-ctx` を明示する coherence 検査だけで使う。
 
+合成候補は、出力 trait の生成 scope が可視であり、かつ左右の成分候補がともに coherent である場合だけ残す。
+合成 trait は名前で呼べなければ立てる意味がないため、出力 trait の生成 scope を可視にする。
+成分の所属が見えない場合は合成の所属も見えないため、左右の成分候補をともに coherent とする。
+
 ### 6.4 計算分類
 
 `Implements`、引数付き `ValidNarrativeTrait`、`RequiresBoth`、`FieldType` は、命題の形によって `Finite` に分類する。
 Finite の証拠は、`project-goal` が抽出した goal 単位の完全な候補集合でなければならない。
 候補がなければ `Absent`、一件なら `Resolved`、二件以上なら `Ambiguous` になる。
+
+### 6.5 合成 trait への所属
+
+`project-goal` は `(Implements τ tn_out)` の goal に対し、`tn_out` を出力する intersect 行ごとに左右の成分候補を抽出する。
+左右の候補の直積を一件ずつ合成し、元の Γ_pc へは追加しない。
+
+合成候補は次の形を持つ。
+
+```text
+(Candidate ProofRep(Derived(Reserved(iid), Compose(tn_out, O_A, O_B)),
+                    Implements τ tn_out),
+           (compose iid cid_A cid_B), root, default,
+           (compose tid iid (O_A hook_A) (O_B hook_B)))
+```
+
+`O_A` は `intersect-left` の候補から、`O_B` は `intersect-right` の候補から作る。
+この順序は origin の発行者検査が左右の成分を表の順序で照合するため固定される。
+合成候補は成分二つが現在の系譜から coherent で、出力 trait の生成 scope も可視なときだけ残る。
+
+性質検査は表の現在の三つの対象型 `Int`、`String`、`Bool` を使い、型を追加生成せずに `Resolved`、`Ambiguous`、`Absent` の三分岐を観測する。
+
+[REQ: TRT-004]
+
+### 6.6 `RequiresBoth` の暗黙充足
+
+`intersect-table` に `(A, B, A&B)` の行があるとき、`trait-global-bindings` は `(RequiresBoth A B)` の候補を一件供給する。
+命題の正準化は左右を symbol 順へ写すため、逆順の `RequiresBoth B A` も同じ候補で充足する。
+
+正典表に対応する行がない命題には候補を作らない。
+したがって `RequiresBoth` の暗黙充足は表の行の存在と同値であり、合成 trait の `Implements` 候補を Γ_pc へ事前登録することとは別の経路である。
+
+[REQ: TRT-005]
 
 ## 7. merge と join
 
@@ -332,20 +379,32 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 | TRT-001 | §5.1 shape 一致と宣言 origin |
 | TRT-002 | §4.2 impl-table、§4.4 環境の導出、§5.2 impl と derive |
 | TRT-003 | §6.1 初期候補、§6.2 候補同一性、§6.3 coherence |
+| TRT-004 | §6.5 合成 trait への所属 |
+| TRT-005 | §6.6 `RequiresBoth` の暗黙充足 |
 | CMP-001 | §3.2 Union の正規形、§7.1 `imm` field の join |
 | CMP-002 | §3.3 構造型の Intersection |
 
 ## 9. 未回収の範囲
 
-本節の項目は、G2e で回収済みではない。
+本節の項目は、G2e/G2f で回収済みではない。
 範囲を狭めた理由は実装規模であり、ホワイトペーパーの意味を置き換えない。
 
-- **合成 trait への所属の導出**：`intersect-table` と `RequiresBoth A B` Proof は導入するが、`Implements τ A`、`Implements τ B`、`RequiresBoth A B` から合成 trait の `Implements` を導く規則は導入しない。
-  `RequiresBoth` の implicit discharge も行わない。
-  ホワイトペーパー §8.1 の Proof-bearing trait composition は、この導出を含む正典として残る。
+- **合成 Proof 値と primitive**：G2f は合成候補の静的な `ProofRep` を検証するが、それを生成して引数へ渡す primitive は導入しない。
+  現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
+  これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
+- **合成候補の入れ子**：`proof-issuer-ok?` は成分 origin へ再帰するが、正典表には合成 trait を別の intersect 行の成分にする行がない。
+  したがって入れ子の再帰は fixture で未到達であり、行を増やして検査することも G2f の範囲に含めない。
+- **合成成分の順序**：`Compose` の左右成分は intersect 行の順序へ固定され、入れ替えた origin は拒否される。
+  `RequiresBoth` の命題順の正準化は、この origin step の順序を変更しない。
+- **合成候補と直接実装の優先順位**：`project-goal` は表由来の直接候補と合成候補を並べるだけで、どちらかを優先しない。
+  合成 trait の直接 impl 行を追加すると同じ goal が `Ambiguous` になるため、優先順位は候補順ではなく正典表の設計で定める必要がある。
+- **合成候補の出力 scope 検査**：合成候補は出力 trait の生成 scope が可視であることも要求する。
+  現在の正典表では合成 trait の `PrintableSizable` と `PrintableTaggable` がともに `root` scope であるため、この条件が偽になる fixture はなく、実際に観測しているのは成分側の coherence 条件だけである。
 - **異型 mut field の Union 方針**：G2e の merge は、異なる型を持つ `mut` field を合流 row から落とす。
   これは ROW-004 の不変性を守るための実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
   この未回収範囲では、ホワイトペーパー §4.5.3 の Union 方針を正典として残す。
+- **merge の失敗と field 脱落の区別**：`merge-fields` の field 単位の `#f` は、可変性不一致と field 型の正規化失敗を同じ脱落として扱う。
+  `merge-record-types` の `(values #f '())` は well-formed な入力では到達しないため、返却値検査の該当節は防御的である。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
   この操作には、merge の動的意味論と Preservation の値レベルでの改訂が要る。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
