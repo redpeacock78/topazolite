@@ -1,11 +1,12 @@
 #lang racket
 
 (require racket/match
+         "policy.rkt"
          "rows.rkt"
          "search.rkt"
          "type-equiv.rkt")
 
-(provide compat?)
+(provide compat? check-compat-return)
 
 (define (record-compatible? sub-row sup-row gamma-pc)
   (for/and ([field (in-list sup-row)])
@@ -15,7 +16,7 @@
          [(list sub-type sub-mutability)
           (and (eq? sub-mutability sup-mutability)
                (case sup-mutability
-                 [(imm) (compat? sub-type sup-type gamma-pc)]
+                 [(imm) (compat?/impl sub-type sup-type gamma-pc)]
                  [(mut) (type-equiv? sub-type sup-type)]
                  [else #f]))]
          [_ #f])]
@@ -48,19 +49,19 @@
   (and (= (length sub-parameters) (length sup-parameters))
        (for/and ([sub-parameter (in-list sub-parameters)]
                  [sup-parameter (in-list sup-parameters)])
-         (compat? sup-parameter sub-parameter gamma-pc))
-       (compat? sub-return sup-return gamma-pc)
+         (compat?/impl sup-parameter sub-parameter gamma-pc))
+       (compat?/impl sub-return sup-return gamma-pc)
        (effect-row-subset? sub-row sup-row)
        (obligations-subset? sub-obligations sup-obligations gamma-pc)))
 
 ;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
 ;; G2c までの挙動と一致する。
-(define (compat? sub sup [gamma-pc '()])
+(define (compat?/impl sub sup [gamma-pc '()])
   ;; Union は節順に預けず、sub の各要素が sup のいずれかと互換かで判定する。
   (if (or (union? sub) (union? sup))
       (for/and ([sub-member (in-list (union-members sub))])
         (for/or ([sup-member (in-list (union-members sup))])
-          (compat? sub-member sup-member gamma-pc)))
+          (compat?/impl sub-member sup-member gamma-pc)))
       (compat?/non-union sub sup gamma-pc)))
 
 (define (union? type)
@@ -74,16 +75,31 @@
     [(`(Owned ,sub-type) `(Owned ,sup-type))
      (type-equiv? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
-     (compat? sub-payload sup-payload gamma-pc)]
+     (compat?/impl sub-payload sup-payload gamma-pc)]
     ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。
     ;; type-equiv? と同じ proposition-equiv? を使い、同値型の互換性を保つ。
     [(`(Refined ,sub-payload ,sub-proposition)
       `(Refined ,sup-payload ,sup-proposition))
      (and (proposition-equiv? sub-proposition sup-proposition)
-          (compat? sub-payload sup-payload gamma-pc))]
+          (compat?/impl sub-payload sup-payload gamma-pc))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
       `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
                       sup-parameters sup-return sup-row sup-obligations
                       gamma-pc)]
     [(_ _) (type-equiv? sub sup)]))
+
+;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
+;; 返却を持たない。VariancePolicy は宣言と境界検査を提供するが、変性規則そのものを
+;; 差し替える機構はまだ無く、実装本体は G5 で強化する。
+(define (check-compat-return args returns)
+  (match* (args returns)
+    [((list sub sup _ ...) (list result))
+     (and (boolean? result)
+          (or (not (type-equiv? sub sup)) (eq? result #t)))]
+    [(_ _) #f]))
+
+(define compat?
+  (policy-wrap 'VariancePolicy 'compat?
+               compat?/impl
+               check-compat-return))

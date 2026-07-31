@@ -3,7 +3,8 @@
 (require racket/list
          rackunit
          "../policy.rkt"
-         "../type-equiv.rkt")
+         "../type-equiv.rkt"
+         "../compat.rkt")
 
 ;; 予約 Narrative を正しく束縛した R0 の最小 fixture。
 (define r0-ok
@@ -126,3 +127,15 @@
    (and (member '(Normalization . normalize-type)
                 (registered-policy-operations))
         #t)))
+
+(test-case "POL-002/VariancePolicy: 同値な二型は互換である"
+  (check-true (compat? 'Int 'Int))
+  (check-true (compat? '(Record ((a Int imm))) '(Record ((a Int imm)))))
+  ;; 非互換の判定は素通りする。compat? に fail-closed 返却は無い。
+  (check-false (compat? 'Int 'String)))
+
+(test-case "VariancePolicy: 検査は同値互換に限る（G5 で強化する）"
+  ;; check-compat-return を直接呼び、同値でない組には制約が無いことを固定する。
+  (check-true (check-compat-return '(Int String) '(#f)))
+  (check-true (check-compat-return '(Int String) '(#t)))
+  (check-false (check-compat-return '(Int Int) '(#f))))
