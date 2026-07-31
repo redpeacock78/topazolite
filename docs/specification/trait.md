@@ -110,7 +110,7 @@ record 行は鍵の内部だけで label 順に並べ、プログラム中の re
 `template` は requirement field の行であり、型位置に meta-level placeholder `Self` を持てる。
 `Self` は型文法に属さず、実装対象の型 τ で `instantiate-requirements(template, τ)` を行った後にだけ通常の field row になる。
 
-G2e の表は、次の四行を持つ。
+G2e の表は、次の五行を持つ。
 
 ```text
 (o-trait-printable Printable root
@@ -122,9 +122,13 @@ G2e の表は、次の四行を持つ。
    (size (NFn (Self) Int () ()) imm)))
 (o-trait-taggable Taggable s-kernel
   ((tag (NFn (Self) String () ()) imm)))
+(o-trait-printable-taggable PrintableTaggable root
+  ((print (NFn (Self) String () ()) imm)
+   (tag (NFn (Self) String () ()) imm)))
 ```
 
 `PrintableSizable` は、`Printable` と `Sizable` の requirement を衝突なく合わせた合成 trait である。
+`PrintableTaggable` は、`Printable` と `Taggable` の requirement を衝突なく合わせた合成 trait である。
 
 ### 4.2 impl-table
 
@@ -140,7 +144,7 @@ kind ::= impl | derive
 行は、`Record(instantiate-requirements(template-of(tn), τ))` の shape が検査済みである信頼された宣言である。
 実装 record の値自体は表に保存しない。
 
-G2e の表は、次の五行を持つ。
+G2e の表は、次の七行を持つ。
 
 ```text
 (o-impl-printable-int impl-printable-int impl Printable Int root)
@@ -148,9 +152,14 @@ G2e の表は、次の五行を持つ。
 (o-impl-printable-str-a impl-printable-str-a impl Printable String root)
 (o-impl-printable-str-b impl-printable-str-b impl Printable String root)
 (o-impl-taggable-bool impl-taggable-bool impl Taggable Bool s-user)
+(o-derive-sizable-str derive-sizable-str derive Sizable String root)
+(o-impl-taggable-int impl-taggable-int impl Taggable Int s-user)
 ```
 
 一行目は一意解決、二行目は `derive` 経路、三行目と四行目は曖昧性、五行目は coherence の検査に使う。
+六行目は `String` に対する `Sizable` を追加して合成候補の曖昧性を観測し、七行目は対象型 `Int` の非 root scope による可視性を観測する。
+`Taggable` の trait scope は `s-kernel`、`Int` の target scope は `s-user` であるため、`(root)` からは見えず `(root s-user)` からは見える。
+`Bool` を対象型にした `Taggable` の行は、`search-trait-integration-test.rkt` の `finite-absent-reject` が反転するため、この fixture では追加しない。
 
 ### 4.3 intersect-table
 
@@ -164,11 +173,13 @@ G2e の表は、次の五行を持つ。
 逆順の入力は命題の正準化で同じ対へ写す。
 両辺の requirement template は衝突なく合成でき、その結果が `tn_out` の template と一致しなければならない。
 
-G2e の表は、次の一行を持つ。
+G2e の表は、次の二行を持つ。
 
 ```text
 (o-intersect-print-size intersect-printable-sizable
  Printable Sizable PrintableSizable)
+(o-intersect-print-tag intersect-printable-taggable
+ Printable Taggable PrintableTaggable)
 ```
 
 ### 4.4 読み込み時検査と環境の導出

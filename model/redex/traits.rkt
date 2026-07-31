@@ -50,7 +50,10 @@
               (list (list 'print '(NFn (Self) String () ()) 'imm)
                     (list 'size '(NFn (Self) Int () ()) 'imm)))
         (list 'o-trait-taggable 'Taggable 's-kernel
-              (list (list 'tag '(NFn (Self) String () ()) 'imm)))))
+              (list (list 'tag '(NFn (Self) String () ()) 'imm)))
+        (list 'o-trait-printable-taggable 'PrintableTaggable 'root
+              (list (list 'print '(NFn (Self) String () ()) 'imm)
+                    (list 'tag   '(NFn (Self) String () ()) 'imm)))))
 
 ;; impl-table の行: (oid nm kind tn τ sid_target)
 ;; 各行は、対応する実装 record が検査済みである信頼された宣言である。
@@ -59,12 +62,21 @@
         (list 'o-derive-sizable-int   'derive-sizable-int   'derive 'Sizable   'Int    'root)
         (list 'o-impl-printable-str-a 'impl-printable-str-a 'impl   'Printable 'String 'root)
         (list 'o-impl-printable-str-b 'impl-printable-str-b 'impl   'Printable 'String 'root)
-        (list 'o-impl-taggable-bool   'impl-taggable-bool   'impl   'Taggable  'Bool   's-user)))
+        (list 'o-impl-taggable-bool   'impl-taggable-bool   'impl   'Taggable  'Bool   's-user)
+        ;; derive-sizable-str は String の成分数を (Printable 2 件, Sizable 1 件) にし、
+        ;; 合成候補の Ambiguous を観測できるようにする（設計 §5.5）。
+        (list 'o-derive-sizable-str    'derive-sizable-str    'derive 'Sizable   'String 'root)
+        ;; impl-taggable-int は対象型の scope が s-user であり、Taggable の trait 行は
+        ;; s-kernel にある。(root) からは見えず (root s-user) からは見えるため、
+        ;; 可視性が合成候補まで及ぶことを片側だけ動かして観測できる。
+        (list 'o-impl-taggable-int     'impl-taggable-int     'impl   'Taggable  'Int    's-user)))
 
 ;; intersect-table の行: (oid nm tn_a tn_b tn_out)
 (define intersect-table
   (list (list 'o-intersect-print-size 'intersect-printable-sizable
-              'Printable 'Sizable 'PrintableSizable)))
+              'Printable 'Sizable 'PrintableSizable)
+        (list 'o-intersect-print-tag 'intersect-printable-taggable
+              'Printable 'Taggable 'PrintableTaggable)))
 
 (define (trait-origin row) (first row))
 (define (trait-name row) (second row))
