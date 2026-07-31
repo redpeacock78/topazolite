@@ -42,7 +42,9 @@
          (Derived O step))
   (step ::= (Curry v)
             (Make t)
-            (Expand nm))
+            (Expand nm)
+            (Policy nm)
+            (Compose nm O O))
 
   (op ::= (Return b τ))
   (w ::= x)

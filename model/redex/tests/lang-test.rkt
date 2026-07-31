@@ -61,3 +61,20 @@
                 (term (Own Partial Compile)))
   (check-equal? (term (row-\\ (Own Partial Compile) (Partial)))
                 (term (Own Compile))))
+
+(test-case "G2f: step は policy 派生と合成派生を受理する"
+  (check-true
+   (redex-match? G2m O
+                 (term (Derived (Reserved o-language-narrative)
+                                (Policy TraitResolution)))))
+  (check-true
+   (redex-match? G2m O
+                 (term (Derived (Reserved o-intersect-print-size)
+                                (Compose PrintableSizable
+                                         (Reserved o-impl-printable-int)
+                                         (Reserved o-derive-sizable-int))))))
+  ;; 成分が origin でない形は受理しない。
+  (check-false
+   (redex-match? G2m O
+                 (term (Derived (Reserved o-intersect-print-size)
+                                (Compose PrintableSizable))))))
