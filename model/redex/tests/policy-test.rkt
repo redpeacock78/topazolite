@@ -2,7 +2,8 @@
 
 (require racket/list
          rackunit
-         "../policy.rkt")
+         "../policy.rkt"
+         "../type-equiv.rkt")
 
 ;; 予約 Narrative を正しく束縛した R0 の最小 fixture。
 (define r0-ok
@@ -103,3 +104,25 @@
                  (lambda (args returns) (= (length returns) 3))
                  #:project (lambda (vs) (list (first vs)))))
   (check-equal? (projected) #t))
+
+(test-case "POL-002/Normalization: 正規化は冪等で、#f は素通りする"
+  (check-equal? (normalize-type '(Union Int Int)) 'Int)
+  (define normalized (normalize-type '(Union String Int)))
+  (check-equal? (normalize-type normalized) normalized)
+  ;; 正規化できない型の fail-closed 返却。例外にしてはならない。
+  (check-false (normalize-type '(Intersection Int String))))
+
+(test-case "Normalization: 検査述語は #f を素通りし、非冪等な返却を弾く"
+  ;; #f は正規化できない型の fail-closed 返却であり、検査の対象外である。
+  (check-true
+   (check-normalize-return (list '(Intersection Int String)) '(#f)))
+  (check-true (check-normalize-return '(Int) '(Int)))
+  ;; (Union Int Int) は Int へ正規化されるため、返却としては冪等でない。
+  (check-false
+   (check-normalize-return '(Int) '((Union Int Int)))))
+
+(test-case "Normalization: normalize-type は policy として登録されている"
+  (check-true
+   (and (member '(Normalization . normalize-type)
+                (registered-policy-operations))
+        #t)))

@@ -1,6 +1,7 @@
 #lang racket
 
 (require racket/match
+         "policy.rkt"
          "rows.rkt")
 
 (provide effect-equiv?
@@ -12,7 +13,8 @@
          proposition-equiv?
          sort-then-dedup
          union-members
-         type-normal?)
+         type-normal?
+         check-normalize-return)
 
 ;; 型の外部表現に対する決定的な全順序。
 (define (external-key value)
@@ -52,7 +54,7 @@
 (define (normalize-row row)
   (define normalized
     (for/list ([field (in-list row)])
-      (define type (normalize-type (cadr field)))
+      (define type (normalize-type/impl (cadr field)))
       (and type (list (car field) type (caddr field)))))
   (and (andmap values normalized) normalized))
 
@@ -62,27 +64,27 @@
     (for/list ([label (in-list row)])
       (match label
         [`(Return ,boundary ,type)
-         (define result (normalize-type type))
+         (define result (normalize-type/impl type))
          (and result `(Return ,boundary ,result))]
         [`(Yield ,type)
-         (define result (normalize-type type))
+         (define result (normalize-type/impl type))
          (and result `(Yield ,result))]
         [_ label])))
   (and (andmap values normalized) normalized))
 
 ;; 型を正規形へ写す。正規化できない型には #f を返す。
-(define (normalize-type type)
+(define (normalize-type/impl type)
   (match type
     [`(Union ,_ ,_)
      (define members
        (for/list ([member (in-list (union-members type))])
-         (normalize-type member)))
+         (normalize-type/impl member)))
      (and (andmap values members)
           (build-union
            (sort-then-dedup (append-map union-members members))))]
     [`(Intersection ,left ,right)
-     (define normalized-left (normalize-type left))
-     (define normalized-right (normalize-type right))
+     (define normalized-left (normalize-type/impl left))
+     (define normalized-right (normalize-type/impl right))
      (and normalized-left
           normalized-right
           (match* (normalized-left normalized-right)
@@ -94,28 +96,28 @@
      (define normalized (normalize-row row))
      (and normalized `(Record ,(sort-row normalized)))]
     [`(List ,element)
-     (define normalized (normalize-type element))
+     (define normalized (normalize-type/impl element))
      (and normalized `(List ,normalized))]
     [`(Option ,element)
-     (define normalized (normalize-type element))
+     (define normalized (normalize-type/impl element))
      (and normalized `(Option ,normalized))]
     [`(Owned ,inner)
-     (define normalized (normalize-type inner))
+     (define normalized (normalize-type/impl inner))
      (and normalized `(Owned ,normalized))]
     [`(Untrusted ,payload)
-     (define normalized (normalize-type payload))
+     (define normalized (normalize-type/impl payload))
      (and normalized `(Untrusted ,normalized))]
     [`(Result ,ok-type ,error-type)
-     (define normalized-ok (normalize-type ok-type))
-     (define normalized-error (normalize-type error-type))
+     (define normalized-ok (normalize-type/impl ok-type))
+     (define normalized-error (normalize-type/impl error-type))
      (and normalized-ok
           normalized-error
           `(Result ,normalized-ok ,normalized-error))]
     [`(NFn ,parameters ,return-type ,row ,obligations)
      (define normalized-parameters
        (for/list ([parameter (in-list parameters)])
-         (normalize-type parameter)))
-     (define normalized-return (normalize-type return-type))
+         (normalize-type/impl parameter)))
+     (define normalized-return (normalize-type/impl return-type))
      (define normalized-row (normalize-effect-row row))
      (define normalized-obligations
        (for/list ([proposition (in-list obligations)])
@@ -132,7 +134,7 @@
      (define normalized (normalize-proposition proposition))
      (and normalized `(Proof ,normalized))]
     [`(Refined ,payload ,proposition)
-     (define normalized-payload (normalize-type payload))
+     (define normalized-payload (normalize-type/impl payload))
      (define normalized-proposition (normalize-proposition proposition))
      (and normalized-payload
           normalized-proposition
@@ -143,10 +145,10 @@
 (define (normalize-proposition proposition)
   (match proposition
     [`(Implements ,type ,trait)
-     (define normalized (normalize-type type))
+     (define normalized (normalize-type/impl type))
      (and normalized `(Implements ,normalized ,trait))]
     [`(FieldType ,label ,type)
-     (define normalized (normalize-type type))
+     (define normalized (normalize-type/impl type))
      (and normalized `(FieldType ,label ,normalized))]
     [`(RequiresBoth ,left ,right)
      (if (symbol<? left right)
@@ -156,7 +158,7 @@
 
 ;; 正規化を通した型について type-equiv? と一致する内部専用の鍵。
 (define (canonical-type-key type)
-  (define normalized (normalize-type type))
+  (define normalized (normalize-type/impl type))
   (and normalized (canonical-key/normal normalized)))
 
 (define (canonical-key/normal type)
@@ -221,7 +223,7 @@
 
 ;; 型が正規形であるか。normalize-type が失敗する型は正規形でない。
 (define (type-normal? type)
-  (equal? (normalize-type type) type))
+  (equal? (normalize-type/impl type) type))
 
 (define (effect-equiv? left right)
   (match* (left right)
@@ -307,3 +309,17 @@
     ;; Future type-level computations remain opaque unless their syntax is
     ;; identical. G1 has no reducible type form beyond constructor specs.
     [(_ _) (equal? left right)]))
+
+;; POL-002/CMP-001: 正規化の冪等性。#f は正規化できない型の fail-closed 返却
+;; であり、検査で弾かない。
+(define (check-normalize-return args returns)
+  (match returns
+    [(list #f) #t]
+    [(list normalized)
+     (equal? (normalize-type/impl normalized) normalized)]
+    [_ #f]))
+
+(define normalize-type
+  (policy-wrap 'Normalization 'normalize-type
+               normalize-type/impl
+               check-normalize-return))
