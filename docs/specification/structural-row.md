@@ -214,6 +214,7 @@ compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
 record の sub は、sup が要求する field をすべて満たす限り余剰 field を持てる。
 この width subsumption によって型同値でない二つの record 型が互換になりうる。
 
+`imm` field は共変に再帰照合する。
 `mut` field は読みと書きの双方に使われるため、`mut` を要求する位置では field 型が `type-equiv?` で一致する場合だけ互換とする。
 `imm` を要求する位置には `mut` field を渡せる。 [REQ: ROW-005]
 書き込み能力を捨てる方向であり、その位置からは読み出しだけが可能なため、§3.5 の降格した field を構成できる。

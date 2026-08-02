@@ -276,9 +276,10 @@ elaboration と `⊢core` は、どちらも固定の Π0 から `candidateize` 
 Γ_pc⁰ の識別子は決定的なので、両経路は同じ候補文脈を再構成する。
 この共有により、elaboration が受理した義務は `⊢core` の再検査でも同じ結果になる。
 
-充足の証拠は artifact に保存しない。
+充足の証拠のうち、計算クラスと certificate は artifact に保存しない。
 `⊢core` は各義務位置で `⊢discharge` を再導出する。
 χ と Ωs は型検査器側の信頼環境であり、手書きの artifact は計算クラスや certificate を注入できない。
+選択した P だけは項へ載せる。搬送の規則は §6.3 が定める。
 
 ### 6.3 選択した Proof の搬送
 
@@ -287,9 +288,6 @@ G2g は搬送の入口 `discharge/proof` を足した。
 `discharge?` は受理判定の投影のまま残り、`discharge/proof` は受理判定、計算クラス、SearchResult の三つを返す。
 
 搬送する P の形と関門、および項側の `Discharge` は `proof-value.md` §6.4 が定める。
-充足の証拠のうち、計算クラスと certificate は artifact に保存しない。
-`⊢core` は各義務位置で `⊢discharge` を再導出する。
-χ と Ωs は型検査器側の信頼環境であり、手書きの artifact は計算クラスや certificate を注入できない。
 
 ## 7. 後続層との境界
 

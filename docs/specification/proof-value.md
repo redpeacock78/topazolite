@@ -495,7 +495,9 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 - **合成 trait の origin**：`Compose` の成分 origin は左右の intersect 行の順序を保持し、入れ子の成分へ再帰できる。
   入れ子の行は G2g が `trait.md` §4.3 として正典表へ加えた。
 - **Policy Narrative**：既存方針を包む Policy の origin と返却値検査は、`policy-narrative.md` §3 から §7 に従う。
-- **探索動力学**：探索計算、`⇓class`、certificate、termination Proof、priority、provenance の実体化は探索の後続層で扱う。
+- **探索動力学**：探索計算、`⇓class`、certificate、termination Proof、priority は探索の後続層で扱う。
+  選択した候補の provenance の搬送は §6.4 が回収した。
+  搬送した P を消費する下流処理は Phase 1 以降で扱う。
 - **局所 Proof 束縛**：merge 位置を越えた witness の保存、scope 付き照合、位置依存文脈の `compat?` への供給と併せて後続層で扱う。
 - **多相 primitive**：型変数と型 scheme を導入する Phase 1 以降で扱う。
 - **文脈付き安全型とユーザー validator**：`Safe<T, Context>` とユーザー定義 validator は Phase 1 以降で扱う。
