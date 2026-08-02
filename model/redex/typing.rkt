@@ -186,8 +186,8 @@
 (define (join-types left right)
   (normalize-type `(Union ,left ,right)))
 
-;; CMP-001/ROW-004: 同じ label と可変性を持つ field を合わせる。
-;; 異型を join できるのは imm だけであり、異型 mut と可変性不一致は落とす。
+;; CMP-001/ROW-005: 同じ label を持つ field を合わせる。
+;; 異型があれば mut を imm へ降格したうえで Union join する。
 (define (merge-field left right)
   (merge-fields (list left right)))
 
@@ -232,52 +232,65 @@
 (define (merge-fields fields)
   (define first-field (first fields))
   (define label (first first-field))
-  (define mutability (third first-field))
+  ;; 全枝が mut のときにだけ mut を保つ。1 枝でも imm なら、書き込みが
+  ;; imm 枝の不変性を破りうるため imm へ落とす。
+  (define all-mutable?
+    (for/and ([field (in-list fields)]) (eq? (third field) 'mut)))
   (define types (distinct-normal-types (map second fields)))
   (and
    (for/and ([field (in-list fields)])
-     (and (eq? (first field) label)
-          (eq? (third field) mutability)))
+     (eq? (first field) label))
    types
    (cond
      [(null? (rest types))
-      (list label (first types) mutability)]
-     [(eq? mutability 'imm)
+      (list label (first types) (if all-mutable? 'mut 'imm))]
+     ;; 異型は可変性によらず imm へ降格して join する。降格後は read-only で
+     ;; あり、join 型の値を書き戻して枝の型を破る経路が無い。
+     [else
       (define joined
         (for/fold ([joined (first types)])
                   ([type (in-list (rest types))])
           (join-types joined type)))
-      (and joined (list label joined 'imm))]
-     ;; #f は merge 全体の失敗ではなく、この field の脱落を表す。
-     [else #f])))
+      (and joined (list label joined 'imm))])))
 
+;; ROW-005: 返り値は 3 状態である。field 行なら合流成功、'absent は「どれかの
+;; branch にこの field が無い」正常な脱落、#f は正規化または join の失敗であり
+;; merge 全体の fail-closed へ伝播する。
+;; 両者を #f で兼ねると、失敗が脱落として黙って握り潰される。
 (define (merge-common-field types first-field)
   (define label (first first-field))
   (define fields
     (for/list ([type (in-list types)])
       (assoc label (second type))))
-  (and (andmap values fields)
-       (merge-fields fields)))
+  (if (andmap values fields)
+      (merge-fields fields)
+      'absent))
 
-;; RFN-002/CMP-001: 全 branch に常在する field を合わせる。異型 imm は Union
-;; join し、異型 mut と可変性不一致は field 単位で落とす。
+;; RFN-002/CMP-001/ROW-005: 全 branch に常在する field を合わせる。異型は imm
+;; へ降格して Union join する。どれかの branch に無い field だけが落ちる。
 ;; types は空でないことを呼び出し側が保証する。
 (define (merge-record-types/impl types)
-  (define merged-row
-    (filter-map
-     (lambda (field) (merge-common-field types field))
-     (second (first types))))
-  (define merged-type (normalize-type `(Record ,merged-row)))
-  (if merged-type
-      (values merged-type
-              (merge-witness-context types (second merged-type)))
-      (values #f '())))
+  (define merged-fields
+    (for/list ([field (in-list (second (first types)))])
+      (merge-common-field types field)))
+  (cond
+    [(memq #f merged-fields) (values #f '())]
+    [else
+     (define merged-row
+       (filter (lambda (field) (not (eq? field 'absent))) merged-fields))
+     (define merged-type (normalize-type `(Record ,merged-row)))
+     (if merged-type
+         (values merged-type
+                 (merge-witness-context types (second merged-type)))
+         (values #f '()))]))
 
 ;; POL-002/ROW-004: 合流 row の label は一意で昇順、witness 列は wf-context? を
 ;; 満たし束縛名が重複しない。#f だけが fail-closed 返却である。(Record ()) は
 ;; 共通 field が残らない正常な合流であり、成功返却として不変条件を適用する。
 ;; 両者を同じ形と見なすと、正規化失敗が「空 row の合流に成功した」として素通り
 ;; する。
+;; ROW-005 以降、#f は merge-common-field から伝播した正規化・join の失敗と、
+;; 合流 row 自身の正規化失敗の 2 経路で立つ。
 (define (check-merge-return args returns)
   (match returns
     [(list #f '()) #t]

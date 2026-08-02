@@ -226,15 +226,15 @@
              attempts (unbox multi-branch-count) (unbox nontrivial-count)
              (bounds-seed limits)))))
 
-(test-case "CMP-001: 性質6 imm は join し、mut と可変性不一致は脱落する"
+(test-case "CMP-001: 性質6 join は可変性によらず imm へ降格する"
   (call-with-search-seed
    limits
    (lambda ()
      (define imm-joined-count (box 0))
-     (define mut-dropped-count (box 0))
+     (define mut-joined-count (box 0))
      (for ([_i (in-range attempts)])
-       ;; properties-refine-test.rkt の dropped は欠落・可変性不一致・異型 mut を
-       ;; 混ぜる。ここでは同じ label と異なる型を必ず置き、原因を分離する。
+       ;; properties-refine-test.rkt の dropped は欠落を含む。ここでは同じ label
+       ;; と異なる型を必ず置き、可変性によらず join する経路を分離する。
        (define left (pick-one field-types))
        (define right (pick-one (remove left field-types)))
        (define mutability (pick-one '(imm mut)))
@@ -254,19 +254,23 @@
             (set-box! imm-joined-count
                       (add1 (unbox imm-joined-count))))]
          [(mut)
-          (check-equal? merged '(Record ()))
-          (check-equal? witnesses '())
-          (when (equal? merged '(Record ()))
-            (set-box! mut-dropped-count
-                      (add1 (unbox mut-dropped-count))))])
+          (define expected
+            `(Record ((a ,(normalize-type `(Union ,left ,right)) imm))))
+          (check-equal? merged expected)
+          (check-true (pair? witnesses))
+          (when (equal? merged expected)
+            (set-box! mut-joined-count
+                      (add1 (unbox mut-joined-count))))])
        (define-values (mismatched mismatch-witnesses)
          (merge-record-types
           (list `(Record ((a ,left imm)))
                 `(Record ((a ,right mut))))))
-       (check-equal? mismatched '(Record ()))
-       (check-equal? mismatch-witnesses '()))
+       (define expected-mismatch
+         `(Record ((a ,(normalize-type `(Union ,left ,right)) imm))))
+       (check-equal? mismatched expected-mismatch)
+       (check-true (pair? mismatch-witnesses)))
      (check-true (positive? (unbox imm-joined-count)))
-     (check-true (positive? (unbox mut-dropped-count)))
-     (printf "性質6: attempts=~a imm-joined=~a mut-dropped=~a seed=~a\n"
-             attempts (unbox imm-joined-count) (unbox mut-dropped-count)
+     (check-true (positive? (unbox mut-joined-count)))
+     (printf "性質6: attempts=~a imm-joined=~a mut-joined=~a seed=~a\n"
+             attempts (unbox imm-joined-count) (unbox mut-joined-count)
              (bounds-seed limits)))))

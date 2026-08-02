@@ -153,13 +153,13 @@
     (check-true (wf-context? witnesses))))
 
 (test-case "RowPolicy: 空 row の合流は fail-closed ではない"
-  ;; typing-join-test.rkt の mutable 衝突と同じ形。(Record ()) は成功返却で
-  ;; あり、検査述語は不変条件を実際に適用する。
+  ;; 共通 label を持たない枝の合流。(Record ()) は成功返却であり、検査述語は
+  ;; 不変条件を実際に適用する。
   (define applied (box 0))
   (let-values ([(merged witnesses)
                 (merge-record-types
-                 (list '(Record ((a Int mut)))
-                       '(Record ((a String mut)))))])
+                 (list '(Record ((a Int imm)))
+                       '(Record ((b String imm)))))])
     (check-equal? merged '(Record ()))
     (check-equal? witnesses '())
     (when (equal? merged '(Record ())) (set-box! applied (add1 (unbox applied)))))
@@ -273,24 +273,19 @@
                                               (Record ((a Bool imm))))))
   (check-false (normalize-type '(Intersection Int String))))
 
-(test-case "POL-002: 正規化できない field 型は field 脱落として合流に成功する"
-  ;; 現行の挙動を固定する検査であり、意図した最終仕様ではない。
-  ;; merge-fields は distinct-normal-types が #f を返したとき、その field を
-  ;; 落として合流を続ける。正規化の失敗と可変性の不一致を同じ #f で表すため、
-  ;; 正規化できない field 型は「共通 field が残らない合流の成功」になる。
-  ;; ROW-004 側の意味の問題であり、G2f では挙動を変えない。回収しない範囲として
-  ;; Task 16 の policy-narrative.md へ書く。
+(test-case "POL-002: 正規化できない field 型は合流全体を失敗させる"
+  ;; 正規化の失敗は field の脱落ではなく、merge 全体の fail-closed である。
   (define-values (merged witnesses)
     (merge-record-types (list '(Record ((a (Intersection Int String) imm))))))
-  (check-equal? merged '(Record ()))
+  (check-false merged)
   (check-equal? witnesses '()))
 
 (test-case "POL-002: 空 row の合流は fail-closed 扱いされない"
-  ;; typing-join-test.rkt の mutable 衝突と同じ形。(Record ()) は成功返却で
-  ;; あり、検査述語は不変条件を実際に適用する。
+  ;; 共通 label を持たない枝の合流。(Record ()) は成功返却であり、検査述語は
+  ;; 不変条件を実際に適用する。
   (define-values (merged witnesses)
-    (merge-record-types (list '(Record ((a Int mut)))
-                              '(Record ((a Bool mut))))))
+    (merge-record-types (list '(Record ((a Int imm)))
+                              '(Record ((b Bool imm))))))
   (check-equal? merged '(Record ()))
   (check-equal? witnesses '()))
 

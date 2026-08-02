@@ -4,6 +4,7 @@
 (define left '(Record ((a Int imm) (b String imm))))
 (define right '(Record ((a Int imm) (c Bool imm))))
 (define mutability-clash '(Record ((a Int mut))))
+(define disjoint '(Record ((z Int imm))))
 
 ;; RFN-002: merge は共通の field だけを残し、残った field ごとに常在性
 ;; witness を立てる。
@@ -18,9 +19,17 @@
   ;; W は候補文脈として整合である。
   (check-true (wf-context? witnesses)))
 
-;; 交差が空なら W も空である。
+;; 可変性が食い違う field は落ちず、imm へ降格して残る。
 (let-values ([(merged witnesses)
               (merge-record-types (list left mutability-clash))])
+  (check-equal? merged '(Record ((a Int imm))))
+  (check-equal? (map (lambda (binding) (entry-phi (second binding)))
+                     witnesses)
+                '((Presence a))))
+
+;; 交差が空なら W も空である。共通 label を持たない枝で観測する。
+(let-values ([(merged witnesses)
+              (merge-record-types (list left disjoint))])
   (check-equal? merged '(Record ()))
   (check-equal? witnesses '()))
 

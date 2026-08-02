@@ -12,14 +12,14 @@
   '() '())
  '((Record ((a Int imm))) ()))
 
-; 可変性が食い違う共通ラベルは残さない
+; 可変性が食い違う共通ラベルは結果が imm へ降格するため、mut 枝の書き込みは拒否
 (check-equal?
  (core-type-of
   '(Eliminate (Construct Bool true)
      ((true () -> (Rec ((a imm 1))))
       (false () -> (Rec ((a mut 2))))))
   '() '())
- '((Record ()) ()))
+ 'ill-typed)
 
 ; Never 枝の吸収: 一方が Perform で Never を synth（typing.rkt:369 で (Never …)）、
 ; 他方が record。Never 枝は交差から除外され、残る record 枝の型がそのまま result-type になる。

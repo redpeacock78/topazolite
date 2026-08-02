@@ -171,25 +171,19 @@
        (cond
          [(not (andmap values fields)) '()]
          [else
-          (define first-field (first fields))
-          (define mutability (third first-field))
-          (define same-mutability?
-            (for/and ([field (in-list (rest fields))])
-              (eq? (third field) mutability)))
           (define normalized-types
             (map normalize-type (map second fields)))
           (define distinct-types
             (and (andmap values normalized-types)
                  (sort-then-dedup normalized-types)))
           (cond
-            [(or (not same-mutability?) (not distinct-types)) '()]
+            [(not distinct-types) '()]
             [(null? (rest distinct-types))
              (list `(Presence ,label))]
-            [(eq? mutability 'imm)
+            [else
              (cons `(Presence ,label)
                    (for/list ([type (in-list distinct-types)])
-                     `(FieldType ,label ,type)))]
-            [else '()])]))
+                     `(FieldType ,label ,type)))])]))
      (define issued-count (box 0))
      (define dropped-count (box 0))
      (for ([_i (in-range attempts)])

@@ -24,17 +24,24 @@
                '(Record ((z Int imm) (a Int imm))))
    '(Record ((a Int imm) (z Int imm)))))
 
-(test-case "merge-field joins only immutable field types"
+(test-case "ROW-005: merge-field は異型を imm へ降格して join する"
   (check-equal?
    (merge-field '(a Int imm) '(a String imm))
    `(a ,joined-type imm))
   (check-equal?
    (merge-field '(a Int mut) '(a Int mut))
    '(a Int mut))
-  (check-false
-   (merge-field '(a Int mut) '(a String mut)))
-  (check-false
-   (merge-field '(a Int imm) '(a String mut))))
+  ;; 異型 mut は落とさず、imm へ降格して join する。
+  (check-equal?
+   (merge-field '(a Int mut) '(a String mut))
+   `(a ,joined-type imm))
+  ;; 可変性が食い違えば、同型でも imm になる。
+  (check-equal?
+   (merge-field '(a Int imm) '(a Int mut))
+   '(a Int imm))
+  (check-equal?
+   (merge-field '(a Int imm) '(a String mut))
+   `(a ,joined-type imm)))
 
 (test-case "merge joins colliding immutable fields and emits local witnesses"
   (let-values ([(merged witnesses)
@@ -49,19 +56,23 @@
     (check-false (check-duplicates (map car witnesses)))
     (check-true (wf-context? witnesses))))
 
-(test-case "merge drops mutable conflicts and mutability mismatches"
+(test-case "ROW-005: 異型 mut と可変性不一致は降格して残る"
   (let-values ([(merged witnesses)
                 (merge-record-types
                  (list '(Record ((a Int mut)))
                        '(Record ((a String mut)))))])
-    (check-equal? merged '(Record ()))
-    (check-equal? witnesses '()))
+    (check-equal? merged `(Record ((a ,joined-type imm))))
+    (check-equal? (witness-propositions witnesses)
+                  '((Presence a)
+                    (FieldType a Int)
+                    (FieldType a String))))
   (let-values ([(merged witnesses)
                 (merge-record-types
                  (list '(Record ((a Int imm)))
                        '(Record ((a Int mut)))))])
-    (check-equal? merged '(Record ()))
-    (check-equal? witnesses '())))
+    (check-equal? merged '(Record ((a Int imm))))
+    (check-equal? (witness-propositions witnesses)
+                  '((Presence a)))))
 
 (test-case "merge keeps equivalent mutable fields"
   (let-values ([(merged witnesses)
@@ -126,3 +137,13 @@
 (test-case "witness binding names follow the declared scheme"
   (check-equal? (presence-binding-name 'a) 'presence-a)
   (check-equal? (field-type-binding-name 'a 0) 'field-type-a-0))
+
+(test-case "ROW-005: join できない field は merge 全体を fail-closed にする"
+  ;; (Intersection Int Bool) は Record でない交差であり normalize-type が #f を
+  ;; 返す。脱落ではなく失敗であることを、返り値の形で観測する。
+  (let-values ([(merged witnesses)
+                (merge-record-types
+                 (list '(Record ((a (Intersection Int Bool) imm)))
+                       '(Record ((a Int imm)))))])
+    (check-false merged)
+    (check-equal? witnesses '())))
