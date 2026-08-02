@@ -150,6 +150,17 @@ TypeInfo の kind application は飽和または明示的型関数でなけれ�
 
 mutable field は代入安全性を守るため既定で不変として扱う。
 
+### ROW-005
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/structural-row.md`）
+- **正典**：`docs/specification/structural-row.md` §3.5
+
+同名 field の可変性が合流の両辺で異なる場合、結果の field は不変とする。
+可変のまま合流すると、片方の辺の代入がもう片方の辺の型を破る。
+両辺の型は Union で合流する。
+片方にしか無い field は結果から落とす。
+
 ### VAR-001
 
 - **状態**：G2
@@ -241,6 +252,25 @@ trait requirement の shape 一致だけでは Implements Proof を生成して�
 正典表に対応する intersect 行がある `RequiresBoth` は、明示的な Apply なしに充足できなければならない。
 行が無い組を充足してはならない。
 
+### TRT-006
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/trait.md`）
+- **正典**：`docs/specification/trait.md` §4.3
+
+intersect 行の成分は、それ自身が合成 trait であってよい。
+入れ子の合成候補は、成分の候補から再帰的に導く。
+成分の間に循環がある表を受理してはならない。
+
+### TRT-007
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/trait.md`）
+- **正典**：`docs/specification/trait.md` §4.4
+
+intersect 行の出力 trait に対する直接の impl 行を、正典表に置いてはならない。
+合成 trait への所属は、成分からの導出だけを根拠とする。
+
 ### CMP-001
 
 - **状態**：G2
@@ -262,6 +292,16 @@ recursive Union の opaque identity は Phase 1 以降で扱う。
 行が衝突する Intersection は型として成立しない。
 ホワイトペーパー §4.5.3 の構造 row 合成を根拠とする。
 trait の Intersection は Proof-bearing trait composition として TRT 群が扱い、この規則の対象外とする。
+
+### COH-001
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/trait.md`）
+- **正典**：`docs/specification/trait.md` §6.3
+
+scope は親子の系譜を成し、根はただ一つとする。
+scope の可視性は、現在の系譜のいずれかの要素から祖先へ到達できることで決まる。
+合成候補は、成分と出力 trait の生成 scope がいずれも可視であるときにだけ立てる。
 
 ### PSR-001
 
@@ -335,6 +375,16 @@ Unknown Proof は definitional equality の自動正規化に使用しない。
 - **由来**：ホワイトペーパー §15
 
 Proof term は既定で型同一性に対して irrelevant とし、provenance / capability identity は relevant とする。
+
+### PRF-004
+
+- **状態**：G2
+- **由来**：新規（`docs/specification/proof-value.md`）
+- **正典**：`docs/specification/proof-value.md` §6.4
+
+義務を伴う適用を elaboration するとき、探索が選択した Proof を成果物へ搬送しなければならない。
+搬送する Proof は、義務の並びと同じ順序で項に載せる。
+搬送された Proof は、型に影響を与えず、δ 簡約で消える。
 
 ### REC-001
 

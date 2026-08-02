@@ -148,7 +148,12 @@
                project-goal/impl
                check-project-goal-return))
 
-(define (scope-visible? sid sc-ctx) (and (member sid sc-ctx) #t))
+;; COH-001: scope の可視性は祖先到達で決まる。sc-ctx のいずれかの要素に
+;; ついて、sid がその要素自身か祖先であるとき可視である。方向を逆に取ると
+;; (root) から子 scope の宣言が見えてしまうため、この向きに固定する。
+(define (scope-visible? sid sc-ctx)
+  (for/or ([s (in-list sc-ctx)])
+    (and (member sid (scope-ancestors s)) #t)))
 
 ;; cand = (Candidate (ProofRep O φ) cid sid pid hook)
 (define (candidate-proof c)  (second c))

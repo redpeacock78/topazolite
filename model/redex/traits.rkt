@@ -32,6 +32,9 @@
          intersect-row-by-oid
          intersect-row-by-name
          intersect-acyclic?
+         scope-parent-table
+         scope-ancestors
+         scope-genealogy-ok?
          instantiate-requirements
          trait-primitive-name?
          trait-primitive-names)
@@ -79,6 +82,14 @@
         (list 'o-intersect-print-tag 'intersect-printable-taggable
               'Printable 'Taggable 'PrintableTaggable)))
 
+;; COH-001: scope の系譜。package と module の入れ子を親子で表す。
+;; 可視性（search.rkt の scope-visible?）はこの表の祖先到達で決まる。
+;; 各行は (sid parent) であり、親を持たない scope は #f を置く。
+(define scope-parent-table
+  '((root #f)
+    (s-kernel root)
+    (s-user root)))
+
 (define (trait-origin row) (first row))
 (define (trait-name row) (second row))
 (define (trait-scope row) (third row))
@@ -111,6 +122,71 @@
   (findf (lambda (row) (eq? (intersect-oid row) origin)) intersect-table))
 (define (intersect-row-by-name name)
   (findf (lambda (row) (eq? (intersect-name row) name)) intersect-table))
+
+;; COH-001: 自身を含む祖先の列。表に無い scope 識別子は親を持たないものと
+;; して扱い、自身だけの列を返す。sid と sc-ctx は呼び出し側が組み立てる
+;; 引数であり、表に無い識別子が渡り得る。
+(define (scope-parent-row row) (first row))
+(define (scope-parent-of row) (second row))
+
+(define (scope-ancestors sid [rows scope-parent-table])
+  (let loop ([sid sid] [seen '()])
+    (cond
+      [(memq sid seen) (reverse seen)]
+      [else
+       (define row
+         (findf (lambda (r) (eq? (scope-parent-row r) sid)) rows))
+       (define parent (and row (scope-parent-of row)))
+       (if parent
+           (loop parent (cons sid seen))
+           (reverse (cons sid seen)))])))
+
+;; COH-001: 系譜表の内部整合と、trait 行・impl 行の scope が表に載っている
+;; ことを見る。表を引数に取るのは拒否の経路をテストから実行するためであり、
+;; intersect-acyclic? と同じ形である。
+(define (scope-genealogy-ok? [scope-rows scope-parent-table]
+                             [trait-rows trait-table]
+                             [impl-rows impl-table])
+  (define shape-ok?
+    (and (list? scope-rows)
+         (for/and ([row (in-list scope-rows)])
+           (and (list? row)
+                (= (length row) 2)
+                (symbol? (first row))
+                (let ([parent (second row)])
+                  (or (not parent) (symbol? parent)))))))
+  (if (not shape-ok?)
+      #f
+      (let* ([sids (map scope-parent-row scope-rows)]
+             [declared? (lambda (sid) (and (memq sid sids) #t))]
+             [roots
+              (filter (lambda (row) (not (scope-parent-of row)))
+                      scope-rows)])
+        (define (acyclic? row)
+          (let descend ([sid (scope-parent-row row)] [path '()])
+            (cond
+              [(memq sid path) #f]
+              [else
+               (define next
+                 (findf (lambda (r)
+                          (eq? (scope-parent-row r) sid))
+                        scope-rows))
+               (define parent
+                 (and next (scope-parent-of next)))
+               (if parent
+                   (descend parent (cons sid path))
+                   #t)])))
+        (and
+         (for/and ([row (in-list scope-rows)])
+           (define parent (scope-parent-of row))
+           (or (not parent) (declared? parent)))
+         (= (length sids) (length (remove-duplicates sids)))
+         (= (length roots) 1)
+         (for/and ([row (in-list scope-rows)]) (acyclic? row))
+         (for/and ([row (in-list trait-rows)])
+           (declared? (trait-scope row)))
+         (for/and ([row (in-list impl-rows)])
+           (declared? (impl-target-scope row)))))))
 
 ;; template 中の Self を型で置き換え、具体的な requirement 行を得る。
 (define (instantiate-requirements template type)
@@ -284,6 +360,9 @@
              (intersect-name row))))
 
   (unless (intersect-acyclic?)
-    (error 'traits "intersect rows form a cycle in the trait name graph")))
+    (error 'traits "intersect rows form a cycle in the trait name graph"))
+
+  (unless (scope-genealogy-ok?)
+    (error 'traits "scope parent table is malformed")))
 
 (check-tables!)
