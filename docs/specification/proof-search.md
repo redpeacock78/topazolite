@@ -280,13 +280,16 @@ elaboration と `⊢core` は、どちらも固定の Π0 から `candidateize` 
 `⊢core` は各義務位置で `⊢discharge` を再導出する。
 χ と Ωs は型検査器側の信頼環境であり、手書きの artifact は計算クラスや certificate を注入できない。
 
-### 6.3 Proof の非実体化
+### 6.3 選択した Proof の搬送
 
-G2b は義務を受理できるかだけを判定し、選択した P を Typed Core の項へ埋め込まない。
-G2b の下流には候補の provenance や capability identity を利用する処理がないため、この範囲では P の搬送経路を要しない。
+G2b は義務を受理できるかだけを判定し、選択した P を Typed Core の項へ埋め込まなかった。
+G2g は搬送の入口 `discharge/proof` を足した。
+`discharge?` は受理判定の投影のまま残り、`discharge/proof` は受理判定、計算クラス、SearchResult の三つを返す。
 
-Proof term の provenance は PRF-003 により relevant である。
-したがって、候補の provenance を下流で利用する処理を導入するときは、選択した P を artifact または項へ搬送する経路を別に定めなければならない。
+搬送する P の形と関門、および項側の `Discharge` は `proof-value.md` §6.4 が定める。
+充足の証拠のうち、計算クラスと certificate は artifact に保存しない。
+`⊢core` は各義務位置で `⊢discharge` を再導出する。
+χ と Ωs は型検査器側の信頼環境であり、手書きの artifact は計算クラスや certificate を注入できない。
 
 ## 7. 後続層との境界
 
@@ -296,14 +299,14 @@ G2b は暗黙 Proof 探索の静的な骨格に範囲を限る。
 - trait 型と `impl` または `derive` を使う暗黙 trait resolution、`RequiresBoth` の implicit discharge、合成 trait の候補生成は、G2e と G2f が `trait.md` §6 として導入した。
   合成 `Implements` の Proof 値を生成して項へ渡す primitive は未回収である。
 - 合成候補の origin は intersect 行の左右順を保持する。
-  `proof-issuer-ok?` は成分 origin へ再帰できるが、正典表に合成 trait を成分とする行がないため、入れ子の経路は fixture で未到達である。
+  合成 trait を成分とする行は G2g が `trait.md` §4.3 として正典表へ加えた。
 - trait origin と `impl` または `derive` Proof を含む候補同一性は、G2e が `trait.md` §6.1、§6.2 として導入した。
 - **異種命題の候補文脈**：カーネル命題の範囲は G2d が `proof-value.md` §6.3 として回収し、goal ごとの候補抽出と候補文脈全体の well-formedness を分けた。
   trait 由来の候補同一性は G2e が `trait.md` §6.2 として導入した。
 - 局所 Proof 束縛による候補文脈の成長と scope ごとの統合性質。
 - 実際の探索計算、その `⇓class` 導出、Productive の SR と certificate の構築。
 - Unknown を有限化する探索境界と termination Proof。
-- priority による候補の勝者選択。
-- 選択した候補の provenance の実体化と下流利用。
+- priority による候補の勝者選択と `pid` の下流利用。
+  選択した候補の provenance の搬送は G2g が `proof-value.md` §6.4 として回収した。
 
 これらを導入するまでは、複数の候補を保守的に `Ambiguous` とし、G2b の簡約関係と評価文脈を変更しない。

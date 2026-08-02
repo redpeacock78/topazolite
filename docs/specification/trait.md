@@ -173,14 +173,21 @@ G2f の正典表は、次の七行を持つ。
 逆順の入力は命題の正準化で同じ対へ写す。
 両辺の requirement template は衝突なく合成でき、その結果が `tn_out` の template と一致しなければならない。
 
-G2f の正典表は、次の二行を持つ。
+G2g の正典表は、次の四行を持つ。
 
 ```text
 (o-intersect-print-size intersect-printable-sizable
  Printable Sizable PrintableSizable)
 (o-intersect-print-tag intersect-printable-taggable
  Printable Taggable PrintableTaggable)
+(o-intersect-size-tag intersect-sizable-taggable
+ Sizable Taggable SizableTaggable)
+(o-intersect-print-size-tag intersect-printable-sizable-taggable
+ PrintableSizable Taggable PrintableSizableTaggable)
 ```
+
+`tn_left` と `tn_right` は合成 trait でもよい。 [REQ: TRT-006]
+成分が合成 trait である行の候補は、成分側の合成候補を成分として持ち、その origin は `Compose` の入れ子になる。
 
 ### 4.4 読み込み時検査と環境の導出
 
@@ -188,6 +195,8 @@ G2f の正典表は、次の二行を持つ。
 各行が参照する trait の存在、template の label 一意性、`Self` の出現位置、具体化後の型の整形式性と正規性も検査する。
 合成行については、trait 名の順序、row 合成の成功、出力 template との一致を検査する。
 intersect 行の trait 名は symbol 順でなければならず、`intersect-acyclic?` が trait 名の依存グラフの非巡回性を検査する。
+`impl` 行と `derive` 行の対象 trait は、`intersect-table` のどの出力 trait でもあってはならない。 [REQ: TRT-007]
+合成 trait への直接実装を許すと、同じ goal に表由来の直接候補と合成候補が並び、`Ambiguous` になるためである。
 R0 と Γ0 へ追加した後に、既存 kernel 行との key 衝突も検査する。
 
 各 trait 行から、次の Γ0 定数を導く。
@@ -292,7 +301,9 @@ priority による勝者選択は行わない。
 
 entry の sid は global 可視性のため `root` とする。
 これとは別に、`project-goal` は trait の `sid_trait` または対象型の `sid_target` が現在の `sc-ctx` から可視であることを要求する。
-この条件は、ホワイトペーパー §8.1 の package または module の系譜を既存の scope 識別子で近似する。
+可視性は scope の系譜で決める。 [REQ: COH-001]
+`sc-ctx` に並ぶいずれかの scope から親を辿って到達できる scope を可視とする。
+この系譜は、ホワイトペーパー §8.1 の package または module の入れ子を既存の scope 識別子で近似する。
 
 `sc-ctx` は `project-goal`、`wf-candidate?`、`wf-Σ?`、`admissible?` へ同じ値を渡す。
 production の `obligations-dischargeable?` は `root` を使うため、production で暗黙利用する表の行は trait または対象型の少なくとも一方が `root` に属さなければならない。
@@ -301,6 +312,7 @@ production の `obligations-dischargeable?` は `root` を使うため、product
 合成候補は、出力 trait の生成 scope が可視であり、かつ左右の成分候補がともに coherent である場合だけ残す。
 合成 trait は名前で呼べなければ立てる意味がないため、出力 trait の生成 scope を可視にする。
 成分の所属が見えない場合は合成の所属も見えないため、左右の成分候補をともに coherent とする。
+出力 trait の生成 scope が不可視なら、成分がともに coherent でも合成候補を立てない。 [REQ: COH-001]
 
 ### 6.4 計算分類
 
@@ -381,6 +393,9 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 | TRT-003 | §6.1 初期候補、§6.2 候補同一性、§6.3 coherence |
 | TRT-004 | §6.5 合成 trait への所属 |
 | TRT-005 | §6.6 `RequiresBoth` の暗黙充足 |
+| TRT-006 | §4.3 合成 trait を成分とする intersect 行、§4.4 非巡回性検査 |
+| TRT-007 | §4.4 合成 trait への直接 impl の禁止 |
+| COH-001 | §6.3 scope 系譜による可視性、合成候補の出力 scope 検査 |
 | CMP-001 | §3.2 Union の正規形、§7.1 `imm` field の join |
 | CMP-002 | §3.3 構造型の Intersection |
 
@@ -392,25 +407,35 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **合成 Proof 値と primitive**：G2f は合成候補の静的な `ProofRep` を検証するが、それを生成して引数へ渡す primitive は導入しない。
   現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
-- **合成候補の入れ子**：`proof-issuer-ok?` は成分 origin へ再帰するが、正典表には合成 trait を別の intersect 行の成分にする行がない。
-  したがって入れ子の再帰は fixture で未到達であり、行を増やして検査することも G2f の範囲に含めない。
 - **合成成分の順序**：`Compose` の左右成分は intersect 行の順序へ固定され、入れ替えた origin は拒否される。
   `RequiresBoth` の命題順の正準化は、この origin step の順序を変更しない。
-- **合成候補と直接実装の優先順位**：`project-goal` は表由来の直接候補と合成候補を並べるだけで、どちらかを優先しない。
-  合成 trait の直接 impl 行を追加すると同じ goal が `Ambiguous` になるため、優先順位は候補順ではなく正典表の設計で定める必要がある。
-- **合成候補の出力 scope 検査**：合成候補は出力 trait の生成 scope が可視であることも要求する。
-  現在の正典表では合成 trait の `PrintableSizable` と `PrintableTaggable` がともに `root` scope であるため、この条件が偽になる fixture はなく、実際に観測しているのは成分側の coherence 条件だけである。
-- **異型 mut field の Union 方針**：G2e の merge は、異なる型を持つ `mut` field を合流 row から落とす。
-  これは ROW-004 の不変性を守るための実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
+- **異型 mut field の Union 方針**：G2g の merge は、異なる型を持つ `mut` field を `imm` へ降格したうえで Union join する。
+  降格の理由は代入安全性であり、join 型の field へ書き込める規則を与えられないためである。
+  これはホワイトペーパー §4.5.3 が求める、可変性を保ったまま join する規則を回収したことを意味しない。
   この未回収範囲では、ホワイトペーパー §4.5.3 の Union 方針を正典として残す。
-- **merge の失敗と field 脱落の区別**：`merge-fields` の field 単位の `#f` は、可変性不一致と field 型の正規化失敗を同じ脱落として扱う。
-  `merge-record-types` の `(values #f '())` は well-formed な入力では到達しないため、返却値検査の該当節は防御的である。
+  可変性を保つ join は、借用と代入を同時に規定できる G5 へ送る。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
-  この操作には、merge の動的意味論と Preservation の値レベルでの改訂が要る。
+  この操作は Phase 1 以降へ送る。
+  witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
+  Union 値に runtime tag が無い以上、eliminator を足すと Preservation が破れる。
+  次の三案は採らなかった。
+  branch 添字を持つ witness は、witness の意味を存在言明から位置情報へ変え、merge の局所検査を通らなくなる。
+  `(Refined τ_union (FieldType label τ))` による絞り込みは、`Refined` のペイロードが validate 由来であるという RFN-001 の前提を崩す。
+  `Eliminate` の分岐を Union へ拡張する案は、branch を判別する runtime tag を値側へ導入することと同じであり、Phase 0 の値集合を越える。
+- **合成 Proof 値の入れ子と直接実装**：合成 trait を成分とする intersect 行と、合成 trait への直接 impl の禁止は、G2g が §4.3 と §4.4 として回収した。
+  合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
   正規化分類と opaque identity は Phase 1 以降へ送る。
 - **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
 - **三項以上の trait 合成**：`intersect-table` は二項の合成だけを持つ。
 - **package と module の coherence**：G2e は既存の scope 識別子で系譜を近似し、production の入口を `root` に固定する。
-- **priority と provenance の下流利用**：候補の `pid` は既定値のままにし、選択した Proof を artifact へ搬送しない。
+- **typing 経路の scope 文脈**：`obligations-dischargeable?` は `sc-ctx` を引数に取らず、`discharge?` の既定値 `(root)` を使う。
+  typing と elaborate の判断は、いずれもこの経路を通る。
+  したがって現在の模型では、`root` から不可視な scope を要する義務は、探索としては解けても typing としては解けない。
+  G2g はこの差を埋めない。埋めるには typing 判断そのものが scope 文脈を運ぶ必要があり、`Γ` の形を変える改訂になるためである。
+  これはホワイトペーパー §17.6 の「global implicit `impl` は trait または target type の少なくとも一方が現在の package / module 系譜で生成されていることを要求する」を、typing 側でも回収したことを意味しない。
+  typing への scope 文脈の搬送は Phase 1 以降へ送る。
+- **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
+  選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
+  搬送した Proof を消費する下流処理は、Phase 1 以降で扱う。

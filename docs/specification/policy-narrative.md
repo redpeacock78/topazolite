@@ -133,12 +133,12 @@ G2f は Policy の差し替え API を導入しない。
 G2f の VariancePolicy は同値な二型の互換だけを検査する。
 ホワイトペーパーの変性規則全体を回収済みとは記録しない。
 
-RowPolicy の `merge-fields` は、field 単位の `#f` をその field の脱落として扱う。
-この `#f` は可変性不一致と field 型の正規化失敗の両方から生じるため、現状は両者を区別しない。
-その結果、正規化できない field 型を持つ合流は、共通 field が残らない合流として成功する。
+RowPolicy の `merge-fields` が field 単位の `#f` に脱落と正規化失敗の二役を負わせていた状態は、G2g の ROW-005 が解消した。
+脱落は `'absent`、正規化と join の失敗は `#f` であり、後者は合流全体を `(values #f '())` へ落とす。
+可変性の不一致も脱落ではなくなり、`imm` へ降格したうえで Union join する。
 
-`merge-record-types` が `(values #f '())` を返す経路は、well-formed な入力では到達しない。
-`check-merge-return` の `#f` 節は防御的に残してあり、検査全体が空なのではなく、この節だけが空である。
+`merge-record-types` が `(values #f '())` を返す経路は、正規化できない field 型を持つ入力で到達する。
+`check-merge-return` の `#f` 節は、その経路が返す空の witness 列を検査する。
 label が重複する入力では witness 名の重複検査が失敗するため、RowPolicy の検査は実際に働く。
 
 合成 Proof を値として生成する primitive は G2f に含めない。

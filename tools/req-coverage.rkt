@@ -255,6 +255,10 @@
 (define expected-g2f-ids
   '(POL-001 POL-002 TRT-004 TRT-005))
 
+;; Update this only when the G2g scope intentionally gains or removes an ID.
+(define expected-g2g-ids
+  '(COH-001 PRF-004 ROW-005 TRT-006 TRT-007))
+
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
   (define g1-specs
@@ -314,6 +318,19 @@
                                 "search-compose-test.rkt"
                                 "properties-policy-test.rkt"))])
       (build-path root "model/redex/tests" name)))
+  (define g2g-specs
+    (for/list ([name (in-list '("structural-row.md"
+                                "trait.md"
+                                "proof-value.md"))])
+      (build-path root "docs/specification" name)))
+  (define g2g-tests
+    (for/list ([name (in-list '("trait-scope-test.rkt"
+                                "trait-tables-test.rkt"
+                                "typing-join-test.rkt"
+                                "search-discharge-proof-test.rkt"
+                                "discharge-term-test.rkt"
+                                "elaborate-discharge-test.rkt"))])
+      (build-path root "model/redex/tests" name)))
   (list
    (cycle-descriptor 'G1 g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a g2a-specs g2a-tests #f expected-g2a-ids)
@@ -321,7 +338,8 @@
    (cycle-descriptor 'G2c g2c-specs g2c-tests #f expected-g2c-ids)
    (cycle-descriptor 'G2d g2d-specs g2d-tests #f expected-g2d-ids)
    (cycle-descriptor 'G2e g2e-specs g2e-tests #f expected-g2e-ids)
-   (cycle-descriptor 'G2f g2f-specs g2f-tests #f expected-g2f-ids)))
+   (cycle-descriptor 'G2f g2f-specs g2f-tests #f expected-g2f-ids)
+   (cycle-descriptor 'G2g g2g-specs g2g-tests #f expected-g2g-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

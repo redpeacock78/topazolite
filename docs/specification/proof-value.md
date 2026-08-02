@@ -388,6 +388,69 @@ Finite な探索の evidence は `ev = Σ_goal` でなければならない。
 
 [REQ: RFN-003]
 
+### 6.4 選択した Proof の搬送
+
+充足に成功した義務の P を、適用の項へ載せる。
+
+```text
+c ::= ... | (Discharge (ProofRep O φ) c)
+```
+
+`Discharge` は G2 と G2m の `c` にだけ現れる。
+G1 の `c` には現れず、G1 の評価文脈 F、E、G にも入らない。
+
+型付けは連なりの全体で見る。 [REQ: PRF-004]
+
+```text
+c を外側から剥がして得た φ 列を (φ_1 ... φ_n)、基底を c_base とする
+c_base = (Apply c_f c_a ...)
+Γ ⊢ c_f : NFn(τ ..., τ_r, ε, (φ'_1 ... φ'_n))
+すべての i について φ_i ≡ φ'_i
+------------------------------------------------------------ (T-Discharge)
+Γ ⊢ (Discharge (ProofRep O φ_1) ... c_base) : τ_r
+```
+
+基底を `Apply` に限り、φ 列を義務列と個数も順序も一致させる。
+包み先を直接の `Apply` に限る形は採れない。
+義務が複数あるとき、外側の `Discharge` の包み先は `Discharge` になり、生成した形を自分で拒否してしまう。
+素通しの規則も採れない。
+当該の適用と無関係な正当な `ProofRep` を手書きで包んだ項が、成果物検証を通ってしまう。
+
+δ 規則は一段ずつ外側から剥がす。
+
+```text
+(Discharge (ProofRep O φ) c) --> c   (δ-Discharge)
+```
+
+`Discharge` は評価文脈ではないため、包まれた `c` は剥がれるまで還元されない。
+値の集合 v は変わらない。
+したがって Preservation と Progress は、剥がした後の項の性質へ帰着する。
+
+elaboration は、義務列の先頭を最も外側にして包む。 [REQ: PRF-004]
+搬送する P は、探索が採択した候補の `ProofRep` そのものに限る。
+搬送の関門は三つである。
+
+- P が `(ProofRep O φ_p)` の形であること。
+- `φ_p` の正準鍵が義務 φ の正準鍵と一致すること。正準鍵を作れない命題は搬送しない。
+- `proof-issuer-ok?` と `proof-occurrence-ok?` をともに満たすこと。
+
+三つ目は Productive な探索結果のための関門である。
+`Resolved P` の P は Ω_search の言明であり、`admissible?` は `ProofRep` の形まで見ない。
+信頼する Ω であっても、成果物に載る P は無検査で通さない。
+
+`(Presence label)` と `(FieldType label τ)` は局所 witness であり、`proof-occurrence-ok?` が拒否する。
+merge 位置の witness は成果物へ搬送しない。
+
+Proof の妥当性は三つの層が分けて担う。
+T-Discharge が見るのは φ 列と義務列の対応だけであり、`ProofRep` の origin は見ない。
+origin の妥当性は、搬送の入口が上の三つの関門で、成果物全体は `verify-origins` が担う。
+型付けだけを通した項が origin 不正でも成果物検証で落ちるのは、この分担による。
+
+搬送の関門は `obligations-dischargeable?` の受理判定より狭い。
+それでも elaboration が受理判定の通る適用を拒否することはない。
+義務は注釈から `resolve-obligations` を通って NFn へ入り、そこで `(Presence label)` と `(FieldType label τ)` が除かれ、正準鍵を作れない命題も除かれるためである。
+残る関門である issuer と φ の一致は、正典表由来の候補では表の整合性検査が保証する。
+
 ## 7. 二層の成果物検証
 
 origin 検証を、elaboration の出力に対する初期層と、簡約で到達した構成に対する到達層へ分ける。
@@ -423,13 +486,14 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 
 - **join 型と型付き field 回復**：異型 `imm` field の Union join と局所 `FieldType` witness は、G2e が `trait.md` §7 として導入した。
   witness による型付き field 回復は未回収であり、`trait.md` §9 へ送る。
-  異型 `mut` field の脱落は実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
+  異型 `mut` field の `imm` への降格 join は G2g が `structural-row.md` §3.5 として導入した。
+  降格は代入安全性のための狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の合成は型の Intersection ではなく、正典表と `RequiresBoth` Proof で表す。
 - **trait resolution**：表由来の `Implements` 候補、`RequiresBoth` の implicit discharge、合成候補、trait hook、候補同一性、scope による coherence は、G2e と G2f が `trait.md` §6 として導入した。
   合成 trait の `ProofRep` を値として生成する primitive は未回収である。
 - **合成 trait の origin**：`Compose` の成分 origin は左右の intersect 行の順序を保持し、入れ子の成分へ再帰できる。
-  正典表に入れ子の行がないため、その経路は fixture で未到達である。
+  入れ子の行は G2g が `trait.md` §4.3 として正典表へ加えた。
 - **Policy Narrative**：既存方針を包む Policy の origin と返却値検査は、`policy-narrative.md` §3 から §7 に従う。
 - **探索動力学**：探索計算、`⇓class`、certificate、termination Proof、priority、provenance の実体化は探索の後続層で扱う。
 - **局所 Proof 束縛**：merge 位置を越えた witness の保存、scope 付き照合、位置依存文脈の `compat?` への供給と併せて後続層で扱う。
@@ -443,3 +507,4 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 | RFN-001 | §3.3 T-UVal と T-RVal、§4.1 判定表、§4.2 δ-Validate-Ok と δ-Validate-Ng、§7 二層の成果物検証 |
 | RFN-002 | §5.1 常在性 witness の発行規則、§5.2 merge ごとの局所検査 |
 | RFN-003 | §6.1 discharge 互換の判定規則、§6.3 χ 分類と well-formedness の改訂 |
+| PRF-004 | §6.4 `Discharge` の項文法、T-Discharge、δ-Discharge、搬送の関門 |

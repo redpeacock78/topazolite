@@ -202,9 +202,9 @@ compat?(Never, sup) = true
 compat?((Record r_sub), (Record r_sup)) =
   r_sup の各 (label : τ_sup @ m_sup) について、次をすべて満たす
     lookup(r_sub, label) = (τ_sub, m_sub) が存在する
-    m_sub = m_sup
+    m_sub ∈ {imm, mut}
     m_sup = imm なら compat?(τ_sub, τ_sup)
-    m_sup = mut なら type-equiv?(τ_sub, τ_sup)
+    m_sup = mut なら m_sub = mut かつ type-equiv?(τ_sub, τ_sup)
 
 compat?(Owned<τ_sub>, Owned<τ_sup>) = type-equiv?(τ_sub, τ_sup)
 compat?(NFn_sub, NFn_sup) = §6.1 の関数互換性
@@ -214,8 +214,9 @@ compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
 record の sub は、sup が要求する field をすべて満たす限り余剰 field を持てる。
 この width subsumption によって型同値でない二つの record 型が互換になりうる。
 
-`imm` field は共変に再帰照合する。
-`mut` field は読みと書きの双方に使われるため、field 型が `type-equiv?` で一致する場合だけ互換とする。
+`mut` field は読みと書きの双方に使われるため、`mut` を要求する位置では field 型が `type-equiv?` で一致する場合だけ互換とする。
+`imm` を要求する位置には `mut` field を渡せる。 [REQ: ROW-005]
+書き込み能力を捨てる方向であり、その位置からは読み出しだけが可能なため、§3.5 の降格した field を構成できる。
 一方だけが `Owned` である field 型は互換でなく、双方が `Owned` の場合も内部型を不変に照合する。
 `NFn` field の照合は §6.3 が定める（`imm` は関数 variance、`mut` は不変一致）。
 
@@ -252,15 +253,21 @@ Never の枝を merge 入力から除外する
 Eliminate(c0, branches) : (Record r)
 ```
 
-交差に残す field は全枝に存在し、型が `type-equiv?` で一致し、可変性も一致する field だけである。
+交差に残す field は全枝に存在する field だけである。 [REQ: ROW-005]
+型が `type-equiv?` で一致しない field は、可変性を `imm` へ降格したうえで Union join する。
+可変性が枝の間で食い違う field も `imm` へ降格する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
 
 非 `Never` 枝が一つもなければ結果型は `Never` である。
 非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
 
-この構造的交差は、全経路で同じ型と可変性を持つ field だけを残す decidable な近似である。
-型が異なる `imm` field の Union join は、G2e が `trait.md` §7 として導入した。
+この構造的交差は、全経路に存在する field だけを残す decidable な近似である。
+型が異なる field の Union join は、G2e が `trait.md` §7 として導入した。
+G2g は join の対象を `imm` field から全 field へ広げ、`mut` field を `imm` へ降格して join する規則を加えた。 [REQ: ROW-005]
+降格の理由は代入安全性である。
+join 型の field へ書き込めるとすると、ある枝が期待する狭い型の位置に別の枝の値を格納できてしまう。
+降格後の field は read-only であり、この経路が無い。
 Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
 ## 4. elaboration
@@ -460,7 +467,9 @@ G2a は次の規則を導入しない。
   field 常在性の witness は G2d が `proof-value.md` §5 として導入した。
   branch で型が異なる `imm` field の Union join と `FieldType` witness は、G2e が `trait.md` §7 として導入した。
   witness による型付き field 回復は未回収であり、同仕様 §9 へ送る。
-  異型 `mut` field の脱落は実装上の狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
+  異型 `mut` field の降格 join は G2g が §3.5 として導入した。 [REQ: ROW-005]
+  降格は代入安全性のための狭めであり、ホワイトペーパー §4.5.3 が求める、書き込み可能なまま join する規則を回収したことを意味しない。
+  可変性を保ったまま join する規則は、借用と代入を同時に規定できる G5 へ送る。
 - **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
 - **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。
@@ -482,6 +491,7 @@ closed と open を record 型の mode として保持する表現も採らな�
 | ROW-002 | §3.1 T-Proj、§3.2 T-LetOpenRecord |
 | ROW-003 | §3.5 T-EliminateRecordMerge |
 | ROW-004 | §3.1 T-Rec、§3.3 の `mut` field 不変性 |
+| ROW-005 | §3.5 の可変性降格と Union join、§3.3 の `imm` 要求を満たす `mut` field |
 | VAR-001 | §6.1 関数互換性の規則、§6.4 checking 位置の統一 |
 | VAR-002 | §6.2 latent Effect と Proof obligation の包含 |
 | VAR-003 | §6.3 field の可変性との交差、§3.3 の `NFn` field 照合 |

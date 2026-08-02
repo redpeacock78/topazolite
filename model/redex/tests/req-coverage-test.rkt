@@ -397,13 +397,14 @@
   (check-equal? (get-output-string output)
                 (string-append
                  "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, "
-                 "3 G2b IDs, 3 G2c IDs, 3 G2d IDs, 5 G2e IDs, 4 G2f IDs\n"))
+                 "3 G2b IDs, 3 G2c IDs, 3 G2d IDs, 5 G2e IDs, 4 G2f IDs, "
+                 "5 G2g IDs\n"))
   (check-equal? (get-output-string errors) ""))
 
 (test-case "cycle-descriptors covers every declared sub-cycle"
   (define ds (default-cycle-descriptors))
   (check-equal? (map cycle-descriptor-name ds)
-                '(G1 G2a G2b G2c G2d G2e G2f))
+                '(G1 G2a G2b G2c G2d G2e G2f G2g))
   (define (by-name n)
     (findf (lambda (d) (eq? (cycle-descriptor-name d) n)) ds))
   (check-equal? (cycle-descriptor-expected-count (by-name 'G1)) 18)
