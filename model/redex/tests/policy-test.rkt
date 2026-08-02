@@ -247,6 +247,7 @@
               (declared-policy-operations))
          string<?)
    '("Normalization.normalize-type"
+     "ProofSearch.discharge/proof"
      "ProofSearch.discharge?"
      "RowPolicy.merge-record-types"
      "TraitResolution.project-goal"

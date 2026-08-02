@@ -15,6 +15,7 @@
          lookup
          origin-of
          proof-issuer-ok?
+         proof-occurrence-ok?
          trait-global-bindings
          verify-origins
          verify-initial-origins)

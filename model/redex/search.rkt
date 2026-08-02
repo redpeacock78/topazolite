@@ -24,7 +24,8 @@
          make-classifier make-oracle make-cert cert-valid? unique?
          default-classifier default-oracle
          admissible?
-         discharge? current-search-log search-log-snapshot reset-search-log!
+         discharge? discharge/proof obligation-proofs
+         current-search-log search-log-snapshot reset-search-log!
          obligations-dischargeable?)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
@@ -466,6 +467,45 @@
                discharge?/impl
                check-discharge-return
                #:project (lambda (vs) (list (first vs)))))
+
+;; PRF-004: 同じ実装を投影せずに包む入口。discharge? の 1 値契約（POL-002）は
+;; 変えず、選択した Proof を呼び出し側へ届ける。
+(define discharge/proof
+  (policy-wrap 'ProofSearch 'discharge/proof
+               discharge?/impl
+               check-discharge-return))
+
+;; PRF-004: 搬送の入口検査。Finite の P は wf-Σ? を通った候補由来であり形が
+;; 保証されるが、Productive の P は Ω の言明であり、admissible? も
+;; check-discharge-return も ProofRep の形まで見ていない。
+;; trusted な Ω であっても、成果物に載る ProofRep は無検査で通さない。
+;; 命題の一致に proposition-equiv? を使わないのは、あの述語が鍵 #f のとき構文
+;; 比較へ退化し、正規化できない命題を素通しするためである。
+(define (transportable-proof proof phi)
+  (match proof
+    [`(ProofRep ,origin ,phi-proof)
+     (define key (canonical-proposition-key phi))
+     (define key-proof (canonical-proposition-key phi-proof))
+     (and key
+          key-proof
+          (equal? key key-proof)
+          (proof-issuer-ok? R0 origin phi-proof)
+          (proof-occurrence-ok? phi-proof)
+          proof)]
+    [_ #f]))
+
+;; PRF-004: 各 obligation を一度だけ探索し、選択した Proof を並び順で返す。
+;; 非受理と、搬送できない P はどちらも #f である。
+;; obligations-dischargeable? は変更しない。判定と搬送で探索が二重に走らない
+;; よう、elaboration 側はこの結果だけを見る。
+(define (obligation-proofs obligations gamma-pc
+                           [chi default-classifier]
+                           [omega default-oracle]
+                           [sc-ctx '(root)])
+  (for/list ([phi (in-list obligations)])
+    (define-values (accepted? _class sr)
+      (discharge/proof gamma-pc chi omega (make-goal phi) sc-ctx))
+    (and accepted? (transportable-proof (resolved-proof sr) phi))))
 
 ;; 義務列の全 φ が候補文脈から暗黙充足できるか。typing と elaborate の共有経路。
 (define (obligations-dischargeable? obligations gamma-pc

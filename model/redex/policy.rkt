@@ -39,7 +39,7 @@
   (list (policy-row 'RowPolicy '(merge-record-types) 'typing.rkt)
         (policy-row 'VariancePolicy '(compat?) 'compat.rkt)
         (policy-row 'TraitResolution '(project-goal resolve-candidates) 'search.rkt)
-        (policy-row 'ProofSearch '(discharge?) 'search.rkt)
+        (policy-row 'ProofSearch '(discharge? discharge/proof) 'search.rkt)
         (policy-row 'Normalization '(normalize-type) 'type-equiv.rkt)))
 
 (define (policy-name row)       (first row))
