@@ -12,14 +12,17 @@
   '() '())
  '((Record ((a Int imm))) ()))
 
-; 可変性が食い違う共通ラベルは結果が imm へ降格するため、mut 枝の書き込みは拒否
+; ROW-005: 可変性が食い違う共通 field は imm へ降格して残る。
+; 両枝の field 型は Int なので join は Int であり、降格だけが観測される。
+; mut 枝を降格後の imm 結果へ照合できるのは、compat? が imm の要求を
+; mut field で満たせるようにしたためである（compat.rkt の record-compatible?）。
 (check-equal?
  (core-type-of
   '(Eliminate (Construct Bool true)
      ((true () -> (Rec ((a imm 1))))
       (false () -> (Rec ((a mut 2))))))
   '() '())
- 'ill-typed)
+ '((Record ((a Int imm))) ()))
 
 ; Never 枝の吸収: 一方が Perform で Never を synth（typing.rkt:369 で (Never …)）、
 ; 他方が record。Never 枝は交差から除外され、残る record 枝の型がそのまま result-type になる。

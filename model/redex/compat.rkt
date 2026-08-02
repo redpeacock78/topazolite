@@ -8,16 +8,22 @@
 
 (provide compat? check-compat-return)
 
+;; ROW-002/ROW-005: field の可変性は一致ではなく互換で照合する。
+;; imm を要求する位置には mut field を渡せる。書き込み能力を捨てる方向であり、
+;; その位置からは読み出しだけが可能なため、他の枝が期待する狭い型を破れない。
+;; 逆方向は能力を増やすため許さない。mut を要求する位置の field 型は、読みと
+;; 書きの双方に使われるため type-equiv? の不変一致に留める。
 (define (record-compatible? sub-row sup-row gamma-pc)
   (for/and ([field (in-list sup-row)])
     (match field
       [(list label sup-type sup-mutability)
        (match (field-row-lookup sub-row label)
          [(list sub-type sub-mutability)
-          (and (eq? sub-mutability sup-mutability)
+          (and (memq sub-mutability '(imm mut))
                (case sup-mutability
                  [(imm) (compat?/impl sub-type sup-type gamma-pc)]
-                 [(mut) (type-equiv? sub-type sup-type)]
+                 [(mut) (and (eq? sub-mutability 'mut)
+                             (type-equiv? sub-type sup-type))]
                  [else #f]))]
          [_ #f])]
       [_ #f])))
