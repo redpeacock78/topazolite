@@ -527,16 +527,26 @@
            (synth function environment delta propositions boundaries))
          (match (judgment-type function-result)
            [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
-            (unless (obligations-dischargeable?
-                     obligations
-                     (initial-candidate-context propositions))
+            ;; PRF-004: 判定と搬送で探索を二重に走らせない。obligation-proofs は
+            ;; 各義務を一度だけ解き、充足できない義務と搬送できない P をどちらも
+            ;; #f で返す。obligations-dischargeable? の呼び出しはここから外す。
+            (define proofs
+              (obligation-proofs
+               obligations
+               (initial-candidate-context propositions)))
+            (when (memq #f proofs)
               (reject 'unsatisfied-proof-obligation obligations))
             (define argument-results
               (check-many arguments parameter-types
                           environment delta propositions boundaries))
+            (define applied
+              `(Apply ,(judgment-core function-result)
+                      ,@(map judgment-core argument-results)))
             (judgment
-             `(Apply ,(judgment-core function-result)
-                     ,@(map judgment-core argument-results))
+             ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
+             ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
+             (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
+               `(Discharge ,proof ,core))
              return-type
              (rows-union
               (append (list (judgment-row function-result))
