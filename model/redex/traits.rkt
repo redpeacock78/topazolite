@@ -62,7 +62,13 @@
         ;; (root s-user) から可視であり、出力 scope の可視性だけが落ちる。
         (list 'o-trait-sizable-taggable 'SizableTaggable 's-kernel
               (list (list 'size '(NFn (Self) Int () ()) 'imm)
-                    (list 'tag  '(NFn (Self) String () ()) 'imm)))))
+                    (list 'tag  '(NFn (Self) String () ()) 'imm)))
+        ;; TRT-006: 合成 trait を成分に取る合成の出力。三項の要求は二項の
+        ;; 入れ子で表し、表そのものは二項の関係を保つ。
+        (list 'o-trait-printable-sizable-taggable 'PrintableSizableTaggable 'root
+              (list (list 'print '(NFn (Self) String () ()) 'imm)
+                    (list 'size  '(NFn (Self) Int () ()) 'imm)
+                    (list 'tag   '(NFn (Self) String () ()) 'imm)))))
 
 ;; impl-table の行: (oid nm kind tn τ sid_target)
 ;; 各行は、対応する実装 record が検査済みである信頼された宣言である。
@@ -87,7 +93,9 @@
         (list 'o-intersect-print-tag 'intersect-printable-taggable
               'Printable 'Taggable 'PrintableTaggable)
         (list 'o-intersect-size-tag 'intersect-sizable-taggable
-              'Sizable 'Taggable 'SizableTaggable)))
+              'Sizable 'Taggable 'SizableTaggable)
+        (list 'o-intersect-print-size-tag 'intersect-printable-sizable-taggable
+              'PrintableSizable 'Taggable 'PrintableSizableTaggable)))
 
 ;; COH-001: scope の系譜。package と module の入れ子を親子で表す。
 ;; 可視性（search.rkt の scope-visible?）はこの表の祖先到達で決まる。
@@ -130,12 +138,12 @@
 (define (intersect-row-by-name name)
   (findf (lambda (row) (eq? (intersect-name row) name)) intersect-table))
 
-;; COH-001: 自身を含む祖先の列。表に無い scope 識別子は親を持たないものと
-;; して扱い、自身だけの列を返す。sid と sc-ctx は呼び出し側が組み立てる
-;; 引数であり、表に無い識別子が渡り得る。
 (define (scope-parent-row row) (first row))
 (define (scope-parent-of row) (second row))
 
+;; COH-001: 自身を含む祖先の列。表に無い scope 識別子は親を持たないものと
+;; して扱い、自身だけの列を返す。sid と sc-ctx は呼び出し側が組み立てる
+;; 引数であり、表に無い識別子が渡り得る。
 (define (scope-ancestors sid [rows scope-parent-table])
   (let loop ([sid sid] [seen '()])
     (cond

@@ -5,7 +5,9 @@
          "../traits.rkt"
          "../type-equiv.rkt"
          "../rows.rkt"
-         "../type-shape.rkt")
+         "../type-shape.rkt"
+         "../origins.rkt"
+         "../search.rkt")
 
 (test-case "trait names are unique"
   (define names (map trait-name trait-table))
@@ -105,3 +107,40 @@
     (check-true (trait-primitive-name? (intersect-name row)))
     (check-true (and (memq (intersect-name row) names) #t)
                 (format "~s" (intersect-name row)))))
+
+(test-case "TRT-006: 合成 trait は別の合成の成分になれる"
+  ;; 左成分の PrintableSizable Int は、それ自体が合成候補である。
+  ;; 右成分の Taggable Int は s-user から立つ。入れ子の合成が (root s-user)
+  ;; で一意に解ける。
+  (define goal (make-goal '(Implements Int PrintableSizableTaggable)))
+  (define sigma (project-goal Γ-pc0 '(root s-user) goal))
+  (check-equal? (length sigma) 1)
+  (check-true (resolved? (resolve-candidates goal sigma)))
+  ;; obligations-dischargeable? は typing と elaborate の共有経路であり、
+  ;; sc-ctx を引数に取らず discharge? の既定値 '(root) を使う。Taggable Int は
+  ;; trait 行が s-kernel、impl 行の対象型 scope が s-user であるため (root)
+  ;; からは可視でなく、入れ子の合成もそこでは立たない。入れ子が成り立つ証拠は
+  ;; 上の project-goal と resolve-candidates の対であり、この check-false は
+  ;; 経路の違いを固定しているだけである。
+  (check-false
+   (obligations-dischargeable? '((Implements Int PrintableSizableTaggable))
+                               Γ-pc0
+                               default-classifier
+                               default-oracle)))
+
+(test-case "TRT-006: 入れ子の合成 origin は成分の連なりを保つ"
+  ;; 三項の要求を二項の入れ子で表す。外側の origin から内側の合成 origin を
+  ;; たどれることが、成分の provenance が消えていないことの証拠である。
+  (define nested
+    `(Derived (Reserved o-intersect-print-size-tag)
+              (Compose PrintableSizableTaggable
+                       (Derived (Reserved o-intersect-print-size)
+                                (Compose PrintableSizable
+                                         (Reserved o-impl-printable-int)
+                                         (Reserved o-derive-sizable-int)))
+                       (Reserved o-impl-taggable-int))))
+  (check-true
+   (proof-issuer-ok? R0 nested '(Implements Int PrintableSizableTaggable))))
+
+(test-case "TRT-006: 入れ子を足しても intersect-table は非巡回である"
+  (check-true (intersect-acyclic?)))
