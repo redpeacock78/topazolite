@@ -452,6 +452,15 @@
        (check-as bound declared-type environment places callables))
      (and bound-row (list bound-row declared-type))]))
 
+;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
+;; 型付けを連なりの全体で見るため、節の側では再帰しない。
+(define (peel-discharge core)
+  (let loop ([core core] [propositions '()])
+    (match core
+      [`(Discharge (ProofRep ,_ ,phi) ,inner)
+       (loop inner (cons phi propositions))]
+      [_ (values (reverse propositions) core)])))
+
 (define (infer core environment places callables)
   (match core
     [(? integer?) (list 'Int '())]
@@ -562,6 +571,26 @@
                     (append (list function-row)
                             argument-rows
                             (list latent-row)))))]
+       [_ #f])]
+
+    [`(Discharge (ProofRep ,_ ,_) ,_)
+     ;; 包み先を直接の Apply に限る形は採れない。複数義務では外側の Discharge
+     ;; の包み先が Discharge になり、生成する形を自分で拒否してしまう。
+     ;; 素通しの規則も採れない。当該の Apply と無関係な正当な ProofRep を手書き
+     ;; で包んだ項が検証を通る。PRF-004 が要求するのは選択した Proof の
+     ;; provenance であるから、φ 列と義務列の対応をここで固定する。
+     (define-values (propositions base) (peel-discharge core))
+     (match base
+       [`(Apply ,function ,_ ...)
+        (match (infer function environment places callables)
+          [(list `(NFn ,_ ,_ ,_ ,obligations) _)
+           (and (= (length propositions) (length obligations))
+                (for/and ([phi (in-list propositions)]
+                          [obligation (in-list obligations)])
+                  (proposition-equiv? phi obligation))
+                ;; 型と Effect 行は基底の Apply のものを返す。
+                (infer base environment places callables))]
+          [_ #f])]
        [_ #f])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)

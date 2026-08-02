@@ -431,6 +431,13 @@
                             label_target))
         R-Proj)
 
+   ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では
+   ;; ないため、包まれた c は Discharge が消えるまで還元されない。入れ子は外側から一段
+   ;; ずつ消える。
+   (--> (cfg (in-hole E (Discharge (ProofRep O φ) c_inner)) H Ω θ)
+        (cfg (in-hole E c_inner) H Ω θ)
+        R-Discharge)
+
    (--> (cfg (in-hole E
                       (Let (x bmode τ) v_bound c_body))
              H Ω θ)

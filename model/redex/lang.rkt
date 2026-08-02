@@ -102,7 +102,8 @@
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
-         (Let (x bmode τ) c c))
+         (Let (x bmode τ) c c)
+         (Discharge (ProofRep O φ) c))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
@@ -172,7 +173,8 @@
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
-         (Let (x bmode τ) c c))
+         (Let (x bmode τ) c c)
+         (Discharge (ProofRep O φ) c))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)

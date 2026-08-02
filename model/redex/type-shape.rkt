@@ -149,6 +149,9 @@
          [`(resource ,_) #t]
          [`(UVal ,payload) (walk payload)]
          [`(RVal ,proof ,payload) (and (walk proof) (walk payload))]
+         ;; PRF-004: 搬送された ProofRep は core に現れる。包み先と Proof の
+         ;; どちらも通常の core として辿る。
+         [`(Discharge ,proof ,inner) (and (walk proof) (walk inner))]
          [`(Lam ,origin ,_ (,_ ...) ,body)
           (and (walk-origin origin) (walk body))]
          [`(PrimVal ,origin ,_) (walk-origin origin)]
