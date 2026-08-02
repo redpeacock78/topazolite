@@ -144,3 +144,22 @@
 
 (test-case "TRT-006: 入れ子を足しても intersect-table は非巡回である"
   (check-true (intersect-acyclic?)))
+
+(test-case "TRT-007: 正典表のどの impl 行も合成 trait を対象にしていない"
+  (check-true (impl-not-composite?))
+  (check-true (impl-not-composite? impl-table intersect-table)))
+
+(test-case "TRT-007: 合成 trait を対象にする impl 行は拒否される"
+  (define composite (intersect-output (first intersect-table)))
+  (define bad-impl
+    (list 'o-bad-composite 'impl-bad-composite 'impl composite
+          '(Record ((x Int imm)))
+          'root))
+  (check-false (impl-not-composite? (cons bad-impl impl-table) intersect-table))
+  ;; 成分 trait への impl は禁止対象ではない。
+  (define good-impl
+    (list 'o-ok-component 'impl-ok-component 'impl
+          (intersect-left (first intersect-table))
+          '(Record ((x Int imm)))
+          'root))
+  (check-true (impl-not-composite? (cons good-impl impl-table) intersect-table)))

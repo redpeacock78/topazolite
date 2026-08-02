@@ -32,6 +32,7 @@
          intersect-row-by-oid
          intersect-row-by-name
          intersect-acyclic?
+         impl-not-composite?
          scope-parent-table
          scope-ancestors
          scope-genealogy-ok?
@@ -312,6 +313,18 @@
   (for/and ([row (in-list rows)])
     (descend (intersect-output row) '())))
 
+;; TRT-007: 合成 trait には直接の impl 行を置かない。
+;; 合成 trait の実装は成分の impl から resolve-candidates が導出するものであり、
+;; 直接行を許すと同じ (τ, tn) に導出経路と直接経路が併存し、coherence の一意性が
+;; 表の側から破れる。
+(define (impl-not-composite? [impl-rows impl-table]
+                             [intersect-rows intersect-table])
+  (define composite-names
+    (for/list ([row (in-list intersect-rows)])
+      (intersect-output row)))
+  (for/and ([row (in-list impl-rows)])
+    (not (memq (impl-trait-name row) composite-names))))
+
 ;; 3 表の内部整合を load 時に検査する。
 ;; R0 と Γ0 との衝突は origins.rkt が append 後に検査する。
 (define (check-tables!)
@@ -376,6 +389,9 @@
 
   (unless (intersect-acyclic?)
     (error 'traits "intersect rows form a cycle in the trait name graph"))
+
+  (unless (impl-not-composite?)
+    (error 'traits "impl rows must not target a composite trait"))
 
   (unless (scope-genealogy-ok?)
     (error 'traits "scope parent table is malformed")))
