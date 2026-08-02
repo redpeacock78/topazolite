@@ -57,7 +57,12 @@
               (list (list 'tag '(NFn (Self) String () ()) 'imm)))
         (list 'o-trait-printable-taggable 'PrintableTaggable 'root
               (list (list 'print '(NFn (Self) String () ()) 'imm)
-                    (list 'tag   '(NFn (Self) String () ()) 'imm)))))
+                    (list 'tag   '(NFn (Self) String () ()) 'imm)))
+        ;; COH-001: 生成 scope が s-kernel の合成 trait。成分はどちらも
+        ;; (root s-user) から可視であり、出力 scope の可視性だけが落ちる。
+        (list 'o-trait-sizable-taggable 'SizableTaggable 's-kernel
+              (list (list 'size '(NFn (Self) Int () ()) 'imm)
+                    (list 'tag  '(NFn (Self) String () ()) 'imm)))))
 
 ;; impl-table の行: (oid nm kind tn τ sid_target)
 ;; 各行は、対応する実装 record が検査済みである信頼された宣言である。
@@ -80,7 +85,9 @@
   (list (list 'o-intersect-print-size 'intersect-printable-sizable
               'Printable 'Sizable 'PrintableSizable)
         (list 'o-intersect-print-tag 'intersect-printable-taggable
-              'Printable 'Taggable 'PrintableTaggable)))
+              'Printable 'Taggable 'PrintableTaggable)
+        (list 'o-intersect-size-tag 'intersect-sizable-taggable
+              'Sizable 'Taggable 'SizableTaggable)))
 
 ;; COH-001: scope の系譜。package と module の入れ子を親子で表す。
 ;; 可視性（search.rkt の scope-visible?）はこの表の祖先到達で決まる。

@@ -68,7 +68,7 @@
   ;; 正典表に無い組は依然として解けない。
   (check-false
    (obligations-dischargeable?
-    '((RequiresBoth Sizable Taggable))
+    '((RequiresBoth Sizable PrintableTaggable))
     Γ-pc0)))
 
 (define (check-apply-obligation proposition expected branch)

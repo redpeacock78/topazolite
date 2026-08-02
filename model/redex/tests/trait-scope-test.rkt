@@ -48,3 +48,21 @@
    (scope-genealogy-ok? '((root #f))
                         '()
                         (list (list 'o-i 'i 'impl 'T 'Int 's-missing)))))
+
+(test-case "COH-001: 出力 trait の生成 scope が不可視なら合成候補は立たない"
+  ;; SizableTaggable の生成 scope は s-kernel である。成分は Sizable Int
+  ;; （対象型 scope root）と Taggable Int（対象型 scope s-user）であり、
+  ;; (root s-user) からはどちらも可視かつ coherent になる。動いているのは
+  ;; 出力 trait の生成 scope の可視性だけである。
+  (define goal (make-goal '(Implements Int SizableTaggable)))
+  (check-equal? (length (project-goal Γ-pc0 '(root s-user) goal)) 0)
+  ;; 成分が両方とも可視であることを、成分ごとの goal で確かめる。
+  (check-equal? (length (project-goal Γ-pc0 '(root s-user)
+                                      (make-goal '(Implements Int Sizable))))
+                1)
+  (check-equal? (length (project-goal Γ-pc0 '(root s-user)
+                                      (make-goal '(Implements Int Taggable))))
+                1)
+  ;; 生成 scope を含む系譜からは合成候補が立つ。連言項が落としているのが
+  ;; 出力 scope であることの対照である。
+  (check-equal? (length (project-goal Γ-pc0 '(root s-kernel s-user) goal)) 1))
