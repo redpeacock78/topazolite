@@ -5,6 +5,7 @@
 
 (provide (struct-out cycle-descriptor)
          coverage-errors
+         deferred-test-counts
          default-cycle-descriptors
          main
          run-coverage)
@@ -127,6 +128,24 @@
                [index (in-naturals)])
       (cycle-local-references references index)))
 
+  ;; 免除された ID ごとに、所有サイクルのテストファイルのうち ID を参照して
+  ;; いるファイル数を数える。同一ファイル内の出現回数は書き方で揺れるため、
+  ;; ファイル単位で数える。
+  (define deferred-counts
+    (sort
+     (append*
+      (for/list ([cycle (in-list cycles)]
+                 [owned (in-list owned-sets)])
+        (for/list ([id (in-list (sorted-ids (set-intersect owned deferred)))])
+          (cons id
+                (for/sum ([path (in-list (cycle-descriptor-test-paths cycle))]
+                          #:when (member id
+                                         (regexp-match* test-id-rx
+                                                        (file->string path))))
+                  1)))))
+     string<?
+     #:key car))
+
   (define all-references
     (for/fold ([references (set)])
               ([cycle-references
@@ -205,6 +224,7 @@
      cycles expected-sets cycle-specs cycle-tests))
   (values
    cycle-counts
+   deferred-counts
    (append
     (for/list ([id (in-list duplicates)])
       (format "duplicate requirement ID: ~a" id))
@@ -230,15 +250,23 @@
 
 (define (coverage-errors registry-path
                          #:cycles [cycles (default-cycle-descriptors)])
-  (define-values (_counts errors)
+  (define-values (_counts _deferred errors)
     (coverage-analysis registry-path cycles))
   errors)
+
+;; car は ID の記号、cdr は ID を参照するテストファイルの数である。
+(define (deferred-test-counts registry-path
+                              #:cycles [cycles (default-cycle-descriptors)])
+  (define-values (_counts deferred-counts _errors)
+    (coverage-analysis registry-path cycles))
+  (for/list ([entry (in-list deferred-counts)])
+    (cons (string->symbol (car entry)) (cdr entry))))
 
 (define (run-coverage registry-path
                       [output (current-output-port)]
                       [error-output (current-error-port)]
                       #:cycles [cycles (default-cycle-descriptors)])
-  (define-values (counts errors)
+  (define-values (counts deferred-counts errors)
     (coverage-analysis registry-path cycles))
   (cond
     [(null? errors)
@@ -249,6 +277,13 @@
        (unless (zero? index) (display ", " output))
        (fprintf output "~a ~a IDs" count (cycle-descriptor-name cycle)))
      (newline output)
+     (unless (null? deferred-counts)
+       (display "deferred-tests: " output)
+       (for ([entry (in-list deferred-counts)]
+             [index (in-naturals)])
+         (unless (zero? index) (display ", " output))
+         (fprintf output "~a:~a" (car entry) (cdr entry)))
+       (newline output))
      0]
     [else
      (for ([message (in-list errors)])

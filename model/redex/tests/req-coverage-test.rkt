@@ -28,6 +28,16 @@
       (procedure registry-path (list spec-path) (list test-path)))
     (lambda () (delete-directory/files root))))
 
+(define (fixture-output registry spec test cycles-of)
+  (with-fixture
+   registry spec test
+   (lambda (registry-path spec-paths test-paths)
+     (define output (open-output-string))
+     (define code
+       (run-coverage registry-path output (open-output-string)
+                     #:cycles (cycles-of spec-paths test-paths)))
+     (list code (get-output-string output)))))
+
 ;; This file is scanned as a test input, so fixture IDs must not be literal
 ;; requirement references that could make the real coverage check pass.
 (define known-id (string-append "NAR" "-001"))
@@ -526,6 +536,53 @@
  (check-equal?
   errors
   (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
+
+(test-case
+ "deferred-tests line reports the measured reference count"
+ (define result
+   (fixture-output
+    (registry-entry/verify bak-001 "G3" "Phase 2 以降（emitter の実装）")
+    (format "[REQ: ~a]" bak-001)
+    (format "(test-case ~s (void))" bak-001)
+    (lambda (spec-paths test-paths)
+      (list (cycle-descriptor 'G3b "G3" spec-paths test-paths #f
+                              (list (string->symbol bak-001)))))))
+ (check-equal? (first result) 0)
+ (check-equal?
+  (second result)
+  (format "Requirement coverage OK: 1 G3b IDs\ndeferred-tests: ~a:1\n"
+          bak-001)))
+
+(test-case
+ "deferred-tests keeps a zero count visible"
+ (define result
+   (fixture-output
+    (registry-entry/verify bak-002 "G3" "Phase 3 以降（runtime の実装）")
+    (format "[REQ: ~a]" bak-002)
+    ""
+    (lambda (spec-paths test-paths)
+      (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                              (list (string->symbol bak-002)))))))
+ (check-equal? (first result) 0)
+ (check-equal?
+  (second result)
+  (format "Requirement coverage OK: 1 G3d IDs\ndeferred-tests: ~a:0\n"
+          bak-002)))
+
+(test-case
+ "no deferred-tests line when nothing is exempt"
+ (define result
+   (fixture-output
+    (registry-entry bak-002 "G3")
+    (format "[REQ: ~a]" bak-002)
+    (format "(test-case ~s (void))" bak-002)
+    (lambda (spec-paths test-paths)
+      (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                              (list (string->symbol bak-002)))))))
+ (check-equal? (first result) 0)
+ (check-equal?
+  (second result)
+  "Requirement coverage OK: 1 G3d IDs\n"))
 
 ;; 状態フィールドが descriptor ごとに効くこと。G3 の ID を G2 の descriptor で
 ;; 期待すると「absent or not state G2」が出る。
