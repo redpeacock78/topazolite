@@ -330,13 +330,13 @@ feature ごとに、2 つの backend での実現方法を `native`、`shim`、`
 2 つの backend が同じ意味論を持つことは、対応表の各行が指す semantic test で確かめる。
 Phase 0 が回収するのは、その列の全域性である。 [REQ: BAK-002]
 
-- `unsupported` を含まない行は `semantic-test` 列を持つ。Phase 0 で書けない行には `(deferred "Phase 3 以降")` を置き、列を空にしない。
-- `unsupported` を含む行は `semantic-test` を持たない。両 backend で動かない feature には比べる対象が無いためである。代わりに §8 の 4 つの義務を負う。
+- `unsupported` を含まない行は `semantic-test` 列を持つ。Phase 0 で書けない行には `(deferred <理由>)` を置き、列を空にしない。
+- `unsupported` を含む行は `semantic-test` を持たない。両 backend で動かない feature には比べる対象が無いためである。代わりに `note` 列に理由を持ち、§8 の診断 ID 一覧に自分の ID を持つ。写像がその feature に当たったときの義務は §8 が述べる。
 - `shim` を宣言する行は `shim` 列に shim の名前を持つ。両 backend が `native` を宣言する行は `shim` 列が `#f` である。
 - `feature-id` は表の中で重複しない。
 
 3 番目と 4 番目を置くのは、`semantic-test` の免除が support 値の書き換えで手に入る経路を閉じるためである。
-`unsupported` へ書き換えると §8 の 4 つの義務が代わりに立つ。
+`unsupported` へ書き換えると、`note` 列、診断 ID 一覧、診断の返却、部分的な出力の禁止という別の義務が立つ。
 
 suite を 2 つの runtime で実際に走らせるのは Phase 3 以降である。
 Phase 0 の対応表は宣言であり、`racket-cs` と `racketscript` の support 値を runtime で確かめていない。
