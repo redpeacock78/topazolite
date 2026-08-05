@@ -331,7 +331,85 @@ feature ごとに、2 つの backend での実現方法を `native`、`shim`、`
 
 ## 10. bit 意味論と算術 shim
 
-（G3c で埋める。）
+算術と比較の primitive は、写し先で Host の演算を直接指してはならない。 [REQ: BIT-002]
+写し先は Topazolite が定めた shim 関数の呼び出しである。
+backend を差し替えても結果が変わらないことの根拠は、この一点にある。
+
+模型が shim の意味論をどう実装するかは、これとは別の話である。
+`Int` は任意精度整数なので、`tz:add` の意味論は Racket の `+` そのものである。
+固定幅の切り詰めが意味論に入るのは Phase 2 以降の型追加後であり、そのとき shim の実装も変わる。
+
+### 10.1 shim の意味論
+
+目標機械の shim を、源の primitive と 1 対 1 で定める。
+値の形と引数個数まで固定する。
+
+| shim | 引数 | 結果 | 源の primitive |
+|---|---|---|---|
+| `tz:add` | 整数 2 | 整数の和 | `add` |
+| `tz:sub` | 整数 2 | 整数の差 | `sub` |
+| `tz:mul` | 整数 2 | 整数の積 | `mul` |
+| `tz:lt` | 整数 2 | `(PTagged k:true)` または `(PTagged k:false)` | `lt` |
+| `tz:le` | 整数 2 | 同上 | `le` |
+| `tz:eq` | 整数 2 | 同上 | `eq` |
+| `tz:acquire` | 整数 1 | `(PResource n)` | `acquire` |
+| 上記以外の名前、引数個数の不一致、非整数の引数 | | 未定義 | |
+
+`Bool` の結果が 2 つの tag になるのは、源の真偽値を写像が tag の符号化を通して写すためである。
+目標機械が源の符号化に依存するのはこの 2 つの tag だけであり、両者が一致することをテストで固定する。
+どちらかの tag を選ばざるを得ず、選んだ tag が写像の像と食い違えば分岐が選べない。
+
+意味論が未定義の呼び出しでは規則が発火せず、項は stuck する。
+源の primitive が同じ入力で不発火になるのと同じ扱いである。
+引数個数の合わない適用は適用の側でも stuck するので、η 展開を経た正しい個数の呼び出しだけが shim へ届く。
+
+### 10.2 feature の分割
+
+7 件の shim に、名前ごとの feature-id を 1 つずつ与える。
+表の `shim` 列は名前を 1 つだけ持ち、リストを置かない。
+名前ごとに feature を分けるのはこの形を守るためであり、1 件を `unsupported` と宣言したときに他の名前まで閉じないためでもある。
+
+| feature-id | shim | 表の要求 |
+|---|---|---|
+| `primitive-add` | `tz:add` | 両 backend が `shim`。`native` を許さない |
+| `primitive-sub` | `tz:sub` | 同上 |
+| `primitive-mul` | `tz:mul` | 同上 |
+| `primitive-lt` | `tz:lt` | 同上 |
+| `primitive-le` | `tz:le` | 同上 |
+| `primitive-eq` | `tz:eq` | 同上 |
+| `primitive-acquire` | `tz:acquire` | 両 backend が `shim` |
+
+`native` を禁じる検査の対象は上の 6 件である。
+資源取得を外すのは、BIT-002 が算術と比較の結果の同一性を言う要件だからである。
+`tz:acquire` も `shim` だが、それは Host の資源表現を目標項へ持ち込まないためであり、別の理由による。
+
+形の対応表は `PrimVal` の頭シンボルに `primitive-value` を割り当てる。
+これは η 展開した closure を作る層であり、両 backend で `native` である。
+名前ごとの feature は写像の内側でもう一度引く。
+頭に算術の feature を割り当てると、算術を `unsupported` と宣言したときに、kernel primitive と trait primitive と資源取得の診断まで巻き込んで閉じてしまう。
+`primitive-value` を閉じた対応表では 7 件すべての写しが診断になるが、粗い側へ倒れるだけであり、部分的な出力は返らない（§8）。
+
+### 10.3 予約する feature
+
+固定幅整数と `Bits<N>` は feature-id として表に予約する。
+`semantic-test` 列は Phase 2 以降への延期とする。
+Typed Core に対応する型が無いので、形の対応表の値域には現れない。
+
+両 backend の support を `shim` と宣言する。
+Racket の整数は任意精度であり、RacketScript の数値は倍精度浮動小数点数なので、固定幅の切り詰めをどちらの backend も native には持たない。
+`native` を宣言すると BIT-002 と矛盾する。
+
+予約した shim の名前は Phase 0 の shim 意味論に無い。
+実装済みに見えると、対応する型が無いまま意味論を書いたことになるので、名前が未定義であることをテストで固定する。
+
+### 10.4 Phase 0 で検査できる範囲
+
+2 つである。
+写し先が shim 名を指すことと、表が両 backend に `shim` を要求することである。
+
+shim の意味論そのものが backend 間で一致するかは、ここでは確かめられない。
+目標機械が 1 つしか無いためである。
+一致は §9 の conformance suite が確かめる。
 
 ## 11. 要件対応表
 

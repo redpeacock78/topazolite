@@ -5,6 +5,7 @@
          "../backend-matrix.rkt")
 
 ;; [REQ: BAK-003]
+;; [REQ: BIT-002] 算術 shim の宣言を表の検査で固定する。
 
 (define (row-feature-id row) (first row))
 (define (row-racket-cs row) (second row))
