@@ -483,6 +483,7 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 ## 8. 範囲外の規則
 
 次の規則は後続層へ送るか、後続層が定めた境界に従う。
+本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
 - **join 型と型付き field 回復**：異型 `imm` field の Union join と局所 `FieldType` witness は、G2e が `trait.md` §7 として導入した。
   witness による型付き field 回復は未回収であり、`trait.md` §9 へ送る。

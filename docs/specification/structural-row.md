@@ -457,6 +457,7 @@ elaboration と ⊢core が同じ判定を共有しない場合、elaboration �
 
 G2a は次の規則を導入しない。
 送り先は、その規則が必要とする意味論に合わせて定める。
+本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
 - **optional field**：G2a の field はすべて required とする。
   optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う。

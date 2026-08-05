@@ -586,3 +586,45 @@ terminal、LSP、JSON renderer は同一 Diagnostic IR を入力とする。
 - **由来**：ホワイトペーパー §15
 
 error code は安定識別子として versioning される。
+
+## 4. Phase 1 への申し送り
+
+Phase 0 の各仕様が未回収として残した項目を一覧にする。
+ID は新設しない。
+ID は状態と検証欄を持ち gate の期待集合に入るが、本節の項目はどちらも持たないためである。
+
+項目名は記載元の太字項目名をそのまま使う。
+記載元が別の文書と節を名指しして送っている項目は、名指しされた側の文書に 1 行だけ置く。
+名指しの相手が層である項目は畳まず、記載元ごとに行を置く。
+`proof-search.md` §7 の項目には太字名が無いので、本表で名前を与える。
+
+| 項目 | 記載元 | 行き先 | ホワイトペーパー |
+|---|---|---|---|
+| 合成 Proof 値と primitive | `trait.md` §9 | Phase 1 以降 | §8.1 |
+| 異型 mut field の Union 方針 | `trait.md` §9 | G5 | §4.5.3 |
+| Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
+| 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 1 以降 | §8.1 |
+| recursive Union の opaque identity | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
+| 表層構文の derive | `trait.md` §9 | Phase 1 以降 | §8.1 |
+| 型引数、継承、supertrait | `trait.md` §9 | Phase 1 以降 | §4.4、§8.1 |
+| 三項以上の trait 合成 | `trait.md` §9 | Phase 1 以降 | §8.1 |
+| package と module の coherence | `trait.md` §9 | Phase 1 以降 | §17.6 |
+| typing 経路の scope 文脈 | `trait.md` §9 | Phase 1 以降 | §17.6 |
+| priority の下流利用 | `trait.md` §9 | Phase 1 以降 | §6.4 |
+| optional field | `structural-row.md` §7 | Phase 1 以降 | §4.5.2 |
+| mut field への代入と借用 | `structural-row.md` §7 | G5 | §4.7、§4.8 |
+| borrow mode の互換性 | `structural-row.md` §7 | G5 | §4.8 |
+| Surface 構文 | `structural-row.md` §7 | Phase 1 | §3.1 |
+| 探索動力学 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
+| 局所 Proof 束縛 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
+| 多相 primitive | `proof-value.md` §8 | Phase 1 以降 | §4.4 |
+| 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 1 以降 | §4.6 |
+| 探索計算と certificate | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
+| Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
+
+G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
+可変性を保つ join、`mut` field への再代入、borrow mode の互換性は同じ意味論の上に乗る。
+
+本表の検査は `model/redex/tests/handoff-table-test.rkt` が行う。
+検査するのは記載元のファイルと節見出しが実在することだけである。
+項目の追加漏れは捕まらないので、各文書の未回収節に追記規約を置いて人手に委ねる。

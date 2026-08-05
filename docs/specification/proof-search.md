@@ -293,6 +293,7 @@ G2g は搬送の入口 `discharge/proof` を足した。
 
 G2b は暗黙 Proof 探索の静的な骨格に範囲を限る。
 次の機能は後続層で定める。
+本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
 - trait 型と `impl` または `derive` を使う暗黙 trait resolution、`RequiresBoth` の implicit discharge、合成 trait の候補生成は、G2e と G2f が `trait.md` §6 として導入した。
   合成 `Implements` の Proof 値を生成して項へ渡す primitive は未回収である。

@@ -171,6 +171,7 @@ G2f の正典表は、次の七行を持つ。
 
 `tn_left` と `tn_right` は symbol 順に並べる。
 逆順の入力は命題の正準化で同じ対へ写す。
+命題側のこの正準化は、`Compose` の origin step が保持する成分の順序を変更しない。
 両辺の requirement template は衝突なく合成でき、その結果が `tn_out` の template と一致しなければならない。
 
 G2g の正典表は、次の四行を持つ。
@@ -403,12 +404,11 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 
 本節の項目は、G2e/G2f で回収済みではない。
 範囲を狭めた理由は実装規模であり、ホワイトペーパーの意味を置き換えない。
+本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
 - **合成 Proof 値と primitive**：G2f は合成候補の静的な `ProofRep` を検証するが、それを生成して引数へ渡す primitive は導入しない。
   現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
-- **合成成分の順序**：`Compose` の左右成分は intersect 行の順序へ固定され、入れ替えた origin は拒否される。
-  `RequiresBoth` の命題順の正準化は、この origin step の順序を変更しない。
 - **異型 mut field の Union 方針**：G2g の merge は、異なる型を持つ `mut` field を `imm` へ降格したうえで Union join する。
   降格の理由は代入安全性であり、join 型の field へ書き込める規則を与えられないためである。
   これはホワイトペーパー §4.5.3 が求める、可変性を保ったまま join する規則を回収したことを意味しない。
