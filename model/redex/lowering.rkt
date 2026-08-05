@@ -1,10 +1,12 @@
 #lang racket
 
 (require racket/match
+         racket/set
          redex/reduction-semantics
          "backend-matrix.rkt"
          "lang.rkt"
-         "origins.rkt")
+         "origins.rkt"
+         "pr-lang.rkt")
 
 (provide lower
          lower/with-matrix
@@ -18,7 +20,12 @@
          primitive-arity
          arithmetic-primitives
          resource-primitives
-         shim-primitives)
+         shim-primitives
+         repr-ok?
+         row-kinds
+         effect-kinds-of
+         latent-kinds
+         latent-visible?)
 
 ;;; §6.4 の符号化
 
@@ -39,6 +46,12 @@
 ;; 同一視する。
 (define (tycode type)
   (encode-name 'ty (format "~s" type)))
+
+;; (Return b τ) の符号の組み立て。make-lowering の op-code は τ の検査を足して
+;; ここへ委ねる。§7.2 の row-kinds は検査を通った源の行だけを受け取るので、
+;; 組み立てだけを呼ぶ。
+(define (return-code b type)
+  `(return ,(boundary-code b) ,(tycode type)))
 
 ;;; primitive
 
@@ -118,7 +131,7 @@
        (unless (redex-match? G2m τ type)
          (fail 'unknown-core-type
                (format "op-code の入力が Typed Core の τ でない: ~s" type)))
-       `(return ,(boundary-code b) ,(tycode type))]
+       (return-code b type)]
       [_ (fail 'unknown-core-form (format "op の形が (Return b τ) でない: ~s" op))]))
 
   ;; prim-body。名前で 3 つに分ける（spec §4.4）。PrimVal の頭が指す
@@ -271,3 +284,165 @@
       (define-values (lower-val lower-core)
         (make-lowering backend backend-features fail))
       (lower-val value))))
+
+;;; §7.1 表現規約
+
+;; ADT の写しはすべて (PTagged K pv ...) である。List と Option と Result を
+;; 同じ行にまとめるのは spec §7.1 の表と同じ粒度である。
+(define (ptagged? value)
+  (match value [`(PTagged ,_ ,_ ...) #t] [_ #f]))
+
+(define (ptagged-with? value tag)
+  (match value [`(PTagged ,K ,_ ...) (equal? K tag)] [_ #f]))
+
+;; repr(τ) への適合。表を τ の形ごとに書き、判定を全域にする。
+(define (repr-ok? type value)
+  (match type
+    ['Int (exact-integer? value)]
+    ['Bool (or (ptagged-with? value (tag-code 'true))
+               (ptagged-with? value (tag-code 'false)))]
+    ['Unit (equal? value 'unit)]
+    ['String (string? value)]
+    ;; Never は住人を持たない。値が来た時点で偽である。
+    ['Never #f]
+    ['Res (match value [`(PResource ,_) #t] [_ #f])]
+    [`(List ,_) (ptagged? value)]
+    [`(Option ,_) (ptagged? value)]
+    [`(Result ,_ ,_) (ptagged? value)]
+    ;; 所有は静的な区別であり実行時表現に現れない。
+    [`(Owned ,inner) (repr-ok? inner value)]
+    [`(NFn ,_ ,_ ,_ ,_) (match value [`(PClosure ,_ ,_ ,_) #t] [_ #f])]
+    ;; TypeInfo と Proof は実行時に意味を持たないので tag だけが残る。
+    [`(TypeInfo ,_) (equal? value '(PTagged typerep))]
+    [`(Proof ,_) (equal? value '(PTagged proof))]
+    [`(Record ,_) (match value [`(PRec ,_) #t] [_ #f])]
+    ;; machine.rkt の δ が実行時に区別しているので tag を残す。
+    [`(Untrusted ,inner)
+     (match value
+       [`(PTagged uval ,payload) (repr-ok? inner payload)]
+       [_ #f])]
+    [`(Refined ,inner ,_)
+     (match value
+       [`(PTagged rval ,payload) (repr-ok? inner payload)]
+       [_ #f])]
+    ;; spec §7.1 の表に行が無い 2 形。lang.rkt:76 の G2 の τ にはあるので、表を
+    ;; 分配して補う。行を落とすと repr-ok? が生成項の一部で偽を返し、§7.1 の
+    ;; 言明がその項について述べられなくなる。狭めではなく表の補完である。
+    [`(Union ,left ,right) (or (repr-ok? left value) (repr-ok? right value))]
+    [`(Intersection ,left ,right)
+     (and (repr-ok? left value) (repr-ok? right value))]
+    [_ #f]))
+
+;;; §7.2 Effect のラベル種別
+
+;; ℓ から kind へ。(Return b τ) だけは op-code の像である pop 全体を種別に使う。
+;; 境界名だけにすると、同じ b で τ が違う handler が源側では残す Effect を目標側
+;; が消してしまう。
+(define (effect-label-kind label)
+  (match label
+    [`(Return ,b ,type) (return-code b type)]
+    ;; PRuntime yield は型符号を担がないので、型成分はここで落ちる（spec §13）。
+    [`(Yield ,_) 'yield]
+    ['Suspend 'suspend]
+    ['Partial 'partial]
+    ['Compile 'compile]
+    ['Own 'own]
+    [_ (error 'effect-label-kind "未知の Effect ラベル: ~s" label)]))
+
+(define (row-kinds row)
+  (for/fold ([kinds (set)]) ([label (in-list row)])
+    (set-add kinds (effect-label-kind label))))
+
+(define (kinds-of-all cores)
+  (for/fold ([kinds (set)]) ([core (in-list cores)])
+    (set-union kinds (effect-kinds-of core))))
+
+;; 目標項に残る Effect の種別を取り出す residual extractor（spec §7.2 の表）。
+;; 形ごとの節を並べ、最後に「その他は部分項の和」を置く。PClosure と PLam と
+;; PInstall と PError の 4 形は和と違う寄与を持つので、和へ落とすと寄与がずれる。
+(define (effect-kinds-of core)
+  (match core
+    ;; --- 値の形。現在行はすべて () である ---
+    [(? exact-integer?) (set)]
+    ['unit (set)]
+    [(? string?) (set)]
+    [`(PResource ,_) (set)]
+    [`(PPlace ,_) (set)]
+    ;; Lam の現在行は空で、本体の Effect は NFn の latent row に入る。本体を和に
+    ;; 含めると、関数を作っただけで Effect が立つ。
+    [`(PClosure ,_ ,_ ,_) (set)]
+    ;; spec §7.2 の表に PLam の行が無い。PClosure と同じ理由で空にする。Recur の
+    ;; 写しは (PLetrec f (PLam ...) rest) であり、源の Recur の typing は継続の行
+    ;; だけを返すので、PLam を和に含めると (1) の包含が破れる。
+    [`(PLam ,_ ,_) (set)]
+    ;; --- 変数。unit の節より後に置く ---
+    [(? symbol?) (set)]
+    ;; --- 計算の形 ---
+    ;; Apply は callee の latent row を現在行へ足す。
+    [`(PApp ,function ,arguments ...)
+     (set-union (latent-kinds function)
+                (effect-kinds-of function)
+                (kinds-of-all arguments))]
+    [`(PLet ,_ ,bound ,body) (kinds-of-all (list bound body))]
+    [`(PLetOwned ,_ ,bound ,body) (kinds-of-all (list bound body))]
+    [`(PLetrec ,_ ,bound ,body) (kinds-of-all (list bound body))]
+    [`(PTagged ,_ ,arguments ...) (kinds-of-all arguments)]
+    [`(PRec ((,_ ,fields) ...)) (kinds-of-all fields)]
+    ;; Proj は row を足さない。
+    [`(PProj ,record ,_) (effect-kinds-of record)]
+    [`(PMatch ,scrutinee (,branches ...))
+     (set-union (effect-kinds-of scrutinee)
+                (kinds-of-all
+                 (for/list ([branch (in-list branches)])
+                   (match branch [`(,_ (,_ ...) -> ,body) body] [_ '()]))))]
+    ;; Γ0 の 7 件の primitive の latent row はすべて () である。
+    [`(PPrim ,_ ,arguments ...) (kinds-of-all arguments)]
+    [`(PEffect ,pop ,argument) (set-add (effect-kinds-of argument) pop)]
+    ;; handler の寄与に latent-kinds を使う。handler の写しは (PLam (px) ...) で
+    ;; あり、PLam の寄与が空なので effect-kinds-of では handler の Effect が消える。
+    ;; 除去は本体だけに効かせる。集合を作ってから大域的に差を取ると、同じ pop を
+    ;; 持つ PEffect が handler の外側にも現れたとき、外側の出現まで消える。
+    [`(PInstall ,pop ,handler ,body)
+     (set-union (latent-kinds handler)
+                (set-remove (effect-kinds-of body) pop))]
+    [`(PRuntime move ,argument) (set-add (effect-kinds-of argument) 'own)]
+    [`(PRuntime drop ,argument) (set-add (effect-kinds-of argument) 'own)]
+    [`(PRuntime yield ,observed ,next)
+     (set-add (kinds-of-all (list observed next)) 'yield)]
+    [`(PRuntime suspend ,body) (set-add (effect-kinds-of body) 'suspend)]
+    ;; Curry の row は function row と argument row の和で、何も足さない。
+    [`(PRuntime curry ,function ,argument)
+     (kinds-of-all (list function argument))]
+    ;; Scope の row は body の row そのもので、own を足さない。
+    [`(PScopeExit ,_ ,body) (effect-kinds-of body)]
+    ;; (Error _) は型付かない。
+    [`(PError ,_) (set)]
+    ;; spec §7.2 の表の「その他は部分項の和」。上の節が PR の形をすべて挙げている
+    ;; ので、ここへ落ちるのは PR に形が増えたときだけである。落ちた形は寄与が
+    ;; 和になり静かに通ってしまうため、形ごとの fixture の表を検査側に置く
+    ;; （§8.3 と同じ流儀）。
+    [(? pair?) (kinds-of-all (list (car core) (cdr core)))]
+    [_ (set)]))
+
+;; 適用先の潜在 Effect を取り出す。適用先が構文上の関数値でないときは空集合を
+;; 返す。過小近似だが、(1) は包含なのでこの側で成り立つ。
+(define (latent-kinds core)
+  (match core
+    [`(PClosure ,_ ,_ ,body) (effect-kinds-of body)]
+    [`(PLam ,_ ,body) (effect-kinds-of body)]
+    [_ (set)]))
+
+;; 目標側から latent Effect が取れる範囲。PApp の適用先がすべて構文上の PClosure
+;; か PLam であることを、項全体について見る。
+(define (latent-visible? core)
+  (let walk ([node core])
+    (match node
+      [`(PApp ,function ,arguments ...)
+       (and (match function
+              [`(PClosure ,_ ,_ ,_) #t]
+              [`(PLam ,_ ,_) #t]
+              [_ #f])
+            (walk function)
+            (andmap walk arguments))]
+      [(? pair?) (and (walk (car node)) (walk (cdr node)))]
+      [_ #t])))
