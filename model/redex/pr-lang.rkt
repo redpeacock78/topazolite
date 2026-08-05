@@ -56,7 +56,7 @@
 
   ;; PF / PG / PE は 3 つを別々に展開する。PF の句を貼ったうえで PInstall の句
   ;; だけを足す書き方では、PE が PInstall の本体の内側へ届かない。
-  ;; PRuntime の評価位置は lang.rkt:141 の F と同じ 4 本に限る。総称の
+  ;; PRuntime の評価位置は lang.rkt:128-137 の F と同じ 4 本に限る。総称の
   ;; (PRuntime prt pv ... PF pc ...) を置くと yield の継続と suspend の本体まで
   ;; 掘れてしまい、後続が 2 つ残って §5.2 の決定性が壊れる。
   (PF ::= hole
