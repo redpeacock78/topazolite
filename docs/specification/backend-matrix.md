@@ -377,7 +377,7 @@ backend を差し替えても結果が変わらないことの根拠は、この
 | `primitive-lt` | `tz:lt` | 同上 |
 | `primitive-le` | `tz:le` | 同上 |
 | `primitive-eq` | `tz:eq` | 同上 |
-| `primitive-acquire` | `tz:acquire` | 両 backend が `shim` |
+| `primitive-acquire` | `tz:acquire` | 両 backend が `shim`（`native` を禁じる検査の対象外） |
 
 `native` を禁じる検査の対象は上の 6 件である。
 資源取得を外すのは、BIT-002 が算術と比較の結果の同一性を言う要件だからである。
