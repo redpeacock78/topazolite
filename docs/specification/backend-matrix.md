@@ -90,7 +90,7 @@ pc   ::= pv | px
        | (PError pp)
 ```
 
-`pc` の形は源の `c` より少ない。
+`pc` の形の数は源の `c` より少ない。
 `Perform` と `Handle` が `PEffect` と `PInstall` へ、`Yield` と `Suspend` と `Move` と `Drop` と `Curry` が `PRuntime` へ潰れる。
 
 `ptycode` は `pop` の中にだけ現れる。
@@ -157,7 +157,8 @@ pstate ::= Available | Moved | Dropped
 `PLam` は `PLetrec` の右辺と `PInstall` の handler にしか現れず、どちらもその位置で規則が消費する。
 
 この対応表は `model/redex/tests/rule-crosscheck-test.rkt` が機械照合する。
-源の規則名の集合は `machine.rkt` の `-->g1/rules` と `-->g2/rules` から取り、目標の規則名の集合は `pr-machine.rkt` の `-->pr/rules` から取る。
+源の規則名の集合は `machine.rkt` の `-->g1/rules` と `-->g2/rules` から取り、対応表がその集合をちょうど覆うことを検査する。
+対応表の値の側が `pr-machine.rkt` の `-->pr/rules` と一致することは `model/redex/tests/pr-machine-test.rkt` が検査する。
 
 ## 5. lowering 関係と表現規約
 
