@@ -18,6 +18,7 @@
 
 (define heading-rx #px"^### ([A-Z]{3}-[0-9]{3})(?: +.*)?$")
 (define state-rx #px"^- \\*\\*状態\\*\\*： *(.+?) *$")
+(define verify-rx #px"^- \\*\\*検証\\*\\*： *(.+?) *$")
 (define spec-id-rx #px"\\[REQ: ([A-Z]{3}-[0-9]{3})\\]")
 (define test-id-rx
   #px"(?<![A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
@@ -53,6 +54,18 @@
            [_ (void)]))]))
   (reverse definitions))
 
+;; 検証欄を持つ ID の集合。この ID はテスト参照の要求から免除される。
+(define (registry-deferred path)
+  (define deferred (set))
+  (define current-id #f)
+  (for ([line (in-list (file->lines path))])
+    (match (regexp-match heading-rx line)
+      [(list _ id) (set! current-id id)]
+      [_
+       (when (and current-id (regexp-match? verify-rx line))
+         (set! deferred (set-add deferred current-id)))]))
+  deferred)
+
 (define (spec-ids paths)
   (append-map
    (lambda (path)
@@ -71,6 +84,7 @@
 
 (define (coverage-analysis registry-path cycles)
   (define definitions (registry-definitions registry-path))
+  (define deferred (registry-deferred registry-path))
   (define counts (make-hash))
   (for ([definition (in-list definitions)])
     (hash-update! counts (car definition) add1 0))
@@ -182,8 +196,17 @@
                         name state id))
               (set-difference-errors actual-specs expected
                                      (format "~a spec" name))
-              (set-difference-errors actual-tests expected
-                                     (format "~a test" name))))
+              (for/list ([id (in-list
+                              (sorted-ids
+                               (set-subtract
+                                (set-subtract expected deferred)
+                                actual-tests)))])
+                (format "~a test ID set missing expected ID: ~a" name id))
+              (for/list ([id (in-list
+                              (sorted-ids
+                               (set-subtract actual-tests expected)))])
+                (format "~a test ID set contains unexpected ID: ~a"
+                        name id))))
            '()))
      cycles expected-sets cycle-specs cycle-tests))
   (values
@@ -204,8 +227,9 @@
                                    g1-specs)))])
       (format "G1 requirement lacks spec annotation: ~a" id))
     (for/list ([id (in-list
-                    (sorted-ids
-                     (set-subtract (state-set definitions "G1")
+                     (sorted-ids
+                     (set-subtract
+                      (set-subtract (state-set definitions "G1") deferred)
                                    g1-tests)))])
       (format "G1 requirement lacks test reference: ~a" id))
     exact-set-errors)))

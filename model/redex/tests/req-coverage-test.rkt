@@ -49,6 +49,12 @@
 
 ;; 状態フィールドのテスト用 ID は実データの参照集合へ混入させない。
 (define bak-003 (string-append "BAK" "-003"))
+(define bak-001 (string-append "BAK" "-001"))
+(define bak-002 (string-append "BAK" "-002"))
+
+(define (registry-entry/verify id state verification)
+  (format "### ~a\n\n- **状態**：~a\n- **検証**：~a\n"
+          id state verification))
 
 (define expected-g2a-ids
   (set typ-003 row-001 row-002 row-003 row-004))
@@ -435,6 +441,91 @@
                 (format "~s" (cycle-descriptor-name d)))
     (check-true (list? (cycle-descriptor-test-paths d))
                 (format "~s" (cycle-descriptor-name d)))))
+
+(test-case
+ "verification field exempts an ID from the test reference requirement"
+ (define errors
+   (with-fixture
+    (registry-entry/verify bak-002 "G3" "Phase 3 以降（runtime の実装）")
+    (format "[REQ: ~a]" bak-002)
+    ""
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-002))))))))
+ (check-equal? errors '()))
+
+(test-case
+ "the exemption is permissive: an exempt ID may still be referenced"
+ (define errors
+   (with-fixture
+    (registry-entry/verify bak-001 "G3" "Phase 2 以降（emitter の実装）")
+    (format "[REQ: ~a]" bak-001)
+    (format "(test-case ~s (void))" bak-001)
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3b "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-001))))))))
+ (check-equal? errors '()))
+
+(test-case
+ "an ID without a verification field still requires a test reference"
+ (define errors
+   (with-fixture
+    (registry-entry bak-002 "G3")
+    (format "[REQ: ~a]" bak-002)
+    ""
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-002))))))))
+ (check-equal?
+  errors
+  (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
+
+(test-case
+ "the spec annotation side is not exempted"
+ ;; 免除は test 参照の側にしか効かない。spec 注釈の側は検証欄の有無によらず
+ ;; 要求し続ける。test 側を満たした fixture にしてあるのは、観測したいのが
+ ;; spec 側の 1 行だけだからである。test 側を空にすると、免除が入る前は test
+ ;; 側の欠落も並び、このテストが名前と違う理由で落ちる。
+ (define errors
+   (with-fixture
+    (registry-entry/verify bak-002 "G3" "Phase 3 以降（runtime の実装）")
+    ""
+    (format "(test-case ~s (void))" bak-002)
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-002))))))))
+ (check-equal?
+  errors
+  (list (format "G3d spec ID set missing expected ID: ~a" bak-002))))
+
+(test-case
+ "the verification regexp does not match a state line"
+ (define errors
+   (with-fixture
+    (registry-entry bak-002 "G3")
+    (format "[REQ: ~a]" bak-002)
+    ""
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-002))))))))
+ (check-equal?
+  errors
+  (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
 
 ;; 状態フィールドが descriptor ごとに効くこと。G3 の ID を G2 の descriptor で
 ;; 期待すると「absent or not state G2」が出る。
