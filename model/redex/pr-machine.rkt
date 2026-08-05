@@ -88,6 +88,44 @@
   [(punique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
 
+;; machine.rkt:157 から 184 の table-ref / table-set / fresh-place /
+;; finalize/proc と同じ実装である。machine.rkt はこれらを provide しておらず、
+;; provide を広げるより写すほうが公開面を増やさない。θ へ足す順序も揃える。
+;; §7.3 の trace 一致が順序まで比べるためである。
+(define (ptable-ref table key)
+  (match (assoc key table)
+    [(list _ value) value]
+    [_ #f]))
+
+(define (ptable-set table key value)
+  (if (assoc key table)
+      (for/list ([entry (in-list table)])
+        (if (equal? (first entry) key)
+            (list key value)
+            entry))
+      (append table (list (list key value)))))
+
+(define (pfresh-place heap states)
+  (for/fold ([next 0])
+            ([entry (in-list (append heap states))])
+    (max next (add1 (first entry)))))
+
+(define (finalize-pr/proc places states trace)
+  (define-values (final-states reversed-events)
+    (for/fold ([states states]
+               [events '()])
+              ([place (in-list (reverse places))])
+      (if (eq? (ptable-ref states place) 'Available)
+          (values (ptable-set states place 'Dropped)
+                  (cons (list 'fin place) events))
+          (values states events))))
+  (list final-states (append trace (reverse reversed-events))))
+
+(define-metafunction PR
+  finalize-pr : (pp ...) PΩ θ -> any
+  [(finalize-pr (pp ...) PΩ θ)
+   ,(finalize-pr/proc (term (pp ...)) (term PΩ) (term θ))])
+
 (define (pr-unique-binders? core)
   (and (match core
          [`(PLam ,parameters ,_) (not (check-duplicates parameters))]
@@ -167,7 +205,75 @@
         (side-condition (term (punique-labels? (label_field ...))))
         (where pv_result
                (pproj-lookup ((label_field pv_field) ...) label_target))
-        R-PR-Proj)))
+        R-PR-Proj)
+
+   ;; 内側の文脈を PG にするのは、間に scope が挟まったときに内側の scope へ
+   ;; 登録させるためである。源の R-LetOwned の G_inner に対応する。型ではなく
+   ;; 構成子で選ぶので、源の R-LetOwned と R-LetOwnedB がここへ畳まれる。
+   (--> (pcfg (in-hole PE_outer
+                       (PScopeExit (pp_managed ...)
+                                   (in-hole PG_inner
+                                            (PLetOwned px pv_bound pc_body))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer
+                       (PScopeExit (pp_managed ... pp_new)
+                                   (in-hole PG_inner pc_result)))
+              PH_new PΩ_new θ)
+        (where pp_new ,(pfresh-place (term PH) (term PΩ)))
+        (where pc_result (substitute pc_body px (PPlace pp_new)))
+        (where PH_new ,(ptable-set (term PH) (term pp_new) (term pv_bound)))
+        (where PΩ_new ,(ptable-set (term PΩ) (term pp_new) 'Available))
+        R-PR-LetOwned)
+
+   (--> (pcfg (in-hole PE (PRuntime move (PPlace pp))) PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ_new θ)
+        (where Available ,(ptable-ref (term PΩ) (term pp)))
+        (where pv_result ,(ptable-ref (term PH) (term pp)))
+        (where PΩ_new ,(ptable-set (term PΩ) (term pp) 'Moved))
+        R-PR-Move)
+
+   (--> (pcfg (in-hole PE (PRuntime move (PPlace pp))) PH PΩ θ)
+        (pcfg (in-hole PE (PError pp)) PH PΩ θ)
+        (where pstate_old ,(ptable-ref (term PΩ) (term pp)))
+        (side-condition (memq (term pstate_old) '(Moved Dropped)))
+        R-PR-MoveError)
+
+   (--> (pcfg (in-hole PE (PRuntime drop pv)) PH PΩ θ)
+        (pcfg (in-hole PE unit) PH PΩ θ)
+        R-PR-Drop)
+
+   (--> (pcfg (in-hole PE (PRuntime yield pv_observed pc_next))
+              PH PΩ (event_old ...))
+        (pcfg (in-hole PE pc_next) PH PΩ (event_old ... (obs pv_observed)))
+        R-PR-Yield)
+
+   (--> (pcfg (in-hole PE (PRuntime suspend pc_next)) PH PΩ θ)
+        (pcfg (in-hole PE pc_next) PH PΩ θ)
+        R-PR-Suspend)
+
+   (--> (pcfg (in-hole PE (PScopeExit (pp_managed ...) pv_result))
+              PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ_final θ_final)
+        (where (PΩ_final θ_final) (finalize-pr (pp_managed ...) PΩ θ))
+        R-PR-ScopeValue)
+
+   ;; 内側の文脈を PF にするのは、間に scope も handler も無いことを表すため
+   ;; である。源の R-ScopeAbort の F_inner に対応する。
+   (--> (pcfg (in-hole PE_outer
+                       (PScopeExit (pp_managed ...)
+                                   (in-hole PF_inner (PEffect pop pv_arg))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer (PEffect pop pv_arg)) PH PΩ_final θ_final)
+        (where (PΩ_final θ_final) (finalize-pr (pp_managed ...) PΩ θ))
+        R-PR-ScopeAbort)
+
+   (--> (pcfg (in-hole PE_outer
+                       (PScopeExit (pp_managed ...)
+                                   (in-hole PF_inner (PError pp_error))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer (PError pp_error)) PH PΩ_final θ_final)
+        (where (PΩ_final θ_final) (finalize-pr (pp_managed ...) PΩ θ))
+        R-PR-ScopeError)))
 
 (define (raw-steps-pr configuration)
   (if (pr-unique-binders? configuration)

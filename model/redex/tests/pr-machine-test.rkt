@@ -15,10 +15,11 @@
 (define (eval-pr core)
   (match (run-pr (inject-pr core) fuel)
     ['timeout 'timeout]
-    [`(pcfg (PScopeExit () ,result) ,_ ,_ ,_)
-     #:when (redex-match? PR pv result)
-     result]
     [`(pcfg ,result ,_ ,_ ,_) result]))
+
+;; 終端の config を丸ごと返す。PH と PΩ と θ を比べる検査で使う。
+(define (eval-pr/config core)
+  (run-pr (inject-pr core) fuel))
 
 (test-case
  "δpr implements the shim semantics of spec §9"
@@ -133,3 +134,79 @@
  (check-equal?
   (eval-pr (term (PProj (PRec ((f 1))) g)))
   (term (PScopeExit () (PProj (PRec ((f 1))) g)))))
+
+(test-case
+ "R-PR-LetOwned registers a fresh place and substitutes PPlace"
+ (check-equal?
+  (eval-pr/config (term (PLetOwned a 5 (PRuntime move a))))
+  (term (pcfg 5 ((0 5)) ((0 Moved)) ())))
+ ;; 2 つ目の場所は 1 になる。
+ (check-equal?
+  (eval-pr/config (term (PLetOwned a 5 (PLetOwned b 6 (PRuntime move b)))))
+  (term (pcfg 6 ((0 5) (1 6)) ((0 Dropped) (1 Moved)) ((fin 0))))))
+
+(test-case
+ "R-PR-LetOwned attaches to the innermost enclosing scope"
+ ;; PG は PScopeExit を含まないので、内側の scope の中の PLetOwned は外側の
+ ;; scope に登録されない。源の R-LetOwned が G_inner でしていることと同じである。
+ (check-equal?
+  (eval-pr/config (term (PLet a (PScopeExit () (PLetOwned b 6 7)) a)))
+  (term (pcfg 7 ((0 6)) ((0 Dropped)) ((fin 0))))))
+
+(test-case
+ "finalize-pr appends fin events in reverse allocation order"
+ ;; machine.rkt の finalize/proc が (reverse places) を走ることに対応する。
+ ;; §7.3 の trace 一致は順序まで比べるので、ここが揃っていないと落ちる。
+ (check-equal?
+  (eval-pr/config (term (PLetOwned a 5 (PLetOwned b 6 7))))
+  (term (pcfg 7 ((0 5) (1 6)) ((0 Dropped) (1 Dropped)) ((fin 1) (fin 0))))))
+
+(test-case
+ "R-PR-Move consumes the place and R-PR-MoveError reports the second move"
+ (check-equal?
+  (eval-pr/config
+   (term (PLetOwned a 5
+                    (PLet b (PRuntime move a) (PRuntime move a)))))
+  (term (pcfg (PError 0) ((0 5)) ((0 Moved)) ()))))
+
+(test-case
+ "R-PR-ScopeError finalizes the places that are still available"
+ (check-equal?
+  (eval-pr/config
+   (term (PLetOwned a 5
+                    (PLetOwned b 6
+                               (PLet c (PRuntime move a) (PRuntime move a))))))
+  (term (pcfg (PError 0) ((0 5) (1 6)) ((0 Moved) (1 Dropped)) ((fin 1))))))
+
+(test-case
+ "R-PR-Drop returns unit and does not touch PΩ"
+ (check-equal? (eval-pr (term (PRuntime drop 5))) (term unit))
+ ;; ここでの Dropped は scope 退出の finalize-pr が付けたものである。
+ ;; R-PR-Drop 自身は PΩ を触らない。
+ (check-equal?
+  (eval-pr/config (term (PLetOwned a 5 (PRuntime drop a))))
+  (term (pcfg unit ((0 5)) ((0 Dropped)) ((fin 0))))))
+
+(test-case
+ "R-PR-Yield records the observation and continues"
+ (check-equal? (eval-pr/config (term (PRuntime yield 3 4)))
+               (term (pcfg 4 () () ((obs 3)))))
+ ;; 継続は評価位置ではない。yield が先に発火し、後続は 1 つだけである。
+ ;; 総称の PRuntime 文脈を置くとここで run-pr が非決定 error を投げる。
+ (check-equal?
+  (eval-pr/config (term (PRuntime yield 3 (PPrim tz:add 1 2))))
+  (term (pcfg 3 () () ((obs 3))))))
+
+(test-case
+ "R-PR-Suspend drops the marker without touching the state"
+ (check-equal? (eval-pr/config (term (PRuntime suspend (PPrim tz:add 1 2))))
+               (term (pcfg 3 () () ()))))
+
+(test-case
+ "R-PR-ScopeAbort finalizes before the effect leaves the scope"
+ (check-equal?
+  (eval-pr/config (term (PLetOwned a 5 (PEffect (return b:alpha ty:Int) 1))))
+  (term (pcfg (PEffect (return b:alpha ty:Int) 1)
+              ((0 5))
+              ((0 Dropped))
+              ((fin 0))))))
