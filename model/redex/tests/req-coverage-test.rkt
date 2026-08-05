@@ -47,6 +47,9 @@
 (define rfn-002 (string-append "RFN" "-002"))
 (define rfn-003 (string-append "RFN" "-003"))
 
+;; 状態フィールドのテスト用 ID は実データの参照集合へ混入させない。
+(define bak-003 (string-append "BAK" "-003"))
+
 (define expected-g2a-ids
   (set typ-003 row-001 row-002 row-003 row-004))
 (define expected-g2b-ids
@@ -113,13 +116,13 @@
           registry-path
           #:cycles
           (list
-           (cycle-descriptor 'G2a spec-paths test-paths #f
+           (cycle-descriptor 'G2a "G2" spec-paths test-paths #f
                              (descriptor-ids expected-g2a-ids))))
          (coverage-errors
           registry-path
           #:cycles
           (list
-           (cycle-descriptor 'G1 spec-paths test-paths
+           (cycle-descriptor 'G1 "G1" spec-paths test-paths
                              expected-g1-count #f)))))))
 
 (define (fixture-errors-g2b registry spec test)
@@ -130,7 +133,7 @@
       registry-path
       #:cycles
       (list
-       (cycle-descriptor 'G2b spec-paths test-paths #f
+       (cycle-descriptor 'G2b "G2" spec-paths test-paths #f
                          (descriptor-ids expected-g2b-ids)))))))
 
 (define (fixture-errors-g2c registry spec test)
@@ -141,7 +144,7 @@
       registry-path
       #:cycles
       (list
-       (cycle-descriptor 'G2c spec-paths test-paths #f
+       (cycle-descriptor 'G2c "G2" spec-paths test-paths #f
                          (descriptor-ids expected-g2c-ids)))))))
 
 (define (fixture-errors-g2d registry spec test)
@@ -152,7 +155,7 @@
       registry-path
       #:cycles
       (list
-       (cycle-descriptor 'G2d spec-paths test-paths #f
+       (cycle-descriptor 'G2d "G2" spec-paths test-paths #f
                          (descriptor-ids expected-g2d-ids)))))))
 
 (test-case "G2a coverage requires the exact ID set"
@@ -294,9 +297,9 @@
        registry-path
        #:cycles
        (list
-        (cycle-descriptor 'G2a spec-paths test-paths #f
+        (cycle-descriptor 'G2a "G2" spec-paths test-paths #f
                           (descriptor-ids expected-g2a-ids))
-        (cycle-descriptor 'G2c spec-paths test-paths #f
+        (cycle-descriptor 'G2c "G2" spec-paths test-paths #f
                           (descriptor-ids expected-g2c-ids))))
       '()))))
 
@@ -383,7 +386,7 @@
       (run-coverage
        registry-path output errors
        #:cycles
-       (list (cycle-descriptor 'G1 spec-paths test-paths #f #f)))
+       (list (cycle-descriptor 'G1 "G1" spec-paths test-paths #f #f)))
       1)
      (check-equal? (get-output-string output) "")
      (check-true
@@ -432,3 +435,54 @@
                 (format "~s" (cycle-descriptor-name d)))
     (check-true (list? (cycle-descriptor-test-paths d))
                 (format "~s" (cycle-descriptor-name d)))))
+
+;; 状態フィールドが descriptor ごとに効くこと。G3 の ID を G2 の descriptor で
+;; 期待すると「absent or not state G2」が出る。
+(test-case
+ "descriptor state selects the requirement state set"
+ (define errors
+   (with-fixture
+    (registry-entry bak-003 "G3")
+    (format "[REQ: ~a]" bak-003)
+    (format "(test-case ~s (void))" bak-003)
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3a "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-003))))))))
+ (check-equal? errors '()))
+
+(test-case
+ "descriptor state mismatch is reported with the declared state"
+ (define errors
+   (with-fixture
+    (registry-entry bak-003 "G3")
+    (format "[REQ: ~a]" bak-003)
+    (format "(test-case ~s (void))" bak-003)
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3a "G2" spec-paths test-paths #f
+                               (list (string->symbol bak-003))))))))
+ (check-equal?
+  errors
+  (list (format "G3a expected ID is absent or not state G2: ~a" bak-003))))
+
+(test-case
+ "descriptor state outside G1..G5 is rejected"
+ (define errors
+   (with-fixture
+    (registry-entry bak-003 "G3")
+    (format "[REQ: ~a]" bak-003)
+    (format "(test-case ~s (void))" bak-003)
+    (lambda (registry-path spec-paths test-paths)
+      (coverage-errors
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3a "Phase 2 以降" spec-paths test-paths #f
+                               (list (string->symbol bak-003))))))))
+ (check-equal?
+  errors
+  (list "descriptor G3a declares invalid state: Phase 2 以降")))

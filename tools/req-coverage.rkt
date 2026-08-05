@@ -12,7 +12,7 @@
 ;; サブサイクル 1 件分の入力と期待値。
 ;; expected-count と expected-ids は、使わない側へ #f を入れる。
 (struct cycle-descriptor
-  (name spec-paths test-paths expected-count expected-ids)
+  (name state spec-paths test-paths expected-count expected-ids)
   #:transparent)
 
 (define heading-rx #px"^### ([A-Z]{3}-[0-9]{3})(?: +.*)?$")
@@ -23,6 +23,16 @@
 (define valid-states
   (set "G1" "G2" "G3" "G4" "G5"
        "Phase 1 以降" "Phase 2 以降" "Phase 3 以降"))
+
+;; descriptor が名乗れる状態は G サイクルに限る。valid-states は Phase 送りの
+;; 状態も含むため、後続 Phase の状態を descriptor に書けないよう別に制限する。
+(define descriptor-states (set "G1" "G2" "G3" "G4" "G5"))
+
+(define (state-set definitions state)
+  (list->set
+   (for/list ([definition (in-list definitions)]
+              #:when (equal? (cdr definition) state))
+     (car definition))))
 
 (define (registry-definitions path)
   (define definitions '())
@@ -64,17 +74,6 @@
   (for ([definition (in-list definitions)])
     (hash-update! counts (car definition) add1 0))
   (define known (list->set (map car definitions)))
-  (define g1
-    (list->set
-     (for/list ([definition (in-list definitions)]
-                #:when (equal? (cdr definition) "G1"))
-       (car definition))))
-  (define g2
-    (list->set
-     (for/list ([definition (in-list definitions)]
-                #:when (equal? (cdr definition) "G2"))
-       (car definition))))
-
   (define (expected-id-set cycle)
     (and (cycle-descriptor-expected-ids cycle)
          (list->set
@@ -86,7 +85,7 @@
                [expected (in-list expected-sets)])
       (cond
         [expected expected]
-        [(eq? (cycle-descriptor-name cycle) 'G1) g1]
+        [(eq? (cycle-descriptor-name cycle) 'G1) (state-set definitions "G1")]
         [else (set)])))
   (define spec-reference-sets
     (for/list ([cycle (in-list cycles)])
@@ -128,6 +127,13 @@
      (for/list ([definition (in-list definitions)]
                 #:unless (set-member? valid-states (cdr definition)))
        (car definition))))
+  (define invalid-descriptor-states
+    (for/list ([cycle (in-list cycles)]
+               #:unless (set-member? descriptor-states
+                                     (cycle-descriptor-state cycle)))
+      (format "descriptor ~a declares invalid state: ~a"
+              (cycle-descriptor-name cycle)
+              (cycle-descriptor-state cycle))))
   (define (set-difference-errors actual expected source)
     (append
      (for/list ([id (in-list
@@ -158,14 +164,18 @@
   (define exact-set-errors
     (append-map
      (lambda (cycle expected actual-specs actual-tests)
-       (if expected
-           (let ([name (cycle-descriptor-name cycle)])
+       (if (and expected
+                (set-member? descriptor-states
+                             (cycle-descriptor-state cycle)))
+           (let* ([name (cycle-descriptor-name cycle)]
+                  [state (cycle-descriptor-state cycle)]
+                  [owned (state-set definitions state)])
              (append
               (for/list ([id (in-list
                               (sorted-ids
-                               (set-subtract expected g2)))])
-                (format "~a expected ID is absent or not state G2: ~a"
-                        name id))
+                               (set-subtract expected owned)))])
+                (format "~a expected ID is absent or not state ~a: ~a"
+                        name state id))
               (set-difference-errors actual-specs expected
                                      (format "~a spec" name))
               (set-difference-errors actual-tests expected
@@ -179,13 +189,20 @@
       (format "duplicate requirement ID: ~a" id))
     (for/list ([id (in-list (sorted-ids invalid-states))])
       (format "invalid or missing requirement state: ~a" id))
+    invalid-descriptor-states
     count-errors
     (for/list ([id (in-list
                     (sorted-ids (set-subtract all-references known)))])
       (format "unknown requirement ID: ~a" id))
-    (for/list ([id (in-list (sorted-ids (set-subtract g1 g1-specs)))])
+    (for/list ([id (in-list
+                    (sorted-ids
+                     (set-subtract (state-set definitions "G1")
+                                   g1-specs)))])
       (format "G1 requirement lacks spec annotation: ~a" id))
-    (for/list ([id (in-list (sorted-ids (set-subtract g1 g1-tests)))])
+    (for/list ([id (in-list
+                    (sorted-ids
+                     (set-subtract (state-set definitions "G1")
+                                   g1-tests)))])
       (format "G1 requirement lacks test reference: ~a" id))
     exact-set-errors)))
 
@@ -332,14 +349,14 @@
                                 "elaborate-discharge-test.rkt"))])
       (build-path root "model/redex/tests" name)))
   (list
-   (cycle-descriptor 'G1 g1-specs g1-tests expected-g1-count #f)
-   (cycle-descriptor 'G2a g2a-specs g2a-tests #f expected-g2a-ids)
-   (cycle-descriptor 'G2b g2b-specs g2b-tests #f expected-g2b-ids)
-   (cycle-descriptor 'G2c g2c-specs g2c-tests #f expected-g2c-ids)
-   (cycle-descriptor 'G2d g2d-specs g2d-tests #f expected-g2d-ids)
-   (cycle-descriptor 'G2e g2e-specs g2e-tests #f expected-g2e-ids)
-   (cycle-descriptor 'G2f g2f-specs g2f-tests #f expected-g2f-ids)
-   (cycle-descriptor 'G2g g2g-specs g2g-tests #f expected-g2g-ids)))
+   (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
+   (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
+   (cycle-descriptor 'G2b "G2" g2b-specs g2b-tests #f expected-g2b-ids)
+   (cycle-descriptor 'G2c "G2" g2c-specs g2c-tests #f expected-g2c-ids)
+   (cycle-descriptor 'G2d "G2" g2d-specs g2d-tests #f expected-g2d-ids)
+   (cycle-descriptor 'G2e "G2" g2e-specs g2e-tests #f expected-g2e-ids)
+   (cycle-descriptor 'G2f "G2" g2f-specs g2f-tests #f expected-g2f-ids)
+   (cycle-descriptor 'G2g "G2" g2g-specs g2g-tests #f expected-g2g-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
