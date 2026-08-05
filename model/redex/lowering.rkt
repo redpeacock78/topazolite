@@ -400,6 +400,7 @@
     [`(PEffect ,pop ,argument) (set-add (effect-kinds-of argument) pop)]
     ;; handler の寄与に latent-kinds を使う。handler の写しは (PLam (px) ...) で
     ;; あり、PLam の寄与が空なので effect-kinds-of では handler の Effect が消える。
+    ;; 源の Handle は handler-row を row-union するので、開いた側と揃える。
     ;; 除去は本体だけに効かせる。集合を作ってから大域的に差を取ると、同じ pop を
     ;; 持つ PEffect が handler の外側にも現れたとき、外側の出現まで消える。
     [`(PInstall ,pop ,handler ,body)

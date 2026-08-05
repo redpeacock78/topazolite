@@ -484,11 +484,13 @@
 (define trace-compared (box 0))
 (define trace-discarded (box 0))
 
-;; §7.1。評価結果が値なら repr(τ) に属する。終端の core は run-pr/adaptive の
-;; 返す pcfg から取り、種別は terminal-kind-pr で見る。obs-eval-pr を使わないのは
-;; 上の run-pr/adaptive のコメントの理由による。
+;; §7.1。評価結果が値なら repr(τ) に属する。τ は Typed Core の型付け判定から取り、
+;; elaboration-result の型をそのまま使わない。終端の core は run-pr/adaptive の返す
+;; pcfg から取り、種別は terminal-kind-pr で見る。obs-eval-pr を使わないのは上の
+;; run-pr/adaptive のコメントの理由による。
 (define (repr-conforms? source)
-  (define-values (core type _row callables) (artifact source))
+  (define-values (core _elaborated-type _row callables) (artifact source))
+  (match-define (list type _row2) (core-fixture core callables))
   (define-values (status target) (lower core 'racket-cs))
   (cond
     [(not (eq? status 'ok)) #t]
