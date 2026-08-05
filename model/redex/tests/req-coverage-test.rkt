@@ -569,6 +569,23 @@
   (format "Requirement coverage OK: 1 G3d IDs\ndeferred-tests: ~a:0\n"
           bak-002)))
 
+;; 出力の行だけでなく、後続タスクが使う関数の側も固定する。ID を記号へ写す
+;; ところが壊れても、Task 14 まで気付けないままになる。
+(test-case
+ "deferred-test-counts exposes the same measurement as symbols"
+ (define counts
+   (with-fixture
+    (registry-entry/verify bak-001 "G3" "Phase 2 以降（emitter の実装）")
+    (format "[REQ: ~a]" bak-001)
+    (format "(test-case ~s (void))" bak-001)
+    (lambda (registry-path spec-paths test-paths)
+      (deferred-test-counts
+       registry-path
+       #:cycles
+       (list (cycle-descriptor 'G3b "G3" spec-paths test-paths #f
+                               (list (string->symbol bak-001))))))))
+ (check-equal? counts (list (cons (string->symbol bak-001) 1))))
+
 (test-case
  "no deferred-tests line when nothing is exempt"
  (define result
