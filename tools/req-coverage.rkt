@@ -11,6 +11,7 @@
 
 ;; サブサイクル 1 件分の入力と期待値。
 ;; expected-count と expected-ids は、使わない側へ #f を入れる。
+;; state は要件の状態文字列で、期待 ID 集合の照合対象を選ぶ。
 (struct cycle-descriptor
   (name state spec-paths test-paths expected-count expected-ids)
   #:transparent)
@@ -164,6 +165,9 @@
   (define exact-set-errors
     (append-map
      (lambda (cycle expected actual-specs actual-tests)
+       ;; descriptor の状態が無効なら owned が空集合になり、expected ID 全件が
+       ;; 偽の欠落として並ぶ。宣言そのものの誤りなので、ここでは何も出さず
+       ;; invalid-descriptor-states だけを返す。
        (if (and expected
                 (set-member? descriptor-states
                              (cycle-descriptor-state cycle)))
