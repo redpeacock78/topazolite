@@ -336,6 +336,9 @@
 ;; Update this only when the G3a scope intentionally gains or removes an ID.
 (define expected-g3a-ids '(BAK-003))
 
+;; Update this only when the G3b scope intentionally gains or removes an ID.
+(define expected-g3b-ids '(BAK-001))
+
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
   (define g1-specs
@@ -412,6 +415,13 @@
     (list (build-path root "docs/specification/backend-matrix.md")))
   (define g3a-tests
     (list (build-path root "model/redex/tests/backend-matrix-test.rkt")))
+  (define g3b-tests
+    (list (build-path root "model/redex/tests/rule-crosscheck-test.rkt")
+          (build-path root "model/redex/tests/pr-lang-test.rkt")
+          (build-path root "model/redex/tests/pr-machine-test.rkt")
+          (build-path root "model/redex/tests/pr-obs-test.rkt")
+          (build-path root "model/redex/tests/lowering-test.rkt")
+          (build-path root "model/redex/tests/properties-lowering-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -421,7 +431,8 @@
    (cycle-descriptor 'G2e "G2" g2e-specs g2e-tests #f expected-g2e-ids)
    (cycle-descriptor 'G2f "G2" g2f-specs g2f-tests #f expected-g2f-ids)
    (cycle-descriptor 'G2g "G2" g2g-specs g2g-tests #f expected-g2g-ids)
-   (cycle-descriptor 'G3a "G3" g3-specs g3a-tests #f expected-g3a-ids)))
+   (cycle-descriptor 'G3a "G3" g3-specs g3a-tests #f expected-g3a-ids)
+   (cycle-descriptor 'G3b "G3" g3-specs g3b-tests #f expected-g3b-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

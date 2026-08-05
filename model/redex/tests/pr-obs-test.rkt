@@ -5,6 +5,8 @@
          "../pr-lang.rkt"
          "../pr-obs.rkt")
 
+;; [REQ: BAK-001] 目標側の観測と終端種別（backend-matrix.md §4）
+
 (define depth 5)
 (define fuel 10000)
 

@@ -16,6 +16,8 @@
          "../type-equiv.rkt"
          "../typing.rkt")
 
+;; [REQ: BAK-001] 型と Effect と評価順の保存（backend-matrix.md §6）
+
 (define limits (read-bounds))
 (define depth (bounds-observation-depth limits))
 (define source-fuel (bounds-fuel limits))

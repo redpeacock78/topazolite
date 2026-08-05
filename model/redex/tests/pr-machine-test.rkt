@@ -7,6 +7,8 @@
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
+;; [REQ: BAK-001] 目標機械 -->pr の 20 本の規則（backend-matrix.md §4）
+
 (define fuel 10000)
 
 ;; 目標項を注入して走らせ、終端の config の計算部分を返す。

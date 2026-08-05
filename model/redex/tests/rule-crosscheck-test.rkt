@@ -5,6 +5,8 @@
          redex/reduction-semantics
          "../machine.rkt")
 
+;; [REQ: BAK-001] 源と目標の規則名の対応（backend-matrix.md §4）
+
 (provide rule-correspondence
          target-rule-names)
 

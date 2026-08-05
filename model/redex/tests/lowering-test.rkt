@@ -12,7 +12,7 @@
          "../pr-machine.rkt"
          "../pr-obs.rkt")
 
-;; [REQ: BAK-001]
+;; [REQ: BAK-001] lowering 関係と符号化（backend-matrix.md §5）
 
 (define depth 5)
 (define fuel 10000)

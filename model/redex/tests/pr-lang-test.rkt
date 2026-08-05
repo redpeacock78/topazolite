@@ -4,6 +4,8 @@
          redex/reduction-semantics
          "../pr-lang.rkt")
 
+;; [REQ: BAK-001] 目標言語 PR の構文（backend-matrix.md §3）
+
 ;; 証人被覆の限界：これは公開 API で実施できる有限の証人被覆であり、言語定義と
 ;; の機械的な完全一致ではない。句を足したときに証人を足し忘れれば検出できず、
 ;; 一覧に無い句の欠落も検出できない。Redex 9.2 の language-nts は非終端名しか
