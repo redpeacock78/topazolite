@@ -64,6 +64,30 @@
          (not (check-duplicates (term (px ...))))))]
   [(psubstitute* pc_body (px ...) (pv_arg ...)) #f])
 
+(define-metafunction PR
+  pselect-branch : K (pv ...) (pbr ...) -> any
+  [(pselect-branch K (pv_arg ...) ((K (px ...) -> pc_body) pbr_rest ...))
+   (psubstitute* pc_body (px ...) (pv_arg ...))]
+  [(pselect-branch K (pv_arg ...)
+                   ((K_other (px_other ...) -> pc_other) pbr_rest ...))
+   (pselect-branch K (pv_arg ...) (pbr_rest ...))]
+  [(pselect-branch K (pv_arg ...) ()) #f])
+
+(define-metafunction PR
+  pproj-lookup : ((label pv) ...) label -> any
+  [(pproj-lookup ((label_target pv_target) (label_rest pv_rest) ...)
+                 label_target)
+   pv_target]
+  [(pproj-lookup ((label_head pv_head) (label_rest pv_rest) ...)
+                 label_target)
+   (pproj-lookup ((label_rest pv_rest) ...) label_target)]
+  [(pproj-lookup () label_target) #f])
+
+(define-metafunction PR
+  punique-labels? : (label ...) -> boolean
+  [(punique-labels? (label ...))
+   ,(not (check-duplicates (term (label ...))))])
+
 (define (pr-unique-binders? core)
   (and (match core
          [`(PLam ,parameters ,_) (not (check-duplicates parameters))]
@@ -85,7 +109,65 @@
    (--> (pcfg (in-hole PE (PPrim pnm pv_arg ...)) PH PΩ θ)
         (pcfg (in-hole PE pv_result) PH PΩ θ)
         (where pv_result (δpr pnm pv_arg ...))
-        R-PR-Prim)))
+        R-PR-Prim)
+
+   (--> (pcfg (in-hole PE (PApp (PClosure ((px_e pv_e) ...) (px ...) pc_body)
+                                pv_arg ...))
+              PH PΩ θ)
+        (pcfg (in-hole PE pc_result) PH PΩ θ)
+        (where pc_result
+               (psubstitute* pc_body (px_e ... px ...) (pv_e ... pv_arg ...)))
+        R-PR-App)
+
+   ;; 源の R-CurryVal と R-ApplyCurry を 1 本に畳む。CurryVal 相当の中間値を
+   ;; 作らず penv を延ばすので、origin-of と Derived が消える。
+   (--> (pcfg (in-hole PE (PRuntime curry
+                                    (PClosure ((px_e pv_e) ...)
+                                              (px_1 px_2 ...)
+                                              pc_body)
+                                    pv_arg))
+              PH PΩ θ)
+        (pcfg (in-hole PE (PClosure ((px_e pv_e) ... (px_1 pv_arg))
+                                    (px_2 ...)
+                                    pc_body))
+              PH PΩ θ)
+        R-PR-Curry)
+
+   ;; (owned-type? τ) の判定は lowering が静的に解いており、目標側は構成子で
+   ;; 選ぶ。源の R-Let と R-LetB がここへ畳まれる。
+   (--> (pcfg (in-hole PE (PLet px pv_bound pc_body)) PH PΩ θ)
+        (pcfg (in-hole PE pc_result) PH PΩ θ)
+        (where pc_result (substitute pc_body px pv_bound))
+        R-PR-Let)
+
+   (--> (pcfg (in-hole PE (PLetrec px_f (PLam (px ...) pc_body) pc_next))
+              PH PΩ θ)
+        (pcfg (in-hole PE pc_result) PH PΩ θ)
+        ;; 閉包の本体は「同じ letrec を張り直したうえで元の本体を評価する」形に
+        ;; する。(PApp px_f px ...) を置くと閉包が自分自身へ戻るだけで pc_body に
+        ;; 到達せず、どんな入力でも 2 状態を往復して停止しない。
+        (where pv_recur
+               (PClosure ()
+                         (px ...)
+                         (PLetrec px_f
+                                  (PLam (px ...) pc_body)
+                                  pc_body)))
+        (where pc_result (substitute pc_next px_f pv_recur))
+        R-PR-Letrec)
+
+   (--> (pcfg (in-hole PE (PMatch (PTagged K pv_arg ...) (pbr ...))) PH PΩ θ)
+        (pcfg (in-hole PE pc_result) PH PΩ θ)
+        (where pc_result (pselect-branch K (pv_arg ...) (pbr ...)))
+        R-PR-Match)
+
+   (--> (pcfg (in-hole PE (PProj (PRec ((label_field pv_field) ...))
+                                 label_target))
+              PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (side-condition (term (punique-labels? (label_field ...))))
+        (where pv_result
+               (pproj-lookup ((label_field pv_field) ...) label_target))
+        R-PR-Proj)))
 
 (define (raw-steps-pr configuration)
   (if (pr-unique-binders? configuration)

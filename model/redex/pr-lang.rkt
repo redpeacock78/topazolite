@@ -107,7 +107,8 @@
 
   #:binding-forms
   (PLam (px ...) pc #:refers-to (shadow px ...))
-  (PClosure penv (px ...) pc #:refers-to (shadow px ...))
+  (PClosure ((px_e pv_e) ...) (px ...) pc
+            #:refers-to (shadow px_e ... px ...))
   (PLet px pc_1 pc_2 #:refers-to px)
   (PLetOwned px pc_1 pc_2 #:refers-to px)
   (PLetrec px pc_1 #:refers-to px pc_2 #:refers-to px)
