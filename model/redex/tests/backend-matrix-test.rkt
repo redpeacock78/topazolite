@@ -115,3 +115,68 @@
  (check-eq? (capability-diagnostic-feature-id diagnostic) 'kernel-primitive)
  (check-eq? (capability-diagnostic-backend diagnostic) 'racket-cs)
  (check-equal? (capability-diagnostic-reason diagnostic) "test"))
+
+(test-case
+ "every core form names a feature declared in the canonical table"
+ (define feature-ids (list->set (map row-feature-id backend-features)))
+ (for ([row (in-list core-form-features)])
+   (check-true (set-member? feature-ids (second row))
+               (format "feature of ~a" (first row)))))
+
+(test-case
+ "core form heads do not repeat"
+ (define heads (map first core-form-features))
+ (check-equal? (length heads) (set-count (list->set heads))))
+
+(test-case
+ "core-form-feature reads the table and fails closed"
+ (check-eq? (core-form-feature 'Apply) 'closure)
+ (check-eq? (core-form-feature '%literal) 'literal)
+ (check-eq? (core-form-feature 'PrimVal) 'primitive-value)
+ ;; 対応表に無い頭シンボルは例外ではなく #f を返す。lower はこれを
+ ;; unknown-core-form の診断へ変える（spec §8.3）。
+ (check-false (core-form-feature 'Frobnicate)))
+
+(test-case
+ "every primitive name has its own shim feature"
+ ;; spec §8.1。shim 列は名前 1 つであり、リストを置かない。名前と feature が
+ ;; 1 対 1 なので、1 件を unsupported にしても他の 6 件は閉じない。
+ (check-equal? (sort (map car primitive-features) symbol<?)
+               '(acquire add eq le lt mul sub))
+ (define feature-ids (map cdr primitive-features))
+ (check-equal? (length feature-ids) (set-count (list->set feature-ids)))
+ (check-eq? (primitive-feature 'add) 'primitive-add)
+ (check-eq? (primitive-feature 'acquire) 'primitive-acquire)
+ ;; Γ0 に無い名前は例外ではなく #f を返す。lower はこれを unknown-core-form の
+ ;; 診断へ変える（spec §8.1）。
+ (check-false (primitive-feature 'frobnicate))
+ (check-equal? (feature-primitives 'primitive-add) '(add))
+ (check-equal? (feature-primitives 'primitive-value) '()))
+
+(test-case
+ "the primitive features are shim on both backends"
+ ;; spec §9。native を許さない検査そのものは Task 15 で足す。ここでは表の値だけ
+ ;; を固定する。
+ (for* ([feature-id (in-list (map cdr primitive-features))]
+        [backend (in-list '(racket-cs racketscript))])
+   (check-eq? (feature-support feature-id backend) 'shim
+              (format "~a on ~a" feature-id backend)))
+ ;; PrimVal の頭に付く feature は別である。η 展開した closure を作るだけなので、
+ ;; 両 backend で native であり、算術を閉じても閉じない（spec §8.3）。
+ (check-eq? (feature-support 'primitive-value 'racket-cs) 'native)
+ (check-eq? (feature-support 'primitive-value 'racketscript) 'native)
+ ;; 算術と比較の 6 件だけを G3c の検査の対象にする。
+ (check-equal? (sort arithmetic-shim-features symbol<?)
+               '(primitive-add primitive-eq primitive-le primitive-lt
+                 primitive-mul primitive-sub)))
+
+(test-case
+ "feature-support/matrix reads the injected table"
+ ;; test seam。正典表と同じ形の別の表を読む（spec §6.2）。
+ (define injected
+   (for/list ([row (in-list backend-features)])
+     (if (eq? (row-feature-id row) 'closure)
+         '(closure unsupported unsupported #f #f "test seam")
+         row)))
+ (check-eq? (feature-support/matrix injected 'closure 'racket-cs) 'unsupported)
+ (check-eq? (feature-support 'closure 'racket-cs) 'native))

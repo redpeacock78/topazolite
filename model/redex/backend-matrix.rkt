@@ -1,9 +1,16 @@
 #lang racket
 
 (provide (struct-out capability-diagnostic)
+         arithmetic-shim-features
          backend-features
+         core-form-features
+         core-form-feature
          diagnostic-ids
+         feature-primitives
          feature-support
+         feature-support/matrix
+         primitive-feature
+         primitive-features
          check-tables!)
 
 ;; 非対応 feature に当たったときに lower が返す値。近似的な写しは出さない。
@@ -15,11 +22,36 @@
 ;; shim 列は shim 名か #f。semantic-test 列はテスト名、(deferred "..."),
 ;; または unsupported 行の #f。
 (define backend-features
-  '((closure          native native #f (deferred "Phase 3 以降") "")
+  '((literal          native native #f (deferred "Phase 3 以降") "")
+    (variable-binding native native #f (deferred "Phase 3 以降") "")
+    (closure          native native #f (deferred "Phase 3 以降") "")
     (tagged-adt       native native #f (deferred "Phase 3 以降") "")
     (immutable-record native native #f (deferred "Phase 3 以降") "")
     (effect-dispatch  native native #f (deferred "Phase 3 以降") "")
     (scope-exit       native native #f (deferred "Phase 3 以降") "")
+    (runtime-call     native native #f (deferred "Phase 3 以降") "")
+    (resource-runtime native native #f (deferred "Phase 3 以降") "")
+    (static-erasure   native native #f (deferred "Phase 3 以降") "")
+    ;; primitive 値そのものの写し。η 展開した closure を作るだけなので両 backend
+    ;; で native である。どの名前を写せるかは下の 7 行が決める（spec §8.3）。
+    (primitive-value  native native #f (deferred "Phase 3 以降") "")
+    ;; Γ0 の 7 件は名前ごとに 1 行を持つ。shim 列は名前 1 つであり、リストを置か
+    ;; ない（spec §8.1、§16）。算術と比較の 6 件は G3c の表の検査が native を
+    ;; 禁じる対象になる（spec §9）。
+    (primitive-add    shim shim tz:add (deferred "Phase 3 以降")
+                      "算術は Host の演算を直接指さない")
+    (primitive-sub    shim shim tz:sub (deferred "Phase 3 以降")
+                      "算術は Host の演算を直接指さない")
+    (primitive-mul    shim shim tz:mul (deferred "Phase 3 以降")
+                      "算術は Host の演算を直接指さない")
+    (primitive-lt     shim shim tz:lt (deferred "Phase 3 以降")
+                      "比較は Host の演算を直接指さない")
+    (primitive-le     shim shim tz:le (deferred "Phase 3 以降")
+                      "比較は Host の演算を直接指さない")
+    (primitive-eq     shim shim tz:eq (deferred "Phase 3 以降")
+                      "比較は Host の演算を直接指さない")
+    (primitive-acquire shim shim tz:acquire (deferred "Phase 3 以降")
+                      "資源取得は Host の演算を直接指さない")
     (kernel-primitive unsupported unsupported #f #f
                       "Phase 0 の Typed Core は kernel primitive を持たない")
     (trait-primitive  unsupported unsupported #f #f
@@ -35,16 +67,96 @@
     (unknown-core-form "対応表に無い Typed Core の形")
     (unknown-core-type "op-code の入力が Typed Core の τ でない")))
 
-(define (feature-row feature-id)
-  (or (assq feature-id backend-features)
+;; spec §4.4 の 2 表の左辺、すなわち c と v の形の頭シンボルから feature-id への
+;; 写像である。§8.3 の 1 の突合の対象はこの左辺の集合であり、lang.rkt の c と v
+;; の形の集合と一致しなければならない。集合をここへ書くのは、Redex の
+;; language-nts が非終端名しか返さず、生成規則の右辺を取る公開 API が無いためで
+;; ある。lang.rkt に形が増えたとき、この表を更新しなければ検査が落ちる。
+;;
+;; 変数と literal は頭シンボルを持たないので、% を冠した擬似的な頭で表す。% は
+;; G2m にも PR にも現れないので、源の形の名前と衝突しない。
+(define core-form-features
+  '((%literal   literal)
+    (%variable  variable-binding)
+    (Let        variable-binding)
+    (Recur      variable-binding)
+    (RecurVal   variable-binding)
+    (Apply      closure)
+    (Lam        closure)
+    (CurryVal   closure)
+    (Construct  tagged-adt)
+    (Eliminate  tagged-adt)
+    (UVal       tagged-adt)
+    (RVal       tagged-adt)
+    (Rec        immutable-record)
+    (Proj       immutable-record)
+    (Perform    effect-dispatch)
+    (Handle     effect-dispatch)
+    (Scope      scope-exit)
+    (Yield      runtime-call)
+    (Suspend    runtime-call)
+    (Move       runtime-call)
+    (Drop       runtime-call)
+    (Curry      runtime-call)
+    (Error      resource-runtime)
+    (resource   resource-runtime)
+    (Discharge  static-erasure)
+    (TypeRep    static-erasure)
+    (ProofRep   static-erasure)
+    (PrimVal    primitive-value)))
+
+;; 対応表に無い頭シンボルで例外を投げない。lower が全域であるための土台であり、
+;; 呼び出し側が #f を unknown-core-form の診断へ変える（spec §8.3）。
+(define (core-form-feature head)
+  (define row (assq head core-form-features))
+  (and row (second row)))
+
+;; Γ0 の primitive の名前から feature-id への写像である。`PrimVal` の頭が指す
+;; `primitive-value` とは別の層であり、名前の feature を lower が別々に引く
+;;（spec §8.3）。名前と feature を 1 対 1 にしてあるのは、shim 列が名前 1 つを
+;; 持つ §8.1 の約束を守るためであり、1 件を unsupported にしたときに他の名前まで
+;; 閉じないためでもある。
+(define primitive-features
+  '((add . primitive-add)
+    (sub . primitive-sub)
+    (mul . primitive-mul)
+    (lt  . primitive-lt)
+    (le  . primitive-le)
+    (eq  . primitive-eq)
+    (acquire . primitive-acquire)))
+
+;; 算術と比較の 6 件。spec §9 の「両 backend が shim」の検査はこの 6 件だけを対象
+;; にする。acquire は資源取得であり、算術の禁則とは別の理由で shim である。
+(define arithmetic-shim-features
+  '(primitive-add primitive-sub primitive-mul
+    primitive-lt primitive-le primitive-eq))
+
+;; 表に無い名前で例外を投げない。呼び出し側が #f を unknown-core-form の診断へ変
+;; える（spec §8.1）。
+(define (primitive-feature nm)
+  (define row (assq nm primitive-features))
+  (and row (cdr row)))
+
+;; feature-id からその feature が覆う名前を引く。名前の束を lowering.rkt が二重に
+;; 持たないための逆写像である。
+(define (feature-primitives feature-id)
+  (for/list ([row (in-list primitive-features)]
+             #:when (eq? (cdr row) feature-id))
+    (car row)))
+
+(define (feature-row matrix feature-id)
+  (or (assq feature-id matrix)
       (error 'feature-support "unknown feature id: ~a" feature-id)))
 
-(define (feature-support feature-id backend)
-  (define row (feature-row feature-id))
+(define (feature-support/matrix matrix feature-id backend)
+  (define row (feature-row matrix feature-id))
   (case backend
     [(racket-cs) (second row)]
     [(racketscript) (third row)]
     [else (error 'feature-support "unknown backend: ~a" backend)]))
+
+(define (feature-support feature-id backend)
+  (feature-support/matrix backend-features feature-id backend))
 
 (define (row-unsupported? row)
   (or (eq? (second row) 'unsupported)
@@ -90,6 +202,21 @@
   (for ([entry (in-list diagnostic-ids)])
     (when (or (not (string? (second entry))) (string=? (second entry) ""))
       (error 'check-tables! "~a: roster entry states no reason" (first entry))))
+  ;; 形の対応表の右辺は正典表の行でなければならない。形を足したときに feature を
+  ;; 宣言し忘れると load 時に落ちる。
+  (define form-heads (map first core-form-features))
+  (unless (= (length form-heads) (set-count (list->set form-heads)))
+    (error 'check-tables! "duplicate core form head"))
+  (for ([row (in-list core-form-features)])
+    (unless (assq (second row) backend-features)
+      (error 'check-tables! "~a: undeclared feature ~a"
+             (first row) (second row))))
+  ;; 名前の対応表も同じ規律に従う。名前を足して feature を書き忘れると load 時に
+  ;; 落ちる。名前が Γ0 に属するかどうかの突合は G3c で足す（spec §9）。
+  (for ([row (in-list primitive-features)])
+    (unless (assq (cdr row) backend-features)
+      (error 'check-tables! "~a: undeclared feature ~a"
+             (car row) (cdr row))))
   (void))
 
 (check-tables!)
