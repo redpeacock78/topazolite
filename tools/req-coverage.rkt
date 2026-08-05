@@ -342,6 +342,9 @@
 ;; Update this only when the G3c scope intentionally gains or removes an ID.
 (define expected-g3c-ids '(BIT-002))
 
+;; Update this only when the G3d scope intentionally gains or removes an ID.
+(define expected-g3d-ids '(BAK-002))
+
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
   (define g1-specs
@@ -439,7 +442,8 @@
    (cycle-descriptor 'G2g "G2" g2g-specs g2g-tests #f expected-g2g-ids)
    (cycle-descriptor 'G3a "G3" g3-specs g3a-tests #f expected-g3a-ids)
    (cycle-descriptor 'G3b "G3" g3-specs g3b-tests #f expected-g3b-ids)
-   (cycle-descriptor 'G3c "G3" g3-specs g3c-tests #f expected-g3c-ids)))
+   (cycle-descriptor 'G3c "G3" g3-specs g3c-tests #f expected-g3c-ids)
+   (cycle-descriptor 'G3d "G3" g3-specs '() #f expected-g3d-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

@@ -312,7 +312,7 @@ elaboration は型宣言の形にコンパイル時の Effect を足すが、Typ
 feature ごとに、2 つの backend での実現方法を `native`、`shim`、`unsupported` の 3 値で宣言する。
 表は `model/redex/backend-matrix.rkt` が唯一の定義元であり、検査規則は表の行から生成する。
 
-（conformance suite の義務との対応は G3d で足す。）
+表の各行は semantic test 列を持ち、その全域性を §9 が義務として述べる。 [REQ: BAK-002]
 
 ## 8. capability diagnostic
 
@@ -327,7 +327,19 @@ feature ごとに、2 つの backend での実現方法を `native`、`shim`、`
 
 ## 9. conformance suite の義務
 
-（G3d で埋める。）
+2 つの backend が同じ意味論を持つことは、対応表の各行が指す semantic test で確かめる。
+Phase 0 が回収するのは、その列の全域性である。 [REQ: BAK-002]
+
+- `unsupported` を含まない行は `semantic-test` 列を持つ。Phase 0 で書けない行には `(deferred "Phase 3 以降")` を置き、列を空にしない。
+- `unsupported` を含む行は `semantic-test` を持たない。両 backend で動かない feature には比べる対象が無いためである。代わりに §8 の 4 つの義務を負う。
+- `shim` を宣言する行は `shim` 列に shim の名前を持つ。両 backend が `native` を宣言する行は `shim` 列が `#f` である。
+- `feature-id` は表の中で重複しない。
+
+3 番目と 4 番目を置くのは、`semantic-test` の免除が support 値の書き換えで手に入る経路を閉じるためである。
+`unsupported` へ書き換えると §8 の 4 つの義務が代わりに立つ。
+
+suite を 2 つの runtime で実際に走らせるのは Phase 3 以降である。
+Phase 0 の対応表は宣言であり、`racket-cs` と `racketscript` の support 値を runtime で確かめていない。
 
 ## 10. bit 意味論と算術 shim
 
@@ -413,8 +425,35 @@ shim の意味論そのものが backend 間で一致するかは、ここでは
 
 ## 11. 要件対応表
 
-（G3d で埋める。）
+本文書が回収する 4 件の要件と、その規則注釈の位置、Phase 0 での検査の対応である。
+
+| ID | 規則注釈 | Phase 0 の検査 |
+|---|---|---|
+| BAK-001 | §5、§6 | 型と Effect と評価順の保存（`model/redex/tests/properties-lowering-test.rkt`） |
+| BAK-002 | §7、§9 | 表の整合検査と semantic test 列の全域性（`model/redex/tests/backend-matrix-test.rkt`） |
+| BAK-003 | §8 | capability diagnostic と診断 ID 一覧（`model/redex/tests/backend-matrix-test.rkt`） |
+| BIT-002 | §10 | 算術と比較が shim を指すこと（`model/redex/tests/lowering-arith-test.rkt`） |
+
+4 件とも `requirements.md` の検証欄を残す。
+検証欄が指す成果物（emitter、2 つの runtime、非対応 feature の確定、固定幅整数）は Phase 0 に無い。
+
+BAK-002 の行が指すのは表の整合検査であり、`[REQ: BAK-002]` を注釈するテストは無い。
+gate の `deferred-tests` が BAK-002 を 0 件と数えるのはこのためである。
 
 ## 12. 未回収の範囲
 
-（G3d で埋める。）
+本節の項目は Phase 0 で狭めた範囲である。
+狭めた理由は実装規模であり、ホワイトペーパーの意味を置き換えない。
+
+- **module 境界**：`PR` に module 形を置かない。Phase 0 の Typed Core は単一の項であり module 境界を持たない。これはホワイトペーパー §13.3.1 の `module import / export` を回収したことを意味しない。
+- **source-map**：写像の出力に metadata を載せない。全構成子への付与は構文を倍にし、保存性質の検査に必要でもない。これはホワイトペーパー §13.3.1 の `source-map metadata` を回収したことを意味しない。
+- **immutable vector**：`PR` に vector 形を置かない。Phase 0 の Typed Core に vector 型が無く、`(List τ)` は `Construct` による ADT である。これはホワイトペーパー §13.3.1 の `immutable record / vector` のうち vector を回収したことを意味しない。
+- **explicit closure environment**：`penv` は部分適用の引数を溜める列でしかなく、適用の時点で代入して消える（§4 の `R-PR-App`）。写像の出力で `penv` が空でないのは源の `CurryVal` を写した場合だけである。源の機械が代入で意味論を与えているため、目標機械も代入で書く。これはホワイトペーパー §13.3.1 の `explicit closure environment` を実行モデルとして回収したことを意味しない。
+- **固定幅整数と bit 演算**：Typed Core に対応する型が無いため、表に feature を予約するだけで写像の対応表には現れない（§10.3）。これはホワイトペーパー §4.11 の固定幅整数の意味を回収したことを意味しない。
+- **型の保存**：表現規約への適合は型保存の必要条件でしかない。型の違う 2 つの関数型は同じ closure 表現へ落ちる。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち型の保存を完全に回収したことを意味しない。
+- **Effect の保存**：`Return` は境界名と型符号の両方が残るが、`Yield` の型は `yield` へ潰れる。写し先の runtime 呼び出しが型符号を担がないためである。等号が言えるのは、適用先が構文上の closure であり、かつ宣言 latent row が本体の実効果と等しい範囲に限られる。全域では包含しか言えない。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち Effect の保存を完全に回収したことを意味しない。
+- **Effect の dispatch tag**：目標側の operation 名は型由来の符号を担ぐ。源の handler 選択が operation 全体を比べるため、境界名だけでは選択が一致しないためである。型に由来する情報が目標項に残る点は §1 の不変条件に対する擦り寄りであり、符号には単射性しか要求しない。
+- **kernel primitive と trait primitive**：`Γ0` の 7 件以外の primitive は Phase 0 では診断を返す。源の δ を目標側の値表現の上で書き直すと、独立に検査できない二重定義になるためである。これはこれらの primitive が backend で動かないことを意味せず、Phase 0 の模型が写さないだけである。
+- **評価順の保存の測定範囲**：目標側の fuel を段階的に増やしても終端に届かない項は discard する。再帰を含む項は展開に静的な上界を持たないため、有限の試行で全項を測り切ることはできない。discard した項について保存は主張しない。
+- **文法の全域性**：`lower` が源のすべての形を写すことは証明していない。形ごとの fixture と生成器の到達範囲で確かめているだけであり、源の形集合との一致は §7 の対応表が源の形を漏れなく並べていることに依存する。
+- **backend の実体**：`racket-cs` と `racketscript` の support 値は表の宣言であり、実際の runtime で確かめていない。確認は BAK-002 と BAK-003 の検証欄が指す Phase 3 以降の成果物で行う。
