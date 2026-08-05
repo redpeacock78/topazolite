@@ -11,7 +11,8 @@
          feature-support/matrix
          primitive-feature
          primitive-features
-         check-tables!)
+         check-tables!
+         check-tables!/matrix)
 
 ;; 非対応 feature に当たったときに lower が返す値。近似的な写しは出さない。
 (struct capability-diagnostic (feature-id backend reason) #:transparent)
@@ -52,6 +53,14 @@
                       "比較は Host の演算を直接指さない")
     (primitive-acquire shim shim tz:acquire (deferred "Phase 3 以降")
                       "資源取得は Host の演算を直接指さない")
+    ;; 予約行。Typed Core に対応する型が無いので形の対応表には現れない。両
+    ;; backend の support を shim とするのは、Racket の任意精度整数でも
+    ;; RacketScript の倍精度数でも固定幅の切り詰めを native に持たないためで
+    ;; ある。native を宣言すると backend-matrix.md §9 と矛盾する。
+    (fixed-width-int   shim shim tz:wrap (deferred "Phase 2 以降")
+                       "固定幅の切り詰めは Phase 2 以降の型追加を待つ")
+    (bits-n            shim shim tz:bits (deferred "Phase 2 以降")
+                       "Bits<N> に対応する Typed Core の型が無い")
     (kernel-primitive unsupported unsupported #f #f
                       "Phase 0 の Typed Core は kernel primitive を持たない")
     (trait-primitive  unsupported unsupported #f #f
@@ -162,13 +171,12 @@
   (or (eq? (second row) 'unsupported)
       (eq? (third row) 'unsupported)))
 
-;; 表と診断 ID 一覧の整合検査。load 時に走らせ、表を書き換えたときに気付ける
-;; ようにする。
-(define (check-tables!)
-  (define ids (map first backend-features))
+;; 表と診断 ID 一覧の整合検査。正典表以外の表も検査できるよう matrix を取る。
+(define (check-tables!/matrix matrix)
+  (define ids (map first matrix))
   (unless (= (length ids) (set-count (list->set ids)))
     (error 'check-tables! "duplicate feature id"))
-  (for ([row (in-list backend-features)])
+  (for ([row (in-list matrix)])
     (define id (first row))
     (for ([support (in-list (list (second row) (third row)))])
       (unless (memq support '(native shim unsupported))
@@ -192,7 +200,7 @@
       [else
        (unless (fifth row)
          (error 'check-tables! "~a: row carries no semantic test" id))]))
-  (define feature-ids (list->set (map first backend-features)))
+  (define feature-ids (list->set ids))
   (define orphans
     (for/list ([entry (in-list diagnostic-ids)]
                #:unless (set-member? feature-ids (first entry)))
@@ -208,15 +216,25 @@
   (unless (= (length form-heads) (set-count (list->set form-heads)))
     (error 'check-tables! "duplicate core form head"))
   (for ([row (in-list core-form-features)])
-    (unless (assq (second row) backend-features)
+    (unless (set-member? feature-ids (second row))
       (error 'check-tables! "~a: undeclared feature ~a"
              (first row) (second row))))
   ;; 名前の対応表も同じ規律に従う。名前を足して feature を書き忘れると load 時に
   ;; 落ちる。名前が Γ0 に属するかどうかの突合は G3c で足す（spec §9）。
   (for ([row (in-list primitive-features)])
-    (unless (assq (cdr row) backend-features)
+    (unless (set-member? feature-ids (cdr row))
       (error 'check-tables! "~a: undeclared feature ~a"
              (car row) (cdr row))))
+  ;; backend-matrix.md §9。算術と比較の shim feature は両 backend で shim を要求し、native を
+  ;; 許さない。backend を差し替えても結果が変わらないことの Phase 0 における形
+  ;; である。
+  (for* ([feature-id (in-list arithmetic-shim-features)]
+         [backend (in-list '(racket-cs racketscript))])
+    (unless (eq? (feature-support/matrix matrix feature-id backend) 'shim)
+      (error 'check-tables! "~a: arithmetic feature is not shim on ~a"
+             feature-id backend)))
   (void))
+
+(define (check-tables!) (check-tables!/matrix backend-features))
 
 (check-tables!)

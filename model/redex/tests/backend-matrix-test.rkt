@@ -180,3 +180,62 @@
          row)))
  (check-eq? (feature-support/matrix injected 'closure 'racket-cs) 'unsupported)
  (check-eq? (feature-support 'closure 'racket-cs) 'native))
+
+(test-case
+ "check-tables! rejects an arithmetic feature declared native"
+ ;; 検査そのものが効いていることを、壊した写しで確かめる。native / native は
+ ;; shim 列が #f なので既存の 4 本は通り、算術の検査だけが落ちる。
+ (for ([feature-id (in-list arithmetic-shim-features)])
+   (define broken
+     (for/list ([row (in-list backend-features)])
+       (if (eq? (row-feature-id row) feature-id)
+           (list feature-id 'native 'native #f '(deferred "Phase 3 以降") "")
+           row)))
+   (check-exn exn:fail? (lambda () (check-tables!/matrix broken))
+              (format "native ~a" feature-id)))
+ (check-not-exn (lambda () (check-tables!/matrix backend-features))))
+
+(test-case
+ "the arithmetic roster is exactly the primitives minus resource acquisition"
+ ;; 名前を足して名簿へ入れ忘れると、その名前だけ native を宣言できてしまう。
+ ;; 名前の表の像と名簿を突き合わせて閉じる（backend-matrix.md §9）。
+ (check-equal? (sort arithmetic-shim-features symbol<?)
+               (sort (for/list ([row (in-list primitive-features)]
+                                #:unless (eq? (car row) 'acquire))
+                       (cdr row))
+                     symbol<?))
+ ;; 資源取得も shim だが、native を禁じる検査の対象ではない。
+ (check-false (memq 'primitive-acquire arithmetic-shim-features))
+ (check-eq? (feature-support 'primitive-acquire 'racket-cs) 'shim)
+ (check-eq? (feature-support 'primitive-acquire 'racketscript) 'shim))
+
+(test-case
+ "check-tables! rejects a primitive naming an undeclared feature"
+ ;; 名前の表の右辺が正典表に無い場合も落ちる。名前を足して行を書き忘れる経路
+ ;; である（backend-matrix.md §9）。
+ (define broken
+   (for/list ([row (in-list backend-features)]
+              #:unless (eq? (row-feature-id row) 'primitive-eq))
+     row))
+ (check-exn exn:fail? (lambda () (check-tables!/matrix broken))))
+
+(test-case
+ "fixed width integers and Bits<N> are reserved rows"
+ ;; backend-matrix.md §9。Typed Core に対応する型が無いので、形の対応表の値域には現れない。
+ (for ([feature-id (in-list '(fixed-width-int bits-n))])
+   (define row (assq feature-id backend-features))
+   (check-not-false row (format "reserved row ~a" feature-id))
+   (check-eq? (row-racket-cs row) 'shim)
+   (check-eq? (row-racketscript row) 'shim)
+   (check-equal? (row-semantic-test row) '(deferred "Phase 2 以降"))
+   ;; shim 列は名前 1 つである（backend-matrix.md §8.1）。
+   (check-true (symbol? (row-shim row)))
+   (check-true (and (string? (row-note row))
+                    (not (string=? (row-note row) "")))))
+ (define assigned (list->set (map second core-form-features)))
+ (check-false (set-member? assigned 'fixed-width-int))
+ (check-false (set-member? assigned 'bits-n))
+ ;; 予約行は名前の表にも現れない。Γ0 に対応する primitive が無いためである。
+ (define named (list->set (map cdr primitive-features)))
+ (check-false (set-member? named 'fixed-width-int))
+ (check-false (set-member? named 'bits-n)))
