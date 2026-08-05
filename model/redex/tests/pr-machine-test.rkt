@@ -1,9 +1,11 @@
 #lang racket
 
-(require rackunit
+(require racket/set
+         rackunit
          redex/reduction-semantics
          "../pr-lang.rkt"
-         "../pr-machine.rkt")
+         "../pr-machine.rkt"
+         "rule-crosscheck-test.rkt")
 
 (define fuel 10000)
 
@@ -20,6 +22,21 @@
 ;; 終端の config を丸ごと返す。PH と PΩ と θ を比べる検査で使う。
 (define (eval-pr/config core)
   (run-pr (inject-pr core) fuel))
+
+(define pop-a (term (return b:alpha ty:Int)))
+(define pop-b (term (return b:alpha ty:Bool)))
+
+;; 1 つの項の還元列を最後までたどり、各段の後続が 1 つ以下であることを確かめる。
+;; run-pr は非決定を error にするだけで、どこで枝分かれしたかを示さない。
+(define (check-deterministic core)
+  (let loop ([current (inject-pr core)]
+             [remaining fuel])
+    (define next
+      (remove-duplicates (apply-reduction-relation -->pr current) equal?))
+    (check-true (<= (length next) 1)
+                (format "nondeterministic at ~s: ~s" current next))
+    (when (and (pair? next) (positive? remaining))
+      (loop (car next) (sub1 remaining)))))
 
 (test-case
  "δpr implements the shim semantics of spec §9"
@@ -210,3 +227,68 @@
               ((0 5))
               ((0 Dropped))
               ((fin 0))))))
+
+(test-case
+ "R-PR-InstallValue returns the body value and discards the handler"
+ (check-equal? (eval-pr (term (PInstall ,pop-a (PLam (x) 0) 7))) 7))
+
+(test-case
+ "R-PR-InstallEffect selects the handler by the whole pop"
+ (check-equal?
+  (eval-pr (term (PInstall ,pop-a (PLam (x) (PPrim tz:add x 1))
+                           (PEffect ,pop-a 3))))
+  4)
+ ;; §4.2 の反例項。PInstall の本体の hole が PG のままだと、この行が
+ ;; (PScopeExit () (PEffect ...)) のまま stuck する。
+ (check-equal?
+  (eval-pr (term (PInstall ,pop-a (PLam (x) (PPrim tz:add x 1))
+                           (PScopeExit () (PEffect ,pop-a 3)))))
+  4))
+
+(test-case
+ "R-PR-InstallSkip lets a different pop pass through"
+ ;; ptycode が違うだけでも別の pop である。源の R-HandleSkip が op 全体を
+ ;; 比べていることに対応する。
+ (check-equal?
+  (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PEffect ,pop-b 3))))
+  (term (PEffect ,pop-b 3))))
+
+(test-case
+ "R-PR-InstallError lets an ownership error pass through"
+ (check-equal?
+  (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
+  (term (PError 0))))
+
+;; 20 本の規則それぞれを少なくとも 1 回通る fixture。§5.2 の決定性は
+;; obs-eval-pr が動く前提そのものなので、規則を足すたびにここで確かめる。
+(define determinism-fixtures
+  (list (term (PPrim tz:add 1 2))
+        (term (PApp (PClosure ((e 7)) (a) (PPrim tz:add e a)) 5))
+        (term (PRuntime curry (PClosure () (a b) (PPrim tz:add a b)) 4))
+        (term (PLet a 3 (PPrim tz:add a a)))
+        (term (PLetrec f (PLam (a) a) (PApp f 9)))
+        (term (PMatch (PTagged some 4) ((none () -> 0) (some (a) -> a))))
+        (term (PProj (PRec ((f 1) (g 2))) g))
+        (term (PLetOwned a 5 (PRuntime move a)))
+        (term (PLetOwned a 5 (PLet b (PRuntime move a) (PRuntime move a))))
+        (term (PLetOwned a 5 (PLetOwned b 6 (PRuntime drop b))))
+        (term (PRuntime yield 3 (PPrim tz:add 1 2)))
+        (term (PRuntime suspend (PPrim tz:add 1 2)))
+        (term (PLetOwned a 5 (PEffect ,pop-a 1)))
+        (term (PInstall ,pop-a (PLam (x) 0) 7))
+        (term (PInstall ,pop-a (PLam (x) x) (PEffect ,pop-a 3)))
+        (term (PInstall ,pop-a (PLam (x) x) (PEffect ,pop-b 3)))
+        (term (PInstall ,pop-a (PLam (x) x)
+                        (PScopeExit () (PEffect ,pop-a 3))))
+        (term (PInstall ,pop-a (PLam (x) x) (PError 0)))))
+
+(test-case
+ "-->pr is deterministic on every fixture"
+ (for ([core (in-list determinism-fixtures)])
+   (check-deterministic core)))
+
+(test-case
+ "-->pr/rules declares exactly the 20 target rule names"
+ ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
+ (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
+               target-rule-names))

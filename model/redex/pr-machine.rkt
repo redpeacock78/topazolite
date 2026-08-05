@@ -273,7 +273,42 @@
               PH PΩ θ)
         (pcfg (in-hole PE_outer (PError pp_error)) PH PΩ_final θ_final)
         (where (PΩ_final θ_final) (finalize-pr (pp_managed ...) PΩ θ))
-        R-PR-ScopeError)))
+        R-PR-ScopeError)
+
+   (--> (pcfg (in-hole PE_outer (PInstall pop pc_handler pv_result)) PH PΩ θ)
+        (pcfg (in-hole PE_outer pv_result) PH PΩ θ)
+        R-PR-InstallValue)
+
+   ;; pop を 2 回書くのは非線形パターンであり、handler の pop と performed の
+   ;; pop が等しいことを要求する。pop は境界名と ptycode の対なので、源の
+   ;; R-HandleReturn が (Return b τ) 全体を比べていることと一致する。
+   (--> (pcfg (in-hole PE_outer
+                       (PInstall pop
+                                 (PLam (px) pc_handler)
+                                 (in-hole PF_inner (PEffect pop pv_arg))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer pc_result) PH PΩ θ)
+        (where pc_result (substitute pc_handler px pv_arg))
+        R-PR-InstallEffect)
+
+   (--> (pcfg (in-hole PE_outer
+                       (PInstall pop_handler
+                                 pc_handler
+                                 (in-hole PF_inner
+                                          (PEffect pop_performed pv_arg))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer (PEffect pop_performed pv_arg)) PH PΩ θ)
+        (side-condition
+         (not (equal? (term pop_handler) (term pop_performed))))
+        R-PR-InstallSkip)
+
+   (--> (pcfg (in-hole PE_outer
+                       (PInstall pop
+                                 pc_handler
+                                 (in-hole PF_inner (PError pp_error))))
+              PH PΩ θ)
+        (pcfg (in-hole PE_outer (PError pp_error)) PH PΩ θ)
+        R-PR-InstallError)))
 
 (define (raw-steps-pr configuration)
   (if (pr-unique-binders? configuration)
