@@ -149,10 +149,12 @@
       (format "descriptor ~a declares invalid state: ~a"
               (cycle-descriptor-name cycle)
               (cycle-descriptor-state cycle))))
-  (define (set-difference-errors actual expected source)
+  (define (set-difference-errors actual expected source [exempt (set)])
     (append
      (for/list ([id (in-list
-                     (sorted-ids (set-subtract expected actual)))])
+                     (sorted-ids
+                      (set-subtract (set-subtract expected exempt)
+                                    actual)))])
        (format "~a ID set missing expected ID: ~a" source id))
      (for/list ([id (in-list
                      (sorted-ids (set-subtract actual expected)))])
@@ -196,17 +198,9 @@
                         name state id))
               (set-difference-errors actual-specs expected
                                      (format "~a spec" name))
-              (for/list ([id (in-list
-                              (sorted-ids
-                               (set-subtract
-                                (set-subtract expected deferred)
-                                actual-tests)))])
-                (format "~a test ID set missing expected ID: ~a" name id))
-              (for/list ([id (in-list
-                              (sorted-ids
-                               (set-subtract actual-tests expected)))])
-                (format "~a test ID set contains unexpected ID: ~a"
-                        name id))))
+              (set-difference-errors actual-tests expected
+                                     (format "~a test" name)
+                                     deferred)))
            '()))
      cycles expected-sets cycle-specs cycle-tests))
   (values
@@ -227,10 +221,10 @@
                                    g1-specs)))])
       (format "G1 requirement lacks spec annotation: ~a" id))
     (for/list ([id (in-list
-                     (sorted-ids
+                    (sorted-ids
                      (set-subtract
                       (set-subtract (state-set definitions "G1") deferred)
-                                   g1-tests)))])
+                      g1-tests)))])
       (format "G1 requirement lacks test reference: ~a" id))
     exact-set-errors)))
 
