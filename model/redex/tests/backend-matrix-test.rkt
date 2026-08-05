@@ -198,7 +198,7 @@
 (test-case
  "the arithmetic roster is exactly the primitives minus resource acquisition"
  ;; 名前を足して名簿へ入れ忘れると、その名前だけ native を宣言できてしまう。
- ;; 名前の表の像と名簿を突き合わせて閉じる（backend-matrix.md §9）。
+ ;; 名前の表の像と名簿を突き合わせて閉じる（backend-matrix.md §10）。
  (check-equal? (sort arithmetic-shim-features symbol<?)
                (sort (for/list ([row (in-list primitive-features)]
                                 #:unless (eq? (car row) 'acquire))
@@ -212,7 +212,7 @@
 (test-case
  "check-tables! rejects a primitive naming an undeclared feature"
  ;; 名前の表の右辺が正典表に無い場合も落ちる。名前を足して行を書き忘れる経路
- ;; である（backend-matrix.md §9）。
+ ;; である（backend-matrix.md §10）。
  (define broken
    (for/list ([row (in-list backend-features)]
               #:unless (eq? (row-feature-id row) 'primitive-eq))
@@ -221,14 +221,15 @@
 
 (test-case
  "fixed width integers and Bits<N> are reserved rows"
- ;; backend-matrix.md §9。Typed Core に対応する型が無いので、形の対応表の値域には現れない。
+ ;; backend-matrix.md §10。Typed Core に対応する型が無いので、形の対応表の値域には
+ ;; 現れない。
  (for ([feature-id (in-list '(fixed-width-int bits-n))])
    (define row (assq feature-id backend-features))
    (check-not-false row (format "reserved row ~a" feature-id))
    (check-eq? (row-racket-cs row) 'shim)
    (check-eq? (row-racketscript row) 'shim)
    (check-equal? (row-semantic-test row) '(deferred "Phase 2 以降"))
-   ;; shim 列は名前 1 つである（backend-matrix.md §8.1）。
+   ;; shim 列は名前 1 つである（backend-matrix.md §10）。
    (check-true (symbol? (row-shim row)))
    (check-true (and (string? (row-note row))
                     (not (string=? (row-note row) "")))))

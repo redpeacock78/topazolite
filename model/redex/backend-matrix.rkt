@@ -56,7 +56,7 @@
     ;; 予約行。Typed Core に対応する型が無いので形の対応表には現れない。両
     ;; backend の support を shim とするのは、Racket の任意精度整数でも
     ;; RacketScript の倍精度数でも固定幅の切り詰めを native に持たないためで
-    ;; ある。native を宣言すると backend-matrix.md §9 と矛盾する。
+    ;; ある。native を宣言すると backend-matrix.md §10 と矛盾する。
     (fixed-width-int   shim shim tz:wrap (deferred "Phase 2 以降")
                        "固定幅の切り詰めは Phase 2 以降の型追加を待つ")
     (bits-n            shim shim tz:bits (deferred "Phase 2 以降")
@@ -220,14 +220,16 @@
       (error 'check-tables! "~a: undeclared feature ~a"
              (first row) (second row))))
   ;; 名前の対応表も同じ規律に従う。名前を足して feature を書き忘れると load 時に
-  ;; 落ちる。名前が Γ0 に属するかどうかの突合は G3c で足す（spec §9）。
+  ;; 落ちる。Γ0 との突合は表の検査では行わず、lowering 側の primitive-arity が
+  ;; Γ0 を引き、shim-primitives が feature-primitives 経由で担保する
+  ;; （backend-matrix.md §10）。
   (for ([row (in-list primitive-features)])
     (unless (set-member? feature-ids (cdr row))
       (error 'check-tables! "~a: undeclared feature ~a"
              (car row) (cdr row))))
-  ;; backend-matrix.md §9。算術と比較の shim feature は両 backend で shim を要求し、native を
-  ;; 許さない。backend を差し替えても結果が変わらないことの Phase 0 における形
-  ;; である。
+  ;; backend-matrix.md §10。算術と比較の shim feature は両 backend で shim を要求し、
+  ;; native を許さない。backend を差し替えても結果が変わらないことの Phase 0 に
+  ;; おける形である。
   (for* ([feature-id (in-list arithmetic-shim-features)]
          [backend (in-list '(racket-cs racketscript))])
     (unless (eq? (feature-support/matrix matrix feature-id backend) 'shim)

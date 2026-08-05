@@ -42,7 +42,7 @@
     [(? pair?) (append (prim-names (car target)) (prim-names (cdr target)))]
     [_ '()]))
 
-;; 正典表の shim 列を読む。名前 1 つか #f である（backend-matrix.md §8.1）。
+;; 正典表の shim 列を読む。名前 1 つか #f である（backend-matrix.md §10）。
 (define (row-shim-name feature-id)
   (fourth (assq feature-id backend-features)))
 
@@ -59,8 +59,8 @@
 
 (test-case
  "the lowered term names no host operator and no source primitive name"
- ;; backend-matrix.md §9。禁じるのは生成物が Host の演算を直接指すことである。源の名前が
- ;; 符号化を経ずに残る経路も同じ検査で閉じる。
+ ;; backend-matrix.md §10。禁じるのは生成物が Host の演算を直接指すことである。
+ ;; 源の名前が符号化を経ずに残る経路も同じ検査で閉じる。
  (define forbidden '(+ - * < <= = add sub mul lt le eq acquire))
  (for ([name (in-list shim-primitives)])
    (define target (lower-value-ok (prim-value name)))
@@ -90,7 +90,7 @@
 
 (test-case
  "the reserved rows name shims the Phase 0 machine does not implement"
- ;; backend-matrix.md §9。予約行は Phase 2 以降の feature である。実装済みに見えると、
+ ;; backend-matrix.md §10。予約行は Phase 2 以降の feature である。実装済みに見えると、
  ;; 対応する型が無いまま意味論を書いたことになる。
  (for ([feature-id (in-list '(fixed-width-int bits-n))])
    (define name (row-shim-name feature-id))
@@ -118,7 +118,7 @@
 
 (test-case
  "closing one arithmetic feature closes only that name"
- ;; backend-matrix.md §8.1。名前ごとに feature を持つので、add を閉じても他の 6 件は写せる。
+ ;; backend-matrix.md §10。名前ごとに feature を持つので、add を閉じても他の 6 件は写せる。
  (define matrix
    (for/list ([row (in-list backend-features)])
      (if (eq? (first row) 'primitive-add)
@@ -138,7 +138,7 @@
  "closing the head feature closes every primitive value"
  ;; 形の対応表が PrimVal に与える primitive-value は名前によらない層である。
  ;; これを閉じると 7 件すべての写しが閉じる。粗い側へ倒れるだけであり、部分的
- ;; な出力は返さない（backend-matrix.md §8.3、§8.4）。
+ ;; な出力は返さない（backend-matrix.md §8）。
  (define matrix
    (for/list ([row (in-list backend-features)])
      (if (eq? (first row) 'primitive-value)
