@@ -11,11 +11,13 @@
          Γ0
          Π0
          R0
+         kernel-gamma0-entries
          kindOf
          lookup
          origin-of
          proof-issuer-ok?
          proof-occurrence-ok?
+         trait-gamma0-entries
          trait-global-bindings
          verify-origins
          verify-initial-origins)
