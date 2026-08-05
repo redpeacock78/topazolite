@@ -9,6 +9,8 @@
 
 (provide -->g1
          -->g2
+         -->g1/rules
+         -->g2/rules
          inject
          inject-g2
          run
