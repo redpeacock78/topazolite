@@ -152,6 +152,15 @@
 (test-case "substitute は erase-core の出力に対して G4b 以前と同じ結果を返す"
   (define core+
     (term (Let ,s0 ((#:bind y ,s1) (#:ty Int ,s1)) (#:var x ,s1) (#:var y ,s1))))
+  ;; 両辺を同じ substitute で作ると、置換がともに壊れても一致してしまう。
+  ;; 期待値を直に書いて、置換の結果そのものを固定する。
+  ;; substitute は束縛子を常に freshen するので、y は y«0» のような別名になる。
+  ;; したがって直の期待値との比較は check-equal? ではなく alpha 同値で行う。
+  (check-true (alpha-equivalent? G1
+                                 (term (sub ,(erase-core core+) x 7))
+                                 (term (Let (y Int) 7 y))))
+  ;; 束縛子を含まない項では freshen が起きないので、直の期待値と一致する。
+  (check-equal? (term (sub (Apply x 1) x 7)) (term (Apply 7 1)))
   (check-equal? (term (sub ,(erase-core core+) x 7))
                 (term (sub (Let (y Int) x y) x 7))))
 
