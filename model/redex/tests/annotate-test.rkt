@@ -3,6 +3,7 @@
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"
+         "../elaborate.rkt"
          "../span.rkt"
          "../erase.rkt"
          "../annotate.rkt")
@@ -69,3 +70,56 @@
     (for ([sp (in-list found)])
       (check-true (span-ok? sp) (format "~a" sp))
       (check-equal? (cadr sp) '#:synthetic))))
+
+(define g2-terms
+  (term ((Rec ((a imm 1)))
+         (Proj (Rec ((a imm 1))) a)
+         (Let (x const Int) 1 x)
+         (Discharge (ProofRep User ValidNarrativeTrait) 1)
+         (UVal 1)
+         (RVal (ProofRep User (Prop p)) 1))))
+
+(test-case "annotate-core は G2 の追加 production も持ち上げる"
+  (for ([core (in-list g2-terms)])
+    (define lifted (annotate-core core))
+    (check-true (or (and (redex-match? G2+ c lifted) #t)
+                    (and (redex-match? G2+ v lifted) #t))
+                (format "~a -> ~a" core lifted))
+    (check-equal? (erase-core lifted) core)))
+
+(define ucore-terms
+  (term ((Fn ((x Int)) Int () x)
+         (Apply 1 2)
+         (Let x 1 x)
+         (Let (x const Int) 1 x)
+         (Rec ((a imm 1)))
+         (Proj x a)
+         (Construct some 1)
+         (Construct some (Types Int) 1)
+         (Eliminate x ((some (y) -> y)))
+         (Return 1)
+         (NarrativeExpr 1)
+         (Recur f ((x Int)) Int () x (Apply f 0))
+         (Yield 1 2)
+         (Suspend 1)
+         (Move x)
+         (Drop 1)
+         (Curry 1 2)
+         (TypeMake (Spec Nat Nat))
+         (LetType T (TypeMake (Spec Nat Nat)) 1)
+         1
+         x)))
+
+(test-case "annotate-surface は UCore の全 production を持ち上げる"
+  (for ([expr (in-list ucore-terms)])
+    (define lifted (annotate-surface expr))
+    (check-true (redex-match? UCore+ e lifted) (format "~a -> ~a" expr lifted))))
+
+(test-case "annotate-surface と erase-surface は往復する"
+  (for ([expr (in-list ucore-terms)])
+    (check-equal? (erase-surface (annotate-surface expr)) expr (format "~a" expr))))
+
+(test-case "annotate-surface は決定的であり未対応の production を素通ししない"
+  (for ([expr (in-list ucore-terms)])
+    (check-equal? (annotate-surface expr) (annotate-surface expr)))
+  (check-exn exn:fail? (λ () (annotate-surface (term (NoSuchForm 1 2))))))
