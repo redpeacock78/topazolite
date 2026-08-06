@@ -3,6 +3,7 @@
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"
+         "../elaborate.rkt"
          "../span.rkt")
 
 (define s0 (term (#:span main.tz 0 4)))
@@ -141,3 +142,55 @@
     (check-true (redex-match? G2 φ prop) (format "~a" prop))
     (check-equal? (and (redex-match? G2+ φ prop) #t)
                   (and (redex-match? G2 φ prop) #t))))
+
+(test-case "UCore+ の e は 21 production すべてに証人を持つ"
+  (for ([expr (in-list
+               (list (term (#:lit 1 ,s0))
+                     (term (#:var x ,s0))
+                     (term (Fn ,s0 (((#:bind x ,s1) (#:ty Int ,s1)))
+                               (#:ty Int ,s1) (#:ef () ,s1) (#:var x ,s1)))
+                     (term (Apply ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
+                     (term (Let ,s0 (#:bind x ,s1) (#:lit 1 ,s1) (#:var x ,s1)))
+                     (term (Let ,s0 ((#:bind x ,s1) const (#:ty Int ,s1))
+                                (#:lit 1 ,s1) (#:var x ,s1)))
+                     (term (Rec ,s0 (((#:lbl a ,s1) imm (#:lit 1 ,s1)))))
+                     (term (Proj ,s0 (#:var x ,s1) (#:lbl a ,s1)))
+                     (term (Construct ,s0 some (#:lit 1 ,s1)))
+                     (term (Construct ,s0 some (Types (#:ty Int ,s1)) (#:lit 1 ,s1)))
+                     (term (Eliminate ,s0 (#:var x ,s1)
+                                      ((,s1 some ((#:bind y ,s1)) -> (#:var y ,s1)))))
+                     (term (Return ,s0 (#:lit 1 ,s1)))
+                     (term (NarrativeExpr ,s0 (#:lit 1 ,s1)))
+                     (term (Recur ,s0 (#:bind f ,s1) (((#:bind x ,s1) (#:ty Int ,s1)))
+                                  (#:ty Int ,s1) (#:ef () ,s1)
+                                  (#:var x ,s1) (Apply ,s1 (#:var f ,s1) (#:lit 0 ,s1))))
+                     (term (Yield ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
+                     (term (Suspend ,s0 (#:lit 1 ,s1)))
+                     (term (Move ,s0 (#:var x ,s1)))
+                     (term (Drop ,s0 (#:lit 1 ,s1)))
+                     (term (Curry ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
+                     (term (TypeMake ,s0 (#:ty (Spec Nat Nat) ,s1)))
+                     (term (LetType ,s0 T (TypeMake ,s1 (#:ty (Spec Nat Nat) ,s1))
+                                    (#:lit 1 ,s1)))))])
+    (check-true (redex-match? UCore+ e expr) (format "~a" expr))))
+
+(test-case "spanless な UCore の項は UCore+ に一致しない"
+  (for ([expr (in-list (term ((Fn ((x Int)) Int () x)
+                              (Apply 1 2)
+                              (Let x 1 x)
+                              (Rec ((a imm 1)))
+                              (Construct some 1)
+                              (Return 1)
+                              (TypeMake (Spec Nat Nat))
+                              1
+                              x)))])
+    (check-false (redex-match? UCore+ e expr) (format "~a" expr))))
+
+(test-case "UCore+ は束縛形を宣言しない"
+  ;; 束縛形を宣言していれば alpha 同値で真になるが、宣言していないので偽である。
+  (check-false
+   (alpha-equivalent? UCore+
+                      (term (Fn ,s0 (((#:bind x ,s1) (#:ty Int ,s1)))
+                                (#:ty Int ,s1) (#:ef () ,s1) (#:var x ,s1)))
+                      (term (Fn ,s0 (((#:bind y ,s1) (#:ty Int ,s1)))
+                                (#:ty Int ,s1) (#:ef () ,s1) (#:var y ,s1))))))
