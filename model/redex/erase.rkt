@@ -1,6 +1,17 @@
 #lang racket
 
-(provide erase-core erase-surface)
+(provide erase-core erase-surface metadata-form? check-spanless!)
+
+;; span 機構の包みかどうかを head だけで判定する。
+;; 型・表・semantic origin は spanless であり、head に keyword を取る形を持たない。
+(define (metadata-form? t)
+  (and (pair? t) (keyword? (car t))))
+
+;; spanless を要求する位置へ包みが渡ったことを、その場で落とす。
+;; 黙って通すと、包みが型として比較され、型同一性や正規形の判定が偽の成立をする。
+(define (check-spanless! who t)
+  (when (metadata-form? t)
+    (error who "spanless な位置へ span 機構の包みが渡った: ~s" t)))
 
 ;; 列の要素として現れた span を判定する。
 (define (span-element? t)

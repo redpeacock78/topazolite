@@ -153,3 +153,20 @@
   (check-false (type-shape-ok? `(Proof (FieldType f ,duplicate-row))))
   (check-false (type-shape-ok? `(Refined Int (FieldType f ,duplicate-row))))
   (check-false (type-shape-ok? `(NFn () Unit () ((FieldType f ,duplicate-row))))))
+
+(test-case "型注釈の包みを型として渡すと拒否する"
+  (define annotation '(#:ty Int (#:span #:synthetic 0 3)))
+  (check-exn exn:fail? (λ () (normalize-type annotation)))
+  (check-exn exn:fail? (λ () (type-normal? annotation)))
+  (check-exn exn:fail? (λ () (type-equiv? annotation annotation)))
+  ;; 片側だけ包まれた場合も、最後の equal? 節へ落とさず拒否する。
+  (check-exn exn:fail? (λ () (type-equiv? annotation 'Int)))
+  (check-exn exn:fail? (λ () (type-equiv? 'Int annotation))))
+
+(test-case "span 自身を型や命題として渡すと拒否する"
+  (define span '(#:span #:synthetic 0 3))
+  (check-exn exn:fail? (λ () (normalize-type span)))
+  (check-exn exn:fail?
+             (λ () (normalize-proposition `(Implements ,span Printable))))
+  (check-exn exn:fail?
+             (λ () (canonical-proposition-key `(FieldType f ,span)))))

@@ -1,6 +1,7 @@
 #lang racket
 
 (require racket/match
+         "erase.rkt"
          "policy.rkt"
          "rows.rkt")
 
@@ -74,6 +75,7 @@
 
 ;; 型を正規形へ写す。正規化できない型には #f を返す。
 (define (normalize-type/impl type)
+  (check-spanless! 'normalize-type type)
   (match type
     [`(Union ,_ ,_)
      (define members
@@ -143,6 +145,7 @@
 
 ;; 命題に埋め込まれた型を正規化する。
 (define (normalize-proposition proposition)
+  (check-spanless! 'normalize-proposition proposition)
   (match proposition
     [`(Implements ,type ,trait)
      (define normalized (normalize-type/impl type))
@@ -226,6 +229,8 @@
   (equal? (normalize-type/impl type) type))
 
 (define (effect-equiv? left right)
+  (check-spanless! 'effect-equiv? left)
+  (check-spanless! 'effect-equiv? right)
   (match* (left right)
     [(`(Return ,left-boundary ,left-type)
       `(Return ,right-boundary ,right-type))
@@ -275,6 +280,8 @@
            (type-equiv? left-member right-member)))))
 
 (define (type-equiv? left right)
+  (check-spanless! 'type-equiv? left)
+  (check-spanless! 'type-equiv? right)
   (match* (left right)
     [(`(Union ,_ ,_) _) (union-type-equiv? left right)]
     [(_ `(Union ,_ ,_)) (union-type-equiv? left right)]
