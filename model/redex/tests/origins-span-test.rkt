@@ -55,7 +55,7 @@
   (define (metadata-free? value)
     (cond
       [(and (pair? value) (keyword? (car value)))
-       (not (memq (car value) '(#:span #:var #:lit #:bind #:lbl #:ty #:ef)))]
+       #f]
       [(list? value) (for/and ([element (in-list value)])
                        (metadata-free? element))]
       [else #t]))
