@@ -53,8 +53,8 @@
 
 (test-case
  "the handoff table is not vacuous"
- (check-true (>= (length (table-rows)) 20))
- (check-true (>= (length (all-citations)) 20)))
+ (check-true (>= (length (table-rows)) 30))
+ (check-true (>= (length (all-citations)) 30)))
 
 (test-case
  "every handoff row has four columns"
@@ -74,8 +74,9 @@
                (format "missing heading: ~a §~a" (car cite) (cdr cite)))))
 
 (test-case
- "all four source documents appear in the table"
+ "all five source documents appear in the table"
  (define names (list->set (map car (all-citations))))
  (check-equal? names
                (set "trait.md" "structural-row.md"
-                    "proof-value.md" "proof-search.md")))
+                    "proof-value.md" "proof-search.md"
+                    "backend-matrix.md")))
