@@ -247,9 +247,9 @@ elab の返り値の形は変えない。
 この規則を課す関数は `normalize-type`、`normalize-proposition`、`type-equiv?`、`effect-equiv?`、`type-shape-ok?`、`instantiate-requirements`、`compat?` である。
 
 `compat?` は再帰の入口であり、入れ子の spanful な型もここで拒否する。
-`type-equiv?` への委譲だけに依存してはならない。
+`type-equiv?` への委譲だけに頼らない。
 `compat?/impl` の `Never` の枝は sup を見ずに真を返すためである。
-境界検査は実装が値を返したあとに走る。
+`policy-wrap` の境界検査は実装が値を返したあとに走る。
 そのため、fail-closed を境界検査の実装に依存させない。
 
 項を受け取る関数は spanful な項と spanless な項の両方を受理する。
