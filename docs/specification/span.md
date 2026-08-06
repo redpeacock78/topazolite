@@ -115,6 +115,15 @@ span は構成子名の直後に置く。
 これは §3 が定める 6 単位だけに span を持たせ、識別子一般には span を持たせないためである。
 `span-collision-test.rkt` が境界名 `b` を 5 位置の一つとして検査するのは受理集合を検査するためであり、`b` に span を与えることを意味しない。
 
+`O` が spanless であることは、`G1+` の `step` を置き直すことで保っている。
+基底の `step` は `(Curry v)` であり、`G1+` が `v` を spanful へ置き換えると、`O` の内側まで span を要求してしまう。
+内側の値を文法で spanless と書き下すには `G1` の `v` から `c` までを複製する必要があるため、`G1+` は `step` の `Curry` の内側を `any` で受ける。
+
+このため `G1+` と `G2+` は spanful な `O` も受理する。
+`O` を spanless に保つ責任は項を作る側にあり、`annotate-core` は `O` を包まない。
+`origin-shape-valid?` は投影の上で origin の形を見るため、`O` の内側が spanful でも erase 後には spanless 版と一致し、`(forged c)` にならない。
+erase 後に同じ項へ写る以上、この受理は実行意味論へ届く項を変えない。
+
 ### 4.1 変数参照と literal
 
 UCore+、G1+、G2+ の変数参照はすべて `(#:var x s)` に包む。
@@ -207,6 +216,7 @@ span 機構へ新しい head を追加したときに、投影側の更新漏れ
 | typing | `G2+` | `(tau, epsilon)` | 型と row は spanless |
 | classify | `G2+` | 分類結果 | span を見ない |
 | type-shape | `G2+` と型 | 判定 | 項を走査するが span を見ない |
+| origins | `G2+` と `G2` | `ok` または `(forged c)` | 項を走査し、`(forged c)` は入力の span を保つ |
 | search | 型、`Gamma-pc`、Goal | `Resolved`、`Absent`、`Ambiguous` | `ProofRep` を生成する |
 | compat、traits、type-equiv | 型と表 | 判定 | 項構成子を走査しない |
 | policy-check | `G2+` | 判定 | spanless |
@@ -227,6 +237,23 @@ elab の返り値の形は変えない。
 成功時は `(core type row callables)` の 4 要素を返す。
 失敗時は `(err reason)` の形を返す。
 失敗時の `reason` は Diagnostic IR ではなく、Diagnostic IR への置換は後続の phase が扱う。
+
+### 7.3 型を受け取る位置の fail-closed
+
+型、命題、作用 label、trait 表の行を受け取る関数は、span 機構の包みを受理しない。
+包みが渡ったら error を上げる。
+黙って通すと、包みが型として `equal?` で比較され、型同一性と正規形の判定が偽の成立をする。
+
+この規則を課す関数は `normalize-type`、`normalize-proposition`、`type-equiv?`、`effect-equiv?`、`type-shape-ok?`、`instantiate-requirements` である。
+
+項を受け取る関数は spanful な項と spanless な項の両方を受理する。
+判定に span を使わない関数は、投影を通してから既存の走査へ渡す。
+`core-types-normal?` はこの形である。
+
+semantic origin の形の検査も投影の上で行う。
+`O` は spanless であり、`CurryVal` の origin へ埋まる値、`Δ0` の行、validator が見る payload はいずれも spanless であるため、spanful な項の側だけを投影して比べる。
+判定結果は投影しない。
+`verify-origins` が返す `(forged c)` の `c` は入力のままの項であり、span を保つ。
 
 rows、schema、validators、policy は項構成子を走査しない leaf module であるため、span 基盤では変更しない。
 `validators` に現れる `Yield` は effect label の pattern であり、項構成子ではない。
