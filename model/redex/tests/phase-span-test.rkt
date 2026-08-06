@@ -3,6 +3,7 @@
 (require rackunit
          redex/reduction-semantics
          "../annotate.rkt"
+         "../classify.rkt"
          "../typing.rkt")
 
 ;; span.md §7.3: 判定に span を使わない項面の関数は、投影を通してから既存の
@@ -43,3 +44,25 @@
   (check-equal? (core-check-row (annotate-core prim) '() '() signature)
                 '())
   (check-true (core-check (annotate-core prim) '() '() signature '())))
+
+;; 分類の 3 判定のうち no-recursion? は Recur の有無だけを見るため、spanful でも
+;; 偶然一致しうる。投影の有無を分けるのは structural? と guarded? であり、
+;; どちらも Eliminate と Apply の内側まで構造を照合する。
+(define structural-callables
+  '((list-loop-id (NFn ((List Int)) Int () ()))))
+
+(define structural-loop
+  '(Recur list-loop-id loop (xs)
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) -> (Apply loop tail))))
+          (Apply loop (Construct (List Int) nil))))
+
+(test-case "span.md §7.3: classify は spanful な c を投影して分類する"
+  (check-equal? (classify (annotate-core structural-loop) '() structural-callables)
+                '(Finite structural))
+  (check-equal? (classify (annotate-core structural-loop) '() structural-callables)
+                (classify structural-loop '() structural-callables))
+  (check-equal? (classify (annotate-core '(Apply (PrimVal (Reserved o-add) add) 1 2))
+                          '() '())
+                '(Finite no-recursion)))

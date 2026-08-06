@@ -2,6 +2,7 @@
 
 (require racket/match
          racket/set
+         "erase.rkt"
          "schema.rkt"
          "type-equiv.rkt"
          "typing.rkt")
@@ -505,7 +506,9 @@
        [_ #f])]
     [_ #f]))
 
-(define (classify core environment callables)
+(define (classify core-in environment callables)
+  ;; span.md §7.3: 分類は span を見ない。入口で一度だけ投影する。
+  (define core (erase-core core-in))
   (cond
     [(no-recursion? core) '(Finite no-recursion)]
     [(structural? core environment callables) '(Finite structural)]
