@@ -113,7 +113,7 @@ span は構成子名の直後に置く。
 境界名 `b`、ADT tag `K`、semantic origin `O`、境界 ID `cid`、primitive 名 `nm`、mutability `m`、`bmode`、型名 `T`、trait 名 `tn` は spanless である。
 これらを指す診断は、それらを含む構成子の span で代表する。
 これは §3 が定める 6 単位だけに span を持たせ、識別子一般には span を持たせないためである。
-Task 9 で境界名 `b` を 5 位置の一つとして検査することは、受理集合を検査するためであり、`b` に span を与えることを意味しない。
+`span-collision-test.rkt` が境界名 `b` を 5 位置の一つとして検査するのは受理集合を検査するためであり、`b` に span を与えることを意味しない。
 
 ### 4.1 変数参照と literal
 
