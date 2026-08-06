@@ -20,7 +20,7 @@
          [(list '#:span _ start end) (<= start end)]
          [_ #f])))
 
-;; G1 の項へ span を付けた言語。span を持たない非終端（τ κ ℓ ε Q φ t O step π n l
+;; G1 の項へ span を付けた言語。span を持たない非終端（τ κ ℓ ε Q φ t π n l
 ;; x f b K nm id cid）は G1 から引き継ぐ。
 ;; c v ov br h w op は spanful へ置き換わるため .... を書かない。
 (define-extended-language G1+ G1
@@ -34,6 +34,16 @@
   (lt ::= (#:lit l s))
   (w ::= vr)
   (op ::= (Return b ts))
+  ;; O は spanless である（span.md §4）。基底の step は (Curry v) であり、
+  ;; G1+ が v を spanful へ置き換えると O の内側まで span を要求してしまう。
+  ;; 内側の値を文法で spanless と書き下すには G1 の v から c までを複製する
+  ;; 必要があるため、受理を any へ広げる。O の妥当性は文法ではなく
+  ;; origins.rkt の valid-origin? と origin-shape-valid? が判定する。
+  (step ::= (Curry any)
+            (Make t)
+            (Expand nm)
+            (Policy nm)
+            (Compose nm O O))
   (br ::= (s K (xs ...) -> c))
   (h ::= (s xs -> c))
   (c ::= v

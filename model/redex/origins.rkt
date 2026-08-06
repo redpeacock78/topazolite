@@ -2,7 +2,9 @@
 
 (require racket/match
          redex/reduction-semantics
+         "erase.rkt"
          "lang.rkt"
+         "span-core.rkt"
          "traits.rkt"
          "type-equiv.rkt"
          "validators.rkt")
@@ -349,7 +351,11 @@
        (and ((validator-check row) payload) #t)))
 
 (define (origin-shape-valid? r0 value)
-  (match (origin-data/proc value)
+  ;; span.md §4 の通り O は spanless である。CurryVal の origin へ埋まる値も、
+  ;; Δ0 の行も、validator の payload も spanless であるため、形の検査は
+  ;; 投影の上で行う。走査そのものは spanful な項の上を進む。
+  (define erased (erase-core value))
+  (match (origin-data/proc erased)
     [`(PrimVal (Reserved ,id) ,primitive)
      (equal? (lookup r0 id) `(prim ,primitive))]
     [`(Lam ,origin) (eq? origin 'User)]
@@ -364,7 +370,7 @@
           (match origin
             [`(Reserved ,id)
              (and (equal? (lookup r0 id) `(type ,type-form))
-                  (reserved-type-rep? type-form value))]
+                  (reserved-type-rep? type-form erased))]
             [`(Derived (Reserved o-type-narrative) (Make ,made))
              (and (eq? (lookup r0 'o-type-narrative) 'typeNarrative)
                   (equal? made type-form))]
@@ -381,6 +387,14 @@
 (define (origin-bearing-head? value)
   (and (pair? value)
        (memq (car value) origin-bearing-heads)))
+
+(define (core-term? value)
+  (or (and (redex-match? G2m c value) #t)
+      (and (redex-match? G2+ c value) #t)))
+
+(define (check-core! who value)
+  (unless (core-term? value)
+    (error who "c でも G2+ の c でもない: ~s" value)))
 
 (define (verify-origins/proc r0 core)
   (define (walk-list terms)
@@ -399,12 +413,13 @@
            `(forged ,term))]
       [(list? term) (walk-list term)]
       [else 'ok]))
+  (check-core! 'verify-origins core)
   (walk core))
 
 (define-metafunction G2m
-  verify-origins : any c -> any
-  [(verify-origins any_R0 c)
-   ,(verify-origins/proc (term any_R0) (term c))])
+  verify-origins : any any -> any
+  [(verify-origins any_R0 any_core)
+   ,(verify-origins/proc (term any_R0) (term any_core))])
 
 ;; RFN-001: 初期成果物の層。UCore は UVal と RVal の構文を持たないため、
 ;; elaboration の出力にこれらが現れることはない。到達成果物では validate が
@@ -419,10 +434,11 @@
       [else #f])))
 
 (define (verify-initial-origins/proc r0 core)
+  (check-core! 'verify-initial-origins core)
   (or (initial-layer-violation core)
       (verify-origins/proc r0 core)))
 
 (define-metafunction G2m
-  verify-initial-origins : any c -> any
-  [(verify-initial-origins any_R0 c)
-   ,(verify-initial-origins/proc (term any_R0) (term c))])
+  verify-initial-origins : any any -> any
+  [(verify-initial-origins any_R0 any_core)
+   ,(verify-initial-origins/proc (term any_R0) (term any_core))])
