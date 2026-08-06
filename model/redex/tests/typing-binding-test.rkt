@@ -21,5 +21,5 @@
 (check-equal?
  (core-type-of `(Let (x const (Record ((a Int imm)))) (Perform (Return boundary Int) 1) (Proj x a)) '() '())
  '(Int ((Return boundary Int))))
-; Let の effect row は bound と body の effect の和（§7.5）
+; Let の effect row は bound と body の effect の和（structural-row.md §5.4）
 (check-equal? (core-type-of '(Let (x const Int) (Suspend 1) x) '() '()) '(Int (Suspend)))

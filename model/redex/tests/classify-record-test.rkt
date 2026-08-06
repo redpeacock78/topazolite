@@ -15,7 +15,7 @@
           (Apply loop (Construct (List Int) nil))))
 (check-equal? (classify let-loop '() structural-callables) '(Finite structural))
 
-; Rec は record リテラルであり productivity guard ではない（設計文書 §9.3 で codex 確定）。
+; Rec は record リテラルであり productivity guard ではない（core-calculus.md §6.2）。
 ; よって Rec／Proj で再帰呼び出しを包んでも productivity は変わらず、構造再帰として (Finite structural)。
 ; walker に Rec／Proj 分岐が無いと fallthrough し Unknown へ誤分類する。
 (define rec-loop

@@ -67,7 +67,8 @@
 ; (k) 重複ラベルの Rec の射影は例外でなく stuck（unique-labels? side-condition で不発火）
 (check-true (stuck-g2? (term (Proj (Rec ((a imm 1) (a imm 2))) a))))
 
-; (l) Rec の field 内の Perform が F 文脈を通って handler に捕捉される（§7.2 で Rec を F へ）
+; (l) Rec の field 内の Perform が F 文脈を通って handler に捕捉される
+; （structural-row.md §5.1 で Rec を F へ）
 (check-equal?
  (run-g2 (inject-g2
    (term (Handle (Return boundary Int)

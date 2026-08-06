@@ -21,11 +21,12 @@
 (check-equal? (core-type-of '(Rec ((a imm (resource 1)))) '() '()) 'ill-typed)
 
 ; 重複ラベルの record 型を expected に置くと ill-formed で弾かれる（type? が G2m τ
-; かつ field-row-unique? を要求。§3.2）
+; かつ field-row-unique? を要求。structural-row.md §2.2）
 (check-false (core-check '(Rec ((a imm 1)))
                          '() '() '(Record ((a Int imm) (a Bool mut))) '()))
 
-; Suspend を field に含む Rec は field effect の和として row (Suspend) を返す（§7.5）
+; Suspend を field に含む Rec は field effect の和として row (Suspend) を返す
+; （structural-row.md §5.4）
 (check-equal? (core-type-of '(Rec ((a imm (Suspend 1)))) '() '())
               '((Record ((a Int imm))) (Suspend)))
 ; その Proj は scrutinee の effect (Suspend) を保つ

@@ -17,7 +17,7 @@
 (provide UCore
          elab)
 
-;; S-expression encoding of the untyped reduced Core from specification §3.1.
+;; S-expression encoding of the untyped reduced Core from core-calculus.md §3.1.
 ;; Explicit constructor type arguments use (Types ...), and applied type specs
 ;; use (Spec head argument ...).
 (define-extended-language UCore G1

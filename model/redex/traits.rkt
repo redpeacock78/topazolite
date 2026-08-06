@@ -80,7 +80,7 @@
         (list 'o-impl-printable-str-b 'impl-printable-str-b 'impl   'Printable 'String 'root)
         (list 'o-impl-taggable-bool   'impl-taggable-bool   'impl   'Taggable  'Bool   's-user)
         ;; derive-sizable-str は String の成分数を (Printable 2 件, Sizable 1 件) にし、
-        ;; 合成候補の Ambiguous を観測できるようにする（設計 §5.5）。
+        ;; 合成候補の Ambiguous を観測できるようにする（trait.md §6.2）。
         (list 'o-derive-sizable-str    'derive-sizable-str    'derive 'Sizable   'String 'root)
         ;; impl-taggable-int は対象型の scope が s-user であり、Taggable の trait 行は
         ;; s-kernel にある。(root) からは見えず (root s-user) からは見えるため、

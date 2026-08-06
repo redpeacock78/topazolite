@@ -53,7 +53,7 @@
               (RequiresBoth Printable Sizable))))
 
 (test-case "trait intersection is implicitly dischargeable"
-  ;; 設計 §5.3: intersect 行は Γ-pc⁰ へ RequiresBoth 候補を供給する。
+  ;; trait.md §6.1: intersect 行は Γ-pc⁰ へ RequiresBoth 候補を供給する。
   ;; G2e ではここが check-false であった。反転がそのまま証拠である。
   ;; 要件 ID は search-compose-test.rkt 側に置く。
   (check-true

@@ -24,19 +24,19 @@
 (check-equal? (elab-row  '(Proj (Rec ((a imm (Suspend 1)))) a)) '(Suspend))
 ; Rec の Owned field は拒否（(Apply acquire N) は Owned<Res> に synth される。record 値の field に Owned を許さない）
 (check-true (elab-error? '(Rec ((a imm (Apply acquire 1))))))
-; ラベル重複も拒否（§3.2 field-row-unique?）
+; ラベル重複も拒否（structural-row.md §2.2 field-row-unique?）
 (check-true (elab-error? '(Rec ((a imm (Suspend 1)) (a mut 2)))))
-; 注釈なし G1 Let は旧形のまま（新形へ正規化しない。§4.1／回帰維持）
+; 注釈なし G1 Let は旧形のまま（新形へ正規化しない。structural-row.md §4／回帰維持）
 (check-equal? (elab-core '(Let x 1 x)) '(Let (x Int) 1 x))
 ; 注釈あり let → binding mode 付き Let（注釈型は resolve-annotation で (label τ m) 順に解決）
 (check-equal? (elab-core '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1))) x))
               '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1))) x))
 ; bmode Let の effect row は bound と body の effect の和
 (check-equal? (elab-row '(Let (x const Int) (Suspend 1) x)) '(Suspend))
-; 重複ラベルの record 型注釈は ill-formed（§3.2）
+; 重複ラベルの record 型注釈は ill-formed（structural-row.md §2.2）
 (check-true (elab-error? '(Let (x let (Record ((a Int imm) (a Bool mut)))) (Rec ((a imm 1))) x)))
-; const は残余空を要求。注釈 {a} に bound {a,b} だと残余 {b} が非空で拒否（§5.2）
+; const は残余空を要求。注釈 {a} に bound {a,b} だと残余 {b} が非空で拒否（structural-row.md §3.2）
 (check-true (elab-error? '(Let (x const (Record ((a Int imm)))) (Rec ((a imm 1) (b imm 2))) x)))
-; let は残余 {b} を x の型へ保持し、body で Proj x b が Int を返す（§5.2）
+; let は残余 {b} を x の型へ保持し、body で Proj x b が Int を返す（structural-row.md §3.2）
 (check-equal? (elab-type '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1) (b imm 2))) (Proj x b)))
               'Int)
