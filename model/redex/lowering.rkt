@@ -279,6 +279,10 @@
 ;; test seam。unsupported を含む profile を作って診断機構そのものを試す。
 (define (lower/with-matrix core-in backend matrix)
   ;; span.md §7: lowering は出力に span を残さない。入口で一度だけ投影する。
+  ;; 投影は with-diagnostics の外へ置く。内側へ入れて診断へ潰すと、span 機構が
+  ;; head を得たときの誤りが unknown-core-form として現れ、Core の形の誤りと区別できなくなる。
+  ;; lower の全域性は Core の形に対するものであり、span 機構の誤りはその外にある
+  ;; （span.md §7.3）。
   (define core (erase-core core-in))
   (with-diagnostics backend
     (lambda (fail)

@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "../annotate.rkt"
          "../classify.rkt"
+         "../compat.rkt"
          "../lowering.rkt"
          "../typing.rkt")
 
@@ -88,3 +89,26 @@
   (check-eq? spanless-status 'ok)
   (check-eq? spanful-status 'ok)
   (check-equal? spanful-result spanless-result))
+
+;; span.md §7.3: 型の位置の包みは、境界検査より前に compat? 自身が落とす。
+(define wrapped-int '(#:ty Int (#:span #:synthetic 0 0)))
+
+(test-case "span.md §7.3: compat? は型の位置の包みを自身の error で落とす"
+  (check-exn #rx"^compat\\?"
+             (lambda () (compat? wrapped-int 'Int)))
+  (check-exn #rx"^compat\\?"
+             (lambda () (compat? 'Int wrapped-int)))
+  ;; Never は全型と互換だが、短絡より前に包みを落とす。
+  (check-exn #rx"^compat\\?"
+             (lambda () (compat? 'Never wrapped-int)))
+  (check-exn #rx"^compat\\?"
+             (lambda ()
+               (compat? `(Record ((a ,wrapped-int imm)))
+                        '(Record ((a Int imm)))))))
+
+(test-case "span.md §7.3: compat? の義務も型面の fail-closed を保つ"
+  ;; 義務の側は proposition-equiv? 経由で normalize-proposition が落とす。
+  (check-exn #rx"^normalize-proposition"
+             (lambda ()
+               (compat? `(NFn () Int () (,wrapped-int))
+                        `(NFn () Int () (,wrapped-int))))))

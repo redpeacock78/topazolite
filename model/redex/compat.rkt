@@ -1,6 +1,7 @@
 #lang racket
 
 (require racket/match
+         "erase.rkt"
          "policy.rkt"
          "rows.rkt"
          "search.rkt"
@@ -63,6 +64,8 @@
 ;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
 ;; G2c までの挙動と一致する。
 (define (compat?/impl sub sup [gamma-pc '()])
+  (check-spanless! 'compat? sub)
+  (check-spanless! 'compat? sup)
   ;; Union は節順に預けず、sub の各要素が sup のいずれかと互換かで判定する。
   (if (or (union? sub) (union? sup))
       (for/and ([sub-member (in-list (union-members sub))])
@@ -96,7 +99,8 @@
     [(_ _) (type-equiv? sub sup)]))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
-;; 返却を持たない。VariancePolicy は宣言と境界検査を提供するが、変性規則そのものを
+;; 返却を持たない。span 機構の包みは型の形の外にあり、全域性の対象ではないため
+;; error で落とす。VariancePolicy は宣言と境界検査を提供するが、変性規則そのものを
 ;; 差し替える機構はまだ無く、実装本体は G5 で強化する。
 (define (check-compat-return args returns)
   (match* (args returns)
