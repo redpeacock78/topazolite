@@ -598,6 +598,12 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 名指しの相手が層である項目は畳まず、記載元ごとに行を置く。
 `proof-search.md` §7 の項目には太字名が無いので、本表で名前を与える。
 
+ホワイトペーパー列が「無し」の項目は、Phase 0 の設計判断が生んだ未回収であり、ホワイトペーパーに対応する要求を持たない。
+
+`core-calculus.md` §9 の延期事項は本表に載せない。
+§9 の内容は BOR-001、BOR-002、BOR-003、PTR-001、PTR-002 が覆っており、いずれも状態を持つ ID である。
+§9 は太字項目名も持たない。
+
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 1 以降 | §8.1 |
@@ -621,6 +627,15 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 1 以降 | §4.6 |
 | 探索計算と certificate | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
 | Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
+| module 境界 | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
+| PR output の source-map metadata | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
+| immutable vector | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
+| explicit closure environment | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
+| 型の保存 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
+| Effect の保存 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
+| 評価順の保存の測定範囲 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
+| kernel primitive と trait primitive | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
+| lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 
 G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
 可変性を保つ join、`mut` field への再代入、borrow mode の互換性は同じ意味論の上に乗る。
