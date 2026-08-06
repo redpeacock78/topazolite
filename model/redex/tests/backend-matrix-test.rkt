@@ -84,7 +84,8 @@
 
 (test-case
  "the roster ids absent from the feature table are exactly the two fallbacks"
- ;; spec §8.1。feature に対応しない診断 ID は unknown-core-form（対応表に無い
+ ;; backend-matrix.md §8。feature に対応しない診断 ID は unknown-core-form
+ ;; （対応表に無い
  ;; 形）と unknown-core-type（τ でない op-code の入力）の 2 件だけである。
  (define feature-ids (list->set (map row-feature-id backend-features)))
  (define orphans
@@ -135,12 +136,13 @@
  (check-eq? (core-form-feature '%literal) 'literal)
  (check-eq? (core-form-feature 'PrimVal) 'primitive-value)
  ;; 対応表に無い頭シンボルは例外ではなく #f を返す。lower はこれを
- ;; unknown-core-form の診断へ変える（spec §8.3）。
+ ;; unknown-core-form の診断へ変える（backend-matrix.md §8）。
  (check-false (core-form-feature 'Frobnicate)))
 
 (test-case
  "every primitive name has its own shim feature"
- ;; spec §8.1。shim 列は名前 1 つであり、リストを置かない。名前と feature が
+ ;; backend-matrix.md §10。shim 列は名前 1 つであり、リストを置かない。
+ ;; 名前と feature が
  ;; 1 対 1 なので、1 件を unsupported にしても他の 6 件は閉じない。
  (check-equal? (sort (map car primitive-features) symbol<?)
                '(acquire add eq le lt mul sub))
@@ -149,21 +151,22 @@
  (check-eq? (primitive-feature 'add) 'primitive-add)
  (check-eq? (primitive-feature 'acquire) 'primitive-acquire)
  ;; Γ0 に無い名前は例外ではなく #f を返す。lower はこれを unknown-core-form の
- ;; 診断へ変える（spec §8.1）。
+ ;; 診断へ変える（backend-matrix.md §8）。
  (check-false (primitive-feature 'frobnicate))
  (check-equal? (feature-primitives 'primitive-add) '(add))
  (check-equal? (feature-primitives 'primitive-value) '()))
 
 (test-case
  "the primitive features are shim on both backends"
- ;; spec §9。native を許さない検査そのものは Task 15 で足す。ここでは表の値だけ
+ ;; backend-matrix.md §10。native を許さない検査そのものは Task 15 で足す。
+ ;; ここでは表の値だけ
  ;; を固定する。
  (for* ([feature-id (in-list (map cdr primitive-features))]
         [backend (in-list '(racket-cs racketscript))])
    (check-eq? (feature-support feature-id backend) 'shim
               (format "~a on ~a" feature-id backend)))
  ;; PrimVal の頭に付く feature は別である。η 展開した closure を作るだけなので、
- ;; 両 backend で native であり、算術を閉じても閉じない（spec §8.3）。
+ ;; 両 backend で native であり、算術を閉じても閉じない（backend-matrix.md §7）。
  (check-eq? (feature-support 'primitive-value 'racket-cs) 'native)
  (check-eq? (feature-support 'primitive-value 'racketscript) 'native)
  ;; 算術と比較の 6 件だけを G3c の検査の対象にする。
@@ -173,7 +176,7 @@
 
 (test-case
  "feature-support/matrix reads the injected table"
- ;; test seam。正典表と同じ形の別の表を読む（spec §6.2）。
+ ;; test seam。正典表と同じ形の別の表を読む（backend-matrix.md §5）。
  (define injected
    (for/list ([row (in-list backend-features)])
      (if (eq? (row-feature-id row) 'closure)
@@ -222,8 +225,8 @@
 
 (test-case
  "fixed width integers and Bits<N> are reserved rows"
- ;; backend-matrix.md §10。Typed Core に対応する型が無いので、形の対応表の値域には
- ;; 現れない。
+ ;; backend-matrix.md §10。Typed Core に対応する型が無いので、
+ ;; 形の対応表の値域には現れない。
  (for ([feature-id (in-list '(fixed-width-int bits-n))])
    (define row (assq feature-id backend-features))
    (check-not-false row (format "reserved row ~a" feature-id))

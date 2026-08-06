@@ -56,8 +56,8 @@
 ;; PE だけが持つ句。
 (define pe-only-witnesses
   (list (term (PScopeExit () hole))
-        ;; spec §4.2 の反例項。PInstall の本体の hole を PG のままにすると
-        ;; PE がここへ届かず、この行が落ちる。
+        ;; backend-matrix.md §3 の反例項。PInstall の本体の hole を PG の
+        ;; ままにすると PE がここへ届かず、この行が落ちる。
         (term (PInstall ,pop-a (PLam (a) a) (PScopeExit () hole)))))
 
 (test-case
@@ -89,7 +89,7 @@
  "PRuntime evaluation positions match lang.rkt's F, not a generic rule"
  ;; 源の F は (Drop F) (Yield F c) (Curry F c) (Curry v F) の 4 本だけを持つ。
  ;; yield の継続、suspend の本体、move の引数は評価位置にない。総称の句を置くと
- ;; 後続が 2 つ残り、§5.2 の決定性が壊れる。
+ ;; 後続が 2 つ残り、backend-matrix.md §4 の決定性が壊れる。
  (check-false (redex-match? PR PE (term (PRuntime yield 1 hole))))
  (check-false (redex-match? PR PE (term (PRuntime suspend hole))))
  (check-false (redex-match? PR PE (term (PRuntime move hole)))))
@@ -104,7 +104,8 @@
 
 (test-case
  "encoded source names are accepted where raw literals are not"
- ;; spec §6.4。源の x / K / label / b / nm は G2m の literal でなければ何でも取れる。
+ ;; backend-matrix.md §5。源の x / K / label / b / nm は G2m の literal でなければ
+ ;; 何でも取れる。
  ;; PR の literal はそれと違うので、素の名前を写すと項が PR に入らない。
  (check-false (redex-match? PR px (term yield)))
  (check-false (redex-match? PR px (term PLet)))

@@ -19,7 +19,7 @@
        [_ observed]))))
 
 ;; obs.rkt:19 の terminal-kind-g1 と同じ分類である。種別の名前を揃えるのは、
-;; §7.3 の trace 一致が源と目標の種別を直接比べるためである。
+;; backend-matrix.md §6 の trace 一致が源と目標の種別を直接比べるためである。
 (define (terminal-kind-pr core)
   (cond
     [(redex-match? PR pv core) 'value]

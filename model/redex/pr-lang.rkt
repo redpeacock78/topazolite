@@ -58,7 +58,7 @@
   ;; だけを足す書き方では、PE が PInstall の本体の内側へ届かない。
   ;; PRuntime の評価位置は lang.rkt:128-137 の F と同じ 4 本に限る。総称の
   ;; (PRuntime prt pv ... PF pc ...) を置くと yield の継続と suspend の本体まで
-  ;; 掘れてしまい、後続が 2 つ残って §5.2 の決定性が壊れる。
+  ;; 掘れてしまい、後続が 2 つ残って backend-matrix.md §4 の決定性が壊れる。
   (PF ::= hole
           (PApp pv ... PF pc ...)
           (PLet px PF pc)

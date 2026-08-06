@@ -27,7 +27,7 @@
          latent-kinds
          latent-visible?)
 
-;;; §6.4 の符号化
+;;; backend-matrix.md §5 の符号化
 
 ;; 源の記号空間を種類ごとの接頭辞つきの記号へ写す。単射性は接頭辞の一意性から
 ;; 従う。像は最初の : で一意に分かれ、PR の literal に : を含むものは無い。
@@ -48,17 +48,18 @@
   (encode-name 'ty (format "~s" type)))
 
 ;; (Return b τ) の符号の組み立て。make-lowering の op-code は τ の検査を足して
-;; ここへ委ねる。§7.2 の row-kinds は検査を通った源の行だけを受け取るので、
-;; 組み立てだけを呼ぶ。
+;; ここへ委ねる。backend-matrix.md §6 の row-kinds は検査を通った源の行だけを
+;; 受け取るので、組み立てだけを呼ぶ。
 (define (return-code b type)
   `(return ,(boundary-code b) ,(tycode type)))
 
 ;;; primitive
 
-;; spec §4.4。shim へ写すのはこの 7 件だけである。名前と feature の対応は
+;; backend-matrix.md §7。shim へ写すのはこの 7 件だけである。名前と feature の対応は
 ;; backend-matrix.rkt の primitive-features が持つので、名前の束はそこから引き、
-;; ここに書き写さない。算術と比較の 6 件と資源取得を分けておくのは、spec §9 の表
-;; の検査が算術と比較の側だけを対象にするためである（G3c で使う）。
+;; ここに書き写さない。算術と比較の 6 件と資源取得を分けておくのは、
+;; backend-matrix.md §10 の表の検査が算術と比較の側だけを対象にするためで
+;; ある（G3c で使う）。
 (define arithmetic-primitives
   (append-map feature-primitives arithmetic-shim-features))
 (define resource-primitives (feature-primitives 'primitive-acquire))
@@ -71,15 +72,16 @@
     [_ #f]))
 
 ;; 固定名。prim-body に自由変数が無いので捕獲は起きず、gensym なしで写しが決定的
-;; になる（spec §4.4）。
+;; になる（backend-matrix.md §7）。
 (define (primitive-formals arity)
   (for/list ([index (in-range 1 (add1 arity))])
     (string->symbol (format "pa_~a" index))))
 
 ;;; 診断
 
-;; 診断は例外ではなく値で返す（spec §8.4）。let/ec で脱出させると、部分的な出力と
-;; 診断を同時に返す経路が構文の上で作れない。
+;; 診断は例外ではなく値で返す（backend-matrix.md §8）。
+;; let/ec で脱出させると、部分的な出力と診断を同時に返す経路が
+;; 構文の上で作れない。
 (define (with-diagnostics backend proc)
   (let/ec escape
     (define (fail feature-id reason)
@@ -110,7 +112,7 @@
 ;; backend / matrix / fail を閉じ込めて、写しの各行を 1 引数の関数として書く。
 (define (make-lowering backend matrix fail)
   ;; 形の feature を引き、backend が非対応なら診断へ脱出する。対応表に無い頭
-  ;; シンボルは unknown-core-form で閉じる（spec §8.3）。
+  ;; シンボルは unknown-core-form で閉じる（backend-matrix.md §8）。
   (define (require-feature-id! feature-id)
     (when (eq? (feature-support/matrix matrix feature-id backend) 'unsupported)
       (fail feature-id
@@ -124,7 +126,7 @@
             (format "対応表に無い Typed Core の形: ~a" head)))
     (require-feature-id! feature-id))
 
-  ;; op-code。τ でない入力に符号を作らない（spec §6.4）。
+  ;; op-code。τ でない入力に符号を作らない（backend-matrix.md §5）。
   (define (op-code op)
     (match op
       [`(Return ,b ,type)
@@ -134,9 +136,10 @@
        (return-code b type)]
       [_ (fail 'unknown-core-form (format "op の形が (Return b τ) でない: ~s" op))]))
 
-  ;; prim-body。名前で 3 つに分ける（spec §4.4）。PrimVal の頭が指す
+  ;; prim-body。名前で 3 つに分ける（backend-matrix.md §7）。PrimVal の頭が指す
   ;; primitive-value は η 展開の closure を作るだけの feature なので、shim へ写す
-  ;; 名前の可否はここでもう一度、名前ごとの feature で引く（spec §8.3）。頭に算術
+  ;; 名前の可否はここでもう一度、名前ごとの feature で引く
+  ;; （backend-matrix.md §7）。頭に算術
   ;; の feature を割り当てると、算術を unsupported と宣言したときに kernel と
   ;; trait と acquire の診断まで巻き込んで閉じてしまう。
   (define (prim-body nm)
@@ -165,7 +168,8 @@
                (format "CurryVal の関数側が parameter を持つ PClosure でない: ~s"
                        function))]))
 
-  ;; 型に依存する規則の選択を写す側で解く（spec §6.3）。目標項には結果だけが残る。
+  ;; 型に依存する規則の選択を写す側で解く（backend-matrix.md §5）。
+  ;; 目標項には結果だけが残る。
   (define (let-form type px bound body)
     (if (owned-type? type)
         `(PLetOwned ,px ,bound ,body)
@@ -177,7 +181,7 @@
        `(,(tag-code tag) ,(map var-code formals) -> ,(lower-core body))]
       [_ (fail 'unknown-core-form (format "分岐の形が br でない: ~s" br))]))
 
-  ;; §4.4 の値の表
+  ;; backend-matrix.md §7 の値の表
   (define (lower-val value)
     (require-feature! (core-head value))
     (match value
@@ -211,7 +215,7 @@
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
       [_ (fail 'unknown-core-form (format "lower-value: ~s" value))]))
 
-  ;; §4.4 の計算の表。v は値の表へ委譲する。
+  ;; backend-matrix.md §7 の計算の表。v は値の表へ委譲する。
   (define (lower-core core)
     (cond
       [(redex-match? G2m v core) (lower-val core)]
@@ -236,7 +240,8 @@
                      (PLam (,(var-code x)) ,(lower-core handler))
                      ,(lower-core body))]
          [`(Scope (,places ...) ,body)
-          ;; 場所は natural であり literal と衝突しないので符号化しない（§6.4）。
+          ;; 場所は natural であり literal と衝突しないので符号化しない
+          ;; （backend-matrix.md §5）。
           `(PScopeExit ,places ,(lower-core body))]
          [`(Recur ,_ ,f (,formals ...) ,body ,rest)
           `(PLetrec ,(var-code f)
@@ -265,7 +270,8 @@
 
   (values lower-val lower-core))
 
-;; production の入口。正典表を既定で使い、表を引数に取らない（spec §6.2）。
+;; production の入口。正典表を既定で使い、表を引数に取らない
+;; （backend-matrix.md §5）。
 (define (lower core backend)
   (lower/with-matrix core backend backend-features))
 
@@ -276,8 +282,8 @@
       (define-values (lower-val lower-core) (make-lowering backend matrix fail))
       (lower-core core))))
 
-;; 値の表を直接呼ぶ入口。§8.3 の形ごとの fixture が UVal と RVal のように
-;; well-typed な源項から到達しない形を試すために使う。
+;; 値の表を直接呼ぶ入口。UVal と RVal のように well-typed な源項から到達しない形を
+;; fixture で試すために使う。
 (define (lower-value value backend)
   (with-diagnostics backend
     (lambda (fail)
@@ -285,10 +291,10 @@
         (make-lowering backend backend-features fail))
       (lower-val value))))
 
-;;; §7.1 表現規約
+;;; backend-matrix.md §5 表現規約
 
 ;; ADT の写しはすべて (PTagged K pv ...) である。List と Option と Result を
-;; 同じ行にまとめるのは spec §7.1 の表と同じ粒度である。
+;; 同じ行にまとめるのは backend-matrix.md §5 の表と同じ粒度である。
 (define (ptagged? value)
   (match value [`(PTagged ,_ ,_ ...) #t] [_ #f]))
 
@@ -325,15 +331,17 @@
      (match value
        [`(PTagged rval ,payload) (repr-ok? inner payload)]
        [_ #f])]
-    ;; spec §7.1 の表に行が無い 2 形。lang.rkt:76 の G2 の τ にはあるので、表を
-    ;; 分配して補う。行を落とすと repr-ok? が生成項の一部で偽を返し、§7.1 の
-    ;; 言明がその項について述べられなくなる。狭めではなく表の補完である。
+    ;; backend-matrix.md §5 の表に行が無い 2 形。lang.rkt:76 の G2 の τ には
+    ;; あるので、
+    ;; 表を分配して補う。行を落とすと repr-ok? が生成項の一部で偽を返し、
+    ;; backend-matrix.md §5 の言明がその項について述べられなくなる。
+    ;; 狭めではなく表の補完である。
     [`(Union ,left ,right) (or (repr-ok? left value) (repr-ok? right value))]
     [`(Intersection ,left ,right)
      (and (repr-ok? left value) (repr-ok? right value))]
     [_ #f]))
 
-;;; §7.2 Effect のラベル種別
+;;; backend-matrix.md §6 Effect のラベル種別
 
 ;; ℓ から kind へ。(Return b τ) だけは op-code の像である pop 全体を種別に使う。
 ;; 境界名だけにすると、同じ b で τ が違う handler が源側では残す Effect を目標側
@@ -341,7 +349,8 @@
 (define (effect-label-kind label)
   (match label
     [`(Return ,b ,type) (return-code b type)]
-    ;; PRuntime yield は型符号を担がないので、型成分はここで落ちる（spec §13）。
+    ;; PRuntime yield は型符号を担がないので、型成分はここで落ちる
+    ;; （backend-matrix.md §12）。
     [`(Yield ,_) 'yield]
     ['Suspend 'suspend]
     ['Partial 'partial]
@@ -357,7 +366,8 @@
   (for/fold ([kinds (set)]) ([core (in-list cores)])
     (set-union kinds (effect-kinds-of core))))
 
-;; 目標項に残る Effect の種別を取り出す residual extractor（spec §7.2 の表）。
+;; 目標項に残る Effect の種別を取り出す residual extractor。
+;; backend-matrix.md §6 のラベル種別の表と、続く散文に対応する。
 ;; 形ごとの節を並べ、最後に「その他は部分項の和」を置く。PClosure と PLam と
 ;; PInstall と PError の 4 形は和と違う寄与を持つので、和へ落とすと寄与がずれる。
 (define (effect-kinds-of core)
@@ -371,9 +381,10 @@
     ;; Lam の現在行は空で、本体の Effect は NFn の latent row に入る。本体を和に
     ;; 含めると、関数を作っただけで Effect が立つ。
     [`(PClosure ,_ ,_ ,_) (set)]
-    ;; spec §7.2 の表に PLam の行が無い。PClosure と同じ理由で空にする。Recur の
-    ;; 写しは (PLetrec f (PLam ...) rest) であり、源の Recur の typing は継続の行
-    ;; だけを返すので、PLam を和に含めると (1) の包含が破れる。
+    ;; backend-matrix.md §6 の「値の形と PLam の寄与は空」という散文に従い、
+    ;; 空にする。Recur の写しは (PLetrec f (PLam ...) rest) であり、
+    ;; 源の Recur の typing は継続の行だけを返すので、PLam を和に含めると
+    ;; (1) の包含が破れる。
     [`(PLam ,_ ,_) (set)]
     ;; --- 変数。unit の節より後に置く ---
     [(? symbol?) (set)]
@@ -418,10 +429,12 @@
     [`(PScopeExit ,_ ,body) (effect-kinds-of body)]
     ;; (Error _) は型付かない。
     [`(PError ,_) (set)]
-    ;; spec §7.2 の表の「その他は部分項の和」。上の節が PR の形をすべて挙げている
-    ;; ので、ここへ落ちるのは PR に形が増えたときだけである。落ちた形は寄与が
-    ;; 和になり静かに通ってしまうため、形ごとの fixture の表を検査側に置く
-    ;; （§8.3 と同じ流儀）。
+    ;; backend-matrix.md §6 の散文が定める部分項の Effect 合成へ
+    ;; 黙って落ちる形が無いようにする。
+    ;; 上の節が PR の形をすべて挙げているので、ここへ落ちるのは
+    ;; PR に形が増えたときだけである。
+    ;; 落ちた形は寄与が和になり静かに通ってしまうため、
+    ;; 形ごとの fixture を検査側に置く。
     [(? pair?) (kinds-of-all (list (car core) (cdr core)))]
     [_ (set)]))
 

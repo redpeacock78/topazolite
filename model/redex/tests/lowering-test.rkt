@@ -33,10 +33,11 @@
   (check-eq? status 'capability (format "lower: ~s" result))
   result)
 
-;;; §6.4 の符号化
+;;; backend-matrix.md §5 の符号化
 
-;; PR の literal と、: を含む記号を入れる（spec §8.3）。fin と obs と unit は
-;; G2m の literal でもあり源の名前になれないので、衝突の対象から外す。
+;; PR の literal と、: を含む記号を入れる（backend-matrix.md §7）。
+;; fin と obs と unit は G2m の literal でもあり源の名前になれないので、
+;; 衝突の対象から外す。
 (define collision-names '(PLet return yield drop curry |a:b|))
 
 (test-case
@@ -91,23 +92,23 @@
 (test-case
  "tycode separates types that type-equiv? identifies"
  ;; 正規化すると R-HandleSkip が別物として扱う 2 つの op を目標側が同一視する
- ;; （spec §6.4）。
+ ;; （backend-matrix.md §5）。
  (check-not-equal? (tycode '(Union Int Bool)) (tycode '(Union Bool Int)))
  (check-not-equal? (tycode '(Record ((a Int imm) (b Bool imm))))
                    (tycode '(Record ((b Bool imm) (a Int imm))))))
 
 (test-case
  "the target machine's Bool tags agree with tag-code"
- ;; spec §8.3、§9。食い違うと PMatch の枝が選べない。
+ ;; backend-matrix.md §7、§10。食い違うと PMatch の枝が選べない。
  (check-eq? bool-tag-true (tag-code 'true))
  (check-eq? bool-tag-false (tag-code 'false))
  (check-equal? (lower-value-ok '(Construct Bool true))
                `(PTagged ,bool-tag-true)))
 
-;;; §4.4 の値の表
+;;; backend-matrix.md §7 の値の表
 
 (test-case
- "the value table of spec §4.4"
+ "the value table of backend-matrix.md §7"
  (check-equal? (lower-value-ok 7) 7)
  (check-equal? (lower-value-ok 'unit) 'unit)
  (check-equal? (lower-value-ok "s") "s")
@@ -138,7 +139,7 @@
 
 (test-case
  "the fixed tags lowering invents never collide with encoded tags"
- ;; spec §4.4。源の K が typerep でも写し先は k:typerep になる。
+ ;; backend-matrix.md §7。源の K が typerep でも写し先は k:typerep になる。
  (check-not-equal? (tag-code 'typerep) 'typerep)
  (check-not-equal? (tag-code 'proof) 'proof)
  (check-not-equal? (tag-code 'uval) 'uval)
@@ -155,15 +156,15 @@
  (check-false (primitive-arity 'not-a-primitive))
  (check-equal? (sort shim-primitives symbol<?)
                '(acquire add eq le lt mul sub))
- ;; 算術と比較の 6 件と資源取得を分けておく。spec §9 の表の検査は前者だけを
- ;; 対象にする（G3c）。
+ ;; 算術と比較の 6 件と資源取得を分けておく。
+ ;; backend-matrix.md §10 の表の検査は前者だけを対象にする（G3c）。
  (check-equal? (sort arithmetic-primitives symbol<?) '(add eq le lt mul sub))
  (check-equal? resource-primitives '(acquire)))
 
-;;; §4.4 の計算の表
+;;; backend-matrix.md §7 の計算の表
 
 (test-case
- "the computation table of spec §4.4"
+ "the computation table of backend-matrix.md §7"
  (check-equal? (lower-ok 'x) (var-code 'x))
  (check-equal? (lower-ok '(Apply (Lam User c0 (a) a) 1))
                `(PApp (PClosure () (,(var-code 'a)) ,(var-code 'a)) 1))
@@ -204,7 +205,7 @@
                (var-code 'x))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
 
-;;; §8.3 の 1 と 2：形の突合と形ごとの fixture
+;;; backend-matrix.md §7 の feature 対応に使う形の突合と、形ごとの fixture
 
 ;; 左辺は lang.rkt の c と v の全形の頭シンボルである。G1m が足す (Error p) と
 ;; w ::= p に由来する (Move p) を含める。kind は lower と lower-value のどちらを
@@ -241,15 +242,15 @@
 
 (test-case
  "the form table's left-hand side matches the fixture roster"
- ;; §8.3 の 1。lang.rkt の形の集合は公開 API で取れないので、この 2 つの手書きの
- ;; 一覧を突き合わせる形で二重定義を許す。lang.rkt に形が増えたとき、どちらか
- ;; 一方だけを更新すればこの検査が落ちる。
+ ;; backend-matrix.md §7。lang.rkt の形の集合は公開 API で取れないので、
+ ;; この 2 つの手書きの一覧を突き合わせる形で二重定義を許す。
+ ;; lang.rkt に形が増えたとき、どちらか一方だけを更新すればこの検査が落ちる。
  (check-equal? (list->set (map first core-form-features))
                (list->set (map first form-fixtures))))
 
 ;; 目標項に τ が残っていないことを、型の構成子が像に無いことで確かめる
-;; （spec §6.3）。符号化を通った名前はすべて : を含むので、素の構成子が残れば
-;; ここで見つかる。
+;; （backend-matrix.md §5）。符号化を通った名前はすべて : を含むので、
+;; 素の構成子が残ればここで見つかる。
 (define type-constructors
   '(Int Bool Unit String Never Res List Option Result Owned NFn TypeInfo Proof
     Record Untrusted Refined Union Intersection Type))
@@ -276,7 +277,7 @@
      (check-true (redex-match? PR pc result) (format "~a: ~s" head result))
      (check-true (type-free? result) (format "~a: ~s" head result)))))
 
-;;; §8.3 の衝突名 regression fixture
+;;; backend-matrix.md §7 の衝突名 regression fixture
 
 ;; 変数名に return と prt の 5 名と PLet を使い、ADT tag に yield、record の
 ;; field 名に drop、Effect 境界の名前に PInstall を使う。符号化を外すと写し先が
@@ -306,7 +307,7 @@
  (check-equal? (second source-result) 'value)
  (check-equal? (length (first source-result)) 1))
 
-;;; §8.2 と §8.4：診断 ID ごとの fixture
+;;; backend-matrix.md §7 と backend-matrix.md §8：診断 ID ごとの fixture
 
 (test-case
  "a kernel primitive produces the kernel-primitive diagnostic"
@@ -328,13 +329,13 @@
 
 (test-case
  "an op carrying a non-type produces the unknown-core-type diagnostic"
- ;; spec §6.4 の fail-closed 契約。近似的な符号を作って先へ進めない。
+ ;; backend-matrix.md §8 の fail-closed 契約。近似的な符号を作って先へ進めない。
  (define diagnostic (lower-diagnostic '(Perform (Return io NotAType) 1)))
  (check-eq? (capability-diagnostic-feature-id diagnostic) 'unknown-core-type))
 
 (test-case
  "a diagnostic comes back with no target term"
- ;; §8.4 の 2 本目。部分的な出力と診断を同時に返さない。
+ ;; backend-matrix.md §8。部分的な出力と診断を同時に返さない。
  (define-values (status result) (lower '(Frobnicate 1) 'racket-cs))
  (check-eq? status 'capability)
  (check-true (capability-diagnostic? result))
@@ -347,7 +348,7 @@
                (set 'kernel-primitive 'trait-primitive
                     'unknown-core-form 'unknown-core-type)))
 
-;;; §6.2 の test seam
+;;; backend-matrix.md §5 の test seam
 
 ;; 正典表の 1 行だけを unsupported へ差し替えた表を作る。列の形は変えない。
 (define (matrix-with feature-id support)

@@ -41,7 +41,7 @@
       (loop (car next) (sub1 remaining)))))
 
 (test-case
- "δpr implements the shim semantics of spec §9"
+ "δpr implements the shim semantics of backend-matrix.md §10"
  (check-equal? (term (δpr tz:add 2 3)) 5)
  (check-equal? (term (δpr tz:sub 2 3)) -1)
  (check-equal? (term (δpr tz:mul 2 3)) 6)
@@ -175,7 +175,8 @@
 (test-case
  "finalize-pr appends fin events in reverse allocation order"
  ;; machine.rkt の finalize/proc が (reverse places) を走ることに対応する。
- ;; §7.3 の trace 一致は順序まで比べるので、ここが揃っていないと落ちる。
+ ;; backend-matrix.md §6 の trace 一致は順序まで比べるので、ここが揃っていないと
+ ;; 落ちる。
  (check-equal?
   (eval-pr/config (term (PLetOwned a 5 (PLetOwned b 6 7))))
   (term (pcfg 7 ((0 5) (1 6)) ((0 Dropped) (1 Dropped)) ((fin 1) (fin 0))))))
@@ -240,8 +241,8 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) (PPrim tz:add x 1))
                            (PEffect ,pop-a 3))))
   4)
- ;; §4.2 の反例項。PInstall の本体の hole が PG のままだと、この行が
- ;; (PScopeExit () (PEffect ...)) のまま stuck する。
+ ;; backend-matrix.md §3 の反例項。PInstall の本体の hole が PG のままだと、
+ ;; この行が (PScopeExit () (PEffect ...)) のまま stuck する。
  (check-equal?
   (eval-pr (term (PInstall ,pop-a (PLam (x) (PPrim tz:add x 1))
                            (PScopeExit () (PEffect ,pop-a 3)))))
@@ -261,8 +262,9 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
   (term (PError 0))))
 
-;; 20 本の規則それぞれを少なくとも 1 回通る fixture。§5.2 の決定性は
-;; obs-eval-pr が動く前提そのものなので、規則を足すたびにここで確かめる。
+;; 20 本の規則それぞれを少なくとも 1 回通る fixture。
+;; backend-matrix.md §4 の決定性は obs-eval-pr が動く前提そのものなので、
+;; 規則を足すたびにここで確かめる。
 (define determinism-fixtures
   (list (term (PPrim tz:add 1 2))
         (term (PApp (PClosure ((e 7)) (a) (PPrim tz:add e a)) 5))

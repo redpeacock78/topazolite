@@ -34,11 +34,12 @@
     (resource-runtime native native #f (deferred "Phase 3 以降") "")
     (static-erasure   native native #f (deferred "Phase 3 以降") "")
     ;; primitive 値そのものの写し。η 展開した closure を作るだけなので両 backend
-    ;; で native である。どの名前を写せるかは下の 7 行が決める（spec §8.3）。
+    ;; で native である。どの名前を写せるかは下の 7 行が決める
+    ;; （backend-matrix.md §7）。
     (primitive-value  native native #f (deferred "Phase 3 以降") "")
     ;; Γ0 の 7 件は名前ごとに 1 行を持つ。shim 列は名前 1 つであり、リストを置か
-    ;; ない（spec §8.1、§16）。算術と比較の 6 件は G3c の表の検査が native を
-    ;; 禁じる対象になる（spec §9）。
+    ;; ない（backend-matrix.md §10）。算術と比較の 6 件は G3c の表の検査が native を
+    ;; 禁じる対象になる（backend-matrix.md §10）。
     (primitive-add    shim shim tz:add (deferred "Phase 3 以降")
                       "算術は Host の演算を直接指さない")
     (primitive-sub    shim shim tz:sub (deferred "Phase 3 以降")
@@ -68,19 +69,21 @@
 
 ;; 診断 ID 一覧。feature に対応する ID と、対応しない ID の 2 種類がある。
 ;; unknown-core-form は対応表に無い形、unknown-core-type は op-code が τ でない
-;; 入力を受けたときの fallback である（spec §6.4）。どちらも backend の能力の話
-;; ではないので support 値を持たない。
+;; 入力を受けたときの fallback である（backend-matrix.md §8）。
+;; どちらも backend の能力の話ではないので support 値を持たない。
 (define diagnostic-ids
   '((kernel-primitive "Typed Core の kernel primitive は写し先を持たない")
     (trait-primitive  "trait primitive は Phase 2 以降の emitter を待つ")
     (unknown-core-form "対応表に無い Typed Core の形")
     (unknown-core-type "op-code の入力が Typed Core の τ でない")))
 
-;; spec §4.4 の 2 表の左辺、すなわち c と v の形の頭シンボルから feature-id への
-;; 写像である。§8.3 の 1 の突合の対象はこの左辺の集合であり、lang.rkt の c と v
-;; の形の集合と一致しなければならない。集合をここへ書くのは、Redex の
-;; language-nts が非終端名しか返さず、生成規則の右辺を取る公開 API が無いためで
-;; ある。lang.rkt に形が増えたとき、この表を更新しなければ検査が落ちる。
+;; c と v の頭シンボルから feature-id への形の対応表であり、
+;; backend-matrix.md §7 の feature 対応を形へ割り当てる。
+;; 表の突合は、この左辺の集合と lang.rkt の c と v の形の集合を比べ、
+;; backend-matrix.md §7 が求める表の完全性を確かめる。
+;; 集合をここへ書くのは、Redex の language-nts が非終端名しか返さず、生成規則の右辺を
+;; 取る公開 API が無いためである。lang.rkt に形が増えたとき、この表を更新しなければ
+;; 検査が落ちる。
 ;;
 ;; 変数と literal は頭シンボルを持たないので、% を冠した擬似的な頭で表す。% は
 ;; G2m にも PR にも現れないので、源の形の名前と衝突しない。
@@ -115,16 +118,16 @@
     (PrimVal    primitive-value)))
 
 ;; 対応表に無い頭シンボルで例外を投げない。lower が全域であるための土台であり、
-;; 呼び出し側が #f を unknown-core-form の診断へ変える（spec §8.3）。
+;; 呼び出し側が #f を unknown-core-form の診断へ変える（backend-matrix.md §8）。
 (define (core-form-feature head)
   (define row (assq head core-form-features))
   (and row (second row)))
 
 ;; Γ0 の primitive の名前から feature-id への写像である。`PrimVal` の頭が指す
 ;; `primitive-value` とは別の層であり、名前の feature を lower が別々に引く
-;;（spec §8.3）。名前と feature を 1 対 1 にしてあるのは、shim 列が名前 1 つを
-;; 持つ §8.1 の約束を守るためであり、1 件を unsupported にしたときに他の名前まで
-;; 閉じないためでもある。
+;;（backend-matrix.md §7）。名前と feature を 1 対 1 にしてあるのは、
+;; shim 列が名前 1 つを持つ backend-matrix.md §10 の約束を守るためであり、
+;; 1 件を unsupported にしたときに他の名前まで閉じないためでもある。
 (define primitive-features
   '((add . primitive-add)
     (sub . primitive-sub)
@@ -134,14 +137,15 @@
     (eq  . primitive-eq)
     (acquire . primitive-acquire)))
 
-;; 算術と比較の 6 件。spec §9 の「両 backend が shim」の検査はこの 6 件だけを対象
-;; にする。acquire は資源取得であり、算術の禁則とは別の理由で shim である。
+;; 算術と比較の 6 件。backend-matrix.md §10 の「native を禁じる検査」は
+;; この 6 件だけを対象にする。acquire は資源取得であり、算術の禁則とは別の理由で shim
+;; である。
 (define arithmetic-shim-features
   '(primitive-add primitive-sub primitive-mul
     primitive-lt primitive-le primitive-eq))
 
 ;; 表に無い名前で例外を投げない。呼び出し側が #f を unknown-core-form の診断へ変
-;; える（spec §8.1）。
+;; える（backend-matrix.md §8）。
 (define (primitive-feature nm)
   (define row (assq nm primitive-features))
   (and row (cdr row)))
@@ -227,7 +231,8 @@
     (unless (set-member? feature-ids (cdr row))
       (error 'check-tables! "~a: undeclared feature ~a"
              (car row) (cdr row))))
-  ;; backend-matrix.md §10。算術と比較の shim feature は両 backend で shim を要求し、
+  ;; backend-matrix.md §10。算術と比較の shim feature は両 backend で shim を
+  ;; 要求し、
   ;; native を許さない。backend を差し替えても結果が変わらないことの Phase 0 に
   ;; おける形である。
   (for* ([feature-id (in-list arithmetic-shim-features)]

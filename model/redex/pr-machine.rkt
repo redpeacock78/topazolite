@@ -18,18 +18,21 @@
          bool-tag-false)
 
 ;; k:true と k:false は lowering の tag-code(true) / tag-code(false) の像である
-;; （spec §6.4、§9）。δpr が Bool を返す以上どれかの tag を選ばざるを得ず、選んだ
-;; tag が lowering の像と食い違うと PMatch の枝が選べない。目標機械が源の符号化に
-;; 依存するのはこの 2 つだけである。値を 1 箇所に置いて provide するのは、Task 12
-;; の lowering 側テストが (tag-code 'true) との一致をこの束縛で固定するためであり、
-;; 綴りを写した定数を両側に置くとテストが自分自身を確かめる形になる。
+;; （backend-matrix.md §5、§10）。δpr が Bool を返す以上、どれかの tag を
+;; 選ぶ必要があり、
+;; 選んだ tag が lowering の像と食い違うと PMatch の枝が選べない。
+;; 目標機械が源の符号化に依存するのはこの 2 つだけである。値を 1 箇所に置いて
+;; provide するのは、Task 12 の lowering 側テストが (tag-code 'true) との一致を
+;; この束縛で固定するためであり、綴りを写した定数を両側に置くとテストが自分自身を
+;; 確かめる形になる。
 (define bool-tag-true 'k:true)
 (define bool-tag-false 'k:false)
 
-;; spec §9 の表。Int は任意精度整数なので、shim の意味論は Racket の演算その
-;; ものである。固定幅の切り詰めが意味論に入るのは Phase 2 以降であり、そのとき
-;; ここの実装も変わる。禁じているのは生成物が Host の演算を直接指すことであっ
-;; て、模型の実装手段ではない。
+;; backend-matrix.md §10 の表。Int は任意精度整数なので、shim の意味論は
+;; Racket の演算そのものである。
+;; 固定幅の切り詰めが意味論に入るのは Phase 2 以降であり、そのときここの実装も
+;; 変わる。禁じているのは生成物が Host の演算を直接指すことであって、
+;; 模型の実装手段ではない。
 (define-metafunction PR
   δpr : pnm pv ... -> any
   [(δpr tz:add integer_1 integer_2)
@@ -91,7 +94,7 @@
 ;; machine.rkt:157 から 184 の table-ref / table-set / fresh-place /
 ;; finalize/proc と同じ実装である。machine.rkt はこれらを provide しておらず、
 ;; provide を広げるより写すほうが公開面を増やさない。θ へ足す順序も揃える。
-;; §7.3 の trace 一致が順序まで比べるためである。
+;; backend-matrix.md §6 の trace 一致が順序まで比べるためである。
 (define (ptable-ref table key)
   (match (assoc key table)
     [(list _ value) value]

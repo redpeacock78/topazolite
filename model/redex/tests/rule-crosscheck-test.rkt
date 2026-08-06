@@ -10,9 +10,11 @@
 (provide rule-correspondence
          target-rule-names)
 
-;; spec §5.4 の対応表の源側。値は写し先の規則名で、#f は目標側に規則を持たない
-;; ことを表す。4 組が 1 本へ畳まれ R-Discharge が消えるので、値の相異なる集合は
-;; 20 本になる。この表と machine.rkt の実物がずれたら下の検査が落ちる。
+;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
+;; #f は目標側に規則を持たないことを表す。
+;; 4 組が 1 本へ畳まれ R-Discharge が消えるので、値の相異なる集合は
+;; 20 本になる。
+;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
     (R-Beta         . R-PR-App)
