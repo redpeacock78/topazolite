@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "../annotate.rkt"
          "../classify.rkt"
+         "../lowering.rkt"
          "../typing.rkt")
 
 ;; span.md §7.3: 判定に span を使わない項面の関数は、投影を通してから既存の
@@ -66,3 +67,24 @@
   (check-equal? (classify (annotate-core '(Apply (PrimVal (Reserved o-add) add) 1 2))
                           '() '())
                 '(Finite no-recursion)))
+
+;; span.md §7 の lowering 行は「出力に span を残さない」である。写しが spanless
+;; 版と一致することでこれを固定する。PR の符号化そのものは lowering-test.rkt が
+;; 固定しているため、ここでは書き下さない。
+(test-case "span.md §7: lower は spanful な core を投影して写す"
+  (define core '(Apply (PrimVal (Reserved o-add) add) 1 2))
+  (define-values (spanless-status spanless-result) (lower core 'racket-cs))
+  (define-values (spanful-status spanful-result)
+    (lower (annotate-core core) 'racket-cs))
+  (check-eq? spanless-status 'ok)
+  (check-eq? spanful-status 'ok)
+  (check-equal? spanful-result spanless-result))
+
+(test-case "span.md §7: lower-value も spanful な値を投影して写す"
+  (define value '(PrimVal (Reserved o-add) add))
+  (define-values (spanless-status spanless-result) (lower-value value 'racket-cs))
+  (define-values (spanful-status spanful-result)
+    (lower-value (annotate-core value) 'racket-cs))
+  (check-eq? spanless-status 'ok)
+  (check-eq? spanful-status 'ok)
+  (check-equal? spanful-result spanless-result))

@@ -4,6 +4,7 @@
          racket/set
          redex/reduction-semantics
          "backend-matrix.rkt"
+         "erase.rkt"
          "lang.rkt"
          "origins.rkt"
          "pr-lang.rkt")
@@ -276,7 +277,9 @@
   (lower/with-matrix core backend backend-features))
 
 ;; test seam。unsupported を含む profile を作って診断機構そのものを試す。
-(define (lower/with-matrix core backend matrix)
+(define (lower/with-matrix core-in backend matrix)
+  ;; span.md §7: lowering は出力に span を残さない。入口で一度だけ投影する。
+  (define core (erase-core core-in))
   (with-diagnostics backend
     (lambda (fail)
       (define-values (lower-val lower-core) (make-lowering backend matrix fail))
@@ -284,7 +287,8 @@
 
 ;; 値の表を直接呼ぶ入口。UVal と RVal のように well-typed な源項から到達しない形を
 ;; fixture で試すために使う。
-(define (lower-value value backend)
+(define (lower-value value-in backend)
+  (define value (erase-core value-in))
   (with-diagnostics backend
     (lambda (fail)
       (define-values (lower-val lower-core)
