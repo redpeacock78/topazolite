@@ -84,7 +84,60 @@
 
 (test-case "span を持たない非終端は G1 と同じものを受理する"
   (for ([type (in-list (term (Int (List Int) (NFn (Int) Bool () ()))))])
+    ;; 両辺が偽でも一致するので、まず基底で真であることを固定する。
+    (check-true (redex-match? G1 τ type) (format "~a" type))
     (check-equal? (and (redex-match? G1+ τ type) #t)
                   (and (redex-match? G1 τ type) #t)))
   (check-true (redex-match? G1+ ε (term (Own Partial))))
   (check-true (redex-match? G1+ O (term (Derived User (Make List))))))
+
+(test-case "G2+ の追加 production は証人を持つ"
+  (for ([core (in-list
+               (list (term (Rec ,s0 (((#:lbl a ,s1) imm (#:lit 1 ,s1)))))
+                     (term (Proj ,s0 (Rec ,s1 (((#:lbl a ,s1) imm (#:lit 1 ,s1))))
+                                 (#:lbl a ,s1)))
+                     (term (Let ,s0 ((#:bind x ,s1) const (#:ty Int ,s1))
+                                (#:lit 1 ,s1) (#:var x ,s1)))
+                     (term (Discharge ,s0 (ProofRep ,s1 User ValidNarrativeTrait)
+                                      (#:lit 1 ,s1)))))])
+    (check-true (redex-match? G2+ c core) (format "~a" core)))
+  (for ([value (in-list
+                (list (term (Rec ,s0 (((#:lbl a ,s1) imm (#:lit 1 ,s1)))))
+                      (term (UVal ,s0 (#:lit 1 ,s1)))
+                      (term (RVal ,s0 (ProofRep ,s1 User (Prop p)) (#:lit 1 ,s1)))))])
+    (check-true (redex-match? G2+ v value) (format "~a" value))))
+
+(test-case "G2+ は G1+ の項をすべて受理する"
+  (check-true (redex-match? G2+ c (term (Apply ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))))
+  (check-true (redex-match? G2+ v (term (resource ,s0 0)))))
+
+(test-case "spanless な G2 の項は G2+ に一致しない"
+  (for ([core (in-list (term ((Rec ((a imm 1)))
+                              (Proj (Rec ((a imm 1))) a)
+                              (Let (x const Int) 1 x)
+                              (Discharge (ProofRep User ValidNarrativeTrait) 1))))])
+    (check-false (redex-match? G2+ c core) (format "~a" core)))
+  (for ([value (in-list (term ((UVal 1)
+                               (RVal (ProofRep User (Prop p)) 1))))])
+    (check-false (redex-match? G2+ v value) (format "~a" value))))
+
+(test-case "G2+ の型と述語は G2 と同じものを受理する"
+  (for ([type (in-list (term ((Record ((a Int imm)))
+                              (Untrusted Int)
+                              (Refined Int (Prop p))
+                              (Union Int Bool)
+                              (Intersection Int Bool))))])
+    ;; 両辺が偽でも一致するので、まず基底で真であることを固定する。
+    (check-true (redex-match? G2 τ type) (format "~a" type))
+    (check-equal? (and (redex-match? G2+ τ type) #t)
+                  (and (redex-match? G2 τ type) #t)))
+  (for ([prop (in-list (term ((Prop p)
+                              (Presence a)
+                              (ValidNarrativeTrait Printable)
+                              (Implements Int Printable)
+                              (RequiresBoth Printable Sizable)
+                              (FieldType a Int))))])
+    ;; 両辺が偽でも一致するので、まず基底で真であることを固定する。
+    (check-true (redex-match? G2 φ prop) (format "~a" prop))
+    (check-equal? (and (redex-match? G2+ φ prop) #t)
+                  (and (redex-match? G2 φ prop) #t))))

@@ -3,7 +3,7 @@
 (require redex/reduction-semantics
          "lang.rkt")
 
-(provide Span span-ok? G1+)
+(provide Span span-ok? G1+ G2+)
 
 ;; CanonicalSpan。sourceId は利用者が与える記号か、予約 keyword #:synthetic である。
 ;; 予約値と利用者の sourceId は値の種類で分かれるため、名前による予約を置かない。
@@ -71,3 +71,28 @@
          c_2 #:refers-to f)
   (RecurVal s cid (#:bind f s_f) ((#:bind x s_b) ...)
             c #:refers-to (shadow f x ...)))
+
+;; G2 の項へ span を付けた言語。基底の G1+ がすでに spanful なので、
+;; c と v は .... で引き継いだうえで G2 の追加 production を足す。
+;; τ と φ は G2 が G1 へ足した production を改めて足す。
+(define-extended-language G2+ G1+
+  (label ::= variable-not-otherwise-mentioned)
+  (m ::= imm mut)
+  (bmode ::= const let)
+  (r ::= ((label τ m) ...))
+  (tn ::= id)
+  (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ) (Union τ τ) (Intersection τ τ))
+  (φ ::= .... (Prop id) (Presence label) (ValidNarrativeTrait tn)
+         (Implements τ tn) (RequiresBoth tn tn) (FieldType label τ))
+  (ls ::= (#:lbl label s))
+  (c ::= ....
+         (Rec s ((ls m c) ...))
+         (Proj s c ls)
+         (Let s (xs bmode ts) c c)
+         (Discharge s (ProofRep s O φ) c))
+  (v ::= ....
+         (Rec s ((ls m v) ...))
+         (UVal s v)
+         (RVal s (ProofRep s O φ) v))
+  #:binding-forms
+  (Let s ((#:bind x s_b) bmode ts) c_1 c_2 #:refers-to x))
