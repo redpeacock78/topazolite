@@ -3,6 +3,7 @@
 (require racket/match
          redex/reduction-semantics
          "compat.rkt"
+         "erase.rkt"
          "lang.rkt"
          "origins.rkt"
          "policy.rkt"
@@ -812,7 +813,12 @@
         (and (type-compatible? actual expected) row)]
        [_ #f])]))
 
-(define (core-type-of core places callables [environment '()])
+(define (core-type-of core-in places callables [environment '()])
+  ;; span.md §7.3: 判定に span を使わないため、入口で一度だけ投影してから
+  ;; 既存の走査へ渡す。投影は spanless な入力に対して恒等写像である。
+  ;; redex-match? より前に投影する。spanful な項は G2m の c に属さないため、
+  ;; 後に置くと判定へ届く前に 'ill-typed へ落ちる。
+  (define core (erase-core core-in))
   (if (and (redex-match? G2m c core)
            (core-types-normal? core)
            (valid-environment? environment)
@@ -825,7 +831,9 @@
         [_ 'ill-typed])
       'ill-typed))
 
-(define (core-check-row core places callables expected [environment '()])
+(define (core-check-row core-in places callables expected [environment '()])
+  ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
+  (define core (erase-core core-in))
   (and (redex-match? G2m c core)
        (core-types-normal? core)
        (valid-environment? environment)
