@@ -219,7 +219,7 @@ span 機構へ新しい head を追加したときに、投影側の更新漏れ
 | origins | `G2+` と `G2m` の `c` | `ok` または `(forged c)` | 項を走査し、`(forged c)` は入力の span を保つ |
 | search | 型、`Gamma-pc`、Goal | `Resolved`、`Absent`、`Ambiguous` | `ProofRep` を生成する |
 | compat、traits、type-equiv | 型と表 | 判定 | 項構成子を走査しない |
-| policy-check | `G2+` | 判定 | spanless |
+| policy-check | policy 表と `R0` | 判定 | 項を受け取らない |
 | lowering | `G2+` | `PR` または capability diagnostic | 出力に span を残さない |
 | machine、obs、pr-machine、pr-obs | `G2`、`PR` | 実行結果 | span を扱わない |
 
@@ -244,11 +244,27 @@ elab の返り値の形は変えない。
 包みが渡ったら error を上げる。
 黙って通すと、包みが型として `equal?` で比較され、型同一性と正規形の判定が偽の成立をする。
 
-この規則を課す関数は `normalize-type`、`normalize-proposition`、`type-equiv?`、`effect-equiv?`、`type-shape-ok?`、`instantiate-requirements` である。
+この規則を課す関数は `normalize-type`、`normalize-proposition`、`type-equiv?`、`effect-equiv?`、`type-shape-ok?`、`instantiate-requirements`、`compat?` である。
+
+`compat?` は再帰の入口であり、入れ子の spanful な型もここで拒否する。
+`type-equiv?` への委譲だけに依存してはならない。
+`compat?/impl` の `Never` の枝は sup を見ずに真を返すためである。
+境界検査は実装が値を返したあとに走る。
+そのため、fail-closed を境界検査の実装に依存させない。
 
 項を受け取る関数は spanful な項と spanless な項の両方を受理する。
 判定に span を使わない関数は、投影を通してから既存の走査へ渡す。
-`core-types-normal?` はこの形である。
+`core-types-normal?`、`core-type-of`、`core-check-row`、`classify`、`lower/with-matrix`、`lower-value` はこの形である。
+`core-check` は `core-check-row` へ、`lower` は `lower/with-matrix` へ委譲するため、投影を重ねて置かない。
+投影は文法照合より前に置く。
+spanful な項は G2m の `c` に属さないため、後に置くと判定へ届く前に不受理へ落ちる。
+
+`config-ok?` は投影しない。
+`config` は G2m に属し、§4.4 の通り spanful 版を定義しないためである。
+
+`erase-core` は閉世界検査を伴うため、未知の keyword head と項の位置に現れた span は入口で error になる。
+`lower` の全域性は Core の形に対するものであり、span 機構の誤りはその外にある。
+投影を診断の内側へ置くと、span 機構の誤りが `unknown-core-form` として現れ、Core の形の誤りと区別できなくなるためである。
 
 semantic origin の形の検査も投影の上で行う。
 `O` は spanless であり、`CurryVal` の origin へ埋まる値、`Δ0` の行、validator が見る payload はいずれも spanless であるため、spanful な項の側だけを投影して比べる。
