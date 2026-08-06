@@ -216,7 +216,7 @@ span 機構へ新しい head を追加したときに、投影側の更新漏れ
 | typing | `G2+` | `(tau, epsilon)` | 型と row は spanless |
 | classify | `G2+` | 分類結果 | span を見ない |
 | type-shape | `G2+` と型 | 判定 | 項を走査するが span を見ない |
-| origins | `G2+` と `G2` | `ok` または `(forged c)` | 項を走査し、`(forged c)` は入力の span を保つ |
+| origins | `G2+` と `G2m` の `c` | `ok` または `(forged c)` | 項を走査し、`(forged c)` は入力の span を保つ |
 | search | 型、`Gamma-pc`、Goal | `Resolved`、`Absent`、`Ambiguous` | `ProofRep` を生成する |
 | compat、traits、type-equiv | 型と表 | 判定 | 項構成子を走査しない |
 | policy-check | `G2+` | 判定 | spanless |
