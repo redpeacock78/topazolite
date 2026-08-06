@@ -1,6 +1,7 @@
 #lang racket
 
 (require racket/match
+         "erase.rkt"
          "rows.rkt"
          "type-equiv.rkt"
          "validators.rkt")
@@ -26,6 +27,7 @@
 ;; 型の整形式性。record のラベル一意性に加えて、RFN-001 の Owned-free 制限を
 ;; Untrusted と Refined のペイロードへ課す。
 (define (type-shape-ok? type)
+  (check-spanless! 'type-shape-ok? type)
   (match type
     [`(Record ,row)
      (and (field-row-unique? row)
@@ -165,4 +167,8 @@
                (proposition-types-normal? proposition))]
          [_ (error 'core-types-normal? "unhandled core form: ~s" value)])]))
 
-  (walk subject))
+  ;; spanful な項は投影してから走査する。span.md §7 の通り type-shape は項を
+  ;; 走査するが span を見ない判定であり、判定結果に位置情報を持たない。
+  ;; 投影は spanless な入力では恒等写像であり、知らない metadata head では error を
+  ;; 上げる。keyword でない未知の構成子は従来どおり walk の unhandled 節で落ちる。
+  (walk (erase-core subject)))

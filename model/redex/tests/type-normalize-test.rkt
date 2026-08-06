@@ -1,5 +1,6 @@
 #lang racket/base
 (require rackunit
+         "../annotate.rkt"
          "../type-equiv.rkt"
          "../type-shape.rkt")
 
@@ -170,3 +171,38 @@
              (λ () (normalize-proposition `(Implements ,span Printable))))
   (check-exn exn:fail?
              (λ () (canonical-proposition-key `(FieldType f ,span)))))
+
+(test-case "core-types-normal? は spanful 項でも spanless 項と同じ判定を返す"
+  (define normal '(Let (x Int) 1 x))
+  (define abnormal '(Let (x (Union String Int)) 1 x))
+  (check-true (core-types-normal? (annotate-core normal)))
+  (check-false (core-types-normal? (annotate-core abnormal)))
+  (check-equal? (core-types-normal? (annotate-core normal))
+                (core-types-normal? normal))
+  (check-equal? (core-types-normal? (annotate-core abnormal))
+                (core-types-normal? abnormal)))
+
+(test-case "core-types-normal? は spanful な値と origin も辿る"
+  (define core '(Curry (PrimVal (Reserved o-add) add) 1))
+  (check-true (core-types-normal? (annotate-core core)))
+  (check-true
+   (core-types-normal?
+    (annotate-core '(TypeRep (Reserved o-int) Int Type))))
+  (check-false
+   (core-types-normal?
+    (annotate-core '(Construct (Union String Int) MkPair 1 2)))))
+
+(test-case "core-types-normal? は知らない metadata head を通さない"
+  (check-exn exn:fail?
+             (λ () (core-types-normal? '(Apply (#:tag Int) 1))))
+  ;; keyword でない未知の構成子は、従来どおり walk の unhandled 節で落とす。
+  (check-exn exn:fail?
+             (λ () (core-types-normal? '(NoSuch 1)))))
+
+(test-case "type-shape-ok? は型注釈の包みを拒否する"
+  (check-exn exn:fail?
+             (λ () (type-shape-ok? '(#:ty Int (#:span #:synthetic 0 3)))))
+  (check-exn exn:fail?
+             (λ ()
+               (type-shape-ok?
+                '(Owned (#:ty Int (#:span #:synthetic 0 3)))))))
