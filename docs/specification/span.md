@@ -99,12 +99,21 @@ span は構成子名の直後に置く。
 | `br` | `(s K (xs ...) -> c)` | `(K (x ...) -> c)` |
 | `h` | `(s xs -> c)` | `(x -> c)` |
 | `ubr` | `(s K (xs ...) -> e)` | `(K (x ...) -> e)` |
+| `op` | `(Return b ts)` | `(Return b tau)` |
 
 `xs` は `(#:bind x s)`、`ls` は `(#:lbl label s)` である。
 `ts` は UCore+ では `(#:ty u_tau s)`、G1+ と G2+ では `(#:ty tau s)` である。
 `es` は UCore+ の effect annotation を包む `(#:ef u_epsilon s)` である。
 `vr` は `(#:var x s)`、`lt` は `(#:lit l s)` である。
 `#:ty` と `#:ef` の中身は spanless であり、span を持つのは注釈の出現位置だけである。
+
+`op` は effect label であり、`lang.rkt` では `ell` に属するため項構成子ではない。
+そのため `Return` の境界名と label は spanless のままにし、内側の型注釈 `ts` だけが span を持つ。
+
+境界名 `b`、ADT tag `K`、semantic origin `O`、境界 ID `cid`、primitive 名 `nm`、mutability `m`、`bmode`、型名 `T`、trait 名 `tn` は spanless である。
+これらを指す診断は、それらを含む構成子の span で代表する。
+これは §3 が定める 6 単位だけに span を持たせ、識別子一般には span を持たせないためである。
+Task 9 で境界名 `b` を 5 位置の一つとして検査することは、受理集合を検査するためであり、`b` に span を与えることを意味しない。
 
 ### 4.1 変数参照と literal
 
