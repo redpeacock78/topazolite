@@ -2,8 +2,6 @@
 
 (require rackunit
          redex/reduction-semantics
-         "../lang.rkt"
-         "../elaborate.rkt"
          "../span.rkt"
          "../erase.rkt"
          "../annotate.rkt")
