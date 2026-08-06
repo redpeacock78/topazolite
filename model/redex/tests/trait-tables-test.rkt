@@ -80,6 +80,28 @@
      (memq 'Self (flatten row))
      (format "Self remained in ~s" (trait-name trait-row)))))
 
+(test-case "instantiate-requirements は包んだ型を拒否する"
+  (define template (trait-template (trait-row-by-name 'Printable)))
+  (check-exn
+   exn:fail?
+   (λ ()
+     (instantiate-requirements
+      template
+      '(#:ty Int (#:span #:synthetic 0 3))))))
+
+(test-case "trait 表の行に span 機構の包みが無い"
+  (define (spanless? value)
+    (cond
+      [(and (pair? value) (keyword? (car value))) #f]
+      [(list? value)
+       (for/and ([element (in-list value)]) (spanless? element))]
+      [else #t]))
+  ;; check-tables! は各表の宣言形・重複・正規形を検査するが、表全体の
+  ;; metadata 不在を横断的に保証する検査ではない。ここでその不変条件を固定する。
+  (check-true (spanless? trait-table))
+  (check-true (spanless? impl-table))
+  (check-true (spanless? intersect-table)))
+
 (test-case "intersect rows compose to their declared output"
   (for ([row (in-list intersect-table)])
     (define left (trait-row-by-name (intersect-left row)))

@@ -2,6 +2,7 @@
 
 (require racket/list
          racket/match
+         "erase.rkt"
          "rows.rkt"
          "type-equiv.rkt"
          "type-shape.rkt")
@@ -206,6 +207,7 @@
 
 ;; template 中の Self を型で置き換え、具体的な requirement 行を得る。
 (define (instantiate-requirements template type)
+  (check-spanless! 'instantiate-requirements type)
   (define (substitute value)
     (cond
       [(eq? value 'Self) type]
