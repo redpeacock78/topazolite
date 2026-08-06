@@ -1,7 +1,5 @@
 #lang racket
 
-(require "span.rkt")
-
 (provide erase-core erase-surface)
 
 ;; 列の要素として現れた span を判定する。
