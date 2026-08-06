@@ -24,7 +24,7 @@
 
 ;;; backend-matrix.md §6 repr 適合の単位検査
 
-(test-case "§5: repr の表が τ の各行で成り立つ"
+(test-case "backend-matrix.md §5: repr の表が τ の各行で成り立つ"
   (check-true (repr-ok? 'Int 7))
   (check-false (repr-ok? 'Int 'unit))
   (check-true (repr-ok? 'Bool (term (PTagged ,(tag-code 'true)))))
@@ -63,7 +63,7 @@
 
 ;;; backend-matrix.md §6 ラベル種別の単位検査
 
-(test-case "§6: row-kinds が ℓ の 6 形を種別へ写す"
+(test-case "backend-matrix.md §6: row-kinds が ℓ の 6 形を種別へ写す"
   (check-equal? (row-kinds (term ((Return b Int))))
                 (set (term (return ,(boundary-code 'b) ,(tycode 'Int)))))
   ;; 同じ境界名でも τ が違えば別の種別になる。Handle の row-difference と
@@ -140,13 +140,13 @@
    (list 'PScopeExit (term (PScopeExit (0) ,effectful)) (set sample-op))
    (list 'PError (term (PError 0)) (set))))
 
-(test-case "§6: effect-kinds-of の寄与が形ごとに固定されている"
+(test-case "backend-matrix.md §6: effect-kinds-of の寄与が形ごとに固定されている"
   (for ([fixture (in-list target-form-fixtures)])
     (match-define (list label target expected) fixture)
     (check-true (redex-match? PR pc target) (format "PR の項でない: ~a" label))
     (check-equal? (effect-kinds-of target) expected (format "~a" label))))
 
-(test-case "§6: latent-kinds は関数値の本体だけを開く"
+(test-case "backend-matrix.md §6: latent-kinds は関数値の本体だけを開く"
   (check-equal? (latent-kinds (term (PClosure () (pa_1) ,effectful)))
                 (set sample-op))
   (check-equal? (latent-kinds (term (PLam (pa_1) ,effectful))) (set sample-op))
@@ -154,7 +154,7 @@
   (check-equal? (latent-kinds (term v:f)) (set))
   (check-equal? (latent-kinds 1) (set)))
 
-(test-case "§6: latent-visible? は適用先が構文上の関数値かを見る"
+(test-case "backend-matrix.md §6: latent-visible? は適用先が構文上の関数値かを見る"
   (check-true (latent-visible? (term (PApp (PClosure () () 1)))))
   (check-true (latent-visible? (term (PApp (PLam () 1)))))
   (check-false (latent-visible? (term (PApp v:f 1))))
@@ -297,14 +297,15 @@
 
 (define add-prim (term (PrimVal (Reserved o-add) add)))
 
-(test-case "§6 回帰 1: Effect を持たない Curry は両側とも空である"
+(test-case
+ "backend-matrix.md §6 回帰 1: Effect を持たない Curry は両側とも空である"
   (match-define (list expected actual _)
     (check-effect-preservation "curry" (term (Curry ,add-prim 1)) '()
                                #:tight? #t))
   (check-equal? expected (set))
   (check-equal? actual (set)))
 
-(test-case "§6 回帰 2: Scope は own を立てない"
+(test-case "backend-matrix.md §6 回帰 2: Scope は own を立てない"
   (match-define (list expected actual _)
     (check-effect-preservation "scope" (term (Scope () 1)) '()
                                #:tight? #t))
@@ -314,7 +315,8 @@
 ;; 同じ境界名 b で τ が違う Handle と Perform の入れ子。ptycode の違いで handler
 ;; が選ばれず、源側の ε にも目標側の残差にも (return b:b ty:Bool) が残る。境界名
 ;; だけで差し引く定義だと目標側が空になり、この fixture が (2) の反例になる。
-(test-case "§6 回帰 3: 境界名が同じで τ が違う Handle は差し引かない"
+(test-case
+ "backend-matrix.md §6 回帰 3: 境界名が同じで τ が違う Handle は差し引かない"
   (define core
     (term (Handle (Return b Int)
                   (x -> x)
@@ -326,7 +328,7 @@
   (check-equal? actual expected))
 
 ;; 宣言 latent row が本体の行と等しい closure への Apply。(2) の等号が立つ。
-(test-case "§6 回帰 4: 宣言と本体が一致する closure は等号になる"
+(test-case "backend-matrix.md §6 回帰 4: 宣言と本体が一致する closure は等号になる"
   (define callables (term ((c1 (NFn () Int ((Return b Int)) ())))))
   (define core
     (term (Apply (Lam User c1 () (Perform (Return b Int) 7)))))
@@ -340,7 +342,8 @@
 ;; 宣言 latent row が本体より広い closure への Apply（elaborate-test.rkt:282 の
 ;; g と同じ形）。latent-tight? が偽なので (2) を要求せず、(1) の包含だけが立つ。
 ;; この fixture が無いと、(2) の条件を落としたときに検査が黙って通ってしまう。
-(test-case "§6 回帰 5: 宣言が本体より広い closure は等号を要求しない"
+(test-case
+ "backend-matrix.md §6 回帰 5: 宣言が本体より広い closure は等号を要求しない"
   (define callables (term ((c1 (NFn () Unit (Suspend Own) ())))))
   (define core (term (Apply (Lam User c1 () unit))))
   (match-define (list expected actual tight?)
@@ -356,7 +359,8 @@
 ;; 目標側の (PTagged typerep) の残差も空集合で等号が立つ。
 ;; この fixture が無いと、検査が ε を elaboration の側から取るよう戻ったときに
 ;; 気付けない。
-(test-case "§6 回帰 6: ε は elaboration の行ではなく Typed Core の行である"
+(test-case
+ "backend-matrix.md §6 回帰 6: ε は elaboration の行ではなく Typed Core の行である"
   (define source (term (LetType Box (TypeMake List) (TypeMake (Spec Box Int)))))
   (match-define (list core _type elaborated-row callables)
     (elaboration-result source))
@@ -372,7 +376,7 @@
 
 ;; Γ0 の 7 件の primitive はいずれも latent row が () で本体に Effect が無いので、
 ;; latent-tight? を満たし等号が立つ。
-(test-case "§6: Γ0 の 7 件の primitive で等号が立つ"
+(test-case "backend-matrix.md §6: Γ0 の 7 件の primitive で等号が立つ"
   (for ([name (in-list shim-primitives)])
     (define arity (primitive-arity name))
     (define arguments (for/list ([_ (in-range arity)]) 1))
@@ -450,17 +454,17 @@
   (check-eq? (second source) (second result)
              (format "~a: 終端種別の対応" label)))
 
-(test-case "§6: 終端種別 value"
+(test-case "backend-matrix.md §6: 終端種別 value の保存（§4 の定義）"
   (check-terminal-kind "value" (term (Apply ,add-prim 1 2)) depth 'value))
 
-(test-case "§6: 終端種別 perform"
+(test-case "backend-matrix.md §6: 終端種別 perform の保存（§4 の定義）"
   (check-terminal-kind "perform" (term (Perform (Return b Int) 7)) depth
                        'perform))
 
-;; 源項は (Error p) を直接含まない。(Error p) は型付かないためである。同じ場所を
-;; 2 度 Move して R-MoveError に到達する形にする。machine-own-test.rkt:24 が
-;; 同じ項で源側の (Error 0) を固定している。
-(test-case "§6: 終端種別 ownership-error"
+;; 源項は (Error p) を直接含めず、同じ場所を 2 度 Move して R-MoveError が生成する
+;; 終端へ到達させる。machine-own-test.rkt:24 が同じ項で源側の (Error 0) を固定して
+;; いる。
+(test-case "backend-matrix.md §6: 終端種別 ownership-error の保存（§4 の定義）"
   (define acquire-prim (term (PrimVal (Reserved o-acquire) acquire)))
   (check-terminal-kind
    "ownership-error"
@@ -471,7 +475,7 @@
    'ownership-error))
 
 ;; 観測が d 個で打ち切られる項。d を 1 にして Yield を 2 段にする。
-(test-case "§6: 終端種別 observed"
+(test-case "backend-matrix.md §6: 終端種別 observed の保存（§4 の定義）"
   (check-terminal-kind "observed" (term (Yield 1 (Yield 2 3))) 1 'observed))
 
 ;;; 生成検査
@@ -587,24 +591,24 @@
               (bounds-seed limits))))
 
   (bounded-check-lowering
-   "BAK-001 §6: 値の表現が repr に適合する"
+   "BAK-001 backend-matrix.md §6: 値の表現が repr に適合する"
    repr-conforms?
    (list (cons 'value-terminal repr-witness)))
 
   (bounded-check-lowering
-   "BAK-001 §6: Effect 種別が包含し、条件が揃えば等号になる"
+   "BAK-001 backend-matrix.md §6: Effect 種別が包含し、条件が揃えば等号になる"
    effect-kinds-sound?
    (list (cons 'nonempty-row effect-nonempty-witness)
          (cons 'tight effect-tight-witness)))
 
   (bounded-check-lowering
-   "BAK-001 §6: 観測列と終端種別が一致する"
+   "BAK-001 backend-matrix.md §6: 観測列と終端種別が一致する"
    trace-preserved?
    (list (cons 'compared trace-compared)))
 
   ;; discard は受理項の半分を超えない。超えたときは fuel の与え方か生成器の
   ;; 分布のどちらかが壊れており、性質が実質的に空振りしている。
-  (test-case "§6: discard 率が比較した項の半分を超えない"
+  (test-case "backend-matrix.md §6: discard 率が比較した項の半分を超えない"
     (printf "trace: compared=~a discarded=~a\n"
             (unbox trace-compared) (unbox trace-discarded))
     (check-true (<= (* 2 (unbox trace-discarded)) (unbox trace-compared))
