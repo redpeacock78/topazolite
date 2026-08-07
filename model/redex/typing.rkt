@@ -3,6 +3,7 @@
 (require racket/match
          redex/reduction-semantics
          "compat.rkt"
+         "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
          "origins.rkt"
@@ -10,11 +11,13 @@
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
+         "span-core.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
          "validators.rkt")
 
 (provide core-type-of
+         core-type-of/diagnostic
          core-check
          core-check-row
          config-ok?
@@ -830,6 +833,19 @@
          (if normalized (list normalized row) 'ill-typed)]
         [_ 'ill-typed])
       'ill-typed))
+
+;; spec §3: G4d2 の公開 Diagnostic 境界はこの adapter である。
+;; core-type-of は 'ill-typed を返す低レベルの判定として残し、判定 API と診断 API
+;; を混ぜない。
+;; primary-span は投影前の core-in の根から取る。core-type-of は入口で erase-core
+;; を通し、その下の infer は棄却した部分項を持たない #f を返すため、根より深い節点
+;; を指すには infer 全体へ span を通す改修が要る（spec §13）。
+;; E-TYP-001 は粗い受け皿なので expected と found を埋めない。
+(define (core-type-of/diagnostic core-in places callables [environment '()])
+  (define result (core-type-of core-in places callables environment))
+  (if (eq? result 'ill-typed)
+      (diagnostic-of 'typing 'ill-typed #:primary-span (entry-span core-in))
+      result))
 
 (define (core-check-row core-in places callables expected [environment '()])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
