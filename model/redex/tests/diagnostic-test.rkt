@@ -8,6 +8,7 @@
          "diagnostic-fixture-v1.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
+;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §7）
 
 ;; test 1
 (test-case

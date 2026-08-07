@@ -14,6 +14,7 @@
          "../pr-obs.rkt")
 
 ;; [REQ: BAK-001] lowering 関係と符号化（backend-matrix.md §5）
+;; [REQ: DIA-001] lowering の Diagnostic 生成（diagnostic.md §7、§12）
 
 (define depth 5)
 (define fuel 10000)

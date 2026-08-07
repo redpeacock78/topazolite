@@ -134,6 +134,8 @@ error code は `E-<分類>-<3桁>` の書式を持つ。
 
 ## 7. registry に載せる診断
 
+[REQ: DIA-001] elaborate、typing、origins、lowering の 4 phase は、失敗を文字列ではなく Diagnostic IR で返す。
+
 error code registry には、production が返しうる診断だけを載せる。
 
 正常な判定結果である `Unknown`、`Absent`、`Ambiguous`、`obligation-proofs` の `#f` には error code を与えない。

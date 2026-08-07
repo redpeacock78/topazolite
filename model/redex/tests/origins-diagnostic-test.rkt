@@ -5,6 +5,8 @@
          "../diagnostic.rkt"
          "../origins.rkt")
 
+;; [REQ: DIA-001] origins の Diagnostic 生成（diagnostic.md §7、§12）
+
 (test-case "origin が正しい項では 'ok を返す"
   (check-equal?
    (verify-origins/diagnostic R0 `(Apply (PrimVal (Reserved o-add) add) 1 2))

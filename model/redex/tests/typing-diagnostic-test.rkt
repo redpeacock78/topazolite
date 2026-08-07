@@ -5,6 +5,8 @@
          "../diagnostic.rkt"
          "../typing.rkt")
 
+;; [REQ: DIA-001] typing の Diagnostic 生成（diagnostic.md §7、§12）
+
 (define empty '())
 
 (test-case "成功する入力では core-type-of と同じ値を返す"
