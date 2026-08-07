@@ -81,13 +81,17 @@
 (define (entry-pid e)    (fifth e))
 (define (entry-hook e)   (sixth e))
 
+;; span.md §7.1: search が生成する ProofRep は常に synthetic の空 span を持つ。
+;; goal の span を継承すると、同じ候補の同一性判定へ span が混ざる。
+(define proof-span '(#:span #:synthetic 0 0))
+
 ;; project: scope 文脈 sc-ctx から可視な entry だけを候補へ写す。
 (define (project gamma-pc sc-ctx)
   (for/list ([binding (in-list gamma-pc)]
              #:when (scope-visible? (entry-sid (second binding)) sc-ctx))
     (define e (second binding))
     (list 'Candidate
-          (list 'ProofRep (entry-origin e) (entry-phi e))
+          (list 'ProofRep proof-span (entry-origin e) (entry-phi e))
           (entry-cid e) (entry-sid e) (entry-pid e) (entry-hook e))))
 
 ;; TRT-004: 合成 trait への所属。goal の τ について、その trait を出力する
@@ -125,7 +129,8 @@
                      (list (candidate-origin a) (candidate-hook a))
                      (list (candidate-origin b) (candidate-hook b))))
              (list 'Candidate
-                   (list 'ProofRep origin `(Implements ,type ,tn-out))
+                   (list 'ProofRep proof-span origin
+                         `(Implements ,type ,tn-out))
                    `(compose ,iid ,(candidate-cid a) ,(candidate-cid b))
                    'root
                    'default

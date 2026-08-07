@@ -3,6 +3,9 @@
 (require "../origins.rkt")
 
 (define P '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+(define P/span '(ProofRep (#:span #:synthetic 0 0)
+                          (Reserved o-type-narrative)
+                          TypeNarrativeCap))
 
 ; Goal descriptor
 (check-equal? (make-goal 'TypeNarrativeCap) '(Goal TypeNarrativeCap ⊥ext))
@@ -51,7 +54,8 @@
 ; project: root scope から可視な entry を候補へ写す
 (check-equal?
  (project gamma-pc-one '(root))
- '((Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+ '((Candidate (ProofRep (#:span #:synthetic 0 0)
+                        (Reserved o-type-narrative) TypeNarrativeCap)
               typeNarrativeCap root default ())))
 
 ; 可視でない scope の entry は候補にしない
@@ -59,7 +63,7 @@
 
 ; 候補アクセサ
 (define c (first (project gamma-pc-one '(root))))
-(check-equal? (candidate-proof c) '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+(check-equal? (candidate-proof c) P/span)
 (check-equal? (candidate-prop c) 'TypeNarrativeCap)
 (check-equal? (candidate-origin c) '(Reserved o-type-narrative))
 (check-equal? (candidate-cid c) 'typeNarrativeCap)
@@ -126,5 +130,5 @@
 
 ; unique?: 完全な Σ から (Resolved P) が出れば一意性導出
 (define sigmaT (project-goal Γ-pc0 '(root) goalT))
-(check-true  (unique? goalT sigmaT PT))
+(check-true  (unique? goalT sigmaT P/span))
 (check-false (unique? goalT '() PT))

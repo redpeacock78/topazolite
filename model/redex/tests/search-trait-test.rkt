@@ -79,13 +79,15 @@
    (resolve-candidates (goal '(Implements Int Printable))
                        (sigma '(Implements Int Printable)))
    (resolved
-    '(ProofRep (Reserved o-impl-printable-int)
+    '(ProofRep (#:span #:synthetic 0 0)
+               (Reserved o-impl-printable-int)
                (Implements Int Printable))))
   (check-equal?
    (resolve-candidates (goal '(Implements Int Sizable))
                        (sigma '(Implements Int Sizable)))
    (resolved
-    '(ProofRep (Reserved o-derive-sizable-int)
+    '(ProofRep (#:span #:synthetic 0 0)
+               (Reserved o-derive-sizable-int)
                (Implements Int Sizable)))))
 
 (test-case "duplicate impls are ambiguous"

@@ -9,8 +9,7 @@
          "../lowering.rkt"
          "../origins.rkt"
          "../search.rkt"
-         "../span-core.rkt"
-         "../ucore.rkt"
+         "../span.rkt"
          "../erase.rkt"
          "../typing.rkt")
 
@@ -195,11 +194,38 @@
     (TypeMake (Spec List Int))
     (LetType MyList (TypeMake (Spec List Int)) 1)))
 
+(define discharge-source
+  '(Fn ((f (NFn () Int () (TypeNarrativeCap)))) Int () (Apply f)))
+
 (test-case "span.md §7.4: elab の結果は表層の span に依らない"
   (for ([source (in-list spanful-corpus)])
     (check-equal? (elab (annotate-surface source))
                   (elab source)
                   (format "span 付きと span なしで結果が違う: ~s" source))))
+
+;; span.md §7: elaboration の出力は G2+ である。
+(test-case "span.md §7: elab の core は G2+ に属する"
+  (for ([source (in-list spanful-corpus)])
+    (match (elab (annotate-surface source))
+      [(list core _ _ _)
+       (check-true (redex-match? G2+ c core)
+                   (format "G2+ の c に属さない: ~s -> ~s" source core))]
+      ;; 効果宣言が不足する fixture は core を生成しないため対象外とする。
+      [`(err ,_) (void)])))
+
+;; span.md §7.1: search が生成する ProofRep の span は goal と候補文脈に依らない。
+(test-case "span.md §7.1: search の ProofRep は synthetic の空 span を持つ"
+  (define sigma (project-goal Γ-pc0 '(root) (make-goal 'TypeNarrativeCap)))
+  (check-true (pair? sigma))
+  (for ([candidate (in-list sigma)])
+    (match-define (list 'ProofRep s _ _) (candidate-proof candidate))
+    (check-equal? s '(#:span #:synthetic 0 0))))
+
+(test-case "span.md §7: Discharge を含む core も G2+ に属する"
+  (match-define (list core _ _ _)
+    (elab (annotate-surface discharge-source)))
+  (check-true (redex-match? G2+ c core)
+              (format "Discharge を含む core が G2+ に属さない: ~s" core)))
 
 (test-case "span.md §7.4: span を一部だけ持つ項は拒否する"
   ;; UCore+ にも UCore にも属さない。

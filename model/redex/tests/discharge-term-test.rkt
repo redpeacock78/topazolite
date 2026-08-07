@@ -6,11 +6,13 @@
          "../machine.rkt"
          "../origins.rkt"
          "../search.rkt"
+         "../erase.rkt"
          "../typing.rkt")
 
 (define cap-proof '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
 (define printable-proof
-  (first (obligation-proofs '((Implements Int Printable)) Γ-pc0)))
+  (erase-core
+   (first (obligation-proofs '((Implements Int Printable)) Γ-pc0))))
 
 (define (verify-initial core)
   (term (verify-initial-origins ,R0 ,core)))

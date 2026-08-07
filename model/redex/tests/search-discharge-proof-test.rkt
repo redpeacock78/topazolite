@@ -27,11 +27,13 @@
                        Γ-pc0))
   (check-equal? (length proofs) 2)
   (check-equal? (first proofs)
-                '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+                '(ProofRep (#:span #:synthetic 0 0)
+                           (Reserved o-type-narrative)
+                           TypeNarrativeCap))
   ;; 2 件目の origin は探索が選んだ候補に依存するため、形と命題だけを固定する。
-  (check-equal? (length (second proofs)) 3)
+  (check-equal? (length (second proofs)) 4)
   (check-equal? (first (second proofs)) 'ProofRep)
-  (check-equal? (third (second proofs)) '(Implements Int Printable)))
+  (check-equal? (fourth (second proofs)) '(Implements Int Printable)))
 
 (test-case "PRF-004: 充足できない義務は #f になる"
   (check-equal? (obligation-proofs '(ValidNarrativeTrait) Γ-pc0)
