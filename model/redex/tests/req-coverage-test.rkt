@@ -690,3 +690,25 @@
  (check-equal?
   errors
   (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
+
+;; error code の分類部が要件 ID として読まれないこと。
+;; ID を直書きすると g1-tests の走査へ漏れるため、分割して組み立てる。
+(define typ-014 (string-append "TYP" "-014"))
+(define code-typ-014 (string-append "E-" typ-014))
+
+(test-case
+ "error code から要件 ID を抽出しない"
+ ;; テスト本文が code しか含まない場合、要件 ID の参照は 0 件である。
+ (check-equal?
+  (fixture-errors (registry-entry typ-014)
+                  (format "[REQ: ~a]\n" typ-014)
+                  (format ";; ~a\n" code-typ-014)
+                  #:expected-g1-count 1)
+  (list (format "G1 requirement lacks test reference: ~a" typ-014)))
+ ;; 素の ID なら従来どおり抽出する。
+ (check-equal?
+  (fixture-errors (registry-entry typ-014)
+                  (format "[REQ: ~a]\n" typ-014)
+                  (format ";; ~a\n" typ-014)
+                  #:expected-g1-count 1)
+  '()))

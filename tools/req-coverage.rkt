@@ -21,8 +21,10 @@
 (define state-rx #px"^- \\*\\*状態\\*\\*： *(.+?) *$")
 (define verify-rx #px"^- \\*\\*検証\\*\\*： *(.+?) *$")
 (define spec-id-rx #px"\\[REQ: ([A-Z]{3}-[0-9]{3})\\]")
+;; 後読みへハイフンを含める。含めないと error code の E-TYP-014 から
+;; TYP-014 を取り出し、テストが要件 ID を参照したものと誤って数える。
 (define test-id-rx
-  #px"(?<![A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
+  #px"(?<![-A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
 (define valid-states
   (set "G1" "G2" "G3" "G4" "G5"
        "Phase 1 以降" "Phase 2 以降" "Phase 3 以降"))
