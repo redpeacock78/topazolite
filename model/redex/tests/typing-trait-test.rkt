@@ -133,7 +133,7 @@
   (define d
     (match (elab '(Let (x let (Intersection Int String)) 1 x))
       [`(err ,d) d]
-      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+      [other (fail-check (format "elaboration succeeded unexpectedly: ~s" other))]))
   (check-equal? (diagnostic-id d)
                 (diagnostic-code-of 'elaborate 'invalid-resolved-type))
   (check-pred span-ok? (diagnostic-primary-span d))

@@ -23,7 +23,7 @@
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
-;;   elaborate: reject が第 1 引数に取る reason 記号
+;;   elaborate: reject が第 2 引数に取る reason 記号
 ;;   typing:    core-type-of が返す 'ill-typed
 ;;   origins:   verify-initial-origins が返す (forged ...) の頭
 ;;   lowering:  backend-matrix.rkt の diagnostic-ids の第 1 要素

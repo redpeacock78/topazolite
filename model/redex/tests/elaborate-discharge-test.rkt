@@ -84,7 +84,7 @@
   (define d
     (match (elab '(Fn ((f (NFn () Int () (ValidNarrativeTrait)))) Int () (Apply f)))
       [`(err ,d) d]
-      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+      [other (fail-check (format "elaboration succeeded unexpectedly: ~s" other))]))
   (check-equal? (diagnostic-id d)
                 (diagnostic-code-of 'elaborate 'unsatisfied-proof-obligation))
   (check-pred span-ok? (diagnostic-primary-span d))

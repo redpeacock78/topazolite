@@ -198,6 +198,11 @@
 (define discharge-source
   '(Fn ((f (NFn () Int () (TypeNarrativeCap)))) Int () (Apply f)))
 
+(define (invalid-syntax-diagnostic term)
+  (match (elab term)
+    [`(err ,d) d]
+    [other (fail-check (format "elaboration succeeded unexpectedly: ~s" other))]))
+
 (test-case "span.md §7.4: elab の結果は表層の span に依らない"
   (for ([source (in-list spanful-corpus)])
     (check-equal? (elab (annotate-surface source))
@@ -236,10 +241,6 @@
   ;; UCore+ にも UCore にも属さない。
   ;; erase-surface は列の要素の span を落とすため、投影を通す形では
   ;; (Apply add) へ縮退して受理されてしまう（erase.rkt:43）。
-  (define (invalid-syntax-diagnostic term)
-    (match (elab term)
-      [`(err ,d) d]
-      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
   ;; 第 2 要素が span でないため入口で span を取れない。§8 の条件 2 である。
   (let ([d (invalid-syntax-diagnostic '(Apply add (#:span #:synthetic 0 0)))])
     (check-equal? (diagnostic-id d)
@@ -263,10 +264,6 @@
             (#:var add (#:span #:synthetic 0 3))
             (#:lit 1 (#:span #:synthetic 4 5))))
   (check-true (redex-match? UCore+ e reversed))
-  (define (invalid-syntax-diagnostic term)
-    (match (elab term)
-      [`(err ,d) d]
-      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
   ;; 最外の span が span-ok? を満たさないため条件 2 へ落ちる。
   (let ([d (invalid-syntax-diagnostic reversed)])
     (check-equal? (diagnostic-id d)

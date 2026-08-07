@@ -92,6 +92,12 @@ origin chain の要素形は G4e が定め、`origin-chain` を埋めるとき�
 
 producer は phase ごとに型項、効果集合、証明対象など異なる値を入れるため、共通の形へ縛ると producer 側の判定経路を歪める。
 
+producer は `details` を文字列化せず、Racket の値のまま `expected` と `found` へ置く。
+
+既定では `details` の件数だけで配り、意味を推測して `expected` を作らない。
+
+`found` は「実測した型」ではなく、棄却の対象になった値を指す欄である。
+
 renderer が具体的な整形を要求するのは G4f 以降であり、その時点で要素形を定めて schema version を上げる。
 
 この判断は未回収の欄を残すものではなく、schema version 1 が「任意の値または `#f`」を形として定めるものである。
@@ -142,7 +148,7 @@ lowering の `capability-diagnostic` を Diagnostic IR へ変換するのは `lo
 
 registry の `key` は、phase が診断を識別するために使う記号である。
 
-elaborate の `key` は `reject` が第1引数に取る reason 記号である。
+elaborate の `key` は `reject` が第2引数に取る reason 記号である。
 
 typing の `key` は `core-type-of` が返す `ill-typed` である。
 
@@ -193,3 +199,21 @@ fixture は後方互換性を検査する履歴であり、第二の正典では
 G4d1 が `E-TYP-016` 以降の細分類を追加しても、`E-TYP-001` の適用条件を狭めない。
 
 `E-TYP-001` の title と message は文言を変更できるが、細分類できない型検査失敗を受けるという条件は変更しない。
+
+## 12. primary-span と producer の規約
+
+`primary-span` は、その phase が棄却の判断を下した節点の span である。
+
+「最も深い span を選ぶ」という汎用の述語は定めない。
+
+深さは phase をまたいで一貫した意味を持たないためである。
+
+判断節点の span を取れない入力に限り `(#:span #:synthetic 0 0)` へ落ちる。
+
+判断節点の span を取れる入力で synthetic span へ落としてはならない。
+
+型注釈の内部は包みを剥がすと span を失うため、最近傍の包みの span を使う。
+
+Diagnostic の生成は phase ごとに1箇所へ集約し、registry の引き当てと schema 検証を通る経路を1本にする。
+
+registry に無い reason を受けたときは、汎用 code へ落とさず error にする。

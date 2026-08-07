@@ -37,13 +37,16 @@
  (define d (elab-diagnostic term))
  (check-equal? (diagnostic-id d)
                (diagnostic-code-of 'elaborate 'type-mismatch))
+ ;; 束縛式の span ではない。
  (check-equal? (diagnostic-primary-span d) let-span)
+ ;; expected は宣言した型、found は棄却された実測型である。
  (check-equal? (diagnostic-expected d) 'Bool)
  (check-equal? (diagnostic-found d) 'Int))
 
 (test-case
  "invalid-obligation は最近傍の包みの span を取る"
  (define ty-span '(#:span src 4 40))
+ ;; NFn の obligations に、判定表が引き当てない (Prop id) を置く。
  (define term
    `(Let (#:span src 0 60)
          ((#:bind f (#:span src 4 5)) let
@@ -59,6 +62,7 @@
 (test-case
  "invalid-proposition も同じ最近傍の包みの span を取る"
  (define ty-span '(#:span src 4 30))
+ ;; Refined の proposition に同じ値を置く。
  (define term
    `(Let (#:span src 0 40)
          ((#:bind x (#:span src 4 5)) let
