@@ -230,6 +230,10 @@ search が生成する `ProofRep` には常に `(#:span #:synthetic 0 0)` を与
 候補文脈は表から作られ、source coordinate を持つ項ではないためである。
 goal の span を継承すると、同じ候補の同一性判定に span が混入する。
 `Discharge` の位置を指す診断は項側の `Discharge` の span を読む。
+`Γ0` の `ProofRep` は search が生成する項ではない。
+参照した位置の span を持つ。
+参照位置が `(#:span #:synthetic 0 0)` を持つ場合、search が生成した項と span の値が一致する。
+由来の判別に span を使わない。
 
 ### 7.2 elab の返り値
 
@@ -252,6 +256,12 @@ elab の返り値の形は変えない。
 `policy-wrap` の境界検査は実装が値を返したあとに走る。
 そのため、fail-closed を境界検査の実装に依存させない。
 
+`check-spanless!` は head だけを見る。
+`type-equiv?` と `compat?/impl` は再帰の入口ごとにこの検査を呼ぶため、深い走査へ変えると比較のたびに項全体を歩き直す。
+命題を受け取る入口は再帰の外にあり、呼ばれる回数が項の大きさに比例しない。
+`make-goal` と `candidateize` はここへ深い検査を置き、`(Implements (#:ty Int s) Printable)` のように内側へ包みを持つ命題も拒否する。
+どの層が拒否するかを、head の検査と深い検査の 2 段として定める。
+
 項を受け取る関数は spanful な項と spanless な項の両方を受理する。
 判定に span を使わない関数は、投影を通してから既存の走査へ渡す。
 `core-types-normal?`、`core-type-of`、`core-check-row`、`classify`、`lower/with-matrix`、`lower-value` はこの形である。
@@ -273,5 +283,48 @@ semantic origin の形の検査も投影の上で行う。
 
 rows、schema、validators、policy は項構成子を走査しない leaf module であるため、span 基盤では変更しない。
 `validators` に現れる `Yield` は effect label の pattern であり、項構成子ではない。
+
+### 7.4 elab が core へ span を写す規則
+
+elab は表層の span を core へ次の 3 通りで写す。
+
+1. **そのまま渡す**：`#:var`、`#:lit`、`#:bind`、`#:lbl` の包みは表層と core で同じ形を持つため、開かずに core へ置く。
+2. **組み直す**：`#:ty` の包みは解決前の注釈を包む。core へ置く `ts` は、解決後の型と注釈の span から組み直す。包みの span は第 3 要素にあり、節点の span（第 2 要素）とは位置が違う。
+3. **生成した節点へ与える**：表層に対応を持たない core の節点は、その節点を生んだ表層の節点の span を持つ。
+
+規則 3 が定める span は次のとおりである。
+
+- `Fn` から生まれる `Handle`、`Scope`、handler の束縛、`op` の `ts` は `Fn` の span を持つ。
+- `NarrativeExpr` から生まれる `Handle` と `Scope` も同じ形である。
+- `Apply` の義務から生まれる `Discharge` は `Apply` の span を持つ。
+- 表層の `Return` から生まれる `Perform` とその `op` の `ts` は `Return` の span を持つ。
+- `Drop` の被演算子が owned な変数参照であるときに補う `Move` は `Drop` の span を持つ。
+- 型注釈を持たない `Let` の `ts` は `Let` の span を持つ。
+- `Construct` の `ts` は `Construct` の span を持つ。`Types` の有無で分かれない。`ts` は構成子の結果型を包む位置であり、個々の型引数の注釈とは対応しない。
+
+`Γ0` の値は表の項であり span を持たない。
+参照した位置の span を与えて core へ置く。
+表の項は source coordinate を持たないため、参照位置が唯一の決定的な選択である。
+
+`UCore` と `UCore+` は `ucore.rkt` に置く。
+`UCore+` を span.rkt へ置くと、span.rkt が elaborate.rkt を require するため、elab が自分の入力の文法を参照できない。
+`UCore` は `lang.rkt` の `G1` だけを基底に取り、`UCore+` は `UCore` だけを基底に取るため、2 つを `lang.rkt` の上の 1 つの module へ置ける。
+`span-core.rkt` の `G1+` と `G2+` も同じ形である。
+
+elab は入力を `UCore+` と `UCore` の両方へ照合する。
+`UCore+` の `e` は全 production を spanful へ置き換えており、literal も包みを持つため、2 つの文法は交わらない。
+`UCore+` に属する項はそのまま使い、`UCore` に属する項は `annotate-surface` で `UCore+` へ正規化する。
+どちらにも属さない項は `invalid-syntax` で拒否する。
+span を一部だけ持つ項はここで落ちる。
+
+入力の判定に投影を使わない。
+`erase-surface` は列の要素として現れた span を落とす。
+節点の span を落とす機構がこれであるため、項の位置に紛れた span も静かに消え、投影の出力は `UCore` に属してしまう。
+文法へ直接照合すれば、この縮退を経ずに拒否できる。
+
+文法への照合だけでは §3 を満たさない。
+`s ::= (#:span sid natural natural)` は `startByte <= endByte` を書けないため、`(#:span #:synthetic 10 0)` も `UCore+` に属する。
+`UCore+` に属した項は、続けて全 span を再帰的に走査し、`span-ok?` を満たさない span が 1 つでもあれば `invalid-syntax` で拒否する。
+`annotate-surface` の出力は常に `span-ok?` を満たすため、`UCore` の枝ではこの走査を行わない。
 
 この文書は G4b の span 契約だけを定め、要件 ID や申し送り表の行を追加しない。
