@@ -8,6 +8,7 @@
          diagnostic-code-row
          (struct-out diagnostic)
          make-diagnostic
+         diagnostic-of
          diagnostic-schema-version
          diagnostic-valid?
          diagnostic-schema-errors)
@@ -181,6 +182,27 @@
               origin-chain expansion-trace
               effect-context proof-context
               related fixes))
+
+;; diagnostic.md §12: Diagnostic の生成を phase ごとに 1 箇所へ集約するための
+;; 共通部分である。registry の引き当てに失敗したら既定の code へ落とさず error に
+;; する。落とすと registry へ行を足し忘れたまま診断が出てしまう。
+;; message へ title を入れるのは Phase 0 の暫定であり、文案との書き分けは G4f が
+;; 定める。ここへ寄せておけば G4f の変更は 1 箇所で済む。
+(define (diagnostic-of phase key
+                       #:primary-span primary-span
+                       #:expected [expected #f]
+                       #:found [found #f])
+  (define code (diagnostic-code-of phase key))
+  (unless code
+    (error 'diagnostic-of "registry に無い phase と key である: ~s ~s" phase key))
+  (define row (diagnostic-code-row code))
+  (define title (diagnostic-code-title row))
+  (make-diagnostic #:id code
+                   #:title title
+                   #:message title
+                   #:primary-span primary-span
+                   #:expected expected
+                   #:found found))
 
 (define (non-empty-string? v)
   (and (string? v) (> (string-length v) 0)))

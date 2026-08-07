@@ -28,3 +28,23 @@
   ;; 文法に合わない項は span-ok? も偽である。
   (check-false (span-ok? (term (#:span main.tz -1 3))))
   (check-false (span-ok? (term (Apply 1 2)))))
+
+(test-case "span-of は節点の形ごとに span の位置を選ぶ"
+  ;; #:var と #:lit は span が第 3 要素、それ以外の節点は第 2 要素である。
+  (check-equal? (span-of '(#:var x (#:span src 5 9))) '(#:span src 5 9))
+  (check-equal? (span-of '(#:lit 1 (#:span src 5 9))) '(#:span src 5 9))
+  (check-equal? (span-of '(Apply (#:span src 0 20) (#:var f (#:span src 1 2))))
+                '(#:span src 0 20))
+  ;; G2+ の Core 節点にも同じ 2 つの形が当てはまる。
+  (check-equal? (span-of '(PrimVal (#:span src 3 7) (Reserved o-add) add))
+                '(#:span src 3 7))
+  (check-exn exn:fail? (lambda () (span-of '(Apply 1 2)))))
+
+(test-case "entry-span は span を取れないときだけ synthetic へ落ちる"
+  (check-equal? (entry-span '(Apply (#:span src 0 20) (#:var f (#:span src 1 2))))
+                '(#:span src 0 20))
+  ;; spanless な項では span-of が error を出すため fallback を使う。
+  (check-equal? (entry-span '(Apply 1 2)) '(#:span #:synthetic 0 0))
+  ;; 文法に合う形でも startByte > endByte なら span-ok? が偽になり fallback へ落ちる。
+  (check-equal? (entry-span '(Apply (#:span src 20 0) 1))
+                '(#:span #:synthetic 0 0)))

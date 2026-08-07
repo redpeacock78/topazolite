@@ -64,14 +64,6 @@
     [(list _ value) value]
     [_ #f]))
 
-;; span.md §7.4: 節点の照合は span を剥いだ形の上で行い、子は spanful のまま残す。
-;; 節ごとの pattern を二重に持たないため、剥がしをこの 1 箇所へ寄せる。
-(define (span-of node)
-  (match node
-    [(list (or '#:var '#:lit) _ s) s]
-    [(list _ (and s (list '#:span _ _ _)) _ ...) s]
-    [_ (error 'span-of "span を持たない節点である: ~s" node)]))
-
 (define (peel-node node)
   (match node
     [(list '#:lit l _) l]
@@ -418,25 +410,13 @@
      (set-subtract (free-vars expression) (list->set locally-bound))
      outer-owned))))
 
-;; §8: 判断節点の span を取れるならそれを、取れないときだけ synthetic へ
-;; 落ちる。順序を逆にすると source span があるのに synthetic を返す実装になる。
-(define (entry-span term)
-  (define s
-    (with-handlers ([exn:fail? (lambda (_) #f)])
-      (span-of term)))
-  (if (and s (span-ok? s)) s '(#:span #:synthetic 0 0)))
-
 ;; §5: Diagnostic の生成は 1 箇所へ集約する。reject は struct を組み立てず、
 ;; registry の引き当てと欄の検証を通る経路をここへ揃える。
 (define (elab-failure->diagnostic failure)
   (define reason (exn:fail:elab-reason failure))
-  (define row (diagnostic-code-row (diagnostic-code-of 'elaborate reason)))
-  (define title (diagnostic-code-title row))
   (define-values (expected found)
     (distribute-details reason (exn:fail:elab-details failure)))
-  (make-diagnostic #:id (diagnostic-code-code row)
-                   #:title title
-                   #:message title
+  (diagnostic-of 'elaborate reason
                    #:primary-span (exn:fail:elab-primary-span failure)
                    #:expected expected
                    #:found found))

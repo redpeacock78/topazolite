@@ -238,3 +238,24 @@
    (check-pred symbol? key))
  (check-equal? registry-keys (map first diagnostic-ids))
  (check-equal? registry-titles (map second diagnostic-ids)))
+
+(test-case "diagnostic-of は registry から id と title を引き当てる"
+  (define d (diagnostic-of 'typing 'ill-typed #:primary-span '(#:span src 0 4)))
+  (check-equal? (diagnostic-id d) (diagnostic-code-of 'typing 'ill-typed))
+  (check-equal? (diagnostic-primary-span d) '(#:span src 0 4))
+  ;; message が title と同じなのは Phase 0 の暫定である（spec §13）。
+  (check-equal? (diagnostic-message d) (diagnostic-title d))
+  (check-true (diagnostic-valid? d))
+  ;; expected と found の既定は #f である。
+  (check-false (diagnostic-expected d))
+  (check-false (diagnostic-found d)))
+
+(test-case "diagnostic-of は registry に無い key を error にする"
+  ;; 既定の code へ落とすと、registry へ行を足し忘れたまま診断が出てしまう。
+  (check-exn exn:fail?
+             (lambda ()
+               (diagnostic-of 'typing 'no-such-key #:primary-span '(#:span src 0 4))))
+  ;; phase が違えば同じ key でも引き当たらない。
+  (check-exn exn:fail?
+             (lambda ()
+               (diagnostic-of 'origins 'ill-typed #:primary-span '(#:span src 0 4)))))

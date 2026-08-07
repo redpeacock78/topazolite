@@ -3,7 +3,7 @@
 (require redex/reduction-semantics
          "lang.rkt")
 
-(provide Span span-ok? G1+ G2+)
+(provide Span span-ok? span-of entry-span G1+ G2+)
 
 ;; CanonicalSpan。sourceId は利用者が与える記号か、予約 keyword #:synthetic である。
 ;; 予約値と利用者の sourceId は値の種類で分かれるため、名前による予約を置かない。
@@ -19,6 +19,26 @@
        (match t
          [(list '#:span _ start end) (<= start end)]
          [_ #f])))
+
+;; span.md §7.4: 節点の照合は span を剥いだ形の上で行い、子は spanful のまま残す。
+;; 節ごとの pattern を二重に持たないため、剥がしをこの 1 箇所へ寄せる。
+;; 先頭が #:var か #:lit なら第 3 要素、それ以外なら第 2 要素が span である。
+;; この 2 つの形は表層 AST と G2+ の Core 節点の双方に当てはまるため、
+;; elaborate.rkt から移して 3 つの producer で共有する。
+(define (span-of node)
+  (match node
+    [(list (or '#:var '#:lit) _ s) s]
+    [(list _ (and s (list '#:span _ _ _)) _ ...) s]
+    [_ (error 'span-of "span を持たない節点である: ~s" node)]))
+
+;; diagnostic.md §12: 判断節点の span を取れるならそれを、取れないときだけ
+;; synthetic へ落ちる。順序を逆にすると source span があるのに synthetic を返す
+;; 実装になる。
+(define (entry-span term)
+  (define s
+    (with-handlers ([exn:fail? (lambda (_) #f)])
+      (span-of term)))
+  (if (and s (span-ok? s)) s '(#:span #:synthetic 0 0)))
 
 ;; G1 の項へ span を付けた言語。span を持たない非終端（τ κ ℓ ε Q φ t π n l
 ;; x f b K nm id cid）は G1 から引き継ぐ。
