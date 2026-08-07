@@ -5,7 +5,14 @@
          diagnostic-registry
          diagnostic-registry-version
          diagnostic-code-of
-         diagnostic-code-row)
+         diagnostic-code-row
+         (struct-out diagnostic)
+         make-diagnostic
+         diagnostic-schema-version
+         diagnostic-valid?
+         diagnostic-schema-errors)
+
+(require "span-core.rkt")
 
 ;; error code の書式。ホワイトペーパー §13.4 の error[E-RET-003] を継承する。
 (define diagnostic-code-rx #px"^E-[A-Z]{3}-[0-9]{3}$")
@@ -129,3 +136,104 @@
   (for/first ([row (in-list diagnostic-registry)]
               #:when (equal? (diagnostic-code-code row) code))
     row))
+
+;; Diagnostic の欄の形に付ける版。欄の追加、削除、欄が受け付ける形の変更で
+;; 上げる。code 集合に付ける diagnostic-registry-version とは別物である。
+;; G4e が origin-chain を空要求から origin の列へ変えるとき 2 になる。
+(define diagnostic-schema-version 1)
+
+;; ホワイトペーパー §13.4 の 17 欄。
+(struct diagnostic
+  (id severity category title message
+   primary-span secondary-labels notes help
+   expected found
+   origin-chain expansion-trace
+   effect-context proof-context
+   related fixes)
+  #:transparent)
+
+;; category は引数に取らない。2 つの入口から与えると食い違いうるため、
+;; id の分類部から導出する。
+(define (category-of id)
+  (and (string? id)
+       (regexp-match? diagnostic-code-rx id)
+       (string->symbol (substring id 2 5))))
+
+(define (make-diagnostic #:id id
+                         #:severity [severity 'error]
+                         #:title title
+                         #:message message
+                         #:primary-span primary-span
+                         #:secondary-labels [secondary-labels '()]
+                         #:notes [notes '()]
+                         #:help [help '()]
+                         #:expected [expected #f]
+                         #:found [found #f]
+                         #:origin-chain [origin-chain '()]
+                         #:expansion-trace [expansion-trace '()]
+                         #:effect-context [effect-context #f]
+                         #:proof-context [proof-context #f]
+                         #:related [related '()]
+                         #:fixes [fixes '()])
+  (diagnostic id severity (category-of id) title message
+              primary-span secondary-labels notes help
+              expected found
+              origin-chain expansion-trace
+              effect-context proof-context
+              related fixes))
+
+(define (non-empty-string? v)
+  (and (string? v) (> (string-length v) 0)))
+
+;; secondary-labels の要素は (list span ラベル) の 2 要素である。
+(define (secondary-label-ok? v)
+  (and (list? v)
+       (= (length v) 2)
+       (span-ok? (first v))
+       (non-empty-string? (second v))))
+
+;; expected、found、effect-context、proof-context は形を検査しない。
+;; phase ごとに入る値の種類が違い、共通の述語を置くと phase を跨ぐたびに
+;; 緩めることになるためである。
+;; origin-chain、expansion-trace、related、fixes は schema version 1 では
+;; 空を要求する。要素形を定めるサイクルが版を上げる。
+(define (diagnostic-schema-errors d)
+  (define (check ok? message) (if ok? '() (list message)))
+  (append
+   (check (and (string? (diagnostic-id d))
+               (diagnostic-code-row (diagnostic-id d)))
+          "id は registry にある code でなければならない")
+   (check (memq (diagnostic-severity d) '(error warning note))
+          "severity は error、warning、note のいずれかでなければならない")
+   (check (and (symbol? (diagnostic-category d))
+               (eq? (diagnostic-category d)
+                    (category-of (diagnostic-id d))))
+          "category は id の分類部を記号にした値でなければならない")
+   (check (non-empty-string? (diagnostic-title d))
+          "title は空でない文字列でなければならない")
+   (check (non-empty-string? (diagnostic-message d))
+          "message は空でない文字列でなければならない")
+   (check (span-ok? (diagnostic-primary-span d))
+          "primary-span は span-ok? を満たさなければならない")
+   (check (and (list? (diagnostic-secondary-labels d))
+               (andmap secondary-label-ok? (diagnostic-secondary-labels d)))
+          "secondary-labels は (span ラベル) の list でなければならない")
+   (check (and (list? (diagnostic-notes d))
+               (andmap non-empty-string? (diagnostic-notes d)))
+          "notes は空でない文字列の list でなければならない")
+   (check (and (list? (diagnostic-help d))
+               (andmap non-empty-string? (diagnostic-help d)))
+          "help は空でない文字列の list でなければならない")
+   (check (null? (diagnostic-origin-chain d))
+          "schema version 1 は origin-chain へ空を要求する")
+   (check (null? (diagnostic-expansion-trace d))
+          "schema version 1 は expansion-trace へ空を要求する")
+   (check (null? (diagnostic-related d))
+          "schema version 1 は related へ空を要求する")
+   (check (null? (diagnostic-fixes d))
+          "schema version 1 は fixes へ空を要求する")))
+
+;; primary-span が最小原因を指すかは判定しない。それは DIA-002 の内容であり、
+;; G4d1 以降が phase ごとの test で示す。
+(define (diagnostic-valid? d)
+  (null? (diagnostic-schema-errors d)))
