@@ -2,7 +2,8 @@
 
 (require racket/set
          rackunit
-         "../diagnostic.rkt")
+         "../diagnostic.rkt"
+         "diagnostic-fixture-v1.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 
@@ -173,3 +174,19 @@
                       (struct-copy diagnostic d [related (list d)])
                       (struct-copy diagnostic d [fixes (list 'f)])))])
    (check-false (diagnostic-valid? broken))))
+
+;; test 6
+(test-case
+ "凍結 fixture v1 の全 (code phase key) が現在の registry にある"
+ (check-equal? (length diagnostic-entries-v1) 59)
+ (define current
+   (list->set
+    (for/list ([row (in-list diagnostic-registry)])
+      (list (diagnostic-code-code row)
+            (diagnostic-code-phase row)
+            (diagnostic-code-key row)))))
+ ;; 契約は包含のみである。追加は fixture に触れない。削除、改名、番号の
+ ;; 再利用、意味の付け替えがあると落ちる。
+ (for ([entry (in-list diagnostic-entries-v1)])
+   (check-true (set-member? current entry)
+               (format "registry から消えたか意味が変わった: ~a" entry))))
