@@ -2,6 +2,7 @@
 
 (require racket/match
          redex/reduction-semantics
+         "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
          "span-core.rkt"
@@ -22,7 +23,9 @@
          trait-gamma0-entries
          trait-global-bindings
          verify-origins
-         verify-initial-origins)
+         verify-origins/diagnostic
+         verify-initial-origins
+         verify-initial-origins/diagnostic)
 
 ;; 判定表の行と、導入・射影 primitive の行から R0 の追加分を生成する。
 ;; oid は primitive の発行者であると同時に ProofRep の発行者でもある。
@@ -442,3 +445,24 @@
   verify-initial-origins : any any -> any
   [(verify-initial-origins any_R0 any_core)
    ,(verify-initial-origins/proc (term any_R0) (term any_core))])
+
+;; spec §3: G4d2 の公開 Diagnostic 境界はこの 2 つの adapter である。
+;; metafunction は (forged ...) を返す形のまま残す。diagnostic.md §1 が Diagnostic
+;; IR を項でないと定めており、metafunction の返り値へ struct を混ぜられない。
+;; diagnostic.md §8 が origins の registry key を (forged ...) の頭から導いている
+;; のも、metafunction が形を保つ前提の記述である。
+(define (origins-result->diagnostic result)
+  (match result
+    [(list 'forged subject)
+     ;; subject は棄却の対象になった部分項である。typing と違い位置が分かるため、
+     ;; 根へ丸めずここから span を取り、値そのものを found へ入れる。
+     (diagnostic-of 'origins 'forged
+                    #:primary-span (entry-span subject)
+                    #:found subject)]
+    [other other]))
+
+(define (verify-origins/diagnostic r0 core)
+  (origins-result->diagnostic (verify-origins/proc r0 core)))
+
+(define (verify-initial-origins/diagnostic r0 core)
+  (origins-result->diagnostic (verify-initial-origins/proc r0 core)))
