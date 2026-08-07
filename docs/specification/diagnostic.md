@@ -217,3 +217,21 @@ G4d1 が `E-TYP-016` 以降の細分類を追加しても、`E-TYP-001` の適�
 Diagnostic の生成は phase ごとに1箇所へ集約し、registry の引き当てと schema 検証を通る経路を1本にする。
 
 registry に無い reason を受けたときは、汎用 code へ落とさず error にする。
+
+Diagnostic を生成する境界は、判定を行う関数そのものとは限らない。
+
+typing の `core-type-of` と origins の `verify-origins` および `verify-initial-origins` は、それぞれ `'ill-typed` と `(forged ...)` を返す判定のまま残し、その上の adapter が Diagnostic を生成する。
+
+origins が adapter を挟むのは、§1 が定めるとおり Diagnostic IR が項ではなく、metafunction の返り値へ struct を混ぜられないためである。
+
+typing も同じ層の分担に揃え、判定 API と診断 API を分ける。
+
+typing の primary-span は入力 Core 項の根の span である。
+
+`core-type-of` は判定へ入る前に投影を行い、その下の型推論は棄却した部分項を持たない失敗値を返すため、根より深い節点を指せない。
+
+`E-TYP-001` は §11 が定める恒久の粗い受け皿であり、部分項を指す改修は細分類と同じサイクルで行う。
+
+origins の primary-span は根ではなく `(forged <subject>)` の `subject` の span である。
+
+`subject` は棄却の対象になった部分項そのものであり、位置が分かるため根へ丸めない。
