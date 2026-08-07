@@ -1,10 +1,11 @@
 #lang racket
-(require rackunit racket/match "../elaborate.rkt")
+(require rackunit racket/match "../elaborate.rkt" "../erase.rkt")
 
 ; elab は 1 引数で、成功時に (list core type row callables) を返す（elaborate.rkt:294、
 ; 687-690）。Δ0／Γ0／Π0 は elab 内部で使われ、外部 API は 1 引数である。
 ; 既存 elaborate-test.rkt の (match-define (list core _ _ _) (elab '...)) 規約に合わせる。
-(define (elab-core term) (match (elab term) [(list core _ _ _) core]))
+(define (elab-core term)
+  (match (elab term) [(list core _ _ _) (erase-core core)]))
 (define (elab-type term) (match (elab term) [(list _ type _ _) type]))
 (define (elab-row  term) (match (elab term) [(list _ _ row _) row]))
 ; 失敗時は (err reason)。elaborate-test.rkt の elaboration-error? に倣う。

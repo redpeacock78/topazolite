@@ -4,6 +4,7 @@
          rackunit
          redex/reduction-semantics
          "../elaborate.rkt"
+         "../erase.rkt"
          "../lang.rkt"
          "../origins.rkt"
          "../typing.rkt"
@@ -13,7 +14,8 @@
 ;; Discharge は G2 の項形式なので、この層の成功検査は G2 で行う。
 (define (elaborated source)
   (match (elab source)
-    [(and result (list _ _ _ _)) result]
+    [(list core type row callables)
+     (list (erase-core core) type row callables)]
     [other (fail-check (format "elaboration failed: ~s" other))]))
 
 ;; 成果物のどこに Discharge が現れるかは Lam と Handle の入れ子に依存する。

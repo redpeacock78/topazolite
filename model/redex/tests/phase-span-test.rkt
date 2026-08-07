@@ -238,3 +238,22 @@
   (check-equal? (second annotation) 'Int)
   (check-true (span-ok? (third annotation)))
   (check-equal? (erase-surface annotated) '(Let (x const Int) 1 x)))
+
+;; span.md §7.4: 投影すると Task 4 までの core と一致する。
+(test-case "span.md §7.4: core の span を落とすと従来の core と一致する"
+  (match-define (list core _ _ _) (elab '(Let x 1 (Apply add x 2))))
+  (check-equal?
+   (erase-core core)
+   '(Let (x Int) 1 (Apply (PrimVal (Reserved o-add) add) x 2))))
+
+(test-case "span.md §7.4: 表層の span が core へ写る"
+  (match-define (list core _ _ _)
+    (elab (annotate-surface '(Apply add 1 2))))
+  (check-true (span-ok? (second core))
+              (format "Apply の span が無い: ~s" core))
+  (match-define (list 'Apply _ function argument-1 argument-2) core)
+  (check-equal? (first argument-1) '#:lit)
+  (check-equal? (second argument-1) 1)
+  (check-true (span-ok? (third argument-1)))
+  (check-equal? (first function) 'PrimVal)
+  (check-true (span-ok? (second function))))

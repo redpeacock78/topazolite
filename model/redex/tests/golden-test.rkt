@@ -5,6 +5,7 @@
          redex/reduction-semantics
          "../classify.rkt"
          "../elaborate.rkt"
+         "../erase.rkt"
          "../machine.rkt"
          "../origins.rkt")
 
@@ -20,7 +21,8 @@
 
 (define (check-golden source expected-type environment expected-value)
   (match (elab source)
-    [(list core type row callables)
+    [(list raw-core type row callables)
+     (define core (erase-core raw-core))
      (check-equal? type expected-type)
      (check-equal? row '())
      (check-equal? (term (verify-origins ,R0 ,core)) 'ok)
@@ -93,7 +95,8 @@
                (Construct (List Int) cons 4
                           (Construct (List Int) nil))))
 
-  (match-define (list curry-core _ _ _) (elab '(Curry mul 2)))
+  (match-define (list raw-curry-core _ _ _) (elab '(Curry mul 2)))
+  (define curry-core (erase-core raw-curry-core))
   (match-define `(cfg ,curried () () ())
     (run (inject curry-core) fuel))
   (check-equal?

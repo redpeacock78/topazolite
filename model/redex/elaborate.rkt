@@ -70,6 +70,13 @@
 (define (peel-lbl t)  (match t [(list '#:lbl label _) label] [_ t]))
 (define (peel-ef t)   (match t [(list '#:ef row _) row] [_ t]))
 
+;; span.md §7.4: Γ0 の値は表の項であり span を持たない。参照した位置の
+;; span を head の直後へ付け、G1+ の値へ戻す。
+(define (attach-span value s)
+  (match value
+    [(list head rest ...) (list* head s rest)]
+    [_ (error 'attach-span "Γ0 の値が項ではない: ~s" value)]))
+
 ;; 包みの span。(#:ty τ s)、(#:bind x s)、(#:lbl label s)、(#:ef ε s) は
 ;; いずれも第 3 要素へ span を持つ。span-of は節点の第 2 要素を読むため
 ;; 包みには使えない。両者を 1 つの関数へまとめると、節点の第 2 要素が
@@ -413,7 +420,7 @@
                  [type (in-list types)])
         (check item type environment delta propositions boundaries)))
 
-    (define (elaborate-constructor constructor fields expected
+    (define (elaborate-constructor constructor fields expected type-span
                                    environment delta propositions boundaries)
       (define schema (constructor-schema expected))
       (define field-types (and schema (lookup schema constructor)))
@@ -424,12 +431,12 @@
       (define results
         (check-many fields field-types
                     environment delta propositions boundaries))
-      (judgment `(Construct ,expected ,constructor
+      (judgment `(Construct ,type-span (#:ty ,expected ,type-span) ,constructor
                             ,@(map judgment-core results))
                 expected
                 (rows-union (map judgment-row results))))
 
-    (define (check-eliminate scrutinee branches expected
+    (define (check-eliminate scrutinee branches expected eliminate-span
                              environment delta propositions boundaries)
       (define scrutinee-result
         (synth scrutinee environment delta propositions boundaries))
@@ -462,10 +469,12 @@
             (check body expected
                    (extend environment parameters field-types)
                    delta propositions boundaries))
-          (list `(,constructor ,parameters -> ,(judgment-core result))
-                (judgment-row result))))
+            (list `(,(branch-span raw-branch) ,constructor ,raw-parameters
+                    -> ,(judgment-core result))
+                  (judgment-row result))))
       (judgment
-       `(Eliminate ,(judgment-core scrutinee-result)
+       `(Eliminate ,eliminate-span
+                   ,(judgment-core scrutinee-result)
                    ,(map first branch-results))
        expected
        (rows-union
@@ -483,10 +492,11 @@
                 (judgment-row result)))
 
     (define (synth/raw expression environment delta propositions boundaries)
+      (define s (span-of expression))
       (match (peel-node expression)
-        [(? integer? literal) (judgment literal 'Int '())]
-        [(? string? literal) (judgment literal 'String '())]
-        ['unit (judgment 'unit 'Unit '())]
+        [(? integer? literal) (judgment `(#:lit ,literal ,s) 'Int '())]
+        [(? string? literal) (judgment `(#:lit ,literal ,s) 'String '())]
+        ['unit (judgment `(#:lit unit ,s) 'Unit '())]
 
         [(? symbol? name)
          (define local-type (lookup environment name))
@@ -494,10 +504,10 @@
            [local-type
             (if (owned-type? local-type)
                 (reject 'owned-variable-requires-move name)
-                (judgment name local-type '()))]
+                (judgment `(#:var ,name ,s) local-type '()))]
            [else
             (match (lookup Γ0 name)
-              [(list type value) (judgment value type '())]
+              [(list type value) (judgment (attach-span value s) type '())]
               [_ (reject 'unbound-variable name)])])]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
@@ -531,10 +541,11 @@
          (unless (row-subset? residual-row declared-row)
            (reject 'undeclared-function-effect residual-row declared-row))
          (judgment
-          `(Lam User ,callable ,parameters
-                (Handle (Return ,boundary ,return-type)
-                        (return-value -> return-value)
-                        (Scope () ,(judgment-core body-result))))
+          `(Lam ,s User ,callable ,parameter-binders
+                (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
+                        (,s (#:bind return-value ,s) ->
+                            (#:var return-value ,s))
+                        (Scope ,s () ,(judgment-core body-result))))
           signature
           '())]
 
@@ -556,13 +567,13 @@
               (check-many arguments parameter-types
                           environment delta propositions boundaries))
             (define applied
-              `(Apply ,(judgment-core function-result)
+              `(Apply ,s ,(judgment-core function-result)
                       ,@(map judgment-core argument-results)))
             (judgment
              ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
              ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
              (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
-               `(Discharge ,proof ,core))
+               `(Discharge ,s ,proof ,core))
              return-type
              (rows-union
               (append (list (judgment-row function-result))
@@ -571,6 +582,7 @@
            [_ (reject 'apply-non-function (judgment-type function-result))])]
 
         [`(Rec (,raw-fields ...))
+         (define raw-labels (map first raw-fields))
          (define fields
            (for/list ([field (in-list raw-fields)])
              (match-define `(,raw-label ,mutability ,field-expression) field)
@@ -586,10 +598,11 @@
                (reject 'owned-record-field label))
              (list label mutability result)))
          (judgment
-          `(Rec
-            ,(for/list ([field (in-list field-results)])
+          `(Rec ,s
+            ,(for/list ([field (in-list field-results)]
+                        [raw-label (in-list raw-labels)])
                (match-define (list label mutability result) field)
-               `(,label ,mutability ,(judgment-core result))))
+               `(,raw-label ,mutability ,(judgment-core result))))
           `(Record
             ,(for/list ([field (in-list field-results)])
                (match-define (list label mutability result) field)
@@ -606,7 +619,7 @@
            [`(Record ,row)
             (match (field-row-lookup row label)
               [(list field-type _)
-               (judgment `(Proj ,(judgment-core record-result) ,label)
+               (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
                          field-type
                          (judgment-row record-result))]
               [_ (reject 'unknown-record-label label)])]
@@ -644,7 +657,8 @@
                   (extend environment (list name) (list binding-type))
                   delta propositions boundaries))
          (judgment
-          `(Let (,name ,binding-mode ,declared-type)
+          `(Let ,s (,raw-name ,binding-mode
+                              (#:ty ,declared-type ,(wrapper-span raw-type)))
                 ,(judgment-core bound-result)
                 ,(judgment-core body-result))
           (judgment-type body-result)
@@ -661,7 +675,7 @@
                           (list (judgment-type bound-result)))
                   delta propositions boundaries))
          (judgment
-          `(Let (,name ,(judgment-type bound-result))
+          `(Let ,s (,raw-name (#:ty ,(judgment-type bound-result) ,s))
                 ,(judgment-core bound-result)
                 ,(judgment-core body-result))
           (judgment-type body-result)
@@ -675,6 +689,7 @@
          (define result-type
            (constructor-result constructor type-arguments))
          (elaborate-constructor constructor fields result-type
+                                s
                                 environment delta propositions boundaries)]
 
         [`(Construct ,_ ,_ ...)
@@ -690,7 +705,7 @@
               (check returned return-type
                      environment delta propositions boundaries))
             (judgment
-             `(Perform (Return ,boundary ,return-type)
+             `(Perform ,s (Return ,boundary (#:ty ,return-type ,s))
                        ,(judgment-core returned-result))
              'Never
              (row-union `((Return ,boundary ,return-type))
@@ -733,7 +748,7 @@
            (synth continuation function-environment
                   delta propositions boundaries))
          (define recur-core
-           `(Recur ,callable ,function ,parameters
+           `(Recur ,s ,callable ,raw-function ,parameter-binders
                    ,(judgment-core body-result)
                    ,(judgment-core continuation-result)))
          (define classification
@@ -753,7 +768,7 @@
          (define next-result
            (synth next environment delta propositions boundaries))
          (judgment
-          `(Yield ,(judgment-core observed-result)
+          `(Yield ,s ,(judgment-core observed-result)
                   ,(judgment-core next-result))
           (judgment-type next-result)
           (rows-union
@@ -764,7 +779,7 @@
         [`(Suspend ,body)
          (define result
            (synth body environment delta propositions boundaries))
-         (judgment `(Suspend ,(judgment-core result))
+         (judgment `(Suspend ,s ,(judgment-core result))
                    (judgment-type result)
                    (row-union (judgment-row result) '(Suspend)))]
 
@@ -772,21 +787,21 @@
          (define name (peel-node raw-name))
          (match (lookup environment name)
            [`(Owned ,inner)
-            (judgment `(Move ,name) `(Owned ,inner) '(Own))]
+            (judgment `(Move ,s ,raw-name) `(Owned ,inner) '(Own))]
            [_ (reject 'move-non-owned name)])]
 
         [`(Drop ,raw-name)
          #:when (let ([name (peel-node raw-name)])
                   (and (symbol? name)
                        (owned-type? (lookup environment name))))
-         (judgment `(Drop (Move ,(peel-node raw-name))) 'Unit '(Own))]
+         (judgment `(Drop ,s (Move ,s ,raw-name)) 'Unit '(Own))]
 
         [`(Drop ,body)
          (define result
            (synth body environment delta propositions boundaries))
          (unless (owned-type? (judgment-type result))
            (reject 'drop-non-owned (judgment-type result)))
-         (judgment `(Drop ,(judgment-core result))
+         (judgment `(Drop ,s ,(judgment-core result))
                    'Unit
                    (row-union (judgment-row result) '(Own)))]
 
@@ -802,7 +817,7 @@
               (check argument first-type
                      environment delta propositions boundaries))
             (judgment
-             `(Curry ,(judgment-core function-result)
+             `(Curry ,s ,(judgment-core function-result)
                      ,(judgment-core argument-result))
              `(NFn ,remaining-types ,return-type ,latent-row ,obligations)
              (row-union (judgment-row function-result)
@@ -815,7 +830,7 @@
          (match-define (list type-form kind)
            (interpret-spec spec delta))
          (judgment
-          `(TypeRep (Derived (Reserved o-type-narrative)
+          `(TypeRep ,s (Derived (Reserved o-type-narrative)
                              (Make ,type-form))
                     ,type-form
                     ,kind)
@@ -845,6 +860,7 @@
         [_ (reject 'cannot-synthesize expression)]))
 
     (define (check expression expected environment delta propositions boundaries)
+      (define s (span-of expression))
       (match (peel-node expression)
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
@@ -856,10 +872,12 @@
 
         [`(Construct ,constructor ,fields ...)
          (elaborate-constructor constructor fields expected
+                                s
                                 environment delta propositions boundaries)]
 
         [`(Eliminate ,scrutinee (,branches ...))
          (check-eliminate scrutinee branches expected
+                          s
                           environment delta propositions boundaries)]
 
         [`(NarrativeExpr ,body)
@@ -870,9 +888,9 @@
                         boundaries)))
          (define own-return `((Return ,boundary ,expected)))
          (judgment
-          `(Handle (Return ,boundary ,expected)
-                   (return-value -> return-value)
-                   (Scope () ,(judgment-core body-result)))
+          `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
+                   (,s (#:bind return-value ,s) -> (#:var return-value ,s))
+                   (Scope ,s () ,(judgment-core body-result)))
           expected
           (row-difference (judgment-row body-result) own-return))]
 

@@ -4,6 +4,7 @@
          rackunit
          redex/reduction-semantics
          "../elaborate.rkt"
+         "../erase.rkt"
          "../machine.rkt"
          "../origins.rkt"
          "../search.rkt"
@@ -18,7 +19,8 @@
 
 (define (check-surface-application source expected-type expected-value)
   (match (elab source)
-    [(list core type row callables)
+    [(list raw-core type row callables)
+     (define core (erase-core raw-core))
      (check-equal? type expected-type)
      (check-equal? row empty)
      (check-equal? (term (verify-initial-origins ,R0 ,core)) 'ok)

@@ -5,6 +5,7 @@
          rackunit
          redex/reduction-semantics
          "../elaborate.rkt"
+         "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
          "../origins.rkt"
@@ -68,7 +69,7 @@
                   other)])))
     (match (elab `(Rec ,source-fields))
       [(list record type '() callables)
-       (impl-fixture row record type callables)]
+       (impl-fixture row (erase-core record) type callables)]
       [other
        (error 'properties-trait-test
               "record fixture no longer elaborates: ~s"

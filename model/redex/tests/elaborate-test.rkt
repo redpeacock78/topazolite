@@ -4,6 +4,7 @@
          redex/reduction-semantics
          rackunit
          "../elaborate.rkt"
+         "../erase.rkt"
          "../lang.rkt"
          "../typing.rkt")
 
@@ -11,9 +12,11 @@
   (match result
     [(list core _ _ _)
      (check-true
-      (redex-match? G1 c core)
+      (redex-match? G1 c (erase-core core))
       (format "elaboration produced malformed Typed Core: ~s" core))
-     result]
+     (match result
+       [(list core type row callables)
+        (list (erase-core core) type row callables)])]
     [_ (fail-check (format "expected elaboration success, got ~s" result))]))
 
 (define (elaboration-error? result)
@@ -162,8 +165,9 @@
   (check-true (tree-contains? drop-core '(Drop (Move item)))))
 
 (test-case "TYP-001/TYP-002: typeMake interprets saturated specs"
-  (match-define (list type-core type type-row _)
-    (success (elab '(TypeMake (Spec List Int)))))
+  (match-define (list raw-type-core type type-row callables)
+    (elab '(TypeMake (Spec List Int))))
+  (define type-core (erase-core raw-type-core))
   (check-equal?
    type-core
    '(TypeRep (Derived (Reserved o-type-narrative)
@@ -186,8 +190,10 @@
     (elab '(TypeMake (Spec List Int Unit))))))
 
 (test-case "E-Prim: primitive resolution respects local shadowing"
+  (match-define (list raw-core direct-type direct-row direct-callables)
+    (elab 'add))
   (check-equal?
-   (elab 'add)
+   (list (erase-core raw-core) direct-type direct-row direct-callables)
    '((PrimVal (Reserved o-add) add)
      (NFn (Int Int) Int () ())
      ()
@@ -213,8 +219,9 @@
           (Apply f))))))
 
 (test-case "CUR-001/CUR-002: curry preserves the latent signature"
+  (match-define (list raw-core type row callables) (elab '(Curry add 1)))
   (check-equal?
-   (elab '(Curry add 1))
+   (list (erase-core raw-core) type row callables)
    '((Curry (PrimVal (Reserved o-add) add) 1)
      (NFn (Int) Int () ())
      ()
@@ -227,8 +234,10 @@
           (Curry f (Apply acquire 1)))))))
 
 (test-case "E-Construct/E-Eliminate: expected and explicit type arguments"
+  (match-define (list raw-core direct-type direct-row direct-callables)
+    (elab '(Construct nil (Types Int))))
   (check-equal?
-   (elab '(Construct nil (Types Int)))
+   (list (erase-core raw-core) direct-type direct-row direct-callables)
    '((Construct (List Int) nil) (List Int) () ()))
   (check-true (elaboration-error? (elab '(Construct nil))))
   (match-define (list core type row callables)

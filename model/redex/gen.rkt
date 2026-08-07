@@ -5,6 +5,7 @@
          racket/string
          redex/reduction-semantics
          "elaborate.rkt"
+         "erase.rkt"
          "lang.rkt"
          "machine.rkt"
          "typing.rkt"
@@ -241,7 +242,10 @@
 (define trace-cache (make-hash))
 
 (define (elaboration-result source)
-  (hash-ref! elaboration-cache source (lambda () (elab source))))
+  (match (hash-ref! elaboration-cache source (lambda () (elab source)))
+    [(list core type row callables)
+     (list (erase-core core) type row callables)]
+    [other other]))
 
 (define (prepare-elaborable counts source)
   (match (elaboration-result source)

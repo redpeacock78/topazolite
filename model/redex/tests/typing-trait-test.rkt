@@ -1,11 +1,22 @@
 #lang racket/base
 
-(require rackunit
+(require racket/match
+         rackunit
          redex/reduction-semantics
          "../elaborate.rkt"
+         "../erase.rkt"
          "../typing.rkt")
 
 (define empty '())
+
+(define (elab-core source)
+  (erase-core (car (elab source))))
+
+(define (elab-result source)
+  (match (elab source)
+    [(list core type row callables)
+     (list (erase-core core) type row callables)]
+    [other other]))
 
 (test-case "normal unions are accepted and non-normal types are rejected"
   (check-true
@@ -62,13 +73,13 @@
   (check-equal? (cadr (elab record)) record-type)
   ;; G1 由来の Let は bound の合成型を Core 注釈へ埋め込む。
   (check-equal?
-   (car (elab `(Let x ,record 1)))
+   (elab-core `(Let x ,record 1))
    `(Let (x ,record-type) ,record 1))
   ;; 明示注釈も resolve-annotation の出口で正規化する。
   (check-equal?
-   (car (elab `(Let (x let (Record ((z Int imm) (a Int imm))))
-                 ,record
-                 1)))
+   (elab-core `(Let (x let (Record ((z Int imm) (a Int imm))))
+                       ,record
+                       1))
    `(Let (x let ,record-type) ,record 1))
   (let-values ([(merged _witnesses)
                 (merge-record-types
@@ -100,12 +111,12 @@
 
 (test-case "elaboration normalizes composite annotations"
   (check-equal?
-   (car (elab '(Let (x let (Union String Int)) 1 x)))
+   (elab-core '(Let (x let (Union String Int)) 1 x))
    '(Let (x let (Union Int String)) 1 x))
   (define record-type
     '(Record ((a Int imm) (b Int imm))))
   (check-equal?
-   (elab
+   (elab-result
     '(Let (x let
              (Intersection (Record ((a Int imm)))
                            (Record ((b Int imm)))))
