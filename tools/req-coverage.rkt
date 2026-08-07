@@ -347,6 +347,13 @@
 ;; Update this only when the G3d scope intentionally gains or removes an ID.
 (define expected-g3d-ids '(BAK-002))
 
+;; Update this only when the G4 scope intentionally gains or removes an ID.
+;; G4 はサブサイクル（G4c、G4d1 から G4d3、G4e、G4f）に分かれるが descriptor は
+;; 1 件である。cycle-local-references が自身以外の owned 集合を差し引くため、
+;; サブサイクルごとに立てると DIA-001 と DIA-002 の置き先が無くなる。
+;; サブサイクルが要件を回収するたび、この列へ ID を足す。
+(define expected-g4-ids '(DIA-005))
+
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
   (define g1-specs
@@ -433,6 +440,12 @@
   (define g3c-tests
     (list (build-path root "model/redex/tests/backend-matrix-test.rkt")
           (build-path root "model/redex/tests/lowering-arith-test.rkt")))
+  (define g4-specs
+    (for/list ([name (in-list '("diagnostic.md"
+                                "span.md"))])
+      (build-path root "docs/specification" name)))
+  (define g4-tests
+    (list (build-path root "model/redex/tests/diagnostic-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -445,7 +458,8 @@
    (cycle-descriptor 'G3a "G3" g3-specs g3a-tests #f expected-g3a-ids)
    (cycle-descriptor 'G3b "G3" g3-specs g3b-tests #f expected-g3b-ids)
    (cycle-descriptor 'G3c "G3" g3-specs g3c-tests #f expected-g3c-ids)
-   (cycle-descriptor 'G3d "G3" g3-specs '() #f expected-g3d-ids)))
+   (cycle-descriptor 'G3d "G3" g3-specs '() #f expected-g3d-ids)
+   (cycle-descriptor 'G4 "G4" g4-specs g4-tests #f expected-g4-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
