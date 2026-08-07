@@ -10,13 +10,12 @@
 
 (define (success result)
   (match result
-    [(list core _ _ _)
+    [(list core type row callables)
+     (define erased (erase-core core))
      (check-true
-      (redex-match? G1 c (erase-core core))
+      (redex-match? G1 c erased)
       (format "elaboration produced malformed Typed Core: ~s" core))
-     (match result
-       [(list core type row callables)
-        (list (erase-core core) type row callables)])]
+     (list erased type row callables)]
     [_ (fail-check (format "expected elaboration success, got ~s" result))]))
 
 (define (elaboration-error? result)
