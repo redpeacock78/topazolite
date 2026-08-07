@@ -4,6 +4,7 @@
          rackunit
          redex/reduction-semantics
          "../backend-matrix.rkt"
+         "../diagnostic.rkt"
          "../lang.rkt"
          "../lowering.rkt"
          "../obs.rkt"
@@ -313,34 +314,65 @@
  "a kernel primitive produces the kernel-primitive diagnostic"
  (define name (first (first kernel-gamma0-entries)))
  (define diagnostic (lower-diagnostic `(PrimVal (Reserved o-kernel) ,name)))
- (check-eq? (capability-diagnostic-feature-id diagnostic) 'kernel-primitive)
- (check-eq? (capability-diagnostic-backend diagnostic) 'racket-cs))
+ (check-equal? (diagnostic-id diagnostic) "E-LOW-001"))
 
 (test-case
  "a trait primitive produces the trait-primitive diagnostic"
  (define name (first (first trait-gamma0-entries)))
  (define diagnostic (lower-diagnostic `(PrimVal (Reserved o-trait) ,name)))
- (check-eq? (capability-diagnostic-feature-id diagnostic) 'trait-primitive))
+ (check-equal? (diagnostic-id diagnostic) "E-LOW-002"))
 
 (test-case
  "a form outside the table produces the unknown-core-form diagnostic"
  (define diagnostic (lower-diagnostic '(Frobnicate 1)))
- (check-eq? (capability-diagnostic-feature-id diagnostic) 'unknown-core-form))
+ (check-equal? (diagnostic-id diagnostic) "E-LOW-003"))
 
 (test-case
  "an op carrying a non-type produces the unknown-core-type diagnostic"
  ;; backend-matrix.md §8 の fail-closed 契約。近似的な符号を作って先へ進めない。
  (define diagnostic (lower-diagnostic '(Perform (Return io NotAType) 1)))
- (check-eq? (capability-diagnostic-feature-id diagnostic) 'unknown-core-type))
+ (check-equal? (diagnostic-id diagnostic) "E-LOW-004"))
 
 (test-case
  "a diagnostic comes back with no target term"
  ;; backend-matrix.md §8。部分的な出力と診断を同時に返さない。
  (define-values (status result) (lower '(Frobnicate 1) 'racket-cs))
  (check-eq? status 'capability)
- (check-true (capability-diagnostic? result))
- (check-true (and (string? (capability-diagnostic-reason result))
-                  (not (string=? (capability-diagnostic-reason result) "")))))
+ (check-true (diagnostic? result))
+ (check-true (diagnostic-valid? result))
+ ;; reason 文字列は found へ入る。移行前に検査していた「空でない文字列」を
+ ;; found の側で固定し、同じ文字列が同じ経路から来ていることを確かめる。
+ (define-values (seam-status seam-result)
+   (lower/with-matrix '(Frobnicate 1) 'racket-cs backend-features))
+ (check-eq? seam-status 'capability)
+ (check-equal? (diagnostic-found result)
+               (capability-diagnostic-reason seam-result))
+ (check-true (string? (diagnostic-found result)))
+ (check-false (string=? (diagnostic-found result) "")))
+
+(test-case
+ "lower-value も Diagnostic を返す"
+ ;; 入口が 2 つあるため、片方だけ変換したまま残らないことを固定する。
+ (define name (first (first kernel-gamma0-entries)))
+ (define-values (status result)
+   (lower-value `(PrimVal (Reserved o-kernel) ,name) 'racket-cs))
+ (check-eq? status 'capability)
+ (check-true (diagnostic? result))
+ (check-equal? (diagnostic-id result) "E-LOW-001"))
+
+(test-case
+ "lowering の primary-span は入力項の根である"
+ ;; spec §12。投影前の根から取る。span を持たない入力では synthetic へ落ちる。
+ ;; 棄却されるのは Frobnicate のような Core の外の形ではなく、正典表で
+ ;; unsupported な kernel primitive である。前者は spanful な形として
+ ;; erase-core を通せない。
+ (define name (first (first kernel-gamma0-entries)))
+ (define spanful
+   `(PrimVal (#:span src 0 20) (Reserved o-kernel) ,name))
+ (define diagnostic (lower-diagnostic spanful))
+ (check-equal? (diagnostic-primary-span diagnostic) '(#:span src 0 20))
+ (define spanless (lower-diagnostic '(Frobnicate 1)))
+ (check-equal? (diagnostic-primary-span spanless) '(#:span #:synthetic 0 0)))
 
 (test-case
  "the diagnostic roster is exactly the set the fixtures produce"

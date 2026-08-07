@@ -4,10 +4,12 @@
          racket/set
          redex/reduction-semantics
          "backend-matrix.rkt"
+         "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
          "origins.rkt"
-         "pr-lang.rkt")
+         "pr-lang.rkt"
+         "span-core.rkt")
 
 (provide lower
          lower/with-matrix
@@ -271,10 +273,28 @@
 
   (values lower-val lower-core))
 
+;; spec §3: G4d3 の公開 Diagnostic 境界はこの adapter である。
+;; lower/with-matrix は test seam なので capability-diagnostic を返す層のまま
+;; 残す（diagnostic.md §7）。
+;; primary-span は投影前の入力項の根から取る。lower/with-matrix は入口で
+;; erase-core を通し、その下の fail は feature-id と reason 文字列しか受け取ら
+;; ないため、棄却した部分項を指すには走査全体へ span を通す改修が要る（spec §13）。
+;; reason 文字列は found へ入れる。backend は schema version 1 に欄が無いので
+;; 運ばない（spec §13）。
+(define (capability->diagnostic capability span)
+  (diagnostic-of 'lowering
+                 (capability-diagnostic-feature-id capability)
+                 #:primary-span span
+                 #:found (capability-diagnostic-reason capability)))
+
 ;; production の入口。正典表を既定で使い、表を引数に取らない
 ;; （backend-matrix.md §5）。
-(define (lower core backend)
-  (lower/with-matrix core backend backend-features))
+(define (lower core-in backend)
+  (define-values (status result)
+    (lower/with-matrix core-in backend backend-features))
+  (if (eq? status 'capability)
+      (values status (capability->diagnostic result (entry-span core-in)))
+      (values status result)))
 
 ;; test seam。unsupported を含む profile を作って診断機構そのものを試す。
 (define (lower/with-matrix core-in backend matrix)
@@ -293,11 +313,15 @@
 ;; fixture で試すために使う。
 (define (lower-value value-in backend)
   (define value (erase-core value-in))
-  (with-diagnostics backend
-    (lambda (fail)
-      (define-values (lower-val lower-core)
-        (make-lowering backend backend-features fail))
-      (lower-val value))))
+  (define-values (status result)
+    (with-diagnostics backend
+      (lambda (fail)
+        (define-values (lower-val lower-core)
+          (make-lowering backend backend-features fail))
+        (lower-val value))))
+  (if (eq? status 'capability)
+      (values status (capability->diagnostic result (entry-span value-in)))
+      (values status result)))
 
 ;;; backend-matrix.md §5 表現規約
 
