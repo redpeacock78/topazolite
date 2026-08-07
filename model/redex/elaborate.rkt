@@ -12,70 +12,11 @@
          "search.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
+         "ucore.rkt"
          "validators.rkt")
 
 (provide UCore
          elab)
-
-;; S-expression encoding of the untyped reduced Core from core-calculus.md §3.1.
-;; Explicit constructor type arguments use (Types ...), and applied type specs
-;; use (Spec head argument ...).
-(define-extended-language UCore G1
-  (T ::= variable-not-otherwise-mentioned)
-  (A ::= Int Bool Unit String Never Res List Option Result T)
-  (label ::= variable-not-otherwise-mentioned)
-  (m ::= imm mut)
-  (bmode ::= const let)
-  (tn ::= id)
-  (ur ::= ((label uτ m) ...))
-  ;; RFN-001: 表層に書ける命題。判定表の (Prop id) を足す。常在性 witness の
-  ;; (Presence label) は含めない。merge の局所検査だけで立つ命題である。
-  (uφ ::= ValidNarrativeTrait TypeNarrativeCap (Prop id)
-          (ValidNarrativeTrait tn)
-          (Implements uτ tn)
-          (RequiresBoth tn tn))
-  (uQ ::= (uφ ...))
-  (uτ ::= Int Bool Unit String Never Res
-          T
-          (List uτ)
-          (Option uτ)
-          (Result uτ uτ)
-          (Owned uτ)
-          (Untrusted uτ)
-          (Refined uτ uφ)
-          (NFn (uτ ...) uτ tε uQ)
-          (TypeInfo κ)
-          (Proof uφ)
-          (Record ur)
-          (Union uτ uτ)
-          (Intersection uτ uτ))
-  (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own)
-  (tε ::= (tℓ ...))
-  (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own)
-  (uε ::= (uℓ ...))
-  (spec ::= A (Spec spec spec ...))
-  (ubr ::= (K (x ...) -> e))
-  (e ::= l
-         x
-         (Fn ((x uτ) ...) uτ uε e)
-         (Apply e e ...)
-         (Let x e e)
-         (Let (x bmode uτ) e e)
-         (Rec ((label m e) ...))
-         (Proj e label)
-         (Construct K e ...)
-         (Construct K (Types uτ ...) e ...)
-         (Eliminate e (ubr ...))
-         (Return e)
-         (NarrativeExpr e)
-         (Recur f ((x uτ) ...) uτ uε e e)
-         (Yield e e)
-         (Suspend e)
-         (Move x)
-         (Drop e)
-         (Curry e e)
-         (TypeMake spec)
-         (LetType T (TypeMake spec) e)))
 
 (struct judgment (core type row) #:transparent)
 (struct exn:fail:elab exn:fail (reason) #:transparent)
