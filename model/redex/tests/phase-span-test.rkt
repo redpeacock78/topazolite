@@ -205,13 +205,17 @@
 
 ;; span.md §7: elaboration の出力は G2+ である。
 (test-case "span.md §7: elab の core は G2+ に属する"
+  (define checked 0)
   (for ([source (in-list spanful-corpus)])
     (match (elab (annotate-surface source))
       [(list core _ _ _)
+       (set! checked (add1 checked))
        (check-true (redex-match? G2+ c core)
                    (format "G2+ の c に属さない: ~s -> ~s" source core))]
       ;; 効果宣言が不足する fixture は core を生成しないため対象外とする。
-      [`(err ,_) (void)])))
+      [`(err ,_) (void)]))
+  ;; 空振りで通らないよう、検査した件数を固定する。
+  (check-equal? checked 19))
 
 ;; span.md §7.1: search が生成する ProofRep の span は goal と候補文脈に依らない。
 (test-case "span.md §7.1: search の ProofRep は synthetic の空 span を持つ"
