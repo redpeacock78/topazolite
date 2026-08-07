@@ -235,3 +235,21 @@ typing の primary-span は入力 Core 項の根の span である。
 origins の primary-span は根ではなく `(forged <subject>)` の `subject` の span である。
 
 `subject` は棄却の対象になった部分項そのものであり、位置が分かるため根へ丸めない。
+
+lowering の primary-span は入力 Core 項の根の span である。
+
+`lower/with-matrix` は入口で `erase-core` を通し、その下の `fail` は feature-id と reason 文字列だけを受け取るため、棄却した部分項を持たない。
+
+Diagnostic を生成するのは `lower` と `lower-value` であり、`lower/with-matrix` は §7 のとおり capability diagnostic を返す層のまま残す。
+
+`lower` と `lower-value` は `(values <status> <payload>)` の 2 値を返し、`status` の記号は `'ok` と `'capability` のままである。
+
+Diagnostic 化で替えるのは失敗時の payload だけであり、`status` は失敗の分類を表すため payload の表現形とは独立である。
+
+`capability-diagnostic` の `reason` 文字列は `found` へ入れる。
+
+`backend` は Diagnostic へ運ばない。
+
+§2 が定める schema version 1 の欄集合に backend を置く欄が無く、欄を足せば schema version を上げることになる。
+
+`lower/with-matrix` を呼ぶ test は capability diagnostic の `backend` を引き続き読める。
