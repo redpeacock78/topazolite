@@ -1,6 +1,7 @@
 #lang racket
 
-(require racket/set
+(require racket/runtime-path
+         racket/set
          rackunit
          "../diagnostic.rkt"
          "diagnostic-fixture-v1.rkt")
@@ -190,3 +191,30 @@
  (for ([entry (in-list diagnostic-entries-v1)])
    (check-true (set-member? current entry)
                (format "registry から消えたか意味が変わった: ~a" entry))))
+
+(define-runtime-path elaborate-source "../elaborate.rkt")
+
+;; test 7
+(test-case
+ "elaborate の reject reason が全て registry にある"
+ (define source (file->string elaborate-source))
+ (define reasons
+   (sort
+    (remove-duplicates
+     (for/list ([m (in-list
+                    (regexp-match* #px"\\(reject '([a-z][a-z0-9-]*)"
+                                   source
+                                   #:match-select values))])
+       (string->symbol (second m))))
+    symbol<?))
+ ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
+ ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
+ (check-equal? (length reasons) 51)
+ (for ([reason (in-list reasons)])
+   (check-not-false (diagnostic-code-of 'elaborate reason)
+                    (format "registry に無い reason: ~a" reason)))
+ ;; resolve-proposition の第 3 引数として渡る reason は (reject '...) の
+ ;; 字面で現れない。走査の対象外なので明示の許容表で確かめる。
+ (for ([reason (in-list '(invalid-obligation invalid-proposition))])
+   (check-false (memq reason reasons))
+   (check-not-false (diagnostic-code-of 'elaborate reason))))
