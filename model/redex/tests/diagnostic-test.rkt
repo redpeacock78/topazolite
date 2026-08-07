@@ -203,7 +203,8 @@
    (sort
     (remove-duplicates
      (for/list ([m (in-list
-                    (regexp-match* #px"\\(reject '([a-z][a-z0-9-]*)"
+                    (regexp-match*
+                     #px"\\(reject\\s+(?:[a-z-]+|\\([^)]*\\))\\s+'([a-z][a-z0-9-]*)"
                                    source
                                    #:match-select values))])
        (string->symbol (second m))))
