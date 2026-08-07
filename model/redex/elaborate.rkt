@@ -612,8 +612,10 @@
               [_ (reject 'unknown-record-label label)])]
            [_ (reject 'project-non-record (judgment-type record-result))])]
 
+        ;; 注釈なし Let の (#:bind x s) を注釈あり Let の 3 つ組として
+        ;; 誤って分解しないよう、binder の包みの形で分岐する。
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
-         #:when (memq binding-mode '(const let))
+         #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
          (define name (peel-bind raw-name))
          (define declared-type (resolve-annotation raw-type delta))
          (define bound-result
