@@ -3,6 +3,7 @@
 (require racket/runtime-path
          racket/set
          rackunit
+         "../backend-matrix.rkt"
          "../diagnostic.rkt"
          "diagnostic-fixture-v1.rkt")
 
@@ -218,3 +219,19 @@
  (for ([reason (in-list '(invalid-obligation invalid-proposition))])
    (check-false (memq reason reasons))
    (check-not-false (diagnostic-code-of 'elaborate reason))))
+
+;; test 13
+(test-case
+ "lowering の registry 行が diagnostic-ids と一致する"
+ (define lowering-rows
+   (for/list ([row (in-list diagnostic-registry)]
+              #:when (eq? (diagnostic-code-phase row) 'lowering))
+     row))
+ (define registry-keys (map diagnostic-code-key lowering-rows))
+ (define registry-titles (map diagnostic-code-title lowering-rows))
+ ;; key は feature-id であり、capability-diagnostic の reason 文字列ではない。
+ ;; 文字列が紛れ込むとここで落ちる。
+ (for ([key (in-list registry-keys)])
+   (check-pred symbol? key))
+ (check-equal? registry-keys (map first diagnostic-ids))
+ (check-equal? registry-titles (map second diagnostic-ids)))

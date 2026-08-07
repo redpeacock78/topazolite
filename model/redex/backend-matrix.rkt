@@ -1,5 +1,7 @@
 #lang racket
 
+(require "diagnostic.rkt")
+
 (provide (struct-out capability-diagnostic)
          arithmetic-shim-features
          backend-features
@@ -71,11 +73,16 @@
 ;; unknown-core-form は対応表に無い形、unknown-core-type は op-code が τ でない
 ;; 入力を受けたときの fallback である（backend-matrix.md §8）。
 ;; どちらも backend の能力の話ではないので support 値を持たない。
+;;
+;; 表そのものは diagnostic.rkt の registry が持ち、ここはその射影である。
+;; 同じ 4 件を 2 箇所に置くと二重管理になるため、整合を test で検出するのでは
+;; なく、食い違いうる状態を無くしている。並びは registry の lowering 行の
+;; 並びであり、従来の列と同じである。
 (define diagnostic-ids
-  '((kernel-primitive "Typed Core の kernel primitive は写し先を持たない")
-    (trait-primitive  "trait primitive は Phase 2 以降の emitter を待つ")
-    (unknown-core-form "対応表に無い Typed Core の形")
-    (unknown-core-type "op-code の入力が Typed Core の τ でない")))
+  (for/list ([row (in-list diagnostic-registry)]
+             #:when (eq? (diagnostic-code-phase row) 'lowering))
+    (list (diagnostic-code-key row)
+          (diagnostic-code-title row))))
 
 ;; c と v の頭シンボルから feature-id への形の対応表であり、
 ;; backend-matrix.md §7 の feature 対応を形へ割り当てる。
