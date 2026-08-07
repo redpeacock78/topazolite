@@ -199,13 +199,15 @@
 (test-case
  "elaborate の reject reason が全て registry にある"
  (define source (file->string elaborate-source))
+ (define production-source
+   (car (string-split source "\n(module+ test")))
  (define reasons
    (sort
     (remove-duplicates
      (for/list ([m (in-list
                     (regexp-match*
                      #px"\\(reject\\s+(?:[a-z-]+|\\([^)]*\\))\\s+'([a-z][a-z0-9-]*)"
-                                   source
+                                   production-source
                                    #:match-select values))])
        (string->symbol (second m))))
     symbol<?))

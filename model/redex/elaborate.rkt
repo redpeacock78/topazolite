@@ -42,6 +42,23 @@
     reason
     details)))
 
+;; §6: details を expected と found へ配る。既定は件数だけで決まり、意味を
+;; 推測しない。意味が全呼出しで一致する 5 つの reason だけを例外表で扱う。
+;; 例外表の reason でも details の長さが想定と違えば既定へ落ちる。
+(define (distribute-details reason details)
+  (match* (reason details)
+    [('type-mismatch (list actual expected)) (values expected actual)]
+    [('arity-mismatch (list expected actual)) (values expected actual)]
+    [('constructor-type-mismatch (list constructor expected))
+     (values expected constructor)]
+    [('undeclared-function-effect (list residual declared))
+     (values declared residual)]
+    [('undeclared-recur-effect (list residual declared))
+     (values declared residual)]
+    [(_ '()) (values #f #f)]
+    [(_ (list only)) (values #f only)]
+    [(_ _) (values #f details)]))
+
 (define (lookup table key)
   (match (assoc key table)
     [(list _ value) value]
@@ -409,14 +426,25 @@
       (span-of term)))
   (if (and s (span-ok? s)) s '(#:span #:synthetic 0 0)))
 
+;; §5: Diagnostic の生成は 1 箇所へ集約する。reject は struct を組み立てず、
+;; registry の引き当てと欄の検証を通る経路をここへ揃える。
+(define (elab-failure->diagnostic failure)
+  (define reason (exn:fail:elab-reason failure))
+  (define row (diagnostic-code-row (diagnostic-code-of 'elaborate reason)))
+  (define title (diagnostic-code-title row))
+  (define-values (expected found)
+    (distribute-details reason (exn:fail:elab-details failure)))
+  (make-diagnostic #:id (diagnostic-code-code row)
+                   #:title title
+                   #:message title
+                   #:primary-span (exn:fail:elab-primary-span failure)
+                   #:expected expected
+                   #:found found))
+
 (define (elab raw-expression)
   (with-handlers ([exn:fail:elab?
                    (lambda (failure)
-                     (define reason (exn:fail:elab-reason failure))
-                     (define details (exn:fail:elab-details failure))
-                     `(err ,(if (null? details)
-                                reason
-                                (cons reason details))))])
+                     `(err ,(elab-failure->diagnostic failure)))])
     ;; span.md §7.4: UCore+ と UCore は交わらない。spanless な入力は
     ;; annotate-surface で UCore+ へ正規化し、以後は 1 つの形だけを扱う。
     ;; span を一部だけ持つ項はどちらにも属さず、ここで落ちる。
@@ -968,7 +996,7 @@
   ;; registry に無い reason は汎用 code へ落とさず error にする。
   (check-exn #px"registry に無い reason"
              (lambda ()
-               (reject ok-span (string->symbol "no-such-reason"))))
+               (reject ok-span 'no-such-reason)))
 
   ;; 正しい呼び出しは exn:fail:elab を投げ、3 欄を保つ。
   (define failure

@@ -3,8 +3,10 @@
 (require racket/match
          rackunit
          redex/reduction-semantics
+         "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../span-core.rkt"
          "../typing.rkt")
 
 (define empty '())
@@ -128,9 +130,14 @@
      ,record-type
      ()
      ()))
-  (check-equal?
-   (elab '(Let (x let (Intersection Int String)) 1 x))
-   '(err (invalid-resolved-type (Intersection Int String)))))
+  (define d
+    (match (elab '(Let (x let (Intersection Int String)) 1 x))
+      [`(err ,d) d]
+      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+  (check-equal? (diagnostic-id d)
+                (diagnostic-code-of 'elaborate 'invalid-resolved-type))
+  (check-pred span-ok? (diagnostic-primary-span d))
+  (check-equal? (diagnostic-found d) '(Intersection Int String)))
 
 (test-case "elaboration normalizes trait propositions in every type position"
   (define source

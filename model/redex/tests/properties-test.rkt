@@ -7,6 +7,7 @@
          redex/reduction-semantics
          "../classify.rkt"
          "../compat.rkt"
+         "../diagnostic.rkt"
          "../gen.rkt"
          "../lang.rkt"
          "../machine.rkt"
@@ -438,8 +439,10 @@
 
   (define (row-001? source)
     (match (elaboration-result source)
-      [`(err (const-record-residual ,residual))
-       (pair? residual)]
+      [`(err ,d)
+       (and (equal? (diagnostic-id d)
+                    (diagnostic-code-of 'elaborate 'const-record-residual))
+            (pair? (diagnostic-found d)))]
       [_ #f]))
 
   (define (row-002? source)
@@ -461,7 +464,9 @@
                     '(Let (record let (Record ((a Bool imm))))
                           (Rec ((a imm 1)))
                           record))
-              [`(err (type-mismatch ,_ ,_)) #t]
+              [`(err ,d)
+               (equal? (diagnostic-id d)
+                       (diagnostic-code-of 'elaborate 'type-mismatch))]
               [_ #f]))]
       [_ #f]))
 

@@ -5,6 +5,7 @@
          "../annotate.rkt"
          "../classify.rkt"
          "../compat.rkt"
+         "../diagnostic.rkt"
          "../elaborate.rkt"
          "../lowering.rkt"
          "../origins.rkt"
@@ -235,10 +236,24 @@
   ;; UCore+ にも UCore にも属さない。
   ;; erase-surface は列の要素の span を落とすため、投影を通す形では
   ;; (Apply add) へ縮退して受理されてしまう（erase.rkt:43）。
-  (check-equal? (elab '(Apply add (#:span #:synthetic 0 0)))
-                '(err (invalid-syntax (Apply add (#:span #:synthetic 0 0)))))
-  (check-equal? (elab '(Apply (#:span #:synthetic 0 0) add 1))
-                '(err (invalid-syntax (Apply (#:span #:synthetic 0 0) add 1)))))
+  (define (invalid-syntax-diagnostic term)
+    (match (elab term)
+      [`(err ,d) d]
+      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+  ;; 第 2 要素が span でないため入口で span を取れない。§8 の条件 2 である。
+  (let ([d (invalid-syntax-diagnostic '(Apply add (#:span #:synthetic 0 0)))])
+    (check-equal? (diagnostic-id d)
+                  (diagnostic-code-of 'elaborate 'invalid-syntax))
+    (check-equal? (diagnostic-primary-span d) '(#:span #:synthetic 0 0))
+    (check-equal? (diagnostic-found d)
+                  '(Apply add (#:span #:synthetic 0 0))))
+  ;; 最外の span を取れるため §8 の条件 1 でそれを使う。
+  (let ([d (invalid-syntax-diagnostic '(Apply (#:span #:synthetic 0 0) add 1))])
+    (check-equal? (diagnostic-id d)
+                  (diagnostic-code-of 'elaborate 'invalid-syntax))
+    (check-equal? (diagnostic-primary-span d) '(#:span #:synthetic 0 0))
+    (check-equal? (diagnostic-found d)
+                  '(Apply (#:span #:synthetic 0 0) add 1))))
 
 (test-case "span.md §3: 座標が逆順の span を持つ項は拒否する"
   ;; 文法は startByte <= endByte を書けない。UCore+ には属するが span として
@@ -248,13 +263,27 @@
             (#:var add (#:span #:synthetic 0 3))
             (#:lit 1 (#:span #:synthetic 4 5))))
   (check-true (redex-match? UCore+ e reversed))
-  (check-equal? (elab reversed) `(err (invalid-syntax ,reversed)))
+  (define (invalid-syntax-diagnostic term)
+    (match (elab term)
+      [`(err ,d) d]
+      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+  ;; 最外の span が span-ok? を満たさないため条件 2 へ落ちる。
+  (let ([d (invalid-syntax-diagnostic reversed)])
+    (check-equal? (diagnostic-id d)
+                  (diagnostic-code-of 'elaborate 'invalid-syntax))
+    (check-equal? (diagnostic-primary-span d) '(#:span #:synthetic 0 0))
+    (check-equal? (diagnostic-found d) reversed))
   ;; 節点の span が正しく、内側の包みだけが逆順の場合も落ちる。
   (define reversed-inner
     '(Apply (#:span #:synthetic 0 5)
             (#:var add (#:span #:synthetic 3 0))
             (#:lit 1 (#:span #:synthetic 4 5))))
-  (check-equal? (elab reversed-inner) `(err (invalid-syntax ,reversed-inner))))
+  ;; 最外の span は妥当であり、内側だけが逆順である。条件 1 が働く。
+  (let ([d (invalid-syntax-diagnostic reversed-inner)])
+    (check-equal? (diagnostic-id d)
+                  (diagnostic-code-of 'elaborate 'invalid-syntax))
+    (check-equal? (diagnostic-primary-span d) '(#:span #:synthetic 0 5))
+    (check-equal? (diagnostic-found d) reversed-inner)))
 
 (test-case "span.md §7.4: UCore+ の Let の包みは erase 後の Let に対応する"
   ;; 注釈ありの Let で、包みの span が第 3 要素にあることを固定する。

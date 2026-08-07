@@ -3,10 +3,12 @@
 (require racket/match
          rackunit
          redex/reduction-semantics
+         "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
          "../lang.rkt"
          "../origins.rkt"
+         "../span-core.rkt"
          "../typing.rkt"
          "properties-test.rkt")
 
@@ -79,6 +81,11 @@
   (check-true (progress-g2? one-source)))
 
 (test-case "PRF-004: 充足できない義務は従来どおり拒否される"
-  (check-equal?
-   (elab '(Fn ((f (NFn () Int () (ValidNarrativeTrait)))) Int () (Apply f)))
-   '(err (unsatisfied-proof-obligation (ValidNarrativeTrait)))))
+  (define d
+    (match (elab '(Fn ((f (NFn () Int () (ValidNarrativeTrait)))) Int () (Apply f)))
+      [`(err ,d) d]
+      [other (fail-check (format "elaboration failed unexpectedly: ~s" other))]))
+  (check-equal? (diagnostic-id d)
+                (diagnostic-code-of 'elaborate 'unsatisfied-proof-obligation))
+  (check-pred span-ok? (diagnostic-primary-span d))
+  (check-equal? (diagnostic-found d) '(ValidNarrativeTrait)))
