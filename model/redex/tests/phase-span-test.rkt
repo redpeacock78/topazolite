@@ -5,9 +5,12 @@
          "../annotate.rkt"
          "../classify.rkt"
          "../compat.rkt"
+         "../elaborate.rkt"
          "../lowering.rkt"
          "../origins.rkt"
          "../search.rkt"
+         "../span-core.rkt"
+         "../ucore.rkt"
          "../erase.rkt"
          "../typing.rkt")
 
@@ -167,3 +170,71 @@
    (lambda ()
      (check-spanless! 'type-equiv?
                       '(Implements (#:ty Int (#:span #:synthetic 0 0)) Printable)))))
+
+;; span.md §7.4: 表層の span は結果を変えない。annotate-surface を通した項と
+;; 通さない項で、elab の返り値が一致する。
+(define spanful-corpus
+  '(1
+    add
+    (Apply add 1 2)
+    (Let x 1 (Apply add x 2))
+    (Let (x const Int) 1 x)
+    (Fn ((n Int)) Int () (Apply add n 1))
+    (Fn () Int () (NarrativeExpr (Return 2)))
+    (Fn ((n Int)) Int (Partial) (Recur f ((m Int)) Int (Partial) (Apply f m) n))
+    (Fn ((flag Bool)) Int () (Eliminate flag ((true () -> 1) (false () -> 2))))
+    (Rec ((a imm 1) (b mut 2)))
+    (Proj (Rec ((a imm 1))) a)
+    (Construct nil (Types Int))
+    (Fn () (Option Int) () (Construct none))
+    (Let item (Apply acquire 7) (Move item))
+    (Let item (Apply acquire 7) (Drop item))
+    (Fn () Unit ((Yield Int)) (Yield 1 unit))
+    (Fn () Unit () (Suspend unit))
+    (Curry add 1)
+    (TypeMake (Spec List Int))
+    (LetType MyList (TypeMake (Spec List Int)) 1)))
+
+(test-case "span.md §7.4: elab の結果は表層の span に依らない"
+  (for ([source (in-list spanful-corpus)])
+    (check-equal? (elab (annotate-surface source))
+                  (elab source)
+                  (format "span 付きと span なしで結果が違う: ~s" source))))
+
+(test-case "span.md §7.4: span を一部だけ持つ項は拒否する"
+  ;; UCore+ にも UCore にも属さない。
+  ;; erase-surface は列の要素の span を落とすため、投影を通す形では
+  ;; (Apply add) へ縮退して受理されてしまう（erase.rkt:43）。
+  (check-equal? (elab '(Apply add (#:span #:synthetic 0 0)))
+                '(err (invalid-syntax (Apply add (#:span #:synthetic 0 0)))))
+  (check-equal? (elab '(Apply (#:span #:synthetic 0 0) add 1))
+                '(err (invalid-syntax (Apply (#:span #:synthetic 0 0) add 1)))))
+
+(test-case "span.md §3: 座標が逆順の span を持つ項は拒否する"
+  ;; 文法は startByte <= endByte を書けない。UCore+ には属するが span として
+  ;; 妥当でない項であり、入口の span-ok? の再帰検査で落ちる。
+  (define reversed
+    '(Apply (#:span #:synthetic 10 0)
+            (#:var add (#:span #:synthetic 0 3))
+            (#:lit 1 (#:span #:synthetic 4 5))))
+  (check-true (redex-match? UCore+ e reversed))
+  (check-equal? (elab reversed) `(err (invalid-syntax ,reversed)))
+  ;; 節点の span が正しく、内側の包みだけが逆順の場合も落ちる。
+  (define reversed-inner
+    '(Apply (#:span #:synthetic 0 5)
+            (#:var add (#:span #:synthetic 3 0))
+            (#:lit 1 (#:span #:synthetic 4 5))))
+  (check-equal? (elab reversed-inner) `(err (invalid-syntax ,reversed-inner))))
+
+(test-case "span.md §7.4: UCore+ の Let の包みは erase 後の Let に対応する"
+  ;; 注釈ありの Let で、包みの span が第 3 要素にあることを固定する。
+  ;; span-of は節点の第 2 要素を読むため、この位置には使えない。
+  (define annotated (annotate-surface '(Let (x const Int) 1 x)))
+  (match-define `(Let ,_ (,binder const ,annotation) ,_ ,_) annotated)
+  (check-equal? (first binder) '#:bind)
+  (check-equal? (second binder) 'x)
+  (check-true (span-ok? (third binder)))
+  (check-equal? (first annotation) '#:ty)
+  (check-equal? (second annotation) 'Int)
+  (check-true (span-ok? (third annotation)))
+  (check-equal? (erase-surface annotated) '(Let (x const Int) 1 x)))

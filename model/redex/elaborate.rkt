@@ -3,13 +3,16 @@
 (require racket/match
          racket/set
          redex/reduction-semantics
+         "annotate.rkt"
          "classify.rkt"
          "compat.rkt"
+         "erase.rkt"
          "lang.rkt"
          "origins.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
+         "span-core.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
          "ucore.rkt"
@@ -32,6 +35,58 @@
   (match (assoc key table)
     [(list _ value) value]
     [_ #f]))
+
+;; span.md §7.4: 節点の照合は span を剥いだ形の上で行い、子は spanful のまま残す。
+;; 節ごとの pattern を二重に持たないため、剥がしをこの 1 箇所へ寄せる。
+(define (span-of node)
+  (match node
+    [(list (or '#:var '#:lit) _ s) s]
+    [(list _ (and s (list '#:span _ _ _)) _ ...) s]
+    [_ (error 'span-of "span を持たない節点である: ~s" node)]))
+
+(define (peel-node node)
+  (match node
+    [(list '#:lit l _) l]
+    [(list '#:var x _) x]
+    [(list head (list '#:span _ _ _) rest ...) (cons head rest)]
+    [_ node]))
+
+;; ubr は span を先頭へ持つ。head を持たないため peel-node と別に扱う。
+(define (branch-span branch)
+  (match branch
+    [(list (and s (list '#:span _ _ _)) _ ...) s]
+    [_ (error 'branch-span "span を持たない分岐である: ~s" branch)]))
+
+(define (peel-branch branch)
+  (match branch
+    [(list (list '#:span _ _ _) rest ...) rest]
+    [_ branch]))
+
+;; 型注釈・束縛・label・作用 row の包み。spanless な入力にも使えるよう、
+;; 包みでない値はそのまま返す。resolve-annotation は入れ子の型からも呼ばれ、
+;; 内側の型は §4.2 の通り包みを持たないためである。
+(define (peel-ty t)   (match t [(list '#:ty type _) type] [_ t]))
+(define (peel-bind t) (match t [(list '#:bind x _) x] [_ t]))
+(define (peel-lbl t)  (match t [(list '#:lbl label _) label] [_ t]))
+(define (peel-ef t)   (match t [(list '#:ef row _) row] [_ t]))
+
+;; 包みの span。(#:ty τ s)、(#:bind x s)、(#:lbl label s)、(#:ef ε s) は
+;; いずれも第 3 要素へ span を持つ。span-of は節点の第 2 要素を読むため
+;; 包みには使えない。両者を 1 つの関数へまとめると、節点の第 2 要素が
+;; 偶然 span に見える包みを取り違える余地が残るので、別の名前で分ける。
+(define (wrapper-span t)
+  (match t
+    [(list (or '#:ty '#:bind '#:lbl '#:ef) _ (and s (list '#:span _ _ _))) s]
+    [_ (error 'wrapper-span "span を持たない包みである: ~s" t)]))
+
+;; span.md §3: 文法は startByte <= endByte を書けない。UCore+ に属する項でも
+;; 座標が逆順なら span として妥当でない。入口で一度だけ再帰的に検査する。
+;; 判定は span-core.rkt の span-ok? が持ち、ここは走査だけを行う。
+(define (spans-ok? t)
+  (cond
+    [(and (pair? t) (eq? (car t) '#:span)) (span-ok? t)]
+    [(list? t) (andmap spans-ok? t)]
+    [else #t]))
 
 (define (extend environment names types)
   (append (map list names types) environment))
@@ -99,7 +154,8 @@
   (for/list ([proposition (in-list obligations)])
     (resolve-proposition proposition delta 'invalid-obligation)))
 
-(define (resolve-annotation annotation delta)
+(define (resolve-annotation raw-annotation delta)
+  (define annotation (peel-ty raw-annotation))
   (define resolved
     (match annotation
       [`(Record ,row)
@@ -155,7 +211,8 @@
       normalized
       (reject 'invalid-resolved-type resolved)))
 
-(define (resolve-type-row row delta)
+(define (resolve-type-row raw-row delta)
+  (define row (peel-ef raw-row))
   (normalize-row
    (for/list ([label (in-list row)])
      (match label
@@ -169,7 +226,8 @@
 (define (nearest-boundary boundaries)
   (and (pair? boundaries) (car boundaries)))
 
-(define (resolve-declaration-row row delta boundaries)
+(define (resolve-declaration-row raw-row delta boundaries)
+  (define row (peel-ef raw-row))
   (normalize-row
    (for/list ([label (in-list row)])
      (match label
@@ -195,7 +253,8 @@
     [('Result (list ok-type error-type)) `(Result ,ok-type ,error-type)]
     [(_ _) (reject 'invalid-type-application type-form arguments)]))
 
-(define (interpret-spec spec delta)
+(define (interpret-spec raw-spec delta)
+  (define spec (peel-ty raw-spec))
   (match spec
     [(? symbol? name)
      (match (lookup delta name)
@@ -240,56 +299,60 @@
             ([item (in-list sets)])
     (set-union combined item)))
 
-(define (free-vars expression)
+(define (free-vars raw-expression)
+  (define expression (erase-surface raw-expression))
+  (free-vars/erased expression))
+
+(define (free-vars/erased expression)
   (match expression
     [(or (? integer?) (? string?) 'unit) (set)]
     [(? symbol? name) (set name)]
     [`(Fn ((,names ,_) ...) ,_ ,_ ,body)
-     (set-subtract (free-vars body) (list->set names))]
+     (set-subtract (free-vars/erased body) (list->set names))]
     [`(Apply ,terms ...)
-     (sets-union (map free-vars terms))]
+     (sets-union (map free-vars/erased terms))]
     [`(Let (,name ,_ ,_) ,bound ,body)
-     (set-union (free-vars bound)
-                (set-remove (free-vars body) name))]
+     (set-union (free-vars/erased bound)
+                (set-remove (free-vars/erased body) name))]
     [`(Let ,name ,bound ,body)
-     (set-union (free-vars bound)
-                (set-remove (free-vars body) name))]
+     (set-union (free-vars/erased bound)
+                (set-remove (free-vars/erased body) name))]
     [`(Rec (,fields ...))
      (sets-union
       (for/list ([field (in-list fields)])
         (match field
-          [`(,_ ,_ ,body) (free-vars body)]
+          [`(,_ ,_ ,body) (free-vars/erased body)]
           [_ (set)])))]
-    [`(Proj ,record ,_) (free-vars record)]
+    [`(Proj ,record ,_) (free-vars/erased record)]
     [`(Construct ,_ (Types ,_ ...) ,fields ...)
-     (sets-union (map free-vars fields))]
+     (sets-union (map free-vars/erased fields))]
     [`(Construct ,_ ,fields ...)
-     (sets-union (map free-vars fields))]
+     (sets-union (map free-vars/erased fields))]
     [`(Eliminate ,scrutinee (,branches ...))
      (set-union
-      (free-vars scrutinee)
+      (free-vars/erased scrutinee)
       (sets-union
        (for/list ([branch (in-list branches)])
          (match branch
            [`(,_ (,parameters ...) -> ,body)
-            (set-subtract (free-vars body) (list->set parameters))]
+            (set-subtract (free-vars/erased body) (list->set parameters))]
            [_ (set)]))))]
-    [`(Return ,body) (free-vars body)]
-    [`(NarrativeExpr ,body) (free-vars body)]
+    [`(Return ,body) (free-vars/erased body)]
+    [`(NarrativeExpr ,body) (free-vars/erased body)]
     [`(Recur ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
      (set-union
-      (set-subtract (free-vars body)
+      (set-subtract (free-vars/erased body)
                     (list->set (cons function parameters)))
-      (set-remove (free-vars continuation) function))]
+      (set-remove (free-vars/erased continuation) function))]
     [`(Yield ,observed ,next)
-     (set-union (free-vars observed) (free-vars next))]
-    [`(Suspend ,body) (free-vars body)]
+     (set-union (free-vars/erased observed) (free-vars/erased next))]
+    [`(Suspend ,body) (free-vars/erased body)]
     [`(Move ,name) (set name)]
-    [`(Drop ,body) (free-vars body)]
+    [`(Drop ,body) (free-vars/erased body)]
     [`(Curry ,function ,argument)
-     (set-union (free-vars function) (free-vars argument))]
+     (set-union (free-vars/erased function) (free-vars/erased argument))]
     [`(TypeMake ,_) (set)]
-    [`(LetType ,_ (TypeMake ,_) ,body) (free-vars body)]
+    [`(LetType ,_ (TypeMake ,_) ,body) (free-vars/erased body)]
     [_ (set)]))
 
 (define (captures-owned? expression locally-bound environment)
@@ -309,12 +372,21 @@
      (set-subtract (free-vars expression) (list->set locally-bound))
      outer-owned))))
 
-(define (elab expression)
+(define (elab raw-expression)
   (with-handlers ([exn:fail:elab?
                    (lambda (failure)
                      `(err ,(exn:fail:elab-reason failure)))])
-    (unless (redex-match? UCore e expression)
-      (reject 'invalid-syntax expression))
+    ;; span.md §7.4: UCore+ と UCore は交わらない。spanless な入力は
+    ;; annotate-surface で UCore+ へ正規化し、以後は 1 つの形だけを扱う。
+    ;; span を一部だけ持つ項はどちらにも属さず、ここで落ちる。
+    (define expression
+      (cond
+        [(redex-match? UCore+ e raw-expression)
+         (if (spans-ok? raw-expression)
+             raw-expression
+             (reject 'invalid-syntax raw-expression))]
+        [(redex-match? UCore e raw-expression) (annotate-surface raw-expression)]
+        [else (reject 'invalid-syntax raw-expression)]))
 
     (define boundary-counter 0)
     (define callable-counter 0)
@@ -366,10 +438,10 @@
         (reject 'non-data-eliminate (judgment-type scrutinee-result)))
       (define expected-constructors (map first schema))
       (define actual-constructors
-        (for/list ([branch (in-list branches)])
-          (match branch
+        (for/list ([raw-branch (in-list branches)])
+          (match (peel-branch raw-branch)
             [`(,constructor (,_ ...) -> ,_) constructor]
-            [_ (reject 'invalid-branch branch)])))
+            [_ (reject 'invalid-branch raw-branch)])))
       (unless (and (= (length branches) (length schema))
                    (not (check-duplicates actual-constructors))
                    (andmap (lambda (constructor)
@@ -377,13 +449,15 @@
                            expected-constructors))
         (reject 'non-exhaustive-eliminate actual-constructors))
       (define branch-results
-        (for/list ([branch (in-list branches)])
-          (match-define `(,constructor (,parameters ...) -> ,body) branch)
+        (for/list ([raw-branch (in-list branches)])
+          (match-define `(,constructor (,raw-parameters ...) -> ,body)
+            (peel-branch raw-branch))
+          (define parameters (map peel-bind raw-parameters))
           (define field-types (lookup schema constructor))
           (unless (and field-types
                        (= (length parameters) (length field-types))
                        (not (check-duplicates parameters)))
-            (reject 'invalid-branch-binders branch))
+            (reject 'invalid-branch-binders raw-branch))
           (define result
             (check body expected
                    (extend environment parameters field-types)
@@ -409,9 +483,9 @@
                 (judgment-row result)))
 
     (define (synth/raw expression environment delta propositions boundaries)
-      (match expression
-        [(? integer?) (judgment expression 'Int '())]
-        [(? string?) (judgment expression 'String '())]
+      (match (peel-node expression)
+        [(? integer? literal) (judgment literal 'Int '())]
+        [(? string? literal) (judgment literal 'String '())]
         ['unit (judgment 'unit 'Unit '())]
 
         [(? symbol? name)
@@ -426,8 +500,9 @@
               [(list type value) (judgment value type '())]
               [_ (reject 'unbound-variable name)])])]
 
-        [`(Fn ((,parameters ,raw-parameter-types) ...)
+        [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)
+         (define parameters (map peel-bind parameter-binders))
          (when (check-duplicates parameters)
            (reject 'duplicate-parameter parameters))
          (define parameter-types
@@ -495,7 +570,11 @@
                       (list latent-row))))]
            [_ (reject 'apply-non-function (judgment-type function-result))])]
 
-        [`(Rec (,fields ...))
+        [`(Rec (,raw-fields ...))
+         (define fields
+           (for/list ([field (in-list raw-fields)])
+             (match-define `(,raw-label ,mutability ,field-expression) field)
+             (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject 'duplicate-record-label fields))
          (define field-results
@@ -519,7 +598,8 @@
            (for/list ([field (in-list field-results)])
              (judgment-row (third field)))))]
 
-        [`(Proj ,record ,label)
+        [`(Proj ,record ,raw-label)
+         (define label (peel-lbl raw-label))
          (define record-result
            (synth record environment delta propositions boundaries))
          (match (judgment-type record-result)
@@ -532,7 +612,9 @@
               [_ (reject 'unknown-record-label label)])]
            [_ (reject 'project-non-record (judgment-type record-result))])]
 
-        [`(Let (,name ,binding-mode ,raw-type) ,bound ,body)
+        [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
+         #:when (memq binding-mode '(const let))
+         (define name (peel-bind raw-name))
          (define declared-type (resolve-annotation raw-type delta))
          (define bound-result
            (synth bound environment delta propositions boundaries))
@@ -567,7 +649,8 @@
           (row-union (judgment-row bound-result)
                      (judgment-row body-result)))]
 
-        [`(Let ,name ,bound ,body)
+        [`(Let ,raw-name ,bound ,body)
+         (define name (peel-bind raw-name))
          (define bound-result
            (synth bound environment delta propositions boundaries))
          (define body-result
@@ -615,8 +698,10 @@
         [`(NarrativeExpr ,_)
          (reject 'narrative-expression-needs-expected-type)]
 
-        [`(Recur ,function ((,parameters ,raw-parameter-types) ...)
+        [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  ,raw-return-type ,raw-row ,body ,continuation)
+         (define function (peel-bind raw-function))
+         (define parameters (map peel-bind parameter-binders))
          (when (check-duplicates (cons function parameters))
            (reject 'duplicate-recur-binder function parameters))
          (define parameter-types
@@ -681,16 +766,18 @@
                    (judgment-type result)
                    (row-union (judgment-row result) '(Suspend)))]
 
-        [`(Move ,name)
+        [`(Move ,raw-name)
+         (define name (peel-node raw-name))
          (match (lookup environment name)
            [`(Owned ,inner)
             (judgment `(Move ,name) `(Owned ,inner) '(Own))]
            [_ (reject 'move-non-owned name)])]
 
-        [`(Drop ,name)
-         #:when (and (symbol? name)
-                     (owned-type? (lookup environment name)))
-         (judgment `(Drop (Move ,name)) 'Unit '(Own))]
+        [`(Drop ,raw-name)
+         #:when (let ([name (peel-node raw-name)])
+                  (and (symbol? name)
+                       (owned-type? (lookup environment name))))
+         (judgment `(Drop (Move ,(peel-node raw-name))) 'Unit '(Own))]
 
         [`(Drop ,body)
          (define result
@@ -733,7 +820,7 @@
           `(TypeInfo ,kind)
           '(Compile))]
 
-        [`(LetType ,name (TypeMake ,spec) ,body)
+        [`(LetType ,name (TypeMake ,_ ,spec) ,body)
          (unless (authorized? propositions)
            (reject 'missing-type-narrative-capability))
          (match-define (list type-form kind)
@@ -756,7 +843,7 @@
         [_ (reject 'cannot-synthesize expression)]))
 
     (define (check expression expected environment delta propositions boundaries)
-      (match expression
+      (match (peel-node expression)
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
            (synth expression environment delta propositions boundaries))
