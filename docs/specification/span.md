@@ -230,6 +230,7 @@ search が生成する `ProofRep` には常に `(#:span #:synthetic 0 0)` を与
 候補文脈は表から作られ、source coordinate を持つ項ではないためである。
 goal の span を継承すると、同じ候補の同一性判定に span が混入する。
 `Discharge` の位置を指す診断は項側の `Discharge` の span を読む。
+
 `Γ0` の `ProofRep` は search が生成する項ではない。
 参照した位置の span を持つ。
 参照位置が `(#:span #:synthetic 0 0)` を持つ場合、search が生成した項と span の値が一致する。
