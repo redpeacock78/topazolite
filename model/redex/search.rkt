@@ -6,7 +6,8 @@
          "policy.rkt"
          "traits.rkt"
          "type-equiv.rkt"
-         "validators.rkt")
+         "validators.rkt"
+         "erase.rkt")
 
 (provide make-goal goal? goal-proposition
          resolved Absent ambiguous
@@ -25,11 +26,17 @@
          default-classifier default-oracle
          admissible?
          discharge? discharge/proof obligation-proofs
+         transportable-proof
          current-search-log search-log-snapshot reset-search-log!
          obligations-dischargeable?)
 
 ;; Goal descriptor: (Goal φ ⊥ext)。⊥ext は型・Effect・lexical 特殊化の拡張点で G2b は空。
-(define (make-goal phi) (list 'Goal phi '⊥ext))
+;; span.md §7.3: φ は spanless である。包みが混ざると candidate-matches? が
+;; 包みごと比較し、命題の一致が偽に成立する。φ は (Implements uτ tn) のように
+;; 型を内側へ持つため、head だけでなく内側まで見る。
+(define (make-goal phi)
+  (check-spanless/deep! 'make-goal phi)
+  (list 'Goal phi '⊥ext))
 (define (goal? x)
   (match x [(list 'Goal _ '⊥ext) #t] [_ #f]))
 (define (goal-proposition g) (second g))
@@ -54,6 +61,9 @@
 (define (candidateize pi0)
   (for/list ([binding (in-list pi0)])
     (match-define (list name (list phi origin)) binding)
+    ;; span.md §7.3: Γ_pc の行は表から作られ、φ と O はいずれも spanless である。
+    (check-spanless/deep! 'candidateize phi)
+    (check-spanless/deep! 'candidateize origin)
     (list name (list phi origin name 'root 'default '()))))
 
 ;; 探索と elaboration が共有する初期候補文脈。propositions を省略した場合は
@@ -156,10 +166,28 @@
   (for/or ([s (in-list sc-ctx)])
     (and (member sid (scope-ancestors s)) #t)))
 
-;; cand = (Candidate (ProofRep O φ) cid sid pid hook)
+;; cand = (Candidate (ProofRep O φ) cid sid pid hook) または
+;;        (Candidate (ProofRep s O φ) cid sid pid hook)
 (define (candidate-proof c)  (second c))
-(define (candidate-prop c)   (third (candidate-proof c)))
-(define (candidate-origin c) (second (candidate-proof c)))
+
+;; span.md §7.1: search が生成する ProofRep は span を持つ。位置で読むと
+;; span を足した時点で φ の位置が 1 つずれるため、形で読む。
+(define (proofrep-parts proof)
+  (match proof
+    [(list 'ProofRep (list '#:span _ _ _) origin phi) (values origin phi)]
+    [(list 'ProofRep origin phi) (values origin phi)]
+    [_ (error 'proofrep-parts "ProofRep の形ではない: ~s" proof)]))
+
+(define (proofrep-origin proof)
+  (define-values (origin _phi) (proofrep-parts proof))
+  origin)
+
+(define (proofrep-prop proof)
+  (define-values (_origin phi) (proofrep-parts proof))
+  phi)
+
+(define (candidate-prop c)   (proofrep-prop (candidate-proof c)))
+(define (candidate-origin c) (proofrep-origin (candidate-proof c)))
 (define (candidate-cid c)    (third c))
 (define (candidate-sid c)    (fourth c))
 (define (candidate-pid c)    (fifth c))
@@ -483,7 +511,8 @@
 ;; 比較へ退化し、正規化できない命題を素通しするためである。
 (define (transportable-proof proof phi)
   (match proof
-    [`(ProofRep ,origin ,phi-proof)
+    [(or (list 'ProofRep (list '#:span _ _ _) origin phi-proof)
+         (list 'ProofRep origin phi-proof))
      (define key (canonical-proposition-key phi))
      (define key-proof (canonical-proposition-key phi-proof))
      (and key

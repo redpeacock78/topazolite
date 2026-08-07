@@ -6,6 +6,9 @@
          "../classify.rkt"
          "../compat.rkt"
          "../lowering.rkt"
+         "../origins.rkt"
+         "../search.rkt"
+         "../erase.rkt"
          "../typing.rkt")
 
 ;; span.md §7.3: 判定に span を使わない項面の関数は、投影を通してから既存の
@@ -112,3 +115,55 @@
              (lambda ()
                (compat? `(NFn () Int () (,wrapped-int))
                         `(NFn () Int () (,wrapped-int))))))
+
+(test-case "span.md §7.1: 候補の読み出しは ProofRep の両形を受ける"
+  (define spanless '(Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+                               typeNarrativeCap root default ()))
+  (define spanful '(Candidate (ProofRep (#:span #:synthetic 0 0)
+                                        (Reserved o-type-narrative)
+                                        TypeNarrativeCap)
+                              typeNarrativeCap root default ()))
+  (check-equal? (candidate-prop spanful) (candidate-prop spanless))
+  (check-equal? (candidate-origin spanful) (candidate-origin spanless))
+  (check-true (wf-candidate? spanful (make-goal 'TypeNarrativeCap))))
+
+(test-case "span.md §7.1: transportable-proof は ProofRep の両形を受ける"
+  (define phi 'TypeNarrativeCap)
+  (define spanless `(ProofRep (Reserved o-type-narrative) ,phi))
+  (define spanful `(ProofRep (#:span #:synthetic 0 0)
+                             (Reserved o-type-narrative) ,phi))
+  (check-equal? (transportable-proof spanless phi) spanless)
+  (check-equal? (transportable-proof spanful phi) spanful))
+
+(test-case "span.md §7.1: ProofRep の要素数は 3 と 4 だけである"
+  (define phi 'TypeNarrativeCap)
+  (define overlong
+    `(ProofRep (#:span #:synthetic 0 0) extra (Reserved o-type-narrative) ,phi))
+  (check-equal? (transportable-proof overlong phi) #f)
+  (check-exn #rx"^proofrep-parts"
+             (lambda ()
+               (candidate-prop `(Candidate ,overlong cap root default ())))))
+
+(test-case "span.md §7.3: goal と候補文脈は span 機構の包みを受理しない"
+  (check-exn #rx"^make-goal"
+             (lambda () (make-goal '(#:ty TypeNarrativeCap (#:span #:synthetic 0 0)))))
+  (check-exn #rx"^candidateize"
+             (lambda ()
+               (candidateize
+                '((cap ((#:ty TypeNarrativeCap (#:span #:synthetic 0 0))
+                        (Reserved o-type-narrative))))))))
+
+(test-case "span.md §7.3: 命題の内側の包みも拒否する"
+  (check-exn #rx"^make-goal"
+             (lambda ()
+               (make-goal '(Implements (#:ty Int (#:span #:synthetic 0 0)) Printable))))
+  (check-exn #rx"^candidateize"
+             (lambda ()
+               (candidateize
+                '((imp ((Implements (#:ty Int (#:span #:synthetic 0 0)) Printable)
+                        (Reserved o-impl-printable-int)))))))
+  ;; head の検査だけを残す位置は従来どおり通る。
+  (check-not-exn
+   (lambda ()
+     (check-spanless! 'type-equiv?
+                      '(Implements (#:ty Int (#:span #:synthetic 0 0)) Printable)))))

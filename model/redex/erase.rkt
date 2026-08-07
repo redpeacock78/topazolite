@@ -1,6 +1,6 @@
 #lang racket
 
-(provide erase-core erase-surface metadata-form? check-spanless!)
+(provide erase-core erase-surface metadata-form? check-spanless! check-spanless/deep!)
 
 ;; span 機構の包みかどうかを head だけで判定する。
 ;; 型・表・semantic origin は spanless であり、head に keyword を取る形を持たない。
@@ -12,6 +12,14 @@
 (define (check-spanless! who t)
   (when (metadata-form? t)
     (error who "spanless な位置へ span 機構の包みが渡った: ~s" t)))
+
+;; span.md §7.3: 命題を受け取る入口は、内側の包みも拒否する。
+;; head だけを見ると (Implements (#:ty Int s) Printable) が通り、命題の
+;; 一致が包みごと比較されて偽に成立する。
+(define (check-spanless/deep! who t)
+  (check-spanless! who t)
+  (when (list? t)
+    (for-each (lambda (u) (check-spanless/deep! who u)) t)))
 
 ;; 列の要素として現れた span を判定する。
 (define (span-element? t)
