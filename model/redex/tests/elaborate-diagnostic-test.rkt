@@ -25,3 +25,48 @@
  (define d (elab-diagnostic 'no-such-variable))
  (check-equal? (diagnostic-found d) 'no-such-variable)
  (check-false (diagnostic-expected d)))
+
+(test-case
+ "判断を下した Let 節点の span を取り details は expected と found へ入る"
+ (define let-span '(#:span src 0 20))
+ (define lit-span '(#:span src 12 13))
+ (define term
+   `(Let ,let-span ((#:bind x ,let-span) let (#:ty Bool ,let-span))
+         (#:lit 1 ,lit-span)
+         (#:var x ,let-span)))
+ (define d (elab-diagnostic term))
+ (check-equal? (diagnostic-id d)
+               (diagnostic-code-of 'elaborate 'type-mismatch))
+ (check-equal? (diagnostic-primary-span d) let-span)
+ (check-equal? (diagnostic-expected d) 'Bool)
+ (check-equal? (diagnostic-found d) 'Int))
+
+(test-case
+ "invalid-obligation は最近傍の包みの span を取る"
+ (define ty-span '(#:span src 4 40))
+ (define term
+   `(Let (#:span src 0 60)
+         ((#:bind f (#:span src 4 5)) let
+          (#:ty (NFn (Int) Int () ((Prop no-such-validator))) ,ty-span))
+         (#:lit 1 (#:span src 44 45))
+         (#:var f (#:span src 50 51))))
+ (define d (elab-diagnostic term))
+ (check-equal? (diagnostic-id d)
+               (diagnostic-code-of 'elaborate 'invalid-obligation))
+ (check-equal? (diagnostic-primary-span d) ty-span)
+ (check-equal? (diagnostic-found d) '(Prop no-such-validator)))
+
+(test-case
+ "invalid-proposition も同じ最近傍の包みの span を取る"
+ (define ty-span '(#:span src 4 30))
+ (define term
+   `(Let (#:span src 0 40)
+         ((#:bind x (#:span src 4 5)) let
+          (#:ty (Refined Int (Prop no-such-validator)) ,ty-span))
+         (#:lit 1 (#:span src 34 35))
+         (#:var x (#:span src 36 37))))
+ (define d (elab-diagnostic term))
+ (check-equal? (diagnostic-id d)
+               (diagnostic-code-of 'elaborate 'invalid-proposition))
+ (check-equal? (diagnostic-primary-span d) ty-span)
+ (check-equal? (diagnostic-found d) '(Prop no-such-validator)))
