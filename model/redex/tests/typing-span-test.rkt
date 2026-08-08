@@ -26,6 +26,8 @@
                             '()
                             '()
                             owned-environment))
+(check-equal? (core-type-of move-source '() '() owned-environment)
+              '((Owned Res) (Own)))
 
 (define handle-source
   '(Handle (Return boundary Int)
@@ -35,3 +37,14 @@
               (core-type-of (annotate-core handle-source) '() '()))
 (check-equal? (core-type-of (annotate-core handle-source) '() '())
               '(Int ()))
+
+;; 失敗しても従来の返り値のまま返る。
+(check-equal? (core-type-of '(Drop 1) '() '()) 'ill-typed)
+(check-equal? (core-check-row '(Drop 1) '() '() 'Unit) #f)
+
+;; Drop の第 1 経路の失敗は局所的に回復し、fallback の check-as へ進む。
+(check-equal? (core-type-of '(Drop (resource 0)) '((0 Res)) '())
+              '(Unit (Own)))
+
+;; fallback も失敗したときは外側へ抜ける。
+(check-equal? (core-type-of '(Drop 1) '((0 Res)) '()) 'ill-typed)
