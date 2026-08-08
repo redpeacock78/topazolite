@@ -547,7 +547,7 @@
                           (reach-node 'Lam 807 813 'User 'f
                                       (list (reach-bind 'x 808 809))
                                       (reach-var 'x 811 812))
-                          (reach-lit 817 818 1))
+                          (reach-lit 1 817 818))
               '() reach-call-obligation '() (reach-span 806 822))))
 
 (test-case "typing の producer key 集合が registry v2 と一致する"
