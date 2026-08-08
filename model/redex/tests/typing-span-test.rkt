@@ -26,6 +26,17 @@
 (check-equal? (id-of '(Error 0) '() '()) "E-TYP-016")
 (check-equal? (core-check-row 1 '() '() 'String) #f)
 
+;; 入口検査は 1 箇所にある。判定 API と診断 API が同じ入力集合を落とす。
+(for ([bad (in-list (list (list '(NotACoreForm) '() '() '())
+                          (list '(Construct (Union Int Int) nil) '() '() '())
+                          (list 1 '() 'not-a-table '())
+                          (list 1 'not-a-place-table '() '())
+                          (list 1 '() '() 'not-an-environment)))])
+  (match-define (list core places callables environment) bad)
+  (check-false (core-check-row core places callables 'Int environment))
+  (check-true (diagnostic?
+               (core-type-of/diagnostic core places callables environment))))
+
 (define callables '((f (NFn (Int) Int () ()))))
 (let ([d (core-type-of/diagnostic
           '(Apply (Lam User f (x) x) "s")

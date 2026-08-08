@@ -313,3 +313,22 @@
   (check-true (span-ok? (third argument-1)))
   (check-equal? (first function) 'PrimVal)
   (check-true (span-ok? (second function))))
+
+;; span.md §7.3: elab が返す spanful な core を、その投影と同じ判定へ通す。
+;; 手書きの annotate-core とは span の付き方が違うため、上流の出力そのもので
+;; 入口の投影を固定する。ill-typed 側の一致では契約を固定できないため、
+;; well-typed な項の型と Effect 行が一致することを見る。
+(test-case "span.md §7.3: elab の core とその投影が同じ判定を返す"
+  (for ([source (in-list (list '(Let x 1 (Apply add x 2))
+                               '(Apply add 1 2)))])
+    (match-define (list core _ _ _) (elab (annotate-surface source)))
+    (define result (core-type-of core '() '()))
+    (check-true (list? result)
+                (format "~s の core が ill-typed になる: ~s" source core))
+    (when (list? result)
+      (check-equal? result (core-type-of (erase-core core) '() '())
+                    (format "~s の判定が投影で変わる" source))
+      (check-true (list? (core-check-row core '() '() (first result)))
+                  (format "~s の spanful な core が期待型を通らない" source))
+      (check-true (list? (core-check-row (erase-core core) '() '() (first result)))
+                  (format "~s の投影が期待型を通らない" source)))))

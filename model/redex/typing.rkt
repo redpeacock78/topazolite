@@ -915,21 +915,28 @@
           (fail 'type-mismatch core actual expected))
         row])]))
 
+;; 入口検査は type-of/raw と core-check-row が共有する。片方だけ直す事故を
+;; 避けるため、検査の順と key をここへ寄せる。
+;; core は投影済みの項を受け取る。返り値は最初に破れた検査の
+;; (list key details ...) か、すべて通ったときの #f である。
+(define (entry-violation core places callables environment)
+  (cond
+    [(not (redex-match? G2m c core)) '(not-core-term)]
+    [(not (core-types-normal? core)) '(non-normal-type)]
+    [(not (valid-environment? environment))
+     (list 'invalid-environment environment)]
+    [(not (valid-places? places)) (list 'invalid-places places)]
+    [(not (valid-callables? callables)) (list 'invalid-callables callables)]
+    [else #f]))
+
 (define (type-of/raw core-in places callables [environment '()])
   (with-typing
    (lambda (fail)
      ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
      (define core (erase-core core-in))
-     (unless (redex-match? G2m c core)
-       (fail 'not-core-term core-in))
-     (unless (core-types-normal? core)
-       (fail 'non-normal-type core-in))
-     (unless (valid-environment? environment)
-       (fail 'invalid-environment core-in environment))
-     (unless (valid-places? places)
-       (fail 'invalid-places core-in places))
-     (unless (valid-callables? callables)
-       (fail 'invalid-callables core-in callables))
+     (define violation (entry-violation core places callables environment))
+     (when violation
+       (apply fail (first violation) core-in (rest violation)))
      (match (infer core-in environment places callables fail)
        [(list type row)
         (define normalized (normalize-type type))
@@ -977,11 +984,7 @@
 (define (core-check-row core-in places callables expected [environment '()])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
   (define core (erase-core core-in))
-  (and (redex-match? G2m c core)
-       (core-types-normal? core)
-       (valid-environment? environment)
-       (valid-places? places)
-       (valid-callables? callables)
+  (and (not (entry-violation core places callables environment))
        (type? expected)
        (check-as/boolean core-in expected environment places callables)))
 
@@ -992,6 +995,7 @@
          (and actual-row (row=? actual-row row)))))
 
 (define (config-ok? configuration callables expected row)
+  ;; config-ok? の別集合も entry-violation の検査追加時に同期する。
   (and (redex-match? G2m config configuration)
        (core-types-normal? configuration)
        (valid-callables? callables)
