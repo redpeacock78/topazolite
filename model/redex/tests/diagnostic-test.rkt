@@ -5,7 +5,8 @@
          rackunit
          "../backend-matrix.rkt"
          "../diagnostic.rkt"
-         "diagnostic-fixture-v1.rkt")
+         "diagnostic-fixture-v1.rkt"
+         "diagnostic-fixture-v2.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §7）
@@ -207,6 +208,17 @@
  (for ([entry (in-list diagnostic-entries-v1)])
    (check-true (set-member? current entry)
                (format "registry から消えたか意味が変わった: ~a" entry))))
+
+(test-case
+ "凍結 fixture v2 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v2) 107)
+ (for ([entry (in-list diagnostic-entries-v2)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
 
 (define-runtime-path elaborate-source "../elaborate.rkt")
 

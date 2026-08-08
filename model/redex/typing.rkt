@@ -1022,3 +1022,15 @@
                                            places callables)])
                     (and actual-row (row=? actual-row row))))))]
          [_ #f])))
+
+(module+ test
+  (require rackunit)
+
+  ;; fail は key ill-typed を未登録として error にしない。
+  (check-equal? (with-typing (lambda (fail) (fail 'ill-typed 1)))
+                '(fail ill-typed 1 ()))
+
+  ;; registry に無い key は error になる。
+  (check-exn #px"registry に無い typing の key"
+             (lambda ()
+               (with-typing (lambda (fail) (fail 'no-such-key 1))))))
