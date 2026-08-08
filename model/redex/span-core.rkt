@@ -39,8 +39,10 @@
 ;; 実装になる。
 (define (entry-span term)
   (define s
-    (with-handlers ([exn:fail? (lambda (_) #f)])
-      (span-of term)))
+    (or (with-handlers ([exn:fail? (lambda (_) #f)])
+          (span-of term))
+        (with-handlers ([exn:fail? (lambda (_) #f)])
+          (branch-span term))))
   (if (and s (span-ok? s)) s '(#:span #:synthetic 0 0)))
 
 (define (peel-node node)

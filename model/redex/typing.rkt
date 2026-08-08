@@ -148,7 +148,9 @@
   (define plain-branches (map peel-branch branches))
   (for ([branch (in-list branches)]
         [plain (in-list plain-branches)])
-    (unless (redex-match? G2m br plain)
+    ;; 枝の形だけを spanless な文法で検査し、本文は spanful のまま子へ渡す。
+    ;; 本文までそのまま G2m へ照合すると、子の span が理由なく不一致になる。
+    (unless (redex-match? G2m br (erase-core plain))
       (fail 'ill-typed branch)))
   (define expected-constructors (map first schema))
   (define actual-constructors (map first plain-branches))
@@ -157,8 +159,9 @@
   (for ([constructor (in-list expected-constructors)])
     (unless (member constructor actual-constructors)
       (fail 'non-exhaustive-eliminate node)))
-  (for ([branch (in-list plain-branches)])
-    (match-define `(,constructor (,parameters ...) -> ,_) branch)
+  (for ([branch (in-list branches)]
+        [plain (in-list plain-branches)])
+    (match-define `(,constructor (,parameters ...) -> ,_) plain)
     (define field-types (lookup schema constructor))
     (unless field-types (fail 'unknown-constructor branch constructor))
     (unless (= (length parameters) (length field-types))
