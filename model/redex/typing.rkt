@@ -160,7 +160,7 @@
   (for ([branch (in-list plain-branches)])
     (match-define `(,constructor (,parameters ...) -> ,_) branch)
     (define field-types (lookup schema constructor))
-    (unless field-types (fail 'ill-typed branch))
+    (unless field-types (fail 'unknown-constructor branch constructor))
     (unless (= (length parameters) (length field-types))
       (fail 'branch-binder-arity branch (length field-types) (length parameters)))
     (when (check-duplicates (map peel-bind parameters))
@@ -389,6 +389,8 @@
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body body-row latent-row))
      (list signature '())]
+    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
+    ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 (define (infer-recur-value callable function parameters body
@@ -418,6 +420,8 @@
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body body-row latent-row))
      (list signature '())]
+    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
+    ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 (define (recur-context callable function parameters body
@@ -448,6 +452,8 @@
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body body-row latent-row))
      function-environment]
+    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
+    ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 (define (binding-context binding-mode declared-type bound
