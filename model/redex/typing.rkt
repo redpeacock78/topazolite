@@ -126,44 +126,45 @@
 
 (define (check-construct constructor fields data-type
                          environment places callables node fail)
+  ;; 呼び出し側は G2+ の ts、つまり (#:ty τ s) を包みのまま渡す。
+  ;; 剥がす位置をここに 1 つだけ置き、以降は実型だけを使う。
   (define actual-type (peel-ty data-type))
   (define schema (constructor-schema actual-type))
-  (define field-types (and schema (lookup schema constructor)))
-  (unless schema (fail 'ill-typed node))
-  (unless field-types (fail 'ill-typed node))
-  (when (ormap owned-type? field-types)
-    (fail 'ill-typed node))
+  (unless schema (fail 'unknown-data-type node actual-type))
+  (define field-types (lookup schema constructor))
+  (unless field-types (fail 'unknown-constructor node constructor))
+  (for ([field-type (in-list field-types)])
+    (when (owned-type? field-type)
+      (fail 'owned-constructor-field node field-type)))
   (define rows
     (check-many fields field-types environment places callables node fail))
   (rows-union rows))
 
 (define (branch-contexts branches data-type environment node scrutinee fail)
   (define schema (constructor-schema data-type))
-  (unless schema (fail 'ill-typed node))
+  (unless schema (fail 'non-data-eliminate scrutinee))
   (unless (= (length branches) (length schema))
-    (fail 'ill-typed node))
+    (fail 'non-exhaustive-eliminate node))
   (define plain-branches (map peel-branch branches))
   (for ([branch (in-list branches)]
         [plain (in-list plain-branches)])
-    (match plain
-      [`(,constructor (,parameters ...) -> ,_)
-       (void)]
-      [_ (fail 'ill-typed branch)]))
+    (unless (redex-match? G2m br plain)
+      (fail 'ill-typed branch)))
   (define expected-constructors (map first schema))
   (define actual-constructors (map first plain-branches))
   (when (check-duplicates actual-constructors)
-    (fail 'ill-typed node))
+    (fail 'duplicate-branch-constructor node))
   (for ([constructor (in-list expected-constructors)])
     (unless (member constructor actual-constructors)
-      (fail 'ill-typed node)))
+      (fail 'non-exhaustive-eliminate node)))
   (for ([branch (in-list plain-branches)])
     (match-define `(,constructor (,parameters ...) -> ,_) branch)
     (define field-types (lookup schema constructor))
     (unless field-types (fail 'ill-typed branch))
     (unless (= (length parameters) (length field-types))
-      (fail 'ill-typed branch))
+      (fail 'branch-binder-arity branch (length field-types) (length parameters)))
     (when (check-duplicates (map peel-bind parameters))
-      (fail 'ill-typed branch)))
+      (fail 'duplicate-branch-binder branch)))
   (for/list ([branch (in-list plain-branches)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (list body
@@ -347,10 +348,10 @@
        ;; RFN-002: W は merge の局所検査だけで使う。型へは載せない。
        (define-values (merged _witnesses)
          (merge-record-types/impl types))
-       (unless merged (fail 'ill-typed node))
+       (unless merged (fail 'unmergeable-branch-records node))
        merged]
       [(ormap record-type? types)
-       (fail 'ill-typed node)]
+       (fail 'incompatible-branch-types node)]
       [else (first types)]))
   (define branch-rows
     (for/list ([context (in-list contexts)])
@@ -367,15 +368,17 @@
 (define (infer-lam callable parameters body
                    environment places callables node fail)
   (define signature (lookup callables callable))
-  (unless signature (fail 'ill-typed node))
+  (unless signature (fail 'unknown-callable node))
   (match signature
     [`(NFn ,parameter-types ,return-type ,latent-row ,_)
      (unless (= (length parameters) (length parameter-types))
-       (fail 'ill-typed node))
+       (fail 'parameter-arity-mismatch node
+             (length parameter-types)
+             (length parameters)))
      (when (check-duplicates parameters)
-       (fail 'ill-typed node))
+       (fail 'duplicate-parameter node))
      (when (ormap owned-type? parameter-types)
-       (fail 'ill-typed node))
+       (fail 'owned-function-parameter node))
      (define body-environment
        (extend (without-owned environment)
                parameters
@@ -384,22 +387,24 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'ill-typed body))
+       (fail 'undeclared-function-effect body body-row latent-row))
      (list signature '())]
-    [_ (fail 'ill-typed node)]))
+    [_ (fail 'unknown-callable node)]))
 
 (define (infer-recur-value callable function parameters body
                            environment places callables node fail)
   (define signature (lookup callables callable))
-  (unless signature (fail 'ill-typed node))
+  (unless signature (fail 'unknown-callable node))
   (match signature
     [`(NFn ,parameter-types ,return-type ,latent-row ,_)
      (unless (= (length parameters) (length parameter-types))
-       (fail 'ill-typed node))
+       (fail 'parameter-arity-mismatch node
+             (length parameter-types)
+             (length parameters)))
      (when (check-duplicates (cons function parameters))
-       (fail 'ill-typed node))
+       (fail 'duplicate-parameter node))
      (when (ormap owned-type? parameter-types)
-       (fail 'ill-typed node))
+       (fail 'owned-function-parameter node))
      (define body-environment
        (extend
         (extend (without-owned environment)
@@ -411,22 +416,24 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'ill-typed body))
+       (fail 'undeclared-function-effect body body-row latent-row))
      (list signature '())]
-    [_ (fail 'ill-typed node)]))
+    [_ (fail 'unknown-callable node)]))
 
 (define (recur-context callable function parameters body
                        environment places callables node fail)
   (define signature (lookup callables callable))
-  (unless signature (fail 'ill-typed node))
+  (unless signature (fail 'unknown-callable node))
   (match signature
     [`(NFn ,parameter-types ,return-type ,latent-row ,_)
      (unless (= (length parameters) (length parameter-types))
-       (fail 'ill-typed node))
+       (fail 'parameter-arity-mismatch node
+             (length parameter-types)
+             (length parameters)))
      (when (check-duplicates (cons function parameters))
-       (fail 'ill-typed node))
+       (fail 'duplicate-parameter node))
      (when (ormap owned-type? parameter-types)
-       (fail 'ill-typed node))
+       (fail 'owned-function-parameter node))
      (define function-environment
        (extend environment
                (list function)
@@ -439,9 +446,9 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'ill-typed body))
+       (fail 'undeclared-function-effect body body-row latent-row))
      function-environment]
-    [_ (fail 'ill-typed node)]))
+    [_ (fail 'unknown-callable node)]))
 
 (define (binding-context binding-mode declared-type bound
                          environment places callables node fail)

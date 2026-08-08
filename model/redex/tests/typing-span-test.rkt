@@ -16,6 +16,8 @@
 (check-equal? (id-of '(Curry 1 2) '() '()) "E-APP-004")
 (check-equal? (id-of '(Proj 1 a) '() '()) "E-RCD-007")
 (check-equal? (id-of '(Rec ((a imm 1) (a imm 2))) '() '()) "E-RCD-006")
+(check-equal? (id-of '(Eliminate 1 ()) '() '()) "E-DAT-006")
+(check-equal? (id-of '(Lam User no-such-callable (x) x) '() '()) "E-APP-005")
 
 ;; spanful な入力が spanless な入力と同じ判定を返す。
 (define spanless '(Drop (resource 0)))
