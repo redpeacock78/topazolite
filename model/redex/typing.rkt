@@ -119,7 +119,7 @@
 
 (define (check-many cores types environment places callables node fail)
   (unless (= (length cores) (length types))
-    (fail 'ill-typed node))
+    (fail 'arity-mismatch node (length types) (length cores)))
   (for/list ([core (in-list cores)]
              [type (in-list types)])
     (check-as core type environment places callables fail)))
@@ -521,27 +521,30 @@
     [`(PrimVal ,_ ,name)
      (match (assoc name Γ0)
        [(list _ (list type canonical-value))
-        (if (equal? canonical-value (peel-node core))
-            (list type '())
-            (fail 'ill-typed core))]
-       [_ (fail 'ill-typed core)])]
+        (unless (equal? canonical-value (peel-node core))
+          (fail 'non-canonical-primitive core))
+        (list type '())]
+       [_ (fail 'unknown-primitive core)])]
 
     [`(CurryVal ,_ ,function ,argument)
      (match (infer function environment places callables fail)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row)
-        (unless (null? function-row) (fail 'ill-typed function))
-        (when (owned-type? first-type) (fail 'ill-typed argument))
+        (unless (null? function-row)
+          (fail 'effectful-curry-operand function))
+        (when (owned-type? first-type)
+          (fail 'owned-curry-argument argument))
         (define argument-row
           (check-as argument first-type environment places callables fail))
-        (unless (null? argument-row) (fail 'ill-typed argument))
+        (unless (null? argument-row)
+          (fail 'effectful-curry-operand argument))
         (list `(NFn ,remaining-types
                     ,return-type
                     ,latent-row
                     ,obligations)
               '())]
-       [_ (fail 'ill-typed function)])]
+       [_ (fail 'curry-non-function function)])]
 
     [`(RecurVal ,callable ,function (,parameters ...) ,body)
      (infer-recur-value callable (peel-bind function)
@@ -569,14 +572,14 @@
                (second field)
                (third field))))
      (unless (field-row-unique? plain-fields)
-       (fail 'ill-typed core))
+       (fail 'duplicate-record-label core))
      (define results
        (for/list ([field (in-list plain-fields)])
          (infer (third field) environment places callables fail)))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
        (when (owned-type? (first result))
-         (fail 'ill-typed (third field))))
+         (fail 'owned-record-field (third field))))
      (list
       `(Record
         ,(for/list ([field (in-list plain-fields)]
@@ -608,8 +611,8 @@
        [(list `(Record ,row) record-row)
         (match (field-row-lookup row (peel-lbl label))
           [(list field-type _) (list field-type record-row)]
-          [_ (fail 'ill-typed core)])]
-       [_ (fail 'ill-typed record)])]
+          [_ (fail 'unknown-record-label core)])]
+       [_ (fail 'project-non-record record)])]
 
     [`(Apply ,function ,arguments ...)
      (match (infer function environment places callables fail)
@@ -626,7 +629,7 @@
                (append (list function-row)
                        argument-rows
                        (list latent-row))))]
-       [_ (fail 'ill-typed function)])]
+       [_ (fail 'apply-non-function function)])]
 
     [`(Discharge ,_ ,_)
      ;; 包み先を直接の Apply に限る形は採れない。複数義務では外側の Discharge
@@ -647,7 +650,7 @@
                (fail 'ill-typed core)))
            ;; 型と Effect 行は基底の Apply のものを返す。
            (infer base environment places callables fail)]
-          [_ (fail 'ill-typed function)])]
+          [_ (fail 'apply-non-function function)])]
        [_ (fail 'ill-typed base)])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
@@ -711,7 +714,7 @@
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
-       (fail 'ill-typed core))
+       (fail 'unmanaged-place core))
      (infer body environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -741,15 +744,15 @@
     [`(Move ,place)
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
-     (unless type (fail 'ill-typed core))
+     (unless type (fail 'unknown-place core))
      (list `(Owned ,type) '(Own))]
 
     [`(Move ,name)
      (define type (lookup environment (peel-node name)))
-     (unless type (fail 'ill-typed core))
+     (unless type (fail 'unknown-place core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own))]
-       [_ (fail 'ill-typed core)])]
+       [_ (fail 'move-non-owned core)])]
 
     [`(Drop ,argument)
      (define argument-result
@@ -774,7 +777,8 @@
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row)
-        (when (owned-type? first-type) (fail 'ill-typed argument))
+        (when (owned-type? first-type)
+          (fail 'owned-curry-argument argument))
         (define argument-row
           (check-as argument first-type environment places callables fail))
         (list `(NFn ,remaining-types
@@ -782,14 +786,14 @@
                     ,latent-row
                     ,obligations)
               (row-union function-row argument-row))]
-       [_ (fail 'ill-typed function)])]
+       [_ (fail 'curry-non-function function)])]
 
     [`(Error ,_) (fail 'ill-typed core)]
 
     [(? symbol? name)
      (define type (lookup environment name))
-     (unless type (fail 'ill-typed core))
-     (when (owned-type? type) (fail 'ill-typed core))
+     (unless type (fail 'unbound-variable core))
+     (when (owned-type? type) (fail 'owned-variable-requires-move core))
      (list type '())]
 
     [_ (fail 'ill-typed core)]))
@@ -805,7 +809,7 @@
     [`(Error ,place)
      (unless (and (exact-nonnegative-integer? place)
                   (assoc place places))
-       (fail 'ill-typed core))
+       (fail 'unknown-place core))
      '()]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
@@ -843,7 +847,7 @@
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
-       (fail 'ill-typed core))
+       (fail 'unmanaged-place core))
      (check-as body expected environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)

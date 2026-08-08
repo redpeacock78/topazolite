@@ -19,12 +19,12 @@
                                          empty
                                          empty))))
 
-(test-case "失敗する入力では E-TYP-001 の Diagnostic を返す"
+(test-case "未束縛変数は E-VAR-006 の Diagnostic を返す"
   (define d (core-type-of/diagnostic (term x) empty empty))
   (check-true (diagnostic? d))
-  (check-equal? (diagnostic-id d) (diagnostic-code-of 'typing 'ill-typed))
+  (check-equal? (diagnostic-id d) (diagnostic-code-of 'typing 'unbound-variable))
   (check-true (diagnostic-valid? d))
-  ;; E-TYP-001 は粗い受け皿であり、expected と found を埋めない（spec §12）。
+  ;; この診断では expected と found を埋めない。
   (check-false (diagnostic-expected d))
   (check-false (diagnostic-found d)))
 

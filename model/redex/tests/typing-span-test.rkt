@@ -2,7 +2,20 @@
 
 (require rackunit
          "../annotate.rkt"
+         "../diagnostic.rkt"
          "../typing.rkt")
+
+(define (id-of core places callables [environment '()])
+  (diagnostic-id (core-type-of/diagnostic core places callables environment)))
+
+(check-equal? (id-of 'x '() '()) "E-VAR-006")
+(check-equal? (id-of '(Move 3) '() '()) "E-OWN-020")
+(check-equal? (id-of '(Scope (3) 1) '() '()) "E-OWN-021")
+(check-equal? (id-of '(PrimVal User no-such-prim) '() '()) "E-VAR-007")
+(check-equal? (id-of '(Apply 1 2) '() '()) "E-APP-003")
+(check-equal? (id-of '(Curry 1 2) '() '()) "E-APP-004")
+(check-equal? (id-of '(Proj 1 a) '() '()) "E-RCD-007")
+(check-equal? (id-of '(Rec ((a imm 1) (a imm 2))) '() '()) "E-RCD-006")
 
 ;; spanful な入力が spanless な入力と同じ判定を返す。
 (define spanless '(Drop (resource 0)))
