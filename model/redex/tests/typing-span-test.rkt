@@ -42,8 +42,12 @@
 (check-equal? (core-type-of '(Drop 1) '() '()) 'ill-typed)
 (check-equal? (core-check-row '(Drop 1) '() '() 'Unit) #f)
 
-;; Drop の第 1 経路の失敗は局所的に回復し、fallback の check-as へ進む。
+;; 第 1 経路が成功する所有型の Drop。
 (check-equal? (core-type-of '(Drop (resource 0)) '((0 Res)) '())
+              '(Unit (Own)))
+
+;; 第 1 経路の失敗を局所的に回復し、fallback の check-as へ進む。
+(check-equal? (core-type-of '(Drop (Error 0)) '((0 Res)) '())
               '(Unit (Own)))
 
 ;; fallback も失敗したときは外側へ抜ける。
