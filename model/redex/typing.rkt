@@ -749,7 +749,7 @@
 
     [`(Move ,name)
      (define type (lookup environment (peel-node name)))
-     (unless type (fail 'unknown-place core))
+     (unless type (fail 'unbound-variable core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own))]
        [_ (fail 'move-non-owned core)])]
