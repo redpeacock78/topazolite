@@ -651,18 +651,19 @@
                 (row-union argument-row
                            `((Return ,boundary ,type*)))))]
 
-    [`(Handle (Return ,boundary ,type)
-              (,name -> ,handler)
-              ,body)
+    [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
      (define body-row
        (check-as body type* environment places callables))
      (define handler-row
-       (check-as handler
-                 type*
-                 (extend environment (list (peel-bind name)) (list type*))
-                 places
-                 callables))
+       (match (peel-branch handler-clause)
+         [`(,name -> ,handler)
+          (check-as handler
+                    type*
+                    (extend environment (list (peel-bind name)) (list type*))
+                    places
+                    callables)]
+         [_ #f]))
      (and body-row
           handler-row
           (list type*
@@ -713,7 +714,7 @@
      (and type (list `(Owned ,type) '(Own)))]
 
     [`(Move ,name)
-     (match (lookup environment name)
+     (match (lookup environment (peel-node name))
        [`(Owned ,type) (list `(Owned ,type) '(Own))]
        [_ #f])]
 
