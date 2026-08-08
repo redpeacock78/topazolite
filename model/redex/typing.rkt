@@ -465,7 +465,7 @@
         (list bound-row declared-type)]
        [(list `(Record ,actual-row) bound-row)
         (unless (compat? `(Record ,actual-row) declared-type Γ-pc0)
-          (fail 'ill-typed bound))
+          (fail 'record-binding-incompatible bound))
         (define residual
           (field-row-residual actual-row declared-row))
         (define binding-row
@@ -473,13 +473,17 @@
             [(const)
              (if (null? residual)
                  declared-row
-                 (fail 'ill-typed bound))]
+                 (fail 'const-record-residual bound residual))]
             [(let)
              (field-row-⊕ declared-row residual)]
             [else (fail 'ill-typed node)]))
-        (unless binding-row (fail 'ill-typed bound))
+        ;; field-row-residual は declared-row のラベルを除いた残余を返すため、
+        ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
+        ;; 到達しないこの位置は先の compat? 検査と key を共有する。
+        (unless binding-row (fail 'record-binding-incompatible bound))
         (list bound-row `(Record ,binding-row))]
-       [_ (fail 'ill-typed bound)])]
+       [(list actual-type _)
+        (fail 'type-mismatch bound actual-type declared-type)])]
     [_
      (define bound-row
        (check-as bound declared-type environment places callables fail))
@@ -605,7 +609,8 @@
     [`(UVal ,value)
      (match (infer value environment places callables fail)
        [(list value-type value-row)
-        (unless (owned-free? value-type) (fail 'ill-typed value))
+        (unless (owned-free? value-type)
+          (fail 'owned-untrusted-payload value))
         (list `(Untrusted ,value-type) value-row)])]
 
     ;; RFN-001: 検証済みの値。witness の命題を型へ持ち上げる。発行者が正当か
@@ -615,7 +620,8 @@
        [`(ProofRep ,_ ,proposition)
         (match (infer value environment places callables fail)
           [(list value-type value-row)
-           (unless (owned-free? value-type) (fail 'ill-typed value))
+           (unless (owned-free? value-type)
+             (fail 'owned-refined-payload value))
            (list `(Refined ,value-type ,proposition) value-row)])]
        [_ (fail 'ill-typed core)])]
 
@@ -636,7 +642,7 @@
           (check-many arguments parameter-types
                       environment places callables core fail))
         (unless (obligations-dischargeable? obligations Γ-pc0)
-          (fail 'ill-typed core))
+          (fail 'unsatisfied-proof-obligation core))
         (list return-type
               (rows-union
                (append (list function-row)
@@ -656,15 +662,15 @@
         (match (infer function environment places callables fail)
           [(list `(NFn ,_ ,_ ,_ ,obligations) _)
            (unless (= (length propositions) (length obligations))
-             (fail 'ill-typed core))
+             (fail 'discharge-obligation-count core))
            (for ([phi (in-list propositions)]
                  [obligation (in-list obligations)])
              (unless (proposition-equiv? phi obligation)
-               (fail 'ill-typed core)))
+               (fail 'discharge-proposition-mismatch core)))
            ;; 型と Effect 行は基底の Apply のものを返す。
            (infer base environment places callables fail)]
           [_ (fail 'apply-non-function function)])]
-       [_ (fail 'ill-typed base)])]
+       [_ (fail 'discharge-target-not-apply base)])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound
@@ -782,7 +788,13 @@
        [else
         (define argument-row
           (check-as argument '(Owned Res)
-                    environment places callables fail))
+                    environment places callables
+                    (lambda (key node . details)
+                      (assert-typing-key key)
+                      (if (and (eq? key 'type-mismatch)
+                               (eq? node argument))
+                          (fail 'drop-non-owned argument)
+                          (apply fail key node details)))))
         (list 'Unit (row-union argument-row '(Own)))])]
 
     [`(Curry ,function ,argument)
@@ -801,7 +813,7 @@
               (row-union function-row argument-row))]
        [_ (fail 'curry-non-function function)])]
 
-    [`(Error ,_) (fail 'ill-typed core)]
+    [`(Error ,_) (fail 'error-needs-expected-type core)]
 
     [(? symbol? name)
      (define type (lookup environment name))
@@ -814,8 +826,9 @@
 (define (check-as core expected environment places callables fail)
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
-     (unless (type-equiv? (peel-ty data-type) expected)
-       (fail 'ill-typed core))
+     (define actual (peel-ty data-type))
+     (unless (type-equiv? actual expected)
+       (fail 'type-mismatch core actual expected))
      (check-construct constructor fields data-type
                       environment places callables core fail)]
 
@@ -896,7 +909,7 @@
      (match (infer core environment places callables fail)
        [(list actual row)
         (unless (type-compatible? actual expected)
-          (fail 'ill-typed core))
+          (fail 'type-mismatch core actual expected))
         row])]))
 
 (define (type-of/raw core-in places callables [environment '()])

@@ -18,6 +18,18 @@
 (check-equal? (id-of '(Rec ((a imm 1) (a imm 2))) '() '()) "E-RCD-006")
 (check-equal? (id-of '(Eliminate 1 ()) '() '()) "E-DAT-006")
 (check-equal? (id-of '(Lam User no-such-callable (x) x) '() '()) "E-APP-005")
+(check-equal? (id-of '(Drop 1) '() '()) "E-OWN-011")
+(check-equal? (id-of '(Error 0) '() '()) "E-TYP-016")
+(check-equal? (core-check-row 1 '() '() 'String) #f)
+
+(define callables '((f (NFn (Int) Int () ()))))
+(let ([d (core-type-of/diagnostic
+          '(Apply (Lam User f (x) x) "s")
+          '()
+          callables)])
+  (check-equal? (diagnostic-id d) "E-TYP-023")
+  (check-equal? (diagnostic-expected d) 'Int)
+  (check-equal? (diagnostic-found d) 'String))
 
 ;; spanful な入力が spanless な入力と同じ判定を返す。
 (define spanless '(Drop (resource 0)))
