@@ -28,7 +28,7 @@
   (check-false (diagnostic-expected d))
   (check-false (diagnostic-found d)))
 
-(test-case "primary-span は入力 Core 項の根から取る"
+(test-case "棄却節点が根なら primary-span は根を指す"
   ;; 根は #:var なので span は第 3 要素にある。
   (define d (core-type-of/diagnostic '(#:var x (#:span src 5 9)) empty empty))
   (check-equal? (diagnostic-primary-span d) '(#:span src 5 9)))

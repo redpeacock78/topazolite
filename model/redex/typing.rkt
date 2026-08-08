@@ -909,11 +909,9 @@
     [(list 'ok result) result]
     [_ 'ill-typed]))
 
-;; spec §3: G4d2 の公開 Diagnostic 境界はこの adapter である。
-;; core-type-of は 'ill-typed を返す低レベルの判定として残し、判定 API と診断 API
-;; を混ぜない。
-;; primary-span は fail が運ぶ棄却節点から取る。entry-span が span を取れないときだけ
-;; synthetic fallback へ落ちる。
+;; spec §8: Diagnostic を組む位置はここ 1 箇所だけである。
+;; expected と found の分配は G4d spec §6 の既定に従い、意味が確定している key
+;; だけを例外表で扱う。引数順は elaborate.rkt:50-60 の同名 key に揃える。
 (define (typing-expected/found key details)
   (match* (key details)
     [('type-mismatch (list actual expected)) (values expected actual)]
@@ -933,6 +931,11 @@
                 #:expected expected
                 #:found found))
 
+;; spec §3: G4d2 の公開 Diagnostic 境界はこの adapter である。
+;; core-type-of は 'ill-typed を返す低レベルの判定として残し、判定 API と診断 API
+;; を混ぜない。
+;; primary-span は fail が運ぶ棄却節点から取る。entry-span が span を取れないときだけ
+;; synthetic fallback へ落ちる。
 (define (core-type-of/diagnostic core-in places callables [environment '()])
   (match (type-of/raw core-in places callables environment)
     [(list 'ok (list type row)) (list type row)]
