@@ -45,18 +45,26 @@
 
 ;; test 5
 (test-case
- "G4c の registry は 59 行であり内訳が一致する"
- (check-equal? (length diagnostic-registry) 59)
+ "registry の行数と内訳と since が一致する"
+ ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
+ ;; 足し忘れや二重登録が通ってしまう。
+ (check-equal? (length diagnostic-registry) 65)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 1)
+ (check-equal? (count-of 'typing) 7)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
+ (define (since-count v)
+   (for/sum ([row (in-list diagnostic-registry)]
+             #:when (= (diagnostic-code-since row) v))
+     1))
+ ;; version 1 の 59 行は動かない。増えるのは version 2 の typing だけである。
+ (check-equal? (since-count 1) 59)
+ (check-equal? (since-count 2) 6)
  (for ([row (in-list diagnostic-registry)])
-   (check-equal? (diagnostic-code-since row) 1)
    (check-false (diagnostic-code-deprecated-in row))))
 
 ;; test 8
@@ -135,9 +143,15 @@
 
 ;; test 12
 (test-case
- "2 つの版がどちらも 1 である"
+ "schema version は 1、registry version は 2 である"
  (check-equal? diagnostic-schema-version 1)
- (check-equal? diagnostic-registry-version 1))
+ (check-equal? diagnostic-registry-version 2))
+
+(test-case
+ "typing の registry version 2 と入口 key"
+ (check-equal? diagnostic-registry-version 2)
+ (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
+ (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 
 ;; test 14
 (test-case

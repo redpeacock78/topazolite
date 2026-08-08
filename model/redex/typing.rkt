@@ -888,19 +888,20 @@
      ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
      (define core (erase-core core-in))
      (unless (redex-match? G2m c core)
-       (fail 'ill-typed core-in))
+       (fail 'not-core-term core-in))
      (unless (core-types-normal? core)
-       (fail 'ill-typed core-in))
+       (fail 'non-normal-type core-in))
      (unless (valid-environment? environment)
-       (fail 'ill-typed core-in))
+       (fail 'invalid-environment core-in environment))
      (unless (valid-places? places)
-       (fail 'ill-typed core-in))
+       (fail 'invalid-places core-in places))
      (unless (valid-callables? callables)
-       (fail 'ill-typed core-in))
+       (fail 'invalid-callables core-in callables))
      (match (infer core-in environment places callables fail)
        [(list type row)
         (define normalized (normalize-type type))
-        (unless normalized (fail 'ill-typed core-in))
+        (unless normalized
+          (fail 'non-normalizable-result-type core-in type))
         (list normalized row)]))))
 
 (define (core-type-of core-in places callables [environment '()])
@@ -911,15 +912,31 @@
 ;; spec §3: G4d2 の公開 Diagnostic 境界はこの adapter である。
 ;; core-type-of は 'ill-typed を返す低レベルの判定として残し、判定 API と診断 API
 ;; を混ぜない。
-;; primary-span は投影前の core-in の根から取る。core-type-of は入口で erase-core
-;; を通し、その下の infer は棄却した部分項を持たない #f を返すため、根より深い節点
-;; を指すには infer 全体へ span を通す改修が要る（spec §13）。
-;; E-TYP-001 は粗い受け皿なので expected と found を埋めない。
+;; primary-span は fail が運ぶ棄却節点から取る。entry-span が span を取れないときだけ
+;; synthetic fallback へ落ちる。
+(define (typing-expected/found key details)
+  (match* (key details)
+    [('type-mismatch (list actual expected)) (values expected actual)]
+    [((or 'arity-mismatch 'parameter-arity-mismatch 'branch-binder-arity)
+      (list expected actual))
+     (values expected actual)]
+    [('undeclared-function-effect (list residual declared))
+     (values declared residual)]
+    [(_ '()) (values #f #f)]
+    [(_ (list only)) (values #f only)]
+    [(_ _) (values #f details)]))
+
+(define (typing-diagnostic key node details)
+  (define-values (expected found) (typing-expected/found key details))
+  (diagnostic-of 'typing key
+                #:primary-span (entry-span node)
+                #:expected expected
+                #:found found))
+
 (define (core-type-of/diagnostic core-in places callables [environment '()])
-  (define result (core-type-of core-in places callables environment))
-  (if (eq? result 'ill-typed)
-      (diagnostic-of 'typing 'ill-typed #:primary-span (entry-span core-in))
-      result))
+  (match (type-of/raw core-in places callables environment)
+    [(list 'ok (list type row)) (list type row)]
+    [(list 'fail key node details) (typing-diagnostic key node details)]))
 
 (define (core-check-row core-in places callables expected [environment '()])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。

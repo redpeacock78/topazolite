@@ -20,12 +20,12 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 1)
+(define diagnostic-registry-version 2)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
 ;;   elaborate: reject が第 2 引数に取る reason 記号
-;;   typing:    core-type-of が返す 'ill-typed
+;;   typing:    core-type-of/diagnostic が fail から受け取る key
 ;;   origins:   verify-initial-origins が返す (forged ...) の頭
 ;;   lowering:  backend-matrix.rkt の diagnostic-ids の第 1 要素
 ;; lowering の key は feature-id であり、capability-diagnostic の reason
@@ -100,10 +100,24 @@
     ("E-PRF-004" unsatisfied-proof-obligation "満たされない Proof 義務が残る")))
 
 ;; E-TYP-001 は恒久の汎用 fallback である。適用条件は「型検査に失敗したが、
-;; より具体的な安定 code を割り当てられない場合」に固定する。G4d1 が
-;; E-TYP-016 以降の細分類を足しても、この条件は狭めない。
-(define typing-entries
+;; より具体的な安定 code を割り当てられない場合」に固定する。G4d4a が性質別の
+;; typing 細分類を足しても、この条件は狭めない。細分類は分類部をまたいで足される
+;; ため、番号の範囲では書かない。
+;; 現行の G2m には、この既定経路の 5 箇所（infer の catch-all、branch-contexts
+;; の br の形の検査、binding-context の bmode の else 分岐、infer の RVal の
+;; 非 ProofRep 分岐、infer の Handle の非 handler 分岐）へ到達する入力が無い。
+;; この行は producer に未分類時の明示分岐があり、G2m を拡張したときに実際に
+;; 返りうるため置く。
+(define typing-entries-v1
   '(("E-TYP-001" ill-typed "型検査に失敗した")))
+
+(define typing-entries-v2
+  '(("E-SYN-004" not-core-term "入力が Typed Core の項でない")
+    ("E-TYP-018" invalid-callables "callable 表の形が不正である")
+    ("E-TYP-019" invalid-environment "型環境の形が不正である")
+    ("E-TYP-020" invalid-places "場所表の形が不正である")
+    ("E-TYP-021" non-normal-type "入力の型が正規形でない")
+    ("E-TYP-022" non-normalizable-result-type "推論した型が正規化できない")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
@@ -121,7 +135,8 @@
 
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
-          (rows 'typing 1 typing-entries)
+          (rows 'typing 1 typing-entries-v1)
+          (rows 'typing 2 typing-entries-v2)
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
 

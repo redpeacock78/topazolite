@@ -33,9 +33,8 @@
   (define d (core-type-of/diagnostic '(#:var x (#:span src 5 9)) empty empty))
   (check-equal? (diagnostic-primary-span d) '(#:span src 5 9)))
 
-(test-case "失敗の原因が内側にあっても primary-span は根を指す"
-  ;; y が未束縛なので型検査は失敗する。infer は棄却した部分項を持たないため、
-  ;; 根の span を使う（spec §12 と §13）。内側の span を返す実装ならここで落ちる。
+(test-case "失敗の原因が内側なら primary-span は内側を指す"
+  ;; y が未束縛なので型検査は失敗する。fail が運ぶ棄却節点の span を使う。
   (define core
     '(Apply (#:span src 0 20)
             (PrimVal (#:span src 1 4) (Reserved o-add) add)
@@ -43,10 +42,20 @@
             (#:lit 2 (#:span src 12 13))))
   (define d (core-type-of/diagnostic core empty empty))
   (check-true (diagnostic? d))
-  (check-equal? (diagnostic-primary-span d) '(#:span src 0 20)))
+  (check-equal? (diagnostic-primary-span d) '(#:span src 10 11)))
 
 (test-case "spanless な入力では synthetic fallback を使う"
   ;; annotate-core は根へ (#:span #:synthetic 0 0) を割り当てるため、
   ;; fallback との区別が付かない。spanless な項で検査する。
   (define d (core-type-of/diagnostic (term x) empty empty))
   (check-equal? (diagnostic-primary-span d) '(#:span #:synthetic 0 0)))
+
+(test-case "入口検査の失敗は細分類した Diagnostic を返す"
+  (define d (core-type-of/diagnostic '(NotACoreForm) empty empty))
+  (check-equal? (diagnostic-id d) "E-SYN-004")
+  (check-eq? (diagnostic-category d) 'SYN))
+
+(test-case "不正な callable 表は typing の入口 key になる"
+  (define d (core-type-of/diagnostic 1 empty 'not-a-table))
+  (check-equal? (diagnostic-id d) "E-TYP-018")
+  (check-equal? (diagnostic-found d) 'not-a-table))
