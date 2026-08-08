@@ -64,47 +64,12 @@
     [(list _ value) value]
     [_ #f]))
 
-(define (peel-node node)
-  (match node
-    [(list '#:lit l _) l]
-    [(list '#:var x _) x]
-    [(list head (list '#:span _ _ _) rest ...) (cons head rest)]
-    [_ node]))
-
-;; ubr は span を先頭へ持つ。head を持たないため peel-node と別に扱う。
-(define (branch-span branch)
-  (match branch
-    [(list (and s (list '#:span _ _ _)) _ ...) s]
-    [_ (error 'branch-span "span を持たない分岐である: ~s" branch)]))
-
-(define (peel-branch branch)
-  (match branch
-    [(list (list '#:span _ _ _) rest ...) rest]
-    [_ branch]))
-
-;; 型注釈・束縛・label・作用 row の包み。spanless な入力にも使えるよう、
-;; 包みでない値はそのまま返す。resolve-annotation は入れ子の型からも呼ばれ、
-;; 内側の型は §4.2 の通り包みを持たないためである。
-(define (peel-ty t)   (match t [(list '#:ty type _) type] [_ t]))
-(define (peel-bind t) (match t [(list '#:bind x _) x] [_ t]))
-(define (peel-lbl t)  (match t [(list '#:lbl label _) label] [_ t]))
-(define (peel-ef t)   (match t [(list '#:ef row _) row] [_ t]))
-
 ;; span.md §7.4: Γ0 の値は表の項であり span を持たない。参照した位置の
 ;; span を head の直後へ付け、G1+ の値へ戻す。
 (define (attach-span value s)
   (match value
     [(list head rest ...) (list* head s rest)]
     [_ (error 'attach-span "Γ0 の値が項ではない: ~s" value)]))
-
-;; 包みの span。(#:ty τ s)、(#:bind x s)、(#:lbl label s)、(#:ef ε s) は
-;; いずれも第 3 要素へ span を持つ。span-of は節点の第 2 要素を読むため
-;; 包みには使えない。両者を 1 つの関数へまとめると、節点の第 2 要素が
-;; 偶然 span に見える包みを取り違える余地が残るので、別の名前で分ける。
-(define (wrapper-span t)
-  (match t
-    [(list (or '#:ty '#:bind '#:lbl '#:ef) _ (and s (list '#:span _ _ _))) s]
-    [_ (error 'wrapper-span "span を持たない包みである: ~s" t)]))
 
 ;; 包みが span を持つならそれを、持たないなら親から引き継いだ span を返す。
 ;; wrapper-span は span を持たない包みで error を出すため、形の判定を先に行う。

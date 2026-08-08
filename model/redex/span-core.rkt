@@ -3,7 +3,10 @@
 (require redex/reduction-semantics
          "lang.rkt")
 
-(provide Span span-ok? span-of entry-span G1+ G2+)
+(provide Span span-ok? span-of entry-span G1+ G2+
+         peel-node peel-branch branch-span
+         peel-ty peel-bind peel-lbl peel-ef
+         wrapper-span)
 
 ;; CanonicalSpan。sourceId は利用者が与える記号か、予約 keyword #:synthetic である。
 ;; 予約値と利用者の sourceId は値の種類で分かれるため、名前による予約を置かない。
@@ -39,6 +42,41 @@
     (with-handlers ([exn:fail? (lambda (_) #f)])
       (span-of term)))
   (if (and s (span-ok? s)) s '(#:span #:synthetic 0 0)))
+
+(define (peel-node node)
+  (match node
+    [(list '#:lit l _) l]
+    [(list '#:var x _) x]
+    [(list head (list '#:span _ _ _) rest ...) (cons head rest)]
+    [_ node]))
+
+;; ubr は span を先頭へ持つ。head を持たないため peel-node と別に扱う。
+(define (branch-span branch)
+  (match branch
+    [(list (and s (list '#:span _ _ _)) _ ...) s]
+    [_ (error 'branch-span "span を持たない分岐である: ~s" branch)]))
+
+(define (peel-branch branch)
+  (match branch
+    [(list (list '#:span _ _ _) rest ...) rest]
+    [_ branch]))
+
+;; 型注釈・束縛・label・作用 row の包み。spanless な入力にも使えるよう、
+;; 包みでない値はそのまま返す。resolve-annotation は入れ子の型からも呼ばれ、
+;; 内側の型は §4.2 の通り包みを持たないためである。
+(define (peel-ty t)   (match t [(list '#:ty type _) type] [_ t]))
+(define (peel-bind t) (match t [(list '#:bind x _) x] [_ t]))
+(define (peel-lbl t)  (match t [(list '#:lbl label _) label] [_ t]))
+(define (peel-ef t)   (match t [(list '#:ef row _) row] [_ t]))
+
+;; 包みの span。(#:ty τ s)、(#:bind x s)、(#:lbl label s)、(#:ef ε s) は
+;; いずれも第 3 要素へ span を持つ。span-of は節点の第 2 要素を読むため
+;; 包みには使えない。両者を 1 つの関数へまとめると、節点の第 2 要素が
+;; 偶然 span に見える包みを取り違える余地が残るので、別の名前で分ける。
+(define (wrapper-span t)
+  (match t
+    [(list (or '#:ty '#:bind '#:lbl '#:ef) _ (and s (list '#:span _ _ _))) s]
+    [_ (error 'wrapper-span "span を持たない包みである: ~s" t)]))
 
 ;; G1 の項へ span を付けた言語。span を持たない非終端（τ κ ℓ ε Q φ t π n l
 ;; x f b K nm id cid）は G1 から引き継ぐ。

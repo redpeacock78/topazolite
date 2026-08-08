@@ -2,7 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
-         "../span.rkt")
+         "../span-core.rkt")
 
 (test-case "CanonicalSpan は sourceId と 2 つの非負 byte offset を持つ"
   (check-true (redex-match? Span s (term (#:span main.tz 0 0))))
@@ -48,3 +48,14 @@
   ;; 文法に合う形でも startByte > endByte なら span-ok? が偽になり fallback へ落ちる。
   (check-equal? (entry-span '(Apply (#:span src 20 0) 1))
                 '(#:span #:synthetic 0 0)))
+
+(check-equal? (peel-node '(Drop (#:span src 3 7) 1)) '(Drop 1))
+(check-equal? (peel-node '(#:var x (#:span src 0 1))) 'x)
+(check-equal? (peel-node '(Drop 1)) '(Drop 1))
+(check-equal? (peel-ty '(#:ty Int (#:span src 0 3))) 'Int)
+(check-equal? (peel-bind '(#:bind x (#:span src 0 1))) 'x)
+(check-equal? (peel-lbl '(#:lbl a (#:span src 0 1))) 'a)
+(check-equal? (peel-ef '(#:ef (Own) (#:span src 0 3))) '(Own))
+(check-equal? (branch-span '((#:span src 1 9) K () -> 1)) '(#:span src 1 9))
+(check-equal? (peel-branch '((#:span src 1 9) K () -> 1)) '(K () -> 1))
+(check-equal? (wrapper-span '(#:ty Int (#:span src 0 3))) '(#:span src 0 3))
