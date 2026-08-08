@@ -140,7 +140,7 @@ error code registry には、production が返しうる診断だけを載せる�
 
 正常な判定結果である `Unknown`、`Absent`、`Ambiguous`、`obligation-proofs` の `#f` には error code を与えない。
 
-registry の対象は elaborate の reject reason、typing の `ill-typed`、origins の `forged`、lowering の診断 key である。
+registry の対象は elaborate の reject reason、typing の棄却 key、origins の `forged`、lowering の診断 key である。
 
 test seam のためだけに production が返さない code を registry へ予約しない。
 
@@ -152,7 +152,11 @@ registry の `key` は、phase が診断を識別するために使う記号で�
 
 elaborate の `key` は `reject` が第2引数に取る reason 記号である。
 
-typing の `key` は `core-type-of` が返す `ill-typed` である。
+typing の `key` は producer が `fail` の第1引数に渡す記号である。
+
+`core-type-of` は key を外へ出さず、`'ill-typed` へ潰した判定だけを返す。
+
+key を Diagnostic へ運ぶのは `core-type-of/diagnostic` である。
 
 origins の `key` は `verify-initial-origins` が返す `(forged ...)` の先頭記号である。
 
@@ -174,7 +178,11 @@ code を廃止するときは registry の行を削除せず、`deprecated-in` �
 
 一度も外部へ出していない code は廃止行として残さず、追加前に取り下げる。
 
-現在の registry version 1 に属する59行は、すべて `since` が1で `deprecated-in` が `#f` である。
+registry version 1 に属する59行は `since` が1である。
+
+registry version 2 で足した typing の48行は `since` が2である。
+
+`deprecated-in` は全107行が `#f` である。
 
 ## 10. 凍結 fixture
 
@@ -198,7 +206,15 @@ fixture は後方互換性を検査する履歴であり、第二の正典では
 
 `E-TYP-001` は型検査に失敗したが、より具体的な安定 code を割り当てられない場合に使う恒久の fallback である。
 
-G4d1 が `E-TYP-016` 以降の細分類を追加しても、`E-TYP-001` の適用条件を狭めない。
+G4d4a が性質別の typing 細分類を追加しても、`E-TYP-001` の適用条件を狭めない。
+
+`E-TYP-001` を立てる分岐は `infer` の catch-all だけではなく、枝の形の検査と binding-mode の既定にもある。
+
+現行の `G2m` には、そのいずれへも到達する入力が無い。
+
+この行を registry へ置くのは、producer に未分類時の明示分岐があり、`G2m` を拡張したときに実際に返りうるためである。
+
+§7 の「production が返しうる診断だけを載せる」は、現在の入力集合での到達性ではなく、producer に分岐があることを指す。
 
 `E-TYP-001` の title と message は文言を変更できるが、細分類できない型検査失敗を受けるという条件は変更しない。
 
@@ -228,11 +244,11 @@ origins が adapter を挟むのは、§1 が定めるとおり Diagnostic IR �
 
 typing も同じ層の分担に揃え、判定 API と診断 API を分ける。
 
-typing の primary-span は入力 Core 項の根の span である。
+typing の primary-span は棄却の判断を下した節点の span である。
 
-`core-type-of` は判定へ入る前に投影を行い、その下の型推論は棄却した部分項を持たない失敗値を返すため、根より深い節点を指せない。
+入口検査だけが投影した形を見て、走査は spanful な節点を受け取る。
 
-`E-TYP-001` は §11 が定める恒久の粗い受け皿であり、部分項を指す改修は細分類と同じサイクルで行う。
+`E-TYP-001` は細分類の key を割り当てられない棄却を受ける。
 
 origins の primary-span は根ではなく `(forged <subject>)` の `subject` の span である。
 

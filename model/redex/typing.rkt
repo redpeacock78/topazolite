@@ -995,7 +995,9 @@
          (and actual-row (row=? actual-row row)))))
 
 (define (config-ok? configuration callables expected row)
-  ;; config-ok? の別集合も entry-violation の検査追加時に同期する。
+  ;; 検査集合は entry-violation（判定 API と診断 API の入口）と揃える。
+  ;; ここは G2m config を見る別の入口であり、places を heap から導出するため
+  ;; entry-violation をそのまま呼べない。あちらへ検査を足すときは同時に直す。
   (and (redex-match? G2m config configuration)
        (core-types-normal? configuration)
        (valid-callables? callables)

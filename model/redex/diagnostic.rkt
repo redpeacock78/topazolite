@@ -123,7 +123,7 @@
     ("E-DAT-007" non-exhaustive-eliminate "Eliminate が構築子を尽くしていない")
     ("E-DAT-008" unknown-constructor "data 型に無い構築子である")
     ("E-DAT-009" unknown-data-type "schema に無い data 型である")
-    ("E-EFF-004" effectful-curry-operand "Curry の被演算子が効果を残す")
+    ("E-EFF-004" effectful-curry-operand "CurryVal の被演算子が効果を残す")
     ("E-EFF-005" undeclared-function-effect "関数が宣言していない効果を残す")
     ("E-OWN-011" drop-non-owned "Drop の対象が owned でない")
     ("E-OWN-012" move-non-owned "Move の対象が owned でない")

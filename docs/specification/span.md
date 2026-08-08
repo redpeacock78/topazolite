@@ -264,8 +264,9 @@ elab の返り値の形は変えない。
 どの層が拒否するかを、head の検査と深い検査の 2 段として定める。
 
 項を受け取る関数は spanful な項と spanless な項の両方を受理する。
-判定に span を使わない関数は、投影を通してから既存の走査へ渡す。
-`core-types-normal?`、`core-type-of`、`core-check-row`、`classify`、`lower/with-matrix`、`lower-value` はこの形である。
+typing の `core-type-of` と `core-check-row` は、入口検査のために一度だけ投影し、走査は spanful な項のまま行う。
+`core-types-normal?` と `classify` は、入口で投影した spanless な項を走査する。
+lowering の `lower/with-matrix` と `lower-value` は、入口で一度だけ投影し、spanless な形で走査する。
 `core-check` は `core-check-row` へ、`lower` は `lower/with-matrix` へ委譲するため、投影を重ねて置かない。
 投影は文法照合より前に置く。
 spanful な項は G2m の `c` に属さないため、後に置くと判定へ届く前に不受理へ落ちる。
