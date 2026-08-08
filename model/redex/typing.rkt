@@ -127,7 +127,8 @@
 
 (define (check-construct constructor fields data-type
                          environment places callables)
-  (define schema (constructor-schema data-type))
+  (define actual-type (peel-ty data-type))
+  (define schema (constructor-schema actual-type))
   (define field-types (and schema (lookup schema constructor)))
   (and field-types
        (not (ormap owned-type? field-types))
@@ -140,7 +141,7 @@
   (define expected-constructors (and schema (map first schema)))
   (define actual-constructors
     (for/list ([branch (in-list branches)])
-      (match branch
+      (match (peel-branch branch)
         [`(,constructor (,parameters ...) -> ,_) constructor]
         [_ #f])))
   (and schema
@@ -151,19 +152,19 @@
                  (member constructor actual-constructors))
                expected-constructors)
        (for/and ([branch (in-list branches)])
-         (match branch
+         (match (peel-branch branch)
            [`(,constructor (,parameters ...) -> ,_)
             (define field-types (lookup schema constructor))
             (and field-types
                  (= (length parameters) (length field-types))
-                 (not (check-duplicates parameters)))]
+                 (not (check-duplicates (map peel-bind parameters))))]
            [_ #f]))
        (for/list ([branch (in-list branches)])
          (match-define `(,constructor (,parameters ...) -> ,body)
-           branch)
+           (peel-branch branch))
          (list body
                (extend environment
-                       parameters
+                       (map peel-bind parameters)
                        (lookup schema constructor))))))
 
 (define (check-eliminate scrutinee branches expected
@@ -460,25 +461,28 @@
 ;; 型付けを連なりの全体で見るため、節の側では再帰しない。
 (define (peel-discharge core)
   (let loop ([core core] [propositions '()])
-    (match core
-      [`(Discharge (ProofRep ,_ ,phi) ,inner)
-       (loop inner (cons phi propositions))]
+    (match (peel-node core)
+      [`(Discharge ,proof-rep ,inner)
+       (match (peel-node proof-rep)
+         [`(ProofRep ,_ ,phi)
+          (loop inner (cons phi propositions))]
+         [_ (values (reverse propositions) core)])]
       [_ (values (reverse propositions) core)])))
 
 (define (infer core environment places callables)
-  (match core
+  (match (peel-node core)
     [(? integer?) (list 'Int '())]
     [(? string?) (list 'String '())]
     ['unit (list 'Unit '())]
 
     [`(Lam ,_ ,callable (,parameters ...) ,body)
-     (infer-lam callable parameters body
+     (infer-lam callable (map peel-bind parameters) body
                 environment places callables)]
 
     [`(PrimVal ,_ ,name)
      (match (assoc name Γ0)
        [(list _ (list type canonical-value))
-        (and (equal? canonical-value core)
+        (and (equal? canonical-value (peel-node core))
              (list type '()))]
        [_ #f])]
 
@@ -501,7 +505,8 @@
        [_ #f])]
 
     [`(RecurVal ,callable ,function (,parameters ...) ,body)
-     (infer-recur-value callable function parameters body
+     (infer-recur-value callable (peel-bind function)
+                        (map peel-bind parameters) body
                         environment places callables)]
 
     [`(TypeRep ,_ ,_ ,kind)
@@ -514,14 +519,19 @@
      (define row
        (check-construct constructor fields data-type
                         environment places callables))
-     (and row (list data-type row))]
+     (and row (list (peel-ty data-type) row))]
 
     [`(resource ,_) (list '(Owned Res) '())]
 
     [`(Rec (,fields ...))
-     (and (field-row-unique? fields)
+     (define plain-fields
+       (for/list ([field (in-list fields)])
+         (list (peel-lbl (first field))
+               (second field)
+               (third field))))
+     (and (field-row-unique? plain-fields)
           (let ([results
-                 (for/list ([field (in-list fields)])
+                 (for/list ([field (in-list plain-fields)])
                    (infer (third field) environment places callables))])
             (and (andmap identity results)
                  (not (ormap (lambda (result)
@@ -529,7 +539,7 @@
                              results))
                  (list
                   `(Record
-                    ,(for/list ([field (in-list fields)]
+                    ,(for/list ([field (in-list plain-fields)]
                                 [result (in-list results)])
                        `(,(first field) ,(first result) ,(second field))))
                   (rows-union (map second results))))))]
@@ -545,17 +555,20 @@
 
     ;; RFN-001: 検証済みの値。witness の命題を型へ持ち上げる。発行者が正当か
     ;; どうかは成果物検証（verify-origins）の担当であり、ここでは見ない。
-    [`(RVal (ProofRep ,_ ,proposition) ,value)
-     (match (infer value environment places callables)
-       [(list value-type value-row)
-        (and (owned-free? value-type)
-             (list `(Refined ,value-type ,proposition) value-row))]
+    [`(RVal ,proof-rep ,value)
+     (match (peel-node proof-rep)
+       [`(ProofRep ,_ ,proposition)
+        (match (infer value environment places callables)
+          [(list value-type value-row)
+           (and (owned-free? value-type)
+                (list `(Refined ,value-type ,proposition) value-row))]
+          [_ #f])]
        [_ #f])]
 
     [`(Proj ,record ,label)
      (match (infer record environment places callables)
        [(list `(Record ,row) record-row)
-        (match (field-row-lookup row label)
+        (match (field-row-lookup row (peel-lbl label))
           [(list field-type _) (list field-type record-row)]
           [_ #f])]
        [_ #f])]
@@ -577,14 +590,14 @@
                             (list latent-row)))))]
        [_ #f])]
 
-    [`(Discharge (ProofRep ,_ ,_) ,_)
+    [`(Discharge ,_ ,_)
      ;; 包み先を直接の Apply に限る形は採れない。複数義務では外側の Discharge
      ;; の包み先が Discharge になり、生成する形を自分で拒否してしまう。
      ;; 素通しの規則も採れない。当該の Apply と無関係な正当な ProofRep を手書き
      ;; で包んだ項が検証を通る。PRF-004 が要求するのは選択した Proof の
      ;; provenance であるから、φ 列と義務列の対応をここで固定する。
      (define-values (propositions base) (peel-discharge core))
-     (match base
+     (match (peel-node base)
        [`(Apply ,function ,_ ...)
         (match (infer function environment places callables)
           [(list `(NFn ,_ ,_ ,_ ,obligations) _)
@@ -598,11 +611,12 @@
        [_ #f])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
-     (match (binding-context binding-mode type bound
+     (match (binding-context binding-mode (peel-ty type) bound
                              environment places callables)
        [(list bound-row binding-type)
         (match (infer body
-                      (extend environment (list name) (list binding-type))
+                      (extend environment (list (peel-bind name))
+                              (list binding-type))
                       places
                       callables)
           [(list body-type body-row)
@@ -612,10 +626,12 @@
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-row
-       (check-as bound type environment places callables))
+       (check-as bound (peel-ty type) environment places callables))
      (and bound-row
           (match (infer body
-                        (extend environment (list name) (list type))
+                        (extend environment
+                                (list (peel-bind name))
+                                (list (peel-ty type)))
                         places
                         callables)
             [(list body-type body-row)
@@ -627,30 +643,32 @@
                       environment places callables)]
 
     [`(Perform (Return ,boundary ,type) ,argument)
+     (define type* (peel-ty type))
      (define argument-row
-       (check-as argument type environment places callables))
+       (check-as argument type* environment places callables))
      (and argument-row
           (list 'Never
                 (row-union argument-row
-                           `((Return ,boundary ,type)))))]
+                           `((Return ,boundary ,type*)))))]
 
     [`(Handle (Return ,boundary ,type)
               (,name -> ,handler)
               ,body)
+     (define type* (peel-ty type))
      (define body-row
-       (check-as body type environment places callables))
+       (check-as body type* environment places callables))
      (define handler-row
        (check-as handler
-                 type
-                 (extend environment (list name) (list type))
+                 type*
+                 (extend environment (list (peel-bind name)) (list type*))
                  places
                  callables))
      (and body-row
           handler-row
-          (list type
+          (list type*
                 (row-union
                  (row-difference body-row
-                                 `((Return ,boundary ,type)))
+                                 `((Return ,boundary ,type*)))
                  handler-row)))]
 
     [`(Scope (,managed-places ...) ,body)
@@ -660,7 +678,10 @@
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
-       (recur-context callable function parameters body
+       (recur-context callable
+                      (peel-bind function)
+                      (map peel-bind parameters)
+                      body
                       environment places callables))
      (and continuation-environment
           (infer continuation
@@ -738,9 +759,9 @@
     [_ #f]))
 
 (define (check-as core expected environment places callables)
-  (match core
+  (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
-     (and (type-equiv? data-type expected)
+     (and (type-equiv? (peel-ty data-type) expected)
           (check-construct constructor fields data-type
                            environment places callables))]
 
@@ -750,13 +771,14 @@
           '())]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
-     (match (binding-context binding-mode type bound
+     (match (binding-context binding-mode (peel-ty type) bound
                              environment places callables)
        [(list bound-row binding-type)
         (define body-row
           (check-as body
                     expected
-                    (extend environment (list name) (list binding-type))
+                    (extend environment (list (peel-bind name))
+                            (list binding-type))
                     places
                     callables))
         (and body-row (row-union bound-row body-row))]
@@ -764,11 +786,13 @@
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-row
-       (check-as bound type environment places callables))
+       (check-as bound (peel-ty type) environment places callables))
      (define body-row
        (check-as body
                  expected
-                 (extend environment (list name) (list type))
+                 (extend environment
+                         (list (peel-bind name))
+                         (list (peel-ty type)))
                  places
                  callables))
      (and bound-row body-row (row-union bound-row body-row))]
@@ -784,7 +808,10 @@
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
-       (recur-context callable function parameters body
+       (recur-context callable
+                      (peel-bind function)
+                      (map peel-bind parameters)
+                      body
                       environment places callables))
      (and continuation-environment
           (check-as continuation
@@ -827,7 +854,7 @@
            (valid-environment? environment)
            (valid-places? places)
            (valid-callables? callables))
-      (match (infer core environment places callables)
+      (match (infer core-in environment places callables)
         [(list type row)
          (define normalized (normalize-type type))
          (if normalized (list normalized row) 'ill-typed)]
@@ -856,7 +883,7 @@
        (valid-places? places)
        (valid-callables? callables)
        (type? expected)
-       (check-as core expected environment places callables)))
+       (check-as core-in expected environment places callables)))
 
 (define (core-check core places callables expected row [environment '()])
   (and (row? row)
