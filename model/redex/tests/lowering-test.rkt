@@ -459,7 +459,7 @@
 
 ;;; spec §25 第 2 群。producer の key 集合と registry の lowering 行を突き合わせる。
 
-;; lowering.rkt の 11 箇所の fail が渡す key。registry の射影ではなく
+;; lowering.rkt の 12 箇所の fail が渡す key。registry の射影ではなく
 ;; producer 側の literal であり、これが registry と食い違えば落ちる。
 (define lowering-producer-keys
   '(kernel-primitive
@@ -479,7 +479,7 @@
   (check-equal? (sort lowering-producer-keys symbol<?)
                 (sort (map first diagnostic-ids) symbol<?)))
 
-;;; spec §25 第 3 群。§20 の 11 地点それぞれへ到達する入力を 1 件ずつ置く。
+;;; spec §25 第 3 群。§20 の 12 地点それぞれへ到達する入力を 1 件ずつ置く。
 ;;; 行は (mode key 入力項 期待 span) である。mode は入口の選び方を表す。
 ;;; 'core は lower、'value は lower-value、'seam は差し替えた表を通す。
 
@@ -534,7 +534,7 @@
                      (#:lit 1 (#:span src 10 11))
                      (((#:span src 20 28) Bogus)))
          '(#:span src 20 28))
-   ;; 10. lower-core の catch-all。Handle の handler の形が h でない。
+   ;; 10. Handle の handler 節の内側の fail。handler の形が h でない。
    (list 'core 'unknown-core-form
          `(Handle (#:span src 0 40)
                   (Return io (#:ty Int (#:span src 10 13)))
@@ -544,7 +544,14 @@
    ;; 11. lower-val の catch-all。UVal は内側を持たない形にして値の表で落とす。
    (list 'value 'unknown-core-form
          `(UVal (#:span src 0 12))
-         '(#:span src 0 12))))
+         '(#:span src 0 12))
+   ;; 12. lower-core の catch-all。頭は対応表にあるが節の形が合わない。
+   (list 'core 'unknown-core-form
+         `(Perform (#:span src 0 10)
+                   (#:lit 1 (#:span src 4 5))
+                   (#:lit 2 (#:span src 6 7))
+                   (#:lit 3 (#:span src 8 9)))
+         '(#:span src 0 10))))
 
 ;; 行の mode ごとに入口を選び、(観測 key 観測 span) を返す。
 (define (observe-node-case mode key term)
@@ -568,7 +575,7 @@
 (define (expected-key mode key)
   (if (eq? mode 'seam) key (diagnostic-code-of 'lowering key)))
 
-(test-case "11 箇所の fail はそれぞれ棄却した節点の span を返す"
+(test-case "12 箇所の fail はそれぞれ棄却した節点の span を返す"
   (for ([row (in-list node-cases)])
     (define mode (first row))
     (define key (second row))
@@ -578,12 +585,12 @@
                   (list (expected-key mode key) span)
                   (format "node-case: ~a ~a" mode key))))
 
-(test-case "表は 11 行あり unknown-core-form が 7 行を占める"
+(test-case "表は 12 行あり unknown-core-form が 8 行を占める"
   ;; 地点ごとの取り違えを検出するため、行数と key の内訳を固定する。
-  (check-equal? (length node-cases) 11)
+  (check-equal? (length node-cases) 12)
   (check-equal? (length (filter (lambda (row) (eq? (second row) 'unknown-core-form))
                                 node-cases))
-                7))
+                8))
 
 ;;; spec §25 第 4 群。公開 API の返り値の形を固定する。
 
