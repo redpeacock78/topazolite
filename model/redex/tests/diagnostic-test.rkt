@@ -228,6 +228,32 @@
    (check-false (diagnostic-valid? broken)
                 (format "棄却するはずの chain である: ~s" chain))))
 
+;; test 15d
+(test-case
+ "検証器は backend の値域を検査する"
+ (define d (base-diagnostic))
+ (check-false (diagnostic-backend d))
+ (for ([good (in-list '(racket-cs racketscript #f))])
+   (check-equal? (diagnostic-schema-errors (struct-copy diagnostic d [backend good]))
+                 '()
+                 (format "通るはずの backend である: ~s" good)))
+ (for ([bad (in-list '(node "racket-cs" chez))])
+   (check-false (diagnostic-valid? (struct-copy diagnostic d [backend bad]))
+                (format "棄却するはずの backend である: ~s" bad))))
+
+;; test 15e
+(test-case
+ "diagnostic-of は phase と backend の対応に反する呼出しを error にする"
+ (check-exn exn:fail?
+            (lambda ()
+              (diagnostic-of 'lowering 'unknown-core-form
+                             #:primary-span '(#:span src 0 4))))
+ (check-exn exn:fail?
+            (lambda ()
+              (diagnostic-of 'typing 'ill-typed
+                             #:primary-span '(#:span src 0 4)
+                             #:backend 'racket-cs))))
+
 ;; test 6
 (test-case
  "凍結 fixture v1 の全 (code phase key) が現在の registry にある"

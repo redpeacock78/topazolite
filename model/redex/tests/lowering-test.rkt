@@ -621,6 +621,14 @@
   (check-equal? (diagnostic-source-chain result)
                 (list (list 'surface 'verbatim '(#:span src 0 18)))))
 
+;; lowering の Diagnostic は backend を持つ（spec §8、§15）
+(test-case "lowering の Diagnostic は backend を持ち他の phase は #f である"
+  (define bad-term `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name))
+  (define-values (status result) (lower bad-term 'racket-cs))
+  (check-eq? (diagnostic-backend result) 'racket-cs)
+  (define-values (v-status v-result) (lower-value bad-term 'racketscript))
+  (check-eq? (diagnostic-backend v-result) 'racketscript))
+
 ;;; spec §25 第 5 群。spanless 入力の退化を明示の回帰として固定する。
 
 (test-case "spanless な入力では primary-span が synthetic へ落ちる"

@@ -313,14 +313,15 @@
 ;; 残す（diagnostic.md §7）。
 ;; spec §22: primary-span は運ばれた節点から作る。span の算出をこの 1 箇所へ
 ;; 寄せるため、呼び出し側は entry-span を書かない。
-;; reason 文字列は found へ入れる。backend は schema version 1 に欄が無いので
-;; 運ばない（spec §26）。
+;; reason 文字列は found へ入れる。backend は schema version 2 の欄へ入れる
+;; （spec §8）。
 (define (capability->diagnostic capability)
   (diagnostic-of 'lowering
                  (capability-diagnostic-feature-id capability)
                  #:primary-span
                  (entry-span (capability-diagnostic-node capability))
-                 #:found (capability-diagnostic-reason capability)))
+                 #:found (capability-diagnostic-reason capability)
+                 #:backend (capability-diagnostic-backend capability)))
 
 ;; production の入口。正典表を既定で使い、表を引数に取らない
 ;; （backend-matrix.md §5）。

@@ -72,3 +72,8 @@
   (check-eq? (second (first (diagnostic-source-chain s))) 'synthetic-span)
   (check-equal? (third (first (diagnostic-source-chain s)))
                 (diagnostic-primary-span s)))
+
+;; lowering 以外の phase の backend は #f である（spec §8）
+(test-case "typing の Diagnostic は backend を持たない"
+  (check-false (diagnostic-backend
+                (core-type-of/diagnostic (term x) empty empty))))

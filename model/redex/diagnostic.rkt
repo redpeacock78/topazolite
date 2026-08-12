@@ -198,17 +198,18 @@
 
 ;; Diagnostic の欄の形に付ける版。欄の追加、削除、欄が受け付ける形の変更で
 ;; 上げる。code 集合に付ける diagnostic-registry-version とは別物である。
-;; G4e が source-chain へ要素形を与えたため 2 になる。
+;; G4e が source-chain へ要素形を与え backend 欄を足したため 2 になる。
 (define diagnostic-schema-version 2)
 
-;; ホワイトペーパー §13.4 の 17 欄。originChain[] は source-chain に当たる。
+;; ホワイトペーパー §13.4 の17欄に、G4e が backend を足した18欄である。
 (struct diagnostic
   (id severity category title message
    primary-span secondary-labels notes help
    expected found
    source-chain expansion-trace
    effect-context proof-context
-   related fixes)
+   related fixes
+   backend)
   #:transparent)
 
 ;; category は引数に取らない。2 つの入口から与えると食い違いうるため、
@@ -233,13 +234,15 @@
                          #:effect-context [effect-context #f]
                          #:proof-context [proof-context #f]
                          #:related [related '()]
-                         #:fixes [fixes '()])
+                         #:fixes [fixes '()]
+                         #:backend [backend #f])
   (diagnostic id severity (category-of id) title message
               primary-span secondary-labels notes help
               expected found
               source-chain expansion-trace
               effect-context proof-context
-              related fixes))
+              related fixes
+              backend))
 
 ;; diagnostic.md §12: Diagnostic の生成を phase ごとに 1 箇所へ集約するための
 ;; 共通部分である。registry の引き当てに失敗したら既定の code へ落とさず error に
@@ -257,10 +260,18 @@
                        #:primary-span primary-span
                        #:expected [expected #f]
                        #:found [found #f]
-                       #:source-chain [source-chain #f])
+                       #:source-chain [source-chain #f]
+                       #:backend [backend #f])
   (define code (diagnostic-code-of phase key))
   (unless code
     (error 'diagnostic-of "registry に無い phase と key である: ~s ~s" phase key))
+  ;; spec §10: 検証器は Diagnostic 単体を受けるため phase を知らない。
+  ;; phase と backend の対応はここでしか検査できない。
+  (if (eq? phase 'lowering)
+      (unless (memq backend '(racket-cs racketscript))
+        (error 'diagnostic-of "lowering の診断は backend を要求する: ~s" backend))
+      (when backend
+        (error 'diagnostic-of "~a の診断は backend を取らない: ~s" phase backend)))
   (define row (diagnostic-code-row code))
   (define title (diagnostic-code-title row))
   (make-diagnostic #:id code
@@ -270,7 +281,8 @@
                    #:expected expected
                    #:found found
                    #:source-chain (or source-chain
-                                      (span->source-chain primary-span))))
+                                      (span->source-chain primary-span))
+                   #:backend backend))
 
 (define (non-empty-string? v)
   (and (string? v) (> (string-length v) 0)))
@@ -333,6 +345,8 @@
           "help は空でない文字列の list でなければならない")
    (check (source-chain-ok? (diagnostic-source-chain d))
           "source-chain は surface で始まる frame の空でない list でなければならない")
+   (check (memq (diagnostic-backend d) '(racket-cs racketscript #f))
+          "backend は racket-cs、racketscript、#f のいずれかでなければならない")
    (check (null? (diagnostic-expansion-trace d))
           "schema version 2 は expansion-trace へ空を要求する")
    (check (null? (diagnostic-related d))
