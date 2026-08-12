@@ -59,3 +59,9 @@
   (define subject `(PrimVal (Reserved o-add) sub))
   (check-equal? (term (verify-origins ,R0 ,subject)) `(forged ,subject))
   (check-equal? (term (verify-initial-origins ,R0 ,subject)) `(forged ,subject)))
+
+(test-case "origins の source-chain は長さ 1 の surface frame である"
+  (define subject `(PrimVal (#:span src 4 7) (Reserved o-add) sub))
+  (define d (verify-origins/diagnostic R0 subject))
+  (check-equal? (diagnostic-source-chain d)
+                (list (list 'surface 'verbatim '(#:span src 4 7)))))

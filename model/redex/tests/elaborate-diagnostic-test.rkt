@@ -74,3 +74,20 @@
                (diagnostic-code-of 'elaborate 'invalid-proposition))
  (check-equal? (diagnostic-primary-span d) ty-span)
  (check-equal? (diagnostic-found d) '(Prop no-such-validator)))
+
+(test-case
+ "elaborate の source-chain は長さ 1 で sourceId が kind を決める"
+ (define let-span '(#:span src 0 20))
+ (define lit-span '(#:span src 12 13))
+ (define spanful
+   `(Let ,let-span ((#:bind x ,let-span) let (#:ty Bool ,let-span))
+         (#:lit 1 ,lit-span)
+         (#:var x ,let-span)))
+ (define d (elab-diagnostic spanful))
+ (check-equal? (diagnostic-source-chain d)
+               (list (list 'surface 'verbatim let-span)))
+ (define s (elab-diagnostic 'no-such-variable))
+ (check-equal? (diagnostic-primary-span s) '(#:span #:synthetic 0 0))
+ (check-equal? (diagnostic-source-chain s)
+               (list (list 'surface 'synthetic-span
+                           '(#:span #:synthetic 0 0)))))

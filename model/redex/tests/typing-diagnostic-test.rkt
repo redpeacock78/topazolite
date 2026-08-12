@@ -60,3 +60,15 @@
   (define d (core-type-of/diagnostic 1 empty 'not-a-table))
   (check-equal? (diagnostic-id d) "E-TYP-018")
   (check-equal? (diagnostic-found d) 'not-a-table))
+
+(test-case "typing の source-chain は sourceId で kind を分ける"
+  (define d (core-type-of/diagnostic '(#:var x (#:span src 5 9))
+                                     empty
+                                     empty))
+  (check-equal? (diagnostic-source-chain d)
+                (list (list 'surface 'verbatim '(#:span src 5 9))))
+  (define s (core-type-of/diagnostic (term x) empty empty))
+  (check-equal? (length (diagnostic-source-chain s)) 1)
+  (check-eq? (second (first (diagnostic-source-chain s))) 'synthetic-span)
+  (check-equal? (third (first (diagnostic-source-chain s)))
+                (diagnostic-primary-span s)))

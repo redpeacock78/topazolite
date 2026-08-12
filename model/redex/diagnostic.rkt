@@ -13,7 +13,8 @@
          diagnostic-valid?
          diagnostic-schema-errors)
 
-(require "span-core.rkt")
+(require racket/match
+         "span-core.rkt")
 
 ;; error code の書式。ホワイトペーパー §13.4 の error[E-RET-003] を継承する。
 (define diagnostic-code-rx #px"^E-[A-Z]{3}-[0-9]{3}$")
@@ -197,15 +198,15 @@
 
 ;; Diagnostic の欄の形に付ける版。欄の追加、削除、欄が受け付ける形の変更で
 ;; 上げる。code 集合に付ける diagnostic-registry-version とは別物である。
-;; G4e が origin-chain を空要求から origin の列へ変えるとき 2 になる。
-(define diagnostic-schema-version 1)
+;; G4e が source-chain へ要素形を与えたため 2 になる。
+(define diagnostic-schema-version 2)
 
-;; ホワイトペーパー §13.4 の 17 欄。
+;; ホワイトペーパー §13.4 の 17 欄。originChain[] は source-chain に当たる。
 (struct diagnostic
   (id severity category title message
    primary-span secondary-labels notes help
    expected found
-   origin-chain expansion-trace
+   source-chain expansion-trace
    effect-context proof-context
    related fixes)
   #:transparent)
@@ -227,7 +228,7 @@
                          #:help [help '()]
                          #:expected [expected #f]
                          #:found [found #f]
-                         #:origin-chain [origin-chain '()]
+                         #:source-chain source-chain
                          #:expansion-trace [expansion-trace '()]
                          #:effect-context [effect-context #f]
                          #:proof-context [proof-context #f]
@@ -236,7 +237,7 @@
   (diagnostic id severity (category-of id) title message
               primary-span secondary-labels notes help
               expected found
-              origin-chain expansion-trace
+              source-chain expansion-trace
               effect-context proof-context
               related fixes))
 
@@ -245,10 +246,18 @@
 ;; する。落とすと registry へ行を足し忘れたまま診断が出てしまう。
 ;; message へ title を入れるのは Phase 0 の暫定であり、文案との書き分けは G4f が
 ;; 定める。ここへ寄せておけば G4f の変更は 1 箇所で済む。
+(define (span->source-chain span)
+  (define kind
+    (match span
+      [(list '#:span '#:synthetic _ _) 'synthetic-span]
+      [_ 'verbatim]))
+  (list (list 'surface kind span)))
+
 (define (diagnostic-of phase key
                        #:primary-span primary-span
                        #:expected [expected #f]
-                       #:found [found #f])
+                       #:found [found #f]
+                       #:source-chain [source-chain #f])
   (define code (diagnostic-code-of phase key))
   (unless code
     (error 'diagnostic-of "registry に無い phase と key である: ~s ~s" phase key))
@@ -259,7 +268,9 @@
                    #:message title
                    #:primary-span primary-span
                    #:expected expected
-                   #:found found))
+                   #:found found
+                   #:source-chain (or source-chain
+                                      (span->source-chain primary-span))))
 
 (define (non-empty-string? v)
   (and (string? v) (> (string-length v) 0)))
@@ -274,8 +285,25 @@
 ;; expected、found、effect-context、proof-context は形を検査しない。
 ;; phase ごとに入る値の種類が違い、共通の述語を置くと phase を跨ぐたびに
 ;; 緩めることになるためである。
-;; origin-chain、expansion-trace、related、fixes は schema version 1 では
-;; 空を要求する。要素形を定めるサイクルが版を上げる。
+;; expansion-trace、related、fixes は schema version 2 でも空を要求する。
+;; source-chain は spec §4 の frame の空でない list を要求する。
+(define (source-frame-ok? v)
+  (and (list? v)
+       (= (length v) 3)
+       (memq (first v) '(surface elaborate))
+       (memq (second v) '(verbatim synthesized synthetic-span))
+       (span-ok? (third v))
+       #t))
+
+(define (source-chain-ok? v)
+  (and (list? v)
+       (pair? v)
+       (andmap source-frame-ok? v)
+       (eq? (first (first v)) 'surface)
+       (andmap (lambda (frame)
+                 (eq? (first frame) 'elaborate))
+               (rest v))))
+
 (define (diagnostic-schema-errors d)
   (define (check ok? message) (if ok? '() (list message)))
   (append
@@ -303,14 +331,14 @@
    (check (and (list? (diagnostic-help d))
                (andmap non-empty-string? (diagnostic-help d)))
           "help は空でない文字列の list でなければならない")
-   (check (null? (diagnostic-origin-chain d))
-          "schema version 1 は origin-chain へ空を要求する")
+   (check (source-chain-ok? (diagnostic-source-chain d))
+          "source-chain は surface で始まる frame の空でない list でなければならない")
    (check (null? (diagnostic-expansion-trace d))
-          "schema version 1 は expansion-trace へ空を要求する")
+          "schema version 2 は expansion-trace へ空を要求する")
    (check (null? (diagnostic-related d))
-          "schema version 1 は related へ空を要求する")
+          "schema version 2 は related へ空を要求する")
    (check (null? (diagnostic-fixes d))
-          "schema version 1 は fixes へ空を要求する")))
+          "schema version 2 は fixes へ空を要求する")))
 
 ;; primary-span が最小原因を指すかは判定しない。それは DIA-002 の内容であり、
 ;; G4d1 以降が phase ごとの test で示す。

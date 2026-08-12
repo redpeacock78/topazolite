@@ -89,7 +89,8 @@
   (make-diagnostic #:id "E-TYP-012"
                    #:title "型が期待と一致しない"
                    #:message "Bool を期待したが Int である"
-                   #:primary-span ok-span))
+                   #:primary-span ok-span
+                   #:source-chain (list (list 'surface 'verbatim ok-span))))
 
 ;; test 9
 (test-case
@@ -105,7 +106,8 @@
  (check-false (diagnostic-found d))
  (check-false (diagnostic-effect-context d))
  (check-false (diagnostic-proof-context d))
- (check-equal? (diagnostic-origin-chain d) '())
+ (check-equal? (diagnostic-source-chain d)
+               (list (list 'surface 'verbatim ok-span)))
  (check-equal? (diagnostic-expansion-trace d) '())
  (check-equal? (diagnostic-related d) '())
  (check-equal? (diagnostic-fixes d) '()))
@@ -144,8 +146,8 @@
 
 ;; test 12
 (test-case
- "schema version は 1、registry version は 2 である"
- (check-equal? diagnostic-schema-version 1)
+ "schema version は 2、registry version は 2 である"
+ (check-equal? diagnostic-schema-version 2)
  (check-equal? diagnostic-registry-version 2))
 
 (test-case
@@ -184,14 +186,47 @@
 
 ;; test 15
 (test-case
- "schema version 1 は 4 欄へ空を要求する"
+ "schema version 2 は 3 欄へ空を要求する"
  (define d (base-diagnostic))
  (for ([broken (in-list
-                (list (struct-copy diagnostic d [origin-chain (list 'o)])
-                      (struct-copy diagnostic d [expansion-trace (list 'e)])
+                (list (struct-copy diagnostic d [expansion-trace (list 'e)])
                       (struct-copy diagnostic d [related (list d)])
                       (struct-copy diagnostic d [fixes (list 'f)])))])
    (check-false (diagnostic-valid? broken))))
+
+;; test 15b
+(test-case
+ "検証器は妥当な source-chain を通す"
+ (define d (base-diagnostic))
+ (for ([chain (in-list
+               (list (list (list 'surface 'verbatim ok-span))
+                     (list (list 'surface 'synthetic-span ok-span))
+                     (list (list 'surface 'synthesized ok-span))
+                     (list (list 'surface 'verbatim ok-span)
+                           (list 'elaborate 'synthesized other-span))))])
+   (define good (struct-copy diagnostic d [source-chain chain]))
+   (check-equal? (diagnostic-schema-errors good) '()
+                 (format "通るはずの chain である: ~s" chain))))
+
+;; test 15c
+(test-case
+ "検証器は不正な source-chain を棄却する"
+ (define d (base-diagnostic))
+ (for ([chain (in-list
+               (list '()
+                     (list (list 'elaborate 'synthesized ok-span))
+                     (list (list 'surface 'verbatim ok-span)
+                           (list 'surface 'verbatim other-span))
+                     (list (list 'surface 'verbatim ok-span)
+                           (list 'elaborate 'synthesized other-span)
+                           (list 'surface 'verbatim ok-span))
+                     (list (list 'surface 'verbatim))
+                     (list (list 'surface 'bogus ok-span))
+                     (list (list 'surface 'verbatim '(#:span src 7 3)))
+                     'not-a-list))])
+   (define broken (struct-copy diagnostic d [source-chain chain]))
+   (check-false (diagnostic-valid? broken)
+                (format "棄却するはずの chain である: ~s" chain))))
 
 ;; test 6
 (test-case

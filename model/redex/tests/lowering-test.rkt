@@ -614,6 +614,13 @@
   (check-true (capability-diagnostic? seam-result))
   (check-eq? (capability-diagnostic-backend seam-result) 'racket-cs))
 
+(test-case "lowering の source-chain は長さ 1 の surface frame である"
+  (define bad-term `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name))
+  (define-values (status result) (lower bad-term 'racket-cs))
+  (check-eq? status 'capability)
+  (check-equal? (diagnostic-source-chain result)
+                (list (list 'surface 'verbatim '(#:span src 0 18)))))
+
 ;;; spec §25 第 5 群。spanless 入力の退化を明示の回帰として固定する。
 
 (test-case "spanless な入力では primary-span が synthetic へ落ちる"
