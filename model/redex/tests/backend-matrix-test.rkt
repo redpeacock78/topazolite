@@ -111,11 +111,14 @@
  (check-eq? (feature-support 'kernel-primitive 'racketscript) 'unsupported))
 
 (test-case
- "capability-diagnostic carries the feature id, backend, and reason"
+ "capability-diagnostic carries the feature id, backend, node, and reason"
  (define diagnostic
-   (capability-diagnostic 'kernel-primitive 'racket-cs "test"))
+   (capability-diagnostic 'kernel-primitive 'racket-cs
+                         '(PrimVal (#:span src 0 4) User f) "test"))
  (check-eq? (capability-diagnostic-feature-id diagnostic) 'kernel-primitive)
  (check-eq? (capability-diagnostic-backend diagnostic) 'racket-cs)
+ (check-equal? (capability-diagnostic-node diagnostic)
+               '(PrimVal (#:span src 0 4) User f))
  (check-equal? (capability-diagnostic-reason diagnostic) "test"))
 
 (test-case

@@ -363,18 +363,21 @@
  (check-equal? (diagnostic-id result) "E-LOW-001"))
 
 (test-case
- "lowering の primary-span は入力項の根である"
- ;; spec §12。投影前の根から取る。span を持たない入力では synthetic へ落ちる。
- ;; 棄却されるのは Frobnicate のような Core の外の形ではなく、正典表で
- ;; unsupported な kernel primitive である。前者は spanful な形として
- ;; erase-core を通せない。
+ "lowering の primary-span は棄却した節点である"
+ ;; spec §17 完了条件 1。根ではなく内側の節点を指す。
  (define name (first (first kernel-gamma0-entries)))
- (define spanful
-   `(PrimVal (#:span src 0 20) (Reserved o-kernel) ,name))
- (define diagnostic (lower-diagnostic spanful))
- (check-equal? (diagnostic-primary-span diagnostic) '(#:span src 0 20))
- (define spanless (lower-diagnostic '(Frobnicate 1)))
- (check-equal? (diagnostic-primary-span spanless) '(#:span #:synthetic 0 0)))
+ (define nested
+   `(Drop (#:span src 0 40)
+          (Drop (#:span src 5 35)
+                (PrimVal (#:span src 10 30) (Reserved o-kernel) ,name))))
+ (check-equal? (diagnostic-primary-span (lower-diagnostic nested))
+               '(#:span src 10 30))
+ ;; 同じ span を持つ節点が複数現れても、棄却した節点の span を返す。
+ (define shared
+   `(Drop (#:span src 0 20)
+          (PrimVal (#:span src 0 20) (Reserved o-kernel) ,name)))
+ (check-equal? (diagnostic-primary-span (lower-diagnostic shared))
+               '(#:span src 0 20)))
 
 (test-case
  "the diagnostic roster is exactly the set the fixtures produce"

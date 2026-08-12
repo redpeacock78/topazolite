@@ -17,7 +17,9 @@
          check-tables!/matrix)
 
 ;; 非対応 feature に当たったときに lower が返す値。近似的な写しは出さない。
-(struct capability-diagnostic (feature-id backend reason) #:transparent)
+;; spec §22: node は棄却した節点そのものであり span ではない。span の算出は
+;; lower と lower-value の側へ寄せる。
+(struct capability-diagnostic (feature-id backend node reason) #:transparent)
 
 ;; feature 正典表。列は
 ;;   (feature-id racket-cs racketscript shim semantic-test note)

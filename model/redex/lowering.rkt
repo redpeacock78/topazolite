@@ -87,8 +87,9 @@
 ;; 構文の上で作れない。
 (define (with-diagnostics backend proc)
   (let/ec escape
-    (define (fail feature-id reason)
-      (escape 'capability (capability-diagnostic feature-id backend reason)))
+    ;; spec §20: key を先頭へ置く並びは typing.rkt の fail と揃える。
+    (define (fail feature-id node reason)
+      (escape 'capability (capability-diagnostic feature-id backend node reason)))
     (values 'ok (proc fail))))
 
 ;; 形の頭シンボル。変数と literal は頭を持たないので擬似的な頭を返す。unit は
@@ -116,32 +117,37 @@
 (define (make-lowering backend matrix fail)
   ;; 形の feature を引き、backend が非対応なら診断へ脱出する。対応表に無い頭
   ;; シンボルは unknown-core-form で閉じる（backend-matrix.md §8）。
-  (define (require-feature-id! feature-id)
+  (define (require-feature-id! feature-id node)
     (when (eq? (feature-support/matrix matrix feature-id backend) 'unsupported)
-      (fail feature-id
+      (fail feature-id node
             (format "feature ~a は backend ~a で非対応である"
                     feature-id backend))))
 
   ;; spec §21: core-head は (car core) が記号であることを見るが、(#:var x s) と
   ;; (#:lit l s) の head は keyword である。剥がしてから頭を読む。
   (define (require-feature! term)
-    (define feature-id (core-form-feature (core-head (peel-node term))))
+    (define head (core-head (peel-node term)))
+    (define feature-id (core-form-feature head))
     (unless feature-id
-      (fail 'unknown-core-form
-            (format "対応表に無い Typed Core の形: ~a" (core-head (peel-node term)))))
-    (require-feature-id! feature-id))
+      (fail 'unknown-core-form term
+            (format "対応表に無い Typed Core の形: ~a" head)))
+    (require-feature-id! feature-id term))
 
   ;; op-code。τ でない入力に符号を作らない（backend-matrix.md §5）。
   ;; spec §21: ts は (#:ty τ s) の包みなので剥がしてから照合する。
-  (define (op-code op)
+  ;; spec §20: op 自身は span を持たないため、形の不一致の節点は囲む
+  ;; Perform または Handle を呼び出し側から降ろす。非 τ の節点は τ を包む
+  ;; #:ty の包みである。
+  (define (op-code op node)
     (match op
       [`(Return ,b ,type)
        (define peeled (peel-ty type))
        (unless (redex-match? G2m τ peeled)
-         (fail 'unknown-core-type
+         (fail 'unknown-core-type type
                (format "op-code の入力が Typed Core の τ でない: ~s" peeled)))
        (return-code b peeled)]
       [_ (fail 'unknown-core-form
+               node
                (format "op の形が (Return b τ) でない: ~s" (erase-core op)))]))
 
   ;; prim-body。名前で 3 つに分ける（backend-matrix.md §7）。PrimVal の頭が指す
@@ -150,29 +156,31 @@
   ;; （backend-matrix.md §7）。頭に算術
   ;; の feature を割り当てると、算術を unsupported と宣言したときに kernel と
   ;; trait と acquire の診断まで巻き込んで閉じてしまう。
-  (define (prim-body nm)
+  (define (prim-body nm node)
     (cond
       [(primitive-feature nm)
        => (lambda (feature-id)
-            (require-feature-id! feature-id)
+            (require-feature-id! feature-id node)
             `(PPrim ,(shim nm) ,@(primitive-formals (primitive-arity nm))))]
       [(assq nm kernel-gamma0-entries)
-       (fail 'kernel-primitive
+       (fail 'kernel-primitive node
              (format "Typed Core の kernel primitive は写し先を持たない: ~a" nm))]
       [(assq nm trait-gamma0-entries)
-       (fail 'trait-primitive
+       (fail 'trait-primitive node
              (format "trait primitive は Phase 2 以降の emitter を待つ: ~a" nm))]
       [else
-       (fail 'unknown-core-form (format "Γ0 に無い primitive の名前: ~a" nm))]))
+       (fail 'unknown-core-form node (format "Γ0 に無い primitive の名前: ~a" nm))]))
 
   ;; CurryVal。適用済み引数を penv へ入れ、対応する parameter を列から除く。
   ;; PClosure でない関数側や parameter の尽きた形は well-typed な源項に現れない
   ;; が、lower の全域性のために診断で閉じる。
-  (define (curry-closure function argument)
+  ;; spec §20: function は写し終えた PClosure であり span を持たない。節点には
+  ;; 写す前の source を呼び出し側から降ろす。
+  (define (curry-closure function argument node)
     (match function
       [`(PClosure ,env (,formal ,rest ...) ,body)
        `(PClosure ,(append env (list (list formal argument))) ,rest ,body)]
-      [_ (fail 'unknown-core-form
+      [_ (fail 'unknown-core-form node
                (format "CurryVal の関数側が parameter を持つ PClosure でない: ~s"
                        function))]))
 
@@ -191,7 +199,7 @@
        `(,(tag-code tag)
          ,(map (lambda (formal) (var-code (peel-bind formal))) formals)
          -> ,(lower-core body))]
-      [_ (fail 'unknown-core-form
+      [_ (fail 'unknown-core-form br
                (format "分岐の形が br でない: ~s" (erase-core br)))]))
 
   ;; backend-matrix.md §7 の値の表
@@ -210,10 +218,10 @@
       [`(PrimVal ,_ ,nm)
        ;; primitive の名前を先に検査してから arity を読む。diagnostic で閉じる経路を
        ;; primitive-arity の #f に渡して例外化しないためである。
-       (define body (prim-body nm))
+       (define body (prim-body nm value))
        `(PClosure () ,(primitive-formals (primitive-arity nm)) ,body)]
       [`(CurryVal ,_ ,function ,argument)
-       (curry-closure (lower-val function) (lower-val argument))]
+       (curry-closure (lower-val function) (lower-val argument) function)]
       [`(RecurVal ,_ ,f (,formals ...) ,body)
        (define px-f (var-code (peel-bind f)))
        (define pxs (map (lambda (formal) (var-code (peel-bind formal))) formals))
@@ -229,7 +237,7 @@
                     labels fields))]
       [`(UVal ,inner) `(PTagged uval ,(lower-val inner))]
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
-      [_ (fail 'unknown-core-form (format "lower-value: ~s" (erase-core value)))]))
+      [_ (fail 'unknown-core-form value (format "lower-value: ~s" (erase-core value)))]))
 
   ;; backend-matrix.md §7 の計算の表。v は値の表へ委譲する。
   ;; spec §19: G2m の v は spanless な文法なので、振り分けだけ節点ごとに投影する。
@@ -255,16 +263,16 @@
          [`(Eliminate ,scrutinee (,branches ...))
           `(PMatch ,(lower-core scrutinee) ,(map branch branches))]
          [`(Perform ,op ,argument)
-          `(PEffect ,(op-code op) ,(lower-core argument))]
+          `(PEffect ,(op-code op core) ,(lower-core argument))]
          ;; spec §18: G1+ の h は (s xs -> c) であり span を先頭へ持つため、
          ;; 節点の pattern の中で分解できない。peel-branch で剥がしてから照合する。
          [`(Handle ,op ,handler-clause ,body)
           (match (peel-branch handler-clause)
             [`(,x -> ,handler)
-             `(PInstall ,(op-code op)
+             `(PInstall ,(op-code op core)
                         (PLam (,(var-code (peel-bind x))) ,(lower-core handler))
                         ,(lower-core body))]
-            [_ (fail 'unknown-core-form (format "lower: ~s" (erase-core core)))])]
+            [_ (fail 'unknown-core-form core (format "lower: ~s" (erase-core core)))])]
          [`(Scope (,places ...) ,body)
           ;; 場所は natural であり literal と衝突しないので符号化しない
           ;; （backend-matrix.md §5）。
@@ -296,22 +304,22 @@
          [`(Discharge ,_ ,body) (lower-core body)]
          ;; spec §21: Error は G2m だけの形であり spanful な項に現れない。
          [`(Error ,p) `(PError ,p)]
-         [_ (fail 'unknown-core-form (format "lower: ~s" (erase-core core)))])]))
+         [_ (fail 'unknown-core-form core (format "lower: ~s" (erase-core core)))])]))
 
   (values lower-val lower-core))
 
 ;; spec §3: G4d3 の公開 Diagnostic 境界はこの adapter である。
 ;; lower/with-matrix は test seam なので capability-diagnostic を返す層のまま
 ;; 残す（diagnostic.md §7）。
-;; primary-span は投影前の入力項の根から取る。lower/with-matrix は入口で
-;; erase-core を通し、その下の fail は feature-id と reason 文字列しか受け取ら
-;; ないため、棄却した部分項を指すには走査全体へ span を通す改修が要る（spec §13）。
+;; spec §22: primary-span は運ばれた節点から作る。span の算出をこの 1 箇所へ
+;; 寄せるため、呼び出し側は entry-span を書かない。
 ;; reason 文字列は found へ入れる。backend は schema version 1 に欄が無いので
-;; 運ばない（spec §13）。
-(define (capability->diagnostic capability span)
+;; 運ばない（spec §26）。
+(define (capability->diagnostic capability)
   (diagnostic-of 'lowering
                  (capability-diagnostic-feature-id capability)
-                 #:primary-span span
+                 #:primary-span
+                 (entry-span (capability-diagnostic-node capability))
                  #:found (capability-diagnostic-reason capability)))
 
 ;; production の入口。正典表を既定で使い、表を引数に取らない
@@ -320,7 +328,7 @@
   (define-values (status result)
     (lower/with-matrix core-in backend backend-features))
   (if (eq? status 'capability)
-      (values status (capability->diagnostic result (entry-span core-in)))
+      (values status (capability->diagnostic result))
       (values status result)))
 
 ;; test seam。unsupported を含む profile を作って診断機構そのものを試す。
@@ -347,7 +355,7 @@
           (make-lowering backend backend-features fail))
         (lower-val value-in))))
   (if (eq? status 'capability)
-      (values status (capability->diagnostic result (entry-span value-in)))
+      (values status (capability->diagnostic result))
       (values status result)))
 
 ;;; backend-matrix.md §5 表現規約
