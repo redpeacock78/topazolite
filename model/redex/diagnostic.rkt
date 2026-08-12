@@ -288,12 +288,27 @@
 (define (non-empty-string? v)
   (and (string? v) (> (string-length v) 0)))
 
+;; renderer が 1 行として出す欄は改行を含んではならない（spec §4）。
+;; renderer 側で escape しないのは、escape が表示を壊さないだけで、1 行の欄へ
+;; 複数行が入るという producer 側の誤りを隠すためである。入口で弾けば、誤りは
+;; Diagnostic を作った箇所の error として現れる。
+(define (one-line-string? v)
+  (and (non-empty-string? v)
+       (not (regexp-match? #rx"[\n\r]" v))))
+
+;; relation は記号だが、Racket の記号は改行を含む綴りを取れる。語彙を制限しない
+;; ことと綴りに何も要求しないことは別である。
+(define (one-line-symbol? v)
+  (and (symbol? v)
+       (not (regexp-match? #rx"[\n\r]" (symbol->string v)))))
+
 ;; secondary-labels の要素は (list span ラベル) の 2 要素である。
+;; ラベルは terminal の位置行へ 1 行として出るため改行を含めない。
 (define (secondary-label-ok? v)
   (and (list? v)
        (= (length v) 2)
        (span-ok? (first v))
-       (non-empty-string? (second v))))
+       (one-line-string? (second v))))
 
 ;; expected、found、effect-context、proof-context は形を検査しない。
 ;; phase ごとに入る値の種類が違い、共通の述語を置くと phase を跨ぐたびに
@@ -324,9 +339,9 @@
 (define (related-ref-ok? v)
   (and (list? v)
        (= (length v) 3)
-       (symbol? (first v))
+       (one-line-symbol? (first v))
        (span-ok? (second v))
-       (non-empty-string? (third v))))
+       (one-line-string? (third v))))
 
 (define (diagnostic-schema-errors d)
   (define (check ok? message) (if ok? '() (list message)))
@@ -340,8 +355,8 @@
                (eq? (diagnostic-category d)
                     (category-of (diagnostic-id d))))
           "category は id の分類部を記号にした値でなければならない")
-   (check (non-empty-string? (diagnostic-title d))
-          "title は空でない文字列でなければならない")
+   (check (one-line-string? (diagnostic-title d))
+          "title は改行を含まない空でない文字列でなければならない")
    (check (non-empty-string? (diagnostic-message d))
           "message は空でない文字列でなければならない")
    (check (span-ok? (diagnostic-primary-span d))
@@ -350,11 +365,11 @@
                (andmap secondary-label-ok? (diagnostic-secondary-labels d)))
           "secondary-labels は (span ラベル) の list でなければならない")
    (check (and (list? (diagnostic-notes d))
-               (andmap non-empty-string? (diagnostic-notes d)))
-          "notes は空でない文字列の list でなければならない")
+               (andmap one-line-string? (diagnostic-notes d)))
+          "notes は改行を含まない空でない文字列の list でなければならない")
    (check (and (list? (diagnostic-help d))
-               (andmap non-empty-string? (diagnostic-help d)))
-          "help は空でない文字列の list でなければならない")
+               (andmap one-line-string? (diagnostic-help d)))
+          "help は改行を含まない空でない文字列の list でなければならない")
    (check (source-chain-ok? (diagnostic-source-chain d))
           "source-chain は surface で始まる frame の空でない list でなければならない")
    (check (memq (diagnostic-backend d) '(racket-cs racketscript #f))

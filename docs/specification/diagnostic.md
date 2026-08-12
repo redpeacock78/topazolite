@@ -54,12 +54,12 @@ schema version 3 は、各欄へ次の形を要求する。
 | `id` | registry に存在する code の文字列 |
 | `severity` | `'error`、`'warning`、`'note` のいずれか |
 | `category` | `id` の分類部と `eq?` で一致する記号 |
-| `title` | 空でない文字列 |
+| `title` | 改行を含まない空でない文字列 |
 | `message` | 空でない文字列。複数行を許す |
 | `primary-span` | `span-ok?` を満たす span |
-| `secondary-labels` | `(list span label)` の list |
-| `notes` | 空でない文字列の list |
-| `help` | 空でない文字列の list |
+| `secondary-labels` | `(list span label)` の list。label は改行を含まない空でない文字列 |
+| `notes` | 改行を含まない空でない文字列の list |
+| `help` | 改行を含まない空でない文字列の list |
 | `expected` | 任意の値または `#f` |
 | `found` | 任意の値または `#f` |
 | `source-chain` | §3 の frame の空でない list |
@@ -73,6 +73,24 @@ schema version 3 は、各欄へ次の形を要求する。
 `secondary-labels` の各要素は2要素の list であり、第1要素は `span-ok?` を満たす span、第2要素は空でない文字列である。
 
 `notes` と `help` は list であり、各要素は空でない文字列である。
+
+1 行として出る欄へ改行を禁じるのは、renderer がその欄を 1 行として整形するためである。
+
+`title` は terminal の見出し行と LSP の `message` の第1行、`notes` と `help` は terminal の `=` で始まる補足行、`secondary-labels` のラベルは terminal の位置行、`related` の `relation` と `description` は terminal の related の行と LSP の `relatedInformation` の `message` へ出る。
+
+改行が入ると表示が 2 行へ割れ、1 行として読める行という前提が崩れる。
+
+renderer 側で改行を escape する規則は置かない。
+
+escape は表示を壊さないだけで、1 行の欄へ複数行が入るという producer 側の誤りを隠す。
+
+入口で弾けば、誤りは Diagnostic を作った箇所の error として現れる。
+
+`message` だけは複数行を許す。
+
+`message` は診断ごとの説明であり、Phase 1 以降に複数の文からなる文案が入る欄である。
+
+ここを 1 行に縛ると、`message` を充実させる段階で schema version を上げ直すことになる。
 
 `diagnostic-valid?` はこの形を満たすかを返し、`diagnostic-schema-errors` は満たさない条件の理由を文字列の list で返す。
 
@@ -118,9 +136,9 @@ Phase 0 の elaborate は節点を合成しないため、Phase 0 が出す `sou
 
 **related 参照** は `(list relation span description)` の3要素の list である。
 
-- `relation`：関連の種類を表す記号。語彙は固定しない。
+- `relation`：関連の種類を表す記号。語彙は固定しないが、綴りに改行を含まない。
 - `span`：`span-ok?` を満たす span。
-- `description`：空でない文字列。
+- `description`：空でない文字列。改行を含まない。
 
 Diagnostic を入れ子にしない。
 

@@ -313,7 +313,7 @@
 ;; 残す（diagnostic.md §8）。
 ;; spec §22: primary-span は運ばれた節点から作る。span の算出をこの 1 箇所へ
 ;; 寄せるため、呼び出し側は entry-span を書かない。
-;; reason 文字列は found へ入れる。backend は schema version 2 の欄へ入れる
+;; reason 文字列は found へ入れる。backend は schema version 3 の欄へ入れる
 ;; （spec §8）。
 (define (capability->diagnostic capability)
   (diagnostic-of 'lowering

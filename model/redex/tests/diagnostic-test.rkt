@@ -384,3 +384,64 @@
   (check-exn exn:fail?
              (lambda ()
                (diagnostic-of 'origins 'ill-typed #:primary-span '(#:span src 0 4)))))
+
+;; [REQ: DIA-001] 1 行として出す欄への改行の禁止（spec §4）
+;; 6 欄それぞれについて #\newline と #\return の 2 文字を個別に検査する。
+;; 文字列の 5 欄はこの表で回し、記号である relation は次の test-case で扱う。
+;; 合わせて 12 通りになる。1 欄だけへ検査を足した実装は、どれかで落ちる。
+(define newline-injection-table
+  (list
+   (list 'title
+         (lambda (d s) (struct-copy diagnostic d [title s])))
+   (list 'notes
+         (lambda (d s) (struct-copy diagnostic d [notes (list s)])))
+   (list 'help
+         (lambda (d s) (struct-copy diagnostic d [help (list s)])))
+   (list 'secondary-label
+         (lambda (d s)
+           (struct-copy diagnostic d [secondary-labels (list (list other-span s))])))
+   (list 'related-description
+         (lambda (d s)
+           (struct-copy diagnostic d
+                        [related (list (list 'defined-here other-span s))])))))
+
+(test-case
+ "1 行として出す 5 つの文字列の欄は改行を含めない"
+ (define d (base-diagnostic))
+ (for* ([entry (in-list newline-injection-table)]
+        [ch (in-list (list "\n" "\r"))])
+   (match-define (list name inject) entry)
+   (define broken (inject d (string-append "前" ch "後")))
+   (check-false (diagnostic-valid? broken)
+                (format "~a へ ~s を入れたら落ちなければならない" name ch))))
+
+(test-case
+ "related の relation の記号名も改行を含めない"
+ (define d (base-diagnostic))
+ (for ([ch (in-list (list "\n" "\r"))])
+   (define relation (string->symbol (string-append "前" ch "後")))
+   (define broken
+     (struct-copy diagnostic d
+                  [related (list (list relation other-span "説明"))]))
+   (check-false (diagnostic-valid? broken)
+                (format "relation へ ~s を入れたら落ちなければならない" ch))))
+
+(test-case
+ "改行を含まない値は 6 欄とも通る"
+ (define d (base-diagnostic))
+ (check-true
+  (diagnostic-valid?
+   (struct-copy diagnostic d
+                [title "型が期待と一致しない"]
+                [notes (list "Int と Bool は別の型である")]
+                [help (list "束縛の型注釈を直す")]
+                [secondary-labels (list (list other-span "ここで束縛した"))]
+                [related (list (list 'defined-here other-span "ここで束縛した"))]))))
+
+(test-case
+ "message は複数行を許す"
+ (define d (base-diagnostic))
+ ;; 複数行を許す欄を誤って縛った実装は、この 1 行で落ちる。
+ (check-true
+  (diagnostic-valid?
+   (struct-copy diagnostic d [message "第 1 行\n第 2 行"]))))
