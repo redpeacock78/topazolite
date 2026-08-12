@@ -5,6 +5,7 @@
          redex/reduction-semantics
          "../backend-matrix.rkt"
          "../diagnostic.rkt"
+         "../erase.rkt"
          "../lang.rkt"
          "../lowering.rkt"
          "../obs.rkt"
@@ -402,3 +403,52 @@
  (define-values (canonical-status canonical-result) (lower source 'racket-cs))
  (check-eq? canonical-status 'ok)
  (check-true (redex-match? PR pc canonical-result)))
+
+;;; spec §18、§19。spanful な走査が spanless な走査と同じ判定を返すことを固定する。
+
+;; primary-span を除いた署名。span は Task 3 で意図的に変わるため比べない。
+(define (lower-signature term)
+  (define-values (status result) (lower term 'racket-cs))
+  (if (eq? status 'capability)
+      (list status (diagnostic-id result) (diagnostic-found result))
+      (list status result)))
+
+(define parity-terms
+  (list
+   ;; 通る入力。
+   `(Drop (#:span src 0 10) (#:lit 1 (#:span src 6 7)))
+   `(Apply (#:span src 0 40)
+           (Lam (#:span src 4 20) User c0
+                ((#:bind a (#:span src 9 10)))
+                (#:var a (#:span src 15 16)))
+           (#:lit 2 (#:span src 30 31)))
+   `(Let (#:span src 0 30)
+         ((#:bind x (#:span src 4 5)) (#:ty Int (#:span src 7 10)))
+         (#:lit 1 (#:span src 13 14))
+         (#:var x (#:span src 20 21)))
+   `(Perform (#:span src 0 30)
+             (Return io (#:ty Int (#:span src 12 15)))
+             (#:lit 1 (#:span src 25 26)))
+   ;; m ::= imm mut（lang.rkt:164）であり many は m ではない。
+   `(Rec (#:span src 0 20)
+         (((#:lbl a (#:span src 4 5)) imm (#:lit 1 (#:span src 8 9)))))
+   ;; w ::= vr（span-core.rkt）であり lt は w ではない。
+   `(Move (#:span src 0 8) (#:var y (#:span src 6 7)))
+   ;; 棄却される入力。
+   `(Frobnicate (#:span src 0 12) 1)
+   `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,(first (first kernel-gamma0-entries)))
+   `(Perform (#:span src 0 30)
+             (Return io (#:ty NotAType (#:span src 12 20)))
+             (#:lit 1 (#:span src 25 26)))))
+
+(test-case "spanful な入力は spanless な入力と同じ判定を返す"
+  (for ([term (in-list parity-terms)])
+    (check-equal? (lower-signature term)
+                  (lower-signature (erase-core term))
+                  (format "parity: ~s" term))))
+
+(test-case "parity fixture は空虚でない"
+  ;; すべて棄却へ倒れていると parity が自明に成り立つため、通る入力の存在を要求する。
+  (check-true
+   (for/or ([term (in-list parity-terms)])
+     (eq? 'ok (first (lower-signature term))))))

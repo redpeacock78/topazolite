@@ -122,22 +122,27 @@
             (format "feature ~a は backend ~a で非対応である"
                     feature-id backend))))
 
-  (define (require-feature! head)
-    (define feature-id (core-form-feature head))
+  ;; spec §21: core-head は (car core) が記号であることを見るが、(#:var x s) と
+  ;; (#:lit l s) の head は keyword である。剥がしてから頭を読む。
+  (define (require-feature! term)
+    (define feature-id (core-form-feature (core-head (peel-node term))))
     (unless feature-id
       (fail 'unknown-core-form
-            (format "対応表に無い Typed Core の形: ~a" head)))
+            (format "対応表に無い Typed Core の形: ~a" (core-head (peel-node term)))))
     (require-feature-id! feature-id))
 
   ;; op-code。τ でない入力に符号を作らない（backend-matrix.md §5）。
+  ;; spec §21: ts は (#:ty τ s) の包みなので剥がしてから照合する。
   (define (op-code op)
     (match op
       [`(Return ,b ,type)
-       (unless (redex-match? G2m τ type)
+       (define peeled (peel-ty type))
+       (unless (redex-match? G2m τ peeled)
          (fail 'unknown-core-type
-               (format "op-code の入力が Typed Core の τ でない: ~s" type)))
-       (return-code b type)]
-      [_ (fail 'unknown-core-form (format "op の形が (Return b τ) でない: ~s" op))]))
+               (format "op-code の入力が Typed Core の τ でない: ~s" peeled)))
+       (return-code b peeled)]
+      [_ (fail 'unknown-core-form
+               (format "op の形が (Return b τ) でない: ~s" (erase-core op)))]))
 
   ;; prim-body。名前で 3 つに分ける（backend-matrix.md §7）。PrimVal の頭が指す
   ;; primitive-value は η 展開の closure を作るだけの feature なので、shim へ写す
@@ -178,22 +183,30 @@
         `(PLetOwned ,px ,bound ,body)
         `(PLet ,px ,bound ,body)))
 
+  ;; spec §21: br は span を先頭へ持つため peel-branch で剥がす。formals は
+  ;; (#:bind x s) の包みなので peel-bind を通してから符号化する。
   (define (branch br)
-    (match br
+    (match (peel-branch br)
       [`(,tag (,formals ...) -> ,body)
-       `(,(tag-code tag) ,(map var-code formals) -> ,(lower-core body))]
-      [_ (fail 'unknown-core-form (format "分岐の形が br でない: ~s" br))]))
+       `(,(tag-code tag)
+         ,(map (lambda (formal) (var-code (peel-bind formal))) formals)
+         -> ,(lower-core body))]
+      [_ (fail 'unknown-core-form
+               (format "分岐の形が br でない: ~s" (erase-core br)))]))
 
   ;; backend-matrix.md §7 の値の表
+  ;; spec §18: 節点は剥がした形で照合し、子は spanful のまま再帰へ渡す。
   (define (lower-val value)
-    (require-feature! (core-head value))
-    (match value
-      [(? core-literal?) value]
+    (define node (peel-node value))
+    (require-feature! value)
+    (match node
+      [(? core-literal?) node]
       [`(Construct ,_ ,tag ,arguments ...)
        `(PTagged ,(tag-code tag) ,@(map lower-val arguments))]
       [`(resource ,n) `(PResource ,n)]
       [`(Lam ,_ ,_ (,formals ...) ,body)
-       `(PClosure () ,(map var-code formals) ,(lower-core body))]
+       `(PClosure () ,(map (lambda (formal) (var-code (peel-bind formal))) formals)
+                  ,(lower-core body))]
       [`(PrimVal ,_ ,nm)
        ;; primitive の名前を先に検査してから arity を読む。diagnostic で閉じる経路を
        ;; primitive-arity の #f に渡して例外化しないためである。
@@ -202,8 +215,8 @@
       [`(CurryVal ,_ ,function ,argument)
        (curry-closure (lower-val function) (lower-val argument))]
       [`(RecurVal ,_ ,f (,formals ...) ,body)
-       (define px-f (var-code f))
-       (define pxs (map var-code formals))
+       (define px-f (var-code (peel-bind f)))
+       (define pxs (map (lambda (formal) (var-code (peel-bind formal))) formals))
        `(PClosure () ,pxs
                   (PLetrec ,px-f
                            (PLam ,pxs ,(lower-core body))
@@ -212,64 +225,78 @@
       [`(ProofRep ,_ ,_) '(PTagged proof)]
       [`(Rec ((,labels ,_ ,fields) ...))
        `(PRec ,(map (lambda (label field)
-                      (list (label-code label) (lower-val field)))
+                      (list (label-code (peel-lbl label)) (lower-val field)))
                     labels fields))]
       [`(UVal ,inner) `(PTagged uval ,(lower-val inner))]
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
-      [_ (fail 'unknown-core-form (format "lower-value: ~s" value))]))
+      [_ (fail 'unknown-core-form (format "lower-value: ~s" (erase-core value)))]))
 
   ;; backend-matrix.md §7 の計算の表。v は値の表へ委譲する。
+  ;; spec §19: G2m の v は spanless な文法なので、振り分けだけ節点ごとに投影する。
+  ;; 投影を毎節点で行うため走査は O(n^2) だが、Phase 0 の項の大きさでは問題にならない。
   (define (lower-core core)
     (cond
-      [(redex-match? G2m v core) (lower-val core)]
+      [(redex-match? G2m v (erase-core core)) (lower-val core)]
       [else
-       (require-feature! (core-head core))
-       (match core
-         [(? symbol?) (var-code core)]
+       (define node (peel-node core))
+       (require-feature! core)
+       (match node
+         [(? symbol?) (var-code node)]
          [`(Apply ,function ,arguments ...)
           `(PApp ,(lower-core function) ,@(map lower-core arguments))]
          [`(Let (,x ,type) ,bound ,body)
-          (let-form type (var-code x) (lower-core bound) (lower-core body))]
+          (let-form (peel-ty type) (var-code (peel-bind x))
+                    (lower-core bound) (lower-core body))]
          [`(Let (,x ,_ ,type) ,bound ,body)
-          (let-form type (var-code x) (lower-core bound) (lower-core body))]
+          (let-form (peel-ty type) (var-code (peel-bind x))
+                    (lower-core bound) (lower-core body))]
          [`(Construct ,_ ,tag ,arguments ...)
           `(PTagged ,(tag-code tag) ,@(map lower-core arguments))]
          [`(Eliminate ,scrutinee (,branches ...))
           `(PMatch ,(lower-core scrutinee) ,(map branch branches))]
          [`(Perform ,op ,argument)
           `(PEffect ,(op-code op) ,(lower-core argument))]
-         [`(Handle ,op (,x -> ,handler) ,body)
-          `(PInstall ,(op-code op)
-                     (PLam (,(var-code x)) ,(lower-core handler))
-                     ,(lower-core body))]
+         ;; spec §18: G1+ の h は (s xs -> c) であり span を先頭へ持つため、
+         ;; 節点の pattern の中で分解できない。peel-branch で剥がしてから照合する。
+         [`(Handle ,op ,handler-clause ,body)
+          (match (peel-branch handler-clause)
+            [`(,x -> ,handler)
+             `(PInstall ,(op-code op)
+                        (PLam (,(var-code (peel-bind x))) ,(lower-core handler))
+                        ,(lower-core body))]
+            [_ (fail 'unknown-core-form (format "lower: ~s" (erase-core core)))])]
          [`(Scope (,places ...) ,body)
           ;; 場所は natural であり literal と衝突しないので符号化しない
           ;; （backend-matrix.md §5）。
           `(PScopeExit ,places ,(lower-core body))]
          [`(Recur ,_ ,f (,formals ...) ,body ,rest)
-          `(PLetrec ,(var-code f)
-                    (PLam ,(map var-code formals) ,(lower-core body))
+          `(PLetrec ,(var-code (peel-bind f))
+                    (PLam ,(map (lambda (formal) (var-code (peel-bind formal))) formals)
+                          ,(lower-core body))
                     ,(lower-core rest))]
          [`(Yield ,observed ,next)
           `(PRuntime yield ,(lower-core observed) ,(lower-core next))]
          [`(Suspend ,body) `(PRuntime suspend ,(lower-core body))]
          [`(Move ,w)
-          `(PRuntime move ,(if (exact-nonnegative-integer? w)
-                               `(PPlace ,w)
-                               (var-code w)))]
+          ;; spec §21: 剥がしたあとに整数かどうかを判定する。
+          (define pw (peel-node w))
+          `(PRuntime move ,(if (exact-nonnegative-integer? pw)
+                               `(PPlace ,pw)
+                               (var-code pw)))]
          [`(Drop ,body) `(PRuntime drop ,(lower-core body))]
          [`(Curry ,function ,argument)
           `(PRuntime curry ,(lower-core function) ,(lower-core argument))]
          [`(Rec ((,labels ,_ ,fields) ...))
           `(PRec ,(map (lambda (label field)
-                         (list (label-code label) (lower-core field)))
+                         (list (label-code (peel-lbl label)) (lower-core field)))
                        labels fields))]
          [`(Proj ,record ,label)
-          `(PProj ,(lower-core record) ,(label-code label))]
+          `(PProj ,(lower-core record) ,(label-code (peel-lbl label)))]
          ;; Proof は実行時に意味を持たない。内側の写しをそのまま返す。
          [`(Discharge ,_ ,body) (lower-core body)]
+         ;; spec §21: Error は G2m だけの形であり spanful な項に現れない。
          [`(Error ,p) `(PError ,p)]
-         [_ (fail 'unknown-core-form (format "lower: ~s" core))])]))
+         [_ (fail 'unknown-core-form (format "lower: ~s" (erase-core core)))])]))
 
   (values lower-val lower-core))
 
@@ -298,27 +325,27 @@
 
 ;; test seam。unsupported を含む profile を作って診断機構そのものを試す。
 (define (lower/with-matrix core-in backend matrix)
-  ;; span.md §7: lowering は出力に span を残さない。入口で一度だけ投影する。
-  ;; 投影は with-diagnostics の外へ置く。内側へ入れて診断へ潰すと、span 機構が
-  ;; head を得たときの誤りが unknown-core-form として現れ、Core の形の誤りと区別できなくなる。
-  ;; lower の全域性は Core の形に対するものであり、span 機構の誤りはその外にある
-  ;; （span.md §7.3）。
-  (define core (erase-core core-in))
+  ;; span.md §7.3: 入口検査だけが投影を使い、走査は spanful な項のまま行う。
+  ;; 投影を with-diagnostics の外へ置くのは、内側へ入れて診断へ潰すと span 機構が
+  ;; head を得たときの誤りが unknown-core-form として現れ、Core の形の誤りと
+  ;; 区別できなくなるためである。lower の全域性は Core の形に対するものであり、
+  ;; span 機構の誤りはその外にある。
+  (void (erase-core core-in))
   (with-diagnostics backend
     (lambda (fail)
       (define-values (lower-val lower-core) (make-lowering backend matrix fail))
-      (lower-core core))))
+      (lower-core core-in))))
 
 ;; 値の表を直接呼ぶ入口。UVal と RVal のように well-typed な源項から到達しない形を
 ;; fixture で試すために使う。
 (define (lower-value value-in backend)
-  (define value (erase-core value-in))
+  (void (erase-core value-in))
   (define-values (status result)
     (with-diagnostics backend
       (lambda (fail)
         (define-values (lower-val lower-core)
           (make-lowering backend backend-features fail))
-        (lower-val value))))
+        (lower-val value-in))))
   (if (eq? status 'capability)
       (values status (capability->diagnostic result (entry-span value-in)))
       (values status result)))
