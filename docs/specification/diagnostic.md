@@ -220,7 +220,7 @@ G4d4a が性質別の typing 細分類を追加しても、`E-TYP-001` の適用
 
 ## 12. primary-span と producer の規約
 
-`primary-span` は、その phase が棄却の判断を下した節点の span である。
+[REQ: DIA-002] `primary-span` は、その phase が棄却の判断を下した節点の span である。
 
 「最も深い span を選ぶ」という汎用の述語は定めない。
 
@@ -254,9 +254,11 @@ origins の primary-span は根ではなく `(forged <subject>)` の `subject` �
 
 `subject` は棄却の対象になった部分項そのものであり、位置が分かるため根へ丸めない。
 
-lowering の primary-span は入力 Core 項の根の span である。
+lowering の primary-span も棄却の判断を下した節点の span である。
 
-`lower/with-matrix` は入口で `erase-core` を通し、その下の `fail` は feature-id と reason 文字列だけを受け取るため、棄却した部分項を持たない。
+`lower` と `lower-value` は入口検査のためだけに投影し、`make-lowering` の走査は spanful な節点を受け取る。
+
+`fail` は棄却した節点を受け取り、`op` のように span を持たない位置では囲む節点の span を使う。
 
 Diagnostic を生成するのは `lower` と `lower-value` であり、`lower/with-matrix` は §7 のとおり capability diagnostic を返す層のまま残す。
 

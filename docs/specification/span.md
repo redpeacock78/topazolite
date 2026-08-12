@@ -266,7 +266,8 @@ elab の返り値の形は変えない。
 項を受け取る関数は spanful な項と spanless な項の両方を受理する。
 typing の `core-type-of` と `core-check-row` は、入口検査のために一度だけ投影し、走査は spanful な項のまま行う。
 `core-types-normal?` と `classify` は、入口で投影した spanless な項を走査する。
-lowering の `lower/with-matrix` と `lower-value` は、入口で一度だけ投影し、spanless な形で走査する。
+lowering の `lower/with-matrix` と `lower-value` は、入口検査のために一度だけ投影し、走査は spanful な項のまま行う。
+値と計算の振り分けだけが、節点ごとに局所の投影を使う。
 `core-check` は `core-check-row` へ、`lower` は `lower/with-matrix` へ委譲するため、投影を重ねて置かない。
 投影は文法照合より前に置く。
 spanful な項は G2m の `c` に属さないため、後に置くと判定へ届く前に不受理へ落ちる。
