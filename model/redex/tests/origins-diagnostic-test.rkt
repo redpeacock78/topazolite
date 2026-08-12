@@ -5,7 +5,7 @@
          "../diagnostic.rkt"
          "../origins.rkt")
 
-;; [REQ: DIA-001] origins の Diagnostic 生成（diagnostic.md §7、§12）
+;; [REQ: DIA-001] origins の Diagnostic 生成（diagnostic.md §8、§13）
 
 (test-case "origin が正しい項では 'ok を返す"
   (check-equal?

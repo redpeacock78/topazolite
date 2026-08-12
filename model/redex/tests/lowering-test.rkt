@@ -16,8 +16,8 @@
          "../span-core.rkt")
 
 ;; [REQ: BAK-001] lowering 関係と符号化（backend-matrix.md §5）
-;; [REQ: DIA-001] lowering の Diagnostic 生成（diagnostic.md §7、§12）
-;; [REQ: DIA-002] lowering の primary-span は棄却した節点を指す（diagnostic.md §12）
+;; [REQ: DIA-001] lowering の Diagnostic 生成（diagnostic.md §8、§13）
+;; [REQ: DIA-002] lowering の primary-span は棄却した節点を指す（diagnostic.md §13）
 
 (define depth 5)
 (define fuel 10000)

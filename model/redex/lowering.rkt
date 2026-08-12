@@ -310,7 +310,7 @@
 
 ;; spec §3: G4d3 の公開 Diagnostic 境界はこの adapter である。
 ;; lower/with-matrix は test seam なので capability-diagnostic を返す層のまま
-;; 残す（diagnostic.md §7）。
+;; 残す（diagnostic.md §8）。
 ;; spec §22: primary-span は運ばれた節点から作る。span の算出をこの 1 箇所へ
 ;; 寄せるため、呼び出し側は entry-span を書かない。
 ;; reason 文字列は found へ入れる。backend は schema version 2 の欄へ入れる

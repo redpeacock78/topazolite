@@ -43,19 +43,19 @@ Diagnostic IR は次の18欄を持つ。
 
 欄名を替えたのは、`core-calculus.md` の `origin` と NAR-002 が値の信頼経路に同じ語を充てており、二つの機構を欄名で判別できなくなるためである。
 
-## 2. schema version 2 の形
+## 2. schema version 3 の形
 
 **schema version** は、Diagnostic の欄集合と各欄が受け付ける値の形を示す版である。
 
-schema version 2 は、各欄へ次の形を要求する。
+schema version 3 は、各欄へ次の形を要求する。
 
-| 欄 | schema version 2 の形 |
+| 欄 | schema version 3 の形 |
 | --- | --- |
 | `id` | registry に存在する code の文字列 |
 | `severity` | `'error`、`'warning`、`'note` のいずれか |
 | `category` | `id` の分類部と `eq?` で一致する記号 |
 | `title` | 空でない文字列 |
-| `message` | 空でない文字列 |
+| `message` | 空でない文字列。複数行を許す |
 | `primary-span` | `span-ok?` を満たす span |
 | `secondary-labels` | `(list span label)` の list |
 | `notes` | 空でない文字列の list |
@@ -66,7 +66,7 @@ schema version 2 は、各欄へ次の形を要求する。
 | `expansion-trace` | 空の list |
 | `effect-context` | 任意の値または `#f` |
 | `proof-context` | 任意の値または `#f` |
-| `related` | 空の list |
+| `related` | `(relation span description)` の list。空でもよい |
 | `fixes` | 空の list |
 | `backend` | `'racket-cs`、`'racketscript`、`#f` のいずれか |
 
@@ -76,7 +76,7 @@ schema version 2 は、各欄へ次の形を要求する。
 
 `diagnostic-valid?` はこの形を満たすかを返し、`diagnostic-schema-errors` は満たさない条件の理由を文字列の list で返す。
 
-## 3. source-chain の要素形と schema version 2 の空要求
+## 3. source-chain の要素形と schema version 3 の空要求
 
 [REQ: DIA-003] `source-chain` は、その診断が指す構文の由来を Surface から Core の順に並べた frame の列である。
 
@@ -104,11 +104,9 @@ Phase 0 の elaborate は節点を合成しないため、Phase 0 が出す `sou
 
 予約値を許容集合へ最初から含めるのは、Phase 2 の desugaring が節点を合成するようになったときに schema version を上げずに済ませるためである。
 
-`expansion-trace`、`related`、`fixes` の3欄は、schema version 2 では空であることを要求する。
+`expansion-trace` と `fixes` の2欄は、schema version 3 では空であることを要求する。
 
 これらの欄を埋めるサイクルが要素の形を定め、その変更時に schema version を上げる。
-
-`related` の要素形は G4f が定める。
 
 `fixes` は Phase 1 以降、`expansion-trace` は Phase 2 以降が定める。
 
@@ -116,11 +114,29 @@ Phase 0 の elaborate は節点を合成しないため、Phase 0 が出す `sou
 
 欄そのものは18欄すべてを最初から持つため、後続サイクルは欄の追加を待たずに値を生成できる。
 
-## 4. Phase 0 で形を固定しない欄
+## 4. related の要素形
+
+**related 参照** は `(list relation span description)` の3要素の list である。
+
+- `relation`：関連の種類を表す記号。語彙は固定しない。
+- `span`：`span-ok?` を満たす span。
+- `description`：空でない文字列。
+
+Diagnostic を入れ子にしない。
+
+LSP の `DiagnosticRelatedInformation` は location と message の2欄しか持たず、Ariadne の secondary label も同じ形である。
+
+Diagnostic を丸ごと入れ子にすると renderer は大半の欄を捨てることになり、schema 検証が再帰して循環した参照で停止しなくなる余地が残る。
+
+renderer は未知の `relation` を捨てず、記号をそのまま表示する。
+
+Phase 0 の producer は related を生成しないため、G4f1 が定めるのは受け入れる形だけである。
+
+## 5. Phase 0 で形を固定しない欄
 
 `expected`、`found`、`effect-context`、`proof-context` の4欄は、Phase 0 では形を固定しない。
 
-この4欄は任意の値または `#f` を受け、schema version 2 の検証器は値の形を検査しない。
+この4欄は任意の値または `#f` を受け、schema version 3 の検証器は値の形を検査しない。
 
 空要求の4欄は「まだ使わないので空」と定める欄であり、この4欄は「使うが形を決めない」と定める欄である。
 
@@ -142,13 +158,13 @@ producer は `details` の先頭を `expected`、次を `actual` とする。
 
 renderer が具体的な整形を要求するのは G4f 以降であり、その時点で要素形を定めて schema version を上げる。
 
-この判断は未回収の欄を残すものではなく、schema version 2 が「任意の値または `#f`」を形として定めるものである。
+この判断は未回収の欄を残すものではなく、schema version 3 が「任意の値または `#f`」を形として定めるものである。
 
-## 5. 二つの version
+## 6. 二つの version
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は G4e 完了時点で2であり、`diagnostic-registry-version` は2である。
+`diagnostic-schema-version` は G4f1 完了時点で3であり、`diagnostic-registry-version` は2である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -162,7 +178,7 @@ code の追加は renderer の入力形を変えず、欄の追加は既存 code
 
 registry の `since`、`deprecated-in`、凍結 fixture は registry version に紐づき、schema version には紐づかない。
 
-## 6. error code の書式と分類
+## 7. error code の書式と分類
 
 error code は `E-<分類>-<3桁>` の書式を持つ。
 
@@ -174,7 +190,7 @@ error code は `E-<分類>-<3桁>` の書式を持つ。
 
 例えば `TYP` は error code では型検査に関する分類を表し、要件 ID の `TYP-001` を参照するものではない。
 
-## 7. registry に載せる診断
+## 8. registry に載せる診断
 
 [REQ: DIA-001] elaborate、typing、origins、lowering の 4 phase は、失敗を文字列ではなく Diagnostic IR で返す。
 
@@ -188,7 +204,7 @@ test seam のためだけに production が返さない code を registry へ予
 
 lowering の `capability-diagnostic` を Diagnostic IR へ変換するのは `lower` の層であり、`lower/with-matrix` は capability diagnostic を返す。
 
-## 8. phase ごとの key
+## 9. phase ごとの key
 
 registry の `key` は、phase が診断を識別するために使う記号である。
 
@@ -208,7 +224,7 @@ lowering の `key` は `capability-diagnostic` の `reason` 文字列ではな�
 
 registry の lowering 行の title は `diagnostic-ids` の第2要素から得る。
 
-## 9. registry の versioning
+## 10. registry の versioning
 
 [REQ: DIA-005] registry は追記のみとし、既存 code の削除、意味の付け替え、番号の再利用を行わない。
 
@@ -226,7 +242,7 @@ registry version 2 で足した typing の48行は `since` が2である。
 
 `deprecated-in` は全107行が `#f` である。
 
-## 10. 凍結 fixture
+## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
@@ -244,7 +260,7 @@ fixture は後方互換性を検査する履歴であり、第二の正典では
 
 現在の code 集合を知るときは `model/redex/diagnostic.rkt` の registry を読む。
 
-## 11. E-TYP-001 の適用条件
+## 12. E-TYP-001 の適用条件
 
 `E-TYP-001` は型検査に失敗したが、より具体的な安定 code を割り当てられない場合に使う恒久の fallback である。
 
@@ -256,11 +272,11 @@ G4d4a が性質別の typing 細分類を追加しても、`E-TYP-001` の適用
 
 この行を registry へ置くのは、producer に未分類時の明示分岐があり、`G2m` を拡張したときに実際に返りうるためである。
 
-§7 の「production が返しうる診断だけを載せる」は、現在の入力集合での到達性ではなく、producer に分岐があることを指す。
+§8 の「production が返しうる診断だけを載せる」は、現在の入力集合での到達性ではなく、producer に分岐があることを指す。
 
 `E-TYP-001` の title と message は文言を変更できるが、細分類できない型検査失敗を受けるという条件は変更しない。
 
-## 12. primary-span と producer の規約
+## 13. primary-span と producer の規約
 
 [REQ: DIA-002] `primary-span` は、その phase が棄却の判断を下した節点の span である。
 
@@ -302,7 +318,7 @@ lowering の primary-span も棄却の判断を下した節点の span である
 
 `fail` は棄却した節点を受け取り、`op` のように span を持たない位置では囲む節点の span を使う。
 
-Diagnostic を生成するのは `lower` と `lower-value` であり、`lower/with-matrix` は §7 のとおり capability diagnostic を返す層のまま残す。
+Diagnostic を生成するのは `lower` と `lower-value` であり、`lower/with-matrix` は §8 のとおり capability diagnostic を返す層のまま残す。
 
 `lower` と `lower-value` は `(values <status> <payload>)` の 2 値を返し、`status` の記号は `'ok` と `'capability` のままである。
 

@@ -9,7 +9,7 @@
          "diagnostic-fixture-v2.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
-;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §7）
+;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
 
 ;; test 1
 (test-case
@@ -146,8 +146,8 @@
 
 ;; test 12
 (test-case
- "schema version は 2、registry version は 2 である"
- (check-equal? diagnostic-schema-version 2)
+ "schema version は 3、registry version は 2 である"
+ (check-equal? diagnostic-schema-version 3)
  (check-equal? diagnostic-registry-version 2))
 
 (test-case
@@ -186,13 +186,50 @@
 
 ;; test 15
 (test-case
- "schema version 2 は 3 欄へ空を要求する"
+ "schema version 3 は expansion-trace と fixes へ空を要求する"
  (define d (base-diagnostic))
  (for ([broken (in-list
                 (list (struct-copy diagnostic d [expansion-trace (list 'e)])
-                      (struct-copy diagnostic d [related (list d)])
                       (struct-copy diagnostic d [fixes (list 'f)])))])
    (check-false (diagnostic-valid? broken))))
+
+(test-case
+ "related は (relation span description) の 3 要素の list を受ける"
+ (define d (base-diagnostic))
+ (check-true
+  (diagnostic-valid?
+   (struct-copy diagnostic d
+                [related (list (list 'defined-here other-span "ここで束縛した"))])))
+ (check-true
+  (diagnostic-valid?
+   (struct-copy diagnostic d
+                [related (list (list 'defined-here other-span "ここで束縛した")
+                               (list 'used-here ok-span "ここで使った"))])))
+ (check-true (diagnostic-valid? (struct-copy diagnostic d [related '()]))))
+
+(test-case
+ "related の要素が形を外れたら落ちる"
+ (define d (base-diagnostic))
+ (for ([broken (in-list
+                (list
+                 (list (list 'defined-here other-span))
+                 (list (list 'defined-here other-span "説明" "余り"))
+                 (list (list "defined-here" other-span "説明"))
+                 (list (list 'defined-here '(#:span src 9 2) "説明"))
+                 (list (list 'defined-here other-span ""))
+                 (list (list 'defined-here other-span '説明))
+                 (list 'defined-here)))])
+   (check-false
+    (diagnostic-valid? (struct-copy diagnostic d [related broken]))
+    (format "~s は落ちなければならない" broken))))
+
+(test-case
+ "relation の語彙は固定しない"
+ (define d (base-diagnostic))
+ (check-true
+  (diagnostic-valid?
+   (struct-copy diagnostic d
+                [related (list (list 'no-such-relation-name other-span "説明"))]))))
 
 ;; test 15b
 (test-case

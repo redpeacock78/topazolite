@@ -449,7 +449,7 @@
 ;; spec §3: G4d2 の公開 Diagnostic 境界はこの 2 つの adapter である。
 ;; metafunction は (forged ...) を返す形のまま残す。diagnostic.md §1 が Diagnostic
 ;; IR を項でないと定めており、metafunction の返り値へ struct を混ぜられない。
-;; diagnostic.md §8 が origins の registry key を (forged ...) の頭から導いている
+;; diagnostic.md §9 が origins の registry key を (forged ...) の頭から導いている
 ;; のも、metafunction が形を保つ前提の記述である。
 (define (origins-result->diagnostic result)
   (match result

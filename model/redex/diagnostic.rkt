@@ -198,8 +198,9 @@
 
 ;; Diagnostic の欄の形に付ける版。欄の追加、削除、欄が受け付ける形の変更で
 ;; 上げる。code 集合に付ける diagnostic-registry-version とは別物である。
-;; G4e が source-chain へ要素形を与え backend 欄を足したため 2 になる。
-(define diagnostic-schema-version 2)
+;; G4e が source-chain へ要素形を与え backend 欄を足したため 2 になった。
+;; G4f1 が related へ要素形を与えたため 3 になる。
+(define diagnostic-schema-version 3)
 
 ;; ホワイトペーパー §13.4 の17欄に、G4e が backend を足した18欄である。
 (struct diagnostic
@@ -244,7 +245,7 @@
               related fixes
               backend))
 
-;; diagnostic.md §12: Diagnostic の生成を phase ごとに 1 箇所へ集約するための
+;; diagnostic.md §13: Diagnostic の生成を phase ごとに 1 箇所へ集約するための
 ;; 共通部分である。registry の引き当てに失敗したら既定の code へ落とさず error に
 ;; する。落とすと registry へ行を足し忘れたまま診断が出てしまう。
 ;; message へ title を入れるのは Phase 0 の暫定であり、文案との書き分けは G4f が
@@ -297,8 +298,9 @@
 ;; expected、found、effect-context、proof-context は形を検査しない。
 ;; phase ごとに入る値の種類が違い、共通の述語を置くと phase を跨ぐたびに
 ;; 緩めることになるためである。
-;; expansion-trace、related、fixes は schema version 2 でも空を要求する。
-;; source-chain は spec §4 の frame の空でない list を要求する。
+;; expansion-trace と fixes は schema version 3 でも空を要求する。
+;; related は G4f1 が要素形を定めたため、空でない list も受ける。
+;; source-chain は spec §3 の frame の空でない list を要求する。
 (define (source-frame-ok? v)
   (and (list? v)
        (= (length v) 3)
@@ -315,6 +317,16 @@
        (andmap (lambda (frame)
                  (eq? (first frame) 'elaborate))
                (rest v))))
+
+;; related の要素は (list relation span description) の 3 要素である。
+;; relation の語彙は固定しない。renderer は未知の relation を捨てず記号を
+;; そのまま出すため、綴りの制約は Task 2 で 1 行に限定する。
+(define (related-ref-ok? v)
+  (and (list? v)
+       (= (length v) 3)
+       (symbol? (first v))
+       (span-ok? (second v))
+       (non-empty-string? (third v))))
 
 (define (diagnostic-schema-errors d)
   (define (check ok? message) (if ok? '() (list message)))
@@ -348,11 +360,12 @@
    (check (memq (diagnostic-backend d) '(racket-cs racketscript #f))
           "backend は racket-cs、racketscript、#f のいずれかでなければならない")
    (check (null? (diagnostic-expansion-trace d))
-          "schema version 2 は expansion-trace へ空を要求する")
-   (check (null? (diagnostic-related d))
-          "schema version 2 は related へ空を要求する")
+          "schema version 3 は expansion-trace へ空を要求する")
+   (check (and (list? (diagnostic-related d))
+               (andmap related-ref-ok? (diagnostic-related d)))
+          "related は (relation span description) の list でなければならない")
    (check (null? (diagnostic-fixes d))
-          "schema version 2 は fixes へ空を要求する")))
+          "schema version 3 は fixes へ空を要求する")))
 
 ;; primary-span が最小原因を指すかは判定しない。それは DIA-002 の内容であり、
 ;; G4d1 以降が phase ごとの test で示す。

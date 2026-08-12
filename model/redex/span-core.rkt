@@ -34,7 +34,7 @@
     [(list _ (and s (list '#:span _ _ _)) _ ...) s]
     [_ (error 'span-of "span を持たない節点である: ~s" node)]))
 
-;; diagnostic.md §12: 判断節点の span を取れるならそれを、取れないときだけ
+;; diagnostic.md §13: 判断節点の span を取れるならそれを、取れないときだけ
 ;; synthetic へ落ちる。順序を逆にすると source span があるのに synthetic を返す
 ;; 実装になる。
 ;; spec §22: 型注釈のように節点でない包みも節点として運ばれるため、包みの span も

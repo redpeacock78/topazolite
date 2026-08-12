@@ -5,8 +5,8 @@
          "../diagnostic.rkt"
          "../typing.rkt")
 
-;; [REQ: DIA-001] typing の Diagnostic 生成（diagnostic.md §7、§12）
-;; [REQ: DIA-002] typing の primary-span は棄却した節点を指す（diagnostic.md §12）
+;; [REQ: DIA-001] typing の Diagnostic 生成（diagnostic.md §8、§13）
+;; [REQ: DIA-002] typing の primary-span は棄却した節点を指す（diagnostic.md §13）
 
 (define empty '())
 
