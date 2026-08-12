@@ -390,7 +390,7 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body body-row latent-row))
+       (fail 'undeclared-function-effect body latent-row body-row))
      (list signature '())]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
@@ -421,7 +421,7 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body body-row latent-row))
+       (fail 'undeclared-function-effect body latent-row body-row))
      (list signature '())]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
@@ -453,7 +453,7 @@
        (check-as body return-type body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body body-row latent-row))
+       (fail 'undeclared-function-effect body latent-row body-row))
      function-environment]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
@@ -486,7 +486,7 @@
         (unless binding-row (fail 'record-binding-incompatible bound))
         (list bound-row `(Record ,binding-row))]
        [(list actual-type _)
-        (fail 'type-mismatch bound actual-type declared-type)])]
+        (fail 'type-mismatch bound declared-type actual-type)])]
     [_
      (define bound-row
        (check-as bound declared-type environment places callables fail))
@@ -831,7 +831,7 @@
     [`(Construct ,data-type ,constructor ,fields ...)
      (define actual (peel-ty data-type))
      (unless (type-equiv? actual expected)
-       (fail 'type-mismatch core actual expected))
+       (fail 'type-mismatch core expected actual))
      (check-construct constructor fields data-type
                       environment places callables core fail)]
 
@@ -912,7 +912,7 @@
      (match (infer core environment places callables fail)
        [(list actual row)
         (unless (type-compatible? actual expected)
-          (fail 'type-mismatch core actual expected))
+          (fail 'type-mismatch core expected actual))
         row])]))
 
 ;; 入口検査は type-of/raw と core-check-row が共有する。片方だけ直す事故を
@@ -950,16 +950,19 @@
     [_ 'ill-typed]))
 
 ;; spec §8: Diagnostic を組む位置はここ 1 箇所だけである。
-;; expected と found の分配は G4d spec §6 の既定に従い、意味が確定している key
-;; だけを例外表で扱う。引数順は elaborate.rkt:50-60 の同名 key に揃える。
+;; producer は details の先頭へ expected、次へ actual を渡す
+;; （G4e2 spec §3）。elaborate.rkt の distribute-details と同じ規則である。
+;; key の allowlist は残す。表に無い key の details 2 件は
+;; expected と actual の対ではない。
 (define (typing-expected/found key details)
   (match* (key details)
-    [('type-mismatch (list actual expected)) (values expected actual)]
-    [((or 'arity-mismatch 'parameter-arity-mismatch 'branch-binder-arity)
+    [((or 'type-mismatch
+          'arity-mismatch
+          'parameter-arity-mismatch
+          'branch-binder-arity
+          'undeclared-function-effect)
       (list expected actual))
      (values expected actual)]
-    [('undeclared-function-effect (list residual declared))
-     (values declared residual)]
     [(_ '()) (values #f #f)]
     [(_ (list only)) (values #f only)]
     [(_ _) (values #f details)]))

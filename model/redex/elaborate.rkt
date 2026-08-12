@@ -43,18 +43,22 @@
     details)))
 
 ;; §6: details を expected と found へ配る。既定は件数だけで決まり、意味を
-;; 推測しない。意味が全呼出しで一致する 5 つの reason だけを例外表で扱う。
-;; 例外表の reason でも details の長さが想定と違えば既定へ落ちる。
+;; 推測しない。producer は details の先頭へ expected、次へ actual を渡す
+;; （G4e2 spec §3）。この順は Diagnostic の欄順および renderer の表示順と
+;; 一致する。
+;; key の allowlist は残す。表に無い key でも details を 2 件渡す site が
+;; あり（unsaturated-type、invalid-type-application、kind-mismatch、
+;; constructor-type-arity）、その 2 件は expected と actual の対ではない。
+;; 例外表の reason でも details の長さが 2 でなければ既定へ落ちる。
 (define (distribute-details reason details)
   (match* (reason details)
-    [('type-mismatch (list actual expected)) (values expected actual)]
-    [('arity-mismatch (list expected actual)) (values expected actual)]
-    [('constructor-type-mismatch (list constructor expected))
-     (values expected constructor)]
-    [('undeclared-function-effect (list residual declared))
-     (values declared residual)]
-    [('undeclared-recur-effect (list residual declared))
-     (values declared residual)]
+    [((or 'type-mismatch
+          'arity-mismatch
+          'constructor-type-mismatch
+          'undeclared-function-effect
+          'undeclared-recur-effect)
+      (list expected actual))
+     (values expected actual)]
     [(_ '()) (values #f #f)]
     [(_ (list only)) (values #f only)]
     [(_ _) (values #f details)]))
@@ -434,7 +438,7 @@
       (define schema (constructor-schema expected))
       (define field-types (and schema (lookup schema constructor)))
       (unless field-types
-        (reject type-span 'constructor-type-mismatch constructor expected))
+        (reject type-span 'constructor-type-mismatch expected constructor))
       (when (ormap owned-type? field-types)
         (reject type-span 'owned-constructor-field constructor))
       (define results
@@ -549,7 +553,7 @@
          (define residual-row
            (row-difference (judgment-row body-result) own-return))
          (unless (row-subset? residual-row declared-row)
-           (reject s 'undeclared-function-effect residual-row declared-row))
+           (reject s 'undeclared-function-effect declared-row residual-row))
          (judgment
           `(Lam ,s User ,callable ,parameter-binders
                 (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
@@ -649,7 +653,7 @@
              [(eq? actual-type 'Never) declared-type]
              [else
               (unless (type-compatible? actual-type declared-type propositions)
-                (reject s 'type-mismatch actual-type declared-type))
+                (reject s 'type-mismatch declared-type actual-type))
               (match declared-type
                 [`(Record ,declared-row)
                  (match-define `(Record ,actual-row) actual-type)
@@ -753,7 +757,7 @@
                   delta propositions boundaries))
          (unless (row-subset? (judgment-row body-result) declared-row)
            (reject s 'undeclared-recur-effect
-                   (judgment-row body-result) declared-row))
+                   declared-row (judgment-row body-result)))
          (define continuation-result
            (synth continuation function-environment
                   delta propositions boundaries))
@@ -877,7 +881,7 @@
            (synth expression environment delta propositions boundaries))
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
-           (reject s 'type-mismatch (judgment-type result) expected))
+           (reject s 'type-mismatch expected (judgment-type result)))
          (judgment (judgment-core result) expected (judgment-row result))]
 
         [`(Construct ,constructor ,fields ...)
@@ -909,7 +913,7 @@
            (synth expression environment delta propositions boundaries))
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
-           (reject s 'type-mismatch (judgment-type result) expected))
+           (reject s 'type-mismatch expected (judgment-type result)))
          (judgment (judgment-core result) expected (judgment-row result))]))
 
     (define result (synth expression '() Δ0 Π0 '()))

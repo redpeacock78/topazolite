@@ -128,6 +128,14 @@ producer は phase ごとに型項、効果集合、証明対象など異なる�
 
 producer は `details` を文字列化せず、Racket の値のまま `expected` と `found` へ置く。
 
+producer は `details` の先頭を `expected`、次を `actual` とする。
+
+この順を選んだのは、Diagnostic の欄順および renderer の表示順と一致させるためである。
+
+例外表の key allowlist は残す。
+
+表に無い key の `details` 2件は `expected` と `actual` の対ではなく、`found` へ list ごと入る。
+
 既定では `details` の件数だけで配り、意味を推測して `expected` を作らない。
 
 `found` は「実測した型」ではなく、棄却の対象になった値を指す欄である。
