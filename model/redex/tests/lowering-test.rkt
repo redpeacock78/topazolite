@@ -12,7 +12,8 @@
          "../origins.rkt"
          "../pr-lang.rkt"
          "../pr-machine.rkt"
-         "../pr-obs.rkt")
+         "../pr-obs.rkt"
+         "../span-core.rkt")
 
 ;; [REQ: BAK-001] lowering 関係と符号化（backend-matrix.md §5）
 ;; [REQ: DIA-001] lowering の Diagnostic 生成（diagnostic.md §7、§12）
@@ -455,3 +456,164 @@
   (check-true
    (for/or ([term (in-list parity-terms)])
      (eq? 'ok (first (lower-signature term))))))
+
+;;; spec §25 第 2 群。producer の key 集合と registry の lowering 行を突き合わせる。
+
+;; lowering.rkt の 11 箇所の fail が渡す key。registry の射影ではなく
+;; producer 側の literal であり、これが registry と食い違えば落ちる。
+(define lowering-producer-keys
+  '(kernel-primitive
+    trait-primitive
+    unknown-core-form
+    unknown-core-type))
+
+(test-case "lowering の key 集合は registry と過不足なく一致する"
+  (define registry-keys
+    (for/list ([row (in-list diagnostic-registry)]
+               #:when (eq? (diagnostic-code-phase row) 'lowering))
+      (diagnostic-code-key row)))
+  (check-equal? (length lowering-producer-keys) 4)
+  (check-equal? (sort lowering-producer-keys symbol<?)
+                (sort registry-keys symbol<?))
+  ;; diagnostic-ids は registry の射影なので、producer 側とも一致することを見る。
+  (check-equal? (sort lowering-producer-keys symbol<?)
+                (sort (map first diagnostic-ids) symbol<?)))
+
+;;; spec §25 第 3 群。§20 の 11 地点それぞれへ到達する入力を 1 件ずつ置く。
+;;; 行は (mode key 入力項 期待 span) である。mode は入口の選び方を表す。
+;;; 'core は lower、'value は lower-value、'seam は差し替えた表を通す。
+
+(define kernel-name (first (first kernel-gamma0-entries)))
+(define trait-name (first (first trait-gamma0-entries)))
+
+(define node-cases
+  (list
+   ;; 1. require-feature-id! の非対応 feature。節点は呼び出し側の Apply である。
+   (list 'seam 'closure
+         `(Apply (#:span src 0 40)
+                 (Lam (#:span src 4 20) User c0
+                      ((#:bind a (#:span src 9 10)))
+                      (#:var a (#:span src 15 16)))
+                 (#:lit 2 (#:span src 30 31)))
+         '(#:span src 0 40))
+   ;; 2. require-feature! の対応表に無い head。
+   (list 'core 'unknown-core-form
+         `(Frobnicate (#:span src 0 12) 1)
+         '(#:span src 0 12))
+   ;; 3. op-code の非 τ。節点は #:ty の包みであり、wrapper-span が span を返す。
+   (list 'core 'unknown-core-type
+         `(Perform (#:span src 0 30)
+                   (Return io (#:ty NotAType (#:span src 12 20)))
+                   (#:lit 1 (#:span src 25 26)))
+         '(#:span src 12 20))
+   ;; 4. op-code の op の形不一致。節点は囲む Perform である。
+   (list 'core 'unknown-core-form
+         `(Perform (#:span src 0 30) (Bogus) (#:lit 1 (#:span src 25 26)))
+         '(#:span src 0 30))
+   ;; 5. prim-body の kernel primitive。
+   (list 'core 'kernel-primitive
+         `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name)
+         '(#:span src 0 18))
+   ;; 6. prim-body の trait primitive。
+   (list 'core 'trait-primitive
+         `(PrimVal (#:span src 0 18) (Reserved o-trait) ,trait-name)
+         '(#:span src 0 18))
+   ;; 7. prim-body の Γ0 に無い名前。
+   (list 'core 'unknown-core-form
+         `(PrimVal (#:span src 0 18) (Reserved o-kernel) nosuchprim)
+         '(#:span src 0 18))
+   ;; 8. curry-closure の PClosure 不一致。節点は写す前の関数側の子である。
+   (list 'core 'unknown-core-form
+         `(CurryVal (#:span src 0 30) User
+                    (#:lit 1 (#:span src 10 11))
+                    (#:lit 2 (#:span src 20 21)))
+         '(#:span src 10 11))
+   ;; 9. branch の形不一致。節点は分岐そのものであり、branch-span が span を返す。
+   (list 'core 'unknown-core-form
+         `(Eliminate (#:span src 0 30)
+                     (#:lit 1 (#:span src 10 11))
+                     (((#:span src 20 28) Bogus)))
+         '(#:span src 20 28))
+   ;; 10. lower-core の catch-all。Handle の handler の形が h でない。
+   (list 'core 'unknown-core-form
+         `(Handle (#:span src 0 40)
+                  (Return io (#:ty Int (#:span src 10 13)))
+                  ((#:span src 20 30) Bogus)
+                  (#:lit 1 (#:span src 35 36)))
+         '(#:span src 0 40))
+   ;; 11. lower-val の catch-all。UVal は内側を持たない形にして値の表で落とす。
+   (list 'value 'unknown-core-form
+         `(UVal (#:span src 0 12))
+         '(#:span src 0 12))))
+
+;; 行の mode ごとに入口を選び、(観測 key 観測 span) を返す。
+(define (observe-node-case mode key term)
+  (case mode
+    [(core)
+     (define-values (status result) (lower term 'racket-cs))
+     (check-eq? status 'capability (format "lower: ~s" result))
+     (list (diagnostic-id result) (diagnostic-primary-span result))]
+    [(value)
+     (define-values (status result) (lower-value term 'racket-cs))
+     (check-eq? status 'capability (format "lower-value: ~s" result))
+     (list (diagnostic-id result) (diagnostic-primary-span result))]
+    [(seam)
+     (define-values (status result)
+       (lower/with-matrix term 'racket-cs (matrix-with key 'unsupported)))
+     (check-eq? status 'capability (format "lower/with-matrix: ~s" result))
+     ;; seam の key は registry の key ではないため code へ変換しない。
+     (list (capability-diagnostic-feature-id result)
+           (entry-span (capability-diagnostic-node result)))]))
+
+(define (expected-key mode key)
+  (if (eq? mode 'seam) key (diagnostic-code-of 'lowering key)))
+
+(test-case "11 箇所の fail はそれぞれ棄却した節点の span を返す"
+  (for ([row (in-list node-cases)])
+    (define mode (first row))
+    (define key (second row))
+    (define term (third row))
+    (define span (fourth row))
+    (check-equal? (observe-node-case mode key term)
+                  (list (expected-key mode key) span)
+                  (format "node-case: ~a ~a" mode key))))
+
+(test-case "表は 11 行あり unknown-core-form が 7 行を占める"
+  ;; 地点ごとの取り違えを検出するため、行数と key の内訳を固定する。
+  (check-equal? (length node-cases) 11)
+  (check-equal? (length (filter (lambda (row) (eq? (second row) 'unknown-core-form))
+                                node-cases))
+                7))
+
+;;; spec §25 第 4 群。公開 API の返り値の形を固定する。
+
+(test-case "lower と lower-value と lower/with-matrix は 2 値を返す"
+  (define ok-term `(Drop (#:span src 0 10) (#:lit 1 (#:span src 6 7))))
+  (define-values (ok-status ok-result) (lower ok-term 'racket-cs))
+  (check-eq? ok-status 'ok)
+  (check-true (redex-match? PR pc ok-result))
+  (define bad-term `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name))
+  (define-values (bad-status bad-result) (lower bad-term 'racket-cs))
+  (check-eq? bad-status 'capability)
+  (check-true (diagnostic? bad-result))
+  (define-values (value-status value-result) (lower-value bad-term 'racket-cs))
+  (check-eq? value-status 'capability)
+  (check-true (diagnostic? value-result))
+  ;; seam は Diagnostic ではなく capability diagnostic を返す層のまま残る。
+  (define-values (seam-status seam-result)
+    (lower/with-matrix bad-term 'racket-cs backend-features))
+  (check-eq? seam-status 'capability)
+  (check-true (capability-diagnostic? seam-result))
+  (check-eq? (capability-diagnostic-backend seam-result) 'racket-cs))
+
+;;; spec §25 第 5 群。spanless 入力の退化を明示の回帰として固定する。
+
+(test-case "spanless な入力では primary-span が synthetic へ落ちる"
+  (for ([row (in-list node-cases)])
+    (define mode (first row))
+    (define key (second row))
+    (define term (erase-core (third row)))
+    ;; mode によらず synthetic へ落ちる。seam も core も value も区別しない。
+    (check-equal? (observe-node-case mode key term)
+                  (list (expected-key mode key) '(#:span #:synthetic 0 0))
+                  (format "spanless node-case: ~a ~a" mode key))))
