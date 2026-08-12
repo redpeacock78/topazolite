@@ -704,3 +704,22 @@
     (core-type-of/diagnostic 1 '() 'not-a-table))
   (check-false (diagnostic-expected one-detail))
   (check-equal? (diagnostic-found one-detail) 'not-a-table))
+
+;; drop の callback は details を apply で素通しする。
+;; Drop で包んでも expected/found は包まない場合と一致する。
+;; この lambda へ details を組み替える処理が入ると、この試験が落ちる。
+(test-case
+ "Drop の内側で起きた type-mismatch は expected/found を変えない"
+ (define callables '((f (NFn (Int) Int () ()))))
+ (define inner '(Apply (Lam User f (x) x) "s"))
+ (define bare (core-type-of/diagnostic inner '() callables '()))
+ (define wrapped (core-type-of/diagnostic `(Drop ,inner) '() callables '()))
+ ;; drop-non-owned へ振り替わっていないことを先に確かめる。
+ ;; 棄却されるのは argument そのものではなく、その内側の実引数である。
+ (check-equal? (diagnostic-id wrapped)
+               (diagnostic-code-of 'typing 'type-mismatch))
+ (check-equal? (diagnostic-expected wrapped) (diagnostic-expected bare))
+ (check-equal? (diagnostic-found wrapped) (diagnostic-found bare))
+ ;; 素通し経路が二重変換していないことを値でも押さえる。
+ (check-equal? (diagnostic-expected wrapped) 'Int)
+ (check-equal? (diagnostic-found wrapped) 'String))

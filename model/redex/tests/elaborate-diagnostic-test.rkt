@@ -92,3 +92,56 @@
  (check-equal? (diagnostic-source-chain s)
                (list (list 'surface 'synthetic-span
                            '(#:span #:synthetic 0 0)))))
+
+;; elaborate の例外表 5 key について expected と found の分配を固定する。
+;; typing 側の typing-span-test.rkt の distribution-table と同型である。
+;; 期待値は現行実装の観測値であり、producer の引数順を変えても変わらない。
+(define elaborate-distribution-table
+  (list
+   (list 'type-mismatch
+         `(Let (#:span src 0 20)
+               ((#:bind x (#:span src 4 5)) let (#:ty Bool (#:span src 8 12)))
+               (#:lit 1 (#:span src 14 15))
+               (#:var x (#:span src 16 17)))
+         'Bool 'Int)
+   (list 'arity-mismatch
+         '(Apply (Fn ((x Int)) Int () x) 1 2)
+         1 2)
+   (list 'constructor-type-mismatch
+         '(Fn () (List Int) () (Construct bogus))
+         '(List Int) 'bogus)
+   (list 'undeclared-function-effect
+         '(Fn () Unit () (Yield 1 unit))
+         '() '((Yield Int)))
+   (list 'undeclared-recur-effect
+         '(Recur loop ((xs (List Int))) Unit ()
+                 (Yield 1 (Apply loop (Construct nil (Types Int))))
+                 (Apply loop (Construct nil (Types Int))))
+         '() '((Yield Int)))))
+
+(for ([entry (in-list elaborate-distribution-table)])
+  (match-define (list key term expected found) entry)
+  (define d (elab-diagnostic term))
+  ;; 意図した key へ到達したことを先に確かめる。
+  ;; 別の key の Diagnostic が返ると expected/found の照合が無意味になる。
+  (check-equal? (diagnostic-id d) (diagnostic-code-of 'elaborate key))
+  (check-equal? (diagnostic-expected d) expected)
+  (check-equal? (diagnostic-found d) found)
+  (check-not-equal? expected found
+                    (format "~a の expected と found は異なる" key)))
+
+;; 例外表の allowlist の外にある key は、details が 2 件でも
+;; expected/actual の対として扱わない。
+;; allowlist を外して素の 2 要素照合へ畳むと、Box が expected へ入り
+;; この試験が落ちる。
+(test-case
+ "表に無い key の details 2 件は found の list へ入る"
+ (define d
+   (elab-diagnostic
+    '(LetType Box (TypeMake List) (Fn ((x Box)) Int () x))))
+ (check-equal? (diagnostic-id d)
+               (diagnostic-code-of 'elaborate 'unsaturated-type))
+ (check-false (diagnostic-expected d))
+ ;; 第 1 要素は型構成子の名前、第 2 要素はその kind である。
+ ;; どちらも「期待した型」ではない。
+ (check-equal? (diagnostic-found d) '(Box (Type -> Type))))
