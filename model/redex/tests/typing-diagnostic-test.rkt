@@ -61,6 +61,7 @@
   (check-equal? (diagnostic-id d) "E-TYP-018")
   (check-equal? (diagnostic-found d) 'not-a-table))
 
+;; [REQ: DIA-003] kind は sourceId の 1 bit で決まる（spec §7、§15）
 (test-case "typing の source-chain は sourceId で kind を分ける"
   (define d (core-type-of/diagnostic '(#:var x (#:span src 5 9))
                                      empty
@@ -73,7 +74,7 @@
   (check-equal? (third (first (diagnostic-source-chain s)))
                 (diagnostic-primary-span s)))
 
-;; lowering 以外の phase の backend は #f である（spec §8）
+;; [REQ: DIA-003] lowering 以外の phase の backend は #f である（spec §8）
 (test-case "typing の Diagnostic は backend を持たない"
   (check-false (diagnostic-backend
                 (core-type-of/diagnostic (term x) empty empty))))

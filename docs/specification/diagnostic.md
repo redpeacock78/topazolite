@@ -2,7 +2,7 @@
 
 本文書は、compiler phase が返す Diagnostic の構造と error code の versioning 規約を定める。
 
-Diagnostic の生成、origin chain の構築、expansion trace の構築、terminal と LSP と JSON の renderer は本文書の規約を入力として後続サイクルで実装する。
+Diagnostic の生成、source-chain の構築、expansion trace の構築、terminal と LSP と JSON の renderer は本文書の規約を入力として後続サイクルで実装する。
 
 ## 1. Diagnostic IR の欄
 
@@ -10,7 +10,7 @@ Diagnostic の生成、origin chain の構築、expansion trace の構築、term
 
 Diagnostic IR は G1、G2、PR の項ではなく、簡約や型付けの対象でもない。
 
-Diagnostic IR は次の17欄を持つ。
+Diagnostic IR は次の18欄を持つ。
 
 | 欄 | 意味 |
 | --- | --- |
@@ -25,12 +25,13 @@ Diagnostic IR は次の17欄を持つ。
 | `help` | 対処方法を示す文章の列 |
 | `expected` | 期待された値 |
 | `found` | 実際に見つかった値 |
-| `origin-chain` | Surface から Core までの origin の列 |
+| `source-chain` | Surface から Core までの provenance frame の列 |
 | `expansion-trace` | macro 展開の履歴 |
 | `effect-context` | 診断が生じた効果行の文脈 |
 | `proof-context` | 診断が生じた Proof 義務の文脈 |
 | `related` | 関連する Diagnostic の列 |
 | `fixes` | 機械適用可能な修正候補の列 |
+| `backend` | lowering の診断が生じた対象 backend |
 
 `id` は表示と外部連携に使う文字列であり、`category` は分岐に使う記号である。
 
@@ -38,13 +39,17 @@ Diagnostic IR は次の17欄を持つ。
 
 `category` は `id` の分類部から導出し、構築関数の引数にはしない。
 
-## 2. schema version 1 の形
+`source-chain` はホワイトペーパー §13.4.1 の `originChain[]` に当たる。
+
+欄名を替えたのは、`core-calculus.md` の `origin` と NAR-002 が値の信頼経路に同じ語を充てており、二つの機構を欄名で判別できなくなるためである。
+
+## 2. schema version 2 の形
 
 **schema version** は、Diagnostic の欄集合と各欄が受け付ける値の形を示す版である。
 
-schema version 1 は、各欄へ次の形を要求する。
+schema version 2 は、各欄へ次の形を要求する。
 
-| 欄 | schema version 1 の形 |
+| 欄 | schema version 2 の形 |
 | --- | --- |
 | `id` | registry に存在する code の文字列 |
 | `severity` | `'error`、`'warning`、`'note` のいずれか |
@@ -57,12 +62,13 @@ schema version 1 は、各欄へ次の形を要求する。
 | `help` | 空でない文字列の list |
 | `expected` | 任意の値または `#f` |
 | `found` | 任意の値または `#f` |
-| `origin-chain` | 空の list |
+| `source-chain` | §3 の frame の空でない list |
 | `expansion-trace` | 空の list |
 | `effect-context` | 任意の値または `#f` |
 | `proof-context` | 任意の値または `#f` |
 | `related` | 空の list |
 | `fixes` | 空の list |
+| `backend` | `'racket-cs`、`'racketscript`、`#f` のいずれか |
 
 `secondary-labels` の各要素は2要素の list であり、第1要素は `span-ok?` を満たす span、第2要素は空でない文字列である。
 
@@ -70,23 +76,51 @@ schema version 1 は、各欄へ次の形を要求する。
 
 `diagnostic-valid?` はこの形を満たすかを返し、`diagnostic-schema-errors` は満たさない条件の理由を文字列の list で返す。
 
-## 3. schema version 1 の空要求
+## 3. source-chain の要素形と schema version 2 の空要求
 
-`origin-chain`、`expansion-trace`、`related`、`fixes` の4欄は、schema version 1 では空であることを要求する。
+[REQ: DIA-003] `source-chain` は、その診断が指す構文の由来を Surface から Core の順に並べた frame の列である。
+
+**source-chain frame** は `(list phase kind span)` の3要素の list である。
+
+- `phase`：その frame が指す節点を持ち込んだ層を表す記号。`surface` または `elaborate` のいずれか。
+- `kind`：span がどのように得られたかを表す記号。`verbatim`、`synthesized`、`synthetic-span` のいずれか。
+- `span`：`span-ok?` を満たす span。
+
+列の先頭は最も source に近い frame である。
+
+`surface` の frame は必ず1つ存在し、`elaborate` の frame はその後ろに並ぶ。
+
+合成された節点であっても、その合成を引き起こした入力の構文が必ずあり、その位置が `surface` の frame になるためである。
+
+`kind` は生成地点の事実を span の `sourceId` より優先して決める。
+
+producer は自分がその節点を合成したかを先に判定し、合成でない場合に限り `sourceId` を見る。
+
+`verbatim` と `synthetic-span` は入力由来の節点にのみ与える値であり、`sourceId` が `#:synthetic` かどうかで両者を分ける。
+
+`synthesized` は予約値であり、Phase 0 の producer は生成しない。
+
+Phase 0 の elaborate は節点を合成しないため、Phase 0 が出す `source-chain` の長さは1であり、`kind` は `verbatim` と `synthetic-span` の2値に限られる。
+
+予約値を許容集合へ最初から含めるのは、Phase 2 の desugaring が節点を合成するようになったときに schema version を上げずに済ませるためである。
+
+`expansion-trace`、`related`、`fixes` の3欄は、schema version 2 では空であることを要求する。
 
 これらの欄を埋めるサイクルが要素の形を定め、その変更時に schema version を上げる。
 
-origin chain の要素形は G4e が定め、`origin-chain` を埋めるときに schema version は2になる。
+`related` の要素形は G4f が定める。
+
+`fixes` は Phase 1 以降、`expansion-trace` は Phase 2 以降が定める。
 
 この空要求は、要素形を未定義のまま受け入れることと、将来の要素形を先取りすることを避ける。
 
-欄そのものは17欄すべてを最初から持つため、後続サイクルは欄の追加を待たずに値を生成できる。
+欄そのものは18欄すべてを最初から持つため、後続サイクルは欄の追加を待たずに値を生成できる。
 
 ## 4. Phase 0 で形を固定しない欄
 
 `expected`、`found`、`effect-context`、`proof-context` の4欄は、Phase 0 では形を固定しない。
 
-この4欄は任意の値または `#f` を受け、schema version 1 の検証器は値の形を検査しない。
+この4欄は任意の値または `#f` を受け、schema version 2 の検証器は値の形を検査しない。
 
 空要求の4欄は「まだ使わないので空」と定める欄であり、この4欄は「使うが形を決めない」と定める欄である。
 
@@ -100,13 +134,13 @@ producer は `details` を文字列化せず、Racket の値のまま `expected`
 
 renderer が具体的な整形を要求するのは G4f 以降であり、その時点で要素形を定めて schema version を上げる。
 
-この判断は未回収の欄を残すものではなく、schema version 1 が「任意の値または `#f`」を形として定めるものである。
+この判断は未回収の欄を残すものではなく、schema version 2 が「任意の値または `#f`」を形として定めるものである。
 
 ## 5. 二つの version
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` と `diagnostic-registry-version` は、G4c 完了時点ではともに1である。
+`diagnostic-schema-version` は G4e 完了時点で2であり、`diagnostic-registry-version` は2である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -268,8 +302,12 @@ Diagnostic 化で替えるのは失敗時の payload だけであり、`status` 
 
 `capability-diagnostic` の `reason` 文字列は `found` へ入れる。
 
-`backend` は Diagnostic へ運ばない。
+`backend` は Diagnostic の最上位の欄へ運ぶ。
 
-§2 が定める schema version 1 の欄集合に backend を置く欄が無く、欄を足せば schema version を上げることになる。
+`lower` と `lower-value` が生成する Diagnostic はすべて `backend` を持ち、他の3 phase の Diagnostic は `#f` を持つ。
+
+phase と `backend` の対応を検査するのは `diagnostic-of` である。
+
+`diagnostic-schema-errors` は Diagnostic 単体を受け取り、それを生成した phase を知らないためである。
 
 `lower/with-matrix` を呼ぶ test は capability diagnostic の `backend` を引き続き読める。

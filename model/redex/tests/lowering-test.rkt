@@ -614,6 +614,7 @@
   (check-true (capability-diagnostic? seam-result))
   (check-eq? (capability-diagnostic-backend seam-result) 'racket-cs))
 
+;; [REQ: DIA-003] lowering の source-chain（spec §15）
 (test-case "lowering の source-chain は長さ 1 の surface frame である"
   (define bad-term `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name))
   (define-values (status result) (lower bad-term 'racket-cs))
@@ -621,7 +622,7 @@
   (check-equal? (diagnostic-source-chain result)
                 (list (list 'surface 'verbatim '(#:span src 0 18)))))
 
-;; lowering の Diagnostic は backend を持つ（spec §8、§15）
+;; [REQ: DIA-003] lowering の Diagnostic は backend を持つ（spec §8、§15）
 (test-case "lowering の Diagnostic は backend を持ち他の phase は #f である"
   (define bad-term `(PrimVal (#:span src 0 18) (Reserved o-kernel) ,kernel-name))
   (define-values (status result) (lower bad-term 'racket-cs))

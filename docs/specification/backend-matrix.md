@@ -318,7 +318,7 @@ feature ごとに、2 つの backend での実現方法を `native`、`shim`、`
 
 非対応 feature に当たったとき、写像は近似的な結果を出さず capability diagnostic を返す。 [REQ: BAK-003]
 
-診断は feature-id、backend、理由の 3 つを持つ。
+診断は feature-id、backend、棄却した節点、理由の 4 つを持つ。
 診断を返した入力について、写像は目標項を返さない。
 部分的な出力と診断を同時に返すことを禁じる。
 

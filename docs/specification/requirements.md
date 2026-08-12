@@ -636,6 +636,8 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 評価順の保存の測定範囲 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
 | kernel primitive と trait primitive | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
+| Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
+| Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
 
 G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
 可変性を保つ join、`mut` field への再代入、borrow mode の互換性は同じ意味論の上に乗る。

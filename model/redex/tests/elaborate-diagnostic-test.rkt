@@ -75,6 +75,7 @@
  (check-equal? (diagnostic-primary-span d) ty-span)
  (check-equal? (diagnostic-found d) '(Prop no-such-validator)))
 
+;; [REQ: DIA-003] Phase 0 の producer は長さ 1 の source-chain を出す（spec §15）
 (test-case
  "elaborate の source-chain は長さ 1 で sourceId が kind を決める"
  (define let-span '(#:span src 0 20))

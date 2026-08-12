@@ -1,7 +1,7 @@
 # CanonicalSpan と spanful 構文
 
 この文書は、Surface と Typed Core の項へ source coordinate を付与し、実行意味論へ渡す直前に coordinate を取り除く規約を定める。
-Diagnostic IR の schema、error code registry、phase ごとの Diagnostic 生成、origin chain、renderer はこの文書の対象外である。
+Diagnostic IR の schema、error code registry、phase ごとの Diagnostic 生成、source-chain、renderer はこの文書の対象外である。
 
 ## 1. CanonicalSpan
 

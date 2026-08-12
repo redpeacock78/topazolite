@@ -74,9 +74,9 @@
                (format "missing heading: ~a §~a" (car cite) (cdr cite)))))
 
 (test-case
- "all five source documents appear in the table"
+ "all six source documents appear in the table"
  (define names (list->set (map car (all-citations))))
  (check-equal? names
                (set "trait.md" "structural-row.md"
                     "proof-value.md" "proof-search.md"
-                    "backend-matrix.md")))
+                    "backend-matrix.md" "diagnostic.md")))
