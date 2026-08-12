@@ -49,6 +49,26 @@
   (check-equal? (entry-span '(Apply (#:span src 20 0) 1))
                 '(#:span #:synthetic 0 0)))
 
+;; spec §22、§25 第 6 群。包みは span-of でも branch-span でも取れないため、
+;; fallback を足さないと #:ty の包みを節点にしたとき synthetic へ落ちる。
+(test-case "entry-span は包みからも span を取る"
+  (check-equal? (entry-span '(#:ty Int (#:span src 0 3))) '(#:span src 0 3))
+  (check-equal? (entry-span '(#:bind x (#:span src 4 5))) '(#:span src 4 5))
+  (check-equal? (entry-span '(#:lbl a (#:span src 6 7))) '(#:span src 6 7))
+  (check-equal? (entry-span '(#:ef (Own) (#:span src 8 11))) '(#:span src 8 11))
+  ;; 包みでない spanless な値は synthetic のままである。
+  (check-equal? (entry-span 'x) '(#:span #:synthetic 0 0))
+  (check-equal? (entry-span '(#:ty Int)) '(#:span #:synthetic 0 0))
+  ;; span-ok? を満たさない包みも synthetic へ落ちる。
+  (check-equal? (entry-span '(#:ty Int (#:span src 9 2))) '(#:span #:synthetic 0 0)))
+
+(test-case "entry-span は節点と分岐を包みより先に見る"
+  ;; 3 つの述語は head の形で互いに素であり、追加で既存の解が変わらない。
+  (check-equal? (entry-span '(Drop (#:span src 0 9) 1)) '(#:span src 0 9))
+  (check-equal? (entry-span '((#:span src 1 9) K () -> 1)) '(#:span src 1 9))
+  (check-equal? (entry-span '(#:var x (#:span src 2 3))) '(#:span src 2 3))
+  (check-equal? (entry-span '(#:lit 1 (#:span src 4 5))) '(#:span src 4 5)))
+
 (check-equal? (peel-node '(Drop (#:span src 3 7) 1)) '(Drop 1))
 (check-equal? (peel-node '(#:var x (#:span src 0 1))) 'x)
 (check-equal? (peel-node '(Drop 1)) '(Drop 1))
