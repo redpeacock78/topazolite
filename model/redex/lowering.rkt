@@ -325,7 +325,20 @@
 
 ;; production の入口。正典表を既定で使い、表を引数に取らない
 ;; （backend-matrix.md §5）。
+;; spec §14: 2 つの公開入口が同じ判定を使う。兄弟の入口で判定が分かれると、
+;; 片方だけを直したときに差が残る。
+;; lower/with-matrix へは置かない。seam は matrix を差し替えて診断機構そのものを
+;; 試すためのものであり、backend も差し替える余地を残す。未知の backend は
+;; backend-matrix.rkt の feature-support/matrix が拒むので、seam が素通しに
+;; なるわけではない。lower はこの seam を経由するので、公開 API から入る経路は
+;; 入口の検査と matrix の検査の両方を通る。
+(define (check-backend! who backend)
+  (unless (memq backend '(racket-cs racketscript))
+    (error who "backend は racket-cs か racketscript でなければならない: ~s"
+           backend)))
+
 (define (lower core-in backend)
+  (check-backend! 'lower backend)
   (define-values (status result)
     (lower/with-matrix core-in backend backend-features))
   (if (eq? status 'capability)
@@ -348,6 +361,7 @@
 ;; 値の表を直接呼ぶ入口。UVal と RVal のように well-typed な源項から到達しない形を
 ;; fixture で試すために使う。
 (define (lower-value value-in backend)
+  (check-backend! 'lower-value backend)
   (void (erase-core value-in))
   (define-values (status result)
     (with-diagnostics backend

@@ -641,3 +641,41 @@
     (check-equal? (observe-node-case mode key term)
                   (list (expected-key mode key) '(#:span #:synthetic 0 0))
                   (format "spanless node-case: ~a ~a" mode key))))
+
+;; [REQ: BAK-001] lower の入口は backend の値域を検査する（spec §14）
+(test-case
+ "lower と lower-value は既知の backend を受ける"
+ (for ([backend (in-list '(racket-cs racketscript))])
+   (define-values (status result) (lower 1 backend))
+   (check-eq? status 'ok (format "lower ~a: ~s" backend result))
+   (define-values (vstatus vresult) (lower-value 7 backend))
+   (check-eq? vstatus 'ok (format "lower-value ~a: ~s" backend vresult))))
+
+(test-case
+ "lower と lower-value は未知の backend を入口で error にする"
+ ;; 成功経路にも検査が要る。失敗経路だけなら diagnostic-of が error にするが、
+ ;; 成功する項を渡すと未知の backend のまま結果が返ってしまう。
+ ;; 述語を exn:fail? にはしない。検査が無くても backend-matrix.rkt の
+ ;; feature-support/matrix が case の else で error を投げるため、exn:fail? では
+ ;; 入口の検査が在ることを言えない。綴りで層を見分ける。
+ (for ([backend (in-list '(no-such-backend racket #f "racket-cs"))])
+   (check-exn #rx"backend は racket-cs か racketscript"
+              (lambda () (lower 1 backend))
+              (format "lower は ~s を入口で拒まなければならない" backend))
+   (check-exn #rx"backend は racket-cs か racketscript"
+              (lambda () (lower-value 7 backend))
+              (format "lower-value は ~s を入口で拒まなければならない" backend))))
+
+(test-case
+ "lower/with-matrix は入口の検査を持たず matrix lookup が未知の backend を拒む"
+ ;; seam は matrix を差し替えて診断機構そのものを試すためのものであり、
+ ;; backend も差し替える余地を残す。専用の検査を置かないことをここで言明する。
+ ;; ただし検査が無いことは通ることを意味しない。lower-val が literal でも
+ ;; require-feature! を通り、feature-support/matrix が未知の backend を
+ ;; 'feature-support の error にする。with-diagnostics は let/ec だけで例外を
+ ;; 捕まえないので、この error はそのまま呼び出し側へ抜ける。
+ ;; 綴りで層を見分ける。seam へ check-backend! を置いてしまうと綴りが変わり、
+ ;; この試験が落ちる。
+ (check-exn #rx"feature-support: unknown backend"
+            (lambda ()
+              (lower/with-matrix 1 'no-such-backend backend-features))))
