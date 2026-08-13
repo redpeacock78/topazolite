@@ -369,3 +369,100 @@
   (check-true (extensionally-isomorphic? (build-region-ir raw-core)
                                          (build-region-ir erased)
                                          erased)))
+
+;; [REQ: BOR-003] C5: core-calculus.md §8 の golden program 2 本で、
+;; Scope の入れ子から読み取れる親子関係、outlives、退場を、問い合わせだけで
+;; 再構成できる。
+;; golden-test.rkt:38-79 の写しである。あちらは provide していない。
+(define golden-find-positive
+  '(Apply
+    (Fn ((values (List Int))) (Result Int Unit) ()
+        (NarrativeExpr
+         (Recur loop ((rest (List Int))) (Result Int Unit) (Return)
+                (Eliminate
+                 rest
+                 ((nil () -> (Construct ng unit))
+                  (cons
+                   (head tail)
+                   ->
+                   (Eliminate
+                    (Apply lt 0 head)
+                    ((true () -> (Return (Construct ok head)))
+                     (false () -> (Apply loop tail)))))))
+                (Apply loop values))))
+    (Construct cons (Types Int)
+               -1
+               (Construct cons (Types Int)
+                          2
+                          (Construct nil (Types Int))))))
+
+(define golden-doubled
+  '(Apply
+    (Fn ((f (NFn (Int) Int () ()))
+         (values (List Int)))
+        (List Int) ()
+        (Recur go ((rest (List Int))) (List Int) ()
+               (Eliminate
+                rest
+                ((nil () -> (Construct nil))
+                 (cons
+                  (h t)
+                  ->
+                  (Construct cons (Apply f h) (Apply go t)))))
+               (Apply go values)))
+    (Curry mul 2)
+    (Construct cons (Types Int)
+               -1
+               (Construct cons (Types Int)
+                          2
+                          (Construct nil (Types Int))))))
+
+;; 木の形を直接読んで親子関係を組む。問い合わせ側と独立に書く。
+;; 問い合わせの実装を借りると、実装の誤りが期待値にも同じ形で現れ、比較で相殺される。
+(define (scope-points core)
+  (for/list ([point (in-list (core-points core))]
+             #:when (match (core-node core point)
+                      [`(Scope ,_ ,_) #t]
+                      [_ #f]))
+    point))
+
+;; 親は、自身より真に短い Scope の point のうち最長の接頭辞である。
+(define (scope-parent points point)
+  (for/fold ([best #f]) ([other (in-list points)])
+    (if (and (< (length other) (length point))
+             (equal? other (take point (length other)))
+             (or (not best) (> (length other) (length best))))
+        other
+        best)))
+
+(define (check-golden-region name source)
+  (match-define (list raw-core _ _ _) (elab source))
+  (define core (erase-core raw-core))
+  (define ir (build-region-ir core))
+  (define points (scope-points core))
+  ;; Scope を 1 つも含まない golden では、以下の走査が空回りする。
+  (check-true (pair? points) (format "~a: Scope を 1 つも含まない" name))
+  (check-true (region-ir-ok? ir core) name)
+  (check-true (lexical-region-ir-ok? ir) name)
+  (check-equal? (sub1 (set-count (region-ir-regions ir))) (length points) name)
+  (define root (region-at ir '()))
+  (for ([point (in-list points)])
+    (define ρ (region-at ir point))
+    ;; 退場は自身の point でちょうど 1 件である。
+    (check-equal? (regions-exiting-at ir point) (set ρ) name)
+    ;; 親子関係が一致する。
+    (define parent-point (scope-parent points point))
+    (define parent-region
+      (if parent-point (region-at ir parent-point) root))
+    (check-equal? (region-parent ir ρ) parent-region name)
+    ;; 親が子より長生きし、同時に生きる。
+    (check-true (region-outlives? ir parent-region ρ) name)
+    (check-true (regions-overlap? ir parent-region ρ) name))
+  ;; Scope でない point では退場が無い。
+  (for ([point (in-list (core-points core))]
+        #:unless (member point points))
+    (check-true (set-empty? (regions-exiting-at ir point)) name)))
+
+(test-case "C5: golden program 2 本の region を問い合わせだけで再構成できる"
+  (check-golden-region "findPositive" golden-find-positive)
+  (check-golden-region "map" golden-doubled))
