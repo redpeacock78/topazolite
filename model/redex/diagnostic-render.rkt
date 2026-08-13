@@ -4,7 +4,8 @@
          unfixed->jsexpr
          source-id->uri
          span->jsexpr
-         render-terminal)
+         render-terminal
+         render-lsp)
 
 (require json
          racket/match
@@ -165,3 +166,80 @@
            related-lines
            backend-lines)
    "\n"))
+
+;; spec §9: severity の 3 語を LSP の番号へ写す。
+(define lsp-severity-numbers (hasheq 'error 1 'warning 2 'note 3))
+
+;; location から LSP の range を作る。synthetic を特別扱いしない。
+;; span->location が synthetic へ 4 つの 0 を返すため、同じ経路で
+;; (0,0)-(0,0) になる。ここで分岐を置くと location の規則と二重管理になる。
+(define (location->range loc)
+  (hasheq 'start (hasheq 'line (location-start-line loc)
+                         'character (location-start-character loc))
+          'end (hasheq 'line (location-end-line loc)
+                       'character (location-end-character loc))))
+
+;; source-chain の frame を object へ写す。LSP の data と JSON の sourceChain が
+;; 同じ関数を読む。
+(define (frame->jsexpr frame)
+  (match-define (list phase kind span) frame)
+  (hasheq 'phase (symbol->string phase)
+          'kind (symbol->string kind)
+          'span (span->jsexpr span)))
+
+(define (symbol-or-null v)
+  (if v (symbol->string v) (json-null)))
+
+;; spec §9: LSP の Diagnostic に対応する hasheq を返す。
+;; top level の uri は置かない。uri は publishDiagnostics の params が持つ。
+(define (render-lsp d sm)
+  (define primary (diagnostic-primary-span d))
+  (define loc (span->location sm primary))
+  (match-define (list '#:span sid start-byte end-byte) primary)
+  (hasheq
+   'range (location->range loc)
+   'severity (hash-ref lsp-severity-numbers (diagnostic-severity d))
+   'code (diagnostic-id d)
+   'source "topazolite"
+   ;; 位置は range と relatedInformation が持つので message へは入れない。
+   'message (string-join (cons (diagnostic-title d) (supplement-bodies d)) "\n")
+   'relatedInformation
+   (for/list ([r (in-list (diagnostic-related d))])
+     (match-define (list relation span description) r)
+     (define r-loc (span->location sm span))
+     (hasheq 'location
+             (hasheq 'uri (source-id->uri (location-source-id r-loc))
+                     'range (location->range r-loc))
+             ;; DiagnosticRelatedInformation は location と message の 2 欄しか
+             ;; 持たない。relation を data へ隠すと client 上で消えるため、
+             ;; message の接頭辞として載せる。
+             'message (if (location-synthetic? r-loc)
+                          (format "[~a] <synthetic> ~a" relation description)
+                          (format "[~a] ~a" relation description))))
+   'data
+   (hasheq
+    'synthetic (location-synthetic? loc)
+    'sourceId (sid-spelling sid)
+    'startByte start-byte
+    'endByte end-byte
+    'category (symbol->string (diagnostic-category d))
+    'schemaVersion diagnostic-schema-version
+    'backend (symbol-or-null (diagnostic-backend d))
+    'expected (unfixed->jsexpr (diagnostic-expected d))
+    'found (unfixed->jsexpr (diagnostic-found d))
+    'secondaryLabels
+    (for/list ([lab (in-list (diagnostic-secondary-labels d))])
+      (match-define (list span label) lab)
+      (define l-loc (span->location sm span))
+      ;; span を raw のまま置かない。LSP の出力の中で位置の単位が 2 種類になる。
+      ;; sourceId を載せるのは、range だけでは参照先の source を特定できない
+      ;; ためである。top level の range は data の sourceId と対で読むのに、
+      ;; ここだけ対の片方を欠くと、別 source の label を同じ位置として扱う
+      ;; 受け手を許してしまう。
+      (hasheq 'range (location->range l-loc)
+              'message label
+              'sourceId (sid-spelling (location-source-id l-loc))
+              'synthetic (location-synthetic? l-loc)))
+    'sourceChain (map frame->jsexpr (diagnostic-source-chain d))
+    'effectContext (unfixed->jsexpr (diagnostic-effect-context d))
+    'proofContext (unfixed->jsexpr (diagnostic-proof-context d)))))

@@ -406,3 +406,180 @@
    (match-define (list name d) row)
    (check-false (regexp-match? #rx"\033" (render-terminal d fixture-source-map))
                 (format "~a" name))))
+
+;; spec §9: 返り値は client へ JSON として送られる。
+;; data へ記号が残ると返り値全体が jsexpr? を満たさなくなるため、8 件すべてで
+;; 確かめる。1 件だけで確かめると、特定の欄にだけ記号が残る実装を見逃す。
+(test-case
+ "LSP の返り値は 8 件すべてで jsexpr? を満たす"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (define j (render-lsp d fixture-source-map))
+   (check-true (jsexpr? j) (format "~a" name))
+   ;; data を単体でも通す。返り値全体だけを見ると、原因が data の中にあるのか
+   ;; 最上位の欄にあるのかが失敗の出力から読み取れない（spec §18）。
+   (check-true (jsexpr? (hash-ref j 'data)) (format "~a の data" name))))
+
+(test-case
+ "LSP の最上位は 7 key で source が固定文字列である"
+ (define j (render-lsp (fixture 'minimal) fixture-source-map))
+ (check-equal? (list->seteq (hash-keys j))
+               (seteq 'range 'severity 'code 'source 'message
+                      'relatedInformation 'data))
+ (check-equal? (hash-ref j 'code) "E-VAR-002")
+ (check-equal? (hash-ref j 'source) "topazolite")
+ ;; range は 0 起点である。terminal の 1:5 と同じ位置を指す。
+ (check-equal? (hash-ref j 'range)
+               (hasheq 'start (hasheq 'line 0 'character 4)
+                       'end (hasheq 'line 0 'character 5)))
+ ;; message が title と同じときは title の 1 行だけである。
+ (check-equal? (hash-ref j 'message) "束縛されていない変数である")
+ (check-equal? (hash-ref j 'relatedInformation) '()))
+
+;; spec §9: top level の uri は置かない。uri は publishDiagnostics の params が
+;; 持ち、Diagnostic 自体は持たない。
+(test-case
+ "LSP の最上位に uri を置かない"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (check-false (hash-has-key? (render-lsp d fixture-source-map) 'uri)
+                (format "~a" name))))
+
+(test-case
+ "severity は error が 1、warning が 2、note が 3 である"
+ (for ([pair (in-list '((error 1) (warning 2) (note 3)))])
+   (match-define (list sev expected) pair)
+   (define d
+     (make-diagnostic #:id "E-VAR-002"
+                      #:severity sev
+                      #:title "束縛されていない変数である"
+                      #:message "束縛されていない変数である"
+                      #:primary-span s-x
+                      #:source-chain (list (list 'surface 'verbatim s-x))))
+   (check-equal? (hash-ref (render-lsp d fixture-source-map) 'severity)
+                 expected
+                 (format "~a" sev))))
+
+;; spec §9: message は title の行を先頭に置き、そのあとへ §8 の第 1 行から
+;; 第 7 行を = の接頭辞なしで並べる。
+;; multiline は message が title と異なるため、title の行に続いて message の
+;; 2 行が出る。先頭 2 行が同じ文になるのは、fixture の message の第 1 行が
+;; title と同じ文だからである。
+(test-case
+ "LSP の message は title の行に補足行を接頭辞なしで続ける"
+ (check-equal? (hash-ref (render-lsp (fixture 'multiline) fixture-source-map)
+                         'message)
+               (string-join
+                (list "与えた式の個数が期待と一致しない"
+                      "与えた式の個数が期待と一致しない"
+                      "仮引数は 2 個である")
+                "\n"))
+ (check-equal? (hash-ref (render-lsp (fixture 'secondary) fixture-source-map)
+                         'message)
+               (string-join
+                (list "Eliminate が構築子を尽くしていない"
+                      "note: 構築子は 2 個ある"
+                      "help: 残る構築子の分岐を足す")
+                "\n"))
+ ;; 位置は range と relatedInformation が持つので message へは入れない。
+ ;; backend は §8 第 9 行であり、第 1 行から第 7 行の外なので message へ出ない。
+ (define lowering-message
+   (hash-ref (render-lsp (fixture 'lowering) fixture-source-map) 'message))
+ (check-false (regexp-match? #rx"backend" lowering-message))
+ (check-false (regexp-match? #rx"-->" lowering-message)))
+
+;; spec §7 と §9: synthetic の range は空だが、それだけでは source の先頭を指す
+;; 実在の位置と区別できない。data の synthetic が真であることが marker である。
+(test-case
+ "synthetic の range は空で data の synthetic が真である"
+ (define j (render-lsp (fixture 'synthetic) fixture-source-map))
+ (check-equal? (hash-ref j 'range)
+               (hasheq 'start (hasheq 'line 0 'character 0)
+                       'end (hasheq 'line 0 'character 0)))
+ (check-true (hash-ref (hash-ref j 'data) 'synthetic))
+ (check-equal? (hash-ref (hash-ref j 'data) 'sourceId) "#:synthetic")
+ ;; 実在の source を持つ診断は偽である。
+ (check-false (hash-ref (hash-ref (render-lsp (fixture 'minimal)
+                                              fixture-source-map)
+                                  'data)
+                        'synthetic)))
+
+;; spec §9: relatedInformation の message は relation を落とさず、synthetic の
+;; ときは description の直前へ marker を置く。
+(test-case
+ "relatedInformation は relation と synthetic marker を message へ載せる"
+ (define j (render-lsp (fixture 'related) fixture-source-map))
+ (define infos (hash-ref j 'relatedInformation))
+ (check-equal? (length infos) 2)
+ (check-equal? (first infos)
+               (hasheq 'location
+                       (hasheq 'uri "topazolite:sample"
+                               'range (hasheq 'start (hasheq 'line 1 'character 4)
+                                              'end (hasheq 'line 1 'character 5)))
+                       'message "[defined-here] 先に束縛した位置"))
+ (check-equal? (second infos)
+               (hasheq 'location
+                       (hasheq 'uri "topazolite:%23%3Asynthetic"
+                               'range (hasheq 'start (hasheq 'line 0 'character 0)
+                                              'end (hasheq 'line 0 'character 0)))
+                       'message "[introduced-by] <synthetic> 展開が導入した束縛")))
+
+;; spec §12: secondary-labels は relatedInformation へ混ぜず data へ置く。
+;; 混ぜる実装は relatedInformation の件数が 2 になり、ここで落ちる。
+(test-case
+ "secondary-labels は data へ入り relatedInformation へ混ざらない"
+ (define j (render-lsp (fixture 'secondary) fixture-source-map))
+ (check-equal? (hash-ref j 'relatedInformation) '())
+ (check-equal? (hash-ref (hash-ref j 'data) 'secondaryLabels)
+               (list (hasheq 'range (hasheq 'start (hasheq 'line 1 'character 4)
+                                            'end (hasheq 'line 1 'character 5))
+                             'message "この構築子が漏れている"
+                             'sourceId "sample"
+                             'synthetic #f)
+                     (hasheq 'range (hasheq 'start (hasheq 'line 0 'character 0)
+                                            'end (hasheq 'line 0 'character 0))
+                             'message "既定の分岐は無い"
+                             'sourceId "#:synthetic"
+                             'synthetic #t))))
+
+;; spec §9 の data の値域。記号を残さず文字列と json-null へ写す。
+(test-case
+ "data の backend は記号を文字列へ写し #f を json-null へ写す"
+ (define lowering-data
+   (hash-ref (render-lsp (fixture 'lowering) fixture-source-map) 'data))
+ (check-equal? (hash-ref lowering-data 'backend) "racket-cs")
+ (check-equal? (hash-ref lowering-data 'found)
+               "\"kernel primitive には写し先が無い\"")
+ (for ([row (in-list fixture-table)]
+       #:unless (eq? (first row) 'lowering))
+   (check-equal? (hash-ref (hash-ref (render-lsp (second row)
+                                                 fixture-source-map)
+                                     'data)
+                           'backend)
+                 (json-null)
+                 (format "~a" (first row)))))
+
+;; spec §9: sourceChain を落とすと DIA-003 の provenance が LSP でだけ機械可読で
+;; なくなる。effectContext と proofContext も同じ理由で置く。
+(test-case
+ "data は sourceChain と effectContext と proofContext を持つ"
+ (define data (hash-ref (render-lsp (fixture 'chain) fixture-source-map) 'data))
+ (check-equal? (list->seteq (hash-keys data))
+               (seteq 'synthetic 'sourceId 'startByte 'endByte 'category
+                      'schemaVersion 'backend 'expected 'found
+                      'secondaryLabels 'sourceChain
+                      'effectContext 'proofContext))
+ (check-equal? (hash-ref data 'category) "EFF")
+ (check-equal? (hash-ref data 'schemaVersion) diagnostic-schema-version)
+ (check-equal? (hash-ref data 'startByte) 20)
+ (check-equal? (hash-ref data 'endByte) 20)
+ (check-equal? (hash-ref data 'sourceChain)
+               (list (hasheq 'phase "surface" 'kind "verbatim"
+                             'span (hasheq 'sourceId "sample" 'startByte 4
+                                           'endByte 5 'synthetic #f))
+                     (hasheq 'phase "elaborate" 'kind "synthesized"
+                             'span (hasheq 'sourceId "sample" 'startByte 14
+                                           'endByte 15 'synthetic #f))))
+ (check-equal? (hash-ref data 'effectContext) "(Yield Int \"handler が無い\")")
+ (check-equal? (hash-ref data 'proofContext) "(Prop positive \"義務が残る\")")
+ (check-equal? (hash-ref data 'expected) (json-null)))
