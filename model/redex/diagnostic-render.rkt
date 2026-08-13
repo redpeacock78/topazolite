@@ -3,10 +3,14 @@
 (provide format-unfixed
          unfixed->jsexpr
          source-id->uri
-         span->jsexpr)
+         span->jsexpr
+         render-terminal)
 
 (require json
-         racket/match)
+         racket/match
+         racket/string
+         "diagnostic.rkt"
+         "source-map.rkt")
 
 ;; spec §11: 形を固定しない 4 欄（expected、found、effect-context、
 ;; proof-context）の整形。3 つの renderer がこの 1 つの関数を共有する。
@@ -62,3 +66,102 @@
             (if (set-member? unreserved-bytes b)
                 (string (integer->char b))
                 (percent-encode-byte b))))))
+
+;; spec §8 の補足行の第 1 行から第 7 行。位置を持たない欄だけを、表の順に並べる。
+;; terminal は各行へ "  = " を付け、LSP の message は接頭辞なしで同じ list を
+;; 並べる。2 箇所で組むと、片方だけが欄を落とした形になる。
+(define (supplement-bodies d)
+  (append
+   ;; 第 1 行。message が title と同じときは 2 度出さない。
+   (if (equal? (diagnostic-message d) (diagnostic-title d))
+       '()
+       (string-split (diagnostic-message d) "\n" #:trim? #f))
+   (if (diagnostic-expected d)
+       (list (format "expected: ~a" (format-unfixed (diagnostic-expected d))))
+       '())
+   (if (diagnostic-found d)
+       (list (format "found: ~a" (format-unfixed (diagnostic-found d))))
+       '())
+   (if (diagnostic-effect-context d)
+       (list (format "effect: ~a"
+                     (format-unfixed (diagnostic-effect-context d))))
+       '())
+   (if (diagnostic-proof-context d)
+       (list (format "proof: ~a"
+                     (format-unfixed (diagnostic-proof-context d))))
+       '())
+   (for/list ([note (in-list (diagnostic-notes d))])
+     (format "note: ~a" note))
+   (for/list ([h (in-list (diagnostic-help d))])
+     (format "help: ~a" h))))
+
+;; spec §8 の位置欄。1 起点へ直すのは terminal だけである。
+;; synthetic へ 1:1 を書くと source の先頭を指す実在の位置と区別できない。
+(define (position-text loc)
+  (if (location-synthetic? loc)
+      "<synthetic>"
+      (format "~a:~a:~a"
+              (sid-spelling (location-source-id loc))
+              (add1 (location-start-line loc))
+              (add1 (location-start-character loc)))))
+
+;; 抜粋は primary span の開始行 1 行だけである。
+;; 末尾の改行の後ろの空行も 1 行として数える。span の末尾 offset はその位置を
+;; 指しうるため、行が無いものとして扱うと抜粋が欠ける。
+(define (source-line src line-index)
+  (define lines (string-split src "\n" #:trim? #f))
+  (if (< line-index (length lines))
+      (list-ref lines line-index)
+      ""))
+
+;; caret の桁合わせは UTF-16 code unit で行う。表示幅で揃えるのは Phase 2 以降の
+;; Ariadne の仕事であり、位置行の列と同じ単位にしておけば両者が食い違わない。
+(define (caret-line loc line-text)
+  (define start (location-start-character loc))
+  (define width
+    (cond
+      ;; 複数行 span は開始列から行末までとする。開始列が行末に等しいときも
+      ;; caret を 1 本は出す。0 本にすると caret 行が空行と区別できなくなる。
+      [(not (= (location-start-line loc) (location-end-line loc)))
+       (max 1 (- (utf-16-length line-text) start))]
+      ;; 空 span は 1 文字分とする。
+      [(= start (location-end-character loc)) 1]
+      [else (- (location-end-character loc) start)]))
+  (string-append (make-string start #\space) (make-string width #\^)))
+
+;; spec §8: ANSI escape を含まない plain text を返す。末尾に改行を置かない。
+(define (render-terminal d sm)
+  (define loc (span->location sm (diagnostic-primary-span d)))
+  (define header
+    (format "~a[~a]: ~a"
+            (diagnostic-severity d) (diagnostic-id d) (diagnostic-title d)))
+  (define position (format "  --> ~a" (position-text loc)))
+  (define excerpt
+    (if (location-synthetic? loc)
+        '()
+        (let ([line-text
+               (source-line (source-map-source sm (location-source-id loc))
+                            (location-start-line loc))])
+          (list line-text (caret-line loc line-text)))))
+  (define label-lines
+    (for/list ([lab (in-list (diagnostic-secondary-labels d))])
+      (match-define (list span label) lab)
+      (format "  --> ~a: ~a" (position-text (span->location sm span)) label)))
+  (define related-lines
+    (for/list ([r (in-list (diagnostic-related d))])
+      (match-define (list relation span description) r)
+      (format "  = related[~a] ~a: ~a"
+              relation (position-text (span->location sm span)) description)))
+  (define backend-lines
+    (if (diagnostic-backend d)
+        (list (format "  = backend: ~a" (diagnostic-backend d)))
+        '()))
+  (string-join
+   (append (list header position)
+           excerpt
+           label-lines
+           (for/list ([body (in-list (supplement-bodies d))])
+             (string-append "  = " body))
+           related-lines
+           backend-lines)
+   "\n"))

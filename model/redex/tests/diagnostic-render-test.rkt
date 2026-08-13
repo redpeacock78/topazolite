@@ -244,3 +244,165 @@
                (hasheq 'sourceId "#:synthetic" 'startByte 0 'endByte 0
                        'synthetic #t))
  (check-true (jsexpr? (span->jsexpr s-syn))))
+
+;; spec §8: terminal は plain text であり ANSI escape を含まない。
+;; 8 件の fixture のうち 6 件は出力の全文を固定する。
+;; 行の並び（header、位置行、抜粋、caret、secondary の位置行、= の補足行）を
+;; 部分一致で確かめると、行の順序を入れ替えた実装が通ってしまう。
+
+(test-case
+ "minimal の terminal 出力の全文"
+ (check-equal?
+  (render-terminal (fixture 'minimal) fixture-source-map)
+  (string-join
+   (list "error[E-VAR-002]: 束縛されていない変数である"
+         "  --> sample:1:5"
+         "let x = 1"
+         "    ^")
+   "\n")))
+
+;; spec §7: synthetic は source を持たないため、抜粋と caret 行を出さない。
+;; 位置欄は 1:1 ではなく <synthetic> である。
+(test-case
+ "synthetic の terminal 出力は位置行を marker にし抜粋を出さない"
+ (check-equal?
+  (render-terminal (fixture 'synthetic) fixture-source-map)
+  (string-join
+   (list "error[E-TYP-002]: 期待型なしでは型を合成できない"
+         "  --> <synthetic>")
+   "\n")))
+
+(test-case
+ "expected と found の 2 行が第 2 行と第 3 行の順で出る"
+ (check-equal?
+  (render-terminal (fixture 'expected-found) fixture-source-map)
+  (string-join
+   (list "error[E-TYP-012]: 型が期待と一致しない"
+         "  --> sample:1:1"
+         "let x = 1"
+         "^^^"
+         "  = expected: Bool"
+         "  = found: Int")
+   "\n")))
+
+;; spec §8: primary span が複数行にまたがるときは開始行だけを出し、caret は
+;; 開始列から行末までとする。
+;; message が title と異なるので、第 1 行が message の 2 行として出る。
+(test-case
+ "複数行 span の caret は開始行の行末で止まる"
+ (check-equal?
+  (render-terminal (fixture 'multiline) fixture-source-map)
+  (string-join
+   (list "error[E-ARI-001]: 与えた式の個数が期待と一致しない"
+         "  --> sample:1:1"
+         "let x = 1"
+         "^^^^^^^^^"
+         "  = 与えた式の個数が期待と一致しない"
+         "  = 仮引数は 2 個である")
+   "\n")))
+
+;; caret の空白と幅は location と同じ UTF-16 code unit で数える。
+(test-case
+ "多 byte 文字を含む source の caret は UTF-16 code unit で揃う"
+ (define source-map (make-source-map (hasheq 'wide "あb")))
+ (define span '(#:span wide 3 4))
+ (define d
+   (make-diagnostic #:id "E-VAR-002"
+                    #:title "束縛されていない変数である"
+                    #:message "束縛されていない変数である"
+                    #:primary-span span
+                    #:source-chain (list (list 'surface 'verbatim span))))
+ (check-equal?
+  (render-terminal d source-map)
+  (string-join
+   (list "error[E-VAR-002]: 束縛されていない変数である"
+         "  --> wide:1:2"
+         "あb"
+         " ^")
+   "\n")))
+
+;; spec §8 第 8 行と §7: related の位置欄は synthetic のとき <synthetic> になる。
+;; relation を落とさないことも同じ行で固定する。
+(test-case
+ "related は relation と位置と description を 1 行へ並べる"
+ (check-equal?
+  (render-terminal (fixture 'related) fixture-source-map)
+  (string-join
+   (list "error[E-VAR-001]: 仮引数名が重複している"
+         "  --> sample:1:5"
+         "let x = 1"
+         "    ^"
+         "  = related[defined-here] sample:2:5: 先に束縛した位置"
+         "  = related[introduced-by] <synthetic>: 展開が導入した束縛")
+   "\n")))
+
+;; spec §8 の並び 4 と 5: secondary の位置行は = の補足行より前に出る。
+;; spec §12: note と help は接頭辞で区別する。
+(test-case
+ "secondary の位置行は補足行より前に出て note と help が続く"
+ (check-equal?
+  (render-terminal (fixture 'secondary) fixture-source-map)
+  (string-join
+   (list "error[E-DAT-004]: Eliminate が構築子を尽くしていない"
+         "  --> sample:1:1"
+         "let x = 1"
+         "^^^"
+         "  --> sample:2:5: この構築子が漏れている"
+         "  --> <synthetic>: 既定の分岐は無い"
+         "  = note: 構築子は 2 個ある"
+         "  = help: 残る構築子の分岐を足す")
+   "\n")))
+
+;; spec §11: found の文字列は ~s なので引用符が付く。
+;; spec §8 第 9 行: backend は補足行の最後である。
+(test-case
+ "found の文字列は引用符付きで出て backend が最後の行になる"
+ (check-equal?
+  (render-terminal (fixture 'lowering) fixture-source-map)
+  (string-join
+   (list "error[E-LOW-001]: Typed Core の kernel primitive は写し先を持たない"
+         "  --> sample:2:1"
+         "let y = 2"
+         "^^^^^^^^^"
+         "  = found: \"kernel primitive には写し先が無い\""
+         "  = backend: racket-cs")
+   "\n")))
+
+;; 空 span の caret は 1 文字分である。
+;; source の末尾の offset 20 は 3 行目の先頭であり、その行は空文字列である。
+;; 抜粋の行が空でも caret 行は出す。出さない実装は行数が 1 つ足りなくなる。
+(test-case
+ "空 span の caret は 1 文字分で effect と proof が続く"
+ (check-equal?
+  (render-terminal (fixture 'chain) fixture-source-map)
+  (string-join
+   (list "error[E-EFF-002]: 関数が宣言していない効果を残す"
+         "  --> sample:3:1"
+         ""
+         "^"
+         "  = effect: (Yield Int \"handler が無い\")"
+         "  = proof: (Prop positive \"義務が残る\")")
+   "\n")))
+
+;; severity は語をそのまま使う。3 つの語が header の先頭へ出ることを固定する。
+(test-case
+ "severity の 3 語は header へそのまま出る"
+ (for ([sev (in-list '(error warning note))])
+   (define d
+     (make-diagnostic #:id "E-VAR-002"
+                      #:severity sev
+                      #:title "束縛されていない変数である"
+                      #:message "束縛されていない変数である"
+                      #:primary-span s-x
+                      #:source-chain (list (list 'surface 'verbatim s-x))))
+   (check-equal? (first (string-split (render-terminal d fixture-source-map)
+                                      "\n" #:trim? #f))
+                 (format "~a[E-VAR-002]: 束縛されていない変数である" sev))))
+
+;; 出力は ANSI escape を含まない。色は Phase 2 以降の Rust renderer が持つ。
+(test-case
+ "terminal の出力に ANSI escape が無い"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (check-false (regexp-match? #rx"\033" (render-terminal d fixture-source-map))
+                (format "~a" name))))
