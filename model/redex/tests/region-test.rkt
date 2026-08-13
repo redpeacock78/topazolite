@@ -26,7 +26,7 @@
    (core-children '(Eliminate 0 ((nil () -> 1) (cons (h t) -> 2))))
    '(0 1 2)))
 
-;; spec §4 の production を 1 件ずつ実データで通す。
+;; docs/specification/region.md §3 の production を 1 件ずつ実データで通す。
 ;; 未知形の error は落ちた production を見つけない。既定へ落ちず個別の節が
 ;; 受けていることは、この試験だけが押さえる。
 ;; Construct と Rec は c 側と v 側の双方に同じ形の production を持つ。
@@ -270,7 +270,7 @@
   (check-exn exn:fail? (lambda () (region-at ir '(5))))
   (check-exn exn:fail? (lambda () (regions-exiting-at ir '(0 0)))))
 
-;; [REQ: BOR-003] spec §7 の adapter 性質 C1 から C4。
+;; [REQ: BOR-003] docs/specification/region.md §6 の adapter 性質 C1 から C4。
 ;; 兄弟の Scope を含み、根が Scope でない Core を使う。
 (define sibling-core
   '(Apply f (Scope () (Apply (Scope () 1) (Scope () 2)))))

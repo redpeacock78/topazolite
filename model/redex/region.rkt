@@ -16,7 +16,7 @@
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir)
 
-;; 意味的な子。c の位置に来る部分項だけが子である（spec §4）。
+;; 意味的な子。c の位置に来る部分項だけが子である（docs/specification/region.md §3）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
 ;; 子の並びは項の書き順に従う。
 ;;
@@ -95,7 +95,8 @@
 ;; owners は region から、その region が管理する place 列 π への有限写像である。
 (struct region-ir (regions outlives owners) #:transparent)
 
-;; inspection API。§7 の adapter 性質を試験する側だけが読む。G5b は読まない。
+;; inspection API。docs/specification/region.md §6 の adapter 性質を試験する側だけが読む。
+;; G5b は読まない。
 ;; regions-overlap? が呼ぶため、構造体の定義より前へ置く。
 (define (region-parent ir ρ)
   (hash-ref (lexical-region-ir-parents ir) ρ #f))
@@ -166,7 +167,7 @@
 (define (place-list? v)
   (and (list? v) (andmap exact-nonnegative-integer? v)))
 
-;; spec §6 の 8 条件。Core と対で検査するのは、条件 7 と 8 が Core の全 point を
+;; docs/specification/region.md §5 の 8 条件。Core と対で検査するのは、条件 7 と 8 が Core の全 point を
 ;; 走るためである。and は順に評価されるため、器の形が壊れた IR で問い合わせを
 ;; 呼ぶ前に止まる。
 (define (region-ir-ok? ir core)
@@ -192,7 +193,7 @@
      (and (subset? (regions-exiting-at ir point) regions)
           (set-member? regions (region-at ir point))))))
 
-;; spec §6 の 2 条件。lexical adapter だけが満たす。
+;; docs/specification/region.md §5 の 2 条件。lexical adapter だけが満たす。
 (define (lexical-region-ir-ok? ir)
   (define regions (region-ir-regions ir))
   (define parents (lexical-region-ir-parents ir))

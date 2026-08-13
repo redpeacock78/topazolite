@@ -354,6 +354,13 @@
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
 (define expected-g4-ids '(DIA-001 DIA-002 DIA-003 DIA-004 DIA-005))
 
+;; Update this only when the G5 scope intentionally gains or removes an ID.
+;; G5 はサブサイクル（G5a から G5e）に分かれるが descriptor は 1 件である。
+;; cycle-local-references が自身以外の owned 集合を差し引くため、
+;; サブサイクルごとに立てると BOR-001 と BOR-002 の置き先が無くなる。
+;; サブサイクルが要件を回収するたび、この列へ ID を足す。
+(define expected-g5-ids '(BOR-003))
+
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
   (define g1-specs
@@ -453,6 +460,10 @@
                                 "source-map-test.rkt"
                                 "diagnostic-render-test.rkt"))])
       (build-path root "model/redex/tests" name)))
+  (define g5-specs
+    (list (build-path root "docs/specification/region.md")))
+  (define g5-tests
+    (list (build-path root "model/redex/tests/region-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -466,7 +477,8 @@
    (cycle-descriptor 'G3b "G3" g3-specs g3b-tests #f expected-g3b-ids)
    (cycle-descriptor 'G3c "G3" g3-specs g3c-tests #f expected-g3c-ids)
    (cycle-descriptor 'G3d "G3" g3-specs '() #f expected-g3d-ids)
-   (cycle-descriptor 'G4 "G4" g4-specs g4-tests #f expected-g4-ids)))
+   (cycle-descriptor 'G4 "G4" g4-specs g4-tests #f expected-g4-ids)
+   (cycle-descriptor 'G5 "G5" g5-specs g5-tests #f expected-g5-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
