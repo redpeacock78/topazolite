@@ -5,7 +5,8 @@
          source-id->uri
          span->jsexpr
          render-terminal
-         render-lsp)
+         render-lsp
+         render-json)
 
 (require json
          racket/match
@@ -243,3 +244,44 @@
     'sourceChain (map frame->jsexpr (diagnostic-source-chain d))
     'effectContext (unfixed->jsexpr (diagnostic-effect-context d))
     'proofContext (unfixed->jsexpr (diagnostic-proof-context d)))))
+
+;; spec §10: Diagnostic の 18 欄をすべて写し、schemaVersion と registryVersion を
+;; 最上位へ置く。受け手が、どの版の形で書かれた object かを入力自身から判定できる
+;; ようにするためである。
+;; source-map を取らないのは、span object が byte offset をそのまま載せる形だから
+;; である。
+(define (render-json d)
+  (hasheq
+   ;; 第 1 群。素の値の 6 欄（id、severity、category、title、message、backend）。
+   'id (diagnostic-id d)
+   'severity (symbol->string (diagnostic-severity d))
+   'category (symbol->string (diagnostic-category d))
+   'title (diagnostic-title d)
+   'message (diagnostic-message d)
+   'backend (symbol-or-null (diagnostic-backend d))
+   ;; 第 2 群。構造化された 4 欄、文字列の list の 2 欄、空の list の 2 欄。
+   'primarySpan (span->jsexpr (diagnostic-primary-span d))
+   'secondaryLabels
+   (for/list ([lab (in-list (diagnostic-secondary-labels d))])
+     (match-define (list span label) lab)
+     (hasheq 'span (span->jsexpr span) 'label label))
+   'sourceChain (map frame->jsexpr (diagnostic-source-chain d))
+   'related
+   (for/list ([r (in-list (diagnostic-related d))])
+     (match-define (list relation span description) r)
+     (hasheq 'relation (symbol->string relation)
+             'span (span->jsexpr span)
+             'description description))
+   'notes (diagnostic-notes d)
+   'help (diagnostic-help d)
+   ;; schema version 3 は空を要求する。要素形が定まる時点でここを写し方へ変え、
+   ;; schema version を上げる。
+   'expansionTrace '()
+   'fixes '()
+   ;; 第 3 群。形を固定しない 4 欄。
+   'expected (unfixed->jsexpr (diagnostic-expected d))
+   'found (unfixed->jsexpr (diagnostic-found d))
+   'effectContext (unfixed->jsexpr (diagnostic-effect-context d))
+   'proofContext (unfixed->jsexpr (diagnostic-proof-context d))
+   'schemaVersion diagnostic-schema-version
+   'registryVersion diagnostic-registry-version))

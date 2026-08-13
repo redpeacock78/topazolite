@@ -583,3 +583,119 @@
  (check-equal? (hash-ref data 'effectContext) "(Yield Int \"handler が無い\")")
  (check-equal? (hash-ref data 'proofContext) "(Prop positive \"義務が残る\")")
  (check-equal? (hash-ref data 'expected) (json-null)))
+
+;; spec §10: Diagnostic の 18 欄をすべて写し、schemaVersion と registryVersion を
+;; 最上位へ置く。合計 20 key である。
+;; 件数だけでなく key の集合で確かめる。件数だけだと、欄を 1 つ落として別の名前を
+;; 足した実装が通ってしまう。
+(define json-keys
+  (seteq 'id 'severity 'category 'title 'message
+         'primarySpan 'secondaryLabels 'notes 'help
+         'expected 'found
+         'sourceChain 'expansionTrace
+         'effectContext 'proofContext
+         'related 'fixes 'backend
+         'schemaVersion 'registryVersion))
+
+(test-case
+ "JSON は 20 key を持ち 8 件すべてで jsexpr? を満たす"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (define j (render-json d))
+   (check-true (jsexpr? j) (format "~a" name))
+   (check-equal? (list->seteq (hash-keys j)) json-keys (format "~a" name))))
+
+;; jsexpr? を満たすことと、実際に書き出して読み戻せることは別である。
+;; hasheq の key へ記号でない値が混ざる実装は、この往復で落ちる。
+(test-case
+ "JSON は書き出して読み戻すと同じ値になる"
+ (define j (render-json (fixture 'chain)))
+ (check-equal? (string->jsexpr (jsexpr->string j)) j))
+
+(test-case
+ "第 1 群の 5 欄は素の値を文字列へ写す"
+ (define j (render-json (fixture 'lowering)))
+ (check-equal? (hash-ref j 'id) "E-LOW-001")
+ (check-equal? (hash-ref j 'severity) "error")
+ (check-equal? (hash-ref j 'category) "LOW")
+ (check-equal? (hash-ref j 'title) "Typed Core の kernel primitive は写し先を持たない")
+ (check-equal? (hash-ref j 'message) "Typed Core の kernel primitive は写し先を持たない")
+ (check-equal? (hash-ref j 'backend) "racket-cs")
+ (check-equal? (hash-ref (render-json (fixture 'minimal)) 'backend)
+               (json-null))
+ (check-equal? (hash-ref j 'schemaVersion) diagnostic-schema-version)
+ (check-equal? (hash-ref j 'registryVersion) diagnostic-registry-version))
+
+;; spec §10 の第 2 群。要素形が定まる 4 欄を object へ再帰的に写す。
+;; 文字列化の既定へ落とすと (surface verbatim (#:span src 0 4)) が 1 個の文字列に
+;; なり、受け手が欄を分解できなくなる。
+(test-case
+ "第 2 群の 4 欄は要素ごとに object へ写す"
+ (define j (render-json (fixture 'related)))
+ (check-equal? (hash-ref j 'primarySpan)
+               (hasheq 'sourceId "sample" 'startByte 4 'endByte 5
+                       'synthetic #f))
+ (check-equal? (hash-ref j 'related)
+               (list (hasheq 'relation "defined-here"
+                             'span (hasheq 'sourceId "sample" 'startByte 14
+                                           'endByte 15 'synthetic #f)
+                             'description "先に束縛した位置")
+                     (hasheq 'relation "introduced-by"
+                             'span (hasheq 'sourceId "#:synthetic" 'startByte 0
+                                           'endByte 0 'synthetic #t)
+                             'description "展開が導入した束縛")))
+ (define k (render-json (fixture 'secondary)))
+ (check-equal? (hash-ref k 'secondaryLabels)
+               (list (hasheq 'span (hasheq 'sourceId "sample" 'startByte 14
+                                           'endByte 15 'synthetic #f)
+                             'label "この構築子が漏れている")
+                     (hasheq 'span (hasheq 'sourceId "#:synthetic" 'startByte 0
+                                           'endByte 0 'synthetic #t)
+                             'label "既定の分岐は無い")))
+ ;; notes と help は文字列の list なのでそのまま写す。
+ (check-equal? (hash-ref k 'notes) (list "構築子は 2 個ある"))
+ (check-equal? (hash-ref k 'help) (list "残る構築子の分岐を足す"))
+ (define c (render-json (fixture 'chain)))
+ (check-equal? (hash-ref c 'sourceChain)
+               (list (hasheq 'phase "surface" 'kind "verbatim"
+                             'span (hasheq 'sourceId "sample" 'startByte 4
+                                           'endByte 5 'synthetic #f))
+                     (hasheq 'phase "elaborate" 'kind "synthesized"
+                             'span (hasheq 'sourceId "sample" 'startByte 14
+                                           'endByte 15 'synthetic #f)))))
+
+;; spec §10 の第 3 群。形を固定しない 4 欄は §11 の整形を通した文字列であり、
+;; #f のときは json-null である。
+(test-case
+ "第 3 群の 4 欄は整形した文字列か json-null である"
+ (define j (render-json (fixture 'expected-found)))
+ (check-equal? (hash-ref j 'expected) "Bool")
+ (check-equal? (hash-ref j 'found) "Int")
+ (check-equal? (hash-ref j 'effectContext) (json-null))
+ (check-equal? (hash-ref j 'proofContext) (json-null))
+ (define c (render-json (fixture 'chain)))
+ (check-equal? (hash-ref c 'effectContext) "(Yield Int \"handler が無い\")")
+ (check-equal? (hash-ref c 'proofContext) "(Prop positive \"義務が残る\")")
+ ;; found の文字列は ~s なので引用符が残る。~a にすると記号と区別が付かない。
+ (check-equal? (hash-ref (render-json (fixture 'lowering)) 'found)
+               "\"kernel primitive には写し先が無い\""))
+
+;; schema version 3 は expansion-trace と fixes へ空を要求する。
+(test-case
+ "expansionTrace と fixes は空の list である"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (define j (render-json d))
+   (check-equal? (hash-ref j 'expansionTrace) '() (format "~a" name))
+   (check-equal? (hash-ref j 'fixes) '() (format "~a" name))))
+
+;; spec §9 と §10: sourceId の綴りは 2 つの形式で同じである。
+;; 別の綴りにすると parity の外側にある欄で形式ごとの差が生まれる。
+(test-case
+ "sourceId の綴りは JSON と LSP の data で一致する"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (check-equal? (hash-ref (hash-ref (render-json d) 'primarySpan) 'sourceId)
+                 (hash-ref (hash-ref (render-lsp d fixture-source-map) 'data)
+                           'sourceId)
+                 (format "~a" name))))
