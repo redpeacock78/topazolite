@@ -269,3 +269,103 @@
   (define ir (build-region-ir nested))
   (check-exn exn:fail? (lambda () (region-at ir '(5))))
   (check-exn exn:fail? (lambda () (regions-exiting-at ir '(0 0)))))
+
+;; [REQ: BOR-003] spec §7 の adapter 性質 C1 から C4。
+;; 兄弟の Scope を含み、根が Scope でない Core を使う。
+(define sibling-core
+  '(Apply f (Scope () (Apply (Scope () 1) (Scope () 2)))))
+
+(test-case "C1: region-contains? が真なら region-outlives? も真である"
+  (define ir (build-region-ir sibling-core))
+  (for* ([a (in-set (region-ir-regions ir))]
+         [b (in-set (region-ir-regions ir))])
+    (when (region-contains? ir a b)
+      (check-true (region-outlives? ir a b) (format "~s ~s" a b)))))
+
+(test-case "C2: 兄弟の region は互いに包まず、同時に生きない"
+  (define ir (build-region-ir sibling-core))
+  (define a (region-at ir '(1 0 0)))
+  (define b (region-at ir '(1 0 1)))
+  (check-not-equal? a b)
+  (check-false (region-contains? ir a b))
+  (check-false (region-contains? ir b a))
+  (check-false (regions-overlap? ir a b)))
+
+(define (count-scopes core)
+  (for/sum ([point (in-list (core-points core))])
+    (match (core-node core point)
+      [`(Scope ,_ ,_) 1]
+      [_ 0])))
+
+(test-case "C3: Core の Scope の個数と root 以外の region の個数が一致する"
+  (for ([core (in-list (list '(Apply f 1) nested sibling-core))])
+    (define ir (build-region-ir core))
+    (check-equal? (sub1 (set-count (region-ir-regions ir)))
+                  (count-scopes core)
+                  (format "~s" core))))
+
+(test-case "C4: 退場は Scope の point でちょうど 1 件、それ以外で空である"
+  (define ir (build-region-ir sibling-core))
+  (define root (region-at ir '()))
+  (for ([point (in-list (core-points sibling-core))])
+    (define exiting (regions-exiting-at ir point))
+    (match (core-node sibling-core point)
+      [`(Scope ,_ ,_)
+       (check-equal? exiting (set (region-at ir point)) (format "~s" point))]
+      [_ (check-true (set-empty? exiting) (format "~s" point))])
+    ;; root region はどの point でも返らない。
+    (check-false (set-member? exiting root) (format "~s" point))))
+
+;; C6: spanful な Core と erase-core を通した項が、外延的に同型な IR を作る。
+;; region 識別子は不透明なので equal? では比べられない。
+;; region-at が返す region の対応から写像 σ を作り、親の鎖で root まで延ばす。
+;; region-at は root Scope を持つ Core で root を返さないため、parents を辿らないと
+;; σ が root を覆えない。
+(define (build-σ ir-a ir-b core)
+  (define σ (make-hash))
+  (define (link! a b)
+    (cond
+      [(hash-has-key? σ a) (equal? (hash-ref σ a) b)]
+      [else
+       (hash-set! σ a b)
+       (match* ((region-parent ir-a a) (region-parent ir-b b))
+         [(#f #f) #t]
+         [(pa pb) (and pa pb (link! pa pb))])]))
+  (and (for/and ([point (in-list (core-points core))])
+         (link! (region-at ir-a point) (region-at ir-b point)))
+       σ))
+
+(define (extensionally-isomorphic? ir-a ir-b core)
+  (define σ (build-σ ir-a ir-b core))
+  (define regions-a (region-ir-regions ir-a))
+  (define regions-b (region-ir-regions ir-b))
+  (and
+   ;; 空集合同士の比較で通さない。
+   (positive? (set-count regions-a))
+   ;; 1. σ が写像として矛盾しない。build-σ が矛盾で #f を返す。
+   (hash? σ)
+   ;; 2. σ が全単射である。
+   (equal? (list->set (hash-keys σ)) regions-a)
+   (equal? (list->set (hash-values σ)) regions-b)
+   (= (hash-count σ) (set-count regions-b))
+   ;; 3. regions-exiting-at の結果が σ の下で一致する。
+   (for/and ([point (in-list (core-points core))])
+     (equal? (for/set ([ρ (in-set (regions-exiting-at ir-a point))])
+               (hash-ref σ ρ))
+             (regions-exiting-at ir-b point)))
+   ;; 4. region-outlives? と regions-overlap? が σ の下で一致する。
+   (for*/and ([a (in-set regions-a)] [b (in-set regions-a)])
+     (and (equal? (region-outlives? ir-a a b)
+                  (region-outlives? ir-b (hash-ref σ a) (hash-ref σ b)))
+          (equal? (regions-overlap? ir-a a b)
+                  (regions-overlap? ir-b (hash-ref σ a) (hash-ref σ b)))))))
+
+(test-case "C6: spanful と spanless から外延的に同型な IR ができる"
+  (match-define (list raw-core _ _ _)
+    (elab '(Apply (Fn ((x Int)) Int () x) 1)))
+  (define erased (erase-core raw-core))
+  (check-not-equal? raw-core erased)
+  ;; 入口の erase-core を外すと、spanful 側の point の数え方がずれてここが落ちる。
+  (check-true (extensionally-isomorphic? (build-region-ir raw-core)
+                                         (build-region-ir erased)
+                                         erased)))
