@@ -119,16 +119,18 @@
                  (Apply loop (Construct nil (Types Int))))
          '() '((Yield Int)))))
 
-(for ([entry (in-list elaborate-distribution-table)])
-  (match-define (list key term expected found) entry)
-  (define d (elab-diagnostic term))
-  ;; 意図した key へ到達したことを先に確かめる。
-  ;; 別の key の Diagnostic が返ると expected/found の照合が無意味になる。
-  (check-equal? (diagnostic-id d) (diagnostic-code-of 'elaborate key))
-  (check-equal? (diagnostic-expected d) expected)
-  (check-equal? (diagnostic-found d) found)
-  (check-not-equal? expected found
-                    (format "~a の expected と found は異なる" key)))
+(test-case
+ "elaborate の例外表 5 key の expected と found の分配"
+ (for ([entry (in-list elaborate-distribution-table)])
+   (match-define (list key term expected found) entry)
+   (define d (elab-diagnostic term))
+   ;; 意図した key へ到達したことを先に確かめる。
+   ;; 別の key の Diagnostic が返ると expected/found の照合が無意味になる。
+   (check-equal? (diagnostic-id d) (diagnostic-code-of 'elaborate key))
+   (check-equal? (diagnostic-expected d) expected)
+   (check-equal? (diagnostic-found d) found)
+   (check-not-equal? expected found
+                     (format "~a の expected と found は異なる" key))))
 
 ;; 例外表の allowlist の外にある key は、details が 2 件でも
 ;; expected/actual の対として扱わない。
