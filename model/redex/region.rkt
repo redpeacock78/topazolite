@@ -1,11 +1,20 @@
 #lang racket
 
 (require racket/match
+         racket/set
+         racket/generic
          redex/reduction-semantics
          "lang.rkt"
          "erase.rkt")
 
-(provide core-children core-points core-node)
+(provide core-children core-points core-node
+         (struct-out region)
+         (struct-out region-ir)
+         (struct-out lexical-region-ir)
+         gen:region-solver region-solver?
+         region-at region-outlives? regions-overlap? regions-exiting-at
+         region-parent region-contains?
+         region-ir-ok? lexical-region-ir-ok?)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（spec §4）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
@@ -70,3 +79,134 @@
       (unless (and (exact-nonnegative-integer? i) (< i (length kids)))
         (error 'core-node "Core の節点を指さない point: ~s" point))
       (list-ref kids i))))
+
+;; region 識別子。id は採番の都合であり、消費側は同一性だけを読む。
+(struct region (id) #:transparent)
+
+;; core API。G5b が読んでよいのはこの 4 つだけである。
+;; NLL solver へ置き換えるとき、置換側はこの interface を実装する。
+(define-generics region-solver
+  (region-at region-solver point)
+  (region-outlives? region-solver ρ_long ρ_short)
+  (regions-overlap? region-solver ρ_1 ρ_2)
+  (regions-exiting-at region-solver point))
+
+;; 3 成分。outlives は直接の制約だけを持ち、推移閉包は持たない。
+;; owners は region から、その region が管理する place 列 π への有限写像である。
+(struct region-ir (regions outlives owners) #:transparent)
+
+;; inspection API。§7 の adapter 性質を試験する側だけが読む。G5b は読まない。
+;; regions-overlap? が呼ぶため、構造体の定義より前へ置く。
+(define (region-parent ir ρ)
+  (hash-ref (lexical-region-ir-parents ir) ρ #f))
+
+;; 反射的である。ρ は自身を包む。
+;; 反射でないと、region がそれ自身と重ならないことになり C2 の意味が壊れる。
+(define (region-contains? ir ρ_outer ρ_inner)
+  (let loop ([ρ ρ_inner] [fuel (set-count (region-ir-regions ir))])
+    (cond
+      [(equal? ρ ρ_outer) #t]
+      [(zero? fuel) #f]
+      [else
+       (match (region-parent ir ρ)
+         [#f #f]
+         [p (loop p (sub1 fuel))])])))
+
+;; 問い合わせの定義域を Core の節点を指す point に限る。
+;; adapter は build のときの Core を持たないため、build で列挙した point の
+;; 集合をそのまま持つ。
+(define (check-point ir point)
+  (unless (set-member? (lexical-region-ir-points ir) point)
+    (error 'region-query "Core の節点を指さない point: ~s" point)))
+
+(define (lexical-root ir)
+  (for/first ([ρ (in-set (region-ir-regions ir))]
+              #:unless (hash-has-key? (lexical-region-ir-parents ir) ρ))
+    ρ))
+
+;; lexical adapter が持つ内部の表。IR の接点には出さない。
+;; parents は Scope の入れ子から読んだ親子関係、at-table は Scope の point から
+;; その Scope が開く region への写像、points は Core の全 point である。
+(struct lexical-region-ir region-ir (parents at-table points)
+  #:transparent
+  #:methods gen:region-solver
+  [(define (region-at ir point)
+     (check-point ir point)
+     (or (for/or ([n (in-range (length point) -1 -1)])
+           (hash-ref (lexical-region-ir-at-table ir) (take point n) #f))
+         (lexical-root ir)))
+   ;; outlives における到達可能性。0 歩を含むため反射的である。
+   (define (region-outlives? ir ρ_long ρ_short)
+     (let loop ([frontier (list ρ_long)] [seen (set)])
+       (match frontier
+         ['() #f]
+         [(cons ρ rest)
+          (cond
+            [(equal? ρ ρ_short) #t]
+            [(set-member? seen ρ) (loop rest seen)]
+            [else
+             (loop (append rest
+                           (for/list ([pair (in-set (region-ir-outlives ir))]
+                                      #:when (equal? (first pair) ρ))
+                             (second pair)))
+                   (set-add seen ρ))])])))
+   ;; lexical では、同時に生きる 2 つの region は必ず一方が他方を包む。
+   (define (regions-overlap? ir ρ_1 ρ_2)
+     (or (region-contains? ir ρ_1 ρ_2) (region-contains? ir ρ_2 ρ_1)))
+   ;; point は節点を指す名前であり、時点そのものではない。
+   ;; 退場は、その節点の評価が完了する時点を指す。lexical では Scope 節点の
+   ;; 評価完了が finalize の呼び出し地点であり、core-calculus.md §5.6 の
+   ;; R-ScopeValue、R-ScopeAbort、R-ScopeError が発火する地点と一致する。
+   (define (regions-exiting-at ir point)
+     (check-point ir point)
+     (match (hash-ref (lexical-region-ir-at-table ir) point #f)
+       [#f (set)]
+       [ρ (set ρ)]))])
+
+(define (place-list? v)
+  (and (list? v) (andmap exact-nonnegative-integer? v)))
+
+;; spec §6 の 8 条件。Core と対で検査するのは、条件 7 と 8 が Core の全 point を
+;; 走るためである。and は順に評価されるため、器の形が壊れた IR で問い合わせを
+;; 呼ぶ前に止まる。
+(define (region-ir-ok? ir core)
+  (define regions (region-ir-regions ir))
+  (define outlives (region-ir-outlives ir))
+  (define owners (region-ir-owners ir))
+  (and
+   ;; 器の形。
+   (set? regions)
+   (for/and ([ρ (in-set regions)]) (region? ρ))
+   (set? outlives)
+   (for/and ([pair (in-set outlives)])
+     (and (list? pair) (= 2 (length pair)) (andmap region? pair)))
+   (hash? owners)
+   (for/and ([v (in-hash-values owners)]) (place-list? v))
+   ;; 3 成分の間の整合。
+   (not (set-empty? regions))
+   (for/and ([pair (in-set outlives)])
+     (andmap (lambda (ρ) (set-member? regions ρ)) pair))
+   (equal? (list->set (hash-keys owners)) regions)
+   ;; 問い合わせの返値。
+   (for/and ([point (in-list (core-points core))])
+     (and (subset? (regions-exiting-at ir point) regions)
+          (set-member? regions (region-at ir point))))))
+
+;; spec §6 の 2 条件。lexical adapter だけが満たす。
+(define (lexical-region-ir-ok? ir)
+  (define regions (region-ir-regions ir))
+  (define parents (lexical-region-ir-parents ir))
+  (and
+   (for/and ([(child parent) (in-hash parents)])
+     (and (set-member? regions child) (set-member? regions parent)))
+   (let ([roots (for/list ([ρ (in-set regions)]
+                           #:unless (hash-has-key? parents ρ))
+                  ρ)])
+     (and (= 1 (length roots))
+          ;; 循環が無いこと。どの region からも高々 |regions| 歩で根へ届く。
+          (for/and ([ρ (in-set regions)])
+            (let loop ([ρ ρ] [fuel (set-count regions)])
+              (cond
+                [(not (hash-has-key? parents ρ)) #t]
+                [(zero? fuel) #f]
+                [else (loop (hash-ref parents ρ) (sub1 fuel))])))))))
