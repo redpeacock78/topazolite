@@ -2,7 +2,7 @@
 
 **状態**：G2f 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/policy-narrative.md`、`docs/specification/glossary.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/policy-narrative.md`、`docs/specification/glossary.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/region.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -470,6 +470,8 @@ mutable borrow の有効期間中、競合する alias を許可しない。
 - **由来**：ホワイトペーパー §15
 
 初期 lexical region 解析は将来の NLL region solver と置換可能な IR を持つ。
+
+置換条件は `docs/specification/region.md` が定める。
 
 ### PTR-001
 
