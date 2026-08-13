@@ -223,3 +223,49 @@
   (check-true (regions-overlap? ir ρ0 ρ2))
   (check-true (regions-overlap? ir ρ2 ρ0))
   (check-true (regions-overlap? ir ρ1 ρ1)))
+
+;; [REQ: BOR-003] builder は Scope ごとに region を開く。
+;; 手で組んだ IR と外延的に同じものを作ることを確かめる。
+(test-case "build-region-ir は手組みの IR と同じ答えを返す"
+  (define ir (build-region-ir nested))
+  (check-true (region-ir-ok? ir nested))
+  (check-true (lexical-region-ir-ok? ir))
+  (check-equal? (set-count (region-ir-regions ir)) 3)
+  (define root (region-at ir '()))
+  (check-equal? (region-at ir '(0)) root)
+  (check-not-equal? (region-at ir '(1)) root)
+  (check-equal? (region-at ir '(1 0)) (region-at ir '(1)))
+  (check-not-equal? (region-at ir '(1 0 1)) (region-at ir '(1)))
+  (check-equal? (region-at ir '(1 0 1 0)) (region-at ir '(1 0 1)))
+  (check-equal? (region-parent ir (region-at ir '(1 0 1)))
+                (region-at ir '(1)))
+  (check-equal? (region-parent ir (region-at ir '(1))) root)
+  (check-false (region-parent ir root)))
+
+(test-case "outlives は直接の制約だけを持つ"
+  (define ir (build-region-ir nested))
+  (define root (region-at ir '()))
+  (define ρa (region-at ir '(1)))
+  (define ρb (region-at ir '(1 0 1)))
+  (check-equal? (region-ir-outlives ir)
+                (set (list root ρa) (list ρa ρb))))
+
+(test-case "owners の定義域は regions と一致し、値は π である"
+  (define ir (build-region-ir nested))
+  (check-equal? (list->set (hash-keys (region-ir-owners ir)))
+                (region-ir-regions ir))
+  (for ([v (in-hash-values (region-ir-owners ir))])
+    (check-equal? v '())))
+
+(test-case "Scope を持たない Core では全 point が root を指す"
+  (define core '(Apply f 1))
+  (define ir (build-region-ir core))
+  (check-equal? (set-count (region-ir-regions ir)) 1)
+  (for ([point (in-list (core-points core))])
+    (check-equal? (region-at ir point) (region-at ir '()))
+    (check-true (set-empty? (regions-exiting-at ir point)))))
+
+(test-case "builder が作った IR も不正な point で error を出す"
+  (define ir (build-region-ir nested))
+  (check-exn exn:fail? (lambda () (region-at ir '(5))))
+  (check-exn exn:fail? (lambda () (regions-exiting-at ir '(0 0)))))

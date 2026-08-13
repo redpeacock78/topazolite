@@ -14,7 +14,7 @@
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at
          region-parent region-contains?
-         region-ir-ok? lexical-region-ir-ok?)
+         region-ir-ok? lexical-region-ir-ok? build-region-ir)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（spec §4）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
@@ -210,3 +210,44 @@
                 [(not (hash-has-key? parents ρ)) #t]
                 [(zero? fuel) #f]
                 [else (loop (hash-ref parents ρ) (sub1 fuel))])))))))
+
+;; lexical adapter。erase-core を通した項を 1 度だけ歩く。
+;; 採番は歩いた順である。C6 が要求するのは外延的な同型であり、採番の安定性
+;; ではないため、この順序に意味を持たせない。
+(define (build-region-ir core)
+  (define erased (erase-core core))
+  (define next 0)
+  (define (fresh!)
+    (define ρ (region next))
+    (set! next (add1 next))
+    ρ)
+  (define root (fresh!))
+  (define parents (make-hash))
+  (define at-table (make-hash))
+  (define owners (make-hash (list (cons root '()))))
+  (define outlives (mutable-set))
+  (let walk ([t erased] [prefix '()] [current root])
+    (define point (reverse prefix))
+    (define inner
+      (match t
+        [`(Scope ,π ,_)
+         (define ρ (fresh!))
+         (hash-set! parents ρ current)
+         (hash-set! at-table point ρ)
+         (hash-set! owners ρ π)
+         ;; 親が子より長生きする。直接の制約だけを入れ、推移閉包は入れない。
+         (set-add! outlives (list current ρ))
+         ρ]
+        [_ current]))
+    (for ([k (in-list (core-children t))] [i (in-naturals)])
+      (walk k (cons i prefix) inner)))
+  (lexical-region-ir
+   (list->set (cons root (hash-keys parents)))
+   (list->set (set->list outlives))
+   (freeze owners)
+   (freeze parents)
+   (freeze at-table)
+   (list->set (core-points erased))))
+
+(define (freeze h)
+  (for/hash ([(k v) (in-hash h)]) (values k v)))
