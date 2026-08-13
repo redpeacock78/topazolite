@@ -699,3 +699,229 @@
                  (hash-ref (hash-ref (render-lsp d fixture-source-map) 'data)
                            'sourceId)
                  (format "~a" name))))
+
+;; ---- parity（spec §13）------------------------------------------------
+;; 3 形式は同じ情報を別の単位と器で書くため、突き合わせる前に共通の形へ
+;; 正規化する。取り出しは renderer の内部を呼ばずにこの節で書き下ろす。
+;; renderer の関数を借りると、renderer の誤りが取り出しにも同じ形で現れ、
+;; 比較で相殺される。
+
+;; 観測する位置。始まりだけを持つ。
+;; terminal の位置行は始まりしか出さないため、終わりを入れると契約どおりの
+;; 実装でも 3 形式が食い違う。
+;; 終わりの意味が失われるわけではない。parity は共通部分だけを見る層であり、
+;; 終わりは source-map-test.rkt の location 全体の検査と、形式ごとの
+;; output-shape の試験（range、caret、byte offset）が固定する（spec §13）。
+(struct ppos (source-id synthetic? line character) #:transparent)
+
+;; 10 の観測量。backend と message は入れない。
+(struct parity (code severity title position expected found
+                notes help related secondary)
+  #:transparent)
+
+;; 欄が無いときの #f と、1 行だけ現れるときの文字列を分ける。
+(define (single texts)
+  (match texts
+    ['() #f]
+    [(list one) one]
+    [_ (error 'single "1 行に収まらない: ~s" texts)]))
+
+(define (lines-with-prefix lines prefix)
+  (for/list ([line (in-list lines)] #:when (string-prefix? line prefix))
+    (substring line (string-length prefix))))
+
+;; ---- terminal 側の取り出し --------------------------------------------
+
+;; "sample:2:5" と "<synthetic>" の 2 形を受ける。
+;; terminal だけが 1 起点なので、ここで 0 起点へ戻す。
+(define (parse-position-text text)
+  (cond
+    [(string=? text "<synthetic>") (ppos "#:synthetic" #t 0 0)]
+    [(regexp-match #px"^(.+):([0-9]+):([0-9]+)$" text)
+     => (lambda (m)
+          (match-define (list _ spelling line column) m)
+          (ppos spelling #f
+                (sub1 (string->number line))
+                (sub1 (string->number column))))]
+    [else (error 'parse-position-text "位置の形ではない: ~s" text)]))
+
+(define header-rx #px"^([a-z]+)\\[([^]]+)\\]: (.*)$")
+(define labelled-rx #px"^(<synthetic>|.+?:[0-9]+:[0-9]+): (.*)$")
+(define related-rx
+  #px"^related\\[([^]]+)\\] (<synthetic>|.+?:[0-9]+:[0-9]+): (.*)$")
+
+(define (terminal-parity s)
+  (define lines (string-split s "\n" #:trim? #f))
+  (match-define (list _ severity code title)
+    (or (regexp-match header-rx (first lines))
+        (error 'terminal-parity "見出し行の形ではない: ~s" (first lines))))
+  ;; 位置行のうち最初の 1 本が primary であり、残りが secondary-labels である。
+  ;; 順序は §8 が固定しているため、行の並びをそのまま順序として読む。
+  (define position-texts (lines-with-prefix lines "  --> "))
+  (define supplements (lines-with-prefix lines "  = "))
+  (parity
+   code
+   (string->symbol severity)
+   title
+   (parse-position-text (first position-texts))
+   (single (lines-with-prefix supplements "expected: "))
+   (single (lines-with-prefix supplements "found: "))
+   (lines-with-prefix supplements "note: ")
+   (lines-with-prefix supplements "help: ")
+   (for/list ([line (in-list supplements)]
+              #:when (regexp-match related-rx line))
+     (match-define (list _ relation position description)
+       (regexp-match related-rx line))
+     (list (string->symbol relation)
+           (parse-position-text position)
+           description))
+   (for/list ([text (in-list (rest position-texts))])
+     (match-define (list _ position label)
+       (or (regexp-match labelled-rx text)
+           (error 'terminal-parity "補足の位置行の形ではない: ~s" text)))
+     (list (parse-position-text position) label))))
+
+;; ---- LSP 側の取り出し --------------------------------------------------
+
+;; renderer の表を借りず、逆向きの表を別に書く。
+;; 借りると番号を取り違えた表がそのまま通る。
+(define lsp-severity-symbols (hasheq 1 'error 2 'warning 3 'note))
+
+;; percent-encoding を戻す。source-id->uri が復元できる形で encode している
+;; ことも、この復号が通ることで確かめられる。
+;; unreserved の側はすべて ASCII なので、1 文字が 1 byte である。
+(define (uri->source-id-spelling uri)
+  (unless (string-prefix? uri "topazolite:")
+    (error 'uri->source-id-spelling "scheme が違う: ~s" uri))
+  (define body (substring uri (string-length "topazolite:")))
+  (let loop ([chars (string->list body)] [acc '()])
+    (match chars
+      ['() (bytes->string/utf-8 (list->bytes (reverse acc)))]
+      [(list* #\% h l rest)
+       (loop rest (cons (string->number (string h l) 16) acc))]
+      [(cons c rest) (loop rest (cons (char->integer c) acc))])))
+
+(define (jsexpr-value v) (if (eq? v (json-null)) #f v))
+
+(define (range->ppos range spelling synthetic?)
+  (define start (hash-ref range 'start))
+  (ppos spelling synthetic?
+        (hash-ref start 'line)
+        (hash-ref start 'character)))
+
+(define related-message-rx #px"^\\[([^]]+)\\] (.*)$")
+
+(define (lsp-parity j)
+  (define data (hash-ref j 'data))
+  ;; message の第 1 行は title、以降は §8 の補足行である。
+  ;; message が title と異なる fixture では本文行もここに並ぶが、terminal も
+  ;; 同じ並びなので、接頭辞で拾う限り 2 形式の取り出しは同じ結果になる。
+  (define message-lines (string-split (hash-ref j 'message) "\n" #:trim? #f))
+  (define bodies (rest message-lines))
+  (parity
+   (hash-ref j 'code)
+   (hash-ref lsp-severity-symbols (hash-ref j 'severity))
+   (first message-lines)
+   (range->ppos (hash-ref j 'range)
+                (hash-ref data 'sourceId)
+                (hash-ref data 'synthetic))
+   (jsexpr-value (hash-ref data 'expected))
+   (jsexpr-value (hash-ref data 'found))
+   (lines-with-prefix bodies "note: ")
+   (lines-with-prefix bodies "help: ")
+   (for/list ([r (in-list (hash-ref j 'relatedInformation))])
+     (match-define (list _ relation tail)
+       (or (regexp-match related-message-rx (hash-ref r 'message))
+           (error 'lsp-parity "relatedInformation の message の形ではない: ~s" r)))
+     (define location (hash-ref r 'location))
+     (define spelling (uri->source-id-spelling (hash-ref location 'uri)))
+     (define synthetic? (string=? spelling "#:synthetic"))
+     ;; marker は位置の情報であり description の一部ではない。
+     ;; relation の角括弧とともに剥がす。
+     (define description
+       (if synthetic?
+           (let ([m (regexp-match #px"^<synthetic> (.*)$" tail)])
+             (unless m
+               (error 'lsp-parity "synthetic の marker が無い: ~s" tail))
+             (second m))
+           tail))
+     (list (string->symbol relation)
+           (range->ppos (hash-ref location 'range) spelling synthetic?)
+           description))
+   (for/list ([lab (in-list (hash-ref data 'secondaryLabels))])
+     (list (range->ppos (hash-ref lab 'range)
+                        (hash-ref lab 'sourceId)
+                        (hash-ref lab 'synthetic))
+           (hash-ref lab 'message)))))
+
+;; ---- JSON 側の取り出し -------------------------------------------------
+
+;; JSON だけが byte offset を載せるため、span object から span を組み直して
+;; span->location を通す。この変換の正しさは source-map-test.rkt が別に
+;; 担保する。
+(define (spelling->source-id spelling)
+  (if (string=? spelling "#:synthetic") '#:synthetic (string->symbol spelling)))
+
+(define (json-span->ppos span)
+  (define spelling (hash-ref span 'sourceId))
+  (define loc
+    (span->location fixture-source-map
+                    (list '#:span (spelling->source-id spelling)
+                          (hash-ref span 'startByte)
+                          (hash-ref span 'endByte))))
+  (ppos spelling
+        (location-synthetic? loc)
+        (location-start-line loc)
+        (location-start-character loc)))
+
+(define (json-parity j)
+  (parity
+   (hash-ref j 'id)
+   (string->symbol (hash-ref j 'severity))
+   (hash-ref j 'title)
+   (json-span->ppos (hash-ref j 'primarySpan))
+   (jsexpr-value (hash-ref j 'expected))
+   (jsexpr-value (hash-ref j 'found))
+   (hash-ref j 'notes)
+   (hash-ref j 'help)
+   (for/list ([r (in-list (hash-ref j 'related))])
+     (list (string->symbol (hash-ref r 'relation))
+           (json-span->ppos (hash-ref r 'span))
+           (hash-ref r 'description)))
+   (for/list ([lab (in-list (hash-ref j 'secondaryLabels))])
+     (list (json-span->ppos (hash-ref lab 'span))
+           (hash-ref lab 'label)))))
+
+;; ---- 比較 --------------------------------------------------------------
+
+;; 観測量が 1 つも埋まらない fixture だけを並べると、parity は空同士の比較で
+;; 通る。10 の観測量のうち、空になりうる 8 件について、値を持つ fixture が
+;; 1 件以上あることを先に確かめる。code と severity と title は
+;; diagnostic-schema-errors が空を弾くため、ここでは数えない。
+(test-case
+ "空になりうる 8 つの観測量は、いずれかの fixture で値を持つ"
+ (define ps
+   (for/list ([row (in-list fixture-table)])
+     (json-parity (render-json (second row)))))
+ (define (some pred) (for/or ([p (in-list ps)]) (and (pred p) #t)))
+ (check-true (some parity-expected) "expected")
+ (check-true (some parity-found) "found")
+ (check-true (some (lambda (p) (pair? (parity-notes p)))) "notes")
+ (check-true (some (lambda (p) (pair? (parity-help p)))) "help")
+ (check-true (some (lambda (p) (= 2 (length (parity-related p))))) "related 2 件")
+ (check-true (some (lambda (p) (= 2 (length (parity-secondary p)))))
+             "secondary-labels 2 件")
+ (check-true (some (lambda (p) (ppos-synthetic? (parity-position p))))
+             "synthetic の primary")
+ (check-true (some (lambda (p) (not (ppos-synthetic? (parity-position p)))))
+             "実在の source の primary"))
+
+(test-case
+ "fixture 8 件で 3 形式の 10 観測量が一致する"
+ (for ([row (in-list fixture-table)])
+   (match-define (list name d) row)
+   (define t (terminal-parity (render-terminal d fixture-source-map)))
+   (define l (lsp-parity (render-lsp d fixture-source-map)))
+   (define j (json-parity (render-json d)))
+   (check-equal? t l (format "~a: terminal と LSP" name))
+   (check-equal? l j (format "~a: LSP と JSON" name))))
