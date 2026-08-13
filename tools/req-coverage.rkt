@@ -352,7 +352,7 @@
 ;; 1 件である。cycle-local-references が自身以外の owned 集合を差し引くため、
 ;; サブサイクルごとに立てると DIA-001 と DIA-002 の置き先が無くなる。
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
-(define expected-g4-ids '(DIA-001 DIA-002 DIA-003 DIA-005))
+(define expected-g4-ids '(DIA-001 DIA-002 DIA-003 DIA-004 DIA-005))
 
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
@@ -449,7 +449,9 @@
                                 "elaborate-diagnostic-test.rkt"
                                 "typing-diagnostic-test.rkt"
                                 "origins-diagnostic-test.rkt"
-                                "lowering-test.rkt"))])
+                                "lowering-test.rkt"
+                                "source-map-test.rkt"
+                                "diagnostic-render-test.rkt"))])
       (build-path root "model/redex/tests" name)))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)

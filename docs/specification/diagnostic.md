@@ -353,3 +353,51 @@ phase と `backend` の対応を検査するのは `diagnostic-of` である。
 `diagnostic-schema-errors` は Diagnostic 単体を受け取り、それを生成した phase を知らないためである。
 
 `lower/with-matrix` を呼ぶ test は capability diagnostic の `backend` を引き続き読める。
+
+## 14. 3 形式の renderer
+
+[REQ: DIA-004] terminal、LSP、JSON の 3 つの renderer は、同一の Diagnostic IR を入力とする。
+
+3 つは `model/redex/diagnostic-render.rkt` の `render-terminal`、`render-lsp`、`render-json` である。
+
+renderer は Diagnostic を読むだけであり、欄を足さない。
+
+`notes` は producer の欄であり、renderer は書き込まない。
+
+位置の単位は 0 起点の行と 0 起点の UTF-16 code unit である。
+
+1 起点へ直すのは terminal renderer だけであり、LSP の `range` と JSON の byte offset は 0 起点のまま運ぶ。
+
+byte offset から行と列への変換は `model/redex/source-map.rkt` の `span->location` が担い、source の byte 長を超える offset と多 byte 文字の途中を指す offset を error にする。
+
+`render-terminal` と `render-lsp` は source-map を取る。
+
+`render-json` は取らない。JSON の span object が byte offset をそのまま載せるためである。
+
+sourceId が `#:synthetic` の位置は、3 形式とも `<synthetic>` の綴りで示す。
+
+`expected`、`found`、`effect-context`、`proof-context` の 4 欄は Phase 0 で要素形を固定しないため、3 形式とも `~s` で綴りへ写す。
+
+`~a` で写すと文字列の引用符が落ち、記号との区別が付かなくなる。
+
+LSP の `data` の `secondaryLabels` は、各要素を `(hasheq 'range <range> 'message <文字列> 'sourceId <文字列> 'synthetic <真偽>)` とする。
+
+`sourceId` の綴りは JSON の span object と同じ規則に従う。
+
+`range` と `synthetic` だけでは、別の source の同じ座標を指す補足位置を区別できない。
+
+3 形式の一致は `model/redex/tests/diagnostic-render-test.rkt` が 10 の観測量で検査する。
+
+位置の観測量は primary span の開始位置だけであり、`sourceId`、`synthetic`、`start-line`、`start-character` の 4 要素で比べる。
+
+終わりの位置は 3 形式の共通部分に無い。
+
+terminal の位置行は始まりしか出さず、caret も複数行 span を行末で打ち切るためである。
+
+終わりは `source-map-test.rkt` の `location` 全体の検査と、形式ごとの `range`、caret、byte offset の試験が固定する。
+
+`backend` と `message` は観測量に入れない。
+
+`backend` は terminal だけが `#f` の欄の行を出さず、`message` は `title` と等しいとき terminal と LSP が本文行を省くため、3 形式で出力の有無が意図的に食い違う。
+
+2 欄は形式ごとの試験が受け持つ。
