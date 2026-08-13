@@ -364,11 +364,9 @@ renderer は Diagnostic を読むだけであり、欄を足さない。
 
 `notes` は producer の欄であり、renderer は書き込まない。
 
-位置の単位は 0 起点の行と 0 起点の UTF-16 code unit である。
+位置の単位と `span->location` の契約は `span.md` §8 が定める。
 
 1 起点へ直すのは terminal renderer だけであり、LSP の `range` と JSON の byte offset は 0 起点のまま運ぶ。
-
-byte offset から行と列への変換は `model/redex/source-map.rkt` の `span->location` が担い、source の byte 長を超える offset と多 byte 文字の途中を指す offset を error にする。
 
 `render-terminal` と `render-lsp` は source-map を取る。
 

@@ -330,4 +330,15 @@ span を一部だけ持つ項はここで落ちる。
 `UCore+` に属した項は、続けて全 span を再帰的に走査し、`span-ok?` を満たさない span が 1 つでもあれば `invalid-syntax` で拒否する。
 `annotate-surface` の出力は常に `span-ok?` を満たすため、`UCore` の枝ではこの走査を行わない。
 
-この文書は G4b の span 契約だけを定め、要件 ID や申し送り表の行を追加しない。
+## 8. span から位置への変換
+
+位置の単位は 0 起点の行と 0 起点の UTF-16 code unit である。
+
+`model/redex/source-map.rkt` の `span->location` が span を位置へ写す。
+source の byte 長を超える offset と、多 byte 文字の途中を指す offset は error にする。
+
+この単位は span を読むすべての相に共通である。
+1 起点へ直してよいのは、人が読む綴りを作る側だけである。
+`diagnostic.md` §14 の terminal renderer がその唯一の例であり、他の受け手は 0 起点のまま運ぶ。
+
+この文書は G4b の span 契約に §8 を足したものであり、要件 ID や申し送り表の行を追加しない。
