@@ -145,15 +145,23 @@ C6 は region 識別子の採番や内部鍵の一致を要求しない。
 
 ## 7. NLL solver への置換条件
 
-[REQ: BOR-003] lexical adapter を NLL solver へ置換するには、次の 3 条件を満たす。
+[REQ: BOR-003] lexical adapter を NLL solver へ置換するには、次の 5 条件を満たす。
 
 1. 新しい solver は 3 成分を埋め、`region-ir-ok?` の 8 条件を満たす IR を返す。
 2. 新しい solver は Core API の 4 つを実装する。
-3. 利用側は region 識別子の同一性と Core API の結果だけを見る。
+3. 新しい solver は per-IR bridge の `region->rho ir ρ` と `rho->region ir n` を実装する。
+   両者は `gen:region-solver` の method であり、1 つの IR の中で互いの逆写像である。
+   その IR に属さない region や `ρ` に対しては `error` にする。
+4. 新しい solver は region 識別子を、その solver のすべての実行を通じて fresh に採番する。
+   採番の順序、大小、連番は契約に含めない。
+5. 利用側は region 識別子の同一性と Core API の結果だけを見る。
 
-3 条件を満たす限り、利用側の書き換えは要らない。
+5 条件を満たす限り、利用側の書き換えは要らない。
 新しい solver は Inspection API、`lexical-region-ir-ok?`、C1 から C4 を実装または満たす必要はない。
 C6 は point の定義に関する性質であり、solver の種類を問わず成り立つ。
+
+条件 4 の保証は `build-region-ir` と solver が返す IR についてのみ主張する。
+手組みの IR は実装誤りを示す fixture のため、この保証を迂回する。
 
 ## 8. 位置
 

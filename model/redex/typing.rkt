@@ -35,8 +35,8 @@
          merge-witnesses-dischargeable?)
 
 ;; 段 1 の試験専用。既定は何もしない。
-;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の
-;; 入口 2 箇所に限る。
+;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
+;; および Discharge の層を降りる loop の 3 箇所に限る。
 (define typing-point-probe (make-parameter void))
 
 (define (lookup table key)

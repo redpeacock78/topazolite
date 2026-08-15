@@ -20,6 +20,7 @@
   (id ::= variable-not-otherwise-mentioned)
   (cid ::= variable-not-otherwise-mentioned)
   (n ::= integer)
+  (ρ ::= natural)
   (l ::= integer unit string)
 
   (τ ::= Int Bool Unit String Never Res

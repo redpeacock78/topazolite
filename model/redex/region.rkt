@@ -13,6 +13,7 @@
          (struct-out lexical-region-ir)
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at
+         region->rho rho->region
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir)
 
@@ -83,13 +84,27 @@
 ;; region 識別子。id は採番の都合であり、消費側は同一性だけを読む。
 (struct region (id) #:transparent)
 
-;; core API。G5b が読んでよいのはこの 4 つだけである。
-;; NLL solver へ置き換えるとき、置換側はこの interface を実装する。
+;; region 識別子の採番。すべての build と solver の実行を通じて fresh である。
+;; build ごとに 0 へ戻さないのは、独立な ir 2 つの ρ が同じ自然数になると
+;; per-IR bridge が由来を判別できなくなるためである（spec §5）。
+;; counter は provide しない。採番値の大小、連番、間隔は契約に含めない。
+(define region-counter 0)
+
+(define (fresh-region!)
+  (define ρ (region region-counter))
+  (set! region-counter (add1 region-counter))
+  ρ)
+
+;; Core API の 4 method に加え、per-IR bridge の 2 method を宣言する（spec 5 節）。
+;; 型の中へ region を書くため、region 識別子を Redex の項へ落とす手段が要る。
+;; bridge は Core API とは別の契約であり、4.1 節の本数には数えない。
 (define-generics region-solver
   (region-at region-solver point)
   (region-outlives? region-solver ρ_long ρ_short)
   (regions-overlap? region-solver ρ_1 ρ_2)
-  (regions-exiting-at region-solver point))
+  (regions-exiting-at region-solver point)
+  (region->rho region-solver ρ)
+  (rho->region region-solver n))
 
 ;; 3 成分。outlives は直接の制約だけを持ち、推移閉包は持たない。
 ;; owners は region から、その region が管理する place 列 π への有限写像である。
@@ -162,7 +177,20 @@
      (check-point ir point)
      (match (hash-ref (lexical-region-ir-at-table ir) point #f)
        [#f (set)]
-       [ρ (set ρ)]))])
+       [ρ (set ρ)]))
+   ;; 写像は 1 つの ir の中でだけ有効である。別の ir の region や ρ を渡すのは
+   ;; error であり、solver が異なる場合も同じ solver の別の実行結果である場合も
+   ;; 区別しない。判別は数の由来ではなく ir の所属表への membership で行う。
+   (define (region->rho self ρ)
+     (unless (set-member? (region-ir-regions self) ρ)
+       (error 'region->rho "この ir に属さない region である: ~s" ρ))
+     (region-id ρ))
+
+   (define (rho->region self n)
+     (define ρ (region n))
+     (unless (set-member? (region-ir-regions self) ρ)
+       (error 'rho->region "この ir に属さない ρ である: ~s" n))
+     ρ)])
 
 (define (place-list? v)
   (and (list? v) (andmap exact-nonnegative-integer? v)))
@@ -217,12 +245,7 @@
 ;; ではないため、この順序に意味を持たせない。
 (define (build-region-ir core)
   (define erased (erase-core core))
-  (define next 0)
-  (define (fresh!)
-    (define ρ (region next))
-    (set! next (add1 next))
-    ρ)
-  (define root (fresh!))
+  (define root (fresh-region!))
   (define parents (make-hash))
   (define at-table (make-hash))
   (define owners (make-hash (list (cons root '()))))
@@ -232,7 +255,7 @@
     (define inner
       (match t
         [`(Scope ,π ,_)
-         (define ρ (fresh!))
+         (define ρ (fresh-region!))
          (hash-set! parents ρ current)
          (hash-set! at-table point ρ)
          (hash-set! owners ρ π)
