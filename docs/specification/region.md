@@ -67,7 +67,7 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 
 ### 4.1 Core API
 
-次の 4 つは、すべての region solver が実装する。
+次の 5 つは、すべての region solver が実装する。
 
 - `region-at ir point`：point で有効な最も内側の region を返す。
   Scope に包まれない節点では root region を返す。
@@ -76,6 +76,10 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 - `regions-overlap? ir ρ_1 ρ_2`：2 つの region が同時に生きる瞬間を持つかを返す。
   対称である。
 - `regions-exiting-at ir point`：point が指す節点の評価完了時に退場する region の集合を返す。
+- `region-owning ir p`：`p` を `owners` に持つ region を返す。
+  その region が一意に定まるときだけ値を返す。
+  所有者が無い、または 2 つ以上ある IR は不正であり `error` にする。
+  root region の `owners` は空の π であるため、root が返ることは無い。
 
 `region-at` と `regions-exiting-at` の定義域は、Core の節点を指す point に限る。
 定義域外の point は `#f` や空集合へ置き換えず `error` にする。
@@ -148,7 +152,7 @@ C6 は region 識別子の採番や内部鍵の一致を要求しない。
 [REQ: BOR-003] lexical adapter を NLL solver へ置換するには、次の 5 条件を満たす。
 
 1. 新しい solver は 3 成分を埋め、`region-ir-ok?` の 8 条件を満たす IR を返す。
-2. 新しい solver は Core API の 4 つを実装する。
+2. 新しい solver は Core API の 5 つを実装する。`region-owning` を含む。
 3. 新しい solver は per-IR bridge の `region->rho ir ρ` と `rho->region ir n` を実装する。
    両者は `gen:region-solver` の method であり、1 つの IR の中で互いの逆写像である。
    その IR に属さない region や `ρ` に対しては `error` にする。

@@ -12,7 +12,7 @@
          (struct-out region-ir)
          (struct-out lexical-region-ir)
          gen:region-solver region-solver?
-         region-at region-outlives? regions-overlap? regions-exiting-at
+         region-at region-outlives? regions-overlap? regions-exiting-at region-owning
          region->rho rho->region
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir)
@@ -95,7 +95,7 @@
   (set! region-counter (add1 region-counter))
   ρ)
 
-;; Core API の 4 method に加え、per-IR bridge の 2 method を宣言する（spec 5 節）。
+;; Core API の 5 method と per-IR bridge の 2 method を宣言する（spec 5 節）。
 ;; 型の中へ region を書くため、region 識別子を Redex の項へ落とす手段が要る。
 ;; bridge は Core API とは別の契約であり、4.1 節の本数には数えない。
 (define-generics region-solver
@@ -103,6 +103,7 @@
   (region-outlives? region-solver ρ_long ρ_short)
   (regions-overlap? region-solver ρ_1 ρ_2)
   (regions-exiting-at region-solver point)
+  (region-owning region-solver p)
   (region->rho region-solver ρ)
   (rho->region region-solver n))
 
@@ -178,6 +179,21 @@
      (match (hash-ref (lexical-region-ir-at-table ir) point #f)
        [#f (set)]
        [ρ (set ρ)]))
+   ;; core API の 5 本目（docs/specification/region.md §4.1）。
+   ;; 実行時の config で place から owner region を引く（spec §7.2）。
+   ;; owners から導けるため、region-ir-ok? の 8 条件は増やさない。
+   ;;
+   ;; 引けない p を root region へ落とさない。root は最も長生きするため、
+   ;; 黙って root にすると BOR-001 の判定がすべて通ってしまう。
+   (define (region-owning ir p)
+     (define found
+       (for/list ([(ρ π) (in-hash (region-ir-owners ir))]
+                  #:when (memv p π))
+         ρ))
+     (match found
+       [(list ρ) ρ]
+       ['() (error 'region-owning "所有者が無い place である: ~s" p)]
+       [_ (error 'region-owning "所有者が 2 つ以上ある place である: ~s" p)]))
    ;; 写像は 1 つの ir の中でだけ有効である。別の ir の region や ρ を渡すのは
    ;; error であり、solver が異なる場合も同じ solver の別の実行結果である場合も
    ;; 区別しない。判別は数の由来ではなく ir の所属表への membership で行う。
