@@ -24,6 +24,7 @@
        (set (list 'z ρ1))
        (set (list 'w ρ2 ρ1))))
 
+;; 段 9 で suspended の退場は親 capability の復帰へ変わる。この期待値は段 9 で動く。
 (check-equal? (psi-exit Ψc (set ρ1))
               (psi (set (list 'y ρ2)) (set) (set)))
 

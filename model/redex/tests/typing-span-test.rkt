@@ -7,6 +7,8 @@
          "../diagnostic.rkt"
          "../erase.rkt"
          "../lang.rkt"
+         "../borrow.rkt"
+         "../region.rkt"
          "../typing.rkt")
 
 (define (id-of core places callables [environment '()])
@@ -117,8 +119,12 @@
         (map (λ (name) (reach-bind name start end)) names)
         '->
         body))
-(define (reach-row key core places callables environment expected-span)
-  (list key core places callables environment expected-span))
+(define (reach-row key core places callables environment expected-span
+                   [make-Λ #f])
+  (list key core places callables environment expected-span make-Λ))
+
+(define (reach-region-ctx core)
+  (region-ctx (build-region-ir (erase-core core)) '() (hash) (hash)))
 
 (define reach-call-f '((f (NFn (Int) Int () ()))))
 (define reach-call-opt '((f (NFn ((Option Int)) Int () ()))))
@@ -164,6 +170,8 @@
     discharge-target-not-apply unsatisfied-proof-obligation
    ;; BOR
     borrowed-owned-payload borrow-region-mismatch
+    borrow-conflicting-alias borrow-escapes-owner borrow-non-owned
+    borrow-unknown-owner-region drop-borrowed move-borrowed
     ;; default
     ill-typed))
 
@@ -571,27 +579,89 @@
               '() '() '() (reach-span 1000 1020))
    (reach-row 'borrow-region-mismatch
               (reach-node 'BorrowAt 1021 1030 0 (reach-var 'x 1026 1027))
-              '() '() '() (reach-span 1021 1030))))
+              '() '() '() (reach-span 1021 1030))
+   (reach-row 'borrow-conflicting-alias
+              (reach-node 'Scope 1031 1070 '()
+                          (reach-node 'Let 1032 1069
+                                      (list (reach-bind 'x 1033 1034) 'let
+                                            (reach-ty '(Owned Res) 1035 1036))
+                                      (reach-node 'resource 1037 1038 1)
+                                      (reach-node 'Yield 1039 1068
+                                                  (reach-node 'BorrowMut 1040 1050
+                                                              (reach-var 'x 1045 1046))
+                                                  (reach-node 'BorrowMut 1051 1067
+                                                              (reach-var 'x 1060 1061)))))
+              '() '() '() (reach-span 1051 1067)
+              reach-region-ctx)
+   (reach-row 'borrow-escapes-owner
+              (reach-node 'Borrow 1071 1080 (reach-var 'x 1076 1077))
+              '() '() '((x (Owned Int))) (reach-span 1071 1080)
+              (λ (core)
+                (define ir (build-region-ir '(Scope () (Scope () 0))))
+                (region-ctx ir '() (hash 'x (region-at ir '(0 0))) (hash))))
+   (reach-row 'borrow-non-owned
+              (reach-node 'Scope 1081 1100 '()
+                          (reach-node 'Let 1082 1099
+                                      (list (reach-bind 'x 1083 1084) 'let
+                                            (reach-ty 'Int 1085 1086))
+                                      (reach-lit 1 1087 1088)
+                                      (reach-node 'Borrow 1089 1098
+                                                  (reach-var 'x 1094 1095))))
+              '() '() '() (reach-span 1089 1098)
+              reach-region-ctx)
+   (reach-row 'borrow-unknown-owner-region
+              (reach-node 'Borrow 1101 1110 (reach-var 'x 1106 1107))
+              '() '() '((x (Owned Int))) (reach-span 1101 1110))
+   (reach-row 'drop-borrowed
+              (reach-node 'Scope 1111 1150 '()
+                          (reach-node 'Let 1112 1149
+                                      (list (reach-bind 'x 1113 1114) 'let
+                                            (reach-ty '(Owned Res) 1115 1116))
+                                      (reach-node 'resource 1117 1118 1)
+                                      (reach-node 'Yield 1119 1148
+                                                  (reach-node 'Borrow 1120 1129
+                                                              (reach-var 'x 1125 1126))
+                                                  (reach-node 'Drop 1130 1147
+                                                              (reach-var 'x 1140 1141)))))
+              '() '() '() (reach-span 1140 1141)
+              reach-region-ctx)
+   (reach-row 'move-borrowed
+              (reach-node 'Scope 1151 1190 '()
+                          (reach-node 'Let 1152 1189
+                                      (list (reach-bind 'x 1153 1154) 'let
+                                            (reach-ty '(Owned Res) 1155 1156))
+                                      (reach-node 'resource 1157 1158 1)
+                                      (reach-node 'Yield 1159 1188
+                                                  (reach-node 'Borrow 1160 1169
+                                                              (reach-var 'x 1165 1166))
+                                                  (reach-node 'Move 1170 1187
+                                                              (reach-var 'x 1180 1181)))))
+              '() '() '() (reach-span 1170 1187)
+              reach-region-ctx)))
 
 (test-case "typing の producer key 集合が registry v3 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 51)
+  (check-equal? (length producer-keys) 57)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
 (test-case "typing の全到達可能 key が正しい primary-span を持つ"
   (for ([entry (in-list reachability-table)])
-    (match-define (list key core places callables environment expected-span) entry)
+    (match-define (list key core places callables environment expected-span
+                        make-Λ) entry)
     (if (eq? key 'not-core-term)
         (check-false (redex-match? G2m c (erase-core core))
                      "not-core-term の入力は G2m の c ではない")
         (check-true (redex-match? G2m c (erase-core core))
                     (format "~a の入力が G2m の c に属する" key)))
     (define diagnostic
-      (core-type-of/diagnostic core places callables environment))
+      (if make-Λ
+          (core-type-of/diagnostic core places callables environment
+                                   (make-Λ core))
+          (core-type-of/diagnostic core places callables environment)))
     (check-true (diagnostic? diagnostic)
                 (format "~a が Diagnostic を返す" key))
     (when (diagnostic? diagnostic)

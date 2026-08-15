@@ -2,7 +2,8 @@
 
 (require racket/match
          racket/set
-         "region.rkt")
+         "region.rkt"
+         "span-core.rkt")
 
 (provide (struct-out region-ctx)
          empty-region-ctx
@@ -13,7 +14,14 @@
          empty-psi
          psi-join
          psi-exit
-         check-region-annotation)
+         check-region-annotation
+         borrow-allowed?
+         borrow-mut-allowed?
+         use-allowed?
+         psi-add-shared
+         psi-add-mut
+         borrow-typed?
+         borrow-token-key)
 
 ;; Λ（region 文脈）。spec §3.1。
 ;; 木を下る向きにだけ流れる不変の値である。parameterize を使わない。
@@ -79,3 +87,114 @@
   (unless ir (fail 'borrow-region-mismatch node))
   (define expected (region->rho ir (region-at ir (region-ctx-point Λ))))
   (unless (equal? ρ expected) (fail 'borrow-region-mismatch node)))
+
+;; permission map の key は w である。x と p を同じ空間で扱う。
+;; 静的な core には x だけが、実行時の config には p だけが現れるため、
+;; 両者が同じ Ψ に混在することは無い。
+(define (conflicts? entries w ρ_borrow ir)
+  (for/or ([entry (in-set entries)])
+    (and (equal? (first entry) w)
+         (regions-overlap? ir (second entry) ρ_borrow))))
+
+;; [REQ: BOR-002] 共有借用どうしは許す。可変借用と重なるときだけ拒む。
+(define (borrow-allowed? Ψ w ρ_borrow ir)
+  (not (conflicts? (psi-mut Ψ) w ρ_borrow ir)))
+
+;; [REQ: BOR-002] 可変借用は排他である。共有借用とも可変借用とも重なれない。
+(define (borrow-mut-allowed? Ψ w ρ_borrow ir)
+  (and (not (conflicts? (psi-mut Ψ) w ρ_borrow ir))
+       (not (conflicts? (psi-shared Ψ) w ρ_borrow ir))))
+
+;; Move と Drop は、その w について生きている借用が 1 つも無いときだけ許す。
+;; suspended も見る。reborrow で停止した親は mut に無いため、
+;; suspended を見なければ停止中の親を Move できてしまう。
+(define (use-allowed? Ψ w)
+  (define (holds? entries) (for/or ([e (in-set entries)]) (equal? (first e) w)))
+  (not (or (holds? (psi-shared Ψ))
+           (holds? (psi-mut Ψ))
+           (holds? (psi-suspended Ψ)))))
+
+(define (psi-add-shared Ψ w ρ)
+  (struct-copy psi Ψ [shared (set-add (psi-shared Ψ) (list w ρ))]))
+
+(define (psi-add-mut Ψ w ρ)
+  (struct-copy psi Ψ [mut (set-add (psi-mut Ψ) (list w ρ))]))
+
+(define (borrow-typed? type)
+  (match type
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [_ #f]))
+
+;; c が作る借用が指す designator の集合を返す。
+;; Reborrow が親の token を特定するために使う（段 9）。
+;; Let と Scope と Eliminate を通すのは、借用の値を束縛してから
+;; reborrow する形を同じ key へ落とすためである。
+;;
+;; 入口で peel-node を通す。type-of/raw は span 付きの core をそのまま infer へ
+;; 渡すため、生の形だけを match すると Let の bound や Reborrow の operand が
+;; span 付きのときに末尾の [_ (set)] へ落ちる。落ちると Λ.tokens から key を
+;; 引けず、段 9 の Reborrow が実装誤りの error になる。
+;; peel-node は 1 段だけ剥がす。再帰の各段で入口を通るため、これで足りる。
+;; w の位置も (#:var x span) になりうるため、その場で剥がす。
+;; 分岐は span を先頭に持ち head を持たないため、peel-branch を使う。
+;;
+;; locals は operand の内側で束縛された名前から token への写像である。
+;; Λ.tokens は外側の Let が張った束縛だけを持つ。operand 自身が Let のとき
+;; その束縛は Λ に無い。(Reborrow (Let (y let (BorrowedMut Int ρ)) (BorrowMut x) y))
+;; がその形であり、locals を持たないと y の対応を失う。
+;; locals は Λ.tokens より先に見る。内側の束縛子は外側の同名を遮蔽する。
+;;
+;; designator が locals にも Λ.tokens にも無いときは、その designator 自身を
+;; 親 capability とみなす（borrow.md §5）。データへ格納された借用を分岐の
+;; 束縛子で受けた形がこれに当たり、真の所有者は構造からは辿れない。
+;; borrow-designator? は provide しない。この手続きの内部だけで使う。
+(define (borrow-designator? w)
+  (or (symbol? w) (exact-nonnegative-integer? w)))
+
+(define (borrow-token-key Λ c [locals (hash)])
+  (match (peel-node c)
+    [`(Borrow ,w) (set (peel-node w))]
+    [`(BorrowMut ,w) (set (peel-node w))]
+    [`(BorrowAt ,_ ,w) (set (peel-node w))]
+    [`(BorrowMutAt ,_ ,w) (set (peel-node w))]
+    [(? borrow-designator? w)
+     (define ws (hash-ref locals w (lambda () (region-ctx-token Λ w))))
+     (if (set-empty? ws) (set w) ws)]
+    [`(Eliminate ,_ ,brs)
+     (for/fold ([acc (set)]) ([br (in-list brs)])
+       (match-define `(,_ (,parameters ...) -> ,body) (peel-branch br))
+       (define locals_branch
+         (for/fold ([acc_l locals]) ([p (in-list parameters)])
+           (hash-set acc_l (peel-bind p) (set))))
+       (set-union acc (borrow-token-key Λ body locals_branch)))]
+    [`(Scope ,_ ,body) (borrow-token-key Λ body locals)]
+    [`(Proj ,c_1 ,_) (borrow-token-key Λ c_1 locals)]
+    [`(Suspend ,c_1) (borrow-token-key Λ c_1 locals)]
+    [`(Yield ,_ ,c_next) (borrow-token-key Λ c_next locals)]
+    [`(Handle ,_ ,handler ,body)
+     (match-define `(,name -> ,c_h) (peel-branch handler))
+     (set-union (borrow-token-key Λ body locals)
+                (borrow-token-key Λ c_h
+                                  (hash-set locals (peel-bind name) (set))))]
+    [`(Rec (,fields ...))
+     (for/fold ([acc (set)]) ([field (in-list fields)])
+       (set-union acc (borrow-token-key Λ (third field) locals)))]
+    [`(Construct ,_ ,_ ,fields ...)
+     (for/fold ([acc (set)]) ([field (in-list fields)])
+       (set-union acc (borrow-token-key Λ field locals)))]
+    ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
+    ;; 宣言型はどちらの形でも最後の要素である。
+    ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。
+    ;; place は非負整数であるため、borrow-designator? は place と整数リテラルを
+    ;; 区別できない。非借用の束縛で bound を辿ると、(Let (y let Int) 1 y) の 1 が
+    ;; designator の節へ落ち、自己 fallback によって y の token へ {1} を張る。
+    ;; そのとき y 自身の token も {1} になり、y は自分を指す key を失う。
+    ;; 宣言型で切ると、この取り違えが起きない。
+    [`(Let (,name ,rest ...) ,bound ,body)
+     (define token
+       (if (borrow-typed? (peel-ty (last rest)))
+           (borrow-token-key Λ bound locals)
+           (set)))
+     (borrow-token-key Λ body (hash-set locals (peel-bind name) token))]
+    [_ (set)]))

@@ -58,14 +58,14 @@
 (check-exn exn:fail? (lambda () (annotate-regions annotated ir)))
 
 ;; 試験 4: 注釈が一致すれば borrow-region-mismatch にならない。
-;; 段 6 では Borrow の型付けが無いため ill-typed になる。
+;; Λ.owners は空なので、注釈検査を通った後に borrow-unknown-owner-region になる。
 ;; point '(0 1 0) は内側 Scope の中の Eliminate である。
 ;; '() の外側 Scope とは region が異なり、試験 5 の wrong-ρ が成り立つ。
 (define Λ (region-ctx ir '(0 1 0) (hash) (hash)))
 (define ok-node `(BorrowAt ,(region->rho ir (region-at ir '(0 1 0))) x))
 
-(check-equal? (type-of/raw ok-node '() '() '() Λ)
-              (list 'fail 'ill-typed ok-node '()))
+(check-equal? (type-of/raw ok-node '() '() '((x (Owned Res))) Λ)
+              (list 'fail 'borrow-unknown-owner-region ok-node '()))
 
 ;; 試験 5: 注釈が一致しなければ borrow-region-mismatch になる。
 ;; 別の point の region を注釈へ置く。

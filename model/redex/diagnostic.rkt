@@ -166,7 +166,13 @@
 ;; 番号は実 producer が現れる段の順に連番で振る。辞書順は各段の中だけで効く。
 (define typing-entries-v3
   '(("E-BOR-001" borrowed-owned-payload "Borrowed の中身に owned を置けない")
-    ("E-BOR-002" borrow-region-mismatch "注釈された region が走査位置と一致しない")))
+    ("E-BOR-002" borrow-region-mismatch "注釈された region が走査位置と一致しない")
+    ("E-BOR-003" borrow-conflicting-alias "借用が競合する alias を作る")
+    ("E-BOR-004" borrow-escapes-owner "借用が owner より長生きする")
+    ("E-BOR-005" borrow-non-owned "借用の対象が owned でない")
+    ("E-BOR-006" borrow-unknown-owner-region "借用の対象の所有 region が定まらない")
+    ("E-BOR-007" drop-borrowed "借用中の値を Drop できない")
+    ("E-BOR-008" move-borrowed "借用中の値を Move できない")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

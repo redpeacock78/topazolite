@@ -32,7 +32,8 @@
          field-type-binding-name
          merge-record-types
          check-merge-return
-         merge-witnesses-dischargeable?)
+         merge-witnesses-dischargeable?
+         register-owner)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -197,11 +198,18 @@
   (for/list ([branch (in-list plain-branches)]
              [i (in-naturals 1)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
+    (define field-types (lookup schema constructor))
+    (define Λ_branch
+      (for/fold ([Λ_acc Λ])
+                ([p (in-list parameters)] [τ (in-list field-types)])
+        (region-ctx-add-token (register-owner Λ_acc (peel-bind p) τ)
+                              (peel-bind p)
+                              (set))))
     (list body
           (extend environment
                   (map peel-bind parameters)
-                  (lookup schema constructor))
-          (enter-child Λ i))))
+                  field-types)
+          (enter-child Λ_branch i))))
 
 (define (check-eliminate scrutinee branches expected
                          Λ Ψ environment places callables node fail)
@@ -221,7 +229,7 @@
                 callables
                 fail)))
   (define branch-psi
-    (for/fold ([joined (empty-psi)])
+    (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
       (psi-join joined (second result))))
   (list (rows-union
@@ -406,7 +414,7 @@
                 callables
                 fail)))
   (define branch-psi
-    (for/fold ([joined (empty-psi)])
+    (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-rows)])
       (psi-join joined (second result))))
   (list result-type
@@ -592,6 +600,64 @@
     [(list 'ok (list row _psi)) row]
     [_ #f]))
 
+;; spec §3.1。所有値の束縛子だけを owners へ入れる。
+;; ρ は束縛子の節点で有効な region である。Λ.point がその節点を指すため、
+;; enter-child を掛ける前の Λ をここへ渡す。
+;; ir が無い Λ、すなわち公開入口の既定の空 Λ では何もしない。
+(define (register-owner Λ w binding-type)
+  (define ir (region-ctx-ir Λ))
+  (cond
+    [(not ir) Λ]
+    [(match (normalize-type binding-type)
+       [`(Owned ,_) #t]
+       [_ #f])
+     (region-ctx-add-owner Λ w (region-at ir (region-ctx-point Λ)))]
+    [else Λ]))
+
+;; 借用の対象の payload を引く。p は places が直接 τ を与え、
+;; x は environment が (Owned τ) を与える。
+(define (borrow-target-payload w environment places node fail)
+  (cond
+    [(exact-nonnegative-integer? w)
+     (define type (lookup places w))
+     (unless type (fail 'unknown-place node))
+     type]
+    [else
+     (define type (lookup environment (peel-node w)))
+     (unless type (fail 'unbound-variable node))
+     (match type
+       [`(Owned ,payload) payload]
+       [_ (fail 'borrow-non-owned node)])]))
+
+;; [REQ: BOR-001] 借用の region は owner の region に含まれていなければならない。
+;; [REQ: BOR-002] 可変借用の有効期間中、競合する alias を作れない。
+(define (infer-borrow core w mutable? Λ Ψ environment places callables fail)
+  (define ir (region-ctx-ir Λ))
+  (unless ir (fail 'borrow-unknown-owner-region core))
+  (define payload (borrow-target-payload w environment places core fail))
+  (define key (if (exact-nonnegative-integer? w) w (peel-node w)))
+  (define ρ_owner (region-ctx-owner Λ key))
+  (unless ρ_owner (fail 'borrow-unknown-owner-region core))
+  ;; 借用は自分を囲む最も内側の Scope の間だけ生きる。lexical な近似であり、
+  ;; NLL solver へ置き換われば ρ_borrow は短くなる。判定の式は変わらない。
+  (define ρ_borrow (region-at ir (region-ctx-point Λ)))
+  (unless (region-outlives? ir ρ_owner ρ_borrow)
+    (fail 'borrow-escapes-owner core))
+  (define allowed?
+    (if mutable?
+        (borrow-mut-allowed? Ψ key ρ_borrow ir)
+        (borrow-allowed? Ψ key ρ_borrow ir)))
+  (unless allowed? (fail 'borrow-conflicting-alias core))
+  (define Ψ_out
+    (if mutable?
+        (psi-add-mut Ψ key ρ_borrow)
+        (psi-add-shared Ψ key ρ_borrow)))
+  (list (list (if mutable? 'BorrowedMut 'Borrowed)
+              payload
+              (region->rho ir ρ_borrow))
+        '()
+        Ψ_out))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
@@ -774,10 +840,18 @@
      (match (binding-context binding-mode (peel-ty type) bound Λ
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
+        (define x (peel-bind name))
+        (define Λ_owner (register-owner Λ x binding-type))
+        (define token
+          (if (borrow-typed? (normalize-type binding-type))
+              (borrow-token-key Λ bound)
+              (set)))
+        (define Λ_token (region-ctx-add-token Λ_owner x token))
+        (define Λ_body (enter-child Λ_token 1))
         (match (infer body
-                      (enter-child Λ 1)
+                      Λ_body
                       bound-psi
-                      (extend environment (list (peel-bind name))
+                      (extend environment (list x)
                               (list binding-type))
                       places
                       callables
@@ -789,12 +863,21 @@
      (define bound-result
        (check-as bound (peel-ty type) (enter-child Λ 0)
                  Ψ environment places callables fail))
+     (define x (peel-bind name))
+     (define binding-type (peel-ty type))
+     (define Λ_owner (register-owner Λ x binding-type))
+     (define token
+       (if (borrow-typed? (normalize-type binding-type))
+           (borrow-token-key Λ bound)
+           (set)))
+     (define Λ_token (region-ctx-add-token Λ_owner x token))
+     (define Λ_body (enter-child Λ_token 1))
      (match (infer body
-                   (enter-child Λ 1)
+                   Λ_body
                    (second bound-result)
                    (extend environment
-                           (list (peel-bind name))
-                           (list (peel-ty type)))
+                           (list x)
+                           (list binding-type))
                    places
                    callables
                    fail)
@@ -829,7 +912,7 @@
           (check-as handler
                     type*
                     (enter-child Λ 0)
-                    Ψ
+                    (psi-join Ψ (second body-result))
                     (extend environment (list (peel-bind name)) (list type*))
                     places
                     callables
@@ -896,16 +979,31 @@
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
      (unless type (fail 'unknown-place core))
+     (unless (use-allowed? Ψ place) (fail 'move-borrowed core))
      (list `(Owned ,type) '(Own) Ψ)]
 
     [`(Move ,name)
-     (define type (lookup environment (peel-node name)))
+     (define w (peel-node name))
+     (define type (lookup environment w))
      (unless type (fail 'unbound-variable core))
+     (unless (use-allowed? Ψ w) (fail 'move-borrowed core))
+     (when (borrow-typed? type) (fail 'move-borrowed core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own) Ψ)]
        [_ (fail 'move-non-owned core)])]
 
     [`(Drop ,argument)
+     (define dropped
+       (match (peel-node argument)
+         [`(Move ,w) (peel-node w)]
+         [(? symbol? w) w]
+         [(? exact-nonnegative-integer? w) w]
+         [_ #f]))
+     (when (and dropped (not (use-allowed? Ψ dropped)))
+       (fail 'drop-borrowed argument))
+     (when (and dropped
+                (borrow-typed? (or (lookup environment dropped) '())))
+       (fail 'drop-borrowed argument))
      (define argument-Λ (enter-child Λ 0))
      (define argument-result
        (let/ec recover
@@ -961,12 +1059,16 @@
      (when (owned-type? type) (fail 'owned-variable-requires-move core))
      (list type '() Ψ)]
 
-    [`(BorrowAt ,ρ ,_)
+    [`(Borrow ,w)
+     (infer-borrow core w #f Λ Ψ environment places callables fail)]
+    [`(BorrowMut ,w)
+     (infer-borrow core w #t Λ Ψ environment places callables fail)]
+    [`(BorrowAt ,ρ ,w)
      (check-region-annotation Λ ρ core fail)
-     (fail 'ill-typed core)]
-    [`(BorrowMutAt ,ρ ,_)
+     (infer-borrow core w #f Λ Ψ environment places callables fail)]
+    [`(BorrowMutAt ,ρ ,w)
      (check-region-annotation Λ ρ core fail)
-     (fail 'ill-typed core)]
+     (infer-borrow core w #t Λ Ψ environment places callables fail)]
     [`(ReborrowAt ,ρ ,_)
      (check-region-annotation Λ ρ core fail)
      (fail 'ill-typed core)]
@@ -996,12 +1098,20 @@
                              Λ
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
+        (define x (peel-bind name))
+        (define Λ_owner (register-owner Λ x binding-type))
+        (define token
+          (if (borrow-typed? (normalize-type binding-type))
+              (borrow-token-key Λ bound)
+              (set)))
+        (define Λ_token (region-ctx-add-token Λ_owner x token))
+        (define Λ_body (enter-child Λ_token 1))
         (define body-result
           (check-as body
                     expected
-                    (enter-child Λ 1)
+                    Λ_body
                     bound-psi
-                    (extend environment (list (peel-bind name))
+                    (extend environment (list x)
                             (list binding-type))
                     places
                     callables
@@ -1013,14 +1123,23 @@
      (define bound-result
        (check-as bound (peel-ty type) (enter-child Λ 0)
                  Ψ environment places callables fail))
+     (define x (peel-bind name))
+     (define binding-type (peel-ty type))
+     (define Λ_owner (register-owner Λ x binding-type))
+     (define token
+       (if (borrow-typed? (normalize-type binding-type))
+           (borrow-token-key Λ bound)
+           (set)))
+     (define Λ_token (region-ctx-add-token Λ_owner x token))
+     (define Λ_body (enter-child Λ_token 1))
      (define body-result
        (check-as body
                  expected
-                 (enter-child Λ 1)
+                 Λ_body
                  (second bound-result)
                  (extend environment
-                         (list (peel-bind name))
-                         (list (peel-ty type)))
+                         (list x)
+                         (list binding-type))
                  places
                  callables
                  fail))
