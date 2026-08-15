@@ -162,8 +162,8 @@
     ;; PRF
     discharge-obligation-count discharge-proposition-mismatch
     discharge-target-not-apply unsatisfied-proof-obligation
-    ;; BOR
-    borrowed-owned-payload
+   ;; BOR
+    borrowed-owned-payload borrow-region-mismatch
     ;; default
     ill-typed))
 
@@ -568,14 +568,17 @@
                                 (reach-ty '(Borrowed (Owned Int) 0) 1003 1010))
                           (reach-lit 1 1011 1012)
                           (reach-var 'x 1013 1014))
-              '() '() '() (reach-span 1000 1020))))
+              '() '() '() (reach-span 1000 1020))
+   (reach-row 'borrow-region-mismatch
+              (reach-node 'BorrowAt 1021 1030 0 (reach-var 'x 1026 1027))
+              '() '() '() (reach-span 1021 1030))))
 
 (test-case "typing の producer key 集合が registry v3 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 50)
+  (check-equal? (length producer-keys) 51)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

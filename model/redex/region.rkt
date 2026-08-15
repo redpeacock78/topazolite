@@ -7,7 +7,7 @@
          "lang.rkt"
          "erase.rkt")
 
-(provide core-children core-points core-node
+(provide core-children core-with-children core-points core-node
          (struct-out region)
          (struct-out region-ir)
          (struct-out lexical-region-ir)
@@ -15,7 +15,7 @@
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
          region->rho rho->region
          region-parent region-contains?
-         region-ir-ok? lexical-region-ir-ok? build-region-ir)
+         region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（docs/specification/region.md §3）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
@@ -46,6 +46,14 @@
     [`(UVal ,v) (list v)]
     [`(RVal (ProofRep ,_ ,_) ,v) (list v)]
     [`(CurryVal ,_ ,v_1 ,v_2) (list v_1 v_2)]
+    [`(Reborrow ,c) (list c)]
+    [`(ReborrowAt ,_ ,c) (list c)]
+    [`(Borrow ,_) '()]
+    [`(BorrowMut ,_) '()]
+    [`(BorrowAt ,_ ,_) '()]
+    [`(BorrowMutAt ,_ ,_) '()]
+    [`(BorrowRef ,_ ,_) '()]
+    [`(BorrowMutRef ,_ ,_) '()]
     [`(Move ,_) '()]
     [`(PrimVal ,_ ,_) '()]
     [`(TypeRep ,_ ,_ ,_) '()]
@@ -59,6 +67,46 @@
      #:when (or (redex-match? G2 x s) (redex-match? G2 l s))
      '()]
     [other (error 'core-children "Core の形ではない: ~s" other)]))
+
+;; core-children の逆。子の並びを差し替えた同じ形を返す。
+;; 節の並びは core-children と 1 対 1 で対応させる。片方だけ足すと
+;; annotate-regions が子を落とす。
+(define (core-with-children t children)
+  (define (first-child) (first children))
+  (match t
+    [`(Apply ,_ ,_ ...) `(Apply ,@children)]
+    [`(Let ,binder ,_ ,_) `(Let ,binder ,(first children) ,(second children))]
+    [`(Construct ,τ ,K ,_ ...) `(Construct ,τ ,K ,@children)]
+    [`(Eliminate ,_ ,brs)
+     `(Eliminate ,(first children)
+                 ,(for/list ([br (in-list brs)] [c (in-list (rest children))])
+                    (append (drop-right br 1) (list c))))]
+    [`(Perform ,op ,_) `(Perform ,op ,(first-child))]
+    [`(Handle ,op ,h ,_)
+     `(Handle ,op
+              ,(append (drop-right h 1) (list (first children)))
+              ,(second children))]
+    [`(Scope ,π ,_) `(Scope ,π ,(first-child))]
+    [`(Recur ,cid ,f ,xs ,_ ,_)
+     `(Recur ,cid ,f ,xs ,(first children) ,(second children))]
+    [`(Yield ,_ ,_) `(Yield ,(first children) ,(second children))]
+    [`(Suspend ,_) `(Suspend ,(first-child))]
+    [`(Drop ,_) `(Drop ,(first-child))]
+    [`(Curry ,_ ,_) `(Curry ,(first children) ,(second children))]
+    [`(Rec ((,ls ,ms ,_) ...)) `(Rec ,(map list ls ms children))]
+    [`(Proj ,_ ,label) `(Proj ,(first-child) ,label)]
+    [`(Discharge ,proof-rep ,_) `(Discharge ,proof-rep ,(first-child))]
+    [`(Lam ,O ,cid ,xs ,_) `(Lam ,O ,cid ,xs ,(first-child))]
+    [`(RecurVal ,cid ,f ,xs ,_) `(RecurVal ,cid ,f ,xs ,(first-child))]
+    [`(UVal ,_) `(UVal ,(first-child))]
+    [`(RVal ,proof-rep ,_) `(RVal ,proof-rep ,(first-child))]
+    [`(CurryVal ,O ,_ ,_) `(CurryVal ,O ,(first children) ,(second children))]
+    [`(Reborrow ,_) `(Reborrow ,(first-child))]
+    [`(ReborrowAt ,ρ ,_) `(ReborrowAt ,ρ ,(first-child))]
+    [_
+     (unless (null? children)
+       (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))
+     t]))
 
 ;; point は根から目的の節点までの意味的な子の添字列である。
 ;; 定義域は elaboration が返す Core、すなわち G2 の項である。
@@ -288,6 +336,25 @@
    (freeze parents)
    (freeze at-table)
    (list->set (core-points erased))))
+
+;; 注釈前の core を 1 回走査し、借用の 3 形へ region を注入する。
+;; point の数え方は core-children を使うため region.md §3 と自動的に一致する。
+;; ρ は region->rho で natural へ落とす。項に載るのは natural であり、
+;; Λ.owners と Ψ が持つのは region 構造体である。
+(define (annotate-regions core ir)
+  (let walk ([t core] [point '()])
+    (define (here) (region->rho ir (region-at ir point)))
+    (match t
+      [(or `(BorrowAt ,_ ,_) `(BorrowMutAt ,_ ,_) `(ReborrowAt ,_ ,_))
+       (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
+      [`(Borrow ,w) `(BorrowAt ,(here) ,w)]
+      [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,w)]
+      [`(Reborrow ,c) `(ReborrowAt ,(here) ,(walk c (append point '(0))))]
+      [_
+       (core-with-children
+        t
+        (for/list ([k (in-list (core-children t))] [i (in-naturals)])
+          (walk k (append point (list i)))))])))
 
 (define (freeze h)
   (for/hash ([(k v) (in-hash h)]) (values k v)))

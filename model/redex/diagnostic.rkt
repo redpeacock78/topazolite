@@ -165,7 +165,8 @@
 ;; G5b の借用。分類 E-BOR を新設する。
 ;; 番号は実 producer が現れる段の順に連番で振る。辞書順は各段の中だけで効く。
 (define typing-entries-v3
-  '(("E-BOR-001" borrowed-owned-payload "Borrowed の中身に owned を置けない")))
+  '(("E-BOR-001" borrowed-owned-payload "Borrowed の中身に owned を置けない")
+    ("E-BOR-002" borrow-region-mismatch "注釈された region が走査位置と一致しない")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

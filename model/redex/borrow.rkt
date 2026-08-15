@@ -1,13 +1,15 @@
 #lang racket
 
 (require racket/match
-         racket/set)
+         racket/set
+         "region.rkt")
 
 (provide (struct-out region-ctx)
          empty-region-ctx
          enter-child
          region-ctx-add-owner region-ctx-owner
-         region-ctx-add-token region-ctx-token)
+         region-ctx-add-token region-ctx-token
+         check-region-annotation)
 
 ;; Λ（region 文脈）。spec §3.1。
 ;; 木を下る向きにだけ流れる不変の値である。parameterize を使わない。
@@ -40,3 +42,12 @@
 
 (define (region-ctx-token Λ x)
   (hash-ref (region-ctx-tokens Λ) x (set)))
+
+;; 注釈済みの形の ρ は、走査位置の region と一致していなければならない。
+;; 一致しない項は annotate-regions を通していない項か、別の ir で注釈した項である。
+;; どちらも入力の誤りとして診断する。
+(define (check-region-annotation Λ ρ node fail)
+  (define ir (region-ctx-ir Λ))
+  (unless ir (fail 'borrow-region-mismatch node))
+  (define expected (region->rho ir (region-at ir (region-ctx-point Λ))))
+  (unless (equal? ρ expected) (fail 'borrow-region-mismatch node)))

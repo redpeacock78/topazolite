@@ -51,6 +51,11 @@ span、束縛子、型注釈、label、`op`、`O`、`cid`、π、構築子名 `K
 - `(Lam O cid (x ...) c)` と `(RecurVal cid f (x ...) c)`：`c`。
 - `(UVal v)` と `(RVal (ProofRep O φ) v)`：`v`。
 - `(CurryVal O v_1 v_2)`：`v_1`、`v_2`。
+- `(Reborrow c)`：`c`。
+- `(ReborrowAt ρ c)`：`c`。
+- `(Borrow w)`、`(BorrowMut w)`、`(BorrowAt ρ w)`、`(BorrowMutAt ρ w)`：子を持たない。
+  `w` は designator であり `c` の位置の部分項ではない。
+- `(BorrowRef p ρ)`、`(BorrowMutRef p ρ)`：子を持たない。
 - `l`、`x`、`(Move w)`、`(PrimVal O nm)`、`(TypeRep O t κ)`、`(ProofRep O φ)`、`(resource n)`：子を持たない。
 
 値の内側も歩く。
@@ -58,6 +63,7 @@ span、束縛子、型注釈、label、`op`、`O`、`cid`、π、構築子名 `K
 
 この定義の対象は elaboration が返す `G2` の Core である。
 `(Error p)` は実行時の形であり、elaboration の Core には現れないため対象外である。
+`(BorrowAt ρ w)`、`(BorrowMutAt ρ w)`、`(ReborrowAt ρ c)`、`(BorrowRef p ρ)`、`(BorrowMutRef p ρ)` も注釈後および実行時の形であり、elaboration の Core には現れない。
 未知の形に出会ったときは、子を持たないものとして扱わず `error` を出す。
 
 point は `erase-core` の像の上で数える。

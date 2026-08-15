@@ -149,6 +149,17 @@
          [`(Yield ,observed ,next)
           (and (walk observed) (walk next))]
          [`(Suspend ,body) (walk body)]
+         ;; 借用の 8 形。型を持つ位置が無いため、operand を辿るだけでよい。
+         ;; w は designator、ρ は region 識別子、p は place であり、
+         ;; いずれも型ではない。
+         [`(Borrow ,_) #t]
+         [`(BorrowMut ,_) #t]
+         [`(BorrowAt ,_ ,_) #t]
+         [`(BorrowMutAt ,_ ,_) #t]
+         [`(BorrowRef ,_ ,_) #t]
+         [`(BorrowMutRef ,_ ,_) #t]
+         [`(Reborrow ,operand) (walk operand)]
+         [`(ReborrowAt ,_ ,operand) (walk operand)]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)

@@ -878,6 +878,16 @@
      (when (owned-type? type) (fail 'owned-variable-requires-move core))
      (list type '())]
 
+    [`(BorrowAt ,ρ ,_)
+     (check-region-annotation Λ ρ core fail)
+     (fail 'ill-typed core)]
+    [`(BorrowMutAt ,ρ ,_)
+     (check-region-annotation Λ ρ core fail)
+     (fail 'ill-typed core)]
+    [`(ReborrowAt ,ρ ,_)
+     (check-region-annotation Λ ρ core fail)
+     (fail 'ill-typed core)]
+
     [_ (fail 'ill-typed core)]))
 
 (define (check-as core expected Λ environment places callables fail)

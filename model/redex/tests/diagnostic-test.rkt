@@ -49,13 +49,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 108)
+ (check-equal? (length diagnostic-registry) 109)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 50)
+ (check-equal? (count-of 'typing) 51)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -65,7 +65,7 @@
  ;; version 1 の 59 行は動かない。増えるのは version 2 と version 3 の typing である。
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
- (check-equal? (since-count 3) 1)
+ (check-equal? (since-count 3) 2)
  (for ([row (in-list diagnostic-registry)])
    (check-false (diagnostic-code-deprecated-in row))))
 
