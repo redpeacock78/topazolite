@@ -127,18 +127,31 @@
   (filter (λ (entry) (not (owned-type? (second entry))))
           environment))
 
-(define (check-many cores types Λ environment places callables node fail
+(define (check-many cores types Λ Ψ environment places callables node fail
                     [start-index 0])
   (unless (= (length cores) (length types))
     (fail 'arity-mismatch node (length types) (length cores)))
-  (for/list ([core (in-list cores)]
-             [type (in-list types)]
-             [i (in-naturals start-index)])
-    (check-as core type (enter-child Λ i)
-              environment places callables fail)))
+  (let loop ([cores cores]
+             [types types]
+             [i start-index]
+             [current-psi Ψ]
+             [rows '()])
+    (if (null? cores)
+        (list (reverse rows) current-psi)
+        (match (check-as (first cores)
+                         (first types)
+                         (enter-child Λ i)
+                         current-psi
+                         environment places callables fail)
+          [(list row next-psi)
+           (loop (rest cores)
+                 (rest types)
+                 (add1 i)
+                 next-psi
+                 (cons row rows))]))))
 
 (define (check-construct constructor fields data-type
-                         Λ environment places callables node fail)
+                         Λ Ψ environment places callables node fail)
   ;; 呼び出し側は G2+ の ts、つまり (#:ty τ s) を包みのまま渡す。
   ;; 剥がす位置をここに 1 つだけ置き、以降は実型だけを使う。
   (define actual-type (peel-ty data-type))
@@ -149,9 +162,9 @@
   (for ([field-type (in-list field-types)])
     (when (owned-type? field-type)
       (fail 'owned-constructor-field node field-type)))
-  (define rows
-    (check-many fields field-types Λ environment places callables node fail))
-  (rows-union rows))
+  (match (check-many fields field-types Λ Ψ environment places callables node fail)
+    [(list rows next-psi)
+     (list (rows-union rows) next-psi)]))
 
 (define (branch-contexts branches data-type Λ environment node scrutinee fail)
   (define schema (constructor-schema data-type))
@@ -191,22 +204,30 @@
           (enter-child Λ i))))
 
 (define (check-eliminate scrutinee branches expected
-                         Λ environment places callables node fail)
+                         Λ Ψ environment places callables node fail)
   (define scrutinee-result
-    (infer scrutinee (enter-child Λ 0) environment places callables fail))
+    (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type (first scrutinee-result))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
-  (define branch-rows
+  (define branch-results
     (for/list ([context (in-list contexts)])
       (check-as (first context)
                 expected
                 (third context)
+                (third scrutinee-result)
                 (second context)
                 places
                 callables
                 fail)))
-  (rows-union (cons (second scrutinee-result) branch-rows)))
+  (define branch-psi
+    (for/fold ([joined (empty-psi)])
+              ([result (in-list branch-results)])
+      (psi-join joined (second result))))
+  (list (rows-union
+         (cons (second scrutinee-result)
+               (map first branch-results)))
+        branch-psi))
 
 ;; CMP-001: 2 つの型を Union で合わせ、同値な構成要素を正規化で畳む。
 (define (join-types left right)
@@ -342,9 +363,9 @@
   (and merged
        (obligations-dischargeable? obligations witnesses)))
 
-(define (infer-eliminate scrutinee branches Λ environment places callables node fail)
+(define (infer-eliminate scrutinee branches Λ Ψ environment places callables node fail)
   (define scrutinee-result
-    (infer scrutinee (enter-child Λ 0) environment places callables fail))
+    (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type (first scrutinee-result))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
@@ -352,6 +373,7 @@
     (for/list ([context (in-list contexts)])
       (infer (first context)
              (third context)
+             (third scrutinee-result)
              (second context)
              places
              callables
@@ -378,15 +400,22 @@
       (check-as (first context)
                 result-type
                 (third context)
+                (third scrutinee-result)
                 (second context)
                 places
                 callables
                 fail)))
+  (define branch-psi
+    (for/fold ([joined (empty-psi)])
+              ([result (in-list branch-rows)])
+      (psi-join joined (second result))))
   (list result-type
         (rows-union
-         (cons (second scrutinee-result) branch-rows))))
+         (cons (second scrutinee-result)
+               (map first branch-rows)))
+        branch-psi))
 
-(define (infer-lam callable parameters body Λ
+(define (infer-lam callable parameters body Λ Ψ
                    environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -404,17 +433,17 @@
        (extend (without-owned environment)
                parameters
                parameter-types))
-     (define body-row
-       (check-as body return-type (enter-child Λ 0) body-environment
+     (define body-result
+       (check-as body return-type (enter-child Λ 0) Ψ body-environment
                  places callables fail))
-     (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body latent-row body-row))
-     (list signature '())]
+     (unless (row-subset? (first body-result) latent-row)
+       (fail 'undeclared-function-effect body latent-row (first body-result)))
+     (list signature '() Ψ)]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (infer-recur-value callable function parameters body Λ
+(define (infer-recur-value callable function parameters body Λ Ψ
                            environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -435,17 +464,17 @@
                 (list signature))
         parameters
         parameter-types))
-     (define body-row
-       (check-as body return-type (enter-child Λ 0) body-environment
+     (define body-result
+       (check-as body return-type (enter-child Λ 0) Ψ body-environment
                  places callables fail))
-     (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body latent-row body-row))
-     (list signature '())]
+     (unless (row-subset? (first body-result) latent-row)
+       (fail 'undeclared-function-effect body latent-row (first body-result)))
+     (list signature '() Ψ)]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (recur-context callable function parameters body Λ
+(define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -467,24 +496,35 @@
        (extend (without-owned function-environment)
                parameters
                parameter-types))
-     (define body-row
-       (check-as body return-type (enter-child Λ 0) body-environment
-                 places callables fail))
+     ;; body は Recur の子 0 である（region.md §3）。
+     ;; 環境は既存の body-environment をそのまま使う。
+     ;; 仮引数は owners へ入れないため（spec §3.1）、Λ は enter-child だけを掛ける。
+     (define Λ_body (enter-child Λ 0))
+     ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
+     (define (fixpoint Ψ_in)
+       (match (check-as body return-type Λ_body Ψ_in body-environment
+                        places callables fail)
+         [(list body-row Ψ_1)
+          (define Ψ_next (psi-join Ψ_in Ψ_1))
+          (if (equal? Ψ_next Ψ_in)
+              (list body-row Ψ_next)
+              (fixpoint Ψ_next))]))
+     (match-define (list body-row Ψ_body) (fixpoint Ψ))
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body latent-row body-row))
-     function-environment]
+     (list function-environment Ψ_body)]
     ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (binding-context binding-mode declared-type bound Λ
+(define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
     [`(Record ,declared-row)
-     (match (infer bound (enter-child Λ 0) environment places callables fail)
-       [(list 'Never bound-row)
-        (list bound-row declared-type)]
-       [(list `(Record ,actual-row) bound-row)
+     (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
+       [(list 'Never bound-row bound-psi)
+        (list bound-row declared-type bound-psi)]
+       [(list `(Record ,actual-row) bound-row bound-psi)
         (unless (compat? `(Record ,actual-row) declared-type Γ-pc0)
           (fail 'record-binding-incompatible bound))
         (define residual
@@ -502,14 +542,16 @@
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
-        (list bound-row `(Record ,binding-row))]
-       [(list actual-type _)
+        (list bound-row `(Record ,binding-row) bound-psi)]
+       [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
     [_
-     (define bound-row
+     (define bound-result
        (check-as bound declared-type (enter-child Λ 0)
-                 environment places callables fail))
-     (list bound-row declared-type)]))
+                 Ψ environment places callables fail))
+     (match bound-result
+       [(list row bound-psi)
+        (list row declared-type bound-psi)])]))
 
 ;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
 ;; 型付けを連なりの全体で見るため、節の側では再帰しない。
@@ -545,19 +587,21 @@
   (match (with-typing
           (lambda (fail)
             (check-as core expected Λ
+                      (empty-psi)
                       environment places callables fail)))
-    [(list 'ok row) row]
+    [(list 'ok (list row _psi)) row]
     [_ #f]))
 
-(define (infer core Λ environment places callables fail)
+(define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
-    [(? integer?) (list 'Int '())]
-    [(? string?) (list 'String '())]
-    ['unit (list 'Unit '())]
+    [(? integer?) (list 'Int '() Ψ)]
+    [(? string?) (list 'String '() Ψ)]
+    ['unit (list 'Unit '() Ψ)]
 
     [`(Lam ,_ ,callable (,parameters ...) ,body)
      (infer-lam callable (map peel-bind parameters) body Λ
+                Ψ
                 environment places callables core fail)]
 
     [`(PrimVal ,_ ,name)
@@ -565,49 +609,53 @@
        [(list _ (list type canonical-value))
         (unless (equal? canonical-value (peel-node core))
           (fail 'non-canonical-primitive core))
-        (list type '())]
+        (list type '() Ψ)]
        [_ (fail 'unknown-primitive core)])]
 
     [`(CurryVal ,_ ,function ,argument)
      (match (infer function (enter-child Λ 0)
-                    environment places callables fail)
+                    Ψ environment places callables fail)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
-              function-row)
+              function-row function-psi)
         (unless (null? function-row)
           (fail 'effectful-curry-operand function))
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
+                    function-psi
                     environment places callables fail))
-        (unless (null? argument-row)
+        (unless (null? (first argument-row))
           (fail 'effectful-curry-operand argument))
         (list `(NFn ,remaining-types
                     ,return-type
                     ,latent-row
                     ,obligations)
-              '())]
+              (row-union function-row (first argument-row))
+              (second argument-row))]
        [_ (fail 'curry-non-function function)])]
 
     [`(RecurVal ,callable ,function (,parameters ...) ,body)
      (infer-recur-value callable (peel-bind function)
                         (map peel-bind parameters) body Λ
+                        Ψ
                         environment places callables core fail)]
 
     [`(TypeRep ,_ ,_ ,kind)
-     (list `(TypeInfo ,kind) '())]
+     (list `(TypeInfo ,kind) '() Ψ)]
 
     [`(ProofRep ,_ ,proposition)
-     (list `(Proof ,proposition) '())]
+     (list `(Proof ,proposition) '() Ψ)]
 
     [`(Construct ,data-type ,constructor ,fields ...)
-     (define row
+     (define result
        (check-construct constructor fields data-type Λ
+                        Ψ
                         environment places callables core fail))
-     (list (peel-ty data-type) row)]
+     (list (peel-ty data-type) (first result) (second result))]
 
-    [`(resource ,_) (list '(Owned Res) '())]
+    [`(resource ,_) (list '(Owned Res) '() Ψ)]
 
     [`(Rec (,fields ...))
      (define plain-fields
@@ -617,11 +665,14 @@
                (third field))))
      (unless (field-row-unique? plain-fields)
        (fail 'duplicate-record-label core))
-     (define results
-       (for/list ([field (in-list plain-fields)]
+     (define-values (results final-psi)
+       (for/fold ([results '()] [current-psi Ψ])
+                 ([field (in-list plain-fields)]
                   [i (in-naturals)])
-         (infer (third field) (enter-child Λ i)
-                environment places callables fail)))
+         (define result
+           (infer (third field) (enter-child Λ i)
+                  current-psi environment places callables fail))
+         (values (append results (list result)) (third result))))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
        (when (owned-type? (first result))
@@ -631,17 +682,19 @@
         ,(for/list ([field (in-list plain-fields)]
                     [result (in-list results)])
            `(,(first field) ,(first result) ,(second field))))
-      (rows-union (map second results)))]
+      (rows-union (map second results))
+      final-psi)]
 
     ;; RFN-001: 未検証の値。ペイロードの型をそのまま Untrusted で包む。
     ;; effect row はペイロードのものを引き継ぐ。
     [`(UVal ,value)
      (match (infer value (enter-child Λ 0)
+                    Ψ
                     environment places callables fail)
-       [(list value-type value-row)
+       [(list value-type value-row value-psi)
         (unless (owned-free? value-type)
           (fail 'owned-untrusted-payload value))
-        (list `(Untrusted ,value-type) value-row)])]
+        (list `(Untrusted ,value-type) value-row value-psi)])]
 
     ;; RFN-001: 検証済みの値。witness の命題を型へ持ち上げる。発行者が正当か
     ;; どうかは成果物検証（verify-origins）の担当であり、ここでは見ない。
@@ -649,38 +702,40 @@
      (match (peel-node proof-rep)
        [`(ProofRep ,_ ,proposition)
         (match (infer value (enter-child Λ 0)
+                       Ψ
                        environment places callables fail)
-          [(list value-type value-row)
+          [(list value-type value-row value-psi)
            (unless (owned-free? value-type)
              (fail 'owned-refined-payload value))
-           (list `(Refined ,value-type ,proposition) value-row)])]
+           (list `(Refined ,value-type ,proposition) value-row value-psi)])]
        [_ (fail 'ill-typed core)])]
 
     [`(Proj ,record ,label)
      (match (infer record (enter-child Λ 0)
-                    environment places callables fail)
-       [(list `(Record ,row) record-row)
+                    Ψ environment places callables fail)
+       [(list `(Record ,row) record-row record-psi)
         (match (field-row-lookup row (peel-lbl label))
-          [(list field-type _) (list field-type record-row)]
+          [(list field-type _) (list field-type record-row record-psi)]
           [_ (fail 'unknown-record-label core)])]
        [_ (fail 'project-non-record record)])]
 
     [`(Apply ,function ,arguments ...)
      (match (infer function (enter-child Λ 0)
-                    environment places callables fail)
+                    Ψ environment places callables fail)
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
-              function-row)
+              function-row function-psi)
         (define argument-rows
-          (check-many arguments parameter-types Λ
+          (check-many arguments parameter-types Λ function-psi
                       environment places callables core fail 1))
         (unless (obligations-dischargeable? obligations Γ-pc0)
           (fail 'unsatisfied-proof-obligation core))
         (list return-type
               (rows-union
                (append (list function-row)
-                       argument-rows
-                       (list latent-row))))]
+                       (first argument-rows)
+                       (list latent-row)))
+              (second argument-rows))]
        [_ (fail 'apply-non-function function)])]
 
     [`(Discharge ,_ ,_)
@@ -702,8 +757,8 @@
      (match (peel-node base)
        [`(Apply ,function ,_ ...)
         (match (infer function (enter-child base-Λ 0)
-                       environment places callables fail)
-          [(list `(NFn ,_ ,_ ,_ ,obligations) _)
+                       Ψ environment places callables fail)
+          [(list `(NFn ,_ ,_ ,_ ,obligations) _ function-psi)
            (unless (= (length propositions) (length obligations))
              (fail 'discharge-obligation-count core))
            (for ([phi (in-list propositions)]
@@ -711,63 +766,70 @@
              (unless (proposition-equiv? phi obligation)
                (fail 'discharge-proposition-mismatch core)))
            ;; 型と Effect 行は基底の Apply のものを返す。
-           (infer base base-Λ environment places callables fail)]
+           (infer base base-Λ function-psi environment places callables fail)]
           [_ (fail 'apply-non-function function)])]
        [_ (fail 'discharge-target-not-apply base)])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound Λ
-                             environment places callables core fail)
-       [(list bound-row binding-type)
+                             Ψ environment places callables core fail)
+       [(list bound-row binding-type bound-psi)
         (match (infer body
                       (enter-child Λ 1)
+                      bound-psi
                       (extend environment (list (peel-bind name))
                               (list binding-type))
                       places
                       callables
                       fail)
-          [(list body-type body-row)
-           (list body-type (row-union bound-row body-row))])])]
+          [(list body-type body-row body-psi)
+           (list body-type (row-union bound-row body-row) body-psi)])])]
 
     [`(Let (,name ,type) ,bound ,body)
-     (define bound-row
+     (define bound-result
        (check-as bound (peel-ty type) (enter-child Λ 0)
-                 environment places callables fail))
+                 Ψ environment places callables fail))
      (match (infer body
                    (enter-child Λ 1)
+                   (second bound-result)
                    (extend environment
                            (list (peel-bind name))
                            (list (peel-ty type)))
                    places
                    callables
                    fail)
-       [(list body-type body-row)
-        (list body-type (row-union bound-row body-row))])]
+       [(list body-type body-row body-psi)
+        (list body-type
+              (row-union (first bound-result) body-row)
+              body-psi)])]
 
     [`(Eliminate ,scrutinee (,branches ...))
      (infer-eliminate scrutinee branches Λ
+                      Ψ
                       environment places callables core fail)]
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
      (define argument-row
        (check-as argument type* (enter-child Λ 0)
-                 environment places callables fail))
+                 Ψ environment places callables fail))
      (list 'Never
-           (row-union argument-row
-                      `((Return ,boundary ,type*))))]
+           (row-union (first argument-row)
+                      `((Return ,boundary ,type*)))
+           (second argument-row))]
 
     [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
-     (define body-row
+     (define body-result
        (check-as body type* (enter-child Λ 1)
-                 environment places callables fail))
-     (define handler-row
+                 Ψ environment places callables fail))
+     (define handler-result
        (match (peel-branch handler-clause)
          [`(,name -> ,handler)
           (check-as handler
                     type*
                     (enter-child Λ 0)
+                    Ψ
                     (extend environment (list (peel-bind name)) (list type*))
                     places
                     callables
@@ -775,15 +837,24 @@
          [_ (fail 'ill-typed core)]))
      (list type*
            (row-union
-            (row-difference body-row
+            (row-difference (first body-result)
                             `((Return ,boundary ,type*)))
-            handler-row))]
+            (first handler-result))
+           (psi-join (second body-result) (second handler-result)))]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (infer body (enter-child Λ 0) environment places callables fail)]
+     (match (infer body (enter-child Λ 0) Ψ environment places callables fail)
+       [(list type row body-psi)
+        (define ir (region-ctx-ir Λ))
+        (define out-psi
+          (if ir
+              (psi-exit body-psi
+                        (regions-exiting-at ir (region-ctx-point Λ)))
+              body-psi))
+        (list type row out-psi)])]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -792,46 +863,53 @@
                       (map peel-bind parameters)
                       body
                       Λ
+                      Ψ
                       environment places callables core fail))
      (infer continuation (enter-child Λ 1)
-           continuation-environment places callables fail)]
+           (second continuation-environment)
+           (first continuation-environment)
+           places callables fail)]
 
     [`(Yield ,observed ,next)
      (define observed-result
        (infer observed (enter-child Λ 0)
-             environment places callables fail))
+             Ψ environment places callables fail))
      (define next-result
        (infer next (enter-child Λ 1)
+             (third observed-result)
              environment places callables fail))
      (list (first next-result)
            (rows-union
             (list (second observed-result)
                   (second next-result)
-                  `((Yield ,(first observed-result))))))]
+                  `((Yield ,(first observed-result)))))
+           (third next-result))]
 
     [`(Suspend ,body)
      (define result (infer body (enter-child Λ 0)
+                               Ψ
                                environment places callables fail))
-     (list (first result) (row-union (second result) '(Suspend)))]
+     (list (first result) (row-union (second result) '(Suspend))
+           (third result))]
 
     [`(Move ,place)
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
      (unless type (fail 'unknown-place core))
-     (list `(Owned ,type) '(Own))]
+     (list `(Owned ,type) '(Own) Ψ)]
 
     [`(Move ,name)
      (define type (lookup environment (peel-node name)))
      (unless type (fail 'unbound-variable core))
      (match type
-       [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own))]
+       [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own) Ψ)]
        [_ (fail 'move-non-owned core)])]
 
     [`(Drop ,argument)
      (define argument-Λ (enter-child Λ 0))
      (define argument-result
        (let/ec recover
-         (infer argument argument-Λ environment places callables
+         (infer argument argument-Λ Ψ environment places callables
                 (lambda (key node . details)
                   (assert-typing-key key)
                   (recover #f)))))
@@ -839,10 +917,12 @@
        [(and argument-result
              (owned-type? (first argument-result)))
         (list 'Unit
-              (row-union (second argument-result) '(Own)))]
+              (row-union (second argument-result) '(Own))
+              (third argument-result))]
        [else
         (define argument-row
           (check-as argument '(Owned Res) argument-Λ
+                    Ψ
                     environment places callables
                     (lambda (key node . details)
                       (assert-typing-key key)
@@ -850,24 +930,27 @@
                                (eq? node argument))
                           (fail 'drop-non-owned argument)
                           (apply fail key node details)))))
-        (list 'Unit (row-union argument-row '(Own)))])]
+        (list 'Unit (row-union (first argument-row) '(Own))
+              (second argument-row))])]
 
     [`(Curry ,function ,argument)
      (match (infer function (enter-child Λ 0)
-                    environment places callables fail)
+                    Ψ environment places callables fail)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
-              function-row)
+              function-row function-psi)
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
+                    function-psi
                     environment places callables fail))
         (list `(NFn ,remaining-types
                     ,return-type
                     ,latent-row
                     ,obligations)
-              (row-union function-row argument-row))]
+              (row-union function-row (first argument-row))
+              (second argument-row))]
        [_ (fail 'curry-non-function function)])]
 
     [`(Error ,_) (fail 'error-needs-expected-type core)]
@@ -876,7 +959,7 @@
      (define type (lookup environment name))
      (unless type (fail 'unbound-variable core))
      (when (owned-type? type) (fail 'owned-variable-requires-move core))
-     (list type '())]
+     (list type '() Ψ)]
 
     [`(BorrowAt ,ρ ,_)
      (check-region-annotation Λ ρ core fail)
@@ -890,7 +973,7 @@
 
     [_ (fail 'ill-typed core)]))
 
-(define (check-as core expected Λ environment places callables fail)
+(define (check-as core expected Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
@@ -899,57 +982,71 @@
        (fail 'type-mismatch core expected actual))
      (check-construct constructor fields data-type
                       Λ
+                      Ψ
                       environment places callables core fail)]
 
     [`(Error ,place)
      (unless (and (exact-nonnegative-integer? place)
                   (assoc place places))
        (fail 'unknown-place core))
-     '()]
+     (list '() Ψ)]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound
                              Λ
-                             environment places callables core fail)
-       [(list bound-row binding-type)
-        (define body-row
+                             Ψ environment places callables core fail)
+       [(list bound-row binding-type bound-psi)
+        (define body-result
           (check-as body
                     expected
                     (enter-child Λ 1)
+                    bound-psi
                     (extend environment (list (peel-bind name))
                             (list binding-type))
                     places
                     callables
                     fail))
-        (row-union bound-row body-row)])]
+        (list (row-union bound-row (first body-result))
+              (second body-result))])]
 
     [`(Let (,name ,type) ,bound ,body)
-     (define bound-row
+     (define bound-result
        (check-as bound (peel-ty type) (enter-child Λ 0)
-                 environment places callables fail))
-     (define body-row
+                 Ψ environment places callables fail))
+     (define body-result
        (check-as body
                  expected
                  (enter-child Λ 1)
+                 (second bound-result)
                  (extend environment
                          (list (peel-bind name))
                          (list (peel-ty type)))
                  places
                  callables
                  fail))
-     (row-union bound-row body-row)]
+     (list (row-union (first bound-result) (first body-result))
+           (second body-result))]
 
     [`(Eliminate ,scrutinee (,branches ...))
      (check-eliminate scrutinee branches expected
                       Λ
+                      Ψ
                       environment places callables core fail)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (check-as body expected (enter-child Λ 0)
-               environment places callables fail)]
+     (match (check-as body expected (enter-child Λ 0)
+                     Ψ environment places callables fail)
+       [(list row body-psi)
+        (define ir (region-ctx-ir Λ))
+        (define out-psi
+          (if ir
+              (psi-exit body-psi
+                        (regions-exiting-at ir (region-ctx-point Λ)))
+              body-psi))
+        (list row out-psi)])]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -958,11 +1055,13 @@
                       (map peel-bind parameters)
                       body
                       Λ
+                      Ψ
                       environment places callables core fail))
      (check-as continuation
                expected
                (enter-child Λ 1)
-               continuation-environment
+               (second continuation-environment)
+               (first continuation-environment)
                places
                callables
                fail)]
@@ -970,27 +1069,30 @@
     [`(Yield ,observed ,next)
      (define observed-result
        (infer observed (enter-child Λ 0)
-             environment places callables fail))
-     (define next-row
+             Ψ environment places callables fail))
+     (define next-result
        (check-as next expected (enter-child Λ 1)
+                 (third observed-result)
                  environment places callables fail))
-     (rows-union
-      (list (second observed-result)
-            next-row
-            `((Yield ,(first observed-result)))))]
+     (list (rows-union
+            (list (second observed-result)
+                  (first next-result)
+                  `((Yield ,(first observed-result)))))
+           (second next-result))]
 
     [`(Suspend ,body)
-     (define body-row
+     (define body-result
        (check-as body expected (enter-child Λ 0)
-                 environment places callables fail))
-     (row-union body-row '(Suspend))]
+                 Ψ environment places callables fail))
+     (list (row-union (first body-result) '(Suspend))
+           (second body-result))]
 
     [_
-     (match (infer core Λ environment places callables fail)
-       [(list actual row)
+     (match (infer core Λ Ψ environment places callables fail)
+       [(list actual row result-psi)
         (unless (type-compatible? actual expected)
           (fail 'type-mismatch core expected actual))
-        row])]))
+        (list row result-psi)])]))
 
 ;; 入口検査は type-of/raw と core-check-row が共有する。片方だけ直す事故を
 ;; 避けるため、検査の順と key をここへ寄せる。
@@ -1027,8 +1129,8 @@
      (define violation (entry-violation core places callables environment))
      (when violation
        (apply fail (first violation) core-in (rest violation)))
-     (match (infer core-in Λ environment places callables fail)
-       [(list type row)
+     (match (infer core-in Λ (empty-psi) environment places callables fail)
+       [(list type row _psi)
         (define normalized (normalize-type type))
         (unless normalized
           (fail 'non-normalizable-result-type core-in type))
@@ -1043,7 +1145,8 @@
                     (set-box! seen (cons point (unbox seen))))])
     (with-typing
      (lambda (fail)
-       (infer core (empty-region-ctx) environment places callables fail))))
+       (infer core (empty-region-ctx) (empty-psi)
+              environment places callables fail))))
   (unbox seen))
 
 (define (core-type-of core-in places callables [environment '()]

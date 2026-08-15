@@ -9,6 +9,10 @@
          enter-child
          region-ctx-add-owner region-ctx-owner
          region-ctx-add-token region-ctx-token
+         (struct-out psi)
+         empty-psi
+         psi-join
+         psi-exit
          check-region-annotation)
 
 ;; Λ（region 文脈）。spec §3.1。
@@ -42,6 +46,30 @@
 
 (define (region-ctx-token Λ x)
   (hash-ref (region-ctx-tokens Λ) x (set)))
+
+;; Ψ は評価順に流れる permission 状態である。Λ と違い、木を下る向きだけでは
+;; 足りない。(Let (y τ) (Reborrow x) c_body) の c_body は (Reborrow x) の
+;; 兄弟であり、c_1 で取った借用が c_2 へ届かなければ BOR-002 を判定できない。
+(struct psi (shared mut suspended) #:transparent)
+
+(define (empty-psi) (psi (set) (set) (set)))
+
+;; 分岐の合流。どれか 1 つの経路で生きている借用を生きているものとして扱う。
+(define (psi-join Ψ_1 Ψ_2)
+  (psi (set-union (psi-shared Ψ_1) (psi-shared Ψ_2))
+       (set-union (psi-mut Ψ_1) (psi-mut Ψ_2))
+       (set-union (psi-suspended Ψ_1) (psi-suspended Ψ_2))))
+
+;; Scope の退場。exiting は regions-exiting-at が返す region の集合である。
+;; suspended の復帰は段 9 で足す。本段では 3 欄すべてを同じ規則で削る。
+(define (psi-exit Ψ exiting)
+  (define (keep entries index)
+    (for/set ([entry (in-set entries)]
+              #:unless (set-member? exiting (list-ref entry index)))
+      entry))
+  (psi (keep (psi-shared Ψ) 1)
+       (keep (psi-mut Ψ) 1)
+       (keep (psi-suspended Ψ) 2)))
 
 ;; 注釈済みの形の ρ は、走査位置の region と一致していなければならない。
 ;; 一致しない項は annotate-regions を通していない項か、別の ir で注釈した項である。
