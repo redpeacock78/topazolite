@@ -1,13 +1,16 @@
 #lang racket
 
 (require racket/match
+         racket/set
          redex/reduction-semantics
+         "borrow.rkt"
          "compat.rkt"
          "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
          "origins.rkt"
          "policy.rkt"
+         "region.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
@@ -20,6 +23,8 @@
          core-type-of/diagnostic
          core-check
          core-check-row
+         type-of/raw
+         typing-visited-points
          config-ok?
          join-types
          merge-field
@@ -28,6 +33,11 @@
          merge-record-types
          check-merge-return
          merge-witnesses-dischargeable?)
+
+;; 段 1 の試験専用。既定は何もしない。
+;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の
+;; 入口 2 箇所に限る。
+(define typing-point-probe (make-parameter void))
 
 (define (lookup table key)
   (match (assoc key table)
@@ -117,15 +127,18 @@
   (filter (λ (entry) (not (owned-type? (second entry))))
           environment))
 
-(define (check-many cores types environment places callables node fail)
+(define (check-many cores types Λ environment places callables node fail
+                    [start-index 0])
   (unless (= (length cores) (length types))
     (fail 'arity-mismatch node (length types) (length cores)))
   (for/list ([core (in-list cores)]
-             [type (in-list types)])
-    (check-as core type environment places callables fail)))
+             [type (in-list types)]
+             [i (in-naturals start-index)])
+    (check-as core type (enter-child Λ i)
+              environment places callables fail)))
 
 (define (check-construct constructor fields data-type
-                         environment places callables node fail)
+                         Λ environment places callables node fail)
   ;; 呼び出し側は G2+ の ts、つまり (#:ty τ s) を包みのまま渡す。
   ;; 剥がす位置をここに 1 つだけ置き、以降は実型だけを使う。
   (define actual-type (peel-ty data-type))
@@ -137,10 +150,10 @@
     (when (owned-type? field-type)
       (fail 'owned-constructor-field node field-type)))
   (define rows
-    (check-many fields field-types environment places callables node fail))
+    (check-many fields field-types Λ environment places callables node fail))
   (rows-union rows))
 
-(define (branch-contexts branches data-type environment node scrutinee fail)
+(define (branch-contexts branches data-type Λ environment node scrutinee fail)
   (define schema (constructor-schema data-type))
   (unless schema (fail 'non-data-eliminate scrutinee))
   (unless (= (length branches) (length schema))
@@ -168,24 +181,27 @@
       (fail 'branch-binder-arity branch (length field-types) (length parameters)))
     (when (check-duplicates (map peel-bind parameters))
       (fail 'duplicate-branch-binder branch)))
-  (for/list ([branch (in-list plain-branches)])
+  (for/list ([branch (in-list plain-branches)]
+             [i (in-naturals 1)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (list body
           (extend environment
                   (map peel-bind parameters)
-                  (lookup schema constructor)))))
+                  (lookup schema constructor))
+          (enter-child Λ i))))
 
 (define (check-eliminate scrutinee branches expected
-                         environment places callables node fail)
+                         Λ environment places callables node fail)
   (define scrutinee-result
-    (infer scrutinee environment places callables fail))
+    (infer scrutinee (enter-child Λ 0) environment places callables fail))
   (define data-type (first scrutinee-result))
   (define contexts
-    (branch-contexts branches data-type environment node scrutinee fail))
+    (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define branch-rows
     (for/list ([context (in-list contexts)])
       (check-as (first context)
                 expected
+                (third context)
                 (second context)
                 places
                 callables
@@ -326,15 +342,16 @@
   (and merged
        (obligations-dischargeable? obligations witnesses)))
 
-(define (infer-eliminate scrutinee branches environment places callables node fail)
+(define (infer-eliminate scrutinee branches Λ environment places callables node fail)
   (define scrutinee-result
-    (infer scrutinee environment places callables fail))
+    (infer scrutinee (enter-child Λ 0) environment places callables fail))
   (define data-type (first scrutinee-result))
   (define contexts
-    (branch-contexts branches data-type environment node scrutinee fail))
+    (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
       (infer (first context)
+             (third context)
              (second context)
              places
              callables
@@ -360,6 +377,7 @@
     (for/list ([context (in-list contexts)])
       (check-as (first context)
                 result-type
+                (third context)
                 (second context)
                 places
                 callables
@@ -368,7 +386,7 @@
         (rows-union
          (cons (second scrutinee-result) branch-rows))))
 
-(define (infer-lam callable parameters body
+(define (infer-lam callable parameters body Λ
                    environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -387,7 +405,7 @@
                parameters
                parameter-types))
      (define body-row
-       (check-as body return-type body-environment
+       (check-as body return-type (enter-child Λ 0) body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body latent-row body-row))
@@ -396,7 +414,7 @@
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (infer-recur-value callable function parameters body
+(define (infer-recur-value callable function parameters body Λ
                            environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -418,7 +436,7 @@
         parameters
         parameter-types))
      (define body-row
-       (check-as body return-type body-environment
+       (check-as body return-type (enter-child Λ 0) body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body latent-row body-row))
@@ -427,7 +445,7 @@
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (recur-context callable function parameters body
+(define (recur-context callable function parameters body Λ
                        environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
@@ -450,7 +468,7 @@
                parameters
                parameter-types))
      (define body-row
-       (check-as body return-type body-environment
+       (check-as body return-type (enter-child Λ 0) body-environment
                  places callables fail))
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body latent-row body-row))
@@ -459,11 +477,11 @@
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
-(define (binding-context binding-mode declared-type bound
+(define (binding-context binding-mode declared-type bound Λ
                          environment places callables node fail)
   (match declared-type
     [`(Record ,declared-row)
-     (match (infer bound environment places callables fail)
+     (match (infer bound (enter-child Λ 0) environment places callables fail)
        [(list 'Never bound-row)
         (list bound-row declared-type)]
        [(list `(Record ,actual-row) bound-row)
@@ -489,7 +507,8 @@
         (fail 'type-mismatch bound declared-type actual-type)])]
     [_
      (define bound-row
-       (check-as bound declared-type environment places callables fail))
+       (check-as bound declared-type (enter-child Λ 0)
+                 environment places callables fail))
      (list bound-row declared-type)]))
 
 ;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
@@ -521,21 +540,24 @@
     (list 'ok (proc fail))))
 
 ;; 脱出を捕まえて従来の #f へ潰す。core-check-row と config-ok? が使う。
-(define (check-as/boolean core expected environment places callables)
+(define (check-as/boolean core expected environment places callables
+                          [Λ (empty-region-ctx)])
   (match (with-typing
           (lambda (fail)
-            (check-as core expected environment places callables fail)))
+            (check-as core expected Λ
+                      environment places callables fail)))
     [(list 'ok row) row]
     [_ #f]))
 
-(define (infer core environment places callables fail)
+(define (infer core Λ environment places callables fail)
+  ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [(? integer?) (list 'Int '())]
     [(? string?) (list 'String '())]
     ['unit (list 'Unit '())]
 
     [`(Lam ,_ ,callable (,parameters ...) ,body)
-     (infer-lam callable (map peel-bind parameters) body
+     (infer-lam callable (map peel-bind parameters) body Λ
                 environment places callables core fail)]
 
     [`(PrimVal ,_ ,name)
@@ -547,7 +569,8 @@
        [_ (fail 'unknown-primitive core)])]
 
     [`(CurryVal ,_ ,function ,argument)
-     (match (infer function environment places callables fail)
+     (match (infer function (enter-child Λ 0)
+                    environment places callables fail)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row)
@@ -556,7 +579,8 @@
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))
         (define argument-row
-          (check-as argument first-type environment places callables fail))
+          (check-as argument first-type (enter-child Λ 1)
+                    environment places callables fail))
         (unless (null? argument-row)
           (fail 'effectful-curry-operand argument))
         (list `(NFn ,remaining-types
@@ -568,7 +592,7 @@
 
     [`(RecurVal ,callable ,function (,parameters ...) ,body)
      (infer-recur-value callable (peel-bind function)
-                        (map peel-bind parameters) body
+                        (map peel-bind parameters) body Λ
                         environment places callables core fail)]
 
     [`(TypeRep ,_ ,_ ,kind)
@@ -579,7 +603,7 @@
 
     [`(Construct ,data-type ,constructor ,fields ...)
      (define row
-       (check-construct constructor fields data-type
+       (check-construct constructor fields data-type Λ
                         environment places callables core fail))
      (list (peel-ty data-type) row)]
 
@@ -594,8 +618,10 @@
      (unless (field-row-unique? plain-fields)
        (fail 'duplicate-record-label core))
      (define results
-       (for/list ([field (in-list plain-fields)])
-         (infer (third field) environment places callables fail)))
+       (for/list ([field (in-list plain-fields)]
+                  [i (in-naturals)])
+         (infer (third field) (enter-child Λ i)
+                environment places callables fail)))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
        (when (owned-type? (first result))
@@ -610,7 +636,8 @@
     ;; RFN-001: 未検証の値。ペイロードの型をそのまま Untrusted で包む。
     ;; effect row はペイロードのものを引き継ぐ。
     [`(UVal ,value)
-     (match (infer value environment places callables fail)
+     (match (infer value (enter-child Λ 0)
+                    environment places callables fail)
        [(list value-type value-row)
         (unless (owned-free? value-type)
           (fail 'owned-untrusted-payload value))
@@ -621,7 +648,8 @@
     [`(RVal ,proof-rep ,value)
      (match (peel-node proof-rep)
        [`(ProofRep ,_ ,proposition)
-        (match (infer value environment places callables fail)
+        (match (infer value (enter-child Λ 0)
+                       environment places callables fail)
           [(list value-type value-row)
            (unless (owned-free? value-type)
              (fail 'owned-refined-payload value))
@@ -629,7 +657,8 @@
        [_ (fail 'ill-typed core)])]
 
     [`(Proj ,record ,label)
-     (match (infer record environment places callables fail)
+     (match (infer record (enter-child Λ 0)
+                    environment places callables fail)
        [(list `(Record ,row) record-row)
         (match (field-row-lookup row (peel-lbl label))
           [(list field-type _) (list field-type record-row)]
@@ -637,13 +666,14 @@
        [_ (fail 'project-non-record record)])]
 
     [`(Apply ,function ,arguments ...)
-     (match (infer function environment places callables fail)
+     (match (infer function (enter-child Λ 0)
+                    environment places callables fail)
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
               function-row)
         (define argument-rows
-          (check-many arguments parameter-types
-                      environment places callables core fail))
+          (check-many arguments parameter-types Λ
+                      environment places callables core fail 1))
         (unless (obligations-dischargeable? obligations Γ-pc0)
           (fail 'unsatisfied-proof-obligation core))
         (list return-type
@@ -660,9 +690,19 @@
      ;; で包んだ項が検証を通る。PRF-004 が要求するのは選択した Proof の
      ;; provenance であるから、φ 列と義務列の対応をここで固定する。
      (define-values (propositions base) (peel-discharge core))
+     (define base-Λ
+       (let loop ([node (peel-node core)] [ctx Λ])
+         ;; Discharge の proof 欄は子ではないが、各包みの inner は child 0
+         ;; である。base へ跳ぶ前に中間層も観測して point 集合を欠かさない。
+         ((typing-point-probe) (region-ctx-point ctx))
+         (match node
+           [`(Discharge ,_ ,inner)
+            (loop (peel-node inner) (enter-child ctx 0))]
+           [_ ctx])))
      (match (peel-node base)
        [`(Apply ,function ,_ ...)
-        (match (infer function environment places callables fail)
+        (match (infer function (enter-child base-Λ 0)
+                       environment places callables fail)
           [(list `(NFn ,_ ,_ ,_ ,obligations) _)
            (unless (= (length propositions) (length obligations))
              (fail 'discharge-obligation-count core))
@@ -671,15 +711,16 @@
              (unless (proposition-equiv? phi obligation)
                (fail 'discharge-proposition-mismatch core)))
            ;; 型と Effect 行は基底の Apply のものを返す。
-           (infer base environment places callables fail)]
+           (infer base base-Λ environment places callables fail)]
           [_ (fail 'apply-non-function function)])]
        [_ (fail 'discharge-target-not-apply base)])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
-     (match (binding-context binding-mode (peel-ty type) bound
+     (match (binding-context binding-mode (peel-ty type) bound Λ
                              environment places callables core fail)
        [(list bound-row binding-type)
         (match (infer body
+                      (enter-child Λ 1)
                       (extend environment (list (peel-bind name))
                               (list binding-type))
                       places
@@ -690,8 +731,10 @@
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-row
-       (check-as bound (peel-ty type) environment places callables fail))
+       (check-as bound (peel-ty type) (enter-child Λ 0)
+                 environment places callables fail))
      (match (infer body
+                   (enter-child Λ 1)
                    (extend environment
                            (list (peel-bind name))
                            (list (peel-ty type)))
@@ -702,13 +745,14 @@
         (list body-type (row-union bound-row body-row))])]
 
     [`(Eliminate ,scrutinee (,branches ...))
-     (infer-eliminate scrutinee branches
+     (infer-eliminate scrutinee branches Λ
                       environment places callables core fail)]
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
      (define argument-row
-       (check-as argument type* environment places callables fail))
+       (check-as argument type* (enter-child Λ 0)
+                 environment places callables fail))
      (list 'Never
            (row-union argument-row
                       `((Return ,boundary ,type*))))]
@@ -716,12 +760,14 @@
     [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
      (define body-row
-       (check-as body type* environment places callables fail))
+       (check-as body type* (enter-child Λ 1)
+                 environment places callables fail))
      (define handler-row
        (match (peel-branch handler-clause)
          [`(,name -> ,handler)
           (check-as handler
                     type*
+                    (enter-child Λ 0)
                     (extend environment (list (peel-bind name)) (list type*))
                     places
                     callables
@@ -737,7 +783,7 @@
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (infer body environment places callables fail)]
+     (infer body (enter-child Λ 0) environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -745,14 +791,18 @@
                       (peel-bind function)
                       (map peel-bind parameters)
                       body
+                      Λ
                       environment places callables core fail))
-     (infer continuation continuation-environment places callables fail)]
+     (infer continuation (enter-child Λ 1)
+           continuation-environment places callables fail)]
 
     [`(Yield ,observed ,next)
      (define observed-result
-       (infer observed environment places callables fail))
+       (infer observed (enter-child Λ 0)
+             environment places callables fail))
      (define next-result
-       (infer next environment places callables fail))
+       (infer next (enter-child Λ 1)
+             environment places callables fail))
      (list (first next-result)
            (rows-union
             (list (second observed-result)
@@ -760,7 +810,8 @@
                   `((Yield ,(first observed-result))))))]
 
     [`(Suspend ,body)
-     (define result (infer body environment places callables fail))
+     (define result (infer body (enter-child Λ 0)
+                               environment places callables fail))
      (list (first result) (row-union (second result) '(Suspend)))]
 
     [`(Move ,place)
@@ -777,9 +828,10 @@
        [_ (fail 'move-non-owned core)])]
 
     [`(Drop ,argument)
+     (define argument-Λ (enter-child Λ 0))
      (define argument-result
        (let/ec recover
-         (infer argument environment places callables
+         (infer argument argument-Λ environment places callables
                 (lambda (key node . details)
                   (assert-typing-key key)
                   (recover #f)))))
@@ -790,7 +842,7 @@
               (row-union (second argument-result) '(Own)))]
        [else
         (define argument-row
-          (check-as argument '(Owned Res)
+          (check-as argument '(Owned Res) argument-Λ
                     environment places callables
                     (lambda (key node . details)
                       (assert-typing-key key)
@@ -801,14 +853,16 @@
         (list 'Unit (row-union argument-row '(Own)))])]
 
     [`(Curry ,function ,argument)
-     (match (infer function environment places callables fail)
+     (match (infer function (enter-child Λ 0)
+                    environment places callables fail)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row)
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))
         (define argument-row
-          (check-as argument first-type environment places callables fail))
+          (check-as argument first-type (enter-child Λ 1)
+                    environment places callables fail))
         (list `(NFn ,remaining-types
                     ,return-type
                     ,latent-row
@@ -826,13 +880,15 @@
 
     [_ (fail 'ill-typed core)]))
 
-(define (check-as core expected environment places callables fail)
+(define (check-as core expected Λ environment places callables fail)
+  ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
      (define actual (peel-ty data-type))
      (unless (type-equiv? actual expected)
        (fail 'type-mismatch core expected actual))
      (check-construct constructor fields data-type
+                      Λ
                       environment places callables core fail)]
 
     [`(Error ,place)
@@ -843,11 +899,13 @@
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound
+                             Λ
                              environment places callables core fail)
        [(list bound-row binding-type)
         (define body-row
           (check-as body
                     expected
+                    (enter-child Λ 1)
                     (extend environment (list (peel-bind name))
                             (list binding-type))
                     places
@@ -857,10 +915,12 @@
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-row
-       (check-as bound (peel-ty type) environment places callables fail))
+       (check-as bound (peel-ty type) (enter-child Λ 0)
+                 environment places callables fail))
      (define body-row
        (check-as body
                  expected
+                 (enter-child Λ 1)
                  (extend environment
                          (list (peel-bind name))
                          (list (peel-ty type)))
@@ -871,13 +931,15 @@
 
     [`(Eliminate ,scrutinee (,branches ...))
      (check-eliminate scrutinee branches expected
+                      Λ
                       environment places callables core fail)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (check-as body expected environment places callables fail)]
+     (check-as body expected (enter-child Λ 0)
+               environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -885,9 +947,11 @@
                       (peel-bind function)
                       (map peel-bind parameters)
                       body
+                      Λ
                       environment places callables core fail))
      (check-as continuation
                expected
+               (enter-child Λ 1)
                continuation-environment
                places
                callables
@@ -895,9 +959,11 @@
 
     [`(Yield ,observed ,next)
      (define observed-result
-       (infer observed environment places callables fail))
+       (infer observed (enter-child Λ 0)
+             environment places callables fail))
      (define next-row
-       (check-as next expected environment places callables fail))
+       (check-as next expected (enter-child Λ 1)
+                 environment places callables fail))
      (rows-union
       (list (second observed-result)
             next-row
@@ -905,11 +971,12 @@
 
     [`(Suspend ,body)
      (define body-row
-       (check-as body expected environment places callables fail))
+       (check-as body expected (enter-child Λ 0)
+                 environment places callables fail))
      (row-union body-row '(Suspend))]
 
     [_
-     (match (infer core environment places callables fail)
+     (match (infer core Λ environment places callables fail)
        [(list actual row)
         (unless (type-compatible? actual expected)
           (fail 'type-mismatch core expected actual))
@@ -929,7 +996,8 @@
     [(not (valid-callables? callables)) (list 'invalid-callables callables)]
     [else #f]))
 
-(define (type-of/raw core-in places callables [environment '()])
+(define (type-of/raw core-in places callables [environment '()]
+                     [Λ (empty-region-ctx)])
   (with-typing
    (lambda (fail)
      ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
@@ -937,15 +1005,28 @@
      (define violation (entry-violation core places callables environment))
      (when violation
        (apply fail (first violation) core-in (rest violation)))
-     (match (infer core-in environment places callables fail)
+     (match (infer core-in Λ environment places callables fail)
        [(list type row)
         (define normalized (normalize-type type))
         (unless normalized
           (fail 'non-normalizable-result-type core-in type))
         (list normalized row)]))))
 
-(define (core-type-of core-in places callables [environment '()])
-  (match (type-of/raw core-in places callables environment)
+;; 段 1 の試験専用。typing の走査が訪れた point を集める。
+;; 型検査の成否は問わず、走査の網羅だけを観測する。
+(define (typing-visited-points core places callables [environment '()])
+  (define seen (box '()))
+  (parameterize ([typing-point-probe
+                  (lambda (point)
+                    (set-box! seen (cons point (unbox seen))))])
+    (with-typing
+     (lambda (fail)
+       (infer core (empty-region-ctx) environment places callables fail))))
+  (unbox seen))
+
+(define (core-type-of core-in places callables [environment '()]
+                      [Λ (empty-region-ctx)])
+  (match (type-of/raw core-in places callables environment Λ)
     [(list 'ok result) result]
     [_ 'ill-typed]))
 
@@ -979,22 +1060,25 @@
 ;; を混ぜない。
 ;; primary-span は fail が運ぶ棄却節点から取る。entry-span が span を取れないときだけ
 ;; synthetic fallback へ落ちる。
-(define (core-type-of/diagnostic core-in places callables [environment '()])
-  (match (type-of/raw core-in places callables environment)
+(define (core-type-of/diagnostic core-in places callables [environment '()]
+                                 [Λ (empty-region-ctx)])
+  (match (type-of/raw core-in places callables environment Λ)
     [(list 'ok (list type row)) (list type row)]
     [(list 'fail key node details) (typing-diagnostic key node details)]))
 
-(define (core-check-row core-in places callables expected [environment '()])
+(define (core-check-row core-in places callables expected [environment '()]
+                        [Λ (empty-region-ctx)])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
   (define core (erase-core core-in))
   (and (not (entry-violation core places callables environment))
        (type? expected)
-       (check-as/boolean core-in expected environment places callables)))
+       (check-as/boolean core-in expected environment places callables Λ)))
 
-(define (core-check core places callables expected row [environment '()])
+(define (core-check core places callables expected row [environment '()]
+                    [Λ (empty-region-ctx)])
   (and (row? row)
        (let ([actual-row
-              (core-check-row core places callables expected environment)])
+              (core-check-row core places callables expected environment Λ)])
          (and actual-row (row=? actual-row row)))))
 
 (define (config-ok? configuration callables expected row)
