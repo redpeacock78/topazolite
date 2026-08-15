@@ -7,7 +7,7 @@
          "lang.rkt"
          "erase.rkt")
 
-(provide core-children core-with-children core-points core-node
+(provide core-children core-with-children core-points core-node core-free-vars
          (struct-out region)
          (struct-out region-ir)
          (struct-out lexical-region-ir)
@@ -128,6 +128,43 @@
       (unless (and (exact-nonnegative-integer? i) (< i (length kids)))
         (error 'core-node "Core の節点を指さない point: ~s" point))
       (list-ref kids i))))
+
+;; 項の自由変数の集合を返す。束縛は G2 の binding-forms に従う。
+;; 束縛子を持つ形だけを名指しし、残りは意味的な子の合併で足りる。
+;; 入口で erase-core を通すため spanful な項でも結果は同じである。
+(define (core-free-vars core)
+  (let walk ([t (erase-core core)])
+    (define (bind body names)
+      (set-subtract (walk body) (list->set names)))
+    (match t
+      [`(Lam ,_ ,_ (,parameters ...) ,body)
+       (bind body parameters)]
+      [`(RecurVal ,_ ,f (,parameters ...) ,body)
+       (bind body (cons f parameters))]
+      [`(Recur ,_ ,f (,parameters ...) ,body ,continuation)
+       (set-union (bind body (cons f parameters))
+                  (bind continuation (list f)))]
+      [`(Let (,name ,_ ,_) ,bound ,body)
+       (set-union (walk bound) (bind body (list name)))]
+      [`(Let (,name ,_) ,bound ,body)
+       (set-union (walk bound) (bind body (list name)))]
+      [`(Eliminate ,scrutinee (,branches ...))
+       (for/fold ([free (walk scrutinee)]) ([branch (in-list branches)])
+         (match branch
+           [`(,_ (,parameters ...) -> ,body)
+            (set-union free (bind body parameters))]))]
+      [`(Handle ,_ (,name -> ,handler) ,body)
+       (set-union (bind handler (list name)) (walk body))]
+      [`(Borrow ,w) (if (symbol? w) (set w) (set))]
+      [`(BorrowMut ,w) (if (symbol? w) (set w) (set))]
+      [`(BorrowAt ,_ ,w) (if (symbol? w) (set w) (set))]
+      [`(BorrowMutAt ,_ ,w) (if (symbol? w) (set w) (set))]
+      [`(Move ,w) (if (symbol? w) (set w) (set))]
+      [(? symbol? s)
+       (if (redex-match? G2 x s) (set s) (set))]
+      [_
+       (for/fold ([free (set)]) ([child (in-list (core-children t))])
+         (set-union free (walk child)))])))
 
 ;; region 識別子。id は採番の都合であり、消費側は同一性だけを読む。
 (struct region (id) #:transparent)

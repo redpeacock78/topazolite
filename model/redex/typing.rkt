@@ -423,18 +423,44 @@
                (map first branch-rows)))
         branch-psi))
 
+;; [REQ: BOR-001] spec §14。関数境界で Borrowed と BorrowedMut を禁じる。
+;; 仮引数、結果、証明義務の Q、捕捉を同じ入口で検査する。
+(define (check-function-boundary parameter-types return-type obligations body
+                                 bound-names environment node fail)
+  (when (ormap borrowed-type? parameter-types)
+    (fail 'borrowed-function-parameter node))
+  (when (borrowed-type? return-type)
+    (fail 'borrowed-function-result node))
+  (when (borrowed-type? obligations)
+    (fail 'borrowed-function-result node obligations))
+  ;; 関数自身の束縛子は同名の外側の項目を遮蔽するため、自由変数から引く。
+  (define free
+    (set-subtract (core-free-vars body) (list->set bound-names)))
+  ;; environment は連想リストであり、前方の項目が遮蔽後の有効な項目である。
+  (define visible
+    (for/fold ([entries '()]) ([entry (in-list environment)])
+      (if (assoc (first entry) entries)
+          entries
+          (cons entry entries))))
+  (for ([entry (in-list visible)])
+    (when (and (borrowed-type? (second entry))
+               (set-member? free (first entry)))
+      (fail 'borrowed-function-capture node))))
+
 (define (infer-lam callable parameters body Λ Ψ
                    environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
   (match signature
-    [`(NFn ,parameter-types ,return-type ,latent-row ,_)
+    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
              (length parameters)))
      (when (check-duplicates parameters)
        (fail 'duplicate-parameter node))
+     (check-function-boundary parameter-types return-type obligations
+                              body parameters environment node fail)
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
      (define body-environment
@@ -456,13 +482,15 @@
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
   (match signature
-    [`(NFn ,parameter-types ,return-type ,latent-row ,_)
+    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
              (length parameters)))
      (when (check-duplicates (cons function parameters))
        (fail 'duplicate-parameter node))
+     (check-function-boundary parameter-types return-type obligations
+                              body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
      (define body-environment
@@ -487,13 +515,15 @@
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
   (match signature
-    [`(NFn ,parameter-types ,return-type ,latent-row ,_)
+    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
              (length parameters)))
      (when (check-duplicates (cons function parameters))
        (fail 'duplicate-parameter node))
+     (check-function-boundary parameter-types return-type obligations
+                              body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
      (define function-environment
@@ -815,6 +845,12 @@
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
               function-row function-psi)
+        (when (ormap borrowed-type? parameter-types)
+          (fail 'borrowed-function-parameter function))
+        (when (borrowed-type? return-type)
+          (fail 'borrowed-function-result function))
+        (when (borrowed-type? obligations)
+          (fail 'borrowed-function-result function obligations))
         (define argument-rows
           (check-many arguments parameter-types Λ function-psi
                       environment places callables core fail 1))
@@ -1060,6 +1096,14 @@
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row function-psi)
+        (when (borrowed-type? first-type)
+          (fail 'borrowed-function-parameter argument))
+        (when (ormap borrowed-type? remaining-types)
+          (fail 'borrowed-function-parameter argument))
+        (when (borrowed-type? return-type)
+          (fail 'borrowed-function-result argument))
+        (when (borrowed-type? obligations)
+          (fail 'borrowed-function-result argument obligations))
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))
         (define argument-row

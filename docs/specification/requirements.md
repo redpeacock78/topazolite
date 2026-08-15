@@ -640,9 +640,17 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
+| 関数境界をまたぐ借用の受け渡し | `borrow.md` §8 | G5 | §15 |
+| 関数の仮引数そのものの借用 | `borrow.md` §8 | G5 | §15 |
+| Borrowed の payload の制限 | `borrow.md` §8 | G5 | §15 |
+| 自己 fallback の provenance | `borrow.md` §8 | G5 | §15 |
+| region の外へ出る借用の値 | `borrow.md` §8 | G5 | §4.8 |
+| 借用規則の backend 写し先 | `borrow.md` §8 | Phase 2 以降 | §13.3.1 |
+| 分岐 record の借用 region 合流 | `borrow.md` §8 | G5 | 無し |
 
-G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
+structural-row.md と trait.md から G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
 可変性を保つ join、`mut` field への再代入、borrow mode の互換性は同じ意味論の上に乗る。
+borrow.md §8 の未回収 6 件は、同節の項目に対応して本表へ記載している。
 
 本表の検査は `model/redex/tests/handoff-table-test.rkt` が行う。
 検査するのは記載元のファイルと節見出しが実在することだけである。

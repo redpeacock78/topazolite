@@ -174,7 +174,10 @@
     ("E-BOR-007" drop-borrowed "借用中の値を Drop できない")
     ("E-BOR-008" move-borrowed "借用中の値を Move できない")
     ("E-BOR-009" reborrow-non-mutable "Reborrow の対象が可変借用でない")
-    ("E-BOR-010" reborrow-region-escapes "reborrow の子 region が親を超える")))
+    ("E-BOR-010" reborrow-region-escapes "reborrow の子 region が親を超える")
+    ("E-BOR-011" borrowed-function-capture "関数が borrowed を捕捉している")
+    ("E-BOR-012" borrowed-function-parameter "関数の仮引数に borrowed を置けない")
+    ("E-BOR-013" borrowed-function-result "関数の結果型と証明義務に borrowed を置けない")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

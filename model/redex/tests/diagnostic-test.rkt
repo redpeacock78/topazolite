@@ -6,7 +6,8 @@
          "../backend-matrix.rkt"
          "../diagnostic.rkt"
          "diagnostic-fixture-v1.rkt"
-         "diagnostic-fixture-v2.rkt")
+         "diagnostic-fixture-v2.rkt"
+         "diagnostic-fixture-v3.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -49,13 +50,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 117)
+ (check-equal? (length diagnostic-registry) 120)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 59)
+ (check-equal? (count-of 'typing) 62)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -65,7 +66,7 @@
  ;; version 1 の 59 行は動かない。増えるのは version 2 と version 3 の typing である。
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
- (check-equal? (since-count 3) 10)
+ (check-equal? (since-count 3) 13)
  (for ([row (in-list diagnostic-registry)])
    (check-false (diagnostic-code-deprecated-in row))))
 
@@ -312,6 +313,17 @@
  "凍結 fixture v2 の全 (code phase key) が現在の registry に同じ組である"
  (check-equal? (length diagnostic-entries-v2) 107)
  (for ([entry (in-list diagnostic-entries-v2)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v3 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v3) 120)
+ (for ([entry (in-list diagnostic-entries-v3)])
    (match-define (list code phase key) entry)
    (define row (diagnostic-code-row code))
    (check-true (and row

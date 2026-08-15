@@ -22,6 +22,7 @@
          psi-add-shared
          psi-add-mut
          borrow-typed?
+         borrowed-type?
          borrow-token-key)
 
 ;; Λ（region 文脈）。spec §3.1。
@@ -143,6 +144,15 @@
   (match type
     [`(Borrowed ,_ ,_) #t]
     [`(BorrowedMut ,_ ,_) #t]
+    [_ #f]))
+
+;; spec §14。型木のどこかに Borrowed または BorrowedMut が現れるかを返す。
+;; 型構築子を列挙せずリストを盲目に降りるため、型文法の拡張に追従する。
+(define (borrowed-type? type)
+  (match type
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [(? list? ts) (ormap borrowed-type? ts)]
     [_ #f]))
 
 ;; c が作る借用が指す designator の集合を返す。

@@ -173,6 +173,8 @@
     borrow-conflicting-alias borrow-escapes-owner borrow-non-owned
     borrow-unknown-owner-region drop-borrowed move-borrowed
     reborrow-non-mutable reborrow-region-escapes
+    borrowed-function-capture borrowed-function-parameter
+    borrowed-function-result
     ;; default
     ill-typed))
 
@@ -655,14 +657,32 @@
                                                               (reach-node 'BorrowMut 1235 1245
                                                                           (reach-var 'x 1240 1241))))))
               '() '() '() (reach-span 1219 1258)
-              reach-region-ctx)))
+              reach-region-ctx)
+   (reach-row 'borrowed-function-parameter
+              (reach-node 'Lam 1261 1280 'User 'f
+                          (list (reach-bind 'a 1265 1266))
+                          (reach-lit 0 1270 1271))
+              '() '((f (NFn ((Borrowed Int 0)) Int () ()))) '()
+              (reach-span 1261 1280))
+   (reach-row 'borrowed-function-result
+              (reach-node 'Lam 1281 1300 'User 'f
+                          (list (reach-bind 'a 1285 1286))
+                          (reach-lit 0 1290 1291))
+              '() '((f (NFn (Int) (Borrowed Int 0) () ()))) '()
+              (reach-span 1281 1300))
+   (reach-row 'borrowed-function-capture
+              (reach-node 'Lam 1301 1320 'User 'f
+                          (list (reach-bind 'a 1305 1306))
+                          (reach-var 'y 1310 1311))
+              '() reach-call-f '((y (Borrowed Int 0)))
+              (reach-span 1301 1320))))
 
 (test-case "typing の producer key 集合が registry v3 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 59)
+  (check-equal? (length producer-keys) 62)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -691,7 +711,9 @@
                     (format "~a の primary-span" key))))
   ;; 現行 G2m からは到達しない key は表から除くが、registry からは除かない。
   ;; effectful-curry-operand は G2m の NFn 値が空 row しか返さないため到達しない。
+  ;; G5b の Borrowed と BorrowedMut も空 row を返すため、この理由は変わらない。
   ;; non-normalizable-result-type は Intersection を含む型を入口が拒むため到達しない。
+  ;; G5b の Borrowed と BorrowedMut は normalize-type が扱えるため、この理由は変わらない。
   ;; unmergeable-branch-records は正常型同士の merge だけが走るため到達しない。
   (define unreachable-keys
     '(effectful-curry-operand

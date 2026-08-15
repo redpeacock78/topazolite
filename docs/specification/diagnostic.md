@@ -258,9 +258,9 @@ registry version 1 に属する59行は `since` が1である。
 
 registry version 2 で足した typing の48行は `since` が2である。
 
-registry version 3 で足した typing の10行は `since` が3である。
+registry version 3 で足した typing の13行は `since` が3である。
 
-`deprecated-in` は全117行が `#f` である。
+`deprecated-in` は全120行が `#f` である。
 
 ## 11. 凍結 fixture
 

@@ -7,6 +7,8 @@
          "../borrow.rkt"
          "../typing.rkt")
 
+;; [REQ: BOR-002] reborrow による親の停止と復帰。
+
 (define (Λ-of ir) (region-ctx ir '() (hash) (hash)))
 
 (define (key-of result)

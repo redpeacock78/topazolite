@@ -5,6 +5,9 @@
          "../borrow.rkt"
          "../typing.rkt")
 
+;; [REQ: BOR-001] 借用の型付けと owner region の判定。
+;; [REQ: BOR-002] 共有借用と可変借用の permission。
+
 (define (Λ-of ir) (region-ctx ir '() (hash) (hash)))
 
 (define (key-of result)
