@@ -14,6 +14,7 @@
          raw-steps-g2
          inject
          inject-g2
+         inject-g2m
          run
          run-g2
          g2-primitive-name?)
@@ -388,6 +389,33 @@
    G2m
    #:domain config
 
+   ;; spec §13.1。H、Ω、θ は借用値の生成では変更しない。
+   (--> (cfg (in-hole E (BorrowAt ρ p)) H Ω θ)
+        (cfg (in-hole E (BorrowRef p ρ)) H Ω θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        R-Borrow)
+
+   (--> (cfg (in-hole E (BorrowAt ρ p)) H Ω θ)
+        (cfg (in-hole E (Error p)) H Ω θ)
+        (where state_old ,(table-ref (term Ω) (term p)))
+        (side-condition (memq (term state_old) '(Moved Dropped)))
+        R-BorrowError)
+
+   (--> (cfg (in-hole E (BorrowMutAt ρ p)) H Ω θ)
+        (cfg (in-hole E (BorrowMutRef p ρ)) H Ω θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        R-BorrowMut)
+
+   (--> (cfg (in-hole E (BorrowMutAt ρ p)) H Ω θ)
+        (cfg (in-hole E (Error p)) H Ω θ)
+        (where state_old ,(table-ref (term Ω) (term p)))
+        (side-condition (memq (term state_old) '(Moved Dropped)))
+        R-BorrowMutError)
+
+   (--> (cfg (in-hole E (ReborrowAt ρ (BorrowMutRef p ρ_parent))) H Ω θ)
+        (cfg (in-hole E (BorrowRef p ρ)) H Ω θ)
+        R-Reborrow)
+
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
         (cfg (in-hole E v_result) H Ω θ)
         (where v_result (δ/g2 nm v_arg ...))
@@ -509,6 +537,11 @@
 (define (inject-g2 core)
   (unless (redex-match? G2 c core)
     (raise-argument-error 'inject-g2 "G2 core term" core))
+  `(cfg (Scope () ,core) () () ()))
+
+(define (inject-g2m core)
+  (unless (redex-match? G2m c core)
+    (raise-argument-error 'inject-g2m "G2m core term" core))
   `(cfg (Scope () ,core) () () ()))
 
 (define (run config fuel)

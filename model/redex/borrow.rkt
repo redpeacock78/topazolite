@@ -13,6 +13,7 @@
          (struct-out psi)
          empty-psi
          psi-join
+         psi-suspend
          psi-exit
          check-region-annotation
          borrow-allowed?
@@ -68,15 +69,33 @@
        (set-union (psi-mut Ψ_1) (psi-mut Ψ_2))
        (set-union (psi-suspended Ψ_1) (psi-suspended Ψ_2))))
 
+;; Reborrow で親の可変借用を子 region の間だけ停止する。
+;; mut に実在する項目だけを suspended へ退避する。自己 fallback で得た
+;; designator は mut に無いので、退場時に項目を新規作成しない。
+(define (psi-suspend Ψ w ρ_parent ρ_child)
+  (define held? (set-member? (psi-mut Ψ) (list w ρ_parent)))
+  (psi (set-add (psi-shared Ψ) (list w ρ_child))
+       (if held?
+           (set-remove (psi-mut Ψ) (list w ρ_parent))
+           (psi-mut Ψ))
+       (if held?
+           (set-add (psi-suspended Ψ) (list w ρ_parent ρ_child))
+           (psi-suspended Ψ))))
+
 ;; Scope の退場。exiting は regions-exiting-at が返す region の集合である。
-;; suspended の復帰は段 9 で足す。本段では 3 欄すべてを同じ規則で削る。
+;; suspended の親 capability は子 region の退場で復帰する。
 (define (psi-exit Ψ exiting)
   (define (keep entries index)
     (for/set ([entry (in-set entries)]
               #:unless (set-member? exiting (list-ref entry index)))
       entry))
+  (define restored
+    (for/set ([entry (in-set (psi-suspended Ψ))]
+              #:when (and (set-member? exiting (third entry))
+                          (not (set-member? exiting (second entry)))))
+      (list (first entry) (second entry))))
   (psi (keep (psi-shared Ψ) 1)
-       (keep (psi-mut Ψ) 1)
+       (set-union (keep (psi-mut Ψ) 1) restored)
        (keep (psi-suspended Ψ) 2)))
 
 ;; 注釈済みの形の ρ は、走査位置の region と一致していなければならない。
@@ -158,6 +177,10 @@
     [`(BorrowMut ,w) (set (peel-node w))]
     [`(BorrowAt ,_ ,w) (set (peel-node w))]
     [`(BorrowMutAt ,_ ,w) (set (peel-node w))]
+    [`(BorrowRef ,p ,_) (set (peel-node p))]
+    [`(BorrowMutRef ,p ,_) (set (peel-node p))]
+    [`(Reborrow ,c_1) (borrow-token-key Λ c_1 locals)]
+    [`(ReborrowAt ,_ ,c_1) (borrow-token-key Λ c_1 locals)]
     [(? borrow-designator? w)
      (define ws (hash-ref locals w (lambda () (region-ctx-token Λ w))))
      (if (set-empty? ws) (set w) ws)]
@@ -192,6 +215,9 @@
     ;; そのとき y 自身の token も {1} になり、y は自分を指す key を失う。
     ;; 宣言型で切ると、この取り違えが起きない。
     [`(Let (,name ,rest ...) ,bound ,body)
+     ;; 非借用の束縛は Task 8 の回帰どおり空集合を張る。Reborrow の
+     ;; operand になりうるのは宣言型が借用の束縛であり、その場合だけ
+     ;; bound の token を body へ渡す。
      (define token
        (if (borrow-typed? (peel-ty (last rest)))
            (borrow-token-key Λ bound locals)

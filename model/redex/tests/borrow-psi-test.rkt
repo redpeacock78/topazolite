@@ -24,16 +24,32 @@
        (set (list 'z ρ1))
        (set (list 'w ρ2 ρ1))))
 
-;; 段 9 で suspended の退場は親 capability の復帰へ変わる。この期待値は段 9 で動く。
+;; ρ1 の退場で、停止していた (w ρ2 ρ1) は mut の (w ρ2) へ戻る。
 (check-equal? (psi-exit Ψc (set ρ1))
-              (psi (set (list 'y ρ2)) (set) (set)))
+              (psi (set (list 'y ρ2)) (set (list 'w ρ2)) (set)))
 
 (check-equal? (psi-exit Ψc (set ρ2))
               (psi (set (list 'x ρ1)) (set (list 'z ρ1)) (set (list 'w ρ2 ρ1))))
 
 ;; suspended は 3 つ組の 3 番目、つまり子の region で判定する。
 (check-equal? (psi-exit (psi (set) (set) (set (list 'w ρ2 ρ1))) (set ρ1))
-              (psi (set) (set) (set)))
+              (psi (set) (set (list 'w ρ2)) (set)))
+
+;; 親の ρ2 も同時に退場するときは戻さない。親の借用自体が既に死んでいる。
+(check-equal? (psi-exit Ψc (set ρ1 ρ2)) (empty-psi))
+
+;; mut に (x ρ2) があるときは、退避と子の共有借用の両方を行う。
+(check-equal? (psi-suspend (psi (set) (set (list 'x ρ2)) (set))
+                           'x ρ2 ρ1)
+              (psi (set (list 'x ρ1))
+                   (set)
+                   (set (list 'x ρ2 ρ1))))
+
+;; mut に無いときは共有借用だけを張り、退場時に mut を新規作成しない。
+(check-equal? (psi-suspend (empty-psi) 'x ρ2 ρ1)
+              (psi (set (list 'x ρ1)) (set) (set)))
+(check-equal? (psi-exit (psi-suspend (empty-psi) 'x ρ2 ρ1) (set ρ1))
+              (empty-psi))
 
 ;; 空の Ψ は退場で変わらない。
 (check-equal? (psi-exit (empty-psi) (set ρ1)) (empty-psi))

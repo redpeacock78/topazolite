@@ -658,6 +658,30 @@
         '()
         Ψ_out))
 
+;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
+;; 親 capability を子の生存期間だけ停止する。
+(define (infer-reborrow core operand Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define ir (region-ctx-ir Λ))
+  (unless ir (fail 'borrow-unknown-owner-region core))
+  (match (normalize-type τ_operand)
+    [`(BorrowedMut ,τ ,n_parent)
+     (define ρ_parent (rho->region ir n_parent))
+     (define ρ_child (region-at ir (region-ctx-point Λ)))
+     (unless (region-outlives? ir ρ_parent ρ_child)
+       (fail 'reborrow-region-escapes core))
+     (define tokens (borrow-token-key Λ operand))
+     (when (set-empty? tokens)
+       (error 'infer-reborrow
+              "親の token を特定できない operand: ~s"
+              operand))
+     (define Ψ_2
+       (for/fold ([Ψ_acc Ψ_1]) ([w (in-set tokens)])
+         (psi-suspend Ψ_acc w ρ_parent ρ_child)))
+     (list `(Borrowed ,τ ,(region->rho ir ρ_child)) ε_operand Ψ_2)]
+    [_ (fail 'reborrow-non-mutable core)]))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
@@ -997,7 +1021,6 @@
        (match (peel-node argument)
          [`(Move ,w) (peel-node w)]
          [(? symbol? w) w]
-         [(? exact-nonnegative-integer? w) w]
          [_ #f]))
      (when (and dropped (not (use-allowed? Ψ dropped)))
        (fail 'drop-borrowed argument))
@@ -1069,9 +1092,11 @@
     [`(BorrowMutAt ,ρ ,w)
      (check-region-annotation Λ ρ core fail)
      (infer-borrow core w #t Λ Ψ environment places callables fail)]
-    [`(ReborrowAt ,ρ ,_)
+    [`(Reborrow ,c_operand)
+     (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
+    [`(ReborrowAt ,ρ ,c_operand)
      (check-region-annotation Λ ρ core fail)
-     (fail 'ill-typed core)]
+     (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

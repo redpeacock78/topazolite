@@ -172,6 +172,7 @@
     borrowed-owned-payload borrow-region-mismatch
     borrow-conflicting-alias borrow-escapes-owner borrow-non-owned
     borrow-unknown-owner-region drop-borrowed move-borrowed
+    reborrow-non-mutable reborrow-region-escapes
     ;; default
     ill-typed))
 
@@ -637,6 +638,23 @@
                                                   (reach-node 'Move 1170 1187
                                                               (reach-var 'x 1180 1181)))))
               '() '() '() (reach-span 1170 1187)
+              reach-region-ctx)
+   (reach-row 'reborrow-non-mutable
+              (reach-node 'Scope 1191 1210 '()
+                          (reach-node 'Reborrow 1192 1209
+                                      (reach-lit 1 1200 1201)))
+              '() '() '() (reach-span 1192 1209) reach-region-ctx)
+   (reach-row 'reborrow-region-escapes
+              (reach-node 'Scope 1211 1260 '()
+                          (reach-node 'Let 1212 1259
+                                      (list (reach-bind 'x 1213 1214) 'let
+                                            (reach-ty '(Owned Res) 1215 1216))
+                                      (reach-node 'resource 1217 1218 1)
+                                      (reach-node 'Reborrow 1219 1258
+                                                  (reach-node 'Scope 1230 1250 '()
+                                                              (reach-node 'BorrowMut 1235 1245
+                                                                          (reach-var 'x 1240 1241))))))
+              '() '() '() (reach-span 1219 1258)
               reach-region-ctx)))
 
 (test-case "typing の producer key 集合が registry v3 と一致する"
@@ -644,7 +662,7 @@
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 57)
+  (check-equal? (length producer-keys) 59)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

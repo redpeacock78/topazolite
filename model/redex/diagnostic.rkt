@@ -172,7 +172,9 @@
     ("E-BOR-005" borrow-non-owned "借用の対象が owned でない")
     ("E-BOR-006" borrow-unknown-owner-region "借用の対象の所有 region が定まらない")
     ("E-BOR-007" drop-borrowed "借用中の値を Drop できない")
-    ("E-BOR-008" move-borrowed "借用中の値を Move できない")))
+    ("E-BOR-008" move-borrowed "借用中の値を Move できない")
+    ("E-BOR-009" reborrow-non-mutable "Reborrow の対象が可変借用でない")
+    ("E-BOR-010" reborrow-region-escapes "reborrow の子 region が親を超える")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

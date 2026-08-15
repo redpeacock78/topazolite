@@ -12,8 +12,8 @@
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
-;; 4 組が 1 本へ畳まれ R-Discharge が消えるので、値の相異なる集合は
-;; 20 本になる。
+;; 4 組が 1 本へ畳まれ、R-Discharge と借用規則 5 本が目標側に無いため、
+;; 値の相異なる集合は 20 本になる。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
@@ -27,6 +27,11 @@
     (R-Eliminate    . R-PR-Match)
     (R-Proj         . R-PR-Proj)
     (R-Discharge    . #f)
+    (R-Borrow       . #f)
+    (R-BorrowError  . #f)
+    (R-BorrowMut    . #f)
+    (R-BorrowMutError . #f)
+    (R-Reborrow     . #f)
     (R-RecurBind    . R-PR-Letrec)
     (R-RecurUnfold  . R-PR-Letrec)
     (R-Move         . R-PR-Move)
@@ -56,17 +61,19 @@
  (check-equal? (set-count g1-rule-names) 21))
 
 (test-case
- "-->g2/rules adds exactly four names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。増えるのは 4 本だけである。
+ "-->g2/rules adds exactly nine names to -->g1/rules"
+ ;; 同名の上書きは名前集合を増やさない。G2m 固有の借用規則を含めて 9 本である。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
-               (set 'R-Proj 'R-Discharge 'R-LetB 'R-LetOwnedB))
+               (set 'R-Proj 'R-Discharge 'R-LetB 'R-LetOwnedB
+                    'R-Borrow 'R-BorrowError 'R-BorrowMut
+                    'R-BorrowMutError 'R-Reborrow))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 25))
+ (check-equal? (set-count g2-rule-names) 30))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 25))
+ (check-equal? (length rule-correspondence) 30))
 
 (test-case
  "the target side has 20 rules"
