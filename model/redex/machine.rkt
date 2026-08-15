@@ -11,6 +11,7 @@
          -->g2
          -->g1/rules
          -->g2/rules
+         raw-steps-g2
          inject
          inject-g2
          run
