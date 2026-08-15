@@ -986,9 +986,21 @@
 ;; 避けるため、検査の順と key をここへ寄せる。
 ;; core は投影済みの項を受け取る。返り値は最初に破れた検査の
 ;; (list key details ...) か、すべて通ったときの #f である。
+(define (borrowed-owned-payload-type subject)
+  ;; core の型注釈を走査し、Borrowed または BorrowedMut の payload が直接
+  ;; Owned である最初の型を返す。無ければ #f。
+  (let search ([t subject])
+    (match t
+      [`(Borrowed (Owned ,_) ,_) t]
+      [`(BorrowedMut (Owned ,_) ,_) t]
+      [(? list?) (for/or ([e (in-list t)]) (search e))]
+      [_ #f])))
+
 (define (entry-violation core places callables environment)
   (cond
     [(not (redex-match? G2m c core)) '(not-core-term)]
+    [(borrowed-owned-payload-type core)
+     => (lambda (found) (list 'borrowed-owned-payload found))]
     [(not (core-types-normal? core)) '(non-normal-type)]
     [(not (valid-environment? environment))
      (list 'invalid-environment environment)]

@@ -182,7 +182,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は G4f1 完了時点で3であり、`diagnostic-registry-version` は2である。
+`diagnostic-schema-version` は G4f1 完了時点で3であり、`diagnostic-registry-version` は3である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -258,7 +258,9 @@ registry version 1 に属する59行は `since` が1である。
 
 registry version 2 で足した typing の48行は `since` が2である。
 
-`deprecated-in` は全107行が `#f` である。
+registry version 3 で足した typing の1行は `since` が3である。
+
+`deprecated-in` は全108行が `#f` である。
 
 ## 11. 凍結 fixture
 

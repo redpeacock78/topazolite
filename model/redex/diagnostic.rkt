@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 2)
+(define diagnostic-registry-version 3)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -162,6 +162,11 @@
     ("E-VAR-006" unbound-variable "束縛されていない変数である")
     ("E-VAR-007" unknown-primitive "Γ0 に無い primitive である")))
 
+;; G5b の借用。分類 E-BOR を新設する。
+;; 番号は実 producer が現れる段の順に連番で振る。辞書順は各段の中だけで効く。
+(define typing-entries-v3
+  '(("E-BOR-001" borrowed-owned-payload "Borrowed の中身に owned を置けない")))
+
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
 
@@ -180,6 +185,7 @@
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
+          (rows 'typing 3 typing-entries-v3)
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
 

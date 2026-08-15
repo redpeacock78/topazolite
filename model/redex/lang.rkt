@@ -28,6 +28,8 @@
          (Option τ)
          (Result τ τ)
          (Owned τ)
+         (Borrowed τ ρ)
+         (BorrowedMut τ ρ)
          (NFn (τ ...) τ ε Q)
          (TypeInfo κ)
          (Proof φ))

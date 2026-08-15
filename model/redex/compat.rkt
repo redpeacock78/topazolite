@@ -96,6 +96,16 @@
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
                       sup-parameters sup-return sup-row sup-obligations
                       gamma-pc)]
+    ;; 構成子が一致し、payload が互換で、ρ が equal? のときに限り真である。
+    ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。
+    ;; 弱化を認めると、可変借用を共有借用の位置へ渡しつつ元の可変借用が
+    ;; 生き続ける抜けができる。
+    [(`(Borrowed ,sub-payload ,sub-ρ) `(Borrowed ,sup-payload ,sup-ρ))
+     (and (equal? sub-ρ sup-ρ)
+          (compat?/impl sub-payload sup-payload gamma-pc))]
+    [(`(BorrowedMut ,sub-payload ,sub-ρ) `(BorrowedMut ,sup-payload ,sup-ρ))
+     (and (equal? sub-ρ sup-ρ)
+          (compat?/impl sub-payload sup-payload gamma-pc))]
     [(_ _) (type-equiv? sub sup)]))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed

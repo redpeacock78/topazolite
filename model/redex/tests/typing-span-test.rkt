@@ -162,6 +162,8 @@
     ;; PRF
     discharge-obligation-count discharge-proposition-mismatch
     discharge-target-not-apply unsatisfied-proof-obligation
+    ;; BOR
+    borrowed-owned-payload
     ;; default
     ill-typed))
 
@@ -559,14 +561,21 @@
                                       (list (reach-bind 'x 808 809))
                                       (reach-var 'x 811 812))
                           (reach-lit 1 817 818))
-              '() reach-call-obligation '() (reach-span 806 822))))
+              '() reach-call-obligation '() (reach-span 806 822))
+   (reach-row 'borrowed-owned-payload
+              (reach-node 'Let 1000 1020
+                          (list (reach-bind 'x 1001 1002) 'const
+                                (reach-ty '(Borrowed (Owned Int) 0) 1003 1010))
+                          (reach-lit 1 1011 1012)
+                          (reach-var 'x 1013 1014))
+              '() '() '() (reach-span 1000 1020))))
 
-(test-case "typing の producer key 集合が registry v2 と一致する"
+(test-case "typing の producer key 集合が registry v3 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 49)
+  (check-equal? (length producer-keys) 50)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

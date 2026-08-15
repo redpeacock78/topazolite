@@ -106,6 +106,14 @@
     [`(Owned ,inner)
      (define normalized (normalize-type/impl inner))
      (and normalized `(Owned ,normalized))]
+    ;; ρ は不透明な token であり、正規化の対象になる構造を持たない。
+    ;; payload だけを再帰で正規化する。
+    [`(Borrowed ,payload ,ρ)
+     (define normalized (normalize-type/impl payload))
+     (and normalized `(Borrowed ,normalized ,ρ))]
+    [`(BorrowedMut ,payload ,ρ)
+     (define normalized (normalize-type/impl payload))
+     (and normalized `(BorrowedMut ,normalized ,ρ))]
     [`(Untrusted ,payload)
      (define normalized (normalize-type/impl payload))
      (and normalized `(Untrusted ,normalized))]
@@ -184,6 +192,10 @@
     [`(List ,element) `(List ,(canonical-key/normal element))]
     [`(Option ,element) `(Option ,(canonical-key/normal element))]
     [`(Owned ,inner) `(Owned ,(canonical-key/normal inner))]
+    [`(Borrowed ,payload ,ρ)
+     `(Borrowed ,(canonical-key/normal payload) ,ρ)]
+    [`(BorrowedMut ,payload ,ρ)
+     `(BorrowedMut ,(canonical-key/normal payload) ,ρ)]
     [`(Untrusted ,payload) `(Untrusted ,(canonical-key/normal payload))]
     [`(Result ,ok-type ,error-type)
      `(Result ,(canonical-key/normal ok-type)
@@ -294,6 +306,14 @@
           (type-equiv? left-error right-error))]
     [(`(Owned ,left-inner) `(Owned ,right-inner))
      (type-equiv? left-inner right-inner)]
+    [(`(Borrowed ,left-payload ,left-ρ)
+      `(Borrowed ,right-payload ,right-ρ))
+     (and (equal? left-ρ right-ρ)
+          (type-equiv? left-payload right-payload))]
+    [(`(BorrowedMut ,left-payload ,left-ρ)
+      `(BorrowedMut ,right-payload ,right-ρ))
+     (and (equal? left-ρ right-ρ)
+          (type-equiv? left-payload right-payload))]
     [(`(Untrusted ,left-payload) `(Untrusted ,right-payload))
      (type-equiv? left-payload right-payload)]
     ;; RFN-001: witness の実体は型同一性に関与しない。φ は正準鍵だけを見る。

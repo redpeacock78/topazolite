@@ -39,6 +39,14 @@
      (and (type-shape-ok? ok-type)
           (type-shape-ok? error-type))]
     [`(Owned ,inner) (type-shape-ok? inner)]
+    ;; 借用は所有ではないため、payload を Owned で包めない。
+    ;; 禁じるのは直接の Owned だけである。Untrusted と Refined が使う再帰的な
+    ;; owned-free? は採らない。所有値を含む構造の借用は意図された用法である
+    ;; （ホワイトペーパー 709 行の borrowed view）。
+    [`(Borrowed (Owned ,_) ,_) #f]
+    [`(BorrowedMut (Owned ,_) ,_) #f]
+    [`(Borrowed ,inner ,_) (type-shape-ok? inner)]
+    [`(BorrowedMut ,inner ,_) (type-shape-ok? inner)]
     [`(Untrusted ,inner)
      (and (owned-free? inner) (type-shape-ok? inner))]
     [`(Refined ,inner ,proposition)
