@@ -20,7 +20,10 @@
   (id ::= variable-not-otherwise-mentioned)
   (cid ::= variable-not-otherwise-mentioned)
   (n ::= integer)
-  (ρ ::= natural)
+  ;; 寿命変数と具体的な region を同じ欄に置く（spec §3.1）。
+  ;; 別の構文にするのは、同じ空間に採番すると解決前の変数と解決済みの
+  ;; region を型の上で区別できなくなるからである。
+  (ρ ::= natural (RVar natural))
   (l ::= integer unit string)
 
   (τ ::= Int Bool Unit String Never Res

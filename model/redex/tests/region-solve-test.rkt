@@ -52,15 +52,19 @@
                    broken))
   (check-equal? (region-solve ir cs) (list 'error (list broken))))
 
-;; 決定的である。同じ ir と同じ並びに対して同じ σ を返す。
+;; 制約の並び順に依らず、同じ σ を返す。
 (let ()
   (define core '(Scope () (Yield (Scope () 0) (Scope () 0))))
   (define ir (build-region-ir core))
-  (define cs (list (region-constraint 'contains '(RVar 0)
-                                      (region-at ir '(0 0 0)) '(0 0 0) #f)
-                   (region-constraint 'contains '(RVar 0)
-                                      (region-at ir '(0 1 0)) '(0 1 0) #f)))
-  (check-equal? (region-solve ir cs) (region-solve ir cs)))
+  (define cs-forward
+    (list (region-constraint 'contains '(RVar 0)
+                             (region-at ir '(0 0 0)) '(0 0 0) #f)
+          (region-constraint 'contains '(RVar 0)
+                             (region-at ir '(0 1 0)) '(0 1 0) #f)))
+  (define cs-reverse (reverse cs-forward))
+  (match-define (list 'ok σ-forward) (region-solve ir cs-forward))
+  (match-define (list 'ok σ-reverse) (region-solve ir cs-reverse))
+  (check-equal? σ-forward σ-reverse))
 
 ;; 寿命項の判別。
 (check-true (lifetime-var? '(RVar 3)))

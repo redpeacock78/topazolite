@@ -275,6 +275,16 @@
       [_ 'verbatim]))
   (list (list 'surface kind span)))
 
+;; 寿命変数は推論の内部の名前であり、読み手へ見せる語彙ではない（spec §3.1）。
+;; 印字される欄へ漏れたら、それは段 3 で σ を通し忘れた誤りである。
+;; 誤りは Diagnostic を作った箇所の error として現れてほしいので、
+;; 検証器ではなく producer である diagnostic-of で落とす。
+(define (lifetime-var-free? v)
+  (match v
+    [`(RVar ,_) #f]
+    [(? list? vs) (andmap lifetime-var-free? vs)]
+    [_ #t]))
+
 (define (diagnostic-of phase key
                        #:primary-span primary-span
                        #:expected [expected #f]
@@ -284,6 +294,13 @@
   (define code (diagnostic-code-of phase key))
   (unless code
     (error 'diagnostic-of "registry に無い phase と key である: ~s ~s" phase key))
+  ;; RVar は typing 相の推論内部にだけ現れる。elaborate 相の found は
+  ;; 書き手が書いた surface 項をそのまま持ち得るため、相を限らないと
+  ;; 構文誤りが処理系の異常終了へ変わる。
+  (when (eq? phase 'typing)
+    (unless (and (lifetime-var-free? expected)
+                 (lifetime-var-free? found))
+      (error 'diagnostic-of "診断へ寿命変数が漏れた: ~s ~s" expected found)))
   ;; spec §10: 検証器は Diagnostic 単体を受けるため phase を知らない。
   ;; phase と backend の対応はここでしか検査できない。
   (if (eq? phase 'lowering)
