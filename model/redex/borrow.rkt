@@ -17,8 +17,7 @@
          psi-join
          psi-suspend
          check-region-annotation
-         borrow-allowed?
-         borrow-mut-allowed?
+         check-borrows
          psi-add-shared
          psi-add-mut
          borrow-typed?
@@ -64,7 +63,7 @@
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
 (struct borrow-request (w mode alpha node) #:transparent)
-(struct use-request (w point-region node kind) #:transparent)
+(struct use-request (w point-region node kind otherwise) #:transparent)
 
 (define (empty-psi) (psi (set) (set) (set)))
 
@@ -96,22 +95,50 @@
   (define expected (region->rho ir (region-at ir (region-ctx-point Λ))))
   (unless (equal? ρ expected) (fail 'borrow-region-mismatch node)))
 
-;; permission map の key は w である。x と p を同じ空間で扱う。
-;; 静的な core には x だけが、実行時の config には p だけが現れるため、
-;; 両者が同じ Ψ に混在することは無い。
-(define (conflicts? entries w ρ_borrow ir)
-  (for/or ([entry (in-set entries)])
-    (and (equal? (first entry) w)
-         (regions-overlap? ir (second entry) ρ_borrow))))
+;; 段 3。σ の上で BOR-002 と使用を判定する。spec §7.3 と §8。
+;; sigma-ref は typing 側から渡す。borrow.rkt は typing.rkt を require しない。
+(define (check-borrows ir σ Ψ requests sigma-ref fail)
+  (define borrows (filter borrow-request? requests))
+  (define uses (filter use-request? requests))
+  (define (ρ-of r) (sigma-ref σ (borrow-request-alpha r)))
+  ;; BOR-002。同じ w の対を決定的な順序で見る。
+  (define ordered
+    (sort borrows
+          (lambda (a b)
+            (define wa (format "~s" (borrow-request-w a)))
+            (define wb (format "~s" (borrow-request-w b)))
+            (if (string=? wa wb)
+                (< (alpha-order a) (alpha-order b))
+                (string<? wa wb)))))
+  (for* ([i (in-range (length ordered))]
+         [j (in-range (add1 i) (length ordered))])
+    (define a (list-ref ordered i))
+    (define b (list-ref ordered j))
+    (when (and (equal? (borrow-request-w a) (borrow-request-w b))
+               (or (eq? (borrow-request-mode a) 'mut)
+                   (eq? (borrow-request-mode b) 'mut))
+               (regions-overlap? ir (ρ-of a) (ρ-of b)))
+      (fail 'borrow-conflicting-alias (borrow-request-node b))))
+  ;; 使用。w の生きた借用が使用位置を覆うかを見る。重なりでは見ない。§7.4。
+  ;; 覆う借用が 1 つも無いとき、otherwise を持つ要求だけがその key で落ちる。§7.5。
+  (for ([u (in-list uses)])
+    (define ρ_point (use-request-point-region u))
+    (define covered?
+      (for/or ([r (in-list ordered)])
+        (and (equal? (borrow-request-w r) (use-request-w u))
+             (region-outlives? ir (ρ-of r) ρ_point))))
+    (cond
+      [covered? (fail (use-kind u) (use-request-node u))]
+      [(use-request-otherwise u)
+       (fail (use-request-otherwise u) (use-request-node u))]
+      [else (void)])))
 
-;; [REQ: BOR-002] 共有借用どうしは許す。可変借用と重なるときだけ拒む。
-(define (borrow-allowed? Ψ w ρ_borrow ir)
-  (not (conflicts? (psi-mut Ψ) w ρ_borrow ir)))
+(define (alpha-order r)
+  (match (borrow-request-alpha r)
+    [`(RVar ,k) k]
+    [_ -1]))
 
-;; [REQ: BOR-002] 可変借用は排他である。共有借用とも可変借用とも重なれない。
-(define (borrow-mut-allowed? Ψ w ρ_borrow ir)
-  (and (not (conflicts? (psi-mut Ψ) w ρ_borrow ir))
-       (not (conflicts? (psi-shared Ψ) w ρ_borrow ir))))
+(define (use-kind u) (use-request-kind u))
 
 (define (psi-add-shared Ψ w ρ)
   (struct-copy psi Ψ [shared (set-add (psi-shared Ψ) (list w ρ))]))

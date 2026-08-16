@@ -41,7 +41,10 @@
          collect-use-regions!
          typing-inference
          typing-solve
-         sigma-ref)
+         sigma-ref
+         subst-type-regions
+         contains-lifetime-var?
+         materialize-fail-result)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -78,11 +81,11 @@
   (if b (reverse (unbox b)) '()))
 
 ;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
-(define (emit-use-request! w Λ node kind)
+(define (emit-use-request! w Λ node kind [otherwise #f])
   (define ir (region-ctx-ir Λ))
   (when ir
     (emit-request!
-     (use-request w (region-at ir (region-ctx-point Λ)) node kind))))
+     (use-request w (region-at ir (region-ctx-point Λ)) node kind otherwise))))
 
 ;; 段 2。下限制約から σ を作る。spec §6.1。
 ;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
@@ -639,6 +642,29 @@
     ;; ここへ到達しない。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
+;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、
+;; 推論した型のそれは寿命である。語彙が違うので照合しない。
+;; 両方が同じ構成子の借用である位置だけ、宣言型の欄を推論した欄へ写す。
+;; 形が食い違う位置は宣言型のまま残し、後段の type-compatible? に落とさせる。
+(define (adopt-inferred-lifetimes declared actual)
+  (match* (declared actual)
+    [(`(Borrowed ,d-payload ,_) `(Borrowed ,a-payload ,a-rho))
+     `(Borrowed ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
+    [(`(BorrowedMut ,d-payload ,_) `(BorrowedMut ,a-payload ,a-rho))
+     `(BorrowedMut ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
+    [((? list?) (? list?))
+     #:when (= (length declared) (length actual))
+     (for/list ([d (in-list declared)] [a (in-list actual)])
+       (adopt-inferred-lifetimes d a))]
+    [(_ _) declared]))
+
+(define (declared-has-borrow? t)
+  (match t
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [(? list?) (for/or ([e (in-list t)]) (declared-has-borrow? e))]
+    [_ #f]))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
@@ -668,12 +694,27 @@
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
     [_
-     (define bound-result
-       (check-as bound declared-type (enter-child Λ 0)
-                 Ψ environment places callables fail))
-     (match bound-result
-       [(list row bound-psi)
-        (list row declared-type bound-psi)])]))
+     (cond
+       [(declared-has-borrow? declared-type)
+        ;; 宣言型が借用を含むときは check-as へ委ねない。
+        ;; 推論した型を手元に置き、寿命を写してから照合し、
+        ;; 束縛の型として推論した型の方を返すためである。
+        ;; 宣言型を返すと spec §5.1 の下限収集が (RVar k) を見つけられず、
+        ;; 束縛した名前を使う位置の region が σ に入らない。
+        (match (infer bound (enter-child Λ 0)
+                      Ψ environment places callables fail)
+          [(list actual bound-row bound-psi)
+           (define expected (adopt-inferred-lifetimes declared-type actual))
+           (unless (type-compatible? actual expected)
+             (fail 'type-mismatch bound declared-type actual))
+           (list bound-row actual bound-psi)])]
+       [else
+        (define bound-result
+          (check-as bound declared-type (enter-child Λ 0)
+                    Ψ environment places callables fail))
+       (match bound-result
+         [(list row bound-psi)
+           (list row declared-type bound-psi)])])]))
 
 ;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
 ;; 型付けを連なりの全体で見るため、節の側では再帰しない。
@@ -759,26 +800,23 @@
   (unless ρ_owner (fail 'borrow-unknown-owner-region core))
   (define point (region-ctx-point Λ))
   (define ρ_borrow (region-at ir point))
-  ;; 移行期の入口では、まだ寿命変数の文脈を持たないため G5b と同じ
-  ;; 具体 region を返す。寿命変数を使う入口だけが制約を記録する。
-  (define α (and (lifetime-counter) (fresh-lifetime! point)))
-  (when α
-    ;; 借用の起点は α の下限である。使わない借用の解はこの 1 本で決まり、
-    ;; G5b の ρ_borrow と一致する（spec §5.3）。
-    (emit-constraint!
-     (region-constraint 'contains α ρ_borrow point #f))
-    ;; BOR-001 は上限制約になる（spec §8.1）。
-    (emit-constraint!
-     (region-constraint 'outlives ρ_owner α point core)))
+  (define α (fresh-lifetime! point))
+  ;; 借用の起点は α の下限である。使わない借用の解はこの 1 本で決まり、
+  ;; G5b の ρ_borrow と一致する（spec §5.3）。
+  (emit-constraint!
+   (region-constraint 'contains α ρ_borrow point #f))
+  ;; BOR-001 は上限制約になる（spec §8.1）。
+  (emit-constraint!
+   (region-constraint 'outlives ρ_owner α point core))
   (emit-request!
    (borrow-request key (if mutable? 'mut 'shared) α core))
   (define Ψ_out
     (if mutable?
-        (psi-add-mut Ψ key (or α ρ_borrow))
-        (psi-add-shared Ψ key (or α ρ_borrow))))
+        (psi-add-mut Ψ key α)
+        (psi-add-shared Ψ key α)))
   (list (list (if mutable? 'BorrowedMut 'Borrowed)
               payload
-              (or α (region->rho ir ρ_borrow)))
+              α)
         '()
         Ψ_out))
 
@@ -1152,17 +1190,34 @@
          [`(Move ,w) (peel-node w)]
          [(? symbol? w) w]
          [_ #f]))
-     (when dropped (emit-use-request! dropped Λ argument 'drop-borrowed))
+     ;; spec §7.5。Move を通さない裸の名前で、型が Owned のとき、
+     ;; 段 1 は答えを決められない。借用が生きていれば drop-borrowed、
+     ;; 生きていなければ owned-variable-requires-move である。
+     ;; 段 1 で後者を出すと段 3 の判定を潰すので、両方を段 3 へ渡す。
+     ;; ir が無いときは借用が無いので答えが段 1 で確定する。
+     ;; そのとき渡してしまうと要求が記録されず、どちらも出ずに受理してしまう。
+     (define dropped-type (and dropped (lookup environment dropped)))
+     (define bare-owned?
+       (and dropped
+            (region-ctx-ir Λ)
+            (symbol? (peel-node argument))
+            dropped-type
+            (owned-type? dropped-type)))
+     (when dropped
+       (emit-use-request! dropped Λ argument 'drop-borrowed
+                          (and bare-owned? 'owned-variable-requires-move)))
      (when (and dropped
                 (borrow-typed? (or (lookup environment dropped) '())))
        (fail 'drop-borrowed argument))
      (define argument-Λ (enter-child Λ 0))
      (define argument-result
-       (let/ec recover
-         (infer argument argument-Λ Ψ environment places callables
-                (lambda (key node . details)
-                  (assert-typing-key key)
-                  (recover #f)))))
+       (if bare-owned?
+           (list dropped-type '() Ψ)
+           (let/ec recover
+             (infer argument argument-Λ Ψ environment places callables
+                    (lambda (key node . details)
+                      (assert-typing-key key)
+                      (recover #f))))))
      (cond
        [(and argument-result
              (owned-type? (first argument-result)))
@@ -1419,19 +1474,103 @@
 
 (define (type-of/raw core-in places callables [environment '()]
                      [Λ (empty-region-ctx)])
-  (with-typing
-   (lambda (fail)
-     ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
-     (define core (erase-core core-in))
-     (define violation (entry-violation core places callables environment))
-     (when violation
-       (apply fail (first violation) core-in (rest violation)))
-     (match (infer core-in Λ (empty-psi) environment places callables fail)
-       [(list type row _psi)
-        (define normalized (normalize-type type))
-        (unless normalized
-          (fail 'non-normalizable-result-type core-in type))
-        (list normalized row)]))))
+  (define cs (box '()))
+  (define rs (box '()))
+  (define tbl (box (hash)))
+  (define result
+    (parameterize ([lifetime-collector cs]
+                   [request-collector rs]
+                   [lifetime-counter (box 0)]
+                   [alpha-table tbl])
+      (with-typing
+       (lambda (fail)
+         ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
+         (define core (erase-core core-in))
+         (define violation (entry-violation core places callables environment))
+         (when violation
+           (apply fail (first violation) core-in (rest violation)))
+         ;; 段 1。
+         (match-define (list type row Ψ)
+           (infer core-in Λ (empty-psi) environment places callables fail))
+         ;; 段 2。
+         (define ir (region-ctx-ir Λ))
+         (define solved (typing-solve ir (reverse (unbox cs))))
+         (match solved
+           [(list 'error broken)
+            (define c (first broken))
+            (fail (constraint-key c) (constraint-node c))]
+           [(list 'ok σ)
+            ;; 段 3。
+            (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+            ;; 型の中の α を σ で解いてから正規化する。materialize が core の
+            ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
+            ;; 置換を正規化より先に置くのは、Union の重複除去が置換の後で
+            ;; なければ効かないためである。σ(α_1) と σ(α_2) が同じ region に
+            ;; なる形では、正規化を先に置くと正規形の不変が破れる。
+            (define substituted (subst-type-regions type σ ir))
+            (define normalized (normalize-type substituted))
+            (unless normalized
+              (fail 'non-normalizable-result-type core-in substituted))
+            ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
+            ;; Perform は (Return boundary τ) として row へ入れるため、
+            ;; 借用をこれらで返すと row が α を運ぶ。
+            (list normalized
+                  (subst-type-regions row σ ir))])))))
+  ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
+  ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
+  (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
+
+;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。
+;; 段 1 の fail は推論の途中の型を details へ入れる。typing.rkt:1346 の
+;; typing-expected/found がそれを diagnostic-of の expected と found へ
+;; そのまま渡すので、α が残ると Task 3 の寿命変数の検査が型検査を
+;; 異常終了させる。返す前に必ず解くか捨てるかする。
+(define (materialize-fail-result ir cs result)
+  (match result
+    [(list 'fail key node details)
+     (match (and ir (pair? cs) (typing-solve ir cs))
+       [(list 'ok σ)
+        (list 'fail key node
+              (map (lambda (d) (subst-type-regions d σ ir)) details))]
+       ;; ir が無い形と制約が空の形では α を採らない。details はそのままでよい。
+       [#f result]
+       ;; 段 1 が棄却した時点の制約集合は不完全である。出口の下限が欠けると
+       ;; σ(α) は本来より狭くなり、α を左辺に持つ Reborrow と分岐合流の制約が
+       ;; 偽に破れる。左辺が具体的な region の BOR-001 だけは向きが逆になるが、
+       ;; 制約の種別で健全性が変わる規則は置かない。段 1 の key と node を保ち、
+       ;; 解けない details だけを捨てる。失われるのは expected と found であり、
+       ;; 診断の分類と位置は残る（spec §6.3）。
+       [_ (list 'fail key node '())])]
+    [_ result]))
+
+;; 破れた上限制約から診断の key と節点を引く。
+;; Task 12 が合流の制約を足すとき、ここに 1 行足せば済む形にする。
+(define (constraint-key c)
+  (case (region-constraint-kind c)
+    [(outlives) 'borrow-escapes-owner]
+    [else 'borrow-escapes-owner]))
+
+(define (constraint-node c) (region-constraint-node c))
+
+;; 型の中の `(RVar k)` を σ の解へ置き換える（spec §6.3）。
+;; α が現れるのは借用の 3 つ目の欄だけだが、Union や Record や NFn の中へ
+;; 入れ子になるため木全体を歩く。
+;; これを通さないと、`type-of` の返り値に α が残り、spec §11 の不変性が破れる。
+;; effect row も同じ関数で解く。row の要素は (Return boundary τ) と (Yield τ) と
+;; 記号であり、型を運ぶ欄はこの走査で覆える。validators.rkt の
+;; effect-owned-free? が row の同じ 2 形から型を取り出しているのと対応する。
+(define (subst-type-regions t σ ir)
+  (match t
+    [`(RVar ,_) (region->rho ir (sigma-ref σ t))]
+    [(? list? ts) (map (lambda (x) (subst-type-regions x σ ir)) ts)]
+    [_ t]))
+
+;; 段 3 の出口で α が残っていないことを試験が見るための述語。
+(define (contains-lifetime-var? t)
+  (cond
+    [(lifetime-var? t) #t]
+    [(list? t) (ormap contains-lifetime-var? t)]
+    [else #f]))
 
 ;; 段 1 の試験専用。typing の走査が訪れた point を集める。
 ;; 型検査の成否は問わず、走査の網羅だけを観測する。
