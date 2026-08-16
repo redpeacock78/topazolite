@@ -38,7 +38,8 @@
          emit-constraint!
          collected-constraints
          with-lifetime-collector
-         collect-use-regions!)
+         collect-use-regions!
+         typing-inference)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -76,6 +77,19 @@
           (region-constraint 'contains `(RVar ,k) ρ point #f))]
         [(? list? ts) (for-each walk ts)]
         [_ (void)]))))
+
+;; 寿命変数の採番（spec §3.2）。借用の項 1 つにつき 1 つ作る。
+;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない（spec §14-1）。
+(define lifetime-counter (make-parameter #f))
+(define alpha-table (make-parameter #f))
+
+(define (fresh-lifetime! point)
+  (define c (lifetime-counter))
+  (define k (unbox c))
+  (set-box! c (add1 k))
+  (define t (alpha-table))
+  (when t (set-box! t (hash-set (unbox t) point `(RVar ,k))))
+  `(RVar ,k))
 
 (define (lookup table key)
   (match (assoc key table)
@@ -698,30 +712,38 @@
 
 ;; [REQ: BOR-001] 借用の region は owner の region に含まれていなければならない。
 ;; [REQ: BOR-002] 可変借用の有効期間中、競合する alias を作れない。
+;;
+;; G5c1 では判定を行わない。α を作り、制約と判定の要求だけを記録する。
+;; 判定は解決の後、検査の段が行う（spec §7.3）。
 (define (infer-borrow core w mutable? Λ Ψ environment places callables fail)
   (define ir (region-ctx-ir Λ))
   (unless ir (fail 'borrow-unknown-owner-region core))
   (define payload (borrow-target-payload w environment places core fail))
   (define key (if (exact-nonnegative-integer? w) w (peel-node w)))
   (define ρ_owner (region-ctx-owner Λ key))
+  ;; 所有者の region が引けないのは制約の違反ではなく入力の情報不足である。
+  ;; 解決を待つ理由が無いため、ここで落とす（spec §8.1）。
   (unless ρ_owner (fail 'borrow-unknown-owner-region core))
-  ;; 借用は自分を囲む最も内側の Scope の間だけ生きる。lexical な近似であり、
-  ;; NLL solver へ置き換われば ρ_borrow は短くなる。判定の式は変わらない。
-  (define ρ_borrow (region-at ir (region-ctx-point Λ)))
-  (unless (region-outlives? ir ρ_owner ρ_borrow)
-    (fail 'borrow-escapes-owner core))
-  (define allowed?
-    (if mutable?
-        (borrow-mut-allowed? Ψ key ρ_borrow ir)
-        (borrow-allowed? Ψ key ρ_borrow ir)))
-  (unless allowed? (fail 'borrow-conflicting-alias core))
+  (define point (region-ctx-point Λ))
+  (define ρ_borrow (region-at ir point))
+  ;; 移行期の入口では、まだ寿命変数の文脈を持たないため G5b と同じ
+  ;; 具体 region を返す。寿命変数を使う入口だけが制約を記録する。
+  (define α (and (lifetime-counter) (fresh-lifetime! point)))
+  (when α
+    ;; 借用の起点は α の下限である。使わない借用の解はこの 1 本で決まり、
+    ;; G5b の ρ_borrow と一致する（spec §5.3）。
+    (emit-constraint!
+     (region-constraint 'contains α ρ_borrow point #f))
+    ;; BOR-001 は上限制約になる（spec §8.1）。
+    (emit-constraint!
+     (region-constraint 'outlives ρ_owner α point core)))
   (define Ψ_out
     (if mutable?
-        (psi-add-mut Ψ key ρ_borrow)
-        (psi-add-shared Ψ key ρ_borrow)))
+        (psi-add-mut Ψ key (or α ρ_borrow))
+        (psi-add-shared Ψ key (or α ρ_borrow))))
   (list (list (if mutable? 'BorrowedMut 'Borrowed)
               payload
-              (region->rho ir ρ_borrow))
+              (or α (region->rho ir ρ_borrow)))
         '()
         Ψ_out))
 
@@ -1188,6 +1210,28 @@
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
+
+;; 段 1 だけを走らせる。試験と、Task 7 の解決の段が使う。
+;; with-typing は成功を (list 'ok <本体の返り値>) で包むので、ここで剥がす。
+;; 返すのは裸の 3 つ組であり、呼び出し側は second と third をそのまま読める。
+;; 段 1 で棄却されたときは error を上げる。3 つ組と取り違える形を残さないためである。
+(define (typing-inference core-in places callables [environment '()]
+                          [Λ (empty-region-ctx)])
+  (define cs (box '()))
+  (define tbl (box (hash)))
+  (define result
+    (parameterize ([lifetime-collector cs]
+                   [lifetime-counter (box 0)]
+                   [alpha-table tbl])
+      (with-typing
+       (lambda (fail)
+         (match-define (list type _row _Ψ)
+           (infer core-in Λ (empty-psi) environment places callables fail))
+         (list type (unbox tbl) (reverse (unbox cs)))))))
+  (match result
+    [(list 'ok value) value]
+    [(list 'fail key _node details)
+     (error 'typing-inference "段 1 が棄却した: ~a ~a" key details)]))
 
 (define (check-as core expected Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
