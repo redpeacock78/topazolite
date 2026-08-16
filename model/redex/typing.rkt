@@ -39,7 +39,9 @@
          collected-constraints
          with-lifetime-collector
          collect-use-regions!
-         typing-inference)
+         typing-inference
+         typing-solve
+         sigma-ref)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -81,6 +83,19 @@
   (when ir
     (emit-request!
      (use-request w (region-at ir (region-ctx-point Λ)) node kind))))
+
+;; 段 2。下限制約から σ を作る。spec §6.1。
+;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
+(define (typing-solve ir constraints)
+  (if ir
+      (region-solve ir constraints)
+      (list 'ok (hash))))
+
+;; σ を読む唯一の窓口。寿命変数なら引き、具体的な region ならそのまま返す。
+(define (sigma-ref σ t)
+  (if (lifetime-var? t)
+      (hash-ref σ (lifetime-var-index t))
+      t))
 
 ;; 型が運び手である（spec §5.1）。
 ;; point π で推論した型の中に α が現れるなら region-at ir π は α の下限である。
