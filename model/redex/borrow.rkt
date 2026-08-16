@@ -11,14 +11,14 @@
          region-ctx-add-owner region-ctx-owner
          region-ctx-add-token region-ctx-token
          (struct-out psi)
+         (struct-out borrow-request)
+         (struct-out use-request)
          empty-psi
          psi-join
          psi-suspend
-         psi-exit
          check-region-annotation
          borrow-allowed?
          borrow-mut-allowed?
-         use-allowed?
          psi-add-shared
          psi-add-mut
          borrow-typed?
@@ -62,6 +62,10 @@
 ;; 兄弟であり、c_1 で取った借用が c_2 へ届かなければ BOR-002 を判定できない。
 (struct psi (shared mut suspended) #:transparent)
 
+;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
+(struct borrow-request (w mode alpha node) #:transparent)
+(struct use-request (w point-region node kind) #:transparent)
+
 (define (empty-psi) (psi (set) (set) (set)))
 
 ;; 分岐の合流。どれか 1 つの経路で生きている借用を生きているものとして扱う。
@@ -73,31 +77,15 @@
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
 ;; mut に実在する項目だけを suspended へ退避する。自己 fallback で得た
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
-(define (psi-suspend Ψ w ρ_parent ρ_child)
-  (define held? (set-member? (psi-mut Ψ) (list w ρ_parent)))
-  (psi (set-add (psi-shared Ψ) (list w ρ_child))
+(define (psi-suspend Ψ w α_parent α_child)
+  (define held? (set-member? (psi-mut Ψ) (list w α_parent)))
+  (psi (set-add (psi-shared Ψ) (list w α_child))
        (if held?
-           (set-remove (psi-mut Ψ) (list w ρ_parent))
+           (set-remove (psi-mut Ψ) (list w α_parent))
            (psi-mut Ψ))
        (if held?
-           (set-add (psi-suspended Ψ) (list w ρ_parent ρ_child))
+           (set-add (psi-suspended Ψ) (list w α_parent α_child))
            (psi-suspended Ψ))))
-
-;; Scope の退場。exiting は regions-exiting-at が返す region の集合である。
-;; suspended の親 capability は子 region の退場で復帰する。
-(define (psi-exit Ψ exiting)
-  (define (keep entries index)
-    (for/set ([entry (in-set entries)]
-              #:unless (set-member? exiting (list-ref entry index)))
-      entry))
-  (define restored
-    (for/set ([entry (in-set (psi-suspended Ψ))]
-              #:when (and (set-member? exiting (third entry))
-                          (not (set-member? exiting (second entry)))))
-      (list (first entry) (second entry))))
-  (psi (keep (psi-shared Ψ) 1)
-       (set-union (keep (psi-mut Ψ) 1) restored)
-       (keep (psi-suspended Ψ) 2)))
 
 ;; 注釈済みの形の ρ は、走査位置の region と一致していなければならない。
 ;; 一致しない項は annotate-regions を通していない項か、別の ir で注釈した項である。
@@ -124,15 +112,6 @@
 (define (borrow-mut-allowed? Ψ w ρ_borrow ir)
   (and (not (conflicts? (psi-mut Ψ) w ρ_borrow ir))
        (not (conflicts? (psi-shared Ψ) w ρ_borrow ir))))
-
-;; Move と Drop は、その w について生きている借用が 1 つも無いときだけ許す。
-;; suspended も見る。reborrow で停止した親は mut に無いため、
-;; suspended を見なければ停止中の親を Move できてしまう。
-(define (use-allowed? Ψ w)
-  (define (holds? entries) (for/or ([e (in-set entries)]) (equal? (first e) w)))
-  (not (or (holds? (psi-shared Ψ))
-           (holds? (psi-mut Ψ))
-           (holds? (psi-suspended Ψ)))))
 
 (define (psi-add-shared Ψ w ρ)
   (struct-copy psi Ψ [shared (set-add (psi-shared Ψ) (list w ρ))]))

@@ -64,6 +64,24 @@
   (parameterize ([lifetime-collector b]) (thunk))
   (reverse (unbox b)))
 
+;; 判定の要求の収集器（spec §7.3）。既定は #f であり、その場合は何も記録しない。
+(define request-collector (make-parameter #f))
+
+(define (emit-request! r)
+  (define b (request-collector))
+  (when b (set-box! b (cons r (unbox b)))))
+
+(define (collected-requests)
+  (define b (request-collector))
+  (if b (reverse (unbox b)) '()))
+
+;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
+(define (emit-use-request! w Λ node kind)
+  (define ir (region-ctx-ir Λ))
+  (when ir
+    (emit-request!
+     (use-request w (region-at ir (region-ctx-point Λ)) node kind))))
+
 ;; 型が運び手である（spec §5.1）。
 ;; point π で推論した型の中に α が現れるなら region-at ir π は α の下限である。
 ;; 値の流れを別に追う解析を書くと、型の側と二重に管理することになる。
@@ -737,6 +755,8 @@
     ;; BOR-001 は上限制約になる（spec §8.1）。
     (emit-constraint!
      (region-constraint 'outlives ρ_owner α point core)))
+  (emit-request!
+   (borrow-request key (if mutable? 'mut 'shared) α core))
   (define Ψ_out
     (if mutable?
         (psi-add-mut Ψ key (or α ρ_borrow))
@@ -1056,15 +1076,7 @@
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (match (infer body (enter-child Λ 0) Ψ environment places callables fail)
-       [(list type row body-psi)
-        (define ir (region-ctx-ir Λ))
-        (define out-psi
-          (if ir
-              (psi-exit body-psi
-                        (regions-exiting-at ir (region-ctx-point Λ)))
-              body-psi))
-        (list type row out-psi)])]
+     (infer body (enter-child Λ 0) Ψ environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -1106,14 +1118,14 @@
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
      (unless type (fail 'unknown-place core))
-     (unless (use-allowed? Ψ place) (fail 'move-borrowed core))
+     (emit-use-request! place Λ core 'move-borrowed)
      (list `(Owned ,type) '(Own) Ψ)]
 
     [`(Move ,name)
      (define w (peel-node name))
      (define type (lookup environment w))
      (unless type (fail 'unbound-variable core))
-     (unless (use-allowed? Ψ w) (fail 'move-borrowed core))
+     (emit-use-request! w Λ core 'move-borrowed)
      (when (borrow-typed? type) (fail 'move-borrowed core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own) Ψ)]
@@ -1125,8 +1137,7 @@
          [`(Move ,w) (peel-node w)]
          [(? symbol? w) w]
          [_ #f]))
-     (when (and dropped (not (use-allowed? Ψ dropped)))
-       (fail 'drop-borrowed argument))
+     (when dropped (emit-use-request! dropped Λ argument 'drop-borrowed))
      (when (and dropped
                 (borrow-typed? (or (lookup environment dropped) '())))
        (fail 'drop-borrowed argument))
@@ -1213,21 +1224,23 @@
 
 ;; 段 1 だけを走らせる。試験と、Task 7 の解決の段が使う。
 ;; with-typing は成功を (list 'ok <本体の返り値>) で包むので、ここで剥がす。
-;; 返すのは裸の 3 つ組であり、呼び出し側は second と third をそのまま読める。
+;; 返すのは裸の 4 つ組であり、Task 5 の 3 つ組へ要求の並びを足す。
 ;; 段 1 で棄却されたときは error を上げる。3 つ組と取り違える形を残さないためである。
 (define (typing-inference core-in places callables [environment '()]
                           [Λ (empty-region-ctx)])
   (define cs (box '()))
+  (define rs (box '()))
   (define tbl (box (hash)))
   (define result
     (parameterize ([lifetime-collector cs]
+                   [request-collector rs]
                    [lifetime-counter (box 0)]
                    [alpha-table tbl])
       (with-typing
        (lambda (fail)
          (match-define (list type _row _Ψ)
            (infer core-in Λ (empty-psi) environment places callables fail))
-         (list type (unbox tbl) (reverse (unbox cs)))))))
+         (list type (unbox tbl) (reverse (unbox cs)) (reverse (unbox rs)))))))
   (match result
     [(list 'ok value) value]
     [(list 'fail key _node details)
@@ -1314,16 +1327,8 @@
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (match (check-as body expected (enter-child Λ 0)
-                     Ψ environment places callables fail)
-       [(list row body-psi)
-        (define ir (region-ctx-ir Λ))
-        (define out-psi
-          (if ir
-              (psi-exit body-psi
-                        (regions-exiting-at ir (region-ctx-point Λ)))
-              body-psi))
-        (list row out-psi)])]
+     (check-as body expected (enter-child Λ 0)
+               Ψ environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
