@@ -33,12 +33,49 @@
          merge-record-types
          check-merge-return
          merge-witnesses-dischargeable?
-         register-owner)
+         register-owner
+         lifetime-collector
+         emit-constraint!
+         collected-constraints
+         with-lifetime-collector
+         collect-use-regions!)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
 ;; および Discharge の層を降りる loop の 3 箇所に限る。
 (define typing-point-probe (make-parameter void))
+
+;; 制約の収集器（spec §5.2）。既定は #f であり、その場合は何も記録しない。
+;; G4b が入れた typing-point-probe と同じ形の記録先である。
+;; 走査の各段へ手を入れず、infer の出口 1 か所で集める。
+(define lifetime-collector (make-parameter #f))
+
+(define (emit-constraint! c)
+  (define b (lifetime-collector))
+  (when b (set-box! b (cons c (unbox b)))))
+
+(define (collected-constraints)
+  (define b (lifetime-collector))
+  (if b (reverse (unbox b)) '()))
+
+(define (with-lifetime-collector thunk)
+  (define b (box '()))
+  (parameterize ([lifetime-collector b]) (thunk))
+  (reverse (unbox b)))
+
+;; 型が運び手である（spec §5.1）。
+;; point π で推論した型の中に α が現れるなら region-at ir π は α の下限である。
+;; 値の流れを別に追う解析を書くと、型の側と二重に管理することになる。
+(define (collect-use-regions! type ir point)
+  (when (and ir (lifetime-collector))
+    (define ρ (region-at ir point))
+    (let walk ([t type])
+      (match t
+        [`(RVar ,k)
+         (emit-constraint!
+          (region-constraint 'contains `(RVar ,k) ρ point #f))]
+        [(? list? ts) (for-each walk ts)]
+        [_ (void)]))))
 
 (define (lookup table key)
   (match (assoc key table)
@@ -714,6 +751,14 @@
 
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
+  (define result
+    (infer/body core Λ Ψ environment places callables fail))
+  (collect-use-regions! (first result)
+                        (region-ctx-ir Λ)
+                        (region-ctx-point Λ))
+  result)
+
+(define (infer/body core Λ Ψ environment places callables fail)
   (match (peel-node core)
     [(? integer?) (list 'Int '() Ψ)]
     [(? string?) (list 'String '() Ψ)]
