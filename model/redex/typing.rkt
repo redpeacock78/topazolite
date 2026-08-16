@@ -658,13 +658,6 @@
        (adopt-inferred-lifetimes d a))]
     [(_ _) declared]))
 
-(define (declared-has-borrow? t)
-  (match t
-    [`(Borrowed ,_ ,_) #t]
-    [`(BorrowedMut ,_ ,_) #t]
-    [(? list?) (for/or ([e (in-list t)]) (declared-has-borrow? e))]
-    [_ #f]))
-
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
@@ -694,27 +687,13 @@
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
     [_
-     (cond
-       [(declared-has-borrow? declared-type)
-        ;; 宣言型が借用を含むときは check-as へ委ねない。
-        ;; 推論した型を手元に置き、寿命を写してから照合し、
-        ;; 束縛の型として推論した型の方を返すためである。
-        ;; 宣言型を返すと spec §5.1 の下限収集が (RVar k) を見つけられず、
+     (match (check-as/full bound declared-type (enter-child Λ 0)
+                           Ψ environment places callables fail)
+       [(list row bound-psi actual)
+        ;; 束縛の型には推論した寿命を持つ側を置く。
+        ;; 宣言型を置くと spec §5.1 の下限収集が (RVar k) を見つけられず、
         ;; 束縛した名前を使う位置の region が σ に入らない。
-        (match (infer bound (enter-child Λ 0)
-                      Ψ environment places callables fail)
-          [(list actual bound-row bound-psi)
-           (define expected (adopt-inferred-lifetimes declared-type actual))
-           (unless (type-compatible? actual expected)
-             (fail 'type-mismatch bound declared-type actual))
-           (list bound-row actual bound-psi)])]
-       [else
-        (define bound-result
-          (check-as bound declared-type (enter-child Λ 0)
-                    Ψ environment places callables fail))
-       (match bound-result
-         [(list row bound-psi)
-           (list row declared-type bound-psi)])])]))
+        (list row (adopt-inferred-lifetimes declared-type actual) bound-psi)])]))
 
 ;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
 ;; 型付けを連なりの全体で見るため、節の側では再帰しない。
@@ -1316,23 +1295,24 @@
     [(list 'fail key _node details)
      (error 'typing-inference "段 1 が棄却した: ~a ~a" key details)]))
 
-(define (check-as core expected Λ Ψ environment places callables fail)
+(define (check-as/full core expected Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
      (define actual (peel-ty data-type))
      (unless (type-equiv? actual expected)
        (fail 'type-mismatch core expected actual))
-     (check-construct constructor fields data-type
-                      Λ
-                      Ψ
-                      environment places callables core fail)]
+     (match (check-construct constructor fields data-type
+                              Λ
+                              Ψ
+                              environment places callables core fail)
+       [(list row psi) (list row psi actual)])]
 
     [`(Error ,place)
      (unless (and (exact-nonnegative-integer? place)
                   (assoc place places))
        (fail 'unknown-place core))
-     (list '() Ψ)]
+     (list '() Ψ expected)]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound
@@ -1348,22 +1328,23 @@
         (define Λ_token (region-ctx-add-token Λ_owner x token))
         (define Λ_body (enter-child Λ_token 1))
         (define body-result
-          (check-as body
-                    expected
-                    Λ_body
-                    bound-psi
-                    (extend environment (list x)
-                            (list binding-type))
-                    places
-                    callables
-                    fail))
+          (check-as/full body
+                        expected
+                        Λ_body
+                        bound-psi
+                        (extend environment (list x)
+                                (list binding-type))
+                        places
+                        callables
+                        fail))
         (list (row-union bound-row (first body-result))
-              (second body-result))])]
+              (second body-result)
+              (third body-result))])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
-       (check-as bound (peel-ty type) (enter-child Λ 0)
-                 Ψ environment places callables fail))
+       (check-as/full bound (peel-ty type) (enter-child Λ 0)
+                      Ψ environment places callables fail))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type))
@@ -1374,31 +1355,33 @@
      (define Λ_token (region-ctx-add-token Λ_owner x token))
      (define Λ_body (enter-child Λ_token 1))
      (define body-result
-       (check-as body
-                 expected
-                 Λ_body
-                 (second bound-result)
-                 (extend environment
-                         (list x)
-                         (list binding-type))
-                 places
-                 callables
-                 fail))
+       (check-as/full body
+                     expected
+                     Λ_body
+                     (second bound-result)
+                     (extend environment
+                             (list x)
+                             (list binding-type))
+                     places
+                     callables
+                     fail))
      (list (row-union (first bound-result) (first body-result))
-           (second body-result))]
+           (second body-result)
+           (third body-result))]
 
     [`(Eliminate ,scrutinee (,branches ...))
-     (check-eliminate scrutinee branches expected
-                      Λ
-                      Ψ
-                      environment places callables core fail)]
+     (match (check-eliminate scrutinee branches expected
+                              Λ
+                              Ψ
+                              environment places callables core fail)
+       [(list row psi) (list row psi expected)])]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (check-as body expected (enter-child Λ 0)
-               Ψ environment places callables fail)]
+     (check-as/full body expected (enter-child Λ 0)
+                    Ψ environment places callables fail)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -1409,42 +1392,51 @@
                       Λ
                       Ψ
                       environment places callables core fail))
-     (check-as continuation
-               expected
-               (enter-child Λ 1)
-               (second continuation-environment)
-               (first continuation-environment)
-               places
-               callables
-               fail)]
+     (check-as/full continuation
+                    expected
+                    (enter-child Λ 1)
+                    (second continuation-environment)
+                    (first continuation-environment)
+                    places
+                    callables
+                    fail)]
 
     [`(Yield ,observed ,next)
      (define observed-result
        (infer observed (enter-child Λ 0)
              Ψ environment places callables fail))
      (define next-result
-       (check-as next expected (enter-child Λ 1)
-                 (third observed-result)
-                 environment places callables fail))
+       (check-as/full next expected (enter-child Λ 1)
+                      (third observed-result)
+                      environment places callables fail))
      (list (rows-union
             (list (second observed-result)
                   (first next-result)
                   `((Yield ,(first observed-result)))))
-           (second next-result))]
+           (second next-result)
+           (third next-result))]
 
     [`(Suspend ,body)
      (define body-result
-       (check-as body expected (enter-child Λ 0)
-                 Ψ environment places callables fail))
+       (check-as/full body expected (enter-child Λ 0)
+                      Ψ environment places callables fail))
      (list (row-union (first body-result) '(Suspend))
-           (second body-result))]
+           (second body-result)
+           (third body-result))]
 
     [_
      (match (infer core Λ Ψ environment places callables fail)
        [(list actual row result-psi)
-        (unless (type-compatible? actual expected)
+        (unless (type-compatible?
+                 actual
+                 (adopt-inferred-lifetimes expected actual))
           (fail 'type-mismatch core expected actual))
-        (list row result-psi)])]))
+        (list row result-psi actual)])]))
+
+;; 既存の呼び出しは結果の型を要らない。第 3 要素を落として渡す。
+(define (check-as core expected Λ Ψ environment places callables fail)
+  (match (check-as/full core expected Λ Ψ environment places callables fail)
+    [(list row psi _) (list row psi)]))
 
 ;; 入口検査は type-of/raw と core-check-row が共有する。片方だけ直す事故を
 ;; 避けるため、検査の順と key をここへ寄せる。
