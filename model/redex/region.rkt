@@ -11,9 +11,11 @@
          (struct-out region)
          (struct-out region-ir)
          (struct-out lexical-region-ir)
+         (struct-out region-constraint)
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
-         region->rho rho->region
+         region->rho rho->region region-solve
+         lifetime-var? lifetime-var-index
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions)
 
@@ -190,11 +192,27 @@
   (regions-exiting-at region-solver point)
   (region-owning region-solver p)
   (region->rho region-solver ρ)
-  (rho->region region-solver n))
+  (rho->region region-solver n)
+  (region-solve region-solver constraints))
 
 ;; 3 成分。outlives は直接の制約だけを持ち、推移閉包は持たない。
 ;; owners は region から、その region が管理する place 列 π への有限写像である。
 (struct region-ir (regions outlives owners) #:transparent)
+
+;; 制約は違反したときに診断を出す位置を持つ（spec §4.2）。
+;; kind は 'contains か 'outlives である。
+;; left と right は寿命項であり、`(RVar k)` か region 構造体である。
+;; point は制約を立てた位置であり、α 表と同じ鍵である。
+;; node は診断の span を引く節点であり、region-solve は読まない。
+;; 鍵に使ってよいのは point だけである。core-children が走査のたびに節点を
+;; 作り直すため、node を値で hash した鍵は構造の等しい借用どうしで衝突する。
+(struct region-constraint (kind left right point node) #:transparent)
+
+(define (lifetime-var? t)
+  (match t [`(RVar ,(? exact-nonnegative-integer?)) #t] [_ #f]))
+
+(define (lifetime-var-index t)
+  (match t [`(RVar ,k) k]))
 
 ;; inspection API。docs/specification/region.md §6 の adapter 性質を試験する側だけが読む。
 ;; G5b は読まない。
@@ -225,6 +243,26 @@
   (for/first ([ρ (in-set (region-ir-regions ir))]
               #:unless (hash-has-key? (lexical-region-ir-parents ir) ρ))
     ρ))
+
+;; 下限の並びから最小共通祖先を返す。lexical 固有の内部手続きであり、
+;; Core API には出さない。typing はこれを呼ばない。
+(define (lexical-join ir regions)
+  (for/fold ([acc (first regions)]) ([ρ (in-list (rest regions))])
+    (let loop ([a acc])
+      (cond
+        [(region-contains? ir a ρ) a]
+        [else
+         (match (region-parent ir a)
+           [#f a]
+           [p (loop p)])]))))
+
+(define (satisfied? ir σ resolve c)
+  (define l (resolve (region-constraint-left c)))
+  (define r (resolve (region-constraint-right c)))
+  (cond
+    [(or (not l) (not r)) #f]
+    [(eq? (region-constraint-kind c) 'contains) (region-outlives? ir l r)]
+    [else (region-outlives? ir l r)]))
 
 ;; lexical adapter が持つ内部の表。IR の接点には出さない。
 ;; parents は Scope の入れ子から読んだ親子関係、at-table は Scope の point から
@@ -279,6 +317,38 @@
        [(list ρ) ρ]
        ['() (error 'region-owning "所有者が無い place である: ~s" p)]
        [_ (error 'region-owning "所有者が 2 つ以上ある place である: ~s" p)]))
+   ;; 解決を Core API の 1 つの問いにする（spec §6.1）。
+   ;; 最小上界を返す region-lub を足す案は採らない。region.md §5 の
+   ;; well-formedness は任意の outlives の集合を許し、束であることを
+   ;; 要求しないため、最小上界は全域にならない。
+   ;;
+   ;; σ は決定的かつ極小でなければならない。極小解が一意であることは
+   ;; 要求しないが、診断と materialize と parity 検査が同じ σ を観測する
+   ;; 必要があるため、選び方は決定的でなければならない。
+   ;; lexical では最小共通祖先が唯一の極小解になるので自動的に満たされる。
+   (define (region-solve ir constraints)
+     ;; 下限を寿命変数ごとに集める。並びは制約の順であり、決定的である。
+     (define lowers
+       (for/fold ([acc (hash)]) ([c (in-list constraints)])
+         (cond
+           [(eq? (region-constraint-kind c) 'contains)
+            (define k (lifetime-var-index (region-constraint-left c)))
+            (hash-update acc k (lambda (rs) (cons (region-constraint-right c) rs))
+                         '())]
+           [else acc])))
+     ;; 極小解は下限の最小共通祖先である。
+     (define σ
+       (for/hash ([(k rs) (in-hash lowers)])
+         (values k (lexical-join ir (reverse rs)))))
+     (define (resolve t)
+       (if (lifetime-var? t)
+           (hash-ref σ (lifetime-var-index t) #f)
+           t))
+     (define broken
+       (for/list ([c (in-list constraints)]
+                  #:unless (satisfied? ir σ resolve c))
+         c))
+     (if (null? broken) (list 'ok σ) (list 'error broken)))
    ;; 写像は 1 つの ir の中でだけ有効である。別の ir の region や ρ を渡すのは
    ;; error であり、solver が異なる場合も同じ solver の別の実行結果である場合も
    ;; 区別しない。判別は数の由来ではなく ir の所属表への membership で行う。
