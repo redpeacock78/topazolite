@@ -30,9 +30,16 @@
          merge-field
          presence-binding-name
          field-type-binding-name
+         merge-record-types/impl
          merge-record-types
          check-merge-return
          merge-witnesses-dischargeable?
+         lifetime-unify-context
+         unify-borrow-lifetimes
+         with-lifetime-unify
+         merge-position
+         lifetime-counter
+         alpha-table
          register-owner
          lifetime-collector
          emit-constraint!
@@ -124,8 +131,9 @@
   (define c (lifetime-counter))
   (define k (unbox c))
   (set-box! c (add1 k))
-  (define t (alpha-table))
-  (when t (set-box! t (hash-set (unbox t) point `(RVar ,k))))
+  (unless (and (pair? point) (eq? (car point) 'merge))
+    (define t (alpha-table))
+    (when t (set-box! t (hash-set (unbox t) point `(RVar ,k)))))
   `(RVar ,k))
 
 (define (lookup table key)
@@ -308,26 +316,106 @@
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (check-as (first context)
-                expected
-                (third context)
-                (third scrutinee-result)
-                (second context)
-                places
-                callables
-                fail)))
+      (check-as/full (first context)
+                     expected
+                     (third context)
+                     (third scrutinee-result)
+                     (second context)
+                     places
+                     callables
+                     fail)))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
       (psi-join joined (second result))))
+  ;; 分岐ごとに別の α を持つ借用を 1 本へ合流する。合流しなかったときは
+  ;; expected を返し、分岐 0 の型を根拠なく選ばない。
+  (define unified
+    (parameterize ([merge-position
+                    (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
+      (with-lifetime-unify
+       (lambda ()
+         (unify-borrow-lifetimes
+          (map (lambda (result) (normalize-type (third result)))
+               branch-results))))))
+  (define merged (if (= (length unified) 1) (first unified) expected))
   (list (rows-union
          (cons (second scrutinee-result)
                (map first branch-results)))
-        branch-psi))
+        branch-psi
+        merged))
 
 ;; CMP-001: 2 つの型を Union で合わせ、同値な構成要素を正規化で畳む。
 (define (join-types left right)
   (normalize-type `(Union ,left ,right)))
+
+;; §10.1。合流の memo。merge-record-types/impl が 1 回の合流につき 1 つ張る。
+;; merge-fields と merge-witness-context が同じ型の並びへ同じ α_m を得るための共有である。
+(define lifetime-unify-context (make-parameter #f))
+
+;; 合流の制約の診断位置。分岐を型付けする側が張る（§10.2）。
+;; 値は `(list ir point node)` か `#f` である。
+;; `#f` のときは制約を立てない。span を引けない節点で診断を出さないためである。
+;; ir を持つのは、α_m の下限に合流位置の region を置くためである。
+(define merge-position (make-parameter #f))
+
+(define (with-lifetime-unify thunk)
+  (parameterize ([lifetime-unify-context (box (hash))]) (thunk)))
+
+;; 借用の寿命だけを合流する。payload が一致する借用が 2 つ以上あるときに働く。
+;; 文脈が無いとき（合流の外から呼ばれたとき）は何もしない。
+(define (unify-borrow-lifetimes types)
+  (define memo (lifetime-unify-context))
+  (cond
+    [(not memo) types]
+    [(hash-ref (unbox memo) types #f) => values]
+    [else
+     (define result (unify-borrow-lifetimes/fresh types))
+     (set-box! memo (hash-set (unbox memo) types result))
+     result]))
+
+(define (borrow-shape t)
+  (match t
+    [`(Borrowed ,payload ,ρ) (list 'Borrowed payload ρ)]
+    [`(BorrowedMut ,payload ,ρ) (list 'BorrowedMut payload ρ)]
+    [_ #f]))
+
+(define (unify-borrow-lifetimes/fresh types)
+  (define shapes (map borrow-shape types))
+  (cond
+    ;; 全てが借用であり、構築子と payload が一致し、
+    ;; かつ少なくとも 1 つの枝が寿命変数を持つときだけ合流する。
+    ;; 全ての枝が具体的な region のときは G5b のままにする（§3.1）。
+    [(and (andmap values shapes)
+          (> (length shapes) 1)
+          (for/and ([s (in-list (rest shapes))])
+            (and (eq? (first s) (first (first shapes)))
+                 (equal? (second s) (second (first shapes)))))
+          (for/or ([s (in-list shapes)]) (lifetime-var? (third s))))
+     (define ctor (first (first shapes)))
+     (define payload (second (first shapes)))
+     (define α_m (fresh-lifetime! (list 'merge (length shapes))))
+     (define pos (merge-position))
+     ;; 位置が無い呼び出しでは制約を立てない。§10.2。
+     (when (and pos (first pos))
+       (define ir (first pos))
+       (define point (second pos))
+       (define node (third pos))
+       ;; α_m の下限を必ず 1 本立てる。合流した値は合流位置で生きている。
+       (emit-constraint!
+        (region-constraint 'contains α_m (region-at ir point) point node))
+       (for ([s (in-list shapes)])
+         (define ρ (third s))
+         (if (lifetime-var? ρ)
+             ;; 合流した値は両分岐の寿命に収まる。§10.1。
+             (emit-constraint!
+              (region-constraint 'merge ρ α_m point node))
+             ;; 具体の側は下限である。§3.1。
+             (emit-constraint!
+              (region-constraint 'contains α_m (rho->region ir ρ)
+                                 point node)))))
+     (list (list ctor payload α_m))]
+    [else types]))
 
 ;; CMP-001/ROW-005: 同じ label を持つ field を合わせる。
 ;; 異型があれば mut を imm へ降格したうえで Union join する。
@@ -349,7 +437,7 @@
 (define (distinct-normal-types types)
   (define normalized (map normalize-type types))
   (and (andmap values normalized)
-       (sort-then-dedup normalized)))
+       (unify-borrow-lifetimes (sort-then-dedup normalized))))
 
 ;; RFN-002/CMP-001: merge が立てる局所 witness 文脈。
 ;; 各 field の Presence に加え、異型 join には branch 型ごとの FieldType を置く。
@@ -413,19 +501,21 @@
 ;; へ降格して Union join する。どれかの branch に無い field だけが落ちる。
 ;; types は空でないことを呼び出し側が保証する。
 (define (merge-record-types/impl types)
-  (define merged-fields
-    (for/list ([field (in-list (second (first types)))])
-      (merge-common-field types field)))
-  (cond
-    [(memq #f merged-fields) (values #f '())]
-    [else
-     (define merged-row
-       (filter (lambda (field) (not (eq? field 'absent))) merged-fields))
-     (define merged-type (normalize-type `(Record ,merged-row)))
-     (if merged-type
-         (values merged-type
-                 (merge-witness-context types (second merged-type)))
-         (values #f '()))]))
+  (with-lifetime-unify
+   (lambda ()
+     (define merged-fields
+       (for/list ([field (in-list (second (first types)))])
+         (merge-common-field types field)))
+     (cond
+       [(memq #f merged-fields) (values #f '())]
+       [else
+        (define merged-row
+          (filter (lambda (field) (not (eq? field 'absent))) merged-fields))
+        (define merged-type (normalize-type `(Record ,merged-row)))
+        (if merged-type
+            (values merged-type
+                    (merge-witness-context types (second merged-type)))
+            (values #f '()))]))))
 
 ;; POL-002/ROW-004: 合流 row の label は一意で昇順、witness 列は wf-context? を
 ;; 満たし束縛名が重複しない。#f だけが fail-closed 返却である。(Record ()) は
@@ -485,7 +575,9 @@
       [(andmap record-type? types)
        ;; RFN-002: W は merge の局所検査だけで使う。型へは載せない。
        (define-values (merged _witnesses)
-         (merge-record-types/impl types))
+         (parameterize ([merge-position
+                         (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
+           (merge-record-types/impl types)))
        (unless merged (fail 'unmergeable-branch-records node))
        merged]
       [(ormap record-type? types)
@@ -1398,11 +1490,10 @@
            (third body-result))]
 
     [`(Eliminate ,scrutinee (,branches ...))
-     (match (check-eliminate scrutinee branches expected
-                              Λ
-                              Ψ
-                              environment places callables core fail)
-       [(list row psi) (list row psi expected)])]
+     (check-eliminate scrutinee branches expected
+                      Λ
+                      Ψ
+                      environment places callables core fail)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
@@ -1587,7 +1678,9 @@
   (case (region-constraint-kind c)
     [(outlives) 'borrow-escapes-owner]
     [(reborrow) 'reborrow-region-escapes]
-    [else 'borrow-escapes-owner]))
+    [else
+     (error 'constraint-key "未知の region constraint kind: ~s"
+            (region-constraint-kind c))]))
 
 (define (constraint-node c) (region-constraint-node c))
 

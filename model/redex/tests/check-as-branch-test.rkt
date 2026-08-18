@@ -27,8 +27,8 @@
 
 ;; 分岐ごとに別の α を持つ借用でも、検査の位置なら合流は起きない。
 ;; 各分岐が期待した型と照合されるだけなので、Task 12 を待たずに通る。
-;; ただしこの枝は束縛の型へ期待した型をそのまま返すため、(RVar k) を保たない。
-;; 束縛名を使う位置が spec §5.1 の下限を立てられない状態は Task 12 Step 7b が回収する。
+;; この fixture が押さえるのは既存の borrow-request による使用判定であり、
+;; Step 7b の合流した寿命を判別するものではない。
 (let ()
   (define (make ρ)
     `(Scope (1) (Let (b let (Borrowed Res ,ρ))
@@ -39,12 +39,56 @@
   (define ir (build-region-ir (make 0)))
   (check-equal? (status (make (rho-at ir '(0 0))) ir) 'ok))
 
+;; 検査の位置の Eliminate でも、分岐の借用が生きている間の Move を捕まえる。
+;; Task 8b では束縛の型が (RVar k) を失い、この Move が素通りしていた。
+(let ()
+  (define (make body)
+    `(Scope (1) (Let (b let (Borrowed Res 0))
+                     (Eliminate (Construct Bool true)
+                                ((true () -> (Borrow 1))
+                                 (false () -> (Borrow 1))))
+                     ,body)))
+  (define ir (build-region-ir (make '(Move 1))))
+  (check-equal? (status (make '(Move 1)) ir) 'fail)
+  ;; 借用の使用が無ければ、合流が使用の判定を広げすぎず通る。
+  (check-equal? (status (make 0) ir) 'ok))
+
 ;; Scope 枝。借用は内側の Scope で作るが、束縛は外側の宣言型で受ける。
 (let ()
   (define (make ρ)
     `(Scope (1) (Let (b let (Borrowed Res ,ρ)) (Scope () (Borrow 1)) 0)))
   (define ir (build-region-ir (make 0)))
   (check-equal? (status (make (rho-at ir '(0 0 0))) ir) 'ok))
+
+;; 検査位置の Eliminate を内側 Scope へ置き、束縛名を外側で観測する。
+;; check-as/full が合流した型を binding-context へ返さないと宣言型の内側 ρ が
+;; そのまま結果へ残る。合流した (RVar k) を返す経路では、外側の Yield が下限を
+;; 足し、結果の借用は外側 ρ へ広がる。
+(let ()
+  (define skeleton
+    `(Scope (1)
+            (Let (b let (Borrowed Res 0))
+                 (Scope ()
+                        (Eliminate (Construct Bool true)
+                                   ((true () -> (Borrow 1))
+                                    (false () -> (Borrow 1)))))
+                 (Yield b 0))))
+  (define ir (build-region-ir skeleton))
+  (define inner-rho (rho-at ir '(0 0)))
+  (define outer-rho (rho-at ir '()))
+  (define core
+    `(Scope (1)
+            (Let (b let (Borrowed Res ,inner-rho))
+                 (Scope ()
+                        (Eliminate (Construct Bool true)
+                                   ((true () -> (Borrow 1))
+                                    (false () -> (Borrow 1)))))
+                 (Yield b 0))))
+  (check-equal?
+   (type-of/raw (annotate-regions core ir)
+                (list (list 1 'Res)) '() '()
+                (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
+   `(ok (Int ((Yield (Borrowed Res ,outer-rho)))))))
 
 ;; Let 枝（2 要素の形）。内側の Let を通っても寿命が上がる。
 (let ()

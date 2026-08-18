@@ -201,7 +201,7 @@
 (struct region-ir (regions outlives owners) #:transparent)
 
 ;; 制約は違反したときに診断を出す位置を持つ（spec §4.2）。
-;; kind は 'contains、'outlives、または 'reborrow である。
+;; kind は 'contains、'outlives、'reborrow、または 'merge である。
 ;; left と right は寿命項であり、`(RVar k)` か region 構造体である。
 ;; point は制約を立てた位置であり、α 表と同じ鍵である。
 ;; node は診断の span を引く節点であり、region-solve は読まない。
@@ -263,10 +263,11 @@
   (cond
     [(or (not l) (not r)) #f]
     [(eq? (region-constraint-kind c) 'contains) (region-outlives? ir l r)]
-    [(or (eq? (region-constraint-kind c) 'outlives)
-         (eq? (region-constraint-kind c) 'reborrow))
+    [(memq (region-constraint-kind c) '(outlives reborrow merge))
      (region-outlives? ir l r)]
-    [else (region-outlives? ir l r)]))
+    [else
+     (error 'satisfied? "未知の region constraint kind: ~s"
+            (region-constraint-kind c))]))
 
 ;; lexical adapter が持つ内部の表。IR の接点には出さない。
 ;; parents は Scope の入れ子から読んだ親子関係、at-table は Scope の point から

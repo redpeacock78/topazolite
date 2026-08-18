@@ -171,6 +171,6 @@ key と番号は `docs/specification/diagnostic.md` の registry に従う。
 4. 自己 fallback の provenance。3 節のとおり、所有者を辿れない designator は自分自身を親 capability とみなす。真の所有者の可変借用は停止しない。G5b には借用を通じた書き込み操作が無いため観測可能な差は生じないが、書き込み操作を入れる段で provenance を厳密にする必要がある。
 5. 借用の値が自分の region の外へ出ること。これを塞ぐには region subsumption が要る。Scope の結果型を制限する案は、内側の Scope で外側の所有値を借りて結果に返す正当なプログラムを弾くため採らない。BOR-001 と BOR-002 の条件そのものではなく、region の順序の未整備である。G5c1 が寿命の制約でこの流れを解く。関数境界と view が運ぶ流れを試験できるのは G5c2 であるため、確認は G5c2 で行う。
 6. Portable Racket backend に借用 5 規則の写し先が無いこと。BOR-001 と BOR-002 の条件そのものではなく、backend 側の未設計である。借用を扱う backend を追加する段で回収する。
-7. 分岐 record の同じ欄へ異なる region の `Borrowed` 値を返すと、型検査は合流結果を `Union` として受理し、`unmergeable-branch-records` には到達しなかった。record merge の失敗条件を借用の region 差へ広げることは未回収である。
+7. 分岐 record の同じ欄へ異なる region の `Borrowed` 値を返すと、型検査は合流結果を `Union` として受理し、`unmergeable-branch-records` には到達しなかった。record merge の失敗条件を借用の region 差へ広げることは未回収である。G5c1 が回収した。record merge の失敗条件は広げず、合流した借用の寿命を新しい寿命変数へ束ね、両分岐の寿命に収まることを制約で検査する。分岐の借用が所有者を超える形として `borrow-escapes-owner` で報告する。現行の寿命変数の伝播では merge 制約自体が恒に満たされるため、合流固有の診断 key は置かない。opaque な region 引数が入り伝播で広げられなくなる段で必要になれば、その段で足す。失敗条件を広げる案は、両分岐が同じ所有者を同じ長さだけ借りていながら走査上の region 識別子だけが違う形を弾くため、採らなかった。
 
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
