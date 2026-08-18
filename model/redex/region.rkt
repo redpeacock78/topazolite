@@ -505,6 +505,9 @@
 ;; spec §3.3。α 表と σ から、注釈欄を解いた寿命へ置き換えた core を返す。
 ;; point の数え方は annotate-regions と同じく core-children に従う。
 (define (materialize-regions ir core table σ)
+  ;; alpha-table に載る α は fresh-lifetime! と contains 制約を同時に
+  ;; 作ったものだけであり、必ず σ の鍵を持つ。既定値で隠さず不変条件を
+  ;; 破ったときは hash-ref の error として検出する。
   (define (resolve ρ point)
     (define α (hash-ref table point #f))
     (if α

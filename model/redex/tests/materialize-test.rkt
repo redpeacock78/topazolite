@@ -88,3 +88,28 @@
 ;; materialize 後の core へ check-region-annotation を掛けると落ちる。
 ;; この検査は起点との一致を見る道具であり、置換後は必ず落ちるのが正しい。
 ;; 型付けの経路がこれを二度掛けしていないことを、経路の側で保証する。
+
+;; infer-eliminate は同じ分岐を infer と check-as の二度走査する。
+;; 同じ point の alpha-table が後の alpha で上書きされても、両走査の
+;; σ は同じ region を与え、materialize の結果は変わらないことを確認する。
+(let ()
+  (define core
+    '(Scope (1)
+       (Let (x let (Owned Res)) (resource 1)
+         (Eliminate (Construct (Option Int) some 0)
+           ((none () -> (Borrow x))
+            (some (y) -> (Borrow x)))))))
+  (define ir (build-region-ir core))
+  (define annotated (annotate-regions core ir))
+  (define Λ (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
+  (match-define (list 'ok _type out)
+    (core-type-of/materialized annotated (list (list 1 'Res)) '() '() Λ))
+  (define (borrow-at-rhos t)
+    (match t
+      [`(BorrowAt ,ρ ,_) (list ρ)]
+      [(? list? ts) (apply append (map borrow-at-rhos ts))]
+      [_ '()]))
+  (define rhos (borrow-at-rhos out))
+  (check-equal? (length rhos) 2)
+  (check-true (andmap exact-nonnegative-integer? rhos))
+  (check-equal? (remove-duplicates rhos) (list (first rhos))))
