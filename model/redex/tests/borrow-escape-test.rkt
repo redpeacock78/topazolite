@@ -32,4 +32,4 @@
     [(list 'fail 'borrow-escapes-owner node _)
      ;; key だけでなく、破れた outlives 制約の node が Borrow であることを確認する。
      (check-true (match node [`(BorrowAt ,_ 1) #t] [_ #f]))]
-    [_ (fail "expected borrow-escapes-owner at Borrow node, got ~s" result)]))
+    [_ (fail (format "expected borrow-escapes-owner at Borrow node, got ~s" result))]))
