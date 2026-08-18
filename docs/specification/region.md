@@ -186,6 +186,8 @@ C6 は region 識別子の採番や内部鍵の一致を要求しない。
    借用どうしの衝突 `regions-overlap?` は、lexical で偽だった対について NLL でも偽である。
    これらは解の region 識別子ではなく判定の結果を比較する。
    最後の条件には置換の余地があり、lexical で真だった衝突が NLL で偽になることは許す。
+   この 3 条は `model/redex/tests/solver-parity-test.rkt` の枠で確かめる。
+   NLL solver が入るまで、枠は lexical solver どうしを突き合わせる。
 
 6 条件を満たす限り、利用側の書き換えは要らない。
 新しい solver は Inspection API、`lexical-region-ir-ok?`、C1 から C4 を実装または満たす必要はない。
