@@ -98,9 +98,29 @@
 ;; 段 3。σ の上で BOR-002 と使用を判定する。spec §7.3 と §8。
 ;; sigma-ref は typing 側から渡す。borrow.rkt は typing.rkt を require しない。
 (define (check-borrows ir σ Ψ requests sigma-ref fail)
-  (define borrows (filter borrow-request? requests))
+  ;; infer-eliminate は attempts と check-as の双方で枝を走査するため、
+  ;; 同じ借用要求が重複して収集される。要求は出来事を表すので重複は
+  ;; 別 alias ではなく、順序を保ったまま一度だけ判定する。
+  (define borrows (remove-duplicates (filter borrow-request? requests)))
   (define uses (filter use-request? requests))
   (define (ρ-of r) (sigma-ref σ (borrow-request-alpha r)))
+  ;; 停止中の親は、その子の寿命に完全に含まれる要求との対だけを
+  ;; BOR-002 から除く。子の外へはみ出す要求は親が復帰する区間で
+  ;; 衝突し得るため、通常どおり判定する。
+  (define (suspended-pair? a b)
+    (for/or ([e (in-set (psi-suspended Ψ))])
+      (define w-parent (first e))
+      (define α-parent (second e))
+      (define α-child (third e))
+      (define ρ-child (sigma-ref σ α-child))
+      (define (inside-child? r)
+        (define ρ (ρ-of r))
+        (and ρ-child ρ (region-outlives? ir ρ-child ρ)))
+      (and (equal? w-parent (borrow-request-w a))
+           (or (and (equal? α-parent (borrow-request-alpha a))
+                    (inside-child? b))
+               (and (equal? α-parent (borrow-request-alpha b))
+                    (inside-child? a))))))
   ;; BOR-002。同じ w の対を決定的な順序で見る。
   (define ordered
     (sort borrows
@@ -117,6 +137,7 @@
     (when (and (equal? (borrow-request-w a) (borrow-request-w b))
                (or (eq? (borrow-request-mode a) 'mut)
                    (eq? (borrow-request-mode b) 'mut))
+               (not (suspended-pair? a b))
                (regions-overlap? ir (ρ-of a) (ρ-of b)))
       (fail 'borrow-conflicting-alias (borrow-request-node b))))
   ;; 使用。w の生きた借用が使用位置を覆うかを見る。重なりでは見ない。§7.4。

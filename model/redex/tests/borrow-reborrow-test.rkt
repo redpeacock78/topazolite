@@ -118,15 +118,39 @@
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
 ;; 正常系。子 region の共有借用を返す。
+;; G5c1 では外側で使われる結果の位置が α_child の下限になり、
+;; 親子制約の伝播で返り値の寿命は外側の region へ広がる。
 (let ()
   (define core
     '(Scope ()
        (Let (x let (Owned Res)) (resource 1)
          (Scope () (Reborrow (BorrowMut x))))))
   (define ir (build-region-ir core))
-  (define ρ_inner (region->rho ir (region-at ir '(0 1))))
+  (define ρ_outer (region->rho ir (region-at ir '())))
   (check-equal? (type-of/raw core '() '() '() (Λ-of ir))
-                (list 'ok (list `(Borrowed Res ,(region->rho ir (region-at ir '(0 1)))) '()))))
+                (list 'ok (list `(Borrowed Res ,ρ_outer) '()))))
+
+;; Reborrow の子寿命へ完全に含まれる共有借用は、停止中の親との
+;; 対を除いて許す。Reborrow 自身の shared request が別の可変借用との
+;; 衝突を見落とさないことも同時に固定する。
+(let ()
+  (define core
+    '(Scope ()
+       (Let (x let (Owned Res)) (resource 1)
+         (Yield (Reborrow (BorrowMut x)) (Borrow x)))))
+  (define ir (build-region-ir core))
+  (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
+
+;; 子寿命の外へはみ出す共有借用は、親が復帰する区間で衝突するため
+;; 停止窓から除かず、borrow-conflicting-alias を残す。
+(let ()
+  (define core
+    '(Scope ()
+       (Let (x let (Owned Res)) (resource 1)
+         (Yield (Scope () (Reborrow (BorrowMut x))) (Borrow x)))))
+  (define ir (build-region-ir core))
+  (check-equal? (key-of (type-of/raw core '() '() '() (Λ-of ir)))
+                'borrow-conflicting-alias))
 
 ;; Let 経由で停止、子退場後の復帰、Drop の拒否を通す。
 (let ()

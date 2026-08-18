@@ -200,7 +200,7 @@
 (struct region-ir (regions outlives owners) #:transparent)
 
 ;; 制約は違反したときに診断を出す位置を持つ（spec §4.2）。
-;; kind は 'contains か 'outlives である。
+;; kind は 'contains、'outlives、または 'reborrow である。
 ;; left と right は寿命項であり、`(RVar k)` か region 構造体である。
 ;; point は制約を立てた位置であり、α 表と同じ鍵である。
 ;; node は診断の span を引く節点であり、region-solve は読まない。
@@ -262,6 +262,9 @@
   (cond
     [(or (not l) (not r)) #f]
     [(eq? (region-constraint-kind c) 'contains) (region-outlives? ir l r)]
+    [(or (eq? (region-constraint-kind c) 'outlives)
+         (eq? (region-constraint-kind c) 'reborrow))
+     (region-outlives? ir l r)]
     [else (region-outlives? ir l r)]))
 
 ;; lexical adapter が持つ内部の表。IR の接点には出さない。
@@ -336,17 +339,52 @@
             (hash-update acc k (lambda (rs) (cons (region-constraint-right c) rs))
                          '())]
            [else acc])))
-     ;; 極小解は下限の最小共通祖先である。
-     (define σ
-       (for/hash ([(k rs) (in-hash lowers)])
-         (values k (lexical-join ir (reverse rs)))))
-     (define (resolve t)
+     ;; 極小解は下限の最小共通祖先である。上限制約の左辺が寿命変数なら、
+     ;; 右辺もその寿命の下限になる。制約どうしの依存を走査順に反映し、
+     ;; すべての寿命が安定するまで繰り返す（spec §4.3）。
+     (define (resolve-term σ t)
        (if (lifetime-var? t)
            (hash-ref σ (lifetime-var-index t) #f)
            t))
+     (define (initial-sigma)
+       (for/hash ([(k rs) (in-hash lowers)])
+         (values k (lexical-join ir (reverse rs)))))
+     (define variable-count
+       (for/sum ([c (in-list constraints)])
+         (length
+          (filter lifetime-var?
+                  (list (region-constraint-left c)
+                        (region-constraint-right c))))))
+     (define (propagate σ c)
+       (if (eq? (region-constraint-kind c) 'contains)
+           σ
+           (let* ([left (region-constraint-left c)]
+                  [right (resolve-term σ (region-constraint-right c))])
+             (if (and (lifetime-var? left) right)
+                 (let* ([k (lifetime-var-index left)]
+                        [current (hash-ref σ k #f)]
+                        [next (if current
+                                  (lexical-join ir (list current right))
+                                  right)])
+                   (if (equal? current next) σ (hash-set σ k next)))
+                 σ))))
+     (define σ
+       (let loop ([σ (initial-sigma)]
+                  [fuel (max 1 (* (add1 variable-count)
+                                  (max 1 (set-count (region-ir-regions ir)))) )])
+         (define next
+           (for/fold ([acc σ]) ([c (in-list constraints)])
+             (propagate acc c)))
+         (cond
+           [(equal? next σ) next]
+           [(zero? fuel)
+            (error 'region-solve "寿命制約の伝播が固定点に到達しない")]
+           [else (loop next (sub1 fuel))])))
      (define broken
        (for/list ([c (in-list constraints)]
-                  #:unless (satisfied? ir σ resolve c))
+                  #:unless (satisfied? ir σ
+                                       (lambda (t) (resolve-term σ t))
+                                       c))
          c))
      (if (null? broken) (list 'ok σ) (list 'error broken)))
    ;; 写像は 1 つの ir の中でだけ有効である。別の ir の region や ρ を渡すのは

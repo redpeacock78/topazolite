@@ -135,6 +135,25 @@
 (define reach-record-a '(Record ((a Int imm))))
 (define reach-list-int '(List Int))
 
+;; concrete な親の寿命は、外側の位置へ広がれないため Reborrow の上限を破る。
+;; IR と environment を同じ build の結果から作り、rho の所属を保つ。
+(define reborrow-escape-core
+  (reach-node 'Scope 1211 1260 '()
+              (reach-node 'Yield 1219 1258
+                          (reach-node 'Scope 1220 1230 '()
+                                      (reach-lit 0 1225 1226))
+                          (reach-node 'Reborrow 1231 1257
+                                      (reach-var 'y 1240 1241)))))
+(define reborrow-escape-ir
+  (build-region-ir (erase-core reborrow-escape-core)))
+(define reborrow-escape-rho
+  (region->rho reborrow-escape-ir
+               (region-at reborrow-escape-ir '(0 0))))
+(define reborrow-escape-environment
+  `((y (BorrowedMut Int ,reborrow-escape-rho))))
+(define (reborrow-escape-region-ctx _core)
+  (region-ctx reborrow-escape-ir '() (hash) (hash 'y (set 'x))))
+
 ;; producer が使う key 集合。未登録の key と登録したが未到達の key を
 ;; 別々に検査できるよう、ill-typed とも表へ残す。
 (define producer-keys
@@ -647,17 +666,9 @@
                                       (reach-lit 1 1200 1201)))
               '() '() '() (reach-span 1192 1209) reach-region-ctx)
    (reach-row 'reborrow-region-escapes
-              (reach-node 'Scope 1211 1260 '()
-                          (reach-node 'Let 1212 1259
-                                      (list (reach-bind 'x 1213 1214) 'let
-                                            (reach-ty '(Owned Res) 1215 1216))
-                                      (reach-node 'resource 1217 1218 1)
-                                      (reach-node 'Reborrow 1219 1258
-                                                  (reach-node 'Scope 1230 1250 '()
-                                                              (reach-node 'BorrowMut 1235 1245
-                                                                          (reach-var 'x 1240 1241))))))
-              '() '() '() (reach-span 1219 1258)
-              reach-region-ctx)
+              reborrow-escape-core
+              '() '() reborrow-escape-environment (reach-span 1231 1257)
+              reborrow-escape-region-ctx)
    (reach-row 'borrowed-function-parameter
               (reach-node 'Lam 1261 1280 'User 'f
                           (list (reach-bind 'a 1265 1266))

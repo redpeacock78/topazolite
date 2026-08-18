@@ -800,27 +800,54 @@
         Ψ_out))
 
 ;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
-;; 親 capability を子の生存期間だけ停止する。
+;; 親 capability を子の生存期間だけ停止する。判定は段 3 で行う。
 (define (infer-reborrow core operand Λ Ψ environment places callables fail)
   (match-define (list τ_operand ε_operand Ψ_1)
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
   (define ir (region-ctx-ir Λ))
   (unless ir (fail 'borrow-unknown-owner-region core))
   (match (normalize-type τ_operand)
-    [`(BorrowedMut ,τ ,n_parent)
-     (define ρ_parent (rho->region ir n_parent))
-     (define ρ_child (region-at ir (region-ctx-point Λ)))
-     (unless (region-outlives? ir ρ_parent ρ_child)
-       (fail 'reborrow-region-escapes core))
+    [`(BorrowedMut ,τ ,α_parent)
+     (define point (region-ctx-point Λ))
+     (define α_child (fresh-lifetime! point))
+     ;; 型の region 欄は未解決の RVar または concrete な ρ を運ぶ。
+     ;; RVar はそのまま制約へ渡し、concrete な欄だけ per-IR bridge で
+     ;; region 項へ戻して、制約の寿命項の表現を揃える。
+     (define parent-term
+       (if (lifetime-var? α_parent)
+           α_parent
+           (rho->region ir α_parent)))
+     (emit-constraint!
+      (region-constraint 'contains α_child (region-at ir point) point core))
+     (emit-constraint!
+      (region-constraint 'reborrow parent-term α_child point core))
      (define tokens (borrow-token-key Λ operand))
      (when (set-empty? tokens)
        (error 'infer-reborrow
               "親の token を特定できない operand: ~s"
               operand))
+     ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
+     ;; 生成していない。各 token を親の要求として記録し、境界の先でも
+     ;; Move/Drop の判定へ届かせる。
+     (when (not (lifetime-var? α_parent))
+       (for ([w (in-set tokens)])
+         (emit-request! (borrow-request w 'mut parent-term core))))
+     ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
+     ;; 親を停止窓から除いたあとも、子と別の可変借用との衝突は残す必要がある。
+     (for ([w (in-set tokens)])
+       (emit-request! (borrow-request w 'shared α_child core)))
+     ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
+     ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の
+     ;; suspension tuple だけは実在する mut capability として張る。
+     (define Ψ_seed
+       (if (lifetime-var? α_parent)
+           Ψ_1
+           (for/fold ([Ψ_acc Ψ_1]) ([w (in-set tokens)])
+             (psi-add-mut Ψ_acc w parent-term))))
      (define Ψ_2
-       (for/fold ([Ψ_acc Ψ_1]) ([w (in-set tokens)])
-         (psi-suspend Ψ_acc w ρ_parent ρ_child)))
-     (list `(Borrowed ,τ ,(region->rho ir ρ_child)) ε_operand Ψ_2)]
+       (for/fold ([Ψ_acc Ψ_seed]) ([w (in-set tokens)])
+         (psi-suspend Ψ_acc w parent-term α_child)))
+     (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
 (define (infer core Λ Ψ environment places callables fail)
@@ -1540,6 +1567,7 @@
 (define (constraint-key c)
   (case (region-constraint-kind c)
     [(outlives) 'borrow-escapes-owner]
+    [(reborrow) 'reborrow-region-escapes]
     [else 'borrow-escapes-owner]))
 
 (define (constraint-node c) (region-constraint-node c))
