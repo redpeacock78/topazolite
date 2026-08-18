@@ -169,7 +169,7 @@ key と番号は `docs/specification/diagnostic.md` の registry に従う。
 2. 関数の仮引数そのものの借用。owner region が呼出し側にあり、G5b の情報だけでは定まらない。1 と同じ関数境界の項目である。
 3. `Borrowed` の payload の制限。G5b では消去子が無いため直接の owned だけを禁じている。読み出しの消去子を入れる段で、payload の中に隠れた所有値を取り出せないことを改めて決める。
 4. 自己 fallback の provenance。3 節のとおり、所有者を辿れない designator は自分自身を親 capability とみなす。真の所有者の可変借用は停止しない。G5b には借用を通じた書き込み操作が無いため観測可能な差は生じないが、書き込み操作を入れる段で provenance を厳密にする必要がある。
-5. 借用の値が自分の region の外へ出ること。これを塞ぐには region subsumption が要る。Scope の結果型を制限する案は、内側の Scope で外側の所有値を借りて結果に返す正当なプログラムを弾くため採らない。BOR-001 と BOR-002 の条件そのものではなく、region の順序の未整備である。G5c 以降で回収する。
+5. 借用の値が自分の region の外へ出ること。これを塞ぐには region subsumption が要る。Scope の結果型を制限する案は、内側の Scope で外側の所有値を借りて結果に返す正当なプログラムを弾くため採らない。BOR-001 と BOR-002 の条件そのものではなく、region の順序の未整備である。G5c1 が寿命の制約でこの流れを解く。関数境界と view が運ぶ流れを試験できるのは G5c2 であるため、確認は G5c2 で行う。
 6. Portable Racket backend に借用 5 規則の写し先が無いこと。BOR-001 と BOR-002 の条件そのものではなく、backend 側の未設計である。借用を扱う backend を追加する段で回収する。
 7. 分岐 record の同じ欄へ異なる region の `Borrowed` 値を返すと、型検査は合流結果を `Union` として受理し、`unmergeable-branch-records` には到達しなかった。record merge の失敗条件を借用の region 差へ広げることは未回収である。
 
