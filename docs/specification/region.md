@@ -115,8 +115,8 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
   point の数え方は §3 に従う。
 
 `check-region-annotation` は materialize の前だけで走る。
-materialize 後の注釈欄は起点ではなく寿命なので、後で掛け直すと必ず
-`E-BOR-002` になる。
+materialize 後の注釈欄は起点ではなく寿命なので、寿命が起点より広がった
+借用へ後で掛け直すと `E-BOR-002` になる。
 
 ## 5. Well-formedness
 

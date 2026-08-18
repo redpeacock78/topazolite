@@ -85,9 +85,9 @@
         [_ #f])))
   (check-equal? ρ-machine ρ-materialized))
 
-;; materialize 後の core へ check-region-annotation を掛けると落ちる。
-;; この検査は起点との一致を見る道具であり、置換後は必ず落ちるのが正しい。
-;; 型付けの経路がこれを二度掛けしていないことを、経路の側で保証する。
+;; materialize 後の core へ check-region-annotation を掛けると、寿命が
+;; 起点より広がった借用では落ちる。この検査は起点との一致を見る道具であり、
+;; 型付けの経路が二度掛けしていないことを、経路の側で保証する。
 
 ;; infer-eliminate は同じ分岐を infer と check-as の二度走査する。
 ;; 同じ point の alpha-table が後の alpha で上書きされても、両走査の
@@ -110,6 +110,10 @@
       [(? list? ts) (apply append (map borrow-at-rhos ts))]
       [_ '()]))
   (define rhos (borrow-at-rhos out))
+  (define branch-points '((0 1 1) (0 1 2)))
+  (define expected-rhos
+    (for/list ([point (in-list branch-points)])
+      (region->rho ir (region-at ir point))))
   (check-equal? (length rhos) 2)
   (check-true (andmap exact-nonnegative-integer? rhos))
-  (check-equal? (remove-duplicates rhos) (list (first rhos))))
+  (check-equal? rhos expected-rhos))
