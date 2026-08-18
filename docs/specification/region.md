@@ -107,6 +107,15 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
   反射的かつ推移的である。
 - `region-ir-regions ir`：region の集合を返す。
 
+### 4.3 Materialize API
+
+- `materialize-regions ir core table σ`
+  α 表と σ から、借用の項の注釈欄を解いた寿命へ置き換えた core を返す。
+  対象は `BorrowAt` と `BorrowMutAt` と `ReborrowAt` の注釈欄である。
+  point の数え方は §3 に従う。
+
+`check-region-annotation` は materialize の前だけで走る。
+
 ## 5. Well-formedness
 
 `region-ir-ok? ir core` は次の 8 条件をすべて検査する。

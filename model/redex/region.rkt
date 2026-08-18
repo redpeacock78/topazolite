@@ -17,7 +17,8 @@
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
          region-parent region-contains?
-         region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions)
+         region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions
+         materialize-regions)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（docs/specification/region.md §3）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
@@ -500,6 +501,30 @@
         t
         (for/list ([k (in-list (core-children t))] [i (in-naturals)])
           (walk k (append point (list i)))))])))
+
+;; spec §3.3。α 表と σ から、注釈欄を解いた寿命へ置き換えた core を返す。
+;; point の数え方は annotate-regions と同じく core-children に従う。
+(define (materialize-regions ir core table σ)
+  (define (resolve ρ point)
+    (define α (hash-ref table point #f))
+    (if α
+        (region->rho ir (hash-ref σ (lifetime-var-index α)))
+        ρ))
+  (define (walk node point)
+    (define replaced
+      (match node
+        [`(BorrowAt ,ρ ,w) `(BorrowAt ,(resolve ρ point) ,w)]
+        [`(BorrowMutAt ,ρ ,w) `(BorrowMutAt ,(resolve ρ point) ,w)]
+        [`(ReborrowAt ,ρ ,c) `(ReborrowAt ,(resolve ρ point) ,c)]
+        [_ node]))
+    (define kids (core-children replaced))
+    (if (null? kids)
+        replaced
+        (core-with-children
+         replaced
+         (for/list ([k (in-list kids)] [i (in-naturals)])
+           (walk k (append point (list i)))))))
+  (walk core '()))
 
 (define (freeze h)
   (for/hash ([(k v) (in-hash h)]) (values k v)))

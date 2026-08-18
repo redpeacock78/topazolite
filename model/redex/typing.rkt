@@ -44,7 +44,8 @@
          sigma-ref
          subst-type-regions
          contains-lifetime-var?
-         materialize-fail-result)
+         materialize-fail-result
+         core-type-of/materialized)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -1491,8 +1492,7 @@
     [(not (valid-callables? callables)) (list 'invalid-callables callables)]
     [else #f]))
 
-(define (type-of/raw core-in places callables [environment '()]
-                     [Λ (empty-region-ctx)])
+(define (type-of/raw* core-in places callables environment Λ)
   (define cs (box '()))
   (define rs (box '()))
   (define tbl (box (hash)))
@@ -1534,10 +1534,29 @@
             ;; Perform は (Return boundary τ) として row へ入れるため、
             ;; 借用をこれらで返すと row が α を運ぶ。
             (list normalized
-                  (subst-type-regions row σ ir))])))))
+                  (subst-type-regions row σ ir)
+                  (unbox tbl)
+                  σ)])))))
   ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
   ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
   (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
+
+;; 既存の呼び出しは結果の型を要らない。第 3 要素と σ を落として渡す。
+(define (type-of/raw core-in places callables [environment '()]
+                     [Λ (empty-region-ctx)])
+  (match (type-of/raw* core-in places callables environment Λ)
+    [(list 'ok (list type row _table _σ)) (list 'ok (list type row))]
+    [other other]))
+
+;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
+(define (core-type-of/materialized core-in places callables
+                                   [environment '()]
+                                   [Λ (empty-region-ctx)])
+  (match (type-of/raw* core-in places callables environment Λ)
+    [(list 'ok (list type _row table σ))
+     (define ir (region-ctx-ir Λ))
+     (list 'ok type (if ir (materialize-regions ir core-in table σ) core-in))]
+    [other other]))
 
 ;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。
 ;; 段 1 の fail は推論の途中の型を details へ入れる。typing.rkt:1346 の
