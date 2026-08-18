@@ -52,6 +52,24 @@
                    broken))
   (check-equal? (region-solve ir cs) (list 'error (list broken))))
 
+;; 複数の上限制約が破れたときも、発生順のまま返す。
+(let ()
+  (define core '(Scope () (Scope () 0)))
+  (define ir (build-region-ir core))
+  (define ρ-outer (region-at ir '()))
+  (define ρ-inner (region-at ir '(0 0)))
+  (define lower-0
+    (region-constraint 'contains '(RVar 0) ρ-outer '() #f))
+  (define broken-0
+    (region-constraint 'outlives ρ-inner '(RVar 0) '(0 0) 'first))
+  (define lower-1
+    (region-constraint 'contains '(RVar 1) ρ-outer '() #f))
+  (define broken-1
+    (region-constraint 'outlives ρ-inner '(RVar 1) '(0 0) 'second))
+  (check-equal?
+   (region-solve ir (list lower-0 broken-0 lower-1 broken-1))
+   (list 'error (list broken-0 broken-1))))
+
 ;; 制約の並び順に依らず、同じ σ を返す。
 (let ()
   (define core '(Scope () (Yield (Scope () 0) (Scope () 0))))

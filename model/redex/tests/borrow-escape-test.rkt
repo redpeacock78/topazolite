@@ -9,7 +9,7 @@
          "../typing.rkt")
 
 ;; 内側 Scope が外側の所有値を借りて結果に返す形は通る。
-;; borrow.md §8 が退けた「Scope の結果型を制限する案」で弾かれていた形である。
+;; borrow.md §9 が退けた「Scope の結果型を制限する案」で弾かれていた形である。
 ;; fixture は注釈前の形で書き、annotate-regions を 1 度だけ通す。
 (let ()
   (define core '(Scope (1) (Scope () (Borrow 1))))

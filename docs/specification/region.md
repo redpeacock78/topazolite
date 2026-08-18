@@ -92,6 +92,10 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
   極小解が一意であることは要求しない。
   `broken` は満たせなかった制約を入力の並び順で返す。
 
+破れた制約が複数あるとき、solver は `collected-constraints` の発生順を保った並びで返す。
+診断はその先頭 1 件だけを報告する。
+発生順は推論が制約を出した順であり、走査の順に一致する。
+
 `region-at` と `regions-exiting-at` の定義域は、Core の節点を指す point に限る。
 定義域外の point は `#f` や空集合へ置き換えず `error` にする。
 `regions-exiting-at` は root region を返さない。

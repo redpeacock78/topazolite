@@ -40,7 +40,8 @@
   (check-equal? (status (make (rho-at ir '(0 0))) ir) 'ok))
 
 ;; 検査の位置の Eliminate でも、分岐の借用が生きている間の Move を捕まえる。
-;; Task 8b では束縛の型が (RVar k) を失い、この Move が素通りしていた。
+;; この fixture は Step 7b と Task 8b の有無を判別せず、既存の borrow-request
+;; による使用判定を押さえる。Task 8b の特別枝の保持は Error fixture などで押さえる。
 (let ()
   (define (make body)
     `(Scope (1) (Let (b let (Borrowed Res 0))

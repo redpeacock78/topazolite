@@ -62,9 +62,9 @@
                       ir))
   (values ir annotated))
 
-;; 条件 1。lexical が受理した形は同じ solver でも受理する。
-;; 条件 2。上限制約の検査が真だった対で真である。
-  ;; 条件 3。衝突の判定が偽だった対で偽である。
+;; §7 条件 6 の第 1 文。lexical が受理した形は同じ solver でも受理する。
+;; §7 条件 6 の第 2 文。上限制約の検査が真だった対で真である。
+;; §7 条件 6 の第 3 文。衝突の判定が偽だった対で偽である。
 ;; NLL solver が入るまで、右辺も lexical である。
 (for ([c (in-list (solver-parity-cases))])
   (match-define (list name make places expected) c)

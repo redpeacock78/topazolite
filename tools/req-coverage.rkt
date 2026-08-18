@@ -467,7 +467,11 @@
     (list (build-path root "model/redex/tests/region-test.rkt")
           (build-path root "model/redex/tests/borrow-test.rkt")
           (build-path root "model/redex/tests/borrow-reborrow-test.rkt")
-          (build-path root "model/redex/tests/borrow-boundary-test.rkt")))
+          (build-path root "model/redex/tests/borrow-boundary-test.rkt")
+          (build-path root "model/redex/tests/borrow-regression-test.rkt")
+          (build-path root "model/redex/tests/borrow-escape-test.rkt")
+          (build-path root "model/redex/tests/borrow-merge-test.rkt")
+          (build-path root "model/redex/tests/solver-parity-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
