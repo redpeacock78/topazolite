@@ -515,12 +515,12 @@
        (first owns)]
       [else (error 'annotate-regions "分岐ごとの所有者が一致しない operand である: ~s" t)]))
   (define (walk node env*)
-    (match (peel-node node)
+    (match node
       [`(BorrowAt ,_ ,own ,_) own]
       [`(BorrowMutAt ,_ ,own ,_) own]
       [`(ReborrowAt ,_ ,own ,_) own]
       [(? symbol? s) (own-of-designator env* s)]
-      [`(Scope ,_) (walk (second (peel-node node)) env*)]
+      [`(Scope ,_ ,body) (walk body env*)]
       [`(Let (,x ,_ ,τ) ,bound ,body)
        (define bound-own
          (with-handlers ([exn:fail? (lambda (_) #f)])
@@ -547,11 +547,13 @@
 ;; point の数え方は core-children を使うため region.md §3 と自動的に一致する。
 ;; ρ は region->rho で natural へ落とし、own は capability の root/path を保つ。
 (define (annotate-regions core ir)
-  (let walk ([t core] [point '()] [env (hash)])
+  ;; 注釈は spanless Core へ行う。入口で一度だけ包みを外すことで、
+  ;; node だけ peel して子で span を残す中途半端な扱いを避ける。
+  (let walk ([t (erase-core core)] [point '()] [env (hash)])
     (define (here) (region->rho ir (region-at ir point)))
     (define (down k i [env* env])
       (walk k (append point (list i)) env*))
-    (match (peel-node t)
+    (match t
       [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(Borrow ,w) `(BorrowAt ,(here) ,(own-of-designator env w) ,w)]

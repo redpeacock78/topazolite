@@ -44,6 +44,16 @@
   (check-equal? own '(Own 1 ()))
   (check-equal? own-inner '(Own 1 ())))
 
+;; Scope を operand に持つ Reborrow も body の own を引き継ぐ。
+(let ()
+  (define core '(Scope (1) (Reborrow (Scope () (BorrowMut 1)))))
+  (define ir (build-region-ir core))
+  (match-define
+    `(Scope (1) (ReborrowAt ,_ ,own (Scope () (BorrowMutAt ,_ ,own-inner 1))))
+    (annotate-regions core ir))
+  (check-equal? own '(Own 1 ()))
+  (check-equal? own-inner '(Own 1 ())))
+
 ;; own の root が designator と食い違う注釈済みの木は入口で落ちる。
 (let ()
   (define core '(Scope (1) (BorrowAt 0 (Own 7 ()) 1)))
