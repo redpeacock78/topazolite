@@ -5,7 +5,8 @@
          racket/generic
          redex/reduction-semantics
          "lang.rkt"
-         "erase.rkt")
+         "erase.rkt"
+         "span-core.rkt")
 
 (provide core-children core-with-children core-points core-node core-free-vars
          (struct-out region)
@@ -18,6 +19,7 @@
          lifetime-var? lifetime-var-index
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions
+         own-annotation-violation
          materialize-regions)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（docs/specification/region.md §3）。
@@ -50,13 +52,14 @@
     [`(RVal (ProofRep ,_ ,_) ,v) (list v)]
     [`(CurryVal ,_ ,v_1 ,v_2) (list v_1 v_2)]
     [`(Reborrow ,c) (list c)]
-    [`(ReborrowAt ,_ ,c) (list c)]
+    [`(ReborrowAt ,_ ,_ ,c) (list c)]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
-    [`(BorrowAt ,_ ,_) '()]
-    [`(BorrowMutAt ,_ ,_) '()]
+    [`(BorrowAt ,_ ,_ ,_) '()]
+    [`(BorrowMutAt ,_ ,_ ,_) '()]
     [`(BorrowRef ,_ ,_ ,_) '()]
     [`(BorrowMutRef ,_ ,_ ,_) '()]
+    [`(Error ,_) '()]
     [`(Move ,_) '()]
     [`(PrimVal ,_ ,_) '()]
     [`(TypeRep ,_ ,_ ,_) '()]
@@ -105,7 +108,7 @@
     [`(RVal ,proof-rep ,_) `(RVal ,proof-rep ,(first-child))]
     [`(CurryVal ,O ,_ ,_) `(CurryVal ,O ,(first children) ,(second children))]
     [`(Reborrow ,_) `(Reborrow ,(first-child))]
-    [`(ReborrowAt ,ρ ,_) `(ReborrowAt ,ρ ,(first-child))]
+    [`(ReborrowAt ,ρ ,own ,_) `(ReborrowAt ,ρ ,own ,(first-child))]
     [_
      (unless (null? children)
        (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))
@@ -160,8 +163,12 @@
        (set-union (bind handler (list name)) (walk body))]
       [`(Borrow ,w) (if (symbol? w) (set w) (set))]
       [`(BorrowMut ,w) (if (symbol? w) (set w) (set))]
-      [`(BorrowAt ,_ ,w) (if (symbol? w) (set w) (set))]
-      [`(BorrowMutAt ,_ ,w) (if (symbol? w) (set w) (set))]
+      [`(BorrowAt ,_ (Own ,w-own ,_) ,w)
+       (set-union (if (symbol? w) (set w) (set))
+                  (if (symbol? w-own) (set w-own) (set)))]
+      [`(BorrowMutAt ,_ (Own ,w-own ,_) ,w)
+       (set-union (if (symbol? w) (set w) (set))
+                  (if (symbol? w-own) (set w-own) (set)))]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
       [(? symbol? s)
        (if (redex-match? G2 x s) (set s) (set))]
@@ -484,24 +491,121 @@
    (freeze at-table)
    (list->set (core-points erased))))
 
-;; 注釈前の core を 1 回走査し、借用の 3 形へ region を注入する。
+;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
+(define (annotation-borrow-type? τ)
+  (match (peel-ty τ)
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [_ #f]))
+
+(define (own-of-designator env w)
+  (define designator (peel-node w))
+  (if (symbol? designator)
+      (hash-ref env designator (lambda () `(Own ,designator ())))
+      `(Own ,designator ())))
+
+;; 注釈済みの operand から own を引く。単純な借用だけでなく、型の結果を
+;; そのまま返す Scope / Let / Yield / Suspend / Recur / Eliminate も辿る。
+;; それ以外はこの段の境界制限では借用の結果にならないため落とす。
+(define (own-of-operand env t)
+  (define (same-branch-own owns)
+    (cond
+      [(null? owns) (error 'annotate-regions "所有者を辿れない operand である: ~s" t)]
+      [(andmap (lambda (own) (equal? own (first owns))) (rest owns))
+       (first owns)]
+      [else (error 'annotate-regions "分岐ごとの所有者が一致しない operand である: ~s" t)]))
+  (define (walk node env*)
+    (match (peel-node node)
+      [`(BorrowAt ,_ ,own ,_) own]
+      [`(BorrowMutAt ,_ ,own ,_) own]
+      [`(ReborrowAt ,_ ,own ,_) own]
+      [(? symbol? s) (own-of-designator env* s)]
+      [`(Scope ,_) (walk (second (peel-node node)) env*)]
+      [`(Let (,x ,_ ,τ) ,bound ,body)
+       (define bound-own
+         (with-handlers ([exn:fail? (lambda (_) #f)])
+           (walk bound env*)))
+       (define env-next
+         (if (and bound-own (annotation-borrow-type? τ))
+             (hash-set env* (peel-bind x) bound-own)
+             env*))
+       (walk body env-next)]
+      [`(Eliminate ,_ (,branches ...))
+       (same-branch-own
+        (for/list ([branch (in-list branches)])
+          (walk (last branch) env*)))]
+      [`(Yield ,_ ,next) (walk next env*)]
+      [`(Suspend ,body) (walk body env*)]
+      [`(Recur ,_ ,_ ,_ ,_ ,continuation) (walk continuation env*)]
+      [`(Handle ,_ ,handler ,body)
+       (same-branch-own
+        (list (walk (last handler) env*) (walk body env*)))]
+      [_ (error 'annotate-regions "所有者を辿れない operand である: ~s" node)]))
+  (walk t env))
+
+;; 注釈前の core を 1 回走査し、借用の 3 形へ region と own を注入する。
 ;; point の数え方は core-children を使うため region.md §3 と自動的に一致する。
-;; ρ は region->rho で natural へ落とす。項に載るのは natural であり、
-;; Λ.owners と Ψ が持つのは region 構造体である。
+;; ρ は region->rho で natural へ落とし、own は capability の root/path を保つ。
 (define (annotate-regions core ir)
-  (let walk ([t core] [point '()])
+  (let walk ([t core] [point '()] [env (hash)])
     (define (here) (region->rho ir (region-at ir point)))
-    (match t
-      [(or `(BorrowAt ,_ ,_) `(BorrowMutAt ,_ ,_) `(ReborrowAt ,_ ,_))
+    (define (down k i [env* env])
+      (walk k (append point (list i)) env*))
+    (match (peel-node t)
+      [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
-      [`(Borrow ,w) `(BorrowAt ,(here) ,w)]
-      [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,w)]
-      [`(Reborrow ,c) `(ReborrowAt ,(here) ,(walk c (append point '(0))))]
+      [`(Borrow ,w) `(BorrowAt ,(here) ,(own-of-designator env w) ,w)]
+      [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,(own-of-designator env w) ,w)]
+      [`(Reborrow ,c)
+       (define annotated (down c 0))
+       `(ReborrowAt ,(here) ,(own-of-operand env annotated) ,annotated)]
+      [`(Let (,x ,bmode ,τ) ,c_1 ,c_2)
+       (define a_1 (down c_1 0))
+       (define bound-own
+         (and (annotation-borrow-type? τ)
+              (with-handlers ([exn:fail? (lambda (_) #f)])
+                (own-of-operand env a_1))))
+       (define env*
+         (if bound-own
+             (hash-set env (peel-bind x) bound-own)
+             env))
+       `(Let (,x ,bmode ,τ) ,a_1 ,(down c_2 1 env*))]
       [_
        (core-with-children
         t
         (for/list ([k (in-list (core-children t))] [i (in-naturals)])
-          (walk k (append point (list i)))))])))
+          (down k i)))])))
+
+;; 注釈済み core を走り、own の欄が designator と食い違う最初の節点を返す。
+;; annotate-regions と同じ環境規則を使い、冗長な欄を fail-closed で検査する。
+(define (own-annotation-violation core)
+  (define (own-of-operand/checked env t)
+    (with-handlers ([exn:fail? (lambda (_) #f)])
+      (own-of-operand env t)))
+  (let walk ([t core] [env (hash)])
+    (define node (peel-node t))
+    (define (children-violation)
+      (for/or ([k (in-list (core-children t))]) (walk k env)))
+    (match node
+      [`(BorrowAt ,_ ,own ,w)
+       (and (not (equal? own (own-of-designator env w))) t)]
+      [`(BorrowMutAt ,_ ,own ,w)
+       (and (not (equal? own (own-of-designator env w))) t)]
+      [`(ReborrowAt ,_ ,own ,c)
+       (or (walk c env)
+           (and (not (equal? own (own-of-operand/checked env c))) t))]
+      [`(Let (,x ,_ ,τ) ,c_1 ,c_2)
+       (define child-violation (walk c_1 env))
+       (or child-violation
+           (let ([env*
+                  (if (annotation-borrow-type? τ)
+                      (let ([bound-own (own-of-operand/checked env c_1)])
+                        (if bound-own
+                            (hash-set env (peel-bind x) bound-own)
+                            env))
+                      env)])
+             (walk c_2 env*)))]
+      [_ (children-violation)])))
 
 ;; spec §3.3。α 表と σ から、注釈欄を解いた寿命へ置き換えた core を返す。
 ;; point の数え方は annotate-regions と同じく core-children に従う。
@@ -517,9 +621,9 @@
   (define (walk node point)
     (define replaced
       (match node
-        [`(BorrowAt ,ρ ,w) `(BorrowAt ,(resolve ρ point) ,w)]
-        [`(BorrowMutAt ,ρ ,w) `(BorrowMutAt ,(resolve ρ point) ,w)]
-        [`(ReborrowAt ,ρ ,c) `(ReborrowAt ,(resolve ρ point) ,c)]
+        [`(BorrowAt ,ρ ,own ,w) `(BorrowAt ,(resolve ρ point) ,own ,w)]
+        [`(BorrowMutAt ,ρ ,own ,w) `(BorrowMutAt ,(resolve ρ point) ,own ,w)]
+        [`(ReborrowAt ,ρ ,own ,c) `(ReborrowAt ,(resolve ρ point) ,own ,c)]
         [_ node]))
     (define kids (core-children replaced))
     (if (null? kids)

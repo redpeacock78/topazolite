@@ -9,7 +9,17 @@
 (provide type-shape-ok?
          core-types-normal?
          proposition-types-normal?
-         effect-row-normal?)
+         effect-row-normal?
+         type-carries-capability?)
+
+;; 型が Borrowed または BorrowedMut を含むか。Eliminate の branch binder へ
+;; 所有者を運べない段で fail-closed にするために使う。
+(define (type-carries-capability? type)
+  (match type
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [(? list? terms) (ormap type-carries-capability? terms)]
+    [_ #f]))
 
 (define (proposition-shape-ok? proposition)
   (match proposition
@@ -154,12 +164,12 @@
          ;; いずれも型ではない。
          [`(Borrow ,_) #t]
          [`(BorrowMut ,_) #t]
-         [`(BorrowAt ,_ ,_) #t]
-         [`(BorrowMutAt ,_ ,_) #t]
+         [`(BorrowAt ,_ ,_ ,_) #t]
+         [`(BorrowMutAt ,_ ,_ ,_) #t]
          [`(BorrowRef ,_ ,_ ,_) #t]
          [`(BorrowMutRef ,_ ,_ ,_) #t]
          [`(Reborrow ,operand) (walk operand)]
-         [`(ReborrowAt ,_ ,operand) (walk operand)]
+         [`(ReborrowAt ,_ ,_ ,operand) (walk operand)]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)

@@ -68,7 +68,7 @@
 ;; Moved の place からは BorrowRef を作らず Error へ落ちる。
 (let ()
   (define n-root (region->rho ir (region-at ir '())))
-  (define config `(cfg (Scope () (BorrowAt ,n-root 0))
+  (define config `(cfg (Scope () (BorrowAt ,n-root (Own 0 ()) 0))
                        ((0 1))
                        ((0 Moved))
                        ()))

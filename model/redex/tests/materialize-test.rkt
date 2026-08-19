@@ -30,17 +30,17 @@
   ;; 注釈欄はすべて natural である。RVar は残らない。
   (for ([point (in-list (core-points out))])
     (match (core-node out point)
-      [`(BorrowAt ,ρ ,_) (check-true (exact-nonnegative-integer? ρ))]
-      [`(BorrowMutAt ,ρ ,_) (check-true (exact-nonnegative-integer? ρ))]
-      [`(ReborrowAt ,ρ ,_) (check-true (exact-nonnegative-integer? ρ))]
+      [`(BorrowAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
+      [`(BorrowMutAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
+      [`(ReborrowAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
       [_ (void)]))
   ;; 2 件の注釈が別々に置き換わっている。
   (check-equal? (hash-count tbl) 2)
   ;; 鍵が point であることは、出力の 2 つの ρ が異なることで初めて確かめられる。
   ;; 数だけを見ると、両者が同じ ρ へ落ちても試験は通ってしまう。
   ;; 外側の Borrow は外の Scope の region、内側は内の Scope の region を得る。
-  (define ρ-outer (match (core-node out '(0 0)) [`(BorrowAt ,ρ ,_) ρ]))
-  (define ρ-inner (match (core-node out '(0 1 0 0)) [`(BorrowAt ,ρ ,_) ρ]))
+  (define ρ-outer (match (core-node out '(0 0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
+  (define ρ-inner (match (core-node out '(0 1 0 0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
   (check-not-equal? ρ-outer ρ-inner))
 
 ;; type-of の返す型に RVar が残らない。
@@ -70,7 +70,7 @@
   (define ρ-materialized
     (let walk ([t out])
       (match t
-        [`(BorrowAt ,ρ ,_) ρ]
+        [`(BorrowAt ,ρ ,_ ,_) ρ]
         [(? list? ts) (ormap walk ts)]
         [_ #f])))
   (check-true (exact-nonnegative-integer? ρ-materialized))
@@ -106,7 +106,7 @@
     (core-type-of/materialized annotated (list (list 1 'Res)) '() '() Λ))
   (define (borrow-at-rhos t)
     (match t
-      [`(BorrowAt ,ρ ,_) (list ρ)]
+      [`(BorrowAt ,ρ ,_ ,_) (list ρ)]
       [(? list? ts) (apply append (map borrow-at-rhos ts))]
       [_ '()]))
   (define rhos (borrow-at-rhos out))

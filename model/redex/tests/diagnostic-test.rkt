@@ -50,13 +50,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 120)
+ (check-equal? (length diagnostic-registry) 123)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 62)
+ (check-equal? (count-of 'typing) 65)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -67,6 +67,7 @@
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
  (check-equal? (since-count 3) 13)
+ (check-equal? (since-count 4) 3)
  (for ([row (in-list diagnostic-registry)])
    (check-false (diagnostic-code-deprecated-in row))))
 
@@ -148,13 +149,13 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 3 である"
+ "schema version は 3、registry version は 4 である"
  (check-equal? diagnostic-schema-version 3)
- (check-equal? diagnostic-registry-version 3))
+ (check-equal? diagnostic-registry-version 4))
 
 (test-case
- "typing の registry version 3 と入口 key"
- (check-equal? diagnostic-registry-version 3)
+ "typing の registry version 4 と入口 key"
+ (check-equal? diagnostic-registry-version 4)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 

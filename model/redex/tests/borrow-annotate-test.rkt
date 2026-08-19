@@ -35,9 +35,9 @@
 (define (collect t point acc)
   (define acc2
     (match t
-      [`(BorrowAt ,ρ ,_) (cons (list point ρ) acc)]
-      [`(BorrowMutAt ,ρ ,_) (cons (list point ρ) acc)]
-      [`(ReborrowAt ,ρ ,_) (cons (list point ρ) acc)]
+      [`(BorrowAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
+      [`(BorrowMutAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
+      [`(ReborrowAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
       [_ acc]))
   (for/fold ([acc acc2]) ([k (in-list (core-children t))] [i (in-naturals)])
     (collect k (append point (list i)) acc)))
@@ -62,7 +62,7 @@
 ;; point '(0 1 0) は内側 Scope の中の Eliminate である。
 ;; '() の外側 Scope とは region が異なり、試験 5 の wrong-ρ が成り立つ。
 (define Λ (region-ctx ir '(0 1 0) (hash) (hash)))
-(define ok-node `(BorrowAt ,(region->rho ir (region-at ir '(0 1 0))) x))
+(define ok-node `(BorrowAt ,(region->rho ir (region-at ir '(0 1 0))) (Own x ()) x))
 
 (check-equal? (type-of/raw ok-node '() '() '((x (Owned Res))) Λ)
               (list 'fail 'borrow-unknown-owner-region ok-node '()))
@@ -70,7 +70,7 @@
 ;; 試験 5: 注釈が一致しなければ borrow-region-mismatch になる。
 ;; 別の point の region を注釈へ置く。
 (define wrong-ρ (region->rho ir (region-at ir '())))
-(define bad-node `(BorrowAt ,wrong-ρ x))
+(define bad-node `(BorrowAt ,wrong-ρ (Own x ()) x))
 
 (check-not-equal? wrong-ρ (region->rho ir (region-at ir '(0 1 0))))
 (check-equal? (type-of/raw bad-node '() '() '() Λ)
@@ -82,9 +82,9 @@
 (check-true (core-types-normal? '(Reborrow (BorrowMut x))))
 ;; ρ は natural である（段 2、lang.rkt の (ρ ::= natural)）。
 ;; place も natural である（lang.rkt）。記号の ρ0 や p0 は文法に無い。
-(check-true (core-types-normal? '(BorrowAt 1 x)))
-(check-true (core-types-normal? '(BorrowMutAt 1 x)))
-(check-true (core-types-normal? '(ReborrowAt 2 (BorrowMutAt 1 x))))
+(check-true (core-types-normal? '(BorrowAt 1 (Own x ()) x)))
+(check-true (core-types-normal? '(BorrowMutAt 1 (Own x ()) x)))
+(check-true (core-types-normal? '(ReborrowAt 2 (Own x ()) (BorrowMutAt 1 (Own x ()) x))))
 (check-true (core-types-normal? '(BorrowRef 0 () 1)))
 (check-true (core-types-normal? '(BorrowMutRef 0 () 1)))
 

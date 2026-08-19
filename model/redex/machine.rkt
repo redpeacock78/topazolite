@@ -3,6 +3,7 @@
 (require racket/match
          redex/reduction-semantics
          "lang.rkt"
+         "borrow.rkt"
          "origins.rkt"
          "traits.rkt"
          "validators.rkt")
@@ -390,29 +391,34 @@
    #:domain config
 
    ;; spec §13.1。H、Ω、θ は借用値の生成では変更しない。
-   (--> (cfg (in-hole E (BorrowAt ρ p)) H Ω θ)
-        (cfg (in-hole E (BorrowRef p () ρ)) H Ω θ)
+   ;; own と designator が食い違う configuration では、どの規則も進まない。
+   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω θ)
+        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-Borrow)
 
-   (--> (cfg (in-hole E (BorrowAt ρ p)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω θ)
         (cfg (in-hole E (Error p)) H Ω θ)
         (where state_old ,(table-ref (term Ω) (term p)))
         (side-condition (memq (term state_old) '(Moved Dropped)))
+        (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowError)
 
-   (--> (cfg (in-hole E (BorrowMutAt ρ p)) H Ω θ)
-        (cfg (in-hole E (BorrowMutRef p () ρ)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω θ)
+        (cfg (in-hole E (BorrowMutRef p fp ρ)) H Ω θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowMut)
 
-   (--> (cfg (in-hole E (BorrowMutAt ρ p)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω θ)
         (cfg (in-hole E (Error p)) H Ω θ)
         (where state_old ,(table-ref (term Ω) (term p)))
         (side-condition (memq (term state_old) '(Moved Dropped)))
+        (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowMutError)
 
-   (--> (cfg (in-hole E (ReborrowAt ρ (BorrowMutRef p fp ρ_parent))) H Ω θ)
+   (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω θ)
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
         R-Reborrow)
 

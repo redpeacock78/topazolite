@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 3)
+(define diagnostic-registry-version 4)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -179,6 +179,12 @@
     ("E-BOR-012" borrowed-function-parameter "関数の仮引数に borrowed を置けない")
     ("E-BOR-013" borrowed-function-result "関数の結果型と証明義務に borrowed を置けない")))
 
+;; G5c2 の place と読み書き。Task 2 で producer が現れる 3 件を先に置く。
+(define typing-entries-v4
+  '(("E-BOR-020" unresolved-borrow-owner "借用の所有者を辿れない")
+    ("E-BOR-023" own-designator-mismatch "own の欄と designator が別の capability を指す")
+    ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")))
+
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
 
@@ -198,6 +204,7 @@
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
           (rows 'typing 3 typing-entries-v3)
+          (rows 'typing 4 typing-entries-v4)
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
 

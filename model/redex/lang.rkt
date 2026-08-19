@@ -189,9 +189,10 @@
          (Borrow w)
          (BorrowMut w)
          (Reborrow c)
-         (BorrowAt ρ w)
-         (BorrowMutAt ρ w)
-         (ReborrowAt ρ c))
+         (BorrowAt ρ own w)
+         (BorrowMutAt ρ own w)
+         (ReborrowAt ρ own c))
+  (own ::= (Own w fp))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
@@ -203,17 +204,17 @@
          (Rec ((label m v) ... (label m F) (label m c) ...))
          (Proj F label)
          (Let (x bmode τ) F c)
-         (ReborrowAt ρ F))
+         (ReborrowAt ρ own F))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (Proj E label)
          (Let (x bmode τ) E c)
-         (ReborrowAt ρ E))
+         (ReborrowAt ρ own E))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (Proj G label)
          (Let (x bmode τ) G c)
-         (ReborrowAt ρ G))
+         (ReborrowAt ρ own G))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))

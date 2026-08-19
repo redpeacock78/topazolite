@@ -555,6 +555,15 @@
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type (first scrutinee-result))
+  ;; branch-contexts は data type から field の型だけを配り、能力の owner を
+  ;; branch binder へ運ばない。能力を含む scrutinee/field は、label 表を持つ
+  ;; 段まで黙って受理せず fail-closed にする（spec §4.2）。
+  (define schema (constructor-schema data-type))
+  (when (or (type-carries-capability? data-type)
+            (and schema
+                 (ormap type-carries-capability?
+                        (append* (map second schema)))))
+    (fail 'capability-in-eliminate node))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
@@ -916,7 +925,7 @@
       (region-constraint 'contains α_child (region-at ir point) point core))
      (emit-constraint!
       (region-constraint 'reborrow parent-term α_child point core))
-     (define tokens (borrow-token-key Λ operand))
+     (define tokens (borrow-token-key Λ operand #:fail fail))
      (when (set-empty? tokens)
        (error 'infer-reborrow
               "親の token を特定できない operand: ~s"
@@ -1149,7 +1158,7 @@
         (define Λ_owner (register-owner Λ x binding-type))
         (define token
           (if (borrow-typed? (normalize-type binding-type))
-              (borrow-token-key Λ bound)
+              (borrow-token-key Λ bound #:fail fail)
               (set)))
         (define Λ_token (region-ctx-add-token Λ_owner x token))
         (define Λ_body (enter-child Λ_token 1))
@@ -1173,7 +1182,7 @@
      (define Λ_owner (register-owner Λ x binding-type))
      (define token
        (if (borrow-typed? (normalize-type binding-type))
-           (borrow-token-key Λ bound)
+           (borrow-token-key Λ bound #:fail fail)
            (set)))
      (define Λ_token (region-ctx-add-token Λ_owner x token))
      (define Λ_body (enter-child Λ_token 1))
@@ -1383,15 +1392,15 @@
      (infer-borrow core w #f Λ Ψ environment places callables fail)]
     [`(BorrowMut ,w)
      (infer-borrow core w #t Λ Ψ environment places callables fail)]
-    [`(BorrowAt ,ρ ,w)
+    [`(BorrowAt ,ρ ,_ ,w)
      (check-region-annotation Λ ρ core fail)
      (infer-borrow core w #f Λ Ψ environment places callables fail)]
-    [`(BorrowMutAt ,ρ ,w)
+    [`(BorrowMutAt ,ρ ,_ ,w)
      (check-region-annotation Λ ρ core fail)
      (infer-borrow core w #t Λ Ψ environment places callables fail)]
     [`(Reborrow ,c_operand)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
-    [`(ReborrowAt ,ρ ,c_operand)
+    [`(ReborrowAt ,ρ ,_ ,c_operand)
      (check-region-annotation Λ ρ core fail)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
 
@@ -1449,7 +1458,7 @@
         (define Λ_owner (register-owner Λ x binding-type))
         (define token
           (if (borrow-typed? (normalize-type binding-type))
-              (borrow-token-key Λ bound)
+              (borrow-token-key Λ bound #:fail fail)
               (set)))
         (define Λ_token (region-ctx-add-token Λ_owner x token))
         (define Λ_body (enter-child Λ_token 1))
@@ -1476,7 +1485,7 @@
      (define Λ_owner (register-owner Λ x binding-type))
      (define token
        (if (borrow-typed? (normalize-type binding-type))
-           (borrow-token-key Λ bound)
+           (borrow-token-key Λ bound #:fail fail)
            (set)))
      (define Λ_token (region-ctx-add-token Λ_owner x token))
      (define Λ_body (enter-child Λ_token 1))
@@ -1580,6 +1589,8 @@
 (define (entry-violation core places callables environment)
   (cond
     [(not (redex-match? G2m c core)) '(not-core-term)]
+    [(own-annotation-violation core)
+     => (lambda (found) (list 'own-designator-mismatch found))]
     [(borrowed-owned-payload-type core)
      => (lambda (found) (list 'borrowed-owned-payload found))]
     [(not (core-types-normal? core)) '(non-normal-type)]

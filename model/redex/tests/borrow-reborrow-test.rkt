@@ -26,9 +26,9 @@
                                         (BorrowMut x)
                                         (Reborrow y)))
                 (set (list 'x)))
-  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutAt 0 7)))
+  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (Own 7 ()) (BorrowMutAt 0 (Own 7 ()) 7)))
                 (set (list 7)))
-  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutRef 7 () 0)))
+  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (Own 7 ()) (BorrowMutRef 7 () 0)))
                 (set (list 7))))
 
 ;; 内側の項の型をそのまま運ぶ形も全欄を合併する。
@@ -42,7 +42,7 @@
                                   '(Handle (Return 0 (BorrowedMut Int 0))
                                            (h -> h)
                                            (BorrowMut x)))
-                (set (list 'x) (list 'h))))
+                (set (list 'x))))
 
 (let ()
   (define Λ_0 (empty-region-ctx))
@@ -56,15 +56,15 @@
                 (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(Rec ((a imm (resource 1))))) (set)))
 
-;; 登録のない designator は自己 fallback で親 capability になる。
+;; 登録のない designator は、明示的な fail が無い限り空集合になる。
 (let ()
   (define core '(Scope () (Let (x let (Owned Res)) (resource 1) (Borrow x))))
   (define ir (build-region-ir core))
   (define ρ_root (region->rho ir (region-at ir '())))
   (define environment (list (list 'y `(BorrowedMut Int ,ρ_root))))
-  (check-equal? (borrow-token-key (Λ-of ir) 'y) (set (list 'y)))
-  (check-equal? (first (type-of/raw '(Reborrow y) '() '() environment (Λ-of ir)))
-                'ok))
+  (check-equal? (borrow-token-key (Λ-of ir) 'y) (set))
+  (check-equal? (second (type-of/raw '(Reborrow y) '() '() environment (Λ-of ir)))
+                'unresolved-borrow-owner))
 
 ;; Construct の borrowed field を branch binder で受ける形。
 (let ()
@@ -95,7 +95,8 @@
       (cond [(eq? t 'ρ_hole) ρ_inner]
             [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
             [else t])))
-  (check-equal? (first (type-of/raw core-filled '() '() '() (Λ-of ir))) 'ok))
+  (check-equal? (second (type-of/raw core-filled '() '() '() (Λ-of ir)))
+                'capability-in-eliminate))
 
 ;; Reborrow の operand 全体が Let になる形。
 (let ()

@@ -120,7 +120,7 @@
                                 'y)
               (set (list 'x)))
 (check-equal? (borrow-token-key (region-ctx #f '() (hash) (hash)) 'y)
-              (set (list 'y)))
+              (set))
 (check-equal? (borrow-token-key
                (region-ctx #f '() (hash) (hash))
                '(Let (y let (BorrowedMut Int 0)) (BorrowMut x) y))
@@ -132,16 +132,16 @@
 (check-equal? (borrow-token-key
                (region-ctx #f '() (hash) (hash 'y (set 'x)))
                '(Let (y let Int) 1 y))
-              (set (list 'y)))
+              (set))
 (check-equal? (borrow-token-key
                (region-ctx #f '() (hash) (hash))
                '(Eliminate 0 ((C1 (y) -> y))))
-              (set (list 'y)))
+              (set))
 (check-equal? (borrow-token-key (region-ctx #f '() (hash) (hash 'y (set 3)))
                                 'y)
               (set (list 3)))
 (check-equal? (borrow-token-key (region-ctx #f '() (hash) (hash)) 3)
-              (set (list 3)))
+              (set))
 (check-equal? (borrow-token-key (region-ctx #f '() (hash) (hash 'y (set 'x 'z)))
                                 'y)
               (set (list 'x) (list 'z)))

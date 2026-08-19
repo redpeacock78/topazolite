@@ -187,8 +187,9 @@
     ;; PRF
     discharge-obligation-count discharge-proposition-mismatch
     discharge-target-not-apply unsatisfied-proof-obligation
-   ;; BOR
-    borrowed-owned-payload borrow-region-mismatch
+    ;; BOR
+    borrowed-owned-payload borrow-region-mismatch capability-in-eliminate
+    own-designator-mismatch unresolved-borrow-owner
     borrow-conflicting-alias borrow-escapes-owner borrow-non-owned
     borrow-unknown-owner-region drop-borrowed move-borrowed
     reborrow-non-mutable reborrow-region-escapes
@@ -600,8 +601,33 @@
                           (reach-var 'x 1013 1014))
               '() '() '() (reach-span 1000 1020))
    (reach-row 'borrow-region-mismatch
-              (reach-node 'BorrowAt 1021 1030 0 (reach-var 'x 1026 1027))
+              (reach-node 'BorrowAt 1021 1030 0 '(Own x ())
+                          (reach-var 'x 1026 1027))
               '() '() '() (reach-span 1021 1030))
+   (reach-row 'own-designator-mismatch
+              (reach-node 'BorrowAt 1321 1330 0 '(Own 7 ())
+                          (reach-var 'x 1326 1327))
+              '() '() '() (reach-span 1321 1330))
+   (reach-row 'unresolved-borrow-owner
+              (reach-node 'Reborrow 1331 1340
+                          (reach-var 'x 1336 1337))
+              '() '() '((x (BorrowedMut Res (RVar 0))))
+              (reach-span 1336 1337)
+              (lambda (core)
+                (define ir (build-region-ir (erase-core core)))
+                (region-ctx ir '() (hash) (hash))))
+   (reach-row 'capability-in-eliminate
+              (reach-node 'Eliminate 1341 1370
+                          (reach-node 'Borrow 1342 1350
+                                      (reach-var 'x 1347 1348))
+                          '((true () -> 0) (false () -> 0)))
+              '() '() '((x (Owned Res)))
+              (reach-span 1341 1370)
+              (lambda (core)
+                (define ir (build-region-ir (erase-core core)))
+                (region-ctx ir '()
+                            (hash 'x (region-at ir '()))
+                            (hash))))
    (reach-row 'borrow-conflicting-alias
               (reach-node 'Scope 1031 1070 '()
                           (reach-node 'Let 1032 1069
@@ -688,12 +714,12 @@
               '() reach-call-f '((y (Borrowed Int 0)))
               (reach-span 1301 1320))))
 
-(test-case "typing の producer key 集合が registry v3 と一致する"
+(test-case "typing の producer key 集合が registry v4 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 62)
+  (check-equal? (length producer-keys) 65)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

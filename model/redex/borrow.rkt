@@ -17,6 +17,7 @@
          psi-join
          psi-suspend
          check-region-annotation
+         own-agrees?
          check-borrows
          psi-add-shared
          psi-add-mut
@@ -115,6 +116,16 @@
   (unless ir (fail 'borrow-region-mismatch node))
   (define expected (region->rho ir (region-at ir (region-ctx-point Λ))))
   (unless (equal? ρ expected) (fail 'borrow-region-mismatch node)))
+
+;; own の欄と designator が同じ capability を指すか（spec §5.3）。
+;; w が place なら root が w で path は空、借用値なら root/path が一致する。
+;; 実行時には R-LetOwnedB の置換後だけが来るため、それ以外は偽にする。
+(define (own-agrees? w root fp)
+  (match w
+    [`(BorrowRef ,p ,fp-w ,_) (and (equal? p root) (equal? fp-w fp))]
+    [`(BorrowMutRef ,p ,fp-w ,_) (and (equal? p root) (equal? fp-w fp))]
+    [(? exact-nonnegative-integer? p) (and (equal? p root) (null? fp))]
+    [_ #f]))
 
 ;; 段 3。σ の上で BOR-002 と使用を判定する。spec §7.3 と §8。
 ;; sigma-ref は typing 側から渡す。borrow.rkt は typing.rkt を require しない。
@@ -244,41 +255,47 @@
 (define (capability-set keys)
   (for/set ([key (in-set keys)]) (capability-key key)))
 
-(define (borrow-token-key Λ c [locals (hash)])
+(define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
+  (define (recur c* [locals* locals])
+    (borrow-token-key Λ c* locals* #:fail fail))
   (match (peel-node c)
     [`(Borrow ,w) (set (cons (peel-node w) '()))]
     [`(BorrowMut ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowAt ,_ ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowMutAt ,_ ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowAt ,_ ,_ ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowMutAt ,_ ,_ ,w) (set (cons (peel-node w) '()))]
     [`(BorrowRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
     [`(BorrowMutRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
-    [`(Reborrow ,c_1) (borrow-token-key Λ c_1 locals)]
-    [`(ReborrowAt ,_ ,c_1) (borrow-token-key Λ c_1 locals)]
+    [`(Reborrow ,c_1) (recur c_1)]
+    [`(ReborrowAt ,_ ,_ ,c_1) (recur c_1)]
     [(? borrow-designator? w)
-     (define ws (hash-ref locals w (lambda () (region-ctx-token Λ w))))
-     (if (set-empty? ws) (set (cons w '())) (capability-set ws))]
+     (define designator (peel-node w))
+     (define ws (hash-ref locals designator
+                           (lambda () (region-ctx-token Λ designator))))
+     (cond
+       [(not (set-empty? ws)) (capability-set ws)]
+       [fail (fail 'unresolved-borrow-owner c)]
+       [else (set)])]
     [`(Eliminate ,_ ,brs)
      (for/fold ([acc (set)]) ([br (in-list brs)])
        (match-define `(,_ (,parameters ...) -> ,body) (peel-branch br))
        (define locals_branch
          (for/fold ([acc_l locals]) ([p (in-list parameters)])
            (hash-set acc_l (peel-bind p) (set))))
-       (set-union acc (borrow-token-key Λ body locals_branch)))]
-    [`(Scope ,_ ,body) (borrow-token-key Λ body locals)]
-    [`(Proj ,c_1 ,_) (borrow-token-key Λ c_1 locals)]
-    [`(Suspend ,c_1) (borrow-token-key Λ c_1 locals)]
-    [`(Yield ,_ ,c_next) (borrow-token-key Λ c_next locals)]
+       (set-union acc (recur body locals_branch)))]
+    [`(Scope ,_ ,body) (recur body)]
+    [`(Proj ,c_1 ,_) (recur c_1)]
+    [`(Suspend ,c_1) (recur c_1)]
+    [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
      (match-define `(,name -> ,c_h) (peel-branch handler))
-     (set-union (borrow-token-key Λ body locals)
-                (borrow-token-key Λ c_h
-                                  (hash-set locals (peel-bind name) (set))))]
+     (set-union (recur body)
+                (recur c_h (hash-set locals (peel-bind name) (set))))]
     [`(Rec (,fields ...))
      (for/fold ([acc (set)]) ([field (in-list fields)])
-       (set-union acc (borrow-token-key Λ (third field) locals)))]
+       (set-union acc (recur (third field))))]
     [`(Construct ,_ ,_ ,fields ...)
      (for/fold ([acc (set)]) ([field (in-list fields)])
-       (set-union acc (borrow-token-key Λ field locals)))]
+       (set-union acc (recur field)))]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
     ;; 宣言型はどちらの形でも最後の要素である。
     ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。
@@ -293,7 +310,7 @@
      ;; bound の token を body へ渡す。
      (define token
        (if (borrow-typed? (peel-ty (last rest)))
-           (borrow-token-key Λ bound locals)
+           (recur bound)
            (set)))
-     (borrow-token-key Λ body (hash-set locals (peel-bind name) token))]
+     (recur body (hash-set locals (peel-bind name) token))]
     [_ (set)]))
