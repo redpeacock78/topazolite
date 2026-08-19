@@ -89,9 +89,8 @@
   (if b (reverse (unbox b)) '()))
 
 ;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
-;; fp/operation/source は Task 1 で欄だけ先に通す。判定は Task 6 が読む。
-(define (emit-use-request! Λ w [fp '()] [operation 'move] [source (set)]
-                           [node #f] [kind #f] [otherwise #f])
+;; fp/operation/source/node/kind は要求の契約なので必須にする。
+(define (emit-use-request! Λ w fp operation source node kind [otherwise #f])
   (define ir (region-ctx-ir Λ))
   (when ir
     (emit-request!
