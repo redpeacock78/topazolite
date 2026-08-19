@@ -89,11 +89,14 @@
   (if b (reverse (unbox b)) '()))
 
 ;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
-(define (emit-use-request! w Λ node kind [otherwise #f])
+;; fp/operation/source は Task 1 で欄だけ先に通す。判定は Task 6 が読む。
+(define (emit-use-request! Λ w [fp '()] [operation 'move] [source (set)]
+                           [node #f] [kind #f] [otherwise #f])
   (define ir (region-ctx-ir Λ))
   (when ir
     (emit-request!
-     (use-request w (region-at ir (region-ctx-point Λ)) node kind otherwise))))
+     (use-request w fp operation source
+                  (region-at ir (region-ctx-point Λ)) node kind otherwise))))
 
 ;; 段 2。下限制約から σ を作る。spec §6.1。
 ;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
@@ -881,11 +884,11 @@
   (emit-constraint!
    (region-constraint 'outlives ρ_owner α point core))
   (emit-request!
-   (borrow-request key (if mutable? 'mut 'shared) α core))
+   (borrow-request key '() (if mutable? 'mut 'shared) α core))
   (define Ψ_out
     (if mutable?
-        (psi-add-mut Ψ key α)
-        (psi-add-shared Ψ key α)))
+        (psi-add-mut Ψ key '() α)
+        (psi-add-shared Ψ key '() α)))
   (list (list (if mutable? 'BorrowedMut 'Borrowed)
               payload
               α)
@@ -923,23 +926,27 @@
      ;; 生成していない。各 token を親の要求として記録し、境界の先でも
      ;; Move/Drop の判定へ届かせる。
      (when (not (lifetime-var? α_parent))
-       (for ([w (in-set tokens)])
-         (emit-request! (borrow-request w 'mut parent-term core))))
+       (for ([cap (in-set tokens)])
+         (define w (car cap))
+         (define fp (cdr cap))
+         (emit-request! (borrow-request w fp 'mut parent-term core))))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
      ;; 親を停止窓から除いたあとも、子と別の可変借用との衝突は残す必要がある。
-     (for ([w (in-set tokens)])
-       (emit-request! (borrow-request w 'shared α_child core)))
+     (for ([cap (in-set tokens)])
+       (define w (car cap))
+       (define fp (cdr cap))
+       (emit-request! (borrow-request w fp 'shared α_child core)))
      ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
      ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の
      ;; suspension tuple だけは実在する mut capability として張る。
      (define Ψ_seed
        (if (lifetime-var? α_parent)
            Ψ_1
-           (for/fold ([Ψ_acc Ψ_1]) ([w (in-set tokens)])
-             (psi-add-mut Ψ_acc w parent-term))))
+           (for/fold ([Ψ_acc Ψ_1]) ([cap (in-set tokens)])
+             (psi-add-mut Ψ_acc (car cap) (cdr cap) parent-term))))
      (define Ψ_2
-       (for/fold ([Ψ_acc Ψ_seed]) ([w (in-set tokens)])
-         (psi-suspend Ψ_acc w parent-term α_child)))
+       (for/fold ([Ψ_acc Ψ_seed]) ([cap (in-set tokens)])
+         (psi-suspend Ψ_acc (car cap) (cdr cap) parent-term α_child)))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
@@ -1270,14 +1277,14 @@
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
      (unless type (fail 'unknown-place core))
-     (emit-use-request! place Λ core 'move-borrowed)
+     (emit-use-request! Λ place '() 'move (set) core 'move-borrowed)
      (list `(Owned ,type) '(Own) Ψ)]
 
     [`(Move ,name)
      (define w (peel-node name))
      (define type (lookup environment w))
      (unless type (fail 'unbound-variable core))
-     (emit-use-request! w Λ core 'move-borrowed)
+     (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
      (when (borrow-typed? type) (fail 'move-borrowed core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own) Ψ)]
@@ -1303,7 +1310,7 @@
             dropped-type
             (owned-type? dropped-type)))
      (when dropped
-       (emit-use-request! dropped Λ argument 'drop-borrowed
+       (emit-use-request! Λ dropped '() 'move (set) argument 'drop-borrowed
                           (and bare-owned? 'owned-variable-requires-move)))
      (when (and dropped
                 (borrow-typed? (or (lookup environment dropped) '())))

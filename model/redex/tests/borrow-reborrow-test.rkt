@@ -20,29 +20,29 @@
 (let ()
   (define Λ_0 (empty-region-ctx))
   (define Λ (region-ctx-add-token Λ_0 'y (set 'x)))
-  (check-equal? (borrow-token-key Λ_0 '(Reborrow (BorrowMut x))) (set 'x))
+  (check-equal? (borrow-token-key Λ_0 '(Reborrow (BorrowMut x))) (set (list 'x)))
   (check-equal? (borrow-token-key Λ
                                   '(Let (y let (BorrowedMut Int 0))
                                         (BorrowMut x)
                                         (Reborrow y)))
-                (set 'x))
+                (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutAt 0 7)))
-                (set 7))
-  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutRef 7 0)))
-                (set 7)))
+                (set (list 7)))
+  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutRef 7 () 0)))
+                (set (list 7))))
 
 ;; 内側の項の型をそのまま運ぶ形も全欄を合併する。
 (let ()
   (define Λ_0 (empty-region-ctx))
   (check-equal? (borrow-token-key Λ_0 '(Proj (Rec ((a imm (BorrowMut x)))) a))
-                (set 'x))
-  (check-equal? (borrow-token-key Λ_0 '(Suspend (BorrowMut x))) (set 'x))
-  (check-equal? (borrow-token-key Λ_0 '(Yield 1 (BorrowMut x))) (set 'x))
+                (set (list 'x)))
+  (check-equal? (borrow-token-key Λ_0 '(Suspend (BorrowMut x))) (set (list 'x)))
+  (check-equal? (borrow-token-key Λ_0 '(Yield 1 (BorrowMut x))) (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0
                                   '(Handle (Return 0 (BorrowedMut Int 0))
                                            (h -> h)
                                            (BorrowMut x)))
-                (set 'x 'h)))
+                (set (list 'x) (list 'h))))
 
 (let ()
   (define Λ_0 (empty-region-ctx))
@@ -50,10 +50,10 @@
                  Λ_0
                  '(Proj (Rec ((a imm (BorrowMut x))
                               (b imm (BorrowMut y)))) b))
-                (set 'x 'y))
+                (set (list 'x) (list 'y)))
   (check-equal? (borrow-token-key Λ_0
                                   '(Construct (Option Int) some (BorrowMut x)))
-                (set 'x))
+                (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(Rec ((a imm (resource 1))))) (set)))
 
 ;; 登録のない designator は自己 fallback で親 capability になる。
@@ -62,7 +62,7 @@
   (define ir (build-region-ir core))
   (define ρ_root (region->rho ir (region-at ir '())))
   (define environment (list (list 'y `(BorrowedMut Int ,ρ_root))))
-  (check-equal? (borrow-token-key (Λ-of ir) 'y) (set 'y))
+  (check-equal? (borrow-token-key (Λ-of ir) 'y) (set (list 'y)))
   (check-equal? (first (type-of/raw '(Reborrow y) '() '() environment (Λ-of ir)))
                 'ok))
 
@@ -114,7 +114,7 @@
   (check-equal? (borrow-token-key (Λ-of ir)
                                   '(Let (y let (BorrowedMut Res 0))
                                         (BorrowMut x) y))
-                (set 'x))
+                (set (list 'x)))
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
 ;; 正常系。子 region の共有借用を返す。

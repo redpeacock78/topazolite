@@ -85,8 +85,8 @@
 (check-true (core-types-normal? '(BorrowAt 1 x)))
 (check-true (core-types-normal? '(BorrowMutAt 1 x)))
 (check-true (core-types-normal? '(ReborrowAt 2 (BorrowMutAt 1 x))))
-(check-true (core-types-normal? '(BorrowRef 0 1)))
-(check-true (core-types-normal? '(BorrowMutRef 0 1)))
+(check-true (core-types-normal? '(BorrowRef 0 () 1)))
+(check-true (core-types-normal? '(BorrowMutRef 0 () 1)))
 
 ;; operand は辿る。正規でない型を内側に置くと偽になる。
 ;; (Union Int Int) が正規でないのは、normalize-type がこれを Int へ畳むためである。

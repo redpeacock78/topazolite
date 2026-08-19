@@ -39,5 +39,5 @@
 ;; Ψ の項目は α を鍵に持つ。
 (let ()
   (define alpha '(RVar 0))
-  (define Ψ (psi-add-mut (empty-psi) 'x alpha))
-  (check-equal? (psi-mut Ψ) (set (list 'x alpha))))
+  (define Ψ (psi-add-mut (empty-psi) 'x '() alpha))
+  (check-equal? (psi-mut Ψ) (set (list 'x '() alpha))))

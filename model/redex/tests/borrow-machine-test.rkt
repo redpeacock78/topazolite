@@ -13,8 +13,8 @@
 (define (live-borrow-refs config)
   (define (collect t)
     (match t
-      [`(BorrowRef ,p ,ρ) (list (list p ρ))]
-      [`(BorrowMutRef ,p ,ρ) (list (list p ρ))]
+      [`(BorrowRef ,p ,fp ,ρ) (list (list p fp ρ))]
+      [`(BorrowMutRef ,p ,fp ,ρ) (list (list p fp ρ))]
       [(? list?) (append* (map collect t))]
       [_ '()]))
   (match config
@@ -81,7 +81,7 @@
 ;; 手組みの config は invariant を破るので、独立な抽出が検出する。
 (let ()
   (define n-root (region->rho ir (region-at ir '())))
-  (define config `(cfg (Scope () (BorrowRef 0 ,n-root))
+  (define config `(cfg (Scope () (BorrowRef 0 () ,n-root))
                        ((0 1))
                        ((0 Moved))
                        ()))

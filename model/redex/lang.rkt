@@ -170,6 +170,8 @@
 
 (define-extended-language G2m G1m
   (label ::= variable-not-otherwise-mentioned)
+  ;; field path。空の列が root capability を表す。
+  (fp ::= (label ...))
   (m ::= imm mut)
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
@@ -194,8 +196,8 @@
          (Rec ((label m v) ...))
          (UVal v)
          (RVal (ProofRep O φ) v)
-         (BorrowRef p ρ)
-         (BorrowMutRef p ρ))
+         (BorrowRef p fp ρ)
+         (BorrowMutRef p fp ρ))
 
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))

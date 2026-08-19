@@ -391,7 +391,7 @@
 
    ;; spec §13.1。H、Ω、θ は借用値の生成では変更しない。
    (--> (cfg (in-hole E (BorrowAt ρ p)) H Ω θ)
-        (cfg (in-hole E (BorrowRef p ρ)) H Ω θ)
+        (cfg (in-hole E (BorrowRef p () ρ)) H Ω θ)
         (where Available ,(table-ref (term Ω) (term p)))
         R-Borrow)
 
@@ -402,7 +402,7 @@
         R-BorrowError)
 
    (--> (cfg (in-hole E (BorrowMutAt ρ p)) H Ω θ)
-        (cfg (in-hole E (BorrowMutRef p ρ)) H Ω θ)
+        (cfg (in-hole E (BorrowMutRef p () ρ)) H Ω θ)
         (where Available ,(table-ref (term Ω) (term p)))
         R-BorrowMut)
 
@@ -412,8 +412,8 @@
         (side-condition (memq (term state_old) '(Moved Dropped)))
         R-BorrowMutError)
 
-   (--> (cfg (in-hole E (ReborrowAt ρ (BorrowMutRef p ρ_parent))) H Ω θ)
-        (cfg (in-hole E (BorrowRef p ρ)) H Ω θ)
+   (--> (cfg (in-hole E (ReborrowAt ρ (BorrowMutRef p fp ρ_parent))) H Ω θ)
+        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
         R-Reborrow)
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)

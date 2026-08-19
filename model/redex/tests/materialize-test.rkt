@@ -80,7 +80,7 @@
   (define ρ-machine
     (let walk ([t (first next)])
       (match t
-        [`(BorrowRef ,_ ,ρ) ρ]
+        [`(BorrowRef ,_ ,_ ,ρ) ρ]
         [(? list? ts) (ormap walk ts)]
         [_ #f])))
   (check-equal? ρ-machine ρ-materialized))

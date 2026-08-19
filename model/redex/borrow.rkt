@@ -22,7 +22,10 @@
          psi-add-mut
          borrow-typed?
          borrowed-type?
-         borrow-token-key)
+         borrow-token-key
+         field-path?
+         path-prefix?
+         capability-overlap?)
 
 ;; Λ（region 文脈）。spec §3.1。
 ;; 木を下る向きにだけ流れる不変の値である。parameterize を使わない。
@@ -62,8 +65,8 @@
 (struct psi (shared mut suspended) #:transparent)
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
-(struct borrow-request (w mode alpha node) #:transparent)
-(struct use-request (w point-region node kind otherwise) #:transparent)
+(struct borrow-request (w fp mode alpha node) #:transparent)
+(struct use-request (w fp operation source point-region node kind otherwise) #:transparent)
 
 (define (empty-psi) (psi (set) (set) (set)))
 
@@ -76,15 +79,33 @@
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
 ;; mut に実在する項目だけを suspended へ退避する。自己 fallback で得た
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
-(define (psi-suspend Ψ w α_parent α_child)
-  (define held? (set-member? (psi-mut Ψ) (list w α_parent)))
-  (psi (set-add (psi-shared Ψ) (list w α_child))
+(define (psi-suspend Ψ w fp α_parent α_child)
+  (define held? (set-member? (psi-mut Ψ) (list w fp α_parent)))
+  (psi (set-add (psi-shared Ψ) (list w fp α_child))
        (if held?
-           (set-remove (psi-mut Ψ) (list w α_parent))
+           (set-remove (psi-mut Ψ) (list w fp α_parent))
            (psi-mut Ψ))
        (if held?
-           (set-add (psi-suspended Ψ) (list w α_parent α_child))
+           (set-add (psi-suspended Ψ) (list w fp α_parent α_child))
            (psi-suspended Ψ))))
+
+;; spec §3.1。fp は label の列である。空の列が root を指す。
+(define (field-path? fp)
+  (and (list? fp) (andmap symbol? fp)))
+
+;; spec §3.2。fp_1 が fp_2 の接頭辞か。
+(define (path-prefix? fp_1 fp_2)
+  (cond
+    [(null? fp_1) #t]
+    [(null? fp_2) #f]
+    [(equal? (car fp_1) (car fp_2)) (path-prefix? (cdr fp_1) (cdr fp_2))]
+    [else #f]))
+
+;; spec §3.2。root が同じで、一方の path が他方の接頭辞のときだけ重なる。
+(define (capability-overlap? w_1 fp_1 w_2 fp_2)
+  (and (equal? w_1 w_2)
+       (or (path-prefix? fp_1 fp_2)
+           (path-prefix? fp_2 fp_1))))
 
 ;; 注釈済みの形の ρ は、走査位置の region と一致していなければならない。
 ;; 一致しない項は annotate-regions を通していない項か、別の ir で注釈した項である。
@@ -110,13 +131,16 @@
   (define (suspended-pair? a b)
     (for/or ([e (in-set (psi-suspended Ψ))])
       (define w-parent (first e))
-      (define α-parent (second e))
-      (define α-child (third e))
+      (define fp-parent (second e))
+      (define α-parent (third e))
+      (define α-child (fourth e))
       (define ρ-child (sigma-ref σ α-child))
       (define (inside-child? r)
         (define ρ (ρ-of r))
         (and ρ-child ρ (region-outlives? ir ρ-child ρ)))
-      (and (equal? w-parent (borrow-request-w a))
+      (and (capability-overlap? w-parent fp-parent
+                                (borrow-request-w a)
+                                (borrow-request-fp a))
            (or (and (equal? α-parent (borrow-request-alpha a))
                     (inside-child? b))
                (and (equal? α-parent (borrow-request-alpha b))
@@ -134,7 +158,8 @@
          [j (in-range (add1 i) (length ordered))])
     (define a (list-ref ordered i))
     (define b (list-ref ordered j))
-    (when (and (equal? (borrow-request-w a) (borrow-request-w b))
+    (when (and (capability-overlap? (borrow-request-w a) (borrow-request-fp a)
+                                   (borrow-request-w b) (borrow-request-fp b))
                (or (eq? (borrow-request-mode a) 'mut)
                    (eq? (borrow-request-mode b) 'mut))
                (not (suspended-pair? a b))
@@ -146,7 +171,8 @@
     (define ρ_point (use-request-point-region u))
     (define covered?
       (for/or ([r (in-list ordered)])
-        (and (equal? (borrow-request-w r) (use-request-w u))
+        (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
+                                  (use-request-w u) (use-request-fp u))
              (region-outlives? ir (ρ-of r) ρ_point))))
     (cond
       [covered? (fail (use-kind u) (use-request-node u))]
@@ -161,11 +187,11 @@
 
 (define (use-kind u) (use-request-kind u))
 
-(define (psi-add-shared Ψ w ρ)
-  (struct-copy psi Ψ [shared (set-add (psi-shared Ψ) (list w ρ))]))
+(define (psi-add-shared Ψ w fp ρ)
+  (struct-copy psi Ψ [shared (set-add (psi-shared Ψ) (list w fp ρ))]))
 
-(define (psi-add-mut Ψ w ρ)
-  (struct-copy psi Ψ [mut (set-add (psi-mut Ψ) (list w ρ))]))
+(define (psi-add-mut Ψ w fp ρ)
+  (struct-copy psi Ψ [mut (set-add (psi-mut Ψ) (list w fp ρ))]))
 
 (define (borrow-typed? type)
   (match type
@@ -208,19 +234,29 @@
 (define (borrow-designator? w)
   (or (symbol? w) (exact-nonnegative-integer? w)))
 
+;; 移行中の Λ.tokens/locals に旧来の designator 集合が残っていても、
+;; 要求へ流す境界では capability の形へ揃える。
+(define (capability-key key)
+  (if (and (pair? key) (list? (cdr key)))
+      key
+      (cons key '())))
+
+(define (capability-set keys)
+  (for/set ([key (in-set keys)]) (capability-key key)))
+
 (define (borrow-token-key Λ c [locals (hash)])
   (match (peel-node c)
-    [`(Borrow ,w) (set (peel-node w))]
-    [`(BorrowMut ,w) (set (peel-node w))]
-    [`(BorrowAt ,_ ,w) (set (peel-node w))]
-    [`(BorrowMutAt ,_ ,w) (set (peel-node w))]
-    [`(BorrowRef ,p ,_) (set (peel-node p))]
-    [`(BorrowMutRef ,p ,_) (set (peel-node p))]
+    [`(Borrow ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowMut ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowAt ,_ ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowMutAt ,_ ,w) (set (cons (peel-node w) '()))]
+    [`(BorrowRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
+    [`(BorrowMutRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
     [`(Reborrow ,c_1) (borrow-token-key Λ c_1 locals)]
     [`(ReborrowAt ,_ ,c_1) (borrow-token-key Λ c_1 locals)]
     [(? borrow-designator? w)
      (define ws (hash-ref locals w (lambda () (region-ctx-token Λ w))))
-     (if (set-empty? ws) (set w) ws)]
+     (if (set-empty? ws) (set (cons w '())) (capability-set ws))]
     [`(Eliminate ,_ ,brs)
      (for/fold ([acc (set)]) ([br (in-list brs)])
        (match-define `(,_ (,parameters ...) -> ,body) (peel-branch br))
