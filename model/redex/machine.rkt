@@ -454,11 +454,13 @@
    (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω θ)
         (cfg (in-hole E (BorrowRef p fp_result ρ)) H Ω θ)
         (where fp_result ,(append (term fp) (list (term label))))
+        (where (Own p fp_result) own)
         R-ProjBorrow)
 
    (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowMutRef p fp ρ_parent) label)) H Ω θ)
         (cfg (in-hole E v_result) H Ω θ)
         (where fp_result ,(append (term fp) (list (term label))))
+        (where (Own p fp_result) own)
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
                                           (term ρ) (term H)))
         R-ProjBorrowMut)

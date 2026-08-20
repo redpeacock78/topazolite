@@ -150,6 +150,14 @@
    (list (term (cfg (BorrowRef 1 (b) 0)
                     ,(proj-heap) ,(proj-omega) ())))))
 
+;; own の root/path が射影結果と食い違う configuration は stuck にする。
+(let ()
+  (define conf
+    (term (cfg (ProjBorrowAt 0 (Own 2 (wrong))
+                             (BorrowRef 1 () 1) a)
+               ,(proj-heap) ,(proj-omega) ())))
+  (check-equal? (apply-reduction-relation -->g2 conf) '()))
+
 ;; 拒否 2。row に無い label を射影する。
 (let ()
   (define core '(Scope (1) (ProjBorrow (Borrow 1) z)))

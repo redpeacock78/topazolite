@@ -268,8 +268,17 @@
     [`(Reborrow ,c_1) (recur c_1)]
     [`(ReborrowAt ,_ ,_ ,c_1) (recur c_1)]
     [`(ProjBorrowAt ,_ ,_ ,c_1 ,label)
-     (for/set ([k (in-set (recur c_1))])
-       (cons (car k) (append (cdr k) (list label))))]
+     (define child-caps
+       (for/set ([k (in-set (recur c_1))])
+         (cons (car k) (append (cdr k) (list label)))))
+     ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
+     ;; field-path? の定義域（複数要素の列）を実際には検査できない。
+     (for ([cap (in-set child-caps)])
+       (unless (field-path? (cdr cap))
+         (if fail
+             (fail 'unresolved-borrow-owner c)
+             (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
+     child-caps]
     [(? borrow-designator? w)
      (define designator (peel-node w))
      (define ws (hash-ref locals designator

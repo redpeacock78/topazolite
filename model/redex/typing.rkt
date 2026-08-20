@@ -972,9 +972,6 @@
     (match (normalize-type τ_inner)
       [`(Record ,r) r]
       [_ (fail 'projborrow-non-record core)]))
-  ;; Task 1 の検証 API をここで使う。label 単体でも field path として扱う。
-  (unless (field-path? (list label))
-    (fail 'projborrow-unknown-field core))
   (define field
     (or (assoc label row)
         (fail 'projborrow-unknown-field core)))
