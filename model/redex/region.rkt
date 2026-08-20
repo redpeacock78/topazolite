@@ -178,6 +178,12 @@
       [`(BorrowMutAt ,_ (Own ,w-own ,_) ,w)
        (set-union (if (symbol? w) (set w) (set))
                   (if (symbol? w-own) (set w-own) (set)))]
+      [`(ReborrowAt ,_ (Own ,w-own ,_) ,c)
+       (set-union (walk c)
+                  (if (symbol? w-own) (set w-own) (set)))]
+      [`(ProjBorrowAt ,_ (Own ,w-own ,_) ,c ,_)
+       (set-union (walk c)
+                  (if (symbol? w-own) (set w-own) (set)))]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
       [(? symbol? s)
        (if (redex-match? G2 x s) (set s) (set))]
