@@ -359,7 +359,7 @@
 ;; cycle-local-references が自身以外の owned 集合を差し引くため、
 ;; サブサイクルごとに立てると BOR-001 と BOR-002 の置き先が無くなる。
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
-(define expected-g5-ids '(BOR-001 BOR-002 BOR-003))
+(define expected-g5-ids '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006))
 
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
@@ -471,6 +471,13 @@
           (build-path root "model/redex/tests/borrow-regression-test.rkt")
           (build-path root "model/redex/tests/borrow-escape-test.rkt")
           (build-path root "model/redex/tests/borrow-merge-test.rkt")
+          (build-path root "model/redex/tests/borrow-path-test.rkt")
+          (build-path root "model/redex/tests/borrow-own-annot-test.rkt")
+          (build-path root "model/redex/tests/borrow-proj-test.rkt")
+          (build-path root "model/redex/tests/borrow-read-test.rkt")
+          (build-path root "model/redex/tests/borrow-assign-test.rkt")
+          (build-path root "model/redex/tests/borrow-use-test.rkt")
+          (build-path root "model/redex/tests/borrow-mut-join-test.rkt")
           (build-path root "model/redex/tests/solver-parity-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)

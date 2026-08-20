@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-006] own の欄の解決と経路の保存。
+
 (require rackunit
          racket/match
          racket/set

@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-006] capability の正規形と重なりの規則。
+
 (require rackunit
          racket/set
          redex/reduction-semantics

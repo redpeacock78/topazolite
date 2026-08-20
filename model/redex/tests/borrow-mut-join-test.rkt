@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-005] 可変性を保つ join と、合流した field の射影。
+
 (require rackunit
          racket/match
          "../region.rkt"

@@ -473,6 +473,36 @@ mutable borrow の有効期間中、競合する alias を許可しない。
 
 置換条件は `docs/specification/region.md` が定める。
 
+### BOR-004
+
+- **状態**：G5
+- **由来**：ホワイトペーパー §15
+
+借用を通した読み出しと代入の可否を定める。
+
+共有借用を通した読み出しを許し、可変借用を通した読み出しと代入を許す。
+共有借用を通した代入を禁じる。
+所有者への直接の読み書きは、重なる借用が生きているあいだ禁じる。
+
+### BOR-005
+
+- **状態**：G5
+- **由来**：ホワイトペーパー §15
+
+借用の field 射影と mode の決まり方を定める。
+
+record の field への借用を親の借用から作れる。
+親が共有なら子も共有、親が可変で field が `mut` なら子も可変、親が可変で field が `mut` でなければ子は共有になる。
+
+### BOR-006
+
+- **状態**：G5
+- **由来**：ホワイトペーパー §15
+
+借用の所有者は一意に辿れる。
+
+すべての借用について、その所有者の root place と field path が静的に定まる。
+
 ### PTR-001
 
 - **状態**：G5
@@ -609,7 +639,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 1 以降 | §8.1 |
-| 異型 mut field の Union 方針 | `trait.md` §9 | G5 | §4.5.3 |
 | Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 1 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
@@ -620,8 +649,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | typing 経路の scope 文脈 | `trait.md` §9 | Phase 1 以降 | §17.6 |
 | priority の下流利用 | `trait.md` §9 | Phase 1 以降 | §6.4 |
 | optional field | `structural-row.md` §7 | Phase 1 以降 | §4.5.2 |
-| mut field への代入と借用 | `structural-row.md` §7 | G5 | §4.7、§4.8 |
-| borrow mode の互換性 | `structural-row.md` §7 | G5 | §4.8 |
 | Surface 構文 | `structural-row.md` §7 | Phase 1 | §3.1 |
 | 探索動力学 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
@@ -640,16 +667,19 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
-| 関数境界をまたぐ借用の受け渡し | `borrow.md` §9 | G5 | §15 |
-| 関数の仮引数そのものの借用 | `borrow.md` §9 | G5 | §15 |
-| Borrowed の payload の制限 | `borrow.md` §9 | G5 | §15 |
-| 自己 fallback の provenance | `borrow.md` §9 | G5 | §15 |
-| region の外へ出る借用の値 | `borrow.md` §9 | G5 | §4.8 |
-| 借用規則の backend 写し先 | `borrow.md` §9 | Phase 2 以降 | §13.3.1 |
+| 関数境界をまたぐ借用の受け渡し | `borrow.md` §14 | G5c3 | §15 |
+| 関数の仮引数そのものの借用 | `borrow.md` §14 | G5c3 | §15 |
+| 入れ子の借用の複製 | `borrow.md` §14 | G5c3 | §15 |
+| region の外へ出る借用の値 | `borrow.md` §14 | G5c3 | §4.8 |
+| 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
+| 合流した capability の label ごとの表 | `borrow.md` §14 | G5c4 | §15 |
+| identity forwarding | `borrow.md` §14 | G5c3 | §15 |
+| record field の region variance | `borrow.md` §14 | G5c3 | §4.8 |
+| 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
 
-structural-row.md と trait.md から G5 へ送る 3 件は、いずれも借用と代入を同時に規定できる段を待つ。
-可変性を保つ join、`mut` field への再代入、borrow mode の互換性は同じ意味論の上に乗る。
-borrow.md §9 の未回収 6 件は、同節の項目に対応して本表へ記載している。
+structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
+borrow.md §14 の未回収 8 件は、同節の項目に対応して本表へ記載している。
+所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
 
 本表の検査は `model/redex/tests/handoff-table-test.rkt` が行う。
 検査するのは記載元のファイルと節見出しが実在することだけである。

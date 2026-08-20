@@ -328,6 +328,9 @@ typing の primary-span は棄却の判断を下した節点の span である�
 
 `E-TYP-001` は細分類の key を割り当てられない棄却を受ける。
 
+typing の span reachability 表は既存の入口形の span 検査に限る。
+追加の入口形は、専用の producer fixture で key の到達性を検証する。
+
 origins の primary-span は根ではなく `(forged <subject>)` の `subject` の span である。
 
 `subject` は棄却の対象になった部分項そのものであり、位置が分かるため根へ丸めない。

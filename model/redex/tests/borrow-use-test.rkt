@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-004] capability の重なりと source による使用の判定。
+
 (require rackunit
          racket/match
          "../region.rkt"

@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-004] Assign の型付けと受理条件。
+
 (require rackunit
          redex/reduction-semantics
          "../region.rkt"

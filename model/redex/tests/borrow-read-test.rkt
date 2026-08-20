@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-004] Read の型付けと copy-out-ok?。
+
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"

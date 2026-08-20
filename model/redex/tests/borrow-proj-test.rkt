@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: BOR-005] ProjBorrow の型付けと mode の表。
+
 (require rackunit
          racket/set
          redex/reduction-semantics
