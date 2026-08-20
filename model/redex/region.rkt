@@ -53,6 +53,8 @@
     [`(CurryVal ,_ ,v_1 ,v_2) (list v_1 v_2)]
     [`(Reborrow ,c) (list c)]
     [`(ReborrowAt ,_ ,_ ,c) (list c)]
+    [`(ProjBorrow ,c ,_) (list c)]
+    [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
     [`(BorrowAt ,_ ,_ ,_) '()]
@@ -109,6 +111,9 @@
     [`(CurryVal ,O ,_ ,_) `(CurryVal ,O ,(first children) ,(second children))]
     [`(Reborrow ,_) `(Reborrow ,(first-child))]
     [`(ReborrowAt ,ρ ,own ,_) `(ReborrowAt ,ρ ,own ,(first-child))]
+    [`(ProjBorrow ,_ ,label) `(ProjBorrow ,(first-child) ,label)]
+    [`(ProjBorrowAt ,ρ ,own ,_ ,label)
+     `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
     [_
      (unless (null? children)
        (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))
@@ -519,6 +524,7 @@
       [`(BorrowAt ,_ ,own ,_) own]
       [`(BorrowMutAt ,_ ,own ,_) own]
       [`(ReborrowAt ,_ ,own ,_) own]
+      [`(ProjBorrowAt ,_ ,own ,_ ,_) own]
       [(? symbol? s) (own-of-designator env* s)]
       [`(Scope ,_ ,body) (walk body env*)]
       [`(Let (,x ,_ ,τ) ,bound ,body)
@@ -556,11 +562,23 @@
     (match t
       [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
+      [`(ProjBorrowAt ,_ ,_ ,_ ,_)
+       (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(Borrow ,w) `(BorrowAt ,(here) ,(own-of-designator env w) ,w)]
       [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,(own-of-designator env w) ,w)]
       [`(Reborrow ,c)
        (define annotated (down c 0))
        `(ReborrowAt ,(here) ,(own-of-operand env annotated) ,annotated)]
+      [`(ProjBorrow ,c_1 ,label)
+       (define annotated (down c_1 0))
+       (define own_parent (own-of-operand env annotated))
+       (match own_parent
+         [`(Own ,w ,fp)
+          (define child-fp (append fp (list label)))
+          (unless (symbol? label)
+            (error 'annotate-regions "field label の形ではない: ~s" label))
+          `(ProjBorrowAt ,(here) (Own ,w ,child-fp) ,annotated ,label)]
+         [_ (error 'annotate-regions "所有者の形ではない: ~s" own_parent)])]
       [`(Let (,x ,bmode ,τ) ,c_1 ,c_2)
        (define a_1 (down c_1 0))
        (define bound-own
@@ -596,6 +614,13 @@
       [`(ReborrowAt ,_ ,own ,c)
        (or (walk c env)
            (and (not (equal? own (own-of-operand/checked env c))) t))]
+      [`(ProjBorrowAt ,_ ,own ,c ,label)
+       (or (walk c env)
+           (let ([parent-own (own-of-operand/checked env c)])
+             (match parent-own
+               [`(Own ,w ,fp)
+                (and (not (equal? own `(Own ,w ,(append fp (list label))))) t)]
+               [_ t])))]
       [`(Let (,x ,_ ,τ) ,c_1 ,c_2)
        (define child-violation (walk c_1 env))
        (or child-violation
@@ -626,6 +651,8 @@
         [`(BorrowAt ,ρ ,own ,w) `(BorrowAt ,(resolve ρ point) ,own ,w)]
         [`(BorrowMutAt ,ρ ,own ,w) `(BorrowMutAt ,(resolve ρ point) ,own ,w)]
         [`(ReborrowAt ,ρ ,own ,c) `(ReborrowAt ,(resolve ρ point) ,own ,c)]
+        [`(ProjBorrowAt ,ρ ,own ,c ,label)
+         `(ProjBorrowAt ,(resolve ρ point) ,own ,c ,label)]
         [_ node]))
     (define kids (core-children replaced))
     (if (null? kids)

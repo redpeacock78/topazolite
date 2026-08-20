@@ -267,6 +267,9 @@
     [`(BorrowMutRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
     [`(Reborrow ,c_1) (recur c_1)]
     [`(ReborrowAt ,_ ,_ ,c_1) (recur c_1)]
+    [`(ProjBorrowAt ,_ ,_ ,c_1 ,label)
+     (for/set ([k (in-set (recur c_1))])
+       (cons (car k) (append (cdr k) (list label))))]
     [(? borrow-designator? w)
      (define designator (peel-node w))
      (define ws (hash-ref locals designator

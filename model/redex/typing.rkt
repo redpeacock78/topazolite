@@ -958,6 +958,32 @@
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
+;; [REQ: BOR-004] 借用の field 射影。親の α をそのまま使い、
+;; 新しい α と borrow-request は作らない（spec §5.1）。
+(define (infer-projborrow core operand label Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define-values (m_parent τ_inner α)
+    (match (normalize-type τ_operand)
+      [`(Borrowed ,τ ,α) (values 'Borrowed τ α)]
+      [`(BorrowedMut ,τ ,α) (values 'BorrowedMut τ α)]
+      [_ (fail 'projborrow-non-record core)]))
+  (define row
+    (match (normalize-type τ_inner)
+      [`(Record ,r) r]
+      [_ (fail 'projborrow-non-record core)]))
+  ;; Task 1 の検証 API をここで使う。label 単体でも field path として扱う。
+  (unless (field-path? (list label))
+    (fail 'projborrow-unknown-field core))
+  (define field
+    (or (assoc label row)
+        (fail 'projborrow-unknown-field core)))
+  (match-define (list _ τ_f m_f) field)
+  ;; spec §5.4 の例外。直接の Owned payload は Borrowed の禁止形になる。
+  (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
+    (fail 'borrowed-owned-payload core))
+  (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -1403,6 +1429,8 @@
     [`(ReborrowAt ,ρ ,_ ,c_operand)
      (check-region-annotation Λ ρ core fail)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
+    [`(ProjBorrowAt ,_ ,_ ,operand ,label)
+     (infer-projborrow core operand label Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

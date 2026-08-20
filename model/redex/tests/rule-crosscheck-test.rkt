@@ -32,6 +32,8 @@
     (R-BorrowMut    . #f)
     (R-BorrowMutError . #f)
     (R-Reborrow     . #f)
+    (R-ProjBorrow   . #f)
+    (R-ProjBorrowMut . #f)
     (R-RecurBind    . R-PR-Letrec)
     (R-RecurUnfold  . R-PR-Letrec)
     (R-Move         . R-PR-Move)
@@ -61,19 +63,20 @@
  (check-equal? (set-count g1-rule-names) 21))
 
 (test-case
- "-->g2/rules adds exactly nine names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。G2m 固有の借用規則を含めて 9 本である。
+ "-->g2/rules adds exactly eleven names to -->g1/rules"
+ ;; 同名の上書きは名前集合を増やさない。G2m 固有の借用規則を含めて 11 本である。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-Discharge 'R-LetB 'R-LetOwnedB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
-                    'R-BorrowMutError 'R-Reborrow))
+                    'R-BorrowMutError 'R-Reborrow
+                    'R-ProjBorrow 'R-ProjBorrowMut))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 30))
+ (check-equal? (set-count g2-rule-names) 32))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 30))
+ (check-equal? (length rule-correspondence) 32))
 
 (test-case
  "the target side has 20 rules"

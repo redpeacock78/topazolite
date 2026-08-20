@@ -10,7 +10,16 @@
          core-types-normal?
          proposition-types-normal?
          effect-row-normal?
-         type-carries-capability?)
+         type-carries-capability?
+         proj-borrow-mode)
+
+;; spec §5.2。親の mode と field の可変性から子の mode を決める。
+;; capability が BorrowedMut であることは path 上の全 field が mut である
+;; ことを含意するため、後段で path 全体を再検査しない。
+(define (proj-borrow-mode m_parent m_field)
+  (if (and (eq? m_parent 'BorrowedMut) (eq? m_field 'mut))
+      'BorrowedMut
+      'Borrowed))
 
 ;; 型が Borrowed または BorrowedMut を含むか。Eliminate の branch binder へ
 ;; 所有者を運べない段で fail-closed にするために使う。
@@ -170,6 +179,8 @@
          [`(BorrowMutRef ,_ ,_ ,_) #t]
          [`(Reborrow ,operand) (walk operand)]
          [`(ReborrowAt ,_ ,_ ,operand) (walk operand)]
+         [`(ProjBorrow ,operand ,_) (walk operand)]
+         [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)

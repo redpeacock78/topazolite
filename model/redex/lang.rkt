@@ -112,7 +112,8 @@
          (Discharge (ProofRep O φ) c)
          (Borrow w)
          (BorrowMut w)
-         (Reborrow c))
+         (Reborrow c)
+         (ProjBorrow c label))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
@@ -191,7 +192,8 @@
          (Reborrow c)
          (BorrowAt ρ own w)
          (BorrowMutAt ρ own w)
-         (ReborrowAt ρ own c))
+         (ReborrowAt ρ own c)
+         (ProjBorrowAt ρ own c label))
   (own ::= (Own w fp))
   (v ::= ....
          (Rec ((label m v) ...))
@@ -204,17 +206,20 @@
          (Rec ((label m v) ... (label m F) (label m c) ...))
          (Proj F label)
          (Let (x bmode τ) F c)
-         (ReborrowAt ρ own F))
+         (ReborrowAt ρ own F)
+         (ProjBorrowAt ρ own F label))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (Proj E label)
          (Let (x bmode τ) E c)
-         (ReborrowAt ρ own E))
+         (ReborrowAt ρ own E)
+         (ProjBorrowAt ρ own E label))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (Proj G label)
          (Let (x bmode τ) G c)
-         (ReborrowAt ρ own G))
+         (ReborrowAt ρ own G)
+         (ProjBorrowAt ρ own G label))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))

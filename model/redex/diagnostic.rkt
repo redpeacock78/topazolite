@@ -181,7 +181,9 @@
 
 ;; G5c2 の place と読み書き。Task 2 で producer が現れる 3 件を先に置く。
 (define typing-entries-v4
-  '(("E-BOR-020" unresolved-borrow-owner "借用の所有者を辿れない")
+  '(("E-BOR-016" projborrow-non-record "射影の operand が record の借用でない")
+    ("E-BOR-017" projborrow-unknown-field "射影の label が row に無い")
+    ("E-BOR-020" unresolved-borrow-owner "借用の所有者を辿れない")
     ("E-BOR-023" own-designator-mismatch "own の欄と designator が別の capability を指す")
     ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")))
 

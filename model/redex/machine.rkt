@@ -164,6 +164,34 @@
     [(list _ value) value]
     [_ #f]))
 
+;; spec §5.3。H の record を field path に沿って辿る。
+(define (heap-walk-path value fp)
+  (for/fold ([current value]) ([label (in-list fp)])
+    (match current
+      [`(Rec ,fields)
+       (match (assoc label fields)
+         [(list _ _ field-value) field-value]
+         [#f (error 'heap-walk-path "label ~s が無い" label)])]
+      [_ (error 'heap-walk-path "record でない値を辿った: ~s" current)])))
+
+;; 可変借用から field を射影するときの実行時 mode は H から読む。
+;; 型付け側の field mode と食い違う configuration は型付け済みの項からは
+;; 作れないので、ここでは heap の値だけを根拠にする。
+(define (proj-borrow-mut p fp ρ H)
+  (define label (last fp))
+  (define parent-fp (take fp (sub1 (length fp))))
+  (define record (heap-walk-path (table-ref H p) parent-fp))
+  (define mode
+    (match record
+      [`(Rec ,fields)
+       (match (assoc label fields)
+         [(list _ field-mode _) field-mode]
+         [#f (error 'proj-borrow-mut "label ~s が heap の record に無い" label)])]
+      [_ (error 'proj-borrow-mut "射影の先が record でない: ~s" record)]))
+  (if (eq? mode 'mut)
+      `(BorrowMutRef ,p ,fp ,ρ)
+      `(BorrowRef ,p ,fp ,ρ)))
+
 (define (table-set table key value)
   (if (assoc key table)
       (for/list ([entry (in-list table)])
@@ -421,6 +449,19 @@
    (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω θ)
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
         R-Reborrow)
+
+   ;; spec §5.3。H、Ω、θ は射影で変更しない。
+   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω θ)
+        (cfg (in-hole E (BorrowRef p fp_result ρ)) H Ω θ)
+        (where fp_result ,(append (term fp) (list (term label))))
+        R-ProjBorrow)
+
+   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowMutRef p fp ρ_parent) label)) H Ω θ)
+        (cfg (in-hole E v_result) H Ω θ)
+        (where fp_result ,(append (term fp) (list (term label))))
+        (where v_result ,(proj-borrow-mut (term p) (term fp_result)
+                                          (term ρ) (term H)))
+        R-ProjBorrowMut)
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
         (cfg (in-hole E v_result) H Ω θ)

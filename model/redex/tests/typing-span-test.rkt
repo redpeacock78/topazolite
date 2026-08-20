@@ -196,6 +196,7 @@
     borrowed-function-capture borrowed-function-parameter
     borrowed-function-result
     ;; default
+    projborrow-non-record projborrow-unknown-field
     ill-typed))
 
 (define reachability-table
@@ -719,7 +720,7 @@
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 65)
+  (check-equal? (length producer-keys) 67)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -752,10 +753,15 @@
   ;; non-normalizable-result-type は Intersection を含む型を入口が拒むため到達しない。
   ;; G5b の Borrowed と BorrowedMut は normalize-type が扱えるため、この理由は変わらない。
   ;; unmergeable-branch-records は正常型同士の merge だけが走るため到達しない。
+  ;; projborrow-non-record と projborrow-unknown-field は専用の
+  ;; borrow-proj-test.rkt が region context 付きの producer fixture を持つ。
+  ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   (define unreachable-keys
     '(effectful-curry-operand
       non-normalizable-result-type
-      unmergeable-branch-records))
+      unmergeable-branch-records
+      projborrow-non-record
+      projborrow-unknown-field))
   (check-equal? (sort (remove-duplicates (map first reachability-table))
                       symbol<?)
                 (sort (remove* (cons 'ill-typed unreachable-keys)
