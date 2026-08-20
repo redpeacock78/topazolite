@@ -192,6 +192,11 @@
       `(BorrowMutRef ,p ,fp ,ρ)
       `(BorrowRef ,p ,fp ,ρ)))
 
+;; spec §6.3。H から p の値を引き、fp の label を順に辿る。
+;; 型付けを通った項では record と label の不一致は起きない。
+(define (path-lookup H p fp)
+  (heap-walk-path (table-ref H p) fp))
+
 (define (table-set table key value)
   (if (assoc key table)
       (for/list ([entry (in-list table)])
@@ -464,6 +469,20 @@
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
                                           (term ρ) (term H)))
         R-ProjBorrowMut)
+
+   ;; spec §6.3。H、Ω、θ は読み出しで変更しない。
+   ;; Ω を見るのは Moved と Dropped の place を読まないためである。
+   (--> (cfg (in-hole E (Read (BorrowRef p fp ρ))) H Ω θ)
+        (cfg (in-hole E v_result) H Ω θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_result ,(path-lookup (term H) (term p) (term fp)))
+        R-Read)
+
+   (--> (cfg (in-hole E (Read (BorrowMutRef p fp ρ))) H Ω θ)
+        (cfg (in-hole E v_result) H Ω θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_result ,(path-lookup (term H) (term p) (term fp)))
+        R-ReadMut)
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
         (cfg (in-hole E v_result) H Ω θ)

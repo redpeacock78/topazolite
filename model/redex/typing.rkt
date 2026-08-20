@@ -981,6 +981,20 @@
     (fail 'borrowed-owned-payload core))
   (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
 
+;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
+;; ρ は結果の型に現れない（spec §6.1）。
+(define (infer-read core operand Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_payload
+    (match (normalize-type τ_operand)
+      [`(Borrowed ,τ ,_) τ]
+      [`(BorrowedMut ,τ ,_) τ]
+      [_ (fail 'read-non-borrow core)]))
+  (unless (copy-out-ok? (normalize-type τ_payload))
+    (fail 'read-uncopyable-payload core))
+  (list τ_payload ε_operand Ψ_1))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -1428,6 +1442,8 @@
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
     [`(ProjBorrowAt ,_ ,_ ,operand ,label)
      (infer-projborrow core operand label Λ Ψ environment places callables fail)]
+    [`(Read ,operand)
+     (infer-read core operand Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

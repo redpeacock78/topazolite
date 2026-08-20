@@ -181,6 +181,7 @@
          [`(ReborrowAt ,_ ,_ ,operand) (walk operand)]
          [`(ProjBorrow ,operand ,_) (walk operand)]
          [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
+         [`(Read ,operand) (walk operand)]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)

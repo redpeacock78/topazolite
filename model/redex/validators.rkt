@@ -12,6 +12,7 @@
          kernel-primitive-name?
          validator-error-message
          owned-free?
+         copy-out-ok?
          literal-type)
 
 ;; validator 正典表。行は (oid nm φ τ check) の 5 つ組である。
@@ -145,6 +146,39 @@
      (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
           (owned-free? return-type)
           (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
+    [_ #t]))
+
+;; spec §6.2。Read の payload の条件。所有値も借用も含まない型である。
+;; owned-free? と分ける理由は、owned-free? が Untrusted と Refined の
+;; payload の検証にも使われており、そちらの意味を変えられないからである。
+;; owned-free? は Borrowed と BorrowedMut の枝を持たず既定の #t へ落ちる。
+;; 流用すると可変借用を含む値を複製でき、同じ place への可変借用が 2 つになる。
+(define (effect-copy-out-ok? effect)
+  (match effect
+    [`(Return ,_ ,type) (copy-out-ok? type)]
+    [`(Yield ,type) (copy-out-ok? type)]
+    [_ #t]))
+
+(define (copy-out-ok? type)
+  (match type
+    [`(Owned ,_) #f]
+    [`(Borrowed ,_ ,_) #f]
+    [`(BorrowedMut ,_ ,_) #f]
+    [`(List ,element) (copy-out-ok? element)]
+    [`(Option ,element) (copy-out-ok? element)]
+    [`(Result ,ok-type ,error-type)
+     (and (copy-out-ok? ok-type) (copy-out-ok? error-type))]
+    [`(Untrusted ,payload) (copy-out-ok? payload)]
+    [`(Refined ,payload ,_) (copy-out-ok? payload)]
+    [`(Record ,row)
+     (for/and ([field (in-list row)]) (copy-out-ok? (second field)))]
+    [`(Union ,left ,right) (and (copy-out-ok? left) (copy-out-ok? right))]
+    [`(Intersection ,left ,right)
+     (and (copy-out-ok? left) (copy-out-ok? right))]
+    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
+     (and (for/and ([parameter (in-list parameters)]) (copy-out-ok? parameter))
+          (copy-out-ok? return-type)
+          (for/and ([effect (in-list effects)]) (effect-copy-out-ok? effect)))]
     [_ #t]))
 
 ;; リテラルの型。判定表の τ に載りうる型だけを返し、それ以外は #f を返す。
