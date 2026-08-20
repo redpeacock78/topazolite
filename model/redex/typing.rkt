@@ -1011,7 +1011,7 @@
   (match-define (list τ_value ε_value Ψ_2)
     (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
   (for ([τ_i (in-list (union-members τ_payload))])
-    (unless (compat? τ_value τ_i)
+    (unless (type-compatible? τ_value τ_i)
       (fail 'assign-union-variant core)))
   (list 'Unit (row-union ε_target ε_value) Ψ_2))
 

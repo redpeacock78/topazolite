@@ -28,7 +28,7 @@
   (check-equal? (first result) 'ok)
   (check-equal? (first (second result)) 'Unit))
 
-;; shared capability、非借用値、immutable field は代入できない。
+;; shared capability と非借用値は代入できない。
 (let ()
   (define result (run '(Scope (1) (Assign (Borrow 1) 7)) 'Int))
   (check-equal? (first result) 'fail)
@@ -42,6 +42,15 @@
 (let ()
   (define result
     (run '(Scope (1) (Assign (ProjBorrow (Borrow 1) a) 7))
+         '(Record ((a Int imm)))))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'assign-through-shared))
+
+;; 可変借用から imm field を射影すると共有 capability へ落ちるため、
+;; field mode 単独でも Assign を拒む。
+(let ()
+  (define result
+    (run '(Scope (1) (Assign (ProjBorrow (BorrowMut 1) a) 7))
          '(Record ((a Int imm)))))
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'assign-through-shared))
@@ -89,3 +98,12 @@
           ((1 (Rec ((a mut 9) (b imm 0)))))
           ((1 Available))
           ())))))
+
+;; Moved の place は Assign の対象にできず、規則は stuck する。
+(let ()
+  (define conf
+    (term (cfg (Assign (BorrowMutRef 1 () 0) 9)
+               ((1 5))
+               ((1 Moved))
+               ())))
+  (check-equal? (apply-reduction-relation -->g2 conf) '()))
