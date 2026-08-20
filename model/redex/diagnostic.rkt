@@ -182,10 +182,14 @@
 ;; G5c2 の place と読み書き。Task 2 で producer が現れる 3 件を先に置く。
 (define typing-entries-v4
   '(("E-BOR-014" read-uncopyable-payload "読み出しの payload が複製できない型を含む")
+    ("E-BOR-015" assign-through-shared "共有借用を通じて代入できない")
     ("E-BOR-016" projborrow-non-record "射影の operand が record の借用でない")
     ("E-BOR-017" projborrow-unknown-field "射影の label が row に無い")
     ("E-BOR-018" read-non-borrow "読み出しの operand が借用でない")
+    ("E-BOR-019" assign-non-borrow "借用でない値へ代入できない")
     ("E-BOR-020" unresolved-borrow-owner "借用の所有者を辿れない")
+    ("E-BOR-021" assign-owned-payload "所有値を含む capability へ代入できない")
+    ("E-BOR-022" assign-union-variant "Union の全成分と両立しない値を代入できない")
     ("E-BOR-023" own-designator-mismatch "own の欄と designator が別の capability を指す")
     ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")))
 

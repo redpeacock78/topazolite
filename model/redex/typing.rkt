@@ -995,6 +995,26 @@
     (fail 'read-uncopyable-payload core))
   (list τ_payload ε_operand Ψ_1))
 
+;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
+;; target の payload が Union のときは、実行時の全成分と互換でなければならない。
+(define (infer-assign core target value Λ Ψ environment places callables fail)
+  (match-define (list τ_target ε_target Ψ_1)
+    (infer target (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_target* (normalize-type τ_target))
+  (define τ_payload
+    (match τ_target*
+      [`(BorrowedMut ,τ ,_) τ]
+      [`(Borrowed ,_ ,_) (fail 'assign-through-shared core)]
+      [_ (fail 'assign-non-borrow core)]))
+  (unless (copy-out-ok? τ_payload)
+    (fail 'assign-owned-payload core))
+  (match-define (list τ_value ε_value Ψ_2)
+    (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
+  (for ([τ_i (in-list (union-members τ_payload))])
+    (unless (compat? τ_value τ_i)
+      (fail 'assign-union-variant core)))
+  (list 'Unit (row-union ε_target ε_value) Ψ_2))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -1444,6 +1464,8 @@
      (infer-projborrow core operand label Λ Ψ environment places callables fail)]
     [`(Read ,operand)
      (infer-read core operand Λ Ψ environment places callables fail)]
+    [`(Assign ,target ,value)
+     (infer-assign core target value Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

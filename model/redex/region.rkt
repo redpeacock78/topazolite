@@ -56,6 +56,7 @@
     [`(ProjBorrow ,c ,_) (list c)]
     [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
     [`(Read ,c) (list c)]
+    [`(Assign ,target ,value) (list target value)]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
     [`(BorrowAt ,_ ,_ ,_) '()]
@@ -116,6 +117,7 @@
     [`(ProjBorrowAt ,ρ ,own ,_ ,label)
      `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
     [`(Read ,_) `(Read ,(first-child))]
+    [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
     [_
      (unless (null? children)
        (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))

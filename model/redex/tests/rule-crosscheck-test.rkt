@@ -12,7 +12,7 @@
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
-;; 4 組が 1 本へ畳まれ、R-Discharge と借用規則 5 本が目標側に無いため、
+;; 4 組が 1 本へ畳まれ、R-Discharge と G2m 固有規則が目標側に無いため、
 ;; 値の相異なる集合は 20 本になる。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
@@ -36,6 +36,7 @@
     (R-ProjBorrowMut . #f)
     (R-Read         . #f)
     (R-ReadMut      . #f)
+    (R-Assign       . #f)
     (R-RecurBind    . R-PR-Letrec)
     (R-RecurUnfold  . R-PR-Letrec)
     (R-Move         . R-PR-Move)
@@ -65,21 +66,21 @@
  (check-equal? (set-count g1-rule-names) 21))
 
 (test-case
- "-->g2/rules adds exactly thirteen names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。G2m 固有の借用規則を含めて 13 本である。
+ "-->g2/rules adds exactly fourteen names to -->g1/rules"
+ ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 14 本である。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-Discharge 'R-LetB 'R-LetOwnedB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
                     'R-BorrowMutError 'R-Reborrow
                     'R-ProjBorrow 'R-ProjBorrowMut
-                    'R-Read 'R-ReadMut))
+                    'R-Read 'R-ReadMut 'R-Assign))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 34))
+ (check-equal? (set-count g2-rule-names) 35))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 34))
+ (check-equal? (length rule-correspondence) 35))
 
 (test-case
  "the target side has 20 rules"

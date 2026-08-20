@@ -197,6 +197,23 @@
 (define (path-lookup H p fp)
   (heap-walk-path (table-ref H p) fp))
 
+;; spec §7.3。field path の先だけを関数的に差し替える。
+(define (value-set-path old fp new)
+  (if (null? fp)
+      new
+      (match old
+        [`(Rec ,fields)
+         `(Rec ,(for/list ([field (in-list fields)])
+                  (match-define (list label mode value) field)
+                  (if (equal? label (first fp))
+                      (list label mode
+                            (value-set-path value (rest fp) new))
+                      field)))]
+        [_ (error 'value-set-path "record でない値を辿った: ~s" old)])))
+
+(define (path-set H p fp value)
+  (table-set H p (value-set-path (table-ref H p) fp value)))
+
 (define (table-set table key value)
   (if (assoc key table)
       (for/list ([entry (in-list table)])
@@ -483,6 +500,13 @@
         (where Available ,(table-ref (term Ω) (term p)))
         (where v_result ,(path-lookup (term H) (term p) (term fp)))
         R-ReadMut)
+
+   ;; spec §7.3。Assign は capability の path 先だけを更新し、Ω と θ は保つ。
+   (--> (cfg (in-hole E (Assign (BorrowMutRef p fp ρ) v)) H Ω θ)
+        (cfg (in-hole E unit) H_new Ω θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
+        R-Assign)
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
         (cfg (in-hole E v_result) H Ω θ)
