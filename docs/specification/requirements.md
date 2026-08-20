@@ -676,6 +676,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | identity forwarding | `borrow.md` §14 | G5c3 | §15 |
 | record field の region variance | `borrow.md` §14 | G5c3 | §4.8 |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
+| 計算した値を place または Owned へ載せる経路 | `borrow.md` §12 | G5c3 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 8 件は、同節の項目に対応して本表へ記載している。
