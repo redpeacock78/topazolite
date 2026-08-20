@@ -150,11 +150,27 @@
    (list (term (cfg (BorrowRef 1 (b) 0)
                     ,(proj-heap) ,(proj-omega) ())))))
 
-;; own の root/path が射影結果と食い違う configuration は stuck にする。
+;; own の root だけが射影結果と食い違う configuration は stuck にする。
 (let ()
   (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 2 (wrong))
+    (term (cfg (ProjBorrowAt 0 (Own 2 (a))
                              (BorrowRef 1 () 1) a)
+               ,(proj-heap) ,(proj-omega) ())))
+  (check-equal? (apply-reduction-relation -->g2 conf) '()))
+
+;; own の path だけが射影結果と食い違う configuration は stuck にする。
+(let ()
+  (define conf
+    (term (cfg (ProjBorrowAt 0 (Own 1 (wrong))
+                             (BorrowRef 1 () 1) a)
+               ,(proj-heap) ,(proj-omega) ())))
+  (check-equal? (apply-reduction-relation -->g2 conf) '()))
+
+;; 可変借用の射影も own の root を検査し、proj-borrow-mut より先に stuck にする。
+(let ()
+  (define conf
+    (term (cfg (ProjBorrowAt 0 (Own 2 (a))
+                             (BorrowMutRef 1 () 1) a)
                ,(proj-heap) ,(proj-omega) ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))
 
