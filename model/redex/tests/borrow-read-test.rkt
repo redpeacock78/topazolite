@@ -19,6 +19,13 @@
 (check-false (copy-out-ok? '(Untrusted (Borrowed Res 0))))
 (check-false (copy-out-ok? '(Record ((a (Owned Res) imm)))))
 (check-false (copy-out-ok? '(Record ((a (BorrowedMut Res 0) mut)))))
+;; Result / Union / Intersection / Refined も payload を再帰する。
+(check-false (copy-out-ok? '(Result Int (Borrowed Res 0))))
+(check-false (copy-out-ok? '(Union Int (Owned Res))))
+(check-false
+ (copy-out-ok? '(Intersection (Record ((a Int imm)))
+                             (Record ((b (BorrowedMut Res 0) mut))))))
+(check-false (copy-out-ok? '(Refined (Owned Res) (Prop P))))
 ;; NFn は引数、戻り値、effect の payload まで辿る。
 (check-false
  (copy-out-ok? '(NFn (Int) Int ((Yield (BorrowedMut Res 0))) ())))
@@ -26,6 +33,12 @@
 (check-true (copy-out-ok? 'Int))
 (check-true (copy-out-ok? '(Record ((a Int imm) (b Bool mut)))))
 (check-true (copy-out-ok? '(List Int)))
+(check-true (copy-out-ok? '(Result Int Bool)))
+(check-true (copy-out-ok? '(Union Int Bool)))
+(check-true
+ (copy-out-ok? '(Intersection (Record ((a Int imm)))
+                             (Record ((b Bool mut))))))
+(check-true (copy-out-ok? '(Refined Int (Prop P))))
 
 ;; owned-free? は変えない。可変借用は今までどおり素通りする。
 ;; この 1 件が、2 つの述語を分けた理由（spec §6.2）を固定する。

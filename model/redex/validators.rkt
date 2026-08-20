@@ -161,6 +161,14 @@
 
 (define (copy-out-ok? type)
   (match type
+    ['Int #t]
+    ['Bool #t]
+    ['Unit #t]
+    ['String #t]
+    ['Never #t]
+    ['Res #t]
+    [`(TypeInfo ,_) #t]
+    [`(Proof ,_) #t]
     [`(Owned ,_) #f]
     [`(Borrowed ,_ ,_) #f]
     [`(BorrowedMut ,_ ,_) #f]
@@ -179,7 +187,8 @@
      (and (for/and ([parameter (in-list parameters)]) (copy-out-ok? parameter))
           (copy-out-ok? return-type)
           (for/and ([effect (in-list effects)]) (effect-copy-out-ok? effect)))]
-    [_ #t]))
+    ;; 型構成子を追加するときは、複製の可否をここへ明示する。
+    [_ #f]))
 
 ;; リテラルの型。判定表の τ に載りうる型だけを返し、それ以外は #f を返す。
 (define (literal-type payload)

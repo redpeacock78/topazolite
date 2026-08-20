@@ -991,7 +991,7 @@
       [`(Borrowed ,τ ,_) τ]
       [`(BorrowedMut ,τ ,_) τ]
       [_ (fail 'read-non-borrow core)]))
-  (unless (copy-out-ok? (normalize-type τ_payload))
+  (unless (copy-out-ok? τ_payload)
     (fail 'read-uncopyable-payload core))
   (list τ_payload ε_operand Ψ_1))
 
