@@ -191,7 +191,8 @@
     ("E-BOR-021" assign-owned-payload "所有値を含む capability へ代入できない")
     ("E-BOR-022" assign-union-variant "Union の全成分と両立しない値を代入できない")
     ("E-BOR-023" own-designator-mismatch "own の欄と designator が別の capability を指す")
-    ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")))
+    ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")
+    ("E-BOR-025" borrow-conflicting-use "使用が生きている借用と競合する")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

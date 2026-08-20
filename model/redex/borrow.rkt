@@ -176,17 +176,49 @@
                (not (suspended-pair? a b))
                (regions-overlap? ir (ρ-of a) (ρ-of b)))
       (fail 'borrow-conflicting-alias (borrow-request-node b))))
-  ;; 使用。w の生きた借用が使用位置を覆うかを見る。重なりでは見ない。§7.4。
-  ;; 覆う借用が 1 つも無いとき、otherwise を持つ要求だけがその key で落ちる。§7.5。
-  (for ([u (in-list uses)])
-    (define ρ_point (use-request-point-region u))
-    (define covered?
-      (for/or ([r (in-list ordered)])
-        (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
-                                  (use-request-w u) (use-request-fp u))
-             (region-outlives? ir (ρ-of r) ρ_point))))
+  ;; §8.2。所有者への直接の操作と、capability を通した操作を分ける。
+  (define (overlapping? r u)
+    (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
+                              (use-request-w u) (use-request-fp u))
+         (region-outlives? ir (ρ-of r) (use-request-point-region u))))
+
+  ;; 起点そのものが停止しているか。停止した親を通した使用は
+  ;; operation と mode によらず拒む。条件 3 より先に見る。
+  (define (source-suspended? u)
+    (for/or ([e (in-set (psi-suspended Ψ))])
+      (and (set-member? (use-request-source u) (third e))
+           (region-outlives? ir (sigma-ref σ (fourth e))
+                             (use-request-point-region u)))))
+
+  ;; 条件 2。α_o が source の要素の親として suspended に入っているか。
+  (define (parent-of-source? r u)
+    (for/or ([e (in-set (psi-suspended Ψ))])
+      (and (equal? (borrow-request-alpha r) (third e))
+           (set-member? (use-request-source u) (fourth e)))))
+
+  ;; 条件 3。read は mut とだけ競合する。assign と move は両方と競合する。
+  (define (mode-conflict? operation mode)
+    (if (eq? operation 'read) (eq? mode 'mut) #t))
+
+  (define (use-blocked? u)
     (cond
-      [covered? (fail (use-kind u) (use-request-node u))]
+      [(set-empty? (use-request-source u))
+       (for/or ([r (in-list ordered)]) (overlapping? r u))]
+      [(source-suspended? u) #t]
+      [else
+       (for/or ([r (in-list ordered)])
+         (and (overlapping? r u)
+              (not (set-member? (use-request-source u)
+                                (borrow-request-alpha r)))
+              (not (parent-of-source? r u))
+              (mode-conflict? (use-request-operation u)
+                              (borrow-request-mode r))))]))
+
+  ;; 使用。覆う借用が 1 つも無いとき、otherwise を持つ要求だけがその key
+  ;; で落ちる。§7.4-7.5。
+  (for ([u (in-list uses)])
+    (cond
+      [(use-blocked? u) (fail (use-kind u) (use-request-node u))]
       [(use-request-otherwise u)
        (fail (use-request-otherwise u) (use-request-node u))]
       [else (void)])))

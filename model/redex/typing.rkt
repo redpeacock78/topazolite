@@ -38,6 +38,7 @@
          unify-borrow-lifetimes
          with-lifetime-unify
          merge-position
+         merge-alpha-sources
          lifetime-counter
          alpha-table
          register-owner
@@ -50,6 +51,7 @@
          typing-solve
          sigma-ref
          subst-type-regions
+         capability-source
          contains-lifetime-var?
          materialize-fail-result
          core-type-of/materialized)
@@ -361,6 +363,10 @@
 ;; ir を持つのは、α_m の下限に合流位置の region を置くためである。
 (define merge-position (make-parameter #f))
 
+;; §8.1。合流した α から、その合流が受け取った分岐の ρ の集合への対応。
+;; lifetime-counter や alpha-table と同じく、寿命を 1 つの typing の文脈に限る。
+(define merge-alpha-sources (make-parameter #f))
+
 (define (with-lifetime-unify thunk)
   (parameterize ([lifetime-unify-context (box (hash))]) (thunk)))
 
@@ -397,6 +403,10 @@
      (define ctor (first (first shapes)))
      (define payload (second (first shapes)))
      (define α_m (fresh-lifetime! (list 'merge (length shapes))))
+     ;; §8.1。合流した α が受け取った分岐の ρ を記録する。
+     ;; capability-source はこれを葉まで展開する。
+     (hash-set! (merge-alpha-sources) α_m
+                (for/set ([s (in-list shapes)]) (third s)))
      (define pos (merge-position))
      ;; 位置が無い呼び出しでは制約を立てない。§10.2。
      (when (and pos (first pos))
@@ -958,6 +968,32 @@
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
+;; §8.1。合流した α を、借用の項が直接採番した α だけの集合へ展開する。
+;; 中間の合流 α を残してはならない。循環は不変条件の破れとして error にする。
+(define (alpha-set ρ)
+  (cond
+    [(not (lifetime-var? ρ)) (set)]
+    [else
+     (let expand ([α ρ] [seen (set)])
+       (cond
+         [(set-member? seen α)
+          (error 'alpha-set "合流した α の対応が循環している: ~s" α)]
+         [(hash-ref (merge-alpha-sources) α #f)
+          => (lambda (branches)
+               (for/fold ([acc (set)]) ([β (in-set branches)])
+                 (if (lifetime-var? β)
+                     (set-union acc (expand β (set-add seen α)))
+                     acc)))]
+         [else (set α)]))]))
+
+;; §8.1。capability の起点となる借用の α の集合を返す。
+;; 具体的な ρ と借用でない型は起点の寿命を運ばないので空集合である。
+(define (capability-source type)
+  (match (normalize-type type)
+    [`(Borrowed ,_ ,ρ) (alpha-set ρ)]
+    [`(BorrowedMut ,_ ,ρ) (alpha-set ρ)]
+    [_ (set)]))
+
 ;; [REQ: BOR-004] 借用の field 射影。親の α をそのまま使い、
 ;; 新しい α と borrow-request は作らない（spec §5.1）。
 (define (infer-projborrow core operand label Λ Ψ environment places callables fail)
@@ -979,6 +1015,10 @@
   ;; spec §5.4 の例外。直接の Owned payload は Borrowed の禁止形になる。
   (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
     (fail 'borrowed-owned-payload core))
+  (define source (capability-source τ_operand))
+  (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
+    (emit-use-request! Λ (car cap) (append (cdr cap) (list label)) 'read source
+                       core 'borrow-conflicting-use))
   (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
 
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
@@ -993,6 +1033,10 @@
       [_ (fail 'read-non-borrow core)]))
   (unless (copy-out-ok? τ_payload)
     (fail 'read-uncopyable-payload core))
+  (define source (capability-source τ_operand))
+  (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
+    (emit-use-request! Λ (car cap) (cdr cap) 'read source
+                       core 'borrow-conflicting-use))
   (list τ_payload ε_operand Ψ_1))
 
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
@@ -1013,6 +1057,10 @@
   (for ([τ_i (in-list (union-members τ_payload))])
     (unless (type-compatible? τ_value τ_i)
       (fail 'assign-union-variant core)))
+  (define source (capability-source τ_target))
+  (for ([cap (in-set (borrow-token-key Λ target #:fail fail))])
+    (emit-use-request! Λ (car cap) (cdr cap) 'assign source
+                       core 'borrow-conflicting-use))
   (list 'Unit (row-union ε_target ε_value) Ψ_2))
 
 (define (infer core Λ Ψ environment places callables fail)
@@ -1482,7 +1530,8 @@
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
                    [lifetime-counter (box 0)]
-                   [alpha-table tbl])
+                   [alpha-table tbl]
+                   [merge-alpha-sources (make-hash)])
       (with-typing
        (lambda (fail)
          (match-define (list type _row _Ψ)
@@ -1671,7 +1720,8 @@
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
                    [lifetime-counter (box 0)]
-                   [alpha-table tbl])
+                   [alpha-table tbl]
+                   [merge-alpha-sources (make-hash)])
       (with-typing
        (lambda (fail)
          ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。

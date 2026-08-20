@@ -13,7 +13,8 @@
 (define (merge/fresh types)
   (parameterize ([lifetime-counter (box 0)]
                  [lifetime-collector (box '())]
-                 [alpha-table (box (hash))])
+                 [alpha-table (box (hash))]
+                 [merge-alpha-sources (make-hash)])
     (merge-record-types/impl types)))
 
 ;; 制約まで見る版。merge-position を張り、立った制約を型と witness に添えて返す。
@@ -28,6 +29,7 @@
   (parameterize ([lifetime-counter (box 0)]
                  [lifetime-collector (box '())]
                  [alpha-table (box (hash))]
+                 [merge-alpha-sources (make-hash)]
                  [merge-position (list merge-ir merge-point 0)])
     (define-values (merged witnesses) (merge-record-types/impl types))
     (list merged witnesses (collected-constraints))))
@@ -45,7 +47,8 @@
   (define cs
     (parameterize ([lifetime-counter (box 0)]
                    [lifetime-collector (box '())]
-                   [alpha-table (box (hash))])
+                   [alpha-table (box (hash))]
+                   [merge-alpha-sources (make-hash)])
       (merge-record-types/impl (list left right))
       (collected-constraints)))
   (check-equal? cs '()))

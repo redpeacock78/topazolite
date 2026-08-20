@@ -190,7 +190,8 @@
     ;; BOR
     borrowed-owned-payload borrow-region-mismatch capability-in-eliminate
     own-designator-mismatch unresolved-borrow-owner
-    borrow-conflicting-alias borrow-escapes-owner borrow-non-owned
+    borrow-conflicting-alias borrow-conflicting-use
+    borrow-escapes-owner borrow-non-owned
     borrow-unknown-owner-region drop-borrowed move-borrowed
     reborrow-non-mutable reborrow-region-escapes
     borrowed-function-capture borrowed-function-parameter
@@ -723,7 +724,7 @@
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 73)
+  (check-equal? (length producer-keys) 74)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -762,6 +763,8 @@
   ;; borrow-read-test.rkt が region context 付きの producer fixture を持つ。
   ;; Assign の 4 件も専用の borrow-assign-test.rkt が region context 付きの
   ;; producer fixture を持つ。
+  ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
+  ;; producer fixture を持つ。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   (define unreachable-keys
     '(effectful-curry-operand
@@ -771,6 +774,7 @@
       projborrow-unknown-field
       read-non-borrow
       read-uncopyable-payload
+      borrow-conflicting-use
       assign-through-shared
       assign-non-borrow
       assign-owned-payload
