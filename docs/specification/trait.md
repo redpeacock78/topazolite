@@ -409,11 +409,6 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **合成 Proof 値と primitive**：G2f は合成候補の静的な `ProofRep` を検証するが、それを生成して引数へ渡す primitive は導入しない。
   現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
-- **異型 mut field の Union 方針**：G2g の merge は、異なる型を持つ `mut` field を `imm` へ降格したうえで Union join する。
-  降格の理由は代入安全性であり、join 型の field へ書き込める規則を与えられないためである。
-  これはホワイトペーパー §4.5.3 が求める、可変性を保ったまま join する規則を回収したことを意味しない。
-  この未回収範囲では、ホワイトペーパー §4.5.3 の Union 方針を正典として残す。
-  可変性を保つ join は、借用と代入を同時に規定できる G5 へ送る。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
   この操作は Phase 1 以降へ送る。
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。

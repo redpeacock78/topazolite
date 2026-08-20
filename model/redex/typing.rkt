@@ -178,6 +178,43 @@
 (define (type-compatible? actual expected)
   (compat? actual expected Γ-pc0))
 
+;; ROW-005。Eliminate が作った Union の導入点だけで、各枝の具体型を
+;; 合流型の成分として再照合する。一般の mut field 互換性は不変のままにし、
+;; Assign の全成分検査へこの緩和を漏らさない。
+;; mut の否定側は fail-closed の番人である。infer-eliminate の expected は
+;; 常に枝型の merge なので、well-formed な枝では member 性が構造的に成り立つ。
+;; この側は将来の不正な拡張を黙って受理しないために残す。
+(define (merge-branch-compatible? actual expected)
+  (define (union-type? type)
+    (and (pair? type) (eq? (first type) 'Union)))
+  (define (union-members-compatible? actual expected)
+    (and (union-type? expected)
+         (for/and ([actual-member
+                    (in-list (if (union-type? actual)
+                                 (union-members actual)
+                                 (list actual)))])
+           (for/or ([expected-member (in-list (union-members expected))])
+             (type-equiv? actual-member expected-member)))))
+  (match* (actual expected)
+    [('Never _) #t]
+    [((list 'Record actual-row) (list 'Record expected-row))
+     (for/and ([field (in-list expected-row)])
+       (match field
+         [`(,label ,expected-type ,expected-mode)
+          (match (field-row-lookup actual-row label)
+            [`(,actual-type ,actual-mode)
+             (case expected-mode
+               [(imm) (and (memq actual-mode '(imm mut))
+                           (type-compatible? actual-type expected-type))]
+               [(mut) (and (eq? actual-mode 'mut)
+                           (or (type-equiv? actual-type expected-type)
+                               (union-members-compatible?
+                                actual-type expected-type)))]
+               [else #f])]
+            [_ #f])]
+         [_ #f]))]
+    [(_ _) (type-compatible? actual expected)]))
+
 (define (type? value)
   (and (redex-match? G2m τ value)
        (type-shape-ok? value)
@@ -312,7 +349,8 @@
           (enter-child Λ_branch i))))
 
 (define (check-eliminate scrutinee branches expected
-                         Λ Ψ environment places callables node fail)
+                         Λ Ψ environment places callables node fail
+                         [compatible? type-compatible?])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type (first scrutinee-result))
@@ -327,7 +365,8 @@
                      (second context)
                      places
                      callables
-                     fail)))
+                     fail
+                     compatible?)))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
@@ -430,7 +469,8 @@
     [else types]))
 
 ;; CMP-001/ROW-005: 同じ label を持つ field を合わせる。
-;; 異型があれば mut を imm へ降格したうえで Union join する。
+;; 異型があれば可変性を保ったまま Union join する。
+;; 可変性が枝の間で食い違う field だけを imm へ落とす。
 (define (merge-field left right)
   (merge-fields (list left right)))
 
@@ -487,14 +527,16 @@
    (cond
      [(null? (rest types))
       (list label (first types) (if all-mutable? 'mut 'imm))]
-     ;; 異型は可変性によらず imm へ降格して join する。降格後は read-only で
-     ;; あり、join 型の値を書き戻して枝の型を破る経路が無い。
+     ;; 異型でも可変性は保つ。field の型を Union にしたまま mut で残す
+     ;; （spec §9.1、ホワイトペーパー §4.5.3）。書き戻しの安全性は
+     ;; Assign の側が受け持ち、Union の全成分と両立しない値を拒む
+     ;; （spec §9.2 の infer-assign）。
      [else
       (define joined
         (for/fold ([joined (first types)])
                   ([type (in-list (rest types))])
           (join-types joined type)))
-      (and joined (list label joined 'imm))])))
+      (and joined (list label joined (if all-mutable? 'mut 'imm)))])))
 
 ;; ROW-005: 返り値は 3 状態である。field 行なら合流成功、'absent は「どれかの
 ;; branch にこの field が無い」正常な脱落、#f は正規化または join の失敗であり
@@ -509,8 +551,8 @@
       (merge-fields fields)
       'absent))
 
-;; RFN-002/CMP-001/ROW-005: 全 branch に常在する field を合わせる。異型は imm
-;; へ降格して Union join する。どれかの branch に無い field だけが落ちる。
+;; RFN-002/CMP-001/ROW-005: 全 branch に常在する field を合わせる。異型は
+;; 可変性を保ったまま Union join する。どれかの branch に無い field だけが落ちる。
 ;; types は空でないことを呼び出し側が保証する。
 (define (merge-record-types/impl types)
   (with-lifetime-unify
@@ -613,7 +655,8 @@
                 (second context)
                 places
                 callables
-                fail)))
+                fail
+                merge-branch-compatible?)))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-rows)])
@@ -1542,7 +1585,8 @@
     [(list 'fail key _node details)
      (error 'typing-inference "段 1 が棄却した: ~a ~a" key details)]))
 
-(define (check-as/full core expected Λ Ψ environment places callables fail)
+(define (check-as/full core expected Λ Ψ environment places callables fail
+                       [compatible? type-compatible?])
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
@@ -1583,7 +1627,8 @@
                                 (list binding-type))
                         places
                         callables
-                        fail))
+                        fail
+                        compatible?))
         (list (row-union bound-row (first body-result))
               (second body-result)
               (third body-result))])]
@@ -1591,7 +1636,7 @@
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
        (check-as/full bound (peel-ty type) (enter-child Λ 0)
-                      Ψ environment places callables fail))
+                      Ψ environment places callables fail compatible?))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type))
@@ -1611,7 +1656,8 @@
                              (list binding-type))
                      places
                      callables
-                     fail))
+                     fail
+                     compatible?))
      (list (row-union (first bound-result) (first body-result))
            (second body-result)
            (third body-result))]
@@ -1620,14 +1666,15 @@
      (check-eliminate scrutinee branches expected
                       Λ
                       Ψ
-                      environment places callables core fail)]
+                      environment places callables core fail
+                      compatible?)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
      (check-as/full body expected (enter-child Λ 0)
-                    Ψ environment places callables fail)]
+                    Ψ environment places callables fail compatible?)]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -1645,7 +1692,8 @@
                     (first continuation-environment)
                     places
                     callables
-                    fail)]
+                    fail
+                    compatible?)]
 
     [`(Yield ,observed ,next)
      (define observed-result
@@ -1654,7 +1702,7 @@
      (define next-result
        (check-as/full next expected (enter-child Λ 1)
                       (third observed-result)
-                      environment places callables fail))
+                      environment places callables fail compatible?))
      (list (rows-union
             (list (second observed-result)
                   (first next-result)
@@ -1665,7 +1713,7 @@
     [`(Suspend ,body)
      (define body-result
        (check-as/full body expected (enter-child Λ 0)
-                      Ψ environment places callables fail))
+                      Ψ environment places callables fail compatible?))
      (list (row-union (first body-result) '(Suspend))
            (second body-result)
            (third body-result))]
@@ -1673,15 +1721,17 @@
     [_
      (match (infer core Λ Ψ environment places callables fail)
        [(list actual row result-psi)
-        (unless (type-compatible?
+        (unless (compatible?
                  actual
                  (adopt-inferred-lifetimes expected actual))
           (fail 'type-mismatch core expected actual))
         (list row result-psi actual)])]))
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素を落として渡す。
-(define (check-as core expected Λ Ψ environment places callables fail)
-  (match (check-as/full core expected Λ Ψ environment places callables fail)
+(define (check-as core expected Λ Ψ environment places callables fail
+                  [compatible? type-compatible?])
+  (match (check-as/full core expected Λ Ψ environment places callables fail
+                        compatible?)
     [(list row psi _) (list row psi)]))
 
 ;; 入口検査は type-of/raw と core-check-row が共有する。片方だけ直す事故を

@@ -255,8 +255,8 @@ Eliminate(c0, branches) : (Record r)
 ```
 
 交差に残す field は全枝に存在する field だけである。 [REQ: ROW-005]
-型が `type-equiv?` で一致しない field は、可変性を `imm` へ降格したうえで Union join する。
-可変性が枝の間で食い違う field も `imm` へ降格する。
+型が `type-equiv?` で一致しない field は、可変性を保ったまま Union join する。 [REQ: ROW-005]
+可変性が枝の間で食い違う field だけを `imm` へ降格する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
 
 非 `Never` 枝が一つもなければ結果型は `Never` である。
@@ -265,10 +265,16 @@ Eliminate(c0, branches) : (Record r)
 
 この構造的交差は、全経路に存在する field だけを残す decidable な近似である。
 型が異なる field の Union join は、G2e が `trait.md` §7 として導入した。
-G2g は join の対象を `imm` field から全 field へ広げ、`mut` field を `imm` へ降格して join する規則を加えた。 [REQ: ROW-005]
+G2g は join の対象を `imm` field から全 field へ広げた。 [REQ: ROW-005]
+G2g の時点では、異型の `mut` field を `imm` へ降格して join していた。
 降格の理由は代入安全性である。
 join 型の field へ書き込めるとすると、ある枝が期待する狭い型の位置に別の枝の値を格納できてしまう。
-降格後の field は read-only であり、この経路が無い。
+G5c2 は降格をやめ、可変性を保ったまま join する規則へ置き換えた。
+代入安全性は書き込みの側が受け持ち、`borrow.md` の `Assign` は Union の全成分と両立しない値を拒む。
+合流型を作った枝の再照合は、`Eliminate` の導入点だけ専用の規則へ切り替える。
+`mut` field の expected Union に対し、枝が単一型ならいずれかの成分と、枝が部分 Union なら全成分と `type-equiv?` で一致することを求める。
+通常の `compat?` と `Assign` の全成分検査は緩めない。
+合流を到達不能なまま未回収へ送る案は、ホワイトペーパー §4.5.3 の回収主張を実装で空にするため採らない。
 Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
 ## 4. elaboration
@@ -469,11 +475,10 @@ G2a は次の規則を導入しない。
   field 常在性の witness は G2d が `proof-value.md` §5 として導入した。
   branch で型が異なる `imm` field の Union join と `FieldType` witness は、G2e が `trait.md` §7 として導入した。
   witness による型付き field 回復は未回収であり、同仕様 §9 へ送る。
-  異型 `mut` field の降格 join は G2g が §3.5 として導入した。 [REQ: ROW-005]
-  降格は代入安全性のための狭めであり、ホワイトペーパー §4.5.3 が求める、書き込み可能なまま join する規則を回収したことを意味しない。
-  可変性を保ったまま join する規則は、借用と代入を同時に規定できる G5 へ送る。
-- **mut field への代入と借用**：再代入、借用、エイリアス安全性を同時に規定する必要があるため、G5 で扱う。
-- **borrow mode の互換性**：`Borrowed` と `BorrowedMut` は G2a の型に含めず、region と所有権状態を導入する G5 で扱う。
+  異型 `mut` field の join は G2g が §3.5 として導入した。 [REQ: ROW-005]
+  G2g の降格は代入安全性のための狭めであり、G5c2 が可変性を保つ規則へ置き換えて、ホワイトペーパー §4.5.3 の要求を回収した。
+- **mut field への代入と借用**：G5c2 が `ProjBorrow` と `Assign` と alias safety を同時に導入し、record field の借用と書き換えを回収した。
+- **borrow mode の互換性**：G5c2 が record field の射影について `Borrowed` と `BorrowedMut` の mode 規則を定め、暗黙の強化と弱化を認めない範囲を回収した。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。
 
 G2a で範囲外とした関数 field の variance は、G2c が §6 として導入した。
@@ -493,7 +498,7 @@ closed と open を record 型の mode として保持する表現も採らな�
 | ROW-002 | §3.1 T-Proj、§3.2 T-LetOpenRecord |
 | ROW-003 | §3.5 T-EliminateRecordMerge |
 | ROW-004 | §3.1 T-Rec、§3.3 の `mut` field 不変性 |
-| ROW-005 | §3.5 の可変性降格と Union join、§3.3 の `imm` 要求を満たす `mut` field |
+| ROW-005 | §3.5 の可変性を保つ Union join、§3.3 の `imm` 要求を満たす `mut` field |
 | VAR-001 | §6.1 関数互換性の規則、§6.4 checking 位置の統一 |
 | VAR-002 | §6.2 latent Effect と Proof obligation の包含 |
 | VAR-003 | §6.3 field の可変性との交差、§3.3 の `NFn` field 照合 |

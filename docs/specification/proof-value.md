@@ -487,8 +487,8 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 
 - **join 型と型付き field 回復**：異型 `imm` field の Union join と局所 `FieldType` witness は、G2e が `trait.md` §7 として導入した。
   witness による型付き field 回復は未回収であり、`trait.md` §9 へ送る。
-  異型 `mut` field の `imm` への降格 join は G2g が `structural-row.md` §3.5 として導入した。
-  降格は代入安全性のための狭めであり、ホワイトペーパー §4.5.3 の Union 方針を回収したことを意味しない。
+  異型 `mut` field の join は G2g が `structural-row.md` §3.5 として導入した。
+  G2g の降格は代入安全性のための狭めであり、G5c2 が可変性を保つ規則へ置き換えて、ホワイトペーパー §4.5.3 の Union 方針を回収した。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の合成は型の Intersection ではなく、正典表と `RequiresBoth` Proof で表す。
 - **trait resolution**：表由来の `Implements` 候補、`RequiresBoth` の implicit discharge、合成候補、trait hook、候補同一性、scope による coherence は、G2e と G2f が `trait.md` §6 として導入した。

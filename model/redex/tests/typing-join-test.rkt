@@ -24,17 +24,17 @@
                '(Record ((z Int imm) (a Int imm))))
    '(Record ((a Int imm) (z Int imm)))))
 
-(test-case "ROW-005: merge-field は異型を imm へ降格して join する"
+(test-case "ROW-005: merge-field は異型を可変性を保ったまま join する"
   (check-equal?
    (merge-field '(a Int imm) '(a String imm))
    `(a ,joined-type imm))
   (check-equal?
    (merge-field '(a Int mut) '(a Int mut))
    '(a Int mut))
-  ;; 異型 mut は落とさず、imm へ降格して join する。
+  ;; 異型 mut は降格せず、mut のまま Union へ join する。
   (check-equal?
    (merge-field '(a Int mut) '(a String mut))
-   `(a ,joined-type imm))
+   `(a ,joined-type mut))
   ;; 可変性が食い違えば、同型でも imm になる。
   (check-equal?
    (merge-field '(a Int imm) '(a Int mut))
@@ -56,12 +56,12 @@
     (check-false (check-duplicates (map car witnesses)))
     (check-true (wf-context? witnesses))))
 
-(test-case "ROW-005: 異型 mut と可変性不一致は降格して残る"
+(test-case "ROW-005: 異型 mut は mut のまま残り、可変性不一致だけが降格する"
   (let-values ([(merged witnesses)
                 (merge-record-types
                  (list '(Record ((a Int mut)))
                        '(Record ((a String mut)))))])
-    (check-equal? merged `(Record ((a ,joined-type imm))))
+    (check-equal? merged `(Record ((a ,joined-type mut))))
     (check-equal? (witness-propositions witnesses)
                   '((Presence a)
                     (FieldType a Int)

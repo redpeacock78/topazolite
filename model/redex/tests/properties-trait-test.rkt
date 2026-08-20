@@ -227,7 +227,7 @@
              attempts (unbox multi-branch-count) (unbox nontrivial-count)
              (bounds-seed limits)))))
 
-(test-case "CMP-001: 性質6 join は可変性によらず imm へ降格する"
+(test-case "CMP-001: 性質6 join は全枝が mut のときだけ mut を保つ"
   (call-with-search-seed
    limits
    (lambda ()
@@ -256,7 +256,7 @@
                       (add1 (unbox imm-joined-count))))]
          [(mut)
           (define expected
-            `(Record ((a ,(normalize-type `(Union ,left ,right)) imm))))
+            `(Record ((a ,(normalize-type `(Union ,left ,right)) mut))))
           (check-equal? merged expected)
           (check-true (pair? witnesses))
           (when (equal? merged expected)
