@@ -237,14 +237,23 @@
                     labels fields))]
       [`(UVal ,inner) `(PTagged uval ,(lower-val inner))]
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
+      ;; RegionLam は実行時に意味を持たない静的な包みであり、本体へ落とす。
+      [`(RegionLam (,_ ...) ,body) (lower-core body)]
       [_ (fail 'unknown-core-form value (format "lower-value: ~s" (erase-core value)))]))
 
   ;; backend-matrix.md §7 の計算の表。v は値の表へ委譲する。
   ;; spec §19: G2m の v は spanless な文法なので、振り分けだけ節点ごとに投影する。
   ;; 投影を毎節点で行うため走査は O(n^2) だが、Phase 0 の項の大きさでは問題にならない。
+  ;; RegionApp は対応表の引き当てより前に剥がす静的な包みである。
+  (define (region-wrapper-body node)
+    (match node
+      [`(RegionApp ,function (,_ ...)) function]
+      [_ #f]))
+
   (define (lower-core core)
     (cond
       [(redex-match? G2m v (erase-core core)) (lower-val core)]
+      [(region-wrapper-body (peel-node core)) => lower-core]
       [else
        (define node (peel-node core))
        (require-feature! core)

@@ -57,6 +57,9 @@
     [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
     [`(Read ,c) (list c)]
     [`(Assign ,target ,value) (list target value)]
+    ;; RegionLam の束縛名と RegionApp の ρ は Core の子ではない。
+    [`(RegionLam (,_ ...) ,c) (list c)]
+    [`(RegionApp ,c (,_ ...)) (list c)]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
     [`(BorrowAt ,_ ,_ ,_) '()]
@@ -118,6 +121,8 @@
      `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
     [`(Read ,_) `(Read ,(first-child))]
     [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
+    [`(RegionLam ,rps ,_) `(RegionLam ,rps ,(first-child))]
+    [`(RegionApp ,_ ,ρs) `(RegionApp ,(first-child) ,ρs)]
     [_
      (unless (null? children)
        (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))

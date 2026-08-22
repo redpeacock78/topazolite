@@ -1,8 +1,10 @@
 #lang racket
 
 (require racket/match
+         racket/set
          "erase.rkt"
          "policy.rkt"
+         "region-param.rkt"
          "rows.rkt")
 
 (provide effect-equiv?
@@ -140,6 +142,11 @@
                 ,normalized-return
                 ,normalized-row
                 ,normalized-obligations))]
+    ;; binder 名は保存する。type-normal? は normalize の結果との equal? なので、
+    ;; ここで名前を変えると programmer が書いた宣言型が正規形でなくなる。
+    [`(ForallRegion (,rps ...) ,body)
+     (define normalized-body (normalize-type/impl body))
+     (and normalized-body `(ForallRegion ,rps ,normalized-body))]
     [`(Proof ,proposition)
      (define normalized (normalize-proposition proposition))
      (and normalized `(Proof ,normalized))]
@@ -205,12 +212,23 @@
            ,(canonical-key/normal return-type)
            ,(canonical-effect-row-key row)
            ,(map canonical-proposition-key obligations))]
+    [`(ForallRegion (,rps ...) ,body)
+     `(ForallRegion ,(length rps)
+                    ,(canonical-key/normal (index-region-binders body rps)))]
     [`(Proof ,proposition)
      `(Proof ,(canonical-proposition-key proposition))]
     [`(Refined ,payload ,proposition)
      `(Refined ,(canonical-key/normal payload)
                ,(canonical-proposition-key proposition))]
     [_ type]))
+
+;; 束縛子の名前を出現位置の印へ置き換える。内側の束縛は
+;; rename-region-params が shadow して扱う。
+(define (index-region-binders type binders)
+  (define marks
+    (for/hash ([rp (in-list binders)] [index (in-naturals)])
+      (values rp `(RegionIndex ,index))))
+  (rename-region-params type marks))
 
 ;; 作用列は type-equiv? が集合として比べるので、整列と重複除去を行う。
 (define (canonical-effect-row-key row)
@@ -329,6 +347,18 @@
           (type-equiv? left-return right-return)
           (row-equiv? left-row right-row)
           (propositions-equiv? left-obligations right-obligations))]
+    [(`(ForallRegion (,left-binders ...) ,left-body)
+      `(ForallRegion (,right-binders ...) ,right-body))
+     (and (= (length left-binders) (length right-binders))
+          (let ([fresh (fresh-region-binders
+                        (append left-binders right-binders)
+                        (list left-body right-body)
+                        (length left-binders))])
+            (type-equiv?
+             (rename-region-params left-body
+                                    (binder-renaming left-binders fresh))
+             (rename-region-params right-body
+                                    (binder-renaming right-binders fresh)))))]
     [(`(TypeInfo ,left-kind) `(TypeInfo ,right-kind))
      (equal? left-kind right-kind)]
     [(`(Proof ,left-proposition) `(Proof ,right-proposition))
@@ -336,6 +366,24 @@
     ;; Future type-level computations remain opaque unless their syntax is
     ;; identical. G1 has no reducible type form beyond constructor specs.
     [(_ _) (equal? left right)]))
+
+;; 両辺の本体と束縛子に現れる記号を避けた名前を決定的に作る。
+(define (fresh-region-binders used-binders bodies count)
+  (define used
+    (for/fold ([acc (list->set used-binders)]) ([body (in-list bodies)])
+      (set-union acc (term-symbols body))))
+  (let loop ([index 0] [made '()])
+    (cond
+      [(= (length made) count) (reverse made)]
+      [else
+       (define candidate (string->symbol (format "__rp~a" index)))
+       (if (set-member? used candidate)
+           (loop (add1 index) made)
+           (loop (add1 index) (cons candidate made)))])))
+
+(define (binder-renaming binders fresh)
+  (for/hash ([binder (in-list binders)] [name (in-list fresh)])
+    (values binder name)))
 
 ;; POL-002/CMP-001: 正規化の冪等性。#f は正規化できない型の fail-closed 返却
 ;; であり、検査で弾かない。

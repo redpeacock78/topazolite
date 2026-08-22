@@ -561,6 +561,13 @@
         (cfg (in-hole E c_inner) H Ω θ)
         R-Discharge)
 
+   ;; RegionApp は静的な包みを剥がすだけで、実行時の効果を持たない。
+   (--> (cfg (in-hole E
+                      (RegionApp (RegionLam (rp ...) c_body) (ρ ...)))
+             H Ω θ)
+        (cfg (in-hole E c_body) H Ω θ)
+        R-RegionApp)
+
    (--> (cfg (in-hole E
                       (Let (x bmode τ) v_bound c_body))
              H Ω θ)

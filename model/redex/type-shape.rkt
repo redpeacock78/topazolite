@@ -83,6 +83,7 @@
           (type-shape-ok? return-type)
           (effect-row-shape-ok? row)
           (andmap proposition-shape-ok? obligations))]
+    [`(ForallRegion (,_ ...) ,body) (type-shape-ok? body)]
     [_ #t]))
 
 ;; 命題に埋め込まれた型が全て正規形か。
@@ -183,6 +184,8 @@
          [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
          [`(Read ,operand) (walk operand)]
          [`(Assign ,target ,value) (and (walk target) (walk value))]
+         [`(RegionLam (,_ ...) ,body) (walk body)]
+         [`(RegionApp ,function (,_ ...)) (walk function)]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)

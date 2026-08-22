@@ -100,8 +100,12 @@
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
   (tn ::= id)
+  ;; region 引数の名前。r は同じ言語の record row であるため使えない。
+  (rp ::= variable-not-otherwise-mentioned)
+  (ρ ::= .... (RParam rp))
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ)
-         (Union τ τ) (Intersection τ τ))
+         (Union τ τ) (Intersection τ τ)
+         (ForallRegion (rp ...) τ))
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
          (RequiresBoth tn tn) (FieldType label τ))
@@ -115,11 +119,14 @@
          (Reborrow c)
          (ProjBorrow c label)
          (Read c)
-         (Assign c c))
+         (Assign c c)
+         (RegionLam (rp ...) c)
+         (RegionApp c (ρ ...)))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
-         (RVal (ProofRep O φ) v))
+         (RVal (ProofRep O φ) v)
+         (RegionLam (rp ...) c))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))
@@ -179,8 +186,11 @@
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
   (tn ::= id)
+  (rp ::= variable-not-otherwise-mentioned)
+  (ρ ::= .... (RParam rp))
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ)
-         (Union τ τ) (Intersection τ τ))
+         (Union τ τ) (Intersection τ τ)
+         (ForallRegion (rp ...) τ))
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
          (RequiresBoth tn tn) (FieldType label τ))
@@ -197,14 +207,17 @@
          (ReborrowAt ρ own c)
          (ProjBorrowAt ρ own c label)
          (Read c)
-         (Assign c c))
+         (Assign c c)
+         (RegionLam (rp ...) c)
+         (RegionApp c (ρ ...)))
   (own ::= (Own w fp))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
          (RVal (ProofRep O φ) v)
          (BorrowRef p fp ρ)
-         (BorrowMutRef p fp ρ))
+         (BorrowMutRef p fp ρ)
+         (RegionLam (rp ...) c))
 
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))
@@ -214,7 +227,8 @@
          (ProjBorrowAt ρ own F label)
          (Read F)
          (Assign F c)
-         (Assign v F))
+         (Assign v F)
+         (RegionApp F (ρ ...)))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (Proj E label)
@@ -223,7 +237,8 @@
          (ProjBorrowAt ρ own E label)
          (Read E)
          (Assign E c)
-         (Assign v E))
+         (Assign v E)
+         (RegionApp E (ρ ...)))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (Proj G label)
@@ -232,7 +247,8 @@
          (ProjBorrowAt ρ own G label)
          (Read G)
          (Assign G c)
-         (Assign v G))
+         (Assign v G)
+         (RegionApp G (ρ ...)))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))
