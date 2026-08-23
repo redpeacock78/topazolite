@@ -127,7 +127,8 @@
         [_ (void)]))))
 
 ;; 寿命変数の採番（spec §3.2）。借用の項 1 つにつき 1 つ作る。
-;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない（spec §14-1）。
+;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない
+;; （region.md §2 の識別子の不透明性）。
 (define lifetime-counter (make-parameter #f))
 (define alpha-table (make-parameter #f))
 
@@ -671,11 +672,11 @@
 ;; 仮引数、結果、証明義務の Q、捕捉を同じ入口で検査する。
 (define (check-function-boundary parameter-types return-type obligations body
                                  bound-names environment node fail)
-  (when (ormap borrowed-type? parameter-types)
+  (when (ormap unbound-borrowed-type? parameter-types)
     (fail 'borrowed-function-parameter node))
-  (when (borrowed-type? return-type)
+  (when (unbound-borrowed-type? return-type)
     (fail 'borrowed-function-result node))
-  (when (borrowed-type? obligations)
+  (when (unbound-borrowed-type? obligations)
     (fail 'borrowed-function-result node obligations))
   ;; 関数自身の束縛子は同名の外側の項目を遮蔽するため、自由変数から引く。
   (define free
@@ -687,7 +688,7 @@
           entries
           (cons entry entries))))
   (for ([entry (in-list visible)])
-    (when (and (borrowed-type? (second entry))
+    (when (and (unbound-borrowed-type? (second entry))
                (set-member? free (first entry)))
       (fail 'borrowed-function-capture node))))
 
@@ -1247,11 +1248,11 @@
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
               function-row function-psi)
-        (when (ormap borrowed-type? parameter-types)
+        (when (ormap unbound-borrowed-type? parameter-types)
           (fail 'borrowed-function-parameter function))
-        (when (borrowed-type? return-type)
+        (when (unbound-borrowed-type? return-type)
           (fail 'borrowed-function-result function))
-        (when (borrowed-type? obligations)
+        (when (unbound-borrowed-type? obligations)
           (fail 'borrowed-function-result function obligations))
         (define argument-rows
           (check-many arguments parameter-types Λ function-psi
@@ -1506,13 +1507,13 @@
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
               function-row function-psi)
-        (when (borrowed-type? first-type)
+        (when (unbound-borrowed-type? first-type)
           (fail 'borrowed-function-parameter argument))
-        (when (ormap borrowed-type? remaining-types)
+        (when (ormap unbound-borrowed-type? remaining-types)
           (fail 'borrowed-function-parameter argument))
-        (when (borrowed-type? return-type)
+        (when (unbound-borrowed-type? return-type)
           (fail 'borrowed-function-result argument))
-        (when (borrowed-type? obligations)
+        (when (unbound-borrowed-type? obligations)
           (fail 'borrowed-function-result argument obligations))
         (when (owned-type? first-type)
           (fail 'owned-curry-argument argument))

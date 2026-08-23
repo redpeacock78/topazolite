@@ -84,15 +84,15 @@
                 'ok))
 
 ;; 型木を再帰的に走査する。
-(check-true (borrowed-type? '(Union (Borrowed Int 0) Int)))
-(check-true (borrowed-type? '(Option (BorrowedMut Int 0))))
-(check-true (borrowed-type? '(Result Int (List (Borrowed Int 0)))))
-(check-true (borrowed-type? '(NFn (Int) (NFn ((Borrowed Int 0)) Int () ()) () ())))
-(check-true (borrowed-type? '(List (Option (Borrowed Int 0)))))
-(check-false (borrowed-type? '(Union Int String)))
-(check-false (borrowed-type? '(NFn (Int Bool) (Option Int) () ())))
-(check-false (borrowed-type? '(Refined Int (FieldType a Int))))
-(check-false (borrowed-type? '(Refined Int (Implements Int Tn))))
+(check-true (unbound-borrowed-type? '(Union (Borrowed Int 0) Int)))
+(check-true (unbound-borrowed-type? '(Option (BorrowedMut Int 0))))
+(check-true (unbound-borrowed-type? '(Result Int (List (Borrowed Int 0)))))
+(check-true (unbound-borrowed-type? '(NFn (Int) (NFn ((Borrowed Int 0)) Int () ()) () ())))
+(check-true (unbound-borrowed-type? '(List (Option (Borrowed Int 0)))))
+(check-false (unbound-borrowed-type? '(Union Int String)))
+(check-false (unbound-borrowed-type? '(NFn (Int Bool) (Option Int) () ())))
+(check-false (unbound-borrowed-type? '(Refined Int (FieldType a Int))))
+(check-false (unbound-borrowed-type? '(Refined Int (Implements Int Tn))))
 
 ;; 環境由来の署名を Apply で拒む。
 (define bad-environment

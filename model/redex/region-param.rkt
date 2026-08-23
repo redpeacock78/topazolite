@@ -6,6 +6,7 @@
 
 (provide region-free-params
          region-param-counter
+         bound-region-params
          call-with-region-params
          fresh-region-param
          fresh-region-param/avoiding
@@ -34,6 +35,12 @@
 
 ;; 付け替えに使う名前の供給元。typing または IR の文脈ごとに初期化する。
 (define region-param-counter (make-parameter #f))
+
+;; 現在の項を囲む RegionLam が束縛している rp の集合。
+;; Apply と Curry の境界検査は infer の深い位置にあり、引数で運ぶと infer の
+;; 全経路へ引数が増える。既定は空集合であり、既定のままでは借用型がすべて
+;; 違反になる。つまり region 引数を書かない programme の判定は変わらない。
+(define bound-region-params (make-parameter (set)))
 
 (define (call-with-region-params thunk)
   (parameterize ([region-param-counter (box 0)])

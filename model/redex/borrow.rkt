@@ -3,6 +3,7 @@
 (require racket/match
          racket/set
          "region.rkt"
+         "region-param.rkt"
          "span-core.rkt")
 
 (provide (struct-out region-ctx)
@@ -22,7 +23,7 @@
          psi-add-shared
          psi-add-mut
          borrow-typed?
-         borrowed-type?
+         unbound-borrowed-type?
          borrow-token-key
          field-path?
          path-prefix?
@@ -242,13 +243,24 @@
     [`(BorrowedMut ,_ ,_) #t]
     [_ #f]))
 
-;; spec §14。型木のどこかに Borrowed または BorrowedMut が現れるかを返す。
+;; spec §14 と §4.4。型木のどこかに、region 欄が束縛された (RParam rp) でない
+;; 借用型が現れるかを返す。
 ;; 型構築子を列挙せずリストを盲目に降りるため、型文法の拡張に追従する。
-(define (borrowed-type? type)
-  (match type
-    [`(Borrowed ,_ ,_) #t]
-    [`(BorrowedMut ,_ ,_) #t]
-    [(? list? ts) (ormap borrowed-type? ts)]
+;; Borrowed と BorrowedMut の節を先に置くのは、region 欄そのものを盲目に
+;; 降りると (RParam rp) の rp が型の葉として扱われるからである。
+(define (unbound-borrowed-type? type [bound-params (bound-region-params)])
+  (let walk ([t type])
+    (match t
+      [`(Borrowed ,payload ,ρ)
+       (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+      [`(BorrowedMut ,payload ,ρ)
+       (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+      [(? list? ts) (ormap walk ts)]
+      [_ #f])))
+
+(define (bound-region-param? ρ bound-params)
+  (match ρ
+    [`(RParam ,rp) (set-member? bound-params rp)]
     [_ #f]))
 
 ;; c が作る借用が指す designator の集合を返す。
