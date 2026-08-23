@@ -243,7 +243,7 @@
     [`(BorrowedMut ,_ ,_) #t]
     [_ #f]))
 
-;; spec §14 と §4.4。型木のどこかに、region 欄が束縛された (RParam rp) でない
+;; docs/specification/borrow.md §8。型木のどこかに、region 欄が束縛された (RParam rp) でない
 ;; 借用型が現れるかを返す。
 ;; 型構築子を列挙せずリストを盲目に降りるため、型文法の拡張に追従する。
 ;; Borrowed と BorrowedMut の節を先に置くのは、region 欄そのものを盲目に

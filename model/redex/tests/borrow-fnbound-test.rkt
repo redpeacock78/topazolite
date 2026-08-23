@@ -28,6 +28,12 @@
                      (Option (BorrowedMut Int (RParam a))) () ())
                (set 'a))))
 
+;; payload の内側も走査する。外側が束縛されていても、内側が未束縛なら違反。
+(check-true
+ (unbound-borrowed-type?
+  '(Borrowed (Borrowed Int (RParam b)) (RParam a))
+  (set 'a)))
+
 ;; (b) 束縛されていない rp は違反である。
 (test-case
  "束縛されていない rp の借用は違反である"
@@ -78,4 +84,14 @@
  (check-equal?
   (boundary-key '(Scope () (Lam User f (a) 0))
                 (lambda (rho) `(NFn (Int) (Borrowed Int ,rho) () ())))
-  'borrowed-function-result))
+  'borrowed-function-result)
+ ;; capture も既定の空集合で同じ key を出す。
+ (let* ([core '(Scope () (Lam User f (a) y))]
+        [ir (build-region-ir core)]
+        [rho (region->rho ir (region-at ir '()))]
+        [environment (list (list 'y `(Borrowed Int ,rho)))])
+   (check-equal?
+    (key-of (type-of/raw core '() (list (list 'f '(NFn (Int) Int () ())))
+                             environment
+                             (region-ctx ir '() (hash) (hash))))
+    'borrowed-function-capture)))
