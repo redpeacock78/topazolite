@@ -177,16 +177,16 @@
 ;; 正規化を通した型について type-equiv? と一致する内部専用の鍵。
 (define (canonical-type-key type)
   (define normalized (normalize-type/impl type))
-  (and normalized (canonical-key/normal normalized)))
+  (and normalized (canonical-key/normal normalized 0)))
 
-(define (canonical-key/normal type)
+(define (canonical-key/normal type [depth 0])
   (match type
     [`(Record ,row)
      `(Record
        ,(sort
          (for/list ([field (in-list row)])
            (list (car field)
-                 (canonical-key/normal (cadr field))
+                 (canonical-key/normal (cadr field) depth)
                  (caddr field)))
          symbol<?
          #:key car))]
@@ -194,65 +194,77 @@
      `(Union
        ,(sort
          (for/list ([member (in-list (union-members type))])
-           (canonical-key/normal member))
+           (canonical-key/normal member depth))
          external<?))]
-    [`(List ,element) `(List ,(canonical-key/normal element))]
-    [`(Option ,element) `(Option ,(canonical-key/normal element))]
-    [`(Owned ,inner) `(Owned ,(canonical-key/normal inner))]
+    [`(List ,element) `(List ,(canonical-key/normal element depth))]
+    [`(Option ,element) `(Option ,(canonical-key/normal element depth))]
+    [`(Owned ,inner) `(Owned ,(canonical-key/normal inner depth))]
     [`(Borrowed ,payload ,ρ)
-     `(Borrowed ,(canonical-key/normal payload) ,ρ)]
+     `(Borrowed ,(canonical-key/normal payload depth) ,ρ)]
     [`(BorrowedMut ,payload ,ρ)
-     `(BorrowedMut ,(canonical-key/normal payload) ,ρ)]
-    [`(Untrusted ,payload) `(Untrusted ,(canonical-key/normal payload))]
+     `(BorrowedMut ,(canonical-key/normal payload depth) ,ρ)]
+    [`(Untrusted ,payload)
+     `(Untrusted ,(canonical-key/normal payload depth))]
     [`(Result ,ok-type ,error-type)
-     `(Result ,(canonical-key/normal ok-type)
-              ,(canonical-key/normal error-type))]
+     `(Result ,(canonical-key/normal ok-type depth)
+              ,(canonical-key/normal error-type depth))]
     [`(NFn ,parameters ,return-type ,row ,obligations)
-     `(NFn ,(map canonical-key/normal parameters)
-           ,(canonical-key/normal return-type)
-           ,(canonical-effect-row-key row)
-           ,(map canonical-proposition-key obligations))]
+     `(NFn ,(map (lambda (parameter)
+                   (canonical-key/normal parameter depth))
+                 parameters)
+           ,(canonical-key/normal return-type depth)
+           ,(canonical-effect-row-key/normal row depth)
+           ,(map (lambda (proposition)
+                   (canonical-proposition-key/normal proposition depth))
+                 obligations))]
     [`(ForallRegion (,rps ...) ,body)
      `(ForallRegion ,(length rps)
-                    ,(canonical-key/normal (index-region-binders body rps)))]
+                    ,(canonical-key/normal
+                      (index-region-binders body rps depth)
+                      (add1 depth)))]
     [`(Proof ,proposition)
-     `(Proof ,(canonical-proposition-key proposition))]
+     `(Proof ,(canonical-proposition-key/normal proposition depth))]
     [`(Refined ,payload ,proposition)
-     `(Refined ,(canonical-key/normal payload)
-               ,(canonical-proposition-key proposition))]
+     `(Refined ,(canonical-key/normal payload depth)
+               ,(canonical-proposition-key/normal proposition depth))]
     [_ type]))
 
 ;; 束縛子の名前を出現位置の印へ置き換える。内側の束縛は
 ;; rename-region-params が shadow して扱う。
-(define (index-region-binders type binders)
+(define (index-region-binders type binders depth)
   (define marks
     (for/hash ([rp (in-list binders)] [index (in-naturals)])
-      (values rp `(RegionIndex ,index))))
+      (values rp `(RegionIndex ,depth ,index))))
   (rename-region-params type marks))
 
 ;; 作用列は type-equiv? が集合として比べるので、整列と重複除去を行う。
 (define (canonical-effect-row-key row)
+(canonical-effect-row-key/normal row 0))
+
+(define (canonical-effect-row-key/normal row depth)
   (sort
    (remove-duplicates
     (for/list ([label (in-list row)])
       (match label
         [`(Return ,boundary ,type)
-         `(Return ,boundary ,(canonical-key/normal type))]
+         `(Return ,boundary ,(canonical-key/normal type depth))]
         [`(Yield ,type)
-         `(Yield ,(canonical-key/normal type))]
+         `(Yield ,(canonical-key/normal type depth))]
         [_ label])))
    external<?))
 
 ;; 命題の正準鍵。探索の候補識別、issuer 検査、義務の包含判定で共有する。
 (define (canonical-proposition-key proposition)
   (define normalized (normalize-proposition proposition))
-  (and normalized
-       (match normalized
-         [`(Implements ,type ,trait)
-          `(Implements ,(canonical-type-key type) ,trait)]
-         [`(FieldType ,label ,type)
-          `(FieldType ,label ,(canonical-type-key type))]
-         [_ normalized])))
+  (and normalized (canonical-proposition-key/normal normalized 0)))
+
+(define (canonical-proposition-key/normal proposition depth)
+  (match proposition
+    [`(Implements ,type ,trait)
+     `(Implements ,(canonical-key/normal type depth) ,trait)]
+    [`(FieldType ,label ,type)
+     `(FieldType ,label ,(canonical-key/normal type depth))]
+    [_ proposition]))
 
 ;; 型が正規形であるか。normalize-type が失敗する型は正規形でない。
 (define (type-normal? type)

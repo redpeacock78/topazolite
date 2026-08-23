@@ -503,11 +503,11 @@ record の field への借用を親の借用から作れる。
 
 すべての借用について、その所有者の root place と field path が静的に定まる。
 
-### VAR-004 関数の入出力の region の変位
+### VAR-004 借用の region の変位
 
 - **状態**：G5
 - **由来**：ホワイトペーパー §2.1.5（`VariancePolicyNarrative`）
-- **内容**：record field の型に現れる region の変位を、`compat?` の照合で `region-relation` に従って判定する。
+- **内容**：共有借用の region は共変とし、可変借用の region は不変とする。record の field の型へ再帰的に適用する。
 
 ### BOR-007 関数境界の借用の受け渡し
 

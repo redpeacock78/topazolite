@@ -15,13 +15,17 @@
          rename-region-params
          term-symbols)
 
-;; 型木を下って自由な rp の集合を返す。
-;; (RParam rp) と ForallRegion の束縛だけを意味論的に扱い、残りは列として下る。
+;; 型木を下って自由な rp の集合を返す。Core を受けた場合も RegionLam の
+;; 束縛を除く。RegionApp の実引数は静的な region 出現として列を下る。
 (define (region-free-params type)
   (let walk ([t type])
     (match t
       [`(RParam ,rp) (set rp)]
       [`(ForallRegion (,rps ...) ,body)
+       (set-subtract (walk body) (list->set rps))]
+      [`(RegionLam (,rps ...) ,body)
+       (set-subtract (walk body) (list->set rps))]
+      [`(RegionLam ,_ (,rps ...) ,body)
        (set-subtract (walk body) (list->set rps))]
       [(? list?)
        (for/fold ([free (set)]) ([element (in-list t)])

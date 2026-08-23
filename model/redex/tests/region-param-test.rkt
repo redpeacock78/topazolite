@@ -62,6 +62,18 @@
                             Int () ()))))
   (set)))
 
+;; Core を受けても RegionLam の束縛名を自由な rp に数えない。
+(test-case
+ "region-free-params が RegionLam の束縛名を除く"
+ (check-equal?
+  (region-free-params (term (RegionLam (a)
+                                      (RegionApp x ((RParam a))))))
+  (set))
+ (check-equal?
+  (region-free-params (term (RegionLam (a)
+                                      (RegionApp x ((RParam b))))))
+  (set 'b)))
+
 ;; 入れ子の同名束縛を外側の付け替えで捕獲しない。
 (test-case
  "入れ子の同名の束縛が外側の付け替えで捕獲されない"
@@ -155,6 +167,21 @@
   (type-equiv?
    (term (ForallRegion (a) (ForallRegion (a) (Borrowed Int (RParam a)))))
    (term (ForallRegion (b) (ForallRegion (c) (Borrowed Int (RParam c))))))))
+
+;; 入れ子の外側と内側は別の深さを持つため、正準鍵も衝突しない。
+(test-case
+ "canonical proposition key が入れ子 binder の深さを保つ"
+ (define outer
+   (term (ForallRegion (a)
+                       (ForallRegion (b)
+                                     (Borrowed Int (RParam a))))))
+ (define inner
+   (term (ForallRegion (a)
+                       (ForallRegion (b)
+                                     (Borrowed Int (RParam b))))))
+ (check-false (type-equiv? outer inner))
+ (check-not-equal? (canonical-proposition-key `(FieldType f ,outer))
+                    (canonical-proposition-key `(FieldType f ,inner))))
 
 ;; Union の正規化も α 同値な ForallRegion を重複除去する。
 (test-case
