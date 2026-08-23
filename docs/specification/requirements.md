@@ -685,10 +685,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
-| 関数境界をまたぐ借用の受け渡し | `borrow.md` §14 | G5c3 | §15 |
-| 関数の仮引数そのものの借用 | `borrow.md` §14 | G5c3 | §15 |
 | 入れ子の借用の複製 | `borrow.md` §14 | G5c3 | §15 |
-| region の外へ出る借用の値 | `borrow.md` §14 | G5c3 | §4.8 |
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
 | 合流した capability の label ごとの表 | `borrow.md` §14 | G5c4 | §15 |
 | identity forwarding | `borrow.md` §14 | G5c3 | §15 |
@@ -697,7 +694,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 計算した値を place または Owned へ載せる経路 | `borrow.md` §12 | G5c3 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
-borrow.md §14 の未回収 8 件は、同節の項目に対応して本表へ記載している。
+borrow.md §14 の未回収 5 件は、同節の項目に対応して本表へ記載している。
 所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
 
 本表の検査は `model/redex/tests/handoff-table-test.rkt` が行う。

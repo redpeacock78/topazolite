@@ -157,10 +157,13 @@ opaque な region 引数が入り、伝播で左辺を広げられなくなる�
 本文書が定める条件の診断は `E-BOR` 分類である。
 key と番号は `docs/specification/diagnostic.md` の registry に従う。
 
-## 8. 関数境界の制限
+## 8. 関数境界の受け渡し
 
-関数の仮引数の型、結果型、捕捉のいずれにも `Borrowed` と `BorrowedMut` を置けない。
-結果型だけを禁じると仮引数と捕捉が境界を越えるため、3 つをすべて塞ぐ。
+[REQ: BOR-007] 関数の仮引数の型、結果型、捕捉に `Borrowed` と `BorrowedMut` を置ける。
+置けるのは region 欄が、その関数を囲む `RegionLam` が束縛した `(RParam rp)` である場合に限る。
+region 欄が具体的な region か、束縛されていない `rp` であれば違反とする。
+具体的な region を関数の内側から名指す形を許すと、呼出し側の region を関数の定義が決めることになり、呼出しごとに異なる region で同じ定義を使えない。
+結果型だけを開くと仮引数と捕捉が判定を持たないため、3 つを同じ判定で扱う。
 対象は `Lam`、`Recur`、`RecurVal`、`Curry`、`Apply` である。
 
 判定は型木を再帰的に走査する。
@@ -181,6 +184,9 @@ key と番号は `docs/specification/diagnostic.md` の registry に従う。
 
 仮引数の型が借用である場合と、仮引数そのものを借用しようとした場合は別の条件である。
 後者は仮引数が owner の表に入らないことによる。
+
+束縛された `rp` の集合は、`RegionLam` の型付けが本体へ入るときに与える。
+集合が空である文脈、つまり region 引数を持たない関数では、あらゆる借用型が違反になる。
 
 ## 9. capability
 
@@ -314,13 +320,10 @@ operand が借用でなければ `E-BOR-018` で落とす。
 
 ## 14. 未回収
 
-1. 関数境界をまたぐ借用の受け渡し。8 節の 3 つの制限で塞いでいる。G5c3 で回収する。
-2. 関数の仮引数そのものの借用。owner region が呼出し側にあり、G5b の情報だけでは定まらない。1 と同じ関数境界の項目である。
-3. 入れ子の借用の複製。12 節の `copy-out-ok?` は、読み出した値の中に借用が入っている形を弾いている。許すには値の中の借用の所有者を追える必要があり、所有者を型か値へ載せる判断は関数境界を扱う段の仕事である。G5c3 が summary へ所有者を写す形を決めた時点で、この制限を外せるかを判断する。
-4. 借用の値が自分の region の外へ出ること。これを塞ぐには region subsumption が要る。Scope の結果型を制限する案は、内側の Scope で外側の所有値を借りて結果に返す正当なプログラムを弾くため採らない。BOR-001 と BOR-002 の条件そのものではなく、region の順序の未整備である。G5c1 が寿命の制約でこの流れを解いた。関数境界と view が運ぶ流れの確認は G5c3 で行う。
-5. 合流した capability の label ごとの表。11 節は `Eliminate` の分岐の中で capability を作ることを `E-BOR-024` で禁じている。分岐ごとの capability を label で対応づける表を持てば禁止を外せる。G5c4 で判断する。
-6. identity forwarding。token と α と制約の雛形、閉包の provenance、呼出しごとの実体化に依存する。G5c3 で扱う。
-7. record field の region variance。`mut` field の外の型の互換に region の向きを入れる規則であり、region 多相と同時に決める。G5c3 で扱う。
-8. 借用規則の backend 写し先。Phase 2 以降で扱う。
+1. 入れ子の借用の複製。12 節の `copy-out-ok?` は、読み出した値の中に借用が入っている形を弾いている。許すには値の中の借用の所有者を追える必要があり、所有者を型か値へ載せる判断は関数境界を扱う段の仕事である。G5c3 が summary へ所有者を写す形を決めた時点で、この制限を外せるかを判断する。
+2. 合流した capability の label ごとの表。11 節は `Eliminate` の分岐の中で capability を作ることを `E-BOR-024` で禁じている。分岐ごとの capability を label で対応づける表を持てば禁止を外せる。G5c4 で判断する。
+3. identity forwarding。token と α と制約の雛形、閉包の provenance、呼出しごとの実体化に依存する。G5c3 で扱う。
+4. record field の region variance。`mut` field の外の型の互換に region の向きを入れる規則であり、region 多相と同時に決める。G5c3 で扱う。
+5. 借用規則の backend 写し先。Phase 2 以降で扱う。
 
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
