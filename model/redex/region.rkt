@@ -20,7 +20,8 @@
          region-parent region-contains?
          region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions
          own-annotation-violation
-         materialize-regions)
+         materialize-regions
+         make-region-relation)
 
 ;; 意味的な子。c の位置に来る部分項だけが子である（docs/specification/region.md §3）。
 ;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
@@ -677,6 +678,90 @@
          (for/list ([k (in-list kids)] [i (in-naturals)])
            (walk k (append point (list i)))))))
   (walk core '()))
+
+;; spec §6.1。ρ の欄に (RParam rp) が来るかを見る。
+(define (region-param? ρ)
+  (match ρ [`(RParam ,_) #t] [_ #f]))
+
+(define (region-param-name ρ)
+  (match ρ [`(RParam ,rp) rp]))
+
+;; ρ の並びから、(RParam rp) でないものだけを集める。
+(define (concrete-region-set ρs)
+  (for/set ([ρ (in-list ρs)] #:unless (region-param? ρ)) ρ))
+
+;; ρ を欄に持つ構築子と、構築子を除いた 0 起点の添字。
+;; RegionApp は ρ の並びを持つため別に扱う。
+(define region-slot-table
+  (hash 'Borrowed '(1) 'BorrowedMut '(1)
+        'BorrowAt '(0) 'BorrowMutAt '(0)
+        'ReborrowAt '(0) 'ProjBorrowAt '(0)
+        'BorrowRef '(2) 'BorrowMutRef '(2)))
+
+;; 本体に現れる具体的な region を集める。
+;; 内側の RegionLam へは入らない。入ると、内側でしか現れない region を
+;; 外側の rp が含むことになり、呼び出し側が満たせない義務が出る（§6.1）。
+;; 欄を名指して集めるため、region でない位置の自然数は入らない。
+(define (concrete-regions-in-body term)
+  (let walk ([t term])
+    (match t
+      [`(RegionLam (,_ ...) ,_) (set)]
+      [`(RegionApp ,function (,ρs ...))
+       (set-union (walk function) (concrete-region-set ρs))]
+      [(cons (? symbol? head) rest)
+       (define slots (hash-ref region-slot-table head '()))
+       (for/fold ([acc (concrete-region-set
+                        (for/list ([index (in-list slots)]
+                                   #:when (< index (length rest)))
+                          (list-ref rest index)))])
+                 ([sub (in-list rest)])
+         (set-union acc (walk sub)))]
+      [(? list? parts)
+       (for/fold ([acc (set)]) ([sub (in-list parts)])
+         (set-union acc (walk sub)))]
+      [_ (set)])))
+
+;; 付け替えた後の束縛名から、その RegionLam の本体に現れる具体的な region の
+;; 集合への表を作る。付け替えにより名前の一致と束縛元の一致が同じになるため、
+;; 名前を鍵にできる（§6.1）。
+(define (region-binder-table term)
+  (let walk ([t term] [table (hash)])
+    (match t
+      [`(RegionLam (,rps ...) ,body)
+       (define regions (concrete-regions-in-body body))
+       (walk body
+             (for/fold ([acc table]) ([rp (in-list rps)])
+               (when (hash-has-key? acc rp)
+                 (error 'make-region-relation
+                        "RegionLam の束縛名が一意でない: ~s" rp))
+               (hash-set acc rp regions)))]
+      [(? list? parts)
+       (for/fold ([acc table]) ([sub (in-list parts)]) (walk sub acc))]
+      [_ table])))
+
+;; ir に属する具体的な region かを返す。解決前の (RVar k) と、
+;; この ir に属さない番号は偽である。
+(define (ir-region? ir ρ)
+  (and (exact-nonnegative-integer? ρ)
+       (set-member? (region-ir-regions ir) (region ρ))))
+
+;; spec §6.1 の 3 規則。
+;; 表は RegionApp で置換した後も、compat? の再帰へ降りた後も同じものを指す。
+(define (make-region-relation ir core)
+  (define table (region-binder-table core))
+  (lambda (left right)
+    (cond
+      ;; 規則 1 と、別の binder に由来する 2 つの rp を偽にする規則 3。
+      [(and (region-param? left) (region-param? right)) (equal? left right)]
+      ;; 規則 2。表に無い名前は空集合として扱い、偽を返す。
+      [(region-param? left)
+       (set-member? (hash-ref table (region-param-name left) (set)) right)]
+      ;; 規則 3 の残り。
+      [(region-param? right) #f]
+      ;; どちらも rp でなければ region-outlives? へ渡す。
+      [(and (ir-region? ir left) (ir-region? ir right))
+       (region-outlives? ir (rho->region ir left) (rho->region ir right))]
+      [else (equal? left right)])))
 
 (define (freeze h)
   (for/hash ([(k v) (in-hash h)]) (values k v)))

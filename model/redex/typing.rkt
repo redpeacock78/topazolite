@@ -11,6 +11,7 @@
          "origins.rkt"
          "policy.rkt"
          "region.rkt"
+         "region-param.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
@@ -176,8 +177,10 @@
 ;; VAR-001..003: checking は elaboration と同じ compat? を全型で共有する。
 ;; Never の bottom 受理は compat? の Never 分岐が担う。
 ;; RFN-003: discharge に使う文脈は大域の Γ_pc⁰ に限る。merge の W は渡さない。
+;; region どうしの関係は current-region-relation から取る。既定は equal? で
+;; あり、region 引数を書かない programme の判定は変わらない。
 (define (type-compatible? actual expected)
-  (compat? actual expected Γ-pc0))
+  (compat? actual expected Γ-pc0 (current-region-relation)))
 
 ;; ROW-005。Eliminate が作った Union の導入点だけで、各枝の具体型を
 ;; 合流型の成分として再照合する。一般の mut field 互換性は不変のままにし、
@@ -824,7 +827,8 @@
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (compat? `(Record ,actual-row) declared-type Γ-pc0)
+        (unless (compat? `(Record ,actual-row) declared-type Γ-pc0
+                         (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
           (field-row-residual actual-row declared-row))

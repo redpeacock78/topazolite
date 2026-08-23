@@ -7,6 +7,7 @@
 (provide region-free-params
          region-param-counter
          bound-region-params
+         current-region-relation
          call-with-region-params
          fresh-region-param
          fresh-region-param/avoiding
@@ -41,6 +42,11 @@
 ;; 全経路へ引数が増える。既定は空集合であり、既定のままでは借用型がすべて
 ;; 違反になる。つまり region 引数を書かない programme の判定は変わらない。
 (define bound-region-params (make-parameter (set)))
+
+;; compat? へ渡す region どうしの関係。既定は equal? である。
+;; typing の funnel は type-compatible? であり、merge-branch-compatible? は
+;; 引数 2 つの callback として渡るため、引数ではなく parameter で供給する。
+(define current-region-relation (make-parameter equal?))
 
 (define (call-with-region-params thunk)
   (parameterize ([region-param-counter (box 0)])

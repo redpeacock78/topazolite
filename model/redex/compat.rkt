@@ -14,7 +14,7 @@
 ;; その位置からは読み出しだけが可能なため、他の枝が期待する狭い型を破れない。
 ;; 逆方向は能力を増やすため許さない。mut を要求する位置の field 型は、読みと
 ;; 書きの双方に使われるため type-equiv? の不変一致に留める。
-(define (record-compatible? sub-row sup-row gamma-pc)
+(define (record-compatible? sub-row sup-row gamma-pc region-relation)
   (for/and ([field (in-list sup-row)])
     (match field
       [(list label sup-type sup-mutability)
@@ -22,7 +22,7 @@
          [(list sub-type sub-mutability)
           (and (memq sub-mutability '(imm mut))
                (case sup-mutability
-                 [(imm) (compat?/impl sub-type sup-type gamma-pc)]
+                 [(imm) (compat?/impl sub-type sup-type gamma-pc region-relation)]
                  [(mut) (and (eq? sub-mutability 'mut)
                              (type-equiv? sub-type sup-type))]
                  [else #f]))]
@@ -52,60 +52,60 @@
 ;; VAR-001: 引数反変・返り値共変・引数個数一致。
 (define (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
                          sup-parameters sup-return sup-row sup-obligations
-                         gamma-pc)
+                         gamma-pc region-relation)
   (and (= (length sub-parameters) (length sup-parameters))
        (for/and ([sub-parameter (in-list sub-parameters)]
                  [sup-parameter (in-list sup-parameters)])
-         (compat?/impl sup-parameter sub-parameter gamma-pc))
-       (compat?/impl sub-return sup-return gamma-pc)
+         (compat?/impl sup-parameter sub-parameter gamma-pc region-relation))
+       (compat?/impl sub-return sup-return gamma-pc region-relation)
        (effect-row-subset? sub-row sup-row)
        (obligations-subset? sub-obligations sup-obligations gamma-pc)))
 
 ;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
 ;; G2c までの挙動と一致する。
-(define (compat?/impl sub sup [gamma-pc '()])
+(define (compat?/impl sub sup [gamma-pc '()] [region-relation equal?])
   (check-spanless! 'compat? sub)
   (check-spanless! 'compat? sup)
   ;; Union は節順に預けず、sub の各要素が sup のいずれかと互換かで判定する。
   (if (or (union? sub) (union? sup))
       (for/and ([sub-member (in-list (union-members sub))])
         (for/or ([sup-member (in-list (union-members sup))])
-          (compat?/impl sub-member sup-member gamma-pc)))
-      (compat?/non-union sub sup gamma-pc)))
+          (compat?/impl sub-member sup-member gamma-pc region-relation)))
+      (compat?/non-union sub sup gamma-pc region-relation)))
 
 (define (union? type)
   (and (pair? type) (eq? (car type) 'Union)))
 
-(define (compat?/non-union sub sup gamma-pc)
+(define (compat?/non-union sub sup gamma-pc region-relation)
   (match* (sub sup)
     [('Never _) #t]
     [(`(Record ,sub-row) `(Record ,sup-row))
-     (record-compatible? sub-row sup-row gamma-pc)]
+     (record-compatible? sub-row sup-row gamma-pc region-relation)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
      (type-equiv? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
-     (compat?/impl sub-payload sup-payload gamma-pc)]
+     (compat?/impl sub-payload sup-payload gamma-pc region-relation)]
     ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。
     ;; type-equiv? と同じ proposition-equiv? を使い、同値型の互換性を保つ。
     [(`(Refined ,sub-payload ,sub-proposition)
       `(Refined ,sup-payload ,sup-proposition))
      (and (proposition-equiv? sub-proposition sup-proposition)
-          (compat?/impl sub-payload sup-payload gamma-pc))]
+          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
       `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
                       sup-parameters sup-return sup-row sup-obligations
-                      gamma-pc)]
+                      gamma-pc region-relation)]
     ;; 構成子が一致し、payload が互換で、ρ が equal? のときに限り真である。
     ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。
     ;; 弱化を認めると、可変借用を共有借用の位置へ渡しつつ元の可変借用が
     ;; 生き続ける抜けができる。
     [(`(Borrowed ,sub-payload ,sub-ρ) `(Borrowed ,sup-payload ,sup-ρ))
      (and (equal? sub-ρ sup-ρ)
-          (compat?/impl sub-payload sup-payload gamma-pc))]
+          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
     [(`(BorrowedMut ,sub-payload ,sub-ρ) `(BorrowedMut ,sup-payload ,sup-ρ))
      (and (equal? sub-ρ sup-ρ)
-          (compat?/impl sub-payload sup-payload gamma-pc))]
+          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
     [(_ _) (type-equiv? sub sup)]))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
