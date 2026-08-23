@@ -479,7 +479,8 @@
           (build-path root "model/redex/tests/borrow-assign-test.rkt")
           (build-path root "model/redex/tests/borrow-use-test.rkt")
           (build-path root "model/redex/tests/borrow-mut-join-test.rkt")
-          (build-path root "model/redex/tests/solver-parity-test.rkt")))
+          (build-path root "model/redex/tests/solver-parity-test.rkt")
+          (build-path root "model/redex/tests/region-app-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)

@@ -195,3 +195,112 @@
  (check-equal? (normalize-type forall-a) forall-a)
  (check-true (type-normal? forall-a))
  (check-true (type-normal? forall-b)))
+
+;; subst-region-params は名前の付け替えではなく region の項への置き換えである。
+;; RegionApp の実引数の代入がこれを使う（spec §5.3）。
+
+(test-case
+ "subst-region-params が (RParam rp) を表の値そのものへ置き換える"
+ ;; 代入の値は ρ である。ρ ::= natural | (RVar natural) | (RParam rp) であり、
+ ;; 解決済みの region は素の自然数である（region->rho の値域）。
+ (check-equal?
+  (subst-region-params '(Borrowed Int (RParam a)) (hash 'a 3))
+  '(Borrowed Int 3))
+ ;; 表に無い名前はそのまま残る。
+ (check-equal?
+  (subst-region-params '(Borrowed Int (RParam b)) (hash 'a 3))
+  '(Borrowed Int (RParam b)))
+ ;; (RVar k) を入れる形も許す。段 2 の前は寿命変数のまま渡る。
+ (check-equal?
+  (subst-region-params '(BorrowedMut Int (RParam a)) (hash 'a '(RVar 7)))
+  '(BorrowedMut Int (RVar 7))))
+
+(test-case
+ "subst-region-params が内側の束縛を捕獲しない"
+ ;; 内側の ForallRegion が同じ名前を束縛しているため、内側の (RParam a) は
+ ;; 外側の代入の対象にならない。
+ (check-equal?
+  (subst-region-params
+   '(NFn ((Borrowed Int (RParam a))) (ForallRegion (a) (Borrowed Int (RParam a)))
+         () ())
+   (hash 'a 3))
+  '(NFn ((Borrowed Int 3)) (ForallRegion (a) (Borrowed Int (RParam a)))
+        () ()))
+ ;; RegionLam も同じである。項の側で region 欄を持つのは BorrowAt であり、
+ ;; (Borrow w) の w は place であって ρ を置く欄ではない。
+ (check-equal?
+  (subst-region-params
+   '(Yield (BorrowAt (RParam a) (Own 1 ()) y)
+           (RegionLam (a) (BorrowAt (RParam a) (Own 1 ()) y)))
+   (hash 'a 3))
+  '(Yield (BorrowAt 3 (Own 1 ()) y)
+          (RegionLam (a) (BorrowAt (RParam a) (Own 1 ()) y)))))
+
+(test-case
+ "alpha-rename-all-region-lams が入れ子の全段を付け替える"
+ (define renamed
+   (call-with-region-params
+    (lambda ()
+      (alpha-rename-all-region-lams
+       '(RegionLam (a)
+          (Yield (BorrowAt (RParam a) (Own 1 ()) y)
+                 (RegionLam (b)
+                   (Yield (BorrowAt (RParam a) (Own 1 ()) y)
+                          (BorrowAt (RParam b) (Own 1 ()) y)))))))))
+ (match-define `(RegionLam (,outer)
+                  (Yield (BorrowAt (RParam ,outer-use) ,_ ,_)
+                         (RegionLam (,inner)
+                           (Yield (BorrowAt (RParam ,inner-outer-use) ,_ ,_)
+                                  (BorrowAt (RParam ,inner-use) ,_ ,_)))))
+   renamed)
+ (check-not-equal? outer 'a)
+ (check-not-equal? inner 'b)
+ (check-not-equal? outer inner)
+ (check-equal? outer-use outer)
+ (check-equal? inner-outer-use outer)
+ (check-equal? inner-use inner))
+
+(test-case
+ "alpha-rename-all-region-lams が並置した 2 つの RegionLam へ別の名前を配る"
+ (define renamed
+   (call-with-region-params
+    (lambda ()
+      (alpha-rename-all-region-lams
+       '(Yield (RegionLam (a) (BorrowAt (RParam a) (Own 1 ()) y))
+               (RegionLam (a) (BorrowAt (RParam a) (Own 1 ()) y)))))))
+ (match-define `(Yield (RegionLam (,left) ,_) (RegionLam (,right) ,_)) renamed)
+ (check-not-equal? left right))
+
+(test-case
+ "alpha-rename-all-region-lams が spanful な入れ子を付け替える"
+ (define outer-span '(#:span src 10 40))
+ (define inner-span '(#:span src 20 30))
+ (define renamed
+   (call-with-region-params
+    (lambda ()
+      (alpha-rename-all-region-lams
+       `(RegionLam ,outer-span (a)
+                   (Yield ,inner-span
+                          (BorrowAt ,inner-span (RParam a) (Own 1 ()) y)
+                          (RegionLam ,inner-span (a)
+                                     (BorrowAt ,inner-span (RParam a)
+                                               (Own 1 ()) y))))))))
+ (match-define `(RegionLam ,kept-outer (,outer)
+                  (Yield ,_
+                         (BorrowAt ,_ (RParam ,outer-use) ,_ ,_)
+                         (RegionLam ,kept-inner (,inner)
+                                    (BorrowAt ,_ (RParam ,inner-use) ,_ ,_))))
+   renamed)
+ (check-equal? kept-outer outer-span)
+ (check-equal? kept-inner inner-span)
+ (check-not-equal? outer inner)
+ (check-equal? outer-use outer)
+ (check-equal? inner-use inner))
+
+(test-case
+ "alpha-rename-all-region-lams は counter 無しでは error を上げる"
+ (check-exn
+  exn:fail?
+  (lambda ()
+    (alpha-rename-all-region-lams
+     '(RegionLam (a) (BorrowAt (RParam a) (Own 1 ()) y))))))

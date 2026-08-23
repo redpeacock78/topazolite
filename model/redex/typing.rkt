@@ -55,7 +55,8 @@
          capability-source
          contains-lifetime-var?
          materialize-fail-result
-         core-type-of/materialized)
+         core-type-of/materialized
+         unwrap-forall-region)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -246,14 +247,44 @@
             (type? type)]
            [_ #f]))))
 
+;; 一番外の位置より内側に ForallRegion が現れないか。
+;; type? は redex の τ を見るだけであり、ForallRegion をどの位置にも許す。
+;; type-shape-ok? も ForallRegion の本体へ素通しで降りるだけである。
+;; そのため入れ子を入口で落とすのはこの検査の仕事である。
+(define (forall-region-free? type)
+  (match type
+    [`(ForallRegion ,_ ,_) #f]
+    [(? list? parts) (andmap forall-region-free? parts)]
+    [_ #t]))
+
 (define (valid-callables? callables)
   (and (unique-table? callables)
        (for/and ([entry (in-list callables)])
          (match entry
-           [(list callable `(NFn ,_ ,_ ,_ ,_))
+           [(list callable signature)
             (and (callable-id? callable)
-                 (type? (second entry)))]
+                 (type? signature)
+                 (match signature
+                   [`(NFn ,_ ,_ ,_ ,_) (forall-region-free? signature)]
+                   [`(ForallRegion (,rps ...) (NFn ,_ ,_ ,_ ,_))
+                    (and (andmap symbol? rps)
+                         (forall-region-free? (third signature)))]
+                   [_ #f]))]
            [_ #f]))))
+
+;; callables の署名から ForallRegion の包みを 1 段剥がす。
+;; 剥がした本体の (RParam rp) は、context が渡した付け替え後の名前へ位置で
+;; 対応させる。context が無い形と束縛の数が合わない形は #f を返す。
+(define (unwrap-forall-region signature context)
+  (match signature
+    [`(ForallRegion (,rps ...) ,body)
+     (and (list? context)
+          (= (length rps) (length context))
+          (subst-region-params
+           body
+           (for/hash ([rp (in-list rps)] [name (in-list context)])
+             (values rp `(RParam ,name)))))]
+    [_ #f]))
 
 (define (valid-environment? environment)
   (and (list? environment)
@@ -721,8 +752,9 @@
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      (list signature '() Ψ)]
-    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
-    ;; ここへ到達しない。表に無い場合と key を共有する。
+    ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
+    ;; 囲う RegionLam があるはずという仮定を置かず、表に無い場合と key を
+    ;; 共有して fail-closed にする（spec §5.7）。
     [_ (fail 'unknown-callable node)]))
 
 (define (infer-recur-value callable function parameters body Λ Ψ

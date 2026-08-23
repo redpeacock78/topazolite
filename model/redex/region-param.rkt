@@ -15,6 +15,8 @@
          rebuild-region-lam
          alpha-rename-region-lam
          rename-region-params
+         subst-region-params
+         alpha-rename-all-region-lams
          term-symbols)
 
 ;; 型木を下って自由な rp の集合を返す。Core を受けた場合も RegionLam の
@@ -107,6 +109,54 @@
        `(ForallRegion ,rps ,(walk body (shadow rps)))]
       [(? list?)
        (for/list ([element (in-list t)]) (walk element ren))]
+      [_ t])))
+
+;; (RParam rp) を表の値そのものへ置き換える。
+;; rename-region-params は (RParam rp) の中の名前だけを替えるため、region の項
+;; そのものへ置き換える RegionApp の実引数の代入には使えない。
+;; 2 つを 1 つの関数へ寄せないのは、置換の値域が違うためである。
+;; 内側の RegionLam と ForallRegion が同じ名前を束縛していれば、その名前を表から
+;; 外して降りる。外さないと内側の束縛が外側の代入で捕獲される。
+;;
+;; 前提。この関数は捕獲を避けない。shadow が表から外すのは鍵の側の名前だけで
+;; あり、表の値の中に現れる自由な rp は守らない。値の中の rp と同じ名前を束縛
+;; する RegionLam または ForallRegion が term の内側にあれば、その値はその束縛
+;; へ捕獲される。呼ぶ側は、次のどちらかを満たしてから呼ぶ。
+;; (1) 表の値に自由な (RParam rp) が現れない。
+;; (2) 値に現れる rp と同じ名前を束縛する binder が term の内側に無い。
+;; unwrap-forall-region は値の側が (RParam name) なので (1) を満たさない。
+;; (2) を保つのは valid-callables? の入れ子の禁止である。RegionApp の実引数の
+;; 代入も同じ前提を要る（Task 4b）。
+(define (subst-region-params term substitution)
+  (let walk ([t term] [sub substitution])
+    (define (shadow binders)
+      (for/fold ([narrowed sub]) ([binder (in-list binders)])
+        (hash-remove narrowed binder)))
+    (match t
+      [`(RParam ,rp)
+       (if (hash-has-key? sub rp) (hash-ref sub rp) t)]
+      [(app region-lam-parts (list s rps body))
+       (rebuild-region-lam s rps (walk body (shadow rps)))]
+      [`(ForallRegion (,rps ...) ,body)
+       `(ForallRegion ,rps ,(walk body (shadow rps)))]
+      [(? list?)
+       (for/list ([element (in-list t)]) (walk element sub))]
+      [_ t])))
+
+;; term に現れるすべての RegionLam の束縛名を一意な名前へ付け替える。
+;; 外側から内側へ降りる。alpha-rename-region-lam の付け替えは本体の全体へ
+;; 届くため、その後で内側を見れば、内側の本体に残る外側の名前も付け替え後の
+;; 名前になっている。付け替えを終えた項では、すべての束縛名が一意であり、
+;; 同じ名前による遮蔽は残らない。
+(define (alpha-rename-all-region-lams term)
+  (let walk ([t term])
+    (match t
+      [(app region-lam-parts (list _ _ _))
+       (match-define (list s renamed renamed-body)
+         (region-lam-parts (alpha-rename-region-lam t)))
+       (rebuild-region-lam s renamed (walk renamed-body))]
+      [(? list?)
+       (for/list ([element (in-list t)]) (walk element))]
       [_ t])))
 
 ;; 項に現れる記号の集合。束縛名の衝突を避けるために使う。
