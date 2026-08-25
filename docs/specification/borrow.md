@@ -212,7 +212,7 @@ region 欄が具体的な region か、束縛されていない `rp` であれ�
 
 段 A が扱うのは、`RegionLam` と `RegionApp` を持つ関数と、その呼出しで借用を受け渡す形である。
 region 多相な再帰関数は扱わない。
-`Recur` の 2 つの入口は署名の `ForallRegion` を剥がさず、`unknown-callable` で落とす。
+`RecurVal` と `Recur` は署名の `ForallRegion` を剥がさず、`unknown-callable` で落とす。
 剥がす作りは G5c5 で入れる。
 
 ## 9. capability

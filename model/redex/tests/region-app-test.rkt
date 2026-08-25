@@ -85,8 +85,8 @@
     (g (ForallRegion (b) (NFn (Int) Int () ())))))
 
 ;; 段 A では region 多相な再帰関数を扱わない。
-;; Recur の 2 つの入口は署名の ForallRegion を剥がさないため、
-;; 表に ForallRegion の行を持つ Recur は unknown-callable で落ちる。
+;; RecurVal と Recur は署名の ForallRegion を剥がさないため、
+;; 表に ForallRegion の行を持つ両方の構文は unknown-callable で落ちる。
 ;; 落ちる形そのものを固定して、剥がす作りが入るまで素通りしないようにする。
 (test-case
  "region 多相な署名を持つ Recur が unknown-callable で落ちる"
@@ -96,6 +96,21 @@
  (define core
    '(Scope ()
            (Recur g f (n) n 0)))
+ (define ir (build-region-ir core))
+ (check-equal?
+  (match (type-of/raw core '() callables '()
+                       (region-ctx ir '() (hash) (hash)))
+    [(list 'fail key _node _details ...) key]
+    [(list 'ok _) 'ok])
+  'unknown-callable))
+
+(test-case
+ "region 多相な署名を持つ RecurVal が unknown-callable で落ちる"
+ (define callables
+   '((g (ForallRegion (a) (NFn (Int) Int () ())))))
+ (define core
+   '(Scope ()
+           (RecurVal g f (n) n)))
  (define ir (build-region-ir core))
  (check-equal?
   (match (type-of/raw core '() callables '()

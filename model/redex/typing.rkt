@@ -1239,7 +1239,7 @@
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      (list signature '() Ψ)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
-    ;; Recur の 2 つの入口は署名の ForallRegion を剥がさない。
+    ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
     ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
@@ -1291,7 +1291,7 @@
        (fail 'undeclared-function-effect body latent-row body-row))
      (list function-environment Ψ_body)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
-    ;; Recur の 2 つの入口は署名の ForallRegion を剥がさない。
+    ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
     ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
