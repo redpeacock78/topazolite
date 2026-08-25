@@ -146,6 +146,13 @@
                             (empty-region-ctx)))
               'borrowed-function-result)
 
+;; 具体 NFn の借用仮引数は、実引数の照合より先に従来の key を返す。
+(check-equal? (key-of
+               (type-of/raw '(Apply h 1) '() '()
+                            (list (list 'h '(NFn ((Borrowed Int 0)) Int () ())))
+                            (empty-region-ctx)))
+              'borrowed-function-parameter)
+
 ;; Curry の残余仮引数。
 (check-equal?
  (key-of
