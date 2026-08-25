@@ -80,6 +80,10 @@
 (define forall-callables
   '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
 
+(define boundary-callables
+  '((outer (NFn (Int) Int () ()))
+    (g (ForallRegion (b) (NFn (Int) Int () ())))))
+
 (test-case
  "RegionLam の型が本体の型を ForallRegion で包み直す"
  (match-define (list 'ok (list type _row))
@@ -217,15 +221,51 @@
                                (RegionLam (b) (Lam User g (x) 1))
                                ((RParam a)))
                               1))))))
- (define boundary-callables
-   '((outer (NFn (Int) Int () ()))
-     (g (ForallRegion (b) (NFn (Int) Int () ())))))
  (define boundary-ir (build-region-ir (erase-core boundary-core)))
  (define boundary-ctx (region-ctx boundary-ir '() (hash) (hash)))
  ;; Lam の本体では bound-region-params が空へ戻るため、閉包の外側へ
  ;; 持ち出せる前提の委譲は成立せず E-REG-003 になる。
  (match-define (list 'fail key _node _details)
    (type-of/raw boundary-core '() boundary-callables '() boundary-ctx))
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
+ "RecurVal の境界を越えた RParam の RegionApp は落ちる"
+ (define recur-value-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionLam (a)
+                    (RecurVal outer h (z)
+                      (Let (r let (NFn (Int) Int () ()))
+                           (RegionApp
+                            (RegionLam (b) (Lam User g (x) 1))
+                            ((RParam a)))
+                           1))))))
+ (define recur-value-ir
+   (build-region-ir (erase-core recur-value-core)))
+ (define recur-value-ctx
+   (region-ctx recur-value-ir '() (hash) (hash)))
+ (match-define (list 'fail key _node _details)
+   (type-of/raw recur-value-core '() boundary-callables '() recur-value-ctx))
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
+ "Recur の境界を越えた RParam の RegionApp は落ちる"
+ (define recur-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionLam (a)
+                    (Recur outer h (z)
+                      (Let (r let (NFn (Int) Int () ()))
+                           (RegionApp
+                            (RegionLam (b) (Lam User g (x) 1))
+                            ((RParam a)))
+                           1)
+                      0)))))
+ (define recur-ir (build-region-ir (erase-core recur-core)))
+ (define recur-ctx (region-ctx recur-ir '() (hash) (hash)))
+ (match-define (list 'fail key _node _details)
+   (type-of/raw recur-core '() boundary-callables '() recur-ctx))
  (check-equal? key 'region-arg-not-live))
 
 (test-case

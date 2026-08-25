@@ -1015,8 +1015,12 @@
         parameters
         parameter-types))
      (define body-result
-       (check-as body return-type (enter-child Λ 0) Ψ body-environment
-                 places callables fail))
+       ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
+       ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
+       (parameterize ([region-binder-context #f]
+                      [bound-region-params (set)])
+         (check-as body return-type (enter-child Λ 0) Ψ body-environment
+                   places callables fail)))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      (list signature '() Ψ)]
@@ -1058,8 +1062,10 @@
      (define Λ_body (enter-child Λ 0))
      ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
      (define (fixpoint Ψ_in)
-       (match (check-as body return-type Λ_body Ψ_in body-environment
-                        places callables fail)
+       (match (parameterize ([region-binder-context #f]
+                             [bound-region-params (set)])
+               (check-as body return-type Λ_body Ψ_in body-environment
+                         places callables fail))
          [(list body-row Ψ_1)
           (define Ψ_next (psi-join Ψ_in Ψ_1))
           (if (equal? Ψ_next Ψ_in)
