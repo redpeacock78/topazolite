@@ -72,6 +72,8 @@
   (define entry (hash-ref (region-ctx-tokens Λ) x #f))
   (cond
     [(borrow-capability? entry) (borrow-capability-keys entry)]
+    ;; 既存の単体試験と外部の region-ctx 構築が持つ旧形式を読み取り専用で
+    ;; 受ける。新しい書込み口 region-ctx-add-token は必ず capability を保存する。
     [(set? entry) entry]
     [else (set)]))
 

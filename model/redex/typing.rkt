@@ -165,6 +165,28 @@
   (unless (route-deferred! (deferred-constraint w c) w node fail)
     (emit-constraint! c)))
 
+;; Reborrow の token 集合は 1 つの収集先へしか送れない。formal 鍵と通常の
+;; designator が混ざる形を任意の 1 要素で代表させると、制約の行き先が集合の
+;; 反復順で変わる。formal 鍵どうしも別の frame に属するなら同じ問題なので、
+;; その形を unresolved-borrow-owner で閉じる。
+(define (uniform-token-designator tokens node fail)
+  (define caps (set->list tokens))
+  (define first-w (car (first caps)))
+  (define first-frame (and (formal-key? first-w)
+                           (owning-frame first-w)))
+  (define uniform?
+    (if (formal-key? first-w)
+        (and first-frame
+             (for/and ([cap (in-list caps)])
+               (define w (car cap))
+               (and (formal-key? w)
+                    (eq? first-frame (owning-frame w)))))
+        (for/and ([cap (in-list caps)])
+          (not (formal-key? (car cap))))))
+  (unless uniform?
+    (fail 'unresolved-borrow-owner node))
+  first-w)
+
 ;; §5.4。関数の出現ごとの要約。formals は仮引数の位置に対応する formal
 ;; designator の並びであり、借用でない位置は #f である。deferred は本体で
 ;; 集めた雛形、result-index は結果の借用が対応する仮引数の位置または #f、
@@ -204,12 +226,18 @@
 (define (forwarding-index parameter-types return-type) #f)
 
 ;; §5.4。集めた要約の写し。要約は不変な構造体であり、雛形はその欄が持つ
-;; 不変な並びである。可変の表そのものは外へ出さない。
+;; 不変な並びである。可変の表そのものは外へ出さない。summary-key の文字列表現
+;; で並べ、hash の走査順を外へ漏らさない。
 ;; 収集器の箱から読む形は採れない。箱は Lam の本体を出た時点で積みから
 ;; 外れており、入口まで戻ったときには空である。
 (define (collected-callable-summaries)
   (define table (callable-summaries))
-  (if table (hash-values table) '()))
+  (if table
+      (map cdr
+           (sort (hash->list table)
+                 string<?
+                 #:key (lambda (entry) (format "~s" (car entry)))))
+      '()))
 
 ;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
 ;; fp/operation/source/node/kind は要求の契約なので必須にする。
@@ -1207,7 +1235,7 @@
               "親の token を特定できない operand: ~s"
               operand))
      (define parent-designator
-       (if (set-empty? tokens) #f (car (set-first tokens))))
+       (uniform-token-designator tokens core fail))
      (route-constraint!
       (region-constraint 'contains α_child (region-at ir point) point core)
       parent-designator core fail)

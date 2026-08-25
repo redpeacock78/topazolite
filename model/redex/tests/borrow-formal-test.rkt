@@ -16,9 +16,17 @@
                     (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
 
 (define (status core ir τ_place callables)
-  (first (type-of/raw (annotate-regions core ir)
-                      (list (list 1 τ_place)) callables '()
-                      (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))))
+  (first (raw-result core ir τ_place callables)))
+
+(define (raw-result core ir τ_place callables)
+  (type-of/raw (annotate-regions core ir)
+               (list (list 1 τ_place)) callables '()
+               (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
+
+(define (failure-key result)
+  (match result
+    [(list 'fail key _ _) key]
+    [_ #f]))
 
 ;; 借用の仮引数を 1 つ取り、それを読み書きするだけの署名。
 (define use-callables
@@ -36,10 +44,10 @@
 
 ;; 借用の仮引数を持つ Recur の署名。
 (define rec-callables
-  '((recb (NFn ((BorrowedMut Int 0)) Int () ()))))
+  '((recb (NFn ((BorrowedMut Int (RParam a))) Int () ()))))
 
 ;; 1。借用の仮引数を読み書きする本体が型検査を通る。
-;; 今日は borrow-token-key が親を引けず E-BOR-020 で落ちる。
+;; formal 鍵を token へ登録しない実装は本体の Read で所有者を解けず落ちる。
 (test-case
  "借用の仮引数の読み書きが本体で通る"
  (define core
@@ -98,20 +106,26 @@
 ;; 再帰の呼出しごとに実引数が変わり、formal 鍵の実体化が出現をまたぐ。
 (test-case
  "借用の仮引数を持つ Recur を落とす"
- (define core '(Scope (1) (Recur recb g (x) (Read x) 0)))
- (define ir (build-region-ir core))
- (check-equal? (status core ir 'Int rec-callables)
-               'fail))
-
-;; 5。外側の仮引数の借用を捕捉する入れ子の Lam を落とす。
-;; check-function-boundary の捕捉の判定は borrowed-type? のままであり、
-;; 束縛の有無を見ないので、formal も捕捉として落とす。
-(test-case
- "外側の仮引数を捕捉する入れ子の Lam を落とす"
  (define core
    '(Scope (1)
            (RegionLam (a)
-                      (Lam User useb (x)
-                           (Lam User useb (y) (Read x))))))
+                      (RecurVal recb g (x) (Read x)))))
  (define ir (build-region-ir core))
- (check-equal? (status core ir 'Int use-callables) 'fail))
+ (check-equal? (failure-key (raw-result core ir 'Int rec-callables))
+               'borrowed-function-parameter))
+
+;; 5。Let で得た借用を入れ子の Lam が捕捉する形を落とす。
+;; check-function-boundary の捕捉の判定は unbound-borrowed-type? を用い、
+;; bound-region-params の有無で捕捉を見逃さない。
+(test-case
+ "借用を捕捉する入れ子の Lam を落とす"
+ (define core
+   '(Scope (1)
+           (Let (b let (BorrowedMut Int 0))
+                (BorrowMut 1)
+                (Lam User cap (a) (Read b)))))
+ (define ir (build-region-ir core))
+ (define capture-callables '((cap (NFn (Int) Int () ()))))
+ (check-equal? (failure-key
+                (raw-result core ir 'Int capture-callables))
+               'borrowed-function-capture))
