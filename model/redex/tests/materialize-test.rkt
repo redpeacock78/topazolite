@@ -23,7 +23,7 @@
   ;; '(0 1 0 0) に居る。next を 0 に閉じ、内側の寿命を外へ流さない。
   (define annotated (annotate-regions (make (rho-at ir '(0 0))) ir))
   (define Λ (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
-  (match-define (list _type tbl cs _rs)
+  (match-define (list _type tbl cs _rs _ras)
     (typing-inference annotated (list (list 1 'Res)) '() '() Λ))
   (match-define (list 'ok σ) (typing-solve ir cs))
   (define out (materialize-regions ir annotated tbl σ))

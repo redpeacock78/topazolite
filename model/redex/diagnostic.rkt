@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 4)
+(define diagnostic-registry-version 5)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -194,6 +194,14 @@
     ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")
     ("E-BOR-025" borrow-conflicting-use "使用が生きている借用と競合する")))
 
+;; G5c3 段 A の region 多相。分類 E-REG を新設する。
+;; 分類内の番号は、初回割当に限り key 記号の辞書順で振る。
+;; region-app-arity < region-app-non-forall < region-arg-not-live である。
+(define typing-entries-v5
+  '(("E-REG-001" region-app-arity "region の実引数の数が束縛の数と合わない")
+    ("E-REG-002" region-app-non-forall "RegionApp の関数側が region 多相でない")
+    ("E-REG-003" region-arg-not-live "region の実引数が適用の位置で生きていない")))
+
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
 
@@ -214,6 +222,7 @@
           (rows 'typing 2 typing-entries-v2)
           (rows 'typing 3 typing-entries-v3)
           (rows 'typing 4 typing-entries-v4)
+          (rows 'typing 5 typing-entries-v5)
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
 

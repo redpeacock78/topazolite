@@ -127,6 +127,29 @@
   (region-ctx (build-region-ir (erase-core core)) '() (hash) (hash)))
 
 (define reach-call-f '((f (NFn (Int) Int () ()))))
+(define reach-call-forall
+  '((g (ForallRegion (a)
+                     (NFn ((Borrowed Int (RParam a))) Int () ())))))
+
+(define (region-arg-escape-core-with rho)
+  (reach-node 'Scope 1321 1400 '()
+              (reach-node 'Yield 1325 1398
+                          (reach-node 'Scope 1326 1336 '()
+                                      (reach-lit 0 1331 1332))
+                          (reach-node
+                           'RegionApp 1337 1397
+                           (reach-node
+                            'RegionLam 1341 1392 '(a)
+                            (reach-node
+                             'Lam 1345 1391 'User 'g
+                             (list (reach-bind 'x 1350 1351))
+                             (reach-lit 1 1360 1361)))
+                           (list rho)))))
+(define region-arg-escape-ir
+  (build-region-ir (erase-core (region-arg-escape-core-with 0))))
+(define region-arg-escape-rho
+  (region->rho region-arg-escape-ir
+               (region-at region-arg-escape-ir '(0 0))))
 (define reach-call-opt '((f (NFn ((Option Int)) Int () ()))))
 (define reach-call-obligation
   '((f (NFn (Int) Int () ((Prop NonEmpty))))))
@@ -196,6 +219,8 @@
     reborrow-non-mutable reborrow-region-escapes
     borrowed-function-capture borrowed-function-parameter
     borrowed-function-result
+    ;; REG
+    region-app-arity region-app-non-forall region-arg-not-live
     ;; default
     projborrow-non-record projborrow-unknown-field
     read-non-borrow read-uncopyable-payload
@@ -717,14 +742,37 @@
                           (list (reach-bind 'a 1305 1306))
                           (reach-var 'y 1310 1311))
               '() reach-call-f '((y (Borrowed Int 0)))
-              (reach-span 1301 1320))))
+              (reach-span 1301 1320))
+   (reach-row 'region-arg-not-live
+              (region-arg-escape-core-with region-arg-escape-rho)
+              '() reach-call-forall '()
+              (reach-span 1337 1397)
+              (lambda (_core)
+                (region-ctx region-arg-escape-ir '() (hash) (hash))))
+   (reach-row 'region-app-arity
+              (reach-node 'RegionApp 1401 1450
+                          (reach-node 'RegionLam 1405 1445 '(a)
+                                      (reach-node
+                                       'Lam 1410 1444 'User 'g
+                                       (list (reach-bind 'x 1415 1416))
+                                       (reach-lit 1 1425 1426)))
+                          '(0 0))
+              '() '((g (ForallRegion (a)
+                                     (NFn ((Borrowed Int (RParam a)))
+                                          Int () ()))))
+              '() (reach-span 1401 1450))
+   (reach-row 'region-app-non-forall
+              (reach-node 'RegionApp 1451 1470
+                          (reach-lit 1 1460 1461)
+                          '(0))
+              '() '() '() (reach-span 1451 1470))))
 
-(test-case "typing の producer key 集合が registry v4 と一致する"
+(test-case "typing の producer key 集合が registry v5 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 74)
+  (check-equal? (length producer-keys) 77)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

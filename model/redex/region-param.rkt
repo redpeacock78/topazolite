@@ -7,6 +7,7 @@
 (provide region-free-params
          region-param-counter
          bound-region-params
+         region-binder-context
          current-region-relation
          call-with-region-params
          fresh-region-param
@@ -44,6 +45,11 @@
 ;; 全経路へ引数が増える。既定は空集合であり、既定のままでは借用型がすべて
 ;; 違反になる。つまり region 引数を書かない programme の判定は変わらない。
 (define bound-region-params (make-parameter (set)))
+
+;; 直上の RegionLam が束縛した rp の並び。
+;; #f は直上に RegionLam が無いこと、空の並びは束縛 0 個の
+;; RegionLam が直上にあることを表す。
+(define region-binder-context (make-parameter #f))
 
 ;; compat? へ渡す region どうしの関係。既定は equal? である。
 ;; typing の funnel は type-compatible? であり、merge-branch-compatible? は

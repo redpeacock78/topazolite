@@ -47,6 +47,11 @@
          emit-constraint!
          collected-constraints
          with-lifetime-collector
+         (struct-out region-arg-request)
+         region-arg-collector
+         emit-region-arg-request!
+         collected-region-args
+         check-region-args
          collect-use-regions!
          typing-inference
          typing-solve
@@ -100,6 +105,37 @@
     (emit-request!
      (use-request w fp operation source
                   (region-at ir (region-ctx-point Λ)) node kind otherwise))))
+
+;; spec §5.6。RegionApp の実引数は借用の使用要求とは別に集め、段 3 で
+;; σ を解いた後に生存を検査する。
+(struct region-arg-request (rho point node) #:transparent)
+(define region-arg-collector (make-parameter #f))
+
+(define (emit-region-arg-request! rho point node)
+  (define collector (region-arg-collector))
+  (unless collector
+    (error 'emit-region-arg-request!
+           "region-arg-collector が parameterize されていない: ~s" node))
+  (set-box! collector
+            (cons (region-arg-request rho point node)
+                  (unbox collector))))
+
+(define (collected-region-args)
+  (define collector (region-arg-collector))
+  (if collector (reverse (unbox collector)) '()))
+
+;; 段 3。実引数の region が適用位置で生きていることを確認する。
+(define (check-region-args ir sigma requests relation fail)
+  (for ([request (in-list requests)])
+    (unless ir
+      (fail 'region-arg-not-live (region-arg-request-node request)))
+    (define rho
+      (subst-type-regions (region-arg-request-rho request) sigma ir))
+    (define at
+      (region->rho ir
+                   (region-at ir (region-arg-request-point request))))
+    (unless (relation rho at)
+      (fail 'region-arg-not-live (region-arg-request-node request)))))
 
 ;; 段 2。下限制約から σ を作る。spec §6.1。
 ;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
@@ -730,7 +766,11 @@
                    environment places callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
-  (match signature
+  ;; ForallRegion は直上の RegionLam が渡した binder 文脈で 1 段だけ剥がす。
+  ;; 文脈が無い形や束縛数が合わない形は下の既存の fail-closed へ落とす。
+  (define expanded
+    (or (unwrap-forall-region signature (region-binder-context)) signature))
+  (match expanded
     [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
@@ -747,11 +787,12 @@
                parameters
                parameter-types))
      (define body-result
-       (check-as body return-type (enter-child Λ 0) Ψ body-environment
-                 places callables fail))
+       (parameterize ([region-binder-context #f])
+         (check-as body return-type (enter-child Λ 0) Ψ body-environment
+                   places callables fail)))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
-     (list signature '() Ψ)]
+     (list expanded '() Ψ)]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
     ;; 囲う RegionLam があるはずという仮定を置かず、表に無い場合と key を
     ;; 共有して fail-closed にする（spec §5.7）。
@@ -1163,6 +1204,14 @@
                 Ψ
                 environment places callables core fail)]
 
+    [`(RegionLam (,rps ...) ,body)
+     (match-define (list body-type body-row body-psi)
+       (parameterize ([region-binder-context rps]
+                      [bound-region-params
+                       (set-union (bound-region-params) (list->set rps))])
+         (infer body (enter-child Λ 0) Ψ environment places callables fail)))
+     (list `(ForallRegion ,rps ,body-type) body-row body-psi)]
+
     [`(PrimVal ,_ ,name)
      (match (assoc name Γ0)
        [(list _ (list type canonical-value))
@@ -1277,6 +1326,24 @@
           [(list field-type _) (list field-type record-row record-psi)]
           [_ (fail 'unknown-record-label core)])]
        [_ (fail 'project-non-record record)])]
+
+    [`(RegionApp ,function (,rhos ...))
+     (match-define (list function-type function-row function-psi)
+       (infer function (enter-child Λ 0)
+              Ψ environment places callables fail))
+     (match function-type
+       [`(ForallRegion (,rps ...) ,body-type)
+        (unless (= (length rps) (length rhos))
+          (fail 'region-app-arity core (length rps) (length rhos)))
+        (for ([rho (in-list rhos)])
+          (emit-region-arg-request! rho (region-ctx-point Λ) core))
+        (list (subst-region-params
+               body-type
+               (for/hash ([rp (in-list rps)] [rho (in-list rhos)])
+                 (values rp rho)))
+              function-row
+              function-psi)]
+       [_ (fail 'region-app-non-forall core function-type)])]
 
     [`(Apply ,function ,arguments ...)
      (match (infer function (enter-child Λ 0)
@@ -1599,24 +1666,35 @@
 
 ;; 段 1 だけを走らせる。試験と、Task 7 の解決の段が使う。
 ;; with-typing は成功を (list 'ok <本体の返り値>) で包むので、ここで剥がす。
-;; 返すのは裸の 4 つ組であり、Task 5 の 3 つ組へ要求の並びを足す。
-;; 段 1 で棄却されたときは error を上げる。3 つ組と取り違える形を残さないためである。
+;; 返すのは裸の 5 つ組で、末尾は RegionApp の実引数要求である。
+;; 段 1 で棄却されたときは error を上げる。
 (define (typing-inference core-in places callables [environment '()]
                           [Λ (empty-region-ctx)])
   (define cs (box '()))
   (define rs (box '()))
+  (define ras (box '()))
   (define tbl (box (hash)))
+  (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
+                   [region-arg-collector ras]
                    [lifetime-counter (box 0)]
                    [alpha-table tbl]
                    [merge-alpha-sources (make-hash)])
       (with-typing
        (lambda (fail)
-         (match-define (list type _row _Ψ)
-           (infer core-in Λ (empty-psi) environment places callables fail))
-         (list type (unbox tbl) (reverse (unbox cs)) (reverse (unbox rs)))))))
+         (define renamed
+           (call-with-region-params
+            (lambda () (alpha-rename-all-region-lams core-in))))
+         (parameterize ([current-region-relation
+                         (if ir
+                             (make-region-relation ir (erase-core renamed))
+                             equal?)])
+           (match-define (list type _row _Ψ)
+             (infer renamed Λ (empty-psi) environment places callables fail))
+           (list type (unbox tbl) (reverse (unbox cs)) (reverse (unbox rs))
+                 (collected-region-args)))))))
   (match result
     [(list 'ok value) value]
     [(list 'fail key _node details)
@@ -1802,10 +1880,13 @@
 (define (type-of/raw* core-in places callables environment Λ)
   (define cs (box '()))
   (define rs (box '()))
+  (define ras (box '()))
   (define tbl (box (hash)))
+  (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
+                   [region-arg-collector ras]
                    [lifetime-counter (box 0)]
                    [alpha-table tbl]
                    [merge-alpha-sources (make-hash)])
@@ -1816,18 +1897,25 @@
          (define violation (entry-violation core places callables environment))
          (when violation
            (apply fail (first violation) core-in (rest violation)))
-         ;; 段 1。
+         ;; 束縛名を入口で 1 度だけ付け替える。関係の表も同じ core から作る。
+         (define renamed
+           (call-with-region-params
+            (lambda () (alpha-rename-all-region-lams core-in))))
+         (define relation
+           (if ir (make-region-relation ir (erase-core renamed)) equal?))
+         (parameterize ([current-region-relation relation])
+           ;; 段 1。
          (match-define (list type row Ψ)
-           (infer core-in Λ (empty-psi) environment places callables fail))
+           (infer renamed Λ (empty-psi) environment places callables fail))
          ;; 段 2。
-         (define ir (region-ctx-ir Λ))
          (define solved (typing-solve ir (reverse (unbox cs))))
          (match solved
            [(list 'error broken)
             (define c (first broken))
             (fail (constraint-key c) (constraint-node c))]
            [(list 'ok σ)
-            ;; 段 3。
+             ;; 段 3。
+            (check-region-args ir σ (collected-region-args) relation fail)
             (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
             ;; 型の中の α を σ で解いてから正規化する。materialize が core の
             ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
@@ -1844,7 +1932,7 @@
             (list normalized
                   (subst-type-regions row σ ir)
                   (unbox tbl)
-                  σ)])))))
+                  σ)]))))))
   ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
   ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
   (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))

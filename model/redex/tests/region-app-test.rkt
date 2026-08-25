@@ -2,7 +2,10 @@
 
 (require rackunit
          "../typing.rkt"
-         "../region-param.rkt")
+         "../region-param.rkt"
+         "../erase.rkt"
+         "../region.rkt"
+         "../borrow.rkt")
 
 ;; spec §5.7。callables の表は ForallRegion に包まれた署名を受ける。
 ;; 包みは 1 段だけであり、入れ子は受けない。
@@ -71,3 +74,99 @@
  (check-false (unwrap-forall-region signature '(p.0 p.1)))
  ;; 包まれていない署名も #f である。呼び側が NFn の節で扱う。
  (check-false (unwrap-forall-region '(NFn (Int) Int () ()) '(p.0))))
+
+;; spec §5.3、§5.7。RegionLam の型付けと展開。
+
+(define forall-callables
+  '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+
+(test-case
+ "RegionLam の型が本体の型を ForallRegion で包み直す"
+ (match-define (list 'ok (list type _row))
+   (type-of/raw '(RegionLam (a) (Lam User g (x) 1)) '() forall-callables))
+ (match-define `(ForallRegion (,binder)
+                  (NFn ((Borrowed Int (RParam ,used))) Int () ()))
+   type)
+ (check-equal? used binder))
+
+(test-case
+ "囲う RegionLam が無い Lam は ForallRegion の署名で unknown-callable になる"
+ (match-define (list 'fail key _node _details)
+   (type-of/raw '(Lam User g (x) 1) '() forall-callables))
+ (check-equal? key 'unknown-callable))
+
+(test-case
+ "束縛の数が署名と合わない RegionLam も unknown-callable になる"
+ (match-define (list 'fail key _node _details)
+   (type-of/raw '(RegionLam (a b) (Lam User g (x) 1)) '() forall-callables))
+ (check-equal? key 'unknown-callable))
+
+(test-case
+ "入れ子の Lam は外側の binder 文脈を引き継がない"
+ (define nested
+   '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))
+     (h (ForallRegion (a) (NFn (Int) Int () ())))))
+ (match-define (list 'fail key _node _details)
+   (type-of/raw '(RegionLam (a) (Lam User g (x) (Apply (Lam User h (y) 1) 1)))
+                '() nested))
+ (check-equal? key 'unknown-callable))
+
+;; spec §5.3。RegionApp の段 1 の 2 つの検査。
+
+(test-case
+ "実引数の数が束縛の数と合わない"
+ (match-define (list 'fail key _node details)
+   (type-of/raw '(RegionApp (RegionLam (a) (Lam User g (x) 1)) (0 0))
+                '() forall-callables))
+ (check-equal? key 'region-app-arity)
+ (check-equal? details '(1 2)))
+
+(test-case
+ "関数側が region 多相でない"
+ (match-define (list 'fail key _node details)
+   (type-of/raw '(RegionApp 1 (0)) '() '()))
+ (check-equal? key 'region-app-non-forall)
+ (check-equal? details '(Int)))
+
+;; spec §5.6。実引数の生存は段 3 で IR を見て判定する。
+(define (region-arg-core-with rho)
+  `(Scope ()
+          (Yield (Scope () 0)
+                 (RegionApp (RegionLam (a) (Lam User g (x) 1)) (,rho)))))
+(define region-arg-ir
+  (build-region-ir (erase-core (region-arg-core-with 0))))
+(define region-arg-ctx
+  (region-ctx region-arg-ir '() (hash) (hash)))
+(define region-arg-inner-rho
+  (region->rho region-arg-ir (region-at region-arg-ir '(0 0))))
+(define region-arg-outer-rho
+  (region->rho region-arg-ir (region-at region-arg-ir '(0 1))))
+
+(test-case
+ "内側の region を外の位置へ渡すと region-arg-not-live になる"
+ (match-define (list 'fail key _node details)
+   (type-of/raw (region-arg-core-with region-arg-inner-rho)
+                '() forall-callables '() region-arg-ctx))
+ (check-equal? key 'region-arg-not-live)
+ (check-equal? details '()))
+
+(test-case
+ "外側の region を同じ位置へ渡すと通り、束縛が実引数へ置き換わる"
+ (match-define (list 'ok (list type _row))
+   (type-of/raw (region-arg-core-with region-arg-outer-rho)
+                '() forall-callables '() region-arg-ctx))
+ (check-equal? type
+              `(NFn ((Borrowed Int ,region-arg-outer-rho)) Int () ())))
+
+(test-case
+ "ir が無い Λ では実引数の生存を示せないため落とす"
+ (match-define (list 'fail key _node _details)
+   (type-of/raw '(RegionApp (RegionLam (a) (Lam User g (x) 1)) (0))
+                '() forall-callables))
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
+ "region-arg-collector を忘れた経路は要求を捨てず error にする"
+ (check-exn #px"region-arg-collector が parameterize されていない"
+            (lambda ()
+              (emit-region-arg-request! 0 '() 'node))))

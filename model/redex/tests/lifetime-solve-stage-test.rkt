@@ -16,7 +16,7 @@
   (define core '(Scope (1) (Borrow 1)))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
-  (match-define (list _type tbl cs _rs)
+  (match-define (list _type tbl cs _rs _ras)
     (typing-inference annotated (list (list 1 'Res)) '() '()
                       (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
   (match-define (list 'ok σ) (typing-solve ir cs))
