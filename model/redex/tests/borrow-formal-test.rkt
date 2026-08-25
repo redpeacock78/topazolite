@@ -102,10 +102,10 @@
   (for/and ([r (in-list deferred)] #:when (borrow-request? r))
     (set-member? formals (borrow-request-w r)))))
 
-;; 4。借用の仮引数を持つ Recur を落とす。
+;; 4。借用の仮引数を持つ RecurVal を落とす。
 ;; 再帰の呼出しごとに実引数が変わり、formal 鍵の実体化が出現をまたぐ。
 (test-case
- "借用の仮引数を持つ Recur を落とす"
+ "借用の仮引数を持つ RecurVal を落とす"
  (define core
    '(Scope (1)
            (RegionLam (a)
@@ -114,18 +114,34 @@
  (check-equal? (failure-key (raw-result core ir 'Int rec-callables))
                'borrowed-function-parameter))
 
-;; 5。Let で得た借用を入れ子の Lam が捕捉する形を落とす。
-;; check-function-boundary の捕捉の判定は unbound-borrowed-type? を用い、
-;; bound-region-params の有無で捕捉を見逃さない。
+;; 5。継続を持つ Recur 側の guard も同じ key で落とす。
 (test-case
- "借用を捕捉する入れ子の Lam を落とす"
+ "借用の仮引数を持つ Recur を落とす"
  (define core
    '(Scope (1)
-           (Let (b let (BorrowedMut Int 0))
-                (BorrowMut 1)
-                (Lam User cap (a) (Read b)))))
+           (RegionLam (a)
+                      (Recur recb g (x) (Read x) 0))))
  (define ir (build-region-ir core))
- (define capture-callables '((cap (NFn (Int) Int () ()))))
+ (check-equal? (failure-key (raw-result core ir 'Int rec-callables))
+               'borrowed-function-parameter))
+
+;; 6。formal 借用を入れ子の Lam が捕捉する形を落とす。
+;; 内側は素の NFn として lookup できるため、ForallRegion の unwrap 失敗で
+;; 先に止まらず、capture の key まで届く。
+(test-case
+ "formal 借用を捕捉する入れ子の Lam を落とす"
+ (define core
+   '(Scope (1)
+           (RegionLam (a)
+                      (Lam User useb (x)
+                           (Lam User cap (y) (Read x))))))
+ (define ir (build-region-ir core))
+ (define capture-callables
+   '((useb (ForallRegion (a)
+             (NFn ((BorrowedMut Int (RParam a)))
+                  (NFn (Int) Int () ())
+                  () ())))
+     (cap (NFn (Int) Int () ()))))
  (check-equal? (failure-key
                 (raw-result core ir 'Int capture-callables))
                'borrowed-function-capture))

@@ -169,6 +169,9 @@
 ;; designator が混ざる形を任意の 1 要素で代表させると、制約の行き先が集合の
 ;; 反復順で変わる。formal 鍵どうしも別の frame に属するなら同じ問題なので、
 ;; その形を unresolved-borrow-owner で閉じる。
+;; 同じ frame の formal が複数ある場合は許すが、返す代表鍵は frame の同一性を
+;; 示す routing 専用であり、呼出し側の実引数 capability の選択には使わない。
+;; 実体化では token 集合全体と formal の位置対応から選ぶ。
 (define (uniform-token-designator tokens node fail)
   (define caps (set->list tokens))
   (define first-w (car (first caps)))
@@ -948,6 +951,10 @@
                        collector))
      (define body-result
        (parameterize ([region-binder-context #f]
+                      ;; formal の RParam はこの Lam の境界に属する。
+                      ;; 内側の Lam が外側の RegionLam の束縛をそのまま
+                      ;; 引き継ぐと、formal 借用の capture を見逃す。
+                      [bound-region-params (set)]
                       [template-collectors
                        (cons frame (template-collectors))])
          (check-as body return-type body-context Ψ body-environment
