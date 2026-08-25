@@ -480,6 +480,7 @@
           (build-path root "model/redex/tests/borrow-use-test.rkt")
           (build-path root "model/redex/tests/borrow-mut-join-test.rkt")
           (build-path root "model/redex/tests/borrow-formal-test.rkt")
+          (build-path root "model/redex/tests/borrow-identity-test.rkt")
           (build-path root "model/redex/tests/solver-parity-test.rkt")
           (build-path root "model/redex/tests/region-app-test.rkt")))
   (list
