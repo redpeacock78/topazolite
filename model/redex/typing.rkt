@@ -1337,6 +1337,9 @@
           (fail 'region-app-arity core (length rps) (length rhos)))
         (for ([rho (in-list rhos)])
           (emit-region-arg-request! rho (region-ctx-point Λ) core))
+        ;; subst-region-params は capture-avoiding ではない。両入口で infer の
+        ;; 前に alpha-rename-all-region-lams を通すため、全 binder 名が一意になり、
+        ;; region-param.rkt の前提 (2) をここでも満たす。
         (list (subst-region-params
                body-type
                (for/hash ([rp (in-list rps)] [rho (in-list rhos)])
@@ -1905,34 +1908,34 @@
            (if ir (make-region-relation ir (erase-core renamed)) equal?))
          (parameterize ([current-region-relation relation])
            ;; 段 1。
-         (match-define (list type row Ψ)
-           (infer renamed Λ (empty-psi) environment places callables fail))
-         ;; 段 2。
-         (define solved (typing-solve ir (reverse (unbox cs))))
-         (match solved
-           [(list 'error broken)
-            (define c (first broken))
-            (fail (constraint-key c) (constraint-node c))]
-           [(list 'ok σ)
-             ;; 段 3。
-            (check-region-args ir σ (collected-region-args) relation fail)
-            (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
-            ;; 型の中の α を σ で解いてから正規化する。materialize が core の
-            ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
-            ;; 置換を正規化より先に置くのは、Union の重複除去が置換の後で
-            ;; なければ効かないためである。σ(α_1) と σ(α_2) が同じ region に
-            ;; なる形では、正規化を先に置くと正規形の不変が破れる。
-            (define substituted (subst-type-regions type σ ir))
-            (define normalized (normalize-type substituted))
-            (unless normalized
-              (fail 'non-normalizable-result-type core-in substituted))
-            ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
-            ;; Perform は (Return boundary τ) として row へ入れるため、
-            ;; 借用をこれらで返すと row が α を運ぶ。
-            (list normalized
-                  (subst-type-regions row σ ir)
-                  (unbox tbl)
-                  σ)]))))))
+           (match-define (list type row Ψ)
+             (infer renamed Λ (empty-psi) environment places callables fail))
+           ;; 段 2。
+           (define solved (typing-solve ir (reverse (unbox cs))))
+           (match solved
+             [(list 'error broken)
+              (define c (first broken))
+              (fail (constraint-key c) (constraint-node c))]
+             [(list 'ok σ)
+              ;; 段 3。
+              (check-region-args ir σ (collected-region-args) relation fail)
+              (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+              ;; 型の中の α を σ で解いてから正規化する。materialize が core の
+              ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
+              ;; 置換を正規化より先に置くのは、Union の重複除去が置換の後で
+              ;; なければ効かないためである。σ(α_1) と σ(α_2) が同じ region に
+              ;; なる形では、正規化を先に置くと正規形の不変が破れる。
+              (define substituted (subst-type-regions type σ ir))
+              (define normalized (normalize-type substituted))
+              (unless normalized
+                (fail 'non-normalizable-result-type core-in substituted))
+              ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
+              ;; Perform は (Return boundary τ) として row へ入れるため、
+              ;; 借用をこれらで返すと row が α を運ぶ。
+              (list normalized
+                    (subst-type-regions row σ ir)
+                    (unbox tbl)
+                    σ)]))))))
   ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
   ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
   (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))

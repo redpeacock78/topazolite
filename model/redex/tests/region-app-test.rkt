@@ -159,6 +159,23 @@
               `(NFn ((Borrowed Int ,region-arg-outer-rho)) Int () ())))
 
 (test-case
+ "外側の RParam を内側の RegionApp へ渡す"
+ (define nested-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionLam (a)
+                    (RegionApp (RegionLam (b) (Lam User g (x) 1))
+                               ((RParam a)))))))
+ (define nested-ir (build-region-ir (erase-core nested-core)))
+ (define nested-ctx (region-ctx nested-ir '() (hash) (hash)))
+ (match-define (list 'fail key _node _details)
+   (type-of/raw nested-core '() forall-callables '() nested-ctx))
+ ;; 実引数の RParam は入口の alpha rename 後も外側 binder を指し、
+ ;; RegionApp の subst-region-params で内側の b へ代入される。ここでは
+ ;; IR の生存判定が RParam を具体化できないため fail-closed にする。
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
  "ir が無い Λ では実引数の生存を示せないため落とす"
  (match-define (list 'fail key _node _details)
    (type-of/raw '(RegionApp (RegionLam (a) (Lam User g (x) 1)) (0))
