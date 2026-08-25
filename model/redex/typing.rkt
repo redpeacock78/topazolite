@@ -1309,6 +1309,14 @@
        (adopt-inferred-lifetimes d a))]
     [(_ _) declared]))
 
+;; §12。宣言型が Owned のときだけ使う比較。推論した型が Owned でなければ
+;; Owned で包んでから比べる。包んで比べる形を type-compatible? そのものへ
+;; 入れない。入れると、関数の実引数や分岐の合流でも暗黙の持ち上げが起きる。
+(define (owned-lift-compatible? actual expected)
+  (or (type-compatible? actual expected)
+      (and (not (owned-type? actual))
+           (type-compatible? `(Owned ,actual) expected))))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
@@ -1338,6 +1346,23 @@
         (list bound-row `(Record ,binding-row) bound-psi)]
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
+    [`(Owned ,payload)
+     ;; §12。計算した値を Owned へ載せる経路。宣言型が Owned のとき、
+     ;; bound が計算した値をそのまま place へ載せる。
+     ;; resource と Move が作った値は最初の比較で通るため、既存の経路は変わらない。
+     ;; payload に借用が入る形は落とす。place へ載せた後は借用の所有者が
+     ;; どこにいるのかを追う手立てが無く、所有者より長生きする借用を作れる。
+     ;; 束縛の集合は空にする。この位置では region 多相の束縛の下でも、
+     ;; 借用そのものを payload に置けない。
+     (when (unbound-borrowed-type? payload (set))
+       (fail 'own-binding-borrowed-payload node))
+     (match (check-as/full bound declared-type (enter-child Λ 0)
+                           Ψ environment places callables fail
+                           owned-lift-compatible?)
+       [(list row bound-psi _)
+        ;; 宣言型をそのまま束縛の型にする。payload に借用が無いことを
+        ;; 直前に確かめたので、寿命を写す先が無い。
+        (list row declared-type bound-psi)])]
     [_
      (match (check-as/full bound declared-type (enter-child Λ 0)
                            Ψ environment places callables fail)

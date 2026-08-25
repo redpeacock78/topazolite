@@ -193,6 +193,7 @@
     owned-curry-argument owned-function-parameter owned-record-field
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unknown-place unmanaged-place
+    own-binding-borrowed-payload
     ;; VAR
     duplicate-branch-binder duplicate-parameter non-canonical-primitive
     unbound-variable unknown-primitive
@@ -634,6 +635,14 @@
               (reach-node 'BorrowAt 1021 1030 0 '(Own x ())
                           (reach-var 'x 1026 1027))
               '() '() '() (reach-span 1021 1030))
+   (reach-row 'own-binding-borrowed-payload
+              (reach-node 'Let 1371 1400
+                          (list (reach-bind 'x 1372 1373) 'let
+                                (reach-ty '(Owned (BorrowedMut Int 0)) 1374 1385))
+                          (reach-var 'y 1386 1387)
+                          (reach-lit 1 1388 1389))
+              '() '() '((y (BorrowedMut Int 0)))
+              (reach-span 1371 1400))
    (reach-row 'own-designator-mismatch
               (reach-node 'BorrowAt 1321 1330 0 '(Own 7 ())
                           (reach-var 'x 1326 1327))
@@ -772,7 +781,7 @@
     (for/list ([row (in-list diagnostic-registry)]
                #:when (eq? (diagnostic-code-phase row) 'typing))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 77)
+  (check-equal? (length producer-keys) 78)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

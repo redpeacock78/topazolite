@@ -194,13 +194,15 @@
     ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")
     ("E-BOR-025" borrow-conflicting-use "使用が生きている借用と競合する")))
 
-;; G5c3 段 A の region 多相。分類 E-REG を新設する。
+;; G5c3 段 A。分類 E-REG を新設し、E-OWN の続きを 1 件足す。
 ;; 分類内の番号は、初回割当に限り key 記号の辞書順で振る。
 ;; region-app-arity < region-app-non-forall < region-arg-not-live である。
+;; E-OWN は既存の分類の続きであり、E-OWN-021 の次の番号を取る。
 (define typing-entries-v5
   '(("E-REG-001" region-app-arity "region の実引数の数が束縛の数と合わない")
     ("E-REG-002" region-app-non-forall "RegionApp の関数側が region 多相でない")
-    ("E-REG-003" region-arg-not-live "region の実引数が適用の位置で生きていない")))
+    ("E-REG-003" region-arg-not-live "region の実引数が適用の位置で生きていない")
+    ("E-OWN-022" own-binding-borrowed-payload "Owned の束縛の payload に借用が入る")))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
