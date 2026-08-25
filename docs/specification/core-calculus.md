@@ -1420,6 +1420,8 @@ borrow、region、unsafe boundary の judgment は G5 で仕様化する。
 - G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）を、borrow による受け渡しと捕捉として回復する。
 - メタ理論性質 8（borrow safety）と 9（unsafe containment）の bounded 検査を Redex model へ追加する。
 
+このうち `Owned` を取る仮引数と closure の捕捉は G5c5 が扱い、G5c3 段 A では `Let` の宣言型が `Owned` のときに計算した値を載せる形だけを回復する。
+
 G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有権機能が affine な move / drop まで（ホワイトペーパー §16 Phase 1）であり、G1 の Ω 三値モデルがその範囲を過不足なく覆うためである。
 初期 lexical region 解析を NLL 相当の solver と置換可能にする要件（BOR-003）も G5 で扱う。
 

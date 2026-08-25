@@ -233,8 +233,8 @@
     [`(BorrowedMut ,_ ,ρ) ρ]
     [_ #f]))
 
-;; 部分適用と義務の provenance は、束縛済みの region を含む型でも運べない。
-;; 空の束縛集合を渡し、型木のどこかにある借用をすべて検出する。
+;; 型木のどこかに借用があるかを、region の束縛状態に関係なく検出する。
+;; 借用の所有者をこの型から復元できない位置で使う。
 (define (borrowed-type-anywhere? type)
   (unbound-borrowed-type? type (set)))
 
@@ -1354,7 +1354,7 @@
      ;; どこにいるのかを追う手立てが無く、所有者より長生きする借用を作れる。
      ;; 束縛の集合は空にする。この位置では region 多相の束縛の下でも、
      ;; 借用そのものを payload に置けない。
-     (when (unbound-borrowed-type? payload (set))
+     (when (borrowed-type-anywhere? payload)
        (fail 'own-binding-borrowed-payload node))
      (match (check-as/full bound declared-type (enter-child Λ 0)
                            Ψ environment places callables fail
@@ -2328,7 +2328,7 @@
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
      (define actual (peel-ty data-type))
-     (unless (type-equiv? actual expected)
+     (unless (compatible? actual expected)
        (fail 'type-mismatch core expected actual))
      (match (check-construct constructor fields data-type
                               Λ

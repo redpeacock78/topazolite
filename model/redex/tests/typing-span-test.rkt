@@ -189,11 +189,11 @@
     ;; EFF
     effectful-curry-operand undeclared-function-effect
     ;; OWN
-    drop-non-owned move-non-owned owned-constructor-field
+    drop-non-owned move-non-owned own-binding-borrowed-payload
+    owned-constructor-field
     owned-curry-argument owned-function-parameter owned-record-field
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unknown-place unmanaged-place
-    own-binding-borrowed-payload
     ;; VAR
     duplicate-branch-binder duplicate-parameter non-canonical-primitive
     unbound-variable unknown-primitive

@@ -52,6 +52,18 @@
                 1)))
   'ok))
 
+;; Construct の結果も計算値として Owned へ載せられる。
+;; check-as/full の Construct 節が呼出し側の compatible? を捨てないことを見る。
+(test-case
+ "Construct が作った値を Owned の束縛へ載せる"
+ (check-equal?
+  (status
+   '(Scope ()
+           (Let (x let (Owned (List Int)))
+                (Construct (List Int) nil)
+                1)))
+  'ok))
+
 ;; 3。載せる値の型に借用が入る形は落とす。
 ;; place へ載せた後は借用の所有者の生存を追えない。
 (test-case
