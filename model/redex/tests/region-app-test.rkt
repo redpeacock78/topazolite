@@ -168,11 +168,64 @@
                                ((RParam a)))))))
  (define nested-ir (build-region-ir (erase-core nested-core)))
  (define nested-ctx (region-ctx nested-ir '() (hash) (hash)))
- (match-define (list 'fail key _node _details)
+ ;; spec §5.6。実引数が束縛中の rp なら、外側の適用位置で既に生存が
+ ;; 検査されている。適用位置はその内側なので生存は保たれる。
+ (match-define (list 'ok (list type _row))
    (type-of/raw nested-core '() forall-callables '() nested-ctx))
- ;; 実引数の RParam は入口の alpha rename 後も外側 binder を指し、
- ;; RegionApp の subst-region-params で内側の b へ代入される。ここでは
- ;; IR の生存判定が RParam を具体化できないため fail-closed にする。
+ (match-define `(ForallRegion (,binder)
+                  (NFn ((Borrowed Int (RParam ,used))) Int () ()))
+   type)
+ (check-equal? used binder))
+
+(test-case
+ "内側の binder の rp を実引数へ書くと落ちる"
+ (define outside-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionLam (a)
+                    (RegionApp (RegionLam (b) (Lam User g (x) 1))
+                               ((RParam b)))))))
+ (define outside-ir (build-region-ir (erase-core outside-core)))
+ (define outside-ctx (region-ctx outside-ir '() (hash) (hash)))
+ ;; 実引数の位置は (RegionLam (b) ...) の外側なので b は束縛されていない。
+ (match-define (list 'fail key _node _details)
+   (type-of/raw outside-core '() forall-callables '() outside-ctx))
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
+ "どの binder も束縛していない rp を実引数へ書くと落ちる"
+ (define unbound-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionApp (RegionLam (b) (Lam User g (x) 1))
+                             ((RParam z))))))
+ (define unbound-ir (build-region-ir (erase-core unbound-core)))
+ (define unbound-ctx (region-ctx unbound-ir '() (hash) (hash)))
+ (match-define (list 'fail key _node _details)
+   (type-of/raw unbound-core '() forall-callables '() unbound-ctx))
+ (check-equal? key 'region-arg-not-live))
+
+(test-case
+ "Lam の境界を越えた RParam の RegionApp は落ちる"
+ (define boundary-core
+   '(Scope ()
+           (Yield (Scope () 0)
+                  (RegionLam (a)
+                    (Lam User outer (z)
+                         (Let (r let (NFn (Int) Int () ()))
+                              (RegionApp
+                               (RegionLam (b) (Lam User g (x) 1))
+                               ((RParam a)))
+                              1))))))
+ (define boundary-callables
+   '((outer (NFn (Int) Int () ()))
+     (g (ForallRegion (b) (NFn (Int) Int () ())))))
+ (define boundary-ir (build-region-ir (erase-core boundary-core)))
+ (define boundary-ctx (region-ctx boundary-ir '() (hash) (hash)))
+ ;; Lam の本体では bound-region-params が空へ戻るため、閉包の外側へ
+ ;; 持ち出せる前提の委譲は成立せず E-REG-003 になる。
+ (match-define (list 'fail key _node _details)
+   (type-of/raw boundary-core '() boundary-callables '() boundary-ctx))
  (check-equal? key 'region-arg-not-live))
 
 (test-case

@@ -255,7 +255,7 @@
 
 ;; spec §5.6。RegionApp の実引数は借用の使用要求とは別に集め、段 3 で
 ;; σ を解いた後に生存を検査する。
-(struct region-arg-request (rho point node) #:transparent)
+(struct region-arg-request (rho point node bound) #:transparent)
 (define region-arg-collector (make-parameter #f))
 
 (define (emit-region-arg-request! rho point node)
@@ -263,8 +263,10 @@
   (unless collector
     (error 'emit-region-arg-request!
            "region-arg-collector が parameterize されていない: ~s" node))
+  ;; spec §5.6。束縛中かどうかは発行した時点で決まる。段 3 では
+  ;; RegionLam を降りた文脈が残っていないので、ここで写しを採る。
   (set-box! collector
-            (cons (region-arg-request rho point node)
+            (cons (region-arg-request rho point node (bound-region-params))
                   (unbox collector))))
 
 (define (collected-region-args)
@@ -272,17 +274,28 @@
   (if collector (reverse (unbox collector)) '()))
 
 ;; 段 3。実引数の region が適用位置で生きていることを確認する。
+;; spec §5.6。実引数が束縛中の (RParam rp) である場合は判定を通さない。
+;; rp を束縛する RegionLam の本体は、rp へ渡る具体的な region が生きて
+;; いる位置でしか評価されない。適用位置はその内側なので生存は保たれる。
+;; 外側の RegionApp が既に検査しているため、ここで再び呼ぶ必要はない。
 (define (check-region-args ir sigma requests relation fail)
   (for ([request (in-list requests)])
-    (unless ir
-      (fail 'region-arg-not-live (region-arg-request-node request)))
-    (define rho
-      (subst-type-regions (region-arg-request-rho request) sigma ir))
-    (define at
-      (region->rho ir
-                   (region-at ir (region-arg-request-point request))))
-    (unless (relation rho at)
-      (fail 'region-arg-not-live (region-arg-request-node request)))))
+    (define raw (region-arg-request-rho request))
+    (define bound-here?
+      (match raw
+        [`(RParam ,rp)
+         (set-member? (region-arg-request-bound request) rp)]
+        [_ #f]))
+    (unless bound-here?
+      (unless ir
+        (fail 'region-arg-not-live (region-arg-request-node request)))
+      (define rho
+        (subst-type-regions raw sigma ir))
+      (define at
+        (region->rho ir
+                     (region-at ir (region-arg-request-point request))))
+      (unless (relation rho at)
+        (fail 'region-arg-not-live (region-arg-request-node request))))))
 
 ;; 段 2。下限制約から σ を作る。spec §6.1。
 ;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
