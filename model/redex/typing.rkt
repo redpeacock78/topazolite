@@ -1823,8 +1823,9 @@
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
-        ;; 義務は呼出しの出現へ provenance を結び付ける経路を持たない。
-        ;; summary の有無にかかわらず、型木のどこかにある借用を落とす。
+        ;; 義務は呼出しの出現へ provenance を結び付けられるため、束縛済みの
+        ;; RParam は呼出し側で運べる。ここでは既定の bound-region-params を
+        ;; 尊重し、未束縛の借用だけを借用結果として拒む。
         (when (unbound-borrowed-type? obligations)
           (fail 'borrowed-function-result function obligations))
         ;; summary の無い concrete NFn は、従来の関数境界の診断を引数の
@@ -2449,13 +2450,13 @@
 
     [_
      (match (infer core Λ Ψ environment places callables fail)
-        [(list actual row result-psi)
+       [(list actual row result-psi)
         (unless (if adopt?
                    (compatible?
                     actual
                     (adopt-inferred-lifetimes expected actual))
                    (call-argument-compatible? actual expected core Λ
-                                               compatible? fail))
+                                              compatible? fail))
           (fail 'type-mismatch core expected actual))
         (list row result-psi actual)])]))
 
