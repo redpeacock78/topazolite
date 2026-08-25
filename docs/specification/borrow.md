@@ -210,6 +210,11 @@ region 欄が具体的な region か、束縛されていない `rp` であれ�
 要約を持たない具体の region の署名は、region 多相以前からの禁止であり、
 仮引数なら `E-BOR-012`、結果型と証明義務なら `E-BOR-013` で落とす。
 
+段 A が扱うのは、`RegionLam` と `RegionApp` を持つ関数と、その呼出しで借用を受け渡す形である。
+region 多相な再帰関数は扱わない。
+`Recur` の 2 つの入口は署名の `ForallRegion` を剥がさず、`unknown-callable` で落とす。
+剥がす作りは G5c5 で入れる。
+
 ## 9. capability
 
 借用が指す先を **capability** と呼ぶ。

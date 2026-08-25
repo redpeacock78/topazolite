@@ -1238,8 +1238,9 @@
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      (list signature '() Ψ)]
-    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
-    ;; ここへ到達しない。表に無い場合と key を共有する。
+    ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
+    ;; Recur の 2 つの入口は署名の ForallRegion を剥がさない。
+    ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 (define (recur-context callable function parameters body Λ Ψ
@@ -1289,8 +1290,9 @@
      (unless (row-subset? body-row latent-row)
        (fail 'undeclared-function-effect body latent-row body-row))
      (list function-environment Ψ_body)]
-    ;; valid-callables? が表の各行を (NFn ...) に限るため、入口を通った呼び出しは
-    ;; ここへ到達しない。表に無い場合と key を共有する。
+    ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
+    ;; Recur の 2 つの入口は署名の ForallRegion を剥がさない。
+    ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 ;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、
