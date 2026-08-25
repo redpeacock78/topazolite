@@ -690,7 +690,12 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
 | 合流した capability の label ごとの表 | `borrow.md` §14 | G5c4 | §15 |
 | 閉包と部分適用と再帰が運ぶ region と借用の provenance | `borrow.md` §14 | G5c5 | §15 |
-| record field の region variance | `borrow.md` §14 | G5c3 | §4.8 |
+| 関数の入出力の変位 | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
+| region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
+| `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
+| `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
+| view が運ぶ region の外へ出る流れ | `borrow.md` §14 | G5c5 | §15 |
+| `Owned` を取る仮引数と捕捉 | `borrow.md` §8 | G5c5 | §4.7 |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
