@@ -459,6 +459,32 @@ elaboration と ⊢core が同じ判定を共有しない場合、elaboration �
 `Never` の bottom 受理は `compat?` の `Never` 分岐が引き続き担う。
 `type-equiv?` の判定はこの統一で変わらない（§3.4 の分離を維持する）。
 
+### 6.5 借用の region の variance
+
+`Borrowed` と `BorrowedMut` は payload と region 欄を持つ。 [REQ: VAR-004]
+`compat?` はこの 2 つの構成子のあいだの変換をどちらの向きも認めない。
+共有借用を可変借用の位置へ渡すと書き込み能力が増える。
+可変借用を共有借用の位置へ渡すと、元の可変借用が生き続ける抜けができる。
+
+`(Borrowed τ_sub ρ_sub)` が `(Borrowed τ_sup ρ_sup)` と互換であるのは、payload が互換であり、かつ `ρ_sub` が `ρ_sup` を含むときである。
+長く生きる借用は短く生きる借用の位置へ渡せる。
+region どうしの包含の判定は `region.md` の関係へ預け、`compat?` はその関数を受け取るだけである。
+payload の判定へも同じ関数を渡す。
+渡さないと最上位でだけ共変になり、1 段下で region 欄の一致へ戻る。
+
+`(BorrowedMut τ_sub ρ_sub)` は region 欄の一致と payload の型同値を要求する。
+可変借用は書き込みの経路である。
+region を共変にすると、書き込んだ値の region が宣言より短くなりうる。
+payload を広げると、書き込んだ値が元の場所の型に合わなくなる。
+
+この規則は record の field へ再帰的に適用する。
+`imm` の field は payload の判定へ同じ関数を渡すため、field の型の中の共有借用も共変になる。
+`mut` の field は §6.3 のとおり型同値を保ち、region も不変である。
+
+`type-equiv?` の借用の判定は region 欄の一致を保つ。
+同値と互換を同じ関係にすると、`policy-narrative.md` §6.2 が述べる「同値な二型は互換である」という契約が意味を持たなくなる。
+緩めるのは同値でない側だけである。
+
 ## 7. 範囲外の規則
 
 G2a は次の規則を導入しない。
@@ -502,3 +528,4 @@ closed と open を record 型の mode として保持する表現も採らな�
 | VAR-001 | §6.1 関数互換性の規則、§6.4 checking 位置の統一 |
 | VAR-002 | §6.2 latent Effect と Proof obligation の包含 |
 | VAR-003 | §6.3 field の可変性との交差、§3.3 の `NFn` field 照合 |
+| VAR-004 | §6.5 借用の region の variance |

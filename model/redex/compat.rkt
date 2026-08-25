@@ -96,16 +96,25 @@
      (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
                       sup-parameters sup-return sup-row sup-obligations
                       gamma-pc region-relation)]
-    ;; 構成子が一致し、payload が互換で、ρ が equal? のときに限り真である。
+    ;; 構成子が一致し、payload が互換であることを要求する。
     ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。
     ;; 弱化を認めると、可変借用を共有借用の位置へ渡しつつ元の可変借用が
     ;; 生き続ける抜けができる。
+    ;; VAR-004。共有借用の region 欄は共変である。長く生きる借用は短く
+    ;; 生きる借用の位置へ渡せる。包含の判定は region-relation へ預ける。
+    ;; 既定の equal? のままなら、region 引数を書かない programme の判定は
+    ;; 変わらない。payload の再帰へも同じ関係を渡す。渡さないと最上位で
+    ;; だけ共変になり、1 段下で equal? に戻る。
     [(`(Borrowed ,sub-payload ,sub-ρ) `(Borrowed ,sup-payload ,sup-ρ))
-     (and (equal? sub-ρ sup-ρ)
+     (and (region-relation sub-ρ sup-ρ)
           (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
+    ;; VAR-004。可変借用は書き込みの経路であり、region 欄も payload も
+    ;; 不変である。region を共変にすると、書き込んだ値の region が宣言より
+    ;; 短くなりうる。payload を広げると、書き込んだ値が元の場所の型に
+    ;; 合わなくなる。
     [(`(BorrowedMut ,sub-payload ,sub-ρ) `(BorrowedMut ,sup-payload ,sup-ρ))
      (and (equal? sub-ρ sup-ρ)
-          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
+          (type-equiv? sub-payload sup-payload))]
     [(_ _) (type-equiv? sub sup)]))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed

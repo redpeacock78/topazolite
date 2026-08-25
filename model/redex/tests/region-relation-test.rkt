@@ -27,11 +27,6 @@
 
 (define relation (make-region-relation ir binder-core))
 
-;; 段 A では Borrowed/BorrowedMut の region 欄を消費しない。
-;; 関係が誤って呼ばれると、ここで直ちに失敗する。
-(define relation-not-called
-  (lambda args (error 'region-relation-test "段 A で relation を消費した")))
-
 ;; region-slot-table の BorrowAt、BorrowRef、RegionApp の欄も走査する。
 ;; 各 binder は別の形だけを本体に持たせ、1 つの欄の誤りを別の出現で
 ;; 覆い隠さない。
@@ -116,45 +111,53 @@
  (check-true (compat? `(BorrowedMut Int ,outer) `(BorrowedMut Int ,outer) '()))
  (check-false (compat? `(BorrowedMut Int ,inner) `(BorrowedMut Int ,outer) '())))
 
-;; 段 A では関係を渡しても region 欄の判定は equal? のままである。
+;; 段 B は関係を Borrowed の region 欄で消費する。
+;; 束縛された (RParam r) は、その RegionLam の本体に現れる具体的な region を
+;; 含む。表に無い region は含まない。
 (test-case
- "関係を渡しても Borrowed の判定は変わらない"
- (check-false (compat? `(Borrowed Int (RParam a)) `(Borrowed Int ,outer)
-                       '() relation))
+ "関係を渡すと Borrowed の region 欄が共変になる"
+ (check-true (compat? `(Borrowed Int (RParam a)) `(Borrowed Int ,outer)
+                      '() relation))
  (check-false (compat? `(Borrowed Int (RParam a)) `(Borrowed Int ,inner)
                        '() relation))
  (check-true (compat? `(Borrowed Int ,outer) `(Borrowed Int ,outer)
+                      '() relation))
+ (check-true (compat? `(Borrowed Int ,outer) `(Borrowed Int ,inner)
                       '() relation))
  (check-false (compat? `(Borrowed Int ,inner) `(Borrowed Int ,outer)
                        '() relation))
  (check-true (compat? `(BorrowedMut Int ,outer) `(BorrowedMut Int ,outer)
                       '() relation)))
 
-;; 関係は再帰の全経路へ届く。段 A ではまだ消費しないため、
-;; error を投げる spy を渡しても既存の判定が通る。
+;; 関係は再帰の全経路へ届く。呼ばれた組を記録する spy を渡し、
+;; 各構成子の下にある共有借用の region 欄まで届くことを見る。
+;; spy の判定は equal? と同じであり、記録だけを足す。
+(define (spy-relation calls)
+  (lambda (left right)
+    (set-box! calls (cons (list left right) (unbox calls)))
+    (equal? left right)))
+
 (test-case
  "関係は NFn と構築子の再帰へ届く"
- (check-true (compat? `(NFn (Int) (Borrowed Int ,outer) () ())
-                      `(NFn (Int) (Borrowed Int ,outer) () ())
-                      '() relation-not-called))
- (check-true (compat? `(NFn ((Borrowed Int ,outer)) Int () ())
-                      `(NFn ((Borrowed Int ,outer)) Int () ())
-                      '() relation-not-called))
- (check-true (compat? `(Record ((f (Borrowed Int ,outer) imm)))
-                      `(Record ((f (Borrowed Int ,outer) imm)))
-                      '() relation-not-called))
- (check-true (compat? `(Record ((f (BorrowedMut Int ,outer) mut)))
-                      `(Record ((f (BorrowedMut Int ,outer) mut)))
-                      '() relation-not-called))
- (check-true (compat? `(Union (Borrowed Int ,outer) Int)
-                      `(Union (Borrowed Int ,outer) Int)
-                      '() relation-not-called))
- (check-true (compat? `(Untrusted (Borrowed Int ,outer))
-                      `(Untrusted (Borrowed Int ,outer))
-                      '() relation-not-called))
- (check-true (compat? `(Refined (Borrowed Int ,outer) (Implements Int Tn))
-                      `(Refined (Borrowed Int ,outer) (Implements Int Tn))
-                      '() relation-not-called)))
+ (for ([shape (in-list (list `(NFn (Int) (Borrowed Int ,outer) () ())
+                             `(NFn ((Borrowed Int ,outer)) Int () ())
+                             `(Record ((f (Borrowed Int ,outer) imm)))
+                             `(Union (Borrowed Int ,outer) Int)
+                             `(Untrusted (Borrowed Int ,outer))
+                             `(Refined (Borrowed Int ,outer)
+                                       (Implements Int Tn))))])
+   (define calls (box '()))
+   (check-true (compat? shape shape '() (spy-relation calls)))
+   (check-false (null? (unbox calls)))))
+
+;; 可変借用の region 欄は関係を消費しない。equal? で判定し続ける。
+(test-case
+ "可変借用の region 欄は関係を消費しない"
+ (for ([shape (in-list (list `(BorrowedMut Int ,outer)
+                             `(Record ((f (BorrowedMut Int ,outer) mut)))))])
+   (define calls (box '()))
+   (check-true (compat? shape shape '() (spy-relation calls)))
+   (check-true (null? (unbox calls)))))
 
 ;; parameter の既定は equal? である。
 (test-case

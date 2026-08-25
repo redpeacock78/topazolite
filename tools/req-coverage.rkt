@@ -359,7 +359,7 @@
 ;; cycle-local-references が自身以外の owned 集合を差し引くため、
 ;; サブサイクルごとに立てると BOR-001 と BOR-002 の置き先が無くなる。
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
-(define expected-g5-ids '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007 OWN-005))
+(define expected-g5-ids '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007 VAR-004 OWN-005))
 
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
@@ -462,7 +462,8 @@
       (build-path root "model/redex/tests" name)))
   (define g5-specs
     (list (build-path root "docs/specification/region.md")
-          (build-path root "docs/specification/borrow.md")))
+          (build-path root "docs/specification/borrow.md")
+          (build-path root "docs/specification/structural-row.md")))
   (define g5-tests
     (list (build-path root "model/redex/tests/region-test.rkt")
           (build-path root "model/redex/tests/borrow-test.rkt")
@@ -483,7 +484,8 @@
           (build-path root "model/redex/tests/borrow-identity-test.rkt")
           (build-path root "model/redex/tests/own-let-place-test.rkt")
           (build-path root "model/redex/tests/solver-parity-test.rkt")
-          (build-path root "model/redex/tests/region-app-test.rkt")))
+          (build-path root "model/redex/tests/region-app-test.rkt")
+          (build-path root "model/redex/tests/variance-region-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
