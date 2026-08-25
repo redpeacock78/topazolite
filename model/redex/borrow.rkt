@@ -11,6 +11,8 @@
          enter-child
          region-ctx-add-owner region-ctx-owner
          region-ctx-add-token region-ctx-token
+         region-ctx-source region-ctx-summary
+         (struct-out borrow-capability)
          (struct-out psi)
          (struct-out borrow-request)
          (struct-out use-request)
@@ -24,6 +26,7 @@
          psi-add-mut
          borrow-typed?
          unbound-borrowed-type?
+         borrow-designator?
          borrow-token-key
          field-path?
          path-prefix?
@@ -37,6 +40,12 @@
 ;; 集合にするのは Eliminate の分岐合流が 2 つ以上の所有者を返しうるためである。
 ;; 段 9 の Reborrow は集合の全要素を停止する。docs/specification/borrow.md §5。
 (struct region-ctx (ir point owners tokens) #:transparent)
+
+;; §5.4。tokens の値。keys は capability の集合、source は §8.1 の起点の
+;; α 集合である。summary は関数の値を束ねた名前が運ぶ出現局所の要約であり、
+;; 借用でない束縛にも付く。いずれも #f のときは、読む側が今までどおり
+;; 型から取り直す。
+(struct borrow-capability (keys source summary) #:transparent)
 
 (define (empty-region-ctx)
   (region-ctx #f '() (hash) (hash)))
@@ -54,12 +63,25 @@
 (define (region-ctx-owner Λ w)
   (hash-ref (region-ctx-owners Λ) w #f))
 
-(define (region-ctx-add-token Λ x ws)
+(define (region-ctx-add-token Λ x ws [source #f] [summary #f])
   (struct-copy region-ctx Λ
-               [tokens (hash-set (region-ctx-tokens Λ) x ws)]))
+               [tokens (hash-set (region-ctx-tokens Λ) x
+                                 (borrow-capability ws source summary))]))
 
 (define (region-ctx-token Λ x)
-  (hash-ref (region-ctx-tokens Λ) x (set)))
+  (define entry (hash-ref (region-ctx-tokens Λ) x #f))
+  (cond
+    [(borrow-capability? entry) (borrow-capability-keys entry)]
+    [(set? entry) entry]
+    [else (set)]))
+
+(define (region-ctx-source Λ x)
+  (define entry (hash-ref (region-ctx-tokens Λ) x #f))
+  (and (borrow-capability? entry) (borrow-capability-source entry)))
+
+(define (region-ctx-summary Λ x)
+  (define entry (hash-ref (region-ctx-tokens Λ) x #f))
+  (and (borrow-capability? entry) (borrow-capability-summary entry)))
 
 ;; Ψ は評価順に流れる permission 状態である。Λ と違い、木を下る向きだけでは
 ;; 足りない。(Let (y τ) (Reborrow x) c_body) の c_body は (Reborrow x) の
@@ -285,7 +307,8 @@
 ;; designator が locals にも Λ.tokens にも無いときは、その designator 自身を
 ;; 親 capability とみなす（borrow.md §5）。データへ格納された借用を分岐の
 ;; 束縛子で受けた形がこれに当たり、真の所有者は構造からは辿れない。
-;; borrow-designator? は provide しない。この手続きの内部だけで使う。
+;; borrow-designator? は §8.1 の起点を取る位置でも使う。typing.rkt の
+;; use-source が、operand が designator のときだけ写した起点を読む。
 (define (borrow-designator? w)
   (or (symbol? w) (exact-nonnegative-integer? w)))
 

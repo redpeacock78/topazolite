@@ -52,6 +52,8 @@
          emit-region-arg-request!
          collected-region-args
          check-region-args
+         (struct-out callable-summary)
+         collected-callable-summaries
          collect-use-regions!
          typing-inference
          typing-solve
@@ -97,14 +99,128 @@
   (define b (request-collector))
   (if b (reverse (unbox b)) '()))
 
+;; §5.4。formal 鍵の designator。出現の point と節点と仮引数の位置から決める。
+;; 仮引数の名前から採ると同名の仮引数を持つ入れ子の Lam が衝突し、callable の
+;; 識別子から採ると 1 つの識別子を使う複数の出現が衝突し、処理系全体の
+;; counter から採ると同じ項を二度型付けした結果が一致しなくなる。
+;; point だけでも足りない。Task 4a の付け替えは同じ形の部分項を複製するため、
+;; 1 つの点へ別の Lam が来る形がある。summary-key と同じ組を土台にする。
+;; 先頭の 'formal は形で見分けるための札である。利用者の designator は
+;; borrow-designator? が示すとおり記号か非負整数であり、この形とは重ならない。
+;; 見分けは全形で行う。先頭の札だけを見ると、長さや添字の壊れた (formal ...)
+;; を内部の鍵として受け入れてしまい、fail closed の主張が弱くなる。
+(define (formal-designator Λ node index)
+  (list 'formal (region-ctx-point Λ) (peel-node node) index))
+
+(define (formal-key? w)
+  (match w
+    [(list 'formal _point _node (? exact-nonnegative-integer?)) #t]
+    [_ #f]))
+
+;; §5.4。雛形の収集器。関数の本体を型付けしているあいだだけ積みが伸びる。
+;; 各段は自分が採った formal 鍵の集合と箱の対である。
+;; 鍵の持ち主は最も内側から順に探す。積みの先頭へ無条件に入れてはならない。
+;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
+;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
+(struct template-frame (formals box) #:transparent)
+(define template-collectors (make-parameter '()))
+
+(define (owning-frame w)
+  (for/first ([f (in-list (template-collectors))]
+              #:when (set-member? (template-frame-formals f) w))
+    f))
+
+;; §5.4。要求と制約を出す唯一の窓口。formal 鍵が残っていれば、関数の本体を
+;; 型付けしている最中である。そのまま出さず雛形として溜め、Apply が実引数の
+;; capability と RegionApp が受けた region 項で置き換えてから出す。
+;; 持ち主の段が積みに無い形は、実体化の経路が抜けているということなので
+;; fail closed にする。
+(define (route-deferred! item w node fail)
+  (cond
+    [(not (formal-key? w)) #f]
+    [else
+     (define f (owning-frame w))
+     (unless f (fail 'unresolved-borrow-owner node))
+     (define b (template-frame-box f))
+     (set-box! b (cons item (unbox b)))
+     #t]))
+
+(define (route-request! r node fail)
+  (define w
+    (if (borrow-request? r) (borrow-request-w r) (use-request-w r)))
+  (unless (route-deferred! r w node fail)
+    (emit-request! r)))
+
+;; 本体の Reborrow は親が (RParam rp) であり、呼出し位置で RegionApp が
+;; 受けた region 項へ置き換わるまで具体の region へ落とせない。
+(define (rparam-term? t)
+  (match t [`(RParam ,_) #t] [_ #f]))
+
+;; §5.4。region-constraint は所有者の designator を欄に持たない。
+;; 雛形として溜めるときは、振り分けに使った鍵を添える。
+;; 実体化した後にもう一段外の雛形へ回すかどうかを、この鍵で決める。
+(struct deferred-constraint (w constraint) #:transparent)
+
+(define (route-constraint! c w node fail)
+  (unless (route-deferred! (deferred-constraint w c) w node fail)
+    (emit-constraint! c)))
+
+;; §5.4。関数の出現ごとの要約。formals は仮引数の位置に対応する formal
+;; designator の並びであり、借用でない位置は #f である。deferred は本体で
+;; 集めた雛形、result-index は結果の借用が対応する仮引数の位置または #f、
+;; region-subst は RegionApp が解いた rp から ρ への写像である。
+(struct callable-summary (formals deferred result-index region-subst)
+  #:transparent)
+
+;; 要約を出現ごとに溜める表。既定の #f は「収集の外」であり、書き込みを
+;; 黙って捨てる位置と区別する。typing の入口 2 つが parameterize する。
+(define callable-summaries (make-parameter #f))
+
+;; 鍵は point と node の対である。point だけでは足りない。同じ point へ別の
+;; 節点が来る形が 2 つある。1 つは再推論であり、check-as が落ちた後に infer が
+;; 同じ位置を測り直す。もう 1 つは入れ子であり、Task 4a の付け替えが同じ形の
+;; 部分項を複製する。span の包みは剥がしてから鍵にする。
+(define (summary-key Λ node)
+  (cons (region-ctx-point Λ) (peel-node node)))
+
+(define (record-callable-summary! Λ node summary fail)
+  (define table (callable-summaries))
+  (when table
+    (define key (summary-key Λ node))
+    (define previous (hash-ref table key #f))
+    (cond
+      [(not previous) (hash-set! table key summary)]
+      ;; 同じ鍵へ同じ要約が来るのは再推論であり、正しい。
+      [(equal? previous summary) (void)]
+      ;; 別の要約が来たら鍵が出現を一意に指していない。黙って上書きすると、
+      ;; 後から読む Apply が別の関数の雛形を実体化する。
+      [else (fail 'unresolved-borrow-owner node)])))
+
+(define (lookup-callable-summary Λ node)
+  (define table (callable-summaries))
+  (and table (hash-ref table (summary-key Λ node) #f)))
+
+;; Task 5b が結果の region の対応で置き換える。
+(define (forwarding-index parameter-types return-type) #f)
+
+;; §5.4。集めた要約の写し。要約は不変な構造体であり、雛形はその欄が持つ
+;; 不変な並びである。可変の表そのものは外へ出さない。
+;; 収集器の箱から読む形は採れない。箱は Lam の本体を出た時点で積みから
+;; 外れており、入口まで戻ったときには空である。
+(define (collected-callable-summaries)
+  (define table (callable-summaries))
+  (if table (hash-values table) '()))
+
 ;; 使用の要求を立てる。ir が無い形では借用も無いので何もしない。
 ;; fp/operation/source/node/kind は要求の契約なので必須にする。
-(define (emit-use-request! Λ w fp operation source node kind [otherwise #f])
+(define (emit-use-request! Λ w fp operation source node kind [otherwise #f]
+                           [fail #f])
   (define ir (region-ctx-ir Λ))
   (when ir
-    (emit-request!
-     (use-request w fp operation source
-                  (region-at ir (region-ctx-point Λ)) node kind otherwise))))
+    (define r
+      (use-request w fp operation source
+                   (region-at ir (region-ctx-point Λ)) node kind otherwise))
+    (if fail (route-request! r node fail) (emit-request! r))))
 
 ;; spec §5.6。RegionApp の実引数は借用の使用要求とは別に集め、段 3 で
 ;; σ を解いた後に生存を検査する。
@@ -786,12 +902,37 @@
        (extend (without-owned environment)
                parameters
                parameter-types))
+     ;; §5.4。借用の仮引数の位置ごとに文脈局所の formal 鍵を採る。
+     ;; 借用でない位置は #f を置き、位置の対応を崩さない。
+     (define formals
+       (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
+         (and (borrow-typed? τ) (formal-designator Λ node i))))
+     ;; formal 鍵は token へ登録する。本体の Reborrow と使用はこの登録を
+     ;; 通じて親を引く。普通の借用の要求へは入れない。仮引数は呼出し側の
+     ;; 借用の別名であり、定義位置で新しい借用を立てるわけではない。
+     (define body-context
+       (for/fold ([Λ_body (enter-child Λ 0)])
+                 ([x (in-list parameters)] [w (in-list formals)] #:when w)
+         (region-ctx-add-token Λ_body x (set (cons w '())))))
+     (define collector (box '()))
+     (define frame
+       (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                       collector))
      (define body-result
-       (parameterize ([region-binder-context #f])
-         (check-as body return-type (enter-child Λ 0) Ψ body-environment
+       (parameterize ([region-binder-context #f]
+                      [template-collectors
+                       (cons frame (template-collectors))])
+         (check-as body return-type body-context Ψ body-environment
                    places callables fail)))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
+     ;; §5.4。出現局所の要約を登録する。Apply はこの要約を引いて実体化する。
+     (record-callable-summary!
+      Λ node
+      (callable-summary formals (reverse (unbox collector))
+                        (forwarding-index parameter-types return-type)
+                        (hash))
+      fail)
      (list expanded '() Ψ)]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
     ;; 囲う RegionLam があるはずという仮定を置かず、表に無い場合と key を
@@ -814,6 +955,10 @@
                               body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
+     ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
+     ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
+     (when (ormap borrow-typed? parameter-types)
+       (fail 'borrowed-function-parameter node))
      (define body-environment
        (extend
         (extend (without-owned environment)
@@ -847,6 +992,10 @@
                               body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
+     ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
+     ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
+     (when (ormap borrow-typed? parameter-types)
+       (fail 'borrowed-function-parameter node))
      (define function-environment
        (extend environment
                (list function)
@@ -1049,32 +1198,39 @@
      ;; RVar はそのまま制約へ渡し、concrete な欄だけ per-IR bridge で
      ;; region 項へ戻して、制約の寿命項の表現を揃える。
      (define parent-term
-       (if (lifetime-var? α_parent)
+       (if (or (lifetime-var? α_parent) (rparam-term? α_parent))
            α_parent
            (rho->region ir α_parent)))
-     (emit-constraint!
-      (region-constraint 'contains α_child (region-at ir point) point core))
-     (emit-constraint!
-      (region-constraint 'reborrow parent-term α_child point core))
      (define tokens (borrow-token-key Λ operand #:fail fail))
      (when (set-empty? tokens)
        (error 'infer-reborrow
               "親の token を特定できない operand: ~s"
               operand))
+     (define parent-designator
+       (if (set-empty? tokens) #f (car (set-first tokens))))
+     (route-constraint!
+      (region-constraint 'contains α_child (region-at ir point) point core)
+      parent-designator core fail)
+     (route-constraint!
+      (region-constraint 'reborrow parent-term α_child point core)
+      parent-designator core fail)
      ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
      ;; 生成していない。各 token を親の要求として記録し、境界の先でも
      ;; Move/Drop の判定へ届かせる。
-     (when (not (lifetime-var? α_parent))
+     (when (and (not (lifetime-var? α_parent))
+                (not (rparam-term? α_parent)))
        (for ([cap (in-set tokens)])
          (define w (car cap))
          (define fp (cdr cap))
-         (emit-request! (borrow-request w fp 'mut parent-term core))))
+         (route-request! (borrow-request w fp 'mut parent-term core)
+                         core fail)))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
      ;; 親を停止窓から除いたあとも、子と別の可変借用との衝突は残す必要がある。
      (for ([cap (in-set tokens)])
        (define w (car cap))
        (define fp (cdr cap))
-       (emit-request! (borrow-request w fp 'shared α_child core)))
+       (route-request! (borrow-request w fp 'shared α_child core)
+                       core fail))
      ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
      ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の
      ;; suspension tuple だけは実在する mut capability として張る。
@@ -1139,7 +1295,7 @@
   (define source (capability-source τ_operand))
   (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
     (emit-use-request! Λ (car cap) (append (cdr cap) (list label)) 'read source
-                       core 'borrow-conflicting-use))
+                       core 'borrow-conflicting-use #f fail))
   (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
 
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
@@ -1157,7 +1313,7 @@
   (define source (capability-source τ_operand))
   (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'read source
-                       core 'borrow-conflicting-use))
+                       core 'borrow-conflicting-use #f fail))
   (list τ_payload ε_operand Ψ_1))
 
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
@@ -1181,7 +1337,7 @@
   (define source (capability-source τ_target))
   (for ([cap (in-set (borrow-token-key Λ target #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
-                       core 'borrow-conflicting-use))
+                       core 'borrow-conflicting-use #f fail))
   (list 'Unit (row-union ε_target ε_value) Ψ_2))
 
 (define (infer core Λ Ψ environment places callables fail)
@@ -1669,7 +1825,7 @@
 
 ;; 段 1 だけを走らせる。試験と、Task 7 の解決の段が使う。
 ;; with-typing は成功を (list 'ok <本体の返り値>) で包むので、ここで剥がす。
-;; 返すのは裸の 5 つ組で、末尾は RegionApp の実引数要求である。
+;; 返すのは裸の 6 つ組で、末尾は RegionApp の実引数要求と callable 要約である。
 ;; 段 1 で棄却されたときは error を上げる。
 (define (typing-inference core-in places callables [environment '()]
                           [Λ (empty-region-ctx)])
@@ -1684,7 +1840,9 @@
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
                    [alpha-table tbl]
-                   [merge-alpha-sources (make-hash)])
+                   [merge-alpha-sources (make-hash)]
+                   [callable-summaries (make-hash)]
+                   [template-collectors '()])
       (with-typing
        (lambda (fail)
          (define renamed
@@ -1697,7 +1855,8 @@
            (match-define (list type _row _Ψ)
              (infer renamed Λ (empty-psi) environment places callables fail))
            (list type (unbox tbl) (reverse (unbox cs)) (reverse (unbox rs))
-                 (collected-region-args)))))))
+                 (collected-region-args)
+                 (collected-callable-summaries)))))))
   (match result
     [(list 'ok value) value]
     [(list 'fail key _node details)
@@ -1892,7 +2051,9 @@
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
                    [alpha-table tbl]
-                   [merge-alpha-sources (make-hash)])
+                   [merge-alpha-sources (make-hash)]
+                   [callable-summaries (make-hash)]
+                   [template-collectors '()])
       (with-typing
        (lambda (fail)
          ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
