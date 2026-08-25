@@ -685,7 +685,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
-| 入れ子の借用の複製 | `borrow.md` §14 | G5c3 | §15 |
+| 入れ子の借用の複製 | `borrow.md` §14 | G5c5 | §15 |
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
 | 合流した capability の label ごとの表 | `borrow.md` §14 | G5c4 | §15 |
 | 閉包と部分適用と再帰が運ぶ region と借用の provenance | `borrow.md` §14 | G5c5 | §15 |
