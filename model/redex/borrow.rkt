@@ -10,7 +10,7 @@
          empty-region-ctx
          enter-child
          region-ctx-add-owner region-ctx-owner
-         region-ctx-add-token region-ctx-token
+         region-ctx-add-token region-ctx-token region-ctx-field-table
          region-ctx-source region-ctx-summary
          (struct-out borrow-capability)
          (struct-out psi)
@@ -43,9 +43,10 @@
 
 ;; §5.4。tokens の値。keys は capability の集合、source は §8.1 の起点の
 ;; α 集合である。summary は関数の値を束ねた名前が運ぶ出現局所の要約であり、
-;; 借用でない束縛にも付く。いずれも #f のときは、読む側が今までどおり
+;; 借用でない束縛にも付く。fields は構築子の label と欄の位置ごとの
+;; capability 表である。いずれも #f のときは、読む側が今までどおり
 ;; 型から取り直す。
-(struct borrow-capability (keys source summary) #:transparent)
+(struct borrow-capability (keys source summary fields) #:transparent)
 
 (define (empty-region-ctx)
   (region-ctx #f '() (hash) (hash)))
@@ -63,10 +64,10 @@
 (define (region-ctx-owner Λ w)
   (hash-ref (region-ctx-owners Λ) w #f))
 
-(define (region-ctx-add-token Λ x ws [source #f] [summary #f])
+(define (region-ctx-add-token Λ x ws [source #f] [summary #f] [fields #f])
   (struct-copy region-ctx Λ
                [tokens (hash-set (region-ctx-tokens Λ) x
-                                 (borrow-capability ws source summary))]))
+                                 (borrow-capability ws source summary fields))]))
 
 (define (region-ctx-token Λ x)
   (define entry (hash-ref (region-ctx-tokens Λ) x #f))
@@ -84,6 +85,12 @@
 (define (region-ctx-summary Λ x)
   (define entry (hash-ref (region-ctx-tokens Λ) x #f))
   (and (borrow-capability? entry) (borrow-capability-summary entry)))
+
+;; 移行中の Λ.tokens に旧来の生の集合が残っていても #f を返す。
+;; 表を持たない束縛と区別する必要が無いためである。
+(define (region-ctx-field-table Λ x)
+  (define entry (hash-ref (region-ctx-tokens Λ) x #f))
+  (and (borrow-capability? entry) (borrow-capability-fields entry)))
 
 ;; Ψ は評価順に流れる permission 状態である。Λ と違い、木を下る向きだけでは
 ;; 足りない。(Let (y τ) (Reborrow x) c_body) の c_body は (Reborrow x) の
