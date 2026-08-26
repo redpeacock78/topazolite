@@ -661,6 +661,14 @@
     (if α
         (region->rho ir (hash-ref σ (lifetime-var-index α)))
         ρ))
+  ;; RegionApp の実引数は alpha-table に載らない。α ではなく寿命変数
+  ;; そのものが欄に居るため、σ を直に引く。sigma-ref は typing.rkt に
+  ;; あり、typing.rkt が region.rkt を require する側なので使えない。
+  ;; 判別と取り出しは resolve と同じである。
+  (define (resolve-region-argument ρ)
+    (if (lifetime-var? ρ)
+        (region->rho ir (hash-ref σ (lifetime-var-index ρ)))
+        ρ))
   (define (walk node point)
     (define replaced
       (match node
@@ -669,6 +677,8 @@
         [`(ReborrowAt ,ρ ,own ,c) `(ReborrowAt ,(resolve ρ point) ,own ,c)]
         [`(ProjBorrowAt ,ρ ,own ,c ,label)
          `(ProjBorrowAt ,(resolve ρ point) ,own ,c ,label)]
+        [`(RegionApp ,c_function (,ρs ...))
+         `(RegionApp ,c_function ,(map resolve-region-argument ρs))]
         [_ node]))
     (define kids (core-children replaced))
     (if (null? kids)

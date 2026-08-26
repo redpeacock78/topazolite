@@ -145,3 +145,26 @@
   (check-not-equal? inner outer)
   ;; 実引数は外側の束縛を指したままである。
   (check-equal? argument outer))
+
+;; RegionApp の実引数も注釈欄と同じ σ で解く。
+;; materialize-regions を直に呼ぶのは、この枝が alpha-table を引かず
+;; σ だけを引くためである。table は空でよい。
+(let ()
+  (define core
+    '(Scope () (RegionApp (RegionLam (a) 0) ((RVar 0)))))
+  (define ir (build-region-ir core))
+  (define σ (hash 0 (region-at ir '())))
+  (define out (materialize-regions ir core (hash) σ))
+  (match-define `(Scope () (RegionApp (RegionLam (a) 0) (,resolved))) out)
+  (check-equal? resolved (region->rho ir (region-at ir '())))
+  (check-true (exact-nonnegative-integer? resolved)))
+
+;; (RVar k) でない実引数はそのまま通る。natural も (RParam rp) も
+;; σ を引かない。
+(let ()
+  (define core
+    '(Scope () (RegionApp (RegionLam (a) 0) (0 (RParam b)))))
+  (define ir (build-region-ir core))
+  (define out (materialize-regions ir core (hash) (hash)))
+  (match-define `(Scope () (RegionApp (RegionLam (a) 0) ,ρs)) out)
+  (check-equal? ρs '(0 (RParam b))))
