@@ -28,9 +28,7 @@
       [`(RParam ,rp) (set rp)]
       [`(ForallRegion (,rps ...) ,body)
        (set-subtract (walk body) (list->set rps))]
-      [`(RegionLam (,rps ...) ,body)
-       (set-subtract (walk body) (list->set rps))]
-      [`(RegionLam ,_ (,rps ...) ,body)
+      [(app region-lam-parts (list _ rps body))
        (set-subtract (walk body) (list->set rps))]
       [(? list?)
        (for/fold ([free (set)]) ([element (in-list t)])

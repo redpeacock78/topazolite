@@ -74,6 +74,17 @@
                                       (RegionApp x ((RParam b))))))
   (set 'b)))
 
+;; spanful な RegionLam も同じ補助で剥がす。
+(test-case
+ "region-free-params が spanful な RegionLam の束縛名を除く"
+ (define span '(#:span src 10 20))
+ (check-equal?
+  (region-free-params `(RegionLam ,span (a) (RegionApp x ((RParam a)))))
+  (set))
+ (check-equal?
+  (region-free-params `(RegionLam ,span (a) (RegionApp x ((RParam b)))))
+  (set 'b)))
+
 ;; 入れ子の同名束縛を外側の付け替えで捕獲しない。
 (test-case
  "入れ子の同名の束縛が外側の付け替えで捕獲されない"
