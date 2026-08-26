@@ -2582,16 +2582,17 @@
               (list normalized
                     (subst-type-regions row σ ir)
                     (unbox tbl)
-                    σ)]))))))
+                    σ
+                    renamed)]))))))
   ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
   ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
   (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
 
-;; 既存の呼び出しは結果の型を要らない。第 3 要素と σ を落として渡す。
+;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
 (define (type-of/raw core-in places callables [environment '()]
                      [Λ (empty-region-ctx)])
   (match (type-of/raw* core-in places callables environment Λ)
-    [(list 'ok (list type row _table _σ)) (list 'ok (list type row))]
+    [(list 'ok (list type row _table _σ _renamed)) (list 'ok (list type row))]
     [other other]))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
@@ -2599,9 +2600,9 @@
                                    [environment '()]
                                    [Λ (empty-region-ctx)])
   (match (type-of/raw* core-in places callables environment Λ)
-    [(list 'ok (list type _row table σ))
+    [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
-     (list 'ok type (if ir (materialize-regions ir core-in table σ) core-in))]
+     (list 'ok type (if ir (materialize-regions ir renamed table σ) renamed))]
     [other other]))
 
 ;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。

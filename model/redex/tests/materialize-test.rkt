@@ -117,3 +117,31 @@
   (check-equal? (length rhos) 2)
   (check-true (andmap exact-nonnegative-integer? rhos))
   (check-equal? rhos expected-rhos))
+
+;; core-type-of/materialized が返す core は、入口の付け替えを通った項である。
+;; 外と内で同じ名前の region 引数を束ねる項では、内側の束縛名が入力と変わる。
+;; 付け替えを通していない項では名前が変わらないため、この差が renamed を
+;; 使った証拠になる。
+(let ()
+  (define forall-callables
+    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ()) ))))
+  (define core
+    '(Scope ()
+            (Yield (Scope () 0)
+                   (RegionLam (a)
+                     (RegionApp (RegionLam (a) (Lam User g (x) 1))
+                                ((RParam a)))))))
+  (define ir (build-region-ir core))
+  (define Λ (region-ctx ir '() (hash) (hash)))
+  (match-define (list 'ok _type out)
+    (core-type-of/materialized core '() forall-callables '() Λ))
+  (match-define
+    `(Scope ()
+            (Yield (Scope () 0)
+                   (RegionLam (,outer)
+                     (RegionApp (RegionLam (,inner) ,_) ((RParam ,argument))))))
+    out)
+  ;; 内側の束縛名が付け替わっている。
+  (check-not-equal? inner outer)
+  ;; 実引数は外側の束縛を指したままである。
+  (check-equal? argument outer))
