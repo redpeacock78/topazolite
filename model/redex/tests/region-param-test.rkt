@@ -85,6 +85,45 @@
   (region-free-params `(RegionLam ,span (a) (RegionApp x ((RParam b)))))
   (set 'b)))
 
+;; 型注釈の中の ForallRegion も region 引数を束ねる。
+;; 入口の付け替えが term-symbols を避けているため、新しい名前は
+;; ForallRegion の束縛名と衝突せず、R-RegionApp の代入で捕獲が起きない。
+(test-case
+ "付け替え後の実引数が ForallRegion の束縛名に捕獲されない"
+ (define core
+   '(RegionLam (b)
+      (RegionApp
+       (RegionLam (a)
+         (Let (x let
+                 (ForallRegion (b)
+                   (NFn ((Borrowed Int (RParam a))) Int () ())))
+              1 x))
+       ((RParam b)))))
+ (define renamed
+   (call-with-region-params
+    (lambda () (alpha-rename-all-region-lams core))))
+ (match-define
+   `(RegionLam (,outer)
+      (RegionApp (RegionLam (,inner) ,body) ((RParam ,argument))))
+   renamed)
+ (check-equal? argument outer)
+ ;; ForallRegion の束縛名は付け替えの対象外である。
+ (match-define
+   `(Let (x let (ForallRegion (,forall-binder) ,_)) 1 x)
+   body)
+ (check-not-equal? forall-binder outer)
+ ;; R-RegionApp が行う代入と同じものを直に当てる。
+ (define substituted
+   (subst-region-params body (hash inner `(RParam ,outer))))
+ (match-define
+   `(Let (x let
+            (ForallRegion (,kept)
+              (NFn ((Borrowed Int (RParam ,used))) Int () ())))
+         1 x)
+   substituted)
+ (check-equal? used outer)
+ (check-not-equal? used kept))
+
 ;; 入れ子の同名束縛を外側の付け替えで捕獲しない。
 (test-case
  "入れ子の同名の束縛が外側の付け替えで捕獲されない"

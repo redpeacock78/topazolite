@@ -5,6 +5,7 @@
          "lang.rkt"
          "borrow.rkt"
          "origins.rkt"
+         "region-param.rkt"
          "traits.rkt"
          "validators.rkt")
 
@@ -561,11 +562,24 @@
         (cfg (in-hole E c_inner) H Ω θ)
         R-Discharge)
 
-   ;; RegionApp は静的な包みを剥がすだけで、実行時の効果を持たない。
+   ;; RegionApp は静的な包みを剥がし、rp へ ρ を代入する。
+   ;; 還元そのものは RParam を読まないが、剥がした本体は型注釈を運ぶ。
+   ;; 代入しないと、束ねるものが無くなった RParam が注釈に残り、
+   ;; config-ok? の再型付けで束縛の無い region 引数として落ちる。
+   ;; 長さの不一致は region-app-arity が型検査で落とすため、還元では
+   ;; 合わない形として詰まらせる。
    (--> (cfg (in-hole E
                       (RegionApp (RegionLam (rp ...) c_body) (ρ ...)))
              H Ω θ)
-        (cfg (in-hole E c_body) H Ω θ)
+        (cfg (in-hole E c_result) H Ω θ)
+        (side-condition
+         (= (length (term (rp ...))) (length (term (ρ ...)))))
+        (where c_result
+               ,(subst-region-params
+                 (term c_body)
+                 (for/hash ([name (in-list (term (rp ...)))]
+                            [argument (in-list (term (ρ ...)))])
+                   (values name argument))))
         R-RegionApp)
 
    (--> (cfg (in-hole E

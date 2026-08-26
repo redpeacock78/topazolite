@@ -168,3 +168,31 @@
   (define out (materialize-regions ir core (hash) (hash)))
   (match-define `(Scope () (RegionApp (RegionLam (a) 0) ,ρs)) out)
   (check-equal? ρs '(0 (RParam b))))
+
+;; R-RegionApp は包みを剥がすだけでなく、本体の型注釈の (RParam rp) を
+;; 実引数へ置き換える。付け替えの結果だけを見る試験では、機械が実際に
+;; 代入しているかを観測できない。
+;; 束縛は a の 1 つだけであり、同じ名前を束ねる binder が本体に無い。
+;; 未付け替えの項を機械へ直に渡しても捕獲は起きない。
+(let ()
+  (define c-body '(Let (x let (Borrowed Int (RParam a))) 1 x))
+  (define config
+    `(cfg (RegionApp (RegionLam (a) ,c-body) (3)) () () ()))
+  (define next (raw-steps-g2 config))
+  (check-equal? (length next) 1)
+  (match-define `(cfg ,after ,_H ,_Ω ,_θ) (first next))
+  (check-equal? after '(Let (x let (Borrowed Int 3)) 1 x))
+  ;; spec 4.2.5 の 3 点目。還元の前後で point の構造を保つ。
+  ;; G2m は span を持つ production を含まないため、機械の側で観測できるのは
+  ;; point だけである。型注釈は `core-children` の子ではないので、
+  ;; `(RParam a)` を実引数へ置き換えても節点の並びは変わらない。
+  (check-equal? (core-points after) (core-points c-body)))
+
+;; 実引数の数が束縛の数と合わない RegionApp では規則が発火しない。
+;; 長さの不一致は region-app-arity が型検査で落とすため、還元では
+;; 合わない形として詰まらせる。
+(let ()
+  (define c-body '(Let (x let (Borrowed Int (RParam a))) 1 x))
+  (define config
+    `(cfg (RegionApp (RegionLam (a) ,c-body) (3 4)) () () ()))
+  (check-equal? (raw-steps-g2 config) '()))
