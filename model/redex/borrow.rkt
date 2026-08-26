@@ -110,7 +110,7 @@
        (set-union (psi-suspended Ψ_1) (psi-suspended Ψ_2))))
 
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
-;; mut に実在する項目だけを suspended へ退避する。自己 fallback で得た
+;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
 (define (psi-suspend Ψ w fp α_parent α_child)
   (define held? (set-member? (psi-mut Ψ) (list w fp α_parent)))
@@ -313,9 +313,8 @@
 ;; がその形であり、locals を持たないと y の対応を失う。
 ;; locals は Λ.tokens より先に見る。内側の束縛子は外側の同名を遮蔽する。
 ;;
-;; designator が locals にも Λ.tokens にも無いときは、その designator 自身を
-;; 親 capability とみなす（borrow.md §5）。データへ格納された借用を分岐の
-;; 束縛子で受けた形がこれに当たり、真の所有者は構造からは辿れない。
+;; designator が locals にも Λ.tokens にも無いときは、対応を辿れないため
+;; E-BOR-020 で落とす（borrow-token-key の #:fail）。
 ;; borrow-designator? は §8.1 の起点を取る位置でも使う。typing.rkt の
 ;; use-source が、operand が designator のときだけ写した起点を読む。
 (define (borrow-designator? w)

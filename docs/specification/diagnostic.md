@@ -182,7 +182,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は G4f1 完了時点で3であり、`diagnostic-registry-version` は3である。
+`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 6 である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -254,17 +254,29 @@ code を廃止するときは registry の行を削除せず、`deprecated-in` �
 
 一度も外部へ出していない code は廃止行として残さず、追加前に取り下げる。
 
-registry version 1 に属する59行は `since` が1である。
+registry version 1 に属する 59 行は `since` が1である。
 
-registry version 2 で足した typing の48行は `since` が2である。
+registry version 2 で足した typing の 48 行は `since` が2である。
 
-registry version 3 で足した typing の13行は `since` が3である。
+registry version 3 で足した typing の 13 行は `since` が3である。
 
-`deprecated-in` は全120行が `#f` である。
+registry version 4 で足した typing の 12 行は `since` が4である。
+
+registry version 5 で足した typing の 4 行は `since` が5である。
+
+現在の registry は 136 行である。
+
+本サイクルが最初の廃止であり、`E-BOR-024` の 1 行だけが `deprecated-in` に6を持ち、残る 135 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
+
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v6.rkt` まで、registry version ごとに 1 本を置く。
+
+組数は v1 から順に 59、107、120、132、136、136 である。
+
+v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 
@@ -358,6 +370,14 @@ phase と `backend` の対応を検査するのは `diagnostic-of` である。
 `diagnostic-schema-errors` は Diagnostic 単体を受け取り、それを生成した phase を知らないためである。
 
 `lower/with-matrix` を呼ぶ test は capability diagnostic の `backend` を引き続き読める。
+
+期待型を与える入口は段 1 の collector を parameterize しない。
+
+`check-as/boolean` を通る `core-check-row` と `config-ok?` がこれに当たり、`lifetime-collector` と `request-collector` が `#f` のままなので段 2 へ渡す制約と判定要求が空になる。
+
+`region-arg-collector` は `#f` のとき error を上げるため、`RegionApp` を含む形はこの入口では診断ではなく error で落ちる。
+
+入口ごとに collector を初期化して段 2 まで通す形へ揃えるのは G5c5 で扱う。
 
 ## 14. 3 形式の renderer
 
