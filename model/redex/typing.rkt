@@ -765,19 +765,41 @@
       (fail 'branch-binder-arity branch (length field-types) (length parameters)))
     (when (check-duplicates (map peel-bind parameters))
       (fail 'duplicate-branch-binder branch)))
+  ;; scrutinee の型も schema の欄の型も capability を運ばないときは表を引かない。
+  ;; いま通る programme はここを通る。
+  (define carries?
+    (or (type-carries-capability? data-type)
+        (ormap type-carries-capability? (append* (map second schema)))))
+  ;; capability を運ぶのに表が作れない scrutinee は所有者を辿れない。
+  ;; 現行は infer-eliminate だけが capability-in-eliminate で落としており、
+  ;; 期待型を与える check-eliminate は診断も受け渡しも無しに受理していた。
+  ;; この 3 分岐を branch-contexts へ置くことで、その非対称が消える。
+  (define field-table
+    (and carries? (capability-field-table Λ scrutinee)))
+  (when (and carries? (not field-table))
+    (fail 'unresolved-borrow-owner scrutinee))
   (for/list ([branch (in-list plain-branches)]
              [i (in-naturals 1)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (define field-types (lookup schema constructor))
+    (define binders (map peel-bind parameters))
+    ;; 分配の規則は capability-of と共有する。鍵が表に無い分岐は
+    ;; その label の値が来ないことを意味するため、空の token を張る。
+    (define bindings
+      (capability-branch-bindings field-table constructor binders))
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
-                ([p (in-list parameters)] [τ (in-list field-types)])
-        (region-ctx-add-token (register-owner Λ_acc (peel-bind p) τ)
-                              (peel-bind p)
-                              (set))))
+                ([x (in-list binders)] [τ (in-list field-types)]
+                 [entry (in-list bindings)])
+        (region-ctx-add-token (register-owner Λ_acc x τ)
+                              x
+                              (car entry)
+                              #f
+                              #f
+                              (cdr entry))))
     (list body
           (extend environment
-                  (map peel-bind parameters)
+                  binders
                   field-types)
           (enter-child Λ_branch i))))
 
@@ -1040,15 +1062,6 @@
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type (first scrutinee-result))
-  ;; branch-contexts は data type から field の型だけを配り、能力の owner を
-  ;; branch binder へ運ばない。能力を含む scrutinee/field は、label 表を持つ
-  ;; 段まで黙って受理せず fail-closed にする（spec §4.2）。
-  (define schema (constructor-schema data-type))
-  (when (or (type-carries-capability? data-type)
-            (and schema
-                 (ormap type-carries-capability?
-                        (append* (map second schema)))))
-    (fail 'capability-in-eliminate node))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
@@ -1503,20 +1516,40 @@
               operand))
      (define parent-designator
        (uniform-token-designator tokens core fail))
+     ;; concrete な親でも、core 内の BorrowMut がすでに同じ capability の
+     ;; mut 項目を Ψ へ登録している場合がある。そこでは元の α を使い、
+     ;; 外部由来の親だけを synthetic request として補う。
+     (define (existing-mut cap)
+       (for/first ([entry (in-set (psi-mut Ψ_1))]
+                   #:when (and (equal? (first entry) (car cap))
+                               (equal? (second entry) (cdr cap))))
+         entry))
+     (define parent-terms
+       (for/hash ([cap (in-set tokens)])
+         (define existing (existing-mut cap))
+         (values cap
+                 (if (and existing
+                          (not (lifetime-var? α_parent))
+                          (not (rparam-term? α_parent)))
+                     (third existing)
+                     parent-term))))
      (route-constraint!
       (region-constraint 'contains α_child (region-at ir point) point core)
       parent-designator core fail)
-     (route-constraint!
-      (region-constraint 'reborrow parent-term α_child point core)
-      parent-designator core fail)
-     ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
-     ;; 生成していない。各 token を親の要求として記録し、境界の先でも
-     ;; Move/Drop の判定へ届かせる。
-     (when (and (not (lifetime-var? α_parent))
-                (not (rparam-term? α_parent)))
-       (for ([cap (in-set tokens)])
-         (define w (car cap))
-         (define fp (cdr cap))
+     (for ([cap (in-set tokens)])
+       (define w (car cap))
+       (define fp (cdr cap))
+       (route-constraint!
+        (region-constraint 'reborrow (hash-ref parent-terms cap)
+                           α_child point core)
+        parent-designator core fail)
+       ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
+       ;; 生成していない。各 token を親の要求として記録し、境界の先でも
+       ;; Move/Drop の判定へ届かせる。core 内ですでに Ψ にある要求は
+       ;; synthetic request を重ねない。
+       (unless (or (lifetime-var? α_parent)
+                   (rparam-term? α_parent)
+                   (existing-mut cap))
          (route-request! (borrow-request w fp 'mut parent-term core)
                          core fail)))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
@@ -1530,13 +1563,20 @@
      ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の
      ;; suspension tuple だけは実在する mut capability として張る。
      (define Ψ_seed
-       (if (lifetime-var? α_parent)
+       (if (or (lifetime-var? α_parent)
+               (rparam-term? α_parent))
            Ψ_1
            (for/fold ([Ψ_acc Ψ_1]) ([cap (in-set tokens)])
-             (psi-add-mut Ψ_acc (car cap) (cdr cap) parent-term))))
+             (if (existing-mut cap)
+                 Ψ_acc
+                 (psi-add-mut Ψ_acc (car cap) (cdr cap) parent-term)))))
      (define Ψ_2
        (for/fold ([Ψ_acc Ψ_seed]) ([cap (in-set tokens)])
-         (psi-suspend Ψ_acc (car cap) (cdr cap) parent-term α_child)))
+         (psi-suspend Ψ_acc
+                      (car cap)
+                      (cdr cap)
+                      (hash-ref parent-terms cap)
+                      α_child)))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 

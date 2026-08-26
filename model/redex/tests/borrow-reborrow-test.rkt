@@ -95,8 +95,62 @@
       (cond [(eq? t 'ρ_hole) ρ_inner]
             [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
             [else t])))
-  (check-equal? (second (type-of/raw core-filled '() '() '() (Λ-of ir)))
-                'capability-in-eliminate))
+  ;; scrutinee の表が some の 0 番の欄へ BorrowMut の親を運ぶ。
+  ;; 分岐の束縛子 y はその親を受け取り、Reborrow が親を持つ。
+  (check-equal? (first (type-of/raw core-filled '() '() '() (Λ-of ir))) 'ok)
+  ;; 期待型を与える check-eliminate の経路も同じ配布を使う。
+  (define expected-core
+    '(Eliminate o ((none () -> 0) (some (y) -> (Read y)))))
+  (define expected-ir (build-region-ir expected-core))
+  (define expected-rho
+    (region->rho expected-ir (region-at expected-ir '())))
+  (define env-o (list (list 'o `(Option (BorrowedMut Int ,expected-rho)))))
+  (define tbl-o (hash (cons 'some 0) (cons (set (list 'x)) #f)))
+  (define Λ-o (region-ctx-add-token (Λ-of expected-ir) 'o
+                                    (set (list 'x)) #f #f tbl-o))
+  (check-equal? (core-check-row expected-core '() '() 'Int env-o Λ-o)
+                '())
+  ;; capability を運ぶのに表が無い scrutinee は unresolved-borrow-owner になる。
+  (define negative-core `(Construct (Option Int) some ,expected-core))
+  (define negative-ir (build-region-ir negative-core))
+  (define negative-rho
+    (region->rho negative-ir (region-at negative-ir '())))
+  (define negative-env
+    (list (list 'o `(Option (BorrowedMut Int ,negative-rho)))))
+  (define negative-result
+    (type-of/raw negative-core '() '() negative-env
+                 (Λ-of negative-ir)))
+  (check-equal? (second negative-result) 'unresolved-borrow-owner))
+
+;; 内側の Eliminate の束縛子から作った Construct を外側の Eliminate が辿る。
+(let ()
+  (define skeleton
+    '(Scope ()
+       (Let (x let (Owned Res)) (resource 1)
+         (Scope ()
+           (Let (o let (Option (BorrowedMut Res 0)))
+                (Construct (Option (BorrowedMut Res 0)) some (BorrowMut x))
+             (Eliminate
+              (Eliminate o
+                         ((none () ->
+                                (Construct (Option (BorrowedMut Res 0)) none))
+                          (some (y) ->
+                                (Yield (Reborrow y)
+                                       (Construct (Option (BorrowedMut Res 0))
+                                                  some y)))))
+              ((none () -> 0)
+               (some (z) ->
+                     (Let (w let (Borrowed Res 0)) (Reborrow z) 0)))))))))
+  (define ir (build-region-ir skeleton))
+  (define ρ_inner (region->rho ir (region-at ir '(0 1))))
+  (define core
+    (let fill ([t skeleton])
+      (cond [(equal? t '(BorrowedMut Res 0)) `(BorrowedMut Res ,ρ_inner)]
+            [(equal? t '(Borrowed Res 0)) `(Borrowed Res ,ρ_inner)]
+            [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
+            [else t])))
+  (define nested-result (type-of/raw core '() '() '() (Λ-of ir)))
+  (check-equal? (first nested-result) 'ok))
 
 ;; Reborrow の operand 全体が Let になる形。
 (let ()

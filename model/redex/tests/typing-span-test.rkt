@@ -212,7 +212,7 @@
     discharge-obligation-count discharge-proposition-mismatch
     discharge-target-not-apply unsatisfied-proof-obligation
     ;; BOR
-    borrowed-owned-payload borrow-region-mismatch capability-in-eliminate
+    borrowed-owned-payload borrow-region-mismatch
     own-designator-mismatch unresolved-borrow-owner
     borrow-conflicting-alias borrow-conflicting-use
     borrow-escapes-owner borrow-non-owned
@@ -655,18 +655,6 @@
               (lambda (core)
                 (define ir (build-region-ir (erase-core core)))
                 (region-ctx ir '() (hash) (hash))))
-   (reach-row 'capability-in-eliminate
-              (reach-node 'Eliminate 1341 1370
-                          (reach-node 'Borrow 1342 1350
-                                      (reach-var 'x 1347 1348))
-                          '((true () -> 0) (false () -> 0)))
-              '() '() '((x (Owned Res)))
-              (reach-span 1341 1370)
-              (lambda (core)
-                (define ir (build-region-ir (erase-core core)))
-                (region-ctx ir '()
-                            (hash 'x (region-at ir '()))
-                            (hash))))
    (reach-row 'borrow-conflicting-alias
               (reach-node 'Scope 1031 1070 '()
                           (reach-node 'Let 1032 1069
@@ -776,12 +764,13 @@
                           '(0))
               '() '() '() (reach-span 1451 1470))))
 
-(test-case "typing の producer key 集合が registry v5 と一致する"
+(test-case "typing の producer key 集合が registry v6 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
-               #:when (eq? (diagnostic-code-phase row) 'typing))
+               #:when (and (eq? (diagnostic-code-phase row) 'typing)
+                           (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 78)
+  (check-equal? (length producer-keys) 77)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

@@ -69,8 +69,11 @@
  (check-equal? (since-count 3) 13)
  (check-equal? (since-count 4) 12)
  (check-equal? (since-count 5) 4)
+ ;; 本サイクルが最初の廃止である。E-BOR-024 だけが 6 を持つ。
  (for ([row (in-list diagnostic-registry)])
-   (check-false (diagnostic-code-deprecated-in row))))
+   (if (equal? (diagnostic-code-code row) "E-BOR-024")
+       (check-equal? (diagnostic-code-deprecated-in row) 6)
+       (check-false (diagnostic-code-deprecated-in row)))))
 
 ;; test 8
 (test-case
@@ -150,13 +153,13 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 5 である"
+ "schema version は 3、registry version は 6 である"
  (check-equal? diagnostic-schema-version 3)
- (check-equal? diagnostic-registry-version 5))
+ (check-equal? diagnostic-registry-version 6))
 
 (test-case
- "typing の registry version 5 と入口 key"
- (check-equal? diagnostic-registry-version 5)
+ "typing の registry version 6 と入口 key"
+ (check-equal? diagnostic-registry-version 6)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 

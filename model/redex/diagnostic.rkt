@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 5)
+(define diagnostic-registry-version 6)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -191,7 +191,6 @@
     ("E-BOR-021" assign-owned-payload "所有値を含む capability へ代入できない")
     ("E-BOR-022" assign-union-variant "Union の全成分と両立しない値を代入できない")
     ("E-BOR-023" own-designator-mismatch "own の欄と designator が別の capability を指す")
-    ("E-BOR-024" capability-in-eliminate "分岐の仮引数へ能力を配る形は未対応")
     ("E-BOR-025" borrow-conflicting-use "使用が生きている借用と競合する")))
 
 ;; G5c3 段 A。分類 E-REG を新設し、E-OWN の続きを 1 件足す。
@@ -203,6 +202,13 @@
     ("E-REG-002" region-app-non-forall "RegionApp の関数側が region 多相でない")
     ("E-REG-003" region-arg-not-live "region の実引数が適用の位置で生きていない")
     ("E-OWN-022" own-binding-borrowed-payload "Owned の束縛の payload に借用が入る")))
+
+;; G5c4 で廃止した行。表を持つ形では発火する場所が無くなる。辿れない
+;; scrutinee は E-BOR-020 で落ちる。行は registry に残す。番号の再利用と
+;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
+(define deprecated-typing-entries
+  (list (diagnostic-code "E-BOR-024" 'typing 'capability-in-eliminate
+                         "分岐の仮引数へ能力を配る形は未対応" 4 6)))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
@@ -225,6 +231,7 @@
           (rows 'typing 3 typing-entries-v3)
           (rows 'typing 4 typing-entries-v4)
           (rows 'typing 5 typing-entries-v5)
+          deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
 

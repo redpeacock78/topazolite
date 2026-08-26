@@ -108,13 +108,13 @@
 (check-equal? (reborrow-status 'mutable)
               'unresolved-borrow-owner)
 
-;; Eliminate の branch binder へ能力を配る形は fail-closed にする。
+;; Eliminate の branch binder へ能力を配る。
 (define (run-typing core ir places environment)
   (define annotated (annotate-regions core ir))
   (type-of/raw annotated places '() environment
                 (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
 
-;; scrutinee 自体が借用を含む形。
+;; scrutinee 自体が借用を含む形は data type でないため失敗する。
 (let ()
   (define core
     '(Scope (1)
@@ -123,7 +123,7 @@
             (Eliminate b ((true () -> 0) (false () -> 0))))))
   (define ir (build-region-ir core))
   (check-equal? (second (run-typing core ir (list (list 1 'Res)) '()))
-                'capability-in-eliminate))
+                'non-data-eliminate))
 
 ;; 分岐の field 型が借用を含む形。Option の schema を使う。
 (let ()
@@ -135,8 +135,8 @@
               (Eliminate o
                 ((none () -> 0) (some (y) -> 0)))))))
   (define ir (build-region-ir core))
-  (check-equal? (second (run-typing core ir (list (list 1 'Res)) '()))
-                'capability-in-eliminate))
+  (check-equal? (first (run-typing core ir (list (list 1 'Res)) '()))
+                'ok))
 
 ;; 能力を含まない Eliminate は従来どおり通る。
 (let ()
