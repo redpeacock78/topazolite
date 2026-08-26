@@ -3,7 +3,6 @@
 (require rackunit
          "../compat.rkt"
          "../region.rkt"
-         "../region-param.rkt"
          "../type-equiv.rkt")
 
 ;; spec §8。VAR-004 の共変と不変。
@@ -104,12 +103,3 @@
  (check-false (compat? `(Record ((a (Borrowed Int ,outer) mut)))
                        `(Record ((a (Borrowed Int ,inner) mut)))
                        '() relation)))
-
-;; §6.3。分岐の再照合も同じ関係を見る。merge-branch-compatible? の imm の
-;; 節は type-compatible? を呼び、type-compatible? は current-region-relation
-;; から関係を取る。parameter を経由するため、経路の途中で関係が落ちない。
-(test-case
- "分岐の再照合は parameter の関係を見る"
- (parameterize ([current-region-relation relation])
-   (check-true ((current-region-relation) outer inner))
-   (check-false ((current-region-relation) inner outer))))

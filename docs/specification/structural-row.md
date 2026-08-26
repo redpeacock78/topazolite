@@ -484,6 +484,7 @@ payload を広げると、書き込んだ値が元の場所の型に合わなく
 `type-equiv?` の借用の判定は region 欄の一致を保つ。
 同値と互換を同じ関係にすると、`policy-narrative.md` §6.2 が述べる「同値な二型は互換である」という契約が意味を持たなくなる。
 緩めるのは同値でない側だけである。
+VariancePolicy が列挙する readonly / mutable field、関数入出力、borrow の region variance は、それぞれ VAR-003、VAR-001、VAR-004 で回収済みである。
 
 ## 7. 範囲外の規則
 
@@ -506,9 +507,6 @@ G2a は次の規則を導入しない。
 - **mut field への代入と借用**：G5c2 が `ProjBorrow` と `Assign` と alias safety を同時に導入し、record field の借用と書き換えを回収した。
 - **borrow mode の互換性**：G5c2 が record field の射影について `Borrowed` と `BorrowedMut` の mode 規則を定め、暗黙の強化と弱化を認めない範囲を回収した。
 - **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 1 で扱う。
-- **関数の入出力の変位**：仮引数の反変と結果の共変は導入しない。
-  `NFn` の部分型を認めると `compat?` の再帰が関数型の全体へ及び、§6.1 が定めた構成子ごとの一致の枠を越える。
-  Phase 1 以降で扱う。
 - **region 引数どうしの関係の宣言**：異なる 2 つの region 引数のあいだには反射律だけを認める。
   region の束縛へ包含の宣言を書く構文は置かない。
   Phase 1 以降で扱う。
