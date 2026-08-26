@@ -7,7 +7,10 @@
          "../diagnostic.rkt"
          "diagnostic-fixture-v1.rkt"
          "diagnostic-fixture-v2.rkt"
-         "diagnostic-fixture-v3.rkt")
+         "diagnostic-fixture-v3.rkt"
+         "diagnostic-fixture-v4.rkt"
+         "diagnostic-fixture-v5.rkt"
+         "diagnostic-fixture-v6.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -329,6 +332,39 @@
  "凍結 fixture v3 の全 (code phase key) が現在の registry に同じ組である"
  (check-equal? (length diagnostic-entries-v3) 120)
  (for ([entry (in-list diagnostic-entries-v3)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v4 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v4) 132)
+ (for ([entry (in-list diagnostic-entries-v4)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v5 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v5) 136)
+ (for ([entry (in-list diagnostic-entries-v5)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v6 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v6) 136)
+ (for ([entry (in-list diagnostic-entries-v6)])
    (match-define (list code phase key) entry)
    (define row (diagnostic-code-row code))
    (check-true (and row
