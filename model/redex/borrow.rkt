@@ -27,7 +27,7 @@
          borrow-typed?
          unbound-borrowed-type?
          borrow-designator?
-         borrow-token-key
+         borrow-token-key capability-field-table capability-branch-bindings
          field-path?
          path-prefix?
          capability-overlap?)
@@ -331,21 +331,63 @@
 (define (capability-set keys)
   (for/set ([key (in-set keys)]) (capability-key key)))
 
-(define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
+(define (only ws) (cons ws #f))
+
+;; locals には移行前の生の集合が入りうる。組の形へ揃える。
+(define (capability-value entry)
+  (cond
+    [(pair? entry) entry]
+    [(set? entry) (only entry)]
+    [else (only (set))]))
+
+;; 分岐が合流した表の合併。borrow.md と spec 3.1 節の規則である。
+;; ws は合併し、tbl は両方が表のときだけ合併し、片方でも #f なら #f とする。
+(define (table-join t_1 t_2)
+  (and t_1 t_2
+       (for/fold ([acc t_1]) ([(k v) (in-hash t_2)])
+         (define prev (hash-ref acc k #f))
+         (hash-set acc k
+                   (if prev
+                       (cons (set-union (car prev) (car v))
+                             (table-join (cdr prev) (cdr v)))
+                       v)))))
+
+;; scrutinee の表から分岐 K の束縛子へ張る値を並べる。
+;; 表が無い、または鍵が無い束縛子へは空の token と #f を張る。
+;; capability-of と branch-contexts がこの 1 つの規則を共有する。
+(define (capability-branch-bindings tbl K binders)
+  (for/list ([_ (in-list binders)] [i (in-naturals 0)])
+    (if (hash? tbl)
+        (hash-ref tbl (cons K i) (cons (set) #f))
+        (cons (set) #f))))
+
+;; capability の集合と表を同時に返す 1 本の走査である。
+;; 返り値は (cons ws tbl) の組であり、ws は capability の集合、
+;; tbl は (cons K i) から同じ組への hash か #f である。
+;;
+;; #:fail は現行の borrow-token-key がすでに辿っている枝、すなわち ws を
+;; 運ぶ枝だけに伝える。表だけを取るための再帰（Let の非借用の束縛、
+;; RegionApp の本体、Eliminate の scrutinee）へは渡さない。渡すと、いま
+;; 診断を出さずに通っている programme が E-BOR-020 で落ちる。
+(define (capability-of Λ c [locals (hash)] #:fail [fail #f])
   (define (recur c* [locals* locals])
-    (borrow-token-key Λ c* locals* #:fail fail))
+    (capability-of Λ c* locals* #:fail fail))
+  (define (ws-of c* [locals* locals]) (car (recur c* locals*)))
+  ;; 表だけを取る再帰。fail を伝えない。
+  (define (table-of c* [locals* locals])
+    (cdr (capability-of Λ c* locals*)))
   (match (peel-node c)
-    [`(Borrow ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowMut ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowAt ,_ ,_ ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowMutAt ,_ ,_ ,w) (set (cons (peel-node w) '()))]
-    [`(BorrowRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
-    [`(BorrowMutRef ,p ,fp ,_) (set (cons (peel-node p) fp))]
-    [`(Reborrow ,c_1) (recur c_1)]
-    [`(ReborrowAt ,_ ,_ ,c_1) (recur c_1)]
+    [`(Borrow ,w) (only (set (cons (peel-node w) '())))]
+    [`(BorrowMut ,w) (only (set (cons (peel-node w) '())))]
+    [`(BorrowAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())))]
+    [`(BorrowMutAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())))]
+    [`(BorrowRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
+    [`(BorrowMutRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
+    [`(Reborrow ,c_1) (only (ws-of c_1))]
+    [`(ReborrowAt ,_ ,_ ,c_1) (only (ws-of c_1))]
     [`(ProjBorrowAt ,_ ,_ ,c_1 ,label)
      (define child-caps
-       (for/set ([k (in-set (recur c_1))])
+       (for/set ([k (in-set (ws-of c_1))])
          (cons (car k) (append (cdr k) (list label)))))
      ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
      ;; field-path? の定義域（複数要素の列）を実際には検査できない。
@@ -354,51 +396,81 @@
          (if fail
              (fail 'unresolved-borrow-owner c)
              (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
-     child-caps]
+     (only child-caps)]
     [(? borrow-designator? w)
      (define designator (peel-node w))
-     (define ws (hash-ref locals designator
-                           (lambda () (region-ctx-token Λ designator))))
+     (define entry
+       (cond
+         [(hash-ref locals designator #f) => capability-value]
+         [else (cons (region-ctx-token Λ designator)
+                     (region-ctx-field-table Λ designator))]))
+     (define ws (car entry))
      (cond
-       [(not (set-empty? ws)) (capability-set ws)]
+       [(not (set-empty? ws)) (cons (capability-set ws) (cdr entry))]
        [fail (fail 'unresolved-borrow-owner c)]
-       [else (set)])]
-    [`(Eliminate ,_ ,brs)
-     (for/fold ([acc (set)]) ([br (in-list brs)])
-       (match-define `(,_ (,parameters ...) -> ,body) (peel-branch br))
-       (define locals_branch
-         (for/fold ([acc_l locals]) ([p (in-list parameters)])
-           (hash-set acc_l (peel-bind p) (set))))
-       (set-union acc (recur body locals_branch)))]
+       [else (cons (set) (cdr entry))])]
+    [`(Eliminate ,scrutinee ,brs)
+     ;; scrutinee を辿るのは表を得るためだけである。Eliminate 全体の値は
+     ;; 分岐の本体の値であって scrutinee の値ではないため、ws は合併しない。
+     (define tbl_s (table-of scrutinee))
+     (define results
+       (for/list ([br (in-list brs)])
+         (match-define `(,K (,parameters ...) -> ,body) (peel-branch br))
+         (define binders (map peel-bind parameters))
+         (define bindings (capability-branch-bindings tbl_s K binders))
+         (define locals_branch
+           (for/fold ([acc_l locals]) ([x (in-list binders)]
+                                       [entry (in-list bindings)])
+             (hash-set acc_l x entry)))
+         (recur body locals_branch)))
+     (if (null? results)
+         (only (set))
+         (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
+           (cons (set-union (car acc) (car r))
+                 (table-join (cdr acc) (cdr r)))))]
     [`(Scope ,_ ,body) (recur body)]
-    [`(Proj ,c_1 ,_) (recur c_1)]
-    [`(Suspend ,c_1) (recur c_1)]
+    [`(Proj ,c_1 ,_) (only (ws-of c_1))]
+    [`(Suspend ,c_1) (only (ws-of c_1))]
     [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
      (match-define `(,name -> ,c_h) (peel-branch handler))
-     (set-union (recur body)
-                (recur c_h (hash-set locals (peel-bind name) (set))))]
+     (only (set-union (ws-of body)
+                      (ws-of c_h (hash-set locals (peel-bind name)
+                                           (cons (set) #f)))))]
     [`(Rec (,fields ...))
-     (for/fold ([acc (set)]) ([field (in-list fields)])
-       (set-union acc (recur (third field))))]
-    [`(Construct ,_ ,_ ,fields ...)
-     (for/fold ([acc (set)]) ([field (in-list fields)])
-       (set-union acc (recur field)))]
+     (only (for/fold ([acc (set)]) ([field (in-list fields)])
+             (set-union acc (ws-of (third field)))))]
+    [`(Construct ,_ ,K ,fields ...)
+     (define entries (for/list ([field (in-list fields)]) (recur field)))
+     (cons (for/fold ([acc (set)]) ([e (in-list entries)])
+             (set-union acc (car e)))
+           (for/hash ([e (in-list entries)] [i (in-naturals 0)])
+             (values (cons K i) e)))]
+    ;; R-RegionApp は包みを剥がすだけで値を変えない。関数の位置が RegionLam
+    ;; であればその本体の表をそのまま通す。ws は借用を作らないため空である。
+    ;; region-lam-parts は span の有無の両方に対応する。
+    [`(RegionApp ,f ,_)
+     (define parts (region-lam-parts f))
+     (cons (set) (and parts (table-of (third parts))))]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
     ;; 宣言型はどちらの形でも最後の要素である。
     ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。
     ;; place は非負整数であるため、borrow-designator? は place と整数リテラルを
-    ;; 区別できない。非借用の束縛で bound を辿ると、(Let (y let Int) 1 y) の 1 が
-    ;; designator の節へ落ち、自己 fallback によって y の token へ {1} を張る。
-    ;; そのとき y 自身の token も {1} になり、y は自分を指す key を失う。
+    ;; 区別できない。非借用の束縛で bound を辿ると、(Let (y let Int) 1 y)
+    ;; の 1 が designator の節へ落ち、fail 付きの呼出しで E-BOR-020 になる。
     ;; 宣言型で切ると、この取り違えが起きない。
+    ;; 表の側にこの制限は要らない。整数リテラルからは表が作れず #f になる。
     [`(Let (,name ,rest ...) ,bound ,body)
-     ;; 非借用の束縛は Task 8 の回帰どおり空集合を張る。Reborrow の
-     ;; operand になりうるのは宣言型が借用の束縛であり、その場合だけ
-     ;; bound の token を body へ渡す。
-     (define token
-       (if (borrow-typed? (peel-ty (last rest)))
+     (define borrowed? (borrow-typed? (peel-ty (last rest))))
+     (define entry
+       (if borrowed?
            (recur bound)
-           (set)))
-     (recur body (hash-set locals (peel-bind name) token))]
-    [_ (set)]))
+           (cons (set) (table-of bound))))
+     (recur body (hash-set locals (peel-bind name) entry))]
+    [_ (only (set))]))
+
+(define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
+  (car (capability-of Λ c locals #:fail fail)))
+
+(define (capability-field-table Λ c [locals (hash)] #:fail [fail #f])
+  (cdr (capability-of Λ c locals #:fail fail)))

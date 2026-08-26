@@ -1973,10 +1973,16 @@
             [else (borrow-token-key Λ bound #:fail fail)]))
         (when (and summary borrowed? (set-empty? token))
           (fail 'unresolved-borrow-owner bound))
+        ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
+        ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
+        ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
+        ;; ため、表の側で fail を落としても未知の designator を見逃さない。
+        (define fields (capability-field-table Λ bound))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
-                                callable))
+                                callable
+                                fields))
         (define Λ_body (enter-child Λ_token 1))
         (match (infer body
                       Λ_body
@@ -2006,10 +2012,16 @@
          [else (borrow-token-key Λ bound #:fail fail)]))
      (when (and summary borrowed? (set-empty? token))
        (fail 'unresolved-borrow-owner bound))
+     ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
+     ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
+     ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
+     ;; ため、表の側で fail を落としても未知の designator を見逃さない。
+     (define fields (capability-field-table Λ bound))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
-                             callable))
+                             callable
+                             fields))
      (define Λ_body (enter-child Λ_token 1))
      (match (infer body
                    Λ_body
@@ -2361,10 +2373,16 @@
             [else (borrow-token-key Λ bound #:fail fail)]))
         (when (and summary borrowed? (set-empty? token))
           (fail 'unresolved-borrow-owner bound))
+        ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
+        ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
+        ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
+        ;; ため、表の側で fail を落としても未知の designator を見逃さない。
+        (define fields (capability-field-table Λ bound))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
-                                callable))
+                                callable
+                                fields))
         (define Λ_body (enter-child Λ_token 1))
         (define body-result
           (check-as/full body
@@ -2398,10 +2416,16 @@
          [else (borrow-token-key Λ bound #:fail fail)]))
      (when (and summary borrowed? (set-empty? token))
        (fail 'unresolved-borrow-owner bound))
+     ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
+     ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
+     ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
+     ;; ため、表の側で fail を落としても未知の designator を見逃さない。
+     (define fields (capability-field-table Λ bound))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
-                             callable))
+                             callable
+                             fields))
      (define Λ_body (enter-child Λ_token 1))
      (define body-result
        (check-as/full body
