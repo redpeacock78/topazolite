@@ -653,6 +653,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 `core-calculus.md` §9 の延期事項は本表に載せない。
 §9 の内容は BOR-001、BOR-002、BOR-003、PTR-001、PTR-002 が覆っており、いずれも状態を持つ ID である。
 §9 は太字項目名も持たない。
+載せないのは §9 だけであり、§5.1 のように状態を持つ ID が覆わない節は記載元になりうる。
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
@@ -685,16 +686,16 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
-| 入れ子の借用の複製 | `borrow.md` §14 | G5c5 | §15 |
-| region 多相な再帰関数 | `borrow.md` §8 | G5c5 | §11.5.8 |
+| 入れ子の借用の複製 | `borrow.md` §14 | G5c5c | §15 |
+| region 多相な再帰関数 | `borrow.md` §8 | G5c5c | §11.5.8 |
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
-| 閉包と部分適用と再帰が運ぶ region と借用の provenance | `borrow.md` §14 | G5c5 | §15 |
+| 閉包と部分適用と再帰が運ぶ region と借用の provenance | `borrow.md` §14 | G5c5c | §15 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
-| view が運ぶ region の外へ出る流れ | `borrow.md` §14 | G5c5 | §15 |
-| `Owned` を取る仮引数と捕捉 | `borrow.md` §8 | G5c5 | §4.7 |
-| 期待型を与える入口が段 1 の collector を初期化しない | `diagnostic.md` §13 | G5c5 | 無し |
+| view が運ぶ region の外へ出る流れ | `borrow.md` §14 | G5c5c | §15 |
+| `Owned` を取る仮引数と捕捉 | `borrow.md` §8 | G5c5b | §4.7 |
+| ⊢config の Ξ を heap の値の型から導く | `core-calculus.md` §5.1 | G5c6 | 無し |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。

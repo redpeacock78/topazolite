@@ -1253,7 +1253,7 @@
      (list signature '() Ψ)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
     ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
-    ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
+    ;; region 多相な再帰関数は G5c5c で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 (define (recur-context callable function parameters body Λ Ψ
@@ -1305,7 +1305,7 @@
      (list function-environment Ψ_body)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
     ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
-    ;; region 多相な再帰関数は G5c5 で扱う。表に無い場合と key を共有する。
+    ;; region 多相な再帰関数は G5c5c で扱う。表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
 
 ;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、

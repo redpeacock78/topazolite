@@ -38,7 +38,7 @@
 
 ;; 記載元セルから ("trait.md" . "9") の並びを取り出す。
 (define (citations cell)
-  (for/list ([m (in-list (regexp-match* #px"`([^`]+\\.md)` *§([0-9]+)"
+  (for/list ([m (in-list (regexp-match* #px"`([^`]+\\.md)` *§([0-9]+(?:\\.[0-9]+)*)"
                                         cell
                                         #:match-select values))])
     (cons (cadr m) (caddr m))))
@@ -46,8 +46,12 @@
 (define (all-citations)
   (append* (for/list ([row (in-list (table-rows))]) (citations (cadr row)))))
 
+;; 節番号は文字どおり照合する。regexp-quote を通さずに "5.1" を pregexp へ
+;; 入れると、"." が任意の 1 文字として "5x1" にも一致する。
+;; 上位の見出しは "## 5. " のように番号の後へ句点を持ち、下位の見出しは
+;; "### 5.1 " のように持たない。句点は任意とする。
 (define (heading-exists? name number)
-  (define rx (pregexp (format "^#+ ~a\\. " number)))
+  (define rx (pregexp (format "^#+ ~a\\.? " (regexp-quote number))))
   (for/or ([line (in-list (file->lines (spec-file name)))])
     (regexp-match? rx line)))
 
@@ -79,4 +83,5 @@
  (check-equal? names
                (set "trait.md" "structural-row.md"
                     "proof-value.md" "proof-search.md"
-                    "backend-matrix.md" "diagnostic.md" "borrow.md")))
+                    "backend-matrix.md" "diagnostic.md" "borrow.md"
+                    "core-calculus.md")))
