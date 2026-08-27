@@ -410,6 +410,7 @@
 
     (define boundary-counter 0)
     (define callable-counter 0)
+    (define owned-counter 0)
     (define reversed-callables '())
 
     (define (fresh-boundary)
@@ -450,8 +451,9 @@
           [(pair? node) (loop (cdr node) (loop (car node) acc))]
           [else acc])))
 
-    ;; 採った候補を予約集合へ加えてから次の位置へ進む。同じ入力に対して
-    ;; 同じ名前が出るため、凍結 fixture と試験の期待値が安定する。
+    ;; 採った候補を予約集合へ加えてから次の位置へ進む。elab 全体で共有する
+    ;; 連番を使うため、入れ子の Fn の間でも生名は重ならない。同じ入力に
+    ;; 対して同じ名前が出るため、凍結 fixture と試験の期待値が安定する。
     ;; 返り値は仮引数の位置と同じ長さの列であり、Owned でない位置には #f を
     ;; 置く。位置の対応を崩さないためである。
     (define (fresh-owned-names parameter-types reserved)
@@ -460,11 +462,12 @@
           [(null? types) (reverse acc)]
           [(owned-type? (car types))
            (define name
-             (let next ([index 0])
+             (let next ()
                (define candidate
-                 (string->symbol (format "owned~a" index)))
+                 (string->symbol (format "owned~a" owned-counter)))
+               (set! owned-counter (add1 owned-counter))
                (if (set-member? taken candidate)
-                   (next (add1 index))
+                   (next)
                    candidate)))
            (loop (cdr types) (set-add taken name) (cons name acc))]
           [else (loop (cdr types) taken (cons #f acc))])))

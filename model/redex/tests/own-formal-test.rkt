@@ -58,6 +58,11 @@
   '(Fn ((n Int)) Int () n))
 (define owned-name-clash-surface
   '(Fn ((p (Owned Res)) (owned0 Int)) Unit (Own) (Drop p)))
+(define nested-owned-surface
+  '(Fn ((p (Owned Res))) Unit (Own)
+       (Let g
+            (Fn ((q (Owned Res))) Unit (Own) (Drop q))
+            (Drop p))))
 (define owned-capture-surface
   '(Fn ((p (Owned Res))) Unit ()
        (Fn () Unit () (Move p))))
@@ -264,6 +269,15 @@
    [`(Lam ,_ User ,_ ((#:bind ,raw ,_) ,_ ...) ,_)
     (check-false (eq? raw 'owned0))]
    [_ (fail "生名が予約した記号と衝突した")]))
+
+(test-case
+ "入れ子の Fn が重ならない生名で Typed Core へ写る"
+ (match (elab nested-owned-surface)
+   [(list core type row callables)
+    (check-equal?
+     (core-type-of core '() callables)
+     (list type row))]
+   [other (fail (format "入れ子の Fn の elaboration が失敗した: ~s" other))]))
 
 (test-case
  "Owned の仮引数を持つ署名で本体に Let が無い Typed Core を拒否する"
