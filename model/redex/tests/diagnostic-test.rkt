@@ -10,7 +10,8 @@
          "diagnostic-fixture-v3.rkt"
          "diagnostic-fixture-v4.rkt"
          "diagnostic-fixture-v5.rkt"
-         "diagnostic-fixture-v6.rkt")
+         "diagnostic-fixture-v6.rkt"
+         "diagnostic-fixture-v7.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -53,13 +54,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 136)
+ (check-equal? (length diagnostic-registry) 138)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 78)
+ (check-equal? (count-of 'typing) 80)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -72,10 +73,15 @@
  (check-equal? (since-count 3) 13)
  (check-equal? (since-count 4) 12)
  (check-equal? (since-count 5) 4)
- ;; 本サイクルが最初の廃止である。E-BOR-024 だけが 6 を持つ。
+ (check-equal? (since-count 7) 2)
+ ;; version 6 で E-BOR-024 を、version 7 で E-OWN-006 を廃止した。
+ ;; 残る E-OWN-009 と E-OWN-015 は producer がまだ残るため次の段で廃止する。
+ (define deprecated-map
+   '(("E-BOR-024" . 6) ("E-OWN-006" . 7)))
  (for ([row (in-list diagnostic-registry)])
-   (if (equal? (diagnostic-code-code row) "E-BOR-024")
-       (check-equal? (diagnostic-code-deprecated-in row) 6)
+   (define expected (assoc (diagnostic-code-code row) deprecated-map))
+   (if expected
+       (check-equal? (diagnostic-code-deprecated-in row) (cdr expected))
        (check-false (diagnostic-code-deprecated-in row)))))
 
 ;; test 8
@@ -156,13 +162,13 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 6 である"
+ "schema version は 3、registry version は 7 である"
  (check-equal? diagnostic-schema-version 3)
- (check-equal? diagnostic-registry-version 6))
+ (check-equal? diagnostic-registry-version 7))
 
 (test-case
- "typing の registry version 6 と入口 key"
- (check-equal? diagnostic-registry-version 6)
+ "typing の registry version 7 と入口 key"
+ (check-equal? diagnostic-registry-version 7)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 
@@ -372,6 +378,17 @@
                     (eq? (diagnostic-code-key row) key))
                (format "~a が registry に同じ組で存在する" code))))
 
+(test-case
+ "凍結 fixture v7 の全 (code phase key) が現在の registry に同じ組である"
+ (check-equal? (length diagnostic-entries-v7) 138)
+ (for ([entry (in-list diagnostic-entries-v7)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true (and row
+                    (eq? (diagnostic-code-phase row) phase)
+                    (eq? (diagnostic-code-key row) key))
+               (format "~a が registry に同じ組で存在する" code))))
+
 (define-runtime-path elaborate-source "../elaborate.rkt")
 
 ;; test 7
@@ -392,7 +409,7 @@
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
- (check-equal? (length reasons) 51)
+ (check-equal? (length reasons) 50)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

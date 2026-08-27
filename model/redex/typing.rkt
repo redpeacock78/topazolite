@@ -65,7 +65,8 @@
          materialize-fail-result
          core-type-of/materialized
          unwrap-forall-region
-         function-body-environment)
+         function-body-environment
+         check-owned-encoding)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -702,6 +703,57 @@
               [`(Owned ,payload) payload]
               [_ type]))))
 
+;; 項のどこかにその記号が現れるかを見る。束縛の位置も数える。
+(define (core-mentions? core name)
+  (let walk ([t (erase-core core)])
+    (cond
+      [(eq? t name) #t]
+      [(pair? t) (or (walk (car t)) (walk (cdr t)))]
+      [else #f])))
+
+;; G5c5b1 spec §8。Owned の仮引数を本体の形で符号化した Typed Core を
+;; 検査する。parameters は Lam または Recur の仮引数列であり、Owned の位置
+;; には生名が入っている。inner は本体を包む Scope の直下の計算である。
+;;
+;; 条件を満たさない Typed Core は拒否する。値の形から生名を推測して救う
+;; ことはしない。手で書いた不正な Core をここで止める。
+(define (check-owned-encoding parameters parameter-types inner node fail)
+  (define owned-positions
+    (for/list ([name (in-list parameters)]
+               [type (in-list parameter-types)]
+               #:when (owned-type? type))
+      (list name type)))
+  (define reserved (list->set parameters))
+  (define body
+    (let loop ([pending owned-positions] [core inner] [seen '()])
+      (cond
+        [(null? pending) core]
+        [else
+         (match-define (list raw declared) (first pending))
+         (match (peel-node core)
+           [`(Let (,binder-node ,binding-mode ,type-node) ,bound-node ,next)
+            (define binder (peel-bind binder-node))
+            ;; binder は仮引数のどの名前とも衝突せず、連なりの中で一意で
+            ;; ある。衝突を許すと、生名を握り直す形や同じ名前を二度束縛
+            ;; する形が通ってしまう。
+            (unless (and (eq? (peel-node bound-node) raw)
+                         (eq? binding-mode 'let)
+                         (type-equiv? (peel-ty type-node) declared)
+                         (not (set-member? reserved binder))
+                         (not (memq binder seen)))
+              (fail 'owned-parameter-missing-binding node))
+            (loop (cdr pending) next (cons binder seen))]
+           [_ (fail 'owned-parameter-missing-binding node)])])))
+  ;; 生名は対応する Let の右辺にちょうど 1 回だけ現れる。外したあとの本体
+  ;; に 1 度でも現れれば符号化が壊れている。自由出現だけを数えると、内側の
+  ;; Let が生名を shadow する形を見逃す。束縛の位置も数える。
+  ;; 生成側の予約集合が本体の記号をすべて避けるため、正しく生成した Core
+  ;; がこの検査に当たることはない。
+  (for ([entry (in-list owned-positions)])
+    (when (core-mentions? body (first entry))
+      (fail 'owned-raw-parameter-misuse node)))
+  body)
+
 (define (check-many/full cores types Λ Ψ environment places callables node fail
                          [start-index 0]
                          #:adopt? [adopt? #t])
@@ -1177,8 +1229,16 @@
      (parameterize ([bound-region-params signature-region-params])
        (check-function-boundary parameter-types return-type obligations
                                 body parameters environment node fail))
+     ;; 署名が Owned の仮引数を持つなら、本体は生名と Let の連なりで
+     ;; 符号化されている。仮引数の位置ではなく本体の形で検査する。
      (when (ormap owned-type? parameter-types)
-       (fail 'owned-function-parameter node))
+       (match (peel-node body)
+         [`(Handle ,_ ,_ ,scope)
+          (match (peel-node scope)
+            [`(Scope () ,inner)
+             (check-owned-encoding parameters parameter-types inner node fail)]
+            [_ (fail 'owned-parameter-missing-binding node)])]
+         [_ (fail 'owned-parameter-missing-binding node)]))
      (define body-environment
        (function-body-environment environment parameters parameter-types))
      ;; §5.4。借用の仮引数の位置ごとに文脈局所の formal 鍵を採る。

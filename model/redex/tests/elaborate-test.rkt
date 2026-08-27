@@ -120,8 +120,8 @@
                     (Apply loop (Construct nil (Types Int))))
              (Apply loop (Construct nil (Types Int))))))))
 
-(test-case "OWN-001/OWN-002: function boundaries reject affine crossings"
-  (check-true
+(test-case "OWN-001/OWN-002: function boundaries carry Owned formals"
+  (check-false
    (elaboration-error?
     (elab '(Fn ((item (Owned Res))) Unit () unit))))
   (check-true

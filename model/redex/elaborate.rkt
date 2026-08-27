@@ -426,6 +426,75 @@
             (cons (list callable signature) reversed-callables))
       callable)
 
+    ;; G5c5b1 spec §4.3。Owned の仮引数を Core の仮引数列へ置くための生名を
+    ;; 取る。生名は変数の名前空間に入るため、fresh-boundary のように連番
+    ;; だけで作ることはできない。
+    ;;
+    ;; 予約する記号は次の 4 つの和である。
+    ;;   surface の本体に現れる記号
+    ;;   宣言した仮引数の名前すべて。本体で使われない仮引数も含める
+    ;;   Recur の場合は、宣言した関数の名前
+    ;;   その時点の環境の定義域
+    ;;
+    ;; 本体に現れない仮引数の名前を入れるのは、生名と同じつづりになると
+    ;; Lam の仮引数列で名前が重複するためである。Recur の関数の名前を
+    ;; 入れるのは、生名と同じつづりになると本体の再帰呼出しが Let の
+    ;; binder ではなく生名へ束縛されるためである。
+    ;;
+    ;; span や型注釈の中の記号まで拾うため予約は過剰になるが、衝突しない
+    ;; という性質は保たれる。
+    (define (form-symbols form)
+      (let loop ([node form] [acc (set)])
+        (cond
+          [(symbol? node) (set-add acc node)]
+          [(pair? node) (loop (cdr node) (loop (car node) acc))]
+          [else acc])))
+
+    ;; 採った候補を予約集合へ加えてから次の位置へ進む。同じ入力に対して
+    ;; 同じ名前が出るため、凍結 fixture と試験の期待値が安定する。
+    ;; 返り値は仮引数の位置と同じ長さの列であり、Owned でない位置には #f を
+    ;; 置く。位置の対応を崩さないためである。
+    (define (fresh-owned-names parameter-types reserved)
+      (let loop ([types parameter-types] [taken reserved] [acc '()])
+        (cond
+          [(null? types) (reverse acc)]
+          [(owned-type? (car types))
+           (define name
+             (let next ([index 0])
+               (define candidate
+                 (string->symbol (format "owned~a" index)))
+               (if (set-member? taken candidate)
+                   (next (add1 index))
+                   candidate)))
+           (loop (cdr types) (set-add taken name) (cons name acc))]
+          [else (loop (cdr types) taken (cons #f acc))])))
+
+    ;; 生名の binder は対応する仮引数の binder の span をそのまま持つ。
+    ;; 名前だけを差し替えて位置は動かさない。G2+ は各仮引数へ
+    ;; (#:bind x s_b) を要求するためである。
+    (define (owned-parameter-binders parameter-binders raw-names)
+      (for/list ([binder (in-list parameter-binders)]
+                 [raw (in-list raw-names)])
+        (if raw
+            `(#:bind ,raw ,(wrapper-span binder))
+            binder)))
+
+    ;; 生成した Let の span は、対応する仮引数の binder の span で揃える。
+    ;; この Let が仮引数の宣言そのものを Core へ写したものだからである。
+    ;; binder は surface が書いた binder をそのまま使う。名前も span も
+    ;; 仮引数の宣言と一致する。
+    (define (wrap-owned-lets parameter-binders parameter-types raw-names core)
+      (for/fold ([acc core])
+                ([binder (in-list (reverse parameter-binders))]
+                 [type (in-list (reverse parameter-types))]
+                 [raw (in-list (reverse raw-names))])
+        (if raw
+            (let ([s_b (wrapper-span binder)])
+              `(Let ,s_b (,binder let (#:ty ,type ,s_b))
+                    (#:var ,raw ,s_b)
+                    ,acc))
+            acc)))
+
     (define (check-many expressions types environment delta propositions boundaries span)
       (unless (= (length expressions) (length types))
         (reject span 'arity-mismatch (length types) (length expressions)))
@@ -532,8 +601,6 @@
          (define parameter-types
            (for/list ([type (in-list raw-parameter-types)])
              (resolve-annotation type delta s)))
-         (when (ormap owned-type? parameter-types)
-           (reject s 'owned-function-parameter))
          (when (captures-owned? body parameters environment)
            (reject s 'owned-function-capture))
          (define return-type (resolve-annotation raw-return-type delta s))
@@ -543,6 +610,14 @@
          (define signature
            `(NFn ,parameter-types ,return-type ,declared-row ()))
          (define callable (fresh-callable signature))
+         (define raw-names
+           (fresh-owned-names
+            parameter-types
+            (set-union (form-symbols body)
+                       (list->set parameters)
+                       (list->set (map first environment)))))
+         (define core-binders
+           (owned-parameter-binders parameter-binders raw-names))
          (define body-result
            (check body return-type
                   (extend environment parameters parameter-types)
@@ -555,11 +630,14 @@
          (unless (row-subset? residual-row declared-row)
            (reject s 'undeclared-function-effect declared-row residual-row))
          (judgment
-          `(Lam ,s User ,callable ,parameter-binders
+          `(Lam ,s User ,callable ,core-binders
                 (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
                         (,s (#:bind return-value ,s) ->
                             (#:var return-value ,s))
-                        (Scope ,s () ,(judgment-core body-result))))
+                        (Scope ,s ()
+                               ,(wrap-owned-lets parameter-binders
+                                                 parameter-types raw-names
+                                                 (judgment-core body-result)))))
           signature
           '())]
 

@@ -191,7 +191,9 @@
     ;; OWN
     drop-non-owned move-non-owned own-binding-borrowed-payload
     owned-constructor-field
-    owned-curry-argument owned-function-parameter owned-record-field
+    owned-curry-argument owned-function-parameter
+    owned-parameter-missing-binding owned-raw-parameter-misuse
+    owned-record-field
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unknown-place unmanaged-place
     ;; VAR
@@ -320,12 +322,33 @@
                           'some
                           (reach-node 'resource 174 179 0))
               '() '() '() (reach-span 167 180))
-   (reach-row 'owned-function-parameter
+   (reach-row 'owned-parameter-missing-binding
               (reach-node 'Lam 181 190 'User 'f
                           (list (reach-bind 'x 182 183))
                           (reach-lit 1 186 187))
               '() '((f (NFn ((Owned Res)) Int () ()))) '()
               (reach-span 181 190))
+   (reach-row 'owned-raw-parameter-misuse
+              (reach-node 'Lam 191 230 'User 'f
+                          (list (reach-bind 'owned0 192 193))
+                          (reach-node 'Handle 194 229
+                                      (list 'Return 'boundary
+                                            (reach-ty 'Int 195 196))
+                                      (list (reach-span 197 203)
+                                            (reach-bind 'return-value 198 199)
+                                            '->
+                                            (reach-var 'return-value 200 201))
+                                      (reach-node 'Scope 204 228 '()
+                                                  (reach-node
+                                                   'Let 205 218
+                                                   (list (reach-bind 'p 206 207)
+                                                         'let
+                                                         (reach-ty '(Owned Res)
+                                                                   208 209))
+                                                   (reach-var 'owned0 210 211)
+                                                   (reach-var 'owned0 220 221)))))
+              '() '((f (NFn ((Owned Res)) Int () ()))) '()
+              (reach-span 191 230))
    (reach-row 'owned-function-parameter
               (reach-node 'RecurVal 191 203 'f
                           (reach-bind 'loop 192 193)
@@ -770,7 +793,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 77)
+  (check-equal? (length producer-keys) 79)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

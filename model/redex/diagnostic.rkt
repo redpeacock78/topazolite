@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 6)
+(define diagnostic-registry-version 7)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -74,7 +74,6 @@
     ("E-OWN-003" owned-constructor-field "構築子の field に owned を置けない")
     ("E-OWN-004" owned-curry-argument "Curry の引数に owned を置けない")
     ("E-OWN-005" owned-function-capture "関数が owned を捕捉している")
-    ("E-OWN-006" owned-function-parameter "関数の仮引数に owned を置けない")
     ("E-OWN-007" owned-record-field "record の field に owned を置けない")
     ("E-OWN-008" owned-recur-capture "recur が owned を捕捉している")
     ("E-OWN-009" owned-recur-parameter "recur の仮引数に owned を置けない")
@@ -203,12 +202,29 @@
     ("E-REG-003" region-arg-not-live "region の実引数が適用の位置で生きていない")
     ("E-OWN-022" own-binding-borrowed-payload "Owned の束縛の payload に借用が入る")))
 
+;; G5c5b1。Owned の仮引数は生名と Let の連なりで符号化する。壊れた符号化を
+;; 仮引数の位置ではなく本体の形で落とす。分類内の番号は E-OWN-022 の次を
+;; 取る。key 記号の辞書順は
+;; owned-parameter-missing-binding < owned-raw-parameter-misuse である。
+(define typing-entries-v7
+  '(("E-OWN-023" owned-parameter-missing-binding
+                 "Owned の仮引数に対応する Let が本体に無い")
+    ("E-OWN-024" owned-raw-parameter-misuse
+                 "Owned の仮引数の名前が対応する Let の右辺の外に現れる")))
+
 ;; G5c4 で廃止した行。表を持つ形では発火する場所が無くなる。辿れない
 ;; scrutinee は E-BOR-020 で落ちる。行は registry に残す。番号の再利用と
 ;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
 (define deprecated-typing-entries
   (list (diagnostic-code "E-BOR-024" 'typing 'capability-in-eliminate
                          "分岐の仮引数へ能力を配る形は未対応" 4 6)))
+
+;; G5c5b1 で廃止した行。Owned の仮引数は本体の形で符号化して受けるため、
+;; 仮引数の位置で落とす場所が無くなる。行は registry に残す。番号の再利用と
+;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
+(define deprecated-elaborate-entries
+  (list (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
+                         "関数の仮引数に owned を置けない" 1 7)))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
@@ -226,11 +242,13 @@
 
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
+          deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
           (rows 'typing 3 typing-entries-v3)
           (rows 'typing 4 typing-entries-v4)
           (rows 'typing 5 typing-entries-v5)
+          (rows 'typing 7 typing-entries-v7)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))
