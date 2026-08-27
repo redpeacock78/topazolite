@@ -8,7 +8,8 @@
          "typing.rkt")
 
 (provide classify
-         type-equiv?)
+         type-equiv?
+         strip-owned-prefix)
 
 (define (lookup table key)
   (match (assoc key table)
@@ -33,7 +34,7 @@
                  (extend environment (list function) (list signature))])
             (list
              (function-body-environment function-environment
-                                         parameters parameter-types)
+                                        parameters parameter-types)
              function-environment)))]
     [_ #f]))
 
@@ -454,6 +455,69 @@
                                    expected-types)])
          (and row (not (dangerous-guard-row? row))))))
 
+;; G5c5b1 spec §6.4。Owned の仮引数を持つ Recur の本体から、生成した Scope と
+;; Let の連なりを外す。返り値は外した本体と、その本体を見るための環境の
+;; 2 つ組である。契約を 1 つでも満たさなければ #f を返す。
+;;
+;; 外す個数は署名から決める。形を推測して受かるまで剥がすことはしない。
+;; Scope の place 列と Let の宣言型と右辺まで見るのは、手で書いた不正な
+;; Typed Core をここで受けないためである。
+;;
+;; ここは classify の内側であり、入口で erase-core した Core だけを見る。
+;;
+;; guarded-body? 自身は変えない。現在の生成は Eliminate の枝の先に Scope が
+;; 現れる形を作らないためである。Scope を Eliminate の枝の内側へ置く生成を
+;; 将来入れるときは、この判断を見直す必要がある。
+(define (strip-owned-prefix callable parameters body environment callables)
+  (match (lookup callables callable)
+    [`(NFn ,parameter-types ,_ ,_ ,_)
+     (cond
+       [(not (= (length parameters) (length parameter-types))) #f]
+       [else
+        (define owned-positions
+          (for/list ([name (in-list parameters)]
+                     [type (in-list parameter-types)]
+                     #:when (owned-type? type))
+            (list name type)))
+        (cond
+          [(null? owned-positions) (list body environment)]
+          [else
+           (match body
+             [`(Scope () ,inner)
+              (let loop ([pending owned-positions]
+                         [core inner]
+                         [env environment])
+                (cond
+                  [(null? pending)
+                   ;; 契約を満たす Let がもう 1 段続く形は受け付けない。
+                   ;; 外す個数は署名が決めるためである。
+                   (if (generated-owned-let? core parameters parameter-types)
+                       #f
+                       (list core env))]
+                  [else
+                   (match-define (list raw declared) (first pending))
+                   (match core
+                     [`(Let (,binder ,_ ,type) ,(? symbol? bound) ,next)
+                      (and (eq? bound raw)
+                           (type-equiv? type declared)
+                           (loop (cdr pending)
+                                 next
+                                 (extend env (list binder) (list declared))))]
+                     [_ #f])]))]
+             [_ #f])])])]
+    [_ #f]))
+
+;; 連なりの内側に、生成した Let と見分けの付かない Let が続くかを見る。
+(define (generated-owned-let? core parameters parameter-types)
+  (match core
+    [`(Let (,_ ,_ ,type) ,(? symbol? bound) ,_)
+     (for/or ([name (in-list parameters)]
+              [declared (in-list parameter-types)])
+       (and (owned-type? declared)
+            (eq? bound name)
+            (type-equiv? type declared)))]
+    [_ #f]))
+
 (define (guarded-body? target parameter-types observed-types
                        core environment callables)
   (match core
@@ -487,12 +551,19 @@
                           environment callables))
      (match (lookup callables callable)
        [`(NFn ,parameter-types ,_ ,latent-row ,_)
+        ;; 本体の側だけ包みを外す。継続は包みを持たないため、従来どおり
+        ;; 第 2 要素の環境で見る。
+        (define stripped
+          (and contexts
+               (strip-owned-prefix callable parameters body
+                                   (first contexts) callables)))
         (and contexts
+             stripped
              (eq? continuation-function function)
              (= (length arguments) (length parameter-types))
              (guarded-body? function parameter-types
                             (yield-types latent-row)
-                            body (first contexts) callables)
+                            (first stripped) (second stripped) callables)
              (for/and ([argument (in-list arguments)]
                        [expected (in-list parameter-types)])
                (guard-component? function argument
