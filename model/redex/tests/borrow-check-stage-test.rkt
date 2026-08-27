@@ -4,6 +4,7 @@
          racket/match
          "../region.rkt"
          "../borrow.rkt"
+         "../erase.rkt"
          "../typing.rkt")
 
 (define (key-of result)
@@ -118,3 +119,50 @@
   (match-define (list 'fail key _node _details)
     (type-of/raw core '() '() '() (region-ctx ir '() (hash) (hash))))
   (check-equal? key 'owned-variable-requires-move))
+
+;; G5c5a spec §4.1。期待型を与える入口も段 3 まで通す。
+;; 段 3 だけが分ける 2 つの形を、同じ期待型で入口へ通す。
+;; 借用が尽きた後の Move は通り、借用が生きている位置の Move は落ちる。
+(let ()
+  (define (live ρ)
+    `(Scope (1) (Let (b let (Borrowed Res ,ρ)) (Borrow 1) (Move 1))))
+  (define (dead ρ)
+    `(Scope (1) (Let (r let Int)
+                     (Scope () (Let (b let (Borrowed Res ,ρ)) (Borrow 1) 0))
+                     (Move 1))))
+  (define live-ir (build-region-ir (live 0)))
+  (define dead-ir (build-region-ir (dead 0)))
+  (define live-core (annotate-regions (live (rho-at live-ir '(0 0))) live-ir))
+  (define dead-core (annotate-regions (dead (rho-at dead-ir '(0 0 0 0))) dead-ir))
+  (define live-Λ (region-ctx live-ir '() (hash 1 (region-at live-ir '())) (hash)))
+  (define dead-Λ (region-ctx dead-ir '() (hash 1 (region-at dead-ir '())) (hash)))
+  ;; 期待型と期待 row は通る側から引く。両者とも本体は Move なので型は同じである。
+  (match-define (list 'ok (list expected expected-row))
+    (type-of/raw dead-core (list (list 1 'Res)) '() '() dead-Λ))
+  ;; 通る側は type-of/raw と同じ row を返す。σ そのものは返り値へ混ざらない。
+  (check-equal? (core-check-row dead-core (list (list 1 'Res)) '()
+                                expected '() dead-Λ)
+                expected-row)
+  ;; 落ちる側は段 3 の key で落ちる。段 1 だけを走らせていたころは row を返していた。
+  (check-equal? (key-of (type-of/raw live-core (list (list 1 'Res)) '() '() live-Λ))
+                'move-borrowed)
+  (check-false (core-check-row live-core (list (list 1 'Res)) '()
+                               expected '() live-Λ)))
+
+;; G5c5a spec §4.3。RegionApp の region 実引数は段 3 で判定する。
+;; ir を持つ Λ では通り、ir の無い既定の Λ では region-arg-not-live で閉じる。
+;; 段 1 だけを走らせていたころ、後者は emit-region-arg-request! の raw error だった。
+(let ()
+  (define forall-callables
+    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+  (define (core-with ρ)
+    `(Scope () (Yield (Scope () 0)
+                      (RegionApp (RegionLam (a) (Lam User g (x) 1)) (,ρ)))))
+  (define ir (build-region-ir (erase-core (core-with 0))))
+  (define ctx (region-ctx ir '() (hash) (hash)))
+  (define core (core-with (region->rho ir (region-at ir '(0 1)))))
+  (match-define (list 'ok (list expected expected-row))
+    (type-of/raw core '() forall-callables '() ctx))
+  (check-equal? (core-check-row core '() forall-callables expected '() ctx)
+                expected-row)
+  (check-false (core-check-row core '() forall-callables expected)))

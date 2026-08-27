@@ -1416,14 +1416,50 @@
     (list 'ok (proc fail))))
 
 ;; 脱出を捕まえて従来の #f へ潰す。core-check-row と config-ok? が使う。
+;; spec §4.1。段 1 だけでなく段 3 まで通す。段 2 と段 3 の fail も #f へ潰す。
+;; 返り値は成功時の段 1 の row を σ で解決したものであり、σ 自体は外へ出さない。
+;; 段 1 の fail は with-typing の脱出で段 2 へ進まないため、段 1 で棄却した形が
+;; 制約違反として報告されることはない。type-of/raw* と同じ契約である。
 (define (check-as/boolean core expected environment places callables
                           [Λ (empty-region-ctx)])
-  (match (with-typing
-          (lambda (fail)
-            (check-as core expected Λ
-                      (empty-psi)
-                      environment places callables fail)))
-    [(list 'ok (list row _psi)) row]
+  (define cs (box '()))
+  (define rs (box '()))
+  (define ras (box '()))
+  (define ir (region-ctx-ir Λ))
+  (match (parameterize ([lifetime-collector cs]
+                        [request-collector rs]
+                        [region-arg-collector ras]
+                        [lifetime-counter (box 0)]
+                        [alpha-table (box (hash))]
+                        [merge-alpha-sources (make-hash)]
+                        [callable-summaries (make-hash)]
+                        [forwarding-summaries (make-hash)]
+                        [template-collectors '()])
+           (with-typing
+            (lambda (fail)
+              ;; 束縛名を入口で 1 度だけ付け替える。関係の表も同じ項から作る。
+              (define renamed
+                (call-with-region-params
+                 (lambda () (alpha-rename-all-region-lams core))))
+              (define relation
+                (if ir (make-region-relation ir (erase-core renamed)) equal?))
+              (parameterize ([current-region-relation relation])
+                ;; 段 1。
+                (match-define (list row Ψ)
+                  (check-as renamed expected Λ (empty-psi)
+                            environment places callables fail))
+                ;; 段 2。
+                (match (typing-solve ir (reverse (unbox cs)))
+                  [(list 'error broken)
+                   (define c (first broken))
+                   (fail (constraint-key c) (constraint-node c))]
+                  [(list 'ok σ)
+                   ;; 段 3。ir が無い Λ では emit-use-request! が要求を作らない
+                   ;; ため、届くのは RegionApp の要求だけである。
+                   (check-region-args ir σ (collected-region-args) relation fail)
+                   (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+                   (subst-type-regions row σ ir)])))))
+    [(list 'ok row) row]
     [_ #f]))
 
 ;; spec §3.1。所有値の束縛子だけを owners へ入れる。
