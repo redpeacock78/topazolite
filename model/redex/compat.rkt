@@ -119,8 +119,8 @@
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
 ;; 返却を持たない。span 機構の包みは型の形の外にあり、全域性の対象ではないため
-;; error で落とす。VariancePolicy は宣言と境界検査を提供するが、変性規則そのものを
-;; 差し替える機構はまだ無く、実装本体は G5 で強化する。
+;; error で落とす。VariancePolicy は宣言と境界検査を提供する。変性規則そのものを差し替える
+;; 機構は持たない。借用の region の変位は VAR-004 として本ファイルへ入れた。
 (define (check-compat-return args returns)
   (match* (args returns)
     [((list sub sup _ ...) (list result))

@@ -371,13 +371,11 @@ phase と `backend` の対応を検査するのは `diagnostic-of` である。
 
 `lower/with-matrix` を呼ぶ test は capability diagnostic の `backend` を引き続き読める。
 
-期待型を与える入口は段 1 の collector を parameterize しない。
+期待型を与える入口も段 3 まで検査を通す。
 
-`check-as/boolean` を通る `core-check-row` と `config-ok?` がこれに当たり、`lifetime-collector` と `request-collector` が `#f` のままなので段 2 へ渡す制約と判定要求が空になる。
+`check-as/boolean` を通る `core-check-row` と `config-ok?` は、`type-of/raw*` と同じ collector の集合を張り、段 1、`typing-solve`、`check-region-args`、`check-borrows` の順で走る。
 
-`region-arg-collector` は `#f` のとき error を上げるため、`RegionApp` を含む形はこの入口では診断ではなく error で落ちる。
-
-入口ごとに collector を初期化して段 2 まで通す形へ揃えるのは G5c5 で扱う。
+どの段の `fail` も `#f` へ潰すため、これらの入口は診断の code を外へ出さず、判定 API としての返り値だけを返す。
 
 ## 14. 3 形式の renderer
 
