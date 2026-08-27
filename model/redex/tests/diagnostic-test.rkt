@@ -74,10 +74,10 @@
  (check-equal? (since-count 4) 12)
  (check-equal? (since-count 5) 4)
  (check-equal? (since-count 7) 2)
- ;; version 6 で E-BOR-024 を、version 7 で E-OWN-006 を廃止した。
- ;; 残る E-OWN-009 と E-OWN-015 は producer がまだ残るため次の段で廃止する。
+ ;; version 6 で E-BOR-024 を、version 7 で E-OWN の 3 行を廃止した。
  (define deprecated-map
-   '(("E-BOR-024" . 6) ("E-OWN-006" . 7)))
+   '(("E-BOR-024" . 6) ("E-OWN-006" . 7)
+     ("E-OWN-009" . 7) ("E-OWN-015" . 7)))
  (for ([row (in-list diagnostic-registry)])
    (define expected (assoc (diagnostic-code-code row) deprecated-map))
    (if expected
@@ -409,7 +409,7 @@
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
- (check-equal? (length reasons) 50)
+ (check-equal? (length reasons) 49)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

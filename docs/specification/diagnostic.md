@@ -266,7 +266,9 @@ registry version 5 で足した typing の 4 行は `since` が5である。
 
 現在の registry は 138 行である。
 
-本サイクルが最初の廃止であり、`E-BOR-024` の 1 行だけが `deprecated-in` に6を持ち、残る 135 行は `#f` である。
+`deprecated-in` を持つのは 4 行である。
+`E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持つ。
+残る 134 行は `#f` である。
 
 ## 11. 凍結 fixture
 

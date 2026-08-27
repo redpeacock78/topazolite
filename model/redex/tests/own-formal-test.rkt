@@ -6,6 +6,8 @@
          "../classify.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
+         "../erase.rkt"
+         "../machine.rkt"
          "../typing.rkt")
 
 (define (elaborate-surface source)
@@ -67,6 +69,32 @@
   '(Fn ((p (Owned Res))) Unit ()
        (Fn () Unit () (Move p))))
 
+(define owned-recur-surface
+  '(Recur f ((item (Owned Res))) Unit ((Yield Int))
+          (Yield 1 (Apply f (Apply acquire 1)))
+          (Apply f (Apply acquire 1))))
+(define plain-recur-surface
+  '(Recur f ((item Int)) Unit ((Yield Int))
+          (Yield 1 (Apply f 0))
+          (Apply f 0)))
+(define guarded-owned-recur-surface owned-recur-surface)
+(define guarded-plain-recur-surface plain-recur-surface)
+(define structural-with-owned-surface
+  '(Recur f ((xs (List Int)) (item (Owned Res))) Unit ()
+          (Eliminate xs
+                     ((nil () -> unit)
+                      (cons (head tail) ->
+                            (Apply f tail (Apply acquire 1)))))
+          (Apply f (Construct nil (Types Int)) (Apply acquire 1))))
+(define structural-without-owned-surface
+  '(Recur f ((xs (List Int)) (item Int)) Unit ()
+          (Eliminate xs
+                     ((nil () -> unit)
+                      (cons (head tail) -> (Apply f tail 0))))
+          (Apply f (Construct nil (Types Int)) 0)))
+(define recur-name-clash-surface
+  '(Recur owned0 ((item (Owned Res))) Unit (Partial) unit unit))
+
 (define broken-missing-let-core
   (owned-core-lam '(owned0) '((Owned Res))
                   `(#:lit 1 ,(owned-span 50 51))))
@@ -113,10 +141,46 @@
                          ,(owned-let 'p 'owned0 '(Owned Res)
                                      (owned-let 'p 'owned1 '(Owned Res)
                                                 `(#:lit 1 ,s))))))))
+(define broken-recur-value-core
+  (let ([s (owned-span 0 100)])
+    `(RecurVal ,s f (#:bind loop ,s)
+               ((#:bind owned0 ,s))
+               (#:lit 1 ,s))))
+(define broken-recur-core
+  (let ([s (owned-span 0 100)])
+    `(Recur ,s f (#:bind loop ,s)
+            ((#:bind owned0 ,s))
+            (#:lit 1 ,s)
+            (#:lit 0 ,s))))
 (define owned-borrow-payload-core
   '(Let (x let (Owned (BorrowedMut Int 0)))
         (BorrowMut 1)
         1))
+
+(define (classification-of source)
+  (match (elab source)
+    [(list core _ _ callables) (classify core '() callables)]
+    [other (error 'classification-of "elaboration failed: ~s" other)]))
+
+;; R-RecurBind を一度だけ適用し、生成された RecurVal を含む本体を取り出す。
+(define (reduce-owned-recur source)
+  (define core (erase-core (elaborate-surface source)))
+  (match (raw-steps-g2 `(cfg ,core () () ()))
+    [(list next) (second next)]
+    [other (error 'reduce-owned-recur "expected one reduction: ~s" other)]))
+
+(define (scope-count-of core)
+  (cond
+    [(not (list? core)) 0]
+    [(and (pair? core) (eq? (car core) 'Scope))
+     (+ 1 (scope-count-of (third core)))]
+    [else (apply + (map scope-count-of core))]))
+
+(define (expected-unfold-count core)
+  (cond
+    [(not (list? core)) 0]
+    [(and (pair? core) (eq? (car core) 'RecurVal)) 1]
+    [else (apply + (map expected-unfold-count core))]))
 
 ;; 段 1
 (test-case
@@ -324,3 +388,64 @@
  "Owned の借用 payload を取る仮引数を拒否する"
  (check-equal? (typing-diagnostic-of owned-borrow-payload-core)
                "E-OWN-022"))
+
+;; 段 4
+(test-case
+ "Owned の仮引数を取る Recur が本体を Scope で包む"
+ (define core (elaborate-surface owned-recur-surface))
+ (match core
+   [`(Recur ,s_rec ,_ ,_ ((#:bind ,raw ,s_b) ,_ ...)
+            (Scope ,s_scope ()
+                   (Let ,s_let ((#:bind item ,_) let
+                                (#:ty (Owned Res) ,_))
+                        (#:var ,rhs ,_) ,_))
+            ,_)
+    (check-eq? rhs raw)
+    (check-equal? s_scope s_rec)
+    (check-equal? s_let s_b)]
+   [_ (fail "Recur の包みの形が合わない")]))
+
+(test-case
+ "Owned の仮引数を持たない Recur は Scope で包まれない"
+ (define core (elaborate-surface plain-recur-surface))
+ (match core
+   [`(Recur ,_ ,_ ,_ ,_ (Scope ,_ () ,_) ,_)
+    (fail "Owned を持たない Recur に Scope が入った")]
+   [_ (check-true #t)]))
+
+(test-case
+ "展開のたびに RecurVal が自分の Scope を持つ"
+ (define traced (reduce-owned-recur owned-recur-surface))
+ (check-equal? (scope-count-of traced)
+               (expected-unfold-count traced)))
+
+(test-case
+ "Yield で守られた再帰は Owned の仮引数の有無で分類を変えない"
+ (check-equal? (classification-of guarded-owned-recur-surface)
+               '(Productive guarded))
+ (check-equal? (classification-of guarded-plain-recur-surface)
+               '(Productive guarded)))
+
+(test-case
+ "data の位置の structural は Owned の仮引数を足しても変わらない"
+ (check-equal? (classification-of structural-with-owned-surface)
+               (classification-of structural-without-owned-surface)))
+
+(test-case
+ "生名は Recur が宣言した関数の名前を避ける"
+ (define core (elaborate-surface recur-name-clash-surface))
+ (match core
+   [`(Recur ,_ ,_ (#:bind ,function ,_)
+            ((#:bind ,raw ,_) ,_ ...) ,_ ,_)
+    (check-false (eq? raw function))]
+   [_ (fail "生名が関数の名前と衝突した")]))
+
+(test-case
+ "RecurVal の本体で符号化が壊れた Typed Core を拒否する"
+ (check-equal? (typing-diagnostic-of broken-recur-value-core)
+               "E-OWN-023"))
+
+(test-case
+ "Recur の本体で符号化が壊れた Typed Core を拒否する"
+ (check-equal? (typing-diagnostic-of broken-recur-core)
+               "E-OWN-023"))

@@ -76,7 +76,6 @@
     ("E-OWN-005" owned-function-capture "関数が owned を捕捉している")
     ("E-OWN-007" owned-record-field "record の field に owned を置けない")
     ("E-OWN-008" owned-recur-capture "recur が owned を捕捉している")
-    ("E-OWN-009" owned-recur-parameter "recur の仮引数に owned を置けない")
     ("E-OWN-010" owned-variable-requires-move "owned 変数の参照には Move が要る")
     ("E-VAR-001" duplicate-parameter "仮引数名が重複している")
     ("E-VAR-002" unbound-variable "束縛されていない変数である")
@@ -129,7 +128,6 @@
     ("E-OWN-012" move-non-owned "Move の対象が owned でない")
     ("E-OWN-013" owned-constructor-field "構築子の field に owned を置けない")
     ("E-OWN-014" owned-curry-argument "Curry の引数に owned を置けない")
-    ("E-OWN-015" owned-function-parameter "関数の仮引数に owned を置けない")
     ("E-OWN-016" owned-record-field "record の field に owned を置けない")
     ("E-OWN-017" owned-refined-payload "Refined の中身に owned を置けない")
     ("E-OWN-018" owned-untrusted-payload "Untrusted の中身に owned を置けない")
@@ -212,19 +210,25 @@
     ("E-OWN-024" owned-raw-parameter-misuse
                  "Owned の仮引数の名前が対応する Let の右辺の外に現れる")))
 
-;; G5c4 で廃止した行。表を持つ形では発火する場所が無くなる。辿れない
-;; scrutinee は E-BOR-020 で落ちる。行は registry に残す。番号の再利用と
-;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
+;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
+;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
+;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
+;; 無くなる。行は registry に残す。番号の再利用と意味の付け替えを凍結
+;; fixture が検出できるようにするためである。
 (define deprecated-typing-entries
   (list (diagnostic-code "E-BOR-024" 'typing 'capability-in-eliminate
-                         "分岐の仮引数へ能力を配る形は未対応" 4 6)))
+                         "分岐の仮引数へ能力を配る形は未対応" 4 6)
+        (diagnostic-code "E-OWN-015" 'typing 'owned-function-parameter
+                         "関数の仮引数に owned を置けない" 2 7)))
 
 ;; G5c5b1 で廃止した行。Owned の仮引数は本体の形で符号化して受けるため、
 ;; 仮引数の位置で落とす場所が無くなる。行は registry に残す。番号の再利用と
 ;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
 (define deprecated-elaborate-entries
   (list (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
-                         "関数の仮引数に owned を置けない" 1 7)))
+                         "関数の仮引数に owned を置けない" 1 7)
+        (diagnostic-code "E-OWN-009" 'elaborate 'owned-recur-parameter
+                         "recur の仮引数に owned を置けない" 1 7)))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))

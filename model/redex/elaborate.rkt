@@ -819,8 +819,6 @@
          (define parameter-types
            (for/list ([type (in-list raw-parameter-types)])
              (resolve-annotation type delta s)))
-         (when (ormap owned-type? parameter-types)
-           (reject s 'owned-recur-parameter))
          (when (captures-owned? body (cons function parameters) environment)
            (reject s 'owned-recur-capture))
          (define return-type (resolve-annotation raw-return-type delta s))
@@ -829,6 +827,15 @@
          (define signature
            `(NFn ,parameter-types ,return-type ,declared-row ()))
          (define callable (fresh-callable signature))
+         (define raw-names
+           (fresh-owned-names
+            parameter-types
+            (set-union (form-symbols body)
+                       (list->set parameters)
+                       (set function)
+                       (list->set (map first environment)))))
+         (define core-binders
+           (owned-parameter-binders parameter-binders raw-names))
          (define function-environment
            (extend environment (list function) (list signature)))
          (define body-environment
@@ -842,9 +849,20 @@
          (define continuation-result
            (synth continuation function-environment
                   delta propositions boundaries))
+         ;; Owned の仮引数を 1 つ以上持つときだけ Scope で包む。recur は
+         ;; 関数境界を押さないため、包まないと呼出し側の Scope へ place が
+         ;; 積み上がる。Owned を持たない Recur の形は変えない。既存の
+         ;; lowering に PScopeExit を増やさないためである。
+         (define wrapped-body
+           (if (ormap values raw-names)
+               `(Scope ,s ()
+                       ,(wrap-owned-lets parameter-binders
+                                         parameter-types raw-names
+                                         (judgment-core body-result)))
+               (judgment-core body-result)))
          (define recur-core
-           `(Recur ,s ,callable ,raw-function ,parameter-binders
-                   ,(judgment-core body-result)
+           `(Recur ,s ,callable ,raw-function ,core-binders
+                   ,wrapped-body
                    ,(judgment-core continuation-result)))
          (define classification
            (classify recur-core environment

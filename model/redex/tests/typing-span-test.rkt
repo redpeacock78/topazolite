@@ -191,7 +191,7 @@
     ;; OWN
     drop-non-owned move-non-owned own-binding-borrowed-payload
     owned-constructor-field
-    owned-curry-argument owned-function-parameter
+    owned-curry-argument
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
     owned-refined-payload owned-untrusted-payload
@@ -349,14 +349,14 @@
                                                    (reach-var 'owned0 220 221)))))
               '() '((f (NFn ((Owned Res)) Int () ()))) '()
               (reach-span 191 230))
-   (reach-row 'owned-function-parameter
+   (reach-row 'owned-parameter-missing-binding
               (reach-node 'RecurVal 191 203 'f
                           (reach-bind 'loop 192 193)
                           (list (reach-bind 'x 194 195))
                           (reach-lit 1 199 200))
               '() '((f (NFn ((Owned Res)) Int () ()))) '()
               (reach-span 191 203))
-   (reach-row 'owned-function-parameter
+   (reach-row 'owned-parameter-missing-binding
               (reach-node 'Recur 204 220 'f
                           (reach-bind 'loop 205 206)
                           (list (reach-bind 'x 207 208))
@@ -787,13 +787,13 @@
                           '(0))
               '() '() '() (reach-span 1451 1470))))
 
-(test-case "typing の producer key 集合が registry v6 と一致する"
+(test-case "typing の producer key 集合が registry v7 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 79)
+  (check-equal? (length producer-keys) 78)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -857,7 +857,7 @@
     '(unmanaged-place unknown-place type-mismatch
       unbound-variable apply-non-function curry-non-function
       unknown-callable parameter-arity-mismatch duplicate-parameter
-      owned-function-parameter undeclared-function-effect))
+      owned-parameter-missing-binding undeclared-function-effect))
   (for ([key (in-list multi-site-keys)])
     (check-true
      (>= (length (filter (λ (entry) (eq? (first entry) key))

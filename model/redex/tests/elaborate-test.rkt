@@ -124,7 +124,7 @@
   (check-false
    (elaboration-error?
     (elab '(Fn ((item (Owned Res))) Unit () unit))))
-  (check-true
+  (check-false
    (elaboration-error?
     (elab '(Recur f ((item (Owned Res))) Unit (Partial) unit unit))))
   (check-true

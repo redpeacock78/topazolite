@@ -747,8 +747,8 @@
   ;; 生名は対応する Let の右辺にちょうど 1 回だけ現れる。外したあとの本体
   ;; に 1 度でも現れれば符号化が壊れている。自由出現だけを数えると、内側の
   ;; Let が生名を shadow する形を見逃す。束縛の位置も数える。
-  ;; 生成側の予約集合が本体の記号をすべて避けるため、正しく生成した Core
-  ;; がこの検査に当たることはない。
+  ;; elab 全体で共有する連番と生成側の予約集合が本体の記号を避けるため、
+  ;; 正しく生成した Core がこの検査に当たることはない。
   (for ([entry (in-list owned-positions)])
     (when (core-mentions? body (first entry))
       (fail 'owned-raw-parameter-misuse node)))
@@ -1302,7 +1302,10 @@
      (check-function-boundary parameter-types return-type obligations
                               body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
-       (fail 'owned-function-parameter node))
+       (match (peel-node body)
+         [`(Scope () ,inner)
+          (check-owned-encoding parameters parameter-types inner node fail)]
+         [_ (fail 'owned-parameter-missing-binding node)]))
      ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
      ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
      (when (ormap borrow-typed? parameter-types)
@@ -1342,7 +1345,10 @@
      (check-function-boundary parameter-types return-type obligations
                               body (cons function parameters) environment node fail)
      (when (ormap owned-type? parameter-types)
-       (fail 'owned-function-parameter node))
+       (match (peel-node body)
+         [`(Scope () ,inner)
+          (check-owned-encoding parameters parameter-types inner node fail)]
+         [_ (fail 'owned-parameter-missing-binding node)]))
      ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
      ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
      (when (ormap borrow-typed? parameter-types)
