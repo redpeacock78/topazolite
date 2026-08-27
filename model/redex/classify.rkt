@@ -23,10 +23,6 @@
 (define (extend environment names types)
   (append (map list names types) environment))
 
-(define (without-owned environment)
-  (filter (lambda (entry) (not (owned-type? (second entry))))
-          environment))
-
 (define (callable-contexts callable function parameters
                            environment callables)
   (match (lookup callables callable)
@@ -36,8 +32,8 @@
           (let ([function-environment
                  (extend environment (list function) (list signature))])
             (list
-             (extend (without-owned function-environment)
-                     parameters parameter-types)
+             (function-body-environment function-environment
+                                         parameters parameter-types)
              function-environment)))]
     [_ #f]))
 
@@ -45,8 +41,7 @@
   (match (lookup callables callable)
     [`(NFn ,parameter-types ,_ ,_ ,_)
      (and (= (length parameters) (length parameter-types))
-          (extend (without-owned environment)
-                  parameters parameter-types))]
+          (function-body-environment environment parameters parameter-types))]
     [_ #f]))
 
 (define (branch-contexts scrutinee branches environment callables)

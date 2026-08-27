@@ -64,7 +64,8 @@
          contains-lifetime-var?
          materialize-fail-result
          core-type-of/materialized
-         unwrap-forall-region)
+         unwrap-forall-region
+         function-body-environment)
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -687,6 +688,20 @@
   (filter (λ (entry) (not (owned-type? (second entry))))
           environment))
 
+;; G5c5b1 spec §7 と §8。本体の環境を作る。Owned<τ> の仮引数は payload の型
+;; τ で束縛する。生名は本体から直接見えず、生成した Let が surface の名前へ
+;; Owned<τ> を与えるためである。E-Var は Owned<_> の変数を裸で参照すること
+;; を禁じており、生名を Owned<τ> で入れると Let の右辺の参照が落ちる。
+;; 外側の環境から Owned の項目を落とすのは従来どおりである。捕捉の禁止は
+;; G5c5b2 まで有効である。
+(define (function-body-environment environment parameters parameter-types)
+  (extend (without-owned environment)
+          parameters
+          (for/list ([type (in-list parameter-types)])
+            (match type
+              [`(Owned ,payload) payload]
+              [_ type]))))
+
 (define (check-many/full cores types Λ Ψ environment places callables node fail
                          [start-index 0]
                          #:adopt? [adopt? #t])
@@ -1165,9 +1180,7 @@
      (when (ormap owned-type? parameter-types)
        (fail 'owned-function-parameter node))
      (define body-environment
-       (extend (without-owned environment)
-               parameters
-               parameter-types))
+       (function-body-environment environment parameters parameter-types))
      ;; §5.4。借用の仮引数の位置ごとに文脈局所の formal 鍵を採る。
      ;; 借用でない位置は #f を置き、位置の対応を崩さない。
      (define formals
@@ -1235,12 +1248,10 @@
      (when (ormap borrow-typed? parameter-types)
        (fail 'borrowed-function-parameter node))
      (define body-environment
-       (extend
-        (extend (without-owned environment)
-                (list function)
-                (list signature))
-        parameters
-        parameter-types))
+       (extend (function-body-environment environment
+                                          parameters parameter-types)
+               (list function)
+               (list signature)))
      (define body-result
        ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
        ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
@@ -1281,9 +1292,8 @@
                (list function)
                (list signature)))
      (define body-environment
-       (extend (without-owned function-environment)
-               parameters
-               parameter-types))
+       (function-body-environment function-environment
+                                  parameters parameter-types))
      ;; body は Recur の子 0 である（region.md §3）。
      ;; 環境は既存の body-environment をそのまま使う。
      ;; 仮引数は owners へ入れないため（spec §3.1）、Λ は enter-child だけを掛ける。
