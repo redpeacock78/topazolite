@@ -1413,9 +1413,9 @@ Apply(map, CurryVal(…), cons(-1, cons(2, nil)))
 borrow、region、unsafe boundary の judgment は G5 で仕様化する。
 ホワイトペーパー §11.5.8 に基づく概略は次のとおりである。
 
-- Ω の状態に `SharedBorrowed<n>` と `MutBorrowed<r>` を追加する。
-- `&x`（shared borrow）は `Ω(x) ∈ {Available, SharedBorrowed<n>}` かつ region r が owner の生存範囲に含まれるとき許可し、`&mut x` は `Ω(x) = Available` のときだけ許可する。
-- region exit で当該 region の borrow 状態を解放し、`Moved` / `Dropped` の place への read、borrow、drop は型エラーとする。
+- 借用の生存は Ω ではなく静的な記録 Ψ が持ち、Ω は `Available`、`Moved`、`Dropped` の三値のままとする。
+- `&x` と `&mut x` の可否は Ψ と σ が決める。共有借用どうしは重なってよい。可変借用は同じ place について排他であり、同じ place の共有借用と region が重なるときは取れない。
+- region exit で Ψ から項目を消すことはせず、σ が定める生存範囲の外に出た借用は以後の許可判定に効かなくなる。`Moved` と `Dropped` の place への read、borrow、drop は型エラーとする。
 - raw pointer の dereference は `Unsafe` Effect と Proof obligation を要求し（PTR-001）、safe reference の構築には lifetime、alignment、validity の Proof を要求する（PTR-002）。
 - G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）を、borrow による受け渡しと捕捉として回復する。
 - メタ理論性質 8（borrow safety）と 9（unsafe containment）の bounded 検査を Redex model へ追加する。

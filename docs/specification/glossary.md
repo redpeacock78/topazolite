@@ -258,8 +258,8 @@
 
 ### Ω（place 状態）
 
-- **定義**：place から利用状態への有限写像。G1 では状態を `Available`、`Moved`、`Dropped` の三値とする。borrow 状態（`SharedBorrowed<n>`、`MutBorrowed<r>`）は G5 で追加する。
-- **参照**：ホワイトペーパー §11.5.8、core-calculus.md §2、§5。
+- **定義**：place から利用状態への有限写像。状態は `Available`、`Moved`、`Dropped` の三値である。借用の状態は Ω へ入れず、静的な記録 Ψ が別に持つ（borrow.md §4）。
+- **参照**：ホワイトペーパー §11.5.8、core-calculus.md §2、§5、borrow.md §4。
 - **関連要件 ID**：OWN-001、OWN-002、OWN-003。
 
 ### Ξ（place typing）
