@@ -496,18 +496,18 @@ field 型への `Owned<_>` の禁止は G1 の制限である。
 
 ### 4.3 関数と Narrative 適用
 
-G1 の関数引数の型は `Owned<_>` の形を含まない。
-β 簡約（§5.3 R-Beta）は引数値を項へ直接置換するため、Owned 引数を許すと place を経由しない affine 資源の複製経路が生まれる（E-Construct の field 禁止、E-Curry の固定引数禁止と同じ理由による G1 の制限である）。
-G1 で Owned 値を束縛する経路は `let`（R-LetOwned が place を確保する）だけであり、affine 資源の関数引数渡しと closure 捕捉は G5 の borrow 設計と併せて扱う。
+関数引数の署名は `Owned<_>` の形を含みうる。
+E-Lambda は `Owned` の仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
+β 簡約（§5.3 R-Beta）は実引数の値を生名の位置へ置換する。
+置換の結果として `Let` の右辺に来た値は R-LetOwned が place へ移すため、引数値は place を経由して管理される。
 
 関数は、外側の `Owned<_>` 束縛を body で参照することもできない（E-Lambda と E-Recur の自由変数条件）。
 これを許すと、R-LetOwned が置換した place の Move(p) が関数値の中に残り、関数値の複製が place を経由しない複製経路になるうえ、scope の外へ持ち出された関数値が `Dropped` な place を保持するためである。
-G1 の Owned 値は、引数と捕捉のどちらの経路でも関数境界を越えない。
+`Owned` の仮引数は生成された `Let` を通じて関数境界を越えるが、外側の `Owned` 束縛を closure が捕捉する経路はこれまでどおり拒否する。
 
 **(E-Lambda)** [REQ: EFF-001]
 
 ```text
-各 τi は Owned<_> の形でない
 e の自由変数のうち x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
 b fresh
 ℓ fresh                                            （CallableId、§3.3）
@@ -518,12 +518,24 @@ B' = push(B, FunctionBoundary(b, τ))
 --------------------------------
 Γ; Δ; Π; B ⊢ fn(x1 : τ1, …, xk : τk) -> τ ! εdecl  e
   ⇒ NFn<(τ1, …, τk), τ, εdecl', ⟨⟩> ! {}
-  ⟹ Lam(User, ℓ, (x1, …, xk),
-       Handle(Return<b, τ>, x -> x, Scope(∅, c)))
+  ⟹ Lam(User, ℓ, (y1, …, yk),
+       Handle(Return<b, τ>, x -> x,
+              Scope(∅, Let(xi1 : Owned<τi1>, yi1,
+                        … Let(xim : Owned<τim>, yim, c) …))))
   かつ Φ(ℓ) = NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>
 ```
 
+ここで yi は、位置 i が `Owned` のときは生名、そうでないときは surface が書いた名前そのものである。
+`Let` の入れ子の順序は仮引数の位置の順序に一致する。
+生名は対応する `Let` の右辺にちょうど 1 回だけ現れ、それ以外の位置には現れない。
+`Let` の binder は surface が書いた仮引数の名前であり、束縛の様式は `let` である。
+Φ に登録する署名は、`Owned` の位置の型を `Owned<τi>` のまま持つ。
+生名への読み替えは Core の項の側だけに起こる。
+呼出し側は実引数を `Owned<τi>` として検査され、`move p` の形を要求される。
+内側に別の `Fn` を書いて外側の `Owned` の仮引数を捕捉する形は、これまでどおり拒否する。
+
 関数抽象は自身の FunctionBoundary を push し、body を Return handler と Scope で包む。
+`Owned` の仮引数に対応する `Let` はこの Scope の直下に置かれ、R-LetOwned が呼出しごとに place を確保する。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
 ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
@@ -621,7 +633,6 @@ B' = push(B, ExpressionBoundary(b, τ))
 **(E-Recur)** [REQ: RET-003] [REQ: REC-001] [REQ: EFF-001]
 
 ```text
-各 τi は Owned<_> の形でない
 e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
 r fresh                                            （CallableId、§3.3。表層名 f とは別に割り当てる）
 ε' = resolveReturn(B, εdecl)
@@ -629,16 +640,36 @@ r fresh                                            （CallableId、§3.3。表�
 Γf, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇐ τ ! εbody ⟹ c1
 εbody ⊆ ε'
 Γf; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
-Recur(r, f, (x1, …, xk), c1, c2) ⇓class κc      （§6.2）
+Recur(r, f, (y1, …, yk),
+      Scope(∅, Let(xi1 : Owned<τi1>, yi1,
+                … Let(xim : Owned<τim>, yim, c1) …)),
+      c2) ⇓class κc      （§6.2）
 κc = Unknown ならば Partial ∈ ε'
 --------------------------------
 Γ; Δ; Π; B ⊢ recur f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
-  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (x1, …, xk), c1, c2)
+  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk),
+                     Scope(∅, Let(xi1 : Owned<τi1>, yi1,
+                               … Let(xim : Owned<τim>, yim, c1) …)),
+                     c2)
   かつ Φ(r) = NFn<(τ1, …, τk), τ, ε', ⟨⟩>
 ```
 
-Owned 引数と Owned 束縛の捕捉の禁止は Lambda と同じ理由による（§4.3）。
-R-RecurUnfold（§5.4）も引数値を body へ直接置換し、f の適用のたびに body（外側の place への Move を含みうる）を複製するためである。
+Owned 束縛の捕捉の禁止は Lambda と同じ理由による（§4.3）。
+
+R-RecurBind（§5.4）が生成する `RecurVal` は次の形を持つ。
+
+```text
+RecurVal(r, f, (y1, …, yk),
+         Scope(∅, Let(xi1 : Owned<τi1>, yi1,
+                   … Let(xim : Owned<τim>, yim, c1) …)))
+```
+
+ここで `Scope` は `Let` の連なりの外側にあり、連なりの直後に元の本体 c1 が来る。
+継続 c2 は `Scope` の外にあり、包みの影響を受けない。
+再帰の関数名 f は `Scope` の外で束縛され、位置は変わらない。
+m が 0 のとき、つまり `Owned` の仮引数が無いとき、`Scope` も `Let` も入らない。節の形はこれまでと同一である。
+recur は関数境界を押さないため、包まないと呼出し側の `Scope` へ place が積み上がる。
+R-RecurUnfold（§5.4）は本体を複製するが、各呼出しの引数の place はその呼出しの `Scope` が管理する。
 計算分類は、継続 c2 を含む Recur 項全体に対して行う（C-Guarded は c2 が f の適用であることも検査する。§6.2）。
 r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
@@ -1231,6 +1262,13 @@ r は分類に関与しない（Recur の識別だけに使い、条件には現
 継続 c2 の適用には引数位置の条件を課さない。
 初回呼び出しの引数が何であっても、body の中の再帰引数が毎回小さくなれば簡約は停止するためである。
 f を適用以外の位置（curry の引数、constructor の field、返り値）で使う項は C-Structural の対象外である。
+
+`Owned` の仮引数を持つ `Recur` の本体は `Scope` と `Let` の連なりに包まれる。
+分類は署名の `Owned` の位置の個数だけ包みを外してから本体を見る。
+外す個数は署名が決める。形を推測して受かるまで剥がすことはしない。
+包みを外した本体を見る環境は、`Let` の binder を宣言型 `Owned<τ>` で足したものである。
+`Owned` でない位置の構造的減少の判定は、包みの前後で変わらない。
+`Owned` の位置そのものを根とする構造的減少は、現行の型体系では書けない。`Eliminate` は `Owned<τ>` を data 型へ剥がさないためである。
 
 **(C-Guarded)** [REQ: REC-002]
 
