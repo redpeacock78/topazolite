@@ -162,12 +162,25 @@
     [(list core _ _ callables) (classify core '() callables)]
     [other (error 'classification-of "elaboration failed: ~s" other)]))
 
-;; R-RecurBind を一度だけ適用し、生成された RecurVal を含む本体を取り出す。
+;; R-RecurBind と実引数の評価と R-RecurUnfold を順に適用し、展開された
+;; 本体を取り出す。
 (define (reduce-owned-recur source)
   (define core (erase-core (elaborate-surface source)))
   (match (raw-steps-g2 `(cfg ,core () () ()))
-    [(list next) (second next)]
-    [other (error 'reduce-owned-recur "expected one reduction: ~s" other)]))
+    [(list bound)
+     (match (raw-steps-g2 bound)
+       [(list evaluated-argument)
+        (match (raw-steps-g2 evaluated-argument)
+          [(list unfolded) (second unfolded)]
+          [other
+           (error 'reduce-owned-recur
+                  "expected R-RecurUnfold after argument evaluation: ~s"
+                  other)])]
+       [other
+        (error 'reduce-owned-recur
+               "expected argument evaluation after R-RecurBind: ~s"
+               other)])]
+    [other (error 'reduce-owned-recur "expected R-RecurBind: ~s" other)]))
 
 (define (scope-count-of core)
   (cond
@@ -175,12 +188,6 @@
     [(and (pair? core) (eq? (car core) 'Scope))
      (+ 1 (scope-count-of (third core)))]
     [else (apply + (map scope-count-of core))]))
-
-(define (expected-unfold-count core)
-  (cond
-    [(not (list? core)) 0]
-    [(and (pair? core) (eq? (car core) 'RecurVal)) 1]
-    [else (apply + (map expected-unfold-count core))]))
 
 ;; 段 1
 (test-case
@@ -416,8 +423,11 @@
 (test-case
  "展開のたびに RecurVal が自分の Scope を持つ"
  (define traced (reduce-owned-recur owned-recur-surface))
- (check-equal? (scope-count-of traced)
-               (expected-unfold-count traced)))
+ (match traced
+   [`(Scope () (Let ,_ ,_ ,_))
+    ;; 外側の Scope と、次の展開を待つ RecurVal の本体の Scope を数える。
+    (check-equal? (scope-count-of traced) 2)]
+   [_ (fail "R-RecurUnfold 後の本体が Scope と Let で包まれていない")]))
 
 (test-case
  "Yield で守られた再帰は Owned の仮引数の有無で分類を変えない"
@@ -428,6 +438,8 @@
 
 (test-case
  "data の位置の structural は Owned の仮引数を足しても変わらない"
+ (check-equal? (classification-of structural-with-owned-surface)
+               '(Finite structural))
  (check-equal? (classification-of structural-with-owned-surface)
                (classification-of structural-without-owned-surface)))
 
