@@ -521,6 +521,12 @@ record の field への借用を親の借用から作れる。
 - **由来**：ホワイトペーパー §11.5.8
 - **内容**：`Let` の束縛へ、借用でない計算した値を新しい place として載せる経路を開く。
 
+### OWN-006 `Owned` を取る仮引数
+
+- **状態**：G5
+- **由来**：ホワイトペーパー §4.7
+- **内容**：関数と再帰関数は `Owned<τ>` の仮引数を宣言でき、渡された値は呼出された側の `Scope` が管理する place へ載る
+
 ### PTR-001
 
 - **状態**：G5
@@ -694,13 +700,18 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
 | view が運ぶ region の外へ出る流れ | `borrow.md` §14 | G5c5c | §15 |
-| `Owned` を取る仮引数と捕捉 | `borrow.md` §8 | G5c5b | §4.7 |
+| `Owned` を捕捉する closure | `borrow.md` §8 | G5c5b | §4.7 |
+| `Owned` の位置を根とする構造的減少 | `core-calculus.md` §6.2 | G5c5c | 無し |
 | ⊢config の Ξ を heap の値の型から導く | `core-calculus.md` §5.1 | G5c6 | 無し |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 4 件は、同節の項目に対応して本表へ記載している。
 所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
+
+`Owned` の位置を根とする構造的減少を G5c5c の他の行へ含めないのは、`Eliminate` が `Owned<τ>` を data 型へ剥がさないという型体系側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
+この制限の理由は `core-calculus.md` §6.2 に書いてあり、本表の記載元もその節を指す。
+ホワイトペーパーに対応する節が無いため、4 列目は「無し」である。
 
 本表の検査は `model/redex/tests/handoff-table-test.rkt` が行う。
 検査するのは記載元のファイルと節見出しが実在することだけである。

@@ -153,6 +153,9 @@ region 欄が具体的な region か、束縛されていない `rp` であれ�
 結果型だけを開くと仮引数と捕捉が判定を持たないため、3 つを同じ判定で扱う。
 対象は `Lam`、`Recur`、`RecurVal`、`Curry`、`Apply` である。
 
+関数と再帰関数は `Owned<τ>` の仮引数を宣言できる。
+呼出し側から渡された値は、呼出された側の `Scope` が管理する place へ載る。 [REQ: OWN-006]
+
 判定は型木を再帰的に走査する。
 直下の形だけを見る判定では、`(Union (Borrowed τ ρ) τ')` や仮引数列の 2 番目だけが借用の `NFn` がそのまま通ってしまう。
 走査は `Union`、`Intersection`、`Record`、`List`、`Option`、`Result`、`Refined`、`Untrusted`、`NFn` の τ 欄すべてに入る。

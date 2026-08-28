@@ -1,6 +1,7 @@
 #lang racket
 
 ;; G5c5b1。Owned を取る仮引数の符号化を検査する。
+;; [REQ: OWN-006] Owned の仮引数を取る関数と再帰関数。
 (require rackunit
          racket/match
          "../classify.rkt"
