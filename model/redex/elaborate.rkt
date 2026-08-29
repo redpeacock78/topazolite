@@ -474,6 +474,13 @@
           [(pair? node) (loop (cdr node) (loop (car node) acc))]
           [else acc])))
 
+    (define (function-reserved-names function arguments environment)
+      (for/fold ([taken
+                  (set-union (form-symbols function)
+                             (list->set (map first environment)))])
+                ([argument (in-list arguments)])
+        (set-union taken (form-symbols argument))))
+
     ;; 採った候補を予約集合へ加えてから次の位置へ進む。elab 全体で共有する
     ;; 連番を使うため、入れ子の Fn の間でも生名は重ならない。同じ入力に
     ;; 対して同じ名前が出るため、凍結 fixture と試験の期待値が安定する。
@@ -501,6 +508,38 @@
       (define-values (names _)
         (fresh-owned-names/all parameter-types reserved))
       names)
+
+    ;; 関数位置の Owned<NFn ...> を一時的な place へ載せる。Core を再度
+    ;; synth へ通すと同じ正規化が再発火するため、judgment だけを差し替える。
+    (define (normalize-owned-function result function-span reserved)
+      (define type (judgment-type result))
+      (define core (judgment-core result))
+      (define root (peel-node core))
+      (cond
+        [(not (owned-function-type? type)) (values result #f)]
+        [(and (pair? root) (memq (car root) owned-function-roots))
+         (values result #f)]
+        [else
+         (define name (fresh-owned-name reserved))
+         (values
+          (judgment `(Move ,function-span (#:var ,name ,function-span))
+                    type
+                    '(Own))
+          (list name type function-span core (judgment-row result)))]))
+
+    ;; 正規化した関数を Let へ閉じる。wrap が無い場合は元の judgment を返す。
+    (define (close-owned-function wrap body-result)
+      (cond
+        [(not wrap) body-result]
+        [else
+         (match-define (list name type name-span bound-core bound-row) wrap)
+         (judgment
+          `(Let ,name-span
+                ((#:bind ,name ,name-span) let (#:ty ,type ,name-span))
+                ,bound-core
+                ,(judgment-core body-result))
+          (judgment-type body-result)
+          (row-union bound-row (judgment-row body-result)))]))
 
     ;; 生名の binder は対応する仮引数の binder の span をそのまま持つ。
     ;; 名前だけを差し替えて位置は動かさない。G2+ は各仮引数へ
@@ -757,8 +796,13 @@
               lam-core signature s reserved-with-formals))]
 
         [`(Apply ,function ,arguments ...)
-         (define function-result
+         (define raw-function-result
            (synth function environment delta propositions boundaries))
+         (define reserved
+           (function-reserved-names function arguments environment))
+         (define-values (function-result wrap)
+           (normalize-owned-function raw-function-result (span-of function)
+                                     reserved))
          (define-values (function-type _function-owned?)
            (peel-owned-function-elab (judgment-type function-result)
                                      (judgment-core function-result)))
@@ -779,16 +823,18 @@
             (define applied
               `(Apply ,s ,(judgment-core function-result)
                       ,@(map judgment-core argument-results)))
-            (judgment
-             ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
-             ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
-             (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
-               `(Discharge ,s ,proof ,core))
-             return-type
-             (rows-union
-              (append (list (judgment-row function-result))
-                      (map judgment-row argument-results)
-                      (list latent-row))))]
+            (close-owned-function
+             wrap
+             (judgment
+              ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
+              ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
+              (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
+                `(Discharge ,s ,proof ,core))
+              return-type
+              (rows-union
+               (append (list (judgment-row function-result))
+                       (map judgment-row argument-results)
+                       (list latent-row)))))]
            [_ (reject s 'apply-non-function (judgment-type function-result))])]
 
         [`(Rec (,raw-fields ...))
@@ -1034,8 +1080,13 @@
                    (row-union (judgment-row result) '(Own)))]
 
         [`(Curry ,function ,argument)
-         (define function-result
+         (define raw-function-result
            (synth function environment delta propositions boundaries))
+         (define-values (function-result wrap)
+           (normalize-owned-function
+            raw-function-result
+            (span-of function)
+            (function-reserved-names function (list argument) environment)))
          (define-values (function-type function-owned?)
            (peel-owned-function-elab (judgment-type function-result)
                                      (judgment-core function-result)))
@@ -1047,14 +1098,16 @@
                      environment delta propositions boundaries))
             (define bare-result
               `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
-            (judgment
-             `(Curry ,s ,(judgment-core function-result)
-                     ,(judgment-core argument-result))
-             (if (or function-owned? (owned-type? first-type))
-                 `(Owned ,bare-result)
-                 bare-result)
-             (row-union (judgment-row function-result)
-                        (judgment-row argument-result)))]
+            (close-owned-function
+             wrap
+             (judgment
+              `(Curry ,s ,(judgment-core function-result)
+                      ,(judgment-core argument-result))
+              (if (or function-owned? (owned-type? first-type))
+                  `(Owned ,bare-result)
+                  bare-result)
+              (row-union (judgment-row function-result)
+                         (judgment-row argument-result))))]
            [_ (reject s 'curry-non-function function-type)])]
 
         [`(TypeMake ,spec)

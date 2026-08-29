@@ -6,6 +6,7 @@
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../span-core.rkt"
          "../typing.rkt")
 
 (define (elaboration-of source)
@@ -135,3 +136,164 @@
    (elaboration-of capture-one-surface))
  (check-not-false
   (member '(callable1 (NFn ((Owned Res)) Unit (Own) ())) callables)))
+
+;; inline の Apply。関数の位置に捕捉する closure を直に置く。
+(define inline-apply-surface
+  '(Fn ((p (Owned Res))) Unit (Own)
+       (Apply (Fn () Unit (Own) (Drop p)))))
+
+(test-case
+ "closure を inline で Apply する形が外側の Owned な Let へ正規化される"
+ (match-define (list core type row callables)
+   (elaboration-of inline-apply-surface))
+ (check-equal? type '(NFn ((Owned Res)) Unit (Own) ()))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+;; inline の Curry。関数の位置に捕捉する closure を直に置く。
+(define inline-curry-surface
+  '(Fn ((p (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
+       (Curry (Fn ((n Int)) Unit (Own) (Drop p)) 1)))
+
+(test-case
+ "closure を inline で Curry する形が外側の Owned な Let へ正規化される"
+ (match-define (list core type row callables)
+   (elaboration-of inline-curry-surface))
+ (check-equal? type '(NFn ((Owned Res)) (Owned (NFn () Unit (Own) ())) (Own) ()))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+;; 宣言 row が空のため、捕捉した closure の Own を覆えない負例。
+(define undeclared-capture-surface
+  '(Fn ((p (Owned Res))) (Owned (NFn () Unit (Own) ())) ()
+       (Fn () Unit (Own) (Drop p))))
+
+(define (elaborate-diagnostic-of source)
+  (match (elab source)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [other (error 'elaborate-diagnostic-of
+                  "elaboration succeeded: ~s" other)]))
+
+(test-case
+ "捕捉する closure を作る式の row を宣言が覆わないと落ちる"
+ (check-equal? (elaborate-diagnostic-of undeclared-capture-surface)
+               "E-EFF-002"))
+
+;; Owned closure の名前参照は、関数位置でも Move を明示する。
+(define bound-capture-apply-surface
+  '(Fn ((p (Owned Res))) Unit (Own)
+       (Let g
+            (Fn () Unit (Own) (Drop p))
+            (Apply (Move g)))))
+
+(test-case
+ "捕捉する closure を g へ束ね、Move g で Apply すると通る"
+ (match-define (list core type row callables)
+   (elaboration-of bound-capture-apply-surface))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+(test-case
+ "Owned closure の裸の g を Apply すると E-OWN-010 で落ちる"
+ (check-equal?
+  (elaborate-diagnostic-of
+   '(Fn ((p (Owned Res))) Unit (Own)
+        (Let g
+             (Fn () Unit (Own) (Drop p))
+             (Apply g))))
+  "E-OWN-010"))
+
+(define (nodes-of term head)
+  (cond
+    [(and (pair? term) (eq? (car term) head))
+     (cons term (append-map (lambda (item) (nodes-of item head)) (cdr term)))]
+    [(pair? term)
+     (append-map (lambda (item) (nodes-of item head)) term)]
+    [else '()]))
+
+(define (normalization-let? node)
+  ;; spanful の fixture は義務を持たないため、ここでは body 直下の
+  ;; Curry/Apply だけを判定する。Discharge を含む形は対象外である。
+  (match node
+    [(list 'Let (list name 'let _type) _bound
+           (list (or 'Curry 'Apply) (list 'Move used) _ ...))
+     (equal? name used)]
+    [(list 'Let _span
+           (list (list '#:bind name _) 'let (list '#:ty _ _))
+           _bound
+           (list (or 'Curry 'Apply) _span2
+                 (list 'Move _span3 (list '#:var used _)) _ ...))
+     (equal? name used)]
+    [_ #f]))
+
+(define (count-moves-to term name)
+  (cond
+    [(and (pair? term)
+          (match term
+            [`(Move ,used) (equal? used name)]
+            [_ #f]))
+     1]
+    [(pair? term)
+     (for/sum ([item (in-list term)])
+       (count-moves-to item name))]
+    [else 0]))
+
+(define (normalization-lets core)
+  (filter normalization-let? (nodes-of core 'Let)))
+
+(define (normalization-body core)
+  (match (normalization-lets core)
+    [(list (list 'Let _binding _bound body)) body]
+    [other (error 'normalization-body "normalization Let が 1 件でない: ~s" other)]))
+
+;; サーフェイスの入れ子の Curry。内側の Curry の型が Owned<NFn (Int) …> になる。
+(define nested-curry-surface
+  '(Fn ((p (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
+       (Curry (Curry (Fn ((q (Owned Res)) (n Int)) Unit (Own) (Drop q))
+                     (Move p))
+              1)))
+
+(test-case
+ "サーフェイスの入れ子の Curry は正規化を経て通る"
+ (match-define (list core type row callables)
+   (elaboration-of nested-curry-surface))
+ (check-equal? (core-type-of core '() callables) (list type row))
+ (match (normalization-body (erase-core core))
+   [`(Curry (Move ,_) ,_) (void)]
+   [_ (fail "入れ子の Curry の関数位置が Move へ正規化されていない")]))
+
+(test-case
+ "正規化した関数を束ねる Let の bound と Move は 1 回ずつである"
+ (match-define (list core _type _row _callables)
+   (elaboration-of inline-apply-surface))
+ (define erased (erase-core core))
+ (match (normalization-lets erased)
+   [(list (list 'Let (list name 'let let-type) bound body))
+    (check-equal? let-type '(Owned (NFn () Unit (Own) ())))
+    (check-true (pair? bound))
+    (check-equal? (count-moves-to body name) 1)]
+   [_ (fail "inline Apply の正規化 Let が 1 件でない")]))
+
+(test-case
+ "正規化した Let の span は関数部分式の span である"
+ (match-define (list core _type _row _callables)
+   (elaboration-of nested-curry-surface))
+ (match (normalization-lets core)
+   [(list (list 'Let let-span _binding bound body))
+    (check-equal? let-span (span-of bound))
+    (check-not-equal? let-span (span-of body))]
+   [_ (fail "spanful な正規化 Let が 1 件でない")]))
+
+;; Core を直に書いた形。Curry ノードが関数の位置に残る。
+(define bare-nested-curry-core
+  '(Curry (Curry g (Move p)) 1))
+
+(define bare-nested-curry-environment
+  (list (list 'g '(NFn ((Owned Res) Int) Unit (Own) ()))
+        (list 'p '(Owned Res))))
+
+(define (owned-capture-diagnostic-of core environment)
+  (diagnostic-id (core-type-of/diagnostic core '() '() environment)))
+
+(test-case
+ "Core を直に書いた Curry の根は owned-function-requires-move で落ちる"
+ (check-equal? (owned-capture-diagnostic-of bare-nested-curry-core
+                                            bare-nested-curry-environment)
+               "E-OWN-025"))
