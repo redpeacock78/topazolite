@@ -50,8 +50,8 @@
 
 ;; Owned を 2 件捕捉する closure。
 (define capture-two-surface
-  '(Fn ((p (Owned Res)) (q (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
-       (Fn () Unit (Own) (Let r (Drop p) (Drop q)))))
+  '(Fn ((z (Owned Res)) (a (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
+       (Fn () Unit (Own) (Let r (Drop z) (Drop a)))))
 
 (test-case
  "Owned を 2 件捕捉する closure を elaborate できる"
@@ -102,9 +102,9 @@
    (elaboration-of capture-two-surface))
  (match (find-capture-let (erase-core core))
    [`(Let (,first-place let ,first-type)
-          (Curry (Lam User ,_ ,_ ,_) (Move p))
+          (Curry (Lam User ,_ ,_ ,_) (Move a))
           (Let (,second-place let ,second-type)
-               (Curry (Move ,moved-place) (Move q))
+               (Curry (Move ,moved-place) (Move z))
                (Move ,last-place)))
     (check-equal? first-type
                   '(Owned (NFn ((Owned Res)) Unit (Own) ())))

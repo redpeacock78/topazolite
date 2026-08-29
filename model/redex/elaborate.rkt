@@ -542,11 +542,11 @@
 
     ;; 捕捉を Curry の固定引数へ変換し、各段の Owned な残余関数を place へ
     ;; 載せる。返り値の row には最終 Move の Own も含める。
-    (define (wrap-captured-function captures capture-types capture-raw-names
+    (define (wrap-captured-function captures capture-types
                                     lam-core lam-type span reserved)
-      (define-values (place-names _)
+      (define-values (place-names _unused-taken)
         (for/fold ([names '()] [taken reserved])
-                  ([_ (in-list captures)])
+                  ([_capture (in-list captures)])
           (define name (fresh-owned-name taken))
           (values (cons name names) (set-add taken name))))
       (define places (reverse place-names))
@@ -557,9 +557,17 @@
       (for ([capture (in-list captures)]
             [place (in-list places)]
             [capture-type (in-list capture-types)])
-        (match current-type
+        (define signature
+          (if (owned-type? current-type)
+              (second current-type)
+              current-type))
+        (match signature
           [`(NFn (,first-type ,remaining-types ...)
                  ,return-type ,latent-row ,obligations)
+           (unless (equal? first-type capture-type)
+             (error 'wrap-captured-function
+                    "捕捉型と Curry の先頭引数型が一致しない: ~s ~s"
+                    capture-type first-type))
            (define residual
              `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
            (define argument-core
@@ -567,43 +575,23 @@
            (define curry-core
              `(Curry ,span ,current-core
                      (Move ,span ,argument-core)))
-           (define curry-row
-             (row-union current-row '(Own)))
            (set! stages
                  (cons (list place `(Owned ,residual) curry-core)
                        stages))
            (set! current-core `(Move ,span (#:var ,place ,span)))
            (set! current-type `(Owned ,residual))
-           (set! current-row curry-row)]
-          [`(Owned (NFn (,first-type ,remaining-types ...)
-                        ,return-type ,latent-row ,obligations))
-           (define residual
-             `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
-           (define argument-core
-             `(#:var ,capture ,span))
-           (define curry-core
-             `(Curry ,span ,current-core
-                     (Move ,span ,argument-core)))
-           (define curry-row
-             (row-union current-row '(Own)))
-           (set! stages
-                 (cons (list place `(Owned ,residual) curry-core)
-                       stages))
-           (set! current-core `(Move ,span (#:var ,place ,span)))
-           (set! current-type `(Owned ,residual))
-           (set! current-row curry-row)]
+           (set! current-row (row-union current-row '(Own)))]
           [_ (error 'wrap-captured-function
                    "捕捉の Curry 連鎖に非関数型を受けた: ~s"
                    current-type)]))
-      (define final-core `(Move ,span (#:var ,(last places) ,span)))
       (define nested
-        (for/fold ([acc final-core])
+        (for/fold ([acc current-core])
                   ([stage (in-list stages)])
           (match-define (list place type bound) stage)
           `(Let ,span ((#:bind ,place ,span) let (#:ty ,type ,span))
                 ,bound
                 ,acc)))
-      (judgment nested current-type (row-union current-row '(Own))))
+      (judgment nested current-type current-row))
 
     (define (check-many expressions types environment delta propositions boundaries span)
       (unless (= (length expressions) (length types))
@@ -765,7 +753,7 @@
          (if (null? captures)
              (judgment lam-core signature '())
              (wrap-captured-function
-              captures capture-types capture-raw-names
+              captures capture-types
               lam-core signature s reserved-with-formals))]
 
         [`(Apply ,function ,arguments ...)
