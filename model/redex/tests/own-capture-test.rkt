@@ -61,6 +61,12 @@
                           (Owned (NFn () Unit (Own) ())) (Own) ()))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
+(test-case
+ "捕捉の生名は関数境界の自由変数の検査を通る"
+ (match-define (list core type row callables)
+   (elaboration-of capture-two-surface))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
 ;; 捕捉が 0 件なら素の NFn を返す。
 (define capture-none-surface
   '(Fn ((n Int)) (NFn () Int () ()) ()

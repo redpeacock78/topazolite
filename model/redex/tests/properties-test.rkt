@@ -300,8 +300,22 @@
   (and (<= (length before) (length after))
        (equal? before (take after (length before)))))
 
-(define (affine-safety/using source inject-core trace)
-  (define-values (core _type _declared-row _callables) (artifact source))
+;; G5c5b2 の合成 closure は G2 の let 注釈で place を表す。G1 の性質 7
+;; へ渡す既存の機械は spanless G1 Let を受けるため、let 様式だけを同値な
+;; G1 の型注釈へ落とす。const を含む G2 の生成項はこの経路を通らない。
+(define (strip-let-binding-modes term)
+  (match term
+    [`(Let (,name let ,type) ,bound ,body)
+     `(Let (,name ,type)
+           ,(strip-let-binding-modes bound)
+           ,(strip-let-binding-modes body))]
+    [(? list? items) (map strip-let-binding-modes items)]
+    [_ term]))
+
+(define (affine-safety/using source inject-core trace
+                             #:core-transform [core-transform values])
+  (define-values (raw-core _type _declared-row _callables) (artifact source))
+  (define core (core-transform raw-core))
   (define result
     (trace (inject-core core) (bounds-fuel limits)))
   (define configs (execution-configs result))
@@ -368,7 +382,8 @@
                     'Available))))))
 
 (define (affine-safety? source)
-  (affine-safety/using source inject bounded-trace))
+  (affine-safety/using source inject bounded-trace
+                       #:core-transform strip-let-binding-modes))
 
 (define (affine-safety-g2? source)
   (affine-safety/using source inject-g2 bounded-trace-g2))
@@ -435,7 +450,43 @@
 
   (bounded-check
    "OWN-001/OWN-002/OWN-003: property 7 affine safety"
-   g-own affine-safety?)
+   g-own-g5 affine-safety?)
+
+  (define owned-closure-sources
+    '((Let item (Apply acquire 1)
+           (Apply (Fn () Unit (Own) (Drop item))))
+      (Let item (Apply acquire 1)
+           (Let f (Fn () Unit (Own) (Drop item))
+                (Apply (Move f))))
+      (Let item (Apply acquire 1)
+           (Let g (Fn ((q (Owned Res))) Unit (Own) (Drop q))
+                (Let h (Curry g (Move item))
+                     (Apply (Move h)))))))
+
+  (test-case
+   "捕捉と固定引数を含む項が性質 7 を満たす"
+   (for ([source (in-list owned-closure-sources)])
+     (check-true (affine-safety? source) (format "~s" source))))
+
+  (define double-move-closure-source
+    '(Let item (Apply acquire 1)
+          (Let f (Fn () Unit (Own) (Drop item))
+               (Let ignored (Apply (Move f))
+                    (Apply (Move f))))))
+
+  (test-case
+   "捕捉する closure の 2 回目の Move が R-MoveError で止まる"
+   (define-values (raw-core _type _row _callables)
+     (artifact double-move-closure-source))
+   (define core (strip-let-binding-modes raw-core))
+   (define result (bounded-trace (inject core) (bounds-fuel limits)))
+   (define configs (execution-configs result))
+   (define error-count
+     (for/sum ([configuration (in-list configs)])
+       (for/sum ([place (in-list (map first (config-states configuration)))])
+         (tree-count (config-core configuration) `(Error ,place)))))
+   (check-true (> error-count 0))
+   (check-true (affine-safety? double-move-closure-source)))
 
   (define (row-001? source)
     (match (elaboration-result source)

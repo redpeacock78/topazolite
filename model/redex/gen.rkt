@@ -79,6 +79,24 @@
               (Let saved (Move item) (Move item)))
          (Apply (Fn () Int (Own)
                     (Let item (Apply acquire gn) (Return gn)))))
+  (g-own-g5 ::= g-own
+         ;; Owned を 1 件捕捉する closure を inline で呼ぶ。
+         (Let item (Apply acquire gn)
+              (Apply (Fn () Unit (Own) (Drop item))))
+         ;; 捕捉する closure を place へ束ね、Move 経由で 1 回呼ぶ。
+         (Let item (Apply acquire gn)
+              (Let f (Fn () Unit (Own) (Drop item))
+                   (Apply (Move f))))
+         ;; 捕捉する closure を 2 回 Move する。2 回目が R-MoveError で止まる。
+         (Let item (Apply acquire gn)
+              (Let f (Fn () Unit (Own) (Drop item))
+                   (Let ignored (Apply (Move f))
+                        (Apply (Move f)))))
+         ;; Owned を固定引数に取る Curry を Move 経由で呼ぶ。
+         (Let item (Apply acquire gn)
+              (Let g (Fn ((q (Owned Res))) Unit (Own) (Drop q))
+                   (Let h (Curry g (Move item))
+                        (Apply (Move h))))))
   (g-type ::= gt)
   (ga-list ::= (Construct nil (Types Int))
                (Construct cons (Types Int) gn ga-list))
