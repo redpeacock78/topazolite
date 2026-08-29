@@ -74,9 +74,10 @@
  (check-equal? (since-count 4) 12)
  (check-equal? (since-count 5) 4)
  (check-equal? (since-count 7) 2)
- ;; version 6 で E-BOR-024 を、version 7 で E-OWN の 3 行を廃止した。
+ ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
-   '(("E-BOR-024" . 6) ("E-OWN-006" . 7)
+   '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-006" . 7)
+     ("E-OWN-014" . 8)
      ("E-OWN-009" . 7) ("E-OWN-015" . 7)))
  (for ([row (in-list diagnostic-registry)])
    (define expected (assoc (diagnostic-code-code row) deprecated-map))
@@ -162,13 +163,13 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 7 である"
+ "schema version は 3、registry version は 8 である"
  (check-equal? diagnostic-schema-version 3)
- (check-equal? diagnostic-registry-version 7))
+ (check-equal? diagnostic-registry-version 8))
 
 (test-case
- "typing の registry version 7 と入口 key"
- (check-equal? diagnostic-registry-version 7)
+ "typing の registry version 8 と入口 key"
+ (check-equal? diagnostic-registry-version 8)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 
@@ -409,7 +410,7 @@
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
- (check-equal? (length reasons) 49)
+ (check-equal? (length reasons) 48)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

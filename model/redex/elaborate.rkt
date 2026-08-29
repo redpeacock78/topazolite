@@ -636,7 +636,9 @@
           `(Lam ,s User ,callable ,core-binders
                 (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
                         (,s (#:bind return-value ,s) ->
-                            (#:var return-value ,s))
+                            ,(if (owned-type? return-type)
+                                 `(Move ,s (#:var return-value ,s))
+                                 `(#:var return-value ,s)))
                         (Scope ,s ()
                                ,(wrap-owned-lets parameter-binders
                                                  parameter-types raw-names
@@ -921,21 +923,25 @@
         [`(Curry ,function ,argument)
          (define function-result
            (synth function environment delta propositions boundaries))
-         (match (judgment-type function-result)
+         (define-values (function-type function-owned?)
+           (values (judgment-type function-result) #f))
+         (match function-type
            [`(NFn (,first-type ,remaining-types ...)
                   ,return-type ,latent-row ,obligations)
-            (when (owned-type? first-type)
-              (reject s 'owned-curry-argument))
             (define argument-result
               (check argument first-type
                      environment delta propositions boundaries))
+            (define bare-result
+              `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
             (judgment
              `(Curry ,s ,(judgment-core function-result)
                      ,(judgment-core argument-result))
-             `(NFn ,remaining-types ,return-type ,latent-row ,obligations)
+             (if (or function-owned? (owned-type? first-type))
+                 `(Owned ,bare-result)
+                 bare-result)
              (row-union (judgment-row function-result)
                         (judgment-row argument-result)))]
-           [_ (reject s 'curry-non-function (judgment-type function-result))])]
+           [_ (reject s 'curry-non-function function-type)])]
 
         [`(TypeMake ,spec)
          (unless (authorized? propositions)
@@ -1002,7 +1008,10 @@
          (define own-return `((Return ,boundary ,expected)))
          (judgment
           `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
-                   (,s (#:bind return-value ,s) -> (#:var return-value ,s))
+                   (,s (#:bind return-value ,s) ->
+                       ,(if (owned-type? expected)
+                            `(Move ,s (#:var return-value ,s))
+                            `(#:var return-value ,s)))
                    (Scope ,s () ,(judgment-core body-result)))
           expected
           (row-difference (judgment-row body-result) own-return))]

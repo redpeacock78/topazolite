@@ -225,12 +225,13 @@
      (NFn (Int) Int () ())
      ()
      ()))
-  (check-true
-   (elaboration-error?
-    (elab
-     '(Fn ((f (NFn ((Owned Res)) Unit () ())))
-          (NFn () Unit () ()) ()
-          (Curry f (Apply acquire 1)))))))
+  (match-define (list _core curry-type _row _callables)
+    (elab '(Fn ((f (NFn ((Owned Res)) Unit () ())))
+              (Owned (NFn () Unit () ())) (Own)
+              (Curry f (Apply acquire 1)))))
+  (check-equal? curry-type
+                '(NFn ((NFn ((Owned Res)) Unit () ()))
+                      (Owned (NFn () Unit () ())) (Own) ())))
 
 (test-case "E-Construct/E-Eliminate: expected and explicit type arguments"
   (match-define (list raw-core direct-type direct-row direct-callables)

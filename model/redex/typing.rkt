@@ -1408,6 +1408,12 @@
       (and (not (owned-type? actual))
            (type-compatible? `(Owned ,actual) expected))))
 
+;; 固定引数と関数のどちらかが Owned なら、結果の関数型も Owned で包む。
+;; 包んだ型は Move を経由してのみ関数の位置へ置ける（§5.4）。
+(define (curry-result-type remaining-types return-type latent-row obligations owned?)
+  (define bare `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+  (if owned? `(Owned ,bare) bare))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
@@ -1856,18 +1862,18 @@
            (fail 'borrowed-function-result function obligations)])
         (unless (null? function-row)
           (fail 'effectful-curry-operand function))
-        (when (owned-type? first-type)
-          (fail 'owned-curry-argument argument))
+        (define function-owned? #f)
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
                     function-psi
-                    environment places callables fail))
+                    environment places callables fail
+                    (if (owned-type? first-type)
+                        owned-lift-compatible?
+                        type-compatible?)))
         (unless (null? (first argument-row))
           (fail 'effectful-curry-operand argument))
-        (list `(NFn ,remaining-types
-                    ,return-type
-                    ,latent-row
-                    ,obligations)
+        (list (curry-result-type remaining-types return-type latent-row obligations
+                                 (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
        [_ (fail 'curry-non-function function)])]
@@ -2370,16 +2376,13 @@
            (fail 'borrowed-function-result function)]
           [borrowed-obligations?
            (fail 'borrowed-function-result function obligations)])
-        (when (owned-type? first-type)
-          (fail 'owned-curry-argument argument))
+        (define function-owned? #f)
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
                     function-psi
                     environment places callables fail))
-        (list `(NFn ,remaining-types
-                    ,return-type
-                    ,latent-row
-                    ,obligations)
+        (list (curry-result-type remaining-types return-type latent-row obligations
+                                 (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
        [_ (fail 'curry-non-function function)])]

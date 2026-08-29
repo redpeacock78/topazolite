@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 7)
+(define diagnostic-registry-version 8)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -72,7 +72,6 @@
     ("E-OWN-001" drop-non-owned "Drop の対象が owned でない")
     ("E-OWN-002" move-non-owned "Move の対象が owned でない")
     ("E-OWN-003" owned-constructor-field "構築子の field に owned を置けない")
-    ("E-OWN-004" owned-curry-argument "Curry の引数に owned を置けない")
     ("E-OWN-005" owned-function-capture "関数が owned を捕捉している")
     ("E-OWN-007" owned-record-field "record の field に owned を置けない")
     ("E-OWN-008" owned-recur-capture "recur が owned を捕捉している")
@@ -127,7 +126,6 @@
     ("E-OWN-011" drop-non-owned "Drop の対象が owned でない")
     ("E-OWN-012" move-non-owned "Move の対象が owned でない")
     ("E-OWN-013" owned-constructor-field "構築子の field に owned を置けない")
-    ("E-OWN-014" owned-curry-argument "Curry の引数に owned を置けない")
     ("E-OWN-016" owned-record-field "record の field に owned を置けない")
     ("E-OWN-017" owned-refined-payload "Refined の中身に owned を置けない")
     ("E-OWN-018" owned-untrusted-payload "Untrusted の中身に owned を置けない")
@@ -218,6 +216,8 @@
 (define deprecated-typing-entries
   (list (diagnostic-code "E-BOR-024" 'typing 'capability-in-eliminate
                          "分岐の仮引数へ能力を配る形は未対応" 4 6)
+        (diagnostic-code "E-OWN-014" 'typing 'owned-curry-argument
+                         "Curry の引数に owned を置けない" 2 8)
         (diagnostic-code "E-OWN-015" 'typing 'owned-function-parameter
                          "関数の仮引数に owned を置けない" 2 7)))
 
@@ -225,7 +225,9 @@
 ;; 仮引数の位置で落とす場所が無くなる。行は registry に残す。番号の再利用と
 ;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
 (define deprecated-elaborate-entries
-  (list (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
+  (list (diagnostic-code "E-OWN-004" 'elaborate 'owned-curry-argument
+                         "Curry の引数に owned を置けない" 1 8)
+        (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
                          "関数の仮引数に owned を置けない" 1 7)
         (diagnostic-code "E-OWN-009" 'elaborate 'owned-recur-parameter
                          "recur の仮引数に owned を置けない" 1 7)))

@@ -357,6 +357,12 @@
                "E-OWN-023"))
 
 (test-case
+ "Owned を返す Fn の核が型付く"
+ (match-define (list core type row callables) (elab owned-identity-surface))
+ (check-equal? type '(NFn ((Owned Res)) (Owned Res) (Own) ()))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+(test-case
  "Let の宣言型が署名と食い違う Typed Core を拒否する"
  (check-equal? (typing-diagnostic-of broken-let-type-core)
                "E-OWN-023"))

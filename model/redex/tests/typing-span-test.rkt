@@ -191,7 +191,6 @@
     ;; OWN
     drop-non-owned move-non-owned own-binding-borrowed-payload
     owned-constructor-field
-    owned-curry-argument
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
     owned-refined-payload owned-untrusted-payload
@@ -468,12 +467,6 @@
                           (reach-lit 1 440 441)
                           (reach-lit 2 445 446))
               '() '() '() (reach-span 440 441))
-   (reach-row 'owned-curry-argument
-              (reach-node 'Curry 449 460
-                          (reach-var 'g 450 451)
-                          (reach-node 'resource 455 459 0))
-              '() '() '((g (NFn ((Owned Res)) Unit () ())))
-              (reach-span 455 459))
    (reach-row 'unknown-callable
               (reach-node 'Lam 461 470 'User 'missing
                           (list (reach-bind 'x 462 463))
@@ -787,13 +780,13 @@
                           '(0))
               '() '() '() (reach-span 1451 1470))))
 
-(test-case "typing の producer key 集合が registry v7 と一致する"
+(test-case "typing の producer key 集合が registry v8 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 78)
+  (check-equal? (length producer-keys) 77)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
