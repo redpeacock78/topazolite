@@ -67,8 +67,8 @@
             (Fn ((q (Owned Res))) Unit (Own) (Drop q))
             (Drop p))))
 (define owned-capture-surface
-  '(Fn ((p (Owned Res))) Unit ()
-       (Fn () Unit () (Move p))))
+  '(Fn ((p (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
+       (Fn () Unit (Own) (Drop p))))
 
 (define owned-recur-surface
   '(Recur f ((item (Owned Res))) Unit ((Yield Int))
@@ -200,7 +200,8 @@
                               '((Owned Res) Int)))
  (check-equal? (assoc 'owned0 result) '(owned0 Res))
  (check-equal? (assoc 'n result) '(n Int))
- ;; 外側の Owned は落ちる。捕捉の禁止は G5c5b2 まで有効である。
+ ;; 外側の Owned は落ちる。捕捉は仮引数として渡すため、本体の環境へ
+ ;; 外側の Owned を入れる必要が無い。
  (check-false (assoc 'outer result))
  (check-equal? (assoc 'plain result) '(plain Int)))
 
@@ -394,9 +395,11 @@
                "E-OWN-023"))
 
 (test-case
- "Owned の仮引数を内側の Fn が捕捉する surface を拒否する"
- (check-equal? (elaborate-diagnostic-of owned-capture-surface)
-               "E-OWN-005"))
+ "Owned の仮引数を内側の Fn が捕捉する surface を受け入れる"
+ (match-define (list core type row callables) (elab owned-capture-surface))
+ (check-equal? type '(NFn ((Owned Res))
+                          (Owned (NFn () Unit (Own) ())) (Own) ()))
+ (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case
  "Owned の借用 payload を取る仮引数を拒否する"

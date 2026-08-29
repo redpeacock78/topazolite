@@ -127,7 +127,7 @@
   (check-false
    (elaboration-error?
     (elab '(Recur f ((item (Owned Res))) Unit (Partial) unit unit))))
-  (check-true
+  (check-false
    (elaboration-error?
     (elab
      '(Let item (Apply acquire 1)

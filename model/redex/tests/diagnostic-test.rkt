@@ -77,7 +77,8 @@
  (check-equal? (since-count 8) 1)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
-   '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-006" . 7)
+   '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
+     ("E-OWN-006" . 7)
      ("E-OWN-009" . 7) ("E-OWN-014" . 8) ("E-OWN-015" . 7)))
  (for ([row (in-list diagnostic-registry)])
    (define expected (assoc (diagnostic-code-code row) deprecated-map))
@@ -410,7 +411,7 @@
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
- (check-equal? (length reasons) 48)
+ (check-equal? (length reasons) 47)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

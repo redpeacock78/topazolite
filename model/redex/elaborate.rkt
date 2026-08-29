@@ -99,6 +99,9 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+;; Owned の関数を関数の位置へ置くときに place を経由する根。
+(define owned-function-roots '(Move CurryVal))
+
 ;; 関数の位置の Owned<NFn ...> を一段だけ剥がす。elaborate では拒否せず、
 ;; 型が関数でない形は後段の既存の non-function 判定へ渡す。
 (define (owned-function-type? type)
@@ -111,7 +114,7 @@
     [(not (owned-function-type? type)) (values type #f)]
     [else
      (define worn (peel-node core))
-     (if (and (pair? worn) (memq (car worn) '(Move CurryVal)))
+     (if (and (pair? worn) (memq (car worn) owned-function-roots))
          (values (second type) #t)
          (values type #f))]))
 
@@ -378,7 +381,7 @@
     [`(LetType ,_ (TypeMake ,_) ,body) (free-vars/erased body)]
     [_ (set)]))
 
-(define (captures-owned? expression locally-bound environment)
+(define (owned-captures expression locally-bound environment)
   (define visible-environment
     (for/fold ([visible '()])
               ([entry (in-list environment)])
@@ -389,11 +392,15 @@
     (for/set ([entry (in-list visible-environment)]
               #:when (owned-type? (second entry)))
       (first entry)))
-  (not
-   (set-empty?
+  (sort
+   (set->list
     (set-intersect
      (set-subtract (free-vars expression) (list->set locally-bound))
-     outer-owned))))
+     outer-owned))
+   symbol<?))
+
+(define (captures-owned? expression locally-bound environment)
+  (pair? (owned-captures expression locally-bound environment)))
 
 ;; §5: Diagnostic の生成は 1 箇所へ集約する。reject は struct を組み立てず、
 ;; registry の引き当てと欄の検証を通る経路をここへ揃える。
@@ -470,23 +477,30 @@
     ;; 採った候補を予約集合へ加えてから次の位置へ進む。elab 全体で共有する
     ;; 連番を使うため、入れ子の Fn の間でも生名は重ならない。同じ入力に
     ;; 対して同じ名前が出るため、凍結 fixture と試験の期待値が安定する。
+    (define (fresh-owned-name reserved)
+      (let next ()
+        (define candidate
+          (string->symbol (format "owned~a" owned-counter)))
+        (set! owned-counter (add1 owned-counter))
+        (if (set-member? reserved candidate)
+            (next)
+            candidate)))
+
+    (define (fresh-owned-names/all parameter-types reserved)
+      (let loop ([types parameter-types] [taken reserved] [acc '()])
+        (cond
+          [(null? types) (values (reverse acc) taken)]
+          [(owned-type? (car types))
+           (define name (fresh-owned-name taken))
+           (loop (cdr types) (set-add taken name) (cons name acc))]
+          [else (loop (cdr types) taken (cons #f acc))])))
+
     ;; 返り値は仮引数の位置と同じ長さの列であり、Owned でない位置には #f を
     ;; 置く。位置の対応を崩さないためである。
     (define (fresh-owned-names parameter-types reserved)
-      (let loop ([types parameter-types] [taken reserved] [acc '()])
-        (cond
-          [(null? types) (reverse acc)]
-          [(owned-type? (car types))
-           (define name
-             (let next ()
-               (define candidate
-                 (string->symbol (format "owned~a" owned-counter)))
-               (set! owned-counter (add1 owned-counter))
-               (if (set-member? taken candidate)
-                   (next)
-                   candidate)))
-           (loop (cdr types) (set-add taken name) (cons name acc))]
-          [else (loop (cdr types) taken (cons #f acc))])))
+      (define-values (names _)
+        (fresh-owned-names/all parameter-types reserved))
+      names)
 
     ;; 生名の binder は対応する仮引数の binder の span をそのまま持つ。
     ;; 名前だけを差し替えて位置は動かさない。G2+ は各仮引数へ
@@ -513,6 +527,83 @@
                     (#:var ,raw ,s_b)
                     ,acc))
             acc)))
+
+    ;; 捕捉した名前を Lam の生名へ載せ替える。捕捉元には surface の binder
+    ;; が無いため、Let とその内部の包みには Fn 自身の span を使う。
+    (define (wrap-capture-lets capture-names capture-types capture-raw-names
+                               core span)
+      (for/fold ([acc core])
+                ([name (in-list (reverse capture-names))]
+                 [type (in-list (reverse capture-types))]
+                 [raw (in-list (reverse capture-raw-names))])
+        `(Let ,span ((#:bind ,name ,span) let (#:ty ,type ,span))
+              (#:var ,raw ,span)
+              ,acc)))
+
+    ;; 捕捉を Curry の固定引数へ変換し、各段の Owned な残余関数を place へ
+    ;; 載せる。返り値の row には最終 Move の Own も含める。
+    (define (wrap-captured-function captures capture-types capture-raw-names
+                                    lam-core lam-type span reserved)
+      (define-values (place-names _)
+        (for/fold ([names '()] [taken reserved])
+                  ([_ (in-list captures)])
+          (define name (fresh-owned-name taken))
+          (values (cons name names) (set-add taken name))))
+      (define places (reverse place-names))
+      (define stages '())
+      (define current-core lam-core)
+      (define current-type lam-type)
+      (define current-row '())
+      (for ([capture (in-list captures)]
+            [place (in-list places)]
+            [capture-type (in-list capture-types)])
+        (match current-type
+          [`(NFn (,first-type ,remaining-types ...)
+                 ,return-type ,latent-row ,obligations)
+           (define residual
+             `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+           (define argument-core
+             `(#:var ,capture ,span))
+           (define curry-core
+             `(Curry ,span ,current-core
+                     (Move ,span ,argument-core)))
+           (define curry-row
+             (row-union current-row '(Own)))
+           (set! stages
+                 (cons (list place `(Owned ,residual) curry-core)
+                       stages))
+           (set! current-core `(Move ,span (#:var ,place ,span)))
+           (set! current-type `(Owned ,residual))
+           (set! current-row curry-row)]
+          [`(Owned (NFn (,first-type ,remaining-types ...)
+                        ,return-type ,latent-row ,obligations))
+           (define residual
+             `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+           (define argument-core
+             `(#:var ,capture ,span))
+           (define curry-core
+             `(Curry ,span ,current-core
+                     (Move ,span ,argument-core)))
+           (define curry-row
+             (row-union current-row '(Own)))
+           (set! stages
+                 (cons (list place `(Owned ,residual) curry-core)
+                       stages))
+           (set! current-core `(Move ,span (#:var ,place ,span)))
+           (set! current-type `(Owned ,residual))
+           (set! current-row curry-row)]
+          [_ (error 'wrap-captured-function
+                   "捕捉の Curry 連鎖に非関数型を受けた: ~s"
+                   current-type)]))
+      (define final-core `(Move ,span (#:var ,(last places) ,span)))
+      (define nested
+        (for/fold ([acc final-core])
+                  ([stage (in-list stages)])
+          (match-define (list place type bound) stage)
+          `(Let ,span ((#:bind ,place ,span) let (#:ty ,type ,span))
+                ,bound
+                ,acc)))
+      (judgment nested current-type (row-union current-row '(Own))))
 
     (define (check-many expressions types environment delta propositions boundaries span)
       (unless (= (length expressions) (length types))
@@ -620,23 +711,31 @@
          (define parameter-types
            (for/list ([type (in-list raw-parameter-types)])
              (resolve-annotation type delta s)))
-         (when (captures-owned? body parameters environment)
-           (reject s 'owned-function-capture))
+         (define captures (owned-captures body parameters environment))
+         (define capture-types
+           (for/list ([name (in-list captures)])
+             (lookup environment name)))
          (define return-type (resolve-annotation raw-return-type delta s))
          (define declared-row
            (resolve-declaration-row raw-row delta boundaries s))
          (define boundary (fresh-boundary))
-         (define signature
-           `(NFn ,parameter-types ,return-type ,declared-row ()))
-         (define callable (fresh-callable signature))
-         (define raw-names
-           (fresh-owned-names
-            parameter-types
-            (set-union (form-symbols body)
-                       (list->set parameters)
-                       (list->set (map first environment)))))
+         (define reserved
+           (set-union (form-symbols body)
+                      (list->set parameters)
+                      (list->set (map first environment))))
+         (define-values (capture-raw-names reserved-with-captures)
+           (fresh-owned-names/all capture-types reserved))
+         (define-values (raw-names reserved-with-formals)
+           (fresh-owned-names/all parameter-types reserved-with-captures))
+         (define capture-binders
+           (for/list ([raw (in-list capture-raw-names)])
+             `(#:bind ,raw ,s)))
          (define core-binders
            (owned-parameter-binders parameter-binders raw-names))
+         (define signature
+           `(NFn ,(append capture-types parameter-types)
+                ,return-type ,declared-row ()))
+         (define callable (fresh-callable signature))
          (define body-result
            (check body return-type
                   (extend environment parameters parameter-types)
@@ -648,19 +747,26 @@
            (row-difference (judgment-row body-result) own-return))
          (unless (row-subset? residual-row declared-row)
            (reject s 'undeclared-function-effect declared-row residual-row))
-         (judgment
-          `(Lam ,s User ,callable ,core-binders
-                (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
-                        (,s (#:bind return-value ,s) ->
-                            ,(if (owned-type? return-type)
-                                 `(Move ,s (#:var return-value ,s))
-                                 `(#:var return-value ,s)))
-                        (Scope ,s ()
-                               ,(wrap-owned-lets parameter-binders
-                                                 parameter-types raw-names
-                                                 (judgment-core body-result)))))
-          signature
-          '())]
+         (define lam-core
+           `(Lam ,s User ,callable
+                 ,(append capture-binders core-binders)
+                 (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
+                         (,s (#:bind return-value ,s) ->
+                             ,(if (owned-type? return-type)
+                                  `(Move ,s (#:var return-value ,s))
+                                  `(#:var return-value ,s)))
+                         (Scope ,s ()
+                                ,(wrap-capture-lets
+                                  captures capture-types capture-raw-names
+                                  (wrap-owned-lets
+                                   parameter-binders parameter-types raw-names
+                                   (judgment-core body-result))
+                                  s)))))
+         (if (null? captures)
+             (judgment lam-core signature '())
+             (wrap-captured-function
+              captures capture-types capture-raw-names
+              lam-core signature s reserved-with-formals))]
 
         [`(Apply ,function ,arguments ...)
          (define function-result

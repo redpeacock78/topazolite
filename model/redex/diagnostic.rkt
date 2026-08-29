@@ -72,7 +72,6 @@
     ("E-OWN-001" drop-non-owned "Drop の対象が owned でない")
     ("E-OWN-002" move-non-owned "Move の対象が owned でない")
     ("E-OWN-003" owned-constructor-field "構築子の field に owned を置けない")
-    ("E-OWN-005" owned-function-capture "関数が owned を捕捉している")
     ("E-OWN-007" owned-record-field "record の field に owned を置けない")
     ("E-OWN-008" owned-recur-capture "recur が owned を捕捉している")
     ("E-OWN-010" owned-variable-requires-move "owned 変数の参照には Move が要る")
@@ -227,12 +226,15 @@
         (diagnostic-code "E-OWN-015" 'typing 'owned-function-parameter
                          "関数の仮引数に owned を置けない" 2 7)))
 
-;; G5c5b1 で廃止した行。Owned の仮引数は本体の形で符号化して受けるため、
-;; 仮引数の位置で落とす場所が無くなる。行は registry に残す。番号の再利用と
-;; 意味の付け替えを凍結 fixture が検出できるようにするためである。
+;; G5c5b1 と G5c5b2 で廃止した行。Owned の仮引数は本体の形で符号化して
+;; 受け、Owned の捕捉は Curry の固定引数へ変換して受けるため、該当位置で
+;; 落とす場所が無くなる。行は registry に残す。番号の再利用と意味の付け替え
+;; を凍結 fixture が検出できるようにするためである。
 (define deprecated-elaborate-entries
   (list (diagnostic-code "E-OWN-004" 'elaborate 'owned-curry-argument
                          "Curry の引数に owned を置けない" 1 8)
+        (diagnostic-code "E-OWN-005" 'elaborate 'owned-function-capture
+                         "関数が owned を捕捉している" 1 8)
         (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
                          "関数の仮引数に owned を置けない" 1 7)
         (diagnostic-code "E-OWN-009" 'elaborate 'owned-recur-parameter
