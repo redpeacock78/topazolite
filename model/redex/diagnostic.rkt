@@ -208,6 +208,12 @@
     ("E-OWN-024" owned-raw-parameter-misuse
                  "Owned の仮引数の名前が対応する Let の右辺の外に現れる")))
 
+;; G5c5b2。Owned<NFn ...> を関数の位置へ置くときは Move または CurryVal
+;; を経由する形に限る。
+(define typing-entries-v8
+  '(("E-OWN-025" owned-function-requires-move
+                 "Owned の関数は Move を経由してのみ関数の位置へ置ける")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -255,6 +261,7 @@
           (rows 'typing 4 typing-entries-v4)
           (rows 'typing 5 typing-entries-v5)
           (rows 'typing 7 typing-entries-v7)
+          (rows 'typing 8 typing-entries-v8)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))

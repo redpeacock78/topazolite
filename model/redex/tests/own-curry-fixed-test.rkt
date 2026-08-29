@@ -12,6 +12,11 @@
     [(list core type row callables) (list core type row callables)]
     [other (error 'elaboration-of "elaboration failed: ~s" other)]))
 
+(define (key-of result)
+  (match result
+    [(list 'fail key _ _) key]
+    [_ #f]))
+
 (define owned-curry-surface
   '(Let p
        (Apply acquire 1)
@@ -38,3 +43,46 @@
    (elaboration-of plain-curry-surface))
  (check-equal? type '(NFn (Int) (NFn () Int () ()) () ()))
  (check-equal? (core-type-of core '() callables) (list type row)))
+
+;; Owned の関数は Move 経由で呼べる。
+(define owned-curry-apply-surface
+  '(Fn ((p (Owned Res))) Unit (Own)
+       (Let g
+            (Fn ((q (Owned Res))) Unit (Own) (Drop q))
+            (Let h
+                 (Curry g (Move p))
+                 (Apply (Move h))))))
+
+(test-case
+ "Owned の関数を Move 経由で呼べる"
+ (match-define (list core type row callables)
+   (elaboration-of owned-curry-apply-surface))
+ (check-equal? type '(NFn ((Owned Res)) Unit (Own) ()))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+;; 中間の place を Move で開く形は関数の位置へ置ける。Task 3 の生成形がこの形を使う。
+(define curried-owned-function-core
+  '(Curry (Move t) (Move r)))
+
+(define owned-curry-environment
+  (list (list 't '(Owned (NFn ((Owned Res)) Unit (Own) ())))
+        (list 'r '(Owned Res))))
+
+(test-case
+ "Owned の closure を載せた place を Move で開く入れ子の Curry は通る"
+ (check-equal? (type-of/raw curried-owned-function-core '() '()
+                             owned-curry-environment)
+               '(ok ((Owned (NFn () Unit (Own) ())) (Own)))))
+
+;; Move を経ない形は落ちる。関数式は Apply であり、Move でも CurryVal でもない。
+(define owned-function-not-moved-core
+  '(Apply (Apply mk)))
+
+(define owned-maker-environment
+  (list (list 'mk '(NFn () (Owned (NFn () Unit (Own) ())) (Own) ()))))
+
+(test-case
+ "Owned の関数を Move を経ずに関数の位置へ置くと owned-function-requires-move で落ちる"
+ (check-equal? (key-of (type-of/raw owned-function-not-moved-core '() '()
+                                     owned-maker-environment))
+               'owned-function-requires-move))

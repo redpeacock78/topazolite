@@ -54,13 +54,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 138)
+ (check-equal? (length diagnostic-registry) 139)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 80)
+ (check-equal? (count-of 'typing) 81)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -74,11 +74,11 @@
  (check-equal? (since-count 4) 12)
  (check-equal? (since-count 5) 4)
  (check-equal? (since-count 7) 2)
+ (check-equal? (since-count 8) 1)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-006" . 7)
-     ("E-OWN-014" . 8)
-     ("E-OWN-009" . 7) ("E-OWN-015" . 7)))
+     ("E-OWN-009" . 7) ("E-OWN-014" . 8) ("E-OWN-015" . 7)))
  (for ([row (in-list diagnostic-registry)])
    (define expected (assoc (diagnostic-code-code row) deprecated-map))
    (if expected

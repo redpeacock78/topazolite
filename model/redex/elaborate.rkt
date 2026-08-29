@@ -99,6 +99,22 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+;; 関数の位置の Owned<NFn ...> を一段だけ剥がす。elaborate では拒否せず、
+;; 型が関数でない形は後段の既存の non-function 判定へ渡す。
+(define (owned-function-type? type)
+  (match type
+    [`(Owned (NFn ,_ ...)) #t]
+    [_ #f]))
+
+(define (peel-owned-function-elab type core)
+  (cond
+    [(not (owned-function-type? type)) (values type #f)]
+    [else
+     (define worn (peel-node core))
+     (if (and (pair? worn) (memq (car worn) '(Move CurryVal)))
+         (values (second type) #t)
+         (values type #f))]))
+
 (define (type? value)
   (and (redex-match? G2 τ value)
        (type-shape-ok? value)))
@@ -649,7 +665,10 @@
         [`(Apply ,function ,arguments ...)
          (define function-result
            (synth function environment delta propositions boundaries))
-         (match (judgment-type function-result)
+         (define-values (function-type _function-owned?)
+           (peel-owned-function-elab (judgment-type function-result)
+                                     (judgment-core function-result)))
+         (match function-type
            [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
             ;; PRF-004: 判定と搬送で探索を二重に走らせない。obligation-proofs は
             ;; 各義務を一度だけ解き、充足できない義務と搬送できない P をどちらも
@@ -924,7 +943,8 @@
          (define function-result
            (synth function environment delta propositions boundaries))
          (define-values (function-type function-owned?)
-           (values (judgment-type function-result) #f))
+           (peel-owned-function-elab (judgment-type function-result)
+                                     (judgment-core function-result)))
          (match function-type
            [`(NFn (,first-type ,remaining-types ...)
                   ,return-type ,latent-row ,obligations)

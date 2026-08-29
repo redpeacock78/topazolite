@@ -191,6 +191,7 @@
     ;; OWN
     drop-non-owned move-non-owned own-binding-borrowed-payload
     owned-constructor-field
+    owned-function-requires-move
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
     owned-refined-payload owned-untrusted-payload
@@ -778,7 +779,14 @@
               (reach-node 'RegionApp 1451 1470
                           (reach-lit 1 1460 1461)
                           '(0))
-              '() '() '() (reach-span 1451 1470))))
+              '() '() '() (reach-span 1451 1470))
+   (reach-row 'owned-function-requires-move
+              (reach-node 'Apply 1471 1500
+                          (reach-node 'Apply 1475 1490
+                                      (reach-var 'mk 1480 1482)))
+              '() '()
+              '((mk (NFn () (Owned (NFn () Unit (Own) ())) (Own) ())))
+              (reach-span 1475 1490))))
 
 (test-case "typing の producer key 集合が registry v8 と一致する"
   (define registry-keys
@@ -786,7 +794,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 77)
+  (check-equal? (length producer-keys) 78)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

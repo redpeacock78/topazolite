@@ -1414,6 +1414,25 @@
   (define bare `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
   (if owned? `(Owned ,bare) bare))
 
+;; 関数の位置に置かれた Owned<NFn ...> を一段だけ剥がす。
+;; Move と CurryVal は place を経由するため許し、それ以外の根は拒む。
+(define owned-function-roots '(Move CurryVal))
+
+(define (owned-function-type? type)
+  (match type
+    [`(Owned (NFn ,_ ...)) #t]
+    [_ #f]))
+
+(define (peel-owned-function type core fail)
+  (cond
+    [(not (owned-function-type? type)) (values type #f)]
+    [else
+     (define worn (peel-node core))
+     (unless (and (pair? worn)
+                  (memq (car worn) owned-function-roots))
+       (fail 'owned-function-requires-move core))
+     (values (second type) #t)]))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (match declared-type
@@ -1830,11 +1849,15 @@
        [_ (fail 'unknown-primitive core)])]
 
     [`(CurryVal ,_ ,function ,argument)
-     (match (infer function (enter-child Λ 0)
-                    Ψ environment places callables fail)
+     (match-define (list function-type function-row function-psi)
+       (infer function (enter-child Λ 0)
+              Ψ environment places callables fail))
+     (define-values (peeled function-owned?)
+       (peel-owned-function function-type function fail))
+     (match (list peeled function-row function-psi)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
-              function-row function-psi)
+              _ _)
         (define summary
           (or (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
@@ -1862,7 +1885,6 @@
            (fail 'borrowed-function-result function obligations)])
         (unless (null? function-row)
           (fail 'effectful-curry-operand function))
-        (define function-owned? #f)
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
                     function-psi
@@ -1998,11 +2020,15 @@
        [_ (fail 'region-app-non-forall core function-type)])]
 
     [`(Apply ,function ,arguments ...)
-     (match (infer function (enter-child Λ 0)
-                    Ψ environment places callables fail)
+     (match-define (list function-type function-row function-psi)
+       (infer function (enter-child Λ 0)
+              Ψ environment places callables fail))
+     (define-values (peeled _function-owned?)
+       (peel-owned-function function-type function fail))
+     (match (list peeled function-row function-psi)
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
-              function-row function-psi)
+              _ _)
         (define summary
           (or (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
@@ -2348,11 +2374,15 @@
               (second argument-row))])]
 
     [`(Curry ,function ,argument)
-     (match (infer function (enter-child Λ 0)
-                    Ψ environment places callables fail)
+     (match-define (list function-type function-row function-psi)
+       (infer function (enter-child Λ 0)
+              Ψ environment places callables fail))
+     (define-values (peeled function-owned?)
+       (peel-owned-function function-type function fail))
+     (match (list peeled function-row function-psi)
        [(list `(NFn (,first-type ,remaining-types ...)
                     ,return-type ,latent-row ,obligations)
-              function-row function-psi)
+              _ _)
         (define summary
           (or (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
@@ -2376,7 +2406,6 @@
            (fail 'borrowed-function-result function)]
           [borrowed-obligations?
            (fail 'borrowed-function-result function obligations)])
-        (define function-owned? #f)
         (define argument-row
           (check-as argument first-type (enter-child Λ 1)
                     function-psi
