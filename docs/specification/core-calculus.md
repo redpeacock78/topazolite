@@ -501,44 +501,64 @@ E-Lambda は `Owned` の仮引数を関数本体の `Scope` と `Let` の連な�
 β 簡約（§5.3 R-Beta）は実引数の値を生名の位置へ置換する。
 置換の結果として `Let` の右辺に来た値は R-LetOwned が place へ移すため、引数値は place を経由して管理される。
 
-関数は、外側の `Owned<_>` 束縛を body で参照することもできない（E-Lambda と E-Recur の自由変数条件）。
-これを許すと、R-LetOwned が置換した place の Move(p) が関数値の中に残り、関数値の複製が place を経由しない複製経路になるうえ、scope の外へ持ち出された関数値が `Dropped` な place を保持するためである。
-`Owned` の仮引数は生成された `Let` を通じて関数境界を越えるが、外側の `Owned` 束縛を closure が捕捉する経路はこれまでどおり拒否する。
+関数は、外側の `Owned<_>` 束縛を closure の捕捉へ変換できる。
+E-Lambda は捕捉した値を `Move` で `Curry` の固定引数へ渡し、closure の型を `Owned<NFn …>` とする。
+元の place は `Move` によって `Moved` になり、closure の関数位置には `Move` を経由して到達する。
+`Recur` と `RecurVal` の `Owned` 捕捉は、再帰本体の複製を一回の `Move` で制限できないため、E-Recur の制限として残す（§4.6）。
 
 **(E-Lambda)** [REQ: EFF-001]
 
 ```text
-e の自由変数のうち x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
+C = ((u1, κ1), …, (un, κn)) = owned-captures(e, (a1, …, ak), Γ)
 b fresh
 ℓ fresh                                            （CallableId、§3.3）
 εdecl' = resolveReturn(B, εdecl)                  （§4.5 の Return ラベル解決）
 B' = push(B, FunctionBoundary(b, τ))
-Γ, x1 : τ1, …, xk : τk; Δ; Π; B' ⊢ e ⇐ τ ! εbody ⟹ c
+Γ, a1 : τ1, …, ak : τk; Δ; Π; B' ⊢ e ⇐ τ ! εbody ⟹ c
 εbody \ {Return<b, τ>} ⊆ εdecl'
+bodyC = Let(u1 : Owned<κ1>, c1,
+             … Let(un : Owned<κn>, cn,
+                   Let(ai1 : Owned<τi1>, yi1,
+                     … Let(aim : Owned<τim>, yim, c) …)))
+LC = Lam(User, ℓ, (c1, …, cn, y1, …, yk),
+         Handle(Return<b, τ>, x -> x, Scope(∅, bodyC)))
+Ti = Owned<NFn<(κi+1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>>
+
 --------------------------------
-Γ; Δ; Π; B ⊢ fn(x1 : τ1, …, xk : τk) -> τ ! εdecl  e
-  ⇒ NFn<(τ1, …, τk), τ, εdecl', ⟨⟩> ! {}
-  ⟹ Lam(User, ℓ, (y1, …, yk),
-       Handle(Return<b, τ>, x -> x,
-              Scope(∅, Let(xi1 : Owned<τi1>, yi1,
-                        … Let(xim : Owned<τim>, yim, c) …))))
-  かつ Φ(ℓ) = NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>
+n = 0 のとき
+  Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> τ ! εdecl  e
+    ⇒ NFn<(τ1, …, τk), τ, εdecl', ⟨⟩> ! {}
+    ⟹ LC
+
+n > 0 のとき
+  Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> τ ! εdecl  e
+    ⇒ Owned<NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>> ! (Own)
+    ⟹ Let(t1 : T1, Curry(LC, Move(u1)),
+         … Let(tn : Tn, Curry(Move(tn-1), Move(un)), Move(tn)) …)
+Φ(ℓ) = NFn<(κ1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>  （両方の枝に共通）
 ```
 
-ここで yi は、位置 i が `Owned` のときは生名、そうでないときは surface が書いた名前そのものである。
-`Let` の入れ子の順序は仮引数の位置の順序に一致する。
+ここで `owned-captures` は、Γ の現在の可視項目から `Owned<κ>` の型を持つ名前を取り、`free-vars(e)` から `(a1, …, ak)` を除いた集合との共通部分を対象にする。
+Γ に同名項目が複数あるときは、内側の項目だけを可視とする。
+対象の名前は `symbol<?` の昇順に並べ、これを `u1, …, un` とする。
+`ui` は捕捉元の surface 名であり、`ci` は捕捉 formal の生名である。
+`yi` は、元の位置 i が `Owned` のときは生名、そうでないときは surface が書いた名前そのものである。
+`ai` は元の仮引数の surface 名である。
+`ti` は外側の `Let` が管理する place の生名であり、`t1, …, tn` は fresh である。
+捕捉の `Let` の入れ子は `u1, …, un` の辞書順に並ぶ。
+元の仮引数に対応する `Let` の入れ子は仮引数の位置の順序に一致する。
 生名は対応する `Let` の右辺にちょうど 1 回だけ現れ、それ以外の位置には現れない。
 `Let` の binder は surface が書いた仮引数の名前であり、束縛の様式は `let` である。
-Φ に登録する署名は、`Owned` の位置の型を `Owned<τi>` のまま持つ。
+Φ に登録する署名は、捕捉位置の型を `Owned<κi>`、元の `Owned` 位置の型を `Owned<τi>` のまま持つ。
 生名への読み替えは Core の項の側だけに起こる。
 呼出し側は実引数を `Owned<τi>` として検査され、`move p` の形を要求される。
-内側に別の `Fn` を書いて外側の `Owned` の仮引数を捕捉する形は、これまでどおり拒否する。
+`n = 0` のときは `bodyC` の捕捉 `Let` 連鎖も省く。
 
 関数抽象は自身の FunctionBoundary を push し、body を Return handler と Scope で包む。
 `Owned` の仮引数に対応する `Let` はこの Scope の直下に置かれ、R-LetOwned が呼出しごとに place を確保する。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
-ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
+ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 **(E-Apply)**
 
@@ -562,21 +582,25 @@ origin の検査は §3.4 のとおり `verify-origins` が Typed Core 全体に
 **(E-Curry)** [REQ: CUR-001] [REQ: CUR-002]
 
 ```text
-Γ; Δ; Π; B ⊢ e1 ⇒ NFn<(τ1, τ2, …, τk), τ, ε, Q> ! εf ⟹ c1        （k ≥ 1）
-τ1 は Owned<_> の形でない
+Γ; Δ; Π; B ⊢ e1 ⇒ F ! εf ⟹ c1        （k ≥ 1）
+peel-owned-function(F) = (NFn<(τ1, τ2, …, τk), τ, ε, Q>, owned_f)
 Γ; Δ; Π; B ⊢ e2 ⇐ τ1 ! εa ⟹ c2
+b = owned_f ∨ owned-type?(τ1)
 --------------------------------
 Γ; Δ; Π; B ⊢ curry(e1, e2)
-  ⇒ NFn<(τ2, …, τk), τ, ε, specialize(Q, e2)> ! εf ∪ εa
+  ⇒ (if b then Owned<NFn<(τ2, …, τk), τ, ε, specialize(Q, e2)>>
+      else NFn<(τ2, …, τk), τ, ε, specialize(Q, e2)>) ! εf ∪ εa
   ⟹ Curry(c1, c2)
 ```
 
 curry は先頭引数を固定し、返り値型 τ と潜在 Effect row ε を保存し、Proof obligation を固定引数で特殊化する（CUR-001）。
 G1 には Effect 多相がないため `specialize(ε, a) = ε` であり、`specialize(Q, a)` は Q の中の先頭引数への参照を a で置換する。
 
-固定引数への `Owned<_>` の禁止は G1 の制限である。
-CurryVal は複数回適用できる通常の値であり、affine 資源を内部に固定すると適用のたびに資源が複製されるためである。
-affine 資源を捕捉する closure の扱いは G5 で設計する。
+固定引数の型が `Owned<τ1>` であるか、関数側の型が `Owned<NFn …>` であるとき、結果型も `Owned<NFn 残余>` になる。
+どちらも該当しないときは、結果型は従来どおり素の `NFn 残余` である。
+関数側の標識は連鎖の次の段へ引き継ぐ。
+関数の位置で `Owned<NFn …>` を使うときは `Move` または `CurryVal` を経由する。
+`CurryVal` の固定引数は還元後に payload の型で現れるため、宣言型が `Owned<τ1>` のときは payload を `Owned` で包んで照合する。
 
 値レベルの origin は簡約規則（§5.3 R-CurryVal）が §3.4 の origin metafunction を使って定める。
 `origin(RecurVal(…)) = User` なので、recur で束縛した関数の curry は User に根ざす派生 origin を持つ。
@@ -654,7 +678,9 @@ Recur(r, f, (y1, …, yk),
   かつ Φ(r) = NFn<(τ1, …, τk), τ, ε', ⟨⟩>
 ```
 
-Owned 束縛の捕捉の禁止は Lambda と同じ理由による（§4.3）。
+`Recur` と `RecurVal` の `Owned` 捕捉は G5c5b2 では扱わない。
+R-RecurUnfold（§5.4）は再帰本体を呼出しごとに複製するため、`RecurVal` の型を `Owned` にしても捕捉した値の使用回数を上限づけられない。
+この制限は Phase 1 以降へ送る。
 
 R-RecurBind（§5.4）が生成する `RecurVal` は次の形を持つ。
 
@@ -924,10 +950,15 @@ Lam のパラメータ・返り値型・宣言 row は項から消去されて�
 **(T-CurryVal)** [REQ: CUR-002]
 
 ```text
-Γ; Δ; Π; Ξ; Φ ⊢core vf : NFn(τ1, τ2, ..., τk, τ, ε, Q) ! {}        （k ≥ 1）
-Γ; Δ; Π; Ξ; Φ ⊢core va : τ1 ! {}
+Γ; Δ; Π; Ξ; Φ ⊢core vf : F ! {}        （k ≥ 1）
+peel-owned-function(F) = (NFn(τ1, τ2, ..., τk, τ, ε, Q), owned_f)
+Γ; Δ; Π; Ξ; Φ ⊢core va : A ! {}
+A と τ1 が互換である。τ1 が Owned<τ> のときは A を Owned<A> として照合する。
+b = owned_f ∨ owned-type?(τ1)
 --------------------------------
-Γ; Δ; Π; Ξ; Φ ⊢core CurryVal(O, vf, va) : NFn(τ2, ..., τk, τ, ε, specialize(Q, va)) ! {}
+Γ; Δ; Π; Ξ; Φ ⊢core CurryVal(O, vf, va)
+  : (if b then Owned<NFn(τ2, ..., τk, τ, ε, specialize(Q, va))>
+      else NFn(τ2, ..., τk, τ, ε, specialize(Q, va))) ! {}
 ```
 
 `vf` は値なので T-Lam・T-RecurVal・T-CurryVal のいずれかで再帰的に synthesize でき、`Curry`/`Apply` の呼び出し先位置に直接置かれた生の `Lam`/`RecurVal`（Φ(ℓ)/Φ(r) 経由）も、この位置の期待型を経由せず単独で型付けできる。O の整合は verify-origins（§3.4）が別途検査する。
@@ -1461,10 +1492,12 @@ borrow、region、unsafe boundary の judgment は G5 で仕様化する。
 - `&x` と `&mut x` の可否は Ψ と σ が決める。共有借用どうしは重なってよい。可変借用は同じ place について排他であり、同じ place の共有借用と region が重なるときは取れない。
 - region exit で Ψ から項目を消すことはせず、σ が定める生存範囲の外に出た借用は以後の許可判定に効かなくなる。`Moved` と `Dropped` の place への read、borrow、drop は型エラーとする。
 - raw pointer の dereference は `Unsafe` Effect と Proof obligation を要求し（PTR-001）、safe reference の構築には lifetime、alignment、validity の Proof を要求する（PTR-002）。
-- G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）を、borrow による受け渡しと捕捉として回復する。
+- G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）の担当を次のように分ける。
+- 引数渡しは G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2、E-Construct の field は G5c5b3 が担当する。
 - メタ理論性質 8（borrow safety）と 9（unsafe containment）の bounded 検査を Redex model へ追加する。
 
-このうち `Owned` を取る仮引数と closure の捕捉は G5c5b が扱い、G5c3 段 A では `Let` の宣言型が `Owned` のときに計算した値を載せる形だけを回復する。
+このうち `Owned` を取る仮引数は G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2 が扱う。
+G5c3 段 A では `Let` の宣言型が `Owned` のときに計算した値を載せる形だけを回復する。
 
 G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有権機能が affine な move / drop まで（ホワイトペーパー §16 Phase 1）であり、G1 の Ω 三値モデルがその範囲を過不足なく覆うためである。
 初期 lexical region 解析を NLL 相当の solver と置換可能にする要件（BOR-003）も G5 で扱う。

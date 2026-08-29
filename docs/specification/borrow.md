@@ -156,6 +156,22 @@ region 欄が具体的な region か、束縛されていない `rp` であれ�
 関数と再帰関数は `Owned<τ>` の仮引数を宣言できる。
 呼出し側から渡された値は、呼出された側の `Scope` が管理する place へ載る。 [REQ: OWN-006]
 
+`Lam` は外側の `Owned<τ>` を捕捉できる。
+捕捉した値は `Curry` の固定引数として `Move` で渡し、closure の型を `Owned<NFn …>` とする。 [REQ: OWN-007]
+捕捉の仮引数は本体の内側で元の名前へ開く。
+この開き方は `Owned` の仮引数の符号化と同じである。
+
+`Owned` の関数を関数の位置へ置くときは、根が `Move` または `CurryVal` である形だけを許す。
+surface の closure は elaborate が `Let` と `Move` を挿入するため、この制限に適合する。
+Core を直接書く場合に制限へ違反した形は、型検査で拒否する。
+
+`Curry` は `Owned<τ>` の固定引数を `Move` 経由で受け取る。
+固定引数を持つ `CurryVal` の結果型は `Owned<NFn 残余>` になる。 [REQ: OWN-008]
+一回性は型による `Move` の要求、実行時の `R-MoveError`、性質 7 の bounded 検査で確認する。
+
+`CurryVal` の内部に入った `Owned` 値の drop 責務は、`E-Construct` の field と `Yield` の payload に入った `Owned` 値と同じ機構で扱う。
+この機構は G5c5b3 で定める。
+
 判定は型木を再帰的に走査する。
 直下の形だけを見る判定では、`(Union (Borrowed τ ρ) τ')` や仮引数列の 2 番目だけが借用の `NFn` がそのまま通ってしまう。
 走査は `Union`、`Intersection`、`Record`、`List`、`Option`、`Result`、`Refined`、`Untrusted`、`NFn` の τ 欄すべてに入る。

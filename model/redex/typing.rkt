@@ -693,8 +693,9 @@
 ;; τ で束縛する。生名は本体から直接見えず、生成した Let が surface の名前へ
 ;; Owned<τ> を与えるためである。E-Var は Owned<_> の変数を裸で参照すること
 ;; を禁じており、生名を Owned<τ> で入れると Let の右辺の参照が落ちる。
-;; 外側の環境から Owned の項目を落とすのは従来どおりである。捕捉の禁止は
-;; G5c5b2 まで有効である。
+;; 外側の環境から Owned の項目を落とすのは従来どおりである。Owned の捕捉は
+;; elaborate が Curry の固定引数へ変換するため、この補助は外側の Owned を
+;; 本体へ直接見せない。
 (define (function-body-environment environment parameters parameter-types)
   (extend (without-owned environment)
           parameters

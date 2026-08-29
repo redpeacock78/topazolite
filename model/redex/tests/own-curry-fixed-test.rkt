@@ -1,5 +1,7 @@
 #lang racket
 
+;; [REQ: OWN-008] Owned の固定引数。
+
 (require rackunit
          racket/match
          "../diagnostic.rkt"

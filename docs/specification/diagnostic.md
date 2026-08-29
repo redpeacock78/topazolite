@@ -264,25 +264,31 @@ registry version 4 で足した typing の 12 行は `since` が4である。
 
 registry version 5 で足した typing の 4 行は `since` が5である。
 
-現在の registry は 138 行である。
+registry version 8 で足した typing の 1 行は `since` が8である。
 
-`deprecated-in` を持つのは 4 行である。
-`E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持つ。
-残る 134 行は `#f` である。
+現在の registry は 139 行である。
+
+`deprecated-in` を持つのは 7 行である。
+`E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
+残る 132 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v7.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v8.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
 v7 は typing へ 2 行を足し、`Owned` の仮引数に関わる 3 行を廃止する。
 
 廃止した行も registry に残るため、組は 136 に 2 を足した 138 になる。
+
+v8 は typing へ `E-OWN-025` を 1 行足し、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` を廃止する。
+
+廃止した行も registry に残るため、組は 138 に 1 を足した 139 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

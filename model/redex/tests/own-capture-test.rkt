@@ -1,6 +1,7 @@
 #lang racket
 
 ;; G5c5b2。Owned を捕捉する closure の生成を検査する。
+;; [REQ: OWN-007] Owned を捕捉する closure。
 (require rackunit
          racket/match
          "../diagnostic.rkt"
