@@ -86,3 +86,17 @@
  (check-equal? (key-of (type-of/raw owned-function-not-moved-core '() '()
                                      owned-maker-environment))
                'owned-function-requires-move))
+
+;; 関数側だけが Owned で固定引数が Int の Curry を踏む。
+;; 内側の Fn は自分の仮引数しか使わない。Task 3 まで E-OWN-005 が
+;; Owned の捕捉を禁じるため、捕捉のある形はここでは使えない。
+(test-case
+ "elaborate の E-Curry は関数側の Owned を結果へ引き継ぐ"
+ (define surface
+   '(Fn ((p (Owned Res))) (Owned (NFn () Unit (Own) ())) (Own)
+        (Let g
+             (Fn ((q (Owned Res)) (n Int)) Unit (Own) (Drop q))
+          (Let f (Curry g (Move p))
+               (Curry (Move f) 1)))))
+ (match-define (list _core type _row _callables) (elaboration-of surface))
+ (check-equal? (third type) '(Owned (NFn () Unit (Own) ()))))
