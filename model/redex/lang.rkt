@@ -224,7 +224,6 @@
          (Rec ((label m v) ...))
          (UVal v)
          (RVal (ProofRep O φ) v)
-         (OwnedLeaf tk v)
          (BorrowRef p fp ρ)
          (BorrowMutRef p fp ρ)
          (RegionLam (rp ...) c))
