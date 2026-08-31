@@ -13,6 +13,21 @@
          (owned-parameter-id (NFn ((Owned Res)) Unit () ()))
          (capture-id (NFn () (Owned Res) (Own) ())))))
 
+;; 既存の callable-types とは分け、CurryVal の heap entry が持つ
+;; closure の署名だけをこの configuration 用に宣言する。
+(define curry-callables
+  (term ((leaf-drop-id (NFn ((Owned Res)) Unit (Own) ())))))
+
+;; G5c5b1 の Owned formal encoding に従う closure。Lam の formal は生名で
+;; 受け、Handle と Scope の内側の Let で Owned place へ開いてから Move する。
+(define leaf-drop-lam
+  (term (Lam User leaf-drop-id (owned0)
+             (Handle (Return boundary Unit)
+                     (return-value -> return-value)
+                     (Scope ()
+                            (Let (q let (Owned Res)) owned0
+                                 (Drop (Move q))))))))
+
 (test-case "T-Prim/T-MovePlace: synthesis uses Γ0 and Ξ"
   (check-equal?
    (core-type-of (term (PrimVal (Reserved o-lt) lt)) empty empty)
@@ -227,3 +242,15 @@
    (term ((Owned Res) (Own))))
   (check-true
    (core-check (term x) empty empty (term Int) empty environment)))
+
+(test-case "heap の CurryVal を config-ok? が受理する"
+  (define curried (term (CurryVal User ,leaf-drop-lam (resource 1))))
+  (define config
+    (term (cfg unit ((0 ,curried)) ((0 Available)) () ())))
+  (check-true (config-ok? config curry-callables (term Unit) empty)))
+
+(test-case "H の entry の並び順が Ξ の導出を変えない"
+  (define ascending (term ((0 (resource 1)) (1 (resource 2)))))
+  (define descending (term ((1 (resource 2)) (0 (resource 1)))))
+  (check-equal? (derive-places ascending empty)
+                (derive-places descending empty)))

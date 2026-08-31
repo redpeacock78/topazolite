@@ -27,6 +27,7 @@
          type-of/raw
          typing-visited-points
          config-ok?
+         derive-places
          join-types
          merge-field
          presence-binding-name
@@ -2939,6 +2940,26 @@
               (core-check-row core places callables expected environment Λ)])
          (and actual-row (row=? actual-row row)))))
 
+;; Ξ の第 1 段。place は若い順に割り当てられ、heap の値が捕捉できるのは
+;; 自分より前に割り当てられた place だけである。したがって place の番号順に
+;; 畳み込み、entry i の型をそこまでに確定した Ξ の下で推論する。
+;; H の entry の並びは規定されないため、先に番号で整列する。
+(define (derive-places heap callables)
+  (for/fold ([acc '()] #:result (and acc (reverse acc)))
+            ([entry (in-list (sort heap < #:key first))])
+    #:break (not acc)
+    (match (type-of/raw (second entry) (reverse acc) callables)
+      [(list 'ok (list type _row))
+       (cons (list (first entry) (strip-owned type)) acc)]
+      [_ #f])))
+
+;; Ξ は place の指す値そのものの型を持ち、Owned の包みは place 側が担う。
+;; heap の値の型が常に Owned で始まるとは仮定しない。
+(define (strip-owned type)
+  (match type
+    [`(Owned ,inner) inner]
+    [_ type]))
+
 (define (config-ok? configuration callables expected row)
   ;; 検査集合は entry-violation（判定 API と診断 API の入口）と揃える。
   ;; ここは G2m config を見る別の入口であり、places を heap から導出するため
@@ -2954,16 +2975,16 @@
                (unique-table? states)
                (equal? (sort (map first heap) <)
                        (sort (map first states) <))
-               ;; G1 has only resource(n) : Owned<Res>.  G5 must derive Ξ
-               ;; from richer heap value types instead of this constant map.
-               (let ([places
-                      (for/list ([entry (in-list heap)])
-                        (list (first entry) 'Res))])
+               ;; G5 derives Ξ from each heap value rather than assuming Res.
+               (let ([places (derive-places heap callables)])
                  (and
+                  places
                   (for/and ([entry (in-list heap)])
+                    (define declared
+                      (second (assoc (first entry) places)))
                     (define value-row
                       (check-as/boolean (second entry)
-                                        '(Owned Res)
+                                        (list 'Owned declared)
                                         '()
                                         places
                                         callables))

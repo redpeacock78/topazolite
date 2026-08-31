@@ -509,6 +509,17 @@
         (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
         R-Assign)
 
+   ;; G2 の Lam 本体を含む値にも origin-of を適用できるよう、G1 の
+   ;; R-CurryVal を G2m の入口で上書きする。
+   (--> (cfg (in-hole E (Curry ov_f v_arg)) H Ω Λtok θ)
+        (cfg (in-hole E
+                      (CurryVal (Derived O_f (Curry v_arg))
+                                ov_f
+                                v_arg))
+             H Ω Λtok θ)
+        (where O_f (origin-of/g2 ov_f))
+        R-CurryVal)
+
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω Λtok θ)
         (cfg (in-hole E v_result) H Ω Λtok θ)
         (where v_result (δ/g2 nm v_arg ...))

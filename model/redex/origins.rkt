@@ -18,6 +18,7 @@
          kindOf
          lookup
          origin-of
+         origin-of/g2
          proof-issuer-ok?
          proof-occurrence-ok?
          trait-gamma0-entries
@@ -251,6 +252,13 @@
 (define-metafunction G1
   origin-of : ov -> O
   [(origin-of ov) ,(origin-of/proc (term ov))])
+
+;; G2m の closure 本体は G1 の c より広いので、G1 の origin-of を
+;; G2m へ拡張した入口を用意する。判定本体は同じ origin-data/proc である。
+(define-metafunction/extension origin-of
+  G2m
+  origin-of/g2 : ov -> O
+  [(origin-of/g2 ov) ,(origin-of/proc (term ov))])
 
 (define (reserved-type-rep? type-form value)
   (equal? (lookup Δ0 type-form) value))

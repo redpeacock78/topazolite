@@ -178,3 +178,18 @@
               ((0 (resource 5)))
               ((0 Moved))
               () ()))))
+
+;; Lam の本体が G2 だけの形（modeful な Let）なので、G1 の origin-of では
+;; 照合できない。G2m の R-CurryVal が同じ生成を継続することを確かめる。
+(test-case "G2 だけの本体を持つ Lam の Curry が簡約できる"
+  (define config
+    (term (cfg (Curry (Lam User g2-id (x) (Let (y let Res) x y)) 1)
+               () () () ())))
+  (check-true (redex-match? G2m config config))
+  (define results (apply-reduction-relation -->g2 config))
+  (check-equal? (length results) 1)
+  (check-true
+   (redex-match? G2m
+                 (cfg (CurryVal any_o any_f any_a)
+                      any_h any_s any_t any_e)
+                 (first results))))
