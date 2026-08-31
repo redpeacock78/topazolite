@@ -2940,9 +2940,12 @@
               (core-check-row core places callables expected environment Λ)])
          (and actual-row (row=? actual-row row)))))
 
-;; Ξ の第 1 段。place は若い順に割り当てられ、heap の値が捕捉できるのは
-;; 自分より前に割り当てられた place だけである。したがって place の番号順に
-;; 畳み込み、entry i の型をそこまでに確定した Ξ の下で推論する。
+;; Ξ の第 1 段。G5c5b2 が生成する値は place を新たに含めず、捕捉した
+;; 名前を束縛する。R-LetOwned と R-Assign が heap へ保存するのも評価済み
+;; の値だけなので、到達可能な値が参照できる place は自身より前に割り当て
+;; られたものに限られる。したがって place の番号順に畳み込み、entry i の
+;; 型をそこまでに確定した Ξ の下で推論する。到達不能な手書き configuration
+;; の前方参照は、この畳み込みを失敗させて拒否する。
 ;; H の entry の並びは規定されないため、先に番号で整列する。
 (define (derive-places heap callables)
   (for/fold ([acc '()] #:result (and acc (reverse acc)))

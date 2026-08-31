@@ -28,7 +28,6 @@
          config-heap
          config-states
          config-events
-         config-places
          runtime-row
          row-subset?
          pick-one
@@ -283,24 +282,20 @@
    counts (add1 (search-counts-accepted counts))))
 
 (define (config-core configuration)
-  (match-define `(cfg ,core ,_ ,_ () ,_) configuration)
+  (match-define `(cfg ,core ,_ ,_ ,_tokens ,_) configuration)
   core)
 
 (define (config-heap configuration)
-  (match-define `(cfg ,_ ,heap ,_ () ,_) configuration)
+  (match-define `(cfg ,_ ,heap ,_ ,_tokens ,_) configuration)
   heap)
 
 (define (config-states configuration)
-  (match-define `(cfg ,_ ,_ ,states () ,_) configuration)
+  (match-define `(cfg ,_ ,_ ,states ,_tokens ,_) configuration)
   states)
 
 (define (config-events configuration)
-  (match-define `(cfg ,_ ,_ ,_ () ,events) configuration)
+  (match-define `(cfg ,_ ,_ ,_ ,_tokens ,events) configuration)
   events)
-
-(define (config-places configuration)
-  (for/list ([entry (in-list (config-heap configuration))])
-    (list (first entry) 'Res)))
 
 (define (runtime-row configuration callables type)
   ;; Runtime heap entries may contain callable values whose root type is not
