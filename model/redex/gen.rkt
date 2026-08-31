@@ -27,6 +27,7 @@
          config-core
          config-heap
          config-states
+         config-tokens
          config-events
          runtime-row
          row-subset?
@@ -292,6 +293,10 @@
 (define (config-states configuration)
   (match-define `(cfg ,_ ,_ ,states ,_tokens ,_) configuration)
   states)
+
+(define (config-tokens configuration)
+  (match-define `(cfg ,_ ,_ ,_ ,tokens ,_) configuration)
+  tokens)
 
 (define (config-events configuration)
   (match-define `(cfg ,_ ,_ ,_ ,_tokens ,events) configuration)

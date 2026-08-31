@@ -2,6 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
+         "../borrow.rkt"
          "../typing.rkt")
 
 (define empty '())
@@ -254,3 +255,133 @@
   (define descending (term ((1 (resource 2)) (0 (resource 1)))))
   (check-equal? (derive-places ascending empty)
                 (derive-places descending empty)))
+
+(define (leaf-config value tokens)
+  (term (cfg unit ((0 ,value)) ((0 Available)) ,tokens ())))
+
+(test-case "Available の token は live 集合にちょうど一度現れる"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (check-true (config-ok? (leaf-config value (term (((tok 0) Available))))
+                          empty (term Unit) empty)))
+
+(test-case "同じ token が二箇所に現れる configuration を拒否する"
+  (define value
+    (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
+                (g mut (OwnedLeaf (tok 0) (resource 2)))))))
+  (check-false (config-ok? (leaf-config value (term (((tok 0) Available))))
+                           empty (term Unit) empty)))
+
+(test-case "Λtok に無い token を拒否する"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 9) (resource 1)))))))
+  (check-false (config-ok? (leaf-config value (term ()))
+                           empty (term Unit) empty)))
+
+(test-case "Available なのに値に現れない token を拒否する"
+  (check-false (config-ok? (leaf-config (term (resource 1))
+                                        (term (((tok 0) Available))))
+                           empty (term Unit) empty)))
+
+(test-case "Dropped の tombstone は値に現れなくても受理する"
+  (check-true (config-ok? (leaf-config (term (resource 1))
+                                       (term (((tok 0) Dropped))))
+                          empty (term Unit) empty)))
+
+(test-case "Dropped の token が live 集合に現れる configuration を拒否する"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (check-false (config-ok? (leaf-config value (term (((tok 0) Dropped))))
+                           empty (term Unit) empty)))
+
+(test-case "値の根の位置の leaf を拒否する"
+  (check-false (config-ok? (leaf-config (term (OwnedLeaf (tok 0) (resource 1)))
+                                        (term (((tok 0) Available))))
+                           empty (term Unit) empty)))
+
+(test-case "OwnedLeaf の型は payload の型そのもの"
+  (check-equal? (type-of/raw (term (OwnedLeaf (tok 0) (resource 1))) empty empty)
+                (term (ok ((Owned Res) ())))))
+
+(test-case "owned でない payload を包んだ leaf は ill-typed"
+  (define result (type-of/raw (term (OwnedLeaf (tok 0) Unit)) empty empty))
+  (check-false (and (pair? result) (eq? (first result) 'ok))))
+
+(test-case "通常の型検査は Rec の欄の裸の資源を拒否し続ける"
+  (define result (type-of/raw (term (Rec ((f mut (resource 1))))) empty empty))
+  (check-false (and (pair? result) (eq? (first result) 'ok))))
+
+(test-case "leaf-positions-ok? が走査で辿れない位置を拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  (check-false (leaf-positions-ok? leaf))
+  (check-false
+   (leaf-positions-ok?
+    (term (Rec ((f mut (OwnedLeaf (tok 0)
+                                  (OwnedLeaf (tok 1) (resource 1)))))))))
+  (check-false (leaf-positions-ok? (term (CurryVal User ,leaf (resource 2)))))
+  (check-false (leaf-positions-ok? (term (UVal ,leaf))))
+  (check-true (leaf-positions-ok? (term (Rec ((f mut ,leaf)))))))
+
+(test-case "leaf-positions-ok? が未対応の構成子の内部の Rec を拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  (define rec (term (Rec ((f mut ,leaf)))))
+  (check-false (leaf-positions-ok? (term (UVal ,rec))))
+  (check-false (leaf-positions-ok? (term (CurryVal User ,rec (resource 2)))))
+  (check-false (leaf-positions-ok? (term (Scope (0) ,rec))))
+  (check-false (leaf-positions-ok? (term (Let (x Int) ,rec Unit))))
+  (check-false (leaf-positions-ok? (term (UVal (UVal ,rec)))))
+  (check-true (leaf-positions-ok? (term (Rec ((f mut ,rec)))))))
+
+(test-case "leaf-positions-ok? が Construct の引数の leaf を拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  (check-false (leaf-positions-ok? (term (Construct T K ,leaf))))
+  (check-false
+   (leaf-positions-ok?
+    (term (Construct T K (Rec ((f mut ,leaf)))))))
+  (check-true (leaf-positions-ok? (term (Construct T K (resource 1))))))
+
+(test-case "leaf を含まない値は未対応の構成子の内部でも通る"
+  (check-true (leaf-positions-ok? (term (UVal (Rec ((f mut (resource 1))))))))
+  (check-true (leaf-positions-ok? (term (BorrowMutRef 0 (a) ρ)))))
+
+(test-case "制御項の値の位置の leaf を config-ok? が拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  (check-false
+   (config-ok? (term (cfg (Scope () ,leaf)
+                          ()
+                          ()
+                          (((tok 0) Available))
+                          ()))
+               empty (term (Owned Res)) (term (Own))))
+  (check-false
+   (config-ok? (term (cfg (Drop (UVal (Rec ((f mut ,leaf)))))
+                          ()
+                          ()
+                          (((tok 0) Available))
+                          ()))
+               empty (term Unit) (term (Own)))))
+
+(test-case "制御項の値でない位置の下の Rec の leaf は通る"
+  (check-true
+   (control-leaf-positions-ok?
+    (term (Drop (Rec ((f mut (OwnedLeaf (tok 0) (resource 1))))))))))
+
+(test-case "根位置の leaf を持つ configuration を config-ok? が拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 7))))
+  (check-false
+   (config-ok? (term (cfg (Scope (0) (Move 0))
+                          ((0 ,leaf))
+                          ((0 Available))
+                          (((tok 0) Available))
+                          ()))
+               empty (term (Owned Res)) (term (Own))))
+  (check-false
+   (config-ok? (term (cfg ,leaf () () (((tok 0) Available)) ()))
+               empty (term (Owned Res)) (term (Own)))))
+
+(test-case "未対応の構成子へ隠した leaf を config-ok? が拒否する"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 7))))
+  (check-false
+   (config-ok? (term (cfg (Scope (0) (Move 0))
+                          ((0 (UVal (Rec ((f mut ,leaf))))))
+                          ((0 Available))
+                          (((tok 0) Available))
+                          ()))
+               empty (term (Owned Res)) (term (Own)))))

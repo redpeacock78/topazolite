@@ -27,6 +27,7 @@
          type-of/raw
          typing-visited-points
          config-ok?
+         control-leaf-positions-ok?
          derive-places
          join-types
          merge-field
@@ -2982,40 +2983,97 @@
     [`(Owned ,inner) inner]
     [_ type]))
 
+;; Ω[p]=Available の root の値だけを live 集合へ入れる。Moved root の H entry
+;; は R-Move 後も stale value を保持するため、ここへ含めない。
+(define (available-root-values heap states)
+  (for/list ([entry (in-list heap)]
+             #:when (match (assoc (first entry) states)
+                       [(list _ 'Available) #t]
+                       [_ #f]))
+    (second entry)))
+
+;; 制御項と Available な root の値を token 検査の対象にする。θ の obs は履歴で
+;; あり、live value ではないため含めない。
+(define (live-roots core heap states)
+  (cons core (available-root-values heap states)))
+
+(define (live-tokens core heap states)
+  (append-map collect-tokens (live-roots core heap states)))
+
+;; 値である最大の部分項へ leaf-positions-ok? を課し、値でない構成子はその子を
+;; 透過して見る。Drop (Rec ((f mut leaf))) のような制御項は許す一方、値の位置へ
+;; leaf を隠す構成子は拒否する。
+(define (control-leaf-positions-ok? core)
+  (cond
+    [(redex-match? G2m v core) (leaf-positions-ok? core)]
+    [(list? core) (andmap control-leaf-positions-ok? core)]
+    [else #t]))
+
 (define (config-ok? configuration callables expected row)
   ;; 検査集合は entry-violation（判定 API と診断 API の入口）と揃える。
   ;; ここは G2m config を見る別の入口であり、places を heap から導出するため
   ;; entry-violation をそのまま呼べない。あちらへ検査を足すときは同時に直す。
-  (and (redex-match? G2m config configuration)
-       (core-types-normal? configuration)
-       (valid-callables? callables)
-       (type? expected)
-       (row? row)
-       (match configuration
-         [`(cfg ,core ,heap ,states () ,_)
-          (and (unique-table? heap)
-               (unique-table? states)
-               (equal? (sort (map first heap) <)
-                       (sort (map first states) <))
-               ;; G5 derives Ξ from each heap value rather than assuming Res.
-               (let ([places (derive-places heap callables)])
-                 (and
-                  places
-                  (for/and ([entry (in-list heap)])
-                    (define declared
-                      (second (assoc (first entry) places)))
-                    (define value-row
-                      (check-as/boolean (second entry)
-                                        (list 'Owned declared)
-                                        '()
-                                        places
-                                        callables))
-                    (and value-row (null? value-row)))
-                  (let ([actual-row
-                         (check-as/boolean core expected '()
-                                           places callables)])
-                    (and actual-row (row=? actual-row row))))))]
-         [_ #f])))
+  (parameterize ([deriving-config? #t])
+    (and (redex-match? G2m config configuration)
+         (core-types-normal? configuration)
+         (valid-callables? callables)
+         (type? expected)
+         (row? row)
+         (match configuration
+           [`(cfg ,core ,heap ,states ,token-states ,trace)
+            (and (unique-table? heap)
+                 (unique-table? states)
+                 (equal? (sort (map first heap) <)
+                         (sort (map first states) <))
+                 (unique-table? token-states)
+                 ;; G5 derives Ξ from each heap value rather than assuming Res.
+                 (let ([places (derive-places heap callables)])
+                   (and
+                    places
+                    (for/and ([entry (in-list heap)])
+                      (define declared
+                        (second (assoc (first entry) places)))
+                      (define value-row
+                        (check-as/boolean (second entry)
+                                          (list 'Owned declared)
+                                          '()
+                                          places
+                                          callables
+                                          #:compatible?
+                                          (if (contains-owned-leaf? (second entry))
+                                              owned-lift-compatible?
+                                              type-compatible?)))
+                      (and value-row (null? value-row)))
+                    (let ([actual-row
+                           (check-as/boolean core expected '()
+                                             places callables)])
+                      (and actual-row
+                           (row=? actual-row row)
+                           ;; 根の位置に leaf は置かない。
+                           (not (owned-leaf? core))
+                           ;; H の leaf は走査で辿れる位置に限る。
+                           (andmap (lambda (entry)
+                                     (leaf-positions-ok? (second entry)))
+                                   heap)
+                           (control-leaf-positions-ok? core)
+                           ;; token の live 出現と Λtok の状態を突き合わせる。
+                           (let ([tokens (live-tokens core heap states)])
+                             (and
+                              (= (length tokens)
+                                 (length (remove-duplicates tokens)))
+                              (for/and ([tk (in-list tokens)])
+                                (assoc tk token-states))
+                              (for/and ([entry (in-list token-states)])
+                                (define occurrences
+                                  (length
+                                   (filter (lambda (tk)
+                                             (equal? tk (first entry)))
+                                           tokens)))
+                                (case (second entry)
+                                  [(Available Moved) (= occurrences 1)]
+                                  [(Dropped) (= occurrences 0)]
+                                  [else #f])))))))))]
+           [_ #f]))))
 
 (module+ test
   (require rackunit)

@@ -29,6 +29,8 @@
          borrow-designator?
          borrow-token-key capability-field-table capability-branch-bindings
          path-wf? record-path? owner-path?
+         collect-tokens owned-leaf? contains-owned-leaf?
+         walk-leaf-positions leaf-positions-ok?
          path-prefix?
          capability-overlap?)
 
@@ -137,6 +139,41 @@
 ;; 所有値の走査が使う path。位置指定も許す。
 (define (owner-path? fp)
   (path-wf? fp))
+
+;; 値のグラフから token を出現順に集める。重複は保持するので、呼び出し側が
+;; 同じ token の複数出現を検出できる。
+(define (collect-tokens value)
+  (match value
+    [`(OwnedLeaf ,tk ,payload) (cons tk (collect-tokens payload))]
+    [(? list?) (append-map collect-tokens value)]
+    [_ '()]))
+
+(define (owned-leaf? value)
+  (and (pair? value) (eq? (first value) 'OwnedLeaf)))
+
+;; 値のどこかに leaf があるか。位置の妥当性は問わない。
+(define (contains-owned-leaf? value)
+  (or (owned-leaf? value)
+      (and (list? value) (ormap contains-owned-leaf? value))))
+
+;; leaf が回収走査で辿れる位置にだけ現れるかを判定する。b3a では Rec の
+;; 欄と leaf の payload だけを許し、その他の構成子は leaf を含まないことを
+;; 要求して fail-closed にする。
+(define (walk-leaf-positions current)
+  (match current
+    [`(OwnedLeaf ,_tk ,payload)
+     (and (not (owned-leaf? payload))
+          (walk-leaf-positions payload))]
+    [`(Rec ((,_name ,_mode ,values) ...))
+     (andmap walk-leaf-positions values)]
+    [(? list?)
+     (andmap (lambda (child) (not (contains-owned-leaf? child))) current)]
+    [_ #t]))
+
+;; 根の位置の leaf は Ω の root 所有と二重に数えるため拒否する。
+(define (leaf-positions-ok? value)
+  (and (not (owned-leaf? value))
+       (walk-leaf-positions value)))
 
 ;; spec §3.2。fp_1 が fp_2 の接頭辞か。
 (define (path-prefix? fp_1 fp_2)
