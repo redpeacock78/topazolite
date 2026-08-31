@@ -72,7 +72,8 @@
          (Suspend c)
          (Move w)
          (Drop c)
-         (Curry c c))
+         (Curry c c)
+         (OwnLeaf c))
   (v ::= l
          ov
          (Construct τ K v ...)
@@ -165,7 +166,8 @@
          (Drop F)
          (Yield F c)
          (Curry F c)
-         (Curry v F))
+         (Curry v F)
+         (OwnLeaf F))
   (E ::= hole
          (Apply v ... E c ...)
          (Let (x τ) E c)
@@ -177,7 +179,8 @@
          (Curry E c)
          (Curry v E)
          (Scope π E)
-         (Handle op h E))
+         (Handle op h E)
+         (OwnLeaf E))
   (G ::= hole
          (Apply v ... G c ...)
          (Let (x τ) G c)
@@ -188,7 +191,8 @@
          (Yield G c)
          (Curry G c)
          (Curry v G)
-         (Handle op h G)))
+         (Handle op h G)
+         (OwnLeaf G)))
 
 (define-extended-language G2m G1m
   (m ::= imm mut)

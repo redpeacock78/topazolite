@@ -454,6 +454,17 @@
         (side-condition (memq (term state_old) '(Moved Dropped)))
         R-MoveError)
 
+   ;; 値の内部の所有資源へ token を割り当てる。値の変換と Λtok への
+   ;; Available 追加を一つの規則で同時に行い、token 状態の更新を省いた
+   ;; 単なる値変換にしない。
+   (--> (cfg (in-hole E (OwnLeaf v_payload)) H Ω Λtok θ)
+        (cfg (in-hole E (OwnedLeaf tk_new v_payload)) H Ω Λtok_new θ)
+        (where c_whole (in-hole E (OwnLeaf v_payload)))
+        (where tk_new ,(fresh-token (term (cfg c_whole H Ω Λtok θ))))
+        (where Λtok_new
+               ,(append (term Λtok) (list (list (term tk_new) 'Available))))
+        R-OwnLeaf)
+
    (--> (cfg (in-hole E (Drop v_arg)) H Ω Λtok θ)
         (cfg (in-hole E unit) H Ω Λtok_final θ)
         (where Λtok_final (drop-leaves v_arg Λtok))
