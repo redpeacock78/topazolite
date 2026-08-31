@@ -138,6 +138,11 @@
   (c ::= .... (Error p))
 
   (state ::= Available Moved Dropped)
+  ;; record の field 名。借用だけでなく G1m の値走査も使うため、
+  ;; G2m ではなくこの共通機械言語に置く。
+  (label ::= variable-not-otherwise-mentioned)
+  ;; field path。空の列が root capability を表す。
+  (fp ::= (label ...))
   (H ::= ((p v) ...))
   (Ω ::= ((p state) ...))
   ;; 値の内部の Owned 資源を識別する token。
@@ -183,9 +188,6 @@
          (Handle op h G)))
 
 (define-extended-language G2m G1m
-  (label ::= variable-not-otherwise-mentioned)
-  ;; field path。空の列が root capability を表す。
-  (fp ::= (label ...))
   (m ::= imm mut)
   (bmode ::= const let)
   (r ::= ((label τ m) ...))
