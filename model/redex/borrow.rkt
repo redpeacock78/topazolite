@@ -30,7 +30,7 @@
          borrow-token-key capability-field-table capability-branch-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
-         leaf-positions-ok?
+         leaf-positions-ok? walk-owned-leaves
          path-prefix?
          capability-overlap?)
 
@@ -158,6 +158,26 @@
 (define (contains-owned-leaf? value)
   (or (owned-leaf? value)
       (and (list? value) (ormap contains-owned-leaf? value))))
+
+;; 値の内部の Owned leaf を、その path とともに前順で列挙する。
+;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
+;; b3a で辿る子は Rec の欄と leaf の payload だけであり、未対応の
+;; 構成子を汎用 list として辿らない。
+(define (walk-owned-leaves value)
+  (define (walk current path root?)
+    (match current
+      [`(OwnedLeaf ,tk ,payload)
+       (if root?
+           (walk payload path #f)
+           (cons (list tk (reverse path))
+                 (walk payload path #f)))]
+      [`(Rec ((,names ,_modes ,values) ...))
+       (append-map (lambda (name child)
+                     (walk child (cons name path) #f))
+                   names
+                   values)]
+      [_ '()]))
+  (walk value '() #t))
 
 ;; leaf が回収走査で辿れる位置にだけ現れるかを判定する。b3a では Rec の
 ;; 欄と leaf の payload だけを許し、その他の構成子は leaf を含まないことを

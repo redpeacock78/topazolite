@@ -8,6 +8,14 @@
 (define fuel 50)
 (define acquire (term (PrimVal (Reserved o-acquire) acquire)))
 
+(define (cfg-tokens configuration)
+  (match configuration
+    [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
+
+(define (cfg-events configuration)
+  (match configuration
+    [`(cfg ,_ ,_ ,_ ,_ ,events) events]))
+
 (test-case "OWN-001: move succeeds once and reuse raises OwnershipError"
   (check-equal?
    (run
@@ -200,3 +208,97 @@
           (OwnedLeaf (tok 3) (Lam User leaf-sub-id () x))
           (x) ((resource 1))))
    (term (OwnedLeaf (tok 3) (Lam User leaf-sub-id () (resource 1))))))
+
+(test-case "scope 終了が値の内部の leaf を一度だけ回収する"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (define config
+    (term (cfg (Scope (0) unit) ((0 ,value)) ((0 Available))
+               (((tok 0) Available)) ())))
+  (define results (apply-reduction-relation -->g2 config))
+  (check-equal? (length results) 1)
+  (define after (first results))
+  (check-equal? (cfg-tokens after) (term (((tok 0) Dropped))))
+  (check-equal? (cfg-events after) (term ((finLeaf 0 (f)) (fin 0)))))
+
+(test-case "Moved の root は走査しない"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (define config
+    (term (cfg (Scope (0) unit) ((0 ,value)) ((0 Moved))
+               (((tok 0) Available)) ())))
+  (define results (apply-reduction-relation -->g2 config))
+  (check-equal? (length results) 1)
+  (check-equal? (cfg-tokens (first results))
+                (term (((tok 0) Available)))))
+
+(test-case "R-Drop は値の内部の leaf を Dropped にして観測を積まない"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (define config
+    (term (cfg (Drop ,value) ((0 ,value)) ((0 Available))
+               (((tok 0) Available)) ())))
+  (define results (apply-reduction-relation -->g2 config))
+  (check-equal? (length results) 1)
+  (define after (first results))
+  (check-equal? (cfg-tokens after) (term (((tok 0) Dropped))))
+  (check-equal? (cfg-events after) (term ())))
+
+(test-case "leaf の token が Available でなければ R-Drop は発火しない"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (for ([tokens (in-list (list (term (((tok 0) Moved)))
+                               (term (((tok 0) Dropped)))
+                               (term ())))])
+    (define config
+      (term (cfg (Drop ,value) ((0 ,value)) ((0 Available)) ,tokens ())))
+    (check-equal? (apply-reduction-relation -->g2 config) '())))
+
+(test-case "leaf の token が Available でなければ scope 終了が発火しない"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (for ([tokens (in-list (list (term (((tok 0) Moved)))
+                               (term (((tok 0) Dropped)))
+                               (term ())))])
+    (define config
+      (term (cfg (Scope (0) unit) ((0 ,value)) ((0 Available)) ,tokens ())))
+    (check-equal? (apply-reduction-relation -->g2 config) '())))
+
+(test-case "fresh-token は決定的で Dropped の番号を再利用しない"
+  (define config
+    (term (cfg unit ((0 (resource 1))) ((0 Available))
+               (((tok 0) Dropped)) ())))
+  (check-equal? (fresh-token config) (term (tok 1)))
+  (check-equal? (fresh-token config) (term (tok 1))))
+
+(test-case "fresh-token は Λtok 以外の走査対象も見る"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  ;; Λtok は空。token は制御項にだけある。
+  (check-equal?
+   (fresh-token (term (cfg (Drop (Rec ((f mut ,leaf)))) () () () ())))
+   (term (tok 1)))
+  ;; Λtok は空。token は H にだけある。
+  (check-equal?
+   (fresh-token
+    (term (cfg unit ((0 (Rec ((f mut ,leaf))))) ((0 Available)) () ())))
+   (term (tok 1)))
+  ;; Λtok は空。token は θ の (obs v) にだけある。
+  (check-equal?
+   (fresh-token (term (cfg unit () () () ((obs (Rec ((f mut ,leaf))))))))
+   (term (tok 1))))
+
+(test-case "二 place の scope が place の逆順で finLeaf と fin を並べる"
+  (define leaf0 (term (OwnedLeaf (tok 0) (resource 10))))
+  (define leaf1 (term (OwnedLeaf (tok 1) (resource 20))))
+  (define heap
+    (term ((0 (Rec ((f mut ,leaf0))))
+           (1 (Rec ((g mut ,leaf1)))))))
+  (define results
+    (apply-reduction-relation
+     -->g2
+    (term (cfg (Scope (0 1) unit) ,heap
+                ((0 Available) (1 Available))
+                (((tok 0) Available) ((tok 1) Available))
+                ()))))
+  (check-equal? results
+                (list
+                 (term (cfg unit ,heap
+                            ((0 Dropped) (1 Dropped))
+                            (((tok 0) Dropped) ((tok 1) Dropped))
+                            ((finLeaf 1 (g)) (fin 1)
+                             (finLeaf 0 (f)) (fin 0)))))))

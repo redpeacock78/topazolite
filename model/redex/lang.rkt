@@ -152,7 +152,7 @@
   (tk ::= (tok natural))
   ;; token の状態。root の所有を持つ Ω とは別の写像である。
   (Λtok ::= ((tk state) ...))
-  (event ::= (obs v) (fin p))
+  (event ::= (obs v) (fin p) (finLeaf p (fseg fseg ...)))
   (θ ::= (event ...))
   (config ::= (cfg c H Ω Λtok θ))
 

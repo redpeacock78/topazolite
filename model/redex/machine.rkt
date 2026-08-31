@@ -23,6 +23,7 @@
          value-set-path
          path-lookup
          path-set
+         fresh-token
          run
          run-g2
          g2-primitive-name?)
@@ -249,21 +250,90 @@
             ([entry (in-list (append heap states))])
     (max next (add1 (first entry)))))
 
-(define (finalize/proc places states trace)
-  (define-values (final-states reversed-events)
+(define (token-numbers value)
+  (match value
+    [`(tok ,(? exact-nonnegative-integer? n)) (list n)]
+    [(? pair?) (append (token-numbers (car value))
+                       (token-numbers (cdr value)))]
+    [_ '()]))
+
+;; Λtok、H、制御項、θ のどこかに現れる token を避けて採番する。
+(define (fresh-token configuration)
+  (match-define `(cfg ,core ,heap ,_states ,tokens ,events) configuration)
+  (define used
+    (append (token-numbers core)
+            (token-numbers heap)
+            (token-numbers tokens)
+            (token-numbers events)))
+  (term (tok ,(if (null? used) 0 (add1 (apply max used))))))
+
+;; leaf の token が Λtok にあり、すべて Available か。
+(define (leaves-available? leaves tokens)
+  (for/and ([leaf (in-list leaves)])
+    (define entry (assoc (first leaf) tokens))
+    (and entry (eq? (second entry) 'Available))))
+
+;; π の Available な root と、その値の内部の leaf を一緒に回収する。
+;; H は不変。失敗時は #f を返し、呼び出し側の where を不成立にする。
+(define (finalize/proc places heap states tokens trace)
+  (define-values (final-states final-tokens final-events)
     (for/fold ([states states]
+               [tokens tokens]
                [events '()])
               ([place (in-list (reverse places))])
-      (if (eq? (table-ref states place) 'Available)
-          (values (table-set states place 'Dropped)
-                  (cons (list 'fin place) events))
-          (values states events))))
-  (list final-states (append trace (reverse reversed-events))))
+      (cond
+        [(not states) (values #f tokens events)]
+        [(eq? (table-ref states place) 'Available)
+         (define leaves (walk-owned-leaves (table-ref heap place)))
+         (if (not (leaves-available? leaves tokens))
+             (values #f tokens events)
+             (values
+              (table-set states place 'Dropped)
+              (for/fold ([updated tokens])
+                        ([leaf (in-list leaves)])
+                (table-set updated (first leaf) 'Dropped))
+              (append events
+                      (for/list ([leaf (in-list leaves)])
+                        (list 'finLeaf place (second leaf)))
+                      (list (list 'fin place)))))]
+        [else (values states tokens events)])))
+  (and final-states
+       (list final-states final-tokens (append trace final-events))))
 
 (define-metafunction G1m
-  finalize : π Ω θ -> any
-  [(finalize π Ω θ)
-   ,(finalize/proc (term π) (term Ω) (term θ))])
+  finalize : π H Ω Λtok θ -> any
+  [(finalize π H Ω Λtok θ)
+   ,(finalize/proc (term π) (term H) (term Ω) (term Λtok) (term θ))])
+
+(define (drop-leaves/proc value tokens)
+  (for/fold ([updated tokens])
+            ([leaf (in-list (walk-owned-leaves value))])
+    (table-set updated (first leaf) 'Dropped)))
+
+(define (leaves-droppable?/proc value tokens)
+  (leaves-available? (walk-owned-leaves value) tokens))
+
+(define-metafunction G1m
+  drop-leaves : v Λtok -> Λtok
+  [(drop-leaves v Λtok)
+   ,(drop-leaves/proc (term v) (term Λtok))])
+
+(define-metafunction G1m
+  leaves-droppable? : v Λtok -> boolean
+  [(leaves-droppable? v Λtok)
+   ,(leaves-droppable?/proc (term v) (term Λtok))])
+
+(define-metafunction/extension finalize
+  G2m
+  finalize/g2 : π H Ω Λtok θ -> any)
+
+(define-metafunction/extension drop-leaves
+  G2m
+  drop-leaves/g2 : v Λtok -> Λtok)
+
+(define-metafunction/extension leaves-droppable?
+  G2m
+  leaves-droppable?/g2 : v Λtok -> boolean)
 
 (define (unique-binders? term)
   (and (match term
@@ -385,7 +455,9 @@
         R-MoveError)
 
    (--> (cfg (in-hole E (Drop v_arg)) H Ω Λtok θ)
-        (cfg (in-hole E unit) H Ω Λtok θ)
+        (cfg (in-hole E unit) H Ω Λtok_final θ)
+        (where Λtok_final (drop-leaves v_arg Λtok))
+        (side-condition (term (leaves-droppable? v_arg Λtok)))
         R-Drop)
 
    (--> (cfg (in-hole E (Yield v_observed c_next))
@@ -399,24 +471,27 @@
         R-Suspend)
 
    (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω Λtok θ)
-        (cfg (in-hole E_outer v_result) H Ω_final Λtok θ_final)
-        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        (cfg (in-hole E_outer v_result) H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize π_managed H Ω Λtok θ))
         R-ScopeValue)
 
    (--> (cfg (in-hole E_outer
                       (Scope π_managed
                              (in-hole F_inner (Perform op v_arg))))
              H Ω Λtok θ)
-        (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final Λtok θ_final)
-        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize π_managed H Ω Λtok θ))
         R-ScopeAbort)
 
    (--> (cfg (in-hole E_outer
                       (Scope π_managed
                              (in-hole F_inner (Error p_error))))
              H Ω Λtok θ)
-        (cfg (in-hole E_outer (Error p_error)) H Ω_final Λtok θ_final)
-        (where (Ω_final θ_final) (finalize π_managed Ω θ))
+        (cfg (in-hole E_outer (Error p_error)) H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize π_managed H Ω Λtok θ))
         R-ScopeError)
 
    (--> (cfg (in-hole E_outer
@@ -640,7 +715,41 @@
                ,(table-set (term H) (term p_new) (term v_bound)))
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
-        R-LetOwnedB)))
+        R-LetOwnedB)
+
+   ;; G2m の Rec を含む値にも leaf 回収を適用する。G1m の同名規則は
+   ;; G2m の v を受けられないため、G2m 拡張を明示する。
+   (--> (cfg (in-hole E (Drop v_arg)) H Ω Λtok θ)
+        (cfg (in-hole E unit) H Ω Λtok_final θ)
+        (where Λtok_final (drop-leaves/g2 v_arg Λtok))
+        (side-condition (term (leaves-droppable?/g2 v_arg Λtok)))
+        R-Drop)
+
+   (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω Λtok θ)
+        (cfg (in-hole E_outer v_result) H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize/g2 π_managed H Ω Λtok θ))
+        R-ScopeValue)
+
+   (--> (cfg (in-hole E_outer
+                      (Scope π_managed
+                             (in-hole F_inner (Perform op v_arg))))
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Perform op v_arg))
+             H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize/g2 π_managed H Ω Λtok θ))
+        R-ScopeAbort)
+
+   (--> (cfg (in-hole E_outer
+                      (Scope π_managed
+                             (in-hole F_inner (Error p_error))))
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Error p_error))
+             H Ω_final Λtok_final θ_final)
+        (where (Ω_final Λtok_final θ_final)
+               (finalize/g2 π_managed H Ω Λtok θ))
+        R-ScopeError)))
 
 ;; Binding-aware matching freshens binders before destructuring.  Check the raw
 ;; configuration first so repeated source binders cannot be freshened apart.
