@@ -68,6 +68,16 @@
   (check-equal? (core-children '(CurryVal User 1 2)) '(1 2))
   (check-equal? (core-children '(RecurVal c0 f (x) 1)) '(1)))
 
+(test-case "core-children は Owned leaf の payload を子にする"
+  (check-equal? (core-children '(OwnedLeaf (tok 0) x)) '(x)))
+
+(test-case "core-with-children は Owned leaf を組み直す"
+  (check-equal? (core-with-children '(OwnedLeaf (tok 0) x) '(y))
+                '(OwnedLeaf (tok 0) y)))
+
+(test-case "core-free-vars は Owned leaf の payload を見る"
+  (check-equal? (core-free-vars '(OwnedLeaf (tok 0) x)) (set 'x)))
+
 (test-case "子を持たない形は空を返す"
   (for ([t (in-list (list 3 "s" 'unit 'x '(Move y)
                           '(PrimVal User add)

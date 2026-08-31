@@ -127,3 +127,7 @@
   (check-exn exn:fail? (lambda () (erase-core (term (#:ty Int)))))
   (check-exn exn:fail? (lambda () (erase-core (term (#:var x ,s1 ,s1)))))
   (check-exn exn:fail? (lambda () (erase-core (term (#:span main.tz 0))))))
+
+(test-case "erase-core は Owned leaf を保存する"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (check-equal? (erase-core value) value))

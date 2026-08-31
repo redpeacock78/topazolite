@@ -193,3 +193,10 @@
                  (cfg (CurryVal any_o any_f any_a)
                       any_h any_s any_t any_e)
                  (first results))))
+
+(test-case "substitute* は leaf の payload だけを置き換え token を変えない"
+  (check-equal?
+   (term (substitute*/g2
+          (OwnedLeaf (tok 3) (Lam User leaf-sub-id () x))
+          (x) ((resource 1))))
+   (term (OwnedLeaf (tok 3) (Lam User leaf-sub-id () (resource 1))))))

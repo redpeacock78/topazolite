@@ -138,11 +138,14 @@
   (c ::= .... (Error p))
 
   (state ::= Available Moved Dropped)
+  ;; 値の内部に置く所有資源の印。根の値には置かず、config-ok? が拒否する。
+  (v ::= .... (OwnedLeaf tk v))
   ;; record の field 名。借用だけでなく G1m の値走査も使うため、
   ;; G2m ではなくこの共通機械言語に置く。
   (label ::= variable-not-otherwise-mentioned)
-  ;; field path。空の列が root capability を表す。
-  (fp ::= (label ...))
+  ;; path の segment。record は label、位置指定は natural を使う。
+  (fseg ::= label natural)
+  (fp ::= (fseg ...))
   (H ::= ((p v) ...))
   (Ω ::= ((p state) ...))
   ;; 値の内部の Owned 資源を識別する token。
@@ -221,6 +224,7 @@
          (Rec ((label m v) ...))
          (UVal v)
          (RVal (ProofRep O φ) v)
+         (OwnedLeaf tk v)
          (BorrowRef p fp ρ)
          (BorrowMutRef p fp ρ)
          (RegionLam (rp ...) c))

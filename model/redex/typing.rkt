@@ -74,6 +74,10 @@
 ;; および Discharge の層を降りる loop の 3 箇所に限る。
 (define typing-point-probe (make-parameter void))
 
+;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
+;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
+(define deriving-config? (make-parameter #f))
+
 ;; 制約の収集器（spec §5.2）。既定は #f であり、その場合は何も記録しない。
 ;; G4b が入れた typing-point-probe と同じ形の記録先である。
 ;; 走査の各段へ手を入れず、infer の出口 1 か所で集める。
@@ -1524,7 +1528,8 @@
 ;; 段 1 の fail は with-typing の脱出で段 2 へ進まないため、段 1 で棄却した形が
 ;; 制約違反として報告されることはない。type-of/raw* と同じ契約である。
 (define (check-as/boolean core expected environment places callables
-                          [Λ (empty-region-ctx)])
+                          [Λ (empty-region-ctx)]
+                          #:compatible? [compatible? type-compatible?])
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
@@ -1550,7 +1555,8 @@
                 ;; 段 1。
                 (match-define (list row Ψ)
                   (check-as renamed expected Λ (empty-psi)
-                            environment places callables fail))
+                            environment places callables fail
+                            compatible?))
                 ;; 段 2。
                 (match (typing-solve ir (reverse (unbox cs)))
                   [(list 'error broken)
@@ -1923,6 +1929,13 @@
 
     [`(resource ,_) (list '(Owned Res) '() Ψ)]
 
+    [`(OwnedLeaf ,_tk ,payload)
+     (match-define (list payload-type payload-row payload-psi)
+       (infer payload (enter-child Λ 0) Ψ environment places callables fail))
+     (unless (owned-type? payload-type)
+       (fail 'ill-typed core))
+     (list payload-type payload-row payload-psi)]
+
     [`(Rec (,fields ...))
      (define plain-fields
        (for/list ([field (in-list fields)])
@@ -1941,7 +1954,11 @@
          (values (append results (list result)) (third result))))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
-       (when (owned-type? (first result))
+       (when (and (owned-type? (first result))
+                  (not (and (deriving-config?)
+                            (match (peel-node (third field))
+                              [`(OwnedLeaf ,_ ,_) #t]
+                              [_ #f]))))
          (fail 'owned-record-field (third field))))
      (list
       `(Record

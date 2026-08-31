@@ -194,6 +194,7 @@
          [`(Rec ,fields) (andmap walk-record-field fields)]
          [`(Proj ,record ,_) (walk record)]
          [`(resource ,_) #t]
+         [`(OwnedLeaf ,_ ,payload) (walk payload)]
          [`(UVal ,payload) (walk payload)]
          [`(RVal ,proof ,payload) (and (walk proof) (walk payload))]
          ;; PRF-004: 搬送された ProofRep は core に現れる。包み先と Proof の

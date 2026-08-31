@@ -17,6 +17,12 @@
          inject
          inject-g2
          inject-g2m
+         substitute*/g2
+         heap-walk-path
+         proj-borrow-mut
+         value-set-path
+         path-lookup
+         path-set
          run
          run-g2
          g2-primitive-name?)
@@ -46,6 +52,10 @@
 ;; instead of raising a metafunction exception.
 (define-metafunction G1m
   substitute* : c (x ...) (v ...) -> any
+  ;; OwnedLeaf は束縛子を持たないため、token を保ったまま payload だけを
+  ;; 同時置換する。
+  [(substitute* (OwnedLeaf tk v_body) (x ...) (v_arg ...))
+   (OwnedLeaf tk (substitute* v_body (x ...) (v_arg ...)))]
   [(substitute* c_body (x ...) (v_arg ...))
    (substitute c_body (x v_arg) ...)
    (side-condition
@@ -125,7 +135,9 @@
 
 (define-metafunction/extension substitute*
   G2m
-  substitute*/g2 : c (x ...) (v ...) -> any)
+  substitute*/g2 : c (x ...) (v ...) -> any
+  [(substitute*/g2 (OwnedLeaf tk v_body) (x ...) (v_arg ...))
+   (OwnedLeaf tk (substitute*/g2 v_body (x ...) (v_arg ...)))])
 
 (define-metafunction/extension select-branch
   G2m

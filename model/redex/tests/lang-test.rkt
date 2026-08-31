@@ -74,7 +74,13 @@
                                          (Reserved o-impl-printable-int)
                                          (Reserved o-derive-sizable-int))))))
   ;; 成分が origin でない形は受理しない。
-  (check-false
+   (check-false
    (redex-match? G2m O
                  (term (Derived (Reserved o-intersect-print-size)
                                 (Compose PrintableSizable))))))
+
+(test-case "値の内部の Owned leaf が G1m の値である"
+  (check-true
+   (redex-match? G1m v (term (OwnedLeaf (tok 0) (resource 1)))))
+  (check-true (redex-match? G1m fp (term (a 0 b))))
+  (check-false (redex-match? G1m v (term (OwnedLeaf 0 (resource 1))))))
