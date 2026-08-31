@@ -195,6 +195,7 @@
          [`(Rec ,fields) (andmap walk-record-field fields)]
          [`(Proj ,record ,_) (walk record)]
          [`(resource ,_) #t]
+         [`(OwnLeaf ,payload) (walk payload)]
          [`(OwnedLeaf ,_ ,payload) (walk payload)]
          [`(UVal ,payload) (walk payload)]
          [`(RVal ,proof ,payload) (and (walk proof) (walk payload))]

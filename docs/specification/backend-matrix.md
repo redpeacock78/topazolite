@@ -122,7 +122,7 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 20 本である。
-源の `-->g2` の 30 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB` をそれぞれ 1 本へ畳んで 4 本減り、`R-Discharge` と借用規則 5 本が目標側に規則を持たないので 6 本減る。
+源の `-->g2` の 37 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB` をそれぞれ 1 本へ畳んで 4 本減り、`R-Discharge`、`R-OwnLeaf`、および目標側に規則を持たない G2m 固有の借用と投影と読みと代入と region 適用の 11 本が対象外となるので 13 本減る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -134,14 +134,21 @@ pstate ::= Available | Moved | Dropped
 | `R-Eliminate` | `R-PR-Match` | なし |
 | `R-Proj` | `R-PR-Proj` | 可変性が落ちているので label の一意性の側条件だけが残る |
 | `R-Discharge` | なし | Proof は実行時に意味を持たない |
+| `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowError` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowMut` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowMutError` | なし | Portable Racket backend は借用を未設計である |
 | `R-Reborrow` | なし | Portable Racket backend は借用を未設計である |
+| `R-ProjBorrow` | なし | Portable Racket backend は借用投影を未設計である |
+| `R-ProjBorrowMut` | なし | Portable Racket backend は借用投影を未設計である |
+| `R-Read` | なし | Portable Racket backend は借用読み出しを未設計である |
+| `R-ReadMut` | なし | Portable Racket backend は可変借用読み出しを未設計である |
+| `R-Assign` | なし | Portable Racket backend は借用代入を未設計である |
 | `R-RecurBind`、`R-RecurUnfold` | `R-PR-Letrec` | 2 本が 1 本になる。展開は `R-PR-App` との合成になり、呼び出しごとに 1 段増える |
 | `R-Move` | `R-PR-Move` | なし |
 | `R-MoveError` | `R-PR-MoveError` | なし |
+| `R-OwnLeaf` | なし | Portable Racket backend は所有 token を持たない |
 | `R-Drop` | `R-PR-Drop` | なし。状態表は触らない |
 | `R-Yield` | `R-PR-Yield` | なし |
 | `R-Suspend` | `R-PR-Suspend` | なし |

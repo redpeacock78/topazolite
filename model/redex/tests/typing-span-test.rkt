@@ -190,12 +190,13 @@
     effectful-curry-operand undeclared-function-effect
     ;; OWN
     drop-non-owned move-non-owned own-binding-borrowed-payload
+    missing-ownleaf-root
     owned-constructor-field
     owned-function-requires-move
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
     owned-refined-payload owned-untrusted-payload
-    owned-variable-requires-move unknown-place unmanaged-place
+    owned-variable-requires-move unexpected-ownleaf unknown-place unmanaged-place
     ;; VAR
     duplicate-branch-binder duplicate-parameter non-canonical-primitive
     unbound-variable unknown-primitive
@@ -786,15 +787,19 @@
                                       (reach-var 'mk 1480 1482)))
               '() '()
               '((mk (NFn () (Owned (NFn () Unit (Own) ())) (Own) ())))
-              (reach-span 1475 1490))))
+              (reach-span 1475 1490))
+   (reach-row 'unexpected-ownleaf
+              (reach-node 'OwnLeaf 1501 1520
+                          (reach-lit 1 1510 1511))
+              '() '() '() (reach-span 1501 1520))))
 
-(test-case "typing の producer key 集合が registry v8 と一致する"
+(test-case "typing の producer key 集合が registry v9 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 78)
+  (check-equal? (length producer-keys) 80)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -836,8 +841,11 @@
   ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
   ;; producer fixture を持つ。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
+  ;; missing-ownleaf-root は Yield と CurryVal の gate から落ちる。両者の
+  ;; producer 接続は G5c5b3b のタスク 3 が行うため、この段では到達しない。
   (define unreachable-keys
     '(effectful-curry-operand
+      missing-ownleaf-root
       non-normalizable-result-type
       unmergeable-branch-records
       projborrow-non-record

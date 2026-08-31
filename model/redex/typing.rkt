@@ -28,6 +28,9 @@
          typing-visited-points
          config-ok?
          with-config-typing
+         ownleaf-permitted
+         ownleaf-root?
+         require-ownleaf-root
          control-leaf-positions-ok?
          derive-places
          join-types
@@ -1836,6 +1839,23 @@
                         (region-ctx-point Λ))
   result)
 
+;; producer 位置から入ったときだけ OwnLeaf を許す。許可は節点そのものを
+;; memq で保持するため、兄弟の位置へ漏れない。既定は拒否である。
+(define ownleaf-permitted (make-parameter '()))
+
+;; span 付きの core も受けるため peel-node を通す。
+(define (ownleaf-root? core)
+  (match (peel-node core)
+    [`(OwnLeaf ,_) #t]
+    [_ #f]))
+
+;; producer 位置の共通 gate。追跡されていない raw Owned payload を通さない
+;; ため、根の OwnLeaf を必須にする。診断 key は producer ごとに異なるため
+;; 引数で受ける。
+(define (require-ownleaf-root core key node fail)
+  (unless (ownleaf-root? core)
+    (fail key node)))
+
 (define (infer/body core Λ Ψ environment places callables fail)
   (match (peel-node core)
     [(? integer?) (list 'Int '() Ψ)]
@@ -1935,6 +1955,15 @@
      (list (peel-ty data-type) (first result) (second result))]
 
     [`(resource ,_) (list '(Owned Res) '() Ψ)]
+
+    ;; producer 位置から入ったときだけ OwnLeaf を許す。payload の再帰は
+    ;; 通常の infer へ戻すため、入れ子の producer は親位置で個別に許可される。
+    [`(OwnLeaf ,payload)
+     (unless (memq core (ownleaf-permitted))
+       (fail 'unexpected-ownleaf core))
+     (parameterize ([ownleaf-permitted '()])
+       (infer payload (enter-child Λ 0)
+              Ψ environment places callables fail))]
 
     [`(OwnedLeaf ,_tk ,payload)
      (match-define (list payload-type payload-row payload-psi)

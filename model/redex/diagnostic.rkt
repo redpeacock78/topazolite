@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 8)
+(define diagnostic-registry-version 9)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -213,6 +213,14 @@
   '(("E-OWN-025" owned-function-requires-move
                  "Owned の関数は Move を経由してのみ関数の位置へ置ける")))
 
+;; G5c5b3b。値の内部の所有資源は producer 位置の OwnLeaf を通してのみ
+;; token を得る。位置違いと wrapper の欠落を別の code で分ける。
+(define typing-entries-v9
+  '(("E-OWN-026" unexpected-ownleaf
+                 "producer 位置でない場所に OwnLeaf が現れた")
+    ("E-OWN-027" missing-ownleaf-root
+                 "producer 位置の Owned が OwnLeaf で包まれていない")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -264,6 +272,7 @@
           (rows 'typing 5 typing-entries-v5)
           (rows 'typing 7 typing-entries-v7)
           (rows 'typing 8 typing-entries-v8)
+          (rows 'typing 9 typing-entries-v9)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))

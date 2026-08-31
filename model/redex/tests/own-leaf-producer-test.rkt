@@ -3,8 +3,10 @@
 ;; G5c5b3b。値の内部の所有資源へ token を割り当てる producer 経路の回帰。
 (require rackunit
          redex/reduction-semantics
+         "../diagnostic.rkt"
          "../lang.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../typing.rkt")
 
 (define (step config)
   (define results (apply-reduction-relation -->g1 config))
@@ -31,3 +33,10 @@
    (term (cfg (Apply (OwnedLeaf (tok 4) (resource 2))
                      (OwnedLeaf (tok 3) (resource 1)))
               () () (((tok 4) Available)) ()))))
+
+(test-case "producer 位置でない OwnLeaf は unexpected-ownleaf で落ちる"
+  (check-equal? (core-type-of '(OwnLeaf 1) '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic '(OwnLeaf 1) '() '()))
+  (check-true (diagnostic? diagnostic))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'unexpected-ownleaf)))
