@@ -2940,12 +2940,14 @@
               (core-check-row core places callables expected environment Λ)])
          (and actual-row (row=? actual-row row)))))
 
-;; Ξ の第 1 段。G5c5b2 が生成する値は place を新たに含めず、捕捉した
-;; 名前を束縛する。R-LetOwned と R-Assign が heap へ保存するのも評価済み
-;; の値だけなので、到達可能な値が参照できる place は自身より前に割り当て
-;; られたものに限られる。したがって place の番号順に畳み込み、entry i の
-;; 型をそこまでに確定した Ξ の下で推論する。到達不能な手書き configuration
-;; の前方参照は、この畳み込みを失敗させて拒否する。
+;; Ξ の第 1 段。place を直接含む値は BorrowRef と BorrowMutRef だけだが、
+;; typing.rkt にその値の節はないため type-of/raw が拒否する。捕捉した closure
+;; は substitute 後に place を含みうるが、Owned で始まるため、b3a の通常の
+;; Rec 欄では owned-record-field が拒否する。したがって R-Assign が既存の
+;; place へ値を書いても、到達可能な値が参照できる place は自身より前に割り
+;; 当てられたものに限られる。place の番号順に畳み込み、前方参照を含む手書き
+;; configuration は失敗させて拒否する。b3b で deriving-config? が leaf の
+;; Rec 欄を許すときは、この順序の根拠を再検討する。
 ;; H の entry の並びは規定されないため、先に番号で整列する。
 (define (derive-places heap callables)
   (for/fold ([acc '()] #:result (and acc (reverse acc)))
