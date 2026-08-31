@@ -28,7 +28,7 @@
          unbound-borrowed-type?
          borrow-designator?
          borrow-token-key capability-field-table capability-branch-bindings
-         field-path?
+         path-wf? record-path? owner-path?
          path-prefix?
          capability-overlap?)
 
@@ -122,9 +122,21 @@
            (set-add (psi-suspended Ψ) (list w fp α_parent α_child))
            (psi-suspended Ψ))))
 
-;; spec §3.1。fp は label の列である。空の列が root を指す。
-(define (field-path? fp)
+;; path の形そのもの。segment は record の label または位置 natural である。
+(define (path-wf? fp)
+  (and (list? fp)
+       (andmap (lambda (seg)
+                 (or (symbol? seg)
+                     (exact-nonnegative-integer? seg)))
+               fp)))
+
+;; 借用と射影が使う path。record の label だけを辿る。
+(define (record-path? fp)
   (and (list? fp) (andmap symbol? fp)))
+
+;; 所有値の走査が使う path。位置指定も許す。
+(define (owner-path? fp)
+  (path-wf? fp))
 
 ;; spec §3.2。fp_1 が fp_2 の接頭辞か。
 (define (path-prefix? fp_1 fp_2)
@@ -389,9 +401,9 @@
        (for/set ([k (in-set (ws-of c_1))])
          (cons (car k) (append (cdr k) (list label)))))
      ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
-     ;; field-path? の定義域（複数要素の列）を実際には検査できない。
+     ;; record-path? の定義域（複数要素の列）を実際には検査できない。
      (for ([cap (in-set child-caps)])
-       (unless (field-path? (cdr cap))
+       (unless (record-path? (cdr cap))
          (if fail
              (fail 'unresolved-borrow-owner c)
              (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))

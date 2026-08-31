@@ -194,3 +194,22 @@
     (type-of/raw core (list (list 1 'Res)) '() '()
                  (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
   (check-equal? (second result) 'own-designator-mismatch))
+
+(test-case "借用の path は label だけを受理する"
+  (check-true (record-path? (term (a b))))
+  (check-false (record-path? (term (a 0))))
+  (check-true (owner-path? (term (a 0))))
+  (check-true (path-wf? (term (a 0))))
+  (check-false (path-wf? (term (a (b))))))
+
+(test-case "record でない値への射影は例外でなく #f になる"
+  (check-false (heap-walk-path (term (resource 1)) (term (a)))))
+
+(test-case "natural を含む path の借用は簡約できない"
+  (define config
+    (term (cfg (Read (BorrowRef 0 (a 0) 0))
+               ((0 (Rec ((a imm (resource 1))))))
+               ((0 Available))
+               ()
+               ())))
+  (check-equal? (apply-reduction-relation -->g2 config) '()))

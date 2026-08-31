@@ -52,10 +52,6 @@
 ;; instead of raising a metafunction exception.
 (define-metafunction G1m
   substitute* : c (x ...) (v ...) -> any
-  ;; OwnedLeaf は束縛子を持たないため、token を保ったまま payload だけを
-  ;; 同時置換する。
-  [(substitute* (OwnedLeaf tk v_body) (x ...) (v_arg ...))
-   (OwnedLeaf tk (substitute* v_body (x ...) (v_arg ...)))]
   [(substitute* c_body (x ...) (v_arg ...))
    (substitute c_body (x v_arg) ...)
    (side-condition
@@ -135,9 +131,7 @@
 
 (define-metafunction/extension substitute*
   G2m
-  substitute*/g2 : c (x ...) (v ...) -> any
-  [(substitute*/g2 (OwnedLeaf tk v_body) (x ...) (v_arg ...))
-   (OwnedLeaf tk (substitute*/g2 v_body (x ...) (v_arg ...)))])
+  substitute*/g2 : c (x ...) (v ...) -> any)
 
 (define-metafunction/extension select-branch
   G2m
@@ -178,32 +172,38 @@
     [_ #f]))
 
 ;; spec §5.3。H の record を field path に沿って辿る。
+;; path が list でない、record でない値を辿る、または label が無い場合は
+;; #f を返し、呼び出し側の where を不成立にする。
 (define (heap-walk-path value fp)
-  (for/fold ([current value]) ([label (in-list fp)])
-    (match current
-      [`(Rec ,fields)
-       (match (assoc label fields)
-         [(list _ _ field-value) field-value]
-         [#f (error 'heap-walk-path "label ~s が無い" label)])]
-      [_ (error 'heap-walk-path "record でない値を辿った: ~s" current)])))
+  (and (list? fp)
+       (for/fold ([current value]) ([label (in-list fp)])
+         (and current
+              (match current
+                [`(Rec ,fields)
+                 (match (assoc label fields)
+                   [(list _ _ field-value) field-value]
+                   [_ #f])]
+                [_ #f])))))
 
 ;; 可変借用から field を射影するときの実行時 mode は H から読む。
 ;; 型付け側の field mode と食い違う configuration は型付け済みの項からは
-;; 作れないので、ここでは heap の値だけを根拠にする。
+;; 作れないので、ここでは heap の値だけを根拠にする。空 path、非 list、
+;; record でない親、欠落 label はすべて #f で返す。
 (define (proj-borrow-mut p fp ρ H)
-  (define label (last fp))
-  (define parent-fp (take fp (sub1 (length fp))))
-  (define record (heap-walk-path (table-ref H p) parent-fp))
-  (define mode
-    (match record
-      [`(Rec ,fields)
-       (match (assoc label fields)
-         [(list _ field-mode _) field-mode]
-         [#f (error 'proj-borrow-mut "label ~s が heap の record に無い" label)])]
-      [_ (error 'proj-borrow-mut "射影の先が record でない: ~s" record)]))
-  (if (eq? mode 'mut)
-      `(BorrowMutRef ,p ,fp ,ρ)
-      `(BorrowRef ,p ,fp ,ρ)))
+  (and (record-path? fp)
+       (pair? fp)
+       (let* ([label (last fp)]
+              [parent-fp (take fp (sub1 (length fp)))]
+              [record (heap-walk-path (table-ref H p) parent-fp)])
+         (match record
+           [`(Rec ,fields)
+            (match (assoc label fields)
+              [(list _ field-mode _)
+               (if (eq? field-mode 'mut)
+                   `(BorrowMutRef ,p ,fp ,ρ)
+                   `(BorrowRef ,p ,fp ,ρ))]
+              [_ #f])]
+           [_ #f]))))
 
 ;; spec §6.3。H から p の値を引き、fp の label を順に辿る。
 ;; 型付けを通った項では record と label の不一致は起きない。
@@ -212,20 +212,28 @@
 
 ;; spec §7.3。field path の先だけを関数的に差し替える。
 (define (value-set-path old fp new)
-  (if (null? fp)
-      new
-      (match old
-        [`(Rec ,fields)
-         `(Rec ,(for/list ([field (in-list fields)])
-                  (match-define (list label mode value) field)
-                  (if (equal? label (first fp))
-                      (list label mode
-                            (value-set-path value (rest fp) new))
-                      field)))]
-        [_ (error 'value-set-path "record でない値を辿った: ~s" old)])))
+  (cond
+    [(not (list? fp)) #f]
+    [(null? fp) new]
+    [else
+     (match old
+       [`(Rec ,fields)
+        (define label (first fp))
+        (and (assoc label fields)
+             (let ([rebuilt
+                    (for/list ([field (in-list fields)])
+                      (match-define (list name mode value) field)
+                      (if (equal? name label)
+                          (let ([updated
+                                 (value-set-path value (rest fp) new)])
+                            (and updated (list name mode updated)))
+                          field))])
+               (and (andmap values rebuilt) `(Rec ,rebuilt))))]
+       [_ #f])]))
 
 (define (path-set H p fp value)
-  (table-set H p (value-set-path (table-ref H p) fp value)))
+  (define updated (value-set-path (table-ref H p) fp value))
+  (and updated (table-set H p updated)))
 
 (define (table-set table key value)
   (if (assoc key table)
