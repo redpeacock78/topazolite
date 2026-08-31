@@ -406,3 +406,34 @@
                           (((tok 0) Available))
                           ()))
                empty (term (Owned Res)) (term (Own)))))
+
+;; [REQ: OWN-009] config-ok? の拒否理由を構成ごとに固定する。
+(test-case "config-ok? の拒否理由 owned-duplicate"
+  (define value
+    (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
+                (g mut (OwnedLeaf (tok 0) (resource 2)))))))
+  (check-false (config-ok? (leaf-config value (term (((tok 0) Available))))
+                           '() (term Unit) '())))
+
+(test-case "config-ok? の拒否理由 token-state-mismatch"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 9) (resource 1)))))))
+  (check-false (config-ok? (leaf-config value (term ()))
+                           '() (term Unit) '())))
+
+(test-case "config-ok? の拒否理由 leaf-unreachable"
+  (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
+  (check-false
+   (config-ok? (leaf-config (term (UVal (Rec ((f mut ,leaf)))))
+                            (term (((tok 0) Available))))
+               '() (term Unit) '())))
+
+;; [REQ: OWN-010] finLeaf の path 形不一致は構成検査で拒否する。
+(test-case "config-ok? の拒否理由 path-shape-mismatch"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (check-false
+   (config-ok? (term (cfg unit
+                          ((0 ,value))
+                          ((0 Available))
+                          (((tok 0) Available))
+                          ((finLeaf 0 (0)))))
+               '() (term Unit) '())))

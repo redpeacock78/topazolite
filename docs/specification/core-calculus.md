@@ -34,7 +34,8 @@ calculus は次の環境を使う。
 - **Ω（place 状態）**：place p から状態への有限写像。G1 の状態は `Available`、`Moved`、`Dropped` の三値とする。
 - **H（place 格納）**：place p から値への有限写像。
 - **Ξ（place typing）**：place p から型への有限写像。構成の well-formedness（§5.1）で使う。
-- **θ（観測 trace）**：観測イベントの列。イベントは `obs(v)`（yield による観測値）と `fin(p)`（finalization による drop）の二種である。
+- **Λtok（leaf token 状態）**：値の内部の `OwnedLeaf` が持つ token から状態への有限写像。状態は `Available`、`Moved`、`Dropped` の三値とし、`Dropped` の entry は再利用防止の tombstone として残す。
+- **θ（観測 trace）**：観測イベントの列。イベントは `obs(v)`（yield による観測値）、`fin(p)`（root の finalization による drop）、`finLeaf(p, fp)`（値内 leaf の finalization による drop）である。`fin(p)` は空 path の `finLeaf(p, ())` に相当する短縮形だが、leaf の path は常に非空である。
 
 boundary stack の操作は次の二つである。
 
@@ -898,6 +899,18 @@ Perform が運ぶ値の型は op の型成分 τ と一致する。
 Γ; Δ; Π; Ξ; Φ ⊢core resource(n) : Owned<Res> ! {}
 ```
 
+**(T-OwnedLeaf)** [REQ: OWN-009]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core v : τ ! ε        owned-type?(τ)
+------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core OwnedLeaf(tk, v) : τ ! ε
+```
+
+`OwnedLeaf` は payload の型をそのまま持つ実行時の印であり、型をもう一段 `Owned` で包まない。
+leaf は値の内部の `Rec` 欄または別の leaf の payload にだけ置き、値の根には置かない。
+`tk` は `Λtok` の一意な token であり、型付けだけでは token の重複や状態を判定しない。
+
 **(T-Error)**
 
 ```text
@@ -986,14 +999,16 @@ dom(Ξ) = dom(H) = dom(Ω)
 各 p ∈ dom(H) について ∅; Δ0; Π0; Ξ; Φ ⊢core H(p) : Owned<Ξ(p)> ! {}
 ∅; Δ0; Π0; Ξ; Φ ⊢core c : τ ! ε
 --------------------------------
-Ξ; Φ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε
+Ξ; Φ ⊢config ⟨c, H, Ω, Λtok, θ⟩ : τ ! ε
 ```
 
-Ξ は heap の値の型から導く写像である。
+`Ξ` は heap の値から導く写像である。heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けし、place の型から外側の `Owned` を取り除いて次の写像へ加える。前方の place を参照する値はこの導出に失敗する。
 
-Redex model の `config-ok?` は、G1 の heap が `Owned<Res>` だけを持つことに依拠して、Ξ を `Res` の定数写像で置いている。
+値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。G5c5b3a では leaf を `Rec` の欄または別の leaf の payload に置けるが、未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 
-heap がより広い値の型を持つ段では、この定数写像を heap の値の型からの導出へ置き換える。
+`Λtok` の live 集合は、制御項と `Ω(p)=Available` の root の値を走査して得る。`Moved`/`Dropped` の root の heap entry と trace の `obs` は履歴なので live 集合から除く。live 集合での token の重複、`Λtok` に無い token、`Available`/`Moved` なのに live 集合へ一度も現れない token、`Dropped` なのに live 集合へ現れる token は不正である。`Dropped` の tombstone が live 集合に現れないことは正しい。
+
+Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
@@ -1003,10 +1018,10 @@ heap がより広い値の型を持つ段では、この定数写像を heap の
 簡約は構成（configuration）の間の小ステップ関係で定める。
 
 ```text
-⟨c, H, Ω, θ⟩ → ⟨c', H', Ω', θ'⟩
+⟨c, H, Ω, Λtok, θ⟩ → ⟨c', H', Ω', Λtok', θ'⟩
 ```
 
-初期構成はプログラム c0 に対して `⟨Scope(∅, c0), ∅, ∅, ⟨⟩⟩` とする。
+初期構成はプログラム c0 に対して `⟨Scope(∅, c0), ∅, ∅, ∅, ⟨⟩⟩` とする。
 
 評価文脈は二層に分ける。
 
@@ -1023,7 +1038,7 @@ G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文
 ```
 
 以降の規則は、明示しない限り一般文脈 E の下で適用される。
-項だけを書いた規則 `E[c] → E[c']` は、H、Ω、θ を変えない構成遷移 `⟨E[c], H, Ω, θ⟩ → ⟨E[c'], H, Ω, θ⟩` の略記である。
+項だけを書いた規則 `E[c] → E[c']` は、H、Ω、Λtok、θ を変えない構成遷移 `⟨E[c], H, Ω, Λtok, θ⟩ → ⟨E[c'], H, Ω, Λtok, θ⟩` の略記である。
 Perform の伝播規則（R-ScopeAbort、R-HandleSkip、R-HandleReturn）は F の純粋性を条件に使い、内側の frame から順に一段ずつ処理する。
 G は R-LetOwned（§5.3）が最寄りの Scope を特定するために使う。
 初期構成が最外に Scope を持ち、簡約が Scope を項の外へ運び出さないため、redex を囲む Scope は常に存在する。
@@ -1070,8 +1085,8 @@ E[Let(x : τ, v, c)] → E[c[v/x]]        （τ が Owned<_> の形でないと�
 ```text
 p fresh
 --------------------------------
-⟨E[Scope(π, G[Let(x : Owned<τ>, v, c)])], H, Ω, θ⟩
-  → ⟨E[Scope(π · p, G[c[p/x]])], H[p ↦ v], Ω[p ↦ Available], θ⟩
+⟨E[Scope(π, G[Let(x : Owned<τ>, v, c)])], H, Ω, Λtok, θ⟩
+  → ⟨E[Scope(π · p, G[c[p/x]])], H[p ↦ v], Ω[p ↦ Available], Λtok, θ⟩
 ```
 
 Owned 値の束縛は place を確保し、最も内側の Scope の管理列 π へ登録する。
@@ -1105,7 +1120,7 @@ E[Apply(RecurVal(r, f, (x1, …, xk), c), v1, …, vk)]
 **(R-Yield)**
 
 ```text
-⟨E[Yield(v, c)], H, Ω, θ⟩ → ⟨E[c], H, Ω, θ · obs(v)⟩
+⟨E[Yield(v, c)], H, Ω, Λtok, θ⟩ → ⟨E[c], H, Ω, Λtok, θ · obs(v)⟩
 ```
 
 **(R-Suspend)**
@@ -1125,7 +1140,7 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 ```text
 Ω(p) = Available
 --------------------------------
-⟨E[Move(p)], H, Ω, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], θ⟩
+⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], Λtok, θ⟩
 ```
 
 **(R-MoveError)** [REQ: OWN-001]
@@ -1133,37 +1148,42 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 ```text
 Ω(p) ∈ {Moved, Dropped}
 --------------------------------
-⟨E[Move(p)], H, Ω, θ⟩ → ⟨E[Error(p)], H, Ω, θ⟩
+⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[Error(p)], H, Ω, Λtok, θ⟩
 ```
 
 `Error(p)` は値ではなく、`Perform` と同様に文脈を捨てながら外へ伝播する（§5.6 R-ScopeError、§5.7 R-HandleError）。
-最外まで伝播した `⟨Error(p), H, Ω, θ⟩` の形の終端構成を **OwnershipError** と呼ぶ。
+最外まで伝播した `⟨Error(p), H, Ω, Λtok, θ⟩` の形の終端構成を **OwnershipError** と呼ぶ。
 move 済みまたは drop 済みの place の再利用は、暗黙に進行せず必ずこの終端へ落ちる。
 Redex model の負例テストはこの遷移を確認する。
 
-**(R-Drop)**
+**(R-Drop)** [REQ: OWN-010]
 
 ```text
-E[Drop(v)] → E[unit]
+⟨E[Drop(v)], H, Ω, Λtok, θ⟩ → ⟨E[unit], H, Ω, Λtok', θ⟩
+  Λtok' = drop-leaves(v, Λtok)
 ```
 
 Drop の引数は Move を経て取り出された値であり、place の状態遷移は Move 側で済んでいる。
+値の内部の leaf は同じ走査で `Available` から `Dropped` へ遷移するが、`R-Drop` は `fin`/`finLeaf` イベントを記録しない。leaf の token が無い、または `Moved`/`Dropped` のときは規則を適用しない。
 
 ### 5.6 scope exit と finalization
 
-`finalize(π, Ω, θ)` を次で定める。
+`finalize(π, H, Ω, Λtok, θ)` を次で定める。
 
 ```text
-π = ⟨p1, …, pn⟩ のとき、pn から p1 の逆順に走査し、
-Ω(pi) = Available である pi を Ω[pi ↦ Dropped] とし、θ へ fin(pi) を追記する。
-Available でない pi には何もしない。
+π = ⟨p1, …, pn⟩ のとき、pn から p1 の逆順に走査する。
+Ω(pi) = Available である pi の値 H(pi) を走査し、内部 leaf の token を
+Λtok[tk ↦ Dropped] としてから Ω[pi ↦ Dropped] とする。
+各 leaf の `finLeaf(pi, fp)` を path 順に θ へ追記し、最後に `fin(pi)` を追記する。
+Available でない pi には何もしない。leaf の token のいずれか一つでも Available でない場合は
+finalize 全体を失敗させ、scope exit 規則を発火させない。
 ```
 
-**(R-ScopeValue)** [REQ: OWN-002]
+**(R-ScopeValue)** [REQ: OWN-002] [REQ: OWN-010]
 
 ```text
-⟨E[Scope(π, v)], H, Ω, θ⟩ → ⟨E[v], H, Ω', θ'⟩
-  （Ω', θ'）= finalize(π, Ω, θ)
+⟨E[Scope(π, v)], H, Ω, Λtok, θ⟩ → ⟨E[v], H, Ω', Λtok', θ'⟩
+  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok, θ)
 ```
 
 scope の正常終了は、その scope が管理する未消費の affine resource を逆順で drop する。
@@ -1172,8 +1192,8 @@ finalize は Available の place だけを Dropped へ遷移させるため、dr
 **(R-ScopeAbort)** [REQ: OWN-003]
 
 ```text
-⟨E[Scope(π, F[Perform(op, v)])], H, Ω, θ⟩ → ⟨E[Perform(op, v)], H, Ω', θ'⟩
-  （Ω', θ'）= finalize(π, Ω, θ)
+⟨E[Scope(π, F[Perform(op, v)])], H, Ω, Λtok, θ⟩ → ⟨E[Perform(op, v)], H, Ω', Λtok', θ'⟩
+  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok, θ)
 ```
 
 Perform が scope を越えて外側の handler へ向かうとき、越えられる scope は自身の finalization を実行してから消える。
@@ -1183,8 +1203,8 @@ F は純粋文脈なので、内側の scope から順に finalization が走る
 **(R-ScopeError)** [REQ: OWN-003]
 
 ```text
-⟨E[Scope(π, F[Error(p)])], H, Ω, θ⟩ → ⟨E[Error(p)], H, Ω', θ'⟩
-  （Ω', θ'）= finalize(π, Ω, θ)
+⟨E[Scope(π, F[Error(p)])], H, Ω, Λtok, θ⟩ → ⟨E[Error(p)], H, Ω', Λtok', θ'⟩
+  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok, θ)
 ```
 
 ownership error の伝播も scope exit path であり、越えられる scope は finalization を実行してから消える。
@@ -1231,12 +1251,12 @@ op の一致は境界 ID b と型 τ の両方の一致である。
 **観測関係** `c ⇓obs n ⟨u1, …, un⟩` を次で定める。
 
 ```text
-⟨Scope(∅, c), ∅, ∅, ⟨⟩⟩ →* ⟨c', H, Ω, θ⟩ であって、
+⟨Scope(∅, c), ∅, ∅, ∅, ⟨⟩⟩ →* ⟨c', H, Ω, Λtok, θ⟩ であって、
 θ に含まれる obs イベントの先頭 n 個が obs(u1), …, obs(un) である
 有限の簡約列が存在する。
 ```
 
-観測は `yield` が生成する値の列であり、`fin` イベントは観測に数えない。
+観測は `yield` が生成する値の列であり、`fin` と `finLeaf` イベントは観測に数えない。
 Productive の意味はこの関係で与える。
 計算全体が停止しなくても、各 n について有限ステップで n 個目の観測に到達できればよい。 [REQ: REC-002]
 
@@ -1383,13 +1403,13 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 探索の上限値と seed は `model/redex/README.md` に固定した値を正とする。
 反例が見つからないことは性質の証明ではなく、設定した探索範囲での反例未発見を意味する。
 
-1. **Preservation**：`Ξ; Φ ⊢config ⟨c, H, Ω, θ⟩ : τ ! ε`（§5.1）かつ `⟨c, H, Ω, θ⟩ → ⟨c', H', Ω', θ'⟩` ならば、ある Ξ' ⊇ Ξ について `Ξ'; Φ ⊢config ⟨c', H', Ω', θ'⟩ : τ ! ε'` かつ `ε' ⊆ ε` が成り立つ。Φ は簡約で変化しないため同じ Φ を使い回せる（§5.1）。
-2. **Progress modulo effects**：well-typed で closed なプログラム c0 の初期構成 `⟨Scope(∅, c0), ∅, ∅, ⟨⟩⟩` から到達可能な構成は、値であるか、OwnershipError（`⟨Error(p), H, Ω, θ⟩` の形の終端構成、§5.5）であるか、次の step を持つ。top-level に到達した `Perform(op, v)` は、op が初期宣言 row に含まれる場合のみ許容される終端とする。到達可能性で量化するのは、R-LetOwned の割り当て先となる Scope の存在（§5.2）を初期構成の形が保証するためである。
+1. **Preservation**：`Ξ; Φ ⊢config ⟨c, H, Ω, Λtok, θ⟩ : τ ! ε`（§5.1）かつ `⟨c, H, Ω, Λtok, θ⟩ → ⟨c', H', Ω', Λtok', θ'⟩` ならば、ある Ξ' ⊇ Ξ について `Ξ'; Φ ⊢config ⟨c', H', Ω', Λtok', θ'⟩ : τ ! ε'` かつ `ε' ⊆ ε` が成り立つ。Φ は簡約で変化しないため同じ Φ を使い回せる（§5.1）。 [REQ: OWN-009]
+2. **Progress modulo effects**：well-typed で closed なプログラム c0 の初期構成 `⟨Scope(∅, c0), ∅, ∅, ∅, ⟨⟩⟩` から到達可能な構成は、値であるか、OwnershipError（`⟨Error(p), H, Ω, Λtok, θ⟩` の形の終端構成、§5.5）であるか、次の step を持つ。top-level に到達した `Perform(op, v)` は、op が初期宣言 row に含まれる場合のみ許容される終端とする。到達可能性で量化するのは、R-LetOwned の割り当て先となる Scope の存在（§5.2）を初期構成の形が保証するためである。 [REQ: OWN-010]
 3. **Origin integrity**：elaboration の出力 c と、そこから到達可能なすべての構成は `verify-origins(R0, ·)` を満たす。すなわち簡約は偽造 origin を生成しない。 [REQ: NAR-001] [REQ: NAR-002]
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
-7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003]
+7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010]
 
 ## 8. golden program
 
@@ -1524,3 +1544,5 @@ G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有�
 | OWN-001 | E-Move（§4.7）、T-MovePlace（§5.1）、R-Move、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |
 | OWN-003 | R-ScopeAbort、R-ScopeError（§5.6）、性質 7 |
+| OWN-009 | T-OwnedLeaf、`Λtok` の token 条件、性質 7 |
+| OWN-010 | R-Drop、finalize、R-ScopeValue、性質 7 |

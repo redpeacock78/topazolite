@@ -308,6 +308,16 @@
   (for/sum ([event (in-list events)])
     (if (equal? (event-key event) key) 1 0)))
 
+(define (fin-leaf-before-root-fin? events)
+  (for/and ([index (in-range (length events))])
+    (match (list-ref events index)
+      [`(fin ,place)
+       (for/and ([event (in-list (drop events (add1 index)))])
+         (match event
+           [`(finLeaf ,later-place ,_) (not (equal? later-place place))]
+           [_ #t]))]
+      [_ #t])))
+
 (define (root-drop-event-ok? before after place)
   (or (not (and (eq? (table-ref (config-states before) place) 'Available)
                 (eq? (table-ref (config-states after) place) 'Dropped)))
@@ -398,7 +408,8 @@
           (not (eq? (table-ref (config-states (last configs)) place)
                     'Available))))
    (for/and ([key (in-list event-keys)])
-     (<= (event-count (config-events (last configs)) key) 1))))
+     (<= (event-count (config-events (last configs)) key) 1))
+   (fin-leaf-before-root-fin? (config-events (last configs)))))
 
 (define (affine-safety? source)
   (affine-safety/using source inject bounded-trace

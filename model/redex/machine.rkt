@@ -461,9 +461,9 @@
         R-Drop)
 
    (--> (cfg (in-hole E (Yield v_observed c_next))
-             H Ω () (event_old ...))
+             H Ω Λtok (event_old ...))
         (cfg (in-hole E c_next)
-             H Ω () (event_old ... (obs v_observed)))
+             H Ω Λtok (event_old ... (obs v_observed)))
         R-Yield)
 
    (--> (cfg (in-hole E (Suspend c_next)) H Ω Λtok θ)

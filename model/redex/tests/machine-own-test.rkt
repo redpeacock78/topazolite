@@ -282,6 +282,13 @@
    (fresh-token (term (cfg unit () () () ((obs (Rec ((f mut ,leaf))))))))
    (term (tok 1))))
 
+(test-case "R-Yield は leaf token の tombstone を保持する"
+  (define config
+    (term (cfg (Yield 0 unit) () () (((tok 0) Dropped)) ())))
+  (check-equal?
+   (apply-reduction-relation -->g2 config)
+   (list (term (cfg unit () () (((tok 0) Dropped)) ((obs 0)))))))
+
 (test-case "二 place の scope が place の逆順で finLeaf と fin を並べる"
   (define leaf0 (term (OwnedLeaf (tok 0) (resource 10))))
   (define leaf1 (term (OwnedLeaf (tok 1) (resource 20))))

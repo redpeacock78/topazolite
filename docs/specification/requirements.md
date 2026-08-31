@@ -539,6 +539,20 @@ record の field への借用を親の借用から作れる。
 - **由来**：ホワイトペーパー §4.7
 - **内容**：`Curry` は `Owned<τ>` の引数を `Move` 経由で固定できる。生成した `CurryVal` の型は `Owned<NFn 残余>` である
 
+### OWN-009 値の内部に入った `Owned` 資源の identity と一回性
+
+- **状態**：G5
+- **由来**：新規（`docs/specification/core-calculus.md`）
+- **正典**：`docs/specification/core-calculus.md` §5.1、§5.6、§7
+- **内容**：値の内部に入った `Owned` 資源は leaf token で一意に識別し、同じ token を二箇所へ複製してはならない。token の状態と live value の出現は対応しなければならない。
+
+### OWN-010 値の内部に入った `Owned` 資源の scope 終了時の回収
+
+- **状態**：G5
+- **由来**：新規（`docs/specification/core-calculus.md`）
+- **正典**：`docs/specification/core-calculus.md` §5.5、§5.6、§7
+- **内容**：scope 終了と明示 drop は値の内部の Owned leaf を一つの走査で回収し、Available な leaf を高々一度だけ Dropped にする。scope 終了で回収した leaf は `finLeaf` として root の `fin` より先に観測する。
+
 ### PTR-001
 
 - **状態**：G5

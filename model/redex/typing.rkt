@@ -3015,6 +3015,16 @@
     [(list? core) (andmap control-leaf-positions-ok? core)]
     [else #t]))
 
+;; b3a の finLeaf は Rec の label path だけを記録する。文法上は b3b の
+;; positional segment も受理するため、ここで空 path と natural segment を拒否する。
+(define (trace-paths-ok? trace)
+  (andmap
+   (lambda (event)
+     (match event
+       [`(finLeaf ,_ ,fp) (and (pair? fp) (record-path? fp))]
+       [_ #t]))
+   trace))
+
 (define (config-ok? configuration callables expected row)
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
   ;; root/leaf 位置と token 状態も検査する。G2m config を見る別の入口なので、
@@ -3026,12 +3036,13 @@
          (type? expected)
          (row? row)
          (match configuration
-           [`(cfg ,core ,heap ,states ,token-states ,_trace)
+           [`(cfg ,core ,heap ,states ,token-states ,trace)
             (and (unique-table? heap)
                  (unique-table? states)
                  (equal? (sort (map first heap) <)
                          (sort (map first states) <))
                  (unique-table? token-states)
+                 (trace-paths-ok? trace)
                  ;; G5 derives Ξ from each heap value rather than assuming Res.
                  (let ([places (derive-places heap callables)])
                    (and

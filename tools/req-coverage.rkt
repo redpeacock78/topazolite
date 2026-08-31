@@ -361,7 +361,7 @@
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
 (define expected-g5-ids
   '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007
-    VAR-004 OWN-005 OWN-006 OWN-007 OWN-008))
+    VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010))
 
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))
@@ -488,6 +488,8 @@
           (build-path root "model/redex/tests/own-formal-test.rkt")
           (build-path root "model/redex/tests/own-capture-test.rkt")
           (build-path root "model/redex/tests/own-curry-fixed-test.rkt")
+          (build-path root "model/redex/tests/machine-own-test.rkt")
+          (build-path root "model/redex/tests/typing-test.rkt")
           (build-path root "model/redex/tests/solver-parity-test.rkt")
           (build-path root "model/redex/tests/region-app-test.rkt")
           (build-path root "model/redex/tests/variance-region-test.rkt")))

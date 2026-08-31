@@ -226,8 +226,23 @@ region 多相な再帰関数は扱わない。
 借用が指す先を **capability** と呼ぶ。
 capability は根の place `w` と field path `fp` の組である。
 
-`fp` は label の列であり、空の列は place そのものを指す。
+path の形そのものを `path-wf?` が検査する。
+path segment は record の `label` または positional な `natural` である。
+借用と field 射影の入口は `record-path?` を使い、label だけを許す。
+所有値の内部を走査する入口は `owner-path?` を使い、label と natural の双方を許す。
+`owner-path?` と `path-wf?` は同じ segment alphabet を共有するが、用途ごとの
+record 境界を混ぜない。b3a の leaf path は `Rec` の label だけからなり、natural
+segment は b3b の positional producer 用に予約する。segment の種類と対象値の形が
+合わない操作、欠落 field、非 list path は fail-closed に拒否する。
+
+`fp` の空の列は place そのものを指す。
 `(Rec ((a ...) (b ...)))` を束縛した place `1` に対し、`(1 ())` は record 全体を、`(1 (a))` は field `a` を、`(1 (a x))` は field `a` の中の field `x` を指す。
+
+値の内部に入った所有資源は `(OwnedLeaf tk v)` として leaf token `tk` を持つ。
+同じ token の複製を許さず、`Available`/`Moved` の token は live value に一度だけ現れ、
+`Dropped` の token は live value に現れないことを構成検査で確認する。 [REQ: OWN-009]
+scope 終了では leaf を走査して `Dropped` にし、`finLeaf(w, fp)` を root の `fin(w)` より先に記録する。
+明示 `Drop` は同じ leaf 走査で token だけを消費し、観測イベントを追加しない。 [REQ: OWN-010]
 
 2 つの capability `(w1 fp1)` と `(w2 fp2)` が **重なる** のは、`w1` と `w2` が同じ place であり、かつ `fp1` と `fp2` の一方が他方の接頭辞であるときに限る。 [REQ: BOR-006]
 `(1 (a))` と `(1 (a x))` は重なる。
