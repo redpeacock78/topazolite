@@ -30,7 +30,7 @@
          borrow-token-key capability-field-table capability-branch-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
-         walk-leaf-positions leaf-positions-ok?
+         leaf-positions-ok?
          path-prefix?
          capability-overlap?)
 
@@ -138,6 +138,7 @@
 
 ;; 所有値の走査が使う path。位置指定も許す。
 (define (owner-path? fp)
+  ;; owner-path? と path-wf? は同じ segment alphabet を意図的に共有する。
   (path-wf? fp))
 
 ;; 値のグラフから token を出現順に集める。重複は保持するので、呼び出し側が
@@ -149,7 +150,9 @@
     [_ '()]))
 
 (define (owned-leaf? value)
-  (and (pair? value) (eq? (first value) 'OwnedLeaf)))
+  (and (list? value)
+       (pair? value)
+       (eq? (first value) 'OwnedLeaf)))
 
 ;; 値のどこかに leaf があるか。位置の妥当性は問わない。
 (define (contains-owned-leaf? value)

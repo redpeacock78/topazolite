@@ -3,6 +3,7 @@
 (require rackunit
          redex/reduction-semantics
          "../borrow.rkt"
+         "../gen.rkt"
          "../typing.rkt")
 
 (define empty '())
@@ -259,6 +260,13 @@
 (define (leaf-config value tokens)
   (term (cfg unit ((0 ,value)) ((0 Available)) ,tokens ())))
 
+(test-case "runtime-row と config-ok? は leaf を含む heap で同じ Ξ を使う"
+  (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
+  (define config (leaf-config value (term (((tok 0) Available)))))
+  (define row (runtime-row config empty (term Unit)))
+  (check-true (list? row))
+  (check-true (config-ok? config empty (term Unit) row)))
+
 (test-case "Available の token は live 集合にちょうど一度現れる"
   (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
   (check-true (config-ok? (leaf-config value (term (((tok 0) Available))))
@@ -306,6 +314,13 @@
 
 (test-case "通常の型検査は Rec の欄の裸の資源を拒否し続ける"
   (define result (type-of/raw (term (Rec ((f mut (resource 1))))) empty empty))
+  (check-false (and (pair? result) (eq? (first result) 'ok))))
+
+(test-case "通常の型検査は Rec の欄の OwnedLeaf を抑止しない"
+  (define result
+    (type-of/raw
+     (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1))))))
+     empty empty))
   (check-false (and (pair? result) (eq? (first result) 'ok))))
 
 (test-case "leaf-positions-ok? が走査で辿れない位置を拒否する"

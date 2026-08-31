@@ -304,13 +304,16 @@
 
 (define (runtime-row configuration callables type)
   ;; Runtime heap entries may contain callable values whose root type is not
-  ;; Res.  Reconstruct the same Ξ used by config-ok? before checking the row.
-  (define places (derive-places (config-heap configuration) callables))
-  (and places
-       (core-check-row (config-core configuration)
-                       places
-                       callables
-                       type)))
+  ;; Res.  Reconstruct the same Ξ and configuration-only typing scope used by
+  ;; config-ok? before checking the row.
+  (with-config-typing
+   (lambda ()
+     (define places (derive-places (config-heap configuration) callables))
+     (and places
+          (core-check-row (config-core configuration)
+                          places
+                          callables
+                          type)))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))

@@ -27,6 +27,7 @@
          type-of/raw
          typing-visited-points
          config-ok?
+         with-config-typing
          control-leaf-positions-ok?
          derive-places
          join-types
@@ -78,6 +79,11 @@
 ;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
 ;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
 (define deriving-config? (make-parameter #f))
+
+;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
+(define (with-config-typing thunk)
+  (parameterize ([deriving-config? #t])
+    (thunk)))
 
 ;; 制約の収集器（spec §5.2）。既定は #f であり、その場合は何も記録しない。
 ;; G4b が入れた typing-point-probe と同じ形の記録先である。
@@ -3010,17 +3016,17 @@
     [else #t]))
 
 (define (config-ok? configuration callables expected row)
-  ;; 検査集合は entry-violation（判定 API と診断 API の入口）と揃える。
-  ;; ここは G2m config を見る別の入口であり、places を heap から導出するため
-  ;; entry-violation をそのまま呼べない。あちらへ検査を足すときは同時に直す。
-  (parameterize ([deriving-config? #t])
+  ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
+  ;; root/leaf 位置と token 状態も検査する。G2m config を見る別の入口なので、
+  ;; places を heap から導出する entry-violation はそのまま呼ばない。
+  (with-config-typing (lambda ()
     (and (redex-match? G2m config configuration)
          (core-types-normal? configuration)
          (valid-callables? callables)
          (type? expected)
          (row? row)
          (match configuration
-           [`(cfg ,core ,heap ,states ,token-states ,trace)
+           [`(cfg ,core ,heap ,states ,token-states ,_trace)
             (and (unique-table? heap)
                  (unique-table? states)
                  (equal? (sort (map first heap) <)
@@ -3040,6 +3046,9 @@
                                           places
                                           callables
                                           #:compatible?
+                                          ;; Rec の leaf は payload の bare Record を
+                                          ;; 推論するため、place の Owned 宣言へ持ち上げる。
+                                          ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
                                           (if (contains-owned-leaf? (second entry))
                                               owned-lift-compatible?
                                               type-compatible?)))
@@ -3073,7 +3082,7 @@
                                   [(Available Moved) (= occurrences 1)]
                                   [(Dropped) (= occurrences 0)]
                                   [else #f])))))))))]
-           [_ #f]))))
+           [_ #f])))))
 
 (module+ test
   (require rackunit)

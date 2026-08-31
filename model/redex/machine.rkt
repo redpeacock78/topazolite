@@ -176,11 +176,11 @@
 ;; #f を返し、呼び出し側の where を不成立にする。
 (define (heap-walk-path value fp)
   (and (list? fp)
-       (for/fold ([current value]) ([label (in-list fp)])
+       (for/fold ([current value]) ([seg (in-list fp)])
          (and current
               (match current
                 [`(Rec ,fields)
-                 (match (assoc label fields)
+                 (match (assoc seg fields)
                    [(list _ _ field-value) field-value]
                    [_ #f])]
                 [_ #f])))))
@@ -205,10 +205,11 @@
               [_ #f])]
            [_ #f]))))
 
-;; spec §6.3。H から p の値を引き、fp の label を順に辿る。
-;; 型付けを通った項では record と label の不一致は起きない。
+;; spec §6.3。H から p の値を引き、record path の label を順に辿る。
+;; 不正な path や不一致は #f となり、呼び出し側の規則を不発火にする。
 (define (path-lookup H p fp)
-  (heap-walk-path (table-ref H p) fp))
+  (and (record-path? fp)
+       (heap-walk-path (table-ref H p) fp)))
 
 ;; spec §7.3。field path の先だけを関数的に差し替える。
 (define (value-set-path old fp new)
