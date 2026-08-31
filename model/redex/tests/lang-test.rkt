@@ -84,3 +84,7 @@
    (redex-match? G1m v (term (OwnedLeaf (tok 0) (resource 1)))))
   (check-true (redex-match? G1m fp (term (a 0 b))))
   (check-false (redex-match? G1m v (term (OwnedLeaf 0 (resource 1))))))
+
+(test-case "空の path を持つ finLeaf は event に一致しない"
+  (check-false (redex-match? G1m event (term (finLeaf 0 ()))))
+  (check-true (redex-match? G1m event (term (finLeaf 0 (f))))))

@@ -138,6 +138,7 @@
     (match event
       [`(obs ,value) (walk value)]
       [`(fin ,_) #t]
+      [`(finLeaf ,_ ,_) #t]
       [_ (error 'core-types-normal? "unhandled event form: ~s" event)]))
 
   (define (walk value)

@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "../borrow.rkt"
          "../gen.rkt"
+         "../type-shape.rkt"
          "../typing.rkt")
 
 (define empty '())
@@ -298,6 +299,11 @@
   (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))
   (check-false (config-ok? (leaf-config value (term (((tok 0) Dropped))))
                            empty (term Unit) empty)))
+
+(test-case "core-types-normal? は finLeaf を含む trace を受理する"
+  (check-true
+   (core-types-normal?
+    (term (cfg unit () () () ((finLeaf 0 (f))))))))
 
 (test-case "値の根の位置の leaf を拒否する"
   (check-false (config-ok? (leaf-config (term (OwnedLeaf (tok 0) (resource 1)))

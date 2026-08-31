@@ -163,6 +163,7 @@
                 (match event
                   [`(obs ,value) (origin-ok? value)]
                   [`(fin ,_) #t]
+                  [`(finLeaf ,_ ,_) #t]
                   [_ #f]))))))
 
 (define (origin-integrity? source)
@@ -296,6 +297,23 @@
            (tree-count part wanted))
          0)))
 
+;; (fin p) は root、(finLeaf p fp) は値内 leaf の回収位置を表す。
+(define (event-key event)
+  (match event
+    [`(fin ,place) (list place '())]
+    [`(finLeaf ,place ,fp) (list place fp)]
+    [_ #f]))
+
+(define (event-count events key)
+  (for/sum ([event (in-list events)])
+    (if (equal? (event-key event) key) 1 0)))
+
+(define (root-drop-event-ok? before after place)
+  (or (not (and (eq? (table-ref (config-states before) place) 'Available)
+                (eq? (table-ref (config-states after) place) 'Dropped)))
+      (= (add1 (event-count (config-events before) (list place '())))
+         (event-count (config-events after) (list place '())))))
+
 (define (event-prefix? before after)
   (and (<= (length before) (length after))
        (equal? before (take after (length before)))))
@@ -325,6 +343,13 @@
      (append-map (lambda (configuration)
                    (map first (config-states configuration)))
                  configs)))
+  (define event-keys
+    (remove-duplicates
+     (filter values
+             (append-map (lambda (configuration)
+                           (map event-key (config-events configuration)))
+                         configs))
+     equal?))
   (and
    (eq? (execution-outcome result) 'terminal)
    (for/and ([pair (in-list pairs)])
@@ -366,20 +391,14 @@
                       (tree-count (config-core after) `(Move ,place)))))
           (or (<= removed-invalid-moves 0)
               (positive? new-errors))
-          (or (not (and (eq? before-state 'Available)
-                        (eq? after-state 'Dropped)))
-              (= (add1 (tree-count (config-events before)
-                                   `(fin ,place)))
-                 (tree-count (config-events after)
-                             `(fin ,place)))))))
+          (root-drop-event-ok? before after place))))
      (and valid-transitions?
           (<= successful-moves 1)
           (<= drops 1)
-          (<= (tree-count (config-events (last configs))
-                          `(fin ,place))
-              1)
           (not (eq? (table-ref (config-states (last configs)) place)
-                    'Available))))))
+                    'Available))))
+   (for/and ([key (in-list event-keys)])
+     (<= (event-count (config-events (last configs)) key) 1))))
 
 (define (affine-safety? source)
   (affine-safety/using source inject bounded-trace
