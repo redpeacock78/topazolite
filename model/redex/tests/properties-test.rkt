@@ -460,8 +460,24 @@
                 (Apply (Move f))))
       (Let item (Apply acquire 1)
            (Let g (Fn ((q (Owned Res))) Unit (Own) (Drop q))
-                (Let h (Curry g (Move item))
+           (Let h (Curry g (Move item))
                      (Apply (Move h)))))))
+
+  ;; config-ok? が初期 configuration を実際に受理することを先に確かめる。
+  ;; これを性質 1/2 の前件だけで間接的に見ると、config 拒否による空虚な真を
+  ;; 見逃すためである。
+  (define (initial-config-accepted? source)
+    (define-values (core type declared-row callables) (artifact source))
+    (config-ok? (inject-g2 core) callables type declared-row))
+
+  (test-case "捕捉つき閉包の初期 configuration が受理される"
+    (for ([source (in-list owned-closure-sources)])
+      (check-true (initial-config-accepted? source) (format "~s" source))))
+
+  (test-case "捕捉つき閉包が保存と進行を通る"
+    (for ([source (in-list owned-closure-sources)])
+      (check-true (preservation-g2? source) (format "~s" source))
+      (check-true (progress-g2? source) (format "~s" source))))
 
   (test-case
    "捕捉と固定引数を含む項が性質 7 を満たす"

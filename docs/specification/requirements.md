@@ -715,7 +715,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `Owned` を捕捉する closure | `borrow.md` §8 | G5c5b | §4.7 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 1 以降 | §4.7 |
 | `Owned` の位置を根とする構造的減少 | `core-calculus.md` §6.2 | G5c5c | 無し |
-| ⊢config の Ξ を heap の値の型から導く | `core-calculus.md` §5.1 | G5c6 | 無し |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
