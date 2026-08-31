@@ -40,7 +40,7 @@
                  (term (cfg (Scope (0) (Move 0))
                             ((0 (resource 7)))
                             ((0 Available))
-                            ((obs 1) (fin 0))))))
+                            () ((obs 1) (fin 0))))))
   (check-true (redex-match? G1m F (term (Apply 1 hole 2))))
   (check-true
    (redex-match? G1m E

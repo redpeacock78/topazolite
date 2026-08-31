@@ -9,14 +9,14 @@
 (define fuel 20)
 
 (define (final-config core)
-  (term (cfg ,core () () ())))
+  (term (cfg ,core () () () ())))
 
 (define (scoped core)
-  (term (cfg (Scope () ,core) () () ())))
+  (term (cfg (Scope () ,core) () () () ())))
 
 (define (run-core core)
   (match (run (inject core) fuel)
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [result (error 'run-core "unexpected result: ~e" result)]))
 
 (test-case "R-Delta: primitive delta rules reduce applications"
@@ -112,7 +112,7 @@
 (test-case "pure reduction: malformed redexes remain stuck"
   (define (successors core)
     (apply-reduction-relation -->g1
-                              (term (cfg ,core () () ()))))
+                              (term (cfg ,core () () () ()))))
   (for ([core
          (in-list
           (term ((Apply (Lam User arity-id (x) x) 1 2)

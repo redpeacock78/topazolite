@@ -32,7 +32,7 @@
      (check-equal? (classify recur environment callables)
                    '(Finite structural))
      (check-equal? (run (inject core) fuel)
-                   `(cfg ,expected-value () () ()))]
+                   `(cfg ,expected-value () () () ()))]
     [result (fail (format "elaboration failed: ~e" result))]))
 
 (define find-positive
@@ -97,7 +97,7 @@
 
   (match-define (list raw-curry-core _ _ _) (elab '(Curry mul 2)))
   (define curry-core (erase-core raw-curry-core))
-  (match-define `(cfg ,curried () () ())
+  (match-define `(cfg ,curried () () () ())
     (run (inject curry-core) fuel))
   (check-equal?
    (term (origin-of ,curried))

@@ -128,7 +128,7 @@
     `(Apply (PrimVal (Reserved ,(validator-oid row)) ,(validator-name row))
             (UVal ,payload)))
   (match (run-g2 (inject-g2 core) (bounds-fuel limits))
-    [`(cfg ,result ,_H ,_Ω ,_θ) result]
+    [`(cfg ,result ,_H ,_Ω () ,_θ) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
 (test-case "RFN-001: 性質1 validate 健全性"

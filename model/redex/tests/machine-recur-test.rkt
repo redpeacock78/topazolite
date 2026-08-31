@@ -11,7 +11,7 @@
 
 (test-case "R-RecurBind: callable ID is preserved"
   (match (run (inject (term (Recur saved-id f (x) x f))) fuel)
-    [`(cfg ,result () () ())
+    [`(cfg ,result () () () ())
      (check-true
       (alpha-equivalent?
        G1 result (term (RecurVal saved-id f (x) x))))]
@@ -31,7 +31,7 @@
                                          (Construct (List Int) nil)))))))
   (check-equal?
    (run (inject length-two) fuel)
-   (term (cfg 2 () () ()))))
+   (term (cfg 2 () () () ()))))
 
 (test-case "REC-002: guarded recur produces every requested observation"
   (define productive
@@ -45,7 +45,7 @@
   (define (successors core)
     (apply-reduction-relation
      -->g1
-     (term (cfg ,core () () ()))))
+     (term (cfg ,core () () () ()))))
   (check-equal?
    (successors
     (term (Apply (RecurVal arity-id f (x) x) 1 2)))

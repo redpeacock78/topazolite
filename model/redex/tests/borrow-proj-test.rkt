@@ -126,38 +126,38 @@
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 1 (a))
                              (BorrowRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
    (list (term (cfg (BorrowRef 1 (a) 0)
-                    ,(proj-heap) ,(proj-omega) ())))))
+                    ,(proj-heap) ,(proj-omega) () ())))))
 
 (let ()
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 1 (a))
                              (BorrowMutRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
    (list (term (cfg (BorrowMutRef 1 (a) 0)
-                    ,(proj-heap) ,(proj-omega) ())))))
+                    ,(proj-heap) ,(proj-omega) () ())))))
 
 (let ()
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 1 (b))
                              (BorrowMutRef 1 () 1) b)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
    (list (term (cfg (BorrowRef 1 (b) 0)
-                    ,(proj-heap) ,(proj-omega) ())))))
+                    ,(proj-heap) ,(proj-omega) () ())))))
 
 ;; own の root だけが射影結果と食い違う configuration は stuck にする。
 (let ()
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 2 (a))
                              (BorrowRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))
 
 ;; own の path だけが射影結果と食い違う configuration は stuck にする。
@@ -165,7 +165,7 @@
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 1 (wrong))
                              (BorrowRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))
 
 ;; 可変借用の射影も own の root を検査し、proj-borrow-mut より先に stuck にする。
@@ -173,7 +173,7 @@
   (define conf
     (term (cfg (ProjBorrowAt 0 (Own 2 (a))
                              (BorrowMutRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) ())))
+               ,(proj-heap) ,(proj-omega) () ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))
 
 ;; 拒否 2。row に無い label を射影する。

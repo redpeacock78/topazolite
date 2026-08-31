@@ -266,37 +266,37 @@
    G1m
    #:domain config
 
-   (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+   (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (where v_result (δ nm v_arg ...))
         R-Delta)
 
    (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
                                v_arg ...))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where c_result
                (substitute* c_body (x ...) (v_arg ...)))
         R-Beta)
 
-   (--> (cfg (in-hole E (Curry ov_f v_arg)) H Ω θ)
+   (--> (cfg (in-hole E (Curry ov_f v_arg)) H Ω Λtok θ)
         (cfg (in-hole E
                       (CurryVal (Derived O_f (Curry v_arg))
                                 ov_f
                                 v_arg))
-             H Ω θ)
+             H Ω Λtok θ)
         (where O_f (origin-of ov_f))
         R-CurryVal)
 
    (--> (cfg (in-hole E
                       (Apply (CurryVal O v_f v_fixed)
                              v_arg ...))
-             H Ω θ)
-        (cfg (in-hole E (Apply v_f v_fixed v_arg ...)) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E (Apply v_f v_fixed v_arg ...)) H Ω Λtok θ)
         R-ApplyCurry)
 
-   (--> (cfg (in-hole E (Let (x τ) v_bound c_body)) H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+   (--> (cfg (in-hole E (Let (x τ) v_bound c_body)) H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (side-condition (not (owned-type? (term τ))))
         (where c_result (substitute c_body x v_bound))
         R-Let)
@@ -307,11 +307,11 @@
                                       (Let (x τ_owned)
                                            v_bound
                                            c_body))))
-             H Ω θ)
+             H Ω Λtok θ)
         (cfg (in-hole E_outer
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
-             H_new Ω_new θ)
+             H_new Ω_new Λtok θ)
         (side-condition (owned-type? (term τ_owned)))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
@@ -324,16 +324,16 @@
    (--> (cfg (in-hole E
                       (Eliminate (Construct τ K v_arg ...)
                                  (br ...)))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where c_result
                (select-branch K (v_arg ...) (br ...)))
         R-Eliminate)
 
    (--> (cfg (in-hole E
                       (Recur cid_recur f (x ...) c_body c_next))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where v_recur (RecurVal cid_recur f (x ...) c_body))
         (where c_result (substitute c_next f v_recur))
         R-RecurBind)
@@ -341,8 +341,8 @@
    (--> (cfg (in-hole E
                       (Apply (RecurVal cid_recur f (x ...) c_body)
                              v_arg ...))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where v_recur (RecurVal cid_recur f (x ...) c_body))
         (where c_result
                (substitute* c_body
@@ -350,51 +350,51 @@
                             (v_recur v_arg ...)))
         R-RecurUnfold)
 
-   (--> (cfg (in-hole E (Move p)) H Ω θ)
-        (cfg (in-hole E v_result) H Ω_new θ)
+   (--> (cfg (in-hole E (Move p)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (where v_result ,(table-ref (term H) (term p)))
         (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
         R-Move)
 
-   (--> (cfg (in-hole E (Move p)) H Ω θ)
-        (cfg (in-hole E (Error p)) H Ω θ)
+   (--> (cfg (in-hole E (Move p)) H Ω Λtok θ)
+        (cfg (in-hole E (Error p)) H Ω Λtok θ)
         (where state_old ,(table-ref (term Ω) (term p)))
         (side-condition (memq (term state_old) '(Moved Dropped)))
         R-MoveError)
 
-   (--> (cfg (in-hole E (Drop v_arg)) H Ω θ)
-        (cfg (in-hole E unit) H Ω θ)
+   (--> (cfg (in-hole E (Drop v_arg)) H Ω Λtok θ)
+        (cfg (in-hole E unit) H Ω Λtok θ)
         R-Drop)
 
    (--> (cfg (in-hole E (Yield v_observed c_next))
-             H Ω (event_old ...))
+             H Ω () (event_old ...))
         (cfg (in-hole E c_next)
-             H Ω (event_old ... (obs v_observed)))
+             H Ω () (event_old ... (obs v_observed)))
         R-Yield)
 
-   (--> (cfg (in-hole E (Suspend c_next)) H Ω θ)
-        (cfg (in-hole E c_next) H Ω θ)
+   (--> (cfg (in-hole E (Suspend c_next)) H Ω Λtok θ)
+        (cfg (in-hole E c_next) H Ω Λtok θ)
         R-Suspend)
 
-   (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω θ)
-        (cfg (in-hole E_outer v_result) H Ω_final θ_final)
+   (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω Λtok θ)
+        (cfg (in-hole E_outer v_result) H Ω_final Λtok θ_final)
         (where (Ω_final θ_final) (finalize π_managed Ω θ))
         R-ScopeValue)
 
    (--> (cfg (in-hole E_outer
                       (Scope π_managed
                              (in-hole F_inner (Perform op v_arg))))
-             H Ω θ)
-        (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final θ_final)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final Λtok θ_final)
         (where (Ω_final θ_final) (finalize π_managed Ω θ))
         R-ScopeAbort)
 
    (--> (cfg (in-hole E_outer
                       (Scope π_managed
                              (in-hole F_inner (Error p_error))))
-             H Ω θ)
-        (cfg (in-hole E_outer (Error p_error)) H Ω_final θ_final)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Error p_error)) H Ω_final Λtok θ_final)
         (where (Ω_final θ_final) (finalize π_managed Ω θ))
         R-ScopeError)
 
@@ -402,8 +402,8 @@
                       (Handle op
                               (x -> c_handler)
                               v_result))
-             H Ω θ)
-        (cfg (in-hole E_outer v_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer v_result) H Ω Λtok θ)
         R-HandleValue)
 
    (--> (cfg (in-hole E_outer
@@ -411,8 +411,8 @@
                               (x -> c_handler)
                               (in-hole F_inner
                                        (Perform (Return b τ) v_arg))))
-             H Ω θ)
-        (cfg (in-hole E_outer c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer c_result) H Ω Λtok θ)
         (where c_result (substitute c_handler x v_arg))
         R-HandleReturn)
 
@@ -421,8 +421,8 @@
                               (x -> c_handler)
                               (in-hole F_inner
                                        (Perform op_performed v_arg))))
-             H Ω θ)
-        (cfg (in-hole E_outer (Perform op_performed v_arg)) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Perform op_performed v_arg)) H Ω Λtok θ)
         (side-condition
          (not (equal? (term op_handler) (term op_performed))))
         R-HandleSkip)
@@ -431,8 +431,8 @@
                       (Handle op
                               (x -> c_handler)
                               (in-hole F_inner (Error p_error))))
-             H Ω θ)
-        (cfg (in-hole E_outer (Error p_error)) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer (Error p_error)) H Ω Λtok θ)
         R-HandleError)))
 
 (define -->g2/rules
@@ -443,45 +443,45 @@
 
    ;; spec §13.1。H、Ω、θ は借用値の生成では変更しない。
    ;; own と designator が食い違う configuration では、どの規則も進まない。
-   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω θ)
-        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω Λtok θ)
+        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-Borrow)
 
-   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω θ)
-        (cfg (in-hole E (Error p)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowAt ρ (Own p fp) w)) H Ω Λtok θ)
+        (cfg (in-hole E (Error p)) H Ω Λtok θ)
         (where state_old ,(table-ref (term Ω) (term p)))
         (side-condition (memq (term state_old) '(Moved Dropped)))
         (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowError)
 
-   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω θ)
-        (cfg (in-hole E (BorrowMutRef p fp ρ)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω Λtok θ)
+        (cfg (in-hole E (BorrowMutRef p fp ρ)) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowMut)
 
-   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω θ)
-        (cfg (in-hole E (Error p)) H Ω θ)
+   (--> (cfg (in-hole E (BorrowMutAt ρ (Own p fp) w)) H Ω Λtok θ)
+        (cfg (in-hole E (Error p)) H Ω Λtok θ)
         (where state_old ,(table-ref (term Ω) (term p)))
         (side-condition (memq (term state_old) '(Moved Dropped)))
         (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowMutError)
 
-   (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω θ)
-        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω θ)
+   (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω Λtok θ)
+        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         R-Reborrow)
 
    ;; spec §5.3。H、Ω、θ は射影で変更しない。
-   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω θ)
-        (cfg (in-hole E (BorrowRef p fp_result ρ)) H Ω θ)
+   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω Λtok θ)
+        (cfg (in-hole E (BorrowRef p fp_result ρ)) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
         (where (Own p fp_result) own)
         R-ProjBorrow)
 
-   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowMutRef p fp ρ_parent) label)) H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowMutRef p fp ρ_parent) label)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
         (where (Own p fp_result) own)
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
@@ -490,34 +490,34 @@
 
    ;; spec §6.3。H、Ω、θ は読み出しで変更しない。
    ;; Ω を見るのは Moved と Dropped の place を読まないためである。
-   (--> (cfg (in-hole E (Read (BorrowRef p fp ρ))) H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+   (--> (cfg (in-hole E (Read (BorrowRef p fp ρ))) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (where v_result ,(path-lookup (term H) (term p) (term fp)))
         R-Read)
 
-   (--> (cfg (in-hole E (Read (BorrowMutRef p fp ρ))) H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+   (--> (cfg (in-hole E (Read (BorrowMutRef p fp ρ))) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (where v_result ,(path-lookup (term H) (term p) (term fp)))
         R-ReadMut)
 
    ;; spec §7.3。Assign は capability の path 先だけを更新し、Ω と θ は保つ。
-   (--> (cfg (in-hole E (Assign (BorrowMutRef p fp ρ) v)) H Ω θ)
-        (cfg (in-hole E unit) H_new Ω θ)
+   (--> (cfg (in-hole E (Assign (BorrowMutRef p fp ρ) v)) H Ω Λtok θ)
+        (cfg (in-hole E unit) H_new Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
         (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
         R-Assign)
 
-   (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+   (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (where v_result (δ/g2 nm v_arg ...))
         R-Delta)
 
    (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
                                v_arg ...))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where c_result
                (substitute*/g2 c_body (x ...) (v_arg ...)))
         R-Beta)
@@ -525,8 +525,8 @@
    (--> (cfg (in-hole E
                       (Eliminate (Construct τ K v_arg ...)
                                  (br ...)))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where c_result
                (select-branch/g2 K (v_arg ...) (br ...)))
         R-Eliminate)
@@ -534,8 +534,8 @@
    (--> (cfg (in-hole E
                       (Apply (RecurVal cid_recur f (x ...) c_body)
                              v_arg ...))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (where v_recur (RecurVal cid_recur f (x ...) c_body))
         (where c_result
                (substitute*/g2 c_body
@@ -546,8 +546,8 @@
    (--> (cfg (in-hole E
                       (Proj (Rec ((label_field m v_field) ...))
                             label_target))
-             H Ω θ)
-        (cfg (in-hole E v_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
         (side-condition
          (term (unique-labels? (label_field ...))))
         (where v_result
@@ -558,8 +558,8 @@
    ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では
    ;; ないため、包まれた c は Discharge が消えるまで還元されない。入れ子は外側から一段
    ;; ずつ消える。
-   (--> (cfg (in-hole E (Discharge (ProofRep O φ) c_inner)) H Ω θ)
-        (cfg (in-hole E c_inner) H Ω θ)
+   (--> (cfg (in-hole E (Discharge (ProofRep O φ) c_inner)) H Ω Λtok θ)
+        (cfg (in-hole E c_inner) H Ω Λtok θ)
         R-Discharge)
 
    ;; RegionApp は静的な包みを剥がし、rp へ ρ を代入する。
@@ -570,8 +570,8 @@
    ;; 合わない形として詰まらせる。
    (--> (cfg (in-hole E
                       (RegionApp (RegionLam (rp ...) c_body) (ρ ...)))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (side-condition
          (= (length (term (rp ...))) (length (term (ρ ...)))))
         (where c_result
@@ -584,8 +584,8 @@
 
    (--> (cfg (in-hole E
                       (Let (x bmode τ) v_bound c_body))
-             H Ω θ)
-        (cfg (in-hole E c_result) H Ω θ)
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
         (side-condition (not (owned-type? (term τ))))
         (where c_result (substitute c_body x v_bound))
         R-LetB)
@@ -596,11 +596,11 @@
                                       (Let (x bmode τ_owned)
                                            v_bound
                                            c_body))))
-             H Ω θ)
+             H Ω Λtok θ)
         (cfg (in-hole E_outer
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
-             H_new Ω_new θ)
+             H_new Ω_new Λtok θ)
         (side-condition (owned-type? (term τ_owned)))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
@@ -645,17 +645,17 @@
 (define (inject core)
   (unless (redex-match? G1 c core)
     (raise-argument-error 'inject "G1 core term" core))
-  `(cfg (Scope () ,core) () () ()))
+  `(cfg (Scope () ,core) () () () ()))
 
 (define (inject-g2 core)
   (unless (redex-match? G2 c core)
     (raise-argument-error 'inject-g2 "G2 core term" core))
-  `(cfg (Scope () ,core) () () ()))
+  `(cfg (Scope () ,core) () () () ()))
 
 (define (inject-g2m core)
   (unless (redex-match? G2m c core)
     (raise-argument-error 'inject-g2m "G2m core term" core))
-  `(cfg (Scope () ,core) () () ()))
+  `(cfg (Scope () ,core) () () () ()))
 
 (define (run config fuel)
   (unless (redex-match? G1m config config)

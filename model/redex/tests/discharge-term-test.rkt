@@ -74,7 +74,7 @@
 
 (define (step-once core)
   (match (apply-reduction-relation -->g2 (inject-g2 core))
-    [(list `(cfg (Scope () ,result) () () ())) result]
+    [(list `(cfg (Scope () ,result) () () () ())) result]
     [results (error 'step-once "unexpected: ~e" results)]))
 
 (test-case "PRF-004: Discharge は 1 段で消え、内側は先に還元されない"

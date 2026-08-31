@@ -2949,7 +2949,7 @@
        (type? expected)
        (row? row)
        (match configuration
-         [`(cfg ,core ,heap ,states ,_)
+         [`(cfg ,core ,heap ,states () ,_)
           (and (unique-table? heap)
                (unique-table? states)
                (equal? (sort (map first heap) <)

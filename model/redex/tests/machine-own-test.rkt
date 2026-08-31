@@ -19,7 +19,7 @@
    (term (cfg (resource 0)
               ((0 (resource 0)))
               ((0 Moved))
-              ())))
+              () ())))
   (check-equal?
    (run
     (inject
@@ -30,18 +30,18 @@
    (term (cfg (Error 0)
               ((0 (resource 0)))
               ((0 Moved))
-              ())))
+              () ())))
   (check-equal?
    (run
     (term (cfg (Move 0)
                ((0 (resource 0)))
                ((0 Dropped))
-               ()))
+               () ()))
     fuel)
    (term (cfg (Error 0)
               ((0 (resource 0)))
               ((0 Dropped))
-              ()))))
+              () ()))))
 
 (test-case "R-Drop: evaluated values become unit"
   (check-equal?
@@ -54,7 +54,7 @@
    (term (cfg unit
               ((0 (resource 0)))
               ((0 Moved))
-              ()))))
+              () ()))))
 
 (test-case "R-LetOwned: deterministic allocation targets the nearest Scope"
   (define source
@@ -68,7 +68,7 @@
                                       (Move r)))))
            ((0 (resource 0)) (3 (resource 3)))
            ((0 Moved) (3 Moved))
-           ())))
+           () ())))
   (define expected
     (term (cfg
            (Scope ()
@@ -78,7 +78,7 @@
                                  (Move 4))))
            ((0 (resource 0)) (3 (resource 3)) (4 (resource 9)))
            ((0 Moved) (3 Moved) (4 Available))
-           ())))
+           () ())))
   (match (apply-reduction-relation -->g1 source)
     [(list actual) (check-true (alpha-equivalent? G1m actual expected))]
     [actual (fail-check (format "expected one successor, got ~e" actual))])
@@ -88,12 +88,12 @@
                       (Let (x (Owned Res)) (resource 1) 42))
                ()
                ((0 Moved))
-               ()))
+               () ()))
     fuel)
    (term (cfg 42
               ((1 (resource 1)))
               ((0 Moved) (1 Dropped))
-              ((fin 1))))))
+              () ((fin 1))))))
 
 (test-case "OWN-002: scope finalizes available places once in reverse order"
   (check-equal?
@@ -108,18 +108,18 @@
    (term (cfg unit
               ((0 (resource 10)) (1 (resource 20)))
               ((0 Dropped) (1 Dropped))
-              ((fin 1) (fin 0)))))
+              () ((fin 1) (fin 0)))))
   (check-equal?
    (run
     (term (cfg (Scope (0 0) unit)
                ((0 (resource 1)))
                ((0 Available))
-               ()))
+               () ()))
     fuel)
    (term (cfg unit
               ((0 (resource 1)))
               ((0 Dropped))
-              ((fin 0))))))
+              () ((fin 0))))))
 
 (test-case "OWN-003: abort and error exits finalize remaining places"
   (check-equal?
@@ -132,7 +132,7 @@
    (term (cfg (Perform (Return boundary Int) 42)
               ((0 (resource 7)))
               ((0 Dropped))
-              ((fin 0)))))
+              () ((fin 0)))))
   (check-equal?
    (run
     (term (cfg (Scope (0)
@@ -140,12 +140,12 @@
                              (Perform (Return boundary Int) 42)))
                ((0 (resource 0)) (1 (resource 1)))
                ((0 Available) (1 Available))
-               ()))
+               () ()))
     fuel)
    (term (cfg (Perform (Return boundary Int) 42)
               ((0 (resource 0)) (1 (resource 1)))
               ((0 Dropped) (1 Dropped))
-              ((fin 1) (fin 0)))))
+              () ((fin 1) (fin 0)))))
   (check-equal?
    (run
     (inject
@@ -160,7 +160,7 @@
    (term (cfg (Error 1)
               ((0 (resource 10)) (1 (resource 20)))
               ((0 Dropped) (1 Moved))
-              ((fin 0))))))
+              () ((fin 0))))))
 
 (test-case "R-HandleError: ownership errors bypass handlers"
   (check-equal?
@@ -177,4 +177,4 @@
    (term (cfg (Error 0)
               ((0 (resource 5)))
               ((0 Moved))
-              ()))))
+              () ()))))

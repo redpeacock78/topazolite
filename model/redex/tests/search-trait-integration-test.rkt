@@ -14,7 +14,7 @@
 
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) 40)
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
 (define (check-surface-application source expected-type expected-value)

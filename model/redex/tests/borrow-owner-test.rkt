@@ -86,10 +86,10 @@
        (loop next (append (reverse todo) seen) (sub1 fuel))])))
 
 (define (config-heap config)
-  (match config [`(cfg ,_ ,H ,_ ,_) H]))
+  (match config [`(cfg ,_ ,H ,_ () ,_) H]))
 
 (define (config-core config)
-  (match config [`(cfg ,c ,_ ,_ ,_) c]))
+  (match config [`(cfg ,c ,_ ,_ () ,_) c]))
 
 (define reached
   (for/first ([cfg (in-list (all-configs (inject-g2 nested)))]

@@ -18,10 +18,10 @@
       [(? list?) (append* (map collect t))]
       [_ '()]))
   (match config
-    [`(cfg ,c ,H ,_ ,_) (append (collect c) (collect H))]))
+    [`(cfg ,c ,H ,_ () ,_) (append (collect c) (collect H))]))
 
 (define (omega-of config)
-  (match config [`(cfg ,_ ,_ ,Ω ,_) Ω]))
+  (match config [`(cfg ,_ ,_ ,Ω () ,_) Ω]))
 
 (define (all-configs config fuel)
   (let loop ([frontier (list config)] [seen '()] [remaining fuel])
@@ -71,12 +71,12 @@
   (define config `(cfg (Scope () (BorrowAt ,n-root (Own 0 ()) 0))
                        ((0 1))
                        ((0 Moved))
-                       ()))
+                       () ()))
   (define next (raw-steps-g2 config))
   (check-equal? (length next) 1)
   (check-equal? (live-borrow-refs (first next)) '())
   (check-equal? (first next)
-                `(cfg (Scope () (Error 0)) ((0 1)) ((0 Moved)) ())))
+                `(cfg (Scope () (Error 0)) ((0 1)) ((0 Moved)) () ())))
 
 ;; 手組みの config は invariant を破るので、独立な抽出が検出する。
 (let ()
@@ -84,7 +84,7 @@
   (define config `(cfg (Scope () (BorrowRef 0 () ,n-root))
                        ((0 1))
                        ((0 Moved))
-                       ()))
+                       () ()))
   (define refs (live-borrow-refs config))
   (check-equal? (length refs) 1)
   (check-not-equal? (match (assoc (first (first refs)) (omega-of config))

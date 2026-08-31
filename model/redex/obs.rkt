@@ -39,7 +39,7 @@
     (raise-argument-error who "exact-nonnegative-integer?" fuel))
   (let loop ([current (inject-core core)]
              [remaining fuel])
-    (match-define `(cfg ,current-core ,_ ,_ ,trace) current)
+    (match-define `(cfg ,current-core ,_ ,_ () ,trace) current)
     (define all-observed (trace-observations trace))
     (define observed
       (take all-observed (min depth (length all-observed))))

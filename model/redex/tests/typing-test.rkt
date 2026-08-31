@@ -179,7 +179,7 @@
     (term (cfg (Scope (0) (Move 0))
                ((0 (resource 7)))
                ((0 Available))
-               ())))
+               () ())))
   (check-true
    (config-ok? good empty (term (Owned Res)) (term (Own))))
   (check-true
@@ -187,22 +187,22 @@
     (term (cfg (Error 0)
                ((0 (resource 7)))
                ((0 Moved))
-               ()))
+               () ()))
     empty (term Int) empty))
   (check-false
    (config-ok?
-    (term (cfg unit ((0 (resource 7))) () ()))
+    (term (cfg unit ((0 (resource 7))) () () ()))
     empty (term Unit) empty))
   (check-false
    (config-ok?
     (term (cfg unit
                ((0 (resource 7)) (0 (resource 8)))
                ((0 Available) (0 Moved))
-               ()))
+               () ()))
     empty (term Unit) empty))
   (check-false
    (config-ok?
-    (term (cfg unit ((0 1)) ((0 Available)) ()))
+    (term (cfg unit ((0 1)) ((0 Available)) () ()))
     empty (term Unit) empty)))
 
 (test-case "typing environments must be finite maps"

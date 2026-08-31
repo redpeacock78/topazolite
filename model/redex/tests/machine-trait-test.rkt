@@ -7,7 +7,7 @@
 
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) 20)
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [result (error 'run-g2-core "unexpected result: ~e" result)]))
 
 (define (stuck-g2? core)

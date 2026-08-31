@@ -16,7 +16,7 @@
   (check-equal? (obs-eval core 3 fuel) '((1 2) value))
   (check-equal?
    (run (inject core) fuel)
-   (term (cfg unit () () ((obs 1) (obs 2))))))
+   (term (cfg unit () () () ((obs 1) (obs 2))))))
 
 (test-case "REC-002: Suspend consumes a step without producing an observation"
   (check-equal?
@@ -27,7 +27,7 @@
    '(() value))
   (check-equal?
    (run (inject (term (Suspend unit))) fuel)
-   (term (cfg unit () () ()))))
+   (term (cfg unit () () () ()))))
 
 (test-case "OWN-002/REC-002: fin events are not observations"
   (check-equal?
@@ -53,7 +53,7 @@
    (term (cfg unit
               ((0 (resource 8)))
               ((0 Dropped))
-              ((fin 0) (obs 1))))))
+              () ((fin 0) (obs 1))))))
 
 (test-case "obs-eval: terminal outcomes and fuel exhaustion"
   (check-equal? (obs-eval (term 5) 1 fuel) '(() value))

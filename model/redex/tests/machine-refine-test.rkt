@@ -10,7 +10,7 @@
 ;; heap が空の項用: (cfg result () () ()) を unwrap する
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) fuel)
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [result (error 'run-g2-core "unexpected: ~e" result)]))
 
 (define (stuck-g2? core)

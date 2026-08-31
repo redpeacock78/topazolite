@@ -283,19 +283,19 @@
    counts (add1 (search-counts-accepted counts))))
 
 (define (config-core configuration)
-  (match-define `(cfg ,core ,_ ,_ ,_) configuration)
+  (match-define `(cfg ,core ,_ ,_ () ,_) configuration)
   core)
 
 (define (config-heap configuration)
-  (match-define `(cfg ,_ ,heap ,_ ,_) configuration)
+  (match-define `(cfg ,_ ,heap ,_ () ,_) configuration)
   heap)
 
 (define (config-states configuration)
-  (match-define `(cfg ,_ ,_ ,states ,_) configuration)
+  (match-define `(cfg ,_ ,_ ,states () ,_) configuration)
   states)
 
 (define (config-events configuration)
-  (match-define `(cfg ,_ ,_ ,_ ,events) configuration)
+  (match-define `(cfg ,_ ,_ ,_ () ,events) configuration)
   events)
 
 (define (config-places configuration)

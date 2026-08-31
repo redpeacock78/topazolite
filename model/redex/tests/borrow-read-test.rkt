@@ -100,31 +100,31 @@
 ;; 共有借用の読み出しは H の値を返す。H、Ω、θ は変わらない（spec §6.3）。
 (let ()
   (define conf
-    (term (cfg (Read (BorrowRef 1 () 0)) ,read-heap ,read-omega ())))
+    (term (cfg (Read (BorrowRef 1 () 0)) ,read-heap ,read-omega () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg 42 ,read-heap ,read-omega ())))))
+   (list (term (cfg 42 ,read-heap ,read-omega () ())))))
 
 ;; 可変借用の読み出しも同じ値を返す。
 (let ()
   (define conf
-    (term (cfg (Read (BorrowMutRef 1 () 0)) ,read-heap ,read-omega ())))
+    (term (cfg (Read (BorrowMutRef 1 () 0)) ,read-heap ,read-omega () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg 42 ,read-heap ,read-omega ())))))
+   (list (term (cfg 42 ,read-heap ,read-omega () ())))))
 
 ;; path を持つ借用は fp を辿った先を返す。
 (let ()
   (define conf
-    (term (cfg (Read (BorrowRef 2 (a) 0)) ,read-heap ,read-omega ())))
+    (term (cfg (Read (BorrowRef 2 (a) 0)) ,read-heap ,read-omega () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg 7 ,read-heap ,read-omega ())))))
+   (list (term (cfg 7 ,read-heap ,read-omega () ())))))
 
 ;; Moved の place は読めない。規則が当たらず 1 歩も進まない（spec §6.3）。
 (let ()
   (define conf
-    (term (cfg (Read (BorrowRef 1 () 0)) ,read-heap ,moved-omega ())))
+    (term (cfg (Read (BorrowRef 1 () 0)) ,read-heap ,moved-omega () ())))
   (check-equal? (length (apply-reduction-relation -->g2 conf)) 0))
 
 ;; 拒否 2 の 2 件目。payload が可変借用を含む。

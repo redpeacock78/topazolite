@@ -28,7 +28,7 @@
 
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) (bounds-fuel limits))
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
 (define (impl-proposition row)

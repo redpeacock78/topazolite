@@ -10,7 +10,7 @@
 ; heap が空の項用: (cfg result () () ()) を unwrap する
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) fuel)
-    [`(cfg ,result () () ()) result]
+    [`(cfg ,result () () () ()) result]
     [result (error 'run-g2-core "unexpected: ~e" result)]))
 
 ; 1 手も進めなければ stuck とみなす
@@ -35,7 +35,7 @@
 ; (e) R-LetOwnedB: Owned は bmode 付き Let でも move される（G1 R-LetOwned と同じ heap 遷移）
 (check-equal?
  (run-g2 (inject-g2 (term (Let (r const (Owned Res)) (Apply ,acquire 0) (Move r)))) fuel)
- (term (cfg (resource 0) ((0 (resource 0))) ((0 Moved)) ())))
+ (term (cfg (resource 0) ((0 (resource 0))) ((0 Moved)) () ())))
 
 ; (f) Rec のフィールドは記述順に E 文脈で簡約される（congruence）
 (check-equal?
@@ -74,4 +74,4 @@
    (term (Handle (Return boundary Int)
                  (answer -> answer)
                  (Rec ((a imm (Perform (Return boundary Int) 42))))))) fuel)
- (term (cfg 42 () () ())))
+ (term (cfg 42 () () () ())))

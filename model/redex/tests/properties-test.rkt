@@ -184,7 +184,7 @@
               '())))
 
 (define (single-step-core/using next-configs core)
-  (match (next-configs `(cfg ,core () () ()))
+  (match (next-configs `(cfg ,core () () () ()))
     [(list next) (config-core next)]
     [other (error 'single-step-core "expected one step, got ~e" other)]))
 
@@ -501,7 +501,7 @@
       [(list core 'Unit row callables)
        (and (equal? (core-type-of core '() callables) `(Unit ,row))
             (match (run-g2 (inject-g2 core) (bounds-fuel limits))
-              [`(cfg unit ,_ ,_ ,_) #t]
+              [`(cfg unit ,_ ,_ () ,_) #t]
               [_ #f])
             ;; Width compatibility is connected to checking, but remains
             ;; distinct from definitional equality.

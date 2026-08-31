@@ -80,10 +80,10 @@
     (term (cfg (Assign (BorrowMutRef 1 () 0) 9)
                ((1 5))
                ((1 Available))
-               ())))
+               () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg unit ((1 9)) ((1 Available)) ())))))
+   (list (term (cfg unit ((1 9)) ((1 Available)) () ())))))
 
 ;; field path の Assign は根の record を関数的に更新する。
 (let ()
@@ -91,7 +91,7 @@
     (term (cfg (Assign (BorrowMutRef 1 (a) 0) 9)
                ,assign-heap
                ,assign-omega
-               ())))
+               () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
    (list
@@ -99,7 +99,7 @@
      (cfg unit
           ((1 (Rec ((a mut 9) (b imm 0)))))
           ((1 Available))
-          ())))))
+          () ())))))
 
 ;; Moved の place は Assign の対象にできず、規則は stuck する。
 (let ()
@@ -107,5 +107,5 @@
     (term (cfg (Assign (BorrowMutRef 1 () 0) 9)
                ((1 5))
                ((1 Moved))
-               ())))
+               () ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))

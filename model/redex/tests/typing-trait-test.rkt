@@ -53,7 +53,7 @@
   (check-false (core-check-row hidden empty empty 'Int))
   (check-false (core-check hidden empty empty 'Int empty))
   (check-false
-   (config-ok? `(cfg ,hidden () () ()) empty 'Int empty)))
+   (config-ok? `(cfg ,hidden () () () ()) empty 'Int empty)))
 
 (test-case "effect rows and their Core annotations must be normal"
   (define performed

@@ -74,7 +74,7 @@
         [(? list? ts) (ormap walk ts)]
         [_ #f])))
   (check-true (exact-nonnegative-integer? ρ-materialized))
-  (define config `(cfg ,out ((1 1)) ((1 Available)) ()))
+  (define config `(cfg ,out ((1 1)) ((1 Available)) () ()))
   (define next (raw-steps-g2 config))
   (check-equal? (length next) 1)
   (define ρ-machine
@@ -177,10 +177,10 @@
 (let ()
   (define c-body '(Let (x let (Borrowed Int (RParam a))) 1 x))
   (define config
-    `(cfg (RegionApp (RegionLam (a) ,c-body) (3)) () () ()))
+    `(cfg (RegionApp (RegionLam (a) ,c-body) (3)) () () () ()))
   (define next (raw-steps-g2 config))
   (check-equal? (length next) 1)
-  (match-define `(cfg ,after ,_H ,_Ω ,_θ) (first next))
+  (match-define `(cfg ,after ,_H ,_Ω () ,_θ) (first next))
   (check-equal? after '(Let (x let (Borrowed Int 3)) 1 x))
   ;; spec 4.2.5 の 3 点目。還元の前後で point の構造を保つ。
   ;; G2m は span を持つ production を含まないため、機械の側で観測できるのは
@@ -194,5 +194,5 @@
 (let ()
   (define c-body '(Let (x let (Borrowed Int (RParam a))) 1 x))
   (define config
-    `(cfg (RegionApp (RegionLam (a) ,c-body) (3 4)) () () ()))
+    `(cfg (RegionApp (RegionLam (a) ,c-body) (3 4)) () () () ()))
   (check-equal? (raw-steps-g2 config) '()))

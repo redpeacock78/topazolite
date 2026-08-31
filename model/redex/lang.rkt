@@ -140,9 +140,13 @@
   (state ::= Available Moved Dropped)
   (H ::= ((p v) ...))
   (Ω ::= ((p state) ...))
+  ;; 値の内部の Owned 資源を識別する token。
+  (tk ::= (tok natural))
+  ;; token の状態。root の所有を持つ Ω とは別の写像である。
+  (Λtok ::= ((tk state) ...))
   (event ::= (obs v) (fin p))
   (θ ::= (event ...))
-  (config ::= (cfg c H Ω θ))
+  (config ::= (cfg c H Ω Λtok θ))
 
   (F ::= hole
          (Apply v ... F c ...)

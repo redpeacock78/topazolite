@@ -85,7 +85,7 @@
     '(cfg (Scope () (BorrowAt 0 (Own 7 ()) 1))
           ((1 1))
           ((1 Available))
-          ()))
+          () ()))
   (check-equal? (length (raw-steps-g2 conf)) 0))
 
 ;; E-BOR-020 の producer。型環境だけが designator x を束縛し、owner/token

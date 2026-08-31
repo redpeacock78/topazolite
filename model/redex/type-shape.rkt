@@ -145,7 +145,7 @@
       [(or (exact-integer? value) (string? value) (symbol? value)) #t]
       [else
        (match value
-         [`(cfg ,core ,heap ,_ ,events)
+         [`(cfg ,core ,heap ,_ () ,events)
           (and (walk core)
                (andmap walk-heap-entry heap)
                (andmap walk-event events))]

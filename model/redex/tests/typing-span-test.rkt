@@ -892,7 +892,7 @@
    (config-ok? '(cfg (Drop 1)
                      ((0 (resource 0)))
                      ((0 Available))
-                     ())
+                     () ())
                 '()
                 '(Unit (Own))
                 '())))

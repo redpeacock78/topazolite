@@ -15,7 +15,7 @@
                    (answer -> 0)
                    7)))
     fuel)
-   (term (cfg 7 () () ()))))
+   (term (cfg 7 () () () ()))))
 
 (test-case "RET-002/OWN-003: matching Return handles after scope cleanup"
   (check-equal?
@@ -31,7 +31,7 @@
    (term (cfg 42
               ((0 (resource 7)))
               ((0 Dropped))
-              ((fin 0))))))
+              () ((fin 0))))))
 
 (test-case "RET-002: matching Return discards its pure continuation"
   (check-equal?
@@ -43,7 +43,7 @@
                         (Perform (Return boundary Int) 42)
                         99))))
     fuel)
-   (term (cfg 42 () () ()))))
+   (term (cfg 42 () () () ()))))
 
 (test-case "R-HandleSkip: boundary or type mismatch propagates"
   (for ([case
@@ -61,7 +61,7 @@
                      (answer -> 0)
                      (Perform ,performed 7))))
       fuel)
-     (term (cfg (Perform ,performed 7) () () ()))))
+     (term (cfg (Perform ,performed 7) () () () ()))))
   (check-equal?
    (run
     (inject
@@ -71,7 +71,7 @@
                         (Perform (Return inner Int) 7)
                         99))))
     fuel)
-   (term (cfg (Perform (Return inner Int) 7) () () ()))))
+   (term (cfg (Perform (Return inner Int) 7) () () () ()))))
 
 (test-case "RET-002: nested handlers select the matching boundary"
   (check-equal?
@@ -86,7 +86,7 @@
                                                 1))
                            (Perform (Return outer Int) 41)))))
     fuel)
-   (term (cfg 41 () () ())))
+   (term (cfg 41 () () () ())))
   (check-equal?
    (run
     (inject
@@ -99,11 +99,11 @@
                                                 1))
                            (Perform (Return inner Int) 41)))))
     fuel)
-   (term (cfg 42 () () ()))))
+   (term (cfg 42 () () () ()))))
 
 (test-case "top-level Perform: an unhandled Return is terminal"
   (check-equal?
    (run
     (inject (term (Perform (Return boundary Int) 9)))
     fuel)
-   (term (cfg (Perform (Return boundary Int) 9) () () ()))))
+   (term (cfg (Perform (Return boundary Int) 9) () () () ()))))

@@ -167,7 +167,7 @@
 ;; 本体を取り出す。
 (define (reduce-owned-recur source)
   (define core (erase-core (elaborate-surface source)))
-  (match (raw-steps-g2 `(cfg ,core () () ()))
+  (match (raw-steps-g2 `(cfg ,core () () () ()))
     [(list bound)
      (match (raw-steps-g2 bound)
        [(list evaluated-argument)
