@@ -40,6 +40,7 @@
       [(list 'Move w) (list 'Move (next) (ann w))]
       [(list 'Drop c) (list 'Drop (next) (ann c))]
       [(list 'Curry c_1 c_2) (list 'Curry (next) (ann c_1) (ann c_2))]
+      [(list 'OwnLeaf c) (list 'OwnLeaf (next) (ann c))]
       [(list 'resource n) (list 'resource (next) n)]
       [(list 'Lam O cid (list x ...) c)
        (list 'Lam (next) O cid (map bind x) (ann c))]

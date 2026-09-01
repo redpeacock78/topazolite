@@ -161,7 +161,7 @@
 
 ;; 値の内部の Owned leaf を、その path とともに前順で列挙する。
 ;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
-;; b3a で辿る子は Rec の欄と leaf の payload だけであり、未対応の
+;; b3b で辿る子は Rec と Construct の欄と leaf の payload であり、未対応の
 ;; 構成子を汎用 list として辿らない。
 (define (walk-owned-leaves value)
   (define (walk current path root?)
@@ -176,12 +176,17 @@
                      (walk child (cons name path) #f))
                    names
                    values)]
+      [`(Construct ,_type ,_constructor ,fields ...)
+       (append-map (lambda (index child)
+                     (walk child (cons index path) #f))
+                   (range (length fields))
+                   fields)]
       [_ '()]))
   (walk value '() #t))
 
-;; leaf が回収走査で辿れる位置にだけ現れるかを判定する。b3a では Rec の
-;; 欄と leaf の payload だけを許し、その他の構成子は leaf を含まないことを
-;; 要求して fail-closed にする。
+;; leaf が回収走査で辿れる位置にだけ現れるかを判定する。Rec の欄と
+;; Construct の欄と leaf の payload だけを許し、その他の構成子は leaf を
+;; 含まないことを要求して fail-closed にする。
 (define (walk-leaf-positions current)
   (match current
     [`(OwnedLeaf ,_tk ,payload)
@@ -189,6 +194,8 @@
           (walk-leaf-positions payload))]
     [`(Rec ((,_name ,_mode ,values) ...))
      (andmap walk-leaf-positions values)]
+    [`(Construct ,_type ,_constructor ,fields ...)
+     (andmap walk-leaf-positions fields)]
     [(? list?)
      (andmap (lambda (child) (not (contains-owned-leaf? child))) current)]
     [_ #t]))

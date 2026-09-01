@@ -258,6 +258,30 @@
   (check-equal? (derive-places ascending empty)
                 (derive-places descending empty)))
 
+(test-case "OwnedLeaf 欄を含む heap の Ξ 導出は前方参照を拒否する"
+  (define backwards
+    (term ((0 (resource 1))
+           (1 (Rec ((owned mut (OwnedLeaf (tok 0) (resource 2)))
+                   (captured mut (Lam User capture-id () (Move 0)))))))))
+  (define forwards
+    (term ((0 (Rec ((owned mut (OwnedLeaf (tok 1) (resource 2)))
+                   (captured mut (Lam User capture-id () (Move 1))))))
+           (1 (resource 1)))))
+  (check-true
+   (config-ok?
+    (term (cfg unit ,backwards
+               ((0 Available) (1 Available))
+               (((tok 0) Available))
+               ()))
+    callable-types (term Unit) '()))
+  (check-false
+   (config-ok?
+    (term (cfg unit ,forwards
+               ((0 Available) (1 Available))
+               (((tok 1) Available))
+               ()))
+    callable-types (term Unit) '())))
+
 (define (leaf-config value tokens)
   (term (cfg unit ((0 ,value)) ((0 Available)) ,tokens ())))
 
@@ -350,12 +374,13 @@
   (check-false (leaf-positions-ok? (term (UVal (UVal ,rec)))))
   (check-true (leaf-positions-ok? (term (Rec ((f mut ,rec)))))))
 
-(test-case "leaf-positions-ok? が Construct の引数の leaf を拒否する"
+(test-case "leaf-positions-ok? が Construct の引数の leaf を辿る"
   (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
-  (check-false (leaf-positions-ok? (term (Construct T K ,leaf))))
-  (check-false
+  (check-true (leaf-positions-ok? (term (Construct T K ,leaf))))
+  (check-true
    (leaf-positions-ok?
     (term (Construct T K (Rec ((f mut ,leaf)))))))
+  (check-false (leaf-positions-ok? (term (Construct T K (UVal ,leaf)))))
   (check-true (leaf-positions-ok? (term (Construct T K (resource 1))))))
 
 (test-case "leaf を含まない値は未対応の構成子の内部でも通る"
@@ -435,5 +460,5 @@
                           ((0 ,value))
                           ((0 Available))
                           (((tok 0) Available))
-                          ((finLeaf 0 (0)))))
+                          ((finLeaf 0 ((0))))))
                '() (term Unit) '())))

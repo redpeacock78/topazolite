@@ -31,6 +31,7 @@
          ownleaf-permitted
          ownleaf-root?
          require-ownleaf-root
+         config-runtime-leaf?
          control-leaf-positions-ok?
          derive-places
          join-types
@@ -804,6 +805,14 @@
                           start-index)
     [(list rows psi _) (list rows psi)]))
 
+;; config の型導出のときだけ、runtime の leaf をそのまま欄へ許す。
+;; Rec の欄は既存の deriving-config? 節が同じ役目を別に持つ。
+(define (config-runtime-leaf? core)
+  (and (deriving-config?)
+       (match (peel-node core)
+         [`(OwnedLeaf ,_ ,_) #t]
+         [_ #f])))
+
 (define (check-construct constructor fields data-type
                          Λ Ψ environment places callables node fail)
   ;; 呼び出し側は G2+ の ts、つまり (#:ty τ s) を包みのまま渡す。
@@ -813,10 +822,18 @@
   (unless schema (fail 'unknown-data-type node actual-type))
   (define field-types (lookup schema constructor))
   (unless field-types (fail 'unknown-constructor node constructor))
-  (for ([field-type (in-list field-types)])
-    (when (owned-type? field-type)
-      (fail 'owned-constructor-field node field-type)))
-  (match (check-many fields field-types Λ Ψ environment places callables node fail)
+  ;; Owned な欄は producer の根として OwnLeaf を必須にする。包んでいない欄は
+  ;; 従来と同じ owned-constructor-field で落とす。config の runtime leaf だけは
+  ;; deriving-config? の検査範囲で既に OwnedLeaf になっているため通す。
+  (define permitted
+    (for/list ([field-type (in-list field-types)]
+               [field (in-list fields)]
+               #:when (owned-type? field-type))
+      (unless (config-runtime-leaf? field)
+        (require-ownleaf-root field 'owned-constructor-field node fail))
+      field))
+  (match (parameterize ([ownleaf-permitted permitted])
+           (check-many fields field-types Λ Ψ environment places callables node fail))
     [(list rows next-psi)
      (list (rows-union rows) next-psi)]))
 
@@ -2994,13 +3011,11 @@
          (and actual-row (row=? actual-row row)))))
 
 ;; Ξ の第 1 段。place を直接含む値は BorrowRef と BorrowMutRef だけだが、
-;; typing.rkt にその値の節はないため type-of/raw が拒否する。捕捉した closure
-;; は substitute 後に place を含みうるが、Owned で始まるため、b3a の通常の
-;; Rec 欄では owned-record-field が拒否する。したがって R-Assign が既存の
-;; place へ値を書いても、到達可能な値が参照できる place は自身より前に割り
-;; 当てられたものに限られる。place の番号順に畳み込み、前方参照を含む手書き
-;; configuration は失敗させて拒否する。b3b で deriving-config? が leaf の
-;; Rec 欄を許すときは、この順序の根拠を再検討する。
+;; typing.rkt にその値の節はないため type-of/raw が拒否する。OwnedLeaf を
+;; 含む Rec 欄は config 専用の with-config-typing でだけ許されるが、heap を
+;; place の番号順に畳み込むため、前方参照を含む値は依然として拒否される。
+;; 閉包の捕捉先もこの順序に従うため、R-Assign の後に再検査しても前方参照の
+;; 拒否は同じように効く。
 ;; H の entry の並びは規定されないため、先に番号で整列する。
 (define (derive-places heap callables)
   (for/fold ([acc '()] #:result (and acc (reverse acc)))
@@ -3044,13 +3059,13 @@
     [(list? core) (andmap control-leaf-positions-ok? core)]
     [else #t]))
 
-;; b3a の finLeaf は Rec の label path だけを記録する。文法上は b3b の
-;; positional segment も受理するため、ここで空 path と natural segment を拒否する。
+;; finLeaf は所有値の走査が作る owner path を記録する。Construct の欄は
+;; positional segment を使うため、空 path だけを拒否する。
 (define (trace-paths-ok? trace)
   (andmap
    (lambda (event)
      (match event
-       [`(finLeaf ,_ ,fp) (and (pair? fp) (record-path? fp))]
+       [`(finLeaf ,_ ,fp) (and (pair? fp) (owner-path? fp))]
        [_ #t]))
    trace))
 

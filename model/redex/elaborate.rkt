@@ -645,13 +645,19 @@
       (define field-types (and schema (lookup schema constructor)))
       (unless field-types
         (reject type-span 'constructor-type-mismatch expected constructor))
-      (when (ormap owned-type? field-types)
-        (reject type-span 'owned-constructor-field constructor))
       (define results
         (check-many fields field-types
                     environment delta propositions boundaries type-span))
+      ;; Owned な欄だけ producer の根として OwnLeaf で包む。包まない欄は
+      ;; 型検査の gate が既定で拒否する。
+      (define field-cores
+        (for/list ([result (in-list results)]
+                   [field-type (in-list field-types)])
+          (if (owned-type? field-type)
+              `(OwnLeaf ,type-span ,(judgment-core result))
+              (judgment-core result))))
       (judgment `(Construct ,type-span (#:ty ,expected ,type-span) ,constructor
-                            ,@(map judgment-core results))
+                            ,@field-cores)
                 expected
                 (rows-union (map judgment-row results))))
 

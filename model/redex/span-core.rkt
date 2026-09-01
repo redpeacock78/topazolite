@@ -125,7 +125,8 @@
          (Suspend s c)
          (Move s w)
          (Drop s c)
-         (Curry s c c))
+         (Curry s c c)
+         (OwnLeaf s c))
   (v ::= lt
          ov
          (Construct s ts K v ...)

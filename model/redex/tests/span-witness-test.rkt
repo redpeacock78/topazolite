@@ -29,7 +29,7 @@
                       (term (resource ,s0 0))))])
     (check-true (redex-match? G1+ v value) (format "~a" value))))
 
-(test-case "G1+ の c は 15 production すべてに証人を持つ"
+(test-case "G1+ の c は 16 production すべてに証人を持つ"
   (for ([core (in-list
                (list (term (#:lit 1 ,s0))
                      (term (#:var x ,s0))
@@ -53,7 +53,8 @@
                      (term (Suspend ,s0 (#:lit 1 ,s1)))
                      (term (Move ,s0 (#:var x ,s1)))
                      (term (Drop ,s0 (#:lit 1 ,s1)))
-                     (term (Curry ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))))])
+                     (term (Curry ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
+                     (term (OwnLeaf ,s0 (#:lit 1 ,s1)))))])
     (check-true (redex-match? G1+ c core) (format "~a" core))))
 
 (test-case "spanless な項は G1+ に一致しない"
@@ -71,6 +72,7 @@
                               (Move x)
                               (Drop 1)
                               (Curry 1 2)
+                              (OwnLeaf 1)
                               1
                               x)))])
     (check-false (redex-match? G1+ c core) (format "~a" core)))

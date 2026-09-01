@@ -435,8 +435,9 @@
        (string->symbol (second m))))
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
- ;; 通ってしまう。reason を足したらこの数と registry の両方を更新する。
- (check-equal? (length reasons) 47)
+ ;; 通ってしまう。G5c5b3b で elaborate 側の owned-constructor-field は OwnLeaf
+ ;; gate へ移り到達しなくなったため、ここでは registry を据え置いたまま 1 件減る。
+ (check-equal? (length reasons) 46)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

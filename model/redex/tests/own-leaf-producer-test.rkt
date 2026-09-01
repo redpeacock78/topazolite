@@ -1,12 +1,18 @@
 #lang racket/base
 
 ;; G5c5b3b。値の内部の所有資源へ token を割り当てる producer 経路の回帰。
-(require rackunit
+(require racket/match
+         rackunit
          redex/reduction-semantics
          "../diagnostic.rkt"
+         "../borrow.rkt"
          "../lang.rkt"
          "../machine.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         "../span-core.rkt"
+         "../annotate.rkt"
+         "../erase.rkt"
+         "../elaborate.rkt")
 
 (define (step config)
   (define results (apply-reduction-relation -->g1 config))
@@ -40,3 +46,139 @@
   (check-true (diagnostic? diagnostic))
   (check-equal? (diagnostic-id diagnostic)
                 (diagnostic-code-of 'typing 'unexpected-ownleaf)))
+
+(test-case "Construct の欄の Owned leaf を位置 path 付きで拾う"
+  (check-equal?
+   (walk-owned-leaves
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+   '(((tok 0) (0)))))
+
+(test-case "Construct の欄の Owned leaf は回収走査で辿れる位置である"
+  (check-true
+   (leaf-positions-ok?
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))))
+
+(test-case "Construct の入れ子では位置 segment が連結される"
+  (check-equal?
+   (walk-owned-leaves
+    '(Construct (Option (Option (Owned Res))) some
+                (Construct (Option (Owned Res)) some
+                           (OwnedLeaf (tok 3) (resource 1)))))
+   '(((tok 3) (0 0)))))
+
+(test-case "Construct の第 2 欄の位置 segment は 1 である"
+  (check-equal?
+   (walk-owned-leaves
+    '(Construct (Pair Int (Owned Res)) pair
+                1
+                (OwnedLeaf (tok 5) (resource 1))))
+   '(((tok 5) (1)))))
+
+(test-case "Construct の欄の Owned leaf を OwnLeaf で包めば型付く"
+  (check-equal?
+   (core-type-of
+    '(Construct (Option (Owned Res)) some
+                (OwnLeaf (OwnedLeaf (tok 0) (resource 1))))
+    '() '())
+   '((Option (Owned Res)) ())))
+
+(test-case "config の型導出は Construct の OwnedLeaf 欄を受理する"
+  (define value
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (define config
+    `(cfg unit ((0 ,value)) ((0 Available)) (((tok 0) Available)) ()))
+  (check-true (config-ok? config '() 'Unit '())))
+
+(test-case "Construct 欄の leaf を finalize した trace を受理する"
+  (define value
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (define results
+    (apply-reduction-relation
+     -->g2
+     `(cfg (Scope (0) unit)
+           ((0 ,value))
+           ((0 Available))
+           (((tok 0) Available))
+           ())))
+  (check-equal? (length results) 1)
+  (check-true (config-ok? (car results) '() 'Unit '())))
+
+(test-case "Construct 欄の空 path の finLeaf は拒否する"
+  (define value
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (check-false
+   (config-ok?
+    `(cfg unit
+          ((0 ,value))
+          ((0 Dropped))
+          (((tok 0) Dropped))
+          ((finLeaf 0 ()) (fin 0)))
+    '() 'Unit '())))
+
+(test-case "通常の型検査は Construct の OwnedLeaf 欄を受理しない"
+  (define core
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (check-equal? (core-type-of core '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic core '() '()))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'owned-constructor-field)))
+
+(test-case "Construct の Owned 欄が OwnLeaf で包まれていなければ落ちる"
+  (define core '(Construct (Option (Owned Res)) some (resource 1)))
+  (check-equal? (core-type-of core '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic core '() '()))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'owned-constructor-field)))
+
+(test-case "Construct の Owned でない欄の OwnLeaf は許されない"
+  (define core '(Construct (Option Int) some (OwnLeaf 1)))
+  (check-equal? (core-type-of core '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic core '() '()))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'unexpected-ownleaf)))
+
+(define (ownleaf-span-in core)
+  (cond
+    [(and (list? core)
+          (>= (length core) 3)
+          (eq? (car core) 'OwnLeaf))
+     (cadr core)]
+    [(list? core)
+     (for/or ([child (in-list core)])
+       (ownleaf-span-in child))]
+    [else #f]))
+
+(define (head-span-in core head)
+  (cond
+    [(and (list? core)
+          (>= (length core) 2)
+          (eq? (car core) head))
+     (cadr core)]
+    [(list? core)
+     (for/or ([child (in-list core)])
+       (head-span-in child head))]
+    [else #f]))
+
+(test-case "elaborate の Construct producer は spanful OwnLeaf を生成する"
+  (define result
+    (elab '(Fn () (Option (Owned Res)) ()
+             (Construct some (Apply acquire 1)))))
+  (match result
+    [(list core _type _row _callables)
+     (check-true (redex-match? G2+ c core))
+     (define leaf-span (ownleaf-span-in core))
+     (define construct-span (head-span-in core 'Construct))
+     (check-true (span-ok? leaf-span))
+     (check-equal? leaf-span construct-span)]
+    [_ (check-true #f (format "elab が失敗した: ~s" result))]))
+
+(test-case "annotate-core は OwnLeaf を spanful G1+ へ持ち上げる"
+  (define lifted (annotate-core '(OwnLeaf (resource 1))))
+  (check-true (redex-match? G1+ c lifted))
+  (check-equal? (erase-core lifted) '(OwnLeaf (resource 1))))
