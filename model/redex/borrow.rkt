@@ -198,6 +198,8 @@
 
 ;; Drop は値そのものが leaf のときも token を消費する。finalize 用の
 ;; walk-owned-leaves は root を除くため、ここでは root を含めて列挙する。
+;; Drop は path を event へ出さず token だけを更新するため、root の空 path
+;; を finLeaf の生成へ流用してはならない。
 (define (walk-owned-leaves-for-drop value)
   (walk-owned-leaves/internal value #t))
 

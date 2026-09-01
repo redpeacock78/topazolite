@@ -105,6 +105,8 @@
            (((tok 0) Available))
            ())))
   (check-equal? (length results) 1)
+  (match-define `(cfg ,_ ,_ ,_ ,_ ,events) (car results))
+  (check-equal? events '((finLeaf 0 (0)) (fin 0)))
   (check-true (config-ok? (car results) '() 'Unit '())))
 
 (test-case "Construct 欄の空 path の finLeaf は拒否する"
@@ -190,9 +192,22 @@
    '(((tok 2) (1)))))
 
 (test-case "CurryVal の固定引数の Owned leaf は回収走査で辿れる位置である"
+  (define value
+    '(CurryVal User (PrimVal User add)
+               (OwnedLeaf (tok 2) (resource 1))))
   (check-true
-   (leaf-positions-ok?
-    '(CurryVal (Own) (PrimVal () add) (OwnedLeaf (tok 2) (resource 1))))))
+   (leaf-positions-ok? value))
+  (define results
+    (apply-reduction-relation
+     -->g2
+     `(cfg (Scope (0) unit)
+           ((0 ,value))
+           ((0 Available))
+           (((tok 2) Available))
+           ())))
+  (check-equal? (length results) 1)
+  (match-define `(cfg ,_ ,_ ,_ ,_ ,events) (car results))
+  (check-equal? events '((finLeaf 0 (1)) (fin 0))))
 
 (test-case "CurryVal の入れ子では位置 segment が連結される"
   (check-equal?
