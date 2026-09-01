@@ -169,8 +169,8 @@ Core を直接書く場合に制限へ違反した形は、型検査で拒否す
 固定引数を持つ `CurryVal` の結果型は `Owned<NFn 残余>` になる。 [REQ: OWN-008]
 一回性は型による `Move` の要求、実行時の `R-MoveError`、性質 7 の bounded 検査で確認する。
 
-`CurryVal` の内部に入った `Owned` 値の drop 責務は、`E-Construct` の field と `Yield` の payload に入った `Owned` 値と同じ機構で扱う。
-この機構は G5c5b3 で定める。
+`CurryVal` の内部に入った `Owned` 値の drop 責務は、`Construct` の欄と `Yield` の payload に入った `Owned` 値と同じ機構で扱う。
+producer の位置で `OwnLeaf` を通して token を割り当て、`OwnedLeaf` として値の内部へ残す。
 
 判定は型木を再帰的に走査する。
 直下の形だけを見る判定では、`(Union (Borrowed τ ρ) τ')` や仮引数列の 2 番目だけが借用の `NFn` がそのまま通ってしまう。

@@ -791,7 +791,12 @@
    (reach-row 'unexpected-ownleaf
               (reach-node 'OwnLeaf 1501 1520
                           (reach-lit 1 1510 1511))
-              '() '() '() (reach-span 1501 1520))))
+              '() '() '() (reach-span 1501 1520))
+   (reach-row 'missing-ownleaf-root
+              (reach-node 'Yield 1541 1560
+                          (reach-node 'resource 1542 1553 0)
+                          (reach-lit 1 1555 1556))
+              '() '() '() (reach-span 1542 1553))))
 
 (test-case "typing の producer key 集合が registry v9 と一致する"
   (define registry-keys
@@ -841,11 +846,8 @@
   ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
   ;; producer fixture を持つ。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
-  ;; missing-ownleaf-root は Yield と CurryVal の gate から落ちる。両者の
-  ;; producer 接続は G5c5b3b のタスク 3 が行うため、この段では到達しない。
   (define unreachable-keys
     '(effectful-curry-operand
-      missing-ownleaf-root
       non-normalizable-result-type
       unmergeable-branch-records
       projborrow-non-record

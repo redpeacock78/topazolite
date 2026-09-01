@@ -247,9 +247,12 @@
    (core-check (term x) empty empty (term Int) empty environment)))
 
 (test-case "heap の CurryVal を config-ok? が受理する"
-  (define curried (term (CurryVal User ,leaf-drop-lam (resource 1))))
+  (define curried
+    (term (CurryVal User ,leaf-drop-lam
+                    (OwnedLeaf (tok 0) (resource 1)))))
   (define config
-    (term (cfg unit ((0 ,curried)) ((0 Available)) () ())))
+    (term (cfg unit ((0 ,curried)) ((0 Available))
+               (((tok 0) Available)) ())))
   (check-true (config-ok? config curry-callables (term Unit) empty)))
 
 (test-case "H の entry の並び順が Ξ の導出を変えない"
@@ -360,7 +363,7 @@
    (leaf-positions-ok?
     (term (Rec ((f mut (OwnedLeaf (tok 0)
                                   (OwnedLeaf (tok 1) (resource 1)))))))))
-  (check-false (leaf-positions-ok? (term (CurryVal User ,leaf (resource 2)))))
+  (check-true (leaf-positions-ok? (term (CurryVal User ,leaf (resource 2)))))
   (check-false (leaf-positions-ok? (term (UVal ,leaf))))
   (check-true (leaf-positions-ok? (term (Rec ((f mut ,leaf)))))))
 
@@ -368,7 +371,7 @@
   (define leaf (term (OwnedLeaf (tok 0) (resource 1))))
   (define rec (term (Rec ((f mut ,leaf)))))
   (check-false (leaf-positions-ok? (term (UVal ,rec))))
-  (check-false (leaf-positions-ok? (term (CurryVal User ,rec (resource 2)))))
+  (check-true (leaf-positions-ok? (term (CurryVal User ,rec (resource 2)))))
   (check-false (leaf-positions-ok? (term (Scope (0) ,rec))))
   (check-false (leaf-positions-ok? (term (Let (x Int) ,rec Unit))))
   (check-false (leaf-positions-ok? (term (UVal (UVal ,rec)))))

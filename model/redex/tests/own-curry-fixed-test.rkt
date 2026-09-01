@@ -64,7 +64,7 @@
 
 ;; 中間の place を Move で開く形は関数の位置へ置ける。Task 3 の生成形がこの形を使う。
 (define curried-owned-function-core
-  '(Curry (Move t) (Move r)))
+  '(Curry (Move t) (OwnLeaf (Move r))))
 
 (define owned-curry-environment
   (list (list 't '(Owned (NFn ((Owned Res)) Unit (Own) ())))

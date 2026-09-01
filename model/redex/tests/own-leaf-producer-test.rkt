@@ -182,3 +182,117 @@
   (define lifted (annotate-core '(OwnLeaf (resource 1))))
   (check-true (redex-match? G1+ c lifted))
   (check-equal? (erase-core lifted) '(OwnLeaf (resource 1))))
+
+(test-case "CurryVal の固定引数の Owned leaf は位置 1 になる"
+  (check-equal?
+   (walk-owned-leaves
+    '(CurryVal (Own) (PrimVal () add) (OwnedLeaf (tok 2) (resource 1))))
+   '(((tok 2) (1)))))
+
+(test-case "CurryVal の固定引数の Owned leaf は回収走査で辿れる位置である"
+  (check-true
+   (leaf-positions-ok?
+    '(CurryVal (Own) (PrimVal () add) (OwnedLeaf (tok 2) (resource 1))))))
+
+(test-case "CurryVal の入れ子では位置 segment が連結される"
+  (check-equal?
+   (walk-owned-leaves
+    '(CurryVal (Own)
+               (CurryVal (Own) (PrimVal () add)
+                         (OwnedLeaf (tok 4) (resource 1)))
+               1))
+   '(((tok 4) (0 1)))))
+
+(test-case "Yield の Owned な観測 payload は OwnLeaf で包めば型付く"
+  (check-equal?
+   (core-type-of '(Yield (OwnLeaf (resource 1)) 1) '() '())
+   '(Int ((Yield (Owned Res))))))
+
+(test-case "Yield の Owned な観測 payload が包まれていなければ落ちる"
+  (define core '(Yield (resource 1) 1))
+  (check-equal? (core-type-of core '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic core '() '()))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'missing-ownleaf-root)))
+
+(test-case "Yield の Owned でない観測 payload の OwnLeaf は許されない"
+  (define core '(Yield (OwnLeaf 1) 1))
+  (check-equal? (core-type-of core '() '()) 'ill-typed)
+  (define diagnostic (core-type-of/diagnostic core '() '()))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'typing 'unexpected-ownleaf)))
+
+(test-case "θ の obs が持つ leaf の token は live と数える"
+  (check-true
+   (config-ok? '(cfg 1 () () (((tok 0) Available))
+                     ((obs (OwnedLeaf (tok 0) (resource 1)))))
+               '()
+               'Int
+               '())))
+
+(test-case "obs に現れない Available な token は不正である"
+  (check-false
+   (config-ok? '(cfg 1 () () (((tok 0) Available)) ())
+               '()
+               'Int
+               '())))
+
+(test-case "obs の根が leaf であることは正当である"
+  (check-true
+   (config-ok? '(cfg 1 () () (((tok 0) Available))
+                     ((obs (OwnedLeaf (tok 0) (Rec ((f mut 1)))))))
+               '()
+               'Int
+               '())))
+
+(test-case "未対応の構成子の内部へ隠れた obs の leaf は不正である"
+  (check-false
+   (config-ok?
+    '(cfg 1 () () (((tok 0) Available))
+          ((obs (UVal (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))))
+    '()
+    'Int
+    '())))
+
+(test-case "obs の根 leaf の直下の入れ子は不正である"
+  (check-false
+   (config-ok?
+    '(cfg 1 () () (((tok 0) Available) ((tok 1) Available))
+          ((obs (OwnedLeaf (tok 0) (OwnedLeaf (tok 1) (resource 1))))))
+    '()
+    'Int
+    '())))
+
+(test-case "Yield の観測 leaf を含む制御項は受理する"
+  (check-true
+   (config-ok?
+    '(cfg (Yield (OwnedLeaf (tok 0) (resource 1)) 1)
+          () () (((tok 0) Available)) ())
+    '()
+    'Int
+    '((Yield (Owned Res))))))
+
+(test-case "elaborate の Yield producer は spanful OwnLeaf を生成する"
+  (define result
+    (elab '(Fn () Int ((Yield (Owned Res)))
+             (Yield (Apply acquire 1) 1))))
+  (match result
+    [(list core type row callables)
+     (check-true (redex-match? G2+ c core))
+     (check-equal? (core-type-of core '() callables) (list type row))
+     (check-equal? (ownleaf-span-in core) (head-span-in core 'Yield))]
+    [_ (check-true #f (format "elab が失敗した: ~s" result))]))
+
+(test-case "elaborate の Curry producer は Owned 固定引数を包む"
+  (define result
+    (elab '(Let p
+                (Apply acquire 1)
+                (Let g
+                     (Fn ((q (Owned Res))) Unit (Own) (Drop q))
+                     (Curry g (Move p))))))
+  (match result
+    [(list core type row callables)
+     (check-equal? type '(Owned (NFn () Unit (Own) ())))
+     (check-equal? (core-type-of core '() callables) (list type row))
+     (check-equal? (ownleaf-span-in core) (head-span-in core 'Curry))]
+    [_ (check-true #f (format "elab が失敗した: ~s" result))]))

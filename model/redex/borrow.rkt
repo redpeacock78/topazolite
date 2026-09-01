@@ -30,7 +30,7 @@
          borrow-token-key capability-field-table capability-branch-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
-         leaf-positions-ok? walk-owned-leaves
+         leaf-positions-ok? walk-owned-leaves observed-leaf-positions-ok?
          path-prefix?
          capability-overlap?)
 
@@ -146,6 +146,11 @@
 (define (collect-tokens value)
   (match value
     [`(OwnedLeaf ,tk ,payload) (cons tk (collect-tokens payload))]
+    ;; CurryVal の origin は生成履歴であり、固定引数と同じ値を複製して
+    ;; 持つことがあるため走査しない。
+    [`(CurryVal ,_origin ,function ,fixed)
+     (append (collect-tokens function)
+             (collect-tokens fixed))]
     [(? list?) (append-map collect-tokens value)]
     [_ '()]))
 
@@ -161,8 +166,8 @@
 
 ;; 値の内部の Owned leaf を、その path とともに前順で列挙する。
 ;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
-;; b3b で辿る子は Rec と Construct の欄と leaf の payload であり、未対応の
-;; 構成子を汎用 list として辿らない。
+;; b3b で辿る子は Rec と Construct の欄、CurryVal の 2 つの位置、leaf の
+;; payload であり、未対応の構成子を汎用 list として辿らない。
 (define (walk-owned-leaves value)
   (define (walk current path root?)
     (match current
@@ -181,6 +186,9 @@
                      (walk child (cons index path) #f))
                    (range (length fields))
                    fields)]
+      [`(CurryVal ,_own ,function ,fixed)
+       (append (walk function (cons 0 path) #f)
+               (walk fixed (cons 1 path) #f))]
       [_ '()]))
   (walk value '() #t))
 
@@ -196,6 +204,9 @@
      (andmap walk-leaf-positions values)]
     [`(Construct ,_type ,_constructor ,fields ...)
      (andmap walk-leaf-positions fields)]
+    [`(CurryVal ,_own ,function ,fixed)
+     (and (walk-leaf-positions function)
+          (walk-leaf-positions fixed))]
     [(? list?)
      (andmap (lambda (child) (not (contains-owned-leaf? child))) current)]
     [_ #t]))
@@ -204,6 +215,11 @@
 (define (leaf-positions-ok? value)
   (and (not (owned-leaf? value))
        (walk-leaf-positions value)))
+
+;; obs の payload は観測した値そのものなので、根が leaf であることは正当である。
+;; 根 leaf の直下の入れ子と未対応の構成子の内部へ隠れた leaf は拒否する。
+(define (observed-leaf-positions-ok? value)
+  (walk-leaf-positions value))
 
 ;; spec §3.2。fp_1 が fp_2 の接頭辞か。
 (define (path-prefix? fp_1 fp_2)

@@ -88,7 +88,8 @@
    (elaboration-of capture-one-surface))
  (match (find-capture-let (erase-core core))
    [`(Let (,place let ,let-type)
-          (Curry (Lam User ,_ ,capture-binders ,_) (Move p))
+          (Curry (Lam User ,_ ,capture-binders ,_)
+                 (OwnLeaf (Move p)))
           (Move ,same-place))
     (check-equal? let-type '(Owned (NFn () Unit (Own) ())))
     (check-equal? same-place place)
@@ -110,9 +111,9 @@
    (elaboration-of capture-two-surface))
  (match (find-capture-let (erase-core core))
    [`(Let (,first-place let ,first-type)
-          (Curry (Lam User ,_ ,_ ,_) (Move a))
+          (Curry (Lam User ,_ ,_ ,_) (OwnLeaf (Move a)))
           (Let (,second-place let ,second-type)
-               (Curry (Move ,moved-place) (Move z))
+               (Curry (Move ,moved-place) (OwnLeaf (Move z)))
                (Move ,last-place)))
     (check-equal? first-type
                   '(Owned (NFn ((Owned Res)) Unit (Own) ())))
@@ -290,7 +291,7 @@
 
 ;; Core を直に書いた形。Curry ノードが関数の位置に残る。
 (define bare-nested-curry-core
-  '(Curry (Curry g (Move p)) 1))
+  '(Curry (Curry g (OwnLeaf (Move p))) 1))
 
 (define bare-nested-curry-environment
   (list (list 'g '(NFn ((Owned Res) Int) Unit (Own) ()))

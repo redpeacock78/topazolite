@@ -726,17 +726,15 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
 | view が運ぶ region の外へ出る流れ | `borrow.md` §14 | G5c5c | §15 |
-| `Owned` を捕捉する closure | `borrow.md` §8 | G5c5b | §4.7 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 1 以降 | §4.7 |
 | `Owned` の位置を根とする構造的減少 | `core-calculus.md` §6.2 | G5c5c | 無し |
 | 所有値を含む field の書き換え | `borrow.md` §12 | OWN-004 | §15 |
+| 観測された `Owned` leaf の token の retire | `core-calculus.md` §5 | G5c6 | 無し |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 4 件は、同節の項目に対応して本表へ記載している。
 所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
-
-値の内部が持つ `Owned` 値の drop 責務は、`E-Construct` の field、`Yield` の payload、`CurryVal` の捕捉に共通する。
-この責務は G5c5b3 で同じ機構として扱う。
+観測された `Owned` leaf の token の retire は `core-calculus.md` §5 の token 状態の規定に属し、borrow.md の節へは立てないため 4 列目を「無し」とする。
 
 `Owned` の位置を根とする構造的減少を G5c5c の他の行へ含めないのは、`Eliminate` が `Owned<τ>` を data 型へ剥がさないという型体系側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
 この制限の理由は `core-calculus.md` §6.2 に書いてあり、本表の記載元もその節を指す。

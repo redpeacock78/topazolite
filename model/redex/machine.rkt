@@ -245,6 +245,16 @@
             entry))
       (append table (list (list key value)))))
 
+;; An OwnedLeaf that crosses an Owned binding becomes the root value managed by
+;; the new place. Retain a Dropped token tombstone to prevent token reuse.
+(define (rehome-owned-root value tokens)
+  (match value
+    [`(OwnedLeaf ,tk ,payload)
+     (and (not (owned-leaf? payload))
+          (eq? (table-ref tokens tk) 'Available)
+          (list payload (table-set tokens tk 'Dropped)))]
+    [_ (list value tokens)]))
+
 (define (fresh-place heap states)
   (for/fold ([next 0])
             ([entry (in-list (append heap states))])
@@ -402,12 +412,14 @@
         (cfg (in-hole E_outer
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
-             H_new Ω_new Λtok θ)
+             H_new Ω_new Λtok_new θ)
         (side-condition (owned-type? (term τ_owned)))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
+        (where (v_stored Λtok_new)
+               ,(rehome-owned-root (term v_bound) (term Λtok)))
         (where H_new
-               ,(table-set (term H) (term p_new) (term v_bound)))
+               ,(table-set (term H) (term p_new) (term v_stored)))
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
         R-LetOwned)
@@ -718,12 +730,14 @@
         (cfg (in-hole E_outer
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
-             H_new Ω_new Λtok θ)
+             H_new Ω_new Λtok_new θ)
         (side-condition (owned-type? (term τ_owned)))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
+        (where (v_stored Λtok_new)
+               ,(rehome-owned-root (term v_bound) (term Λtok)))
         (where H_new
-               ,(table-set (term H) (term p_new) (term v_bound)))
+               ,(table-set (term H) (term p_new) (term v_stored)))
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
         R-LetOwnedB)

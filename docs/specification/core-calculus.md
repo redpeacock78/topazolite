@@ -1004,9 +1004,9 @@ dom(Ξ) = dom(H) = dom(Ω)
 
 `Ξ` は heap の値から導く写像である。heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けし、place の型から外側の `Owned` を取り除いて次の写像へ加える。前方の place を参照する値はこの導出に失敗する。
 
-値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、または別の leaf の payload に置ける。`Rec` の欄は label を、`Construct` の欄は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
+値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または別の leaf の payload に置ける。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 
-`Λtok` の live 集合は、制御項と `Ω(p)=Available` の root の値を走査して得る。`Moved`/`Dropped` の root の heap entry と trace の `obs` は履歴なので live 集合から除く。live 集合での token の重複、`Λtok` に無い token、`Available`/`Moved` なのに live 集合へ一度も現れない token、`Dropped` なのに live 集合へ現れる token は不正である。`Dropped` の tombstone が live 集合に現れないことは正しい。
+`Λtok` の live 集合は、制御項、`Ω(p)=Available` の root の値、および trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので live 集合から除く。trace の `obs` の payload は観測後も回収前の値として残るため live 集合へ含める。live 集合での token の重複、`Λtok` に無い token、`Available`/`Moved` なのに live 集合へ一度も現れない token、`Dropped` なのに live 集合へ現れる token は不正である。`Dropped` の tombstone が live 集合に現れないことは正しい。
 
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 
@@ -1092,6 +1092,8 @@ p fresh
 Owned 値の束縛は place を確保し、最も内側の Scope の管理列 π へ登録する。
 文脈 G は Scope を含まないため、割り当て先は redex を囲む最寄りの Scope に一意に定まる（間に Handle frame があってもよい）。
 変数 x の出現は place p で置換され、以後の消費は Move(p) を通る。
+束縛値が根の `OwnedLeaf(tk, v)` のときは、`v` を place へ移して `tk` を `Dropped` の tombstone とする。
+この場合は place と `Ω` が root の所有を引き継ぎ、入れ子の根 leaf は拒否する。
 
 ### 5.4 データと再帰
 

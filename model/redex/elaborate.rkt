@@ -611,9 +611,13 @@
              `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
            (define argument-core
              `(#:var ,capture ,span))
+           (define fixed-core
+             (if (owned-type? capture-type)
+                 `(OwnLeaf ,span (Move ,span ,argument-core))
+                 `(Move ,span ,argument-core)))
            (define curry-core
              `(Curry ,span ,current-core
-                     (Move ,span ,argument-core)))
+                     ,fixed-core))
            (set! stages
                  (cons (list place `(Owned ,residual) curry-core)
                        stages))
@@ -1047,8 +1051,12 @@
            (synth observed environment delta propositions boundaries))
          (define next-result
            (synth next environment delta propositions boundaries))
+         (define observed-core
+           (if (owned-type? (judgment-type observed-result))
+               `(OwnLeaf ,s ,(judgment-core observed-result))
+               (judgment-core observed-result)))
          (judgment
-          `(Yield ,s ,(judgment-core observed-result)
+          `(Yield ,s ,observed-core
                   ,(judgment-core next-result))
           (judgment-type next-result)
           (rows-union
@@ -1102,13 +1110,17 @@
             (define argument-result
               (check argument first-type
                      environment delta propositions boundaries))
+            (define argument-core
+              (if (owned-type? first-type)
+                  `(OwnLeaf ,s ,(judgment-core argument-result))
+                  (judgment-core argument-result)))
             (define bare-result
               `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
             (close-owned-function
              wrap
              (judgment
               `(Curry ,s ,(judgment-core function-result)
-                      ,(judgment-core argument-result))
+                      ,argument-core)
               (if (or function-owned? (owned-type? first-type))
                   `(Owned ,bare-result)
                   bare-result)

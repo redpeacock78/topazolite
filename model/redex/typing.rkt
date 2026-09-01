@@ -1937,13 +1937,18 @@
            (fail 'borrowed-function-result function obligations)])
         (unless (null? function-row)
           (fail 'effectful-curry-operand function))
+        (when (and (owned-type? first-type)
+                   (not (config-runtime-leaf? argument)))
+          (require-ownleaf-root argument 'missing-ownleaf-root argument fail))
         (define argument-row
-          (check-as argument first-type (enter-child Λ 1)
-                    function-psi
-                    environment places callables fail
-                    (if (owned-type? first-type)
-                        owned-lift-compatible?
-                        type-compatible?)))
+          (parameterize ([ownleaf-permitted
+                          (if (owned-type? first-type) (list argument) '())])
+            (check-as argument first-type (enter-child Λ 1)
+                      function-psi
+                      environment places callables fail
+                      (if (owned-type? first-type)
+                          owned-lift-compatible?
+                          type-compatible?))))
         (unless (null? (first argument-row))
           (fail 'effectful-curry-operand argument))
         (list (curry-result-type remaining-types return-type latent-row obligations
@@ -2353,10 +2358,19 @@
            places callables fail)]
 
     [`(Yield ,observed ,next)
-     (define observed-result
-       (infer observed (enter-child Λ 0)
-             Ψ environment places callables fail))
-     (define next-result
+      (define observed-result
+       (parameterize ([ownleaf-permitted (list observed)])
+         (infer observed (enter-child Λ 0)
+               Ψ environment places callables fail)))
+      (define observed-owned? (owned-type? (first observed-result)))
+      (cond
+        [(and observed-owned?
+              (not (ownleaf-root? observed))
+              (not (config-runtime-leaf? observed)))
+         (fail 'missing-ownleaf-root observed)]
+        [(and (not observed-owned?) (ownleaf-root? observed))
+         (fail 'unexpected-ownleaf observed)])
+      (define next-result
        (infer next (enter-child Λ 1)
              (third observed-result)
              environment places callables fail))
@@ -2478,10 +2492,15 @@
            (fail 'borrowed-function-result function)]
           [borrowed-obligations?
            (fail 'borrowed-function-result function obligations)])
+        (when (and (owned-type? first-type)
+                   (not (config-runtime-leaf? argument)))
+          (require-ownleaf-root argument 'missing-ownleaf-root argument fail))
         (define argument-row
-          (check-as argument first-type (enter-child Λ 1)
-                    function-psi
-                    environment places callables fail))
+          (parameterize ([ownleaf-permitted
+                          (if (owned-type? first-type) (list argument) '())])
+            (check-as argument first-type (enter-child Λ 1)
+                      function-psi
+                      environment places callables fail)))
         (list (curry-result-type remaining-types return-type latent-row obligations
                                  (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
@@ -2733,10 +2752,19 @@
                     compatible?)]
 
     [`(Yield ,observed ,next)
-     (define observed-result
-       (infer observed (enter-child Λ 0)
-             Ψ environment places callables fail))
-     (define next-result
+      (define observed-result
+       (parameterize ([ownleaf-permitted (list observed)])
+         (infer observed (enter-child Λ 0)
+               Ψ environment places callables fail)))
+      (define observed-owned? (owned-type? (first observed-result)))
+      (cond
+        [(and observed-owned?
+              (not (ownleaf-root? observed))
+              (not (config-runtime-leaf? observed)))
+         (fail 'missing-ownleaf-root observed)]
+        [(and (not observed-owned?) (ownleaf-root? observed))
+         (fail 'unexpected-ownleaf observed)])
+      (define next-result
        (check-as/full next expected (enter-child Λ 1)
                       (third observed-result)
                       environment places callables fail compatible?))
@@ -3042,22 +3070,57 @@
                        [_ #f]))
     (second entry)))
 
-;; 制御項と Available な root の値を token 検査の対象にする。θ の obs は履歴で
-;; あり、live value ではないため含めない。
-(define (live-roots core heap states)
-  (cons core (available-root-values heap states)))
+;; θ の (obs v) の payload を出現順に返す。観測は履歴であるが、観測した値
+;; そのものは回収前の live な値として残るため、token 検査の対象に含める。
+(define (observed-values trace)
+  (for/list ([event (in-list trace)]
+             #:when (match event
+                      [`(obs ,_) #t]
+                      [_ #f]))
+    (second event)))
 
-(define (live-tokens core heap states)
-  (append-map collect-tokens (live-roots core heap states)))
+;; 制御項、Available な root の値、θ の obs の payload を token 検査の対象に
+;; する。Moved/Dropped の root の heap entry は R-Move 後の stale value なので
+;; 含めない。
+(define (live-roots core heap states trace)
+  (append (cons core (available-root-values heap states))
+          (observed-values trace)))
+
+(define (live-tokens core heap states trace)
+  (append-map collect-tokens (live-roots core heap states trace)))
 
 ;; 値である最大の部分項へ leaf-positions-ok? を課し、値でない構成子はその子を
 ;; 透過して見る。Drop (Rec ((f mut leaf))) のような制御項は許す一方、値の位置へ
 ;; leaf を隠す構成子は拒否する。
 (define (control-leaf-positions-ok? core)
-  (cond
-    [(redex-match? G2m v core) (leaf-positions-ok? core)]
-    [(list? core) (andmap control-leaf-positions-ok? core)]
-    [else #t]))
+  (define (value-position-ok? candidate)
+    (if (redex-match? G2m v candidate)
+        (observed-leaf-positions-ok? candidate)
+        (control-leaf-positions-ok? candidate)))
+  (match (peel-node core)
+    ;; Yield の観測 payload と Curry の固定引数は producer が作る値位置
+    ;; なので、根の leaf を許しつつ値内部の走査規則を適用する。
+    [`(Yield ,observed ,continuation)
+     (and (value-position-ok? observed)
+          (control-leaf-positions-ok? continuation))]
+    [`(Curry ,function ,argument)
+     (and (control-leaf-positions-ok? function)
+          (value-position-ok? argument))]
+    ;; CurryVal の固定引数は β 縮約で Apply の実引数や Drop の引数へ
+    ;; 移るため、評価途中のこれらの値位置では根 leaf を許す。
+    [`(Apply ,function ,arguments ...)
+     (and (control-leaf-positions-ok? function)
+          (andmap value-position-ok? arguments))]
+    [`(Let ,_binding ,bound ,body)
+     (and (value-position-ok? bound)
+          (control-leaf-positions-ok? body))]
+    [`(Drop ,argument)
+     (value-position-ok? argument)]
+    [_
+     (cond
+       [(redex-match? G2m v core) (leaf-positions-ok? core)]
+       [(list? core) (andmap control-leaf-positions-ok? core)]
+       [else #t])]))
 
 ;; finLeaf は所有値の走査が作る owner path を記録する。Construct の欄は
 ;; positional segment を使うため、空 path だけを拒否する。
@@ -3119,9 +3182,11 @@
                            (andmap (lambda (entry)
                                      (leaf-positions-ok? (second entry)))
                                    heap)
+                           (andmap observed-leaf-positions-ok?
+                                   (observed-values trace))
                            (control-leaf-positions-ok? core)
                            ;; token の live 出現と Λtok の状態を突き合わせる。
-                           (let ([tokens (live-tokens core heap states)])
+                           (let ([tokens (live-tokens core heap states trace)])
                              (and
                               (= (length tokens)
                                  (length (remove-duplicates tokens)))
