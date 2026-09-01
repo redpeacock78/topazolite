@@ -30,7 +30,8 @@
          borrow-token-key capability-field-table capability-branch-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
-         leaf-positions-ok? walk-owned-leaves observed-leaf-positions-ok?
+         leaf-positions-ok? walk-owned-leaves walk-owned-leaves-for-drop
+         observed-leaf-positions-ok?
          path-prefix?
          capability-overlap?)
 
@@ -168,14 +169,14 @@
 ;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
 ;; b3b で辿る子は Rec と Construct の欄、CurryVal の 2 つの位置、leaf の
 ;; payload であり、未対応の構成子を汎用 list として辿らない。
-(define (walk-owned-leaves value)
+(define (walk-owned-leaves/internal value include-root?)
   (define (walk current path root?)
     (match current
       [`(OwnedLeaf ,tk ,payload)
-       (if root?
-           (walk payload path #f)
-           (cons (list tk (reverse path))
-                 (walk payload path #f)))]
+       (append (if (or include-root? (not root?))
+                   (list (list tk (reverse path)))
+                   '())
+               (walk payload path #f))]
       [`(Rec ((,names ,_modes ,values) ...))
        (append-map (lambda (name child)
                      (walk child (cons name path) #f))
@@ -191,6 +192,14 @@
                (walk fixed (cons 1 path) #f))]
       [_ '()]))
   (walk value '() #t))
+
+(define (walk-owned-leaves value)
+  (walk-owned-leaves/internal value #f))
+
+;; Drop は値そのものが leaf のときも token を消費する。finalize 用の
+;; walk-owned-leaves は root を除くため、ここでは root を含めて列挙する。
+(define (walk-owned-leaves-for-drop value)
+  (walk-owned-leaves/internal value #t))
 
 ;; leaf が回収走査で辿れる位置にだけ現れるかを判定する。Rec の欄と
 ;; Construct の欄と leaf の payload だけを許し、その他の構成子は leaf を

@@ -247,6 +247,9 @@
 
 ;; An OwnedLeaf that crosses an Owned binding becomes the root value managed by
 ;; the new place. Retain a Dropped token tombstone to prevent token reuse.
+;; The root-leaf branch is reachable only for a valid Available token and a
+;; non-leaf payload; config-ok? rejects missing/non-Available tokens and direct
+;; nested leaves, so #f makes malformed configurations stuck.
 (define (rehome-owned-root value tokens)
   (match value
     [`(OwnedLeaf ,tk ,payload)
@@ -317,11 +320,11 @@
 
 (define (drop-leaves/proc value tokens)
   (for/fold ([updated tokens])
-            ([leaf (in-list (walk-owned-leaves value))])
+            ([leaf (in-list (walk-owned-leaves-for-drop value))])
     (table-set updated (first leaf) 'Dropped)))
 
 (define (leaves-droppable?/proc value tokens)
-  (leaves-available? (walk-owned-leaves value) tokens))
+  (leaves-available? (walk-owned-leaves-for-drop value) tokens))
 
 (define-metafunction G1m
   drop-leaves : v Λtok -> Λtok

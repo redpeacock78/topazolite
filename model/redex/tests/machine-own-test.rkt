@@ -90,6 +90,38 @@
   (match (apply-reduction-relation -->g1 source)
     [(list actual) (check-true (alpha-equivalent? G1m actual expected))]
     [actual (fail-check (format "expected one successor, got ~e" actual))])
+  (define root-leaf-source
+    (term (cfg
+           (Scope ()
+                  (Let (r (Owned Res))
+                       (OwnedLeaf (tok 5) (resource 9))
+                       (Move r)))
+           () () (((tok 5) Available)) ())))
+  (define root-leaf-results
+    (apply-reduction-relation -->g1 root-leaf-source))
+  (check-equal? (length root-leaf-results) 1)
+  (check-equal?
+   (first root-leaf-results)
+   (term (cfg (Scope (0) (Move 0))
+              ((0 (resource 9)))
+              ((0 Available))
+              (((tok 5) Dropped)) ())))
+  (define root-leaf-source-g2
+    (term (cfg
+           (Scope ()
+                  (Let (r let (Owned Res))
+                       (OwnedLeaf (tok 6) (resource 10))
+                       (Move r)))
+           () () (((tok 6) Available)) ())))
+  (define root-leaf-results-g2
+    (apply-reduction-relation -->g2 root-leaf-source-g2))
+  (check-equal? (length root-leaf-results-g2) 1)
+  (check-equal?
+   (first root-leaf-results-g2)
+   (term (cfg (Scope (0) (Move 0))
+              ((0 (resource 10)))
+              ((0 Available))
+              (((tok 6) Dropped)) ())))
   (check-equal?
    (run
     (term (cfg (Scope ()
@@ -239,7 +271,13 @@
   (check-equal? (length results) 1)
   (define after (first results))
   (check-equal? (cfg-tokens after) (term (((tok 0) Dropped))))
-  (check-equal? (cfg-events after) (term ())))
+  (check-equal? (cfg-events after) (term ()))
+  (check-equal?
+   (apply-reduction-relation
+    -->g2
+    (term (cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
+               () () (((tok 1) Available)) ())))
+   (list (term (cfg unit () () (((tok 1) Dropped)) ())))))
 
 (test-case "leaf の token が Available でなければ R-Drop は発火しない"
   (define value (term (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))))

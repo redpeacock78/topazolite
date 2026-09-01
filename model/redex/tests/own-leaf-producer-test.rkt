@@ -229,6 +229,19 @@
                '()
                'Int
                '())))
+  (check-true
+   (config-ok? '(cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
+                     () () (((tok 1) Available)) ())
+               '()
+               'Unit
+               '(Own)))
+  (check-false
+   (config-ok? '(cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
+                     () () (((tok 1) Available))
+                     ((obs (OwnedLeaf (tok 1) (resource 3)))))
+               '()
+               'Unit
+               '(Own)))
 
 (test-case "obs に現れない Available な token は不正である"
   (check-false
