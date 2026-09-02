@@ -249,3 +249,88 @@
                  owned-assign-Λ))
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'assign-owned-payload))
+
+;; place 1 に (List Int) を置き、その借用を Eliminate する。
+(define borrowed-eliminate-core
+  '(Scope (1)
+     (Eliminate (Borrow 1)
+                ((nil () -> 0)
+                 (cons (h t) -> (Read h))))))
+(define borrowed-eliminate-ir (build-region-ir borrowed-eliminate-core))
+(define borrowed-eliminate-Λ
+  (region-ctx borrowed-eliminate-ir
+              '()
+              (hash 1 (region-at borrowed-eliminate-ir '()))
+              (hash)))
+
+(test-case "借用した data 値の Eliminate は型が付く"
+  (define result
+    (type-of/raw (annotate-regions borrowed-eliminate-core borrowed-eliminate-ir)
+                 (list (list 1 '(List Int)))
+                 '()
+                 '()
+                 borrowed-eliminate-Λ))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Int))
+
+;; 欄をさらに射影した path は位置と label が混ざる。
+(define borrowed-eliminate-proj-core
+  '(Scope (2)
+     (Eliminate (Borrow 2)
+                ((nil () -> 0)
+                 (cons (h t) -> (Read (ProjBorrow h f)))))))
+(define borrowed-eliminate-proj-ir (build-region-ir borrowed-eliminate-proj-core))
+(define borrowed-eliminate-proj-Λ
+  (region-ctx borrowed-eliminate-proj-ir
+              '()
+              (hash 2 (region-at borrowed-eliminate-proj-ir '()))
+              (hash)))
+
+(test-case "位置の後に label を重ねた射影にも型が付く"
+  (define result
+    (type-of/raw (annotate-regions borrowed-eliminate-proj-core
+                                   borrowed-eliminate-proj-ir)
+                 (list (list 2 '(List (Record ((f Int imm))))))
+                 '()
+                 '()
+                 borrowed-eliminate-proj-Λ))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Int))
+
+(define borrowed-mut-eliminate-core
+  '(Scope (1)
+     (Eliminate (BorrowMut 1)
+                ((nil () -> 0)
+                 (cons (h t) -> 0)))))
+(define borrowed-mut-eliminate-ir (build-region-ir borrowed-mut-eliminate-core))
+(define borrowed-mut-eliminate-Λ
+  (region-ctx borrowed-mut-eliminate-ir
+              '()
+              (hash 1 (region-at borrowed-mut-eliminate-ir '()))
+              (hash)))
+
+(test-case "可変借用した data 値の Eliminate は non-data-eliminate で拒否される"
+  (define result
+    (type-of/raw (annotate-regions borrowed-mut-eliminate-core
+                                   borrowed-mut-eliminate-ir)
+                 (list (list 1 '(List Int)))
+                 '()
+                 '()
+                 borrowed-mut-eliminate-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'non-data-eliminate))
+
+(test-case "分解した欄の capability は scrutinee の path へ位置を積む"
+  (check-equal? (borrow-token-key
+                 (region-ctx #f '() (hash) (hash))
+                 '(Eliminate (BorrowMut x) ((cons (h t) -> h))))
+                (set (list 'x 0)))
+  (check-equal? (borrow-token-key
+                 (region-ctx #f '() (hash) (hash))
+                 '(Eliminate (BorrowMut x) ((cons (h t) -> t))))
+                (set (list 'x 1)))
+  (check-equal? (borrow-token-key
+                 (region-ctx #f '() (hash) (hash))
+                 '(Eliminate (BorrowMut x)
+                             ((cons (h t) -> (ProjBorrowAt (RVar 0) imm h f)))))
+                (set (list 'x 0 'f))))

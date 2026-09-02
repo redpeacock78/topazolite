@@ -840,9 +840,26 @@
     [(list rows next-psi)
      (list (rows-union rows) next-psi)]))
 
+(define (peel-eliminate-wrapper data-type)
+  ;; 借用と所有は data 型を包むだけで構成子を変えない。
+  ;; 包みを剥がして schema を引き、包みごとに決まる rewrap を欄の型へ配る。
+  ;; Borrowed は欄の型を同じ region で包み直す。Owned は欄が宣言どおりの型を
+  ;; 保つため rewrap は恒等である。
+  ;; BorrowedMut は構成子の欄に mode が無く、可変の欄と不変の欄を区別できない
+  ;; ため節を置かない。節が無ければ包みが剥がれず、constructor-schema が偽を
+  ;; 返して non-data-eliminate で落ちる。
+  (match data-type
+    [`(Borrowed ,τ ,ρ) (values τ (lambda (t) `(Borrowed ,t ,ρ)))]
+    [`(Owned ,τ) (values τ values)]
+    [_ (values data-type values)]))
+
 (define (branch-contexts branches data-type Λ environment node scrutinee fail)
-  (define schema (constructor-schema data-type))
-  (unless schema (fail 'non-data-eliminate scrutinee))
+  (define-values (data-core rewrap) (peel-eliminate-wrapper data-type))
+  (define schema-core (constructor-schema data-core))
+  (unless schema-core (fail 'non-data-eliminate scrutinee))
+  (define schema
+    (for/list ([row (in-list schema-core)])
+      (list (first row) (map rewrap (second row)))))
   (unless (= (length branches) (length schema))
     (fail 'non-exhaustive-eliminate node))
   (define plain-branches (map peel-branch branches))
@@ -879,7 +896,13 @@
   ;; この 3 分岐を branch-contexts へ置くことで、その非対称が消える。
   (define field-table
     (and carries? (capability-field-table Λ scrutinee)))
-  (when (and carries? (not field-table))
+  ;; 表が無い scrutinee でも、借用そのものが所有者を運んでいれば欄へ辿れる。
+  ;; その場合は capability の path の末尾へ欄の位置を積む。
+  (define scrutinee-ws
+    (and carries? (not field-table) (borrow-token-key Λ scrutinee)))
+  (when (and carries?
+             (not field-table)
+             (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
     (fail 'unresolved-borrow-owner scrutinee))
   (for/list ([branch (in-list plain-branches)]
              [i (in-naturals 1)])
@@ -889,7 +912,13 @@
     ;; 分配の規則は capability-of と共有する。鍵が表に無い分岐は
     ;; その label の値が来ないことを意味するため、空の token を張る。
     (define bindings
-      (capability-branch-bindings field-table constructor binders))
+      (cond
+        [field-table
+         (capability-branch-bindings field-table constructor binders)]
+        [carries?
+         (capability-projection-bindings scrutinee-ws binders)]
+        [else
+         (capability-branch-bindings #f constructor binders)]))
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
                 ([x (in-list binders)] [τ (in-list field-types)]

@@ -28,6 +28,7 @@
          unbound-borrowed-type?
          borrow-designator?
          borrow-token-key capability-field-table capability-branch-bindings
+         capability-projection-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
          leaf-positions-ok? walk-owned-leaves walk-owned-leaves-for-drop
@@ -466,6 +467,19 @@
         (hash-ref tbl (cons K i) (cons (set) #f))
         (cons (set) #f))))
 
+;; 借用した data 値を Eliminate したとき、束縛子へ張る capability。
+;; scrutinee の capability の path の末尾へ 0 起点の欄の位置を積む。
+;; 位置を path の segment として作る producer はここだけである。
+;; 構成子名を segment へ入れないのは、実行時に選ばれる分岐が 1 つだけで、
+;; core-calculus.md §6.2 の leaf の path も位置だけで欄を指すためである。
+;; ws が空なら空の token を張る。表も capability も無い場合の結果は
+;; capability-branch-bindings が表を持たないときと同じである。
+(define (capability-projection-bindings ws binders)
+  (for/list ([_ (in-list binders)] [i (in-naturals 0)])
+    (cons (for/set ([k (in-set ws)])
+            (cons (car k) (append (cdr k) (list i))))
+          #f)))
+
 ;; capability の集合と表を同時に返す 1 本の走査である。
 ;; 返り値は (cons ws tbl) の組であり、ws は capability の集合、
 ;; tbl は (cons K i) から同じ組への hash か #f である。
@@ -496,8 +510,11 @@
          (cons (car k) (append (cdr k) (list label)))))
      ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
      ;; record-path? の定義域（複数要素の列）を実際には検査できない。
+     ;; Eliminate の束縛子が位置の segment を積むため、label だけを許す
+     ;; record-path? では通らない。owner-path? は label と 0 起点の位置の
+     ;; 両方を許し、それ以外の segment を拒む。
      (for ([cap (in-set child-caps)])
-       (unless (record-path? (cdr cap))
+       (unless (owner-path? (cdr cap))
          (if fail
              (fail 'unresolved-borrow-owner c)
              (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
@@ -515,14 +532,20 @@
        [fail (fail 'unresolved-borrow-owner c)]
        [else (cons (set) (cdr entry))])]
     [`(Eliminate ,scrutinee ,brs)
-     ;; scrutinee を辿るのは表を得るためだけである。Eliminate 全体の値は
-     ;; 分岐の本体の値であって scrutinee の値ではないため、ws は合併しない。
-     (define tbl_s (table-of scrutinee))
+     ;; scrutinee を辿るのは表と capability を得るためだけである。Eliminate
+     ;; 全体の値は分岐の本体の値であって scrutinee の値ではないため、ws は
+     ;; 合併しない。表が無ければ欄の位置を ws の path へ積む。
+     (define entry_s (capability-of Λ scrutinee locals))
+     (define tbl_s (cdr entry_s))
+     (define ws_s (car entry_s))
      (define results
        (for/list ([br (in-list brs)])
          (match-define `(,K (,parameters ...) -> ,body) (peel-branch br))
          (define binders (map peel-bind parameters))
-         (define bindings (capability-branch-bindings tbl_s K binders))
+         (define bindings
+           (if (hash? tbl_s)
+               (capability-branch-bindings tbl_s K binders)
+               (capability-projection-bindings ws_s binders)))
          (define locals_branch
            (for/fold ([acc_l locals]) ([x (in-list binders)]
                                        [entry (in-list bindings)])
