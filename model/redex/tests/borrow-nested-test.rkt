@@ -32,6 +32,13 @@
 (test-case "copy-out-scan は借用の payload の中まで降りない"
   (check-equal? (copy-out-scan '(Borrowed (Owned Int) a1)) '(a1)))
 
+(test-case "copy-out-scan は NFn の順に lifetime を集める"
+  (check-equal?
+   (copy-out-scan
+    '(NFn ((Borrowed Int a1)) (Borrowed Int a2)
+          ((Yield (Borrowed Int a3))) ()))
+   '(a1 a2 a3)))
+
 (test-case "copy-out-scan は未知の型構成子を拒否する"
   (check-false (copy-out-scan '(Mystery Int))))
 
