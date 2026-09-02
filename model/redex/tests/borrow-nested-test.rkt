@@ -111,3 +111,59 @@
                  nested-read-Λ))
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'read-uncopyable-payload))
+
+(define nested-read-constraint-core
+  '(Scope (1)
+     (Let (b let (Borrowed (Record ((f (Borrowed Int (RVar 0)) imm)))
+                           (RVar 0)))
+          (Borrow 1)
+          (Read (Borrow 1)))))
+(define nested-read-constraint-ir
+  (build-region-ir nested-read-constraint-core))
+(define nested-read-constraint-Λ
+  (region-ctx nested-read-constraint-ir
+              '()
+              (hash 1 (region-at nested-read-constraint-ir '()))
+              (hash)))
+
+(test-case "読み出しは view と payload の lifetime 間に outlives を出す"
+  (define inference
+    (typing-inference
+     (annotate-regions nested-read-constraint-core nested-read-constraint-ir)
+     (list (list 1 nested-read-type))
+     '()
+     '()
+     nested-read-constraint-Λ))
+  (define alpha-table (second inference))
+  (define view-alpha (hash-ref alpha-table '(0 1 0)))
+  (define payload-alpha (hash-ref alpha-table '(0 0)))
+  (define outlives-pairs
+    (for/list ([c (in-list (third inference))]
+               #:when (eq? (region-constraint-kind c) 'outlives))
+      (cons (region-constraint-left c) (region-constraint-right c))))
+  (check-not-false (member (cons view-alpha payload-alpha) outlives-pairs)))
+
+(define escaping-view-core
+  '(Scope (1)
+     (Let (b let (Borrowed (Record ((f (Borrowed Int (RVar 0)) imm)))
+                           (RVar 0)))
+          (Borrow 1)
+          (Scope (2) (Read (Borrow 2))))))
+(define escaping-view-ir (build-region-ir escaping-view-core))
+(define escaping-view-Λ
+  (region-ctx escaping-view-ir
+              '()
+              (hash 1 (region-at escaping-view-ir '())
+                    2 (region-at escaping-view-ir '(0 1)))
+              (hash)))
+
+(test-case "view の region を超えて出る借用は拒否される"
+  (define result
+    (type-of/raw (annotate-regions escaping-view-core escaping-view-ir)
+                 (list (list 1 nested-read-type)
+                       (list 2 nested-read-type))
+                 '()
+                 '()
+                 escaping-view-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'borrow-escapes-owner))

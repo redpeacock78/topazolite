@@ -1846,12 +1846,18 @@
 (define (infer-read core operand Λ Ψ environment places callables fail)
   (match-define (list τ_operand ε_operand Ψ_1)
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
-  (define τ_payload
+  (define-values (τ_payload α_view)
     (match (normalize-type τ_operand)
-      [`(Borrowed ,τ ,_) τ]
-      [`(BorrowedMut ,τ ,_) τ]
+      [`(Borrowed ,τ ,α) (values τ α)]
+      [`(BorrowedMut ,τ ,α) (values τ α)]
       [_ (fail 'read-non-borrow core)]))
-  (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core fail)
+  (define α_inner
+    (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core fail))
+  ;; borrow.md 14 節 3 項。読み出した値の中の借用は view の region を超えない。
+  ;; BOR-001 と同じ形の上限制約であり、違反は borrow-escapes-owner で報告される。
+  (for ([α (in-list α_inner)])
+    (emit-constraint!
+     (region-constraint 'outlives α_view α (region-ctx-point Λ) core)))
   (define source (use-source Λ operand τ_operand))
   (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'read source
