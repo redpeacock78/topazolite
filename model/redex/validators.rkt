@@ -12,6 +12,8 @@
          kernel-primitive-name?
          validator-error-message
          owned-free?
+         copy-out-scan
+         effect-copy-out-scan
          copy-out-ok?
          literal-type)
 
@@ -148,47 +150,67 @@
           (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
     [_ #t]))
 
+;; 走査の結果を順に連結する。途中で #f が出たら全体が #f になる。
+;; scanner に values を渡すと、既に走査済みの結果の列を連結できる。
+(define (scan-sequence scanner items)
+  (for/fold ([acc '()]) ([item (in-list items)])
+    (and acc
+         (let ([result (scanner item)])
+           (and result (append acc result))))))
+
+;; spec §4 分岐 1。型の中の借用の lifetime を集める純粋な走査。
+;; 借用以外の複製できない構成子を見つけたら #f を返す。
+;; 借用の payload の中へは降りない。借用は参照であり、複製されるのは参照だけで
+;; あって payload ではないからである。
+(define (copy-out-scan type)
+  (match type
+    ['Int '()] ['Bool '()] ['Unit '()] ['String '()] ['Never '()] ['Res '()]
+    [`(TypeInfo ,_) '()] [`(Proof ,_) '()]
+    [`(Owned ,_) #f]
+    [`(Borrowed ,_ ,alpha) (list alpha)]
+    [`(BorrowedMut ,_ ,alpha) (list alpha)]
+    [`(List ,element) (copy-out-scan element)]
+    [`(Option ,element) (copy-out-scan element)]
+    [`(Result ,ok-type ,error-type)
+     (scan-sequence copy-out-scan (list ok-type error-type))]
+    [`(Untrusted ,payload) (copy-out-scan payload)]
+    [`(Refined ,payload ,_) (copy-out-scan payload)]
+    [`(Record ,row)
+     (scan-sequence copy-out-scan
+                    (for/list ([field (in-list row)]) (second field)))]
+    [`(Union ,left ,right)
+     (scan-sequence copy-out-scan (list left right))]
+    [`(Intersection ,left ,right)
+     (scan-sequence copy-out-scan (list left right))]
+    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
+     (scan-sequence values
+                    (list (scan-sequence copy-out-scan parameters)
+                          (copy-out-scan return-type)
+                          (scan-sequence effect-copy-out-scan effects)))]
+    ;; 型構成子を追加するときは、複製の可否をここへ明示する。
+    [_ #f]))
+
+;; Effect のうち型を運ぶものだけを走査する。
+;; 型を運ばない Effect は借用を含まないため空の列を返す。
+;; Effect を追加するときは、型を運ぶかどうかをここへ明示する。
+(define (effect-copy-out-scan effect)
+  (match effect
+    [`(Return ,_ ,type) (copy-out-scan type)]
+    [`(Yield ,type) (copy-out-scan type)]
+    [_ '()]))
+
 ;; spec §6.2。Read の payload の条件。所有値も借用も含まない型である。
 ;; owned-free? と分ける理由は、owned-free? が Untrusted と Refined の
 ;; payload の検証にも使われており、そちらの意味を変えられないからである。
 ;; owned-free? は Borrowed と BorrowedMut の枝を持たず既定の #t へ落ちる。
 ;; 流用すると可変借用を含む値を複製でき、同じ place への可変借用が 2 つになる。
 (define (effect-copy-out-ok? effect)
-  (match effect
-    [`(Return ,_ ,type) (copy-out-ok? type)]
-    [`(Yield ,type) (copy-out-ok? type)]
-    [_ #t]))
+  (define scanned (effect-copy-out-scan effect))
+  (and scanned (null? scanned) #t))
 
 (define (copy-out-ok? type)
-  (match type
-    ['Int #t]
-    ['Bool #t]
-    ['Unit #t]
-    ['String #t]
-    ['Never #t]
-    ['Res #t]
-    [`(TypeInfo ,_) #t]
-    [`(Proof ,_) #t]
-    [`(Owned ,_) #f]
-    [`(Borrowed ,_ ,_) #f]
-    [`(BorrowedMut ,_ ,_) #f]
-    [`(List ,element) (copy-out-ok? element)]
-    [`(Option ,element) (copy-out-ok? element)]
-    [`(Result ,ok-type ,error-type)
-     (and (copy-out-ok? ok-type) (copy-out-ok? error-type))]
-    [`(Untrusted ,payload) (copy-out-ok? payload)]
-    [`(Refined ,payload ,_) (copy-out-ok? payload)]
-    [`(Record ,row)
-     (for/and ([field (in-list row)]) (copy-out-ok? (second field)))]
-    [`(Union ,left ,right) (and (copy-out-ok? left) (copy-out-ok? right))]
-    [`(Intersection ,left ,right)
-     (and (copy-out-ok? left) (copy-out-ok? right))]
-    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
-     (and (for/and ([parameter (in-list parameters)]) (copy-out-ok? parameter))
-          (copy-out-ok? return-type)
-          (for/and ([effect (in-list effects)]) (effect-copy-out-ok? effect)))]
-    ;; 型構成子を追加するときは、複製の可否をここへ明示する。
-    [_ #f]))
+  (define scanned (copy-out-scan type))
+  (and scanned (null? scanned) #t))
 
 ;; リテラルの型。判定表の τ に載りうる型だけを返し、それ以外は #f を返す。
 (define (literal-type payload)
