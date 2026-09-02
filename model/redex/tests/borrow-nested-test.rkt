@@ -53,3 +53,61 @@
   (check-false (copy-out-ok? '(Owned Int)))
   (check-false (copy-out-ok? '(Borrowed Int a1)))
   (check-false (copy-out-ok? '(Record ((f (Borrowed Int a1) const))))))
+
+(define nested-read-core '(Scope (1) (Read (Borrow 1))))
+(define nested-read-ir (build-region-ir nested-read-core))
+(define nested-read-Λ
+  (region-ctx nested-read-ir
+              '()
+              (hash 1 (region-at nested-read-ir '()))
+              (hash)))
+(define nested-read-type
+  '(Record ((f (Borrowed Int (RVar 0)) imm))))
+
+(test-case "所有者を追える借用を含む payload の複製は通る"
+  (define result
+    (type-of/raw (annotate-regions nested-read-core nested-read-ir)
+                 (list (list 1 nested-read-type))
+                 '()
+                 '()
+                 nested-read-Λ))
+  (check-equal? (first result) 'ok))
+
+(define fnbound-read-type
+  '(Record ((f (Borrowed Int (RVar 1)) imm))))
+
+(test-case "所有者を引けない借用を含む payload は拒否される"
+  (define result
+    (type-of/raw (annotate-regions nested-read-core nested-read-ir)
+                 (list (list 1 fnbound-read-type))
+                 '()
+                 '()
+                 nested-read-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'borrow-unknown-owner-region))
+
+(define owned-read-type
+  '(Record ((f (Owned Res) imm))))
+
+(test-case "所有値を含む payload は従来どおり拒否される"
+  (define result
+    (type-of/raw (annotate-regions nested-read-core nested-read-ir)
+                 (list (list 1 owned-read-type))
+                 '()
+                 '()
+                 nested-read-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'read-uncopyable-payload))
+
+(define nested-borrow-read-type
+  '(Record ((f (Borrowed (BorrowedMut Res (RVar 1)) (RVar 0)) imm))))
+
+(test-case "借用の payload に別の借用がある型は複製を拒否される"
+  (define result
+    (type-of/raw (annotate-regions nested-read-core nested-read-ir)
+                 (list (list 1 nested-borrow-read-type))
+                 '()
+                 '()
+                 nested-read-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'read-uncopyable-payload))

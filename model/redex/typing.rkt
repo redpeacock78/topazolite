@@ -49,6 +49,9 @@
          merge-alpha-sources
          lifetime-counter
          alpha-table
+         lifetime-owner-region
+         borrow-payload-borrow-free?
+         payload-borrows-traceable?
          register-owner
          lifetime-collector
          emit-constraint!
@@ -1805,6 +1808,39 @@
                        core 'borrow-conflicting-use #f fail))
   (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
 
+;; spec §4 分岐 2。α から所有者の region を引く。
+;; 借用の生成は BOR-001 の上限制約 (outlives ρ_owner α) を必ず出すため、
+;; 収集器の中に α を右辺とする outlives があれば、その左辺が所有者の region である。
+(define (lifetime-owner-region alpha)
+  (for/first ([c (in-list (collected-constraints))]
+              #:when (and (eq? (region-constraint-kind c) 'outlives)
+                          (equal? (region-constraint-right c) alpha)))
+    (region-constraint-left c)))
+
+;; copy-out-scan は借用の payload 内の lifetime を収集しないため、
+;; 内側に別の借用を持つ payload はこの段で複製を拒否する。
+(define (borrow-payload-borrow-free? type)
+  (let walk ([t type])
+    (match t
+      [`(Borrowed ,payload ,_) (not (borrowed-type-anywhere? payload))]
+      [`(BorrowedMut ,payload ,_) (not (borrowed-type-anywhere? payload))]
+      [(? list? terms) (andmap walk terms)]
+      [_ #t])))
+
+;; 型の中の借用がすべて所有者を追えることを確かめ、α の列を返す。
+;; 借用以外の複製できない構成子は reason で落とす。
+;; 所有者が引けない借用は関数の境界を越えて入ってきたものであり、
+;; borrow.md 14 節 2 項により本サイクルでは受け取らない。
+(define (payload-borrows-traceable? type reason core fail)
+  (define scanned (copy-out-scan type))
+  (unless scanned (fail reason core))
+  (unless (borrow-payload-borrow-free? type)
+    (fail reason core))
+  (for ([alpha (in-list scanned)])
+    (unless (lifetime-owner-region alpha)
+      (fail 'borrow-unknown-owner-region core)))
+  scanned)
+
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
 ;; ρ は結果の型に現れない（spec §6.1）。
 (define (infer-read core operand Λ Ψ environment places callables fail)
@@ -1815,8 +1851,7 @@
       [`(Borrowed ,τ ,_) τ]
       [`(BorrowedMut ,τ ,_) τ]
       [_ (fail 'read-non-borrow core)]))
-  (unless (copy-out-ok? τ_payload)
-    (fail 'read-uncopyable-payload core))
+  (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core fail)
   (define source (use-source Λ operand τ_operand))
   (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'read source
