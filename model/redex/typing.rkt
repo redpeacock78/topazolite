@@ -1870,15 +1870,21 @@
   (match-define (list τ_target ε_target Ψ_1)
     (infer target (enter-child Λ 0) Ψ environment places callables fail))
   (define τ_target* (normalize-type τ_target))
-  (define τ_payload
+  (define-values (τ_payload α_target)
     (match τ_target*
-      [`(BorrowedMut ,τ ,_) τ]
+      [`(BorrowedMut ,τ ,α) (values τ α)]
       [`(Borrowed ,_ ,_) (fail 'assign-through-shared core)]
       [_ (fail 'assign-non-borrow core)]))
-  (unless (copy-out-ok? τ_payload)
-    (fail 'assign-owned-payload core))
+  (payload-borrows-traceable? τ_payload 'assign-owned-payload core fail)
   (match-define (list τ_value ε_value Ψ_2)
     (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
+  ;; 書き込む値の借用は、書き込み先の view より長く生きなければならない。
+  ;; 短ければ view を通じて解放済みの借用を読み出せる。
+  (define α_value
+    (payload-borrows-traceable? τ_value 'assign-owned-payload core fail))
+  (for ([α (in-list α_value)])
+    (emit-constraint!
+     (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
   (for ([τ_i (in-list (union-members τ_payload))])
     (unless (type-compatible? τ_value τ_i)
       (fail 'assign-union-variant core)))

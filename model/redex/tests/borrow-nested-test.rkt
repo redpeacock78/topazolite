@@ -167,3 +167,85 @@
                  escaping-view-Λ))
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'borrow-escapes-owner))
+
+;; place 2 の中身を mutable view として借り、place 1 由来の借用を欄へ書く。
+(define nested-assign-core
+  '(Scope (1 2)
+     (Let (b let (Borrowed Int (RVar 0)))
+          (Borrow 1)
+          (Assign (BorrowMut 2) b))))
+(define nested-assign-ir (build-region-ir nested-assign-core))
+(define nested-assign-Λ
+  (region-ctx nested-assign-ir
+              '()
+              (hash 1 (region-at nested-assign-ir '())
+                    2 (region-at nested-assign-ir '()))
+              (hash)))
+(define nested-assign-places
+  (list (list 1 'Int)
+        (list 2 '(Borrowed Int (RVar 0)))))
+
+(test-case "代入は値の lifetime が target より長いことを制約にする"
+  (define inference
+    (typing-inference
+     (annotate-regions nested-assign-core nested-assign-ir)
+     nested-assign-places
+     '()
+     '()
+     nested-assign-Λ))
+  (define alpha-table (second inference))
+  (define value-alpha (hash-ref alpha-table '(0 0)))
+  (define target-alpha (hash-ref alpha-table '(0 1 0)))
+  (define outlives-pairs
+    (for/list ([c (in-list (third inference))]
+               #:when (eq? (region-constraint-kind c) 'outlives))
+      (cons (region-constraint-left c) (region-constraint-right c))))
+  (check-not-false (member (cons value-alpha target-alpha) outlives-pairs)))
+
+;; 外側で作った target view へ、内側で作った短い借用を書き込む。
+(define short-assign-core
+  '(Scope (2)
+     (Let (t let (BorrowedMut (Borrowed Int (RVar 1)) (RVar 0)))
+          (BorrowMut 2)
+          (Scope (3)
+            (Let (b let (Borrowed Int (RVar 1)))
+                 (Borrow 3)
+                 (Assign t b))))))
+(define short-assign-ir (build-region-ir short-assign-core))
+(define short-assign-Λ
+  (region-ctx short-assign-ir
+              '()
+              (hash 2 (region-at short-assign-ir '())
+                    3 (region-at short-assign-ir '(0 1)))
+              (hash)))
+(define short-assign-places
+  (list (list 2 '(Borrowed Int (RVar 1)))
+        (list 3 'Int)))
+
+(test-case "target view より短い借用の代入は拒否される"
+  (define result
+    (type-of/raw (annotate-regions short-assign-core short-assign-ir)
+                 short-assign-places
+                 '()
+                 '()
+                 short-assign-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'borrow-escapes-owner))
+
+(define owned-assign-core '(Scope (1) (Assign (BorrowMut 1) 7)))
+(define owned-assign-ir (build-region-ir owned-assign-core))
+(define owned-assign-Λ
+  (region-ctx owned-assign-ir
+              '()
+              (hash 1 (region-at owned-assign-ir '()))
+              (hash)))
+
+(test-case "所有値を含む代入は assign-owned-payload で拒否される"
+  (define result
+    (type-of/raw (annotate-regions owned-assign-core owned-assign-ir)
+                 (list (list 1 '(Owned Res)))
+                 '()
+                 '()
+                 owned-assign-Λ))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'assign-owned-payload))
