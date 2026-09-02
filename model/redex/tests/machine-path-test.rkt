@@ -27,3 +27,25 @@
   (check-false (proj-borrow-mut 0 (term (b)) (term ρ) H))
   (check-equal? (proj-borrow-mut 0 (term (a)) (term ρ) H)
                 (term (BorrowMutRef 0 (a) ρ))))
+
+(check-equal?
+ (path-lookup '((0 (Construct (List Int) cons 7
+                              (Construct (List Int) nil))))
+              0 '(0))
+ 7)
+
+(check-equal?
+ (path-lookup '((0 (Construct (List Int) cons 7
+                              (Construct (List Int) nil))))
+              0 '(1))
+ '(Construct (List Int) nil))
+
+;; 欄の位置が範囲外、または Construct を label で辿る形は偽で返す。
+(check-false
+ (path-lookup '((0 (Construct (List Int) cons 7
+                              (Construct (List Int) nil))))
+              0 '(2)))
+(check-false
+ (path-lookup '((0 (Construct (List Int) cons 7
+                              (Construct (List Int) nil))))
+              0 '(f)))

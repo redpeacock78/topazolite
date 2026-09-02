@@ -172,9 +172,10 @@
     [(list _ value) value]
     [_ #f]))
 
-;; spec §5.3。H の record を field path に沿って辿る。
-;; path が list でない、record でない値を辿る、または label が無い場合は
-;; #f を返し、呼び出し側の where を不成立にする。
+;; spec §5.3。H の値を field path に沿って辿る。
+;; Rec の欄は label で、Construct の欄は 0 起点の位置で指す。
+;; path が list でない、辿れない値、欠落した欄、範囲外の位置はすべて #f を
+;; 返し、呼び出し側の where を不成立にする。
 (define (heap-walk-path value fp)
   (and (list? fp)
        (for/fold ([current value]) ([seg (in-list fp)])
@@ -184,12 +185,18 @@
                  (match (assoc seg fields)
                    [(list _ _ field-value) field-value]
                    [_ #f])]
+                [`(Construct ,_ ,_ ,fields ...)
+                 (and (exact-nonnegative-integer? seg)
+                      (< seg (length fields))
+                      (list-ref fields seg))]
                 [_ #f])))))
 
 ;; 可変借用から field を射影するときの実行時 mode は H から読む。
 ;; 型付け側の field mode と食い違う configuration は型付け済みの項からは
 ;; 作れないので、ここでは heap の値だけを根拠にする。空 path、非 list、
 ;; record でない親、欠落 label はすべて #f で返す。
+;; 構成子の欄には mode が無いため、可変の射影は label の path だけを許す。
+;; 借用した data 値の可変な分解は申し送りとして残す。
 (define (proj-borrow-mut p fp ρ H)
   (and (record-path? fp)
        (pair? fp)
@@ -206,10 +213,11 @@
               [_ #f])]
            [_ #f]))))
 
-;; spec §6.3。H から p の値を引き、record path の label を順に辿る。
-;; 不正な path や不一致は #f となり、呼び出し側の規則を不発火にする。
+;; spec §6.3。H から p の値を引き、path の segment を順に辿る。
+;; label と 0 起点の位置の両方を許す。不正な path や不一致は #f となり、
+;; 呼び出し側の規則を不発火にする。
 (define (path-lookup H p fp)
-  (and (record-path? fp)
+  (and (owner-path? fp)
        (heap-walk-path (table-ref H p) fp)))
 
 ;; spec §7.3。field path の先だけを関数的に差し替える。
@@ -663,6 +671,24 @@
         (where c_result
                (select-branch/g2 K (v_arg ...) (br ...)))
         R-Eliminate)
+
+   ;; 借用参照の Eliminate。H の値の構成子で分岐を選び、束縛子へは欄の値では
+   ;; なく欄を指す借用参照を渡す。位置は R-ProjBorrow と同じ 0 起点であり、
+   ;; 型付け側が束縛子の capability へ積む segment と同じ番号である。
+   ;; Ω を見るのは Moved と Dropped の place を分解しないためである。
+   (--> (cfg (in-hole E (Eliminate (BorrowRef p fp ρ) (br ...))) H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Construct τ K v_field ...)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where (v_ref ...)
+               ,(for/list ([i (in-naturals 0)]
+                           [_ (in-list (term (v_field ...)))])
+                  `(BorrowRef ,(term p)
+                              ,(append (term fp) (list i))
+                              ,(term ρ))))
+        (where c_result (select-branch/g2 K (v_ref ...) (br ...)))
+        R-EliminateRef)
 
    (--> (cfg (in-hole E
                       (Apply (RecurVal cid_recur f (x ...) c_body)

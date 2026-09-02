@@ -320,6 +320,28 @@
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'non-data-eliminate))
 
+(define owned-eliminate-core
+  '(Scope (1)
+     (Eliminate (Move 1)
+                ((nil () -> 0)
+                 (cons (h t) -> h)))))
+(define owned-eliminate-ir (build-region-ir owned-eliminate-core))
+(define owned-eliminate-Λ
+  (region-ctx owned-eliminate-ir
+              '()
+              (hash 1 (region-at owned-eliminate-ir '()))
+              (hash)))
+
+(test-case "所有した data 値の Eliminate は恒等 rewrap で型が付く"
+  (define result
+    (type-of/raw (annotate-regions owned-eliminate-core owned-eliminate-ir)
+                 (list (list 1 '(List Int)))
+                 '()
+                 '()
+                 owned-eliminate-Λ))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Int))
+
 (test-case "分解した欄の capability は scrutinee の path へ位置を積む"
   (check-equal? (borrow-token-key
                  (region-ctx #f '() (hash) (hash))

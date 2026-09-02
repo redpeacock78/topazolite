@@ -122,7 +122,7 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 20 本である。
-源の `-->g2` の 37 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB` をそれぞれ 1 本へ畳んで 4 本減り、`R-Discharge`、`R-OwnLeaf`、および目標側に規則を持たない G2m 固有の借用と投影と読みと代入と region 適用の 11 本が対象外となるので 13 本減る。
+源の `-->g2` の 38 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB` をそれぞれ 1 本へ畳んで 4 本減り、`R-Discharge`、`R-OwnLeaf`、`R-EliminateRef`、および目標側に規則を持たない G2m 固有の借用と投影と読みと代入と region 適用の 11 本が対象外となるので 14 本減る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -132,6 +132,7 @@ pstate ::= Available | Moved | Dropped
 | `R-Let`、`R-LetB` | `R-PR-Let` | 型の判定が消える。束縛様相も落ちる |
 | `R-LetOwned`、`R-LetOwnedB` | `R-PR-LetOwned` | 型ではなく構成子で選ぶ |
 | `R-Eliminate` | `R-PR-Match` | なし |
+| `R-EliminateRef` | なし | Portable Racket backend は借用した data 値の分解を未設計である |
 | `R-Proj` | `R-PR-Proj` | 可変性が落ちているので label の一意性の側条件だけが残る |
 | `R-Discharge` | なし | Proof は実行時に意味を持たない |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |

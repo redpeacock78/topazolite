@@ -89,5 +89,34 @@
   (check-equal? (length refs) 1)
   (check-not-equal? (match (assoc (first (first refs)) (omega-of config))
                            [(list _ state) state]
-                           [_ #f])
+                   [_ #f])
                    'Available))
+
+;; place 0 の cons を借用したまま分解する。欄 0 の束縛子は
+;; (BorrowRef 0 (0) ρ) になる。
+(define ref-eliminate-cfg
+  (term (cfg (Eliminate (BorrowRef 0 () (RVar 0))
+                        ((nil () -> 0)
+                         (cons (h t) -> (Read h))))
+             ((0 (Construct (List Int) cons 7
+                            (Construct (List Int) nil))))
+             ((0 Available)) () ())))
+
+(check-equal?
+ (apply-reduction-relation -->g2 ref-eliminate-cfg)
+ (list (term (cfg (Read (BorrowRef 0 (0) (RVar 0)))
+                  ((0 (Construct (List Int) cons 7
+                                 (Construct (List Int) nil))))
+                  ((0 Available)) () ()))))
+
+;; Moved な place の借用参照は分解できない。
+(check-equal?
+ (apply-reduction-relation
+  -->g2
+  (term (cfg (Eliminate (BorrowRef 0 () (RVar 0))
+                        ((nil () -> 0)
+                         (cons (h t) -> (Read h))))
+             ((0 (Construct (List Int) cons 7
+                            (Construct (List Int) nil))))
+             ((0 Moved)) () ())))
+ '())
