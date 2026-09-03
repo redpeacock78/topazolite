@@ -218,6 +218,51 @@
                1))
    '(((tok 4) (0 1)))))
 
+(test-case "所有値の分解で control へ出た根 leaf を受理する"
+  (define heap-value
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (define start
+    `(cfg (Scope (0) (Eliminate (Move 0) ((some (x) -> x))))
+          ((0 ,heap-value))
+          ((0 Available))
+          (((tok 0) Available))
+          ()))
+  (define moved (apply-reduction-relation -->g2 start))
+  (check-equal? (length moved) 1)
+  (define eliminated (apply-reduction-relation -->g2 (car moved)))
+  (check-equal? (length eliminated) 1)
+  (check-true (config-ok? (car eliminated) '() '(Owned Res) '()))
+  ;; 代入先の枝本体も producer の値位置として扱う。
+  (check-true
+   (control-leaf-positions-ok?
+    '(Eliminate (Construct T K 1)
+                ((some (x) -> (OwnedLeaf (tok 1) (resource 1)))))))
+  (check-false
+   (control-leaf-positions-ok?
+    '(Eliminate (OwnedLeaf (tok 1) (resource 1)) ()))))
+
+(test-case "所有値の分解で束縛した leaf を Drop できる"
+  (define heap-value
+    '(Construct (Option (Owned Res)) some
+                (OwnedLeaf (tok 0) (resource 1))))
+  (define start
+    `(cfg (Scope (0) (Eliminate (Move 0) ((some (x) -> (Drop x)))))
+          ((0 ,heap-value))
+          ((0 Available))
+          (((tok 0) Available))
+          ()))
+  (define moved (apply-reduction-relation -->g2 start))
+  (check-equal? (length moved) 1)
+  (define eliminated (apply-reduction-relation -->g2 (car moved)))
+  (check-equal? (length eliminated) 1)
+  (define after-eliminate (car eliminated))
+  (check-true (config-ok? after-eliminate '() 'Unit '(Own)))
+  (define dropped (apply-reduction-relation -->g2 after-eliminate))
+  (check-equal? (length dropped) 1)
+  (match-define `(cfg ,_ ,_ ,_ ,tokens ,_) (car dropped))
+  (check-equal? tokens '(((tok 0) Dropped))))
+
 (test-case "Yield の Owned な観測 payload は OwnLeaf で包めば型付く"
   (check-equal?
    (core-type-of '(Yield (OwnLeaf (resource 1)) 1) '() '())

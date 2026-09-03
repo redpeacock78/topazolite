@@ -3192,6 +3192,19 @@
           (control-leaf-positions-ok? body))]
     [`(Drop ,argument)
      (value-position-ok? argument)]
+    ;; 所有値の分解は束縛子へ leaf 本体を渡すため、代入後の枝の本体と
+    ;; その着地先の Scope の本体は producer が作る値位置になる。
+    [`(Scope ,_places ,body)
+     (value-position-ok? body)]
+    [`(Eliminate ,scrutinee (,branches ...))
+     (and (control-leaf-positions-ok? scrutinee)
+          (andmap (lambda (branch)
+                    (match branch
+                      [`(,_constructor (,_names ...) -> ,body)
+                       (value-position-ok? body)]
+                      ;; 文法上は br 形しか来ないが、未知の枝も厳格側へ落とす。
+                      [_ (control-leaf-positions-ok? branch)]))
+                  branches))]
     [_
      (cond
        [(redex-match? G2m v core) (leaf-positions-ok? core)]
