@@ -1846,8 +1846,9 @@
                           (equal? (region-constraint-right c) alpha)))
     (region-constraint-left c)))
 
-;; copy-out-scan は借用の payload 内の lifetime を収集しないため、
-;; 内側に別の借用を持つ payload はこの段で複製を拒否する。
+;; Read は外側の借用の payload を新しい値として払い出すが、
+;; payload 内の lifetime-bearing reference を複製して再束縛する規則を定めないため、
+;; 内側に別の借用を持つ payload は複製を拒否する。
 (define (borrow-payload-borrow-free? type)
   (let walk ([t type])
     (match t
@@ -1859,7 +1860,7 @@
 ;; 型の中の借用がすべて所有者を追えることを確かめ、α の列を返す。
 ;; 借用以外の複製できない構成子は reason で落とす。
 ;; 所有者が引けない借用は関数の境界を越えて入ってきたものであり、
-;; borrow.md 14 節 2 項により本サイクルでは受け取らない。
+;; borrow.md 14 節 1 項により本サイクルでは受け取らない。
 (define (payload-borrows-traceable? type reason core fail)
   (define scanned (copy-out-scan type))
   (unless scanned (fail reason core))
@@ -1882,7 +1883,7 @@
       [_ (fail 'read-non-borrow core)]))
   (define α_inner
     (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core fail))
-  ;; borrow.md 14 節 3 項。読み出した値の中の借用は view の region を超えない。
+  ;; borrow.md §12。読み出した値の中の借用は view の region を超えない。
   ;; BOR-001 と同じ形の上限制約であり、違反は borrow-escapes-owner で報告される。
   (for ([α (in-list α_inner)])
     (emit-constraint!
