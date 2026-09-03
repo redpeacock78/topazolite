@@ -347,6 +347,38 @@
  (check-equal? outer-use outer)
  (check-equal? inner-use inner))
 
+;; 枠は内側を先に見る。同じ名前を束縛する入れ子では内側が勝つ。
+(test-case
+ "resolve-region-param は内側の枠を先に見る"
+ (check-equal?
+  (parameterize ([region-binder-renamings
+                  (list (hash 'a 'a.1) (hash 'a 'a.0))])
+    (resolve-region-param 'a))
+  'a.1)
+ ;; 内側の枠に無い名前は外側の枠まで下りる。
+ (check-equal?
+  (parameterize ([region-binder-renamings
+                  (list (hash 'b 'b.1) (hash 'a 'a.0))])
+    (resolve-region-param 'a))
+  'a.0)
+ ;; どの枠にも無い名前はそのまま返る。
+ (check-equal?
+  (parameterize ([region-binder-renamings (list (hash 'a 'a.0))])
+    (resolve-region-param 'c))
+  'c))
+
+;; 署名の内側が束縛する名前は写さない。形 ii の署名がこの節に当たる。
+(test-case
+ "resolve-region-params は署名の内側の束縛を遮蔽する"
+ (parameterize ([region-binder-renamings (list (hash 'a 'a.0))])
+   (check-equal?
+    (resolve-region-params '(NFn ((Borrowed Int (RParam a))) Int () ()))
+    '(NFn ((Borrowed Int (RParam a.0))) Int () ()))
+   (check-equal?
+    (resolve-region-params
+     '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))
+    '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+
 (test-case
  "alpha-rename-all-region-lams は counter 無しでは error を上げる"
  (check-exn

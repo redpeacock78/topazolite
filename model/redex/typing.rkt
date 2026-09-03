@@ -1271,8 +1271,11 @@
 
 (define (infer-lam callable parameters body Λ Ψ
                    environment places callables node fail)
-  (define signature (lookup callables callable))
-  (unless signature (fail 'unknown-callable node))
+  (define raw-signature (lookup callables callable))
+  (unless raw-signature (fail 'unknown-callable node))
+  ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
+  ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
+  (define signature (resolve-region-params raw-signature))
   ;; ForallRegion は直上の RegionLam が渡した binder 文脈で 1 段だけ剥がす。
   ;; 文脈が無い形や束縛数が合わない形は下の既存の fail-closed へ落とす。
   (define expanded
@@ -1353,13 +1356,16 @@
     [_ (fail 'unknown-callable node)]))
 
 (struct recur-prelude
-  (signature parameter-types return-type latent-row obligations)
+  (signature parameter-types return-type latent-row obligations region-params)
   #:transparent)
 
 (define (recur-signature-prelude callable function parameters body
                                  environment callables node fail)
-  (define signature (lookup callables callable))
-  (unless signature (fail 'unknown-callable node))
+  (define raw-signature (lookup callables callable))
+  (unless raw-signature (fail 'unknown-callable node))
+  ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
+  ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
+  (define signature (resolve-region-params raw-signature))
   (match signature
     [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
@@ -1368,6 +1374,12 @@
              (length parameters)))
      (when (check-duplicates (cons function parameters))
        (fail 'duplicate-parameter node))
+     ;; §4.1。境界では、この callable の署名に現れる region parameter だけを
+     ;; 使う。再帰関数は関数の名前を本体の環境へ登録する点が Lam と違うため、
+     ;; 束縛の絞り込みと名前の登録は分けて行う。
+     (define region-params
+       (set-intersect (bound-region-params)
+                      (region-free-params signature)))
      (check-function-boundary parameter-types return-type obligations
                               body (cons function parameters)
                               environment node fail)
@@ -1381,7 +1393,7 @@
      (when (ormap borrow-typed? parameter-types)
        (fail 'borrowed-function-parameter node))
      (recur-prelude signature parameter-types return-type
-                    latent-row obligations)]
+                    latent-row obligations region-params)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
     ;; ForallRegion の節は段 5 で足す。それまでは表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
@@ -1389,7 +1401,8 @@
 (define (infer-recur-value callable function parameters body Λ Ψ
                            environment places callables node fail)
   (match-define
-    (recur-prelude signature parameter-types return-type latent-row _obligations)
+    (recur-prelude signature parameter-types return-type latent-row
+                   _obligations region-params)
     (recur-signature-prelude callable function parameters body
                              environment callables node fail))
   (define body-environment
@@ -1401,7 +1414,7 @@
     ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
     ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
     (parameterize ([region-binder-context #f]
-                   [bound-region-params (set)])
+                   [bound-region-params region-params])
       (check-as body return-type (enter-child Λ 0) Ψ body-environment
                 places callables fail)))
   (unless (row-subset? (first body-result) latent-row)
@@ -1411,7 +1424,8 @@
 (define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
   (match-define
-    (recur-prelude signature parameter-types return-type latent-row _obligations)
+    (recur-prelude signature parameter-types return-type latent-row
+                   _obligations region-params)
     (recur-signature-prelude callable function parameters body
                              environment callables node fail))
   (define function-environment
@@ -1428,7 +1442,7 @@
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in)
     (match (parameterize ([region-binder-context #f]
-                          [bound-region-params (set)])
+                          [bound-region-params region-params])
             (check-as body return-type Λ_body Ψ_in body-environment
                       places callables fail))
       [(list body-row Ψ_1)
@@ -1584,11 +1598,14 @@
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
+  (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
   (match (parameterize ([lifetime-collector cs]
                         [request-collector rs]
                         [region-arg-collector ras]
                         [lifetime-counter (box 0)]
+                        [region-param-origins origins]
+                        [region-binder-renamings '()]
                         [alpha-table (box (hash))]
                         [merge-alpha-sources (make-hash)]
                         [callable-summaries (make-hash)]
@@ -1956,6 +1973,10 @@
     [`(RegionLam (,rps ...) ,body)
      (match-define (list body-type body-row body-psi)
        (parameterize ([region-binder-context rps]
+                      [region-binder-renamings
+                       (cons (for/hash ([fresh (in-list rps)])
+                               (values (region-param-origin fresh) fresh))
+                             (region-binder-renamings))]
                       [bound-region-params
                        (set-union (bound-region-params) (list->set rps))])
          (infer body (enter-child Λ 0) Ψ environment places callables fail)))
@@ -2618,12 +2639,15 @@
   (define rs (box '()))
   (define ras (box '()))
   (define tbl (box (hash)))
+  (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
+                   [region-param-origins origins]
+                   [region-binder-renamings '()]
                    [alpha-table tbl]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
@@ -2906,12 +2930,15 @@
   (define rs (box '()))
   (define ras (box '()))
   (define tbl (box (hash)))
+  (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
+                   [region-param-origins origins]
+                   [region-binder-renamings '()]
                    [alpha-table tbl]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]

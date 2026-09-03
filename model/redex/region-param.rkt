@@ -6,6 +6,11 @@
 
 (provide region-free-params
          region-param-counter
+         region-param-origins
+         region-binder-renamings
+         region-param-origin
+         resolve-region-param
+         resolve-region-params
          bound-region-params
          region-binder-context
          current-region-relation
@@ -37,6 +42,45 @@
 
 ;; 付け替えに使う名前の供給元。typing または IR の文脈ごとに初期化する。
 (define region-param-counter (make-parameter #f))
+
+;; alpha-renaming が作った fresh 名から、入力側の束縛名へ戻る表。
+;; 入口で 1 つの表を作り、rename とその後の型検査で共有する。
+(define region-param-origins (make-parameter #f))
+
+;; 現在有効な RegionLam の元名→fresh 名の束。内側を先に調べる。
+(define region-binder-renamings (make-parameter '()))
+
+(define (region-param-origin rp)
+  (define origins (region-param-origins))
+  (if (and origins (hash-has-key? origins rp))
+      (hash-ref origins rp)
+      rp))
+
+(define (resolve-region-param rp)
+  (or (for/or ([renaming (in-list (region-binder-renamings))]
+               #:when (hash-has-key? renaming rp))
+        (hash-ref renaming rp))
+      rp))
+
+;; 型や署名の RParam だけを現在の RegionLam の fresh 名へ写す。
+;; ForallRegion と RegionLam の束縛名は内側で shadow する。
+(define (resolve-region-params term)
+  (let walk ([t term] [blocked (set)])
+    (match t
+      [`(RParam ,rp)
+       (if (set-member? blocked rp)
+           t
+           `(RParam ,(resolve-region-param rp)))]
+      [`(ForallRegion (,rps ...) ,body)
+       `(ForallRegion ,rps
+                      ,(walk body (set-union blocked (list->set rps))))]
+      [(app region-lam-parts (list s rps body))
+       (rebuild-region-lam
+        s rps
+        (walk body (set-union blocked (list->set rps))))]
+      [(? list?)
+       (for/list ([element (in-list t)]) (walk element blocked))]
+      [_ t])))
 
 ;; 現在の項を囲む RegionLam が束縛している rp の集合。
 ;; Apply と Curry の境界検査は infer の深い位置にあり、引数で運ぶと infer の
@@ -93,6 +137,10 @@
      (define renaming
        (for/hash ([rp (in-list rps)])
          (values rp (fresh-region-param/avoiding rp forbidden))))
+     (define origins (region-param-origins))
+     (when origins
+       (for ([(original fresh) (in-hash renaming)])
+         (hash-set! origins fresh original)))
      (rebuild-region-lam
       s
       (for/list ([rp (in-list rps)]) (hash-ref renaming rp))
