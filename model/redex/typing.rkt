@@ -1352,8 +1352,12 @@
     ;; 共有して fail-closed にする（spec §5.7）。
     [_ (fail 'unknown-callable node)]))
 
-(define (infer-recur-value callable function parameters body Λ Ψ
-                           environment places callables node fail)
+(struct recur-prelude
+  (signature parameter-types return-type latent-row obligations)
+  #:transparent)
+
+(define (recur-signature-prelude callable function parameters body
+                                 environment callables node fail)
   (define signature (lookup callables callable))
   (unless signature (fail 'unknown-callable node))
   (match signature
@@ -1365,7 +1369,8 @@
      (when (check-duplicates (cons function parameters))
        (fail 'duplicate-parameter node))
      (check-function-boundary parameter-types return-type obligations
-                              body (cons function parameters) environment node fail)
+                              body (cons function parameters)
+                              environment node fail)
      (when (ormap owned-type? parameter-types)
        (match (peel-node body)
          [`(Scope () ,inner)
@@ -1375,79 +1380,66 @@
      ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
      (when (ormap borrow-typed? parameter-types)
        (fail 'borrowed-function-parameter node))
-     (define body-environment
-       (extend (function-body-environment environment
-                                          parameters parameter-types)
-               (list function)
-               (list signature)))
-     (define body-result
-       ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
-       ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
-       (parameterize ([region-binder-context #f]
-                      [bound-region-params (set)])
-         (check-as body return-type (enter-child Λ 0) Ψ body-environment
-                   places callables fail)))
-     (unless (row-subset? (first body-result) latent-row)
-       (fail 'undeclared-function-effect body latent-row (first body-result)))
-     (list signature '() Ψ)]
+     (recur-prelude signature parameter-types return-type
+                    latent-row obligations)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
-    ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
-    ;; region 多相な再帰関数は G5c5c で扱う。表に無い場合と key を共有する。
+    ;; ForallRegion の節は段 5 で足す。それまでは表に無い場合と key を共有する。
     [_ (fail 'unknown-callable node)]))
+
+(define (infer-recur-value callable function parameters body Λ Ψ
+                           environment places callables node fail)
+  (match-define
+    (recur-prelude signature parameter-types return-type latent-row _obligations)
+    (recur-signature-prelude callable function parameters body
+                             environment callables node fail))
+  (define body-environment
+    (extend (function-body-environment environment
+                                       parameters parameter-types)
+            (list function)
+            (list signature)))
+  (define body-result
+    ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
+    ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
+    (parameterize ([region-binder-context #f]
+                   [bound-region-params (set)])
+      (check-as body return-type (enter-child Λ 0) Ψ body-environment
+                places callables fail)))
+  (unless (row-subset? (first body-result) latent-row)
+    (fail 'undeclared-function-effect body latent-row (first body-result)))
+  (list signature '() Ψ))
 
 (define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
-  (define signature (lookup callables callable))
-  (unless signature (fail 'unknown-callable node))
-  (match signature
-    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
-     (unless (= (length parameters) (length parameter-types))
-       (fail 'parameter-arity-mismatch node
-             (length parameter-types)
-             (length parameters)))
-     (when (check-duplicates (cons function parameters))
-       (fail 'duplicate-parameter node))
-     (check-function-boundary parameter-types return-type obligations
-                              body (cons function parameters) environment node fail)
-     (when (ormap owned-type? parameter-types)
-       (match (peel-node body)
-         [`(Scope () ,inner)
-          (check-owned-encoding parameters parameter-types inner node fail)]
-         [_ (fail 'owned-parameter-missing-binding node)]))
-     ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
-     ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
-     (when (ormap borrow-typed? parameter-types)
-       (fail 'borrowed-function-parameter node))
-     (define function-environment
-       (extend environment
-               (list function)
-               (list signature)))
-     (define body-environment
-       (function-body-environment function-environment
-                                  parameters parameter-types))
-     ;; body は Recur の子 0 である（region.md §3）。
-     ;; 環境は既存の body-environment をそのまま使う。
-     ;; 仮引数は owners へ入れないため（spec §3.1）、Λ は enter-child だけを掛ける。
-     (define Λ_body (enter-child Λ 0))
-     ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
-     (define (fixpoint Ψ_in)
-       (match (parameterize ([region-binder-context #f]
-                             [bound-region-params (set)])
-               (check-as body return-type Λ_body Ψ_in body-environment
-                         places callables fail))
-         [(list body-row Ψ_1)
-          (define Ψ_next (psi-join Ψ_in Ψ_1))
-          (if (equal? Ψ_next Ψ_in)
-              (list body-row Ψ_next)
-              (fixpoint Ψ_next))]))
-     (match-define (list body-row Ψ_body) (fixpoint Ψ))
-     (unless (row-subset? body-row latent-row)
-       (fail 'undeclared-function-effect body latent-row body-row))
-     (list function-environment Ψ_body)]
-    ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
-    ;; RecurVal と Recur は署名の ForallRegion を剥がさない。
-    ;; region 多相な再帰関数は G5c5c で扱う。表に無い場合と key を共有する。
-    [_ (fail 'unknown-callable node)]))
+  (match-define
+    (recur-prelude signature parameter-types return-type latent-row _obligations)
+    (recur-signature-prelude callable function parameters body
+                             environment callables node fail))
+  (define function-environment
+    (extend environment
+            (list function)
+            (list signature)))
+  (define body-environment
+    (function-body-environment function-environment
+                               parameters parameter-types))
+  ;; body は Recur の子 0 である（region.md §3）。
+  ;; 環境は既存の body-environment をそのまま使う。
+  ;; 仮引数は owners へ入れないため（spec §3.1）、Λ は enter-child だけを掛ける。
+  (define Λ_body (enter-child Λ 0))
+  ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
+  (define (fixpoint Ψ_in)
+    (match (parameterize ([region-binder-context #f]
+                          [bound-region-params (set)])
+            (check-as body return-type Λ_body Ψ_in body-environment
+                      places callables fail))
+      [(list body-row Ψ_1)
+       (define Ψ_next (psi-join Ψ_in Ψ_1))
+       (if (equal? Ψ_next Ψ_in)
+           (list body-row Ψ_next)
+           (fixpoint Ψ_next))]))
+  (match-define (list body-row Ψ_body) (fixpoint Ψ))
+  (unless (row-subset? body-row latent-row)
+    (fail 'undeclared-function-effect body latent-row body-row))
+  (list function-environment Ψ_body))
 
 ;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、
 ;; 推論した型のそれは寿命である。語彙が違うので照合しない。
