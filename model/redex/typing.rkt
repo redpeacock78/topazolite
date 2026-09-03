@@ -63,6 +63,7 @@
          collected-region-args
          check-region-args
          (struct-out callable-summary)
+         lookup-binding
          collected-callable-summaries
          collect-use-regions!
          typing-inference
@@ -146,6 +147,31 @@
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
 (struct template-frame (formals box) #:transparent)
 (define template-collectors (make-parameter '()))
+
+;; §4.2。再帰専用の重ね。template-collectors と同じ形の parameter である。
+;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、forwarding-index、
+;; 雛形を集める箱、仮と確定のどちらかを示す印を持つ。
+(struct recur-frame (bindings formals result-index collector state)
+  #:transparent)
+(define recur-overlay (make-parameter '()))
+
+;; §4.6。束縛の並びの長さは形ごとに決まる。形 i の Recur と RecurVal は 1、
+;; 形 ii の Recur は 2 である。外れたら実装の誤りなので、黙って受理しない。
+(define (make-recur-frame bindings formals result-index collector state
+                          expected)
+  (unless (= (length bindings) expected)
+    (error 'make-recur-frame
+           "束縛の並びの長さが ~a、期待は ~a" (length bindings) expected))
+  (recur-frame bindings formals result-index collector state))
+
+;; §4.2。環境から引いた対が、重ねが保つ束縛の並びのいずれかと eq? で
+;; 一致する枠を返す。名前で引くと、本体の中の Let が影にした同名の束縛を
+;; 再帰呼出しと見なしてしまう。
+(define (recur-frame-for binding)
+  (and binding
+       (for/first ([f (in-list (recur-overlay))]
+                   #:when (memq binding (recur-frame-bindings f)))
+         f)))
 
 (define (owning-frame w)
   (for/first ([f (in-list (template-collectors))]
@@ -555,6 +581,11 @@
   (match (assoc key table)
     [(list _ value) value]
     [_ #f]))
+
+;; §4.6。lookup は assoc の結果から値だけを取り出すので、対の同一性が
+;; 呼出し側へ届かない。重ねの照合はこの手続きだけを使う。包み直さない。
+(define (lookup-binding table key)
+  (assoc key table))
 
 (define (owned-type? type)
   (match type
@@ -1405,20 +1436,49 @@
                    _obligations region-params)
     (recur-signature-prelude callable function parameters body
                              environment callables node fail))
-  (define body-environment
-    (extend (function-body-environment environment
-                                       parameters parameter-types)
+  (define function-environment
+    (extend environment
             (list function)
             (list signature)))
-  (define body-result
-    ;; RecurVal の本体も Lam と同じ関数境界である。RegionLam の
-    ;; binder 文脈を値として持ち出さないよう、外側の束縛をここで閉じる。
-    (parameterize ([region-binder-context #f]
-                   [bound-region-params region-params])
-      (check-as body return-type (enter-child Λ 0) Ψ body-environment
-                places callables fail)))
-  (unless (row-subset? (first body-result) latent-row)
-    (fail 'undeclared-function-effect body latent-row (first body-result)))
+  (define body-environment
+    (function-body-environment function-environment
+                                parameters parameter-types))
+  ;; §4.2。借用の仮引数の位置ごとの鍵。
+  (define formals
+    (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
+      (and (borrow-typed? τ) (formal-designator Λ node i))))
+  (define recur-binding (lookup-binding function-environment function))
+  ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
+  (define body-context
+    (for/fold ([Λ_b (enter-child Λ 0)])
+              ([x (in-list parameters)] [w (in-list formals)] #:when w)
+      (region-ctx-add-token Λ_b x (set (cons w '())))))
+  (define (fixpoint Ψ_in)
+    (define collector (box '()))
+    (define tentative
+      (make-recur-frame (list recur-binding) formals
+                        (forwarding-index parameter-types return-type)
+                        collector 'tentative 1))
+    (define template
+      (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                      collector))
+    (match (parameterize ([region-binder-context #f]
+                          [bound-region-params region-params]
+                          [template-collectors
+                           (cons template (template-collectors))]
+                          [recur-overlay
+                           (cons tentative (recur-overlay))])
+             (check-as body return-type body-context Ψ_in body-environment
+                       places callables fail))
+      [(list body-row Ψ_1)
+       (define Ψ_next (psi-join Ψ_in Ψ_1))
+       (if (equal? Ψ_next Ψ_in)
+           (list body-row Ψ_next
+                 (struct-copy recur-frame tentative [state 'final]))
+           (fixpoint Ψ_next))]))
+  (match-define (list body-row Ψ_body _frame) (fixpoint Ψ))
+  (unless (row-subset? body-row latent-row)
+    (fail 'undeclared-function-effect body latent-row body-row))
   (list signature '() Ψ))
 
 (define (recur-context callable function parameters body Λ Ψ
@@ -1435,25 +1495,45 @@
   (define body-environment
     (function-body-environment function-environment
                                parameters parameter-types))
-  ;; body は Recur の子 0 である（region.md §3）。
-  ;; 環境は既存の body-environment をそのまま使う。
-  ;; 仮引数は owners へ入れないため（spec §3.1）、Λ は enter-child だけを掛ける。
-  (define Λ_body (enter-child Λ 0))
+  ;; §4.2。借用の仮引数の位置ごとの鍵。
+  (define formals
+    (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
+      (and (borrow-typed? τ) (formal-designator Λ node i))))
+  (define recur-binding (lookup-binding function-environment function))
+  ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
+  ;; infer-lam の body-context と同じ形にそろえる。
+  (define body-context
+    (for/fold ([Λ_b (enter-child Λ 0)])
+              ([x (in-list parameters)] [w (in-list formals)] #:when w)
+      (region-ctx-add-token Λ_b x (set (cons w '())))))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in)
+    (define collector (box '()))
+    (define tentative
+      (make-recur-frame (list recur-binding) formals
+                        (forwarding-index parameter-types return-type)
+                        collector 'tentative 1))
+    (define template
+      (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                      collector))
     (match (parameterize ([region-binder-context #f]
-                          [bound-region-params region-params])
-            (check-as body return-type Λ_body Ψ_in body-environment
+                          [bound-region-params region-params]
+                          [template-collectors
+                           (cons template (template-collectors))]
+                          [recur-overlay
+                           (cons tentative (recur-overlay))])
+            (check-as body return-type body-context Ψ_in body-environment
                       places callables fail))
       [(list body-row Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
-           (list body-row Ψ_next)
+           (list body-row Ψ_next
+                 (struct-copy recur-frame tentative [state 'final]))
            (fixpoint Ψ_next))]))
-  (match-define (list body-row Ψ_body) (fixpoint Ψ))
+  (match-define (list body-row Ψ_body frame) (fixpoint Ψ))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
-  (list function-environment Ψ_body))
+  (list function-environment Ψ_body frame))
 
 ;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、
 ;; 推論した型のそれは寿命である。語彙が違うので照合しない。
@@ -1610,7 +1690,8 @@
                         [merge-alpha-sources (make-hash)]
                         [callable-summaries (make-hash)]
                         [forwarding-summaries (make-hash)]
-                        [template-collectors '()])
+                        [template-collectors '()]
+                        [recur-overlay '()])
            (with-typing
             (lambda (fail)
               ;; 束縛名を入口で 1 度だけ付け替える。関係の表も同じ項から作る。
@@ -2442,10 +2523,15 @@
                       Λ
                       Ψ
                       environment places callables core fail))
-     (infer continuation (enter-child Λ 1)
-           (second continuation-environment)
-           (first continuation-environment)
-           places callables fail)]
+     ;; §4.6。recur-context は継続を検査する前に返るので、枠を受け取って
+     ;; 継続の検査全体をここで包む。
+     (parameterize ([recur-overlay
+                     (cons (third continuation-environment)
+                           (recur-overlay))])
+       (infer continuation (enter-child Λ 1)
+             (second continuation-environment)
+             (first continuation-environment)
+             places callables fail))]
 
     [`(Yield ,observed ,next)
       (define observed-result
@@ -2652,7 +2738,8 @@
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
-                   [template-collectors '()])
+                   [template-collectors '()]
+                   [recur-overlay '()])
       (with-typing
        (lambda (fail)
          (define renamed
@@ -2834,15 +2921,18 @@
                       Λ
                       Ψ
                       environment places callables core fail))
-     (check-as/full continuation
-                    expected
-                    (enter-child Λ 1)
-                    (second continuation-environment)
-                    (first continuation-environment)
-                    places
-                    callables
-                    fail
-                    compatible?)]
+     (parameterize ([recur-overlay
+                     (cons (third continuation-environment)
+                           (recur-overlay))])
+       (check-as/full continuation
+                      expected
+                      (enter-child Λ 1)
+                      (second continuation-environment)
+                      (first continuation-environment)
+                      places
+                      callables
+                      fail
+                      compatible?))]
 
     [`(Yield ,observed ,next)
       (define observed-result
@@ -2943,7 +3033,8 @@
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
-                   [template-collectors '()])
+                   [template-collectors '()]
+                   [recur-overlay '()])
       (with-typing
        (lambda (fail)
          ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。

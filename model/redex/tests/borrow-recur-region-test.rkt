@@ -65,3 +65,12 @@
                                   () ()))
                      outer-callables)))
   'borrowed-function-parameter))
+
+;; 3。lookup-binding は assoc の結果をそのまま返す。
+;; 名前や型の equal? へ退行した実装は、同じ名前かつ同じ型の別の対を返す。
+(test-case
+ "lookup-binding は環境の対そのものを返す"
+ (define inner (list 'f '(NFn (Int) Int () ())))
+ (define outer (list 'f '(NFn (Int) Int () ())))
+ (define environment (list inner outer))
+ (check-eq? (lookup-binding environment 'f) inner))
