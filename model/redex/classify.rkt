@@ -16,6 +16,19 @@
     [(list _ value) value]
     [_ #f]))
 
+;; §4.5。分類は region の束縛そのものを見ない。本体側の環境を作るときと、
+;; 署名の仮引数を数えるときだけ 1 段剥がす。継続側は ForallRegion のまま
+;; である。
+(define (peel-forall-region type)
+  (match type
+    [`(ForallRegion (,_ ...) ,inner) inner]
+    [_ type]))
+
+(define (forall-region-params type)
+  (match type
+    [`(ForallRegion (,rps ...) ,_) rps]
+    [_ '()]))
+
 (define (owned-type? type)
   (match type
     [`(Owned ,_) #t]
@@ -26,14 +39,17 @@
 
 (define (callable-contexts callable function parameters
                            environment callables)
-  (match (lookup callables callable)
-    [(and signature
-          `(NFn ,parameter-types ,_ ,_ ,_))
+  (define signature (lookup callables callable))
+  (match (and signature (peel-forall-region signature))
+    [(and body-signature `(NFn ,parameter-types ,_ ,_ ,_))
      (and (= (length parameters) (length parameter-types))
-          (let ([function-environment
+          (let ([body-environment
+                 (extend environment (list function) (list body-signature))]
+                [function-environment
                  (extend environment (list function) (list signature))])
             (list
-             (function-body-environment function-environment
+             ;; 本体は剥がした NFn、継続は元の署名を見る。
+             (function-body-environment body-environment
                                         parameters parameter-types)
              function-environment)))]
     [_ #f]))
@@ -66,14 +82,26 @@
     [_ #f]))
 
 (define (latent-row-safe? function environment callables)
-  (match (core-type-of function '() callables environment)
-    [(list `(NFn ,_ ,_ ,latent-row ,_) _)
-     (not
-      (ormap (lambda (label)
-               (or (eq? label 'Partial)
-                   (match label [`(Yield ,_) #t] [_ #f])))
-             latent-row))]
-    [_ #f]))
+  (define (row-safe? latent-row)
+    (not
+     (ormap (lambda (label)
+              (or (eq? label 'Partial)
+                  (match label [`(Yield ,_) #t] [_ #f])))
+            latent-row)))
+  ;; §4.5。RegionApp は Λ 無しの core-type-of では region の実引数が
+  ;; 生きておらず落ちる。頭の型だけを引き、ForallRegion を 1 段剥がす。
+  (match function
+    [`(RegionApp ,head (,_ ...))
+     (match (core-type-of head '() callables environment)
+       [(list type _)
+        (match (peel-forall-region type)
+          [`(NFn ,_ ,_ ,latent-row ,_) (row-safe? latent-row)]
+          [_ #f])]
+       [_ #f])]
+    [_
+     (match (core-type-of function '() callables environment)
+       [(list `(NFn ,_ ,_ ,latent-row ,_) _) (row-safe? latent-row)]
+       [_ #f])]))
 
 (define (pre? target core environment callables)
   (define (walk core environment target-visible?)
@@ -113,8 +141,12 @@
       [`(Proj ,record ,_)
        (walk record environment target-visible?)]
       [`(Apply ,function ,arguments ...)
+       (define head
+         (match function
+           [`(RegionApp ,g (,_ ...)) g]
+           [_ function]))
        (and (or (and target-visible?
-                     (eq? function target))
+                     (eq? head target))
                 (latent-row-safe? function environment callables))
             (walk function environment target-visible?)
             (andmap (lambda (argument)
@@ -172,6 +204,10 @@
        (and (walk function environment target-visible?)
             (walk argument environment target-visible?))]
       [`(Error ,_) #t]
+      [`(RegionLam (,_ ...) ,body)
+       (walk body environment target-visible?)]
+      [`(RegionApp ,f (,_ ...))
+       (walk f environment target-visible?)]
       [_ #f]))
   (walk core environment #t))
 
@@ -216,8 +252,12 @@
       [`(Proj ,record ,_)
        (walk record target-visible?)]
       [`(Apply ,function ,arguments ...)
+       (define head
+         (match function
+           [`(RegionApp ,g (,_ ...)) g]
+           [_ function]))
        (cond
-         [(and target-visible? (eq? function target))
+         [(and target-visible? (eq? head target))
           (define children
             (combine-uses
              (map (lambda (argument) (walk argument target-visible?))
@@ -274,6 +314,10 @@
        (combine-uses (list (walk function target-visible?)
                            (walk argument target-visible?)))]
       [`(Error ,_) no-uses]
+      [`(RegionLam (,_ ...) ,body)
+       (walk body target-visible?)]
+      [`(RegionApp ,f (,_ ...))
+       (walk f target-visible?)]
       [_ (uses #f #f '())]))
   (walk core target-visible?))
 
@@ -316,8 +360,12 @@
       [`(Proj ,record ,_)
        (walk record decomposable strict target-visible?)]
       [`(Apply ,function ,arguments ...)
+       (define head
+         (match function
+           [`(RegionApp ,g (,_ ...)) g]
+           [_ function]))
        (and
-        (if (and target-visible? (eq? function target))
+        (if (and target-visible? (eq? head target))
             (and (= (length arguments) (length parameters))
                  (let ([argument (list-ref arguments position)])
                    (and (symbol? argument) (set-member? strict argument))))
@@ -395,6 +443,10 @@
        (and (walk function decomposable strict target-visible?)
             (walk argument decomposable strict target-visible?))]
       [`(Error ,_) #t]
+      [`(RegionLam (,_ ...) ,body)
+       (walk body decomposable strict target-visible?)]
+      [`(RegionApp ,f (,_ ...))
+       (walk f decomposable strict target-visible?)]
       [_ #f]))
   (walk body (set root) (set) #t))
 
@@ -469,7 +521,7 @@
 ;; 現れる形を作らないためである。Scope を Eliminate の枝の内側へ置く生成を
 ;; 将来入れるときは、この判断を見直す必要がある。
 (define (strip-owned-prefix callable parameters body environment callables)
-  (match (lookup callables callable)
+  (match (peel-forall-region (lookup callables callable))
     [`(NFn ,parameter-types ,_ ,_ ,_)
      (cond
        [(not (= (length parameters) (length parameter-types))) #f]
@@ -545,20 +597,35 @@
 (define (guarded? core environment callables)
   (match core
     [`(Recur ,callable ,function (,parameters ...) ,body
-             (Apply ,continuation-function ,arguments ...))
+             ,continuation)
+     (define signature (lookup callables callable))
+     ;; §4.4。形 ii の継続は包みを 1 段剥がしてから呼ぶ。形 i の継続は
+     ;; 剥がさない。包みの数が署名と合わない継続は保護つきにしない。
+     (define-values (continuation-function arguments region-arguments)
+       (match continuation
+         [`(Apply (RegionApp ,g (,rhos ...)) ,args ...)
+          (values g args rhos)]
+         [`(Apply ,g ,args ...) (values g args #f)]
+         [_ (values #f '() #f)]))
+     (define region-arity-ok?
+       (if region-arguments
+           (= (length region-arguments)
+              (length (forall-region-params signature)))
+           (null? (forall-region-params signature))))
      (define contexts
        (callable-contexts callable function parameters
                           environment callables))
-     (match (lookup callables callable)
+     (match (peel-forall-region signature)
        [`(NFn ,parameter-types ,_ ,latent-row ,_)
-        ;; 本体の側だけ包みを外す。継続は包みを持たないため、従来どおり
-        ;; 第 2 要素の環境で見る。
+        ;; 本体の側だけ署名の包みを外す。継続側は元の署名を見て、形 ii では
+        ;; RegionApp がその包みを明示的に剥がす。
         (define stripped
           (and contexts
                (strip-owned-prefix callable parameters body
                                    (first contexts) callables)))
         (and contexts
              stripped
+             region-arity-ok?
              (eq? continuation-function function)
              (= (length arguments) (length parameter-types))
              (guarded-body? function parameter-types

@@ -209,3 +209,119 @@
   (check-false
    (type-equiv? `(Opaque ,unknown-calculation)
                 '(Opaque unit))))
+
+;; G5c5c。署名そのものが ForallRegion である再帰の分類。
+(define region-structural-callables
+  '((rlist-loop-id (ForallRegion (a)
+                     (NFn ((List Int) (BorrowedMut Int (RParam a)))
+                          Int () ())))))
+
+(define region-structural-loop
+  '(Recur rlist-loop-id loop (xs r)
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) -> (Apply loop tail r))))
+          (Apply (RegionApp loop ((RParam a)))
+                 (Construct (List Int) nil) r)))
+
+(define region-guarded-callables
+  '((rnats-id (ForallRegion (a) (NFn (Int) Unit ((Yield Int)) ())))))
+
+(define region-guarded-loop
+  '(Recur rnats-id nats (n)
+          (Yield n
+                 (Apply nats
+                        (Apply (PrimVal (Reserved o-add) add) n 1)))
+          (Apply (RegionApp nats ((RParam a))) 0)))
+
+(test-case "G5c5c: region 多相な再帰も構造的減少と保護つきで分類できる"
+  (check-equal? (classify region-structural-loop '()
+                          region-structural-callables)
+                '(Finite structural))
+  (check-equal? (classify region-guarded-loop '() region-guarded-callables)
+                '(Productive guarded)))
+
+;; G5c5c。再帰の中に対象でない region 多相な関数の呼出しがある場合。
+(define region-other-call-environment
+  '((bump (ForallRegion (b) (NFn (Int) Int () ())))))
+
+(define region-other-call-loop
+  '(Recur rlist-loop-id loop (xs r)
+     (Eliminate xs
+       ((nil () -> (Apply (RegionApp bump ((RParam a))) 0))
+        (cons (head tail) -> (Apply loop tail r))))
+     (Apply (RegionApp loop ((RParam a)))
+            (Construct (List Int) nil) r)))
+
+(test-case "G5c5c: 対象でない region 多相な呼出しがあっても分類できる"
+  (check-equal? (classify region-other-call-loop
+                          region-other-call-environment
+                          region-structural-callables)
+                '(Finite structural)))
+
+;; G5c5c。項の中に RegionLam を置いた場合。3 つの走査に RegionLam の節が
+;; 無いと、この形は分類できない。
+(define region-lam-environment
+  '((plus1 (NFn (Int) Int () ()))))
+
+(define region-lam-loop
+  '(Recur rlist-loop-id loop (xs r)
+     (Eliminate xs
+       ((nil () -> (Apply (RegionApp (RegionLam (b) plus1) ((RParam a))) 0))
+        (cons (head tail) -> (Apply loop tail r))))
+     (Apply (RegionApp loop ((RParam a)))
+            (Construct (List Int) nil) r)))
+
+(test-case "G5c5c: 項の中の RegionLam を越えて分類できる"
+  (check-equal? (classify region-lam-loop
+                          region-lam-environment
+                          region-structural-callables)
+                '(Finite structural)))
+
+(test-case "G5c5c: Lam は ForallRegion を剥がさない"
+  (check-equal?
+   (classify
+    '(Recur list-loop-id loop (values)
+       (Eliminate values
+        ((nil () -> (Lam User f (x) 0))
+         (cons (head tail) -> (Apply loop tail))))
+       (Apply loop (Construct (List Int) nil)))
+    '((f (ForallRegion (a) (NFn (Int) Int () ()))))
+    structural-callables)
+   'Unknown))
+
+(test-case "G5c5c: RegionLam 内の再帰呼出しを見落とさない"
+  ;; RegionLam の内側に減少しない再帰呼出しを置く。target-uses がこの
+  ;; 位置を歩かないと、guard component が target-free と誤認される。
+  (check-equal?
+   (classify
+    '(Recur nats-id nats (n)
+       (Yield n
+              (Apply nats
+                     (RegionLam (a)
+                       (Let (u let Unit) (Apply nats 1) 0))))
+       (Apply nats 0))
+    '() guarded-callables)
+   'Unknown))
+
+(test-case "G5c5c: 継続の包みの数が署名と合わないと保護つきにならない"
+  ;; 形 ii なのに継続が包みを剥がさずに呼ぶ。
+  (check-equal?
+   (classify '(Recur rnats-id nats (n)
+                     (Yield n
+                            (Apply nats
+                                   (Apply (PrimVal (Reserved o-add) add)
+                                          n 1)))
+                     (Apply nats 0))
+             '() region-guarded-callables)
+   'Unknown)
+  ;; 形 i なのに継続が包みを剥がす。
+  (check-equal?
+   (classify '(Recur nats-id nats (n)
+                     (Yield n
+                            (Apply nats
+                                   (Apply (PrimVal (Reserved o-add) add)
+                                          n 1)))
+                     (Apply (RegionApp nats ((RParam a))) 0))
+             '() guarded-callables)
+   'Unknown))
