@@ -334,8 +334,8 @@
     (for/fold ([remaining variables])
               ([name (in-list names)])
       (set-remove remaining name)))
-  ;; Move は構造を保つ透過的な操作であり、根の同一性を変えない。
-  ;; 所有は移るが、構造的減少の判定は構造だけを見るため影響しない。
+  ;; 走査対象の位置にある Move は構造を保つ透過操作であり、根を辿る。
+  ;; これは束縛別名の規則とは別で、Move を bound にした名前は rebind で継承しない。
   (define (transparent-root core)
     (match core
       [`(Move ,inner) (transparent-root inner)]

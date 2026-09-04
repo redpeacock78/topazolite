@@ -322,6 +322,7 @@
 
 ;; cons の再帰欄は (List Int) であり (Owned (List Int)) ではない。
 ;; したがって末尾 tail を Owned の仮引数へ渡す再帰呼び出しは型が付かない。
+;; 実測の失敗理由は E-TYP-012 (type-mismatch) である。
 ;; 外側の Fn は、走査対象と初期値を Owned のまま用意するためだけに置く。
 (test-case "C4-005: Owned の位置そのものを根とする再帰は依然として書けない"
   (check-true
