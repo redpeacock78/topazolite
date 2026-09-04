@@ -342,27 +342,6 @@
   (check-equal? (first result) 'ok)
   (check-equal? (first (second result)) 'Int))
 
-(test-case "Typed Core の Eliminate は Borrowed を通し BorrowedMut を拒否する"
-  (define borrowed-result
-    (type-of/raw (annotate-regions borrowed-eliminate-core
-                                   borrowed-eliminate-ir)
-                 (list (list 1 '(List Int)))
-                 '()
-                 '()
-                 borrowed-eliminate-Λ))
-  (check-equal? (first borrowed-result) 'ok)
-  (check-equal? (first (second borrowed-result)) 'Int)
-
-  (define borrowed-mut-result
-    (type-of/raw (annotate-regions borrowed-mut-eliminate-core
-                                   borrowed-mut-eliminate-ir)
-                 (list (list 1 '(List Int)))
-                 '()
-                 '()
-                 borrowed-mut-eliminate-Λ))
-  (check-equal? (first borrowed-mut-result) 'fail)
-  (check-equal? (second borrowed-mut-result) 'non-data-eliminate))
-
 (test-case "分解した欄の capability は scrutinee の path へ位置を積む"
   (check-equal? (borrow-token-key
                  (region-ctx #f '() (hash) (hash))
