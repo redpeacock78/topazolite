@@ -901,19 +901,6 @@
     [(list rows next-psi)
      (list (rows-union rows) next-psi)]))
 
-(define (peel-eliminate-wrapper data-type)
-  ;; 借用と所有は data 型を包むだけで構成子を変えない。
-  ;; 包みを剥がして schema を引き、包みごとに決まる rewrap を欄の型へ配る。
-  ;; Borrowed は欄の型を同じ region で包み直す。Owned は欄が宣言どおりの型を
-  ;; 保つため rewrap は恒等である。
-  ;; BorrowedMut は構成子の欄に mode が無く、可変の欄と不変の欄を区別できない
-  ;; ため節を置かない。節が無ければ包みが剥がれず、constructor-schema が偽を
-  ;; 返して non-data-eliminate で落ちる。
-  (match data-type
-    [`(Borrowed ,τ ,ρ) (values τ (lambda (t) `(Borrowed ,t ,ρ)))]
-    [`(Owned ,τ) (values τ values)]
-    [_ (values data-type values)]))
-
 (define (branch-contexts branches data-type Λ environment node scrutinee fail)
   (define-values (data-core rewrap) (peel-eliminate-wrapper data-type))
   (define schema-core (constructor-schema data-core))

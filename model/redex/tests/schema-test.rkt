@@ -34,3 +34,24 @@
               (redex-match? G1gen g-bool (sample-construct 'Bool row))))
 (check-true (for/and ([row (in-list (constructor-schema '(List Int)))])
               (redex-match? G1gen ga-list (sample-construct '(List Int) row))))
+
+; Eliminate の包みは 1 段だけ剥がし、欄へ配る rewrap を包みごとに選ぶ。
+(let-values ([(core rewrap) (peel-eliminate-wrapper '(Owned (List Int)))])
+  (check-equal? core '(List Int))
+  (check-equal? (rewrap 'Int) 'Int))
+
+(let-values ([(core rewrap) (peel-eliminate-wrapper '(Borrowed (List Int) r))])
+  (check-equal? core '(List Int))
+  (check-equal? (rewrap 'Int) '(Borrowed Int r)))
+
+(let-values ([(core rewrap) (peel-eliminate-wrapper '(BorrowedMut (List Int) r))])
+  (check-equal? core '(BorrowedMut (List Int) r))
+  (check-equal? (rewrap 'Int) 'Int))
+
+(let-values ([(core rewrap) (peel-eliminate-wrapper '(List Int))])
+  (check-equal? core '(List Int))
+  (check-equal? (rewrap 'Int) 'Int))
+
+(let-values ([(core _rewrap)
+              (peel-eliminate-wrapper '(Owned (Owned (List Int))))])
+  (check-equal? core '(Owned (List Int))))
