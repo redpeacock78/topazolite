@@ -325,3 +325,61 @@
                      (Apply (RegionApp nats ((RParam a))) 0))
              '() guarded-callables)
    'Unknown))
+
+(define c4-owned-callables
+  '((c4-owned-loop-id (NFn ((Owned (List Int))) Int () ()))))
+
+(define c4-owned-loop
+  '(Recur c4-owned-loop-id loop (xs)
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) -> 0)))
+          (Apply loop (Construct (Owned (List Int)) nil))))
+
+(test-case "C4-002: Owned を包んだ走査対象の Eliminate が分類できる"
+  (check-equal? (classify c4-owned-loop '() c4-owned-callables)
+                '(Finite structural)))
+
+(define (c4-borrowed-callables wrapper)
+  `((c4-borrowed-loop-id (NFn (,wrapper) Int () ()))))
+
+(define (c4-borrowed-loop wrapper)
+  `(Recur c4-borrowed-loop-id loop (xs)
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) -> (Apply loop tail))))
+          (Apply loop (Construct ,wrapper nil))))
+
+;; 欄の rewrap を落とすと、Borrowed で包まれた関数を素の NFn として
+;; 誤って適用できる。latent-row-safe? がこの差を検出する fixture である。
+;; Unknown は latent-row-safe? の fail-closed な既定によるため、包みつきの関数欄を
+;; 将来受理する変更を入れるときは、この期待値も見直す。
+(define c4-borrowed-function-type
+  '(Borrowed (Option (NFn (Int) Int () ())) 0))
+
+(define c4-borrowed-function-loop
+  `(Recur c4-borrowed-loop-id loop (xs)
+          (Eliminate xs
+                     ((none () -> 0)
+                      (some (f) -> (Apply f 0))))
+          (Apply loop (Construct ,c4-borrowed-function-type none))))
+
+(define (c4-borrowed-function-callables type)
+  `((c4-borrowed-loop-id (NFn (,type) Int () ()))))
+
+(test-case "C4-006c: 分類器は Borrowed を剥がし BorrowedMut を剥がさない"
+  (check-equal?
+   (classify (c4-borrowed-loop '(Borrowed (List Int) 0))
+             '()
+             (c4-borrowed-callables '(Borrowed (List Int) 0)))
+   '(Finite structural))
+  (check-equal?
+   (classify c4-borrowed-function-loop
+             '()
+             (c4-borrowed-function-callables c4-borrowed-function-type))
+   'Unknown)
+  (check-equal?
+   (classify (c4-borrowed-loop '(BorrowedMut (List Int) 0))
+             '()
+             (c4-borrowed-callables '(BorrowedMut (List Int) 0)))
+   'Unknown))

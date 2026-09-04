@@ -63,11 +63,18 @@
 
 (define (branch-contexts scrutinee branches environment callables)
   (match (core-type-of scrutinee '() callables environment)
-    [(list data-type _)
-     (define schema (constructor-schema data-type))
-     (and schema
-          (let ([contexts
-                 (for/list ([branch (in-list branches)])
+    [(list wrapper-type _)
+     ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引き、
+     ;; 剥がした型で schema を引いてから、欄の型を包み直す。
+     (define-values (data-type rewrap)
+       (peel-eliminate-wrapper wrapper-type))
+     (define schema-core (constructor-schema data-type))
+     (and schema-core
+          (let* ([schema
+                  (for/list ([row (in-list schema-core)])
+                    (list (first row) (map rewrap (second row))))]
+                 [contexts
+                  (for/list ([branch (in-list branches)])
                    (match branch
                      [`(,constructor (,parameters ...) -> ,body)
                       (define field-types (lookup schema constructor))
