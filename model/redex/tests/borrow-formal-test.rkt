@@ -102,28 +102,26 @@
   (for/and ([r (in-list deferred)] #:when (borrow-request? r))
     (set-member? formals (borrow-request-w r)))))
 
-;; 4。借用の仮引数を持つ RecurVal を落とす。
-;; 再帰の呼出しごとに実引数が変わり、formal 鍵の実体化が出現をまたぐ。
+;; 4。借用の仮引数を持つ RecurVal を受ける。
+;; 再帰の呼出しごとの formal 鍵は G5c5c の重ねで解決する。
 (test-case
- "借用の仮引数を持つ RecurVal を落とす"
+ "RecurVal の署名が借用の仮引数を取れる"
  (define core
    '(Scope (1)
            (RegionLam (a)
                       (RecurVal recb g (x) (Read x)))))
  (define ir (build-region-ir core))
- (check-equal? (failure-key (raw-result core ir 'Int rec-callables))
-               'borrowed-function-parameter))
+ (check-equal? (status core ir 'Int rec-callables) 'ok))
 
-;; 5。継続を持つ Recur 側の guard も同じ key で落とす。
+;; 5。継続を持つ Recur も借用の仮引数を受ける。
 (test-case
- "借用の仮引数を持つ Recur を落とす"
+ "Recur の署名が借用の仮引数を取れる"
  (define core
    '(Scope (1)
            (RegionLam (a)
                       (Recur recb g (x) (Read x) 0))))
  (define ir (build-region-ir core))
- (check-equal? (failure-key (raw-result core ir 'Int rec-callables))
-               'borrowed-function-parameter))
+ (check-equal? (status core ir 'Int rec-callables) 'ok))
 
 ;; 6。formal 借用を入れ子の Lam が捕捉する形を落とす。
 ;; 内側は素の NFn として lookup できるため、ForallRegion の unwrap 失敗で

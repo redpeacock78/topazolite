@@ -64,6 +64,8 @@
          check-region-args
          (struct-out callable-summary)
          lookup-binding
+         make-recur-frame
+         recur-check-roots
          collected-callable-summaries
          collect-use-regions!
          typing-inference
@@ -172,6 +174,34 @@
        (for/first ([f (in-list (recur-overlay))]
                    #:when (memq binding (recur-frame-bindings f)))
          f)))
+
+;; §4.2。仮の状態では雛形が揃っていないため、要約による照合はできない。
+;; 借用の仮引数の位置ごとに、実引数の capability の根がその位置の鍵と
+;; 一致することだけを課す。capability の要素は (cons root path) の組であり、
+;; 直接の仮引数なら (set (cons w '())) となる。ここでは根だけを見て path は
+;; 縛らない。同じ根を持つ射影と再借用は受理し、根が別の鍵になる入れ替えと
+;; 根が解けない場合は落ちる。path を各回で縛らなくても、射影と再借用は根を
+;; 変えず path だけを狭めるため、Ψ の単調な join がその path ごとの要求を
+;; 次の fixpoint の巡へ運ぶ。収束後に新しい根が現れることはない。
+(define (recur-check-roots frame argument-caps node fail)
+  (define formals (recur-frame-formals frame))
+  (unless (= (length formals) (length argument-caps))
+    (fail 'parameter-arity-mismatch node
+          (length formals) (length argument-caps)))
+  (for ([w (in-list formals)] [caps (in-list argument-caps)] #:when w)
+    (when (set-empty? caps)
+      (fail 'unresolved-borrow-owner node))
+    (for ([cap (in-set caps)])
+      (unless (and (pair? cap) (equal? (car cap) w))
+        (fail 'unresolved-borrow-owner node)))))
+
+;; §4.2。収束した巡の箱を確定した要約へ写す。
+;; 形 ii の RegionApp だけが実引数の region で置換するため、置換表は空で置く。
+(define (recur-frame->summary frame)
+  (callable-summary (recur-frame-formals frame)
+                    (reverse (unbox (recur-frame-collector frame)))
+                    (recur-frame-result-index frame)
+                    (hash)))
 
 (define (owning-frame w)
   (for/first ([f (in-list (template-collectors))]
@@ -1419,10 +1449,6 @@
          [`(Scope () ,inner)
           (check-owned-encoding parameters parameter-types inner node fail)]
          [_ (fail 'owned-parameter-missing-binding node)]))
-     ;; §5.1。再帰の呼出し位置ごとに実引数が変わり、formal 鍵の実体化が
-     ;; 呼出しの出現をまたぐ。本サイクルでは受けない。
-     (when (ormap borrow-typed? parameter-types)
-       (fail 'borrowed-function-parameter node))
      (recur-prelude signature parameter-types return-type
                     latent-row obligations region-params)]
     ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
@@ -2277,8 +2303,17 @@
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-row ,obligations)
               _ _)
+        ;; §4.2。再帰の束縛は、環境から引いた対の同一性で判別する。名前で
+        ;; 引くと、本体の中の Let が影にした同名の束縛を再帰と見なす。
+        (define function-name (peel-node function))
+        (define frame
+          (and (symbol? function-name)
+               (recur-frame-for (lookup-binding environment function-name))))
         (define summary
-          (or (lookup-callable-summary (enter-child Λ 0) function)
+          (or (and frame
+                   (eq? (recur-frame-state frame) 'final)
+                   (recur-frame->summary frame))
+              (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
@@ -2290,9 +2325,11 @@
         ;; summary の無い concrete NFn は、従来の関数境界の診断を引数の
         ;; 照合より先に返す。summary のある callable だけ実体化へ進む。
         (when (and (not summary)
+                   (not frame)
                    (ormap unbound-borrowed-type? parameter-types))
           (fail 'borrowed-function-parameter function))
         (when (and (not summary)
+                   (not frame)
                    (unbound-borrowed-type? return-type))
           (fail 'borrowed-function-result function))
         (define argument-result
@@ -2304,7 +2341,7 @@
           (ormap borrow-typed? parameter-types))
         ;; 既存の concrete NFn は本体の出現要約を持たないため、従来の
         ;; unbound 診断を保つ。ForallRegion の要約欠落だけを fail-closed にする。
-        (when (and (not summary) borrow-parameters?)
+        (when (and (not summary) (not frame) borrow-parameters?)
           (unless (or (not (borrow-region return-type))
                       (forwarding-index parameter-types return-type))
             (fail 'unresolved-borrow-owner core)))
@@ -2315,6 +2352,9 @@
             (if (borrow-typed? τ)
                 (argument-capabilities Λ a i fail)
                 (set))))
+        ;; §4.2。仮の状態の再帰呼出しは、雛形の実体化ではなく根の制約で受ける。
+        (when (and frame (eq? (recur-frame-state frame) 'tentative))
+          (recur-check-roots frame argument-caps core fail))
         (define next-psi (second argument-result))
         (when summary
           (define formals (callable-summary-formals summary))
