@@ -383,3 +383,34 @@
              '()
              (c4-borrowed-callables '(BorrowedMut (List Int) 0)))
    'Unknown))
+
+(define owned-list-callables
+  '((owned-list-id (NFn ((Owned (List Int))) Int () ()))))
+
+;; Scope と Let の連なりに包まれ、Move を挟んで分解と再帰呼び出しを行う本体。
+(define owned-move-loop
+  '(Recur owned-list-id loop (xs)
+          (Scope ()
+                 (Let (ys (Owned (List Int))) xs
+                      (Eliminate (Move ys)
+                                 ((nil () -> 0)
+                                  (cons (head tail) -> (Apply loop (Move tail)))))))
+          (Apply loop (Construct (Owned (List Int)) nil))))
+
+(test-case "C4-003: 別名を跨ぎ Move を挟んだ構造的減少が Finite になる"
+  (check-equal? (classify owned-move-loop '() owned-list-callables)
+                '(Finite structural)))
+
+;; Move で束縛した名前は別名ではない。所有が移るのは同じだが、
+;; bound が記号でないため根の同一性を引き継がない。
+(define owned-move-alias-loop
+  '(Recur owned-list-id loop (xs)
+          (Let (ys (Owned (List Int))) (Move xs)
+               (Eliminate ys
+                          ((nil () -> 0)
+                           (cons (head tail) -> (Apply loop tail)))))
+          (Apply loop (Construct (Owned (List Int)) nil))))
+
+(test-case "C4-004: Move で束縛した名前は根の別名にならない"
+  (check-not-equal? (classify owned-move-alias-loop '() owned-list-callables)
+                    '(Finite structural)))

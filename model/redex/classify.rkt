@@ -334,6 +334,24 @@
     (for/fold ([remaining variables])
               ([name (in-list names)])
       (set-remove remaining name)))
+  ;; Move は構造を保つ透過的な操作であり、根の同一性を変えない。
+  ;; 所有は移るが、構造的減少の判定は構造だけを見るため影響しない。
+  (define (transparent-root core)
+    (match core
+      [`(Move ,inner) (transparent-root inner)]
+      [_ core]))
+  ;; Let の binder は外側の名前を落とすが、束縛する項がその名前そのものなら
+  ;; 別名であり、根の資格をそのまま引き継ぐ。落としてから引き継ぎ直す。
+  (define (rebind name bound decomposable strict)
+    (define alias (and (symbol? bound) bound))
+    (define kept-decomposable?
+      (and alias (set-member? decomposable alias)))
+    (define kept-strict?
+      (and alias (set-member? strict alias)))
+    (define next-decomposable (set-remove decomposable name))
+    (define next-strict (set-remove strict name))
+    (values (if kept-decomposable? (set-add next-decomposable name) next-decomposable)
+            (if kept-strict? (set-add next-strict name) next-strict)))
   (define (walk core decomposable strict target-visible?)
     (match core
       [(or (? integer?) (? string?) 'unit (? symbol?)) #t]
@@ -374,28 +392,29 @@
        (and
         (if (and target-visible? (eq? head target))
             (and (= (length arguments) (length parameters))
-                 (let ([argument (list-ref arguments position)])
+                 (let ([argument (transparent-root (list-ref arguments position))])
                    (and (symbol? argument) (set-member? strict argument))))
             (walk function decomposable strict target-visible?))
         (andmap (lambda (argument)
                   (walk argument decomposable strict target-visible?))
                 arguments))]
       [`(Let (,name ,_) ,bound ,body)
+       (define-values (next-decomposable next-strict)
+         (rebind name bound decomposable strict))
        (and (walk bound decomposable strict target-visible?)
-            (walk body
-                  (set-remove decomposable name)
-                  (set-remove strict name)
+            (walk body next-decomposable next-strict
                   (and target-visible? (not (eq? name target)))))]
       [`(Let (,name ,_ ,_) ,bound ,body)
+       (define-values (next-decomposable next-strict)
+         (rebind name bound decomposable strict))
        (and (walk bound decomposable strict target-visible?)
-            (walk body
-                  (set-remove decomposable name)
-                  (set-remove strict name)
+            (walk body next-decomposable next-strict
                   (and target-visible? (not (eq? name target)))))]
       [`(Eliminate ,scrutinee (,branches ...))
+       (define root-of-scrutinee (transparent-root scrutinee))
        (define decomposed?
-         (and (symbol? scrutinee)
-              (set-member? decomposable scrutinee)))
+         (and (symbol? root-of-scrutinee)
+              (set-member? decomposable root-of-scrutinee)))
        (and
         (walk scrutinee decomposable strict target-visible?)
         (for/and ([branch (in-list branches)])
