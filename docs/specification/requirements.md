@@ -718,9 +718,8 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `expansion-trace` | `diagnostic.md` §3 | Phase 2 以降 | §13.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
-| region 多相な再帰関数 | `borrow.md` §8 | G5c5c | §11.5.8 |
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
-| 閉包と部分適用と再帰が運ぶ region と借用の provenance | `borrow.md` §14 | G5c5c | §15 |
+| 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 1 以降 | §15 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
@@ -735,7 +734,7 @@ borrow.md §14 の未回収 2 件は、同節の項目に対応して本表へ�
 所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
 観測された `Owned` leaf の token の retire は `core-calculus.md` §5 の token 状態の規定に属し、borrow.md の節へは立てないため 4 列目を「無し」とする。
 
-`Owned` の位置を根とする構造的減少を G5c5c の他の行へ含めないのは、`Eliminate` が `Owned<τ>` を data 型へ剥がさないという型体系側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
+`Owned` の位置を根とする構造的減少を provenance の行と同じ段へ含めないのは、`Eliminate` が `Owned<τ>` を data 型へ剥がさないという型体系側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
 この制限の理由は `core-calculus.md` §6.2 に書いてあり、本表の記載元もその節を指す。
 ホワイトペーパーに対応する節が無いため、4 列目は「無し」である。
 
