@@ -164,3 +164,104 @@
  (check-equal? (failure-key-for (set (cons 'other '(field))))
                'unresolved-borrow-owner)
  (check-equal? (failure-key-for (set)) 'unresolved-borrow-owner))
+
+;; 形 ii。署名そのものが ForallRegion である再帰。
+(define forall-callables
+  '((recf (ForallRegion (a)
+            (NFn ((BorrowedMut Int (RParam a))) Int () ())))
+    (useb (NFn ((BorrowedMut Int (RParam a))) Int () ()))))
+
+;; 9。dual-cell の回帰。同じ Recur の本体が剥がした NFn を、継続が
+;; ForallRegion を見る。片方の環境しか直していない実装はここで落ちる。
+(test-case
+ "形 ii の本体は素の呼出し、継続は RegionApp を経る呼出しになる"
+ (check-both-ok
+  '(Scope (1)
+     (RegionLam (a)
+       (Recur recf f (x)
+              (Apply f x)
+              (Lam User useb (y) (Apply (RegionApp f ((RParam a))) y)))))
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  forall-callables
+  '(ForallRegion (a.0)
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+
+;; 10。継続で包みを剥がさずに呼ぶと、関数の型が ForallRegion のままである。
+(test-case
+ "形 ii の継続が RegionApp を経ずに呼ぶと落ちる"
+ (check-both-fail
+  '(Scope (1)
+     (RegionLam (a)
+       (Recur recf f (x)
+              (Apply f x)
+              (Lam User useb (y) (Apply f y)))))
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  forall-callables
+  '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  'apply-non-function))
+
+;; 11。Let を挟まない RegionApp。関数の位置が名前でも RegionLam でもない。
+(test-case
+ "RecurVal を直接 RegionApp へ渡せる"
+ (check-both-ok
+  '(Scope (1)
+     (RegionLam (a)
+       (RegionApp (RecurVal recf f (x) (Read x)) ((RParam a)))))
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  forall-callables
+  '(ForallRegion (a.0)
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+
+;; 12。本体の借用の使用が雛形として溜まり、継続の呼出しで実体化される。
+;; 収集器を template-collectors へ積んでいない実装は、route-deferred! が
+;; 持ち主の段を見つけられず unresolved-borrow-owner で落ちる。
+(test-case
+ "形 ii の本体の借用の使用が継続の呼出しで実体化される"
+ (check-both-ok
+  '(Scope (1)
+     (RegionLam (a)
+       (Recur recf f (x)
+              (Let (t let Int) (Read x) (Apply f x))
+              (Lam User useb (y) (Apply (RegionApp f ((RParam a))) y)))))
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  forall-callables
+  '(ForallRegion (a.0)
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+
+;; 13。外側に RegionLam が無い形 ii。rp を束縛するのは署名だけである。
+;; 継続は Scope の生きた region を実引数にして包みを剥がす。
+;; 外側の RegionLam が rp を束縛していることに頼る実装はここで落ちる。
+(test-case
+ "外側に RegionLam が無くても形 ii が通る"
+ (check-both-ok
+  '(Scope (1)
+     (Recur recf f (x)
+            (Apply f x)
+            (Let (g let (NFn ((BorrowedMut Int (RVar 0))) Int () ()))
+                 (RegionApp f ((RVar 0)))
+                 0)))
+ '() 'Int forall-callables 'Int))
+
+;; 14。RegionApp の置換表は region parameter の並びで作る。2 つの binder を
+;; 逆順に受ける実装や hash の走査順へ依存する実装は、結果型の順序で落ちる。
+(define forall-two-callables
+  '((rec2 (ForallRegion (a b)
+            (NFn ((BorrowedMut Int (RParam a))
+                  (BorrowedMut Int (RParam b)))
+                 Int () ())))))
+
+(test-case
+ "複数の region parameter を RegionApp の位置順で置換する"
+ (check-both-ok
+  '(Scope (1)
+     (RegionLam (a)
+       (RegionLam (b)
+         (RegionApp
+          (RecurVal rec2 f (x y) (Apply f x y))
+          ((RParam a) (RParam b))))))
+  '() 'Int forall-two-callables
+  '(ForallRegion (a.0)
+     (ForallRegion (b.1)
+       (NFn ((BorrowedMut Int (RParam a.0))
+             (BorrowedMut Int (RParam b.1)))
+            Int () ())))))

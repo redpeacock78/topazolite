@@ -1325,8 +1325,18 @@
       (if (assoc (first entry) entries)
           entries
           (cons entry entries))))
+  ;; ForallRegion の binder は、外側の lexical region ではなく callable 自身の
+  ;; 抽象 region である。環境の polymorphic callable を捕捉するときは、その
+  ;; binder を bound-region-params へ一時的に加えて payload の借用を調べる。
+  (define (captured-borrowed? type)
+    (match type
+      [`(ForallRegion (,rps ...) ,body)
+       (unbound-borrowed-type?
+        body
+        (set-union (bound-region-params) (list->set rps)))]
+      [_ (unbound-borrowed-type? type)]))
   (for ([entry (in-list visible)])
-    (when (and (unbound-borrowed-type? (second entry))
+    (when (and (captured-borrowed? (second entry))
                (set-member? free (first entry)))
       (fail 'borrowed-function-capture node))))
 
@@ -1417,7 +1427,8 @@
     [_ (fail 'unknown-callable node)]))
 
 (struct recur-prelude
-  (signature parameter-types return-type latent-row obligations region-params)
+  (signature body-signature binder-params region-params
+   parameter-types return-type latent-row obligations)
   #:transparent)
 
 (define (recur-signature-prelude callable function parameters body
@@ -1427,7 +1438,11 @@
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
   (define signature (resolve-region-params raw-signature))
-  (match signature
+  (define-values (body-signature binder-params)
+    (match signature
+      [`(ForallRegion (,rps ...) ,inner) (values inner rps)]
+      [_ (values signature '())]))
+  (match body-signature
     [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
@@ -1435,45 +1450,51 @@
              (length parameters)))
      (when (check-duplicates (cons function parameters))
        (fail 'duplicate-parameter node))
-     ;; §4.1。境界では、この callable の署名に現れる region parameter だけを
-     ;; 使う。再帰関数は関数の名前を本体の環境へ登録する点が Lam と違うため、
-     ;; 束縛の絞り込みと名前の登録は分けて行う。
+     ;; §4.4。境界では、ForallRegion の binder と、この callable の署名に
+     ;; 現れる外側の region parameter だけを使う。
      (define region-params
-       (set-intersect (bound-region-params)
-                      (region-free-params signature)))
-     (check-function-boundary parameter-types return-type obligations
-                              body (cons function parameters)
-                              environment node fail)
+       (set-union (list->set binder-params)
+                  (set-intersect (bound-region-params)
+                                 (region-free-params body-signature))))
+     (parameterize ([bound-region-params region-params])
+       (check-function-boundary parameter-types return-type obligations
+                                body (cons function parameters)
+                                environment node fail))
      (when (ormap owned-type? parameter-types)
        (match (peel-node body)
          [`(Scope () ,inner)
           (check-owned-encoding parameters parameter-types inner node fail)]
          [_ (fail 'owned-parameter-missing-binding node)]))
-     (recur-prelude signature parameter-types return-type
-                    latent-row obligations region-params)]
-    ;; 表の行は (NFn ...) と (ForallRegion (rp ...) (NFn ...)) の 2 つである。
-    ;; ForallRegion の節は段 5 で足す。それまでは表に無い場合と key を共有する。
+     (recur-prelude signature body-signature binder-params region-params
+                    parameter-types return-type latent-row obligations)]
+    ;; 表の行が NFn でない場合は fail-closed にする。
     [_ (fail 'unknown-callable node)]))
 
 (define (infer-recur-value callable function parameters body Λ Ψ
                            environment places callables node fail)
   (match-define
-    (recur-prelude signature parameter-types return-type latent-row
-                   _obligations region-params)
+    (recur-prelude signature body-signature binder-params region-params
+                   parameter-types return-type latent-row _obligations)
     (recur-signature-prelude callable function parameters body
                              environment callables node fail))
   (define function-environment
     (extend environment
             (list function)
             (list signature)))
+  (define body-function-environment
+    (if (null? binder-params)
+        function-environment
+        (extend environment
+                (list function)
+                (list body-signature))))
   (define body-environment
-    (function-body-environment function-environment
+    (function-body-environment body-function-environment
                                 parameters parameter-types))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
   (define formals
     (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
       (and (borrow-typed? τ) (formal-designator Λ node i))))
-  (define recur-binding (lookup-binding function-environment function))
+  (define recur-binding (lookup-binding body-function-environment function))
   ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
   (define body-context
     (for/fold ([Λ_b (enter-child Λ 0)])
@@ -1502,30 +1523,45 @@
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
            (fixpoint Ψ_next))]))
-  (match-define (list body-row Ψ_body _frame) (fixpoint Ψ))
+  (match-define (list body-row Ψ_body frame) (fixpoint Ψ))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
+  ;; §4.4。RecurVal は継続を持たないので、剥がした本体の要約を自身の
+  ;; 出現へ登録する。RegionApp がこの節点を直接参照できるようにする。
+  (record-callable-summary! Λ node (recur-frame->summary frame) fail)
   (list signature '() Ψ))
 
 (define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
   (match-define
-    (recur-prelude signature parameter-types return-type latent-row
-                   _obligations region-params)
+    (recur-prelude signature body-signature binder-params region-params
+                   parameter-types return-type latent-row _obligations)
     (recur-signature-prelude callable function parameters body
                              environment callables node fail))
   (define function-environment
     (extend environment
             (list function)
             (list signature)))
+  ;; §4.4。本体は剥がした NFn、継続は元の ForallRegion を見る。形 i は
+  ;; 包みが無いので同じ環境の対を共有し、形 ii だけ本体側を別に作る。
+  (define body-function-environment
+    (if (null? binder-params)
+        function-environment
+        (extend environment
+                (list function)
+                (list body-signature))))
   (define body-environment
-    (function-body-environment function-environment
+    (function-body-environment body-function-environment
                                parameters parameter-types))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
   (define formals
     (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
       (and (borrow-typed? τ) (formal-designator Λ node i))))
-  (define recur-binding (lookup-binding function-environment function))
+  (define bindings
+    (if (null? binder-params)
+        (list (lookup-binding function-environment function))
+        (list (lookup-binding body-function-environment function)
+              (lookup-binding function-environment function))))
   ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
   ;; infer-lam の body-context と同じ形にそろえる。
   (define body-context
@@ -1536,9 +1572,10 @@
   (define (fixpoint Ψ_in)
     (define collector (box '()))
     (define tentative
-      (make-recur-frame (list recur-binding) formals
+      (make-recur-frame bindings formals
                         (forwarding-index parameter-types return-type)
-                        collector 'tentative 1))
+                        collector 'tentative
+                        (if (null? binder-params) 1 2)))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
@@ -2275,15 +2312,24 @@
             (values rp rho)))
         (define substituted-body
           (subst-region-params body-type actual-regions))
-        ;; §5.4。RegionApp の実引数の代入も、alpha-rename-all-region-lams が
-        ;; 入口で全 binder 名を一意にした前提に依る。これにより代入値の自由な
-        ;; RParam が対象の項の同名 binder に捕獲されない。
+        ;; §5.4。点と節点は同じ規約で動かす。RegionLam のときだけ包みを
+        ;; 1 段余計に降り、そうでないときは Apply と同じ規約にする。
+        (define-values (inner-point inner-node)
+          (match (peel-node function)
+            [`(RegionLam ,_ ,body)
+             (values (enter-child (enter-child Λ 0) 0) body)]
+            [_ (values (enter-child Λ 0) function)]))
+        (define function-name (peel-node function))
+        ;; Recur の継続は元の ForallRegion を環境に持つため、素の名前の
+        ;; RegionApp は再帰の重ねから確定要約を複製する。
+        (define frame
+          (and (symbol? function-name)
+               (recur-frame-for (lookup-binding environment function-name))))
         (define inner
-          (lookup-callable-summary
-           (enter-child (enter-child Λ 0) 0)
-           (match (peel-node function)
-             [`(RegionLam ,_ ,body) body]
-             [_ function])))
+          (or (lookup-callable-summary inner-point inner-node)
+              (and frame
+                   (eq? (recur-frame-state frame) 'final)
+                   (recur-frame->summary frame))))
         (when inner
           (record-callable-summary!
            Λ core
