@@ -298,3 +298,24 @@
      (core-type-of core '() callables)
      (list type row)
      (format "agreement for ~s" source))))
+
+(test-case "C4-001: Owned を包んだ走査対象の Eliminate が elaborate できる"
+  (check-false
+   (elaboration-error?
+    (elab
+     '(Fn ((xs (Owned (List Int)))) Int (Own)
+          (Eliminate (Move xs)
+                     ((nil () -> 0)
+                      (cons (head tail) -> 0))))))))
+
+;; ucore.rkt の uτ に Borrowed が無いため、UCore+ と UCore の照合が
+;; 両方失敗し、elab は invalid-syntax で落ちる。
+;; resolve-annotation の invalid-type-annotation には届かない。
+(test-case "C4-006a: surface の Borrowed 注釈は文法の照合で落ちる"
+  (check-true
+   (elaboration-error?
+    (elab
+     '(Fn ((xs (Borrowed (List Int) 0))) Int ()
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) -> 0))))))))

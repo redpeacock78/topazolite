@@ -669,9 +669,15 @@
                              environment delta propositions boundaries)
       (define scrutinee-result
         (synth scrutinee environment delta propositions boundaries))
-      (define schema (constructor-schema (judgment-type scrutinee-result)))
-      (unless schema
+      ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引く。
+      (define-values (data-type rewrap)
+        (peel-eliminate-wrapper (judgment-type scrutinee-result)))
+      (define schema-core (constructor-schema data-type))
+      (unless schema-core
         (reject eliminate-span 'non-data-eliminate (judgment-type scrutinee-result)))
+      (define schema
+        (for/list ([row (in-list schema-core)])
+          (list (first row) (map rewrap (second row)))))
       (define expected-constructors (map first schema))
       (define actual-constructors
         (for/list ([raw-branch (in-list branches)])
