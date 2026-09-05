@@ -290,6 +290,11 @@
                'Int
                '())))
 
+(test-case "Ω の Observed state は G2m config 文法で拒否される"
+  (check-false
+   (redex-match? G2m config
+                 '(cfg 1 () ((0 Observed)) () ()))))
+
 (test-case "制御項の Available な leaf は構造側に一度だけ現れる"
   (check-true
    (config-ok? '(cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
@@ -385,6 +390,25 @@
     '()
     'Unit
     '(Own))))
+
+(test-case "Moved token を obs payload に置く構成は不正である"
+  (check-false
+   (config-ok?
+    '(cfg unit () () (((tok 0) Moved))
+          ((obs (OwnedLeaf (tok 0) (resource 1)))))
+    '()
+    'Unit
+    '())))
+
+(test-case "Dropped token を 2 つの obs payload に置く構成は不正である"
+  (check-false
+   (config-ok?
+    '(cfg unit () () (((tok 0) Dropped))
+          ((obs (OwnedLeaf (tok 0) (resource 1)))
+           (obs (OwnedLeaf (tok 0) (resource 1)))))
+    '()
+    'Unit
+    '())))
 
 (test-case "retire 済みの token が obs payload に残る終状態を受理する"
   (check-true

@@ -138,7 +138,7 @@
   (π ::= (p ...))
   (c ::= .... (Error p))
 
-  (state ::= Available Moved Observed Dropped)
+  (state ::= Available Moved Dropped)
   ;; 値の内部に置く所有資源の印。根の値には置かず、config-ok? が拒否する。
   (v ::= .... (OwnedLeaf tk v))
   ;; record の field 名。借用だけでなく G1m の値走査も使うため、
@@ -152,7 +152,8 @@
   ;; 値の内部の Owned 資源を識別する token。
   (tk ::= (tok natural))
   ;; token の状態。root の所有を持つ Ω とは別の写像である。
-  (Λtok ::= ((tk state) ...))
+  (tkstate ::= Available Moved Observed Dropped)
+  (Λtok ::= ((tk tkstate) ...))
   (event ::= (obs v) (fin p) (finLeaf p (fseg fseg ...)))
   (θ ::= (event ...))
   (config ::= (cfg c H Ω Λtok θ))
