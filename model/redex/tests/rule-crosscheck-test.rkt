@@ -12,8 +12,9 @@
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
-;; 4 組が 1 本へ畳まれ、R-Discharge と R-OwnLeaf と R-EliminateRef と
-;; G2m 固有規則が目標側に無いため、値の相異なる集合は 20 本になる。
+;; 4 組が 1 本へ畳まれ、R-Discharge、R-OwnLeaf、R-EliminateRef、
+;; R-RetireValue、R-RetireError、R-RetirePerform と G2m 固有規則が
+;; 目標側に無いため、値の相異なる集合は 20 本になる。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
@@ -46,6 +47,9 @@
     (R-OwnLeaf      . #f)
     (R-Drop         . R-PR-Drop)
     (R-Yield        . R-PR-Yield)
+    (R-RetireValue  . #f)
+    (R-RetireError  . #f)
+    (R-RetirePerform . #f)
     (R-Suspend      . R-PR-Suspend)
     (R-ScopeValue   . R-PR-ScopeValue)
     (R-ScopeAbort   . R-PR-ScopeAbort)
@@ -65,8 +69,8 @@
   (list->set (reduction-relation->rule-names -->g2/rules)))
 
 (test-case
- "-->g1/rules declares 22 rules"
- (check-equal? (set-count g1-rule-names) 22))
+ "-->g1/rules declares 25 rules"
+ (check-equal? (set-count g1-rule-names) 25))
 
 (test-case
  "-->g2/rules adds exactly sixteen names to -->g1/rules"
@@ -79,12 +83,12 @@
                     'R-Read 'R-ReadMut 'R-Assign 'R-RegionApp
                     'R-EliminateRef))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 38))
+ (check-equal? (set-count g2-rule-names) 41))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 38))
+ (check-equal? (length rule-correspondence) 41))
 
 (test-case
  "the target side has 20 rules"

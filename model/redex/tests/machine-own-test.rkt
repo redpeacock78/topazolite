@@ -350,25 +350,38 @@
 
 ;; Yield は payload の leaf token を Available から Observed へ移す。
 (test-case
- "R-Yield moves payload leaf tokens to Observed"
+ "R-Retire drops every Observed token at the terminal"
  (define result
    (run-g2 (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit)
                       () () (((tok 0) Available)) ()))
            10))
- (check-equal? (list-ref result 4) (term (((tok 0) Observed))))
+ (check-equal? (list-ref result 4) (term (((tok 0) Dropped))))
  (check-equal? (list-ref result 5)
                (term ((obs (OwnedLeaf (tok 0) (resource 1)))))))
+
+;; Yield の直後は Observed であり、終端に達するまで retire しない。
+(test-case
+ "R-Yield leaves the payload token Observed before the terminal"
+ (define next
+   (apply-reduction-relation
+   -->g2
+    (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit)
+               () () (((tok 0) Available)) ()))))
+ (check-equal? (length next) 1)
+ (check-equal? (list-ref (car next) 4) (term (((tok 0) Observed)))))
 
 ;; 同じ観測 payload に複数の leaf がある場合、全 token が同時に遷移する。
 (test-case
  "R-Yield moves every payload leaf token in one transition"
- (define result
-   (run-g2 (term (cfg (Yield (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
-                                  (g mut (OwnedLeaf (tok 1) (resource 2)))))
-                             unit)
-                      () () (((tok 0) Available) ((tok 1) Available)) ()))
-           10))
- (check-equal? (list-ref result 4)
+ (define next
+   (apply-reduction-relation
+    -->g2
+    (term (cfg (Yield (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
+                            (g mut (OwnedLeaf (tok 1) (resource 2)))))
+                       unit)
+               () () (((tok 0) Available) ((tok 1) Available)) ()))))
+ (check-equal? (length next) 1)
+ (check-equal? (list-ref (car next) 4)
                (term (((tok 0) Observed) ((tok 1) Observed)))))
 
 ;; 未登録の token を含む payload の Yield は発火しない。
@@ -402,3 +415,28 @@
    (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit)
               () () (((tok 0) Observed)) () )))
   '()))
+
+;; 内側 Scope の finalize は Observed を触らない。retire は終端だけで起きる。
+(test-case
+ "inner Scope finalization keeps Observed tokens Observed"
+ (define next
+   (apply-reduction-relation
+    -->g2
+    (term (cfg (Scope ()
+                      (Scope ()
+                             (Yield (OwnedLeaf (tok 0) (resource 1)) unit)))
+               () () (((tok 0) Available)) ()))))
+ (define after-yield (car next))
+ (define after-exit
+   (car (apply-reduction-relation -->g2 after-yield)))
+ (check-equal? (list-ref after-exit 4) (term (((tok 0) Observed)))))
+
+;; G2m の Rec を payload に持つ観測でも、終端で Observed が Dropped になる。
+(test-case
+ "R-Retire fires for a Rec payload terminal in G2m"
+ (define result
+   (run-g2 (term (cfg (Yield (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))))
+                             unit)
+                      () () (((tok 0) Available)) ()))
+           10))
+ (check-equal? (list-ref result 4) (term (((tok 0) Dropped)))))

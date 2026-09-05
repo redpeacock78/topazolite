@@ -1131,6 +1131,23 @@ E[Apply(RecurVal(r, f, (x1, …, xk), c), v1, …, vk)]
 token のいずれか一つでも `Λtok` に無いか `Available` でない場合、および同じ token が一つの payload に二度現れる場合は規則を適用しない。
 R-Yield は `fin`/`finLeaf` イベントを記録しない。
 
+**(R-Retire)**
+
+```text
+c が値、OwnershipError の Error(p)、または最外の Perform(op, v) のいずれかであり
+Λtok に Observed の token が一つ以上ある
+
+⟨c, H, Ω, Λtok, θ⟩ → ⟨c, H, Ω, Λtok', θ⟩
+  Λtok' は Λtok の Observed をすべて Dropped へ移したもの
+```
+
+R-Retire は実行の終端で一度だけ発火する。
+発火後は `Observed` が残らないため再度は発火しない。
+`θ` は変えない。
+観測された leaf は root place と field path を持たず `finLeaf` イベントを組み立てられないため、retire は event を伴わない状態遷移として記録する。
+`θ` に現れる `finLeaf` の集合は従来どおり root に紐づく回収だけを表す。
+`Observed` が残ったまま停止する構成は正当な終状態と認めない。
+
 **(R-Suspend)**
 
 ```text
@@ -1265,6 +1282,8 @@ op の一致は境界 ID b と型 τ の両方の一致である。
 ```
 
 観測は `yield` が生成する値の列であり、`fin` と `finLeaf` イベントは観測に数えない。
+終端構成は R-Retire を通った後のものを指す。
+R-Retire は制御項を変えないため、観測関係の分類（value、OwnershipError、perform）は変わらない。
 Productive の意味はこの関係で与える。
 計算全体が停止しなくても、各 n について有限ステップで n 個目の観測に到達できればよい。 [REQ: REC-002]
 

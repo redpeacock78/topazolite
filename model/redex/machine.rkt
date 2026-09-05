@@ -369,6 +369,29 @@
   [(leaves-observable? v Λtok)
    ,(leaves-observable?/proc (term v) (term Λtok))])
 
+;; Observed の token が一つでもあるかを見る。R-Retire の発火条件であり、
+;; これが無いと終端の config が自分自身へ遷移し続ける。Λtok の文法を
+;; 拡張するときは G2m 用の /g2 版も追加する。
+(define (has-observed?/proc tokens)
+  (for/or ([entry (in-list tokens)])
+    (eq? (second entry) 'Observed)))
+
+;; Observed の token をすべて Dropped の tombstone へ移す。順序は保つ。
+;; Λtok の文法を拡張するときは G2m 用の /g2 版も追加する。
+(define (retire-observed/proc tokens)
+  (for/list ([entry (in-list tokens)])
+    (if (eq? (second entry) 'Observed)
+        (list (first entry) 'Dropped)
+        entry)))
+
+(define-metafunction G1m
+  has-observed? : Λtok -> boolean
+  [(has-observed? Λtok) ,(has-observed?/proc (term Λtok))])
+
+(define-metafunction G1m
+  retire-observed : Λtok -> Λtok
+  [(retire-observed Λtok) ,(retire-observed/proc (term Λtok))])
+
 (define-metafunction/extension finalize
   G2m
   finalize/g2 : π H Ω Λtok θ -> any)
@@ -534,6 +557,29 @@
         (where Λtok_final (observe-leaves v_observed Λtok))
         (side-condition (term (leaves-observable? v_observed Λtok)))
         R-Yield)
+
+   ;; 実行の終端で、観測者へ引き渡した leaf の token をまとめて回収する。
+   ;; 制御項を hole 抜きで照合し、評価途中の Perform では発火させない。
+   ;; θ は変えない。観測された leaf は root place と field path を持たないので
+   ;; finLeaf event を組み立てられず、retire は event を伴わない遷移とする。
+   (--> (cfg v H Ω Λtok θ)
+        (cfg v H Ω Λtok_final θ)
+        (side-condition (term (has-observed? Λtok)))
+        (where Λtok_final (retire-observed Λtok))
+        R-RetireValue)
+
+   (--> (cfg (Error p) H Ω Λtok θ)
+        (cfg (Error p) H Ω Λtok_final θ)
+        (side-condition (term (has-observed? Λtok)))
+        (where Λtok_final (retire-observed Λtok))
+        R-RetireError)
+
+   ;; 最外 Scope を R-ScopeAbort で抜けた後の裸の Perform も終端である。
+   (--> (cfg (Perform op v) H Ω Λtok θ)
+        (cfg (Perform op v) H Ω Λtok_final θ)
+        (side-condition (term (has-observed? Λtok)))
+        (where Λtok_final (retire-observed Λtok))
+        R-RetirePerform)
 
    (--> (cfg (in-hole E (Suspend c_next)) H Ω Λtok θ)
         (cfg (in-hole E c_next) H Ω Λtok θ)

@@ -76,3 +76,27 @@
              (λ () (obs-eval (term unit) -1 fuel)))
   (check-exn exn:fail:contract?
              (λ () (obs-eval (term unit) 1 -1))))
+
+;; 最外 Scope を Perform で抜けた終端でも Observed は Dropped になる。
+(test-case
+ "R-Retire fires at a bare top-level Perform terminal"
+ (define result
+   (run-g2 (term (cfg (Scope ()
+                             (Yield (OwnedLeaf (tok 0) (resource 1))
+                                    (Perform (Return boundary Int) unit)))
+                      () () (((tok 0) Available)) ()))
+           20))
+ (check-equal? (list-ref result 1)
+               (term (Perform (Return boundary Int) unit)))
+ (check-equal? (list-ref result 4) (term (((tok 0) Dropped))))
+ (check-equal? (list-ref result 5)
+               (term ((obs (OwnedLeaf (tok 0) (resource 1)))))))
+
+;; G2m が継承した R-RetireError も G2 の Error 終端へ再解釈される。
+(test-case
+ "R-Retire fires at a G2 Error terminal"
+ (check-equal?
+  (run-g2
+   (term (cfg (Error 0) () () (((tok 0) Observed)) ()))
+   5)
+  (term (cfg (Error 0) () () (((tok 0) Dropped)) ()))))
