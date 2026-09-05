@@ -34,7 +34,7 @@ calculus は次の環境を使う。
 - **Ω（place 状態）**：place p から状態への有限写像。G1 の状態は `Available`、`Moved`、`Dropped` の三値とする。
 - **H（place 格納）**：place p から値への有限写像。
 - **Ξ（place typing）**：place p から型への有限写像。構成の well-formedness（§5.1）で使う。
-- **Λtok（leaf token 状態）**：値の内部の `OwnedLeaf` が持つ token から状態への有限写像。状態は `Available`、`Moved`、`Dropped` の三値とし、`Dropped` の entry は再利用防止の tombstone として残す。
+- **Λtok（leaf token 状態）**：値の内部の `OwnedLeaf` が持つ token から状態への有限写像。状態は `Available`、`Moved`、`Observed`、`Dropped` の四値とし、`Dropped` の entry は再利用防止の tombstone として残す。`Observed` は観測者へ引き渡された leaf の状態であり、trace の `obs` の payload からのみ到達してよい。
 - **θ（観測 trace）**：観測イベントの列。イベントは `obs(v)`（yield による観測値）、`fin(p)`（root の finalization による drop）、`finLeaf(p, fp)`（値内 leaf の finalization による drop）である。`fin(p)` は空 path の `finLeaf(p, ())` に相当する短縮形だが、leaf の path は常に非空である。
 
 boundary stack の操作は次の二つである。
@@ -1007,7 +1007,7 @@ dom(Ξ) = dom(H) = dom(Ω)
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
 
-`Λtok` の live 集合は、制御項、`Ω(p)=Available` の root の値、および trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので live 集合から除く。trace の `obs` の payload は観測後も回収前の値として残るため live 集合へ含める。live 集合での token の重複、`Λtok` に無い token、`Available`/`Moved` なのに live 集合へ一度も現れない token、`Dropped` なのに live 集合へ現れる token は不正である。`Dropped` の tombstone が live 集合に現れないことは正しい。
+`Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
 
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 

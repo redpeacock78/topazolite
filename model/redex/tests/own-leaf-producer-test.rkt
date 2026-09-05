@@ -282,26 +282,30 @@
   (check-equal? (diagnostic-id diagnostic)
                 (diagnostic-code-of 'typing 'unexpected-ownleaf)))
 
-(test-case "θ の obs が持つ leaf の token は live と数える"
+(test-case "θ の obs が持つ leaf の token は Observed である"
   (check-true
-   (config-ok? '(cfg 1 () () (((tok 0) Available))
+   (config-ok? '(cfg 1 () () (((tok 0) Observed))
                      ((obs (OwnedLeaf (tok 0) (resource 1)))))
                '()
                'Int
                '())))
+
+(test-case "制御項の Available な leaf は構造側に一度だけ現れる"
   (check-true
    (config-ok? '(cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
                      () () (((tok 1) Available)) ())
                '()
                'Unit
-               '(Own)))
+               '(Own))))
+
+(test-case "制御項と obs payload に同じ token がある構成は不正である"
   (check-false
    (config-ok? '(cfg (Drop (OwnedLeaf (tok 1) (resource 2)))
                      () () (((tok 1) Available))
                      ((obs (OwnedLeaf (tok 1) (resource 3)))))
                '()
                'Unit
-               '(Own)))
+               '(Own))))
 
 (test-case "obs に現れない Available な token は不正である"
   (check-false
@@ -312,7 +316,7 @@
 
 (test-case "obs の根が leaf であることは正当である"
   (check-true
-   (config-ok? '(cfg 1 () () (((tok 0) Available))
+   (config-ok? '(cfg 1 () () (((tok 0) Observed))
                      ((obs (OwnedLeaf (tok 0) (Rec ((f mut 1)))))))
                '()
                'Int
@@ -344,6 +348,52 @@
     '()
     'Int
     '((Yield (Owned Res))))))
+
+(test-case "obs payload だけに現れる Observed token を受理する"
+  (check-true
+   (config-ok?
+    '(cfg unit () () (((tok 0) Observed))
+          ((obs (OwnedLeaf (tok 0) (resource 1)))))
+    '()
+    'Unit
+    '())))
+
+(test-case "制御項だけに現れる Observed token は不正である"
+  (check-false
+   (config-ok?
+    '(cfg (Drop (OwnedLeaf (tok 0) (resource 1)))
+          () () (((tok 0) Observed)) ())
+    '()
+    'Unit
+    '(Own))))
+
+(test-case "同じ token を 2 つの obs payload に置く構成は不正である"
+  (check-false
+   (config-ok?
+    '(cfg unit () () (((tok 0) Observed))
+          ((obs (OwnedLeaf (tok 0) (resource 1)))
+           (obs (OwnedLeaf (tok 0) (resource 1)))))
+    '()
+    'Unit
+    '())))
+
+(test-case "制御項に残る Dropped token は不正である"
+  (check-false
+   (config-ok?
+    '(cfg (Drop (OwnedLeaf (tok 0) (resource 1)))
+          () () (((tok 0) Dropped)) ())
+    '()
+    'Unit
+    '(Own))))
+
+(test-case "retire 済みの token が obs payload に残る終状態を受理する"
+  (check-true
+   (config-ok?
+    '(cfg unit () () (((tok 0) Dropped))
+          ((obs (OwnedLeaf (tok 0) (resource 1)))))
+    '()
+    'Unit
+    '())))
 
 (test-case "elaborate の Yield producer は spanful OwnLeaf を生成する"
   (define result

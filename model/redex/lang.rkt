@@ -138,7 +138,7 @@
   (π ::= (p ...))
   (c ::= .... (Error p))
 
-  (state ::= Available Moved Dropped)
+  (state ::= Available Moved Observed Dropped)
   ;; 値の内部に置く所有資源の印。根の値には置かず、config-ok? が拒否する。
   (v ::= .... (OwnedLeaf tk v))
   ;; record の field 名。借用だけでなく G1m の値走査も使うため、

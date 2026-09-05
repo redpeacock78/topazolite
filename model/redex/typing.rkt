@@ -3339,15 +3339,16 @@
                       [_ #f]))
     (second event)))
 
-;; 制御項、Available な root の値、θ の obs の payload を token 検査の対象に
-;; する。Moved/Dropped の root の heap entry は R-Move 後の stale value なので
-;; 含めない。
-(define (live-roots core heap states trace)
-  (append (cons core (available-root-values heap states))
-          (observed-values trace)))
+;; 制御項と Available な root の値から到達する token。Moved/Dropped の root の
+;; heap entry は R-Move 後の stale value なので含めない。
+(define (structural-tokens core heap states)
+  (append-map collect-tokens
+              (cons core (available-root-values heap states))))
 
-(define (live-tokens core heap states trace)
-  (append-map collect-tokens (live-roots core heap states trace)))
+;; trace の obs payload から到達する token。観測済みの leaf は root から
+;; 切り離されているため、構造側とは別に数える。
+(define (observed-tokens trace)
+  (append-map collect-tokens (observed-values trace)))
 
 ;; 値である最大の部分項へ leaf-positions-ok? を課し、値でない構成子はその子を
 ;; 透過して見る。Drop (Rec ((f mut leaf))) のような制御項は許す一方、値の位置へ
@@ -3458,22 +3459,34 @@
                            (andmap observed-leaf-positions-ok?
                                    (observed-values trace))
                            (control-leaf-positions-ok? core)
-                           ;; token の live 出現と Λtok の状態を突き合わせる。
-                           (let ([tokens (live-tokens core heap states trace)])
+                           ;; token の構造側・観測側の出現と Λtok の状態を
+                           ;; 突き合わせる。
+                           (let ([structural
+                                  (structural-tokens core heap states)]
+                                 [observed (observed-tokens trace)])
                              (and
-                              (= (length tokens)
-                                 (length (remove-duplicates tokens)))
-                              (for/and ([tk (in-list tokens)])
+                              (= (length structural)
+                                 (length (remove-duplicates structural)))
+                              (= (length observed)
+                                 (length (remove-duplicates observed)))
+                              (not (ormap (lambda (tk)
+                                            (member tk observed))
+                                          structural))
+                              (for/and ([tk (in-list (append structural
+                                                              observed))])
                                 (assoc tk token-states))
                               (for/and ([entry (in-list token-states)])
-                                (define occurrences
+                                (define (count tokens)
                                   (length
                                    (filter (lambda (tk)
                                              (equal? tk (first entry)))
                                            tokens)))
+                                (define s (count structural))
+                                (define o (count observed))
                                 (case (second entry)
-                                  [(Available Moved) (= occurrences 1)]
-                                  [(Dropped) (= occurrences 0)]
+                                  [(Available Moved) (and (= s 1) (= o 0))]
+                                  [(Observed) (and (= s 0) (= o 1))]
+                                  [(Dropped) (and (= s 0) (<= o 1))]
                                   [else #f])))))))))]
            [_ #f])))))
 
