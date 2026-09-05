@@ -114,7 +114,8 @@ C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
 `NFn<P, R, ε, Q>` はホワイトペーパー §11.5.2 の `NFn<P, R, εin, εout, Q, O>` の G1 簡約形である。
 G1 では εin と εout を単一の潜在 Effect row ε に縮約し、適用時の `combine(εa, εi, εo)` を和集合で定義する（§4.3）。
 また、origin O は型成分ではなく値成分として扱う（§3.4）。
-この二点はホワイトペーパーからの意図的な単純化であり、εin / εout の分離と origin の型レベル追跡が必要になった時点（G2 以降）で拡張する。
+εin と εout の分離はホワイトペーパーからの意図的な単純化であり、Phase 1 以降で拡張する。
+origin は §7 の verify-origins による Typed Core 全体の一括検査へ再配置しており、型成分へ戻すのは surface 構文を導入する時点である。
 
 `Res` は affine 資源の基本型であり、G1 の `Owned<τ>` の中身は `Res` に限る（§3.5）。
 `t` は TypeRep（§3.3）が保持する型式である。
@@ -167,7 +168,7 @@ v ::= l                                          リテラル
 ```
 
 G1 の `Handle` は継続を再開しない **abortive handler** に限る。
-継続を再開する一般の algebraic effect handler は、多相との干渉に対する設計選択（ホワイトペーパー §5.2）を要するため G1 では扱わず、G2 以降のサイクルで導入する。
+継続を再開する一般の algebraic effect handler は、多相との干渉に対する設計選択（ホワイトペーパー §5.2）を要するため G1 では扱わず、Phase 1 以降で導入する。
 G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `Yield` と `Suspend` は Perform ではなく専用ノードで表し、観測関係（§6.1）で意味を与える。
 `Error(p)` は elaboration の出力には現れず、簡約（§5.5 R-MoveError）だけが生成する。
@@ -323,7 +324,7 @@ acquire : NFn<(Int), Owned<Res>, {}, ⟨⟩>  値 PrimVal(Reserved(o-acquire), a
 Owned の move / drop / finalization を Redex model で検査するには、`Owned` 型の値を作る経路が初期環境に一つ要る。
 
 TypeInfo の生成は Γ0 の primitive ではなく、専用構文 `typeMake(spec)`（§4.8）だけが担う。
-TypeInfo 生成関数を第一級値として渡す機能は G1 では扱わない。
+TypeInfo 生成関数を第一級値として渡す機能は Phase 1 以降で扱う。
 
 **Δ0（型名）**：
 
@@ -1156,7 +1157,7 @@ E[Suspend(c)] → E[c]
 
 `Suspend` は 1 step を消費する区切りであり、観測イベントを生成しない。
 このため計算分類（§6.2）の guard には数えない。
-Suspend を corecursion の生産性 guard として使う設計は、観測意味論の拡張と併せて G2 以降で扱う。
+Suspend を corecursion の生産性 guard として使う設計は、観測意味論の拡張と併せて Phase 1 以降で扱う。
 
 ### 5.5 move、drop、affine 検査
 
