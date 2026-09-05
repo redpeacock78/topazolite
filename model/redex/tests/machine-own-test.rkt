@@ -347,3 +347,35 @@
                             (((tok 0) Dropped) ((tok 1) Dropped))
                             ((finLeaf 1 (g)) (fin 1)
                              (finLeaf 0 (f)) (fin 0)))))))
+
+;; Yield は payload の leaf token を Available から Observed へ移す。
+(test-case
+ "R-Yield moves payload leaf tokens to Observed"
+ (define result
+   (run-g2 (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit)
+                      () () (((tok 0) Available)) ()))
+           10))
+ (check-equal? (list-ref result 4) (term (((tok 0) Observed))))
+ (check-equal? (list-ref result 5)
+               (term ((obs (OwnedLeaf (tok 0) (resource 1)))))))
+
+;; 同じ観測 payload に複数の leaf がある場合、全 token が同時に遷移する。
+(test-case
+ "R-Yield moves every payload leaf token in one transition"
+ (define result
+   (run-g2 (term (cfg (Yield (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
+                                  (g mut (OwnedLeaf (tok 1) (resource 2)))))
+                             unit)
+                      () () (((tok 0) Available) ((tok 1) Available)) ()))
+           10))
+ (check-equal? (list-ref result 4)
+               (term (((tok 0) Observed) ((tok 1) Observed)))))
+
+;; 未登録の token を含む payload の Yield は発火しない。
+(test-case
+ "R-Yield does not fire for an unregistered payload token"
+ (check-equal?
+  (apply-reduction-relation
+   -->g2
+   (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit) () () () ())))
+  '()))

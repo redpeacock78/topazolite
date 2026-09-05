@@ -1123,8 +1123,13 @@ E[Apply(RecurVal(r, f, (x1, …, xk), c), v1, …, vk)]
 **(R-Yield)**
 
 ```text
-⟨E[Yield(v, c)], H, Ω, Λtok, θ⟩ → ⟨E[c], H, Ω, Λtok, θ · obs(v)⟩
+⟨E[Yield(v, c)], H, Ω, Λtok, θ⟩ → ⟨E[c], H, Ω, Λtok', θ · obs(v)⟩
+  Λtok' = observe-leaves(v, Λtok)
 ```
+
+`observe-leaves` は `v` の内部の `OwnedLeaf` を根の位置を含めて走査し、その token を一括で `Available` から `Observed` へ移す。
+token のいずれか一つでも `Λtok` に無いか `Available` でない場合、および同じ token が一つの payload に二度現れる場合は規則を適用しない。
+R-Yield は `fin`/`finLeaf` イベントを記録しない。
 
 **(R-Suspend)**
 

@@ -334,6 +334,21 @@
 (define (leaves-droppable?/proc value tokens)
   (leaves-available? (walk-owned-leaves-for-drop value) tokens))
 
+;; Yield は payload の leaf token を一括で Observed へ移す。root 位置の leaf も
+;; 観測されるため、Drop と同じく root を含めて列挙する。
+(define (observe-leaves/proc value tokens)
+  (for/fold ([updated tokens])
+            ([leaf (in-list (walk-owned-leaves-for-drop value))])
+    (table-set updated (first leaf) 'Observed)))
+
+;; 一つの payload に同じ token が二度現れると、観測側の出現数が 2 になり
+;; config-ok? が拒否する形へ進む。規則の側で先に塞ぐ。
+(define (leaves-observable?/proc value tokens)
+  (define leaves (walk-owned-leaves-for-drop value))
+  (define ids (map first leaves))
+  (and (= (length ids) (length (remove-duplicates ids)))
+       (leaves-available? leaves tokens)))
+
 (define-metafunction G1m
   drop-leaves : v Λtok -> Λtok
   [(drop-leaves v Λtok)
@@ -343,6 +358,16 @@
   leaves-droppable? : v Λtok -> boolean
   [(leaves-droppable? v Λtok)
    ,(leaves-droppable?/proc (term v) (term Λtok))])
+
+(define-metafunction G1m
+  observe-leaves : v Λtok -> Λtok
+  [(observe-leaves v Λtok)
+   ,(observe-leaves/proc (term v) (term Λtok))])
+
+(define-metafunction G1m
+  leaves-observable? : v Λtok -> boolean
+  [(leaves-observable? v Λtok)
+   ,(leaves-observable?/proc (term v) (term Λtok))])
 
 (define-metafunction/extension finalize
   G2m
@@ -355,6 +380,14 @@
 (define-metafunction/extension leaves-droppable?
   G2m
   leaves-droppable?/g2 : v Λtok -> boolean)
+
+(define-metafunction/extension observe-leaves
+  G2m
+  observe-leaves/g2 : v Λtok -> Λtok)
+
+(define-metafunction/extension leaves-observable?
+  G2m
+  leaves-observable?/g2 : v Λtok -> boolean)
 
 (define (unique-binders? term)
   (and (match term
@@ -497,7 +530,9 @@
    (--> (cfg (in-hole E (Yield v_observed c_next))
              H Ω Λtok (event_old ...))
         (cfg (in-hole E c_next)
-             H Ω Λtok (event_old ... (obs v_observed)))
+             H Ω Λtok_final (event_old ... (obs v_observed)))
+        (where Λtok_final (observe-leaves v_observed Λtok))
+        (side-condition (term (leaves-observable? v_observed Λtok)))
         R-Yield)
 
    (--> (cfg (in-hole E (Suspend c_next)) H Ω Λtok θ)
@@ -778,6 +813,15 @@
         (where Λtok_final (drop-leaves/g2 v_arg Λtok))
         (side-condition (term (leaves-droppable?/g2 v_arg Λtok)))
         R-Drop)
+
+   ;; G2m の Rec を含む payload にも観測を適用する。G1m の同名規則が呼ぶ
+   ;; observe-leaves は G1m の v しか受けないため、G2m 拡張を明示する。
+   (--> (cfg (in-hole E (Yield v_observed c_next)) H Ω Λtok (event_old ...))
+        (cfg (in-hole E c_next) H Ω Λtok_final
+             (event_old ... (obs v_observed)))
+        (where Λtok_final (observe-leaves/g2 v_observed Λtok))
+        (side-condition (term (leaves-observable?/g2 v_observed Λtok)))
+        R-Yield)
 
    (--> (cfg (in-hole E_outer (Scope π_managed v_result)) H Ω Λtok θ)
         (cfg (in-hole E_outer v_result) H Ω_final Λtok_final θ_final)
