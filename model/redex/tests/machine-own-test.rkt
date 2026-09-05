@@ -379,3 +379,26 @@
    -->g2
    (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit) () () () ())))
   '()))
+
+;; 一つの payload に同じ token が二度現れる Yield は発火しない。
+(test-case
+ "R-Yield rejects duplicate payload leaf tokens"
+ (check-equal?
+  (apply-reduction-relation
+   -->g2
+   (term
+    (cfg (Yield (Rec ((f mut (OwnedLeaf (tok 0) (resource 1)))
+                      (g mut (OwnedLeaf (tok 0) (resource 1)))))
+                unit)
+          () () (((tok 0) Available)) () )))
+  '()))
+
+;; Observed token は二度目の Yield で再観測できない。
+(test-case
+ "R-Yield rejects a non-Available payload token"
+ (check-equal?
+  (apply-reduction-relation
+   -->g2
+   (term (cfg (Yield (OwnedLeaf (tok 0) (resource 1)) unit)
+              () () (((tok 0) Observed)) () )))
+  '()))
