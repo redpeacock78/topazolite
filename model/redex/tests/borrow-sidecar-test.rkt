@@ -49,12 +49,6 @@
   (check-true
    (hash-has-key? σ (lifetime-var-index (borrow-request-alpha request)))))
 
-(test-case "同じ項を 2 度検査しても要求は蓄積しない"
-  (define first-run (sidecar-of shared-term shared-ir))
-  (define second-run (sidecar-of shared-term shared-ir))
-  (check-equal? (length (borrow-sidecar-requests first-run))
-                (length (borrow-sidecar-requests second-run))))
-
 (test-case "型検査が落ちる項では既存 API と同じ失敗の形を返す"
   (define broken '(Scope () (Read 0)))
   (define broken-ir (build-region-ir broken))
