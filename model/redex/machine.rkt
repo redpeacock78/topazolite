@@ -14,6 +14,7 @@
          -->g1/rules
          -->g2/rules
          raw-steps-g2
+         raw-steps-g2/named
          inject
          inject-g2
          inject-g2m
@@ -905,6 +906,16 @@
 (define (raw-steps-g2 config)
   (if (unique-binders? config)
       (apply-reduction-relation -->g2/rules config)
+      '()))
+
+;; spec §4.6。規則名は provenance の fail-closed 一覧にだけ使う。
+;; redex の抽出はこの経路を通さず、制御項の構造 diff で独立に行う。
+(define (raw-steps-g2/named config)
+  (if (unique-binders? config)
+      (for/list ([tagged (in-list
+                          (apply-reduction-relation/tag-with-names
+                           -->g2/rules config))])
+        (list (string->symbol (first tagged)) (second tagged)))
       '()))
 
 (define -->g1
