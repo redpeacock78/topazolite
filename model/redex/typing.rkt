@@ -25,6 +25,7 @@
          core-check
          core-check-row
          type-of/raw
+         type-of/raw*+borrows
          typing-visited-points
          config-ok?
          with-config-typing
@@ -3088,7 +3089,8 @@
     [(not (valid-callables? callables)) (list 'invalid-callables callables)]
     [else #f]))
 
-(define (type-of/raw* core-in places callables environment Λ)
+(define (type-of/raw* core-in places callables environment Λ
+                      #:sidecar [sidecar-box #f])
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
@@ -3135,6 +3137,16 @@
               ;; 段 3。
               (check-region-args ir σ (collected-region-args) relation fail)
               (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+              ;; spec §4.4。段 3 が受理した時点の要求と σ を一度だけ写し取る。
+              ;; infer-eliminate は attempts と check-as の双方で枝を走査する
+              ;; ため同じ要求が重複する。check-borrows と同じ remove-duplicates
+              ;; を掛け、順序は入力のまま保つ。
+              (when sidecar-box
+                (set-box! sidecar-box
+                          (borrow-sidecar
+                           (remove-duplicates
+                            (filter borrow-request? (reverse (unbox rs))))
+                           σ)))
               ;; 型の中の α を σ で解いてから正規化する。materialize が core の
               ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
               ;; 置換を正規化より先に置くのは、Union の重複除去が置換の後で
@@ -3161,6 +3173,17 @@
                      [Λ (empty-region-ctx)])
   (match (type-of/raw* core-in places callables environment Λ)
     [(list 'ok (list type row _table _σ _renamed)) (list 'ok (list type row))]
+    [other other]))
+
+;; spec §4.4。性質 8 の bounded 検査だけが使う入口。
+;; 既存の type-of/raw* の返り値と既存の 2 箇所の呼び出しは変えず、成功結果の末尾へ sidecar を足す。
+(define (type-of/raw*+borrows core-in places callables [environment '()]
+                              [Λ (empty-region-ctx)])
+  (define sidecar-box (box #f))
+  (match (type-of/raw* core-in places callables environment Λ
+                       #:sidecar sidecar-box)
+    [(list 'ok (list type row table σ renamed))
+     (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。

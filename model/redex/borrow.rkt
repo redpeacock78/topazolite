@@ -15,6 +15,7 @@
          (struct-out borrow-capability)
          (struct-out psi)
          (struct-out borrow-request)
+         (struct-out borrow-sidecar)
          (struct-out use-request)
          empty-psi
          psi-join
@@ -103,6 +104,10 @@
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
 (struct borrow-request (w fp mode alpha node) #:transparent)
+;; spec §4.4。型検査が段 3 で受理した借用要求と、それを解く σ の組。
+;; box の生参照ではなく呼び出し終了時に確定した不変の値であり、alpha は未解決のまま持つ。
+;; 消費側が sigma で解いて静的側の借用集合を作る。
+(struct borrow-sidecar (requests sigma) #:transparent)
 (struct use-request (w fp operation source point-region node kind otherwise) #:transparent)
 
 (define (empty-psi) (psi (set) (set) (set)))
