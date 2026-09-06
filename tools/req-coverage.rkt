@@ -7,6 +7,7 @@
          coverage-errors
          deferred-test-counts
          default-cycle-descriptors
+         default-pending-ids
          main
          run-coverage)
 
@@ -85,7 +86,7 @@
 (define (sorted-ids ids)
   (sort (set->list ids) string<?))
 
-(define (coverage-analysis registry-path cycles)
+(define (coverage-analysis registry-path cycles pending)
   (define definitions (registry-definitions registry-path))
   (define deferred (registry-deferred registry-path))
   (define counts (make-hash))
@@ -170,6 +171,46 @@
       (format "descriptor ~a declares invalid state: ~a"
               (cycle-descriptor-name cycle)
               (cycle-descriptor-state cycle))))
+  ;; 要件台帳が名乗る状態の ID のうち、descriptor が所有せず pending にも
+  ;; 挙げていないものを検出する。expected 側との照合は下の exact-set-errors
+  ;; が担うため、ここでは台帳から descriptor への向きだけを見る。
+  (define pending-strings (map symbol->string pending))
+  (define pending-set (list->set pending-strings))
+  (define all-owned
+    (for/fold ([owned (set)]) ([ids (in-list owned-sets)])
+      (set-union owned ids)))
+  (define declared-ids
+    (for/fold ([ids (set)]) ([cycle (in-list cycles)])
+      (set-union ids
+                 (state-set definitions (cycle-descriptor-state cycle)))))
+  (define pending-duplicates
+    (sort
+     (for/list ([(id count) (in-hash
+                             (for/fold ([counts (hash)])
+                                       ([id (in-list pending-strings)])
+                               (hash-update counts id add1 0)))]
+                #:when (> count 1))
+       id)
+     string<?))
+  (define reverse-errors
+    (append
+     (for/list ([id (in-list
+                     (sorted-ids
+                      (set-subtract
+                       (set-subtract declared-ids all-owned)
+                       pending-set)))])
+       (format "requirement declares a cycle state but no descriptor owns it: ~a"
+               id))
+     (for/list ([id (in-list (sorted-ids (set-subtract pending-set known)))])
+       (format "pending ID is absent from the registry: ~a" id))
+     (for/list ([id (in-list (sorted-ids (set-intersect pending-set known)))]
+                #:unless (equal? (cdr (assoc id definitions)) "G5"))
+       (format "pending ID declares state ~a instead of G5: ~a"
+               (cdr (assoc id definitions)) id))
+     (for/list ([id (in-list (sorted-ids (set-intersect pending-set all-owned)))])
+       (format "pending ID is already owned by a descriptor: ~a" id))
+     (for/list ([id (in-list pending-duplicates)])
+       (format "pending ID is declared twice: ~a" id))))
   (define (set-difference-errors actual expected source [exempt (set)])
     (append
      (for/list ([id (in-list
@@ -248,28 +289,32 @@
                       (set-subtract (state-set definitions "G1") deferred)
                       g1-tests)))])
       (format "G1 requirement lacks test reference: ~a" id))
-    exact-set-errors)))
+    exact-set-errors
+    reverse-errors)))
 
 (define (coverage-errors registry-path
-                         #:cycles [cycles (default-cycle-descriptors)])
+                         #:cycles [cycles (default-cycle-descriptors)]
+                         #:pending [pending (default-pending-ids)])
   (define-values (_counts _deferred errors)
-    (coverage-analysis registry-path cycles))
+    (coverage-analysis registry-path cycles pending))
   errors)
 
 ;; car は ID の記号、cdr は ID を参照するテストファイルの数である。
 (define (deferred-test-counts registry-path
-                              #:cycles [cycles (default-cycle-descriptors)])
+                              #:cycles [cycles (default-cycle-descriptors)]
+                              #:pending [pending (default-pending-ids)])
   (define-values (_counts deferred-counts _errors)
-    (coverage-analysis registry-path cycles))
+    (coverage-analysis registry-path cycles pending))
   (for/list ([entry (in-list deferred-counts)])
     (cons (string->symbol (car entry)) (cdr entry))))
 
 (define (run-coverage registry-path
                       [output (current-output-port)]
                       [error-output (current-error-port)]
-                      #:cycles [cycles (default-cycle-descriptors)])
+                      #:cycles [cycles (default-cycle-descriptors)]
+                      #:pending [pending (default-pending-ids)])
   (define-values (counts deferred-counts errors)
-    (coverage-analysis registry-path cycles))
+    (coverage-analysis registry-path cycles pending))
   (cond
     [(null? errors)
      (display "Requirement coverage OK: " output)
@@ -362,6 +407,13 @@
 (define expected-g5-ids
   '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007
     VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010))
+
+;; G5 の状態を名乗るが、意図して G5c7 へ送る ID。
+;; expected へ移すときは spec 参照とテスト参照も同時に足す。
+;; 逆向き検査はこの集合を欠落から除く。
+(define pending-g5-ids '(PTR-001 PTR-002))
+
+(define (default-pending-ids) pending-g5-ids)
 
 (define (default-cycle-descriptors)
   (define root (simplify-path (build-path tools-directory 'up)))

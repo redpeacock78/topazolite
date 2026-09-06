@@ -35,7 +35,8 @@
      (define output (open-output-string))
      (define code
        (run-coverage registry-path output (open-output-string)
-                     #:cycles (cycles-of spec-paths test-paths)))
+                     #:cycles (cycles-of spec-paths test-paths)
+                     #:pending '()))
      (list code (get-output-string output)))))
 
 ;; This file is scanned as a test input, so fixture IDs must not be literal
@@ -56,6 +57,9 @@
 (define rfn-001 (string-append "RFN" "-001"))
 (define rfn-002 (string-append "RFN" "-002"))
 (define rfn-003 (string-append "RFN" "-003"))
+(define ptr-001 (string-append "PTR" "-001"))
+(define ptr-002 (string-append "PTR" "-002"))
+(define bor-001 (string-append "BOR" "-001"))
 
 ;; 状態フィールドのテスト用 ID は実データの参照集合へ混入させない。
 (define bak-003 (string-append "BAK" "-003"))
@@ -133,13 +137,15 @@
           #:cycles
           (list
            (cycle-descriptor 'G2a "G2" spec-paths test-paths #f
-                             (descriptor-ids expected-g2a-ids))))
+                             (descriptor-ids expected-g2a-ids)))
+          #:pending '())
          (coverage-errors
           registry-path
           #:cycles
           (list
            (cycle-descriptor 'G1 "G1" spec-paths test-paths
-                             expected-g1-count #f)))))))
+                             expected-g1-count #f))
+          #:pending '())))))
 
 (define (fixture-errors-g2b registry spec test)
   (with-fixture
@@ -150,7 +156,8 @@
       #:cycles
       (list
        (cycle-descriptor 'G2b "G2" spec-paths test-paths #f
-                         (descriptor-ids expected-g2b-ids)))))))
+                         (descriptor-ids expected-g2b-ids)))
+      #:pending '()))))
 
 (define (fixture-errors-g2c registry spec test)
   (with-fixture
@@ -161,7 +168,8 @@
       #:cycles
       (list
        (cycle-descriptor 'G2c "G2" spec-paths test-paths #f
-                         (descriptor-ids expected-g2c-ids)))))))
+                         (descriptor-ids expected-g2c-ids)))
+      #:pending '()))))
 
 (define (fixture-errors-g2d registry spec test)
   (with-fixture
@@ -172,7 +180,20 @@
       #:cycles
       (list
        (cycle-descriptor 'G2d "G2" spec-paths test-paths #f
-                         (descriptor-ids expected-g2d-ids)))))))
+                         (descriptor-ids expected-g2d-ids)))
+      #:pending '()))))
+
+(define (fixture-errors/pending registry spec test ids pending)
+  (with-fixture
+   registry spec test
+   (lambda (registry-path spec-paths test-paths)
+     (coverage-errors
+      registry-path
+      #:pending pending
+      #:cycles
+      (list
+       (cycle-descriptor 'G5 "G5" spec-paths test-paths #f
+                         (map string->symbol ids)))))))
 
 (test-case "G2a coverage requires the exact ID set"
   (check-equal?
@@ -316,7 +337,8 @@
         (cycle-descriptor 'G2a "G2" spec-paths test-paths #f
                           (descriptor-ids expected-g2a-ids))
         (cycle-descriptor 'G2c "G2" spec-paths test-paths #f
-                          (descriptor-ids expected-g2c-ids))))
+                          (descriptor-ids expected-g2c-ids)))
+       #:pending '())
       '()))))
 
 (test-case "normal coverage passes"
@@ -402,7 +424,8 @@
       (run-coverage
        registry-path output errors
        #:cycles
-       (list (cycle-descriptor 'G1 "G1" spec-paths test-paths #f #f)))
+       (list (cycle-descriptor 'G1 "G1" spec-paths test-paths #f #f))
+       #:pending '())
       1)
      (check-equal? (get-output-string output) "")
      (check-true
@@ -479,7 +502,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal? errors '()))
 
 (test-case
@@ -494,7 +518,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3b "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-001))))))))
+                               (list (string->symbol bak-001))))
+       #:pending '()))))
  (check-equal? errors '()))
 
 (test-case
@@ -509,7 +534,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal?
   errors
   (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
@@ -530,7 +556,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal?
   errors
   (list (format "G3d spec ID set missing expected ID: ~a" bak-002))))
@@ -547,7 +574,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal?
   errors
   (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
@@ -598,7 +626,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3b "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-001))))))))
+                               (list (string->symbol bak-001))))
+       #:pending '()))))
  (check-equal? counts (list (cons (string->symbol bak-001) 1))))
 
 (test-case
@@ -630,7 +659,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3a "G3" spec-paths test-paths #f
-                               (list (string->symbol bak-003))))))))
+                               (list (string->symbol bak-003))))
+       #:pending '()))))
  (check-equal? errors '()))
 
 (test-case
@@ -645,7 +675,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3a "G2" spec-paths test-paths #f
-                               (list (string->symbol bak-003))))))))
+                               (list (string->symbol bak-003))))
+       #:pending '()))))
  (check-equal?
   errors
   (list (format "G3a expected ID is absent or not state G2: ~a" bak-003))))
@@ -662,7 +693,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3a "Phase 2 以降" spec-paths test-paths #f
-                               (list (string->symbol bak-003))))))))
+                               (list (string->symbol bak-003))))
+       #:pending '()))))
  (check-equal?
   errors
   (list "descriptor G3a declares invalid state: Phase 2 以降")))
@@ -679,7 +711,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths '() #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal? errors '()))
 
 (test-case
@@ -694,7 +727,8 @@
        registry-path
        #:cycles
        (list (cycle-descriptor 'G3d "G3" spec-paths '() #f
-                               (list (string->symbol bak-002))))))))
+                               (list (string->symbol bak-002))))
+       #:pending '()))))
  (check-equal?
   errors
   (list (format "G3d test ID set missing expected ID: ~a" bak-002))))
@@ -720,3 +754,79 @@
                   (format ";; ~a\n" typ-014)
                   #:expected-g1-count 1)
   '()))
+
+(test-case
+ "pending として宣言した ID は欠落にしない"
+ (check-equal?
+  (fixture-errors/pending
+   (string-append (registry-entry bor-001 "G5")
+                  (registry-entry ptr-001 "G5"))
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   (list (string->symbol ptr-001)))
+  '()))
+
+(test-case
+ "所有も pending もされない ID を検出する"
+ (check-equal?
+  (fixture-errors/pending
+   (string-append (registry-entry bor-001 "G5")
+                  (registry-entry ptr-001 "G5"))
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   '())
+  (list (format "requirement declares a cycle state but no descriptor owns it: ~a"
+                ptr-001))))
+
+(test-case
+ "registry に無い pending ID を検出する"
+ (check-equal?
+  (fixture-errors/pending
+   (registry-entry bor-001 "G5")
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   (list (string->symbol ptr-002)))
+  (list (format "pending ID is absent from the registry: ~a" ptr-002))))
+
+(test-case
+ "状態が G5 でない pending ID を検出する"
+ (check-equal?
+  (fixture-errors/pending
+   (string-append (registry-entry bor-001 "G5")
+                  (registry-entry ptr-001 "G3"))
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   (list (string->symbol ptr-001)))
+  (list (format "pending ID declares state G3 instead of G5: ~a" ptr-001))))
+
+(test-case
+ "descriptor が所有する ID を pending にも書いた場合を検出する"
+ (check-equal?
+  (fixture-errors/pending
+   (registry-entry bor-001 "G5")
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   (list (string->symbol bor-001)))
+  (list (format "pending ID is already owned by a descriptor: ~a" bor-001))))
+
+(test-case
+ "pending の内部の重複を検出する"
+ (check-equal?
+  (fixture-errors/pending
+   (string-append (registry-entry bor-001 "G5")
+                  (registry-entry ptr-001 "G5"))
+   (format "[REQ: ~a]\n" bor-001)
+   (format ";; ~a\n" bor-001)
+   (list bor-001)
+   (list (string->symbol ptr-001) (string->symbol ptr-001)))
+  (list (format "pending ID is declared twice: ~a" ptr-001))))
+
+(test-case
+ "既定の pending は PTR の 2 件である"
+ (check-equal? (map symbol->string (default-pending-ids))
+               (list ptr-001 ptr-002)))
