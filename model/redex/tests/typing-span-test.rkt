@@ -851,8 +851,8 @@
   ;; producer fixture を持つ。
   ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
   ;; producer fixture を持つ。
-  ;; raw pointer の 9 件も region context または専用の RawPtr fixture が必要な
-  ;; ため、この span reachability 表からは除く。
+  ;; raw pointer の 9 件も region context または専用の RawPtr fixture
+  ;; rawptr-typing-test.rkt が必要なため、この span reachability 表からは除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   (define unreachable-keys
     '(effectful-curry-operand

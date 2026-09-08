@@ -34,6 +34,18 @@
   `(Scope ()
      (Let (x let (Owned Res)) (resource 1) ,body)))
 
+;; AddressOf は可変借用から pointer を作り、6 引数を生成源へ固定する。
+(test-case "AddressOf の 6 引数は生成源へ固定される"
+  (define result (check-core (in-scope '(AddressOf (BorrowMut x)))))
+  (check-equal? (type-of-ok result)
+                '(RawPtr Res Mut NonNull (Align 1)
+                         (AddrSpace native) (Prov owned))))
+
+(test-case "AddressOf は共有借用を受け取らない"
+  (check-equal?
+   (key-of (check-core (in-scope '(AddressOf (Borrow x)))))
+   'address-of-non-mut-borrow))
+
 ;; raw 操作は Unsafe の外では型が付かない。
 (test-case "raw 操作は Unsafe の外で落ちる"
   (for ([body (in-list '((RawLoad (AddressOf (BorrowMut x)))
@@ -69,6 +81,12 @@
    'rawstore-const-pointer)
   (check-equal? (target-key 'Int) 'ptr-non-pointer))
 
+(test-case "PtrOffset の第二引数は Int に限る"
+  (check-equal?
+   (key-of (check-core
+            (in-scope '(PtrOffset (AddressOf (BorrowMut x)) unit))))
+   'ptr-offset-non-int))
+
 ;; 各操作が要求する obligation の集合。
 (test-case "obligation の集合"
   (check-equal? (raw-obligations '(AliveAllocation InBounds) 'Int)
@@ -85,3 +103,31 @@
   (check-false (obligations-dischargeable? '((PtrProp NonNull Int)) Γ-pc0))
   ;; 既存の validator 表にある命題は充足できる。対照として置く。
   (check-true (obligations-dischargeable? '() Γ-pc0)))
+
+(test-case "RawStore の値は payload と互換でなければならない"
+  (check-equal?
+   (key-of
+    (check-core
+     '(Scope ()
+        (Let (x let (Owned Res)) (resource 1)
+          (RawStore (AddressOf (BorrowMut x)) 7)))))
+   'rawstore-type-mismatch))
+
+;; 許可集合から外れた RawPtr を作る項が本サイクルに無いため、
+;; raw-store-target-check と同じく pointer-parts を直に呼ぶ。
+(test-case "pointer-parts は成分違いを分類する"
+  (define (parts-key type)
+    (let/ec escape
+      (pointer-parts 'node type (lambda (key _node) (escape key)))
+      #f))
+  (define (ptr as prov)
+    `(RawPtr Res Mut NonNull (Align 1) ,as ,prov))
+  (check-equal? (parts-key (ptr '(AddrSpace native) '(Prov owned))) #f)
+  (check-equal? (parts-key (ptr '(AddrSpace gpu) '(Prov owned)))
+                'invalid-address-space)
+  (check-equal? (parts-key (ptr '(AddrSpace native) '(Prov native)))
+                'invalid-provenance)
+  (check-equal? (parts-key '(RawPtr Res Mut NonNull (Align 0)
+                                    (AddrSpace native) (Prov owned)))
+                'ptr-malformed)
+  (check-equal? (parts-key 'Int) 'ptr-non-pointer))
