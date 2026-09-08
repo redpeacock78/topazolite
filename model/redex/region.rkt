@@ -63,6 +63,15 @@
     ;; RegionLam の束縛名と RegionApp の ρ は Core の子ではない。
     [`(RegionLam (,_ ...) ,c) (list c)]
     [`(RegionApp ,c (,_ ...)) (list c)]
+    ;; pointer 操作（unsafe.md §4.4）。FromRawPtr の ρ は region 識別子で
+    ;; あり Core の子ではない。PtrVal の p と fp も Core ではない。
+    [`(AddressOf ,c) (list c)]
+    [`(RawLoad ,c) (list c)]
+    [`(Unsafe ,c) (list c)]
+    [`(PtrOffset ,c_1 ,c_2) (list c_1 c_2)]
+    [`(RawStore ,target ,value) (list target value)]
+    [`(FromRawPtr ,c ,_) (list c)]
+    [`(PtrVal ,_ ,_ ,_ ,_) '()]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
     [`(BorrowAt ,_ ,_ ,_) '()]
@@ -128,6 +137,12 @@
     [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
     [`(RegionLam ,rps ,_) `(RegionLam ,rps ,(first-child))]
     [`(RegionApp ,_ ,ρs) `(RegionApp ,(first-child) ,ρs)]
+    [`(AddressOf ,_) `(AddressOf ,(first-child))]
+    [`(RawLoad ,_) `(RawLoad ,(first-child))]
+    [`(Unsafe ,_) `(Unsafe ,(first-child))]
+    [`(PtrOffset ,_ ,_) `(PtrOffset ,(first children) ,(second children))]
+    [`(RawStore ,_ ,_) `(RawStore ,(first children) ,(second children))]
+    [`(FromRawPtr ,_ ,ρ) `(FromRawPtr ,(first-child) ,ρ)]
     [_
      (unless (null? children)
        (error 'core-with-children "子を持たない形へ子を与えた: ~s" t))
@@ -683,6 +698,8 @@
          `(ProjBorrowAt ,(resolve ρ point) ,own ,c ,label)]
         [`(RegionApp ,c_function (,ρs ...))
          `(RegionApp ,c_function ,(map resolve-region-argument ρs))]
+        [`(FromRawPtr ,c ,ρ)
+         `(FromRawPtr ,c ,(resolve-region-argument ρ))]
         [_ node]))
     (define kids (core-children replaced))
     (if (null? kids)
@@ -710,7 +727,8 @@
   (hash 'Borrowed '(1) 'BorrowedMut '(1)
         'BorrowAt '(0) 'BorrowMutAt '(0)
         'ReborrowAt '(0) 'ProjBorrowAt '(0)
-        'BorrowRef '(2) 'BorrowMutRef '(2)))
+        'BorrowRef '(2) 'BorrowMutRef '(2)
+        'FromRawPtr '(1)))
 
 ;; 本体に現れる具体的な region を集める。
 ;; 内側の RegionLam へは入らない。入ると、内側でしか現れない region を
