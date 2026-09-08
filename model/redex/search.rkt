@@ -400,6 +400,7 @@
        [`(Implements ,_ ,_) 'Finite]
        [`(ValidNarrativeTrait ,_) 'Finite]
        [`(RequiresBoth ,_ ,_) 'Finite]
+       [`(PtrProp ,id ,_) (and (ptr-prop-id-ok? id) 'Finite)]
        [_ #f]))))
 
 ;; Ω: Productive 探索の結果と certificate を返す trusted な写像。無ければ #f。

@@ -15,6 +15,10 @@
          copy-out-scan
          effect-copy-out-scan
          copy-out-ok?
+         addr-space-ok?
+         prov-ok?
+         ptr-prop-id-ok?
+         raw-ptr-components-ok?
          literal-type)
 
 ;; validator 正典表。行は (oid nm φ τ check) の 5 つ組である。
@@ -218,3 +222,51 @@
         [(string? payload) 'String]
         [(eq? payload 'unit) 'Unit]
         [else #f]))
+
+;; unsafe.md §3.1。address space の許可集合。文法の `id` は開いたままにし、
+;; pointer 型として受理する集合をここで閉じる。
+(define allowed-addr-spaces (list 'native 'wasm-linear 'js-buffer 'ffi))
+
+(define (addr-space-ok? space)
+  (match space
+    [`(AddrSpace ,id) (and (memq id allowed-addr-spaces) #t)]
+    [_ #f]))
+
+;; unsafe.md §3.1。provenance の許可集合。
+(define allowed-provs (list 'foreign 'owned 'unknown))
+
+(define (prov-ok? provenance)
+  (match provenance
+    [`(Prov ,id) (and (memq id allowed-provs) #t)]
+    [_ #f]))
+
+;; unsafe.md §5.1。PtrProp の識別子の許可集合。
+(define allowed-ptr-prop-ids
+  (list 'NonNull 'Aligned 'InBounds 'Initialized 'AliveAllocation
+        'Readable 'Writable 'AbiMatched 'LifetimeValid
+        'OwnershipTransferred))
+
+(define (ptr-prop-id-ok? id)
+  (and (symbol? id) (memq id allowed-ptr-prop-ids) #t))
+
+;; unsafe.md §3.1。RawPtr の payload 以外の 5 成分を閉じた集合で検査する。
+(define (ptrmut-ok? ptrmut)
+  (and (memq ptrmut '(Const Mut)) #t))
+
+(define (nul-ok? nul)
+  (and (memq nul '(NonNull Nullable)) #t))
+
+(define (align-ok? align)
+  (match align
+    [`(Align ,n) (exact-positive-integer? n)]
+    [_ #f]))
+
+(define (raw-ptr-components-ok? type)
+  (match type
+    [`(RawPtr ,_ ,ptrmut ,nul ,align ,as ,prov)
+     (and (ptrmut-ok? ptrmut)
+          (nul-ok? nul)
+          (align-ok? align)
+          (addr-space-ok? as)
+          (prov-ok? prov))]
+    [_ #f]))
