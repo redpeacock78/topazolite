@@ -42,6 +42,9 @@
          infer-ptr-offset
          infer-raw-load
          infer-raw-store
+         infer-from-raw-ptr
+         from-raw-ptr-obligation-ids
+         from-raw-ptr-result-type
          ownleaf-root?
          require-ownleaf-root
          config-runtime-leaf?
@@ -2181,6 +2184,40 @@
   (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
   (list 'Unit (rows-union (list ε_target ε_value '(Unsafe))) Ψ_2))
 
+;; unsafe.md §3.3。lifetime、alignment、validity の Proof を要求する。
+(define (from-raw-ptr-obligation-ids)
+  '(LifetimeValid Aligned Initialized AliveAllocation NonNull))
+
+;; unsafe.md §3.3。借用台帳が追跡できる pointer に限る。(Prov foreign) と
+;; (Prov unknown) は H の place を指すとは限らない。native 以外の address
+;; space も同じ理由で落とす。ptrmut で借用の種を分ける。
+(define (from-raw-ptr-result-type type region fail)
+  (match (normalize-type type)
+    [`(RawPtr ,τ ,ptrmut ,_nul ,_align ,as ,prov)
+     (unless (equal? as '(AddrSpace native))
+       (fail 'from-raw-ptr-non-native type))
+     (unless (equal? prov '(Prov owned))
+       (fail 'from-raw-ptr-non-owned type))
+     (case ptrmut
+       [(Const) `(Borrowed ,τ ,region)]
+       [(Mut) `(BorrowedMut ,τ ,region)]
+       [else (fail 'ptr-non-pointer type)])]
+    [_ (fail 'ptr-non-pointer type)]))
+
+(define (infer-from-raw-ptr core operand region Λ Ψ environment
+                            places callables fail)
+  ;; unsafe.md §3.3。ρ の束縛は既存の region well-formedness と同じ層で見る。
+  (check-region-annotation Λ region core fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (match-define (list _τ_payload _ptrmut _nul _align _as _prov)
+    (pointer-parts core τ_operand fail))
+  (check-raw-obligations! core (from-raw-ptr-obligation-ids) _τ_payload fail)
+  (define result
+    (from-raw-ptr-result-type τ_operand region
+                              (lambda (key _node) (fail key core))))
+  (list result (row-union ε_operand '(Unsafe)) Ψ_1))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -2910,6 +2947,8 @@
      (infer-raw-load core operand Λ Ψ environment places callables fail)]
     [`(RawStore ,target ,value)
      (infer-raw-store core target value Λ Ψ environment places callables fail)]
+    [`(FromRawPtr ,operand ,region)
+     (infer-from-raw-ptr core operand region Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

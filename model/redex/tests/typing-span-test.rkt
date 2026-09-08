@@ -229,6 +229,7 @@
     address-of-non-mut-borrow invalid-address-space invalid-provenance
     ptr-malformed ptr-non-pointer ptr-offset-non-int rawstore-const-pointer
     rawstore-type-mismatch
+    from-raw-ptr-non-native from-raw-ptr-non-owned
     ;; UNS
     unsafe-outside-boundary
     ;; default
@@ -810,7 +811,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 89)
+  (check-equal? (length producer-keys) 91)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -851,8 +852,9 @@
   ;; producer fixture を持つ。
   ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
   ;; producer fixture を持つ。
-  ;; raw pointer の 9 件も region context または専用の RawPtr fixture
-  ;; rawptr-typing-test.rkt が必要なため、この span reachability 表からは除く。
+  ;; raw pointer の 9 件は rawptr-typing-test.rkt が産出元であり、region context
+  ;; または専用の RawPtr fixture が要るため、この span reachability 表からは除く。
+  ;; FromRawPtr の 2 件は rawptr-fromraw-test.rkt が産出元であり、同じ理由で除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   (define unreachable-keys
     '(effectful-curry-operand
@@ -875,6 +877,8 @@
       ptr-offset-non-int
       rawstore-const-pointer
       rawstore-type-mismatch
+      from-raw-ptr-non-native
+      from-raw-ptr-non-owned
       unsafe-outside-boundary))
   (check-equal? (sort (remove-duplicates (map first reachability-table))
                       symbol<?)

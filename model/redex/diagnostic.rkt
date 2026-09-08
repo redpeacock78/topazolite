@@ -241,6 +241,10 @@
                  "RawStore の対象が Const の pointer である")
     ("E-PTR-008" rawstore-type-mismatch
                  "RawStore の値の型が payload と一致しない")
+    ("E-PTR-009" from-raw-ptr-non-native
+                 "FromRawPtr の対象が native の address space でない")
+    ("E-PTR-010" from-raw-ptr-non-owned
+                 "FromRawPtr の対象の provenance が owned でない")
     ("E-UNS-001" unsafe-outside-boundary
                  "raw 操作が Unsafe の境界の外にある")))
 
