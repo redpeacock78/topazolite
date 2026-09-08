@@ -139,8 +139,23 @@
            (Eliminate (Move d)
                       ((none () -> 1000)
                        (some (e) -> e)))))))
+  (define assign-skeleton
+    '(Scope ()
+       (Let (x let (Owned Int)) 1000
+         (Scope ()
+           (Let (m let (BorrowedMut Int ph))
+             (BorrowMut x)
+             (Assign m 1001))))))
+  (define effect-skeleton
+    '(Scope ()
+       (Let (x let (Owned Int)) 1000
+         (Scope ()
+           (Handle (Return borrow-boundary Int)
+                   (k -> (Read (Borrow x)))
+                   (Perform (Return borrow-boundary Int) 1001))))))
   (for ([skeleton (in-list (list rec-skeleton rec-mut-skeleton
-                                 elim-ref-skeleton elim-skeleton))])
+                                 elim-ref-skeleton elim-skeleton
+                                 assign-skeleton effect-skeleton))])
     (check-true (pair? (prepare-borrow-term skeleton))
                 (format "discard: ~e" skeleton))))
 
@@ -157,5 +172,6 @@
              (walk k acc))]
           [(list? t) (for/fold ([acc acc]) ([k (in-list t)]) (walk k acc))]
           [else acc]))))
-  (for ([form (in-list '(Rec ProjBorrow Construct Eliminate))])
+  (for ([form (in-list '(Rec ProjBorrow Construct Eliminate Assign
+                         Handle Perform))])
     (check-true (set-member? heads form) (format "生成されない: ~a" form))))

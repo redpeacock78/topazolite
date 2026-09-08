@@ -15,7 +15,7 @@
 ;; 生成域は借用の 3 形と、その借用が意味を持つのに必要な最小の周辺だけである。
 ;;   Scope / Let(Owned) / Let(Borrowed) / Let(BorrowedMut)
 ;;   Borrow / BorrowMut / Reborrow / Read / Assign
-;;   Rec / ProjBorrow / Construct / Eliminate / Yield / Drop / Move
+;;   Rec / ProjBorrow / Construct / Eliminate / Perform / Handle / Yield / Drop / Move
 ;; Rec と Construct は射影と分解の対象を作るためだけに生成する。所有の値を
 ;; そのまま読む Proj は借用値を作らないので生成しない。
 ;; Recur は生成しない。RecurVal の本体へ借用値が入ると R-RecurUnfold が
@@ -37,15 +37,15 @@
      (append (literal-positions bound) (literal-positions body))]
     [(? exact-integer?) (list t)]
     [(and (? list?) (? pair?))
-     (append* (map literal-positions (rest t)))]
+     (append* (map literal-positions t))]
     [_ '()]))
 
 ;; 生成中に保つ環境。所有束縛と借用束縛を別に持つ。owned は Res の所有束縛
-;; だけを持ち、record と data の所有束縛は recs と datas に分ける。
+;; だけを持ち、Int と record と data の所有束縛は ints / recs / datas に分ける。
 ;; gen-borrow-let が型を (Borrowed Res ph) に固定しているため、型の違う束縛を
 ;; owned へ混ぜると借用の型が合わなくなる。
-(struct genv (owned shared muts recs datas) #:transparent)
-(define empty-genv (genv '() '() '() '() '()))
+(struct genv (owned ints shared muts recs datas) #:transparent)
+(define empty-genv (genv '() '() '() '() '() '()))
 
 (define (pick lst) (list-ref lst (random (length lst))))
 
@@ -73,7 +73,8 @@
          '())
      (if (positive? depth)
          (list (lambda () (gen-rec-let depth env))
-               (lambda () (gen-data-let depth env)))
+               (lambda () (gen-data-let depth env))
+               (lambda () (gen-int-let depth env)))
          '())
      (if (and (positive? depth) (pair? (genv-recs env)))
          (list (lambda () (gen-proj-borrow-let depth env))
@@ -91,6 +92,10 @@
                (lambda () `(Assign ,(pick (genv-muts env))
                                    ,(gen-literal)))
                (lambda () (gen-reborrow-let depth env)))
+         '())
+     (if (and (positive? depth) (pair? (genv-ints env)))
+         (list (lambda () (gen-int-mut-let depth env))
+               (lambda () (gen-handle depth env)))
          '())))
   ((pick choices)))
 
@@ -100,6 +105,13 @@
      ,(gen-core (max 0 (sub1 depth))
                 (struct-copy genv env
                              [owned (cons x (genv-owned env))]))))
+
+(define (gen-int-let depth env)
+  (define x (fresh-binder! 'i))
+  `(Let (,x let (Owned Int)) ,(gen-literal)
+     ,(gen-core (sub1 depth)
+                (struct-copy genv env
+                             [ints (cons x (genv-ints env))]))))
 
 (define (gen-borrow-let depth env)
   (define y (fresh-binder! 's))
@@ -114,6 +126,22 @@
      ,(gen-core (sub1 depth)
                 (struct-copy genv env
                              [muts (cons y (genv-muts env))]))))
+
+(define (gen-int-mut-let depth env)
+  (define y (fresh-binder! 'mi))
+  `(Let (,y let (BorrowedMut Int ph)) (BorrowMut ,(pick (genv-ints env)))
+     ,(gen-core (sub1 depth)
+                (struct-copy genv env
+                             [muts (cons y (genv-muts env))]))))
+
+;; R-HandleReturn と、その handler 内で発生する借用を実 trace へ通す。
+;; payload は Int のままにし、handler 本体の Borrow/Read で借用形を作る。
+;; Borrowed 型を operation signature へ直接埋めると、注釈前 core の ph を
+;; operation 側にも解く必要が生じるため、ここでは型付けと機械経路を狭く保つ。
+(define (gen-handle depth env)
+  `(Handle (Return borrow-boundary Int)
+           (k -> (Read (Borrow ,(pick (genv-ints env)))))
+           (Perform (Return borrow-boundary Int) ,(gen-literal))))
 
 (define (gen-reborrow-let depth env)
   (define y (fresh-binder! 'r))
