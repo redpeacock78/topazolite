@@ -225,6 +225,12 @@
     borrowed-function-result
     ;; REG
     region-app-arity region-app-non-forall region-arg-not-live
+    ;; PTR
+    address-of-non-mut-borrow invalid-address-space invalid-provenance
+    ptr-malformed ptr-non-pointer ptr-offset-non-int rawstore-const-pointer
+    rawstore-type-mismatch
+    ;; UNS
+    unsafe-outside-boundary
     ;; default
     projborrow-non-record projborrow-unknown-field
     read-non-borrow read-uncopyable-payload
@@ -798,13 +804,13 @@
                           (reach-lit 1 1555 1556))
               '() '() '() (reach-span 1542 1553))))
 
-(test-case "typing の producer key 集合が registry v9 と一致する"
+(test-case "typing の producer key 集合が registry v10 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 80)
+  (check-equal? (length producer-keys) 89)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -845,6 +851,8 @@
   ;; producer fixture を持つ。
   ;; borrow-conflicting-use も専用の borrow-use-test.rkt が region context 付きの
   ;; producer fixture を持つ。
+  ;; raw pointer の 9 件も region context または専用の RawPtr fixture が必要な
+  ;; ため、この span reachability 表からは除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   (define unreachable-keys
     '(effectful-curry-operand
@@ -858,7 +866,16 @@
       assign-through-shared
       assign-non-borrow
       assign-owned-payload
-      assign-union-variant))
+      assign-union-variant
+      address-of-non-mut-borrow
+      invalid-address-space
+      invalid-provenance
+      ptr-malformed
+      ptr-non-pointer
+      ptr-offset-non-int
+      rawstore-const-pointer
+      rawstore-type-mismatch
+      unsafe-outside-boundary))
   (check-equal? (sort (remove-duplicates (map first reachability-table))
                       symbol<?)
                 (sort (remove* (cons 'ill-typed unreachable-keys)

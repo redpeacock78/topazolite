@@ -30,6 +30,18 @@
          config-ok?
          with-config-typing
          ownleaf-permitted
+         unsafe-permitted
+         raw-obligations
+         raw-load-obligation-ids
+         raw-store-obligation-ids
+         ptr-offset-obligation-ids
+         raw-store-target-check
+         pointer-parts
+         check-raw-obligations!
+         infer-address-of
+         infer-ptr-offset
+         infer-raw-load
+         infer-raw-store
          ownleaf-root?
          require-ownleaf-root
          config-runtime-leaf?
@@ -2065,6 +2077,110 @@
                        core 'borrow-conflicting-use #f fail))
   (list 'Unit (row-union ε_target ε_value) Ψ_2))
 
+;; unsafe.md §2.2。pointer の型成分を検査し、成分の並びを返す。
+(define (pointer-parts core type fail)
+  (define normalized (normalize-type type))
+  (match normalized
+    [`(RawPtr ,τ ,ptrmut ,nul ,align ,as ,prov)
+     ;; unsafe.md §3.1。5 成分の許可集合は validators.rkt の
+     ;; raw-ptr-components-ok?（G5c7a1 Task 3）に閉じてある。
+     ;; type-shape-ok? と同じ helper を通し、判定の分岐を作らない。
+     (unless (raw-ptr-components-ok? normalized)
+       (unless (addr-space-ok? as) (fail 'invalid-address-space core))
+       (unless (prov-ok? prov) (fail 'invalid-provenance core))
+       (fail 'ptr-malformed core))
+     (list τ ptrmut nul align as prov)]
+    [_ (fail 'ptr-non-pointer core)]))
+
+;; unsafe.md §2.2。store 先が Mut の pointer であることを検査する。
+;; fail を引数で受ける形は payload-borrows-traceable?（typing.rkt:2005）の
+;; 先例に揃える。Const の pointer を作る項が本サイクルに無いため、
+;; 単体で呼べる形へ切り出す。
+(define (raw-store-target-check type fail)
+  (match (normalize-type type)
+    [`(RawPtr ,_ Mut ,_ ,_ ,_ ,_) type]
+    [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) (fail 'rawstore-const-pointer type)]
+    [_ (fail 'ptr-non-pointer type)]))
+
+;; unsafe.md §4.1。(Unsafe c) の内側だけ、未解決の PtrProp を許可する。
+;; ownleaf-permitted と同じく、包む構成子が本体の検査を parameterize する形を
+;; 採る（typing.rkt:2612 の Yield が先例）。
+(define unsafe-permitted (make-parameter #f))
+
+(define (raw-load-obligation-ids)
+  '(AliveAllocation NonNull Aligned Initialized Readable InBounds))
+
+;; store は未初期化の領域を初期化する操作でもあるため Initialized を要求しない。
+(define (raw-store-obligation-ids)
+  '(AliveAllocation NonNull Aligned Writable InBounds))
+
+(define (ptr-offset-obligation-ids)
+  '(AliveAllocation InBounds))
+
+(define (raw-obligations ids type)
+  (for/list ([id (in-list ids)]) `(PtrProp ,id ,type)))
+
+;; unsafe.md §4.1。obligation が Γ-pc0 から暗黙充足できないとき、Unsafe
+;; boundary の内側でだけ未解決を許可する。PtrProp は validator 表に無いため、
+;; 実際には boundary の内側であることが条件になる。
+(define (check-raw-obligations! core ids pointee fail)
+  (unless (or (unsafe-permitted)
+              (obligations-dischargeable? (raw-obligations ids pointee) Γ-pc0))
+    (fail 'unsafe-outside-boundary core)))
+
+;; unsafe.md §2.2。生きた可変借用から native の owned pointer を作る。
+;; 6 引数はすべて生成源の値へ固定し、書き手に選ばせない。
+;; AddressOf 自身は H を触らないため Unsafe を row へ載せない。
+(define (infer-address-of core operand Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_payload
+    (match (normalize-type τ_operand)
+      [`(BorrowedMut ,τ ,_) τ]
+      [_ (fail 'address-of-non-mut-borrow core)]))
+  (list `(RawPtr ,τ_payload Mut NonNull (Align 1)
+                 (AddrSpace native) (Prov owned))
+        ε_operand
+        Ψ_1))
+
+;; unsafe.md §2.2。offset の結果が非 null である保証は無いため
+;; nul を Nullable へ落とす。ptrmut と align と as と prov は保つ。
+(define (infer-ptr-offset core operand offset Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (match-define (list τ_offset ε_offset Ψ_2)
+    (infer offset (enter-child Λ 1) Ψ_1 environment places callables fail))
+  (unless (type-compatible? (normalize-type τ_offset) 'Int)
+    (fail 'ptr-offset-non-int core))
+  (match-define (list τ_payload ptrmut _nul align as prov)
+    (pointer-parts core τ_operand fail))
+  (check-raw-obligations! core (ptr-offset-obligation-ids) τ_payload fail)
+  (list `(RawPtr ,τ_payload ,ptrmut Nullable ,align ,as ,prov)
+        (rows-union (list ε_operand ε_offset '(Unsafe)))
+        Ψ_2))
+
+(define (infer-raw-load core operand Λ Ψ environment places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (match-define (list τ_payload _ptrmut _nul _align _as _prov)
+    (pointer-parts core τ_operand fail))
+  (check-raw-obligations! core (raw-load-obligation-ids) τ_payload fail)
+  (list τ_payload (row-union ε_operand '(Unsafe)) Ψ_1))
+
+(define (infer-raw-store core target value Λ Ψ environment places callables fail)
+  (match-define (list τ_target ε_target Ψ_1)
+    (infer target (enter-child Λ 0) Ψ environment places callables fail))
+  ;; 失敗記号の details を core へ揃えるため、fail を包み直して渡す。
+  (raw-store-target-check τ_target (lambda (key _node) (fail key core)))
+  (match-define (list τ_value ε_value Ψ_2)
+    (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
+  (match-define (list τ_payload _ptrmut _nul _align _as _prov)
+    (pointer-parts core τ_target fail))
+  (unless (type-compatible? τ_value τ_payload)
+    (fail 'rawstore-type-mismatch core))
+  (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
+  (list 'Unit (rows-union (list ε_target ε_value '(Unsafe))) Ψ_2))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -2786,6 +2902,14 @@
      (infer-read core operand Λ Ψ environment places callables fail)]
     [`(Assign ,target ,value)
      (infer-assign core target value Λ Ψ environment places callables fail)]
+    [`(AddressOf ,operand)
+     (infer-address-of core operand Λ Ψ environment places callables fail)]
+    [`(PtrOffset ,operand ,offset)
+     (infer-ptr-offset core operand offset Λ Ψ environment places callables fail)]
+    [`(RawLoad ,operand)
+     (infer-raw-load core operand Λ Ψ environment places callables fail)]
+    [`(RawStore ,target ,value)
+     (infer-raw-store core target value Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

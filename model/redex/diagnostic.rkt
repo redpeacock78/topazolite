@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 9)
+(define diagnostic-registry-version 10)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -221,6 +221,29 @@
     ("E-OWN-027" missing-ownleaf-root
                  "producer 位置の Owned が OwnLeaf で包まれていない")))
 
+;; G5c7a2。pointer の形と操作の失敗を E-PTR、Unsafe 境界の失敗を E-UNS で
+;; 分ける。registry は追記のみで意味の付け替えを禁じるため、分類はここで分ける。
+;; 分類内の番号は初回割当であり、key 記号の辞書順で振る。
+(define typing-entries-v10
+  '(("E-PTR-001" address-of-non-mut-borrow
+                 "AddressOf の対象が可変借用でない")
+    ("E-PTR-002" invalid-address-space
+                 "RawPtr の address space が許可集合に無い")
+    ("E-PTR-003" invalid-provenance
+                 "RawPtr の provenance が許可集合に無い")
+    ("E-PTR-004" ptr-malformed
+                 "RawPtr の成分が許可集合に合わない")
+    ("E-PTR-005" ptr-non-pointer
+                 "pointer 操作の対象が RawPtr でない")
+    ("E-PTR-006" ptr-offset-non-int
+                 "PtrOffset のオフセットが Int でない")
+    ("E-PTR-007" rawstore-const-pointer
+                 "RawStore の対象が Const の pointer である")
+    ("E-PTR-008" rawstore-type-mismatch
+                 "RawStore の値の型が payload と一致しない")
+    ("E-UNS-001" unsafe-outside-boundary
+                 "raw 操作が Unsafe の境界の外にある")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -273,6 +296,7 @@
           (rows 'typing 7 typing-entries-v7)
           (rows 'typing 8 typing-entries-v8)
           (rows 'typing 9 typing-entries-v9)
+          (rows 'typing 10 typing-entries-v10)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))

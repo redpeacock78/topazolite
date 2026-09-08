@@ -56,13 +56,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 141)
+ (check-equal? (length diagnostic-registry) 150)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 53)
- (check-equal? (count-of 'typing) 83)
+ (check-equal? (count-of 'typing) 92)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (define (since-count v)
@@ -78,6 +78,7 @@
  (check-equal? (since-count 7) 2)
  (check-equal? (since-count 8) 1)
  (check-equal? (since-count 9) 2)
+ (check-equal? (since-count 10) 9)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
@@ -167,13 +168,13 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 9 である"
+ "schema version は 3、registry version は 10 である"
  (check-equal? diagnostic-schema-version 3)
- (check-equal? diagnostic-registry-version 9))
+ (check-equal? diagnostic-registry-version 10))
 
 (test-case
- "typing の registry version 9 と入口 key"
- (check-equal? diagnostic-registry-version 9)
+ "typing の registry version 10 と入口 key"
+ (check-equal? diagnostic-registry-version 10)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
 
