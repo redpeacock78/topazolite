@@ -15,6 +15,8 @@
          copy-out-scan
          effect-copy-out-scan
          copy-out-ok?
+         leaks-rawptr?
+         effect-leaks-rawptr?
          addr-space-ok?
          prov-ok?
          ptr-prop-id-ok?
@@ -227,6 +229,47 @@
 (define (copy-out-ok? type)
   (define scanned (copy-out-scan type))
   (and scanned (null? scanned) #t))
+
+;; unsafe.md §4.3。(Unsafe c) の外へ raw pointer が出ることを型で落とす。
+;; G2m の型文法は再帰型構成子を持たないため、構造走査は必ず停止する。
+;; 判定は fail-closed であり、最後の節が列挙に無い型構成子を漏出ありとする。
+;; 型構成子を足すときは、漏出の可否をここへ明示する。
+(define (leaks-rawptr? type)
+  (match type
+    ['Int #f] ['Bool #f] ['Unit #f] ['String #f] ['Never #f] ['Res #f]
+    [`(TypeInfo ,_) #f]
+    [`(Proof ,_) #f]
+    [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
+    [`(List ,inner) (leaks-rawptr? inner)]
+    [`(Option ,inner) (leaks-rawptr? inner)]
+    [`(Result ,ok ,err) (or (leaks-rawptr? ok) (leaks-rawptr? err))]
+    [`(Owned ,inner) (leaks-rawptr? inner)]
+    [`(Borrowed ,inner ,_) (leaks-rawptr? inner)]
+    [`(BorrowedMut ,inner ,_) (leaks-rawptr? inner)]
+    [`(Untrusted ,inner) (leaks-rawptr? inner)]
+    ;; φ へは降りない。命題の対象は pointer 値の持ち出し経路ではない。
+    [`(Refined ,inner ,_) (leaks-rawptr? inner)]
+    [`(Union ,left ,right) (or (leaks-rawptr? left) (leaks-rawptr? right))]
+    [`(Intersection ,left ,right)
+     (or (leaks-rawptr? left) (leaks-rawptr? right))]
+    [`(ForallRegion (,_ ...) ,body) (leaks-rawptr? body)]
+    [`(Record ,row)
+     (for/or ([field (in-list row)]) (leaks-rawptr? (second field)))]
+    ;; Q へは降りない。Refined の φ と同じ理由である。
+    [`(NFn (,parameters ...) ,result (,row ...) ,_)
+     (or (for/or ([p (in-list parameters)]) (leaks-rawptr? p))
+         (leaks-rawptr? result)
+         (effect-leaks-rawptr? row))]
+    [_ #t]))
+
+;; 型を運ばない label は漏出なしとする。effect-copy-out-scan と同じ形で
+;; 別の関数へ分ける。
+(define (effect-leaks-rawptr? row)
+  (for/or ([label (in-list row)])
+    (match label
+      [`(Return ,_ ,type) (leaks-rawptr? type)]
+      [`(Yield ,type) (leaks-rawptr? type)]
+      [_ #f])))
 
 ;; リテラルの型。判定表の τ に載りうる型だけを返し、それ以外は #f を返す。
 (define (literal-type payload)

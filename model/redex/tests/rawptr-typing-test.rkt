@@ -35,11 +35,19 @@
      (Let (x let (Owned Res)) (resource 1) ,body)))
 
 ;; AddressOf は可変借用から pointer を作り、6 引数を生成源へ固定する。
+;; 注釈と生成結果を Let で突き合わせ、続けて RawLoad まで通す。
 (test-case "AddressOf の 6 引数は生成源へ固定される"
-  (define result (check-core (in-scope '(AddressOf (BorrowMut x)))))
-  (check-equal? (type-of-ok result)
-                '(RawPtr Res Mut NonNull (Align 1)
-                         (AddrSpace native) (Prov owned))))
+  (match (check-core
+          (in-scope
+           '(Unsafe
+             (Let (p const (RawPtr Res Mut NonNull (Align 1)
+                                    (AddrSpace native) (Prov owned)))
+                  (AddressOf (BorrowMut x))
+                  (RawLoad p)))))
+    [(list 'ok (list type row))
+     (check-equal? type 'Res)
+     (check-false (memq 'Unsafe row))]
+    [other (fail (format "受理されなかった: ~s" other))]))
 
 (test-case "AddressOf は共有借用を受け取らない"
   (check-equal?
@@ -131,3 +139,28 @@
                                     (AddrSpace native) (Prov owned)))
                 'ptr-malformed)
   (check-equal? (parts-key 'Int) 'ptr-non-pointer))
+
+;; unsafe.md §4.1。boundary の内側では raw load が通る。
+(test-case "RawLoad は Unsafe の内側で通る"
+  (define result
+    (check-core (in-scope '(Unsafe (RawLoad (AddressOf (BorrowMut x)))))))
+  (check-equal? (type-of-ok result) 'Res))
+
+;; unsafe.md §2.2。boundary の内側では raw store が Unit を返す。
+(test-case "RawStore は Unit を返す"
+  (define result
+    (check-core
+     `(Scope ()
+        (Let (x let (Owned Res)) (resource 1)
+          (Let (y let (Owned Res)) (resource 2)
+            (Unsafe (RawStore (AddressOf (BorrowMut x))
+                              (Read (Borrow y)))))))))
+  (check-equal? (type-of-ok result) 'Unit))
+
+;; PtrOffset の結果は RawPtr なので boundary の外へは出せない。
+(test-case "PtrOffset の RawPtr は Unsafe の外へ出せない"
+  (check-equal?
+   (key-of
+    (check-core
+     (in-scope '(Unsafe (PtrOffset (AddressOf (BorrowMut x)) 1)))))
+   'rawptr-escapes-unsafe))

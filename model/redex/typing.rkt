@@ -45,6 +45,7 @@
          infer-from-raw-ptr
          from-raw-ptr-obligation-ids
          from-raw-ptr-result-type
+         infer-unsafe
          ownleaf-root?
          require-ownleaf-root
          config-runtime-leaf?
@@ -2194,6 +2195,8 @@
 (define (from-raw-ptr-result-type type region fail)
   (match (normalize-type type)
     [`(RawPtr ,τ ,ptrmut ,_nul ,_align ,as ,prov)
+     ;; 現在は pointer-parts が先に address space と provenance を閉じるため、
+     ;; この二つの枝へ到達しない。§11 で非 native/foreign pointer を開くときに使う。
      (unless (equal? as '(AddrSpace native))
        (fail 'from-raw-ptr-non-native type))
      (unless (equal? prov '(Prov owned))
@@ -2210,13 +2213,25 @@
   (check-region-annotation Λ region core fail)
   (match-define (list τ_operand ε_operand Ψ_1)
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
-  (match-define (list _τ_payload _ptrmut _nul _align _as _prov)
+  (match-define (list τ_payload _ptrmut _nul _align _as _prov)
     (pointer-parts core τ_operand fail))
-  (check-raw-obligations! core (from-raw-ptr-obligation-ids) _τ_payload fail)
+  (check-raw-obligations! core (from-raw-ptr-obligation-ids) τ_payload fail)
   (define result
     (from-raw-ptr-result-type τ_operand region
                               (lambda (key _node) (fail key core))))
   (list result (row-union ε_operand '(Unsafe)) Ψ_1))
+
+;; unsafe.md §4.1、§4.3。境界の外へ Unsafe と未解決 obligation と
+;; raw pointer のいずれも出さない。
+(define (infer-unsafe core body Λ Ψ environment places callables fail)
+  (match-define (list τ_body ε_body Ψ_1)
+    (parameterize ([unsafe-permitted #t])
+      (infer body (enter-child Λ 0) Ψ environment places callables fail)))
+  (when (leaks-rawptr? τ_body)
+    (fail 'rawptr-escapes-unsafe core))
+  (when (effect-leaks-rawptr? ε_body)
+    (fail 'rawptr-escapes-unsafe core))
+  (list τ_body (row-difference ε_body '(Unsafe)) Ψ_1))
 
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
@@ -2949,6 +2964,8 @@
      (infer-raw-store core target value Λ Ψ environment places callables fail)]
     [`(FromRawPtr ,operand ,region)
      (infer-from-raw-ptr core operand region Λ Ψ environment places callables fail)]
+    [`(Unsafe ,body)
+     (infer-unsafe core body Λ Ψ environment places callables fail)]
 
     [_ (fail 'ill-typed core)]))
 

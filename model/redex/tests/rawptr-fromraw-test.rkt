@@ -63,13 +63,32 @@
      (Let (x let (Owned Res)) (resource 1)
        (FromRawPtr (AddressOf (BorrowMut x)) ,ρ))))
 
+(define (unsafe-fromraw-core ρ)
+  `(Scope ()
+     (Let (x let (Owned Res)) (resource 1)
+       (Unsafe (FromRawPtr (AddressOf (BorrowMut x)) ,ρ)))))
+
 (define fromraw-ir (build-region-ir (fromraw-core 0)))
 (define fromraw-Λ (Λ-of fromraw-ir))
 (define fromraw-ρ
   (region->rho fromraw-ir (region-at fromraw-ir '(0 1))))
+
+(define unsafe-fromraw-ir (build-region-ir (unsafe-fromraw-core 0)))
+(define unsafe-fromraw-Λ (Λ-of unsafe-fromraw-ir))
+(define unsafe-fromraw-ρ
+  (region->rho unsafe-fromraw-ir (region-at unsafe-fromraw-ir '(0 1))))
 
 ;; FromRawPtr も Unsafe の外では落ちる。
 (test-case "FromRawPtr は Unsafe の外で落ちる"
   (check-equal?
    (key-of (type-of/raw (fromraw-core fromraw-ρ) '() '() '() fromraw-Λ))
    'unsafe-outside-boundary))
+
+;; unsafe.md §4.1。boundary の内側では通り、可変借用になる。
+(test-case "FromRawPtr は Unsafe の内側で通る"
+  (match (type-of/raw (unsafe-fromraw-core unsafe-fromraw-ρ)
+                      '() '() '() unsafe-fromraw-Λ)
+    [(list 'ok (list type _row))
+     (check-equal? (first type) 'BorrowedMut
+                   (format "~s" type))]
+    [other (fail (format "受理されなかった: ~s" other))]))

@@ -182,7 +182,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 6 である。
+`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 10 である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -200,7 +200,7 @@ registry の `since`、`deprecated-in`、凍結 fixture は registry version に
 
 error code は `E-<分類>-<3桁>` の書式を持つ。
 
-分類は `SYN`、`TYP`、`KND`、`EFF`、`RET`、`OWN`、`VAR`、`REC`、`ARI`、`DAT`、`RCD`、`APP`、`PRF`、`ORG`、`LOW` の15種である。
+分類は `SYN`、`TYP`、`KND`、`EFF`、`RET`、`OWN`、`VAR`、`REC`、`ARI`、`DAT`、`RCD`、`APP`、`PRF`、`REG`、`BOR`、`PTR`、`UNS`、`ORG`、`LOW` の19種である。
 
 分類部は要件 ID の接頭辞とは別の体系である。
 
@@ -264,9 +264,15 @@ registry version 4 で足した typing の 12 行は `since` が4である。
 
 registry version 5 で足した typing の 4 行は `since` が5である。
 
+registry version 7 で足した typing の 2 行は `since` が7である。
+
 registry version 8 で足した typing の 1 行は `since` が8である。
 
-現在の registry は 139 行である。
+registry version 9 で足した typing の 2 行は `since` が9である。
+
+registry version 10 で足した typing の 12 行は `since` が10である。
+
+現在の registry は 153 行である。
 
 `deprecated-in` を持つのは 7 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
@@ -276,9 +282,9 @@ registry version 8 で足した typing の 1 行は `since` が8である。
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v8.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v10.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -289,6 +295,14 @@ v7 は typing へ 2 行を足し、`Owned` の仮引数に関わる 3 行を廃�
 v8 は typing へ `E-OWN-025` を 1 行足し、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` を廃止する。
 
 廃止した行も registry に残るため、組は 138 に 1 を足した 139 になる。
+
+v9 は typing へ `E-OWN-026` と `E-OWN-027` を 2 行足した。
+
+廃止した行も registry に残るため、組は 139 に 2 を足した 141 になる。
+
+v10 は typing へ raw pointer の `E-PTR-001` から `E-PTR-010` と、Unsafe 境界の `E-UNS-001` と `E-UNS-002` を 12 行足した。
+
+廃止した行も registry に残るため、組は 141 に 12 を足した 153 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

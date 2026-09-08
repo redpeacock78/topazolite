@@ -246,7 +246,9 @@
     ("E-PTR-010" from-raw-ptr-non-owned
                  "FromRawPtr の対象の provenance が owned でない")
     ("E-UNS-001" unsafe-outside-boundary
-                 "raw 操作が Unsafe の境界の外にある")))
+                 "raw 操作が Unsafe の境界の外にある")
+    ("E-UNS-002" rawptr-escapes-unsafe
+                 "RawPtr が Unsafe の境界の外へ漏れる")))
 
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
