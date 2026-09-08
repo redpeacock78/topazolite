@@ -116,6 +116,13 @@
     [`(BorrowedMut ,payload ,ρ)
      (define normalized (normalize-type/impl payload))
      (and normalized `(BorrowedMut ,normalized ,ρ))]
+    ;; unsafe.md §4.4。ptrmut、nul、align、as、prov は正規化の対象になる
+    ;; 構造を持たないため据え置き、payload だけを再帰で正規化する。
+    ;; Borrowed の ρ と同じ扱いである。
+    [`(RawPtr ,payload ,ptrmut ,nul ,align ,as ,prov)
+     (define normalized (normalize-type/impl payload))
+     (and normalized
+          `(RawPtr ,normalized ,ptrmut ,nul ,align ,as ,prov))]
     [`(Untrusted ,payload)
      (define normalized (normalize-type/impl payload))
      (and normalized `(Untrusted ,normalized))]
@@ -168,6 +175,9 @@
     [`(FieldType ,label ,type)
      (define normalized (normalize-type/impl type))
      (and normalized `(FieldType ,label ,normalized))]
+    [`(PtrProp ,id ,type)
+     (define normalized (normalize-type/impl type))
+     (and normalized `(PtrProp ,id ,normalized))]
     [`(RequiresBoth ,left ,right)
      (if (symbol<? left right)
          `(RequiresBoth ,left ,right)
@@ -203,6 +213,9 @@
      `(Borrowed ,(canonical-key/normal payload depth) ,ρ)]
     [`(BorrowedMut ,payload ,ρ)
      `(BorrowedMut ,(canonical-key/normal payload depth) ,ρ)]
+    [`(RawPtr ,payload ,ptrmut ,nul ,align ,as ,prov)
+     `(RawPtr ,(canonical-key/normal payload depth)
+              ,ptrmut ,nul ,align ,as ,prov)]
     [`(Untrusted ,payload)
      `(Untrusted ,(canonical-key/normal payload depth))]
     [`(Result ,ok-type ,error-type)
@@ -264,6 +277,8 @@
      `(Implements ,(canonical-key/normal type depth) ,trait)]
     [`(FieldType ,label ,type)
      `(FieldType ,label ,(canonical-key/normal type depth))]
+    [`(PtrProp ,id ,type)
+     `(PtrProp ,id ,(canonical-key/normal type depth))]
     [_ proposition]))
 
 ;; 型が正規形であるか。normalize-type が失敗する型は正規形でない。
@@ -346,6 +361,18 @@
           (type-equiv? left-payload right-payload))]
     [(`(Untrusted ,left-payload) `(Untrusted ,right-payload))
      (type-equiv? left-payload right-payload)]
+    ;; unsafe.md §3.2、§4.4。payload は type-equiv? で、残る 5 成分は
+    ;; equal? で比べる。address space が違う pointer は型同値ではない。
+    [(`(RawPtr ,left-payload ,left-ptrmut ,left-nul
+                ,left-align ,left-as ,left-prov)
+      `(RawPtr ,right-payload ,right-ptrmut ,right-nul
+                ,right-align ,right-as ,right-prov))
+     (and (eq? left-ptrmut right-ptrmut)
+          (eq? left-nul right-nul)
+          (equal? left-align right-align)
+          (equal? left-as right-as)
+          (equal? left-prov right-prov)
+          (type-equiv? left-payload right-payload))]
     ;; RFN-001: witness の実体は型同一性に関与しない。φ は正準鍵だけを見る。
     [(`(Refined ,left-payload ,left-proposition)
       `(Refined ,right-payload ,right-proposition))
