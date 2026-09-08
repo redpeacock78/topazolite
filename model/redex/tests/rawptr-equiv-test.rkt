@@ -40,6 +40,14 @@
    (type-equiv?
     '(RawPtr Int Const NonNull (Align 4) (AddrSpace native) (Prov owned))
     '(RawPtr Int Const NonNull (Align 8) (AddrSpace native) (Prov owned))))
+  (check-false
+   (type-equiv?
+    '(RawPtr Int Const NonNull (Align 4) (AddrSpace native) (Prov owned))
+    '(RawPtr Int Const Nullable (Align 4) (AddrSpace native) (Prov owned))))
+  (check-false
+   (type-equiv?
+    '(RawPtr Int Const NonNull (Align 4) (AddrSpace native) (Prov owned))
+    '(RawPtr Int Const NonNull (Align 4) (AddrSpace native) (Prov foreign))))
   (check-false (type-equiv? (ptr 'Int) '(Borrowed Int 0))))
 
 ;; unsafe.md §4.4。PtrProp は φ の構成子なので命題側も正規化する。

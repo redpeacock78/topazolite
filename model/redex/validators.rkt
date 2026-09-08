@@ -135,9 +135,20 @@
     [`(Yield ,type) (owned-free? type)]
     [_ #t]))
 
+;; spec §6.2、unsafe.md §6.5。Untrusted と Refined の payload が Owned を
+;; 含まないことを検査する。列挙に無い型構成子は #f を返す fail-closed の形で
+;; あり、型構成子を足すときは所有を含むかどうかをここへ明示する。
+;; Borrowed と BorrowedMut と RawPtr は #t を返し payload へ降りない。
+;; 所有値を含む構造の借用は意図された用法である（type-shape.rkt:63）。
 (define (owned-free? type)
   (match type
+    ['Int #t] ['Bool #t] ['Unit #t] ['String #t] ['Never #t] ['Res #t]
+    [`(TypeInfo ,_) #t]
+    [`(Proof ,_) #t]
     [`(Owned ,_) #f]
+    [`(Borrowed ,_ ,_) #t]
+    [`(BorrowedMut ,_ ,_) #t]
+    [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
     [`(List ,element) (owned-free? element)]
     [`(Option ,element) (owned-free? element)]
     [`(Result ,ok-type ,error-type)
@@ -148,11 +159,12 @@
      (for/and ([field (in-list row)]) (owned-free? (second field)))]
     [`(Union ,left ,right) (and (owned-free? left) (owned-free? right))]
     [`(Intersection ,left ,right) (and (owned-free? left) (owned-free? right))]
+    [`(ForallRegion (,_ ...) ,body) (owned-free? body)]
     [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
      (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
           (owned-free? return-type)
           (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
-    [_ #t]))
+    [_ #f]))
 
 ;; 走査の結果を順に連結する。途中で #f が出たら全体が #f になる。
 ;; scanner に values を渡すと、既に走査済みの結果の列を連結できる。
@@ -206,7 +218,7 @@
 ;; spec §6.2。Read の payload の条件。所有値も借用も含まない型である。
 ;; owned-free? と分ける理由は、owned-free? が Untrusted と Refined の
 ;; payload の検証にも使われており、そちらの意味を変えられないからである。
-;; owned-free? は Borrowed と BorrowedMut の枝を持たず既定の #t へ落ちる。
+;; owned-free? は Borrowed と BorrowedMut の節で明示的に #t を返す。
 ;; 流用すると可変借用を含む値を複製でき、同じ place への可変借用が 2 つになる。
 (define (effect-copy-out-ok? effect)
   (define scanned (effect-copy-out-scan effect))
