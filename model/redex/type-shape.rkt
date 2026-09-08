@@ -8,6 +8,7 @@
 
 (provide type-shape-ok?
          core-types-normal?
+         proposition-shape-ok?
          proposition-types-normal?
          effect-row-normal?
          type-carries-capability?
@@ -34,6 +35,10 @@
   (match proposition
     [`(Implements ,type ,_) (type-shape-ok? type)]
     [`(FieldType ,_ ,type) (type-shape-ok? type)]
+    ;; unsafe.md §5.1。識別子の許可集合をここで閉じる。既定の #t へ落とすと
+    ;; Proof と Q と Refined の内側で許可集合の外の識別子が通る。
+    [`(PtrProp ,id ,type)
+     (and (ptr-prop-id-ok? id) (type-shape-ok? type))]
     [_ #t]))
 
 (define (effect-row-shape-ok? row)
@@ -57,6 +62,10 @@
     [`(Result ,ok-type ,error-type)
      (and (type-shape-ok? ok-type)
           (type-shape-ok? error-type))]
+    ;; unsafe.md §3.4。Owned の直下に raw pointer を置けない。pointer 値が
+    ;; Owned の境界を越えると、typing.rkt の heap 値の再検査が
+    ;; PtrVal を所有の木の節点として扱わなければならなくなる。
+    [`(Owned (RawPtr ,_ ,_ ,_ ,_ ,_ ,_)) #f]
     [`(Owned ,inner) (type-shape-ok? inner)]
     ;; 借用は所有ではないため、payload を Owned で包めない。
     ;; 禁じるのは直接の Owned だけである。Untrusted と Refined が使う再帰的な
@@ -66,6 +75,8 @@
     [`(BorrowedMut (Owned ,_) ,_) #f]
     [`(Borrowed ,inner ,_) (type-shape-ok? inner)]
     [`(BorrowedMut ,inner ,_) (type-shape-ok? inner)]
+    [`(RawPtr ,payload ,_ ,_ ,_ ,_ ,_)
+     (and (raw-ptr-components-ok? type) (type-shape-ok? payload))]
     [`(Untrusted ,inner)
      (and (owned-free? inner) (type-shape-ok? inner))]
     [`(Refined ,inner ,proposition)
@@ -187,6 +198,18 @@
          [`(Assign ,target ,value) (and (walk target) (walk value))]
          [`(RegionLam (,_ ...) ,body) (walk body)]
          [`(RegionApp ,function (,_ ...)) (walk function)]
+         ;; pointer 操作（unsafe.md §4.4）。型を持つ位置が無いため operand を
+         ;; 辿るだけでよい。ρ は region 識別子、p と fp と ptrmut と prov は
+         ;; 型ではない。
+         [`(AddressOf ,operand) (walk operand)]
+         [`(RawLoad ,operand) (walk operand)]
+         [`(Unsafe ,body) (walk body)]
+         [`(PtrOffset ,operand ,offset)
+          (and (walk operand) (walk offset))]
+         [`(RawStore ,target ,value)
+          (and (walk target) (walk value))]
+         [`(FromRawPtr ,operand ,_) (walk operand)]
+         [`(PtrVal ,_ ,_ ,_ ,_) #t]
          [`(Move ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)
