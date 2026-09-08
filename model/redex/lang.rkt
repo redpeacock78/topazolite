@@ -26,6 +26,15 @@
   (ρ ::= natural (RVar natural))
   (l ::= integer unit string)
 
+  ;; raw pointer の成分。許可される識別子の集合は validators.rkt が閉じる。
+  ;; `mut` は record row の可変性を表す literal であり、Redex は同名の非終端を
+  ;; その参照として解釈するため、pointer の可変性は `ptrmut` として分離する。
+  (ptrmut ::= Const Mut)
+  (nul ::= NonNull Nullable)
+  (align ::= (Align natural))
+  (as ::= (AddrSpace id))
+  (prov ::= (Prov id))
+
   (τ ::= Int Bool Unit String Never Res
          (List τ)
          (Option τ)
@@ -33,11 +42,12 @@
          (Owned τ)
          (Borrowed τ ρ)
          (BorrowedMut τ ρ)
+         (RawPtr τ ptrmut nul align as prov)
          (NFn (τ ...) τ ε Q)
          (TypeInfo κ)
          (Proof φ))
   (κ ::= Type (κ -> κ))
-  (ℓ ::= (Return b τ) (Yield τ) Suspend Partial Compile Own)
+  (ℓ ::= (Return b τ) (Yield τ) Suspend Partial Compile Own Unsafe)
   (ε ::= (ℓ ...))
   (Q ::= (φ ...))
   (φ ::= ValidNarrativeTrait TypeNarrativeCap)
@@ -103,13 +113,17 @@
   (tn ::= id)
   ;; region 引数の名前。r は同じ言語の record row であるため使えない。
   (rp ::= variable-not-otherwise-mentioned)
+  ;; NonNull は nul の literal でもあるため、PtrProp の識別子だけは
+  ;; `id` に加えて明示的に受け入れる。
+  (ptr-prop-id ::= id NonNull)
   (ρ ::= .... (RParam rp))
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ)
          (Union τ τ) (Intersection τ τ)
          (ForallRegion (rp ...) τ))
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
-         (RequiresBoth tn tn) (FieldType label τ))
+         (RequiresBoth tn tn) (FieldType label τ)
+         (PtrProp ptr-prop-id τ))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
@@ -122,7 +136,14 @@
          (Read c)
          (Assign c c)
          (RegionLam (rp ...) c)
-         (RegionApp c (ρ ...)))
+         (RegionApp c (ρ ...))
+         ;; pointer 操作と unsafe boundary（unsafe.md §4.2、§6.1）。
+         (AddressOf c)
+         (PtrOffset c c)
+         (RawLoad c)
+         (RawStore c c)
+         (FromRawPtr c ρ)
+         (Unsafe c))
   (v ::= ....
          (Rec ((label m v) ...))
          (UVal v)
@@ -201,13 +222,15 @@
   (r ::= ((label τ m) ...))
   (tn ::= id)
   (rp ::= variable-not-otherwise-mentioned)
+  (ptr-prop-id ::= id NonNull)
   (ρ ::= .... (RParam rp))
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ)
          (Union τ τ) (Intersection τ τ)
          (ForallRegion (rp ...) τ))
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
-         (RequiresBoth tn tn) (FieldType label τ))
+         (RequiresBoth tn tn) (FieldType label τ)
+         (PtrProp ptr-prop-id τ))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
@@ -223,7 +246,14 @@
          (Read c)
          (Assign c c)
          (RegionLam (rp ...) c)
-         (RegionApp c (ρ ...)))
+         (RegionApp c (ρ ...))
+         ;; pointer 操作と unsafe boundary（unsafe.md §4.2、§6.1）。
+         (AddressOf c)
+         (PtrOffset c c)
+         (RawLoad c)
+         (RawStore c c)
+         (FromRawPtr c ρ)
+         (Unsafe c))
   (own ::= (Own w fp))
   (v ::= ....
          (Rec ((label m v) ...))
@@ -231,6 +261,8 @@
          (RVal (ProofRep O φ) v)
          (BorrowRef p fp ρ)
          (BorrowMutRef p fp ρ)
+         ;; unsafe.md §4.3。ptrmut を実行時にも運ぶ。
+         (PtrVal p fp ptrmut prov)
          (RegionLam (rp ...) c))
 
   (F ::= ....
@@ -242,7 +274,15 @@
          (Read F)
          (Assign F c)
          (Assign v F)
-         (RegionApp F (ρ ...)))
+         (RegionApp F (ρ ...))
+         (AddressOf F)
+         (PtrOffset F c)
+         (PtrOffset v F)
+         (RawLoad F)
+         (RawStore F c)
+         (RawStore v F)
+         (FromRawPtr F ρ)
+         (Unsafe F))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (Proj E label)
@@ -252,7 +292,15 @@
          (Read E)
          (Assign E c)
          (Assign v E)
-         (RegionApp E (ρ ...)))
+         (RegionApp E (ρ ...))
+         (AddressOf E)
+         (PtrOffset E c)
+         (PtrOffset v E)
+         (RawLoad E)
+         (RawStore E c)
+         (RawStore v E)
+         (FromRawPtr E ρ)
+         (Unsafe E))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (Proj G label)
@@ -262,7 +310,15 @@
          (Read G)
          (Assign G c)
          (Assign v G)
-         (RegionApp G (ρ ...)))
+         (RegionApp G (ρ ...))
+         (AddressOf G)
+         (PtrOffset G c)
+         (PtrOffset v G)
+         (RawLoad G)
+         (RawStore G c)
+         (RawStore v G)
+         (FromRawPtr G ρ)
+         (Unsafe G))
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x))
