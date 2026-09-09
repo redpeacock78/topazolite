@@ -10,6 +10,7 @@
          "lang.rkt"
          "origins.rkt"
          "policy.rkt"
+         "ptr-static.rkt"
          "region.rkt"
          "region-param.rkt"
          "rows.rkt"
@@ -26,6 +27,7 @@
          core-check-row
          type-of/raw
          type-of/raw*+borrows
+         type-of/raw*+ptr
          typing-visited-points
          config-ok?
          with-config-typing
@@ -132,6 +134,17 @@
 
 ;; 判定の要求の収集器（spec §7.3）。既定は #f であり、その場合は何も記録しない。
 (define request-collector (make-parameter #f))
+
+;; unsafe.md §5.2。raw 操作の出現の収集器。既定は #f であり、その場合は
+;; 既存の型検査 API の結果と副作用を変えない。
+(define ptr-request-collector (make-parameter #f))
+
+(define (record-ptr-request! kind node obligations)
+  (define b (ptr-request-collector))
+  (when b
+    (set-box! b
+              (cons (ptr-request kind node obligations (unsafe-permitted))
+                    (unbox b)))))
 
 (define (emit-request! r)
   (define b (request-collector))
@@ -2165,6 +2178,7 @@
   (match-define (list τ_payload ptrmut _nul align as prov)
     (pointer-parts core τ_operand fail))
   (check-raw-obligations! core (ptr-offset-obligation-ids) τ_payload fail)
+  (record-ptr-request! 'ptr-offset core (ptr-offset-obligation-ids))
   (list `(RawPtr ,τ_payload ,ptrmut Nullable ,align ,as ,prov)
         (rows-union (list ε_operand ε_offset '(Unsafe)))
         Ψ_2))
@@ -2175,6 +2189,7 @@
   (match-define (list τ_payload _ptrmut _nul _align _as _prov)
     (pointer-parts core τ_operand fail))
   (check-raw-obligations! core (raw-load-obligation-ids) τ_payload fail)
+  (record-ptr-request! 'raw-load core (raw-load-obligation-ids))
   (list τ_payload (row-union ε_operand '(Unsafe)) Ψ_1))
 
 (define (infer-raw-store core target value Λ Ψ environment places callables fail)
@@ -2189,6 +2204,7 @@
   (unless (type-compatible? τ_value τ_payload)
     (fail 'rawstore-type-mismatch core))
   (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
+  (record-ptr-request! 'raw-store core (raw-store-obligation-ids))
   (list 'Unit (rows-union (list ε_target ε_value '(Unsafe))) Ψ_2))
 
 ;; unsafe.md §3.3。lifetime、alignment、validity の Proof を要求する。
@@ -2222,6 +2238,7 @@
   (match-define (list τ_payload _ptrmut _nul _align _as _prov)
     (pointer-parts core τ_operand fail))
   (check-raw-obligations! core (from-raw-ptr-obligation-ids) τ_payload fail)
+  (record-ptr-request! 'from-raw-ptr core (from-raw-ptr-obligation-ids))
   (define result
     (from-raw-ptr-result-type τ_operand region
                               (lambda (key _node) (fail key core))))
@@ -3276,9 +3293,11 @@
     [else #f]))
 
 (define (type-of/raw* core-in places callables environment Λ
-                      #:sidecar [sidecar-box #f])
+                      #:sidecar [sidecar-box #f]
+                      #:ptr-sidecar [ptr-box #f])
   (define cs (box '()))
   (define rs (box '()))
+  (define ptr-rs (box '()))
   (define ras (box '()))
   (define tbl (box (hash)))
   (define origins (make-hash))
@@ -3286,6 +3305,7 @@
   (define result
     (parameterize ([lifetime-collector cs]
                    [request-collector rs]
+                   [ptr-request-collector (and ptr-box ptr-rs)]
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
                    [region-param-origins origins]
@@ -3333,6 +3353,10 @@
                            (remove-duplicates
                             (filter borrow-request? (reverse (unbox rs))))
                            σ)))
+              (when ptr-box
+                (set-box! ptr-box
+                          (ptr-sidecar
+                           (remove-duplicates (reverse (unbox ptr-rs))))))
               ;; 型の中の α を σ で解いてから正規化する。materialize が core の
               ;; 注釈へ行う置換と同じ σ を、型の側へも行う（spec §6.3）。
               ;; 置換を正規化より先に置くのは、Union の重複除去が置換の後で
@@ -3370,6 +3394,17 @@
                        #:sidecar sidecar-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
+    [other other]))
+
+;; unsafe.md §5.2。既存の type-of/raw* の返り値を変えず、raw 操作の
+;; sidecar を返す入口を足す。
+(define (type-of/raw*+ptr core-in places callables [environment '()]
+                          [Λ (empty-region-ctx)])
+  (define ptr-box (box #f))
+  (match (type-of/raw* core-in places callables environment Λ
+                       #:ptr-sidecar ptr-box)
+    [(list 'ok (list type row _table _σ _renamed))
+     (list 'ok (list type row (unbox ptr-box)))]
     [other other]))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
