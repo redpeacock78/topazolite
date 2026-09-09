@@ -85,10 +85,6 @@
        `(FromRawPtr
          ,(walk operand (append point '(0)))
          ,(region->rho ir (region-at ir point)))]
-      [`(Let (,x ,bmode ,τ) ,bound ,body)
-       `(Let (,x ,bmode ,τ)
-             ,(walk bound (append point '(0)))
-             ,(walk body (append point '(1))))]
       [(? list?)
        (core-with-children
         t

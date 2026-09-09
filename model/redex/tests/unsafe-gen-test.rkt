@@ -46,3 +46,17 @@
        (Let (x let (Owned Res)) (resource 1)
          (Unsafe (AddressOf (BorrowMut x))))))
    'discard))
+
+;; FromRawPtr の ρ は生成項の節点自身の region から補われる。
+(test-case "受理された FromRawPtr 形が sidecar に現れる（unsafe.md §5.4）"
+  (match
+      (prepare-unsafe-term
+       '(Scope ()
+          (Let (x let (Owned Res)) (resource 1)
+            (Unsafe (Read (FromRawPtr (AddressOf (BorrowMut x)) 0))))))
+    [(list 'ok _config sidecar)
+     (check-true
+      (for/or ([request (in-list (ptr-sidecar-requests sidecar))])
+        (eq? (ptr-request-kind request) 'from-raw-ptr)))]
+    [other
+     (fail (format "FromRawPtr を含む項が受理されなかった: ~s" other))]))

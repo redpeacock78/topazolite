@@ -78,9 +78,12 @@
     (rec-config (term (PtrOffset (PtrVal 0 (f0 0) Mut (Prov owned)) -1))))
    0))
 
-;; AddressOf は root pointer だけを作り、R-PtrOffset が要求する自然数
-;; segment は可変借用側から作れない。Const の PtrVal も同じ理由で
-;; AddressOf からは作れず、R-FromRawPtrConst は手組み fixture のみである。
+;; AddressOf は root pointer だけを作る。自然数 segment を積むのは
+;; R-EliminateRef だけだが、そこから渡るのは BorrowRef であり、AddressOf
+;; が受ける BorrowMutRef ではない。Eliminate の可変借用版が入ったときは
+;; この試験が落ち、R-PtrOffset の生成域・counter・仕様を回収する契機になる。
+;; Const の PtrVal も同じ到達不能性を持つため、R-FromRawPtrConst は手組み
+;; fixture で規則だけを検査している。
 (test-case "root の借用から作った pointer では PtrOffset が発火しない（unsafe.md §2.3）"
   (match-define (list name after)
     (one-named
