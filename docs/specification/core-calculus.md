@@ -1015,6 +1015,16 @@ Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を�
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
 
+source point ごとの静的な借用状態と機械側の対応は本サイクルでは持たない。
+対応を取るには core の項が縮約を跨いで安定した source point の識別子を持つ必要があり、いまの項は識別子を持たない。
+`borrow.md` §14 の designator の解決もこの識別子を前提にする。
+Phase 1 以降で扱う。
+
+観測側の live 集合に残る借用の生存判定も本サイクルでは持たない。
+`obs` の payload は借用値を運べるが、payload の借用が指す region がすでに終わっているかを `Λtok` の条件は見ない。
+判定には観測の発生位置と region の順序を突き合わせる機構が要る。
+Phase 1 以降で扱う。
+
 ### 5.2 machine 構成と評価文脈
 
 簡約は構成（configuration）の間の小ステップ関係で定める。
@@ -1235,6 +1245,13 @@ F は純粋文脈なので、内側の scope から順に finalization が走る
 
 ownership error の伝播も scope exit path であり、越えられる scope は finalization を実行してから消える。
 ホワイトペーパー §4.9 の panic 経路の cleanup に相当する。
+
+retire について本サイクルで持たない形が二つある。
+一つは非同期な観測者を表す非決定的な `R-ObsRetire` である。
+いまの `R-ObsRetire` は実行が終端へ達した後に一度だけ発火するため、観測者が実行中の任意の位置で回収する形を表せない。
+もう一つは lexical scope ごとの retire である。
+`Observed` の entry へ scope または観測者の識別子を持たせないと、どの scope の退出でどの観測を回収するかを決められない。
+どちらも Phase 1 以降で扱う。
 
 ### 5.7 handler
 
