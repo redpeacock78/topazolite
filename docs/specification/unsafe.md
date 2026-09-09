@@ -344,10 +344,13 @@ raw pointer を boundary の外へ出せない設計だからであり、これ�
 ### 4.4 型走査の fail-closed 規約
 
 `owned-free?` も型構造を走査する判定である。
-この判定は `leaks-rawptr?` と同じく、最後に列挙外を通す catch-all を置かず、未知の型構成子を `#f` として扱う。
+`owned-free?` と `leaks-rawptr?` は、どちらも match の最後へ catch-all を置き、未知の型構成子を安全側へ倒す。
+`owned-free?` は `[_ #f]`、`leaks-rawptr?` は `[_ #t]` を返す。
+節を足し忘れても例外にはならず、安全側の値が黙って返るため、追加漏れは受理の欠落として現れる。
 
 `ForallRegion` は明示的に本体を走査する。
-これを列挙から落とすと、`Untrusted` や `Refined` の内側へ `Owned` を隠した型を受理できてしまう。
+`Borrowed` 系のように `#t` を返して打ち切ると、束縛の内側に隠した `Owned` を見落とす。
+実際、fail-open だった時期に `ForallRegion` が列挙に無く、`(Untrusted (ForallRegion (rp) (Owned Res)))` が両方の検査を通っていた。
 
 `Borrowed`、`BorrowedMut`、`RawPtr` は明示の節で `#t` を返し、payload へ降りない。
 所有値を含む構造の借用は意図された用法であり、借用の payload を再帰的に `owned-free?` へ渡すと既存の受理を失うためである。
