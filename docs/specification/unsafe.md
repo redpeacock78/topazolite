@@ -358,4 +358,102 @@ raw pointer を boundary の外へ出せない設計だからであり、これ�
 型構成子を追加する実装者は、`owned-free?` に対応する節を追加する。
 この規約は fail-open による affine 制約の隠蔽を防ぎ、追加漏れを安全側の失敗として検出できる形を保つ。
 
-5 章（性質 9 の bounded 検査）と 6 章（未回収）は G5c7b が書く。
+## 5. 性質 9 の bounded 検査
+
+### 5.1 性質の主張
+
+性質 9（unsafe containment）は次を主張する。
+型検査を通った項の到達可能なすべての実行について、raw 操作は `Unsafe` の内側でだけ発火し、その操作が要求する `PtrProp` の集合は静的側が求めた obligation と一致し、`Unsafe` の境界を越えて `PtrVal` が外へ出ない。
+
+「越えて外へ出ない」の意味は 2 つの経路で定める。
+1 つは `R-UnsafeExit` が返す値であり、もう 1 つは `Unsafe` の内側の `Yield` が event trace へ足す観測値である。
+前者は静的側の `leaks-rawptr?`（§3.4）と対応し、後者は静的側に対応物を持たない。
+`Yield` の観測値は型ではなく trace へ流れるため、型検査だけでは閉じない。
+
+### 5.2 静的側の記録
+
+`model/redex/ptr-static.rkt` の `ptr-sidecar` は、型検査が受理した項について raw 操作の出現ごとに 1 件の `ptr-request` を持つ。
+各件は操作の種類、節点の位置、obligation の集合、囲む `Unsafe` の有無を記録する。
+
+記録する操作は `RawLoad`、`RawStore`、`PtrOffset`、`FromRawPtr` の 4 つである。
+いずれも §3.2 と §3.3 の obligation を `check-raw-obligations!` で要求し、Effect 行へ `Unsafe` を足す。
+`AddressOf` は §2.2 のとおりどちらも行わないため、記録しない。
+
+囲む `Unsafe` の有無は `unsafe-permitted` パラメタから読む。
+`infer-unsafe` が本体を `(parameterize ([unsafe-permitted #t]) ...)` の内側で走らせるため、深さを別に数える必要はない。
+
+この欄は型検査の言い換えではない。
+`check-raw-obligations!` は、obligation が `Γ-pc0` で解けるとき境界の外の raw 操作も通す。
+したがって受理された項に `unsafe?` が偽の出現が現れうる。
+検査は、生成域の範囲でそのような出現が実際には現れないことを確かめる。
+
+### 5.3 oracle の 5 条件
+
+`model/redex/unsafe-oracle.rkt` は、`raw-steps-g2/named` が返す規則名と遷移の前後の config だけを見て次の 5 つを判定する。
+`typing.rkt` の判定関数を呼ばない。
+静的側の言い換えに退化させないための分業である。
+
+- 発火した規則が `R-RawLoad`、`R-RawStore`、`R-PtrOffset`、`R-FromRawPtrConst`、`R-FromRawPtrMut` のいずれかであるとき、簡約前の config の評価文脈に `Unsafe` の枠が少なくとも 1 つある。
+- 同じ遷移について、その操作が §3.2 と §3.3 で要求する `PtrProp` の集合が、静的側が求めた obligation の集合と一致する。
+- 発火した規則が `R-UnsafeExit` であるとき、簡約後の制御項が `PtrVal` を leaf に持たない。
+- 発火した規則が `R-Yield` であり、簡約前の config の評価文脈に `Unsafe` の枠があるとき、event trace へ足す観測値が `PtrVal` を leaf に持たない。
+- どの規則も発火せず、かつ制御項が終端の形でもないとき、その config の redex が `RawLoad`、`RawStore`、`PtrOffset`、`FromRawPtr` のいずれかであって `Unsafe` の内側にある。
+
+1 番目と 5 番目は評価文脈の一意分解を使う。
+`(in-hole E_1 (Unsafe (in-hole E_2 (RawLoad any))))` に照合できることは、次の redex が `Unsafe` の内側の `RawLoad` であることと同値である。
+制御の経路を別に辿る必要はない。
+
+2 番目は操作の種類で照合する。
+実行時の redex は `(RawLoad (PtrVal ...))` の形であり、静的側が記録した `(RawLoad x)` とは決して等しくならない。
+出現ごとに対応づけるには G5c6b の provenance 機構が要る。
+obligation の集合は操作の種類ごとに定数であるため、種類で引くことで足りる。
+oracle は §3.2 と §3.3 の表を `typing.rkt` から import せず独立に転記する。
+import すると条件が恒真になる。
+
+5 番目の条件が終端の構成を除くのは、値や `Error(p)` や `Perform` に達した config も「どの規則も発火しない」に該当するためである。
+除かないと正常な停止がすべて反例になる。
+
+### 5.4 生成域
+
+生成器 `model/redex/unsafe-gen.rkt` は G2 core を直に作る。
+elaboration も surface 構文も通さない。
+
+- `AddressOf` で得た pointer に対する `RawLoad` と `RawStore`。
+- `PtrOffset` を挟んだ `RawLoad`。
+- `Unsafe` の内側と外側の両方に raw 操作を置いた項。
+- `Unsafe` が `PtrVal` を返す項と、返さない項。`FromRawPtr` で借用へ戻した項。
+- `Unsafe` の内側に `Yield` を置き、pointer でない値を観測する項。
+
+`Unsafe` の外側に raw 操作を置いた項は型検査で落ちる。
+性質 9 は型付けを前件に置くため、落ちた項は検査対象から外す。
+外した項が実際に生成されていることは、生成器の単体テストで別に確かめる。
+確かめないと、生成器が境界の外の形を 1 つも作らないまま 1 番目の条件が空回りする。
+
+### 5.5 発火しない 2 つの規則
+
+生成域は `PtrOffset` を含むが、bounded 検査はその発火回数を数えない。
+`R-PtrOffset` は、G2m の型検査を通るどの項からも発火しないためである。
+
+規則は fp の末尾が自然数である `PtrVal` を要求する。
+fp へ自然数の segment を積む規則は `R-EliminateRef` だけであり、それが束縛子へ渡すのは共有借用の `BorrowRef` である。
+一方 pointer を作る `AddressOf` は、§3.1 の署名のとおり `BorrowedMut` しか受け取らない。
+自然数の segment を作る経路は共有借用側にあり、pointer を作る経路は可変借用側にある。
+この二つは G2m の中で交わらない。
+
+同じ理由で `R-FromRawPtrConst` も発火しない。
+`AddressOf` が作る `PtrVal` は `Mut` であり、`R-PtrOffset` は `ptrmut` をそのまま保つため、`Const` の `PtrVal` を作る経路が無い。
+どちらの規則も、手で組んだ `PtrVal` を初期構成に置く単体テストでだけ動く。
+
+2 章の末尾は、`Construct` の欄へ `RawStore` を実行する経路が無いため、`PtrOffset` の後へ `RawStore` を置いても発火しないと述べた。
+ここで述べるのはより強い事実であり、`PtrOffset` そのものが発火しない。
+
+静的側は動く。
+`PtrOffset` に対する型付けと obligation の生成、sidecar への記録、oracle の obligation 表との照合は、生成した項の上で実際に走る。
+そこで bounded 検査は `ptr-offset` の欄だけ発火回数ではなく静的な出現で押さえ、発火しない事実そのものは別の回帰で固定する。
+回収の条件は 6 章に置く。
+
+### 5.6 探索の上限
+
+探索の attempts、項の深さ、fuel、discard の上限は `model/redex/README.md` が定める値を正とする。
+性質 8 の探索と同じ設定を使う。
+反例が見つからないことは証明ではなく、設定した範囲での反例未発見を意味する。

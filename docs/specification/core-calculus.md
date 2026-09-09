@@ -12,7 +12,7 @@ Redex model（`model/redex/`）はこの文書を正として実装し、乖離�
 G1 の範囲は次のとおりである。
 
 - **対象**：未型付き縮小 Core から Typed Core への elaboration、Typed Core の簡約意味論、origin model、return boundary model、Finite / Productive / Unknown の仕様、affine な move / drop と scope exit finalization。
-- **G5 へ延期**：borrow、region、unsafe boundary の judgment と、メタ理論性質 8（borrow safety）、9（unsafe containment）。概略は §9 に置く。
+- **G5 へ延期**：borrow、region、unsafe boundary の judgment と、メタ理論性質 8（borrow safety）、9（unsafe containment）。所在は §9 に置く。
 - **Phase 1 へ延期**：Surface 構文から未型付き縮小 Core への対応づけ、user trait constructor、マクロ展開。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
@@ -1445,7 +1445,7 @@ Redex model では、同値判定関数が ⇓class Unknown と分類された�
 
 MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパー §11.5.7）のうち、G1 は 1 から 7 を扱う。
 8（borrow safety）は G5 で扱う。
-9（unsafe containment）は raw pointer の基盤とともに G5 の後半で扱う（§9）。
+9（unsafe containment）も G5 で扱う。
 
 いずれの性質も、redex-check による **bounded counterexample search** で反例を探索する。
 探索の上限値と seed は `model/redex/README.md` に固定した値を正とする。
@@ -1459,6 +1459,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
 7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
 8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move も Drop もせず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
+9. **Unsafe containment**：型検査を通った項の任意の有限実行 trace において、(a) `R-RawLoad`、`R-RawStore`、`R-PtrOffset`、`R-FromRawPtrConst`、`R-FromRawPtrMut` が発火する構成では評価文脈に `Unsafe` の枠があり、(b) その操作が要求する `PtrProp` の集合は静的側が求めた obligation の集合と一致し、(c) `R-UnsafeExit` が返す値は `PtrVal` を leaf に持たず、(d) `Unsafe` の内側の `R-Yield` が event trace へ足す観測値も `PtrVal` を leaf に持たず、(e) どの規則も発火せず終端でもない構成の redex は、`Unsafe` の内側の raw 操作であってその実行時側条件を満たさないものに限る。判定の詳細は `unsafe.md` §5 に置く。 [REQ: PTR-001] [REQ: PTR-002]
 
 ## 8. golden program
 
@@ -1552,24 +1553,22 @@ Apply(map, CurryVal(…), cons(-1, cons(2, nil)))
 `CurryVal` の origin が `Derived(Reserved(o-mul), Curry(2))` であり、新規の `Reserved` でないことを golden test で併せて確認する。
 期待する ⇓class は `Finite(structural)` である。
 
-## 9. 延期事項（G5 への概略）
+## 9. G5 で仕様化した事項の所在
 
-borrow、region、unsafe boundary の judgment は G5 で仕様化する。
-ホワイトペーパー §11.5.8 に基づく概略は次のとおりである。
+G1 が延期した borrow、region、unsafe boundary の judgment は G5 で仕様化した。
+本節はその所在を示す。
 
-- 借用の生存は Ω ではなく静的な記録 Ψ が持ち、Ω は `Available`、`Moved`、`Dropped` の三値のままとする。
-- `&x` と `&mut x` の可否は Ψ と σ が決める。共有借用どうしは重なってよい。可変借用は同じ place について排他であり、同じ place の共有借用と region が重なるときは取れない。
-- region exit で Ψ から項目を消すことはせず、σ が定める生存範囲の外に出た借用は以後の許可判定に効かなくなる。`Moved` と `Dropped` の place への read、borrow、drop は型エラーとする。
-- raw pointer の dereference は `Unsafe` Effect と Proof obligation を要求し（PTR-001）、safe reference の構築には lifetime、alignment、validity の Proof を要求する（PTR-002）。
-- G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）の担当を次のように分ける。
-- 引数渡しは G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2、E-Construct の field は G5c5b3 が担当する。
-- メタ理論性質 9（unsafe containment）の bounded 検査を Redex model へ追加する。性質 8（borrow safety）の bounded 検査は `model/redex/tests/properties-borrow-test.rkt` にある。
+- 借用の生存と許可判定、可変借用の排他、reborrow：`borrow.md`。メタ理論性質 8 は §7 の 8 番。
+- region の annotation と生存範囲、region 多相：`region.md`。
+- raw pointer の型と操作、`Unsafe` の境界、obligation：`unsafe.md`。メタ理論性質 9 は §7 の 9 番。
+- 構造的な row と record の射影：`structural-row.md`。
+- G1 が禁止した Owned 値の関数境界越えの解禁：`core-calculus.md` §4.3 と `borrow.md`。
 
-このうち `Owned` を取る仮引数は G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2 が扱う。
-G5c3 段 A では `Let` の宣言型が `Owned` のときに計算した値を載せる形だけを回復する。
+G1 が borrow を延期できたのは、Ω の三値（`Available`、`Moved`、`Dropped`）が借用を持たない言語では所有権の全体を表せるためである。
+借用を入れると生存の情報が Ω に収まらず、静的な記録が要る。
+G5 はその記録を Ψ として置いた。
 
-G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有権機能が affine な move / drop まで（ホワイトペーパー §16 Phase 1）であり、G1 の Ω 三値モデルがその範囲を過不足なく覆うためである。
-初期 lexical region 解析を NLL 相当の solver と置換可能にする要件（BOR-003）も G5 で扱う。
+Phase 1 以降へ送った事項は `requirements.md` の申し送り表に載せる。
 
 ## 10. 規則と要件 ID の対応
 
@@ -1604,3 +1603,5 @@ G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有�
 | BOR-004 | `borrow.md` §12 の読み書き、R-Read、R-ReadMut、R-Assign、性質 8 |
 | BOR-005 | `borrow.md` §11 の field 射影、R-ProjBorrow、R-ProjBorrowMut、性質 8 |
 | BOR-006 | `borrow.md` §10 の所有者の注釈、§9 の capability の重なり、性質 8 |
+| PTR-001 | `unsafe.md` §2 の Unsafe 境界、§3.3 の obligation、R-RawLoad、R-RawStore、性質 9 |
+| PTR-002 | `unsafe.md` §4.2 の FromRawPtr、R-FromRawPtrConst、R-FromRawPtrMut、性質 9 |
