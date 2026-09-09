@@ -47,6 +47,7 @@
 
 (define search-result (run-unsafe-search))
 
+;; [REQ: PTR-001] [REQ: PTR-002] unsafe.md §5.1。
 (test-case "性質 9 の反例が無い"
   (check-equal? (third search-result) '()))
 

@@ -406,12 +406,14 @@
 ;; サブサイクルが要件を回収するたび、この列へ ID を足す。
 (define expected-g5-ids
   '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007
-    VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010))
+    VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010
+    PTR-001 PTR-002))
 
-;; G5 の状態を名乗るが、意図して G5c7 へ送る ID。
+;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
+;; 現在は空である。次に送る ID が出たらここへ挙げる。
 ;; expected へ移すときは spec 参照とテスト参照も同時に足す。
 ;; 逆向き検査はこの集合を欠落から除く。
-(define pending-g5-ids '(PTR-001 PTR-002))
+(define pending-g5-ids '())
 
 (define (default-pending-ids) pending-g5-ids)
 
@@ -517,7 +519,8 @@
   (define g5-specs
     (list (build-path root "docs/specification/region.md")
           (build-path root "docs/specification/borrow.md")
-          (build-path root "docs/specification/structural-row.md")))
+          (build-path root "docs/specification/structural-row.md")
+          (build-path root "docs/specification/unsafe.md")))
   (define g5-tests
     (list (build-path root "model/redex/tests/region-test.rkt")
           (build-path root "model/redex/tests/borrow-test.rkt")
@@ -544,7 +547,8 @@
           (build-path root "model/redex/tests/typing-test.rkt")
           (build-path root "model/redex/tests/solver-parity-test.rkt")
           (build-path root "model/redex/tests/region-app-test.rkt")
-          (build-path root "model/redex/tests/variance-region-test.rkt")))
+          (build-path root "model/redex/tests/variance-region-test.rkt")
+          (build-path root "model/redex/tests/properties-unsafe-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
