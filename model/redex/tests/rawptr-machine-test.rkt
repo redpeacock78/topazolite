@@ -78,6 +78,19 @@
     (rec-config (term (PtrOffset (PtrVal 0 (f0 0) Mut (Prov owned)) -1))))
    0))
 
+;; AddressOf は root pointer だけを作り、R-PtrOffset が要求する自然数
+;; segment は可変借用側から作れない。Const の PtrVal も同じ理由で
+;; AddressOf からは作れず、R-FromRawPtrConst は手組み fixture のみである。
+(test-case "root の借用から作った pointer では PtrOffset が発火しない（unsafe.md §2.3）"
+  (match-define (list name after)
+    (one-named
+     (rec-config
+      (term (PtrOffset (AddressOf (BorrowMutRef 0 () (RVar 0))) 0)))))
+  (check-equal? name 'R-AddressOf)
+  (check-equal? (config-core after)
+                (term (PtrOffset (PtrVal 0 () Mut (Prov owned)) 0)))
+  (check-equal? (step-count after) 0))
+
 ;; 指す先が存在しない場合、RawLoad と RawStore は発火しない。
 (test-case "存在しない欄への RawLoad は発火しない（unsafe.md §2.3）"
   (check-equal?
