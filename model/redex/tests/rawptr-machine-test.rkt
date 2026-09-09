@@ -72,6 +72,12 @@
    (step-count (rec-config (term (PtrOffset (PtrVal 0 (f0) Mut (Prov owned)) 1))))
    0))
 
+(test-case "負の添字になる PtrOffset は発火しない（unsafe.md §2.3）"
+  (check-equal?
+   (step-count
+    (rec-config (term (PtrOffset (PtrVal 0 (f0 0) Mut (Prov owned)) -1))))
+   0))
+
 ;; 指す先が存在しない場合、RawLoad と RawStore は発火しない。
 (test-case "存在しない欄への RawLoad は発火しない（unsafe.md §2.3）"
   (check-equal?
@@ -110,6 +116,18 @@
                 (term (FromRawPtr (PtrVal 0 (f0) Mut (Prov owned)) (RVar 0)))))
    0))
 
+(test-case "Moved の place への RawLoad は発火しない（unsafe.md §2.3）"
+  (check-equal?
+   (step-count (moved-config
+                (term (RawLoad (PtrVal 0 (f0) Mut (Prov owned))))))
+   0))
+
+(test-case "Moved の place への RawStore は発火しない（unsafe.md §2.3）"
+  (check-equal?
+   (step-count (moved-config
+                (term (RawStore (PtrVal 0 (f0) Mut (Prov owned)) 9))))
+   0))
+
 ;; unsafe.md §4.2。R-UnsafeExit は内側が値になったら枠を外す。
 (test-case "R-UnsafeExit は枠を外す（unsafe.md §4.2）"
   (match-define (list name after) (one-named (rec-config (term (Unsafe 7)))))
@@ -117,11 +135,25 @@
   (check-equal? (config-core after) (term 7)))
 
 ;; unsafe.md §4.2。Unsafe の内側の Perform が伝播する。
-;; F と G の枠を置く根拠の回帰である。
+;; F の枠を置く根拠の回帰である。
 (test-case "Unsafe の内側の Perform が伝播する（unsafe.md §4.2）"
-  (check-true
-   (positive?
-    (step-count
+  (match-define (list name after)
+    (one-named
      (rec-config
       (term (Handle (Return b Int) (k -> k)
-                    (Unsafe (Perform (Return b Int) 3)))))))))
+                    (Unsafe (Perform (Return b Int) 3)))))))
+  (check-equal? name 'R-HandleReturn)
+  (check-equal? (config-core after) (term 3)))
+
+;; unsafe.md §4.2。R-LetOwned は G 文脈内でも Unsafe の枠を保つ。
+(test-case "Unsafe の枠は G を越える（unsafe.md §4.2）"
+  (match-define (list name after)
+    (one-named
+     (term (cfg (Scope ()
+                       (Unsafe (Let (r (Owned Res))
+                                    (resource 9)
+                                    (Move r))))
+                () () () ()))))
+  (check-equal? name 'R-LetOwned)
+  (check-equal? (config-core after)
+                (term (Scope (0) (Unsafe (Move 0))))))
