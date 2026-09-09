@@ -32,7 +32,16 @@
     (list
      (lambda () `(RawLoad (AddressOf (BorrowMut ,x))))
      (lambda () `(RawStore (AddressOf (BorrowMut ,x)) ,(gen-literal)))
-     (lambda () `(PtrOffset (AddressOf (BorrowMut ,x)) 1))))
+     (lambda () `(PtrOffset (AddressOf (BorrowMut ,x)) 1))
+     (lambda ()
+       (define p (fresh-binder! 'p))
+       (define q (fresh-binder! 'q))
+       `(Let (,p const (RawPtr Res Mut NonNull (Align 1)
+                              (AddrSpace native) (Prov owned)))
+             (AddressOf (BorrowMut ,x))
+             (Let (,q let Res)
+                  (Unsafe (RawLoad ,p))
+                  (RawLoad ,p))))))
   ((pick choices)))
 
 (define (gen-unsafe-body depth x)
@@ -47,6 +56,7 @@
                                     (PtrOffset (AddressOf (BorrowMut ,x)) 1))))
               (lambda () `(Unsafe
                             (Read (FromRawPtr (AddressOf (BorrowMut ,x)) 0))))
+              (lambda () `(Unsafe (AddressOf (BorrowMut ,x))))
               (lambda () `(Unsafe (Yield ,(gen-literal)
                                          ,(gen-unsafe-body (sub1 depth) x))))
               (lambda () (gen-unsafe-outside x)))])

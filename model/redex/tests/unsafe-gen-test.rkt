@@ -36,3 +36,13 @@
       ['discard (set! discarded (add1 discarded))]))
   (check-true (positive? accepted) "受理される項がある")
   (check-true (positive? discarded) "型検査で落ちる項がある"))
+
+;; 条件 3 の回帰。Unsafe が RawPtr を返す形は生成域に含めるが、
+;; 境界からの漏出を型検査が discard として止める。
+(test-case "Unsafe が PtrVal を返す形は型検査で discard になる（unsafe.md §5.4）"
+  (check-equal?
+   (prepare-unsafe-term
+    '(Scope ()
+       (Let (x let (Owned Res)) (resource 1)
+         (Unsafe (AddressOf (BorrowMut x))))))
+   'discard))
