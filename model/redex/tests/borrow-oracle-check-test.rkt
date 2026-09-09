@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         racket/set
          "../borrow.rkt"
          "../borrow-gen.rkt"
          "../borrow-oracle.rkt")
@@ -22,6 +23,14 @@
          (Let (y let (BorrowedMut Int ph)) (BorrowMut x)
            (Assign y 1001))))))
 
+(define eliminate-ref-skeleton
+  '(Scope ()
+     (Let (d let (Owned (Option Int))) (Construct (Option Int) some 1000)
+       (Scope ()
+         (Eliminate (Borrow d)
+                    ((none () -> 1000)
+                     (some (e) -> (Read e))))))))
+
 (define (run skeleton)
   (define counters (make-bcounters))
   (match (prepare-borrow-term skeleton)
@@ -41,12 +50,15 @@
   (check-true (positive? (bcounters-mut counters)))
   (check-true (positive? (bcounters-use counters))))
 
-(test-case "静的側の借用集合は mode と fp と ρ を持つ"
+(test-case "Eliminate を含む静的側の借用集合は重複除去後の件数と一致する"
   (match-define (list 'ok _config sidecar ir)
-    (prepare-borrow-term shared-skeleton))
-  (define entries (static-borrow-set sidecar ir))
-  (check-equal? (length entries) 1)
-  (check-equal? (first (first entries)) 'shared))
+    (prepare-borrow-term eliminate-ref-skeleton))
+  (define expected
+    (remove-duplicates
+     (filter borrow-request? (borrow-sidecar-requests sidecar))))
+  (check-equal? (length (static-borrow-set sidecar ir))
+                (length expected))
+  (check-true (pair? expected)))
 
 (test-case "初期 config に借用値がある実行は入口で discard になる"
   ;; prepare-borrow-term が弾くので、oracle へは届かない。
@@ -63,8 +75,15 @@
   (define empty-sidecar (borrow-sidecar '() (hash)))
   (match (check-borrow-execution config empty-sidecar #f 200
                                  (make-bcounters))
-    [(list 'fail reason _detail) (check-equal? reason 'unmatched-root)]
+    [(list 'fail reason _detail) (check-equal? reason 'unmatched-reborrow)]
     [other (fail (format "unexpected: ~e" other))]))
+
+(test-case "多価 provenance の ambiguous は後続の一意一致を隠さない"
+  (define prov (provenance (hash 'w (set 0 1))))
+  (define statics
+    (list (list 'shared 'w '() 0)
+          (list 'shared 0 '() 0)))
+  (check-true (static-match-verdict statics 'shared '() 0 0 prov)))
 
 (test-case "カウンタが 0 の欄を列挙できる"
   (define counters (make-bcounters))

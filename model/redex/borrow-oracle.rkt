@@ -19,6 +19,7 @@
          make-bcounters
          bcounters-zeros
          static-borrow-set
+         static-match-verdict
          live-borrows
          check-no-move-of-live
          check-mut-exclusive
@@ -467,36 +468,44 @@
          (set-member? live (second pair))
          (list 'fail 'reborrow-parent-live pair))))
 
+;; spec §4.6。static request の designator が動的な place へ解けるかを調べる。
+;; 解が無いときは #f、全てが p のときは #t、複数の place へ散るときは
+;; ambiguous を返す。複数 request の結果は static-match-verdict でまとめる。
+(define (designator-status prov w p)
+  (define places (resolve-designator prov w))
+  (cond
+    [(null? places) #f]
+    [(andmap (lambda (place) (equal? place p)) places) #t]
+    [else (list 'ambiguous places)]))
+
+;; 同じ mode、fp、ρ の request が複数ある場合も順序に依存させない。
+;; 一つでも一意に一致すれば受理し、受理が無く ambiguous があれば fail にする。
+(define (static-match-verdict statics mode fp ρ p prov)
+  (define matched? #f)
+  (define ambiguous-detail #f)
+  (for ([entry (in-list statics)])
+    (match-define (list s-mode s-w s-fp s-ρ) entry)
+    (when (and (eq? mode s-mode)
+               (equal? fp s-fp)
+               (equal? ρ s-ρ))
+      (define status (designator-status prov s-w p))
+      (cond
+        [(eq? status #t) (set! matched? #t)]
+        [(and (pair? status) (eq? (first status) 'ambiguous)
+              (not ambiguous-detail))
+         (set! ambiguous-detail
+               (list 'static entry 'dynamic-place p
+                     'places (second status)))])))
+  (cond
+    [matched? #t]
+    [ambiguous-detail (list 'fail 'ambiguous-designator ambiguous-detail)]
+    [else #f]))
+
 ;; spec §4.6。根の発生は静的側の要求と mode と fp と ρ で照合する。
-;; place は静的側の記号を provenance で解いた全ての候補と一致しなければならない。
 ;; 個数の一致は要求しない。R-RecurUnfold の複製で同じ要求が複数回発火しうる。
 (define (root-matches? candidate statics prov)
   (match-define (list _tag mode p fp ρ _w) candidate)
-  (define matching
-    (filter (lambda (entry)
-              (match-define (list s-mode _s-w s-fp s-ρ) entry)
-              (and (eq? mode s-mode)
-                   (equal? fp s-fp)
-                   (equal? ρ s-ρ)))
-            statics))
-  (define (designator-status w)
-    (define places (resolve-designator prov w))
-    (cond
-      [(null? places) #f]
-      [(andmap (lambda (place) (equal? place p)) places) #t]
-      [else (list 'ambiguous places)]))
-  (let loop ([entries matching])
-    (cond
-      [(null? entries) #f]
-      [else
-       (define status (designator-status (second (first entries))))
-       (cond
-         [(eq? status #t) #t]
-         [(and (pair? status) (eq? (first status) 'ambiguous))
-          (list 'fail 'ambiguous-designator
-                (list 'static (first entries) 'dynamic-place p
-                      'places (second status)))]
-         [else (loop (rest entries))])])))
+  (static-match-verdict statics mode fp ρ p prov))
 
 ;; reborrow は根でありながら親を持つ。静的側との照合は根と同じ規則で、
 ;; 親の可変借用が簡約前に生きていることも要求する。
@@ -504,33 +513,7 @@
   (match-define (list _tag p fp ρ ρ-parent) candidate)
   (define parent (list 'mut p fp ρ-parent))
   (and (member parent (live-borrows pre))
-       (let ([matching
-              (filter (lambda (entry)
-                        (match-define (list s-mode _s-w s-fp s-ρ) entry)
-                        (and (eq? s-mode 'shared)
-                             (equal? fp s-fp)
-                             (equal? ρ s-ρ)))
-                      statics)])
-         (define (designator-status w)
-           (define places (resolve-designator prov w))
-           (cond
-             [(null? places) #f]
-             [(andmap (lambda (place) (equal? place p)) places) #t]
-             [else (list 'ambiguous places)]))
-         (let loop ([entries matching])
-           (cond
-             [(null? entries) #f]
-             [else
-              (define status (designator-status
-                              (second (first entries))))
-              (cond
-                [(eq? status #t) #t]
-                [(and (pair? status)
-                      (eq? (first status) 'ambiguous))
-                 (list 'fail 'ambiguous-designator
-                       (list 'static (first entries) 'dynamic-place p
-                             'places (second status)))]
-                [else (loop (rest entries))])])))))
+       (static-match-verdict statics 'shared fp ρ p prov)))
 
 ;; 派生の発生は親の参照とだけ照合する。静的側は見ない。
 ;; 形の妥当性は Task 2 の approved-forms が既に確かめている。
@@ -622,7 +605,7 @@
      (cond
        [(and (pair? matched) (eq? (first matched) 'fail)) matched]
        [matched (begin (bump! counters 'reborrow) #f)]
-       [else (list 'fail 'unmatched-root candidate)])]
+       [else (list 'fail 'unmatched-reborrow candidate)])]
     [(list 'derived _mode _p _fp _ρ _pp _pfp _pρ)
      (if (derived-matches? candidate pre)
          (begin (bump! counters 'proj) #f)
