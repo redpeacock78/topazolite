@@ -27,9 +27,10 @@
   '(Scope ()
      (Let (d let (Owned (Option Int))) (Construct (Option Int) some 1000)
        (Scope ()
-         (Eliminate (Borrow d)
-                    ((none () -> 1000)
-                     (some (e) -> (Read e))))))))
+         (Let (q let (Borrowed (Option Int) ph)) (Borrow d)
+           (Eliminate (Borrow d)
+                      ((none () -> 1000)
+                       (some (e) -> (Read e)))))))))
 
 (define (run skeleton)
   (define counters (make-bcounters))
@@ -58,7 +59,7 @@
      (filter borrow-request? (borrow-sidecar-requests sidecar))))
   (check-equal? (length (static-borrow-set sidecar ir))
                 (length expected))
-  (check-true (pair? expected)))
+  (check-true (> (length expected) 1)))
 
 (test-case "初期 config に借用値がある実行は入口で discard になる"
   ;; prepare-borrow-term が弾くので、oracle へは届かない。
@@ -78,12 +79,29 @@
     [(list 'fail reason _detail) (check-equal? reason 'unmatched-reborrow)]
     [other (fail (format "unexpected: ~e" other))]))
 
+(test-case "静的側に無い root borrow は unmatched-root になる"
+  (define config
+    '(cfg (Scope (0) (BorrowAt (RVar 0) (Own 0 ()) 0))
+          ((0 1)) ((0 Available)) () ()))
+  (define empty-sidecar (borrow-sidecar '() (hash)))
+  (match (check-borrow-execution config empty-sidecar #f 200
+                                 (make-bcounters))
+    [(list 'fail reason _detail) (check-equal? reason 'unmatched-root)]
+    [other (fail (format "unexpected: ~e" other))]))
+
 (test-case "多価 provenance の ambiguous は後続の一意一致を隠さない"
   (define prov (provenance (hash 'w (set 0 1))))
   (define statics
     (list (list 'shared 'w '() 0)
           (list 'shared 0 '() 0)))
   (check-true (static-match-verdict statics 'shared '() 0 0 prov)))
+
+(test-case "一意一致が無い ambiguous provenance は fail-closed になる"
+  (define prov (provenance (hash 'w (set 0 1))))
+  (match (static-match-verdict (list (list 'shared 'w '() 0))
+                               'shared '() 0 0 prov)
+    [(list 'fail 'ambiguous-designator _detail) (check-true #t)]
+    [other (fail (format "unexpected: ~e" other))]))
 
 (test-case "カウンタが 0 の欄を列挙できる"
   (define counters (make-bcounters))
