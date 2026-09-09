@@ -23,6 +23,7 @@
          proj-borrow-mut
          value-set-path
          path-lookup
+         fp-offset
          path-set
          fresh-token
          run
@@ -220,6 +221,15 @@
 (define (path-lookup H p fp)
   (and (owner-path? fp)
        (heap-walk-path (table-ref H p) fp)))
+
+;; spec §4.2。ポインタの末尾の自然数 segment だけを offset する。
+;; label-only path、負の結果、非自然数の offset は不発火にする。
+(define (fp-offset fp offset)
+  (and (pair? fp)
+       (exact-nonnegative-integer? (last fp))
+       (let ([moved (+ (last fp) offset)])
+         (and (exact-nonnegative-integer? moved)
+              (append (drop-right fp 1) (list moved))))))
 
 ;; spec §7.3。field path の先だけを関数的に差し替える。
 (define (value-set-path old fp new)
@@ -720,6 +730,46 @@
         (where Available ,(table-ref (term Ω) (term p)))
         (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
         R-Assign)
+
+   ;; spec §4.2。raw pointer 操作は H と Ω の実在 place を要求する。
+   (--> (cfg (in-hole E (AddressOf (BorrowMutRef p fp ρ))) H Ω Λtok θ)
+        (cfg (in-hole E (PtrVal p fp Mut (Prov owned))) H Ω Λtok θ)
+        R-AddressOf)
+
+   (--> (cfg (in-hole E (PtrOffset (PtrVal p fp ptrmut prov) n)) H Ω Λtok θ)
+        (cfg (in-hole E (PtrVal p fp_new ptrmut prov)) H Ω Λtok θ)
+        (where fp_new ,(fp-offset (term fp) (term n)))
+        R-PtrOffset)
+
+   (--> (cfg (in-hole E (RawLoad (PtrVal p fp ptrmut prov))) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_result ,(path-lookup (term H) (term p) (term fp)))
+        R-RawLoad)
+
+   (--> (cfg (in-hole E (RawStore (PtrVal p fp Mut prov) v)) H Ω Λtok θ)
+        (cfg (in-hole E unit) H_new Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
+        R-RawStore)
+
+   (--> (cfg (in-hole E (FromRawPtr (PtrVal p fp Const (Prov owned)) ρ))
+            H Ω Λtok θ)
+        (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_target ,(path-lookup (term H) (term p) (term fp)))
+        R-FromRawPtrConst)
+
+   (--> (cfg (in-hole E (FromRawPtr (PtrVal p fp Mut (Prov owned)) ρ))
+            H Ω Λtok θ)
+        (cfg (in-hole E (BorrowMutRef p fp ρ)) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_target ,(path-lookup (term H) (term p) (term fp)))
+        R-FromRawPtrMut)
+
+   (--> (cfg (in-hole E (Unsafe v)) H Ω Λtok θ)
+        (cfg (in-hole E v) H Ω Λtok θ)
+        R-UnsafeExit)
 
    ;; G2 の Lam 本体を含む値にも origin-of を適用できるよう、G1 の
    ;; R-CurryVal を G2m の入口で上書きする。

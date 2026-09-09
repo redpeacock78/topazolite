@@ -14,7 +14,8 @@
 ;; #f は目標側に規則を持たないことを表す。
 ;; 4 組が 1 本へ畳まれ、R-Discharge、R-OwnLeaf、R-EliminateRef、
 ;; R-RetireValue、R-RetireError、R-RetirePerform と G2m 固有規則が
-;; 目標側に無いため、値の相異なる集合は 20 本になる。
+;; 目標側に無いため、値の相異なる集合は 20 本になる。raw pointer の
+;; 7 規則も G2m 固有で目標側には無い。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
@@ -40,6 +41,13 @@
     (R-Read         . #f)
     (R-ReadMut      . #f)
     (R-Assign       . #f)
+    (R-AddressOf    . #f)
+    (R-PtrOffset    . #f)
+    (R-RawLoad      . #f)
+    (R-RawStore     . #f)
+    (R-FromRawPtrConst . #f)
+    (R-FromRawPtrMut . #f)
+    (R-UnsafeExit   . #f)
     (R-RecurBind    . R-PR-Letrec)
     (R-RecurUnfold  . R-PR-Letrec)
     (R-Move         . R-PR-Move)
@@ -73,22 +81,24 @@
  (check-equal? (set-count g1-rule-names) 25))
 
 (test-case
- "-->g2/rules adds exactly sixteen names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 16 本である。
+ "-->g2/rules adds exactly twenty-three names to -->g1/rules"
+ ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 23 本である。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-Discharge 'R-LetB 'R-LetOwnedB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
                     'R-BorrowMutError 'R-Reborrow
                     'R-ProjBorrow 'R-ProjBorrowMut
                     'R-Read 'R-ReadMut 'R-Assign 'R-RegionApp
-                    'R-EliminateRef))
+                    'R-EliminateRef 'R-AddressOf 'R-PtrOffset
+                    'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
+                    'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 41))
+ (check-equal? (set-count g2-rule-names) 48))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 41))
+ (check-equal? (length rule-correspondence) 48))
 
 (test-case
  "the target side has 20 rules"
