@@ -1427,7 +1427,8 @@ Redex model では、同値判定関数が ⇓class Unknown と分類された�
 ## 7. メタ理論性質
 
 MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパー §11.5.7）のうち、G1 は 1 から 7 を扱う。
-8（borrow safety）と 9（unsafe containment）は G5 で扱う（§9）。
+8（borrow safety）は G5 で扱う。
+9（unsafe containment）は raw pointer の基盤とともに G5 の後半で扱う（§9）。
 
 いずれの性質も、redex-check による **bounded counterexample search** で反例を探索する。
 探索の上限値と seed は `model/redex/README.md` に固定した値を正とする。
@@ -1439,7 +1440,8 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
-7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010]
+7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
+8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move も Drop もせず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
 
 ## 8. golden program
 
@@ -1544,7 +1546,7 @@ borrow、region、unsafe boundary の judgment は G5 で仕様化する。
 - raw pointer の dereference は `Unsafe` Effect と Proof obligation を要求し（PTR-001）、safe reference の構築には lifetime、alignment、validity の Proof を要求する（PTR-002）。
 - G1 が禁止した Owned 値の関数境界越え（引数渡し、closure 捕捉、E-Construct の field、E-Curry の固定引数。§4.3）の担当を次のように分ける。
 - 引数渡しは G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2、E-Construct の field は G5c5b3 が担当する。
-- メタ理論性質 8（borrow safety）と 9（unsafe containment）の bounded 検査を Redex model へ追加する。
+- メタ理論性質 9（unsafe containment）の bounded 検査を Redex model へ追加する。性質 8（borrow safety）の bounded 検査は `model/redex/tests/properties-borrow-test.rkt` にある。
 
 このうち `Owned` を取る仮引数は G5c5b1、closure の捕捉と E-Curry の固定引数は G5c5b2 が扱う。
 G5c3 段 A では `Let` の宣言型が `Owned` のときに計算した値を載せる形だけを回復する。
@@ -1574,5 +1576,14 @@ G1 が borrow を延期できるのは、Phase 1 の MVP が要求する所有�
 | OWN-001 | E-Move（§4.7）、T-MovePlace（§5.1）、R-Move、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |
 | OWN-003 | R-ScopeAbort、R-ScopeError（§5.6）、性質 7 |
+| OWN-005 | `borrow.md` §12 の `Let` の `Owned` 規則、性質 7 |
+| OWN-006 | `borrow.md` §8 の仮引数の受け渡し、性質 7 |
+| OWN-007 | `borrow.md` §8 の closure 捕捉、R-CurryVal（§5.3）、性質 7 |
+| OWN-008 | `borrow.md` §8 の固定引数、R-ApplyCurry（§5.3）、性質 7 |
 | OWN-009 | T-OwnedLeaf、`Λtok` の token 条件、性質 7 |
 | OWN-010 | R-Drop、finalize、R-ScopeValue、性質 7 |
+| BOR-001 | `borrow.md` §4 の許可条件、R-Borrow、R-BorrowError、性質 8 |
+| BOR-002 | `borrow.md` §4 の排他条件、R-BorrowMut、R-BorrowMutError、性質 8 |
+| BOR-004 | `borrow.md` §12 の読み書き、R-Read、R-ReadMut、R-Assign、性質 8 |
+| BOR-005 | `borrow.md` §11 の field 射影、R-ProjBorrow、R-ProjBorrowMut、性質 8 |
+| BOR-006 | `borrow.md` §10 の所有者の注釈、§9 の capability の重なり、性質 8 |
