@@ -1452,7 +1452,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 反例が見つからないことは性質の証明ではなく、設定した探索範囲での反例未発見を意味する。
 
 1. **Preservation**：`Ξ; Φ ⊢config ⟨c, H, Ω, Λtok, θ⟩ : τ ! ε`（§5.1）かつ `⟨c, H, Ω, Λtok, θ⟩ → ⟨c', H', Ω', Λtok', θ'⟩` ならば、ある Ξ' ⊇ Ξ について `Ξ'; Φ ⊢config ⟨c', H', Ω', Λtok', θ'⟩ : τ ! ε'` かつ `ε' ⊆ ε` が成り立つ。Φ は簡約で変化しないため同じ Φ を使い回せる（§5.1）。 [REQ: OWN-009]
-2. **Progress modulo effects**：well-typed で closed なプログラム c0 の初期構成 `⟨Scope(∅, c0), ∅, ∅, ∅, ⟨⟩⟩` から到達可能な構成は、値であるか、OwnershipError（`⟨Error(p), H, Ω, Λtok, θ⟩` の形の終端構成、§5.5）であるか、次の step を持つ。top-level に到達した `Perform(op, v)` は、op が初期宣言 row に含まれる場合のみ許容される終端とする。到達可能性で量化するのは、R-LetOwned の割り当て先となる Scope の存在（§5.2）を初期構成の形が保証するためである。 [REQ: OWN-010]
+2. **Progress modulo effects**：well-typed で closed なプログラム c0 の初期構成 `⟨Scope(∅, c0), ∅, ∅, ∅, ⟨⟩⟩` から到達可能な構成は、値であるか、OwnershipError（`⟨Error(p), H, Ω, Λtok, θ⟩` の形の終端構成、§5.5）であるか、次の step を持つ。top-level に到達した `Perform(op, v)` は、op が初期宣言 row に含まれる場合のみ許容される終端とする。`Unsafe` の内側で raw 操作の実行時側条件が満たされない構成は、この主張の対象から外す（`unsafe.md` §2.3、§4.2）。この構成は値でも OwnershipError でもなく次の step も持たないが、`unsafe.md` が意図して stuck と定めた形である。到達可能性で量化するのは、R-LetOwned の割り当て先となる Scope の存在（§5.2）を初期構成の形が保証するためである。 [REQ: OWN-010]
 3. **Origin integrity**：elaboration の出力 c と、そこから到達可能なすべての構成は `verify-origins(R0, ·)` を満たす。すなわち簡約は偽造 origin を生成しない。 [REQ: NAR-001] [REQ: NAR-002]
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
