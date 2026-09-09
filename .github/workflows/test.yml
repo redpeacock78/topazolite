@@ -1,0 +1,26 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: '9.2'
+          variant: 'CS'
+          distribution: 'full'
+          architecture: 'x64'
+
+      - name: raco test
+        run: raco test -j 2 model/redex/tests/
+
+      - name: requirement coverage
+        if: always()
+        run: racket tools/req-coverage.rkt
