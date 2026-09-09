@@ -732,7 +732,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 1 以降 | §4.1 |
 | core に安定した source point の識別子を持たせること | `core-calculus.md` §5.1 | Phase 1 以降 | §13.4.4 |
 | 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 1 以降 | §4.8 |
-| 非同期な観測者を表す非決定的な `R-ObsRetire` | `core-calculus.md` §5.6 | Phase 1 以降 | 無し |
+| 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 1 以降 | 無し |
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 1 以降 | §4.9 |
 | 記号の shadowing を跨いだ designator の解決 | `borrow.md` §14 | Phase 1 以降 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 1 以降 | §4.8 |
