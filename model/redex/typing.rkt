@@ -429,6 +429,7 @@
                           (append (cdr cap) (borrow-request-fp item))
                           (borrow-request-mode item)
                           child-alpha
+                          (borrow-request-rho-borrow item)
                           node)
           node fail)
          (when (and (eq? (borrow-request-mode item) 'shared)
@@ -444,12 +445,14 @@
                      (psi-suspend
                       (psi-add-mut current-psi (car cap) (cdr cap)
                                    parent-term)
-                      (car cap) (cdr cap) parent-term child-alpha))
+                      (car cap) (cdr cap) parent-term child-alpha
+                      (borrow-request-node item)))
                (for ([parent-alpha (in-list parent-alphas)])
                  (set! current-psi
                        (psi-suspend current-psi
                                     (car cap) (cdr cap)
-                                    parent-alpha child-alpha))))))]
+                                    parent-alpha child-alpha
+                                    (borrow-request-node item)))))))]
       [(use-request? item)
        (define w (use-request-w item))
        ;; 遅延した Reborrow が作った局所 alpha を保つ。全ての use source を
@@ -1841,7 +1844,7 @@
   (emit-constraint!
    (region-constraint 'outlives ρ_owner α point core))
   (emit-request!
-   (borrow-request key '() (if mutable? 'mut 'shared) α core))
+   (borrow-request key '() (if mutable? 'mut 'shared) α ρ_borrow core))
   (define Ψ_out
     (if mutable?
         (psi-add-mut Ψ key '() α)
@@ -1911,14 +1914,16 @@
        (unless (or (lifetime-var? α_parent)
                    (rparam-term? α_parent)
                    (existing-mut cap))
-         (route-request! (borrow-request w fp 'mut parent-term core)
+         (route-request! (borrow-request w fp 'mut parent-term parent-term core)
                          core fail)))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
      ;; 親を停止窓から除いたあとも、子と別の可変借用との衝突は残す必要がある。
      (for ([cap (in-set tokens)])
        (define w (car cap))
        (define fp (cdr cap))
-       (route-request! (borrow-request w fp 'shared α_child core)
+       (route-request! (borrow-request w fp 'shared α_child
+                                       (region-at ir point)
+                                       core)
                        core fail))
      ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
      ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の
@@ -1937,7 +1942,8 @@
                       (car cap)
                       (cdr cap)
                       (hash-ref parent-terms cap)
-                      α_child)))
+                      α_child
+                      core)))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 

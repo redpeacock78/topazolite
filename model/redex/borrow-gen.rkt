@@ -69,6 +69,10 @@
      (if (and (positive? depth) (pair? (genv-owned env)))
          (list (lambda () (gen-borrow-let depth env))
                (lambda () (gen-mut-let depth env))
+               ;; 子 Scope で作った借用を外側で直ちに読む。借用値が Scope
+               ;; の退出をまたぐので scope-exit を数えられるが、同じ Scope
+               ;; の owner から借用を返す反例は生成しない。
+               (lambda () (gen-scope-borrow env))
                (lambda () `(Drop (Move ,(pick (genv-owned env))))))
          '())
      (if (positive? depth)
@@ -119,6 +123,12 @@
      ,(gen-core (sub1 depth)
                 (struct-copy genv env
                              [shared (cons y (genv-shared env))]))))
+
+(define (gen-scope-borrow env)
+  (define y (fresh-binder! 'sx))
+  `(Let (,y let (Borrowed Res ph))
+     (Scope () (Borrow ,(pick (genv-owned env))))
+     (Read ,y)))
 
 (define (gen-mut-let depth env)
   (define y (fresh-binder! 'm))

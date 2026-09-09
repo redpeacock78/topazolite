@@ -61,6 +61,12 @@
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
 (define (approved-forms redex contractum)
   (match (list redex contractum)
+    ;; R-ScopeValue は finalization 後に値を unwrap するだけであり、借用値を
+    ;; 保ったまま新しい借用形を作らない。
+    [(list `(Scope ,_π ,value) value) '()]
+    ;; R-Yield は観測 wrapper を外すだけであり、continuation 内の借用は
+    ;; 新しい借用形ではない。
+    [(list `(Yield ,_observed ,continuation) continuation) '()]
     [(list `(BorrowAt ,ρ (Own ,p ,fp) ,w)
            `(BorrowRef ,p2 ,fp2 ,ρ2))
      #:when (and (equal? p p2) (equal? fp fp2) (equal? ρ ρ2))
@@ -121,7 +127,8 @@
 (define (borrow-form-candidates redex contractum)
   (define matched (approved-forms redex contractum))
   (cond
-    [(and matched (pair? matched)) matched]
+    ;; 承認済みの非生成形は空 list で表す。未知の借用遷移を表す #f と区別する。
+    [(list? matched) matched]
     [(or (pair? (collect-borrow-values redex))
          (pair? (collect-borrow-values contractum)))
      (list (list 'unverified))]
@@ -161,8 +168,15 @@
 (define (empty-provenance) (provenance (hash)))
 
 (define (provenance-add prov name place)
+  ;; 生成器の束縛子は現在すべて一意なので base 名の衝突は起きない。
+  ;; 将来 shadowing を生成域へ足した場合は同じ base へ畳まれて ambiguous fail になる。
+  (define key
+    (if (symbol? name)
+        (string->symbol
+         (regexp-replace* #px"«[0-9]+»" (symbol->string name) ""))
+        name))
   (provenance
-   (hash-update (provenance-table prov) name
+   (hash-update (provenance-table prov) key
                 (lambda (s) (set-add s place))
                 (set))))
 
@@ -376,22 +390,15 @@
              #:when (zero? (cdr pair)))
     (car pair)))
 
-;; spec §4.4。sidecar の borrow-request の alpha を σ で解き、region IR で ρ へ
-;; 写す。解けない alpha は落とさずそのまま残し、照合側で不一致として扱う。
+;; spec §4.4。静的側の ρ は借用を作った節点の rho_borrow を使う。
+;; alpha の σ 解は生存区間用であり、生成点の識別には使わない。
 (define (static-borrow-set sidecar ir)
   (for/list ([req (in-list (borrow-sidecar-requests sidecar))])
-    (define σ (borrow-sidecar-sigma sidecar))
-    (define alpha (borrow-request-alpha req))
-    (define solved
-      (if (and (lifetime-var? alpha)
-               (hash-has-key? σ (lifetime-var-index alpha)))
-          (hash-ref σ (lifetime-var-index alpha))
-          alpha))
+    (define rho-borrow (borrow-request-rho-borrow req))
     (define ρ
-      (if (and ir (not (lifetime-var? solved)))
-          (with-handlers ([exn:fail? (lambda (_e) solved)])
-            (region->rho ir solved))
-          solved))
+      (if (and ir (region? rho-borrow))
+          (region->rho ir rho-borrow)
+          rho-borrow))
     (list (borrow-request-mode req)
           (borrow-request-w req)
           (borrow-request-fp req)

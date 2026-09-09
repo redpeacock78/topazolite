@@ -31,11 +31,11 @@
 
 ;; mut に (x ρ2) があるときは、退避と子の共有借用の両方を行う。
 (check-equal? (psi-suspend (psi (set) (set (list 'x '() ρ2)) (set))
-                           'x '() ρ2 ρ1)
+                           'x '() ρ2 ρ1 '(Reborrow x))
               (psi (set (list 'x '() ρ1))
                    (set)
-                   (set (list 'x '() ρ2 ρ1))))
+                   (set (list 'x '() ρ2 ρ1 '(Reborrow x)))))
 
 ;; mut に無いときは共有借用だけを張り、退場時に mut を新規作成しない。
-(check-equal? (psi-suspend (empty-psi) 'x '() ρ2 ρ1)
+(check-equal? (psi-suspend (empty-psi) 'x '() ρ2 ρ1 '(Reborrow x))
               (psi (set (list 'x '() ρ1)) (set) (set)))

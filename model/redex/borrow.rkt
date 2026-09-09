@@ -103,7 +103,7 @@
 (struct psi (shared mut suspended) #:transparent)
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
-(struct borrow-request (w fp mode alpha node) #:transparent)
+(struct borrow-request (w fp mode alpha rho-borrow node) #:transparent)
 ;; spec §4.4。型検査が段 3 で受理した借用要求と、それを解く σ の組。
 ;; box の生参照ではなく呼び出し終了時に確定した不変の値であり、alpha は未解決のまま持つ。
 ;; 消費側が sigma で解いて静的側の借用集合を作る。
@@ -121,14 +121,15 @@
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
 ;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
-(define (psi-suspend Ψ w fp α_parent α_child)
+;; suspended の末尾には停止を始めた Reborrow の節点を持つ。
+(define (psi-suspend Ψ w fp α_parent α_child node)
   (define held? (set-member? (psi-mut Ψ) (list w fp α_parent)))
   (psi (set-add (psi-shared Ψ) (list w fp α_child))
        (if held?
            (set-remove (psi-mut Ψ) (list w fp α_parent))
            (psi-mut Ψ))
        (if held?
-           (set-add (psi-suspended Ψ) (list w fp α_parent α_child))
+           (set-add (psi-suspended Ψ) (list w fp α_parent α_child node))
            (psi-suspended Ψ))))
 
 ;; path の形そのもの。segment は record の label または位置 natural である。
@@ -289,10 +290,13 @@
       (define fp-parent (second e))
       (define α-parent (third e))
       (define α-child (fourth e))
+      (define reborrow-node (fifth e))
       (define ρ-child (sigma-ref σ α-child))
       (define (inside-child? r)
         (define ρ (ρ-of r))
-        (and ρ-child ρ (region-outlives? ir ρ-child ρ)))
+        (and (or (>= (alpha-order r) (alpha-term-order α-child))
+                 (equal? (borrow-request-node r) reborrow-node))
+             ρ-child ρ (region-outlives? ir ρ-child ρ)))
       (and (capability-overlap? w-parent fp-parent
                                 (borrow-request-w a)
                                 (borrow-request-fp a))
@@ -368,7 +372,10 @@
       [else (void)])))
 
 (define (alpha-order r)
-  (match (borrow-request-alpha r)
+  (alpha-term-order (borrow-request-alpha r)))
+
+(define (alpha-term-order alpha)
+  (match alpha
     [`(RVar ,k) k]
     [_ -1]))
 
