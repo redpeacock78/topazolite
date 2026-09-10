@@ -11,6 +11,7 @@
 (provide (struct-out ucounters)
          make-ucounters
          ucounters-zeros
+         raw-op-under-unsafe?
          unsafe-raw-redex
          yield-under-unsafe?
          contains-ptrval?
@@ -60,15 +61,45 @@
       (config-control c)
       c))
 
+;; stuck の許容判定は、未評価の operand も含む raw 操作を広く拾う。
+(define (raw-op-under-unsafe? c)
+  (define control (control-term c))
+  (cond
+    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (PtrOffset any_1 any_2)))) control) 'ptr-offset]
+    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (FromRawPtr any ρ)))) control) 'from-raw-ptr]
+    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (RawLoad any)))) control) 'raw-load]
+    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (RawStore any_1 any_2)))) control) 'raw-store]
+    [else #f]))
+
 ;; 評価文脈の分解は一意である。
-;; したがって「この形へ照合できる」は「次の redex が Unsafe の内側のその操作である」と同値になる。
+;; 機械規則と同じ PtrVal の operand へ狭め、入れ子の外側形に依存しないようにする。
 (define (unsafe-raw-redex c)
   (define control (control-term c))
   (cond
-    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (RawLoad any)))) control) 'raw-load]
-    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (RawStore any_1 any_2)))) control) 'raw-store]
-    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (PtrOffset any_1 any_2)))) control) 'ptr-offset]
-    [(redex-match? G2m (in-hole E_1 (Unsafe (in-hole E_2 (FromRawPtr any ρ)))) control) 'from-raw-ptr]
+    [(redex-match? G2m
+                   (in-hole E_1
+                     (Unsafe (in-hole E_2
+                       (PtrOffset (PtrVal p fp ptrmut prov) any_2))))
+                   control)
+     'ptr-offset]
+    [(redex-match? G2m
+                   (in-hole E_1
+                     (Unsafe (in-hole E_2
+                       (FromRawPtr (PtrVal p fp ptrmut prov) ρ))))
+                   control)
+     'from-raw-ptr]
+    [(redex-match? G2m
+                   (in-hole E_1
+                     (Unsafe (in-hole E_2
+                       (RawLoad (PtrVal p fp ptrmut prov)))))
+                   control)
+     'raw-load]
+    [(redex-match? G2m
+                   (in-hole E_1
+                     (Unsafe (in-hole E_2
+                       (RawStore (PtrVal p fp ptrmut prov) any_2))))
+                   control)
+     'raw-store]
     [else #f]))
 
 (define (yield-under-unsafe? c)
@@ -133,7 +164,7 @@
          [(null? steps)
           (cond
             [(terminal-control? c) 'ok]
-            [(unsafe-raw-redex c) (bump! counters 'stuck-in-unsafe) 'ok]
+            [(raw-op-under-unsafe? c) (bump! counters 'stuck-in-unsafe) 'ok]
             [else (list 'fail 'stuck-outside-unsafe current)])]
          [(> (length steps) 1) (list 'fail 'nondeterministic steps)]
          [else

@@ -13,10 +13,28 @@
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (RawStore ,p 1)))) 'raw-store)
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (PtrOffset ,p 1)))) 'ptr-offset)
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (FromRawPtr ,p 0)))) 'from-raw-ptr)
+  ;; 内側の raw 操作が次の redex であるとき、外側の RawLoad より先に拾う。
+  (check-equal? (unsafe-raw-redex
+                (cfg-of `(Unsafe (RawLoad (PtrOffset ,p 1)))))
+                'ptr-offset)
+  (check-equal? (unsafe-raw-redex
+                (cfg-of `(Unsafe (RawLoad (FromRawPtr ,p 0)))))
+                'from-raw-ptr)
+  ;; 逆向きの入れ子でも、実際の次の redex である RawLoad を拾う。
+  (check-equal? (unsafe-raw-redex
+                (cfg-of `(Unsafe (PtrOffset (RawLoad ,p) 1))))
+                'raw-load)
+  (check-equal? (unsafe-raw-redex
+                (cfg-of `(Unsafe (FromRawPtr (RawLoad ,p) 0))))
+                'raw-load)
   ;; Unsafe の外は拾わない。
   (check-false (unsafe-raw-redex (cfg-of `(RawLoad ,p))))
   ;; AddressOf は境界を要求しないため対象外である。
-  (check-false (unsafe-raw-redex (cfg-of '(Unsafe (AddressOf (BorrowMutRef 0 () 0)))))))
+  (check-false (unsafe-raw-redex (cfg-of '(Unsafe (AddressOf (BorrowMutRef 0 () 0))))))
+  ;; stuck の判定は未評価 operand も広く拾う。
+  (check-equal? (raw-op-under-unsafe?
+                (cfg-of '(Unsafe (RawLoad (AddressOf (BorrowMutRef 0 () 0))))))
+                'raw-load))
 
 ;; unsafe.md §5.3。PtrVal を leaf に持つかを構造で見る。
 (test-case "contains-ptrval? が入れ子を辿る（unsafe.md §5.3）"
