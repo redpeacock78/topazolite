@@ -463,8 +463,8 @@
     symbol<?))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。G5c5b3b で elaborate 側の owned-constructor-field は OwnLeaf
- ;; gate へ移り到達しなくなったため、ここでは registry を据え置いたまま 1 件減る。
- (check-equal? (length reasons) 46)
+ ;; gate へ移り到達しなくなったが、P1b で owned-narrowing-rejected を追加した。
+ (check-equal? (length reasons) 47)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

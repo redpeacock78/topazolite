@@ -7,6 +7,7 @@
          racket/match
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../elaborate.rkt"
          "../region.rkt"
          "../typing.rkt")
 
@@ -19,6 +20,19 @@
 (define let-nested-environment
   '((s (Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm))))))
 (define owned '(Owned Res))
+
+(define (elaborate-code-of source)
+  (match (elab source)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ 'ok]))
+
+(define nested-actual
+  '(Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm))))
+(define nested-no-z
+  '(Record ((a (Record ((y Int imm))) imm))))
+(define nested-with-residual
+  '(Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm)
+            (x (Owned Res) imm))))
 
 (define (apply-key actual expected)
   (key-of '(Apply f s)
@@ -132,3 +146,36 @@
            '((f (NFn ((Record ((y Int imm)))) Unit () ()))
              (s Never)))
    'ok))
+
+(test-case "elaborate 側の拒否の code は E-OWN-029 である"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p ,nested-actual)) ,nested-no-z () p))
+   "E-OWN-029"))
+
+(test-case "余剰 Owned を保つ形は elaborate を通る"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p ,nested-actual)) ,nested-actual () p))
+   'ok))
+
+(test-case "let binder は最上位の Owned residual を保持する（elaborate）"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p ,nested-with-residual)) Int ()
+         (Let (q let ,nested-actual) p 1)))
+   'ok))
+
+(test-case "注釈付き Let の入れ子 narrowing は拒否する"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p ,nested-with-residual)) Int ()
+         (Let (q let ,nested-no-z) p 1)))
+   "E-OWN-029"))
+
+(test-case "const binder の入れ子 narrowing も拒否する（elaborate）"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p ,nested-actual)) Int ()
+         (Let (q const ,nested-no-z) p 1)))
+   "E-OWN-029"))
