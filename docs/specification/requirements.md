@@ -726,7 +726,9 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 1 以降 | §4.7 |
 | 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 1 以降 | 無し |
-| 所有値を含む field の書き換え（OWN-004） | `borrow.md` §12 | Phase 1 以降 | §15 |
+| 余剰 Owned field に対する borrowed view | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
+| 余剰 Owned field の明示 projection | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
+| RemainderSafelyDropped Proof による残余の drop | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 1 以降 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 1 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 1 以降 | §4.1 |
@@ -747,7 +749,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 5 件のうち 4 件は、同節の項目に対応して本表へ記載している。
 残る 1 件の性質 8 の検査域を載せないのは、BOR-003、BOR-007、VAR-004 が覆っており、いずれも状態を持つ ID だからである。
-所有値を含む field の書き換えは所有権の規則に属するため、borrow.md §14 へは立てず本表だけへ記載している。
+余剰 Owned field の救済策は構造 row の制限に属するため、`structural-row.md` §3.3 へ三行で記載している。
 
 再帰欄を `Owned` で宣言する data 型を provenance の行と同じ段へ含めないのは、data 型の宣言の手段が無いという文法側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
 `Eliminate` の側の包みは剥がせるようになっており、残る制限は宣言の側だけである。

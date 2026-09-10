@@ -1193,6 +1193,9 @@
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
            (reject s 'type-mismatch expected (judgment-type result)))
+         ;; 現行の Bool/List/Option/Result schema は type-compatible? が
+         ;; type-equiv? へ委譲するため narrowing はここへ届かない。
+         ;; Record を持つ nominal data type の追加時にこの位置が生きる。
          (unless (narrowing-ok? (judgment-type result) expected propositions)
            (reject s 'owned-narrowing-rejected expected (judgment-type result)))
          (judgment (judgment-core result) expected (judgment-row result))]

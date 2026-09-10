@@ -22,16 +22,23 @@ G2f は、既存の方針実装を `policy-wrap` で包み、方針の origin �
 (name origin parents (operation ...) owner)
 ```
 
-G2f の `policy-table` は次の五行を持つ。
+G2f の `policy-table` は次の六行を持つ。
 
 - `RowPolicy` は `merge-record-types` を `typing.rkt` へ登録する。
 - `VariancePolicy` は `compat?` を `compat.rkt` へ登録する。
 - `TraitResolution` は `project-goal` と `resolve-candidates` を `search.rkt` へ登録する。
 - `ProofSearch` は `discharge?` を `search.rkt` へ登録する。
 - `Normalization` は `normalize-type` を `type-equiv.rkt` へ登録する。
+- `OwnershipPolicy` は `owned-narrowing-ok?` を `ownership.rkt` へ登録する。
 
-`BindingPolicy` と `OwnershipPolicy` の行は置かない。
+`BindingPolicy` の行は置かない。
 これらの方針を実装するサイクルで行を追加する。
+
+正典が持つのは `OwnershipPolicyNarrative.narrow` であり、実装が登録するのは `owned-narrowing-ok?` である。
+
+名前を合わせる adapter は置かない。
+
+`owned-narrowing-ok?` は boolean を返す `narrow` の reject-only 実装であり、救済策を実装するときに返却形を広げる境界がここになる。
 
 ## 3. 二つの予約 Narrative
 
@@ -73,6 +80,7 @@ id の綴りだけが一致していても、R0 の値が一致しなければ P
 検査述語は所有モジュール側に置く。
 `policy.rkt` は型、row、探索を知らず、所有モジュールから `policy.rkt` への依存だけを持つ。
 包み忘れ検査は五つの所有モジュールを静的に読む `policy-check.rkt` に置く。
+`policy-table` は六行あり、`search.rkt` が二行を持つため行数と所有モジュール数は一致しない。
 
 ## 6. 返却値の検査
 
@@ -93,7 +101,15 @@ id の綴りだけが一致していても、R0 の値が一致しなければ P
 G2f の VariancePolicy は判定規則そのものを差し替えない。
 推移律を Policy 層の検査へ移す機構も持たない。
 
-### 6.3 RowPolicy
+### 6.3 OwnershipPolicy
+
+`OwnershipPolicy.owned-narrowing-ok?` は常に boolean を返す。
+
+この Policy 層は返却値へそれ以上の制約を課さない。
+
+narrowing の安全性は型同値性から導けないため、`VariancePolicy` のような同値性を使った追加条件を置けない。
+
+### 6.4 RowPolicy
 
 `RowPolicy.merge-record-types` の成功返却は、label が一意で昇順の `Record` と、well-formed な witness 列である。
 `(Record ())` は共通 field が存在しない合流の成功返却であり、検査を素通りさせない。
@@ -101,7 +117,7 @@ G2f の VariancePolicy は判定規則そのものを差し替えない。
 `#f` と空 witness 列の組だけを、正規化失敗に対する fail-closed 返却として受理する。
 現状の well-formed な入力では、merged row の型が正規形で label が一意なため、この返却経路は到達しない。
 
-### 6.4 TraitResolution
+### 6.5 TraitResolution
 
 `TraitResolution.project-goal` の返却候補は、goal と一致し、well-formed で coherent でなければならない。
 空リストは候補が存在しない fail-closed 返却として受理する。
@@ -109,7 +125,7 @@ G2f の VariancePolicy は判定規則そのものを差し替えない。
 `TraitResolution.resolve-candidates` は、`Resolved` の Proof が候補集合に実際に含まれ、`Ambiguous` の Proof 列が二件以上で重複しないことを検査する。
 `Absent` は候補がない fail-closed 返却として受理する。
 
-### 6.5 ProofSearch
+### 6.6 ProofSearch
 
 `ProofSearch.discharge?` が真を返すとき、計算クラスは `Finite` または `Productive` で、探索結果は `Resolved` でなければならない。
 偽の返却は fail-closed な探索結果として受理する。
@@ -127,8 +143,12 @@ G2f の VariancePolicy は判定規則そのものを差し替えない。
 ## 8. G2f で狭めた範囲
 
 G2f は Policy の差し替え API を導入しない。
-`BindingPolicy` と `OwnershipPolicy` の行も置かない。
+`BindingPolicy` の行も置かない。
 これは実装上の範囲であり、ホワイトペーパー §2.1.5 の Policy Narrative の意味を置き換えない。
+
+`OwnershipPolicy` の行は P1b が足した。
+
+実装するのは `narrow` の拒否側だけであり、救済策の三つの枝は Phase 2 以降へ送る。
 
 G2f の VariancePolicy は同値な二型の互換だけを検査する。
 ホワイトペーパーの変性規則全体を回収済みとは記録しない。
