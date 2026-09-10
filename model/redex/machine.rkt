@@ -822,6 +822,23 @@
         (where c_result (select-branch/g2 K (v_ref ...) (br ...)))
         R-EliminateRef)
 
+   ;; 可変借用参照の Eliminate。R-EliminateRef と同じ採番で欄を指す参照を作る。
+   ;; 構成子の欄には mode が無いため、親が可変なら子もすべて可変になる。
+   ;; 型付け側は schema.rkt の peel-eliminate-wrapper が同じ規約で欄の型を包む。
+   (--> (cfg (in-hole E (Eliminate (BorrowMutRef p fp ρ) (br ...))) H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Construct τ K v_field ...)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where (v_ref ...)
+               ,(for/list ([i (in-naturals 0)]
+                           [_ (in-list (term (v_field ...)))])
+                  `(BorrowMutRef ,(term p)
+                                 ,(append (term fp) (list i))
+                                 ,(term ρ))))
+        (where c_result (select-branch/g2 K (v_ref ...) (br ...)))
+        R-EliminateMutRef)
+
    (--> (cfg (in-hole E
                       (Apply (RecurVal cid_recur f (x ...) c_body)
                              v_arg ...))
