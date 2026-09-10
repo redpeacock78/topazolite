@@ -457,3 +457,49 @@ fp へ自然数の segment を積む規則は `R-EliminateRef` だけであり�
 探索の attempts、項の深さ、fuel、discard の上限は `model/redex/README.md` が定める値を正とする。
 性質 8 の探索と同じ設定を使う。
 反例が見つからないことは証明ではなく、設定した範囲での反例未発見を意味する。
+
+## 6. 未回収
+
+本章は G5c7 が扱わず後段へ送る事項を挙げる。
+`requirements.md` の申し送り表がこの章を参照する。
+
+### 6.1 backend profile
+
+raw 操作がどの backend でどう降りるかは Phase 2 以降で定める。
+Redex model は `H` の上の path lookup として扱い、機械語の load と store へは対応づけない。
+
+### 6.2 address space
+
+`AddrSpace` は `native` の 1 値だけを認める（§3.1）。
+複数の address space をまたぐ pointer の変換と比較は Phase 1 以降で定める。
+
+### 6.3 外部の allocation
+
+`Prov` は `owned` の 1 値だけを認める（§3.1）。
+`H` の外の allocation を指す pointer と、そこからの safe な reference の構築は Phase 3 以降で定める。
+PTR-002 の `FromRawPtr` は `H` の中の place を指す pointer だけを対象とする縮約である。
+
+### 6.4 pointee の生存
+
+pointee が `H` の外にある場合の生存の判定は本章の外にある。
+§4.3 の実行時側条件は `Ω` の `Available` と path の存在で閉じており、外部の allocation には届かない。
+
+### 6.5 Effect label
+
+`Mutation` と `Foreign` の Effect label は `core-calculus.md` §3.2 の row に無い。
+raw 操作は `Unsafe` の 1 つだけを立てる。
+label の細分は Phase 1 以降で定める。
+
+### 6.6 構文の欄
+
+`Construct` の field へ `RawStore` を置く形と、`Const` の raw pointer を作る式は G5c7 の構文に無い。
+どちらも Phase 1 以降で定める。
+
+### 6.7 可変借用からの `Eliminate`
+
+`Eliminate` に規則と型付けがあるのは共有借用だけである。
+そのため §5.5 のとおり `R-PtrOffset` と `R-FromRawPtrConst` は G2m の項から発火しない。
+可変借用版の `Eliminate` を足すと、可変借用から自然数の segment を持つ place を作れるようになり、どちらの規則も発火する。
+借用層の変更であるため G5c7 では扱わない。
+`requirements.md` の申し送り表は、この事項を「可変借用した data 値の `Eliminate`」の行で既に追っている。
+回収したときは、`properties-unsafe-test.rkt` の `ptr-offset` の欄を静的な出現から発火回数へ戻す。

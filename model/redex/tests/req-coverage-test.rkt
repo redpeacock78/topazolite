@@ -441,7 +441,7 @@
                  "Requirement coverage OK: 18 G1 IDs, 5 G2a IDs, "
                  "3 G2b IDs, 3 G2c IDs, 3 G2d IDs, 5 G2e IDs, 4 G2f IDs, "
                  "5 G2g IDs, 1 G3a IDs, 1 G3b IDs, 1 G3c IDs, 1 G3d IDs, 5 G4 IDs, "
-                 "14 G5 IDs\n"
+                 "16 G5 IDs\n"
                  "deferred-tests: BAK-001:6, BAK-002:0, BAK-003:1, BIT-002:2\n"))
   (check-equal? (get-output-string errors) ""))
 
@@ -467,7 +467,8 @@
   (check-false (cycle-descriptor-expected-count (by-name 'G4)))
   (check-equal? (cycle-descriptor-expected-ids (by-name 'G5))
                 '(BOR-001 BOR-002 BOR-003 BOR-004 BOR-005 BOR-006 BOR-007
-                  VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010))
+                  VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010
+                  PTR-001 PTR-002))
   (check-false (cycle-descriptor-expected-count (by-name 'G5))))
 
 (test-case "G2e descriptor covers the trait and composite requirements"
@@ -827,6 +828,7 @@
   (list (format "pending ID is declared twice: ~a" ptr-001))))
 
 (test-case
- "既定の pending は PTR の 2 件である"
- (check-equal? (map symbol->string (default-pending-ids))
-               (list ptr-001 ptr-002)))
+ "既定の pending は空である"
+ ;; G5 の ID はすべて回収済みで、意図して先送りする ID は無い。
+ ;; ここへ ID が増えたときは、対応するサブサイクルの計画も同時に要る。
+ (check-equal? (default-pending-ids) '()))

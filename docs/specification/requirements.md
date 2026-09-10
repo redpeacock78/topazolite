@@ -682,8 +682,8 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 
 ホワイトペーパー列が「無し」の項目は、Phase 0 の設計判断が生んだ未回収であり、ホワイトペーパーに対応する要求を持たない。
 
-`core-calculus.md` §9 の延期事項は本表に載せない。
-§9 の内容は BOR-001、BOR-002、BOR-003、PTR-001、PTR-002 が覆っており、いずれも状態を持つ ID である。
+`core-calculus.md` §9 は G5 が仕様化した事項の所在を示す索引であり、本表に載せない。
+§9 が挙げる事項は BOR-001、BOR-002、BOR-003、PTR-001、PTR-002 が覆っており、いずれも状態を持つ ID である。
 §9 は太字項目名も持たない。
 載せないのは §9 だけであり、§5.1 のように状態を持つ ID が覆わない節は記載元になりうる。
 
@@ -736,6 +736,13 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 1 以降 | §4.9 |
 | 記号の shadowing を跨いだ designator の解決 | `borrow.md` §14 | Phase 1 以降 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 1 以降 | §4.8 |
+| `Mutation` と `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 1 以降 | §5.2 |
+| raw pointer 操作の backend profile | `unsafe.md` §6 | Phase 2 以降 | §17.13 |
+| address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 1 以降 | §17.13 |
+| 外部の allocation を指す pointer からの safe reference 構築（PTR-002 の縮約） | `unsafe.md` §6 | Phase 3 以降（FFI-003） | §4.10 |
+| `H` の外の allocation としての pointee の生存 | `unsafe.md` §6 | Phase 1 以降 | §17.13 |
+| `Construct` の欄への `RawStore` | `unsafe.md` §6 | Phase 1 以降 | §4.10 |
+| `Const` の raw pointer を作る式 | `unsafe.md` §6 | Phase 1 以降 | §4.10 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 5 件のうち 4 件は、同節の項目に対応して本表へ記載している。
