@@ -1694,6 +1694,17 @@
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
+        ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
+        ;; binding-row を expected 側に使う。これで入れ子の欄だけを検査する。
+        (unless (owned-narrowing-ok?
+                 `(Record ,actual-row)
+                 `(Record ,binding-row)
+                 (lambda (actual expected)
+                   (compat? actual expected Γ-pc0
+                            (current-region-relation))))
+          (fail 'owned-narrowing-rejected bound
+                `(Record ,binding-row)
+                `(Record ,actual-row)))
         (list bound-row `(Record ,binding-row) bound-psi)]
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]

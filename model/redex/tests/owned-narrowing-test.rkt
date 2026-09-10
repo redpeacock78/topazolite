@@ -14,6 +14,10 @@
 (define narrowing-environment
   (list (list 'f '(NFn ((Record ((y Int imm)))) Unit () ()))
         (list 's '(Record ((x (Owned Res) imm) (y Int imm))))))
+(define let-residual-environment
+  '((s (Record ((x (Owned Res) imm) (y Int imm))))))
+(define let-nested-environment
+  '((s (Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm))))))
 (define owned '(Owned Res))
 
 (define (apply-key actual expected)
@@ -97,6 +101,24 @@
                  (Rec ((x imm 1) (y imm 2)))
                  1))
    'ok))
+
+(test-case "let binder は最上位の Owned residual を保持する"
+  (check-equal?
+   (key-of '(Let (r let (Record ((y Int imm)))) s 1)
+           let-residual-environment)
+   'ok))
+
+(test-case "binding-context の入れ子 narrowing は拒否する"
+  (check-equal?
+   (key-of '(Let (r let (Record ((a (Record ((y Int imm))) imm)))) s 1)
+           let-nested-environment)
+   'owned-narrowing-rejected))
+
+(test-case "const binder の入れ子 narrowing も拒否する"
+  (check-equal?
+   (key-of '(Let (r const (Record ((a (Record ((y Int imm))) imm)))) s 1)
+           let-nested-environment)
+   'owned-narrowing-rejected))
 
 (test-case "互換でない型は narrowing 拒否ではなく type-mismatch になる"
   (check-equal?
