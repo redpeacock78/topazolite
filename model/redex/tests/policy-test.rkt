@@ -20,10 +20,10 @@
   '((o-language-narrative someOtherValue)
     (o-type-narrative typeNarrative)))
 
-(test-case "POL-001: policy-table の 5 行がすべて規定の形を持つ"
+(test-case "POL-001: policy-table の 6 行がすべて規定の形を持つ"
   (check-equal? (map policy-name policy-table)
                 '(RowPolicy VariancePolicy TraitResolution
-                  ProofSearch Normalization))
+                  ProofSearch Normalization OwnershipPolicy))
   (for ([row (in-list policy-table)])
     (check-equal? (policy-origin row)
                   `(Derived (Reserved o-language-narrative)
@@ -239,7 +239,7 @@
 
 ;; ---- 包み忘れの検出 ----
 
-(test-case "POL-002: 5 行が宣言した操作はすべて包まれている"
+(test-case "POL-002: 6 行が宣言した操作はすべて包まれている"
   (check-true (policy-wrap-complete?))
   ;; 宣言側の内訳を固定する。行が操作を増やしたのに包まない差分は下で落ちる。
   (check-equal?
@@ -247,6 +247,7 @@
               (declared-policy-operations))
          string<?)
    '("Normalization.normalize-type"
+     "OwnershipPolicy.owned-narrowing-ok?"
      "ProofSearch.discharge/proof"
      "ProofSearch.discharge?"
      "RowPolicy.merge-record-types"

@@ -26,8 +26,9 @@
     (o-type-narrative typeNarrative)))
 
 ;; 行: (名前 origin parents (操作 ...) 所有モジュール)
-;; 登録するのは model に実装がある 5 件だけである。BindingPolicy と
-;; OwnershipPolicy は実装が入るサイクルで足す。
+;; 登録するのは model に実装がある 6 行だけである。所有モジュールは 5 件で
+;; あり、search.rkt が 2 行を持つため行数とは一致しない。BindingPolicy は
+;; 実装が入るサイクルで足す。
 (define (policy-row name operations module-name)
   (list name
         `(Derived (Reserved o-language-narrative) (Policy ,name))
@@ -40,7 +41,8 @@
         (policy-row 'VariancePolicy '(compat?) 'compat.rkt)
         (policy-row 'TraitResolution '(project-goal resolve-candidates) 'search.rkt)
         (policy-row 'ProofSearch '(discharge? discharge/proof) 'search.rkt)
-        (policy-row 'Normalization '(normalize-type) 'type-equiv.rkt)))
+        (policy-row 'Normalization '(normalize-type) 'type-equiv.rkt)
+        (policy-row 'OwnershipPolicy '(owned-narrowing-ok?) 'ownership.rkt)))
 
 (define (policy-name row)       (first row))
 (define (policy-origin row)     (second row))

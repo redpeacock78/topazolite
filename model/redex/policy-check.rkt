@@ -2,6 +2,7 @@
 
 ;; policy 層の読み込み時検査。所有モジュール 5 件を静的に require し、
 ;; 「行が宣言した操作」と「policy-wrap が登録した操作」の一致を確かめる。
+;; policy-table は 6 行あり、search.rkt が 2 行を持つため行数とは一致しない。
 ;; policy.rkt 自身が所有モジュールを読むと循環するため、検査を分けている。
 ;; 動的な読み込みを使わないのは、読み込み順が実行環境に依存し、検査の失敗が
 ;; 「未登録」なのか「読めなかった」のか区別できなくなるためである。
@@ -12,6 +13,7 @@
          "policy.rkt"
          ;; 所有モジュール。require の副作用として policy-wrap が登録を行う。
          "compat.rkt"
+         "ownership.rkt"
          "search.rkt"
          "type-equiv.rkt"
          "typing.rkt")
