@@ -94,6 +94,14 @@
    (list (list 'derived 'shared 3 '(0 1) 0
                3 '(0) 0))))
 
+(test-case "Eliminate は一段深い可変借用を派生として分類する"
+  (check-equal?
+   (borrow-form-candidates
+    '(Eliminate (BorrowMutRef 3 (0) 0) branch)
+    '(BorrowMutRef 3 (0 1) 0))
+   (list (list 'derived 'mut 3 '(0 1) 0
+               3 '(0) 0))))
+
 (test-case "Read は共有借用の使用を分類する"
   (check-equal?
    (borrow-form-candidates

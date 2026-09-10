@@ -95,17 +95,22 @@
      (list (list 'derived
                  (if (eq? tag2 'BorrowMutRef) 'mut 'shared)
                  p fp2 ρ pp fpp ρp))]
-    [(list `(Eliminate (BorrowRef ,p ,fp ,ρ) ,_ ...) contractum)
+    ;; Eliminate は scrutinee と各 child の tag を同じものとして一般化する。
+    ;; 共有・可変の片側だけを承認すると、規則名と借用 mode の不一致を隠す。
+    [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
+     #:when (memq tag '(BorrowRef BorrowMutRef))
      (define children (collect-borrow-values contractum))
      (define expected
        (for/list ([child (in-list children)])
          (match child
-           [`(BorrowRef ,cp ,cfp ,cρ)
+           [(list (== tag) cp cfp cρ)
             #:when (and (equal? cp p) (equal? cρ ρ)
                         (= (length cfp) (add1 (length fp)))
                         (equal? (take cfp (length fp)) fp)
                         (exact-nonnegative-integer? (last cfp)))
-            (list 'derived 'shared p cfp ρ p fp ρ)]
+            (list 'derived
+                  (if (eq? tag 'BorrowMutRef) 'mut 'shared)
+                  p cfp ρ p fp ρ)]
            [_ (list 'unverified)])))
      (if (null? expected) (list (list 'unverified)) expected)]
     [(list `(Read (,tag ,p ,fp ,ρ)) _)
@@ -233,13 +238,17 @@
     [(list 'R-Eliminate `(Eliminate (Construct ,_τ ,K ,v ...) ,branches))
      (define binders (branch-binders K branches))
      (and binders (= (length binders) (length v)) (map cons binders v))]
-    [(list 'R-EliminateRef
-           `(Eliminate (BorrowRef ,p ,fp ,ρ) ,branches))
+    [(list (and rule (or 'R-EliminateRef 'R-EliminateMutRef))
+           `(Eliminate (,tag ,p ,fp ,ρ) ,branches))
+     #:when (equal? tag
+                    (if (eq? rule 'R-EliminateMutRef)
+                        'BorrowMutRef
+                        'BorrowRef))
      ;; 束縛子へ渡るのは欄を指す借用参照であり、規則が組み立てる。
      ;; contractum は本体が実際に使った欄しか含まないため、出現した参照の
      ;; arity だけでは未使用の束縛子を復元できない。各枝の本体へ位置順の
      ;; 参照を同時置換して contractum と比較し、合致した全候補を合併する。
-     (define (child-ref i) (list 'BorrowRef p (append fp (list i)) ρ))
+     (define (child-ref i) (list tag p (append fp (list i)) ρ))
      (define matching
        (for/list ([b (in-list branches)]
                   #:when (and (list? b)

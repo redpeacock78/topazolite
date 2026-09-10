@@ -8,6 +8,7 @@
 (test-case "既知の置換規則と非置換規則を仕分ける"
   (check-equal? (rule-bucket 'R-LetOwnedB) 'substituting)
   (check-equal? (rule-bucket 'R-EliminateRef) 'substituting)
+  (check-equal? (rule-bucket 'R-EliminateMutRef) 'substituting)
   (check-equal? (rule-bucket 'R-Borrow) 'non-substituting)
   (check-equal? (rule-bucket 'R-Assign) 'non-substituting))
 
@@ -221,6 +222,28 @@
   (define step
     (for/first ([candidate (in-list (raw-steps-g2/named pre))]
                 #:when (eq? (first candidate) 'R-EliminateRef))
+      candidate))
+  (check-not-false step)
+  (define post (second step))
+  (define prov
+    (provenance-extend (empty-provenance) (first step) pre post))
+  (check-true (provenance? prov))
+  (check-equal? (resolve-designator prov 'head) '(0))
+  (check-equal? (resolve-designator prov 'tail) '(0)))
+
+(test-case "実機の R-EliminateMutRef 遷移から provenance を取る"
+  (define pre
+    '(cfg (Eliminate (BorrowMutRef 0 () (RVar 0))
+                     ((nil () -> 0)
+                      (cons (head tail) ->
+                            (Rec ((a imm (Read head))
+                                  (b imm (Read tail)))))))
+          ((0 (Construct (List Int) cons 7
+                         (Construct (List Int) nil))))
+          ((0 Available)) () ()))
+  (define step
+    (for/first ([candidate (in-list (raw-steps-g2/named pre))]
+                #:when (eq? (first candidate) 'R-EliminateMutRef))
       candidate))
   (check-not-false step)
   (define post (second step))
