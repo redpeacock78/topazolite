@@ -367,7 +367,7 @@
 (define (c4-borrowed-function-callables type)
   `((c4-borrowed-loop-id (NFn (,type) Int () ()))))
 
-(test-case "C4-006c: 分類器は Borrowed を剥がし BorrowedMut を剥がさない"
+(test-case "C4-006c: 分類器は Borrowed も BorrowedMut も剥がす"
   (check-equal?
    (classify (c4-borrowed-loop '(Borrowed (List Int) 0))
              '()
@@ -379,10 +379,12 @@
              (c4-borrowed-function-callables c4-borrowed-function-type))
    'Unknown)
   (check-equal?
+   ;; decreases-at? の walk には Assign の節がなく catch-all が #f なので、
+   ;; 借用越しの書き換え本体は構造的減少の判定へ到達せず、Finite structural は健全である。
    (classify (c4-borrowed-loop '(BorrowedMut (List Int) 0))
              '()
              (c4-borrowed-callables '(BorrowedMut (List Int) 0)))
-   'Unknown))
+   '(Finite structural)))
 
 (define owned-list-callables
   '((owned-list-id (NFn ((Owned (List Int))) Int () ()))))
