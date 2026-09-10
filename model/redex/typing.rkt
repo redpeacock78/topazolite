@@ -9,6 +9,7 @@
          "erase.rkt"
          "lang.rkt"
          "origins.rkt"
+         "ownership.rkt"
          "policy.rkt"
          "ptr-static.rkt"
          "region.rkt"
@@ -3076,6 +3077,11 @@
      (define actual (peel-ty data-type))
      (unless (compatible? actual expected)
        (fail 'type-mismatch core expected actual))
+     ;; 現行の Bool/List/Option/Result schema は type-equiv? へ落ちるため
+     ;; narrowing はここへ届かない。Record を持つ nominal data type の追加時に生きる。
+     ;; OWN-004。互換だと判断した組に対してだけ narrowing の損失を見る。
+     (unless (owned-narrowing-ok? actual expected compatible?)
+       (fail 'owned-narrowing-rejected core expected actual))
      (match (check-construct constructor fields data-type
                               Λ
                               Ψ
@@ -3246,13 +3252,17 @@
     [_
      (match (infer core Λ Ψ environment places callables fail)
        [(list actual row result-psi)
+        ;; OWN-004。narrowing の検査は互換性の判定に渡したのと同じ型を使う。
+        ;; adopt? の真偽で expected の実体が変わるため、ここで一度束縛する。
+        (define expected*
+          (if adopt? (adopt-inferred-lifetimes expected actual) expected))
         (unless (if adopt?
-                   (compatible?
-                    actual
-                    (adopt-inferred-lifetimes expected actual))
+                   (compatible? actual expected*)
                    (call-argument-compatible? actual expected core Λ
                                               compatible? fail))
           (fail 'type-mismatch core expected actual))
+        (unless (owned-narrowing-ok? actual expected* compatible?)
+          (fail 'owned-narrowing-rejected core expected actual))
         (list row result-psi actual)])]))
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素を落として渡す。
@@ -3502,7 +3512,8 @@
           'arity-mismatch
           'parameter-arity-mismatch
           'branch-binder-arity
-          'undeclared-function-effect)
+          'undeclared-function-effect
+          'owned-narrowing-rejected)
       (list expected actual))
      (values expected actual)]
     [(_ '()) (values #f #f)]

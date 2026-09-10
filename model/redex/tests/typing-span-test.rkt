@@ -155,6 +155,9 @@
   '((f (NFn (Int) Int () ((Prop NonEmpty))))))
 (define reach-owned-environment '((x (Owned Res))))
 (define reach-int-environment '((x Int)))
+(define reach-narrowing-environment
+  '((f (NFn ((Record ((y Int imm)))) Unit () ()))
+    (s (Record ((x (Owned Res) imm) (y Int imm))))))
 (define reach-record-a '(Record ((a Int imm))))
 (define reach-list-int '(List Int))
 
@@ -193,6 +196,7 @@
     missing-ownleaf-root
     owned-constructor-field
     owned-function-requires-move
+    owned-narrowing-rejected
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
     owned-refined-payload owned-untrusted-payload
@@ -799,19 +803,25 @@
               (reach-node 'OwnLeaf 1501 1520
                           (reach-lit 1 1510 1511))
               '() '() '() (reach-span 1501 1520))
+   (reach-row 'owned-narrowing-rejected
+              (reach-node 'Apply 1521 1540
+                          (reach-var 'f 1522 1523)
+                          (reach-var 's 1524 1525))
+              '() '() reach-narrowing-environment
+              (reach-span 1524 1525))
    (reach-row 'missing-ownleaf-root
               (reach-node 'Yield 1541 1560
                           (reach-node 'resource 1542 1553 0)
                           (reach-lit 1 1555 1556))
               '() '() '() (reach-span 1542 1553))))
 
-(test-case "typing の producer key 集合が registry v10 と一致する"
+(test-case "typing の producer key 集合が registry v11 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 92)
+  (check-equal? (length producer-keys) 93)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
