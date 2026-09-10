@@ -429,27 +429,19 @@ elaboration も surface 構文も通さない。
 外した項が実際に生成されていることは、生成器の単体テストで別に確かめる。
 確かめないと、生成器が境界の外の形を 1 つも作らないまま 1 番目の条件が空回りする。
 
-### 5.5 発火しない 2 つの規則
+### 5.5 発火しない規則
 
-生成域は `PtrOffset` を含むが、bounded 検査はその発火回数を数えない。
-`R-PtrOffset` は、G2m の型検査を通るどの項からも発火しないためである。
+生成域は `PtrOffset` を含み、bounded 検査はその発火回数を数える。
+可変借用の `Eliminate` が fp の末尾へ自然数の segment を積み、その束縛子へ `AddressOf` を適用すると、`R-PtrOffset` が要求する `PtrVal` が作れるためである。
 
-規則は fp の末尾が自然数である `PtrVal` を要求する。
-fp へ自然数の segment を積む規則は `R-EliminateRef` だけであり、それが束縛子へ渡すのは共有借用の `BorrowRef` である。
-一方 pointer を作る `AddressOf` は、§3.1 の署名のとおり `BorrowedMut` しか受け取らない。
-自然数の segment を作る経路は共有借用側にあり、pointer を作る経路は可変借用側にある。
-この二つは G2m の中で交わらない。
-
-同じ理由で `R-FromRawPtrConst` も発火しない。
+`R-FromRawPtrConst` は発火しない。
 `AddressOf` が作る `PtrVal` は `Mut` であり、`R-PtrOffset` は `ptrmut` をそのまま保つため、`Const` の `PtrVal` を作る経路が無い。
-どちらの規則も、手で組んだ `PtrVal` を初期構成に置く単体テストでだけ動く。
+この規則は、手で組んだ `PtrVal` を初期構成に置く単体テストでだけ動く。
 
 2 章の末尾は、`Construct` の欄へ `RawStore` を実行する経路が無いため、`PtrOffset` の後へ `RawStore` を置いても発火しないと述べた。
-ここで述べるのはより強い事実であり、`PtrOffset` そのものが発火しない。
+その事実は変わらない。
+`R-PtrOffset` が発火するようになっても、その結果の pointer へ書き込む経路は別に要る。
 
-静的側は動く。
-`PtrOffset` に対する型付けと obligation の生成、sidecar への記録、oracle の obligation 表との照合は、生成した項の上で実際に走る。
-そこで bounded 検査は `ptr-offset` の欄だけ発火回数ではなく静的な出現で押さえ、発火しない事実そのものは別の回帰で固定する。
 回収の条件は 6 章に置く。
 
 ### 5.6 探索の上限
@@ -494,12 +486,3 @@ label の細分は Phase 1 以降で定める。
 
 `Construct` の field へ `RawStore` を置く形と、`Const` の raw pointer を作る式は G5c7 の構文に無い。
 どちらも Phase 1 以降で定める。
-
-### 6.7 可変借用からの `Eliminate`
-
-`Eliminate` に規則と型付けがあるのは共有借用だけである。
-そのため §5.5 のとおり `R-PtrOffset` と `R-FromRawPtrConst` は G2m の項から発火しない。
-可変借用版の `Eliminate` を足すと、可変借用から自然数の segment を持つ place を作れるようになり、どちらの規則も発火する。
-借用層の変更であるため G5c7 では扱わない。
-`requirements.md` の申し送り表は、この事項を「可変借用した data 値の `Eliminate`」の行で既に追っている。
-回収したときは、`properties-unsafe-test.rkt` の `ptr-offset` の欄を静的な出現から発火回数へ戻す。

@@ -47,6 +47,19 @@
          (Unsafe (AddressOf (BorrowMut x))))))
    'discard))
 
+;; unsafe.md §5.5。fp の末尾へ自然数の segment を積む唯一の経路。
+(test-case "可変借用の Eliminate から作る pointer が型検査を通る（unsafe.md §5.4）"
+  (define skeleton
+    '(Scope ()
+       (Let (z let (Owned (List Int)))
+            (Construct (List Int) cons 1000
+                       (Construct (List Int) nil))
+            (Eliminate (BorrowMut z)
+              ((cons (h t) ->
+                     (Unsafe (RawLoad (PtrOffset (AddressOf h) 0))))
+               (nil () -> 1000))))))
+  (check-not-eq? (prepare-unsafe-term skeleton) 'discard))
+
 ;; FromRawPtr の ρ は生成項の節点自身の region から補われる。
 (test-case "受理された FromRawPtr 形が sidecar に現れる（unsafe.md §5.4）"
   (match

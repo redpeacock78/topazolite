@@ -58,14 +58,16 @@
   (check-true (< (second search-result)
                  (bounds-discard-limit (read-bounds)))))
 
-(test-case "ptr-offset 以外のカウンタが非零"
-  ;; G2m では自然数 path を作る規則が共有借用側にしかなく、
-  ;; AddressOf は可変借用だけを受けるため R-PtrOffset は到達不能である。
-  ;; その欄を無視せず、到達不能の事実を exact に固定する。
-  (check-equal? (ucounters-zeros (fourth search-result)) '(ptr-offset)))
+(test-case "すべてのカウンタが非零"
+  ;; 可変借用の Eliminate が fp の末尾へ自然数の segment を積み、その束縛子へ
+  ;; AddressOf を適用すると R-PtrOffset が発火する。到達不能ではなくなった。
+  (check-equal? (ucounters-zeros (fourth search-result)) '()))
 
 (test-case "型検査を通った項の raw 操作はすべて Unsafe の内側にある"
   (check-equal? (fifth search-result) 0))
 
 (test-case "PtrOffset の静的要求は生成域に現れる"
+  ;; 発火回数に含まれる主張だが、切り分けのために残す。
+  ;; ptr-offset の発火回数が零へ戻ったとき、この test-case が緑なら生成域は
+  ;; PtrOffset を作れており、赤なら生成器の側で切れている。
   (check-true (positive? (sixth search-result))))

@@ -65,7 +65,22 @@
                (lambda () `(Unsafe (AddressOf (BorrowMut ,x))))
                (lambda () `(Unsafe (Yield ,(gen-literal)
                                           ,(gen-unsafe-body (sub1 depth)
-                                                            x y #f)))))
+                                                            x y #f))))
+               ;; unsafe.md §5.5。fp の末尾へ自然数の segment を積む唯一の経路。
+               ;; 可変借用の Eliminate が束縛子へ欄を指す可変借用参照を渡し、
+               ;; その参照へ AddressOf を適用すると fp の末尾が自然数になる。
+               (lambda ()
+                 (define z (fresh-binder! 'z))
+                 (define h (fresh-binder! 'h))
+                 (define t (fresh-binder! 't))
+                 `(Let (,z let (Owned (List Int)))
+                       (Construct (List Int) cons ,(gen-literal)
+                                  (Construct (List Int) nil))
+                       (Eliminate (BorrowMut ,z)
+                         ((cons (,h ,t) ->
+                                (Unsafe (RawLoad
+                                          (PtrOffset (AddressOf ,h) 0))))
+                          (nil () -> ,(gen-literal)))))))
               (if include-outside?
                   (list (lambda () (gen-unsafe-outside x y)))
                   '()))])
