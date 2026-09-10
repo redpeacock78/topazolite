@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 10)
+(define diagnostic-registry-version 11)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -250,6 +250,17 @@
     ("E-UNS-002" rawptr-escapes-unsafe
                  "RawPtr が Unsafe の境界の外へ漏れる")))
 
+;; OWN-004。構造型 narrowing が余剰 Owned field を失う場合の拒否である。
+;; 同じ key を elaborate 側も使うが、registry の鍵は (phase key) であるため
+;; phase ごとに別の code を割り当てる。E-TYP-012 と E-TYP-023 と同じ形である。
+(define typing-entries-v11
+  '(("E-OWN-028" owned-narrowing-rejected
+                 "構造型 narrowing が余剰 Owned field を失う")))
+
+(define elaborate-entries-v11
+  '(("E-OWN-029" owned-narrowing-rejected
+                 "構造型 narrowing が余剰 Owned field を失う")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -293,6 +304,7 @@
 
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
+          (rows 'elaborate 11 elaborate-entries-v11)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
@@ -303,6 +315,7 @@
           (rows 'typing 8 typing-entries-v8)
           (rows 'typing 9 typing-entries-v9)
           (rows 'typing 10 typing-entries-v10)
+          (rows 'typing 11 typing-entries-v11)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)))

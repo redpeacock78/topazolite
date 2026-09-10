@@ -100,10 +100,11 @@
 
 (test-case "mut 欄は辿らない"
   ;; compat? が mut を type-equiv? で閉じるため、narrowing は起きない。
+  ;; mut 欄を辿る実装ならここが #f になる。
   (check-true
    (owned-narrowing-ok?
     `(Record ((a (Record ((x ,owned imm) (y Int imm))) mut)))
-    `(Record ((a (Record ((x ,owned imm) (y Int imm))) mut)))
+    '(Record ((a (Record ((y Int imm))) mut)))
     always-compatible)))
 
 (test-case "Never と型が合わない組は検査対象なしとして通す"
