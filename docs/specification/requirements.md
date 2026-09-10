@@ -24,12 +24,13 @@
   - `G3`：Phase 0 サイクル G3（Portable Racket feature matrix）へ延期。
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
-  - `Phase 1 以降`：Phase 0 では扱わず、表面機能を実装する Phase で扱う。
-  - `Phase 2 以降`：表面構文と backend を実装する Phase で扱う。
+  - `Phase 1 以降`：Phase 0 の後に model 層または表面機能を回収する最初の実装 Phase で扱う。
+  - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
 - **由来**：`ホワイトペーパー <節番号>` か、`新規（<起こした文書>）` のいずれか。節番号は §15 に限らず、要件を起こしたホワイトペーパーの任意の節を指す。
 - **正典**：（任意）要件を担当する正典文書と節。
 - **検証**：（任意）状態のサイクルで仕様と契約を定めるが、実行可能な検証が後の Phase の成果物に依存する場合、その Phase を書く。この項目を持つ ID は、状態のサイクルでは仕様書の規則注釈だけを要求し、テストは検証 Phase で要求する。
+- 状態の値の後ろへ、その事項を起こした要件 ID を括弧で添えてよい。
 
 本文はホワイトペーパー §15 の文言をそのまま転記する。
 新規 ID の本文は起こした時点の文言を正とする。
@@ -700,7 +701,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | typing 経路の scope 文脈 | `trait.md` §9 | Phase 1 以降 | §17.6 |
 | priority の下流利用 | `trait.md` §9 | Phase 1 以降 | §6.4 |
 | optional field | `structural-row.md` §7 | Phase 1 以降 | §4.5.2 |
-| Surface 構文 | `structural-row.md` §7 | Phase 1 | §3.1 |
+| Surface 構文 | `structural-row.md` §7 | Phase 1 以降 | §3.1 |
 | 探索動力学 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
 | 多相 primitive | `proof-value.md` §8 | Phase 1 以降 | §4.4 |
@@ -726,7 +727,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 1 以降 | §4.7 |
 | 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 1 以降 | 無し |
 | 所有値を含む field の書き換え（OWN-004） | `borrow.md` §12 | Phase 1 以降 | §15 |
-| 可変借用した data 値の `Eliminate` | `borrow.md` §11 | Phase 1 以降 | §15 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 1 以降 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 1 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 1 以降 | §4.1 |
