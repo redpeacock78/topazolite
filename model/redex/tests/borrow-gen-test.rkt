@@ -132,6 +132,13 @@
            (Eliminate (Borrow d)
                       ((none () -> 1000)
                        (some (e) -> (Read e))))))))
+  (define elim-mut-ref-skeleton
+    '(Scope ()
+       (Let (d let (Owned (Option Int))) (Construct (Option Int) some 1000)
+         (Scope ()
+           (Eliminate (BorrowMut d)
+                      ((none () -> 1000)
+                       (some (e) -> (Read e))))))))
   (define elim-skeleton
     '(Scope ()
        (Let (d let (Owned (Option Int))) (Construct (Option Int) some 1000)
@@ -154,7 +161,8 @@
                    (k -> (Read (Borrow x)))
                    (Perform (Return borrow-boundary Int) 1001))))))
   (for ([skeleton (in-list (list rec-skeleton rec-mut-skeleton
-                                 elim-ref-skeleton elim-skeleton
+                                 elim-ref-skeleton elim-mut-ref-skeleton
+                                 elim-skeleton
                                  assign-skeleton effect-skeleton))])
     (check-true (pair? (prepare-borrow-term skeleton))
                 (format "discard: ~e" skeleton))))
@@ -175,3 +183,18 @@
   (for ([form (in-list '(Rec ProjBorrow Construct Eliminate Assign
                          Handle Perform))])
     (check-true (set-member? heads form) (format "生成されない: ~a" form))))
+
+(test-case "生成器は可変借用の Eliminate を作る"
+  (random-seed 20260910)
+  (define found?
+    (for/or ([_ (in-range 400)])
+      (let walk ([t (gen-borrow-term 4)])
+        (cond
+          [(and (pair? t)
+                (eq? (first t) 'Eliminate)
+                (pair? (second t))
+                (eq? (first (second t)) 'BorrowMut)) #t]
+          [(list? t) (ormap walk t)]
+          [else #f]))))
+  ;; 可変借用の Eliminate だけは頭の記号が共有借用と同じなので、scrutinee まで見る。
+  (check-true found?))

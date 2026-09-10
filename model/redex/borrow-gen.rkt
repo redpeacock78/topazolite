@@ -86,6 +86,7 @@
          '())
      (if (pair? (genv-datas env))
          (list (lambda () (gen-eliminate-ref env))
+               (lambda () (gen-eliminate-mut-ref env))
                (lambda () (gen-eliminate env)))
          '())
      (if (and (positive? depth) (pair? (genv-shared env)))
@@ -211,6 +212,14 @@
 (define (gen-eliminate-ref env)
   (define a (fresh-binder! 'e))
   `(Eliminate (Borrow ,(pick (genv-datas env)))
+              ((none () -> ,(gen-literal))
+               (some (,a) -> (Read ,a)))))
+
+;; R-EliminateMutRef を発火させる。scrutinee が可変借用であることを除いて
+;; gen-eliminate-ref と同じ形であり、束縛子へは欄を指す可変借用参照が渡る。
+(define (gen-eliminate-mut-ref env)
+  (define a (fresh-binder! 'e))
+  `(Eliminate (BorrowMut ,(pick (genv-datas env)))
               ((none () -> ,(gen-literal))
                (some (,a) -> (Read ,a)))))
 
