@@ -309,7 +309,7 @@
               (hash 1 (region-at borrowed-mut-eliminate-ir '()))
               (hash)))
 
-(test-case "可変借用した data 値の Eliminate は non-data-eliminate で拒否される"
+(test-case "可変借用した data 値の Eliminate は型が付く"
   (define result
     (type-of/raw (annotate-regions borrowed-mut-eliminate-core
                                    borrowed-mut-eliminate-ir)
@@ -317,8 +317,8 @@
                  '()
                  '()
                  borrowed-mut-eliminate-Λ))
-  (check-equal? (first result) 'fail)
-  (check-equal? (second result) 'non-data-eliminate))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Int))
 
 (define owned-eliminate-core
   '(Scope (1)

@@ -45,8 +45,8 @@
   (check-equal? (rewrap 'Int) '(Borrowed Int r)))
 
 (let-values ([(core rewrap) (peel-eliminate-wrapper '(BorrowedMut (List Int) r))])
-  (check-equal? core '(BorrowedMut (List Int) r))
-  (check-equal? (rewrap 'Int) 'Int))
+  (check-equal? core '(List Int))
+  (check-equal? (rewrap 'Int) '(BorrowedMut Int r)))
 
 (let-values ([(core rewrap) (peel-eliminate-wrapper '(List Int))])
   (check-equal? core '(List Int))
