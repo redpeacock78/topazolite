@@ -228,7 +228,7 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 この接続により、record を関数引数や branch の期待型へ渡す位置でも width subsumption が働く。
 `Eliminate` が交差型へ型付けされた後に、field の多い実 record 値へ簡約しても、その値は期待する交差型と互換なので Preservation を保つ。
 
-`compat?` の外側には、OwnershipPolicy による narrowing の制限がある（OWN-004）。
+[REQ: OWN-004] `compat?` の外側には、OwnershipPolicy による narrowing の制限がある。
 引き金は余剰欄の存在ではなく、余剰欄に含まれる `Owned` が失われることである。
 判定は `compat?` と同型の並行再帰で行い、`Record` の共通 `imm` 欄、`Untrusted` と `Refined` の payload、`Union` の候補、`NFn` の返り値と反変引数を辿る。
 `Borrowed` の payload では打ち切る。

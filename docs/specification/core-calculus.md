@@ -387,6 +387,15 @@ ng<τ, σ>  : (σ) -> Result<τ, σ>
 primitive 名は E-Prim（§4.2）が PrimVal へ解決するため、初期 Γ に primitive の束縛は要らない。
 この導出中に現れる E-Lambda（§4.3）・E-Recur（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` / `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
 
+**[REQ: SCP-002] 束縛出現の一意化**
+
+E-* の規則が c0 を構成した後、elaboration は束縛出現の記号へ識別子を焼き込む一回の走査を行う。
+対象は `span-core.rkt` が宣言する `Lam`、`Let`、`Eliminate` の分岐、`Handle` の handler、`Recur`、`RecurVal` と、G2+ の binding mode 付き `Let` の七つの束縛形である。
+走査は成果物ごとに一つの counter と、入力の記号から一意化済みの記号への環境を持つ。
+束縛形の scope 外の部分項を先に処理し、束縛子へ番号を割り当て、環境を拡張してから scope 内を処理する。
+縮約で Redex が記号末尾へ付ける `«N»` は、末尾に連なる列だけを取り除いて識別子へ戻す。
+型、Effect row、label、origin、CallableId の記号はこの走査で改名しない。
+
 **(E-Sub)**
 
 ```text
@@ -1016,9 +1025,9 @@ Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を�
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
 
 source point ごとの静的な借用状態と機械側の対応は本サイクルでは持たない。
-対応を取るには core の項が縮約を跨いで安定した source point の識別子を持つ必要があり、いまの項は識別子を持たない。
-`borrow.md` §14 の designator の解決もこの識別子を前提にする。
-Phase 1 以降で扱う。
+core の束縛出現は縮約を跨いで安定した識別子を持つようになったが、識別子は対応を取るための前提であり、静的な借用状態と機械側の対応そのものではない。
+`borrow.md` §3 の designator の解決はこの識別子を鍵にする。
+source point ごとの状態と機械側の対応は後続の Phase で扱う。
 
 観測側の live 集合に残る借用の生存判定も本サイクルでは持たない。
 `obs` の payload は借用値を運べるが、payload の借用が指す region がすでに終わっているかを `Λtok` の条件は見ない。

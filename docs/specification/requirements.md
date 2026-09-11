@@ -24,6 +24,7 @@
   - `G3`：Phase 0 サイクル G3（Portable Racket feature matrix）へ延期。
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
+  - `P1`：Phase 1 のサイクル（P1a から P1c2）の対象。
   - `Phase 1 以降`：Phase 0 の後に model 層または表面機能を回収する最初の実装 Phase で扱う。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
@@ -418,7 +419,7 @@ Productive 判定は各有限観測が有限計算で得られることを保証
 
 ### SCP-002
 
-- **状態**：Phase 1 以降
+- **状態**：P1
 - **由来**：ホワイトペーパー §15
 
 shadowing は新規 binding として扱い、同一 place の assignment と区別する。
@@ -446,7 +447,7 @@ scope exit は未消費の affine resource を高々一度 drop する。
 
 ### OWN-004
 
-- **状態**：Phase 1 以降
+- **状態**：P1
 - **由来**：ホワイトペーパー §15
 
 構造型 narrowing が余剰 Owned field を失う場合、borrowed view、明示 projection、または RemainderSafelyDropped Proof を要求する。
@@ -736,7 +737,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 1 以降 | §4.8 |
 | 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 1 以降 | 無し |
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 1 以降 | §4.9 |
-| 記号の shadowing を跨いだ designator の解決 | `borrow.md` §14 | Phase 1 以降 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 1 以降 | §4.8 |
 | `Mutation` と `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 1 以降 | §5.2 |
 | raw pointer 操作の backend profile | `unsafe.md` §6 | Phase 2 以降 | §17.13 |

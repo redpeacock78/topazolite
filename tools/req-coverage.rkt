@@ -27,12 +27,12 @@
 (define test-id-rx
   #px"(?<![-A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
 (define valid-states
-  (set "G1" "G2" "G3" "G4" "G5"
+  (set "G1" "G2" "G3" "G4" "G5" "P1"
        "Phase 1 以降" "Phase 2 以降" "Phase 3 以降"))
 
 ;; descriptor が名乗れる状態は G サイクルに限る。valid-states は Phase 送りの
 ;; 状態も含むため、後続 Phase の状態を descriptor に書けないよう別に制限する。
-(define descriptor-states (set "G1" "G2" "G3" "G4" "G5"))
+(define descriptor-states (set "G1" "G2" "G3" "G4" "G5" "P1"))
 
 (define (state-set definitions state)
   (list->set
@@ -409,6 +409,10 @@
     VAR-004 OWN-005 OWN-006 OWN-007 OWN-008 OWN-009 OWN-010
     PTR-001 PTR-002))
 
+;; Phase 1 のサブサイクルは状態 "P1" を共有し、所有関係は expected-ids が決める。
+(define expected-p1b-ids '(OWN-004))
+(define expected-p1c1-ids '(SCP-002))
+
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
 ;; expected へ移すときは spec 参照とテスト参照も同時に足す。
@@ -549,6 +553,15 @@
           (build-path root "model/redex/tests/region-app-test.rkt")
           (build-path root "model/redex/tests/variance-region-test.rkt")
           (build-path root "model/redex/tests/properties-unsafe-test.rkt")))
+  (define p1b-specs
+    (list (build-path root "docs/specification/structural-row.md")))
+  (define p1b-tests
+    (list (build-path root "model/redex/tests/owned-narrowing-test.rkt")))
+  (define p1c1-specs
+    (list (build-path root "docs/specification/borrow.md")
+          (build-path root "docs/specification/core-calculus.md")))
+  (define p1c1-tests
+    (list (build-path root "model/redex/tests/binder-occurrence-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -563,7 +576,9 @@
    (cycle-descriptor 'G3c "G3" g3-specs g3c-tests #f expected-g3c-ids)
    (cycle-descriptor 'G3d "G3" g3-specs '() #f expected-g3d-ids)
    (cycle-descriptor 'G4 "G4" g4-specs g4-tests #f expected-g4-ids)
-   (cycle-descriptor 'G5 "G5" g5-specs g5-tests #f expected-g5-ids)))
+   (cycle-descriptor 'G5 "G5" g5-specs g5-tests #f expected-g5-ids)
+   (cycle-descriptor 'P1b "P1" p1b-specs p1b-tests #f expected-p1b-ids)
+   (cycle-descriptor 'P1c1 "P1" p1c1-specs p1c1-tests #f expected-p1c1-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
