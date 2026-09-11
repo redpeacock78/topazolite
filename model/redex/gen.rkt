@@ -359,7 +359,7 @@
 
 (define variance-leaves '(Int Bool Unit String))
 (define variance-effect-pool
-  '(Own Suspend (Yield Int) (Yield (Record ((a Int imm) (b Bool imm))))))
+  '(Own Mutation Suspend (Yield Int) (Yield (Record ((a Int imm) (b Bool imm))))))
 (define variance-obligation-pool '(ValidNarrativeTrait TypeNarrativeCap))
 (define variance-extra-labels '(x y z))
 
