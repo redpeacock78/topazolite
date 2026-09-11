@@ -329,7 +329,7 @@
         `(Return ,boundary ,(resolve-annotation type delta span))]
        [`(Yield ,type)
         `(Yield ,(resolve-annotation type delta span))]
-       [(or 'Suspend 'Partial 'Compile 'Own) label]
+       [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
        [_ (reject span 'invalid-effect-label label)]))))
 
 (define (nearest-boundary boundaries)
@@ -347,7 +347,7 @@
           [_ (reject span 'return-label-outside-boundary)])]
        [`(Yield ,type)
         `(Yield ,(resolve-annotation type delta span))]
-       [(or 'Suspend 'Partial 'Compile 'Own) label]
+       [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
        [_ (reject span 'invalid-effect-label label)]))))
 
 (define (kind-arity kind span)

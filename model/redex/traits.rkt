@@ -34,6 +34,7 @@
          intersect-row-by-name
          intersect-acyclic?
          impl-not-composite?
+         template-effect?
          scope-parent-table
          scope-ancestors
          scope-genealogy-ok?
@@ -265,7 +266,7 @@
 
 (define (template-effect? effect)
   (match effect
-    [(or 'Suspend 'Partial 'Compile 'Own) #t]
+    [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) #t]
     [`(Return ,boundary ,type)
      (and (metadata-symbol? boundary) (template-type? type))]
     [`(Yield ,type) (template-type? type)]
