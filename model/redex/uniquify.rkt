@@ -113,11 +113,6 @@
 
       ;; 既知の束縛形は bind-all が #:bind を消費する。ここへ届く形は
       ;; span-core.rkt の閉じた束縛形一覧に漏れがあるため、黙って通さない。
-      [`(#:bind ,_ ,_)
-       (raise
-        (exn:fail:uniquify
-         (format "未知の束縛形に #:bind がある: ~s" term)
-         (current-continuation-marks)))]
       [(cons '#:bind _)
        (raise
         (exn:fail:uniquify

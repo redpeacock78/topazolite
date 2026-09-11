@@ -1,6 +1,7 @@
 #lang racket
 
 (require rackunit
+         "../annotate.rkt"
          "../elaborate.rkt"
          "../uniquify.rkt")
 
@@ -131,4 +132,15 @@
                `(err ,_))
   (check-match
    (elab '(Eliminate value ((K (|x⟨1⟩|) -> |x⟨1⟩|))))
+   `(err ,_))
+  (check-match
+   (elab '(Eliminate value ((K))))
+   `(err ,_))
+  (check-match
+   (elab (annotate-surface
+          '(Fn ((|x⟨1⟩| Int)) Int () |x⟨1⟩|)))
+   `(err ,_))
+  (check-match
+   (elab (annotate-surface
+          '(Let (|x⟨1⟩| let Int) 1 |x⟨1⟩|)))
    `(err ,_)))

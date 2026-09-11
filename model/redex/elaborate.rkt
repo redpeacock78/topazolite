@@ -106,6 +106,7 @@
 (define (binder-name value)
   (match value
     [`(#:bind ,name ,_) name]
+    [`((#:bind ,name ,_) ,_ ...) name]
     [`(,(? symbol? name) ,_ ...) name]
     [(? symbol? name) name]
     [_ #f]))
@@ -121,6 +122,12 @@
       value))
   (define (parameter-name parameter)
     (binder-name parameter))
+  (define (branch-reserved branch)
+    (match branch
+      [`(,_ ,parameters -> ,_)
+       (and (list? parameters)
+            (first-reserved (map parameter-name parameters)))]
+      [_ #f]))
   (define (walk value)
     (match value
       [`(#:bind ,name ,_)
@@ -148,22 +155,16 @@
            (first-reserved (map parameter-name parameters))
            (walk body)
            (walk continuation))]
-      ;; Eliminate の branch は raw/span で span の有無だけが異なる。
+      ;; raw の branch は branch-reserved が、UCore+ の branch は generic 走査が拾う。
       [`(Eliminate ,scrutinee ,branches)
+       #:when (list? branches)
        (or (walk scrutinee)
-           (for/first ([branch (in-list branches)]
-                       #:when (and (pair? branch)
-                                   (pair? (second branch))
-                                   (list? (second branch)))
-                       #:when (first-reserved
-                               (map parameter-name (second branch))))
-             (first-reserved (map parameter-name (second branch))))
-           (for/first ([branch (in-list branches)]
-                       #:when (walk branch))
+           (for/or ([branch (in-list branches)])
+             (branch-reserved branch))
+           (for/or ([branch (in-list branches)])
              (walk branch)))]
       [(? list?)
-       (for/first ([child (in-list value)]
-                   #:when (walk child))
+       (for/or ([child (in-list value)])
          (walk child))]
       [_ #f]))
   (walk term))
