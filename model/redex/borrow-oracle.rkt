@@ -176,6 +176,7 @@
 ;; 束縛出現の識別子。Redex の substitute が末尾へ付ける «N» の並びだけを
 ;; 取り除く。錨付きなので 1 回だけ当たり、⟨N⟩ には触れない。
 ;; shadowing した束縛子は ⟨N⟩ で区別されるため、base 名が同じでも同じ鍵へ畳まれない。
+;; 一意化前の綴りへ戻すのは uniquify.rkt の binder-base の仕事である。
 (define normalize-rx #px"(«[0-9]+»)+$")
 
 (define (normalize-binder name)

@@ -1,11 +1,13 @@
 #lang racket
 
 (require rackunit
+         redex/reduction-semantics
          "../annotate.rkt"
          "../borrow-oracle.rkt"
          "../diagnostic.rkt"
          "../diagnostic-render.rkt"
          "../elaborate.rkt"
+         "../lang.rkt"
          "../source-map.rkt"
          "../uniquify.rkt")
 
@@ -181,3 +183,66 @@
      (define rendered (render-terminal diagnostic render-source-map))
      (check-true (regexp-match? #px"found: \\\"x⟨1⟩\\\"" rendered))]
     [other (fail (format "予約記号の入力が診断にならない: ~s" other))]))
+
+;; SCP-002。末尾を剥がす 3 つの手続きは対象が異なる。合成の順序を固定する。
+(test-case "正規化と base 化の合成順序（SCP-002）"
+  ;; 単独ではどちらも相手の接尾辞に当たらない。
+  (check-equal? (binder-base '|x⟨1⟩«0»|) '|x⟨1⟩«0»|)
+  (check-equal? (normalize-binder '|x⟨1⟩«0»|) '|x⟨1⟩|)
+  ;; 正規化を先に通すと元の名前へ戻る。
+  (check-equal? (binder-base (normalize-binder '|x⟨1⟩«0»|)) 'x)
+  ;; 逆順は戻らない。
+  (check-equal? (normalize-binder (binder-base '|x⟨1⟩«0»|)) '|x⟨1⟩|))
+
+(define-metafunction G2
+  sub : any x any -> any
+  [(sub any_1 x any_2) (substitute any_1 x any_2)])
+
+;; SCP-002。substitute が freshen した記号を正規化すると識別子へ戻る。
+(test-case "freshen した記号が正規化で識別子へ戻る（SCP-002）"
+  (define freshened
+    (term (sub (Let (|y⟨2⟩| let Int) x |y⟨2⟩|) x 7)))
+  (define binder (first (second freshened)))
+  ;; freshen が起きたことそのものを固定する。
+  (check-not-equal? binder '|y⟨2⟩|)
+  (check-equal? (normalize-binder binder) '|y⟨2⟩|))
+
+(define (let-b binder place)
+  (define pre
+    `(cfg (Scope (,place)
+                 (Let (,binder let (Borrowed Res ,place))
+                      (BorrowRef ,place () ,place)
+                      (Read ,binder)))
+          ((0 (resource 1)) (1 (resource 2)))
+          ((0 Available) (1 Available)) () ()))
+  (define post
+    `(cfg (Scope (,place) (Read (BorrowRef ,place () ,place)))
+          ((0 (resource 1)) (1 (resource 2)))
+          ((0 Available) (1 Available)) () ()))
+  (values pre post))
+
+;; SCP-002。同じ base 名の 2 つの識別子が別々の place へ解決する。
+(test-case "shadowing した借用の designator が 1 つの place へ解決する（SCP-002）"
+  (define-values (pre1 post1) (let-b '|x⟨1⟩| 0))
+  (define-values (pre2 post2) (let-b '|x⟨2⟩| 1))
+  (define prov
+    (provenance-extend
+     (provenance-extend (empty-provenance) 'R-LetB pre1 post1)
+     'R-LetB pre2 post2))
+  (check-true (provenance? prov))
+  (check-equal? (resolve-designator prov '|x⟨1⟩|) '(0))
+  (check-equal? (resolve-designator prov '|x⟨2⟩|) '(1))
+  ;; 未束縛の designator は place を返さない。
+  (check-equal? (resolve-designator prov '|x⟨3⟩|) '())
+  ;; base 名だけでは引けない。一意化前の綴りは鍵ではない。
+  (check-equal? (resolve-designator prov 'x) '()))
+
+;; SCP-002。一意化を外すと同じ鍵へ 2 つの place が畳まれる。
+(test-case "同じ鍵へ 2 つの place が入ると解決が 1 つに定まらない（SCP-002）"
+  (define-values (pre1 post1) (let-b 'x 0))
+  (define-values (pre2 post2) (let-b 'x 1))
+  (define prov
+    (provenance-extend
+     (provenance-extend (empty-provenance) 'R-LetB pre1 post1)
+     'R-LetB pre2 post2))
+  (check-equal? (sort (resolve-designator prov 'x) <) '(0 1)))

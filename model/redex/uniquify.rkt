@@ -12,6 +12,10 @@
 (define identifier-rx
   (pregexp (format "~a[0-9]+~a$" open-mark close-mark)))
 
+;; 末尾の ⟨N⟩ を 1 つだけ剥がす。substitute が付ける «N» には当たらないので、
+;; 簡約を通った束縛子へ使うときは borrow-oracle.rkt の normalize-binder を
+;; 先に通す。表示のための剥がしは diagnostic-render.rkt の strip-identifiers
+;; が両方を担う。
 (define (binder-base symbol)
   (string->symbol
    (regexp-replace identifier-rx (symbol->string symbol) "")))
