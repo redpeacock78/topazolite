@@ -124,6 +124,7 @@
          (Yield s c c)
          (Suspend s c)
          (Move s w)
+         (Reassign s w c)
          (Drop s c)
          (Curry s c c)
          (OwnLeaf s c))

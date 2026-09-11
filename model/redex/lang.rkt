@@ -136,6 +136,8 @@
          (ProjBorrow c label)
          (Read c)
          (Assign c c)
+         ;; P1c2b。SCP-001。source 層の target は binder だけである。
+         (Reassign w c)
          (RegionLam (rp ...) c)
          (RegionApp c (ρ ...))
          ;; pointer 操作と unsafe boundary（unsafe.md §4.2、§6.1）。
@@ -157,8 +159,12 @@
 (define-extended-language G1m G1
   (p ::= natural)
   (w ::= .... p)
+  ;; P1c2b。SCP-001。Reassign 専用の実行時 target。
+  ;; w を広げると Move や BorrowMut の target も MutSlot を受理してしまう。
+  (mw ::= w (MutSlot p))
   (π ::= (p ...))
-  (c ::= .... (Error p))
+  ;; MutSlot は mut binding が指す place の読み口である。値ではない。
+  (c ::= .... (Error p) (MutSlot p))
 
   (state ::= Available Moved Dropped)
   ;; 値の内部に置く所有資源の印。根の値には置かず、config-ok? が拒否する。
@@ -246,6 +252,7 @@
          (ProjBorrowAt ρ own c label)
          (Read c)
          (Assign c c)
+         (Reassign mw c)
          (RegionLam (rp ...) c)
          (RegionApp c (ρ ...))
          ;; pointer 操作と unsafe boundary（unsafe.md §4.2、§6.1）。
@@ -275,6 +282,7 @@
          (Read F)
          (Assign F c)
          (Assign v F)
+         (Reassign mw F)
          (RegionApp F (ρ ...))
          (AddressOf F)
          (PtrOffset F c)
@@ -293,6 +301,7 @@
          (Read E)
          (Assign E c)
          (Assign v E)
+         (Reassign mw E)
          (RegionApp E (ρ ...))
          (AddressOf E)
          (PtrOffset E c)
@@ -311,6 +320,7 @@
          (Read G)
          (Assign G c)
          (Assign v G)
+         (Reassign mw G)
          (RegionApp G (ρ ...))
          (AddressOf G)
          (PtrOffset G c)

@@ -60,6 +60,8 @@
          (Yield e e)
          (Suspend e)
          (Move x)
+         ;; P1c2b。SCP-001。mut binding への再代入。target は Move と同じ綴りである。
+         (Reassign x e)
          (Drop e)
          (Curry e e)
          (TypeMake spec)
@@ -97,6 +99,7 @@
          (Yield s e e)
          (Suspend s e)
          (Move s vr)
+         (Reassign s vr e)
          (Drop s e)
          (Curry s e e)
          (TypeMake s sps)
