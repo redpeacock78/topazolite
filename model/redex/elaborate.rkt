@@ -506,7 +506,7 @@
     (when reserved
       (reject (entry-span raw-expression)
               'reserved-binder-symbol
-              reserved))
+              (symbol->string reserved)))
     ;; span.md §7.4: UCore+ と UCore は交わらない。spanless な入力は
     ;; annotate-surface で UCore+ へ正規化し、以後は 1 つの形だけを扱う。
     ;; span を一部だけ持つ項はどちらにも属さず、ここで落ちる。

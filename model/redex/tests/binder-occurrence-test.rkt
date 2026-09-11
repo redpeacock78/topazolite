@@ -3,7 +3,10 @@
 (require rackunit
          "../annotate.rkt"
          "../borrow-oracle.rkt"
+         "../diagnostic.rkt"
+         "../diagnostic-render.rkt"
          "../elaborate.rkt"
+         "../source-map.rkt"
          "../uniquify.rkt")
 
 ;; elab は成功したとき (list core type row callables) を、失敗したとき
@@ -150,3 +153,31 @@
 (test-case "正規化が末尾の添字だけを剥がす（SCP-002）"
   (check-equal? (normalize-binder '|x⟨1⟩«0»«1»|) '|x⟨1⟩|)
   (check-equal? (normalize-binder '|x«0»⟨1⟩|) '|x«0»⟨1⟩|))
+
+;; SCP-002。診断の表示から識別子が消え、元の名前が現れる。
+(define render-source-map
+  (make-source-map (hasheq 'sample "let x = y")))
+
+(define (diagnostic-with-found found)
+  (diagnostic-of 'typing 'ill-typed
+                 #:primary-span '(#:span sample 4 5)
+                 #:expected 'Int
+                 #:found found))
+
+(test-case "診断の表示が元の名前を出す（SCP-002）"
+  (define d (diagnostic-with-found '|x⟨3⟩|))
+  (for ([rendered (in-list (list (render-terminal d render-source-map)
+                                 (render-lsp d render-source-map)
+                                 (render-json d)))])
+    (define text (format "~a" rendered))
+    (check-true (regexp-match? #px"x" text))
+    (check-false (regexp-match? #px"⟨" text)))
+  ;; 置換が付ける添字も同じ経路で消える。
+  (check-equal? (format-unfixed '|x⟨3⟩«0»|) "x"))
+
+(test-case "予約記号の診断は入力記号をそのまま表示する（SCP-002）"
+  (match (elab '(Let |x⟨1⟩| 1 |x⟨1⟩|))
+    [`(err ,diagnostic)
+     (define rendered (render-terminal diagnostic render-source-map))
+     (check-true (regexp-match? #px"found: \\\"x⟨1⟩\\\"" rendered))]
+    [other (fail (format "予約記号の入力が診断にならない: ~s" other))]))

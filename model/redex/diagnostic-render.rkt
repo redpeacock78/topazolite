@@ -14,13 +14,25 @@
          "diagnostic.rkt"
          "source-map.rkt")
 
+;; 診断の表示は利用者が読む名前を出す。束縛出現の識別子と
+;; 置換が付ける添字を記号からだけ取り除く。
+(define strip-rx (pregexp "(⟨[0-9]+⟩|«[0-9]+»)+$"))
+
+(define (strip-identifiers v)
+  (cond
+    [(symbol? v)
+     (string->symbol (regexp-replace strip-rx (symbol->string v) ""))]
+    [(pair? v) (cons (strip-identifiers (car v))
+                     (strip-identifiers (cdr v)))]
+    [else v]))
+
 ;; spec §11: 形を固定しない 4 欄（expected、found、effect-context、
 ;; proof-context）の整形。3 つの renderer がこの 1 つの関数を共有する。
 ;; ~a ではなく ~s を使うのは、文字列と記号を見分けられるようにするためである。
 ;; capability-diagnostic の reason は文字列で found へ入るため、~a にすると
 ;; 型項の記号と区別が付かない。
 (define (format-unfixed v)
-  (format "~s" v))
+  (format "~s" (strip-identifiers v)))
 
 ;; #f は「値が無い」を表す。#f そのものを表示すると、found が偽値であった診断と
 ;; 区別が付かない。
