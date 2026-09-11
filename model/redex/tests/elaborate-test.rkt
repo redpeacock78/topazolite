@@ -151,7 +151,7 @@
      (elab '(Let item (Apply acquire 7) (Move item)))))
   (check-equal? move-type '(Owned Res))
   (check-equal? move-row '(Own))
-  (check-true (tree-contains? move-core '(Move item)))
+  (check-true (tree-contains? move-core '(Move item⟨1⟩)))
   (check-equal?
    (core-type-of move-core '() move-callables)
    (list move-type move-row))
@@ -161,7 +161,7 @@
      (elab '(Let item (Apply acquire 7) (Drop item)))))
   (check-equal? drop-type 'Unit)
   (check-equal? drop-row '(Own))
-  (check-true (tree-contains? drop-core '(Drop (Move item)))))
+  (check-true (tree-contains? drop-core '(Drop (Move item⟨1⟩)))))
 
 (test-case "TYP-001/TYP-002: typeMake interprets saturated specs"
   (match-define (list raw-type-core type type-row callables)
@@ -199,7 +199,7 @@
      ()))
   (match-define (list core type row _)
     (success (elab '(Let add 1 add))))
-  (check-equal? core '(Let (add Int) 1 add))
+  (check-equal? core '(Let (add⟨1⟩ Int) 1 add⟨1⟩))
   (check-equal? type 'Int)
   (check-equal? row '()))
 

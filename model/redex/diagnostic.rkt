@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 11)
+(define diagnostic-registry-version 12)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -261,6 +261,10 @@
   '(("E-OWN-029" owned-narrowing-rejected
                  "構造型 narrowing が余剰 Owned field を失う")))
 
+(define elaborate-entries-v12
+  '(("E-SYN-005" reserved-binder-symbol
+                 "束縛子の記号に予約文字 ⟨ または ⟩ が含まれる")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -305,6 +309,7 @@
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
+          (rows 'elaborate 12 elaborate-entries-v12)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)

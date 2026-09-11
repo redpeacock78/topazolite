@@ -28,10 +28,10 @@
 ; ラベル重複も拒否（structural-row.md §2.2 field-row-unique?）
 (check-true (elab-error? '(Rec ((a imm (Suspend 1)) (a mut 2)))))
 ; 注釈なし G1 Let は旧形のまま（新形へ正規化しない。structural-row.md §4／回帰維持）
-(check-equal? (elab-core '(Let x 1 x)) '(Let (x Int) 1 x))
+(check-equal? (elab-core '(Let x 1 x)) '(Let (x⟨1⟩ Int) 1 x⟨1⟩))
 ; 注釈あり let → binding mode 付き Let（注釈型は resolve-annotation で (label τ m) 順に解決）
 (check-equal? (elab-core '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1))) x))
-              '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1))) x))
+              '(Let (x⟨1⟩ let (Record ((a Int imm)))) (Rec ((a imm 1))) x⟨1⟩))
 ; bmode Let の effect row は bound と body の effect の和
 (check-equal? (elab-row '(Let (x const Int) (Suspend 1) x)) '(Suspend))
 ; 重複ラベルの record 型注釈は ill-formed（structural-row.md §2.2）

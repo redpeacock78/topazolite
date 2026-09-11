@@ -300,7 +300,7 @@
   (match-define (list core _ _ _) (elab '(Let x 1 (Apply add x 2))))
   (check-equal?
    (erase-core core)
-   '(Let (x Int) 1 (Apply (PrimVal (Reserved o-add) add) x 2))))
+   '(Let (x⟨1⟩ Int) 1 (Apply (PrimVal (Reserved o-add) add) x⟨1⟩ 2))))
 
 (test-case "span.md §7.4: 表層の span が core へ写る"
   (match-define (list core _ _ _)

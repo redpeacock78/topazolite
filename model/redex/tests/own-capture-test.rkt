@@ -8,7 +8,8 @@
          "../elaborate.rkt"
          "../erase.rkt"
          "../span-core.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         "../uniquify.rkt")
 
 (define (elaboration-of source)
   (match (elab source)
@@ -89,9 +90,10 @@
  (match (find-capture-let (erase-core core))
    [`(Let (,place let ,let-type)
           (Curry (Lam User ,_ ,capture-binders ,_)
-                 (OwnLeaf (Move p)))
+                 (OwnLeaf (Move ,captured-name)))
           (Move ,same-place))
     (check-equal? let-type '(Owned (NFn () Unit (Own) ())))
+    (check-equal? (binder-base captured-name) 'p)
     (check-equal? same-place place)
     (check-equal? (length capture-binders) 1)]
    [_ (fail "捕捉 1 件の Let/Curry 形が合わない")]))
@@ -111,13 +113,15 @@
    (elaboration-of capture-two-surface))
  (match (find-capture-let (erase-core core))
    [`(Let (,first-place let ,first-type)
-          (Curry (Lam User ,_ ,_ ,_) (OwnLeaf (Move a)))
+          (Curry (Lam User ,_ ,_ ,_) (OwnLeaf (Move ,first-name)))
           (Let (,second-place let ,second-type)
-               (Curry (Move ,moved-place) (OwnLeaf (Move z)))
+               (Curry (Move ,moved-place) (OwnLeaf (Move ,second-name)))
                (Move ,last-place)))
     (check-equal? first-type
                   '(Owned (NFn ((Owned Res)) Unit (Own) ())))
     (check-equal? second-type '(Owned (NFn () Unit (Own) ())))
+    (check-equal? (binder-base first-name) 'a)
+    (check-equal? (binder-base second-name) 'z)
     (check-equal? moved-place first-place)
     (check-equal? last-place second-place)]
    [_ (fail "捕捉 2 件の Let/Curry 順序が合わない")]))

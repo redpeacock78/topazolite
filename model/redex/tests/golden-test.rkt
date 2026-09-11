@@ -89,8 +89,8 @@
   (check-golden
    doubled
    '(List Int)
-   '((f (NFn (Int) Int () ()))
-     (values (List Int)))
+   '((f⟨1⟩ (NFn (Int) Int () ()))
+     (values⟨2⟩ (List Int)))
    '(Construct (List Int) cons -2
                (Construct (List Int) cons 4
                           (Construct (List Int) nil))))

@@ -30,8 +30,9 @@
   (set "G1" "G2" "G3" "G4" "G5" "P1"
        "Phase 1 以降" "Phase 2 以降" "Phase 3 以降"))
 
-;; descriptor が名乗れる状態は G サイクルに限る。valid-states は Phase 送りの
-;; 状態も含むため、後続 Phase の状態を descriptor に書けないよう別に制限する。
+;; descriptor が名乗れる状態は G サイクルと Phase 1 のサブサイクルに限る。
+;; valid-states は Phase 送りの状態も含むため、まだ着手していない Phase の状態を
+;; descriptor に書けないよう別に制限する。
 (define descriptor-states (set "G1" "G2" "G3" "G4" "G5" "P1"))
 
 (define (state-set definitions state)

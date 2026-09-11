@@ -17,6 +17,7 @@
          "span-core.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
+         "uniquify.rkt"
          "ucore.rkt"
          "validators.rkt")
 
@@ -92,6 +93,80 @@
     [(and (pair? t) (eq? (car t) '#:span)) (span-ok? t)]
     [(list? t) (andmap spans-ok? t)]
     [else #t]))
+
+;; SCP-002。識別子の区切り記号は source の束縛子へ持ち込ませない。
+;; UCore と UCore+ の両方を入口で受けるため、未注釈の記号と #:bind 包みを
+;; 同じ走査で扱う。型や label の記号は束縛子位置として調べない。
+(define reserved-binder-mark-rx #px"[⟨⟩]")
+
+(define (reserved-binder-symbol? value)
+  (and (symbol? value)
+       (regexp-match? reserved-binder-mark-rx (symbol->string value))))
+
+(define (binder-name value)
+  (match value
+    [`(#:bind ,name ,_) name]
+    [`(,(? symbol? name) ,_ ...) name]
+    [(? symbol? name) name]
+    [_ #f]))
+
+(define (reserved-name value)
+  (define name (binder-name value))
+  (and (reserved-binder-symbol? name) name))
+
+(define (reserved-binder-in term)
+  (define (first-reserved values)
+    (for/first ([value (in-list values)]
+                #:when (reserved-binder-symbol? value))
+      value))
+  (define (parameter-name parameter)
+    (binder-name parameter))
+  (define (walk value)
+    (match value
+      [`(#:bind ,name ,_)
+       (and (reserved-binder-symbol? name) name)]
+      ;; Fn: UCore の引数列は第 2 欄、UCore+ は第 3 欄。
+      [`(Fn ,parameters ,_ ,_ ,body)
+       (or (first-reserved (map parameter-name parameters))
+           (walk body))]
+      [`(Fn ,_ ,parameters ,_ ,_ ,body)
+       (or (first-reserved (map parameter-name parameters))
+           (walk body))]
+      ;; Let: raw UCore は第 2 欄、UCore+ は span の後の第 3 欄。
+      [`(Let ,binder ,bound ,body)
+       (or (reserved-name binder) (walk bound) (walk body))]
+      [`(Let ,_ ,binder ,bound ,body)
+       (or (reserved-name binder) (walk bound) (walk body))]
+      ;; Recur: raw UCore は関数名が第 2 欄、UCore+ は span の第 3 欄。
+      [`(Recur ,function ,parameters ,_ ,_ ,body ,continuation)
+       (or (reserved-name function)
+           (first-reserved (map parameter-name parameters))
+           (walk body)
+           (walk continuation))]
+      [`(Recur ,_ ,_ ,function ,parameters ,body ,continuation)
+       (or (reserved-name function)
+           (first-reserved (map parameter-name parameters))
+           (walk body)
+           (walk continuation))]
+      ;; Eliminate の branch は raw/span で span の有無だけが異なる。
+      [`(Eliminate ,scrutinee ,branches)
+       (or (walk scrutinee)
+           (for/first ([branch (in-list branches)]
+                       #:when (and (pair? branch)
+                                   (pair? (second branch))
+                                   (list? (second branch)))
+                       #:when (first-reserved
+                               (map parameter-name (second branch))))
+             (first-reserved (map parameter-name (second branch))))
+           (for/first ([branch (in-list branches)]
+                       #:when (walk branch))
+             (walk branch)))]
+      [(? list?)
+       (for/first ([child (in-list value)]
+                   #:when (walk child))
+         (walk child))]
+      [_ #f]))
+  (walk term))
 
 (define (extend environment names types)
   (append (map list names types) environment))
@@ -426,6 +501,11 @@
   (with-handlers ([exn:fail:elab?
                    (lambda (failure)
                      `(err ,(elab-failure->diagnostic failure)))])
+    (define reserved (reserved-binder-in raw-expression))
+    (when reserved
+      (reject (entry-span raw-expression)
+              'reserved-binder-symbol
+              reserved))
     ;; span.md §7.4: UCore+ と UCore は交わらない。spanless な入力は
     ;; annotate-surface で UCore+ へ正規化し、以後は 1 つの形だけを扱う。
     ;; span を一部だけ持つ項はどちらにも属さず、ここで落ちる。
@@ -1238,7 +1318,7 @@
          (judgment (judgment-core result) expected (judgment-row result))]))
 
     (define result (synth expression '() Δ0 Π0 '()))
-    (list (judgment-core result)
+    (list (uniquify-binders (judgment-core result))
           (judgment-type result)
           (judgment-row result)
           (reverse reversed-callables))))

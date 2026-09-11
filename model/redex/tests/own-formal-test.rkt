@@ -9,7 +9,8 @@
          "../elaborate.rkt"
          "../erase.rkt"
          "../machine.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         "../uniquify.rkt")
 
 (define (elaborate-surface source)
   (match (elab source)
@@ -291,10 +292,11 @@
    [`(Lam ,s_fn User ,_ ((#:bind ,raw ,s_b))
           (Handle ,_ ,_ ,_
                   (Scope ,s_scope ()
-                         (Let ,s_let ((#:bind p ,s_pb) let
+                         (Let ,s_let ((#:bind ,let-name ,s_pb) let
                                       (#:ty (Owned Res) ,s_ty))
                               (#:var ,rhs ,s_rhs) ,_))))
     (check-eq? rhs raw)
+    (check-equal? (binder-base let-name) 'p)
     (check-false (eq? raw 'p))
     (check-equal? s_let s_b)
     (check-equal? s_pb s_b)
@@ -310,11 +312,13 @@
    [`(Lam ,_ User ,_ ((#:bind ,raw0 ,_) (#:bind ,raw1 ,_))
           (Handle ,_ ,_ ,_
                   (Scope ,_ ()
-                         (Let ,_ ((#:bind p ,_) ,_ ,_) (#:var ,rhs0 ,_)
-                              (Let ,_ ((#:bind q ,_) ,_ ,_)
+                         (Let ,_ ((#:bind ,p-name ,_) ,_ ,_) (#:var ,rhs0 ,_)
+                              (Let ,_ ((#:bind ,q-name ,_) ,_ ,_)
                                    (#:var ,rhs1 ,_) ,_)))))
     (check-eq? rhs0 raw0)
     (check-eq? rhs1 raw1)
+    (check-equal? (binder-base p-name) 'p)
+    (check-equal? (binder-base q-name) 'q)
     (check-false (eq? raw0 raw1))]
    [_ (fail "入れ子の順序が仮引数の順序と合わない")] ))
 
@@ -322,17 +326,19 @@
  "Owned と非 Owned を混ぜた仮引数列で非 Owned の名前が変わらない"
  (define core (elaborate-surface owned-mixed-surface))
  (match core
-   [`(Lam ,_ User ,_ ((#:bind ,raw ,_) (#:bind n ,_)) ,_)
-    (check-false (eq? raw 'p))]
+   [`(Lam ,_ User ,_ ((#:bind ,raw ,_) (#:bind ,name ,_)) ,_)
+    (check-false (eq? raw 'p))
+    (check-equal? (binder-base name) 'n)]
    [_ (fail "非 Owned の位置の名前が動いた")]))
 
 (test-case
  "Owned の仮引数を持たない Fn の節の形が変わらない"
  (define core (elaborate-surface plain-identity-surface))
  (match core
-   [`(Lam ,_ User ,_ ((#:bind n ,_))
-          (Handle ,_ ,_ ,_ (Scope ,_ () (#:var n ,_))))
-    (check-true #t)]
+   [`(Lam ,_ User ,_ ((#:bind ,name ,_))
+          (Handle ,_ ,_ ,_ (Scope ,_ () (#:var ,reference ,_))))
+    (check-equal? (binder-base name) 'n)
+    (check-equal? (binder-base reference) 'n)]
    [_ (fail "Owned を持たない節の形が動いた")]))
 
 (test-case
@@ -413,11 +419,12 @@
  (match core
    [`(Recur ,s_rec ,_ ,_ ((#:bind ,raw ,s_b) ,_ ...)
             (Scope ,s_scope ()
-                   (Let ,s_let ((#:bind item ,_) let
+                   (Let ,s_let ((#:bind ,item-name ,_) let
                                 (#:ty (Owned Res) ,_))
                         (#:var ,rhs ,_) ,_))
             ,_)
     (check-eq? rhs raw)
+    (check-equal? (binder-base item-name) 'item)
     (check-equal? s_scope s_rec)
     (check-equal? s_let s_b)]
    [_ (fail "Recur の包みの形が合わない")]))

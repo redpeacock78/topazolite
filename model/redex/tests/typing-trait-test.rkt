@@ -76,13 +76,13 @@
   ;; G1 由来の Let は bound の合成型を Core 注釈へ埋め込む。
   (check-equal?
    (elab-core `(Let x ,record 1))
-   `(Let (x ,record-type) ,record 1))
+   `(Let (x⟨1⟩ ,record-type) ,record 1))
   ;; 明示注釈も resolve-annotation の出口で正規化する。
   (check-equal?
    (elab-core `(Let (x let (Record ((z Int imm) (a Int imm))))
                        ,record
                        1))
-   `(Let (x let ,record-type) ,record 1))
+   `(Let (x⟨1⟩ let ,record-type) ,record 1))
   (let-values ([(merged _witnesses)
                 (merge-record-types
                  (list '(Record ((z Int imm) (a Int imm)))))])
@@ -114,7 +114,7 @@
 (test-case "elaboration normalizes composite annotations"
   (check-equal?
    (elab-core '(Let (x let (Union String Int)) 1 x))
-   '(Let (x let (Union Int String)) 1 x))
+   '(Let (x⟨1⟩ let (Union Int String)) 1 x⟨1⟩))
   (define record-type
     '(Record ((a Int imm) (b Int imm))))
   (check-equal?
@@ -124,9 +124,9 @@
                            (Record ((b Int imm)))))
        (Rec ((a imm 1) (b imm 2)))
        x))
-   `((Let (x let ,record-type)
+   `((Let (x⟨1⟩ let ,record-type)
            (Rec ((a imm 1) (b imm 2)))
-           x)
+           x⟨1⟩)
      ,record-type
      ()
      ()))
