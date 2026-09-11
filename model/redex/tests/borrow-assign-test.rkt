@@ -109,3 +109,10 @@
                ((1 Moved))
                () ())))
   (check-equal? (apply-reduction-relation -->g2 conf) '()))
+
+;; core-calculus.md §4.9。Assign は Mutation を出す。
+(let ()
+  (define result (run '(Scope (1) (Assign (BorrowMut 1) 7)) 'Int))
+  (check-equal? (first result) 'ok)
+  (check-true (and (memq 'Mutation (second (second result))) #t)
+              "Assign の row に Mutation が載る"))

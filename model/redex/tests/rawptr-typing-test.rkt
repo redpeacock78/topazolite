@@ -46,7 +46,8 @@
                   (RawLoad p)))))
     [(list 'ok (list type row))
      (check-equal? type 'Res)
-     (check-false (memq 'Unsafe row))]
+     (check-false (memq 'Unsafe row))
+     (check-false (memq 'Mutation row) "RawLoad は Mutation を出さない")]
     [other (fail (format "受理されなかった: ~s" other))]))
 
 (test-case "AddressOf は共有借用を受け取らない"
@@ -164,3 +165,17 @@
     (check-core
      (in-scope '(Unsafe (PtrOffset (AddressOf (BorrowMut x)) 1)))))
    'rawptr-escapes-unsafe))
+
+;; unsafe.md §2.2 と §4.1。RawStore は Mutation を出し、境界の外まで残る。
+;; Unsafe は境界で剥がれる。
+(test-case "RawStore の Mutation は Unsafe 境界の外へ残る（unsafe.md §4.1）"
+  (define row
+    (row-of-ok
+     (check-core
+      `(Scope ()
+         (Let (x let (Owned Res)) (resource 1)
+           (Let (y let (Owned Res)) (resource 2)
+             (Unsafe (RawStore (AddressOf (BorrowMut x))
+                               (Read (Borrow y))))))))))
+  (check-false (memq 'Unsafe row) "Unsafe は境界で剥がれる")
+  (check-true (and (memq 'Mutation row) #t) "Mutation は境界を越えて残る"))

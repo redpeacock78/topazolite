@@ -2110,7 +2110,7 @@
   (for ([cap (in-set (borrow-token-key Λ target #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
                        core 'borrow-conflicting-use #f fail))
-  (list 'Unit (row-union ε_target ε_value) Ψ_2))
+  (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
 
 ;; unsafe.md §2.2。pointer の型成分を検査し、成分の並びを返す。
 (define (pointer-parts core type fail)
@@ -2217,7 +2217,7 @@
     (fail 'rawstore-type-mismatch core))
   (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
   (record-ptr-request! 'raw-store core (raw-store-obligation-ids))
-  (list 'Unit (rows-union (list ε_target ε_value '(Unsafe))) Ψ_2))
+  (list 'Unit (rows-union (list ε_target ε_value '(Unsafe Mutation))) Ψ_2))
 
 ;; unsafe.md §3.3。lifetime、alignment、validity の Proof を要求する。
 (define (from-raw-ptr-obligation-ids)

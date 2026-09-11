@@ -79,12 +79,12 @@
              (NFn ((BorrowedMut Int (RParam a))
                    (BorrowedMut Int (RParam a)))
                   Int
-                  () ())))
+                  (Mutation) ())))
     (outer (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a))
                    (BorrowedMut Int (RParam a)))
                   Int
-                  () ())))))
+                  (Mutation) ())))))
 
 (define (call-idf ρ)
   `(Scope (1)

@@ -33,14 +33,14 @@
   '((useb (ForallRegion (a)
             (NFn ((BorrowedMut Int (RParam a)))
                  Unit
-                 () ())))))
+                 (Mutation) ())))))
 
 ;; 借用の仮引数を 2 つ取る署名。片方を再借用し、もう片方を使う本体に使う。
 (define pair-callables
   '((pairb (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a)) (BorrowedMut Int (RParam a)))
                   Unit
-                  () ())))))
+                  (Mutation) ())))))
 
 ;; 借用の仮引数を持つ Recur の署名。
 (define rec-callables
