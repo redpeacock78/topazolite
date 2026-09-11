@@ -14,6 +14,7 @@
          (struct-out provenance)
          empty-provenance
          provenance-extend
+         normalize-binder
          resolve-designator
          (struct-out bcounters)
          make-bcounters
@@ -172,16 +173,20 @@
 
 (define (empty-provenance) (provenance (hash)))
 
+;; 束縛出現の識別子。Redex の substitute が末尾へ付ける «N» の並びだけを
+;; 取り除く。錨付きなので 1 回だけ当たり、⟨N⟩ には触れない。
+;; shadowing した束縛子は ⟨N⟩ で区別されるため、base 名が同じでも同じ鍵へ畳まれない。
+(define normalize-rx #px"(«[0-9]+»)+$")
+
+(define (normalize-binder name)
+  (if (symbol? name)
+      (string->symbol
+       (regexp-replace normalize-rx (symbol->string name) ""))
+      name))
+
 (define (provenance-add prov name place)
-  ;; 生成器の束縛子は現在すべて一意なので base 名の衝突は起きない。
-  ;; 将来 shadowing を生成域へ足した場合は同じ base へ畳まれて ambiguous fail になる。
-  (define key
-    (if (symbol? name)
-        (string->symbol
-         (regexp-replace* #px"«[0-9]+»" (symbol->string name) ""))
-        name))
   (provenance
-   (hash-update (provenance-table prov) key
+   (hash-update (provenance-table prov) (normalize-binder name)
                 (lambda (s) (set-add s place))
                 (set))))
 
@@ -189,7 +194,8 @@
   (cond
     [(exact-nonnegative-integer? w) (list w)]
     [(symbol? w)
-     (set->list (hash-ref (provenance-table prov) w (set)))]
+     (set->list
+      (hash-ref (provenance-table prov) (normalize-binder w) (set)))]
     [else '()]))
 
 (define (cfg-parts config)

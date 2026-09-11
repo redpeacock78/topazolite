@@ -2,6 +2,7 @@
 
 (require rackunit
          "../annotate.rkt"
+         "../borrow-oracle.rkt"
          "../elaborate.rkt"
          "../uniquify.rkt")
 
@@ -144,3 +145,8 @@
    (elab (annotate-surface
           '(Let (|x⟨1⟩| let Int) 1 |x⟨1⟩|)))
    `(err ,_)))
+
+;; SCP-002。置換が付ける添字は末尾からだけ剥がす。
+(test-case "正規化が末尾の添字だけを剥がす（SCP-002）"
+  (check-equal? (normalize-binder '|x⟨1⟩«0»«1»|) '|x⟨1⟩|)
+  (check-equal? (normalize-binder '|x«0»⟨1⟩|) '|x«0»⟨1⟩|))
