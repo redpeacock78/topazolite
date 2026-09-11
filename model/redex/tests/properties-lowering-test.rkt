@@ -63,7 +63,7 @@
 
 ;;; backend-matrix.md §6 ラベル種別の単位検査
 
-(test-case "backend-matrix.md §6: row-kinds が ℓ の 6 形を種別へ写す"
+(test-case "backend-matrix.md §6: row-kinds が ℓ の 7 形を種別へ写す"
   (check-equal? (row-kinds (term ((Return b Int))))
                 (set (term (return ,(boundary-code 'b) ,(tycode 'Int)))))
   ;; 同じ境界名でも τ が違えば別の種別になる。Handle の row-difference と
@@ -74,8 +74,8 @@
   ;; (Yield τ) の型成分は落ちる。狭めとして backend-matrix.md §12 に記録済み
   ;; である。
   (check-equal? (row-kinds (term ((Yield Int)))) (row-kinds (term ((Yield Bool)))))
-  (check-equal? (row-kinds (term (Suspend Partial Compile Own)))
-                (set 'suspend 'partial 'compile 'own))
+  (check-equal? (row-kinds (term (Suspend Partial Compile Own Mutation)))
+                (set 'suspend 'partial 'compile 'own 'mutation))
   (check-equal? (row-kinds '()) (set)))
 
 ;;; backend-matrix.md §6 effect-kinds-of の形ごとの被覆

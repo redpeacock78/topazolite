@@ -447,6 +447,7 @@
     ['Partial 'partial]
     ['Compile 'compile]
     ['Own 'own]
+    ['Mutation 'mutation]
     [_ (error 'effect-label-kind "未知の Effect ラベル: ~s" label)]))
 
 (define (row-kinds row)
