@@ -13,7 +13,7 @@
   (A ::= Int Bool Unit String Never Res List Option Result T)
   (label ::= variable-not-otherwise-mentioned)
   (m ::= imm mut)
-  (bmode ::= const let)
+  (bmode ::= const let mut)
   (tn ::= id)
   (ur ::= ((label uτ m) ...))
   ;; RFN-001: 表層に書ける命題。判定表の (Prop id) を足す。常在性 witness の

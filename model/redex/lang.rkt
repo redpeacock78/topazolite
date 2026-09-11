@@ -108,7 +108,8 @@
 (define-extended-language G2 G1
   (label ::= variable-not-otherwise-mentioned)
   (m ::= imm mut)
-  (bmode ::= const let)
+  ;; P1c2b。SCP-001。binding は既定で immutable であり、再代入には mut を要求する。
+  (bmode ::= const let mut)
   (r ::= ((label τ m) ...))
   (tn ::= id)
   ;; region 引数の名前。r は同じ言語の record row であるため使えない。
@@ -218,7 +219,7 @@
 
 (define-extended-language G2m G1m
   (m ::= imm mut)
-  (bmode ::= const let)
+  (bmode ::= const let mut)
   (r ::= ((label τ m) ...))
   (tn ::= id)
   (rp ::= variable-not-otherwise-mentioned)

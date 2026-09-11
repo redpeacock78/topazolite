@@ -154,7 +154,7 @@
 (define-extended-language G2+ G1+
   (label ::= variable-not-otherwise-mentioned)
   (m ::= imm mut)
-  (bmode ::= const let)
+  (bmode ::= const let mut)
   (r ::= ((label τ m) ...))
   (tn ::= id)
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ) (Union τ τ) (Intersection τ τ))
