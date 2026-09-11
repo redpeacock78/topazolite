@@ -1022,7 +1022,8 @@
                  (when (and (eq? binding-mode 'const)
                             (pair? residual))
                    (reject s 'const-record-residual residual))
-                 (if (eq? binding-mode 'let)
+                 ;; P1c2b。mut も残余を戻す。typing の binding-context と揃える。
+                 (if (memq binding-mode '(let mut))
                      `(Record ,(append declared-row residual))
                      declared-type)]
                 [_ declared-type])]))

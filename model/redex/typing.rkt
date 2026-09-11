@@ -1713,7 +1713,8 @@
              (if (null? residual)
                  declared-row
                  (fail 'const-record-residual bound residual))]
-            [(let)
+            ;; P1c2b。mut は残余を落とさない。落とすと const と同じ制約になる。
+            [(let mut)
              (field-row-⊕ declared-row residual)]
             [else (fail 'ill-typed node)]))
         ;; field-row-residual は declared-row のラベルを除いた残余を返すため、

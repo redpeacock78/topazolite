@@ -3,6 +3,7 @@
 (require rackunit
          redex/reduction-semantics
          (prefix-in ty: "../typing.rkt")
+         (prefix-in el: "../elaborate.rkt")
          "../lang.rkt"
          "../ucore.rkt"
          "../span-core.rkt")
@@ -62,3 +63,22 @@
   (define env3 '((f (NFn () Int () ())) (x Int mut)))
   (check-equal? (ty:environment-lookup env2 'f)
                (ty:environment-lookup env3 'f)))
+
+(define rec2 '(Rec ((a imm 1) (b imm unit))))
+
+;; P1c2b。mut は let と同じく残余 field を binding 型へ戻す（spec 7.3）。
+(check-equal?
+ (ty:core-type-of `(Let (x mut (Record ((a Int imm)))) ,rec2 (Proj x b)) '() '())
+ '(Unit ()))
+;; 非 record の T では const や let と差が出ない。
+(check-equal? (ty:core-type-of '(Let (x mut Int) 1 x) '() '()) '(Int ()))
+;; 非互換 field は let と同じく拒否する。
+(check-equal?
+ (ty:core-type-of `(Let (x mut (Record ((a Bool imm)))) ,rec2 x) '() '())
+ 'ill-typed)
+
+;; elaborate 側も同じ扱いである（spec 7.4）。
+(define (elab-type term) (match (el:elab term) [(list _ type _ _) type]))
+(check-equal?
+ (elab-type `(Let (x mut (Record ((a Int imm)))) ,rec2 x))
+ '(Record ((a Int imm) (b Unit imm))))
