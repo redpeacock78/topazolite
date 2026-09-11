@@ -99,7 +99,15 @@
          core-type-of/materialized
          unwrap-forall-region
          function-body-environment
-         check-owned-encoding)
+         check-owned-encoding
+         ;; P1c2b。環境 entry の 3 要素化を回帰で固定するために出す。
+         valid-environment?
+         binding-mode-of
+         ;; lookup は origins.rkt が、extend は classify.rkt と
+         ;; properties-lowering-test.rkt が同じ綴りを持つ。衝突を避けるため
+         ;; この 2 つは environment- を冠した名前で出す。
+         (rename-out [extend environment-extend]
+                     [lookup environment-lookup]))
 
 ;; 段 1 の試験専用。既定は何もしない。
 ;; 本体の走査へ観測を混ぜないため、probe の呼出しは infer と check-as の入口、
@@ -643,7 +651,9 @@
 
 (define (lookup table key)
   (match (assoc key table)
-    [(list _ value) value]
+    ;; P1c2b。環境 entry は mut のとき 3 要素になる。places の表は 2 要素の
+    ;; ままであり、同じ形で両方から値を取る。
+    [(list _ value _ ...) value]
     [_ #f]))
 
 ;; §4.6。lookup は assoc の結果から値だけを取り出すので、対の同一性が
@@ -794,10 +804,26 @@
        (for/and ([entry (in-list environment)])
          (match entry
            [(list (? symbol?) type) (type? type)]
+           ;; P1c2b。mut を宣言した Let だけが 3 要素の entry を作る。
+           [(list (? symbol?) type (? symbol? mode))
+            (and (type? type) (memq mode '(const let mut)) #t)]
            [_ #f]))))
 
-(define (extend environment names types)
-  (append (map list names types) environment))
+;; P1c2b。modes を渡すと (name type mode) の 3 要素 entry を作る。省略すると
+;; 従来どおり 2 要素である。mut 以外の mode を運ぶ必要は無いので、呼出し側は
+;; mut のときだけ modes を渡す。
+(define (extend environment names types [modes #f])
+  (append (if modes
+              (map list names types modes)
+              (map list names types))
+          environment))
+
+;; P1c2b。3 要素 entry の mode を返す。2 要素 entry と未束縛には #f を返す。
+;; 呼出し側は #f を「再代入できない」として扱う。
+(define (binding-mode-of environment name)
+  (match (assoc name environment)
+    [(list _ _ mode) mode]
+    [_ #f]))
 
 (define (without-owned environment)
   (filter (λ (entry) (not (owned-type? (second entry))))

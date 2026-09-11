@@ -68,7 +68,8 @@
 
 (define (lookup table key)
   (match (assoc key table)
-    [(list _ value) value]
+    ;; P1c2b。環境 entry は mut のとき 3 要素になる。
+    [(list _ value _ ...) value]
     [_ #f]))
 
 ;; span.md §7.4: Γ0 の値は表の項であり span を持たない。参照した位置の
@@ -169,8 +170,19 @@
       [_ #f]))
   (walk term))
 
-(define (extend environment names types)
-  (append (map list names types) environment))
+;; P1c2b。modes を渡すと 3 要素 entry を作る。typing.rkt の同名手続きと同じ
+;; 契約である。elaborate は typing を require しないため別に持つ。
+(define (extend environment names types [modes #f])
+  (append (if modes
+              (map list names types modes)
+              (map list names types))
+          environment))
+
+;; P1c2b。3 要素 entry の mode を返す。typing.rkt の同名手続きと同じ契約である。
+(define (binding-mode-of environment name)
+  (match (assoc name environment)
+    [(list _ _ mode) mode]
+    [_ #f]))
 
 (define (owned-type? type)
   (match type
