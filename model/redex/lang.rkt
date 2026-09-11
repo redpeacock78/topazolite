@@ -47,7 +47,7 @@
          (TypeInfo κ)
          (Proof φ))
   (κ ::= Type (κ -> κ))
-  (ℓ ::= (Return b τ) (Yield τ) Suspend Partial Compile Own Unsafe)
+  (ℓ ::= (Return b τ) (Yield τ) Suspend Partial Compile Own Unsafe Mutation)
   (ε ::= (ℓ ...))
   (Q ::= (φ ...))
   (φ ::= ValidNarrativeTrait TypeNarrativeCap)
