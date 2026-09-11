@@ -738,7 +738,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 1 以降 | 無し |
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 1 以降 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 1 以降 | §4.8 |
-| `Mutation` と `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 1 以降 | §5.2 |
+| `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 3 以降（FFI-003） | §5.2 |
 | raw pointer 操作の backend profile | `unsafe.md` §6 | Phase 2 以降 | §17.13 |
 | address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 1 以降 | §17.13 |
 | 外部の allocation を指す pointer からの safe reference 構築（PTR-002 の縮約） | `unsafe.md` §6 | Phase 3 以降（FFI-003） | §4.10 |

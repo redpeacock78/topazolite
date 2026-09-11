@@ -96,7 +96,7 @@ spec ::= T | spec<spec1, …, spek>                型式（型名とその適�
 
 κ ::= Type | κ1 -> κ2                            kind
 
-ε ⊆ { Return<b, τ>, Yield<τ>, Suspend, Partial, Compile, Own }   Effect row
+ε ⊆ { Return<b, τ>, Yield<τ>, Suspend, Partial, Compile, Own, Mutation }   Effect row
      （宣言注釈の中の ε に限り、境界 ID を持たない Return ラベルを許す。§3.1、§4.5）
 
 Q ::= ⟨φ1, …, φn⟩                                Proof obligation の列
@@ -110,6 +110,17 @@ t ::= τ | List | Option | Result                 型式（monotype と未適用
 `Partial` と同じく Perform される op ではなく、静的な marker として働く。
 OwnershipError の源は R-Move / R-Drop に限られるため（§5.5）、row の `Own` は「その項の簡約が OwnershipError で終端しうる」ことの保守的な上界を与える。
 C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
+
+`Mutation` は同じ記憶域を書き換える操作の出現を示す静的な marker である。
+`Mutation` を出す項は `Assign` と `RawStore` の 2 つである。
+`RawLoad` と `PtrOffset` と `AddressOf` は記憶域を読むだけであり、`Mutation` を出さない。
+`Assign` の型付け規則は `Unit ! (ε_target ∪ ε_value ∪ {Mutation})` を返す。
+`Unsafe` は `(Unsafe c)` の境界で row から取り除かれる。
+`Mutation` は取り除かれず、関数境界を越えて宣言 row へ現れる。
+
+Effect label を 1 つ足すと、次の 7 箇所が動く。
+文法が 3 層（`lang.rkt` の `ℓ`、`ucore.rkt` の `tℓ` と `uℓ`）。
+許可集合を閉じている検査が 4 つ（`elaborate.rkt` の `resolve-type-row` と `resolve-declaration-row`、`traits.rkt` の `template-effect?`、`lowering.rkt` の `effect-label-kind`）。
 
 `NFn<P, R, ε, Q>` はホワイトペーパー §11.5.2 の `NFn<P, R, εin, εout, Q, O>` の G1 簡約形である。
 G1 では εin と εout を単一の潜在 Effect row ε に縮約し、適用時の `combine(εa, εi, εo)` を和集合で定義する（§4.3）。

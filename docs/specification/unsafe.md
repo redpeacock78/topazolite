@@ -96,8 +96,8 @@ Effect label に `Unsafe` を加える。
 
 `Unsafe` は `Perform` される operation ではなく、`Own`、`Partial`、`Compile` と同じ静的な marker である。
 
-ホワイトペーパーの署名には `Mutation` と `Foreign` も現れるが、本サイクルでは `Unsafe` だけを追加する。
-`Mutation` と `Foreign` の意味、および backend へ課す契約は未確定であり、別の申し送りとして扱う。
+ホワイトペーパーの署名には `Foreign` も現れるが、本サイクルでは追加しない。
+`Foreign` の意味、および backend へ課す契約は未確定であり、別の申し送りとして扱う。
 
 ### 2.2 操作の型付け
 
@@ -116,9 +116,10 @@ AddressOf : (BorrowedMut τ ρ) ->
 PtrOffset : (RawPtr τ ptrmut nul align as prov) × Int ->
             (RawPtr τ ptrmut Nullable align as prov) ! (Unsafe)
 RawLoad   : (RawPtr τ ptrmut nul align as prov) -> τ ! (Unsafe)
-RawStore  : (RawPtr τ Mut nul align as prov) × τ -> Unit ! (Unsafe)
+RawStore  : (RawPtr τ Mut nul align as prov) × τ -> Unit ! (Unsafe Mutation)
 ```
 
+raw 操作のうち `H` を書き換えるのは `RawStore` だけである。
 `FromRawPtr` の二つの署名は §3.3 に示す。
 `AddressOf` は `Unsafe` Effect を付けない。
 addressOf は借用から pointer を作るだけであり、ホワイトペーパーの署名もこの操作の Effect を空にしている。
@@ -478,9 +479,9 @@ pointee が `H` の外にある場合の生存の判定は本章の外にある�
 
 ### 6.5 Effect label
 
-`Mutation` と `Foreign` の Effect label は `core-calculus.md` §3.2 の row に無い。
-raw 操作は `Unsafe` の 1 つだけを立てる。
-label の細分は Phase 1 以降で定める。
+`Foreign` の Effect label は `core-calculus.md` §3.2 の row に無い。
+FFI の境界設計が未着手であり、label だけ先に置いても検査の対象が無い。
+境界の設計と同時に定める。
 
 ### 6.6 構文の欄
 

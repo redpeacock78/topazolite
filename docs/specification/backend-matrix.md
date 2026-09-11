@@ -278,6 +278,7 @@ BAK-001 は「Typed Core の型と Effect と評価順を保存する」と定�
 | `Partial` | `partial` |
 | `Compile` | `compile` |
 | `Own` | `own` |
+| `Mutation` | `mutation` |
 
 `return` の種別をラベル全体にするのは、源の handler 型付けがラベル全体を差し引くためである。
 境界名だけで差し引くと、同じ境界名で型が違う handler が源側では残す Effect を消してしまう。
