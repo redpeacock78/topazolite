@@ -12,7 +12,9 @@
   (term (verify-origins ,r0 ,core)))
 
 (test-case "NAR-001/TYP-001: initial origin environments"
-  (check-equal? (length R0) 43)
+  ;; NAR-003: trait 行は R0 へ entry を寄与しない。第 1 欄は表の鍵であり
+  ;; trusted root ではない。43 から trait 表の 7 行分だけ減っている。
+  (check-equal? (length R0) 36)
   (check-equal? (length Γ0) 31)
   (check-equal? (length Δ0) 9)
   (check-equal? (length Π0) 1)
