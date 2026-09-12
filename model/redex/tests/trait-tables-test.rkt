@@ -13,7 +13,7 @@
   (define names (map trait-name trait-table))
   (check-equal? (length names) (length (remove-duplicates names))))
 
-(test-case "origin ids are unique across all trait tables"
+(test-case "table keys and origin ids are unique across all trait tables"
   (define origins
     (append (map trait-origin trait-table)
             (map impl-oid impl-table)
@@ -185,3 +185,35 @@
           '(Record ((x Int imm)))
           'root))
   (check-true (impl-not-composite? (cons good-impl impl-table) intersect-table)))
+
+;; NAR-003: 期待する origin は予約 Narrative からの派生である。
+(test-case "NAR-003: trait-derived-origin が派生形を組み立てる"
+  (define row (trait-row-by-name 'Printable))
+  (check-equal? (trait-derived-origin row)
+                '(Derived (Reserved o-language-narrative) (Trait Printable))))
+
+;; NAR-003: 正典の表は全行が形の検査を通る。
+(test-case "NAR-003: 正典の trait 表は全行が trait-row-shape-ok? を通る"
+  (for ([row (in-list trait-table)])
+    (check-true (trait-row-shape-ok? row) (format "~s" (trait-name row)))))
+
+;; 検査が実質何も見ない形で通る退化を防ぐ。宣言されていない trait 名は落ちる。
+(test-case "NAR-003: trait-row-shape-ok? は未宣言の trait 名を落とす"
+  (define broken (list 'o-trait-bogus 'Bogus 'root
+                       (list (list 'print '(NFn (Self) String () ()) 'imm))))
+  (check-false (trait-row-shape-ok? broken))
+  ;; 第 1 欄が symbol でない行は symbol? の節で落ちる。
+  (define non-symbol (list "o-trait-printable" 'Printable 'root
+                           (list (list 'print '(NFn (Self) String () ()) 'imm))))
+  (check-false (trait-row-shape-ok? non-symbol)))
+
+;; NAR-003: R0 の実値まで見る。
+(test-case "NAR-003: trait-origin-ok? は R0 の実値まで見る"
+  (define row (trait-row-by-name 'Printable))
+  (define r0-ok '((o-language-narrative languageNarrative)))
+  (check-true (trait-origin-ok? r0-ok row))
+  ;; 予約 Narrative が別の値へ束縛された R0 では落ちる。
+  (define r0-rebound '((o-language-narrative somethingElse)))
+  (check-false (trait-origin-ok? r0-rebound row))
+  ;; 予約 Narrative が無い R0 でも落ちる。
+  (check-false (trait-origin-ok? '() row)))

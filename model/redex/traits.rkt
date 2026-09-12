@@ -11,6 +11,9 @@
          impl-table
          intersect-table
          trait-origin
+         trait-derived-origin
+         trait-row-shape-ok?
+         trait-origin-ok?
          trait-name
          trait-scope
          trait-template
@@ -109,6 +112,38 @@
     (s-user root)))
 
 (define (trait-origin row) (first row))
+
+;; NAR-003: trait の Proof が持つべき origin。第 1 欄 tid は表の鍵であり、
+;; Proof の origin ではない。POL-001 の policy と同じく、親を
+;; o-language-narrative に固定するのは Redex 項として親を一つ選ぶ必要が
+;; あるためであり、o-type-narrative を親から外す意味ではない。
+;; step の引数に tid ではなく trait 名を使うのは、正典が trait を名前で
+;; 同定しており、proof-issuer-ok? が受け取る trait も名前であるためである。
+(define (trait-derived-origin row)
+  `(Derived (Reserved o-language-narrative) (Trait ,(trait-name row))))
+
+;; R0 を見ずに済む部分。第 1 欄が symbol であること、投影が組み立てる
+;; step の引数が行の trait 名と一致すること、その名前が表に宣言済みで
+;; あることを見る。
+(define (trait-row-shape-ok? row)
+  (match row
+    [(list tid name _scope _template)
+     (and (symbol? tid)
+          (symbol? name)
+          (eq? (trait-row-by-name name) row)
+          (match (trait-derived-origin row)
+            [`(Derived (Reserved o-language-narrative) (Trait ,step-name))
+             (eq? step-name name)]
+            [_ #f]))]
+    [_ #f]))
+
+;; 予約 Narrative の id が R0 で実際にその値へ束縛されていることまで見る。
+;; id の一致だけでは、R0 から予約 Narrative が消えても検査が通る。
+(define (trait-origin-ok? r0 row)
+  (and (trait-row-shape-ok? row)
+       (equal? (assq 'o-language-narrative r0)
+               '(o-language-narrative languageNarrative))))
+
 (define (trait-name row) (second row))
 (define (trait-scope row) (third row))
 (define (trait-template row) (fourth row))
@@ -337,6 +372,10 @@
   (when (duplicate? (map trait-name trait-table))
     (error 'traits "duplicate trait name"))
 
+  ;; NAR-003 以降、trait 行の第 1 欄は R0 の ID ではなく表の鍵である。
+  ;; この検査が守るのは鍵の一意性であり、trait-row-by-oid と search の
+  ;; hook がこの鍵で行を引く。impl と intersect の第 1 欄は R0 の ID の
+  ;; ままであり、3 つの表をまたいで衝突しないことを一度に見る。
   (define origins
     (append (map trait-origin trait-table)
             (map impl-oid impl-table)
@@ -395,6 +434,14 @@
 
   (unless (impl-not-composite?)
     (error 'traits "impl rows must not target a composite trait"))
+
+  ;; NAR-003: 全行が期待する origin の形を組み立てられること。R0 の実値の
+  ;; 照合は origins.rkt が R0 の定義の直後で行う。この層は表そのものに
+  ;; 閉じた検査だけを持つ。
+  (for ([row (in-list trait-table)])
+    (unless (trait-row-shape-ok? row)
+      (error 'traits "trait row has a malformed origin shape: ~s"
+             (trait-name row))))
 
   (unless (scope-genealogy-ok?)
     (error 'traits "scope parent table is malformed")))
