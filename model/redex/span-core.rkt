@@ -108,6 +108,7 @@
             (Make t)
             (Expand nm)
             (Policy nm)
+            (Trait nm)
             (Compose nm O O))
   (br ::= (s K (xs ...) -> c))
   (h ::= (s xs -> c))

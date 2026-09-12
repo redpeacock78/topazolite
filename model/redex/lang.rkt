@@ -60,6 +60,9 @@
             (Make t)
             (Expand nm)
             (Policy nm)
+            ;; trait 名は G1 の既存の名前の非終端 nm を使う。trait 専用の tn は
+            ;; G2 で初めて導入されるため、G1 では literal になってしまう。
+            (Trait nm)
             (Compose nm O O))
 
   (op ::= (Return b τ))

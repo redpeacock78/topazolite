@@ -3,7 +3,9 @@
 (require rackunit
          racket/list
          redex/reduction-semantics
+         "../lang.rkt"
          "../origins.rkt"
+         "../span-core.rkt"
          "../traits.rkt")
 
 (define (trait-constant-name row)
@@ -147,3 +149,19 @@
   (for ([name (in-list names)])
     (define value (second (second (assoc name Γ0))))
     (check-equal? (verify-initial value) 'ok (format "~s" name))))
+
+;; NAR-003: step は Trait の形を受理する。
+(test-case "NAR-003: step が Trait の形を受理する"
+  (check-true (redex-match? G1 step '(Trait Printable)))
+  (check-true
+   (redex-match? G1 O '(Derived (Reserved o-language-narrative)
+                                (Trait Printable))))
+  ;; 既存の 5 形は変わらない。
+  (check-true (redex-match? G1 step '(Policy ownership)))
+  (check-true (redex-match? G1 step '(Expand nm)))
+  ;; G1+（span-core）でも同じ形が通る。両方の文法を触るため、片方の
+  ;; 取りこぼしをこの 1 本で落とす。
+  (check-true (redex-match? G1+ step '(Trait Printable)))
+  (check-true
+   (redex-match? G1+ O '(Derived (Reserved o-language-narrative)
+                                 (Trait Printable)))))
