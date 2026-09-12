@@ -111,6 +111,8 @@
     (s-kernel root)
     (s-user root)))
 
+;; NAR-003: 第 1 欄は表の鍵であり Proof の origin ではない。Proof の origin は
+;; trait-derived-origin が組み立てる。名前は既存の呼び出し側との互換で残す。
 (define (trait-origin row) (first row))
 
 ;; NAR-003: trait の Proof が持つべき origin。第 1 欄 tid は表の鍵であり、

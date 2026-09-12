@@ -128,6 +128,13 @@
       [`(Curry ,value) (walk value)]
       [`(Make ,type) (type-normal? type)]
       [`(Expand ,_) #t]
+      ;; NAR-003: core-types-normal? が閉じるのは到達可能な Trait である。
+      ;; Policy と Compose の節は足さない。Policy は R0 の行と
+      ;; policy-row-shape-ok? の中にしか現れず core 項の値にならず、Compose は
+      ;; 合成 Implements の Proof 値を書き下す正典構文がまだ無く構築できない。
+      ;; どちらも core の値へ導入するサイクルで同時に足す。この error はその
+      ;; 時点で新しい形を素通しせず落とす。
+      [`(Trait ,_) #t]
       [_ (error 'core-types-normal? "unhandled origin step: ~s" step)]))
 
   (define (walk-branch branch)

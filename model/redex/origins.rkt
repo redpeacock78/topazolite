@@ -41,8 +41,6 @@
 
 (define trait-r0-entries
   (append
-   (for/list ([row (in-list trait-table)])
-     (list (trait-origin row) (list 'trait (trait-name row))))
    (for/list ([row (in-list impl-table)])
      (list (impl-oid row) (list 'prim (impl-name row))))
    (for/list ([row (in-list intersect-table)])
@@ -75,6 +73,16 @@
    ;; ため (prim ...) ではなく単独の id として登録する。
    (term ((o-merge merge)))
    trait-r0-entries))
+
+;; NAR-003: 全 trait 行の origin が R0 の実値まで含めて正しいこと。行の形の
+;; 検査は traits.rkt の check-tables! が持ち、ここは R0 との照合だけを行う。
+;; trait-gamma0-entries より前に置くのは、壊れた origin を持つ Proof 値が
+;; いったん Γ0 へ入ってから検査が走るのを避けるためである。
+(for ([row (in-list trait-table)])
+  (unless (trait-origin-ok? R0 row)
+    (error 'origins
+           "trait row has an invalid origin against R0: ~s"
+           (trait-name row))))
 
 ;; RFN-001: validate primitive の型は行ごとの単相型である。latent effect と
 ;; obligation は空とする。判定は純粋な全域計算であるためである。
@@ -111,7 +119,7 @@
      (define proposition `(ValidNarrativeTrait ,(trait-name row)))
      (list (trait-constant-name row)
            (list `(Proof ,proposition)
-                 `(ProofRep (Reserved ,(trait-origin row)) ,proposition))))
+                 `(ProofRep ,(trait-derived-origin row) ,proposition))))
    (for/list ([row (in-list impl-table)])
      (define trait-row (trait-row-by-name (impl-trait-name row)))
      (define requirements
@@ -282,11 +290,16 @@
        [_ #f])]
     [`(ValidNarrativeTrait ,trait)
      (match origin
-       [`(Reserved ,id)
+       ;; NAR-003: trait の Proof は予約 Narrative から継承した派生 origin を
+       ;; 持つ。正規の構成子は trait-derived-origin であり、origin がその像と
+       ;; 一致することと、行そのものが R0 に対して正しいことを見る。親と step
+       ;; の形をここへ書き写さないのは、正規の構成子を 1 箇所に保つためである。
+       [`(Derived ,_ ,_)
         (define row (trait-row-by-name trait))
         (and row
-             (eq? (trait-origin row) id)
-             (equal? (lookup r0 id) `(trait ,trait)))]
+             (equal? origin (trait-derived-origin row))
+             (trait-origin-ok? r0 row)
+             #t)]
        [_ #f])]
     [`(Implements ,type ,trait)
      (match origin
