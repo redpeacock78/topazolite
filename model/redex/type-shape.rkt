@@ -196,6 +196,7 @@
          [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
          [`(Read ,operand) (walk operand)]
          [`(Assign ,target ,value) (and (walk target) (walk value))]
+         [`(Reassign ,target ,value) (and (walk target) (walk value))]
          [`(RegionLam (,_ ...) ,body) (walk body)]
          [`(RegionApp ,function (,_ ...)) (walk function)]
          ;; pointer 操作（unsafe.md §4.4）。型を持つ位置が無いため operand を
@@ -211,6 +212,7 @@
          [`(FromRawPtr ,operand ,_) (walk operand)]
          [`(PtrVal ,_ ,_ ,_ ,_) #t]
          [`(Move ,_) #t]
+         [`(MutSlot ,_) #t]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)
           (and (walk function) (walk argument))]

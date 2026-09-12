@@ -38,6 +38,8 @@
       [(list 'Yield c_1 c_2) (list 'Yield (next) (ann c_1) (ann c_2))]
       [(list 'Suspend c) (list 'Suspend (next) (ann c))]
       [(list 'Move w) (list 'Move (next) (ann w))]
+      [(list 'Reassign target value)
+       (list 'Reassign (next) (ann target) (ann value))]
       [(list 'Drop c) (list 'Drop (next) (ann c))]
       [(list 'Curry c_1 c_2) (list 'Curry (next) (ann c_1) (ann c_2))]
       [(list 'OwnLeaf c) (list 'OwnLeaf (next) (ann c))]
@@ -130,6 +132,8 @@
       [(list 'Yield e_1 e_2) (list 'Yield (next) (ann e_1) (ann e_2))]
       [(list 'Suspend e) (list 'Suspend (next) (ann e))]
       [(list 'Move x) (list 'Move (next) (ann x))]
+      [(list 'Reassign target value)
+       (list 'Reassign (next) (ann target) (ann value))]
       [(list 'Drop e) (list 'Drop (next) (ann e))]
       [(list 'Curry e_1 e_2) (list 'Curry (next) (ann e_1) (ann e_2))]
       [(list 'TypeMake spec) (list 'TypeMake (next) (ty spec))]

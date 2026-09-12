@@ -1696,6 +1696,12 @@
 
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
+  (when (and (eq? binding-mode 'mut)
+             (or (not (owned-free? declared-type))
+                 (borrowed-type-anywhere? declared-type)))
+    ;; 宣言型だけで明らかな affine/borrowed binding は bound を推論する前に
+    ;; 拒む。これにより借用の所有者検査より mut の契約を先に報告できる。
+    (fail 'mut-binding-unsupported-type node))
   (match declared-type
     [`(Record ,declared-row)
      (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
@@ -1714,8 +1720,18 @@
                  declared-row
                  (fail 'const-record-residual bound residual))]
             ;; P1c2b。mut は残余を落とさない。落とすと const と同じ制約になる。
-            [(let mut)
+            [(let)
              (field-row-⊕ declared-row residual)]
+            [(mut)
+             ;; mut の再代入は古い値を捨てるため、affine な値と借用を
+             ;; mutable な環境へ入れない。既存の再帰的な述語で欄の内側も見る。
+             (define row (field-row-⊕ declared-row residual))
+             (for ([field (in-list row)])
+               (define type (second field))
+               (when (or (not (owned-free? type))
+                         (borrowed-type-anywhere? type))
+                 (fail 'mut-binding-unsupported-type node)))
+             row]
             [else (fail 'ill-typed node)]))
         ;; field-row-residual は declared-row のラベルを除いた残余を返すため、
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
@@ -1756,6 +1772,12 @@
      (match (check-as/full bound declared-type (enter-child Λ 0)
                            Ψ environment places callables fail)
        [(list row bound-psi actual)
+        (when (and (eq? binding-mode 'mut)
+                   (or (not (owned-free? actual))
+                       (borrowed-type-anywhere? actual)))
+          ;; Record 以外の mut binding も同じ契約を受ける。ここは宣言型の
+          ;; match の外側なので Borrowed/Owned の non-record root を拾う。
+          (fail 'mut-binding-unsupported-type node))
         ;; 束縛の型には推論した寿命を持つ側を置く。
         ;; 宣言型を置くと spec §5.1 の下限収集が (RVar k) を見つけられず、
         ;; 束縛した名前を使う位置の region が σ に入らない。
@@ -2138,6 +2160,34 @@
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
                        core 'borrow-conflicting-use #f fail))
   (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
+
+;; spec §7.1 §7.2。Reassign は固定された slot の中身を差し替える。slot の型は
+;; binding の宣言で決まり、再代入で変わらない。そのため値の型は compat? では
+;; なく type-equiv? で見る。compat? を採ると右辺の余剰 Owned を落とす経路が
+;; 開き、P1b が閉じた資源損失の穴を別の入口から開け直すことになる。
+(define (infer-reassign core target value Λ Ψ environment places callables fail)
+  (define τ_slot
+    (match target
+      ;; 実行時の形。R-LetMutB が置いた mut の slot である。
+      [`(MutSlot ,place)
+       (define type (lookup places place))
+       (unless type (fail 'unknown-place core))
+       type]
+      [(? exact-nonnegative-integer?)
+       ;; 裸の place は R-LetOwnedB が置いた形であり、再代入の対象ではない。
+       (fail 'immutable-binding core)]
+      [_
+       (define name (peel-node target))
+       (define type (lookup environment name))
+       (unless type (fail 'unbound-variable core))
+       (unless (eq? (binding-mode-of environment name) 'mut)
+         (fail 'immutable-binding core))
+       type]))
+  (match-define (list τ_value ε_value Ψ_1)
+    (infer value (enter-child Λ 0) Ψ environment places callables fail))
+  (unless (type-equiv? τ_slot τ_value)
+    (fail 'reassign-type-mismatch core τ_slot τ_value))
+  (list 'Unit (rows-union (list ε_value '(Mutation))) Ψ_1))
 
 ;; unsafe.md §2.2。pointer の型成分を検査し、成分の並びを返す。
 (define (pointer-parts core type fail)
@@ -2724,7 +2774,8 @@
                       Λ_body
                       bound-psi
                       (extend environment (list x)
-                              (list binding-type))
+                              (list binding-type)
+                              (and (eq? binding-mode 'mut) '(mut)))
                       places
                       callables
                       fail)
@@ -3016,6 +3067,8 @@
      (infer-read core operand Λ Ψ environment places callables fail)]
     [`(Assign ,target ,value)
      (infer-assign core target value Λ Ψ environment places callables fail)]
+    [`(Reassign ,target ,value)
+     (infer-reassign core target value Λ Ψ environment places callables fail)]
     [`(AddressOf ,operand)
      (infer-address-of core operand Λ Ψ environment places callables fail)]
     [`(PtrOffset ,operand ,offset)
@@ -3166,7 +3219,8 @@
                         Λ_body
                         bound-psi
                         (extend environment (list x)
-                                (list binding-type))
+                                (list binding-type)
+                                (and (eq? binding-mode 'mut) '(mut)))
                         places
                         callables
                         fail
@@ -3551,7 +3605,8 @@
           'parameter-arity-mismatch
           'branch-binder-arity
           'undeclared-function-effect
-          'owned-narrowing-rejected)
+          'owned-narrowing-rejected
+          'reassign-type-mismatch)
       (list expected actual))
      (values expected actual)]
     [(_ '()) (values #f #f)]

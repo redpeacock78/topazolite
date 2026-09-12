@@ -60,6 +60,7 @@
     [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
     [`(Read ,c) (list c)]
     [`(Assign ,target ,value) (list target value)]
+    [`(Reassign ,_ ,value) (list value)]
     ;; RegionLam の束縛名と RegionApp の ρ は Core の子ではない。
     [`(RegionLam (,_ ...) ,c) (list c)]
     [`(RegionApp ,c (,_ ...)) (list c)]
@@ -135,6 +136,7 @@
      `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
     [`(Read ,_) `(Read ,(first-child))]
     [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
+    [`(Reassign ,target ,_) `(Reassign ,target ,(first-child))]
     [`(RegionLam ,rps ,_) `(RegionLam ,rps ,(first-child))]
     [`(RegionApp ,_ ,ρs) `(RegionApp ,(first-child) ,ρs)]
     [`(AddressOf ,_) `(AddressOf ,(first-child))]
@@ -210,6 +212,9 @@
        (set-union (walk c)
                   (if (symbol? w-own) (set w-own) (set)))]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
+      [`(Reassign ,target ,value)
+       (set-union (if (symbol? target) (set target) (set))
+                  (walk value))]
       [(? symbol? s)
        (if (redex-match? G2 x s) (set s) (set))]
       [_

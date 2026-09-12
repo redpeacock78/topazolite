@@ -4,6 +4,7 @@
          racket/set
          redex/reduction-semantics
          "annotate.rkt"
+         "borrow.rkt"
          "classify.rkt"
          "compat.rkt"
          "diagnostic.rkt"
@@ -59,7 +60,8 @@
           'constructor-type-mismatch
           'undeclared-function-effect
           'undeclared-recur-effect
-          'owned-narrowing-rejected)
+          'owned-narrowing-rejected
+          'reassign-type-mismatch)
       (list expected actual))
      (values expected actual)]
     [(_ '()) (values #f #f)]
@@ -1005,6 +1007,12 @@
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
          (define name (peel-bind raw-name))
          (define declared-type (resolve-annotation raw-type delta s))
+         (when (and (eq? binding-mode 'mut)
+                    (or (not (owned-free? declared-type))
+                        (unbound-borrowed-type? declared-type (set))))
+           ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
+           ;; 前に拒むため、elaborate と typing が同じ key を返す。
+           (reject s 'mut-binding-unsupported-type declared-type))
          (define bound-result
            (synth bound environment delta propositions boundaries))
          (define actual-type (judgment-type bound-result))
@@ -1027,6 +1035,12 @@
                      `(Record ,(append declared-row residual))
                      declared-type)]
                 [_ declared-type])]))
+         (when (and (eq? binding-mode 'mut)
+                    (or (not (owned-free? binding-type))
+                        (unbound-borrowed-type? binding-type (set))))
+           ;; mut binding の古い値を再代入で捨てるため、Owned と借用を
+           ;; mutable な環境へ入れない。Record の内側も再帰的に検査する。
+           (reject s 'mut-binding-unsupported-type binding-type))
          ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
          ;; binding-type を expected 側に使う。これで入れ子の欄だけを検査する。
          ;; actual-type が Never のときは Record の対にならないため、
@@ -1035,7 +1049,8 @@
            (reject s 'owned-narrowing-rejected binding-type actual-type))
          (define body-result
            (synth body
-                  (extend environment (list name) (list binding-type))
+                  (extend environment (list name) (list binding-type)
+                          (and (eq? binding-mode 'mut) '(mut)))
                   delta propositions boundaries))
          (judgment
           `(Let ,s (,raw-name ,binding-mode
@@ -1192,6 +1207,23 @@
            [`(Owned ,inner)
             (judgment `(Move ,s ,raw-name) `(Owned ,inner) '(Own))]
            [_ (reject s 'move-non-owned name)])]
+
+        ;; spec §7.7。Reassign は elaborate を越える最初の記憶域書き換えの形で
+        ;; ある。target は binder なので judgment を作らず、生の綴りのまま運ぶ。
+        [`(Reassign ,raw-name ,value)
+         (define name (peel-node raw-name))
+         (define slot-type (lookup environment name))
+         (unless slot-type (reject s 'unbound-variable name))
+         (unless (eq? (binding-mode-of environment name) 'mut)
+           (reject s 'immutable-binding name))
+         (define result
+           (synth value environment delta propositions boundaries))
+         (unless (type-equiv? slot-type (judgment-type result))
+           (reject s 'reassign-type-mismatch
+                   slot-type (judgment-type result)))
+         (judgment `(Reassign ,s ,raw-name ,(judgment-core result))
+                   'Unit
+                   (row-union (judgment-row result) '(Mutation)))]
 
         [`(Drop ,raw-name)
          #:when (let ([name (peel-node raw-name)])

@@ -202,7 +202,8 @@
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unexpected-ownleaf unknown-place unmanaged-place
     ;; VAR
-    duplicate-branch-binder duplicate-parameter non-canonical-primitive
+    duplicate-branch-binder duplicate-parameter immutable-binding
+    mut-binding-unsupported-type non-canonical-primitive reassign-type-mismatch
     unbound-variable unknown-primitive
     ;; APP
     apply-non-function curry-non-function unknown-callable
@@ -813,15 +814,35 @@
               (reach-node 'Yield 1541 1560
                           (reach-node 'resource 1542 1553 0)
                           (reach-lit 1 1555 1556))
-              '() '() '() (reach-span 1542 1553))))
+              '() '() '() (reach-span 1542 1553))
+   ;; P1c2b の Reassign producer。span 表でも新しい typing key を実際の
+   ;; G2+ 入力から到達させ、診断の primary-span を固定する。
+   (reach-row 'immutable-binding
+              (reach-node 'Reassign 1561 1575
+                          (reach-var 'x 1562 1563)
+                          (reach-lit 2 1570 1571))
+              '() '() '((x Int)) (reach-span 1561 1575))
+   (reach-row 'mut-binding-unsupported-type
+              (reach-node 'Let 1576 1600
+                          (list (reach-bind 'x 1577 1578) 'mut
+                                (reach-ty '(Owned Res) 1579 1580))
+                          (reach-node 'Move 1581 1588
+                                      (reach-var 's 1584 1585))
+                          (reach-lit 1 1595 1596))
+              '() '() reach-owned-environment (reach-span 1576 1600))
+   (reach-row 'reassign-type-mismatch
+              (reach-node 'Reassign 1601 1615
+                          (reach-var 'x 1602 1603)
+                          (reach-lit 'unit 1610 1611))
+              '() '() '((x Int mut)) (reach-span 1601 1615))))
 
-(test-case "typing の producer key 集合が registry v11 と一致する"
+(test-case "typing の producer key 集合が registry v13 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 93)
+  (check-equal? (length producer-keys) 96)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
