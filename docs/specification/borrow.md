@@ -358,6 +358,11 @@ place へ載せた後は借用の所有者を追う手立てが無く、所有�
 `Assign` の結果は `Unit` である。
 Ω も θ も動かない。
 
+`Assign` と `Reassign` は異なる更新である。 [REQ: SCP-001]
+`Assign` は借用した designator が指す field を書き換えるが、`Reassign` は借用を経由せず、`mut` binding が指す slot 自体を差し替える。
+`Reassign` の結果は `Unit` であり、`H` の slot だけを書き換えて `Ω` と `θ` は動かさない。
+そのため `Reassign` は借用の capability や Ψ の借用記録を新たに作らない。
+
 ## 13. 使用の判定
 
 使用の要求は、根の place `w`、field path `fp`、操作の種類、起点の集合 `source` の 4 つを持つ。 [REQ: BOR-004]

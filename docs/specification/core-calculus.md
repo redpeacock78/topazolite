@@ -112,9 +112,11 @@ OwnershipError の源は R-Move / R-Drop に限られるため（§5.5）、row 
 C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
 
 `Mutation` は同じ記憶域を書き換える操作の出現を示す静的な marker である。
-`Mutation` を出す項は `Assign` と `RawStore` の 2 つである。
+`Mutation` を出す項は `Assign`、`RawStore`、`Reassign` の 3 つである。
 `RawLoad` と `PtrOffset` と `AddressOf` は記憶域を読むだけであり、`Mutation` を出さない。
 `Assign` の型付け規則は `Unit ! (ε_target ∪ ε_value ∪ {Mutation})` を返す。
+`Reassign` の型付け規則は `Unit ! (ε_value ∪ {Mutation})` を返す。
+target は binder に限られるため、`Assign` と違って target 側の ε は無い。
 `Unsafe` は `(Unsafe c)` の境界で row から取り除かれる。
 `Mutation` は取り除かれず、関数境界を越えて宣言 row へ現れる。
 
@@ -148,6 +150,8 @@ kind が `Type` の TypeRep は monotype τ を持ち、kind が矢印の TypeRe
 **Typed Core** は elaboration の出力言語であり、簡約意味論はこの言語の上で定義する。
 
 ```text
+mw ::= w | MutSlot(p)                            Reassign の target
+
 c ::= v                                          値
     | x                                          変数
     | Apply(c0, c1, …, ck)                       適用
@@ -161,9 +165,11 @@ c ::= v                                          値
     | Yield(c1, c2)                              観測値の生成
     | Suspend(c)                                 生産性の区切り
     | Move(w)                                    affine 資源の消費（w は変数または place）
+    | Reassign(mw, c)                            binder が指す slot の更新
     | Drop(c)                                    明示 drop
     | Curry(c1, c2)                              部分適用
     | Error(p)                                   ownership error の伝播（簡約が生成、§5.5）
+    | MutSlot(p)                                 mut binding の slot（R-LetMutB が生成）
 
 op ::= Return<b, τ>                              G1 の handler 対象 Effect
 
@@ -178,11 +184,26 @@ v ::= l                                          リテラル
     | ProofRep(O, φ)                             Proof 値（origin 付き）
 ```
 
+#### 3.3.1 binding mode
+
+`Let` の束縛様相は `const`、`let`、`mut` の 3 つである。
+既定は immutable であり、再代入には `mut` を要求する。 [REQ: SCP-001]
+
+record の field の可変性 `m` は別の軸である。
+`m` は field ごとの書き換えの可否を決め、`Assign` が読む。
+束縛様相は binder 全体の書き換えの可否を決め、`Reassign` が読む。
+`Reassign` の target は binder の slot に限り、field の書き換えは `Assign` が扱う。
+
+`mut` の binding は `Owned` と借用を型に持てない。
+`mut` の `Let` は `Scope` の内側を要求する。
+`Owned` の `Let` と同じ制約であり、place を確保するからである。
+
 G1 の `Handle` は継続を再開しない **abortive handler** に限る。
 継続を再開する一般の algebraic effect handler は、多相との干渉に対する設計選択（ホワイトペーパー §5.2）を要するため G1 では扱わず、Phase 1 以降で導入する。
 G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `Yield` と `Suspend` は Perform ではなく専用ノードで表し、観測関係（§6.1）で意味を与える。
 `Error(p)` は elaboration の出力には現れず、簡約（§5.5 R-MoveError）だけが生成する。
+`MutSlot(p)` も elaboration の出力には現れず、R-LetMutB が生成する。
 `resource(n)` は G1 で唯一の `Owned` 型の値であり、primitive `acquire`（§3.5）だけが導入する。
 
 `Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, ε, Q>` を項から消去する（`RecurVal` も同様）。

@@ -70,7 +70,7 @@ G1 の未型付き縮小 Core へ record 型注釈、record 構築、射影、bi
 ```text
 uτ    ::= ... | (Record ur)
 ur    ::= ((label1 uτ1 m1) ... (labeln uτn mn))
-bmode ::= const | let
+bmode ::= const | let | mut
 
 e ::= ...
     | (Rec ((label1 m1 e1) ... (labeln mn en)))
@@ -86,7 +86,7 @@ Surface の record リテラル、`const`、`let`、`let mut` から未型付き
 G1 の Typed Core へ次の項と値を追加する。
 
 ```text
-bmode ::= const | let
+bmode ::= const | let | mut
 
 c ::= ...
     | (Rec ((label1 m1 c1) ... (labeln mn cn)))
@@ -99,7 +99,7 @@ v ::= ...
 
 `Rec` は record の各 field と可変性を保持する。
 `Proj` は record の field をラベルで射影する。
-binding mode 付き `Let` は `const` と `let` の静的な row policy を区別する。
+binding mode 付き `Let` は `const`、`let`、`mut` の静的な binding policy を区別する。
 
 G1 の binding mode を持たない `Let(x : τ, c1, c2)` は存置する。
 この旧形式は意味論上 `const` と同じ policy を持つが、G1 の項を新形式へ書き換えない。
@@ -371,15 +371,26 @@ E[(Proj (Rec ((labeli mi vi) ...)) labelk)] → E[vk]
 
 ### 5.3 binding mode 付き Let
 
-binding mode は実行時の代入規則を変えない。
-`const` と `let` の差は §3.2 の静的 policy だけであり、G2a は再代入を持たないためである。
+`const` と `let` は再代入を許さず、`mut` は `Reassign` による binder の slot 更新を許す。
+`mut` の `Let` は `Scope` の内側で place を確保し、`MutSlot` を通じてその値を読む。
 
 **(R-LetB)**
 
 ```text
-τ は Owned<τ'> の形でない
+τ は Owned<τ'> の形でなく、bmode は mut でない
 ------------------------------------------------------------
 E[(Let (x bmode τ) v c)] → E[c[x := v]]
+```
+
+**(R-LetMutB)**
+
+```text
+τ は Owned<τ'> の形でなく、bmode = mut
+pnew は H と Ω の domain にない
+------------------------------------------------------------
+E[Scope(π, G[(Let (x mut τ) v c)])], H, Ω, θ
+  → E[Scope(π · pnew, G[c[x := (MutSlot pnew)]])],
+    H[pnew ↦ v], Ω[pnew ↦ Available], θ
 ```
 
 **(R-LetOwnedB)**
@@ -393,7 +404,11 @@ E[Scope(π, G[(Let (x bmode τ) v c)])], H, Ω, θ
     H[pnew ↦ v], Ω[pnew ↦ Available], θ
 ```
 
-`owned-type?` の正負で R-LetB と R-LetOwnedB を排他的にする。
+`owned-type?` と束縛様相の組で R-LetB と R-LetMutB と R-LetOwnedB を排他的にする。
+R-LetOwnedB は `owned-type?` が正のとき。
+R-LetMutB は `owned-type?` が負で様相が `mut` のとき。
+R-LetB は残りのときである。
+3 つの側条件は重なりを持たない。
 この分岐は record 型と非 record 型に共通である。
 
 ### 5.4 Effect row
@@ -408,7 +423,7 @@ field row の演算はこの Effect 合成に使わない。
 
 ### 5.5 簡約関係の拡張
 
-規則本体 `-->g2/rules` は、G1 の内部規則関係 `-->g1/rules` を G2m 上へ拡張し、R-Proj、R-LetB、R-LetOwnedB を加える。
+規則本体 `-->g2/rules` は、G1 の内部規則関係 `-->g1/rules` を G2m 上へ拡張し、R-Proj、R-LetB、R-LetMutB、R-LetOwnedB、R-ReadMutSlot、R-Reassign を加える。
 公開する `-->g2` は G1 と同じく binder 一意性を検査してから内部規則を適用する R-Step ラッパーである。
 公開 `-->g1` 自体を拡張元にしないのは、その関係が R-Step 一規則だけを公開し、β簡約などの規則本体を含まないためである。
 

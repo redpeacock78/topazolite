@@ -182,7 +182,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 12 である。
+`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 13 である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -274,19 +274,19 @@ registry version 10 で足した typing の 12 行は `since` が10である。
 
 registry version 11 で足した elaborate の 1 行と typing の 1 行は `since` が11である。
 
-現在の registry は 156 行である。
+現在の registry は 162 行である。
 
 `deprecated-in` を持つのは 7 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
-残る 149 行は `#f` である。
+残る 155 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v12.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v13.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -313,6 +313,8 @@ v11 は elaborate へ `E-OWN-029` を、typing へ `E-OWN-028` を 1 行ずつ�
 廃止した行も registry に残るため、組は 153 に 2 を足した 155 になる。
 
 v12 は elaborate へ `E-SYN-005` を 1 行足した。
+
+v13 は typing へ `E-VAR-008`、`E-VAR-009`、`E-VAR-010` を、elaborate へ `E-VAR-011`、`E-VAR-012`、`E-VAR-013` を 3 行ずつ足した。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 
