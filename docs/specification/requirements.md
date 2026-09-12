@@ -24,7 +24,7 @@
   - `G3`：Phase 0 サイクル G3（Portable Racket feature matrix）へ延期。
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
-  - `P1`：Phase 1 のサイクル（P1a から P1c2）の対象。
+  - `P1`：Phase 1 のサイクル（P1a から P1d）の対象。
   - `Phase 1 以降`：Phase 0 の後に model 層または表面機能を回収する最初の実装 Phase で扱う。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
@@ -64,7 +64,7 @@
 
 ### NAR-003
 
-- **状態**：Phase 1 以降
+- **状態**：P1
 - **由来**：ホワイトペーパー §15
 
 ユーザー trait は予約 Narrative が継承した正規 trait constructor を経由し、ValidNarrativeTrait Proof を保持しなければならない。
@@ -701,6 +701,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | package と module の coherence | `trait.md` §9 | Phase 1 以降 | §17.6 |
 | typing 経路の scope 文脈 | `trait.md` §9 | Phase 1 以降 | §17.6 |
 | priority の下流利用 | `trait.md` §9 | Phase 1 以降 | §6.4 |
+| impl と intersect の派生 origin | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | optional field | `structural-row.md` §7 | Phase 1 以降 | §4.5.2 |
 | Surface 構文 | `structural-row.md` §7 | Phase 1 以降 | §3.1 |
 | 探索動力学 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |

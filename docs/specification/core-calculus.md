@@ -257,7 +257,7 @@ sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与�
 `Curry(v)` は部分適用（§5.3 R-CurryVal）の派生を表す。
 `Make(t)` は TypeInfo 生成（§4.8 E-TypeMake）の派生を表し、生成された TypeRep が保持する型式 t を記録する。
 `Expand` は Sugar 展開の派生を表す step であり、G1 では使わない（Phase 1 のマクロ展開で使う）。
-`Trait(tn)` は予約 Narrative から trait の生成能力を継承したことを表す step である。trait 名 tn を記録する。
+`Trait(tn)` は予約 Narrative から trait の生成能力を継承したことを表す step である。trait 名 tn を記録する。[REQ: NAR-003]
 sort の `N` は基本型名または組み込み constructor 名である。
 R0 は予約 origin ID から sort への写像であり、どの ID がどの種類の値を正当化するかを定める（§3.5）。
 
@@ -309,6 +309,10 @@ Typed Core の項 c に対する **origin 検証** `verify-origins(R0, c)` を�
   - `CurryVal(O, vf, va)`：O = Derived(origin(vf), Curry(va))。
   - `TypeRep(O, t, κ)`：κ = kindOf(t)（§3.2）であり、かつ次のいずれかが成り立つ。O = Reserved(id) であって、ある型名 T について Δ0(T) = TypeRep(Reserved(id), t, κ)（初期環境の triple と完全一致、§3.5）。または O = Derived(Reserved(o-type-narrative), Make(t))（step が記録する型式と本体の型式が一致）。
   - `ProofRep(O, φ)`：O = Reserved(o-type-narrative) かつ φ = TypeNarrativeCap（G1 の ProofRep はこの一形に限る）。
+
+trait の `ValidNarrativeTrait` を主張する `ProofRep(O, φ)` は、O = Derived(Reserved(o-language-narrative), Trait(tn)) であって、tn が φ の trait 名と一致し、その名前が trait 表に宣言済みであり、R0 が o-language-narrative を languageNarrative へ束縛していることを要求する。
+Reserved(id) の形は受理しない。
+trait 行ごとに R0 の ID を与えると、その ID が新しい trusted root になり、valid-origin が Narrative を参照せずに Reserved(id) だけで受理してしまう。[REQ: NAR-003]
 
 elaboration の出力は常にこれを満たす（§7 性質 3）。
 偽造された `Reserved(id)`（id ∉ dom(R0)）を含む手書きの Typed Core も、値の形と sort が合わない origin（整数 primitive の origin を付けた Lam など）も、この検証で拒否される。

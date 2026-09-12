@@ -162,7 +162,7 @@
 
 - **定義**：予約 Narrative が継承した正規 trait constructor から生成され、要求 shape、Narrative origin、`ValidNarrativeTrait` Proof を持つユーザー定義 trait。
 - **参照**：ホワイトペーパー §8.1、付録 A。
-- **関連要件 ID**：NAR-003（Phase 1 以降）。
+- **関連要件 ID**：NAR-003（P1d）。
 
 ### Closed Row / Contextual Open Row
 

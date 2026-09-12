@@ -414,6 +414,7 @@
 (define expected-p1b-ids '(OWN-004))
 (define expected-p1c1-ids '(SCP-002))
 (define expected-p1c2b-ids '(SCP-001))
+(define expected-p1d-ids '(NAR-003))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -570,6 +571,12 @@
   (define p1c2b-tests
     (list (build-path root "model/redex/tests/reassign-typing-test.rkt")
           (build-path root "model/redex/tests/reassign-machine-test.rkt")))
+  (define p1d-specs
+    (list (build-path root "docs/specification/trait.md")
+          (build-path root "docs/specification/core-calculus.md")))
+  (define p1d-tests
+    (list (build-path root "model/redex/tests/origins-trait-test.rkt")
+          (build-path root "model/redex/tests/trait-tables-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -587,7 +594,8 @@
    (cycle-descriptor 'G5 "G5" g5-specs g5-tests #f expected-g5-ids)
    (cycle-descriptor 'P1b "P1" p1b-specs p1b-tests #f expected-p1b-ids)
    (cycle-descriptor 'P1c1 "P1" p1c1-specs p1c1-tests #f expected-p1c1-ids)
-   (cycle-descriptor 'P1c2b "P1" p1c2b-specs p1c2b-tests #f expected-p1c2b-ids)))
+   (cycle-descriptor 'P1c2b "P1" p1c2b-specs p1c2b-tests #f expected-p1c2b-ids)
+   (cycle-descriptor 'P1d "P1" p1d-specs p1d-tests #f expected-p1d-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

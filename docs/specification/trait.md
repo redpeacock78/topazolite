@@ -221,7 +221,9 @@ nm : NFn<Proof<ValidNarrativeTrait<tn_left>>,
          Proof<RequiresBoth<tn_left, tn_right>>, (), ()>
 ```
 
-R0 は、trait origin を `(trait tn)` へ、impl と intersect の origin を `(prim nm)` へ対応させる。
+R0 は、impl と intersect の origin を `(prim nm)` へ対応させる。
+trait 行の第 1 欄は表の鍵であり、R0 の ID ではない。
+trait の Proof が持つ origin は `Derived(Reserved(o-language-narrative), Trait(tn))` であり、予約 Narrative から生成能力を継承したことを表す。[REQ: NAR-003]
 表由来の名前または引数個数が合わない δ 適用は `undefined` を返し、既存の R-Delta を不発火にする。
 
 ## 5. Proof の生成と検証
@@ -434,3 +436,9 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
   選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
   搬送した Proof を消費する下流処理は、Phase 1 以降で扱う。
+- **impl と intersect の origin**：impl 行と intersect 行は `(Reserved oid)` と R0 の `(prim nm)` のままである。
+  §5.3 の発行者検査は、`Implements τ tn` を対応する impl 行の `oid` に、`RequiresBoth A B` を対応する intersect 行の `oid` に結び付けており、行ごとの ID が単独で Proof を正当化する。
+  NAR-003 が trait 行について取り除いたのと同じ構造が、ここに残っている。
+  ホワイトペーパー §8.1 は「正規の所属は `impl` / `derive` Narrative が返す Proof で表す」と述べ、`TraitResolutionNarrative` に `impl` / `derive` と候補収集、一意性、coherence policy を置いている。
+  NAR-003 が回収したのは trait 生成側の系譜であり、この形について何も主張していない。
+  `(Reserved oid)` が最終的に正しい形だと決めたわけではない。
