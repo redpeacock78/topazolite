@@ -34,15 +34,17 @@
    '(ProofRep (Reserved o-derive-sizable-int)
               (Implements Int Sizable))))
 
+;; NAR-003: 入力の Proof は Γ0 が配る形と同じ派生 origin を持つ。機械は入力の
+;; origin を見ないが、正典が拒否する形を fixture に残すと古い設計が残る。
 (test-case "an intersect primitive composes two proofs"
   (check-equal?
    (run-g2-core
     `(Apply
       ,(trait-primitive 'intersect-printable-sizable
                         'o-intersect-print-size)
-      (ProofRep (Reserved o-trait-printable)
+      (ProofRep (Derived (Reserved o-language-narrative) (Trait Printable))
                 (ValidNarrativeTrait Printable))
-      (ProofRep (Reserved o-trait-sizable)
+      (ProofRep (Derived (Reserved o-language-narrative) (Trait Sizable))
                 (ValidNarrativeTrait Sizable))))
    '(ProofRep (Reserved o-intersect-print-size)
               (RequiresBoth Printable Sizable))))
@@ -69,6 +71,7 @@
   (define intersect-applied-once
     `(Apply ,(trait-primitive 'intersect-printable-sizable
                               'o-intersect-print-size)
-            (ProofRep (Reserved o-trait-printable)
+            (ProofRep (Derived (Reserved o-language-narrative)
+                               (Trait Printable))
                       (ValidNarrativeTrait Printable))))
   (check-true (stuck-g2? intersect-applied-once)))
