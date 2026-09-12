@@ -144,17 +144,18 @@
 ;; -->g2/rules は -->g1/rules を extend-reduction-relation で拡張しており、
 ;; G1 側の名前も発火しうるので両方を挙げる。
 (define substituting-rule-names
-  (seteq 'R-Beta 'R-Let 'R-LetB 'R-LetOwned 'R-LetOwnedB
+  (seteq 'R-Beta 'R-Let 'R-LetB 'R-LetOwned 'R-LetOwnedB 'R-LetMutB
          'R-Eliminate 'R-EliminateRef 'R-EliminateMutRef
          'R-RecurUnfold 'R-HandleReturn))
 
 ;; spec §4.6。置換を行わない規則。名前が増えたときに黙って取りこぼさないよう
 ;; 明示的に挙げ、どちらにも無い名前は unknown として検査を失敗させる。
-;; 二つの集合の和は -->g2/rules の 49 名と一致する。Step の回帰がこれを検査する。
+;; 二つの集合の和は -->g2/rules の 52 名と一致する。Step の回帰がこれを検査する。
 (define non-substituting-rule-names
   (seteq 'R-Delta 'R-Proj 'R-Drop 'R-Borrow 'R-BorrowError
          'R-BorrowMut 'R-BorrowMutError 'R-Reborrow
          'R-ProjBorrow 'R-ProjBorrowMut 'R-Read 'R-ReadMut 'R-Assign
+         'R-ReadMutSlot 'R-Reassign
          'R-AddressOf 'R-PtrOffset 'R-RawLoad 'R-RawStore
          'R-FromRawPtrConst 'R-FromRawPtrMut 'R-UnsafeExit
          'R-Move 'R-MoveError 'R-ScopeValue 'R-ScopeError 'R-ScopeAbort
@@ -328,7 +329,7 @@
        [(unknown) 'fail]
        [(substituting)
         (cond
-          [(memq name '(R-LetOwned R-LetOwnedB))
+          [(memq name '(R-LetOwned R-LetOwnedB R-LetMutB))
            (extend-let-owned prov pre-parts post-parts)]
           [else
            (define diff (control-diff (first pre-parts) (first post-parts)))
@@ -346,8 +347,10 @@
                   (provenance-add acc (car pair) place)))])])]
        [else 'fail])]))
 
-;; spec §4.6。所有束縛は H の増分から fresh place を取る。
+;; spec §4.6。Scope 内で place を確保する束縛は H の増分から fresh place を取る。
 ;; 増分がちょうど 1 件で、同じ place が Ω にも増えている場合だけ採る。
+;; R-LetMutB も Scope ごと入れ替わり H へ place を 1 つ足すので、名前に
+;; owned を含むがこの手続きを共用する。bmode は照合で捨てている。
 (define (extend-let-owned prov pre-parts post-parts)
   (define pre-H (table-keys (second pre-parts)))
   (define post-H (table-keys (second post-parts)))

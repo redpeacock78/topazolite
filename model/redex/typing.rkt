@@ -2919,6 +2919,11 @@
      (list (first result) (row-union (second result) '(Suspend))
            (third result))]
 
+    [`(MutSlot ,place)
+     (define type (lookup places place))
+     (unless type (fail 'unknown-place core))
+     (list type '() Ψ)]
+
     [`(Move ,place)
      #:when (exact-nonnegative-integer? place)
      (define type (lookup places place))
@@ -3723,6 +3728,7 @@
     [`(Let ,_binding ,bound ,body)
      (and (value-position-ok? bound)
           (control-leaf-positions-ok? body))]
+    [`(MutSlot ,_) #t]
     [`(Drop ,argument)
      (value-position-ok? argument)]
     ;; 所有値の分解は束縛子へ leaf 本体を渡すため、代入後の枝の本体と

@@ -894,7 +894,8 @@
                       (Let (x bmode τ) v_bound c_body))
              H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
-        (side-condition (not (owned-type? (term τ))))
+        (side-condition (and (not (owned-type? (term τ)))
+                             (not (eq? (term bmode) 'mut))))
         (where c_result (substitute c_body x v_bound))
         R-LetB)
 
@@ -919,6 +920,45 @@
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
         R-LetOwnedB)
+
+   ;; spec §9.2。mut の束縛へ place を確保し、binder を (MutSlot p) へ置換する。
+   ;; Owned ではないので Λtok は動かさない。Scope の内側であることを要求するのは
+   ;; R-LetOwnedB と同じ制約であり、新種ではない。
+   (--> (cfg (in-hole E_outer
+                      (Scope (p_managed ...)
+                             (in-hole G_inner
+                                      (Let (x bmode τ)
+                                           v_bound
+                                           c_body))))
+             H Ω Λtok θ)
+        (cfg (in-hole E_outer
+                      (Scope (p_managed ... p_new)
+                             (in-hole G_inner c_result)))
+             H_new Ω_new Λtok θ)
+        (side-condition (and (not (owned-type? (term τ)))
+                             (eq? (term bmode) 'mut)))
+        (where p_new ,(fresh-place (term H) (term Ω)))
+        (where c_result (substitute c_body x (MutSlot p_new)))
+        (where H_new ,(table-set (term H) (term p_new) (term v_bound)))
+        (where Ω_new ,(table-set (term Ω) (term p_new) 'Available))
+        R-LetMutB)
+
+   ;; spec §9.3。MutSlot を値位置で読む。裸の place にこの規則を与えないのは、
+   ;; p ::= natural であり整数リテラルと綴りが同じだからである。裸の p へ
+   ;; 読み出しを許すと (Delta + 7 1) が 8 へ簡約される（spec §9.1）。
+   (--> (cfg (in-hole E (MutSlot p)) H Ω Λtok θ)
+        (cfg (in-hole E v_read) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_read ,(table-ref (term H) (term p)))
+        R-ReadMutSlot)
+
+   ;; spec §9.4。target は (MutSlot p) の形だけを受ける。裸の p は
+   ;; R-LetOwnedB が置いた形であり、再代入の対象ではないので詰まる。
+   (--> (cfg (in-hole E (Reassign (MutSlot p) v_new)) H Ω Λtok θ)
+        (cfg (in-hole E unit) H_new Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where H_new ,(table-set (term H) (term p) (term v_new)))
+        R-Reassign)
 
    ;; G2m の Rec を含む値にも leaf 回収を適用する。G1m の同名規則は
    ;; G2m の v を受けられないため、G2m 拡張を明示する。
