@@ -224,3 +224,21 @@
        (check-equal? s_f s1)
        (check-equal? arg (term (#:var y ,s2)))]
       [_ (fail (format "Recur（f 側）の形が違う: ~s" out))])))
+
+;; Redex の substitute を G2+ の上で呼ぶための包み。
+;; tests/span-binding-test.rkt:12-20 と同じ形である。
+(define-metafunction G2+
+  sub+ : any x any -> any
+  [(sub+ any_t x any_u) (substitute any_t x any_u)])
+
+(test-case "substitute は spanful な項を壊し、span-subst は壊さない"
+  (define t (term (#:var x ,s0)))
+  (define u (term (#:lit 7 ,s2)))
+  ;; substitute は (#:var x s) の第 2 要素を差し替えるため、
+  ;; (#:var (#:lit 7 s2) s0) という G2+ に無い形になる。
+  (define broken (term (sub+ ,t x ,u)))
+  (check-false (redex-match? G2+ c broken))
+  ;; span-subst は節点ごと差し替える。
+  (define fixed (span-subst t (list (cons 'x u))))
+  (check-true (redex-match? G2+ c fixed))
+  (check-equal? fixed u))
