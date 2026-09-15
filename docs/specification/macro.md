@@ -116,7 +116,105 @@ primary span は違反した節点自身の span であり、定義の span は 
 
 展開器の出力には `MacroCall` を残さない。
 
+### 5.2 O 欄の2段の不変条件
+
+公開の root 入口へ渡す項では、すべての `MacroCall` の `O` が `User` でなければならない。
+
+`Derived` も `Reserved` も root 入口では拒む。
+
+違反は `E-MAC-004` であり、primary span は違反した `MacroCall` の span である。
+
+`MacroCall` の `O` は `origin-bearing-heads` の投影では検査しない。
+`MacroCall` は展開器が消費する前段の節点であり、origin の検査は展開器の `E-MAC-004` が担う。
+
+内部の再帰入口は展開器の module 内だけから呼ぶ。
+外側の展開が template 中の `MacroCall` の `O` を `(Derived O_call (Expand nm))` へ書き換えるため、再帰の入口では `Derived` を受け入れる。
+
+### 5.3 合成 span を付ける範囲
+
+template 由来の節点すべてへ新しい合成 span を割り当てる。
+
+対象は `c`、`v`、`ov` を問わず、`s` の欄を持つ節点すべてである。
+
+実引数由来の部分項は自身の span を保つ。
+
+合成 span は `(#:span #:synthetic k k)` の形であり、1 回の展開器起動を通じて `k` を単調に増やす。
+
+連番の起点は、入力の項に現れる `#:synthetic` の `k` の最大値へ 1 を足した値である。
+
+これにより展開器が割り当てた span は入力のどの span とも重ならない。
+
+同じ展開の中でも節点ごとに異なる番号を配る。
+
+引数由来の span は展開表の鍵にならない。
+
+置換で消える `#:var` の span と、再帰で置き換わる入れ子の `MacroCall` の span も鍵に残らない。
+
+## 6. 展開と hygiene
+
+### 6.1 spanful な捕捉回避置換
+
+展開は template の pattern 変数を対応する実引数項で置き換える。
+
+置換には `span-subst` を使い、Redex の `substitute` は使わない。
+
+`span-subst` は `(#:var x s)` の節点全体を実引数へ置き換え、実引数自身の span を保つ。
+
+束縛子の改名では `#:bind` の span と範囲内の変数参照の span を保つ。
+
+pattern の変数は同時に置換し、1 つずつ順に置換しない。
+
+template の自由変数は §4.3 の検査で pattern の変数に限る。
+
+### 6.2 束縛形は7つである
+
+置換と自由変数の算出は、`G1+` と `G2+` が宣言する7つの束縛形を個別に扱う。
+
+- `Lam`
+- `Let`（型注釈だけを持つ形）
+- `Let`（`bmode` を持つ形）
+- 分岐
+- ハンドラ
+- `Recur`
+- `RecurVal`
+
+各束縛形について、引数由来の自由変数による α 改名、実引数の span の保存、結果が `G2+` の `c` に属することを回帰で固定する。
+
+### 6.3 template の束縛子
+
+template は束縛子を持ってよい。
+
+`span-subst` が α 改名を行うため、生成した束縛子へ別の hygiene 注釈を持たせる必要はない。
+
+### 6.4 入れ子の展開と段数の上限
+
+展開結果がさらに `MacroCall` を含む場合、展開を繰り返す。
+
+上限は **32 段** とする。
+
+数えるのは一つの `MacroCall` を起点とする再帰の深さであり、展開全体に現れた呼出しの総数ではない。
+
+起点の `MacroCall` を展開した時点が深さ1である。
+
+深さ32は成功し、深さ33に達した時点で `E-MAC-002` を出す。
+
+兄弟の `MacroCall` は互いに深さを足さない。
+
+循環は別の検出機構を置かず、深さ超過として拒否する。
+
+深さ超過の primary span は最も外側の呼出しの span であり、`expansion-trace` は32要素である。
+
 ## 8. origin
+
+### 8.1 Expand の座
+
+展開が作った `Lam` の origin は `(Derived O_call (Expand nm))` である。
+
+`O_call` は `MacroCall` の `O` 欄の値であり、`nm` は展開したマクロの名前である。
+
+`Expand` は既存の origin step であり、`valid-origin?` はその親が妥当であることを検査する。
+
+`MacroCall` の `O` は展開前の呼出しの由来を保持するために置く。
 
 ### 8.2 展開由来の Lam
 
@@ -127,6 +225,18 @@ primary span は違反した節点自身の span であり、定義の span は 
 `Expand` 以外の step を持つ origin は展開由来の `Lam` として受理しない。
 
 `Derived` の親は `valid-origin?` を満たさなければならない。
+
+### 8.3 入れ子の連鎖
+
+入れ子の展開では origin が連鎖する。
+
+外側の展開は template 中の `MacroCall` の `O` を `(Derived O_call (Expand nm_outer))` へ書き換える。
+
+内側の展開がその呼出しを展開すると、内側の `Lam` の origin は `(Derived (Derived O_call (Expand nm_outer)) (Expand nm_inner))` になる。
+
+引数由来の節点の origin は変えない。
+
+ユーザーが書いた項の由来は、展開を経ても呼出し側の由来へ置き換わらない。
 
 ## 9. Diagnostic
 
