@@ -142,3 +142,85 @@
 (test-case "空の σ は項をそのまま返す"
   (define t (term (Apply ,s0 (#:var f ,s1) (#:var x ,s1))))
   (check-equal? (span-subst t '()) t))
+
+;; 束縛形ごとの共通の検査。t の中の束縛名 y へ捕捉が起きる σ を掛け、
+;; 4 点を見る。get-binder は結果から (#:bind y* s_b) を取り出す。
+(define (check-binding-form label t get-binder)
+  (define out (span-subst t (list (cons 'm (term (#:var y ,s2))))))
+  (check-true (redex-match? G2+ c out) (format "~a: G2+ の c に属さない" label))
+  (define b (get-binder out))
+  (check-not-equal? (cadr b) 'y (format "~a: 束縛子が改名されていない" label))
+  (check-equal? (caddr b) s1 (format "~a: 束縛子の span が動いた" label))
+  ;; 本体の参照も改名後の名前を指す。束縛子だけ改名して本体を置き忘れる誤りを弾く。
+  ;; 像が自分の span のまま引数位置へ入ることも同時に見る。
+  (check-true (let loop ([u out])
+                (cond [(equal? u (term (Apply ,s1 (#:var y ,s2)
+                                              (#:var ,(cadr b) ,s1)))) #t]
+                      [(list? u) (ormap loop u)]
+                      [else #f]))
+              (format "~a: 本体が (Apply s1 像 (#:var 改名後 s1)) になっていない" label)))
+
+(test-case "7 つの束縛形で α 改名と span 保存が成り立つ"
+  (check-binding-form
+   "Lam"
+   (term (Lam ,s0 User lam-id ((#:bind y ,s1))
+               (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+   (lambda (out) (match out [`(Lam ,_ ,_ ,_ (,b) ,_) b])))
+
+  (check-binding-form
+   "Let"
+   (term (Let ,s0 ((#:bind y ,s1) (#:ty Int ,s1))
+               (#:lit 1 ,s1)
+               (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+   (lambda (out) (match out [`(Let ,_ (,b ,_ty) ,_ ,_) b])))
+
+  (check-binding-form
+   "Let（bmode 付き）"
+   (term (Let ,s0 ((#:bind y ,s1) mut (#:ty Int ,s1))
+               (#:lit 1 ,s1)
+               (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+   (lambda (out) (match out [`(Let ,_ (,b ,_mode ,_ty) ,_ ,_) b])))
+
+  (check-binding-form
+   "分岐"
+   (term (Eliminate ,s0 (#:lit 1 ,s1)
+                    ((,s1 some ((#:bind y ,s1))
+                          -> (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))))
+   (lambda (out) (match out [`(Eliminate ,_ ,_ ((,_ ,_ (,b) -> ,_))) b])))
+
+  (check-binding-form
+   "ハンドラ"
+   (term (Handle ,s0 (Return b (#:ty Int ,s1))
+                 (,s1 (#:bind y ,s1) -> (Apply ,s1 (#:var m ,s1) (#:var y ,s1)))
+                 (#:lit 1 ,s1)))
+   (lambda (out) (match out [`(Handle ,_ ,_ (,_ ,b -> ,_) ,_) b])))
+
+  ;; Recur は f と x ... で範囲が違う。x ... 側の捕捉を見る。
+  (check-binding-form
+   "Recur（引数側）"
+   (term (Recur ,s0 recur-id (#:bind f ,s1) ((#:bind y ,s1))
+                (Apply ,s1 (#:var m ,s1) (#:var y ,s1))
+                (#:var f ,s1)))
+   (lambda (out) (match out [`(Recur ,_ ,_ ,_ (,b) ,_ ,_) b])))
+
+  (check-binding-form
+   "RecurVal"
+   (term (RecurVal ,s0 recur-id (#:bind f ,s1) ((#:bind y ,s1))
+                   (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+   (lambda (out) (match out [`(RecurVal ,_ ,_ ,_ (,b) ,_) b])))
+
+  ;; Recur の f 側。f への捕捉は c_1 と c_2 の双方を改名する。
+  (let* ([t (term (Recur ,s0 recur-id (#:bind y ,s1) ((#:bind z ,s1))
+                         (Apply ,s1 (#:var m ,s1) (#:var y ,s1))
+                         (#:var y ,s1)))]
+         [out (span-subst t (list (cons 'm (term (#:var y ,s2)))))])
+    (check-true (redex-match? G2+ c out))
+    (match out
+      [`(Recur ,_s ,_cid (#:bind ,y* ,s_f) ,_binds
+               (Apply ,_s1 ,arg (#:var ,u1 ,_)) (#:var ,u2 ,_))
+       (check-not-equal? y* 'y)
+       (check-equal? u1 y*)
+       (check-equal? u2 y*)
+       (check-equal? s_f s1)
+       (check-equal? arg (term (#:var y ,s2)))]
+      [_ (fail (format "Recur（f 側）の形が違う: ~s" out))])))
