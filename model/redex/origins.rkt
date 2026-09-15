@@ -382,7 +382,13 @@
   (match (origin-data/proc erased)
     [`(PrimVal (Reserved ,id) ,primitive)
      (equal? (lookup r0 id) `(prim ,primitive))]
-    [`(Lam ,origin) (eq? origin 'User)]
+    ;; macro.md §8.2: 展開由来の Lam は (Derived O_call (Expand nm)) を持つ。
+    ;; 展開はこの 1 つの step だけを足すため、他の step は受理しない。
+    [`(Lam ,origin)
+     (or (eq? origin 'User)
+         (match origin
+           [`(Derived ,parent (Expand ,_nm)) (valid-origin? r0 parent)]
+           [_ #f]))]
     [`(CurryVal ,origin ,function ,argument)
      (define parent (origin-of/proc function))
      (and parent

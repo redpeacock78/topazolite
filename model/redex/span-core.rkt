@@ -167,7 +167,10 @@
          (Rec s ((ls m c) ...))
          (Proj s c ls)
          (Let s (xs bmode ts) c c)
-         (Discharge s (ProofRep s O φ) c))
+         (Discharge s (ProofRep s O φ) c)
+         ;; macro.md §5.1: 展開前の呼出し節点である。展開器の出力には
+         ;; 現れない。O は呼出しの由来であり、spanless な G1 の O を使う。
+         (MacroCall s O nm (c ...)))
   (v ::= ....
          (Rec s ((ls m v) ...))
          (UVal s v)

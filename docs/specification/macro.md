@@ -51,6 +51,30 @@ Redex の `substitute` はこの層では使えない。
 `G1+` の `step` は `(Curry any)` という形で値を受けるため、内側には spanless な束縛形が現れうる。
 分岐とハンドラの spanless な形は spanful な形と同じ要素数を持つので、束縛形の節は `(#:bind x s)` の包みを確かめてから適用する。
 
+## 5. MacroCall
+
+### 5.1 呼出しの形
+
+`G2+` の `c` は、展開前のマクロ呼出しを `(MacroCall s O nm (c ...))` として表す。
+
+`s` は呼出し節点の span、`O` は呼出しの provenance、`nm` は macro の名前、最後の list は実引数である。
+
+`MacroCall` は束縛を持たないため、`span-core.rkt` の `#:binding-forms` へは加えない。
+
+展開器の出力には `MacroCall` を残さない。
+
+## 8. origin
+
+### 8.2 展開由来の Lam
+
+展開器が template 由来の `Lam` を生成するとき、その origin は `(Derived O_call (Expand nm))` である。
+
+`O_call` は現在の `MacroCall` の origin であり、`nm` はその名前である。
+
+`Expand` 以外の step を持つ origin は展開由来の `Lam` として受理しない。
+
+`Derived` の親は `valid-origin?` を満たさなければならない。
+
 ## 9. Diagnostic
 
 マクロ展開の失敗は `expand` 相の Diagnostic へ変換する。
