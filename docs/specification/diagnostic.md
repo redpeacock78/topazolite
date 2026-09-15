@@ -182,7 +182,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 13 である。
+`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 14 である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 
@@ -200,7 +200,7 @@ registry の `since`、`deprecated-in`、凍結 fixture は registry version に
 
 error code は `E-<分類>-<3桁>` の書式を持つ。
 
-分類は `SYN`、`TYP`、`KND`、`EFF`、`RET`、`OWN`、`VAR`、`REC`、`ARI`、`DAT`、`RCD`、`APP`、`PRF`、`REG`、`BOR`、`PTR`、`UNS`、`ORG`、`LOW` の19種である。
+分類は `SYN`、`TYP`、`KND`、`EFF`、`RET`、`OWN`、`VAR`、`REC`、`ARI`、`DAT`、`RCD`、`APP`、`PRF`、`REG`、`BOR`、`PTR`、`UNS`、`ORG`、`LOW`、`MAC` の20種である。
 
 分類部は要件 ID の接頭辞とは別の体系である。
 
@@ -210,13 +210,13 @@ error code は `E-<分類>-<3桁>` の書式を持つ。
 
 ## 8. registry に載せる診断
 
-[REQ: DIA-001] elaborate、typing、origins、lowering の 4 phase は、失敗を文字列ではなく Diagnostic IR で返す。
+[REQ: DIA-001] elaborate、typing、origins、lowering、expand の 5 phase は、失敗を文字列ではなく Diagnostic IR で返す。
 
 error code registry には、production が返しうる診断だけを載せる。
 
 正常な判定結果である `Unknown`、`Absent`、`Ambiguous`、`obligation-proofs` の `#f` には error code を与えない。
 
-registry の対象は elaborate の reject reason、typing の棄却 key、origins の `forged`、lowering の診断 key である。
+registry の対象は elaborate の reject reason、typing の棄却 key、origins の `forged`、lowering の診断 key、expand の macro reason である。
 
 test seam のためだけに production が返さない code を registry へ予約しない。
 
@@ -241,6 +241,8 @@ lowering の `key` は `diagnostic-ids` の第1要素であり、feature-id を�
 lowering の `key` は `capability-diagnostic` の `reason` 文字列ではない。
 
 registry の lowering 行の title は `diagnostic-ids` の第2要素から得る。
+
+expand の `key` は `macro-expand` が `diagnostic-of` の第2引数へ渡す reason 記号である。
 
 ## 10. registry の versioning
 
@@ -274,19 +276,19 @@ registry version 10 で足した typing の 12 行は `since` が10である。
 
 registry version 11 で足した elaborate の 1 行と typing の 1 行は `since` が11である。
 
-現在の registry は 162 行である。
+現在の registry は 169 行である。
 
 `deprecated-in` を持つのは 7 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
-残る 155 行は `#f` である。
+残る 162 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v13.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v14.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -315,6 +317,10 @@ v11 は elaborate へ `E-OWN-029` を、typing へ `E-OWN-028` を 1 行ずつ�
 v12 は elaborate へ `E-SYN-005` を 1 行足した。
 
 v13 は typing へ `E-VAR-008`、`E-VAR-009`、`E-VAR-010` を、elaborate へ `E-VAR-011`、`E-VAR-012`、`E-VAR-013` を 3 行ずつ足した。
+
+v14 は expand へ `E-MAC-001` から `E-MAC-007` までの 7 行を足した。
+
+廃止した行は無いため、組は 162 に 7 を足した 169 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

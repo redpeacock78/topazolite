@@ -50,3 +50,17 @@ Redex の `substitute` はこの層では使えない。
 走査が `origin` の内側へ入ること自体には意味がある。
 `G1+` の `step` は `(Curry any)` という形で値を受けるため、内側には spanless な束縛形が現れうる。
 分岐とハンドラの spanless な形は spanful な形と同じ要素数を持つので、束縛形の節は `(#:bind x s)` の包みを確かめてから適用する。
+
+## 9. Diagnostic
+
+マクロ展開の失敗は `expand` 相の Diagnostic へ変換する。
+
+| code | key | 展開器が検査する事象 |
+| --- | --- | --- |
+| `E-MAC-001` | `macro-arity-mismatch` | 実引数の個数が pattern の個数と一致しない |
+| `E-MAC-002` | `macro-depth-exceeded` | 展開段数が上限を超える |
+| `E-MAC-003` | `macro-name-duplicate` | macro-env に同じ名前の定義が複数ある |
+| `E-MAC-004` | `macro-origin-invalid` | Lam または MacroCall の origin が User でない |
+| `E-MAC-005` | `macro-pattern-duplicate` | pattern の変数が重複している |
+| `E-MAC-006` | `macro-template-free-var` | template の自由変数が pattern の外にある |
+| `E-MAC-007` | `macro-unknown-name` | 呼出しの名前が macro-env に無い |

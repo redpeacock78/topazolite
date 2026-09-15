@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 13)
+(define diagnostic-registry-version 14)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -29,6 +29,7 @@
 ;;   typing:    core-type-of/diagnostic が fail から受け取る key
 ;;   origins:   verify-initial-origins が返す (forged ...) の頭
 ;;   lowering:  backend-matrix.rkt の diagnostic-ids の第 1 要素
+;;   expand:    macro-expand が diagnostic-of の第 2 引数へ渡す reason 記号
 ;; lowering の key は feature-id であり、capability-diagnostic の reason
 ;; 文字列ではない。列名を reason としないのはこの取り違えを防ぐためである。
 (struct diagnostic-code (code phase key title since deprecated-in)
@@ -324,6 +325,17 @@
     ("E-LOW-003" unknown-core-form "対応表に無い Typed Core の形")
     ("E-LOW-004" unknown-core-type "op-code の入力が Typed Core の τ でない")))
 
+;; registry version 14 で expand 相を新設する。マクロ展開の診断は
+;; 展開器が出すため、既存のどの相へも属さない。
+(define expand-entries-v14
+  '(("E-MAC-001" macro-arity-mismatch "マクロの実引数の個数が pattern と合わない")
+    ("E-MAC-002" macro-depth-exceeded "マクロ展開の段数が上限を超えた")
+    ("E-MAC-003" macro-name-duplicate "同じ名前のマクロを 2 度定義した")
+    ("E-MAC-004" macro-origin-invalid "マクロの origin が User でない")
+    ("E-MAC-005" macro-pattern-duplicate "マクロの pattern に同じ変数が 2 度現れた")
+    ("E-MAC-006" macro-template-free-var "マクロの template が pattern に無い変数を参照した")
+    ("E-MAC-007" macro-unknown-name "registry に無いマクロを呼び出した")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -343,7 +355,8 @@
           (rows 'typing 13 typing-entries-v13)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
-          (rows 'lowering 1 lowering-entries)))
+          (rows 'lowering 1 lowering-entries)
+          (rows 'expand 14 expand-entries-v14)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。
