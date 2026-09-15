@@ -8,7 +8,7 @@
 (require redex/reduction-semantics
          "span-core.rkt")
 
-(provide span-free-vars span-subst)
+(provide span-free-vars span-free-var-nodes span-subst)
 
 ;; (#:bind x s_b) から束縛名を取り出す。
 (define (bind-name b)
@@ -28,38 +28,44 @@
 
 ;; 自由変数の収集。s、cid、K、(#:bind ...) は変数参照を含まないため、
 ;; 束縛形の節では本体だけを名指しし、残りは一般の list 再帰へ委ねる。
-;; 束縛形は span-core.rkt:142-151 と :175-176 の 7 つである。
-(define (free-vars t bound)
+;; 束縛形は span-core.rkt:142-151 と :178-179 の 7 つである。
+;; 返すのは (#:var x s) の節点そのものであり、出現順に並ぶ。重複は除かない。
+;; 診断の primary span には出現位置の span が要るため、名前ではなく節点を返す。
+(define (free-var-nodes t bound)
   (match t
     [`(#:var ,x ,_s)
-     (if (memq x bound) '() (list x))]
+     (if (memq x bound) '() (list t))]
     [`(Lam ,_s ,O ,_cid ,binds ,c)
-     (append (free-vars O bound)
-             (free-vars c (extend bound binds)))]
+     (append (free-var-nodes O bound)
+             (free-var-nodes c (extend bound binds)))]
     [`(Let ,_s (,b ,_ts) ,c_1 ,c_2)
-     (append (free-vars c_1 bound)
-             (free-vars c_2 (extend bound (list b))))]
+     (append (free-var-nodes c_1 bound)
+             (free-var-nodes c_2 (extend bound (list b))))]
     [`(Let ,_s (,b ,_bmode ,_ts) ,c_1 ,c_2)
-     (append (free-vars c_1 bound)
-             (free-vars c_2 (extend bound (list b))))]
+     (append (free-var-nodes c_1 bound)
+             (free-var-nodes c_2 (extend bound (list b))))]
     [`(,_s ,_K ,binds -> ,c)
      #:when (and (list? binds) (andmap bind? binds))
-     (free-vars c (extend bound binds))]
+     (free-var-nodes c (extend bound binds))]
     [`(,_s ,b -> ,c)
      #:when (bind? b)
-     (free-vars c (extend bound (list b)))]
+     (free-var-nodes c (extend bound (list b)))]
     [`(Recur ,_s ,_cid ,b_f ,binds ,c_1 ,c_2)
-     (append (free-vars c_1 (extend (extend bound (list b_f)) binds))
-             (free-vars c_2 (extend bound (list b_f))))]
+     (append (free-var-nodes c_1 (extend (extend bound (list b_f)) binds))
+             (free-var-nodes c_2 (extend bound (list b_f))))]
     [`(RecurVal ,_s ,_cid ,b_f ,binds ,c)
-     (free-vars c (extend (extend bound (list b_f)) binds))]
+     (free-var-nodes c (extend (extend bound (list b_f)) binds))]
     [(? list?)
-     (append-map (lambda (u) (free-vars u bound)) t)]
+     (append-map (lambda (u) (free-var-nodes u bound)) t)]
     [_ '()]))
+
+;; 項の中で自由に現れる変数の出現節点を、出現順に返す。
+(define (span-free-var-nodes t [bound '()])
+  (free-var-nodes t bound))
 
 ;; 項の中で自由に現れる変数を、最初の出現順で重複なく返す。
 (define (span-free-vars t)
-  (remove-duplicates (free-vars t '())))
+  (remove-duplicates (map second (free-var-nodes t '()))))
 
 ;; (#:bind x s_b) の span。改名しても束縛子の span は動かないため、
 ;; 新しい束縛子はこの span を引き継ぐ。
