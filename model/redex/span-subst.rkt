@@ -8,7 +8,7 @@
 (require redex/reduction-semantics
          "span-core.rkt")
 
-(provide span-free-vars)
+(provide span-free-vars span-subst)
 
 ;; (#:bind x s_b) から束縛名を取り出す。
 (define (bind-name b)
@@ -60,3 +60,97 @@
 ;; 項の中で自由に現れる変数を、最初の出現順で重複なく返す。
 (define (span-free-vars t)
   (remove-duplicates (free-vars t '())))
+
+;; (#:bind x s_b) の span。改名しても束縛子の span は動かないため、
+;; 新しい束縛子はこの span を引き継ぐ。
+(define (bind-span b)
+  (match b
+    [`(#:bind ,_x ,s) s]))
+
+;; σ の要素。name は置き換える変数、fvs は像の自由変数、make は
+;; 出現位置の span から像を作る手続きである。
+;; 引数の置換は出現位置の span を捨てて像自身の span を使い、α 改名は
+;; 出現位置の span を保った (#:var y* s) を作る。両者を同じ走査で扱うため、
+;; 像を項ではなく「span を受け取って項を返す手続き」として持つ。
+(struct repl (name fvs make) #:transparent)
+
+;; α 改名のための σ 要素。
+(define (rename-repl y y*)
+  (repl y (list y*) (lambda (s) `(#:var ,y* ,s))))
+
+;; 束縛子 binds が bodies へ届くときの前処理。
+;; σ の鍵から束縛名を落とし、捕捉が起きる束縛子だけを改名する。
+;; 返り値は改名後の束縛子、改名後の本体、束縛名を落とした σ である。
+(define (open-scope binds bodies σ)
+  (define names (map bind-name binds))
+  (define σ*
+    (for/list ([r (in-list σ)] #:unless (memq (repl-name r) names)) r))
+  ;; 本体に自由に現れる鍵の像だけが捕捉の危険を持ち込む。
+  (define live
+    (for/list ([r (in-list σ*)]
+               #:when (ormap (lambda (c) (memq (repl-name r) (span-free-vars c)))
+                             bodies))
+      r))
+  (define incoming (append-map repl-fvs live))
+  (for/fold ([bs '()] [bd bodies] #:result (values (reverse bs) bd σ*))
+            ([b (in-list binds)])
+    (define y (bind-name b))
+    (cond
+      [(memq y incoming)
+       ;; 兄弟の束縛子と同じ名前を選ぶと、同じ並びに同名の束縛子が 2 つ並ぶ。
+       ;; 本体に現れない兄弟は bd からは見えないため、binds と選択済みの bs も
+       ;; 避ける対象へ入れる。
+       (define y* (variable-not-in (list bd incoming binds bs) y))
+       (values (cons `(#:bind ,y* ,(bind-span b)) bs)
+               (map (lambda (c) (subst c (list (rename-repl y y*)))) bd))]
+      [else (values (cons b bs) bd)])))
+
+;; σ を項へ適用する。束縛形の節は free-vars と同じ 7 つである。
+(define (subst t σ)
+  (cond
+    [(null? σ) t]
+    [else
+     (match t
+       [`(#:var ,x ,s)
+        (define r (findf (lambda (r) (eq? (repl-name r) x)) σ))
+        (if r ((repl-make r) s) t)]
+       [`(Lam ,s ,O ,cid ,binds ,c)
+        (define-values (binds* bodies* σ*) (open-scope binds (list c) σ))
+        `(Lam ,s ,(subst O σ) ,cid ,binds* ,(subst (car bodies*) σ*))]
+       [`(Let ,s (,b ,ts) ,c_1 ,c_2)
+        (define-values (binds* bodies* σ*) (open-scope (list b) (list c_2) σ))
+        `(Let ,s (,(car binds*) ,ts) ,(subst c_1 σ) ,(subst (car bodies*) σ*))]
+       [`(Let ,s (,b ,bmode ,ts) ,c_1 ,c_2)
+        (define-values (binds* bodies* σ*) (open-scope (list b) (list c_2) σ))
+        `(Let ,s (,(car binds*) ,bmode ,ts)
+              ,(subst c_1 σ) ,(subst (car bodies*) σ*))]
+       [`(,s ,K ,binds -> ,c)
+        #:when (and (list? binds) (andmap bind? binds))
+        (define-values (binds* bodies* σ*) (open-scope binds (list c) σ))
+        `(,s ,K ,binds* -> ,(subst (car bodies*) σ*))]
+       [`(,s ,b -> ,c)
+        #:when (bind? b)
+        (define-values (binds* bodies* σ*) (open-scope (list b) (list c) σ))
+        `(,s ,(car binds*) -> ,(subst (car bodies*) σ*))]
+       [`(Recur ,s ,cid ,b_f ,binds ,c_1 ,c_2)
+        ;; f は c_1 と c_2 の両方へ、x ... は c_1 だけへ届く。
+        (define-values (bf* bodies-f σ_f) (open-scope (list b_f) (list c_1 c_2) σ))
+        (define-values (binds* bodies-x σ_x)
+          (open-scope binds (list (car bodies-f)) σ_f))
+        `(Recur ,s ,cid ,(car bf*) ,binds*
+                ,(subst (car bodies-x) σ_x) ,(subst (cadr bodies-f) σ_f))]
+       [`(RecurVal ,s ,cid ,b_f ,binds ,c)
+        (define-values (bf* bodies-f σ_f) (open-scope (list b_f) (list c) σ))
+        (define-values (binds* bodies-x σ_x) (open-scope binds bodies-f σ_f))
+        `(RecurVal ,s ,cid ,(car bf*) ,binds* ,(subst (car bodies-x) σ_x))]
+       [(? list?)
+        (map (lambda (u) (subst u σ)) t)]
+       [_ t])]))
+
+;; σ-alist のすべての鍵を同時に置き換える。
+;; 鍵は互いに異なるものとする。像は出現位置の span を捨てて自分の span を保つ。
+(define (span-subst t σ-alist)
+  (subst t
+         (for/list ([p (in-list σ-alist)])
+           (define img (cdr p))
+           (repl (car p) (span-free-vars img) (lambda (_s) img)))))

@@ -64,10 +64,81 @@
   ;; spanless な分岐は spanful なハンドラと同じ 4 要素なので、
   ;; binder の包みを確認してから束縛形として扱う。
   (check-equal? (span-free-vars
-                 (term (Lam ,s0
+                (term (Lam ,s0
                             (Derived User
                                      (Curry
                                       (Lam User lam-id (g)
                                            (Eliminate g ((some (y) -> y))))))
                             lam-id ((#:bind x ,s1)) (#:var x ,s1))))
                 '()))
+
+(test-case "置換の単位は (#:var x s) の節点全体である"
+  ;; substitute は (#:var (#:lit 7 s) s) を作る（tests/span-binding-test.rkt:167）。
+  ;; span-subst は節点ごと差し替える。
+  (check-equal? (span-subst (term (#:var x ,s0))
+                            (list (cons 'x (term (#:lit 7 ,s2)))))
+                (term (#:lit 7 ,s2))))
+
+(test-case "像は自分の span を持ち込み、出現位置の span を捨てる"
+  (define out
+    (span-subst (term (Apply ,s0 (#:var f ,s1) (#:var x ,s1)))
+                (list (cons 'x (term (#:lit 7 ,s2))))))
+  (check-equal? out (term (Apply ,s0 (#:var f ,s1) (#:lit 7 ,s2))))
+  (check-true (redex-match? G2+ c out)))
+
+(test-case "束縛された変数は置換されない"
+  (check-equal?
+   (span-subst (term (Lam ,s0 User lam-id ((#:bind x ,s1)) (#:var x ,s1)))
+               (list (cons 'x (term (#:lit 7 ,s2)))))
+   (term (Lam ,s0 User lam-id ((#:bind x ,s1)) (#:var x ,s1)))))
+
+(test-case "置換は同時であり、像の中へは届かない"
+  ;; x へ渡す像が自由な y を含む。逐次置換なら 2 番目の y の置換がその像へ届く。
+  (define out
+    (span-subst (term (Apply ,s0 (#:var x ,s1) (#:var y ,s1)))
+                (list (cons 'x (term (#:var y ,s2)))
+                      (cons 'y (term (#:lit 9 ,s2))))))
+  (check-equal? out (term (Apply ,s0 (#:var y ,s2) (#:lit 9 ,s2)))))
+
+(test-case "捕捉が起きる束縛子は改名される"
+  (define out
+    (span-subst (term (Lam ,s0 User lam-id ((#:bind y ,s1))
+                           (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+                (list (cons 'm (term (#:var y ,s2))))))
+  (check-true (redex-match? G2+ c out))
+  (match out
+    [`(Lam ,_s ,_O ,_cid ((#:bind ,y* ,s_b)) (Apply ,_s1 ,arg (#:var ,used ,s_use)))
+     ;; 束縛子は y から離れ、本体の参照はその新しい名前を指す。
+     (check-not-equal? y* 'y)
+     (check-equal? used y*)
+     ;; 改名しても束縛子と出現位置の span は動かない。
+     (check-equal? s_b s1)
+     (check-equal? s_use s1)
+     ;; 像は自分の span のまま入る。
+     (check-equal? arg (term (#:var y ,s2)))]
+    [_ (fail (format "形が違う: ~s" out))]))
+
+(test-case "捕捉が起きない束縛子は改名されない"
+  (check-equal?
+   (span-subst (term (Lam ,s0 User lam-id ((#:bind y ,s1))
+                          (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+               (list (cons 'm (term (#:lit 9 ,s2)))))
+   (term (Lam ,s0 User lam-id ((#:bind y ,s1))
+               (Apply ,s1 (#:lit 9 ,s2) (#:var y ,s1))))))
+
+(test-case "改名が兄弟の束縛子と衝突しない"
+  ;; 本体に現れない兄弟 y1 がいる。改名先が y1 になると同名の束縛子が 2 つ並ぶ。
+  (define out
+    (span-subst (term (Lam ,s0 User lam-id ((#:bind y ,s1) (#:bind y1 ,s1))
+                           (Apply ,s1 (#:var m ,s1) (#:var y ,s1))))
+                (list (cons 'm (term (#:var y ,s2))))))
+  (check-true (redex-match? G2+ c out))
+  (match out
+    [`(Lam ,_s ,_O ,_cid ((#:bind ,y* ,_) (#:bind ,sib ,_)) ,_body)
+     (check-not-equal? y* 'y)
+     (check-not-equal? y* sib)]
+    [_ (fail (format "形が違う: ~s" out))]))
+
+(test-case "空の σ は項をそのまま返す"
+  (define t (term (Apply ,s0 (#:var f ,s1) (#:var x ,s1))))
+  (check-equal? (span-subst t '()) t))
