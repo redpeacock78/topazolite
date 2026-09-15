@@ -375,7 +375,8 @@
 ;; 上げる。code 集合に付ける diagnostic-registry-version とは別物である。
 ;; G4e が source-chain へ要素形を与え backend 欄を足したため 2 になった。
 ;; G4f1 が related へ要素形を与えたため 3 になる。
-(define diagnostic-schema-version 3)
+;; P1e2 が expansion-trace の要素形を定めたため 4 になる。
+(define diagnostic-schema-version 4)
 
 ;; ホワイトペーパー §13.4 の17欄に、G4e が backend を足した18欄である。
 (struct diagnostic
@@ -447,7 +448,9 @@
                        #:expected [expected #f]
                        #:found [found #f]
                        #:source-chain [source-chain #f]
-                       #:backend [backend #f])
+                       #:backend [backend #f]
+                       #:expansion-trace [expansion-trace '()]
+                       #:related [related '()])
   (define code (diagnostic-code-of phase key))
   (unless code
     (error 'diagnostic-of "registry に無い phase と key である: ~s ~s" phase key))
@@ -467,14 +470,38 @@
         (error 'diagnostic-of "~a の診断は backend を取らない: ~s" phase backend)))
   (define row (diagnostic-code-row code))
   (define title (diagnostic-code-title row))
+  ;; spec §10.2: 展開から出た診断は、ユーザーが書き下した呼出しと
+  ;; 展開結果の 2 段を持つ。surface frame はユーザーが書き下した
+  ;; 入力そのものの由来を指す。
+  ;; frame の kind は span->source-chain が span から決めるため、
+  ;; その返す 1 要素の list をそのまま surface frame として使う。
+  ;; s_result が合成 span でないのは、template の根が pattern 変数である
+  ;; 定義のときである。その節点は展開が合成したのではなく実引数そのもの
+  ;; だから、synthesized frame を足さず surface frame だけを返す。
+  (define trace expansion-trace)
+  (define (synthetic-span? span)
+    (match span
+      [(list '#:span '#:synthetic _ _) #t]
+      [_ #f]))
+  (define chain
+    (or source-chain
+        (if (null? trace)
+            (span->source-chain primary-span)
+            (match (last trace)
+              [(list _nm s_call s_result)
+               (if (synthetic-span? s_result)
+                   (append (span->source-chain s_call)
+                           (list (list 'elaborate 'synthesized s_result)))
+                   (span->source-chain s_call))]))))
   (make-diagnostic #:id code
                    #:title title
                    #:message title
                    #:primary-span primary-span
                    #:expected expected
                    #:found found
-                   #:source-chain (or source-chain
-                                      (span->source-chain primary-span))
+                   #:source-chain chain
+                   #:expansion-trace trace
+                   #:related related
                    #:backend backend))
 
 (define (non-empty-string? v)
@@ -505,7 +532,7 @@
 ;; expected、found、effect-context、proof-context は形を検査しない。
 ;; phase ごとに入る値の種類が違い、共通の述語を置くと phase を跨ぐたびに
 ;; 緩めることになるためである。
-;; expansion-trace と fixes は schema version 3 でも空を要求する。
+;; expansion-trace は schema version 4 で要素形を検査し、fixes は空を要求する。
 ;; related は G4f1 が要素形を定めたため、空でない list も受ける。
 ;; source-chain は spec §3 の frame の空でない list を要求する。
 (define (source-frame-ok? v)
@@ -566,13 +593,25 @@
           "source-chain は surface で始まる frame の空でない list でなければならない")
    (check (memq (diagnostic-backend d) '(racket-cs racketscript #f))
           "backend は racket-cs、racketscript、#f のいずれかでなければならない")
-   (check (null? (diagnostic-expansion-trace d))
-          "schema version 3 は expansion-trace へ空を要求する")
+   ;; spec §10.1: expansion-trace の要素は (nm s_call s_result) である。
+   ;; s_result は展開結果の最上位節点の span である。template の根が
+   ;; pattern 変数そのものである定義では実引数由来の節点が最上位へ来るため、
+   ;; 合成 span であることは要求しない。
+   (check (and (list? (diagnostic-expansion-trace d))
+               (andmap (lambda (e)
+                         (match e
+                           [(list nm s_call s_result)
+                            (and (symbol? nm)
+                                 (span-ok? s_call)
+                                 (span-ok? s_result))]
+                           [_ #f]))
+                       (diagnostic-expansion-trace d)))
+          "expansion-trace の要素は (nm s_call s_result) である")
    (check (and (list? (diagnostic-related d))
                (andmap related-ref-ok? (diagnostic-related d)))
           "related は (relation span description) の list でなければならない")
    (check (null? (diagnostic-fixes d))
-          "schema version 3 は fixes へ空を要求する")))
+          "schema version 4 は fixes へ空を要求する")))
 
 ;; primary-span が最小原因を指すかは判定しない。それは DIA-002 の内容であり、
 ;; G4d1 以降が phase ごとの test で示す。

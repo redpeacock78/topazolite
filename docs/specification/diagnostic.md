@@ -43,13 +43,13 @@ Diagnostic IR は次の18欄を持つ。
 
 欄名を替えたのは、`core-calculus.md` の `origin` と NAR-002 が値の信頼経路に同じ語を充てており、二つの機構を欄名で判別できなくなるためである。
 
-## 2. schema version 3 の形
+## 2. schema version 4 の形
 
 **schema version** は、Diagnostic の欄集合と各欄が受け付ける値の形を示す版である。
 
-schema version 3 は、各欄へ次の形を要求する。
+schema version 4 は、各欄へ次の形を要求する。
 
-| 欄 | schema version 3 の形 |
+| 欄 | schema version 4 の形 |
 | --- | --- |
 | `id` | registry に存在する code の文字列 |
 | `severity` | `'error`、`'warning`、`'note` のいずれか |
@@ -63,7 +63,7 @@ schema version 3 は、各欄へ次の形を要求する。
 | `expected` | 任意の値または `#f` |
 | `found` | 任意の値または `#f` |
 | `source-chain` | §3 の frame の空でない list |
-| `expansion-trace` | 空の list |
+| `expansion-trace` | `(nm s_call s_result)` の list。`nm` は記号、2つの span は `span-ok?` を満たす |
 | `effect-context` | 任意の値または `#f` |
 | `proof-context` | 任意の値または `#f` |
 | `related` | `(relation span description)` の list。空でもよい |
@@ -94,7 +94,7 @@ escape は表示を壊さないだけで、1 行の欄へ複数行が入ると�
 
 `diagnostic-valid?` はこの形を満たすかを返し、`diagnostic-schema-errors` は満たさない条件の理由を文字列の list で返す。
 
-## 3. source-chain の要素形と schema version 3 の空要求
+## 3. source-chain の要素形と expansion-trace
 
 [REQ: DIA-003] `source-chain` は、その診断が指す構文の由来を Surface から Core の順に並べた frame の列である。
 
@@ -116,19 +116,23 @@ producer は自分がその節点を合成したかを先に判定し、合成�
 
 `verbatim` と `synthetic-span` は入力由来の節点にのみ与える値であり、`sourceId` が `#:synthetic` かどうかで両者を分ける。
 
-`synthesized` は予約値であり、Phase 0 の producer は生成しない。
+`synthesized` は展開結果の合成 span を指す予約値であり、P1e2 の expand producer が生成する。
 
 Phase 0 の elaborate は節点を合成しないため、Phase 0 が出す `source-chain` の長さは1であり、`kind` は `verbatim` と `synthetic-span` の2値に限られる。
 
-予約値を許容集合へ最初から含めるのは、Phase 2 の desugaring が節点を合成するようになったときに schema version を上げずに済ませるためである。
+`synthesized` を許容集合へ含めるのは、展開結果の provenance を source-chain へ記録するためである。
 
-`expansion-trace` と `fixes` の2欄は、schema version 3 では空であることを要求する。
+`expansion-trace` の各要素は `(list nm s_call s_result)` の3要素の list である。
 
-これらの欄を埋めるサイクルが要素の形を定め、その変更時に schema version を上げる。
+`nm` は展開した macro の名前を表す記号である。
 
-`fixes` は Phase 1 以降、`expansion-trace` は Phase 2 以降が定める。
+`s_call` はユーザーが書き下した macro 呼出しの span であり、`s_result` は展開結果の最上位節点の span である。
 
-この空要求は、要素形を未定義のまま受け入れることと、将来の要素形を先取りすることを避ける。
+`s_result` が合成 span のとき、expand 相の Diagnostic の source-chain は `surface` frame と `elaborate` の `synthesized` frame の2段になる。
+
+`s_result` が実引数由来の通常 span のときは、展開が節点を合成していないため `surface` frame の1段だけになる。
+
+`fixes` は schema version 4 でも空を要求する。
 
 欄そのものは18欄すべてを最初から持つため、後続サイクルは欄の追加を待たずに値を生成できる。
 
@@ -150,13 +154,15 @@ renderer は未知の `relation` を捨てず、記号をそのまま表示す�
 
 Phase 0 の producer は related を生成しないため、G4f1 が定めるのは受け入れる形だけである。
 
+P1e2 の expand producer は、macro の定義位置など複数の位置を持つ診断へ related を生成する。
+
 ## 5. Phase 0 で形を固定しない欄
 
 `expected`、`found`、`effect-context`、`proof-context` の4欄は、Phase 0 では形を固定しない。
 
-この4欄は任意の値または `#f` を受け、schema version 3 の検証器は値の形を検査しない。
+この4欄は任意の値または `#f` を受け、schema version 4 の検証器は値の形を検査しない。
 
-空要求の4欄は「まだ使わないので空」と定める欄であり、この4欄は「使うが形を決めない」と定める欄である。
+空を要求する `fixes` は「まだ使わないので空」と定める欄であり、この4欄は「使うが形を決めない」と定める欄である。
 
 producer は phase ごとに型項、効果集合、証明対象など異なる値を入れるため、共通の形へ縛ると producer 側の判定経路を歪める。
 
@@ -176,13 +182,13 @@ producer は `details` の先頭を `expected`、次を `actual` とする。
 
 renderer が具体的な整形を要求するのは G4f 以降であり、その時点で要素形を定めて schema version を上げる。
 
-この判断は未回収の欄を残すものではなく、schema version 3 が「任意の値または `#f`」を形として定めるものである。
+この判断は未回収の欄を残すものではなく、schema version 4 が「任意の値または `#f`」を形として定めるものである。
 
 ## 6. 二つの version
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 3 であり、`diagnostic-registry-version` は 14 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 14 である。
 
 schema version は欄の追加、削除、または欄が受け付ける形の変更で上げる。
 

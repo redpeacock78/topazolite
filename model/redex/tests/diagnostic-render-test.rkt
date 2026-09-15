@@ -567,7 +567,7 @@
  (check-equal? (list->seteq (hash-keys data))
                (seteq 'synthetic 'sourceId 'startByte 'endByte 'category
                       'schemaVersion 'backend 'expected 'found
-                      'secondaryLabels 'sourceChain
+                      'secondaryLabels 'sourceChain 'expansionTrace
                       'effectContext 'proofContext))
  (check-equal? (hash-ref data 'category) "EFF")
  (check-equal? (hash-ref data 'schemaVersion) diagnostic-schema-version)
@@ -680,7 +680,7 @@
  (check-equal? (hash-ref (render-json (fixture 'lowering)) 'found)
                "\"kernel primitive には写し先が無い\""))
 
-;; schema version 3 は expansion-trace と fixes へ空を要求する。
+;; schema version 4 は expansion-trace の形を検査し、fixes へ空を要求する。
 (test-case
  "expansionTrace と fixes は空の list である"
  (for ([row (in-list fixture-table)])
@@ -927,3 +927,17 @@
    (define j (json-parity (render-json d)))
    (check-equal? t l (format "~a: terminal と LSP" name))
    (check-equal? l j (format "~a: LSP と JSON" name))))
+
+(test-case
+ "3 つの renderer が expansion-trace を写す"
+ (define s-call '(#:span sample 0 5))
+ (define s-result '(#:span #:synthetic 1 1))
+ (define d (diagnostic-of 'expand 'macro-arity-mismatch
+                          #:primary-span s-result
+                          #:expansion-trace (list (list 'twice s-call s-result))))
+ (define j (render-json d))
+ (check-equal? (length (hash-ref j 'expansionTrace)) 1)
+ (define l (render-lsp d fixture-source-map))
+ (check-equal? (length (hash-ref (hash-ref l 'data) 'expansionTrace)) 1)
+ (define t (render-terminal d fixture-source-map))
+ (check-true (regexp-match? #px"= expanded\\[twice\\]" t)))

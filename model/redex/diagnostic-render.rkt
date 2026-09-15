@@ -166,6 +166,13 @@
       (match-define (list relation span description) r)
       (format "  = related[~a] ~a: ~a"
               relation (position-text (span->location sm span)) description)))
+  (define expansion-lines
+    (for/list ([e (in-list (diagnostic-expansion-trace d))])
+      (match-define (list nm s_call s_result) e)
+      (format "  = expanded[~a] ~a -> ~a"
+              nm
+              (position-text (span->location sm s_call))
+              (position-text (span->location sm s_result)))))
   (define backend-lines
     (if (diagnostic-backend d)
         (list (format "  = backend: ~a" (diagnostic-backend d)))
@@ -177,6 +184,7 @@
            (for/list ([body (in-list (supplement-bodies d))])
              (string-append "  = " body))
            related-lines
+           expansion-lines
            backend-lines)
    "\n"))
 
@@ -254,6 +262,12 @@
               'sourceId (sid-spelling (location-source-id l-loc))
               'synthetic (location-synthetic? l-loc)))
     'sourceChain (map frame->jsexpr (diagnostic-source-chain d))
+    'expansionTrace
+    (for/list ([e (in-list (diagnostic-expansion-trace d))])
+      (match-define (list nm s_call s_result) e)
+      (hasheq 'macro (symbol->string nm)
+              'callSpan (span->jsexpr s_call)
+              'resultSpan (span->jsexpr s_result)))
     'effectContext (unfixed->jsexpr (diagnostic-effect-context d))
     'proofContext (unfixed->jsexpr (diagnostic-proof-context d)))))
 
@@ -286,9 +300,12 @@
              'description description))
    'notes (diagnostic-notes d)
    'help (diagnostic-help d)
-   ;; schema version 3 は空を要求する。要素形が定まる時点でここを写し方へ変え、
-   ;; schema version を上げる。
-   'expansionTrace '()
+   'expansionTrace
+   (for/list ([e (in-list (diagnostic-expansion-trace d))])
+     (match-define (list nm s_call s_result) e)
+     (hasheq 'macro (symbol->string nm)
+             'callSpan (span->jsexpr s_call)
+             'resultSpan (span->jsexpr s_result)))
    'fixes '()
    ;; 第 3 群。形を固定しない 4 欄。
    'expected (unfixed->jsexpr (diagnostic-expected d))

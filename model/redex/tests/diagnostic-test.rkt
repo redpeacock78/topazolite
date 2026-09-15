@@ -180,8 +180,8 @@
 
 ;; test 12
 (test-case
- "schema version は 3、registry version は 14 である"
- (check-equal? diagnostic-schema-version 3)
+ "schema version は 4、registry version は 14 である"
+ (check-equal? diagnostic-schema-version 4)
  (check-equal? diagnostic-registry-version 14))
 
 (test-case
@@ -220,7 +220,7 @@
 
 ;; test 15
 (test-case
- "schema version 3 は expansion-trace と fixes へ空を要求する"
+ "schema version 4 は expansion-trace の形を検査し fixes へ空を要求する"
  (define d (base-diagnostic))
  (for ([broken (in-list
                 (list (struct-copy diagnostic d [expansion-trace (list 'e)])
@@ -621,3 +621,45 @@
                "E-OWN-028")
  (check-equal? (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)
                "E-OWN-029"))
+
+(test-case
+ "expansion-trace を渡すと source-chain が surface と elaborate の 2 段になる"
+ (define s-call '(#:span main 0 10))
+ (define s-result '(#:span #:synthetic 1 1))
+ (define d (diagnostic-of 'expand 'macro-arity-mismatch
+                          #:primary-span s-result
+                          #:expansion-trace (list (list 'twice s-call s-result))))
+ (check-equal? diagnostic-schema-version 4)
+ (check-equal? (diagnostic-expansion-trace d)
+               (list (list 'twice s-call s-result)))
+ (check-equal? (map first (diagnostic-source-chain d)) '(surface elaborate))
+ (check-equal? (third (first (diagnostic-source-chain d))) s-call)
+ (check-equal? (second (second (diagnostic-source-chain d))) 'synthesized))
+
+(test-case
+ "expansion-trace の要素が 3 つ組でないと validator が拒む"
+ (define d (diagnostic-of 'expand 'macro-arity-mismatch
+                          #:primary-span '(#:span main 0 10)))
+ (define bad (struct-copy diagnostic d [expansion-trace (list 'oops)]))
+ (check-false (diagnostic-valid? bad)))
+
+(test-case
+ "expansion-trace が並びでなくても validator が例外を投げない"
+ (define d (diagnostic-of 'expand 'macro-arity-mismatch
+                          #:primary-span '(#:span main 0 10)))
+ (define bad (struct-copy diagnostic d [expansion-trace 'oops]))
+ (check-false (diagnostic-valid? bad)))
+
+(test-case
+ "spec 5.5: s_result が通常 span の trace を validator が受ける"
+ ;; identity(x) = x の展開では最上位が実引数由来になり、s_result は
+ ;; ユーザーの書いた span のままである。validator はこれを拒まない。
+ (define d (diagnostic-of 'expand 'macro-arity-mismatch
+                          #:primary-span '(#:span main 30 31)
+                          #:expansion-trace
+                          (list (list 'identity '(#:span main 20 32)
+                                      '(#:span main 30 31)))))
+ (check-true (diagnostic-valid? d))
+ ;; 2 段目の synthesized frame は付かない。
+ (check-equal? (diagnostic-source-chain d)
+               '((surface verbatim (#:span main 20 32)))))
