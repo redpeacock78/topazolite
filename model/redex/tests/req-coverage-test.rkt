@@ -42,6 +42,7 @@
 ;; This file is scanned as a test input, so fixture IDs must not be literal
 ;; requirement references that could make the real coverage check pass.
 (define known-id (string-append "NAR" "-001"))
+(define retired-state-id (string-append "DIA" "-999"))
 (define typ-003 (string-append "TYP" "-003"))
 (define row-001 (string-append "ROW" "-001"))
 (define row-002 (string-append "ROW" "-002"))
@@ -658,6 +659,14 @@
  (check-equal?
   (second result)
   "Requirement coverage OK: 1 G3d IDs\n"))
+
+(test-case "Phase 1 以降 は不正な状態として報告される"
+  (check-equal?
+   (fixture-errors
+    (registry-entry retired-state-id "Phase 1 以降")
+    ""
+    "")
+   (list (format "invalid or missing requirement state: ~a" retired-state-id))))
 
 ;; 状態フィールドが descriptor ごとに効くこと。G3 の ID を G2 の descriptor で
 ;; 期待すると「absent or not state G2」が出る。

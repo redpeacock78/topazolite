@@ -28,7 +28,7 @@
   #px"(?<![-A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
 (define valid-states
   (set "G1" "G2" "G3" "G4" "G5" "P1"
-       "Phase 1 以降" "Phase 2 以降" "Phase 3 以降"))
+       "Phase 2 以降" "Phase 3 以降"))
 
 ;; descriptor が名乗れる状態は G サイクルと Phase 1 のサブサイクルに限る。
 ;; valid-states は Phase 送りの状態も含むため、まだ着手していない Phase の状態を
