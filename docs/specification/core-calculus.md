@@ -1064,7 +1064,7 @@ Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を�
 source point ごとの静的な借用状態と機械側の対応は本サイクルでは持たない。
 core の束縛出現は縮約を跨いで安定した識別子を持つようになったが、識別子は対応を取るための前提であり、静的な借用状態と機械側の対応そのものではない。
 `borrow.md` §3 の designator の解決はこの識別子を鍵にする。
-source point ごとの状態と機械側の対応は後続の Phase で扱う。
+source point ごとの状態と機械側の対応は Phase 2 以降で扱う。
 
 観測側の live 集合に残る借用の生存判定も本サイクルでは持たない。
 `obs` の payload は借用値を運べるが、payload の借用が指す region がすでに終わっているかを `Λtok` の条件は見ない。
