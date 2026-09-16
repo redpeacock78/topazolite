@@ -5,6 +5,7 @@
          "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
+         "macro-expand.rkt"
          "span-core.rkt"
          "traits.rkt"
          "type-equiv.rkt"
@@ -426,7 +427,7 @@
   (unless (core-term? value)
     (error who "c でも G2+ の c でもない: ~s" value)))
 
-(define (verify-origins/proc r0 core)
+(define (verify-origins/proc r0 core [expanded? #t])
   (define (walk-list terms)
     (cond
       [(null? terms) 'ok]
@@ -444,6 +445,8 @@
       [(list? term) (walk-list term)]
       [else 'ok]))
   (check-core! 'verify-origins core)
+  (when expanded?
+    (require-expanded! 'verify-origins core))
   (walk core))
 
 (define-metafunction G2m
@@ -466,7 +469,7 @@
 (define (verify-initial-origins/proc r0 core)
   (check-core! 'verify-initial-origins core)
   (or (initial-layer-violation core)
-      (verify-origins/proc r0 core)))
+      (verify-origins/proc r0 core #f)))
 
 (define-metafunction G2m
   verify-initial-origins : any any -> any

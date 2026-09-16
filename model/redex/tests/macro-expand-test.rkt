@@ -5,6 +5,7 @@
          "../span-core.rkt"
          "../erase.rkt"
          "../origins.rkt"
+         "../typing.rkt"
          "../diagnostic.rkt"
          "../macro-expand.rkt"
          racket/set)
@@ -37,7 +38,7 @@
  (check-not-equal? (verify-origins/diagnostic R0 lam) 'ok))
 
 (test-case
- "MacroCall の実引数内の Lam の origin を verify-origins が歩く"
+ "初期 origin 検査は MacroCall の実引数内の Lam を歩く"
  (define arg
    '(Lam (#:span #:synthetic 4 4)
          User c-arg
@@ -45,7 +46,24 @@
          (#:var x (#:span #:synthetic 6 6))))
  (define call
    (list 'MacroCall '(#:span main 0 10) 'User 'twice (list arg)))
- (check-equal? (verify-origins/diagnostic R0 call) 'ok))
+ (check-equal? (term (verify-initial-origins ,R0 ,call)) 'ok))
+
+(test-case
+ "未展開の MacroCall を持つ項は 3 つの入口が拒む"
+ (define call '(MacroCall (#:span main 0 10) User m ()))
+ (define body (list 'Apply '(#:span main 0 20) call call))
+ (check-exn #rx"未展開の MacroCall" (lambda () (require-expanded! 'test body)))
+ (check-exn #rx"未展開の MacroCall"
+            (lambda () (core-type-of body '() (hash))))
+ (check-exn #rx"未展開の MacroCall"
+            (lambda () (core-check-row body '() (hash) 'Unit)))
+ (check-exn #rx"未展開の MacroCall"
+            (lambda () (term (verify-origins ,R0 ,body)))))
+
+(test-case
+ "MacroCall を含まない項は素通りする"
+ (define body '(#:lit 1 (#:span main 0 1)))
+ (check-not-exn (lambda () (require-expanded! 'test body))))
 
 (define s-def '(#:span main 0 20))
 (define s-arg '(#:span main 8 9))

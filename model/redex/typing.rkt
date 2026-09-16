@@ -8,6 +8,7 @@
          "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
+         "macro-expand.rkt"
          "origins.rkt"
          "ownership.rkt"
          "policy.rkt"
@@ -3426,6 +3427,7 @@
       (with-typing
        (lambda (fail)
          ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
+         (require-expanded! 'type-of/raw core-in)
          (define core (erase-core core-in))
          (define violation (entry-violation core places callables environment))
          (when violation
@@ -3639,6 +3641,7 @@
 (define (core-check-row core-in places callables expected [environment '()]
                         [Λ (empty-region-ctx)])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
+  (require-expanded! 'core-check-row core-in)
   (define core (erase-core core-in))
   (and (not (entry-violation core places callables environment))
        (type? expected)

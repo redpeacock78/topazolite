@@ -9,7 +9,7 @@
          "diagnostic.rkt"
          racket/set)
 
-(provide macro-env-errors expand-macros macro-depth-limit)
+(provide macro-env-errors expand-macros macro-depth-limit require-expanded!)
 
 ;; 定義の 4 つ組 (nm s pattern template) を受け、違反の診断を並べて返す。
 ;; 順序は定義の順、1 つの定義の中では §4.3 の 3 条件の順である。
@@ -78,6 +78,14 @@
 ;; macro.md §6.4: 1 つの MacroCall から数えた再帰の深さの上限である。
 ;; 展開の総数ではない。起点の呼出しを展開する時点が深さ 1 である。
 (define macro-depth-limit 32)
+
+;; spec §7.2: 4 検査の入口は erase-core を呼ぶ手前でこれを要求する。
+;; G2+ の照合だけに頼らない理由は、MacroCall が G2+ の c であるため
+;; 照合が未展開の項を受けてしまう点にある。
+(define (require-expanded! who term)
+  (define calls (nodes-where term macro-call?))
+  (unless (null? calls)
+    (error who "未展開の MacroCall が残っている: ~s" (span-of (first calls)))))
 
 ;; Task 4 の nodes-where を使う 2 つの述語である。
 ;; user-origin-violations は Lam と MacroCall の両方を見るのに対し、
