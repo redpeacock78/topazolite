@@ -481,18 +481,20 @@
 ;; IR を項でないと定めており、metafunction の返り値へ struct を混ぜられない。
 ;; diagnostic.md §9 が origins の registry key を (forged ...) の頭から導いている
 ;; のも、metafunction が形を保つ前提の記述である。
-(define (origins-result->diagnostic result)
+(define (origins-result->diagnostic result [expansion-context (hash)])
   (match result
     [(list 'forged subject)
      ;; subject は棄却の対象になった部分項である。typing と違い位置が分かるため、
      ;; 根へ丸めずここから span を取り、値そのものを found へ入れる。
      (diagnostic-of 'origins 'forged
                     #:primary-span (entry-span subject)
-                    #:found subject)]
+                    #:found subject
+                    #:expansion-context expansion-context)]
     [other other]))
 
-(define (verify-origins/diagnostic r0 core)
-  (origins-result->diagnostic (verify-origins/proc r0 core)))
+(define (verify-origins/diagnostic r0 core [expansion-context (hash)])
+  (origins-result->diagnostic (verify-origins/proc r0 core)
+                              expansion-context))
 
 (define (verify-initial-origins/diagnostic r0 core)
   (origins-result->diagnostic (verify-initial-origins/proc r0 core)))

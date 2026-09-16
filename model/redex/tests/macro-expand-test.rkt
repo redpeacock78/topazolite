@@ -10,6 +10,21 @@
          "../macro-expand.rkt"
          racket/set)
 
+;; typing-span-test.rkt:21 の (Apply 1 2) が E-APP-003 になるのを
+;; spanful な形へ写したものである。
+(define ill-typed-core
+  (list 'Apply '(#:span main 0 10)
+        '(#:lit 1 (#:span main 1 2))
+        '(#:lit 2 (#:span main 3 4))))
+
+;; 0 引数マクロ bad の template を ill-typed-core と同じ形にする。
+;; 展開すると template 由来の span がすべて合成 span へ配り直され、
+;; 最上位の Apply の span が展開表の鍵になる。
+;; macro-env の要素は macro-expand.rkt:19 の match-define が読む
+;; 4 つ組 (nm s pattern template) である。
+(define bad-typing-env
+  (list (list 'bad '(#:span main 20 30) '() ill-typed-core)))
+
 (test-case
  "G2+ の c が MacroCall を受ける"
  (define call
@@ -64,6 +79,21 @@
  "MacroCall を含まない項は素通りする"
  (define body '(#:lit 1 (#:span main 0 1)))
  (check-not-exn (lambda () (require-expanded! 'test body))))
+
+(test-case
+ "展開器が作った節点の診断は展開表から trace を引く"
+ (define call '(MacroCall (#:span main 0 10) User bad ()))
+ (define-values (out tbl ds) (expand-macros call bad-typing-env))
+ (check-equal? ds '())
+ (define d (core-type-of/diagnostic out '() '()
+                                    #:expansion-context tbl))
+ (check-not-equal? (diagnostic-expansion-trace d) '())
+ (check-equal? (first (first (diagnostic-expansion-trace d))) 'bad))
+
+(test-case
+ "展開を経ていない項の診断の expansion-trace は空である"
+ (define d (core-type-of/diagnostic ill-typed-core '() '()))
+ (check-equal? (diagnostic-expansion-trace d) '()))
 
 (define s-def '(#:span main 0 20))
 (define s-arg '(#:span main 8 9))

@@ -3620,12 +3620,13 @@
     [(_ (list only)) (values #f only)]
     [(_ _) (values #f details)]))
 
-(define (typing-diagnostic key node details)
+(define (typing-diagnostic key node details [expansion-context (hash)])
   (define-values (expected found) (typing-expected/found key details))
   (diagnostic-of 'typing key
                 #:primary-span (entry-span node)
                 #:expected expected
-                #:found found))
+                #:found found
+                #:expansion-context expansion-context))
 
 ;; spec §3: G4d2 の公開 Diagnostic 境界はこの adapter である。
 ;; core-type-of は 'ill-typed を返す低レベルの判定として残し、判定 API と診断 API
@@ -3633,10 +3634,12 @@
 ;; primary-span は fail が運ぶ棄却節点から取る。entry-span が span を取れないときだけ
 ;; synthetic fallback へ落ちる。
 (define (core-type-of/diagnostic core-in places callables [environment '()]
-                                 [Λ (empty-region-ctx)])
+                                 [Λ (empty-region-ctx)]
+                                 #:expansion-context [expansion-context (hash)])
   (match (type-of/raw core-in places callables environment Λ)
     [(list 'ok (list type row)) (list type row)]
-    [(list 'fail key node details) (typing-diagnostic key node details)]))
+    [(list 'fail key node details)
+     (typing-diagnostic key node details expansion-context)]))
 
 (define (core-check-row core-in places callables expected [environment '()]
                         [Λ (empty-region-ctx)])
