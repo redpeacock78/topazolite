@@ -24,7 +24,7 @@
   - `G3`：Phase 0 サイクル G3（Portable Racket feature matrix）へ延期。
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
-  - `P1`：Phase 1 のサイクル（P1a から P1d）の対象。
+  - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
   - `Phase 1 以降`：Phase 0 の後に model 層または表面機能を回収する最初の実装 Phase で扱う。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
@@ -405,7 +405,7 @@ Productive 判定は各有限観測が有限計算で得られることを保証
 
 ### MAC-001
 
-- **状態**：Phase 1 以降
+- **状態**：P1
 - **由来**：ホワイトペーパー §15
 
 ユーザーマクロの展開結果は再度 type/effect/proof/origin 検査を受ける。

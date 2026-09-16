@@ -13,7 +13,7 @@ G1 の範囲は次のとおりである。
 
 - **対象**：未型付き縮小 Core から Typed Core への elaboration、Typed Core の簡約意味論、origin model、return boundary model、Finite / Productive / Unknown の仕様、affine な move / drop と scope exit finalization。
 - **G5 へ延期**：borrow、region、unsafe boundary の judgment と、メタ理論性質 8（borrow safety）、9（unsafe containment）。所在は §9 に置く。
-- **Phase 1 へ延期**：Surface 構文から未型付き縮小 Core への対応づけ、user trait constructor、マクロ展開。
+- **Phase 1 へ延期**：Surface 構文から未型付き縮小 Core への対応づけ、user trait constructor。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
 ID の本文は `requirements.md` を正とする。
@@ -256,7 +256,7 @@ sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与�
 
 `Curry(v)` は部分適用（§5.3 R-CurryVal）の派生を表す。
 `Make(t)` は TypeInfo 生成（§4.8 E-TypeMake）の派生を表し、生成された TypeRep が保持する型式 t を記録する。
-`Expand` は Sugar 展開の派生を表す step であり、G1 では使わない（Phase 1 のマクロ展開で使う）。
+`Expand` は Sugar 展開の派生を表す step であり、マクロ展開で使う（`macro.md` §8）。 [REQ: MAC-001]
 `Trait(tn)` は予約 Narrative から trait の生成能力を継承したことを表す step である。trait 名 tn を記録する。[REQ: NAR-003]
 sort の `N` は基本型名または組み込み constructor 名である。
 R0 は予約 origin ID から sort への写像であり、どの ID がどの種類の値を正当化するかを定める（§3.5）。

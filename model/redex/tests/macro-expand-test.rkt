@@ -81,7 +81,7 @@
  (check-not-exn (lambda () (require-expanded! 'test body))))
 
 (test-case
- "展開器が作った節点の診断は展開表から trace を引く"
+ "MAC-001: 展開器が作った節点の診断は展開表から trace を引く"
  (define call '(MacroCall (#:span main 0 10) User bad ()))
  (define-values (out tbl ds) (expand-macros call bad-typing-env))
  (check-equal? ds '())
@@ -91,7 +91,7 @@
  (check-equal? (first (first (diagnostic-expansion-trace d))) 'bad))
 
 (test-case
- "展開を経ていない項の診断の expansion-trace は空である"
+ "MAC-001: 展開を経ていない項の診断の expansion-trace は空である"
  (define d (core-type-of/diagnostic ill-typed-core '() '()))
  (check-equal? (diagnostic-expansion-trace d) '()))
 
