@@ -13,7 +13,7 @@ G1 の範囲は次のとおりである。
 
 - **対象**：未型付き縮小 Core から Typed Core への elaboration、Typed Core の簡約意味論、origin model、return boundary model、Finite / Productive / Unknown の仕様、affine な move / drop と scope exit finalization。
 - **G5 へ延期**：borrow、region、unsafe boundary の judgment と、メタ理論性質 8（borrow safety）、9（unsafe containment）。所在は §9 に置く。
-- **Phase 1 へ延期**：Surface 構文から未型付き縮小 Core への対応づけ、user trait constructor。
+- **Phase 2 以降**：Surface 構文から未型付き縮小 Core への対応づけ。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
 ID の本文は `requirements.md` を正とする。
@@ -52,7 +52,7 @@ nearestReturn(B)    先頭の frame を返す。空なら未定義
 ### 3.1 未型付き縮小 Core
 
 **未型付き縮小 Core** は elaboration の入力言語である。
-Surface 構文から糖衣を除いた形に相当するが、Surface 構文との対応づけは Phase 1 で定める。
+Surface 構文から糖衣を除いた形に相当するが、Surface 構文との対応づけは Phase 2 以降で定める。
 
 ```text
 e ::= l                                          リテラル
@@ -127,7 +127,7 @@ Effect label を 1 つ足すと、次の 7 箇所が動く。
 `NFn<P, R, ε, Q>` はホワイトペーパー §11.5.2 の `NFn<P, R, εin, εout, Q, O>` の G1 簡約形である。
 G1 では εin と εout を単一の潜在 Effect row ε に縮約し、適用時の `combine(εa, εi, εo)` を和集合で定義する（§4.3）。
 また、origin O は型成分ではなく値成分として扱う（§3.4）。
-εin と εout の分離はホワイトペーパーからの意図的な単純化であり、Phase 1 以降で拡張する。
+εin と εout の分離はホワイトペーパーからの意図的な単純化であり、Phase 2 以降で拡張する。
 origin は §7 の verify-origins による Typed Core 全体の一括検査へ再配置しており、型成分へ戻すのは surface 構文を導入する時点である。
 
 `Res` は affine 資源の基本型であり、G1 の `Owned<τ>` の中身は `Res` に限る（§3.5）。
@@ -199,7 +199,7 @@ record の field の可変性 `m` は別の軸である。
 `Owned` の `Let` と同じ制約であり、place を確保するからである。
 
 G1 の `Handle` は継続を再開しない **abortive handler** に限る。
-継続を再開する一般の algebraic effect handler は、多相との干渉に対する設計選択（ホワイトペーパー §5.2）を要するため G1 では扱わず、Phase 1 以降で導入する。
+継続を再開する一般の algebraic effect handler は、多相との干渉に対する設計選択（ホワイトペーパー §5.2）を要するため G1 では扱わず、導入時期は Phase 未定である。
 G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `Yield` と `Suspend` は Perform ではなく専用ノードで表し、観測関係（§6.1）で意味を与える。
 `Error(p)` は elaboration の出力には現れず、簡約（§5.5 R-MoveError）だけが生成する。
@@ -361,7 +361,7 @@ acquire : NFn<(Int), Owned<Res>, {}, ⟨⟩>  値 PrimVal(Reserved(o-acquire), a
 Owned の move / drop / finalization を Redex model で検査するには、`Owned` 型の値を作る経路が初期環境に一つ要る。
 
 TypeInfo の生成は Γ0 の primitive ではなく、専用構文 `typeMake(spec)`（§4.8）だけが担う。
-TypeInfo 生成関数を第一級値として渡す機能は Phase 1 以降で扱う。
+TypeInfo 生成関数を第一級値として渡す機能の導入時期は Phase 未定である。
 
 **Δ0（型名）**：
 
@@ -728,7 +728,7 @@ Recur(r, f, (y1, …, yk),
 
 `Recur` と `RecurVal` の `Owned` 捕捉は G5c5b2 では扱わない。
 R-RecurUnfold（§5.4）は再帰本体を呼出しごとに複製するため、`RecurVal` の型を `Owned` にしても捕捉した値の使用回数を上限づけられない。
-この制限は Phase 1 以降へ送る。
+この制限は Phase 4 以降へ送る。
 
 R-RecurBind（§5.4）が生成する `RecurVal` は次の形を持つ。
 
@@ -1069,7 +1069,7 @@ source point ごとの状態と機械側の対応は後続の Phase で扱う。
 観測側の live 集合に残る借用の生存判定も本サイクルでは持たない。
 `obs` の payload は借用値を運べるが、payload の借用が指す region がすでに終わっているかを `Λtok` の条件は見ない。
 判定には観測の発生位置と region の順序を突き合わせる機構が要る。
-Phase 1 以降で扱う。
+Phase 4 以降で扱う。
 
 ### 5.2 machine 構成と評価文脈
 
@@ -1213,7 +1213,7 @@ E[Suspend(c)] → E[c]
 
 `Suspend` は 1 step を消費する区切りであり、観測イベントを生成しない。
 このため計算分類（§6.2）の guard には数えない。
-Suspend を corecursion の生産性 guard として使う設計は、観測意味論の拡張と併せて Phase 1 以降で扱う。
+Suspend を corecursion の生産性 guard として使う設計は、観測意味論の拡張と併せて Phase 4 以降で扱う。
 
 ### 5.5 move、drop、affine 検査
 
@@ -1297,7 +1297,7 @@ retire について本サイクルで持たない形が二つある。
 いまの `R-Retire` は実行が終端へ達した後に一度だけ発火するため、観測者が実行中の任意の位置で回収する形を表せない。
 もう一つは lexical scope ごとの retire である。
 `Observed` の entry へ scope または観測者の識別子を持たせないと、どの scope の退出でどの観測を回収するかを決められない。
-どちらも Phase 1 以降で扱う。
+どちらも Phase 未定である。
 
 ### 5.7 handler
 
@@ -1512,7 +1512,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 golden test の正規手書き項、初期環境、期待簡約列を本節で固定する。
 Redex model の golden test はこの項をそのまま実装し、期待結果との一致を確認する。
 ホワイトペーパー §20 の最小実証プログラムを未型付き縮小 Core で手書きしたものに相当する。
-Surface 構文からの elaboration の検証は Phase 1 で行う。
+Surface 構文からの elaboration の検証は Phase 2 以降で行う。
 
 使用する初期環境は §3.5 の全体である。
 
@@ -1614,7 +1614,7 @@ G1 が borrow を延期できたのは、Ω の三値（`Available`、`Moved`、
 借用を入れると生存の情報が Ω に収まらず、静的な記録が要る。
 G5 はその記録を Ψ として置いた。
 
-Phase 1 以降へ送った事項は `requirements.md` の申し送り表に載せる。
+後続 Phase へ送った事項は `requirements.md` の申し送り表に載せる。
 
 ## 10. 規則と要件 ID の対応
 

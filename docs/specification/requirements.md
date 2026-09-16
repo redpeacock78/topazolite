@@ -25,7 +25,6 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
-  - `Phase 1 以降`：Phase 0 の後に model 層または表面機能を回収する最初の実装 Phase で扱う。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
   - 状態の値の後ろへ、その事項を起こした要件 ID を括弧で添えてよい。
@@ -283,7 +282,7 @@ intersect 行の出力 trait に対する直接の impl 行を、正典表に置
 有限に正規化できる Union 型は、構成要素の順序と重複によらず一意の正規形を持つ。
 正規化に失敗する型を成果物の境界へ通してはならない。
 ホワイトペーパー §4.5.3 の正規化分類を根拠とする。
-recursive Union の opaque identity は Phase 1 以降で扱う。
+recursive Union の opaque identity は Phase 4 以降で扱う。
 
 ### CMP-002
 
@@ -671,11 +670,29 @@ terminal、LSP、JSON renderer は同一 Diagnostic IR を入力とする。
 
 error code は安定識別子として versioning される。
 
-## 4. Phase 1 への申し送り
+## 4. 後続 Phase への申し送り
 
 Phase 0 の各仕様が未回収として残した項目を一覧にする。
 ID は新設しない。
 ID は状態と検証欄を持ち gate の期待集合に入るが、本節の項目はどちらも持たないためである。
+
+行き先の値は次の 5 つである。
+
+- `Phase 2 以降`：parser、Surface からの lowering、module、ADT、pattern matching、bit syntax、Portable Racket backend のいずれかに依存する事項
+- `Phase 3 以降`：JavaScript、native FFI、ABI、または外部の allocation と address space を含む pointer semantics のいずれかに依存する事項。一般の kernel 理論拡張は含めない。`H` の中だけで閉じる raw pointer 操作の backend profile はここに入らない
+- `Phase 4 以降`：Proof search、Finite と Productive と Unknown の分類、recursive と normalization、region inference の kernel 拡張に依存する事項
+- `Phase 5 以降`：typed DSL と実用化に属する事項
+- `Phase 未定`：roadmap に対応する実装対象を持たない事項
+
+行き先の欄の文字列としては、これらに加えて `Phase 3 以降（FFI-003）` を認める。
+これは `Phase 3 以降` に要件 ID の修飾を添えたものであり、意味分類は同じである。
+
+記載元の未回収節にある太字項目のうち、次のいずれかに当たるものは表へ載せない。
+
+- 記載元の本文が、どのサイクルが回収したかを名指して回収済みと述べている
+- 記載元が別の文書または層へ名指しで送っており、送り先に行がある
+- 状態を持つ要件 ID がその事項を覆っている
+- 記載元が、それを Phase 0 で固定した決定と明記し、後続 Phase へ送る先を持たないと述べている
 
 記載元が太字の項目名を持つときはそれをそのまま項目名として使い、持たないときは本表で名前を与える。
 記載元が別の文書と節を名指しして送っている項目は、名指しされた側の文書に 1 行だけ置く。
@@ -691,25 +708,25 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| 合成 Proof 値と primitive | `trait.md` §9 | Phase 1 以降 | §8.1 |
-| Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
-| 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 1 以降 | §8.1 |
-| recursive Union の opaque identity | `trait.md` §9 | Phase 1 以降 | §4.5.3 |
-| 表層構文の derive | `trait.md` §9 | Phase 1 以降 | §8.1 |
-| 型引数、継承、supertrait | `trait.md` §9 | Phase 1 以降 | §4.4、§8.1 |
-| 三項以上の trait 合成 | `trait.md` §9 | Phase 1 以降 | §8.1 |
-| package と module の coherence | `trait.md` §9 | Phase 1 以降 | §17.6 |
-| typing 経路の scope 文脈 | `trait.md` §9 | Phase 1 以降 | §17.6 |
-| priority の下流利用 | `trait.md` §9 | Phase 1 以降 | §6.4 |
-| impl と intersect の派生 origin | `trait.md` §9 | Phase 2 以降 | §8.1 |
-| optional field | `structural-row.md` §7 | Phase 1 以降 | §4.5.2 |
-| Surface 構文 | `structural-row.md` §7 | Phase 1 以降 | §3.1 |
-| 探索動力学 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
-| 局所 Proof 束縛 | `proof-value.md` §8 | Phase 1 以降 | §6.4 |
-| 多相 primitive | `proof-value.md` §8 | Phase 1 以降 | §4.4 |
-| 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 1 以降 | §4.6 |
-| 探索計算と certificate | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
-| Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 1 以降 | §6.4 |
+| 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 2 以降 | §4.5.3 |
+| 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
+| 表層構文の derive | `trait.md` §9 | Phase 2 以降 | §8.1 |
+| 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
+| 三項以上の trait 合成 | `trait.md` §9 | Phase 2 以降 | §8.1 |
+| package と module の coherence | `trait.md` §9 | Phase 2 以降 | §17.6 |
+| typing 経路の scope 文脈 | `trait.md` §9 | Phase 2 以降 | §17.6 |
+| priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
+| impl と intersect の origin | `trait.md` §9 | Phase 2 以降 | §8.1 |
+| optional field | `structural-row.md` §7 | Phase 2 以降 | §4.5.2 |
+| Surface 構文 | `structural-row.md` §7 | Phase 2 以降 | §3.1 |
+| 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
+| 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
+| 多相 primitive | `proof-value.md` §8 | Phase 4 以降 | §4.4 |
+| 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 4 以降 | §4.6 |
+| 探索計算と certificate | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
+| Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
 | module 境界 | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
 | PR output の source-map metadata | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
 | immutable vector | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
@@ -719,32 +736,32 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 評価順の保存の測定範囲 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
 | kernel primitive と trait primitive | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
-| Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 1 以降 | §13.4 |
+| Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 5 以降 | §13.4 |
 | 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
-| 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 1 以降 | §15 |
-| region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
-| `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 1 以降 | §4.8 |
-| `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 1 以降 | §5.1 |
-| `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 1 以降 | §4.7 |
-| 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 1 以降 | 無し |
+| 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
+| region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
+| `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
+| `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 2 以降 | §5.1 |
+| `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
+| 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 2 以降 | 無し |
 | 余剰 Owned field に対する borrowed view | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | 余剰 Owned field の明示 projection | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | RemainderSafelyDropped Proof による残余の drop | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
-| 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 1 以降 | §5.2 |
-| Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 1 以降 | 無し |
-| TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 1 以降 | §4.1 |
-| core に安定した source point の識別子を持たせること | `core-calculus.md` §5.1 | Phase 1 以降 | §13.4.4 |
-| 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 1 以降 | §4.8 |
-| 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 1 以降 | 無し |
-| lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 1 以降 | §4.9 |
-| 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 1 以降 | §4.8 |
+| 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
+| Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
+| TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 未定 | §4.1 |
+| source point ごとの静的な借用状態と機械側の対応 | `core-calculus.md` §5.1 | Phase 2 以降 | §13.4.4 |
+| 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 4 以降 | §4.8 |
+| 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 未定 | 無し |
+| lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 未定 | §4.9 |
+| 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 未定 | §4.8 |
 | `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 3 以降（FFI-003） | §5.2 |
 | raw pointer 操作の backend profile | `unsafe.md` §6 | Phase 2 以降 | §17.13 |
-| address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 1 以降 | §17.13 |
+| address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 3 以降 | §17.13 |
 | 外部の allocation を指す pointer からの safe reference 構築（PTR-002 の縮約） | `unsafe.md` §6 | Phase 3 以降（FFI-003） | §4.10 |
-| `H` の外の allocation としての pointee の生存 | `unsafe.md` §6 | Phase 1 以降 | §17.13 |
-| `Construct` の欄への `RawStore` | `unsafe.md` §6 | Phase 1 以降 | §4.10 |
-| `Const` の raw pointer を作る式 | `unsafe.md` §6 | Phase 1 以降 | §4.10 |
+| `H` の外の allocation としての pointee の生存 | `unsafe.md` §6 | Phase 3 以降 | §17.13 |
+| `Construct` の欄への `RawStore` | `unsafe.md` §6 | Phase 3 以降 | §4.10 |
+| `Const` の raw pointer を作る式 | `unsafe.md` §6 | Phase 3 以降 | §4.10 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
 borrow.md §14 の未回収 5 件のうち 4 件は、同節の項目に対応して本表へ記載している。

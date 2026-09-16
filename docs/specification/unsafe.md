@@ -464,7 +464,7 @@ Redex model は `H` の上の path lookup として扱い、機械語の load �
 ### 6.2 address space
 
 `AddrSpace` は `native` の 1 値だけを認める（§3.1）。
-複数の address space をまたぐ pointer の変換と比較は Phase 1 以降で定める。
+複数の address space をまたぐ pointer の変換と比較は Phase 3 以降で定める。
 
 ### 6.3 外部の allocation
 
@@ -486,4 +486,4 @@ FFI の境界設計が未着手であり、label だけ先に置いても検査�
 ### 6.6 構文の欄
 
 `Construct` の field へ `RawStore` を置く形と、`Const` の raw pointer を作る式は G5c7 の構文に無い。
-どちらも Phase 1 以降で定める。
+どちらも Phase 3 以降で定める。

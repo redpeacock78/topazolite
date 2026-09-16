@@ -216,7 +216,7 @@
 
 ### 未型付き縮小 Core
 
-- **定義**：elaboration の入力となる、Narrative 情報を持たない項言語。Surface 構文から表面的な糖衣を除いた形に相当するが、Surface 構文との対応づけは Phase 1 で定める。
+- **定義**：elaboration の入力となる、Narrative 情報を持たない項言語。Surface 構文から表面的な糖衣を除いた形に相当するが、Surface 構文との対応づけは Phase 2 以降で定める。
 - **参照**：core-calculus.md §3.1。
 - **関連要件 ID**：なし。
 

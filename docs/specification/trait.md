@@ -412,7 +412,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
-  この操作は Phase 1 以降へ送る。
+  この操作は Phase 2 以降へ送る。
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
   Union 値に runtime tag が無い以上、eliminator を足すと Preservation が破れる。
   次の三案は採らなかった。
@@ -422,7 +422,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **合成 Proof 値の入れ子と直接実装**：合成 trait を成分とする intersect 行と、合成 trait への直接 impl の禁止は、G2g が §4.3 と §4.4 として回収した。
   合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
-  正規化分類と opaque identity は Phase 1 以降へ送る。
+  正規化分類と opaque identity は Phase 4 以降へ送る。
 - **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
 - **三項以上の trait 合成**：`intersect-table` は二項の合成だけを持つ。
@@ -432,10 +432,10 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   したがって現在の模型では、`root` から不可視な scope を要する義務は、探索としては解けても typing としては解けない。
   G2g はこの差を埋めない。埋めるには typing 判断そのものが scope 文脈を運ぶ必要があり、`Γ` の形を変える改訂になるためである。
   これはホワイトペーパー §17.6 の「global implicit `impl` は trait または target type の少なくとも一方が現在の package / module 系譜で生成されていることを要求する」を、typing 側でも回収したことを意味しない。
-  typing への scope 文脈の搬送は Phase 1 以降へ送る。
+  typing への scope 文脈の搬送は Phase 2 以降へ送る。
 - **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
   選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
-  搬送した Proof を消費する下流処理は、Phase 1 以降で扱う。
+  搬送した Proof を消費する下流処理は、Phase 4 以降で扱う。
 - **impl と intersect の origin**：impl 行と intersect 行は `(Reserved oid)` と R0 の `(prim nm)` のままである。
   §5.3 の発行者検査は、`Implements τ tn` を対応する impl 行の `oid` に、`RequiresBoth A B` を対応する intersect 行の `oid` に結び付けており、行ごとの ID が単独で Proof を正当化する。
   NAR-003 が trait 行について取り除いたのと同じ構造が、ここに残っている。
