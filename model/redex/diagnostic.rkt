@@ -449,7 +449,8 @@
                        #:found [found #f]
                        #:source-chain [source-chain #f]
                        #:backend [backend #f]
-                       #:expansion-trace [expansion-trace '()]
+                       #:expansion-trace [expansion-trace #f]
+                       #:expansion-context [expansion-context (hash)]
                        #:related [related '()])
   (define code (diagnostic-code-of phase key))
   (unless code
@@ -470,6 +471,11 @@
         (error 'diagnostic-of "~a の診断は backend を取らない: ~s" phase backend)))
   (define row (diagnostic-code-row code))
   (define title (diagnostic-code-title row))
+  ;; spec §7.3: 明示の trace があればそれを使い、無ければ primary span を
+  ;; 鍵として展開表を引き、当たらなければ空とする。
+  (define trace
+    (or expansion-trace
+        (hash-ref expansion-context primary-span '())))
   ;; spec §10.2: 展開から出た診断は、ユーザーが書き下した呼出しと
   ;; 展開結果の 2 段を持つ。surface frame はユーザーが書き下した
   ;; 入力そのものの由来を指す。
@@ -478,7 +484,6 @@
   ;; s_result が合成 span でないのは、template の根が pattern 変数である
   ;; 定義のときである。その節点は展開が合成したのではなく実引数そのもの
   ;; だから、synthesized frame を足さず surface frame だけを返す。
-  (define trace expansion-trace)
   (define (synthetic-span? span)
     (match span
       [(list '#:span '#:synthetic _ _) #t]

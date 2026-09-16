@@ -663,3 +663,29 @@
  ;; 2 段目の synthesized frame は付かない。
  (check-equal? (diagnostic-source-chain d)
                '((surface verbatim (#:span main 20 32)))))
+
+(test-case
+ "明示の expansion-trace が展開表より優先する"
+ (define s '(#:span main 0 5))
+ (define explicit (list (list 'm s '(#:span #:synthetic 1 1))))
+ (define table (hash s (list (list 'other s s))))
+ (define d (diagnostic-of 'typing 'ill-typed
+                          #:primary-span s
+                          #:expansion-trace explicit
+                          #:expansion-context table))
+ (check-equal? (diagnostic-expansion-trace d) explicit))
+
+(test-case
+ "明示が無ければ primary span を鍵として展開表を引く"
+ (define s '(#:span #:synthetic 3 3))
+ (define found (list (list 'm '(#:span main 0 5) s)))
+ (define d (diagnostic-of 'typing 'ill-typed
+                          #:primary-span s
+                          #:expansion-context (hash s found)))
+ (check-equal? (diagnostic-expansion-trace d) found))
+
+(test-case
+ "明示も表の当たりも無ければ expansion-trace は空である"
+ (define s '(#:span main 0 5))
+ (define d (diagnostic-of 'typing 'ill-typed #:primary-span s))
+ (check-equal? (diagnostic-expansion-trace d) '()))
