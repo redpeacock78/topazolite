@@ -246,7 +246,7 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 診断の expected 欄は判定点によって異なる。
 `check-as/full` の 2 箇所は宣言された `expected` をそのまま載せ、`binding-context` は残余を反映した後の束縛型を載せる。
 後者は実際に比較した型を示し、前者は寿命の推論を反映する前の型であり、兄弟の `type-mismatch` と揃える判断である。
-救済策の三つの枝は実装しない（`SUR-006`）。
+救済策の三つの枝は実装しない（`OWN-004`、`SUR-006`、`PRF-005`）。
 
 ### 3.4 型同値との分離
 
@@ -528,7 +528,7 @@ G2a は次の規則を導入しない。
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
 - **optional field**：G2a の field はすべて required とする。
-  optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う。
+  optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う（`ADT-001`）。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。

@@ -658,6 +658,30 @@ package と module の系譜は、scope の可視性、typing の discharge、ba
 
 fixed-width integer の型と literal は、幅と符号を保った表現へ lowering されなければならない。
 
+### ADT-001
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §7、`docs/specification/core-calculus.md` §6.2
+
+ユーザー定義 data 型は optional field と `Owned` の再帰欄を宣言でき、対応する constructor を Core へ lowering できなければならない。
+
+### PAT-001
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §9
+
+Union の eliminator は branch を選択して型付き field を回復し、その結果を Typed Core の分岐へ渡さなければならない。
+
+### PRF-005
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.3
+
+構造型 narrowing で余剰 field を drop する場合、RemainderSafelyDropped Proof を構築して消費しなければならない。
+
 ### BAK-001
 
 - **状態**：G3
@@ -777,13 +801,11 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
-| Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 2 以降 | §4.5.3 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
 | 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
 | 三項以上の trait 合成 | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
-| optional field | `structural-row.md` §7 | Phase 2 以降 | §4.5.2 |
 | 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 多相 primitive | `proof-value.md` §8 | Phase 4 以降 | §4.4 |
@@ -805,9 +827,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 2 以降 | §5.1 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
-| 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 2 以降 | 無し |
-| 余剰 Owned field に対する borrowed view | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
-| RemainderSafelyDropped Proof による残余の drop | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 未定 | §4.1 |

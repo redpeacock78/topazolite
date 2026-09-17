@@ -412,7 +412,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   現在の Γ0 は閉じた単相型を持ち、合成 `Implements` の Proof 値を取る正典構文もないためである。
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
-  この操作は Phase 2 以降へ送る。
+  この操作は Phase 2 以降へ送る（`PAT-001`）。
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
   Union 値に runtime tag が無い以上、eliminator を足すと Preservation が破れる。
   次の三案は採らなかった。

@@ -1412,7 +1412,7 @@ f を適用以外の位置（curry の引数、constructor の field、返り値
 `Owned` でない位置の構造的減少の判定は、包みの前後で変わらない。
 `Owned` の位置そのものを根とする構造的減少は、現行の data 型では書けない。
 `Eliminate` は `Owned<τ>` を data 型へ剥がすが、既存の data 型の再帰欄は `(List element)` のように素の型で宣言されている。
-再帰欄を `Owned` で宣言する data 型を書く手段が無いため、剥がした先の欄が `Owned` にならない。
+再帰欄を `Owned` で宣言する data 型を書く手段が無いため、剥がした先の欄が `Owned` にならない（`ADT-001`）。
 
 **(C-Guarded)** [REQ: REC-002]
 
