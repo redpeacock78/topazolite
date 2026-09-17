@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 14)
+(define diagnostic-registry-version 15)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -336,6 +336,21 @@
     ("E-MAC-006" macro-template-free-var "マクロの template が pattern に無い変数を参照した")
     ("E-MAC-007" macro-unknown-name "registry に無いマクロを呼び出した")))
 
+;; registry version 15 で surface 相を新設する。字句解析と構文解析と
+;; 型別名の展開の診断は Surface 層が出すため、既存のどの相へも属さない。
+(define surface-entries-v15
+  '(("E-SUR-001" surface-invalid-byte "UTF-8 として解釈できない byte 列がある")
+    ("E-SUR-002" surface-unknown-character "字句にならない文字がある")
+    ("E-SUR-003" surface-unterminated-string "文字列リテラルが閉じていない")
+    ("E-SUR-004" surface-invalid-escape "文字列リテラルに許さないエスケープがある")
+    ("E-SUR-005" surface-unexpected-token "構文が合わないトークンがある")
+    ("E-SUR-006" surface-unexpected-eof "入力が構文の途中で終わった")
+    ("E-SUR-007" surface-duplicate-field "record または record 型の同じフィールドを 2 度書いた")
+    ("E-SUR-008" surface-unknown-type-name "宣言の無い型の名前を参照した")
+    ("E-SUR-009" surface-duplicate-type-alias "同じ型別名を 2 度宣言した")
+    ("E-SUR-010" surface-recursive-type-alias "型別名の参照に循環がある")
+    ("E-SUR-011" surface-reserved-type-name "基本型の名前を型別名として宣言した")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -356,7 +371,8 @@
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)
-          (rows 'expand 14 expand-entries-v14)))
+          (rows 'expand 14 expand-entries-v14)
+          (rows 'surface 15 surface-entries-v15)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。
