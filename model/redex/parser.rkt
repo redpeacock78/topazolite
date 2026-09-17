@@ -53,6 +53,49 @@
   (fail (if (eof? ts i) 'surface-unexpected-eof 'surface-unexpected-token)
         (span-at ts i)))
 
+(define (pitem-ahead? ts i)
+  (or (kw? ts i 'type)
+      (kw? ts i 'const)
+      (kw? ts i 'let)
+      (and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))))
+
+;; spec §3.2。pitem の後には NL+ が要る。ここを緩めると、宣言と次の式の
+;; 境界が消えて曖昧になる。
+(define (require-nl ts fail i)
+  (if (eq? (kind-at ts i) 'nl)
+      (add1 i)
+      (fail-at ts fail i)))
+
+(define (parse-pitem ts fail i)
+  (cond
+    [(kw? ts i 'type) (parse-type-decl ts fail i)]
+    [(and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))
+     (parse-fn-decl ts fail i)]
+    [(or (kw? ts i 'const) (kw? ts i 'let))
+     (parse-binding ts fail i)]
+    [else (fail-at ts fail i)]))
+
+(define (parse-type-decl ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
+                [(equal equal-j) (expect-punct ts fail name-j '|=|)]
+                [(ty ty-j) (parse-ty ts fail equal-j)])
+    (values `(STypeDecl ,(hull start (node-span ty))
+                        (SName ,name-span ,name) ,ty)
+            ty-j)))
+
+(define (parse-fn-decl ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
+                [(open open-j) (expect-punct ts fail name-j '|(|)]
+                [(params params-j) (parse-params ts fail open-j)]
+                [(close close-j) (expect-punct ts fail params-j '|)|)]
+                [(return-type type-j) (parse-ty ts fail close-j)]
+                [(body body-j) (parse-block ts fail type-j)])
+    (values `(SFnDecl ,(hull start (node-span body))
+                      (SName ,name-span ,name) ,params ,return-type ,body)
+            body-j)))
+
 (define (expect-punct ts fail i p)
   (if (punct? ts i p)
       (values (span-at ts i) (add1 i))
@@ -64,14 +107,25 @@
       (fail-at ts fail i)))
 
 (define (parse-program ts fail)
-  (define i0 (skip-nl ts 0))
-  (if (eof? ts i0)
-      (fail 'surface-unexpected-eof (span-at ts i0))
-      (let-values ([(expr i1) (parse-expr ts fail i0)])
-        (define i2 (skip-nl ts i1))
-        (if (not (eof? ts i2))
-            (fail-at ts fail i2)
-            (values `(SProgram ,(node-span expr) () ,expr) i2)))))
+  (let loop ([i (skip-nl ts 0)] [items '()])
+    (cond
+      [(eof? ts i)
+       (fail 'surface-unexpected-eof (span-at ts i))]
+      [(pitem-ahead? ts i)
+       (let-values ([(item j) (parse-pitem ts fail i)])
+         (loop (require-nl ts fail j) (cons item items)))]
+      [else
+       (let-values ([(expr j) (parse-expr ts fail i)])
+         (define k (skip-nl ts j))
+         (if (not (eof? ts k))
+             (fail-at ts fail k)
+             (let ([first-span
+                    (if (null? items)
+                        (node-span expr)
+                        (node-span (last items)))])
+               (values `(SProgram ,(hull first-span (node-span expr))
+                                 ,(reverse items) ,expr)
+                       k))))])))
 
 (define (parse-expr ts fail i)
   (parse-postfix ts fail i))
