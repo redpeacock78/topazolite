@@ -68,6 +68,14 @@
 
 ユーザー trait は予約 Narrative が継承した正規 trait constructor を経由し、ValidNarrativeTrait Proof を保持しなければならない。
 
+### NAR-004
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §9
+
+impl と intersect の行は、対応する Narrative の生成系譜を origin として保持しなければならない。
+
 ### POL-001
 
 - **状態**：G2
@@ -613,6 +621,14 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 
 余剰 `Owned` field の明示 projection は、narrowing で残す field と残余の扱いを Surface 上で指定できなければならない。
 
+### MOD-001
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §9、`docs/specification/backend-matrix.md` §12
+
+package と module の系譜は、scope の可視性、typing の discharge、backend の module 境界へ渡されなければならない。
+
 ### BIT-001
 
 - **状態**：Phase 2 以降
@@ -766,10 +782,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
 | 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
 | 三項以上の trait 合成 | `trait.md` §9 | Phase 2 以降 | §8.1 |
-| package と module の coherence | `trait.md` §9 | Phase 2 以降 | §17.6 |
-| typing 経路の scope 文脈 | `trait.md` §9 | Phase 2 以降 | §17.6 |
 | priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
-| impl と intersect の origin | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | optional field | `structural-row.md` §7 | Phase 2 以降 | §4.5.2 |
 | 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
@@ -777,7 +790,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 4 以降 | §4.6 |
 | 探索計算と certificate | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
 | Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
-| module 境界 | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
 | PR output の source-map metadata | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
 | immutable vector | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
 | explicit closure environment | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |

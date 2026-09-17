@@ -426,13 +426,13 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない（`SUR-005`）。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
 - **三項以上の trait 合成**：`intersect-table` は二項の合成だけを持つ。
-- **package と module の coherence**：G2e は既存の scope 識別子で系譜を近似し、production の入口を `root` に固定する。
+- **package と module の coherence**：G2e は既存の scope 識別子で系譜を近似し、production の入口を `root` に固定する（`MOD-001`）。
 - **typing 経路の scope 文脈**：`obligations-dischargeable?` は `sc-ctx` を引数に取らず、`discharge?` の既定値 `(root)` を使う。
   typing と elaborate の判断は、いずれもこの経路を通る。
   したがって現在の模型では、`root` から不可視な scope を要する義務は、探索としては解けても typing としては解けない。
   G2g はこの差を埋めない。埋めるには typing 判断そのものが scope 文脈を運ぶ必要があり、`Γ` の形を変える改訂になるためである。
   これはホワイトペーパー §17.6 の「global implicit `impl` は trait または target type の少なくとも一方が現在の package / module 系譜で生成されていることを要求する」を、typing 側でも回収したことを意味しない。
-  typing への scope 文脈の搬送は Phase 2 以降へ送る。
+  typing への scope 文脈の搬送は Phase 2 以降へ送る（`MOD-001`）。
 - **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
   選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
   搬送した Proof を消費する下流処理は、Phase 4 以降で扱う。
@@ -441,4 +441,4 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   NAR-003 が trait 行について取り除いたのと同じ構造が、ここに残っている。
   ホワイトペーパー §8.1 は「正規の所属は `impl` / `derive` Narrative が返す Proof で表す」と述べ、`TraitResolutionNarrative` に `impl` / `derive` と候補収集、一意性、coherence policy を置いている。
   NAR-003 が回収したのは trait 生成側の系譜であり、この形について何も主張していない。
-  `(Reserved oid)` が最終的に正しい形だと決めたわけではない。
+  `(Reserved oid)` が最終的に正しい形だと決めたわけではない（`NAR-004`）。

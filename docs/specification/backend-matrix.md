@@ -476,7 +476,7 @@ gate の `deferred-tests` が BAK-002 を 0 件と数えるのはこのためで
 本節の項目は Phase 0 で狭めた範囲である。
 狭めた理由は実装規模であり、ホワイトペーパーの意味を置き換えない。
 
-- **module 境界**：`PR` に module 形を置かない。Phase 0 の Typed Core は単一の項であり module 境界を持たない。これはホワイトペーパー §13.3.1 の `module import / export` を回収したことを意味しない。
+- **module 境界**：`PR` に module 形を置かない。Phase 0 の Typed Core は単一の項であり module 境界を持たない。これはホワイトペーパー §13.3.1 の `module import / export` を回収したことを意味しない（`MOD-001`）。
 - **PR output の source-map metadata**：写像の出力に metadata を載せない。全構成子への付与は構文を倍にし、保存性質の検査に必要でもない。これはホワイトペーパー §13.3.1 の `source-map metadata` を回収したことを意味しない。
 - **immutable vector**：`PR` に vector 形を置かない。Phase 0 の Typed Core に vector 型が無く、`(List τ)` は `Construct` による ADT である。これはホワイトペーパー §13.3.1 の `immutable record / vector` のうち vector を回収したことを意味しない。
 - **explicit closure environment**：`penv` は部分適用の引数を溜める列でしかなく、適用の時点で代入して消える（§4 の `R-PR-App`）。写像の出力で `penv` が空でないのは源の `CurryVal` を写した場合だけである。源の機械が代入で意味論を与えているため、目標機械も代入で書く。これはホワイトペーパー §13.3.1 の `explicit closure environment` を実行モデルとして回収したことを意味しない。
