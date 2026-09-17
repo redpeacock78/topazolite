@@ -839,6 +839,10 @@ Phase 0 の各仕様が未回収として残した項目を一覧にする。
 ID は新設しない。
 ID は状態と検証欄を持ち gate の期待集合に入るが、本節の項目はどちらも持たないためである。
 
+P2b では、Phase 2 の実装対象と本表の Phase 2 行を合わせた 41 項目を A から D の 4 分類へ整理し、B と C を要件 ID として §3 へ起票した。
+分類結果は A が 10 件、B が 20 件、C が 9 件、D が 2 件である。
+§4 の行が既存 ID に覆われていると分かった項目は分類ではなく P2a の監査欠陥として扱い、新しい ID を作らずにその行を削除する。
+
 行き先の値は次の 5 つである。
 
 - `Phase 2 以降`：parser、Surface からの lowering、module、ADT、pattern matching、bit syntax、Portable Racket backend のいずれかに依存する事項
