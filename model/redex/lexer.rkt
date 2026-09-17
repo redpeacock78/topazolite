@@ -30,6 +30,19 @@
 
 (define (lex id bs)
   (define n (bytes-length bs))
+  ;; spec §4.4。不正 byte の検査は走査より前に 1 度だけ行い、入力の全体を
+  ;; 覆う。コメントの中も文字列リテラルの中も同じに扱う。この検査は他の
+  ;; どの字句の誤りよりも優先する。走査順の最初の 1 件という規則は、この
+  ;; 検査を通った入力の中でだけ効く。
+  (define bad (first-invalid-byte bs n))
+  (cond
+    [bad (sur 'surface-invalid-byte (span id bad (add1 bad)))]
+    [else (scan id bs n)]))
+
+(define (sur key s)
+  (diagnostic-of 'surface key #:primary-span s))
+
+(define (scan id bs n)
   ;; 走査は byte 添字で進める。char へ変換しないのは、span が byte 位置を
   ;; 指すためである。
   (let loop ([i 0] [acc '()])
@@ -53,9 +66,14 @@
        => (lambda (p)
             (loop (add1 i) (cons (stok 'punct p (span id i (add1 i))) acc)))]
       [(= (bytes-ref bs i) 34)
-       (define-values (j str) (scan-string bs n i))
-       (loop j (cons (stok 'str str (span id i j)) acc))]
-      [else (error 'lex "Task 4 で拒否経路を足すまでの穴である: ~s" i)])))
+       (define result (scan-string id bs n i))
+       (if (diagnostic? result)
+           result
+           (let ([j (car result)] [str (cdr result)])
+             (loop j (cons (stok 'str str (span id i j)) acc))))]
+      [else
+       (define j (code-point-end bs n i))
+       (sur 'surface-unknown-character (span id i j))])))
 
 (define (scan-while bs n i pred)
   (let go ([j i])
@@ -82,18 +100,71 @@
       [(comment-start? bs n j) (go (skip-comment bs n j) last)]
       [else last])))
 
-;; この段では閉じない文字列と許さないエスケープを扱わない。Task 4 で足す。
-(define (scan-string bs n i)
+;; spec §4.5。文字列の中では、許さないエスケープが閉じない末尾より先に返る。
+;; 逆斜線の次が入力の末尾か改行の場合は E-SUR-003 である。
+(define (scan-string id bs n i)
   (let go ([j (add1 i)] [out '()])
     (cond
-      [(>= j n) (error 'lex "Task 4 で E-SUR-003 を足すまでの穴である")]
+      [(>= j n) (sur 'surface-unterminated-string (span id i n))]
+      [(= (bytes-ref bs j) 10)
+       (sur 'surface-unterminated-string (span id i j))]
       [(= (bytes-ref bs j) 34)
-       (values (add1 j)
-               (bytes->string/utf-8 (list->bytes (reverse out))))]
+       (cons (add1 j)
+             (bytes->string/utf-8 (list->bytes (reverse out))))]
       [(= (bytes-ref bs j) 92)
-       (define e (and (< (add1 j) n) (bytes-ref bs (add1 j))))
-       (define c (case e [(34) 34] [(92) 92] [(110) 10] [(116) 9] [else #f]))
-       (if c
-           (go (+ j 2) (cons c out))
-           (error 'lex "Task 4 で E-SUR-004 を足すまでの穴である"))]
+       (define k (add1 j))
+       (cond
+         [(or (>= k n) (= (bytes-ref bs k) 10))
+          (sur 'surface-unterminated-string
+               (span id i (if (>= k n) n k)))]
+         [else
+          (define c (case (bytes-ref bs k)
+                      [(34) 34] [(92) 92] [(110) 10] [(116) 9] [else #f]))
+          (if c
+              (go (+ j 2) (cons c out))
+              (sur 'surface-invalid-escape
+                   (span id j (code-point-end bs n k))))])]
       [else (go (add1 j) (cons (bytes-ref bs j) out))])))
+
+;; UTF-8 として解釈できない最初の byte の位置を返す。無ければ #f である。
+(define (first-invalid-byte bs n)
+  (let go ([i 0])
+    (cond
+      [(>= i n) #f]
+      [else
+       (define len (utf8-length (bytes-ref bs i)))
+       (cond
+         [(not len) i]
+         [(> (+ i len) n) i]
+         [(not (continuations-ok? bs i len)) i]
+         [(not (utf8-canonical? bs i len)) i]
+         [else (go (+ i len))])])))
+
+(define (utf8-length b)
+  (cond
+    [(< b #x80) 1]
+    [(< b #xC2) #f]
+    [(< b #xE0) 2]
+    [(< b #xF0) 3]
+    [(< b #xF5) 4]
+    [else #f]))
+
+(define (continuations-ok? bs i len)
+  (for/and ([k (in-range 1 len)])
+    (= (bitwise-and (bytes-ref bs (+ i k)) #xC0) #x80)))
+
+;; 過長表現と surrogate と上限超えを弾く。
+(define (utf8-canonical? bs i len)
+  (define b0 (bytes-ref bs i))
+  (define b1 (and (> len 1) (bytes-ref bs (add1 i))))
+  (cond
+    [(= len 3) (not (or (and (= b0 #xE0) (< b1 #xA0))
+                        (and (= b0 #xED) (>= b1 #xA0))))]
+    [(= len 4) (not (or (and (= b0 #xF0) (< b1 #x90))
+                        (and (= b0 #xF4) (>= b1 #x90))))]
+    [else #t]))
+
+;; 位置 i から始まる code point の末尾の次の位置を返す。全体検査を通った
+;; 入力にだけ使うので、len が #f になることは無い。
+(define (code-point-end bs n i)
+  (min n (+ i (or (utf8-length (bytes-ref bs i)) 1))))
