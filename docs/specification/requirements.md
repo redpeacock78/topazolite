@@ -706,6 +706,77 @@ Racket CS と RacketScript runtime は共通 semantic conformance suite を通�
 
 未対応 backend feature は silent fallback せず capability diagnostic を返す。
 
+### BAK-004
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+`raco exe` と `raco distribute` は、同じ入力から再現可能な実行ファイルと配布物を生成し、その内容を検証できなければならない。
+
+### BAK-005
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/backend-matrix.md` §12
+
+Portable Racket emitter は、Typed Core の canonical source span に対応する source-map metadata を出力へ保持しなければならない。
+
+### BAK-006
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/backend-matrix.md` §12
+
+Portable Racket runtime は immutable vector を表現し、その不変性を保たなければならない。
+
+### BAK-007
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/backend-matrix.md` §12
+
+Portable Racket emitter は closure environment を明示的に表現し、適用と capture の意味を保たなければならない。
+
+### BAK-008
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/backend-matrix.md` §12
+
+Portable Racket backend は kernel primitive と trait primitive を対応表で区別し、各 primitive の実行または未対応診断を定めなければならない。
+
+### BAK-009
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/backend-matrix.md` §12
+
+Portable Racket lowering は Typed Core の全構成子を漏れなく対応表へ割り当てなければならない。
+
+### BAK-010
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/borrow.md` §14
+
+Portable Racket backend は borrow と region の規則を、実行時表現へ意味論を保って写さなければならない。
+
+### BAK-011
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/core-calculus.md` §5.1
+
+Portable Racket backend は source point ごとの静的な borrow state と machine state の対応を保持しなければならない。
+
+### BAK-012
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/unsafe.md` §6
+
+Portable Racket backend は `H` 内で閉じる raw pointer 操作の profile を定め、対応する実行表現を選ばなければならない。
+
 ### FFI-001
 
 - **状態**：Phase 3 以降
@@ -812,16 +883,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 文脈付き安全型とユーザー validator | `proof-value.md` §8 | Phase 4 以降 | §4.6 |
 | 探索計算と certificate | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
 | Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
-| PR output の source-map metadata | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
-| immutable vector | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
-| explicit closure environment | `backend-matrix.md` §12 | Phase 2 以降 | §13.3.1 |
-| 型の保存 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
-| Effect の保存 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
-| 評価順の保存の測定範囲 | `backend-matrix.md` §12 | Phase 2 以降 | §15 |
-| kernel primitive と trait primitive | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
-| lowering 形集合の完全検査 | `backend-matrix.md` §12 | Phase 2 以降 | 無し |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 5 以降 | §13.4 |
-| 借用規則の backend 写し先 | `borrow.md` §14 | Phase 2 以降 | §13.3.1 |
 | 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
@@ -830,13 +892,11 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 未定 | §4.1 |
-| source point ごとの静的な借用状態と機械側の対応 | `core-calculus.md` §5.1 | Phase 2 以降 | §13.4.4 |
 | 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 4 以降 | §4.8 |
 | 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 未定 | 無し |
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 未定 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 未定 | §4.8 |
 | `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 3 以降（FFI-003） | §5.2 |
-| raw pointer 操作の backend profile | `unsafe.md` §6 | Phase 2 以降 | §17.13 |
 | address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 3 以降 | §17.13 |
 | 外部の allocation を指す pointer からの safe reference 構築（PTR-002 の縮約） | `unsafe.md` §6 | Phase 3 以降（FFI-003） | §4.10 |
 | `H` の外の allocation としての pointee の生存 | `unsafe.md` §6 | Phase 3 以降 | §17.13 |

@@ -458,7 +458,7 @@ elaboration も surface 構文も通さない。
 
 ### 6.1 backend profile
 
-raw 操作がどの backend でどう降りるかは Phase 2 以降で定める。
+raw 操作がどの backend でどう降りるかは Phase 2 以降で定める（`BAK-012`）。
 Redex model は `H` の上の path lookup として扱い、機械語の load と store へは対応づけない。
 
 ### 6.2 address space
