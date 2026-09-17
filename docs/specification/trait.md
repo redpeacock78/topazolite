@@ -423,7 +423,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
   正規化分類と opaque identity は Phase 4 以降へ送る。
-- **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない。
+- **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない（`SUR-005`）。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
 - **三項以上の trait 合成**：`intersect-table` は二項の合成だけを持つ。
 - **package と module の coherence**：G2e は既存の scope 識別子で系譜を近似し、production の入口を `root` に固定する。

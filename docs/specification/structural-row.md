@@ -246,7 +246,7 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 診断の expected 欄は判定点によって異なる。
 `check-as/full` の 2 箇所は宣言された `expected` をそのまま載せ、`binding-context` は残余を反映した後の束縛型を載せる。
 後者は実際に比較した型を示し、前者は寿命の推論を反映する前の型であり、兄弟の `type-mismatch` と揃える判断である。
-救済策の三つの枝は実装しない。
+救済策の三つの枝は実装しない（`SUR-006`）。
 
 ### 3.4 型同値との分離
 
@@ -541,7 +541,7 @@ G2a は次の規則を導入しない。
   G2g の降格は代入安全性のための狭めであり、G5c2 が可変性を保つ規則へ置き換えて、ホワイトペーパー §4.5.3 の要求を回収した。
 - **mut field への代入と借用**：G5c2 が `ProjBorrow` と `Assign` と alias safety を同時に導入し、record field の借用と書き換えを回収した。
 - **borrow mode の互換性**：G5c2 が record field の射影について `Borrowed` と `BorrowedMut` の mode 規則を定め、暗黙の強化と弱化を認めない範囲を回収した。
-- **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 2 以降で扱う。
+- **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 2 以降で扱う（`SUR-001`）。
 - **region 引数どうしの関係の宣言**：異なる 2 つの region 引数のあいだには反射律だけを認める。
   region の束縛へ包含の宣言を書く構文は置かない。
   Phase 4 以降で扱う。

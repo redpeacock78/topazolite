@@ -568,6 +568,51 @@ raw pointer の dereference は `Unsafe` Effect と必要 Proof obligation を�
 
 raw pointer から safe reference を構築するには lifetime、alignment、validity の Proof を要求する。
 
+### SUR-001
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §7
+
+lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継がなければならない。
+
+### SUR-002
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+`?=`、pipe、interpolation は、対応する Core の制御または値の形へ意味論を保って lowering されなければならない。
+
+### SUR-003
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+Surface の Effect row 表記は、宣言と式の Effect 制約を保った Core の Effect row へ elaboration されなければならない。
+
+### SUR-004
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+shared borrow と lexical region の Surface 表記は、既存の borrow と region の境界を保つ Core の規則へ lowering されなければならない。
+
+### SUR-005
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §9
+
+表層構文の `derive` は、対象の実装 record と対応する `Implements` Proof を正規の Narrative 経路から生成しなければならない。
+
+### SUR-006
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/structural-row.md` §3.3
+
+余剰 `Owned` field の明示 projection は、narrowing で残す field と残余の扱いを Surface 上で指定できなければならない。
+
 ### BIT-001
 
 - **状態**：Phase 2 以降
@@ -589,6 +634,13 @@ raw pointer から safe reference を構築するには lifetime、alignment、v
 - **由来**：ホワイトペーパー §15
 
 `|` と `&` は型位置では Union / Intersection として解決される。
+
+### BIT-004
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+fixed-width integer の型と literal は、幅と符号を保った表現へ lowering されなければならない。
 
 ### BAK-001
 
@@ -712,7 +764,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | Union の eliminator と型付き field 回復 | `trait.md` §9 | Phase 2 以降 | §4.5.3 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
-| 表層構文の derive | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
 | 三項以上の trait 合成 | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | package と module の coherence | `trait.md` §9 | Phase 2 以降 | §17.6 |
@@ -720,7 +771,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
 | impl と intersect の origin | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | optional field | `structural-row.md` §7 | Phase 2 以降 | §4.5.2 |
-| Surface 構文 | `structural-row.md` §7 | Phase 2 以降 | §3.1 |
 | 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 多相 primitive | `proof-value.md` §8 | Phase 4 以降 | §4.4 |
@@ -745,7 +795,6 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 再帰欄を `Owned` で宣言する data 型 | `core-calculus.md` §6.2 | Phase 2 以降 | 無し |
 | 余剰 Owned field に対する borrowed view | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
-| 余剰 Owned field の明示 projection | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | RemainderSafelyDropped Proof による残余の drop | `structural-row.md` §3.3 | Phase 2 以降 | §15 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
