@@ -83,5 +83,5 @@
  (check-equal? names
                (set "trait.md" "structural-row.md"
                     "proof-value.md" "proof-search.md"
-                    "backend-matrix.md" "diagnostic.md" "borrow.md"
+                    "diagnostic.md" "borrow.md"
                     "core-calculus.md" "unsafe.md")))
