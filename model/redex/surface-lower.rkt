@@ -101,7 +101,7 @@
                (cons (list (list '#:lbl label s_l) 'imm (lower-sexpr e env fail))
                      row))])))
 
-;; spec §7.2 の対応表である。SBlock は Task 7 で足す。
+;; spec §7.2 の対応表である。
 (define (lower-sexpr e env fail)
   (match e
     [`(SInt ,s ,n) `(#:lit ,n ,s)]
@@ -123,7 +123,53 @@
     [`(SProj ,s ,target (SLabel ,s_l ,label))
      `(Proj ,s ,(lower-sexpr target env fail) (#:lbl ,label ,s_l))]
     [`(SRec ,s ,fields)
-     `(Rec ,s ,(lower-rec-fields fields env fail))]))
+     `(Rec ,s ,(lower-rec-fields fields env fail))]
+    [`(SBlock ,_ ,binds ,tail)
+     ;; spec §7.2。block 自身は節点を作らず、束縛の入れ子と末尾式になる。
+     (fold-items binds tail env fail)]))
+
+;; spec §7.3。尾部の span は「その宣言の始まり」から「末尾式の終わり」までで
+;; ある。span は (#:span sid lo hi) の 4 要素である。
+(define (tail-span item end-span)
+  (list '#:span (second end-span) (third (node-span item)) (fourth end-span)))
+
+;; spec §7.2。spitem 1 つを、残りの項を取って包む手続きへ落とす。
+;; STypeDecl は節点を作らないので、残りをそのまま返す。
+(define (lower-item item s_tail env fail)
+  (match item
+    [`(STypeDecl ,_ ,_ ,_) (λ (rest) rest)]
+    [`(SBind ,_ ,bmode (SName ,s_x ,x) ,ty-or-none ,bound)
+     (define binder
+       (if (eq? ty-or-none '#:none)
+           ;; spec §8。注釈が無ければ 2 欄の束縛子である。
+           (list (list '#:bind x s_x) bmode)
+           (list (list '#:bind x s_x) bmode
+                 (list '#:ty (lower-sty ty-or-none env fail)
+                       (node-span ty-or-none)))))
+     (define bound-core (lower-sexpr bound env fail))
+     (λ (rest) `(Let ,s_tail ,binder ,bound-core ,rest))]
+    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,body)
+     (define params-core (lower-params params env fail))
+     (define result-core (lower-sty result-ty env fail))
+     (define body-core (lower-sexpr body env fail))
+     ;; 効果行の span は宣言自身のものである。Surface に効果の表記が無い。
+     (λ (rest) `(Recur ,s_tail (#:bind ,f ,s_f) ,params-core
+                       (#:ty ,result-core ,(node-span result-ty))
+                       (#:ef () ,s)
+                       ,body-core ,rest))]))
+
+;; spec §7.2。畳み込みは右である。lower [b1 b2] e = L(b1, L(b2, lower e))。
+;; spec §6.1。診断は 1 件だけ返すので、どれが返るかは走る順序で決まる。
+;; 落とす順序は原文の並び順であり、包む順序だけが逆である。末尾式は
+;; 原文では最後なので、宣言をすべて落とし終えてから落とす。
+(define (fold-items items tail env fail)
+  (define end-span (node-span tail))
+  (define wraps
+    (for/list ([item (in-list items)])
+      (lower-item item (tail-span item end-span) env fail)))
+  (define tail-core (lower-sexpr tail env fail))
+  (for/fold ([acc tail-core]) ([wrap (in-list (reverse wraps))])
+    (wrap acc)))
 
 ;; spec §7。入口である。parse の診断はそのまま返す。呼ぶ側に
 ;; 「parse の結果を場合分けしてから lower-surface を呼ぶ」手続きを課すと、
@@ -140,5 +186,4 @@
             (return (diagnostic-of 'surface key #:primary-span s)))
           (define env (build-alias-env items fail))
           (check-alias-definitions items env fail)
-          ;; Task 7 で spitem の畳み込みへ差し替える。
-          (lower-sexpr e env fail))])]))
+          (fold-items items e env fail))])]))
