@@ -2,7 +2,7 @@
 
 **状態**：G2f 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/policy-narrative.md`、`docs/specification/glossary.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/region.md`、`docs/specification/macro.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/proof-search.md`、`docs/specification/proof-value.md`、`docs/specification/trait.md`、`docs/specification/policy-narrative.md`、`docs/specification/glossary.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/region.md`、`docs/specification/macro.md`、`docs/specification/surface.md`
 
 ## 1. 本レジストリの位置づけ
 
@@ -25,6 +25,7 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
+  - `P2`：Phase 2 のサイクル（P2a から P2c）の対象。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
   - 状態の値の後ろへ、その事項を起こした要件 ID を括弧で添えてよい。
@@ -75,6 +76,13 @@
 - **正典**：`docs/specification/trait.md` §9
 
 impl と intersect の行は、対応する Narrative の生成系譜を origin として保持しなければならない。
+
+### NAR-005
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §11.5.2
+
+`NFn` の origin は、検査の時点で導出する派生ではなく、型成分として保持されなければならない。
 
 ### POL-001
 
@@ -578,9 +586,10 @@ raw pointer から safe reference を構築するには lifetime、alignment、v
 
 ### SUR-001
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/structural-row.md` §7
+- **正典**：`docs/specification/surface.md`
+- **関連文書**：`docs/specification/structural-row.md` §7
 
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継がなければならない。
 
@@ -620,6 +629,13 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 - **正典**：`docs/specification/structural-row.md` §3.3
 
 余剰 `Owned` field の明示 projection は、narrowing で残す field と残余の扱いを Surface 上で指定できなければならない。
+
+### SUR-007
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+Surface の型注釈と署名は、Typed Core への elaboration を通じて型付きの経路へつながらなければならない。
 
 ### MOD-001
 

@@ -443,14 +443,14 @@
                  "3 G2b IDs, 3 G2c IDs, 3 G2d IDs, 5 G2e IDs, 4 G2f IDs, "
                  "5 G2g IDs, 1 G3a IDs, 1 G3b IDs, 1 G3c IDs, 1 G3d IDs, 5 G4 IDs, "
                  "16 G5 IDs, 1 P1b IDs, 1 P1c1 IDs, 1 P1c2b IDs, 1 P1d IDs, "
-                 "1 P1e3 IDs\n"
+                 "1 P1e3 IDs, 1 P2c IDs\n"
                  "deferred-tests: BAK-001:6, BAK-002:0, BAK-003:1, BIT-002:2\n"))
   (check-equal? (get-output-string errors) ""))
 
 (test-case "cycle-descriptors covers every declared sub-cycle"
   (define ds (default-cycle-descriptors))
   (check-equal? (map cycle-descriptor-name ds)
-                '(G1 G2a G2b G2c G2d G2e G2f G2g G3a G3b G3c G3d G4 G5 P1b P1c1 P1c2b P1d P1e3))
+                '(G1 G2a G2b G2c G2d G2e G2f G2g G3a G3b G3c G3d G4 G5 P1b P1c1 P1c2b P1d P1e3 P2c))
   (define (by-name n)
     (findf (lambda (d) (eq? (cycle-descriptor-name d) n)) ds))
   (check-equal? (cycle-descriptor-expected-count (by-name 'G1)) 18)
@@ -480,8 +480,10 @@
   (check-false (cycle-descriptor-expected-count (by-name 'P1c2b)))
   (check-equal? (cycle-descriptor-expected-ids (by-name 'P1d)) '(NAR-003))
   (check-equal? (cycle-descriptor-expected-ids (by-name 'P1e3)) '(MAC-001))
+  (check-equal? (cycle-descriptor-expected-ids (by-name 'P2c)) '(SUR-001))
   (check-equal? (cycle-descriptor-state (by-name 'P1d)) "P1")
   (check-equal? (cycle-descriptor-state (by-name 'P1e3)) "P1")
+  (check-equal? (cycle-descriptor-state (by-name 'P2c)) "P2")
   (check-equal? (cycle-descriptor-state (by-name 'P1c2b)) "P1")
   (check-equal? (cycle-descriptor-state (by-name 'P1c1)) "P1"))
 
@@ -705,7 +707,7 @@
   (list (format "G3a expected ID is absent or not state G2: ~a" bak-003))))
 
 (test-case
- "descriptor state outside G1..G5 is rejected"
+ "descriptor state outside the started cycles is rejected"
  (define errors
    (with-fixture
     (registry-entry bak-003 "G3")

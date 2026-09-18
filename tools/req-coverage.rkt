@@ -27,13 +27,13 @@
 (define test-id-rx
   #px"(?<![-A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
 (define valid-states
-  (set "G1" "G2" "G3" "G4" "G5" "P1"
+  (set "G1" "G2" "G3" "G4" "G5" "P1" "P2"
        "Phase 2 以降" "Phase 3 以降"))
 
-;; descriptor が名乗れる状態は G サイクルと Phase 1 のサブサイクルに限る。
+;; descriptor が名乗れる状態は、着手済みのサイクルの状態に限る。
 ;; valid-states は Phase 送りの状態も含むため、まだ着手していない Phase の状態を
 ;; descriptor に書けないよう別に制限する。
-(define descriptor-states (set "G1" "G2" "G3" "G4" "G5" "P1"))
+(define descriptor-states (set "G1" "G2" "G3" "G4" "G5" "P1" "P2"))
 
 (define (state-set definitions state)
   (list->set
@@ -416,6 +416,7 @@
 (define expected-p1c2b-ids '(SCP-001))
 (define expected-p1d-ids '(NAR-003))
 (define expected-p1e3-ids '(MAC-001))
+(define expected-p2c-ids '(SUR-001))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -583,6 +584,17 @@
           (build-path root "docs/specification/core-calculus.md")))
   (define p1e3-tests
     (list (build-path root "model/redex/tests/macro-expand-test.rkt")))
+  (define p2c-specs
+    (list (build-path root "docs/specification/surface.md")))
+  (define p2c-tests
+    (for/list ([name (in-list '("lexer-test.rkt"
+                                "parser-test.rkt"
+                                "surface-lower-test.rkt"
+                                "surface-alias-test.rkt"
+                                "ucore-let-mode-test.rkt"
+                                "surface-diagnostic-test.rkt"
+                                "fstar-parity-test.rkt"))])
+      (build-path root "model/redex/tests" name)))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -602,7 +614,8 @@
    (cycle-descriptor 'P1c1 "P1" p1c1-specs p1c1-tests #f expected-p1c1-ids)
    (cycle-descriptor 'P1c2b "P1" p1c2b-specs p1c2b-tests #f expected-p1c2b-ids)
    (cycle-descriptor 'P1d "P1" p1d-specs p1d-tests #f expected-p1d-ids)
-   (cycle-descriptor 'P1e3 "P1" p1e3-specs p1e3-tests #f expected-p1e3-ids)))
+   (cycle-descriptor 'P1e3 "P1" p1e3-specs p1e3-tests #f expected-p1e3-ids)
+   (cycle-descriptor 'P2c "P2" p2c-specs p2c-tests #f expected-p2c-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])
