@@ -24,3 +24,37 @@ jobs:
       - name: requirement coverage
         if: always()
         run: racket tools/req-coverage.rkt
+
+  fstar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: Bogdanp/setup-racket@v1.15
+        with:
+          version: '9.2'
+          variant: 'CS'
+          distribution: 'full'
+          architecture: 'x64'
+
+      - name: fetch F*
+        run: curl -L -o fstar.tar.gz https://github.com/FStarLang/FStar/releases/download/v2026.09.13/fstar-v2026.09.13-Linux-x86_64.tar.gz
+
+      - name: verify checksum
+        run: echo "41b3b86b37734aae6a7b1beae808f3029568a67883f6be757d13e6d153ae255b  fstar.tar.gz" | sha256sum -c -
+
+      - name: extract
+        run: tar xzf fstar.tar.gz
+
+      - name: make executable
+        run: chmod +x ./fstar/bin/fstar.exe
+
+      - name: put bundled z3 on PATH
+        run: echo "$PWD/fstar/lib/fstar/z3-4.13.3/bin" >> "$GITHUB_PATH"
+
+      - name: z3 --version
+        run: z3 --version
+
+      - name: fstar --version
+        run: ./fstar/bin/fstar.exe --version
