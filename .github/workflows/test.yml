@@ -64,3 +64,25 @@ jobs:
 
       - name: check Topazolite.Parity
         run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Parity.fst
+
+      - name: parity check
+        run: racket tools/fstar-parity.rkt
+
+      - name: no admit or assume
+        run: |
+          if grep -rn -E '\b(admit|assume)\b' model/fstar/; then
+            echo "model/fstar/ に admit か assume がある" >&2
+            exit 1
+          fi
+          for f in model/fstar/*.fst; do
+            for n in $(grep -oE '^val [A-Za-z_][A-Za-z0-9_]*' "$f" | awk '{print $2}'); do
+              if ! grep -qE "^let (rec )?$n[ (:]" "$f"; then
+                echo "$f: val $n に対応する let が無い" >&2
+                exit 1
+              fi
+            done
+          done
+          if grep -rnF '(*' model/fstar/ | grep -F '…'; then
+            echo "model/fstar/ に置き場所だけの注釈がある" >&2
+            exit 1
+          fi
