@@ -119,6 +119,7 @@
          (Apply le gn gn)
          (Apply eq gn gn)
          (Let value gn value)
+         (Let (value let) gn value)
          (Apply (Fn ((argument Int)) Int () argument) gn)
          (Apply (Curry add gn) gn)
          g-bool

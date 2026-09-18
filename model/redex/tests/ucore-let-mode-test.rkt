@@ -5,7 +5,8 @@
          (prefix-in el: "../elaborate.rkt")
          "../ucore.rkt"
          "../annotate.rkt"
-         "../diagnostic.rkt")
+         "../diagnostic.rkt"
+         "../gen.rkt")
 
 ;; spec §8。ホワイトペーパー 867-869 行の const と let と let mut は
 ;; 型注釈を持たない。注釈ありの 3 欄 (x bmode uτ) では落とす先が無いので、
@@ -53,6 +54,14 @@
  (match-define `(Let ,_ (,_ ,mode ,type-wrapper) ,_ ,_) t)
  (check-equal? mode 'let)
  (check-equal? (first type-wrapper) '#:ty))
+
+(test-case
+ "G1gen は mode-only Let を生成しうる"
+ ;; spec §11.2。性質検査の生成器が新しい形を通らないと、mode-only Let は
+ ;; 明示的に書いた回帰でしか踏まれない。
+ (check-true (redex-match? G1gen g '(Let (value let) 0 value)))
+ ;; 既存の形も残る
+ (check-true (redex-match? G1gen g '(Let value 0 value))))
 
 (define (elab-err? r) (and (pair? r) (eq? (first r) 'err)))
 
