@@ -161,3 +161,203 @@ Surface の節点はすべて `(Ctor span ...)` の形であり、span は必ず
 区切りの `nl` は節点の span に含めない。
 `SBlock` の span は開き `{` から閉じ `}` までを含む。
 `SProgram` の span は前後の `NL*` を含まず、最初の item（item が無ければ式）から末尾の式までを覆う。
+
+## 5. 型別名
+
+型別名は Surface だけの糖衣である。
+UCore+ には型別名を置く欄が無いため、`STypeDecl` は節点を生成せず、lowering の別名環境へ消費する。
+
+別名環境は 2 度の走査で作る。
+1 度目は program の `spitem` を原文順に読み、型別名の名前と未展開の `sty` を登録する。
+2 度目は各 `sty` の中の `TName` を環境の定義へ置き換え、展開結果に現れる `TName` も同じ規則で解決する。
+
+1 度目の走査で名前をすべて登録してから 2 度目の走査を行うため、宣言より前の位置から後の宣言を参照できる。
+宣言順に 1 度で読む方式は採らない。
+
+展開関数は展開後の型だけを返す。
+使用位置の span は呼び出し側が入力の `sty` から `(span-of ty)` で取るため、展開後の型と span を 2 値で返す必要はない。
+
+### 5.1 拒否する型別名
+
+型別名の展開は次の 4 件を拒否する。
+
+- 環境に無く、基本型でもない名前は `E-SUR-008` とする。
+- 同じ名前の 2 度目の宣言は `E-SUR-009` とし、2 度目の `SName` の span を primary span にする。
+- 展開経路上で循環する参照は `E-SUR-010` とし、循環を閉じた `TName` の span を primary span にする。
+- 基本型と同じ名前の宣言は `E-SUR-011` とする。
+
+基本型は `Int`、`Bool`、`Unit`、`String` の 4 つである。
+これらは `ucore.rkt` の `A` の先頭 4 つと同じ綴りを使う。
+
+循環は、いま展開している別名の名前を積んだ stack で判定する。
+`TName` を展開するとき、同じ名前が stack にあれば循環とし、定義を展開し終えた名前は stack から外す。
+一度でも展開した名前を記録する集合では判定しない。
+
+```text
+type B = Int
+type A = { a: B, b: B }
+```
+
+上の `A` は `B` を 2 度参照するが、参照経路が同時に stack へ載らないため受理する。
+
+```text
+type A = { x: B }
+type B = { y: A }
+```
+
+上の `A` は展開経路の中で `A` を再び参照するため `E-SUR-010` になる。
+
+`TRec` の中で同じ label を 2 度書いた場合も拒否する。
+式の record と型の record は同じ誤りを表すため、どちらも `E-SUR-007` を使い、2 度目の `TField` の `slabel` の span を primary span にする。
+
+### 5.2 診断の順序
+
+診断は最初の 1 件だけ返す。
+1 度目の走査では、宣言を原文順に読み、基本型名かどうかを先に検査して `E-SUR-011` とし、次に既出かどうかを検査して `E-SUR-009` とする。
+名前の誤りがあれば 2 度目の走査へ進まない。
+
+2 度目の走査では、型名の解決を先に検査して `E-SUR-008` とし、解決後に循環を検査して `E-SUR-010` とする。
+record と record 型の field は左から右へ走査し、最初に見つかった 2 度目の label で `E-SUR-007` を返す。
+3 件以上の重複があっても、最初の 1 件だけを返す。
+
+## 6. UCore+ への lowering
+
+lowering の入口は `(lower-surface sprog)` である。
+返り値は UCore+ の項か Diagnostic 1 件のいずれかである。
+引数が Diagnostic のときは、それをそのまま返す。
+この節は parser が diagnostic を返した経路を呼び側の分岐漏れで失わないために置く。
+
+別名環境を §5 の規則で先に構築し、`sty` を `uτ` へ落とす際に使う。
+宣言の並びは右から畳み、`Let` と `Recur` を積む。
+
+### 6.1 対応表
+
+Surface の span は、下表で `s` と書いた欄へそのまま渡す。
+型注釈の span は入力の `sty` 節点から `(span-of ty)` で取る。
+別名展開後も、型注釈の包みが持つ span は使用位置の `TName` の span とする。
+
+- `(SInt s n)` は `(#:lit n s)` へ落とす。
+- `(SStr s str)` は `(#:lit str s)` へ落とす。
+- `(SUnit s)` は `(#:lit unit s)` へ落とす。
+- `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true)` と `(Construct s false)` へ落とす。
+- `(SVar s x)` は `(#:var x s)` へ落とす。
+- `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
+- `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
+- `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
+- `(SFn s ((SParam s_p (SName s_x x) ty) ...) ty_r body)` は、span を持つ binder、型注釈、空の effect row を持つ `(Fn ...)` へ落とす。
+- `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
+- `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
+- `(SFnDecl s (SName s_f f) ... )` は、関数本体と後続の項を持つ `Recur` へ落とす。
+- `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
+
+`TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
+それ以外は §5 の別名環境から解決し、未登録なら `E-SUR-008` とする。
+`TRec` は field mode を `imm` とする `(Record ((l uτ imm) ...))` へ写す。
+`TFn` は effect row と obligation を空にした `(NFn (uτ ...) uτ_r () ())` へ写す。
+Surface に field の可変性と effect 注釈が無いためである。
+
+### 6.2 宣言の畳み込み
+
+`rest'` は、その束縛より後ろの残りを lowering した結果である。
+末尾の式を先に lowering して種にし、束縛を後ろから 1 つずつ被せる。
+
+```text
+lower [b1 b2 b3] e = L(b1, L(b2, L(b3, lower e)))
+```
+
+右から畳むことで、先の束縛の名前が後続の束縛と末尾式から見える関係が `Let` の本体として表れる。
+別名の登録と重複宣言の検査は、畳み込みとは独立に原文順で行う。
+
+`Let` と `Recur` の span は、宣言の先頭から後続の項の末尾までを覆う尾部 span である。
+block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`、トップレベルの束縛または関数宣言は `[startByte(宣言 i), endByte(program の末尾式))` を持つ。
+この span は元の `SBind` や `SFnDecl` の span とは一致しない。
+
+尾部 span を使うと、`Let` と `Recur` の親 span が後続の項を包含する。
+生成した span は入力の token 位置から決まり、`#:synthetic` は使わない。
+
+### 6.3 span の対応単位
+
+`SUR-001` の span 引き継ぎは、UCore+ の節点または包みを 1 個生成する構成子を単位とする。
+`SName`、`SLabel`、`TName`、`TRec`、`TFn` の span は、それぞれ binder、label、型注釈の欄へ渡す。
+
+`SProgram`、`SBlock`、`STypeDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を渡さない。
+`uτ` に span を足す改修はこの版の範囲外である。
+
+## 7. 診断
+
+Surface の相は registry の版 15 に `surface` として登録する。
+字句、構文、型別名、lowering を 1 つの相にまとめ、区別は code で付ける。
+
+- `E-SUR-001` `surface-invalid-byte`：UTF-8 として解釈できない byte 列
+- `E-SUR-002` `surface-unknown-character`：字句にならない文字。`\r` を含む
+- `E-SUR-003` `surface-unterminated-string`：閉じない文字列リテラル
+- `E-SUR-004` `surface-invalid-escape`：許さないエスケープ
+- `E-SUR-005` `surface-unexpected-token`：構文が合わないトークン
+- `E-SUR-006` `surface-unexpected-eof`：入力が構文の途中で終わる
+- `E-SUR-007` `surface-duplicate-field`：record または record 型の同じフィールドを 2 度書いた
+- `E-SUR-008` `surface-unknown-type-name`：宣言の無い型の名前
+- `E-SUR-009` `surface-duplicate-type-alias`：同じ型別名を 2 度宣言した
+- `E-SUR-010` `surface-recursive-type-alias`：型別名の参照に循環がある
+- `E-SUR-011` `surface-reserved-type-name`：基本型の名前を型別名として宣言した
+
+診断の primary span は、原則として誤りを起こした token または節点の span とする。
+lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
+`E-SUR-001` の primary span は、不正な byte 1 個を指す `(#:span source-id i (add1 i))` である。
+`E-SUR-003` の primary span は、開き引用符から停止位置までを指す。
+`E-SUR-004` の primary span は、逆斜線から許されない escape 文字までを指す。
+
+E-SUR-001 から E-SUR-011 は P2c1 で registry に登録し、fixture v15 をその時点で 1 度だけ凍結した。
+P2c2 は producer を追加するだけで registry を変更しない。
+surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
+
+## 8. F* と parity
+
+F* 側では、Redex の有限例では示せない Surface の全域性と span の性質を並行して検査する。
+この版で書く命題は 4 つである。
+
+1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
+2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
+3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
+4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SApply`、`SProj`、`SRec`、`SFn` の 9 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+
+命題 3 は `wf_node` を前提とする条件付き補題である。
+parser の出力が `wf_node` を満たすことは F* 側からは示さない。
+命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
+
+parity の対応表には、1 対 1、多対 1、対応なし、対象外の 4 種類の行を置く。
+parity 検査は、ツール内の構成子リストと対応表の自己整合性だけを保証する。
+ツールは `.fst` と `surface.rkt` のソースを読まない。
+
+F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子の増減は `fstar-parity-test.rkt` の回帰で、両者の対応は parity 検査で捕まえる。
+
+### 8.1 Surface AST の対応
+
+- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
+- `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
+
+Racket 側の Surface 構成子リストは 22 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 14 個である。
+
+### 8.2 UCore+ の対応
+
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur` の 9 構成子だけを parity の対象とする。
+F* 側では、これらに対応する `CLit`、`CVar`、`CApply`、`CProj`、`CRec`、`CFn`、`CConstruct`、`CLet`、`CRecur` を置く。
+`CRecur` は parity の対象を揃えるための構成子であり、この版の lowering は生成しない。
+UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 23 個（`sexpr` 10 個、`sty` 3 個、`sdecl` 1 個、`core` 9 個）である。
+
+`Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
+
+### 8.3 parity 対象外の型
+
+`Topazolite.Surface` は parity 対象の型のほかにも補助型を置く。
+これらは Surface 構文の構成子集合ではないため、parity の対象に含めない。
+
+- `sid`、`span`、`diag`：span と診断の層を写す型であり、Racket 側では `span-core.rkt` と `diagnostic.rkt` が持つ。
+- `stok`：`kind` 欄で 7 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
+- `lex_result`、`string_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
+- `dkind`：束縛の種別を表す欄の型であり、構成子集合の対象ではない。
+  `SBind` と `SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
+- `node`：`sexpr`、`sty`、`sdecl` を命題 3 でまとめて量化するための包みである。
+- `bytes_split`、`pos_split`：証明の中だけで使う補助型である。
