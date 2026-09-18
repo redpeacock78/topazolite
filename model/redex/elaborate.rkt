@@ -476,6 +476,13 @@
     [`(Let (,name ,_ ,_) ,bound ,body)
      (set-union (free-vars/erased bound)
                 (set-remove (free-vars/erased body) name))]
+    ;; spec §8。2 欄の束縛子である。この節が無いと下の素の名前の節へ落ち、
+    ;; (x let) という list を 1 つの名前として set-remove へ渡すので、
+    ;; 束縛した名前が自由変数のまま残る。
+    [`(Let (,name ,bmode) ,bound ,body)
+     #:when (memq bmode '(const let mut))
+     (set-union (free-vars/erased bound)
+                (set-remove (free-vars/erased body) name))]
     [`(Let ,name ,bound ,body)
      (set-union (free-vars/erased bound)
                 (set-remove (free-vars/erased body) name))]
@@ -1037,6 +1044,33 @@
                          (judgment-row record-result))]
               [_ (reject s 'unknown-record-label label)])]
            [_ (reject s 'project-non-record (judgment-type record-result))])]
+
+        ;; spec §8。注釈なしの const と let と let mut である。宣言型が
+        ;; 無いので束縛式の型をそのまま宣言型とみなす。宣言型だけで分かる
+        ;; mut の検査は走らせようがなく、bind-with-mode の中の推論後の
+        ;; 検査が同じ key を返す。
+        [`(Let (,raw-name ,binding-mode) ,bound ,body)
+         #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
+         (define name (peel-bind raw-name))
+         (define bound-result
+           (synth bound environment delta propositions boundaries))
+         (define actual-type (judgment-type bound-result))
+         (define binding-type
+           (bind-with-mode s binding-mode actual-type actual-type
+                           propositions))
+         (define body-result
+           (synth body
+                  (extend environment (list name) (list binding-type)
+                          (and (eq? binding-mode 'mut) '(mut)))
+                  delta propositions boundaries))
+         (judgment
+          `(Let ,s (,raw-name ,binding-mode
+                              (#:ty ,binding-type ,(span-of bound)))
+                ,(judgment-core bound-result)
+                ,(judgment-core body-result))
+          (judgment-type body-result)
+          (row-union (judgment-row bound-result)
+                     (judgment-row body-result)))]
 
         ;; 注釈なし Let の (#:bind x s) を注釈あり Let の 3 つ組として
         ;; 誤って分解しないよう、binder の包みの形で分岐する。
