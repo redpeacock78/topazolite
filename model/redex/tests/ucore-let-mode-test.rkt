@@ -56,11 +56,13 @@
  (check-equal? (first type-wrapper) '#:ty))
 
 (test-case
- "G1gen は mode-only Let を生成しうる"
+ "G2gen は mode-only Let を生成しうる"
  ;; spec §11.2。性質検査の生成器が新しい形を通らないと、mode-only Let は
  ;; 明示的に書いた回帰でしか踏まれない。
- (check-true (redex-match? G1gen g '(Let (value let) 0 value)))
- ;; 既存の形も残る
+ (check-true (redex-match? G2gen g '(Let (value let) 0 value)))
+ ;; G1 の性質検査へ mode-only 形を混ぜない不変条件も固定する。
+ (check-false (redex-match? G1gen g '(Let (value let) 0 value)))
+ ;; 既存の形は G1gen に残る。
  (check-true (redex-match? G1gen g '(Let value 0 value))))
 
 (define (elab-err? r) (and (pair? r) (eq? (first r) 'err)))

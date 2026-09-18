@@ -119,7 +119,6 @@
          (Apply le gn gn)
          (Apply eq gn gn)
          (Let value gn value)
-         (Let (value let) gn value)
          (Apply (Fn ((argument Int)) Int () argument) gn)
          (Apply (Curry add gn) gn)
          g-bool
@@ -214,7 +213,8 @@
                        (Apply loop ga-list)))
   (g ::= ....
          g-record
-         g-row-let))
+         g-row-let
+         (Let (value let) gn value)))
 
 (struct bounds (attempts term-depth fuel observation-depth discard-limit seed)
   #:transparent)
