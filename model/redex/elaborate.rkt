@@ -547,19 +547,20 @@
 
 ;; §5: Diagnostic の生成は 1 箇所へ集約する。reject は struct を組み立てず、
 ;; registry の引き当てと欄の検証を通る経路をここへ揃える。
-(define (elab-failure->diagnostic failure)
+(define (elab-failure->diagnostic failure expansion-context)
   (define reason (exn:fail:elab-reason failure))
   (define-values (expected found)
     (distribute-details reason (exn:fail:elab-details failure)))
   (diagnostic-of 'elaborate reason
                    #:primary-span (exn:fail:elab-primary-span failure)
                    #:expected expected
-                   #:found found))
+                   #:found found
+                   #:expansion-context expansion-context))
 
-(define (elab raw-expression)
+(define (elab raw-expression #:expansion-context [expansion-context (hash)])
   (with-handlers ([exn:fail:elab?
                    (lambda (failure)
-                     `(err ,(elab-failure->diagnostic failure)))])
+                     `(err ,(elab-failure->diagnostic failure expansion-context)))])
     (define reserved (reserved-binder-in raw-expression))
     (when reserved
       (reject (entry-span raw-expression)

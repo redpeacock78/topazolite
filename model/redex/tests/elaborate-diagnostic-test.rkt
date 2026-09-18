@@ -147,3 +147,27 @@
  ;; 第 1 要素は型構成子の名前、第 2 要素はその kind である。
  ;; どちらも「期待した型」ではない。
  (check-equal? (diagnostic-found d) '(Box (Type -> Type))))
+
+;; spec §7。展開表は primary span を鍵として引くため、まず表を渡さずに
+;; 失敗させて鍵を測り、その鍵で表を作って 2 度目を呼ぶ。
+(define (elab-diagnostic/context term context)
+  (match (elab term #:expansion-context context)
+    [`(err ,d) d]
+    [other (error 'elab-diagnostic/context "失敗しなかった: ~s" other)]))
+
+(test-case
+ "展開表を渡さないと expansion trace は空である"
+ (check-equal? (diagnostic-expansion-trace (elab-diagnostic 'no-such-variable))
+               '()))
+
+(test-case
+ "primary span を鍵とする展開表は expansion trace へ届く"
+ (define bare (elab-diagnostic 'no-such-variable))
+ (define s (diagnostic-primary-span bare))
+ ;; frame は (nm s_call s_result) の 3 要素である（diagnostic.rkt:617）。
+ ;; bare の trace は空なので、表の値には非空の frame を自分で組む。
+ (define frame (list (list 'm s s)))
+ (define d (elab-diagnostic/context 'no-such-variable (hash s frame)))
+ (check-equal? (diagnostic-id d) (diagnostic-code-of 'elaborate 'unbound-variable))
+ (check-equal? (diagnostic-expansion-trace d) frame)
+ (check-true (diagnostic-valid? d)))
