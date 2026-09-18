@@ -58,3 +58,6 @@ jobs:
 
       - name: fstar --version
         run: ./fstar/bin/fstar.exe --version
+
+      - name: check Topazolite.Surface
+        run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Surface.fst
