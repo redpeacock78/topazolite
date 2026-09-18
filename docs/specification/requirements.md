@@ -632,10 +632,18 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 
 ### SUR-007
 
+- **状態**：P2
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/surface.md`
+
+Surface の型注釈と署名は、Typed Core への elaboration を通じて型付きの経路へつながらなければならない。
+
+### SUR-008
+
 - **状態**：Phase 2 以降
 - **由来**：ホワイトペーパー §15
 
-Surface の型注釈と署名は、Typed Core への elaboration を通じて型付きの経路へつながらなければならない。
+関数の戻り型の省略は、省略された戻り型を推論して Typed Core へつながらなければならない。
 
 ### MOD-001
 

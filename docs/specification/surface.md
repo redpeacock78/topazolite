@@ -13,9 +13,11 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、Effect 注釈（`SUR-003`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
+戻り型の省略（`SUR-008`）も受理しない。
 
-Surface の型注釈と署名から Typed Core への elaboration は `SUR-007` が担う。
-`#:expansion-context` を Surface の入口へ接続する作業は、この版では行わない。
+Surface の型注釈と署名から Typed Core への elaboration の入口と返り値は §9 が定める。
+`#:expansion-context` は `compile-source` の任意入力として `elab` へ渡す。
+Surface の経路は展開表を生成しない。
 
 ## 2. 字句
 
@@ -90,7 +92,7 @@ tys      ::= ε | ty ("," ty)*
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
 
 関数の戻り型は省略できない。
-戻り型の推論は `SUR-007` の範囲に属するため、この版では行わない。
+戻り型の推論は `SUR-008` が担うため、この版では行わない。
 
 program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
@@ -361,3 +363,26 @@ UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リ�
   `SBind` と `SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
 - `node`：`sexpr`、`sty`、`sdecl` を命題 3 でまとめて量化するための包みである。
 - `bytes_split`、`pos_split`：証明の中だけで使う補助型である。
+
+## 9. Typed Core への接続
+
+`lex` から `elab` までを 1 つの入口へつなぐ。 [REQ: SUR-007]
+入口は `model/redex/driver.rkt` の `compile-source` と `compile-source/string` である。
+
+経路は 4 段である。
+`lex` が byte 列を token 列へ、`parse` が token 列を Surface の構文木へ、`lower-surface` が構文木を UCore+ へ、`elab` が UCore+ を Typed Core へ移す。
+span はこの 4 段のいずれでも落とさない。
+`erase-core` は成果物を受けた側が必要に応じて掛ける。
+経路の途中で span を落とすと、診断の primary span が指す位置を呼び手が復元できない。
+
+成功の成果物は `(struct compiled (core type row callables))` である。
+欄は `elab` の返り値の 4 要素と同じ順で並ぶ。
+
+失敗の返り値は Diagnostic 1 件である。
+最初に落ちた段の診断をそのまま返し、phase を書き換えない。
+lexer と parser と lowering の診断は `surface`、`elab` の診断は `elaborate` である。
+`elab` が返す `` `(err ...) `` の包みは入口が剥がすため、呼び手は `diagnostic?` だけで成否を判別する。
+
+`compile-source` は任意入力 `#:expansion-context` を取り、`elab` へそのまま渡す。
+既定は空の hash である。
+Surface の経路は展開表を生成しないため、入口は空の hash を作らずに受けた値を素通しする。

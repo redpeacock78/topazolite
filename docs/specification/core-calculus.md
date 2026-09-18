@@ -1514,7 +1514,7 @@ golden test の正規手書き項、初期環境、期待簡約列を本節で�
 Redex model の golden test はこの項をそのまま実装し、期待結果との一致を確認する。
 ホワイトペーパー §20 の最小実証プログラムを未型付き縮小 Core で手書きしたものに相当する。
 Surface 構文から未型付き縮小 Core への lowering の検証は `surface.md` §6 が定め、`model/redex/tests/surface-lower-test.rkt` が行う。
-Surface の型注釈と署名から Typed Core への elaboration の検証は `SUR-007` が担う。
+Surface の型注釈と署名から Typed Core への elaboration は `surface.md` §9 が定め、`model/redex/tests/driver-test.rkt` が検証する。
 
 使用する初期環境は §3.5 の全体である。
 
