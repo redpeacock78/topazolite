@@ -78,11 +78,52 @@
        (values (cons label seen)
                (cons (list label (lower-sty ty env fail stack) 'imm) row))])))
 
-;; spec §7.2。Task 6 で残りの形を足す。
+;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。
+;; 型注釈の span は sty の使用箇所のものであり、別名を展開しても動かない。
+(define (lower-params params env fail)
+  (for/list ([p (in-list params)])
+    (match p
+      [`(SParam ,_ (SName ,s_x ,x) ,ty)
+       (list (list '#:bind x s_x)
+             (list '#:ty (lower-sty ty env fail) (node-span ty)))])))
+
+;; spec §7.2。record 式の欄も可変性を imm に固定する。Surface に mut の
+;; 表記が無いためである。
+;; spec §6.1。左から右へ見て、最初の 2 度目で止める。
+(define (lower-rec-fields fields env fail)
+  (for/fold ([seen '()] [row '()] #:result (reverse row))
+            ([field (in-list fields)])
+    (match field
+      [`(SField ,_ (SLabel ,s_l ,label) ,e)
+       (when (memq label seen)
+         (fail 'surface-duplicate-field s_l))
+       (values (cons label seen)
+               (cons (list (list '#:lbl label s_l) 'imm (lower-sexpr e env fail))
+                     row))])))
+
+;; spec §7.2 の対応表である。SBlock は Task 7 で足す。
 (define (lower-sexpr e env fail)
   (match e
     [`(SInt ,s ,n) `(#:lit ,n ,s)]
-    [`(SVar ,s ,x) `(#:var ,x ,s)]))
+    [`(SStr ,s ,str) `(#:lit ,str ,s)]
+    [`(SUnit ,s) `(#:lit unit ,s)]
+    ;; true と false は構成子であり literal ではない。
+    [`(SBool ,s ,b) `(Construct ,s ,b)]
+    [`(SVar ,s ,x) `(#:var ,x ,s)]
+    [`(SFn ,s ,params ,result-ty ,body)
+     ;; Surface に効果の表記が無いので効果行は空である。span は Fn 自身の
+     ;; ものを使う。
+     `(Fn ,s ,(lower-params params env fail)
+          (#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))
+          (#:ef () ,s)
+          ,(lower-sexpr body env fail))]
+    [`(SApply ,s ,f ,arguments)
+     `(Apply ,s ,(lower-sexpr f env fail)
+             ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
+    [`(SProj ,s ,target (SLabel ,s_l ,label))
+     `(Proj ,s ,(lower-sexpr target env fail) (#:lbl ,label ,s_l))]
+    [`(SRec ,s ,fields)
+     `(Rec ,s ,(lower-rec-fields fields env fail))]))
 
 ;; spec §7。入口である。parse の診断はそのまま返す。呼ぶ側に
 ;; 「parse の結果を場合分けしてから lower-surface を呼ぶ」手続きを課すと、

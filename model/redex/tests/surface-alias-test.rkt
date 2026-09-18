@@ -80,3 +80,32 @@
  (define r (low "type Int = Bool\ntype A = C\n1"))
  (check-true (diagnostic? r))
  (check-equal? (diagnostic-id r) "E-SUR-011"))
+
+;; 多段の展開である。parser は Fn の本体を必ず SBlock にするので、
+;; Surface の項を手で組む。
+(define s0 '(#:span src 0 1))
+(define (prog items e) `(SProgram ,s0 ,items ,e))
+(define (decl name ty) `(STypeDecl ,s0 (SName ,s0 ,name) ,ty))
+(define (fn-of ty) `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) ,ty)) ,ty (SVar ,s0 x)))
+(define (param-type items ty)
+  (define r (lower-surface (prog items (fn-of ty))))
+  (second (second (first (third r)))))
+
+(test-case
+ "別名は不動点まで展開する"
+ (check-equal? (param-type (list (decl 'A `(TName ,s0 B))
+                                 (decl 'B `(TName ,s0 Int)))
+                           `(TName ,s0 A))
+               'Int))
+
+(test-case
+ "record 型の別名は Record の行になり、欄の可変性は imm である"
+ (check-equal? (param-type (list (decl 'A `(TRec ,s0 ((TField ,s0 (SLabel ,s0 a)
+                                                              (TName ,s0 Int))))))
+                           `(TName ,s0 A))
+               '(Record ((a Int imm)))))
+
+(test-case
+ "関数型は効果行と義務が空の NFn になる"
+ (check-equal? (param-type '() `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Bool)))
+               '(NFn (Int) Bool () ())))
