@@ -671,7 +671,7 @@ type core =
   | CFn       : span -> list core -> core -> core
   | CConstruct: span -> string -> list core -> core
   | CLet      : span -> core -> core -> core
-  // parity-only: lowering does not produce CRecur in this cycle.
+  // parity 専用。このサイクルの lowering は CRecur を作らない。
   | CRecur    : span -> core -> core -> core
 
 let span_of_core (c: core) : Tot span =

@@ -13,7 +13,7 @@ G1 の範囲は次のとおりである。
 
 - **対象**：未型付き縮小 Core から Typed Core への elaboration、Typed Core の簡約意味論、origin model、return boundary model、Finite / Productive / Unknown の仕様、affine な move / drop と scope exit finalization。
 - **G5 へ延期**：borrow、region、unsafe boundary の judgment と、メタ理論性質 8（borrow safety）、9（unsafe containment）。所在は §9 に置く。
-- **Phase 2 以降**：Surface 構文から未型付き縮小 Core への対応づけ。
+- **Phase 2 以降**：Surface 構文から未型付き縮小 Core への対応づけ。`docs/specification/surface.md` が定める。
 
 規則には `[REQ: <ID>]` の形で要件 ID を注釈する。
 ID の本文は `requirements.md` を正とする。
@@ -52,7 +52,8 @@ nearestReturn(B)    先頭の frame を返す。空なら未定義
 ### 3.1 未型付き縮小 Core
 
 **未型付き縮小 Core** は elaboration の入力言語である。
-Surface 構文から糖衣を除いた形に相当するが、Surface 構文との対応づけは Phase 2 以降で定める。
+Surface 構文から糖衣を除いた形に相当する。
+対応づけは `surface.md` §6 が定める。
 
 ```text
 e ::= l                                          リテラル
@@ -128,7 +129,7 @@ Effect label を 1 つ足すと、次の 7 箇所が動く。
 G1 では εin と εout を単一の潜在 Effect row ε に縮約し、適用時の `combine(εa, εi, εo)` を和集合で定義する（§4.3）。
 また、origin O は型成分ではなく値成分として扱う（§3.4）。
 εin と εout の分離はホワイトペーパーからの意図的な単純化であり、Phase 2 以降で拡張する。
-origin は §7 の verify-origins による Typed Core 全体の一括検査へ再配置しており、型成分へ戻すのは surface 構文を導入する時点である。
+origin は §7 の verify-origins による Typed Core 全体の一括検査へ再配置しており、型成分へ戻すことは `NAR-005` が担う。
 
 `Res` は affine 資源の基本型であり、G1 の `Owned<τ>` の中身は `Res` に限る（§3.5）。
 `t` は TypeRep（§3.3）が保持する型式である。
@@ -256,7 +257,7 @@ sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与�
 
 `Curry(v)` は部分適用（§5.3 R-CurryVal）の派生を表す。
 `Make(t)` は TypeInfo 生成（§4.8 E-TypeMake）の派生を表し、生成された TypeRep が保持する型式 t を記録する。
-`Expand` は Sugar 展開の派生を表す step であり、マクロ展開で使う（`macro.md` §8）。 [REQ: MAC-001]
+`Expand(name)` は Sugar 展開の派生を表し、展開したマクロの名前 name を記録する（`macro.md` §8）。[REQ: MAC-001]
 `Trait(tn)` は予約 Narrative から trait の生成能力を継承したことを表す step である。trait 名 tn を記録する。[REQ: NAR-003]
 sort の `N` は基本型名または組み込み constructor 名である。
 R0 は予約 origin ID から sort への写像であり、どの ID がどの種類の値を正当化するかを定める（§3.5）。
@@ -1512,7 +1513,8 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 golden test の正規手書き項、初期環境、期待簡約列を本節で固定する。
 Redex model の golden test はこの項をそのまま実装し、期待結果との一致を確認する。
 ホワイトペーパー §20 の最小実証プログラムを未型付き縮小 Core で手書きしたものに相当する。
-Surface 構文からの elaboration の検証は Phase 2 以降で行う。
+Surface 構文から未型付き縮小 Core への lowering の検証は `surface.md` §6 が定め、`model/redex/tests/surface-lower-test.rkt` が行う。
+Surface の型注釈と署名から Typed Core への elaboration の検証は `SUR-007` が担う。
 
 使用する初期環境は §3.5 の全体である。
 

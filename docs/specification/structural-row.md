@@ -79,7 +79,7 @@ e ::= ...
 ```
 
 この構文は Surface 構文ではない。
-Surface の record リテラル、`const`、`let`、`let mut` から未型付き縮小 Core への変換は Phase 2 以降で定める。
+Surface の record リテラル、`const`、`let`、`let mut` から未型付き縮小 Core への変換は `surface.md` §6 が定める。
 
 ### 2.4 Typed Core
 
@@ -541,7 +541,7 @@ G2a は次の規則を導入しない。
   G2g の降格は代入安全性のための狭めであり、G5c2 が可変性を保つ規則へ置き換えて、ホワイトペーパー §4.5.3 の要求を回収した。
 - **mut field への代入と借用**：G5c2 が `ProjBorrow` と `Assign` と alias safety を同時に導入し、record field の借用と書き換えを回収した。
 - **borrow mode の互換性**：G5c2 が record field の射影について `Borrowed` と `BorrowedMut` の mode 規則を定め、暗黙の強化と弱化を認めない範囲を回収した。
-- **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は Phase 2 以降で扱う（`SUR-001`）。
+- **Surface 構文**：record リテラルと binding の Surface から未型付き縮小 Core への変換は `surface.md` §6 が定める（`SUR-001`）。
 - **region 引数どうしの関係の宣言**：異なる 2 つの region 引数のあいだには反射律だけを認める。
   region の束縛へ包含の宣言を書く構文は置かない。
   Phase 4 以降で扱う。
