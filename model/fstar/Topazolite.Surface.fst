@@ -2,7 +2,6 @@ module Topazolite.Surface
 
 open FStar.List.Tot
 open FStar.List.Tot.Properties
-open FStar.Tactics.Logic.Lemmas
 
 type sid = | UserSid : string -> sid | SyntheticSid : sid
 type span = { sid: sid; startByte: nat; endByte: nat }
@@ -294,12 +293,10 @@ let all_tokens_ok_cons id n t ts = ()
 val all_tokens_ok_rev : id:sid -> n:nat -> ts:list stok -> Lemma
   (requires all_tokens_ok id n ts)
   (ensures all_tokens_ok id n (rev ts))
-val all_tokens_ok_rev_point : id:sid -> n:nat -> ts:list stok -> t:stok -> Lemma
-  (requires all_tokens_ok id n ts /\ memP t (rev ts))
-  (ensures token_ok id n t)
-let all_tokens_ok_rev_point id n ts t = rev_memP ts t; ()
 let all_tokens_ok_rev id n ts =
-  lem1_fa (fun t -> all_tokens_ok_rev_point id n ts t)
+  let aux (t: stok) : Lemma (memP t (rev ts) ==> token_ok id n t) =
+    rev_memP ts t in
+  FStar.Classical.forall_intro aux
 
 val scan_fuel_span_sound : id:sid -> n:nat -> i:nat -> rest:list FStar.UInt8.t
                          -> acc:list stok -> fuel:nat{length rest < fuel} -> Lemma
