@@ -61,3 +61,6 @@ jobs:
 
       - name: check Topazolite.Surface
         run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Surface.fst
+
+      - name: check Topazolite.Parity
+        run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Parity.fst

@@ -661,3 +661,82 @@ let parse_span_containment n c =
       FStar.List.Tot.Properties.append_memP
         (match r with None -> [] | Some t -> [NTy t]) [NExpr v] c;
       wf_tys_elim s ps c
+
+type core =
+  | CLit      : span -> core
+  | CVar      : span -> core
+  | CApply    : span -> core -> list core -> core
+  | CProj     : span -> core -> core
+  | CRec      : span -> list core -> core
+  | CFn       : span -> list core -> core -> core
+  | CConstruct: span -> string -> list core -> core
+  | CLet      : span -> core -> core -> core
+  // parity-only: lowering does not produce CRecur in this cycle.
+  | CRecur    : span -> core -> core -> core
+
+let span_of_core (c: core) : Tot span =
+  match c with
+  | CLit s           -> s
+  | CVar s           -> s
+  | CApply s _ _     -> s
+  | CProj s _        -> s
+  | CRec s _         -> s
+  | CFn s _ _        -> s
+  | CConstruct s _ _ -> s
+  | CLet s _ _       -> s
+  | CRecur s _ _     -> s
+
+let one_to_one (e: sexpr) : Tot bool =
+  match e with
+  | SInt _ _     -> true
+  | SStr _ _     -> true
+  | SUnit _      -> true
+  | SBool _ _    -> true
+  | SVar _ _     -> true
+  | SFn _ _ _ _  -> true
+  | SApply _ _ _ -> true
+  | SProj _ _ _  -> true
+  | SRec _ _     -> true
+  | SBlock _ _ _ -> false
+
+let rec lower_expr (e: sexpr) : Tot core (decreases e) =
+  match e with
+  | SInt s _      -> CLit s
+  | SStr s _      -> CLit s
+  | SUnit s       -> CConstruct s "unit" []
+  | SBool s b     -> CConstruct s (if b then "true" else "false") []
+  | SVar s _      -> CVar s
+  | SFn s _ _ b   -> CFn s [] (lower_expr b)
+  | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
+  | SProj s e1 _  -> CProj s (lower_expr e1)
+  | SRec s fs     -> CRec s (lower_exprs fs)
+  | SBlock _ ds t -> lower_block ds (lower_expr t)
+and lower_exprs (es: list sexpr) : Tot (list core) (decreases es) =
+  match es with
+  | []      -> []
+  | e :: tl -> lower_expr e :: lower_exprs tl
+and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
+  match ds with
+  | []      -> tail
+  | d :: tl ->
+      let rest = lower_block tl tail in
+      CLet (hull (span_of_decl d) (span_of_core rest)) (lower_decl d) rest
+and lower_decl (d: sdecl) : Tot core (decreases d) =
+  match d with
+  | SDecl _ _ _ _ v -> lower_expr v
+
+val lower_preserves_span : e:sexpr -> Lemma
+  (requires one_to_one e)
+  (ensures span_of_core (lower_expr e) == span_of_expr e)
+let lower_preserves_span e =
+  match e with
+  | SInt _ _     -> ()
+  | SStr _ _     -> ()
+  | SUnit _      -> ()
+  | SBool _ _    -> ()
+  | SVar _ _     -> ()
+  | SFn _ _ _ _  -> ()
+  | SApply _ _ _ -> ()
+  | SProj _ _ _  -> ()
+  | SRec _ _     -> ()
+  | SBlock _ _ _ -> ()
