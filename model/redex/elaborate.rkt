@@ -428,6 +428,43 @@
   (define expression (erase-surface raw-expression))
   (free-vars/erased expression))
 
+;; spec §8。注釈あり Let と mode-only Let で同じ検査を走らせるための抽出で
+;; ある。束縛型の決定と mut の検査と narrowing の検査を持つ。
+;; 環境の拡張は呼ぶ側に残すので name は取らない。
+(define (bind-with-mode s binding-mode declared-type actual-type propositions)
+  (define binding-type
+    (cond
+      [(eq? actual-type 'Never) declared-type]
+      [else
+       (unless (type-compatible? actual-type declared-type propositions)
+         (reject s 'type-mismatch declared-type actual-type))
+       (match declared-type
+         [`(Record ,declared-row)
+          (match-define `(Record ,actual-row) actual-type)
+          (define residual
+            (field-row-residual actual-row declared-row))
+          (when (and (eq? binding-mode 'const)
+                     (pair? residual))
+            (reject s 'const-record-residual residual))
+          ;; P1c2b。mut も残余を戻す。typing の binding-context と揃える。
+          (if (memq binding-mode '(let mut))
+              `(Record ,(append declared-row residual))
+              declared-type)]
+         [_ declared-type])]))
+  (when (and (eq? binding-mode 'mut)
+             (or (not (owned-free? binding-type))
+                 (unbound-borrowed-type? binding-type (set))))
+    ;; mut binding の古い値を再代入で捨てるため、Owned と借用を
+    ;; mutable な環境へ入れない。Record の内側も再帰的に検査する。
+    (reject s 'mut-binding-unsupported-type binding-type))
+  ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
+  ;; binding-type を expected 側に使う。これで入れ子の欄だけを検査する。
+  ;; actual-type が Never のときは Record の対にならないため、
+  ;; owned-narrowing-ok? は真を返す。
+  (unless (narrowing-ok? actual-type binding-type propositions)
+    (reject s 'owned-narrowing-rejected binding-type actual-type))
+  binding-type)
+
 (define (free-vars/erased expression)
   (match expression
     [(or (? integer?) (? string?) 'unit) (set)]
@@ -1017,36 +1054,8 @@
            (synth bound environment delta propositions boundaries))
          (define actual-type (judgment-type bound-result))
          (define binding-type
-           (cond
-             [(eq? actual-type 'Never) declared-type]
-             [else
-              (unless (type-compatible? actual-type declared-type propositions)
-                (reject s 'type-mismatch declared-type actual-type))
-              (match declared-type
-                [`(Record ,declared-row)
-                 (match-define `(Record ,actual-row) actual-type)
-                 (define residual
-                   (field-row-residual actual-row declared-row))
-                 (when (and (eq? binding-mode 'const)
-                            (pair? residual))
-                   (reject s 'const-record-residual residual))
-                 ;; P1c2b。mut も残余を戻す。typing の binding-context と揃える。
-                 (if (memq binding-mode '(let mut))
-                     `(Record ,(append declared-row residual))
-                     declared-type)]
-                [_ declared-type])]))
-         (when (and (eq? binding-mode 'mut)
-                    (or (not (owned-free? binding-type))
-                        (unbound-borrowed-type? binding-type (set))))
-           ;; mut binding の古い値を再代入で捨てるため、Owned と借用を
-           ;; mutable な環境へ入れない。Record の内側も再帰的に検査する。
-           (reject s 'mut-binding-unsupported-type binding-type))
-         ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
-         ;; binding-type を expected 側に使う。これで入れ子の欄だけを検査する。
-         ;; actual-type が Never のときは Record の対にならないため、
-         ;; owned-narrowing-ok? は真を返す。
-         (unless (narrowing-ok? actual-type binding-type propositions)
-           (reject s 'owned-narrowing-rejected binding-type actual-type))
+           (bind-with-mode s binding-mode declared-type actual-type
+                           propositions))
          (define body-result
            (synth body
                   (extend environment (list name) (list binding-type)
