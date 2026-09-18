@@ -23,6 +23,11 @@
       [(? literal?) (list '#:lit t (next))]
       [(? symbol?) (list '#:var t (next))]
       [(list 'Apply c ...) (list* 'Apply (next) (map ann c))]
+      ;; spec §8。2 欄の束縛子は (x bmode) である。直後の節の (x uτ) と
+      ;; 欄数が同じなので、bmode の 3 語（ucore.rkt:16）で振り分ける。
+      [(list 'Let (list x bmode) c_1 c_2)
+       #:when (memq bmode '(const let mut))
+       (list 'Let (next) (list (bind x) bmode) (ann c_1) (ann c_2))]
       [(list 'Let (list x type) c_1 c_2)
        (list 'Let (next) (list (bind x) (ty type)) (ann c_1) (ann c_2))]
       [(list 'Construct type K c ...)
@@ -107,6 +112,10 @@
       [(list 'Apply e ...) (list* 'Apply (next) (map ann e))]
       [(list 'Let (? symbol? x) e_1 e_2)
        (list 'Let (next) (bind x) (ann e_1) (ann e_2))]
+      ;; spec §8。annotate-core と同じ節を surface 側にも持つ。
+      [(list 'Let (list x bmode) e_1 e_2)
+       #:when (memq bmode '(const let mut))
+       (list 'Let (next) (list (bind x) bmode) (ann e_1) (ann e_2))]
       [(list 'Let (list x bmode type) e_1 e_2)
        (list 'Let (next) (list (bind x) bmode (ty type)) (ann e_1) (ann e_2))]
       [(list 'Rec (list (list label m e) ...))
