@@ -427,3 +427,237 @@ let lex_span_sound id bs =
   match utf8_ok bs with
   | Some i -> utf8_ok_offset bs
   | None -> scan_span_sound id (length bs) 0 bs []
+
+type dkind = | DBind | DFnDecl
+
+type sexpr =
+  | SInt      : span -> nat -> sexpr
+  | SStr      : span -> string -> sexpr
+  | SUnit     : span -> sexpr
+  | SBool     : span -> bool -> sexpr
+  | SVar      : span -> string -> sexpr
+  | SFn       : span -> list sty -> sty -> sexpr -> sexpr
+  | SApply    : span -> sexpr -> list sexpr -> sexpr
+  | SProj     : span -> sexpr -> string -> sexpr
+  | SRec      : span -> list sexpr -> sexpr
+  | SBlock    : span -> list sdecl -> sexpr -> sexpr
+and sty =
+  | TName     : span -> string -> sty
+  | TRec      : span -> list sty -> sty
+  | TFn       : span -> list sty -> sty -> sty
+and sdecl =
+  | SDecl     : span -> dkind -> list sty -> option sty -> sexpr -> sdecl
+
+type node = | NExpr : sexpr -> node | NTy : sty -> node | NDecl : sdecl -> node
+
+let span_of_expr (e: sexpr) : Tot span =
+  match e with
+  | SInt s _      -> s
+  | SStr s _      -> s
+  | SUnit s       -> s
+  | SBool s _     -> s
+  | SVar s _      -> s
+  | SFn s _ _ _   -> s
+  | SApply s _ _  -> s
+  | SProj s _ _   -> s
+  | SRec s _      -> s
+  | SBlock s _ _  -> s
+
+let span_of_ty (t: sty) : Tot span =
+  match t with
+  | TName s _  -> s
+  | TRec s _   -> s
+  | TFn s _ _  -> s
+
+let span_of_decl (d: sdecl) : Tot span =
+  match d with
+  | SDecl s _ _ _ _ -> s
+
+let span_of_node (n: node) : Tot span =
+  match n with
+  | NExpr e -> span_of_expr e
+  | NTy t   -> span_of_ty t
+  | NDecl d -> span_of_decl d
+
+let kids_of_expr (e: sexpr) : Tot (list node) =
+  match e with
+  | SInt _ _      -> []
+  | SStr _ _      -> []
+  | SUnit _       -> []
+  | SBool _ _     -> []
+  | SVar _ _      -> []
+  | SFn _ ps r b  -> map NTy ps @ [NTy r; NExpr b]
+  | SApply _ f a  -> NExpr f :: map NExpr a
+  | SProj _ e1 _  -> [NExpr e1]
+  | SRec _ fs     -> map NExpr fs
+  | SBlock _ ds t -> map NDecl ds @ [NExpr t]
+
+let kids_of_ty (t: sty) : Tot (list node) =
+  match t with
+  | TName _ _  -> []
+  | TRec _ fs  -> map NTy fs
+  | TFn _ ps r -> map NTy ps @ [NTy r]
+
+let kids_of_decl (d: sdecl) : Tot (list node) =
+  match d with
+  | SDecl _ _ ps r v ->
+      map NTy ps @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr v]
+
+let kids_of_node (n: node) : Tot (list node) =
+  match n with
+  | NExpr e -> kids_of_expr e
+  | NTy t   -> kids_of_ty t
+  | NDecl d -> kids_of_decl d
+
+let hull (a b: span) : Tot span =
+  { sid = a.sid;
+    startByte = (if a.startByte <= b.startByte then a.startByte else b.startByte);
+    endByte   = (if a.endByte >= b.endByte then a.endByte else b.endByte) }
+
+let rec hull_all (s0: span) (ks: list node) : Tot span (decreases ks) =
+  match ks with
+  | []      -> s0
+  | k :: tl -> hull_all (hull s0 (span_of_node k)) tl
+
+let rec all_sid (i: sid) (ks: list node) : Tot bool (decreases ks) =
+  match ks with
+  | []      -> true
+  | k :: tl -> (span_of_node k).sid = i && all_sid i tl
+
+let rec all_span_ok (ks: list node) : Tot bool (decreases ks) =
+  match ks with
+  | []      -> true
+  | k :: tl -> span_ok (span_of_node k) && all_span_ok tl
+
+val hull_mono : a:span -> b:span -> Lemma
+  (requires span_ok a /\ span_ok b /\ a.sid = b.sid)
+  (ensures span_ok (hull a b) /\ (hull a b).sid = a.sid /\
+           contains (hull a b) a /\ contains (hull a b) b)
+let hull_mono a b = ()
+
+val contains_trans : a:span -> b:span -> c:span -> Lemma
+  (requires contains a b /\ contains b c)
+  (ensures contains a c)
+let contains_trans a b c = ()
+
+val hull_all_grows : s0:span -> ks:list node -> Lemma
+  (ensures contains (hull_all s0 ks) s0)
+  (decreases ks)
+let rec hull_all_grows s0 ks =
+  match ks with
+  | []      -> ()
+  | k :: tl ->
+      hull_all_grows (hull s0 (span_of_node k)) tl;
+      contains_trans (hull_all (hull s0 (span_of_node k)) tl)
+                     (hull s0 (span_of_node k)) s0
+
+val hull_all_contains : s0:span -> ks:list node -> Lemma
+  (requires span_ok s0 /\ all_sid s0.sid ks /\ all_span_ok ks)
+  (ensures forall (c: node). memP c ks ==> contains (hull_all s0 ks) (span_of_node c))
+  (decreases ks)
+let rec hull_all_contains s0 ks =
+  match ks with
+  | []      -> ()
+  | k :: tl ->
+      hull_mono s0 (span_of_node k);
+      hull_all_grows (hull s0 (span_of_node k)) tl;
+      contains_trans (hull_all (hull s0 (span_of_node k)) tl)
+                     (hull s0 (span_of_node k)) (span_of_node k);
+      hull_all_contains (hull s0 (span_of_node k)) tl
+
+let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
+  match e with
+  | SInt _ _      -> true
+  | SStr _ _      -> true
+  | SUnit _       -> true
+  | SBool _ _     -> true
+  | SVar _ _      -> true
+  | SFn s ps r b  -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+                     && contains s (span_of_expr b) && wf_expr b
+  | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
+  | SProj s e1 _  -> contains s (span_of_expr e1) && wf_expr e1
+  | SRec s fs     -> wf_exprs s fs
+  | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
+and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
+  match es with
+  | []      -> true
+  | e :: tl -> contains s (span_of_expr e) && wf_expr e && wf_exprs s tl
+and wf_ty (t: sty) : Tot bool (decreases t) =
+  match t with
+  | TName _ _  -> true
+  | TRec s fs  -> wf_tys s fs
+  | TFn s ps r -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
+  match ts with
+  | []      -> true
+  | t :: tl -> contains s (span_of_ty t) && wf_ty t && wf_tys s tl
+and wf_decl (d: sdecl) : Tot bool (decreases d) =
+  match d with
+  | SDecl s _ ps r v ->
+      wf_tys s ps
+      && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
+      && contains s (span_of_expr v) && wf_expr v
+and wf_decls (s: span) (ds: list sdecl) : Tot bool (decreases ds) =
+  match ds with
+  | []      -> true
+  | d :: tl -> contains s (span_of_decl d) && wf_decl d && wf_decls s tl
+
+let wf_node (n: node) : Tot bool =
+  match n with
+  | NExpr e -> wf_expr e
+  | NTy t   -> wf_ty t
+  | NDecl d -> wf_decl d
+
+val wf_tys_elim : s:span -> ts:list sty -> c:node -> Lemma
+  (requires wf_tys s ts)
+  (ensures memP c (map NTy ts) ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases ts)
+let rec wf_tys_elim s ts c =
+  match ts with
+  | []      -> ()
+  | t :: tl -> wf_tys_elim s tl c
+
+val wf_exprs_elim : s:span -> es:list sexpr -> c:node -> Lemma
+  (requires wf_exprs s es)
+  (ensures memP c (map NExpr es) ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases es)
+let rec wf_exprs_elim s es c =
+  match es with
+  | []      -> ()
+  | e :: tl -> wf_exprs_elim s tl c
+
+val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
+  (requires wf_decls s ds)
+  (ensures memP c (map NDecl ds) ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases ds)
+let rec wf_decls_elim s ds c =
+  match ds with
+  | []      -> ()
+  | d :: tl -> wf_decls_elim s tl c
+
+val parse_span_containment : n:node -> c:node -> Lemma
+  (requires wf_node n /\ memP c (kids_of_node n))
+  (ensures contains (span_of_node n) (span_of_node c) /\ wf_node c)
+let parse_span_containment n c =
+  match n with
+  | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
+  | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
+  | NExpr (SProj _ _ _) -> ()
+  | NExpr (SFn s ps r b) ->
+      FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r; NExpr b] c;
+      wf_tys_elim s ps c
+  | NExpr (SApply s f a) -> wf_exprs_elim s a c
+  | NExpr (SRec s fs) -> wf_exprs_elim s fs c
+  | NExpr (SBlock s ds t) ->
+      FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
+      wf_decls_elim s ds c
+  | NTy (TRec s fs) -> wf_tys_elim s fs c
+  | NTy (TFn s ps r) ->
+      FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r] c;
+      wf_tys_elim s ps c
+  | NDecl (SDecl s _ ps r v) ->
+      FStar.List.Tot.Properties.append_memP
+        (map NTy ps) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr v]) c;
+      FStar.List.Tot.Properties.append_memP
+        (match r with None -> [] | Some t -> [NTy t]) [NExpr v] c;
+      wf_tys_elim s ps c
