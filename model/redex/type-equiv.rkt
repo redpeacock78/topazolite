@@ -175,6 +175,12 @@
     [`(FieldType ,label ,type)
      (define normalized (normalize-type/impl type))
      (and normalized `(FieldType ,label ,normalized))]
+    [`(RemainderSafelyDropped ,actual ,expected)
+     (define normalized-actual (normalize-type/impl actual))
+     (define normalized-expected (normalize-type/impl expected))
+     (and normalized-actual
+          normalized-expected
+          `(RemainderSafelyDropped ,normalized-actual ,normalized-expected))]
     [`(PtrProp ,id ,type)
      (define normalized (normalize-type/impl type))
      (and normalized `(PtrProp ,id ,normalized))]
@@ -277,6 +283,9 @@
      `(Implements ,(canonical-key/normal type depth) ,trait)]
     [`(FieldType ,label ,type)
      `(FieldType ,label ,(canonical-key/normal type depth))]
+    [`(RemainderSafelyDropped ,actual ,expected)
+     `(RemainderSafelyDropped ,(canonical-key/normal actual depth)
+                              ,(canonical-key/normal expected depth))]
     [`(PtrProp ,id ,type)
      `(PtrProp ,id ,(canonical-key/normal type depth))]
     [_ proposition]))

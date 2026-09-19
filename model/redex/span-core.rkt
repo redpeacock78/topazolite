@@ -161,7 +161,8 @@
   (tn ::= id)
   (τ ::= .... (Record r) (Untrusted τ) (Refined τ φ) (Union τ τ) (Intersection τ τ))
   (φ ::= .... (Prop id) (Presence label) (ValidNarrativeTrait tn)
-         (Implements τ tn) (RequiresBoth tn tn) (FieldType label τ))
+         (Implements τ tn) (RequiresBoth tn tn) (FieldType label τ)
+         (RemainderSafelyDropped τ τ))
   (ls ::= (#:lbl label s))
   (c ::= ....
          (Rec s ((ls m c) ...))

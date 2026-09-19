@@ -127,7 +127,10 @@
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
          (RequiresBoth tn tn) (FieldType label τ)
-         (PtrProp ptr-prop-id τ))
+         (PtrProp ptr-prop-id τ)
+         ;; structural-row.md §3.1。narrowing で失う余剰が安全に drop できる
+         ;; ことを述べる。型の対で鍵付ける。
+         (RemainderSafelyDropped τ τ))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
@@ -240,7 +243,9 @@
   (φ ::= .... (Prop id) (Presence label)
          (ValidNarrativeTrait tn) (Implements τ tn)
          (RequiresBoth tn tn) (FieldType label τ)
-         (PtrProp ptr-prop-id τ))
+         (PtrProp ptr-prop-id τ)
+         ;; G2 と同じ spanless な narrowing witness。
+         (RemainderSafelyDropped τ τ))
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)

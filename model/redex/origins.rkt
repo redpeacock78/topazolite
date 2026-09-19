@@ -73,6 +73,9 @@
    ;; RFN-002: merge が発行する常在性 witness の発行者。primitive を持たない
    ;; ため (prim ...) ではなく単独の id として登録する。
    (term ((o-merge merge)))
+   ;; PRF-005: narrowing が発行する残余安全性 witness。Policy Narrative の
+   ;; 判定であり Γ0 に載らないため、単独の id として登録する。
+   (term ((o-narrow narrow)))
    trait-r0-entries))
 
 ;; NAR-003: 全 trait 行の origin が R0 の実値まで含めて正しいこと。行の形の
@@ -354,15 +357,20 @@
     [`(FieldType ,_ ,_)
      (and (equal? origin '(Reserved o-merge))
           (eq? (lookup r0 'o-merge) 'merge))]
+    [`(RemainderSafelyDropped ,_ ,_)
+     (and (equal? origin '(Reserved o-narrow))
+          (eq? (lookup r0 'o-narrow) 'narrow))]
     [_ #f]))
 
 ;; RFN-002: 出現許可。常在性 witness は merge の局所検査のためだけに立つ値で
 ;; あり、初期成果物にも到達成果物にも現れてはならない。artifact に現れたら
 ;; merge の位置情報が失われ、φ の集約が merge をまたいでしまう。
-(define (proof-occurrence-ok? proposition)
+(define (proof-occurrence-ok? proposition [discharge-proof? #f])
   (match proposition
     [`(Presence ,_) #f]
     [`(FieldType ,_ ,_) #f]
+    ;; PRF-005: narrowing の Proof は Discharge の proof 欄でだけ許す。
+    [`(RemainderSafelyDropped ,_ ,_) discharge-proof?]
     [_ #t]))
 
 ;; RFN-001: RVal のペイロード束縛検査。witness の命題が判定表の行に対応し、
@@ -375,7 +383,7 @@
        (equal? (literal-type payload) (validator-payload-type row))
        (and ((validator-check row) payload) #t)))
 
-(define (origin-shape-valid? r0 value)
+(define (origin-shape-valid? r0 value [discharge-proof? #f])
   ;; span.md §4 の通り O は spanless である。CurryVal の origin へ埋まる値も、
   ;; Δ0 の行も、validator の payload も spanless であるため、形の検査は
   ;; 投影の上で行う。走査そのものは spanful な項の上を進む。
@@ -408,7 +416,7 @@
             [_ #f]))]
     [`(ProofRep ,origin ,proposition)
      (and (proof-issuer-ok? r0 origin proposition)
-          (proof-occurrence-ok? proposition))]
+          (proof-occurrence-ok? proposition discharge-proof?))]
     [`(RVal ,origin ,proposition ,payload)
      (refined-value-valid? r0 origin proposition payload)]
     [_ #f]))
@@ -436,12 +444,18 @@
        (if (eq? result 'ok)
            (walk-list (cdr terms))
            result)]))
-  (define (walk term)
+  (define (walk term [discharge-proof? #f])
     (cond
       [(origin-bearing-head? term)
-       (if (origin-shape-valid? r0 term)
+       (if (origin-shape-valid? r0 term discharge-proof?)
            (walk-list term)
            `(forged ,term))]
+      [(and (pair? term) (eq? (car term) 'Discharge))
+       (match (peel-node term)
+         [`(Discharge ,proof ,inner)
+          (define result (walk proof #t))
+          (if (eq? result 'ok) (walk inner) result)]
+         [_ (walk-list term)])]
       [(list? term) (walk-list term)]
       [else 'ok]))
   (check-core! 'verify-origins core)

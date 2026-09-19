@@ -35,6 +35,8 @@
   (match proposition
     [`(Implements ,type ,_) (type-shape-ok? type)]
     [`(FieldType ,_ ,type) (type-shape-ok? type)]
+    [`(RemainderSafelyDropped ,actual ,expected)
+     (and (type-shape-ok? actual) (type-shape-ok? expected))]
     ;; unsafe.md §5.1。識別子の許可集合をここで閉じる。既定の #t へ落とすと
     ;; Proof と Q と Refined の内側で許可集合の外の識別子が通る。
     [`(PtrProp ,id ,type)
@@ -103,6 +105,8 @@
        (match proposition
          [`(Implements ,type ,_) (type-normal? type)]
          [`(FieldType ,_ ,type) (type-normal? type)]
+         [`(RemainderSafelyDropped ,actual ,expected)
+          (and (type-normal? actual) (type-normal? expected))]
          [_ #t])))
 
 ;; 作用列の Return/Yield に埋め込まれた型が全て正規形か。
