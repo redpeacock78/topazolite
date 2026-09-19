@@ -61,6 +61,7 @@
           'undeclared-function-effect
           'undeclared-recur-effect
           'owned-narrowing-rejected
+          'owned-narrowing-needs-proof
           'reassign-type-mismatch)
       (list expected actual))
      (values expected actual)]

@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 15)
+(define diagnostic-registry-version 16)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -284,6 +284,20 @@
     ("E-VAR-013" reassign-type-mismatch
                  "再代入する値の型が slot の型と一致しない")))
 
+(define typing-entries-v16
+  '(("E-OWN-030" owned-narrowing-needs-proof
+                 "余剰 Owned field を落とす narrowing に Proof が要る")
+    ("E-PRF-009" discharge-mixed-obligation
+                 "Discharge が残余 drop の義務と他の義務を混ぜている")
+    ("E-PRF-010" discharge-remainder-chain
+                 "残余 drop の Discharge を 2 つ以上重ねている")
+    ("E-PRF-011" discharge-proof-issuer
+                 "残余 drop の Proof の発行者が o-narrow でない")))
+
+(define elaborate-entries-v16
+  '(("E-OWN-031" owned-narrowing-needs-proof
+                 "余剰 Owned field を落とす narrowing に Proof が要る")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -356,6 +370,7 @@
           (rows 'elaborate 11 elaborate-entries-v11)
           (rows 'elaborate 12 elaborate-entries-v12)
           (rows 'elaborate 13 elaborate-entries-v13)
+          (rows 'elaborate 16 elaborate-entries-v16)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
@@ -368,6 +383,7 @@
           (rows 'typing 10 typing-entries-v10)
           (rows 'typing 11 typing-entries-v11)
           (rows 'typing 13 typing-entries-v13)
+          (rows 'typing 16 typing-entries-v16)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)

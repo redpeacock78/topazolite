@@ -3613,6 +3613,7 @@
           'branch-binder-arity
           'undeclared-function-effect
           'owned-narrowing-rejected
+          'owned-narrowing-needs-proof
           'reassign-type-mismatch)
       (list expected actual))
      (values expected actual)]
