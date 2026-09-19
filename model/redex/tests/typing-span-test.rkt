@@ -196,6 +196,7 @@
     missing-ownleaf-root
     owned-constructor-field
     owned-function-requires-move
+    owned-narrowing-needs-proof
     owned-narrowing-rejected
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field
@@ -217,8 +218,10 @@
     duplicate-branch-constructor non-data-eliminate non-exhaustive-eliminate
     unknown-constructor unknown-data-type
     ;; PRF
-    discharge-obligation-count discharge-proposition-mismatch
-    discharge-target-not-apply unsatisfied-proof-obligation
+    discharge-mixed-obligation discharge-obligation-count
+    discharge-proof-issuer discharge-proposition-mismatch
+    discharge-remainder-chain discharge-target-not-apply
+    unsatisfied-proof-obligation
     ;; BOR
     borrowed-owned-payload borrow-region-mismatch
     own-designator-mismatch unresolved-borrow-owner
@@ -842,7 +845,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 96)
+  (check-equal? (length producer-keys) 100)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -888,10 +891,15 @@
   ;; FromRawPtr の 2 件は rawptr-fromraw-test.rkt が産出元であり、同じ理由で除く。
   ;; Unsafe 境界からの漏出は rawptr-unsafe-test.rkt が産出元であり、同じ理由で除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
+  ;; narrowing と Discharge の新しい4件は P2e1 の後段で producer を足すまで到達しない。
   (define unreachable-keys
     '(effectful-curry-operand
       non-normalizable-result-type
       unmergeable-branch-records
+      owned-narrowing-needs-proof
+      discharge-mixed-obligation
+      discharge-proof-issuer
+      discharge-remainder-chain
       projborrow-non-record
       projborrow-unknown-field
       read-non-borrow
