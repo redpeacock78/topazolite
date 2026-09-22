@@ -1,6 +1,6 @@
 # Topazolite Surface 構文
 
-**状態**：P2c 版
+**状態**：P2e2 版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/requirements.md`
 
@@ -66,7 +66,9 @@ typedecl ::= "type" ident "=" ty NL+
 fndecl   ::= "fn" ident "(" params ")" ty block NL+
 expr     ::= postfix
 postfix  ::= primary suffix*
-suffix   ::= "(" args ")" | "." ident
+suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
+labels   ::= NL* ident (sep ident)* sep? NL*
+sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")"
 anonfn   ::= "fn" "(" params ")" ty block
@@ -143,6 +145,24 @@ block は末尾の式を必ず持つためである。
 record の field は読点または改行で区切る。
 block の束縛と item は改行で区切る。
 `fsep` は `, NL*` または `NL+` である。
+
+### 3.5 多 field 射影の label 列
+
+`r.{a, b}` は、`r` から複数の field を一度に取り出す後置である。 [REQ: SUR-006]
+label 列は非空であり、同じ label を 2 度書けない。
+どちらに反しても `E-SUR-012` を返し、primary span は `{` から `}` までとする。
+
+label 列の区切りは読点と改行のどちらでもよく、末尾の読点を許す。
+record literal の field の区切りと同じ規則である。
+
+この検査は parser が行う。
+`SProjRec` の第 1 欄の span は `r.{a, b}` の全体を覆うものであり、`{` から `}` までだけを囲む span は構文解析の時点にしか無いからである。
+
+波括弧の中に書けるのは `ident` だけである。
+`r.{a: 1}` や `r.{1}` は `E-SUR-005` になる。
+
+drop する側を書く構文は置かない。
+残す label を列挙すれば残余は一意に決まるため、2 通りの綴りを持つ必要が無い。
 
 ## 4. span
 
@@ -245,12 +265,28 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
+- `(SProjRec s e ((SLabel s_l l) ...))` は、受け側を 1 度だけ束縛する `Let` と、label ごとの `Proj` を並べた `Rec` へ落とす。 [REQ: SUR-006]
 - `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
 - `(SFn s ((SParam s_p (SName s_x x) ty) ...) ty_r body)` は、span を持つ binder、型注釈、空の effect row を持つ `(Fn ...)` へ落とす。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
 - `(SFnDecl s (SName s_f f) ... )` は、関数本体と後続の項を持つ `Recur` へ落とす。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
+
+多 field 射影の落とし先は次の形である。
+
+```text
+(SProjRec s r ((SLabel s_a a) (SLabel s_b b)))
+  ⟶ (Let s ((#:bind %projrec s_r) const) r_core
+          (Rec s (((#:lbl a s_a) imm (Proj s_a (#:var %projrec s_r) (#:lbl a s_a)))
+                  ((#:lbl b s_b) imm (Proj s_b (#:var %projrec s_r) (#:lbl b s_b))))))
+```
+
+受け側の束縛の mode は `const` であり、結果の欄はすべて `imm` である。
+元の field が `mut` でも結果は `imm` になる。
+`Owned` の欄を残す射影は、`Rec` が `Owned` の欄を持てないため `T-Rec` が拒否する（`structural-row.md` §3.1）。
+F* 側の `SProjRec` は label の綴りを保持せず、`proj_fields` は欄の個数だけを写す。
+受け側の綴り `%projrec` は、`lexer.rkt` の `ident-start?` が `%` を受理しないため入力の識別子と衝突しない。
 
 `TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
 それ以外は §5 の別名環境から解決し、未登録なら `E-SUR-008` とする。
@@ -324,7 +360,8 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 
 命題 3 は `wf_node` を前提とする条件付き補題である。
 parser の出力が `wf_node` を満たすことは F* 側からは示さない。
-命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
+命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、1 つの節点を複数の節点へ増やす `SProjRec`、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
+`SProjRec` の lowering の根の span は入力の span を保存するが、複数の節点へ展開するため命題 4 の対象外である。
 
 parity の対応表には、1 対 1、多対 1、対応なし、対象外の 4 種類の行を置く。
 parity 検査は、ツール内の構成子リストと対応表の自己整合性だけを保証する。
@@ -334,20 +371,20 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 
 ### 8.1 Surface AST の対応
 
-- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
 
-Racket 側の Surface 構成子リストは 22 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 14 個である。
+Racket 側の Surface 構成子リストは 23 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
 
 ### 8.2 UCore+ の対応
 
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur` の 9 構成子だけを parity の対象とする。
 F* 側では、これらに対応する `CLit`、`CVar`、`CApply`、`CProj`、`CRec`、`CFn`、`CConstruct`、`CLet`、`CRecur` を置く。
 `CRecur` は parity の対象を揃えるための構成子であり、この版の lowering は生成しない。
-UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 23 個（`sexpr` 10 個、`sty` 3 個、`sdecl` 1 個、`core` 9 個）である。
+UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 24 個（`sexpr` 11 個、`sty` 3 個、`sdecl` 1 個、`core` 9 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

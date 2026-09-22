@@ -625,11 +625,12 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 
 ### SUR-006
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/structural-row.md` §3.3
+- **正典**：`docs/specification/surface.md` §3.5、§6.1
 
 余剰 `Owned` field の明示 projection は、narrowing で残す field と残余の扱いを Surface 上で指定できなければならない。
+P2e2 は多 field 射影 `r.{a, b}` を導入し、残す field を Surface で書けるようにした。
 
 ### SUR-007
 
