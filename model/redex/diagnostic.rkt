@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 16)
+(define diagnostic-registry-version 17)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -365,6 +365,9 @@
     ("E-SUR-010" surface-recursive-type-alias "型別名の参照に循環がある")
     ("E-SUR-011" surface-reserved-type-name "基本型の名前を型別名として宣言した")))
 
+(define surface-entries-v17
+  '(("E-SUR-012" surface-projection-labels "多 field 射影の label 列が空か重複している")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -388,7 +391,8 @@
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)
           (rows 'expand 14 expand-entries-v14)
-          (rows 'surface 15 surface-entries-v15)))
+          (rows 'surface 15 surface-entries-v15)
+          (rows 'surface 17 surface-entries-v17)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。

@@ -18,18 +18,24 @@
     surface-unknown-type-name
     surface-duplicate-type-alias
     surface-recursive-type-alias
-    surface-reserved-type-name))
+    surface-reserved-type-name
+    surface-projection-labels))
+
+;; v15 の 11 件に v17 の 1 件を足した。since は版ごとに異なる。
+(define surface-since
+  (hasheq 'surface-projection-labels 17))
 
 (test-case
- "11 件の key はすべて registry にあり、相は surface である"
+ "12 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
    (check-equal? (diagnostic-code-phase (diagnostic-code-row code)) 'surface)
-   (check-equal? (diagnostic-code-since (diagnostic-code-row code)) 15)))
+   (check-equal? (diagnostic-code-since (diagnostic-code-row code))
+                 (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 11 件だけである"
+ "registry の surface 相はこの 12 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -72,7 +78,7 @@
                     (<= (fourth s) n))
                (format "~a の primary span が [0, ~a] の内側にある" (first pr) n))))
 
-;; spec §12 の「3 つの renderer が全 11 件を描ける」である。producer の無い 5 件も
+;; spec §12 の「3 つの renderer が全 12 件を描ける」である。producer の無い 5 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -88,7 +94,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 11 件すべてを描ける"
+ "3 つの renderer が 12 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))
