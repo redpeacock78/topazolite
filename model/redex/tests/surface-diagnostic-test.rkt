@@ -43,7 +43,8 @@
  (check-equal? (sort (map symbol->string rows) string<?)
                (sort (map symbol->string surface-keys) string<?)))
 
-;; P2c1 が producer を持つのは 6 件である。残る 5 件は P2c2 の
+;; producer を持つのは 7 件である。6 件は P2c1 の lexer と parser が出し、
+;; surface-projection-labels は P2e2 の parser が出す。残る 5 件は P2c2 の
 ;; surface-lower.rkt が出す。
 ;; 3 つ目の欄は入力の byte 長である。primary span の上端をこれと比べる。
 (define producers
@@ -52,17 +53,18 @@
         (list 'surface-unterminated-string (lambda () (lex 'src #"\"a"))                 2)
         (list 'surface-invalid-escape      (lambda () (lex 'src #"\"a\\q\""))            5)
         (list 'surface-unexpected-token    (lambda () (parse (lex/string 'src "if x { 1 }"))) 10)
-        (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "")))      0)))
+        (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "")))      0)
+        (list 'surface-projection-labels   (lambda () (parse (lex/string 'src "r.{}")))  4)))
 
 (test-case
- "6 件の producer が registry と同じ code を返す"
+ "7 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "6 件の分類は SUR である"
+ "7 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -77,6 +79,15 @@
                     (<= (third s) (fourth s))
                     (<= (fourth s) n))
                (format "~a の primary span が [0, ~a] の内側にある" (first pr) n))))
+
+(test-case
+ "多 field 射影の診断の primary span は波括弧の範囲である"
+ (check-equal? (diagnostic-primary-span
+                (parse (lex/string 'src "r.{}")))
+               '(#:span src 2 4))
+ (check-equal? (diagnostic-primary-span
+                (parse (lex/string 'src "r.{a, a}")))
+               '(#:span src 2 8)))
 
 ;; spec §12 の「3 つの renderer が全 12 件を描ける」である。producer の無い 5 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。

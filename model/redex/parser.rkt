@@ -140,9 +140,17 @@
            (loop `(SApply ,(hull (node-span node) close) ,node ,args) close-j))]
         [(punct? ts j '|.|)
          (define dot-j (add1 j))
-         (let-values ([(name s label-j) (expect-ident ts fail dot-j)])
-           (define label `(SLabel ,s ,name))
-           (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j))]
+         (cond
+           ;; spec §3。`.` の直後の `{` は多 field 射影である。
+           [(punct? ts dot-j '|{|)
+            (let-values ([(labels close-j) (parse-proj-labels ts fail dot-j)])
+              (loop `(SProjRec ,(hull (node-span node) (span-at ts close-j))
+                               ,node ,labels)
+                    (add1 close-j)))]
+           [else
+            (let-values ([(name s label-j) (expect-ident ts fail dot-j)])
+              (define label `(SLabel ,s ,name))
+              (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j))])]
         [else (values node j)]))))
 
 (define (parse-primary ts fail i)
@@ -221,6 +229,39 @@
               [(> next value-j)
                (loop next (cons field fields))]
               [else (fail-at ts fail next)]))))))
+
+;; spec §6.2。label 列は非空であり、重複を含まない。primary span は開き波括弧
+;; から閉じ波括弧までである。SProjRec の第 1 欄は r.{a, b} 全体の span であり、
+;; 波括弧だけを囲む span はここでしか手に入らない。だから検査は parser が行う。
+(define (check-proj-labels labels s fail)
+  (define names (for/list ([l (in-list labels)]) (third l)))
+  (when (or (null? names) (check-duplicates names eq?))
+    (fail 'surface-projection-labels s)))
+
+;; 開き波括弧の位置を受け取り、label の並びと閉じ波括弧の位置を返す。
+;; 区切りの規則は parse-record と同じで、読点と改行のどちらでもよく、
+;; 末尾の読点を許す。
+(define (parse-proj-labels ts fail open-j)
+  (define open (span-at ts open-j))
+  (let loop ([j (skip-nl ts (add1 open-j))] [labels '()])
+    (cond
+      [(punct? ts j '|}|)
+       (define labs (reverse labels))
+       (check-proj-labels labs (hull open (span-at ts j)) fail)
+       (values labs j)]
+      [else
+       (let-values ([(name s label-j) (expect-ident ts fail j)])
+         (define next (skip-nl ts label-j))
+         (cond
+           [(punct? ts next '|,|)
+            (loop (skip-nl ts (add1 next)) (cons `(SLabel ,s ,name) labels))]
+           [(punct? ts next '|}|)
+            (loop next (cons `(SLabel ,s ,name) labels))]
+           ;; 読点が無く改行だけで区切った形である。parse-record の
+           ;; (> next value-j) の節と同じ判定である。
+           [(> next label-j)
+            (loop next (cons `(SLabel ,s ,name) labels))]
+           [else (fail-at ts fail next)]))])))
 
 (define (parse-block ts fail i)
   (define open (span-at ts i))

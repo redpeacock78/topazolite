@@ -48,6 +48,9 @@
                 `(SProjRec ,s0 (SVar ,s0 r) ()))))
 
 (define (p str) (parse (lex/string 'src str)))
+(define (p-code str)
+  (define r (p str))
+  (and (diagnostic? r) (diagnostic-id r)))
 
 (test-case
  "整数だけの program"
@@ -69,6 +72,46 @@
                                 (SVar (#:span src 0 1) f)
                                 ((SVar (#:span src 2 3) x)))
                         (SLabel (#:span src 5 6) a)))))
+
+(test-case
+ "多 field 射影は波括弧の中の label 列を順に持つ"
+ (check-equal? (p "r.{a, b}")
+               '(SProgram
+                 (#:span src 0 8) ()
+                 (SProjRec (#:span src 0 8)
+                           (SVar (#:span src 0 1) r)
+                           ((SLabel (#:span src 3 4) a)
+                            (SLabel (#:span src 6 7) b))))))
+
+(test-case
+ "多 field 射影は後置として左結合で積める"
+ (check-equal? (p "f(x).{a}")
+               '(SProgram
+                 (#:span src 0 8) ()
+                 (SProjRec (#:span src 0 8)
+                           (SApply (#:span src 0 4)
+                                   (SVar (#:span src 0 1) f)
+                                   ((SVar (#:span src 2 3) x)))
+                           ((SLabel (#:span src 6 7) a))))))
+
+(test-case
+ "label 列の区切りは読点でも改行でもよく、末尾の読点を許す"
+ (check-equal? (length (fourth (fourth (p "r.{a, b}")))) 2)
+ (check-equal? (length (fourth (fourth (p "r.{a\n b}")))) 2)
+ (check-equal? (length (fourth (fourth (p "r.{a, b,}")))) 2))
+
+(test-case
+ "空の label 列と重複した label は E-SUR-012 である"
+ (check-equal? (p-code "r.{}") "E-SUR-012")
+ (check-equal? (p-code "r.{a, a}") "E-SUR-012")
+ ;; primary span は { から } までである。
+ (check-equal? (diagnostic-primary-span (p "r.{}")) '(#:span src 2 4))
+ (check-equal? (diagnostic-primary-span (p "r.{a, a}")) '(#:span src 2 8)))
+
+(test-case
+ "波括弧の中に式を書くと構文の誤りである"
+ (check-equal? (p-code "r.{a: 1}") "E-SUR-005")
+ (check-equal? (p-code "r.{1}") "E-SUR-005"))
 
 (test-case
  "括弧で括った式は括弧の span を持たない"
@@ -136,6 +179,7 @@
 (test-case
  "出力は Surface の言語に合う"
  (for ([src (in-list (list "1" "true" "f(x).a" "{}" "{ a: 1 }"
+                           "r.{a, b}"
                            "{ let x = 1\n x }"
                            "fn(a: Int) Int { a }"
                            "SInt" "TName" "none" "return"))])
@@ -148,10 +192,6 @@
  (check-false (surface-prog? `(SInt ,s0 0)))
  (check-true  (surface-expr? `(SInt ,s0 0)))
  (check-false (surface-expr? `(SProgram ,s0 () (SInt ,s0 0)))))
-
-(define (p-code str)
-  (define r (p str))
-  (and (diagnostic? r) (diagnostic-id r)))
 
 (test-case
  "トップレベルの型宣言と関数宣言と束縛を受理する"
@@ -232,6 +272,7 @@
  "節点の span は子孫のすべての span を包含する"
  (for ([src (in-list (list "1"
                            "f(x).a"
+                           "r.{a, b}"
                            "return"
                            "type A = Int\nconst x: A = 1\n1"
                            "fn f(a: Int) Int { a }\nf(1)"))])
