@@ -126,6 +126,20 @@ label1, ..., labeln は互いに相異なる
 record 値の field に `Owned` を許すと affine 検査を record 内部へ迂回できるため、G2a は先頭型が `Owned` の field を拒否する。
 この制限は G1 が constructor field、関数引数、closure capture から `Owned` を除外する方針を保つ。
 
+**(T-Drop-Remainder)** [REQ: PRF-005]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ_actual ! ε
+narrow(τ_actual, τ_expected) ≠ 'reject
+issuer(O) = o-narrow
+---------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core
+  (Discharge (ProofRep O (RemainderSafelyDropped τ_actual τ_expected)) c)
+  : τ_expected ! ε
+```
+
+`Discharge` は δ-Discharge で剥がれるため、T-Drop-Remainder は新しい簡約規則を足さない。
+
 `Proj` は scrutinee を synthesis し、field row から結果型を得る。
 
 **(T-Proj)**
@@ -236,17 +250,19 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 `Union` は互換かつ安全な候補が一つ以上あることを要求し、候補の順序で判定が変わってはならない。
 余剰欄の判定には `owned-free?` を使う。
 `copy-out-ok?` は copy 可能性の判定であり、`Owned` の有無とは別の問いである。
-拒否の code は typing が `E-OWN-028`、elaborate が `E-OWN-029` である。
+拒否の code は、入れ子の残余では typing が `E-OWN-028`、elaborate が `E-OWN-029` であり、最上位の残余では typing が `E-OWN-030`、elaborate が `E-OWN-031` である。
 `Untrusted` と `Refined` の枝は構造として閉じているが、現行の型付け規則では到達しない。
 `type-shape.rkt:80-85` が両者の payload に `owned-free?` を課し、`typing.rkt:2451` と `typing.rkt:2464` の `UVal` と `RVal` も構築時に同じ判定で拒否するためである。
-この枝の被覆は `owned-narrowing-ok?` を直に呼ぶ単体テストで行い、統合経路のテストは置かない。
+この枝の被覆は `owned-narrowing-kind` を直に呼ぶ単体テストで行い、統合経路のテストは置かない。
 `Construct` 枝も現行の schema からは到達しないが、理由は別である。
 `schema.rkt:6` が返す schema は `Bool`、`(List t)`、`(Option t)`、`(Result t s)` に限られ、いずれも `compat?` の `type-equiv?` へ委譲するため narrowing の対になる組が作れない。
 構造の `Record` を持つ nominal data type を足したときにこの位置が生きるため、コード注釈で残す。
 診断の expected 欄は判定点によって異なる。
 `check-as/full` の 2 箇所は宣言された `expected` をそのまま載せ、`binding-context` は残余を反映した後の束縛型を載せる。
 後者は実際に比較した型を示し、前者は寿命の推論を反映する前の型であり、兄弟の `type-mismatch` と揃える判断である。
-救済策の三つの枝は実装しない（`OWN-004`、`SUR-006`、`PRF-005`）。
+余剰欄に `Owned` が含まれる最上位の narrowing は `drop-obligation` を返し、`Discharge` の T-Drop-Remainder で Proof を消費する。
+`Union` の候補選別では `'ok` だけを安全な候補と見なす。
+borrowed view は `SUR-004`、明示 projection は `SUR-006` の担当であり、後続 Phase へ送る。
 
 ### 3.4 型同値との分離
 

@@ -418,6 +418,7 @@
 (define expected-p1e3-ids '(MAC-001))
 (define expected-p2c-ids '(SUR-001))
 (define expected-p2d-ids '(SUR-007))
+(define expected-p2e1-ids '(PRF-005))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -600,6 +601,14 @@
     (list (build-path root "docs/specification/surface.md")))
   (define p2d-tests
     (list (build-path root "model/redex/tests/driver-test.rkt")))
+  (define p2e1-specs
+    (list (build-path root "docs/specification/proof-value.md")
+          (build-path root "docs/specification/structural-row.md")
+          (build-path root "docs/specification/policy-narrative.md")))
+  (define p2e1-tests
+    (list (build-path root "model/redex/tests/owned-narrowing-test.rkt")
+          (build-path root "model/redex/tests/remainder-drop-test.rkt")
+          (build-path root "model/redex/tests/origins-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -621,7 +630,8 @@
    (cycle-descriptor 'P1d "P1" p1d-specs p1d-tests #f expected-p1d-ids)
    (cycle-descriptor 'P1e3 "P1" p1e3-specs p1e3-tests #f expected-p1e3-ids)
    (cycle-descriptor 'P2c "P2" p2c-specs p2c-tests #f expected-p2c-ids)
-   (cycle-descriptor 'P2d "P2" p2d-specs p2d-tests #f expected-p2d-ids)))
+   (cycle-descriptor 'P2d "P2" p2d-specs p2d-tests #f expected-p2d-ids)
+   (cycle-descriptor 'P2e1 "P2" p2e1-specs p2e1-tests #f expected-p2e1-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

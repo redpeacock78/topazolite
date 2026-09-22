@@ -29,16 +29,17 @@ G2f の `policy-table` は次の六行を持つ。
 - `TraitResolution` は `project-goal` と `resolve-candidates` を `search.rkt` へ登録する。
 - `ProofSearch` は `discharge?` を `search.rkt` へ登録する。
 - `Normalization` は `normalize-type` を `type-equiv.rkt` へ登録する。
-- `OwnershipPolicy` は `owned-narrowing-ok?` を `ownership.rkt` へ登録する。
+- `OwnershipPolicy` は `owned-narrowing-kind` を `ownership.rkt` へ登録する。
 
 `BindingPolicy` の行は置かない。
 これらの方針を実装するサイクルで行を追加する。
 
-正典が持つのは `OwnershipPolicyNarrative.narrow` であり、実装が登録するのは `owned-narrowing-ok?` である。
+正典が持つのは `OwnershipPolicyNarrative.narrow` であり、実装が登録するのは `owned-narrowing-kind` である。
 
 名前を合わせる adapter は置かない。
 
-`owned-narrowing-ok?` は boolean を返す `narrow` の reject-only 実装であり、救済策を実装するときに返却形を広げる境界がここになる。
+`owned-narrowing-kind` は `narrow` の結果を `'ok`、`(drop-obligation τ_actual τ_expected)`、`'reject` の3つの kind で返す。
+`drop-obligation` は最上位の呼び出しでだけ返し、再帰の呼び出しは kind の最大値を返す。
 
 ## 3. 二つの予約 Narrative
 
@@ -103,7 +104,9 @@ G2f の VariancePolicy は判定規則そのものを差し替えない。
 
 ### 6.3 OwnershipPolicy
 
-`OwnershipPolicy.owned-narrowing-ok?` は常に boolean を返す。
+`OwnershipPolicy.owned-narrowing-kind` は `'ok`、`(drop-obligation τ_actual τ_expected)`、`'reject` のいずれかを返す。
+
+`drop-obligation` は最上位の narrowing だけが返し、再帰の呼び出しは束の最大を返す。
 
 この Policy 層は返却値へそれ以上の制約を課さない。
 
@@ -148,7 +151,8 @@ G2f は Policy の差し替え API を導入しない。
 
 `OwnershipPolicy` の行は P1b が足した。
 
-実装するのは `narrow` の拒否側だけであり、救済策の三つの枝は Phase 2 以降へ送る。
+実装するのは `narrow` の3つの kind と RemainderSafelyDropped Proof による救済である。
+borrowed view は `SUR-004` の担当として Phase 2 以降へ送る。
 
 G2f の VariancePolicy は同値な二型の互換だけを検査する。
 ホワイトペーパーの変性規則全体を回収済みとは記録しない。

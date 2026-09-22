@@ -52,6 +52,7 @@ G2 の命題文法を次のとおり拡張する。
     | TypeNarrativeCap
     | (Prop id)
     | (Presence label)
+    | (RemainderSafelyDropped τ_actual τ_expected)
 ```
 
 **抽象命題** `(Prop id)` は、validator 正典表が名前 id で識別する命題である。
@@ -59,6 +60,9 @@ G2 の命題文法を次のとおり拡張する。
 
 **常在性命題** `(Presence label)` は、merge の全 non-Never branch に label の field が同じ型と可変性で存在したことを表す。
 この命題の発行元は §5 の merge に限る。
+
+**残余 drop 命題** `(RemainderSafelyDropped τ_actual τ_expected)` は、構造型 narrowing で余剰 `Owned` field を落とすために選択した Proof を表す。
+残余 row は型の対から導けるため、命題の鍵へ row を重ねて持たせない。
 
 ### 3.2 型と値の拡張
 
@@ -410,11 +414,15 @@ c_base = (Apply c_f c_a ...)
 Γ ⊢ (Discharge (ProofRep O φ_1) ... c_base) : τ_r
 ```
 
-基底を `Apply` に限り、φ 列を義務列と個数も順序も一致させる。
+φ 列に `RemainderSafelyDropped` が無い場合は、基底を `Apply` に限り、φ 列を義務列と個数も順序も一致させる。
 包み先を直接の `Apply` に限る形は採れない。
 義務が複数あるとき、外側の `Discharge` の包み先は `Discharge` になり、生成した形を自分で拒否してしまう。
 素通しの規則も採れない。
 当該の適用と無関係な正当な `ProofRep` を手書きで包んだ項が、成果物検証を通ってしまう。
+φ 列がすべて `RemainderSafelyDropped` の場合は、包み先を narrowing が起きる項そのものとし、基底を `τ_actual` で `compat?` により検査する。
+`narrow(τ_actual, τ_expected)` が `'reject` でなければ、外側へ `τ_expected` を返す。
+この枝の連なりは1段だけであり、2段目の `τ_actual` は1段目の `τ_expected` と同じ判定を繰り返すため拒否する。 [REQ: PRF-005]
+残余 drop と通常の義務を混ぜた φ 列は拒否する。
 
 δ 規則は一段ずつ外側から剥がす。
 
@@ -511,3 +519,4 @@ intersect 行の primitive binding と出力 trait も同時に照合する。
 | RFN-002 | §5.1 常在性 witness の発行規則、§5.2 merge ごとの局所検査 |
 | RFN-003 | §6.1 discharge 互換の判定規則、§6.3 χ 分類と well-formedness の改訂 |
 | PRF-004 | §6.4 `Discharge` の項文法、T-Discharge、δ-Discharge、搬送の関門 |
+| PRF-005 | §3.1 `RemainderSafelyDropped`、§6.4 T-Drop-Remainder |

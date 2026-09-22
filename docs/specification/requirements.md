@@ -466,6 +466,7 @@ scope exit は未消費の affine resource を高々一度 drop する。
 - **由来**：ホワイトペーパー §15
 
 構造型 narrowing が余剰 Owned field を失う場合、borrowed view、明示 projection、または RemainderSafelyDropped Proof を要求する。
+P2e1 は RemainderSafelyDropped Proof による救済を実装した。
 
 ### BOR-001
 
@@ -700,9 +701,9 @@ Union の eliminator は branch を選択して型付き field を回復し、�
 
 ### PRF-005
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/structural-row.md` §3.3
+- **正典**：`docs/specification/proof-value.md` §3.1 と §6.4、`docs/specification/structural-row.md` §3.1
 
 構造型 narrowing で余剰 field を drop する場合、RemainderSafelyDropped Proof を構築して消費しなければならない。
 
