@@ -1740,15 +1740,22 @@
         (unless binding-row (fail 'record-binding-incompatible bound))
         ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
         ;; binding-row を expected 側に使う。これで入れ子の欄だけを検査する。
-        (unless (owned-narrowing-ok?
-                 `(Record ,actual-row)
-                 `(Record ,binding-row)
-                 (lambda (actual expected)
-                   (compat? actual expected Γ-pc0
-                            (current-region-relation))))
-          (fail 'owned-narrowing-rejected bound
+        (match (owned-narrowing-kind
+                `(Record ,actual-row)
                 `(Record ,binding-row)
-                `(Record ,actual-row)))
+                (lambda (actual expected)
+                  (compat? actual expected Γ-pc0
+                           (current-region-relation))))
+          ['ok
+           (void)]
+          [`(drop-obligation ,_ ,_)
+           (fail 'owned-narrowing-needs-proof bound
+                 `(Record ,binding-row)
+                 `(Record ,actual-row))]
+          [_
+           (fail 'owned-narrowing-rejected bound
+                 `(Record ,binding-row)
+                 `(Record ,actual-row))])
         (list bound-row `(Record ,binding-row) bound-psi)]
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
@@ -2728,21 +2735,63 @@
            [`(Discharge ,_ ,inner)
             (loop (peel-node inner) (enter-child ctx 0))]
            [_ ctx])))
-     (match (peel-node base)
-       [`(Apply ,function ,_ ...)
-        (match (infer function (enter-child base-Λ 0)
-                       Ψ environment places callables fail)
-          [(list `(NFn ,_ ,_ ,_ ,obligations) _ function-psi)
-           (unless (= (length propositions) (length obligations))
-             (fail 'discharge-obligation-count core))
-           (for ([phi (in-list propositions)]
-                 [obligation (in-list obligations)])
-             (unless (proposition-equiv? phi obligation)
-               (fail 'discharge-proposition-mismatch core)))
-           ;; 型と Effect 行は基底の Apply のものを返す。
-           (infer base base-Λ function-psi environment places callables fail)]
-          [_ (fail 'apply-non-function function)])]
-       [_ (fail 'discharge-target-not-apply base)])]
+     (define (remainder-phi? phi)
+       (match phi [`(RemainderSafelyDropped ,_ ,_) #t] [_ #f]))
+     (define remainder-count
+       (for/sum ([phi (in-list propositions)]) (if (remainder-phi? phi) 1 0)))
+     (cond
+       [(zero? remainder-count)
+        (match (peel-node base)
+          [`(Apply ,function ,_ ...)
+           (match (infer function (enter-child base-Λ 0)
+                          Ψ environment places callables fail)
+             [(list `(NFn ,_ ,_ ,_ ,obligations) _ function-psi)
+              (unless (= (length propositions) (length obligations))
+                (fail 'discharge-obligation-count core))
+              (for ([phi (in-list propositions)]
+                    [obligation (in-list obligations)])
+                (unless (proposition-equiv? phi obligation)
+                  (fail 'discharge-proposition-mismatch core)))
+              ;; 型と Effect 行は基底の Apply のものを返す。
+              (infer base base-Λ function-psi environment places callables fail)]
+             [_ (fail 'apply-non-function function)])]
+          [_ (fail 'discharge-target-not-apply base)])]
+       [(< remainder-count (length propositions))
+        ;; 残余 drop の義務と他の義務は、渡し方が違う。混ぜた形は受理しない。
+        (fail 'discharge-mixed-obligation core)]
+       [else
+        (unless (= remainder-count 1)
+          ;; 残余 drop は 1 段で完結する。2 段目の τ_actual は 1 段目の
+          ;; τ_expected と等しく、同じ判定を繰り返すだけである。
+          (fail 'discharge-remainder-chain core))
+        ;; peel-discharge は φ の列しか返さないため、origin をここで取り直す。
+        ;; propositions が空でない以上、最外の包みは ProofRep を持つ。
+        ;; peel-discharge は ProofRep に合わない包みでそこで剥がすのを止め、
+        ;; φ を積まないためである。よってこの match に既定の節は要らない。
+        (define origin
+          (match (peel-node core)
+            [`(Discharge ,proof-rep ,_)
+             (match (peel-node proof-rep)
+               [`(ProofRep ,o ,_) o])]))
+        ;; remainder-count が 1 で、かつ propositions の長さも 1 であるから、
+        ;; 第 1 要素は必ず RemainderSafelyDropped である。
+        (match (first propositions)
+          [`(RemainderSafelyDropped ,tau-actual ,tau-expected)
+           (unless (proof-issuer-ok? R0 origin (first propositions))
+             (fail 'discharge-proof-issuer core))
+           (match (owned-narrowing-kind tau-actual tau-expected
+                                        type-compatible?)
+             ['reject
+              (fail 'owned-narrowing-rejected core tau-expected tau-actual)]
+             [_
+              ;; RemainderSafelyDropped の φ は、包みの内側の項を
+              ;; τ_actual として検査し、外側へは τ_expected を返す。
+              ;; Discharge 自身が narrowing を合成するため、判定点へ
+              ;; proof の状態を渡す必要はない。
+              (match (check-as/full base tau-actual base-Λ
+                                    Ψ environment places callables fail)
+                [(list row result-psi _)
+                 (list tau-expected row result-psi)])])])])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound Λ
@@ -3177,8 +3226,11 @@
      ;; 現行の Bool/List/Option/Result schema は type-equiv? へ落ちるため
      ;; narrowing はここへ届かない。Record を持つ nominal data type の追加時に生きる。
      ;; OWN-004。互換だと判断した組に対してだけ narrowing の損失を見る。
-     (unless (owned-narrowing-ok? actual expected compatible?)
-       (fail 'owned-narrowing-rejected core expected actual))
+     (match (owned-narrowing-kind actual expected compatible?)
+       ['ok (void)]
+       [`(drop-obligation ,_ ,_)
+        (fail 'owned-narrowing-needs-proof core expected actual)]
+       [_ (fail 'owned-narrowing-rejected core expected actual)])
      (match (check-construct constructor fields data-type
                               Λ
                               Ψ
@@ -3359,8 +3411,11 @@
                    (call-argument-compatible? actual expected core Λ
                                               compatible? fail))
           (fail 'type-mismatch core expected actual))
-        (unless (owned-narrowing-ok? actual expected* compatible?)
-          (fail 'owned-narrowing-rejected core expected actual))
+        (match (owned-narrowing-kind actual expected* compatible?)
+          ['ok (void)]
+          [`(drop-obligation ,_ ,_)
+           (fail 'owned-narrowing-needs-proof core expected actual)]
+          [_ (fail 'owned-narrowing-rejected core expected actual)])
         (list row result-psi actual)])]))
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素を落として渡す。

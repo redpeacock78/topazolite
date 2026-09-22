@@ -208,6 +208,15 @@
  (check-equal? (lower-ok '(Proj x a)) `(PProj ,(var-code 'x) ,(label-code 'a)))
  (check-equal? (lower-ok '(Discharge (ProofRep User TypeNarrativeCap) x))
                (var-code 'x))
+ (check-equal?
+  (lower-ok
+   '(Discharge
+     (ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped
+                (Record ((x (Owned Res) imm) (y Int imm)))
+                (Record ((y Int imm)))))
+     x))
+  (var-code 'x))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
 
 ;;; backend-matrix.md §7 の feature 対応に使う形の突合と、形ごとの fixture

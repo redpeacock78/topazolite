@@ -247,7 +247,7 @@
               (declared-policy-operations))
          string<?)
    '("Normalization.normalize-type"
-     "OwnershipPolicy.owned-narrowing-ok?"
+     "OwnershipPolicy.owned-narrowing-kind"
      "ProofSearch.discharge/proof"
      "ProofSearch.discharge?"
      "RowPolicy.merge-record-types"

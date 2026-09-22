@@ -4,14 +4,68 @@
 ;; RemainderSafelyDropped Proof の構築と消費。
 
 (require rackunit
+         racket/match
          redex/reduction-semantics
+         "../borrow.rkt"
+         "../diagnostic.rkt"
          "../lang.rkt"
          "../type-equiv.rkt"
          "../origins.rkt"
-         "../search.rkt")
+         "../search.rkt"
+         "../region.rkt"
+         "../typing.rkt")
 
 (define actual '(Record ((x (Owned Res) imm) (y Int imm))))
 (define expected '(Record ((y Int imm))))
+
+(define wide '(Record ((a (Owned Res) imm) (b Int imm))))
+(define narrow '(Record ((b Int imm))))
+(define phi `(RemainderSafelyDropped ,wide ,narrow))
+(define proof `(ProofRep (Reserved o-narrow) ,phi))
+
+;; 基底が φ の τ_actual より広く、余剰欄にも Owned がある組。
+(define wider
+  '(Record ((a (Owned Res) imm) (b Int imm) (c (Owned Res) imm))))
+
+;; 入れ子の欄で Owned を失う対。kind は 'reject である。
+(define reject-wide '(Record ((a (Record ((p (Owned Res) imm))) imm))))
+(define reject-narrow '(Record ((a (Record ()) imm))))
+(define reject-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,reject-wide ,reject-narrow)))
+
+;; 余剰が Int だけの width narrowing。kind は 'ok である。
+(define ok-wide '(Record ((a Int imm) (b Int imm))))
+(define ok-narrow '(Record ((b Int imm))))
+(define ok-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,ok-wide ,ok-narrow)))
+
+;; 基底の型と一致しない narrowing の型対。Discharge の基底検査で拒む。
+(define other-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,ok-wide ,narrow)))
+
+;; 残余 drop 以外の義務。混在の検査に使う。
+(define cap-proof '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+
+(define narrowing-environment
+  `((f (NFn (,narrow) ,narrow () ()))
+    (g (NFn (,reject-narrow) ,reject-narrow () ()))
+    (h (NFn (,ok-narrow) ,ok-narrow () ()))
+    (k (NFn (,ok-narrow) ,ok-narrow () (TypeNarrativeCap)))
+    (s ,wide)
+    (s-wider ,wider)
+    (s-reject ,reject-wide)
+    (s-ok ,ok-wide)))
+
+(define (key-of core [environment '()])
+  (match (type-of/raw core '() '() environment (empty-region-ctx))
+    [(list 'fail key _node _details ...) key]
+    [(list 'ok _) 'ok]))
+
+(define (type-of core [environment '()])
+  (first (core-type-of core '() '() environment)))
 
 (test-case
  "RemainderSafelyDropped は φ として言語に合う"
@@ -63,3 +117,54 @@
                `(forged ,proof))
  (check-equal? (term (verify-origins ,R0 (Discharge ,proof 1)))
                'ok))
+
+(test-case "Proof 無しの narrowing は owned-narrowing-needs-proof である"
+  (check-equal? (key-of '(Apply f s) narrowing-environment)
+                'owned-narrowing-needs-proof))
+
+(test-case "基底が τ_actual より広く余剰に Owned があると通らない"
+  (check-equal? (key-of `(Apply f (Discharge ,proof s-wider))
+                        narrowing-environment)
+                'owned-narrowing-needs-proof))
+
+(test-case "Discharge で包むと通り、型は τ_expected である"
+  (check-equal? (type-of `(Apply f (Discharge ,proof s))
+                         narrowing-environment)
+                narrow))
+
+(test-case "'reject を返す narrowing は Discharge で包んでも通らない"
+  (check-equal? (key-of `(Apply g (Discharge ,reject-proof s-reject))
+                        narrowing-environment)
+                'owned-narrowing-rejected))
+
+(test-case "'ok を返す narrowing を包んでも通る"
+  (check-equal? (type-of `(Apply h (Discharge ,ok-proof s-ok))
+                         narrowing-environment)
+                ok-narrow))
+
+(test-case "φ の τ_actual が基底の型と一致しないと通らない"
+  (check-equal? (key-of `(Apply f (Discharge ,other-proof s))
+                        narrowing-environment)
+                'type-mismatch))
+
+(test-case "残余 drop と他の義務を重ねると discharge-mixed-obligation である"
+  (check-equal? (key-of `(Apply k
+                              (Discharge ,proof
+                                         (Discharge ,cap-proof s-ok)))
+                        narrowing-environment)
+                'discharge-mixed-obligation))
+
+(test-case "2 枚重ねると discharge-remainder-chain である"
+  (check-equal? (key-of `(Apply f
+                              (Discharge ,proof
+                                         (Discharge ,proof s)))
+                        narrowing-environment)
+                'discharge-remainder-chain))
+
+(test-case "origin が o-narrow 以外なら受理しない"
+  (check-equal?
+   (key-of `(Apply f
+                    (Discharge (ProofRep (Reserved o-type-narrative) ,phi)
+                               s))
+            narrowing-environment)
+   'discharge-proof-issuer))

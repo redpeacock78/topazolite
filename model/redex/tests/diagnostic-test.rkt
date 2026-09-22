@@ -536,7 +536,8 @@
  ;; gate へ移り到達しなくなったが、P1b で owned-narrowing-rejected を追加した。
  ;; P1c1 では予約束縛子の検査に reserved-binder-symbol を追加し、P1c2b
  ;; では Reassign と mut binding の 3 key を追加した。
- (check-equal? (length reasons) 51)
+ ;; P2e1 では narrowing の判定点へ owned-narrowing-needs-proof を追加した。
+ (check-equal? (length reasons) 52)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

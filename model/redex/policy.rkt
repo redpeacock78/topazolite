@@ -42,7 +42,7 @@
         (policy-row 'TraitResolution '(project-goal resolve-candidates) 'search.rkt)
         (policy-row 'ProofSearch '(discharge? discharge/proof) 'search.rkt)
         (policy-row 'Normalization '(normalize-type) 'type-equiv.rkt)
-        (policy-row 'OwnershipPolicy '(owned-narrowing-ok?) 'ownership.rkt)))
+        (policy-row 'OwnershipPolicy '(owned-narrowing-kind) 'ownership.rkt)))
 
 (define (policy-name row)       (first row))
 (define (policy-origin row)     (second row))

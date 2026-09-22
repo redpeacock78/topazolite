@@ -245,9 +245,9 @@
 ;; OWN-004。ownership.rkt は 2 引数の互換性述語を要求する。elaborate の
 ;; type-compatible? は命題文脈を第 3 引数に取るため、その位置の文脈を
 ;; 捕らえた閉包を渡す。互換性の判定と Union の候補選択が同じ述語で行われる。
-(define (narrowing-ok? actual expected propositions)
-  (owned-narrowing-ok? actual expected
-                       (lambda (a e) (type-compatible? a e propositions))))
+(define (narrowing-kind actual expected propositions)
+  (owned-narrowing-kind actual expected
+                        (lambda (a e) (type-compatible? a e propositions))))
 
 ;; RFN-001/002: 表層注釈に書いてよい命題。判定表の (Prop id) と G1 の 2 命題を
 ;; 許し、(Presence label) は許さない。文法でも外しているが、注釈は Redex の
@@ -460,10 +460,11 @@
     (reject s 'mut-binding-unsupported-type binding-type))
   ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
   ;; binding-type を expected 側に使う。これで入れ子の欄だけを検査する。
-  ;; actual-type が Never のときは Record の対にならないため、
-  ;; owned-narrowing-ok? は真を返す。
-  (unless (narrowing-ok? actual-type binding-type propositions)
-    (reject s 'owned-narrowing-rejected binding-type actual-type))
+  (match (narrowing-kind actual-type binding-type propositions)
+    ['ok (void)]
+    [`(drop-obligation ,_ ,_)
+     (reject s 'owned-narrowing-needs-proof binding-type actual-type)]
+    [_ (reject s 'owned-narrowing-rejected binding-type actual-type)])
   binding-type)
 
 (define (free-vars/erased expression)
@@ -1367,8 +1368,13 @@
          ;; 現行の Bool/List/Option/Result schema は type-compatible? が
          ;; type-equiv? へ委譲するため narrowing はここへ届かない。
          ;; Record を持つ nominal data type の追加時にこの位置が生きる。
-         (unless (narrowing-ok? (judgment-type result) expected propositions)
-           (reject s 'owned-narrowing-rejected expected (judgment-type result)))
+         (match (narrowing-kind (judgment-type result) expected propositions)
+           ['ok (void)]
+           [`(drop-obligation ,_ ,_)
+            (reject s 'owned-narrowing-needs-proof expected
+                    (judgment-type result))]
+           [_ (reject s 'owned-narrowing-rejected expected
+                      (judgment-type result))])
          (judgment (judgment-core result) expected (judgment-row result))]
 
         [`(Construct ,constructor ,fields ...)
@@ -1404,8 +1410,13 @@
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
            (reject s 'type-mismatch expected (judgment-type result)))
-         (unless (narrowing-ok? (judgment-type result) expected propositions)
-           (reject s 'owned-narrowing-rejected expected (judgment-type result)))
+         (match (narrowing-kind (judgment-type result) expected propositions)
+           ['ok (void)]
+           [`(drop-obligation ,_ ,_)
+            (reject s 'owned-narrowing-needs-proof expected
+                    (judgment-type result))]
+           [_ (reject s 'owned-narrowing-rejected expected
+                      (judgment-type result))])
          (judgment (judgment-core result) expected (judgment-row result))]))
 
     (define result (synth expression '() Δ0 Π0 '()))

@@ -158,6 +158,15 @@
 (define reach-narrowing-environment
   '((f (NFn ((Record ((y Int imm)))) Unit () ()))
     (s (Record ((x (Owned Res) imm) (y Int imm))))))
+(define reach-nested-narrowing-environment
+  '((g (NFn ((Record ((r (Record ((y Int imm))) imm)))) Unit () ()))
+    (t (Record ((r (Record ((x (Owned Res) imm) (y Int imm))) imm))))))
+(define reach-remainder-actual
+  '(Record ((x (Owned Res) imm) (y Int imm))))
+(define reach-remainder-expected
+  '(Record ((y Int imm))))
+(define reach-remainder-phi
+  `(RemainderSafelyDropped ,reach-remainder-actual ,reach-remainder-expected))
 (define reach-record-a '(Record ((a Int imm))))
 (define reach-list-int '(List Int))
 
@@ -807,7 +816,7 @@
               (reach-node 'OwnLeaf 1501 1520
                           (reach-lit 1 1510 1511))
               '() '() '() (reach-span 1501 1520))
-   (reach-row 'owned-narrowing-rejected
+   (reach-row 'owned-narrowing-needs-proof
               (reach-node 'Apply 1521 1540
                           (reach-var 'f 1522 1523)
                           (reach-var 's 1524 1525))
@@ -837,9 +846,45 @@
               (reach-node 'Reassign 1601 1615
                           (reach-var 'x 1602 1603)
                           (reach-lit 'unit 1610 1611))
-              '() '() '((x Int mut)) (reach-span 1601 1615))))
+              '() '() '((x Int mut)) (reach-span 1601 1615))
+   (reach-row 'owned-narrowing-rejected
+              (reach-node 'Apply 1616 1640
+                          (reach-var 'g 1617 1618)
+                          (reach-var 't 1619 1620))
+              '() '() reach-nested-narrowing-environment
+              (reach-span 1619 1620))
+   ;; 残余 drop の義務と TypeNarrativeCap を混ぜた包み。
+   (reach-row 'discharge-mixed-obligation
+              (reach-node 'Discharge 1641 1670
+                          (reach-node 'ProofRep 1642 1645 'User
+                                      reach-remainder-phi)
+                          (reach-node 'Discharge 1646 1669
+                                      (reach-node 'ProofRep 1647 1650 'User
+                                                  'TypeNarrativeCap)
+                                      (reach-var 's 1660 1661)))
+              '() '() reach-narrowing-environment
+              (reach-span 1641 1670))
+   ;; 残余 drop を 2 段重ねた包み。
+   (reach-row 'discharge-remainder-chain
+              (reach-node 'Discharge 1671 1700
+                          (reach-node 'ProofRep 1672 1675 'User
+                                      reach-remainder-phi)
+                          (reach-node 'Discharge 1676 1699
+                                      (reach-node 'ProofRep 1677 1680 'User
+                                                  reach-remainder-phi)
+                                      (reach-var 's 1690 1691)))
+              '() '() reach-narrowing-environment
+              (reach-span 1671 1700))
+   ;; 発行者が o-narrow でない Proof。
+   (reach-row 'discharge-proof-issuer
+              (reach-node 'Discharge 1701 1725
+                          (reach-node 'ProofRep 1702 1705 'User
+                                      reach-remainder-phi)
+                          (reach-var 's 1715 1716))
+              '() '() reach-narrowing-environment
+              (reach-span 1701 1725))))
 
-(test-case "typing の producer key 集合が registry v13 と一致する"
+(test-case "typing の producer key 集合が registry v16 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
@@ -891,15 +936,11 @@
   ;; FromRawPtr の 2 件は rawptr-fromraw-test.rkt が産出元であり、同じ理由で除く。
   ;; Unsafe 境界からの漏出は rawptr-unsafe-test.rkt が産出元であり、同じ理由で除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
-  ;; narrowing と Discharge の新しい4件は P2e1 の後段で producer を足すまで到達しない。
+  ;; Discharge の新しい producer は span 到達表の上記 3 行で固定する。
   (define unreachable-keys
     '(effectful-curry-operand
       non-normalizable-result-type
       unmergeable-branch-records
-      owned-narrowing-needs-proof
-      discharge-mixed-obligation
-      discharge-proof-issuer
-      discharge-remainder-chain
       projborrow-non-record
       projborrow-unknown-field
       read-non-borrow

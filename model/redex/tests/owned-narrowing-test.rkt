@@ -56,14 +56,14 @@
                  1))
    'ok))
 
-;; 余剰欄が Owned を含むと拒否する。通常の Rec は Owned 欄を拒否するため、
+;; 余剰欄が Owned を含むと Proof を求める。通常の Rec は Owned 欄を拒否するため、
 ;; 関数引数の照合で Record 型の narrowing を直接通す。
-(test-case "余剰 Owned 欄を落とす narrowing は拒否する"
+(test-case "余剰 Owned 欄を落とす narrowing は Proof を求める"
   (define core '(Apply f s))
-  (check-equal? (key-of core narrowing-environment) 'owned-narrowing-rejected)
-  (check-equal? (code-of core narrowing-environment) "E-OWN-028"))
+  (check-equal? (key-of core narrowing-environment) 'owned-narrowing-needs-proof)
+  (check-equal? (code-of core narrowing-environment) "E-OWN-030"))
 
-(test-case "拒否の診断は expected と found を分けて持つ"
+(test-case "Proof を求める診断は expected と found を分けて持つ"
   (define diagnostic
     (core-type-of/diagnostic '(Apply f s) '() '()
                              narrowing-environment
@@ -152,6 +152,13 @@
    (elaborate-code-of
     `(Fn ((p ,nested-actual)) ,nested-no-z () p))
    "E-OWN-029"))
+
+(test-case "elaborate は最上位の余剰 Owned に E-OWN-031 を出す"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((p (Record ((x ,owned imm) (y Int imm)))))
+         (Record ((y Int imm))) () p))
+   "E-OWN-031"))
 
 (test-case "余剰 Owned を保つ形は elaborate を通る"
   (check-equal?
