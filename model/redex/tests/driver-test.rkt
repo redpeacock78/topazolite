@@ -118,3 +118,18 @@
                  (format "~s の source-id" str))
    (check-equal? (containment-violations (compiled-core r)) '()
                  (format "~s の span 包含" str))))
+
+(test-case
+ "多 field 射影は選んだ欄だけの record 型になる"
+ (check-equal? (compiled-type (c "{ let r = { a: 1, b: () }\n r.{a} }"))
+               '(Record ((a Int imm)))))
+
+(test-case
+ "射影のあとも元の record を使える"
+ (check-equal? (compiled-type (c "{ let r = { a: 1, b: 2 }\n let q = r.{a}\n r.b }"))
+               'Int))
+
+(test-case
+ "mut で束縛した欄も射影の結果では imm になる"
+ (check-equal? (compiled-type (c "{ let mut r = { a: 1 }\n r.{a} }"))
+               '(Record ((a Int imm)))))

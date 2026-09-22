@@ -122,6 +122,21 @@
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
     [`(SProj ,s ,target (SLabel ,s_l ,label))
      `(Proj ,s ,(lower-sexpr target env fail) (#:lbl ,label ,s_l))]
+    ;; spec §6.1。受け側を 1 度だけ束縛し、選んだ label ごとに Proj を積んだ
+    ;; Rec を作る。受け側の綴り %projrec は lexer の ident-start? が % を
+    ;; 受理しないため、入力の識別子と衝突しない。入れ子の射影では内側の
+    ;; %projrec が外側の束縛式の中だけで使われるので、影が問題にならない。
+    [`(SProjRec ,s ,target ,labels)
+     (define s_r (node-span target))
+     (define receiver `(#:var %projrec ,s_r))
+     `(Let ,s ((#:bind %projrec ,s_r) const)
+           ,(lower-sexpr target env fail)
+           (Rec ,s
+                ,(for/list ([l (in-list labels)])
+                   (define s_l (second l))
+                   (define name (third l))
+                   `((#:lbl ,name ,s_l) imm
+                     (Proj ,s_l ,receiver (#:lbl ,name ,s_l))))))]
     [`(SRec ,s ,fields)
      `(Rec ,s ,(lower-rec-fields fields env fail))]
     [`(SBlock ,_ ,binds ,tail)

@@ -164,3 +164,24 @@
    (define t (low src))
    (check-false (diagnostic? t) (format "~s が受理される" src))
    (check-true (redex-match? UCore+ e t) (format "~s の出力が UCore+ に合う" src))))
+
+(test-case
+ "多 field 射影は受け側の束縛を 1 つ作り、順序を保った Rec へ落とす"
+ ;; Let と Rec は SProjRec 全体、受け側の束縛は target の span を持つ。
+ (check-equal?
+  (low "r.{b, a}")
+  '(Let (#:span src 0 8) ((#:bind %projrec (#:span src 0 1)) const)
+        (#:var r (#:span src 0 1))
+        (Rec (#:span src 0 8)
+             (((#:lbl b (#:span src 3 4)) imm
+               (Proj (#:span src 3 4)
+                     (#:var %projrec (#:span src 0 1))
+                     (#:lbl b (#:span src 3 4))))
+              ((#:lbl a (#:span src 6 7)) imm
+               (Proj (#:span src 6 7)
+                     (#:var %projrec (#:span src 0 1))
+                     (#:lbl a (#:span src 6 7)))))))))
+
+(test-case
+ "入れ子の射影は内側の %projrec を外側の束縛式の中だけで使う"
+ (check-true (redex-match? UCore+ e (low "r.{a}.{a}"))))
