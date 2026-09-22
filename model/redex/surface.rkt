@@ -41,6 +41,7 @@
              (SFn s (sparam ...) sty sexpr)
              (SApply s sexpr (sexpr ...))
              (SProj s sexpr slabel)
+             (SProjRec s sexpr (slabel ...))
              (SRec s (sfield ...))
              (SBlock s (sbind ...) sexpr))
   (spitem ::= (STypeDecl s sname sty)

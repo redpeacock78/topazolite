@@ -36,6 +36,17 @@
   (redex-match? Surface spitem
                 `(SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1)))))
 
+(test-case
+ "多 field 射影は Surface の言語に合う"
+ (check-true
+  (redex-match? Surface sexpr
+                `(SProjRec ,s0 (SVar ,s0 r)
+                           ((SLabel ,s0 a) (SLabel ,s0 b)))))
+ ;; label 列が空でも言語には合う。非空の要求は parser の検査が持つ。
+ (check-true
+  (redex-match? Surface sexpr
+                `(SProjRec ,s0 (SVar ,s0 r) ()))))
+
 (define (p str) (parse (lex/string 'src str)))
 
 (test-case
