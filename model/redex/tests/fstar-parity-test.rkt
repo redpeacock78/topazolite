@@ -10,9 +10,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 22)
+ (check-equal? (length racket-surface-constructors) 23)
  (check-equal? (length racket-ucore-constructors) 9)
- (check-equal? (length fstar-constructors) 23))
+ (check-equal? (length fstar-constructors) 24))
 
 (test-case
  "対応表に違反が無い"
@@ -100,6 +100,8 @@
                                                       (TName ,s0 Int) (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
    (cons 'SProj     (redex-match? Surface sexpr `(SProj ,s0 (SVar ,s0 x) (SLabel ,s0 a))))
+   (cons 'SProjRec  (redex-match? Surface sexpr
+                                  `(SProjRec ,s0 (SVar ,s0 x) ((SLabel ,s0 a)))))
    (cons 'SRec      (redex-match? Surface sexpr `(SRec ,s0 ((SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))))
    (cons 'SBlock    (redex-match? Surface sexpr `(SBlock ,s0 ((SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1)))
                                                          (SVar ,s0 x))))

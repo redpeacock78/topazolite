@@ -439,6 +439,7 @@ type sexpr =
   | SFn       : span -> list sty -> sty -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> string -> sexpr
+  | SProjRec  : span -> sexpr -> list string -> sexpr
   | SRec      : span -> list sexpr -> sexpr
   | SBlock    : span -> list sdecl -> sexpr -> sexpr
 and sty =
@@ -460,6 +461,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SFn s _ _ _   -> s
   | SApply s _ _  -> s
   | SProj s _ _   -> s
+  | SProjRec s _ _ -> s
   | SRec s _      -> s
   | SBlock s _ _  -> s
 
@@ -489,6 +491,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SFn _ ps r b  -> map NTy ps @ [NTy r; NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
+  | SProjRec _ e1 _ -> [NExpr e1]
   | SRec _ fs     -> map NExpr fs
   | SBlock _ ds t -> map NDecl ds @ [NExpr t]
 
@@ -576,6 +579,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
                      && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
   | SProj s e1 _  -> contains s (span_of_expr e1) && wf_expr e1
+  | SProjRec s e1 _ -> contains s (span_of_expr e1) && wf_expr e1
   | SRec s fs     -> wf_exprs s fs
   | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
 and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
@@ -643,6 +647,7 @@ let parse_span_containment n c =
   | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
   | NExpr (SProj _ _ _) -> ()
+  | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SFn s ps r b) ->
       FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r; NExpr b] c;
       wf_tys_elim s ps c
@@ -696,8 +701,17 @@ let one_to_one (e: sexpr) : Tot bool =
   | SFn _ _ _ _  -> true
   | SApply _ _ _ -> true
   | SProj _ _ _  -> true
+  | SProjRec _ _ _ -> false
   | SRec _ _     -> true
   | SBlock _ _ _ -> false
+
+// 多 field 射影の欄である。F* 側の label は span を持たないので、Proj の span
+// には射影全体の span を、受け側の変数には被射影式の span を与える。
+let rec proj_fields (s_all: span) (s_recv: span) (ls: list string)
+  : Tot (list core) (decreases ls) =
+  match ls with
+  | []      -> []
+  | _ :: tl -> CProj s_all (CVar s_recv) :: proj_fields s_all s_recv tl
 
 let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   match e with
@@ -709,6 +723,8 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SFn s _ _ b   -> CFn s [] (lower_expr b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SProj s e1 _  -> CProj s (lower_expr e1)
+  | SProjRec s e1 ls ->
+      CLet s (lower_expr e1) (CRec s (proj_fields s (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_exprs fs)
   | SBlock _ ds t -> lower_block ds (lower_expr t)
 and lower_exprs (es: list sexpr) : Tot (list core) (decreases es) =
@@ -738,5 +754,6 @@ let lower_preserves_span e =
   | SFn _ _ _ _  -> ()
   | SApply _ _ _ -> ()
   | SProj _ _ _  -> ()
+  | SProjRec _ _ _ -> ()
   | SRec _ _     -> ()
   | SBlock _ _ _ -> ()
