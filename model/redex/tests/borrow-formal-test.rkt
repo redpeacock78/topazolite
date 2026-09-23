@@ -33,18 +33,18 @@
   '((useb (ForallRegion (a)
             (NFn ((BorrowedMut Int (RParam a)))
                  Unit
-                 (Mutation) ())))))
+                 () (Mutation) () User)))))
 
 ;; 借用の仮引数を 2 つ取る署名。片方を再借用し、もう片方を使う本体に使う。
 (define pair-callables
   '((pairb (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a)) (BorrowedMut Int (RParam a)))
                   Unit
-                  (Mutation) ())))))
+                  () (Mutation) () User)))))
 
 ;; 借用の仮引数を持つ Recur の署名。
 (define rec-callables
-  '((recb (NFn ((BorrowedMut Int (RParam a))) Int () ()))))
+  '((recb (NFn ((BorrowedMut Int (RParam a))) Int () () () User))))
 
 ;; 1。借用の仮引数を読み書きする本体が型検査を通る。
 ;; formal 鍵を token へ登録しない実装は本体の Read で所有者を解けず落ちる。
@@ -137,9 +137,9 @@
  (define capture-callables
    '((useb (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a)))
-                  (NFn (Int) Int () ())
-                  () ())))
-     (cap (NFn (Int) Int () ()))))
+                  (NFn (Int) Int () () () User)
+                  () () () User)))
+     (cap (NFn (Int) Int () () () User))))
  (check-equal? (failure-key
                 (raw-result core ir 'Int capture-callables))
                'borrowed-function-capture))

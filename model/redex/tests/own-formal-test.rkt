@@ -27,7 +27,7 @@
    (core-type-of/diagnostic
     core
     '()
-    (list (list 'f `(NFn ,parameter-types Int () ()))))))
+    (list (list 'f `(NFn ,parameter-types Int () () () User))))))
 
 (define (owned-span start end)
   (list '#:span 'src start end))
@@ -214,9 +214,9 @@
 
 ;; 段 2
 (define owned-callables
-  '((callable0 (NFn ((Owned Res) Int) Int () ()))))
+  '((callable0 (NFn ((Owned Res) Int) Int () () () User))))
 (define plain-callables
-  '((callable1 (NFn (Int) Int () ()))))
+  '((callable1 (NFn (Int) Int () () () User))))
 
 (test-case
  "strip-owned-prefix は Owned が無ければ本体と環境をそのまま返す"
@@ -366,7 +366,7 @@
 (test-case
  "Owned を返す Fn の核が型付く"
  (match-define (list core type row callables) (elab owned-identity-surface))
- (check-equal? type '(NFn ((Owned Res)) (Owned Res) (Own) ()))
+ (check-equal? type '(NFn ((Owned Res)) (Owned Res) () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case
@@ -404,7 +404,7 @@
  "Owned の仮引数を内側の Fn が捕捉する surface を受け入れる"
  (match-define (list core type row callables) (elab owned-capture-surface))
  (check-equal? type '(NFn ((Owned Res))
-                          (Owned (NFn () Unit (Own) ())) (Own) ()))
+                          (Owned (NFn () Unit () (Own) () User)) () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case

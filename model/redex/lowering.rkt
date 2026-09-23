@@ -71,7 +71,8 @@
 ;; arity を写して二重定義にしない。Γ0 の NFn の引数個数をそのまま使う。
 (define (primitive-arity nm)
   (match (lookup Γ0 nm)
-    [(list (list 'NFn (list argument-types ...) _ _ _) _) (length argument-types)]
+    [(list (list 'NFn (list argument-types ...) _ _ _ _ _) _)
+     (length argument-types)]
     [_ #f]))
 
 ;; 固定名。prim-body に自由変数が無いので捕獲は起きず、gensym なしで写しが決定的
@@ -408,7 +409,7 @@
     [`(Result ,_ ,_) (ptagged? value)]
     ;; 所有は静的な区別であり実行時表現に現れない。
     [`(Owned ,inner) (repr-ok? inner value)]
-    [`(NFn ,_ ,_ ,_ ,_) (match value [`(PClosure ,_ ,_ ,_) #t] [_ #f])]
+    [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) (match value [`(PClosure ,_ ,_ ,_) #t] [_ #f])]
     ;; TypeInfo と Proof は実行時に意味を持たないので tag だけが残る。
     [`(TypeInfo ,_) (equal? value '(PTagged typerep))]
     [`(Proof ,_) (equal? value '(PTagged proof))]

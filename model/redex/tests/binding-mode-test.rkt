@@ -59,8 +59,8 @@
 
 ;; spec 6.3。3 要素 entry を混ぜても recur の対は同じものが取れる。
 (test-case "recur-frame-for は 3 要素 entry に影響されない"
-  (define env2 '((f (NFn () Int () ())) (x Int)))
-  (define env3 '((f (NFn () Int () ())) (x Int mut)))
+  (define env2 '((f (NFn () Int () () () User)) (x Int)))
+  (define env3 '((f (NFn () Int () () () User)) (x Int mut)))
   (check-equal? (ty:environment-lookup env2 'f)
                (ty:environment-lookup env3 'f)))
 

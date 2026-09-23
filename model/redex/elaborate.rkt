@@ -313,8 +313,10 @@
        `(NFn ,(for/list ([parameter (in-list parameters)])
                 (resolve-annotation parameter delta span))
              ,(resolve-annotation return-type delta span)
+             ()
              ,(resolve-type-row row delta span)
-             ,(resolve-obligations obligations delta span))]
+             ,(resolve-obligations obligations delta span)
+             User)]
       [`(TypeInfo ,kind) `(TypeInfo ,kind)]
       [`(Proof ,proposition)
        `(Proof
@@ -753,13 +755,14 @@
               current-type))
         (match signature
           [`(NFn (,first-type ,remaining-types ...)
-                 ,return-type ,latent-row ,obligations)
+                 ,return-type ,latent-in ,latent-out ,obligations ,origin)
            (unless (equal? first-type capture-type)
              (error 'wrap-captured-function
                     "捕捉型と Curry の先頭引数型が一致しない: ~s ~s"
                     capture-type first-type))
            (define residual
-             `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+             `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
+                   ,obligations ,origin))
            (define argument-core
              `(#:var ,capture ,span))
            (define fixed-core
@@ -928,7 +931,7 @@
            (owned-parameter-binders parameter-binders raw-names))
          (define signature
            `(NFn ,(append capture-types parameter-types)
-                ,return-type ,declared-row ()))
+                ,return-type () ,declared-row () User))
          (define callable (fresh-callable signature))
          (define body-result
            (check body return-type
@@ -974,7 +977,7 @@
            (peel-owned-function-elab (judgment-type function-result)
                                      (judgment-core function-result)))
          (match function-type
-           [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
+           [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
             ;; PRF-004: 判定と搬送で探索を二重に走らせない。obligation-proofs は
             ;; 各義務を一度だけ解き、充足できない義務と搬送できない P をどちらも
             ;; #f で返す。obligations-dischargeable? の呼び出しはここから外す。
@@ -1172,7 +1175,7 @@
          (define declared-row
            (resolve-declaration-row raw-row delta boundaries s))
          (define signature
-           `(NFn ,parameter-types ,return-type ,declared-row ()))
+           `(NFn ,parameter-types ,return-type () ,declared-row () User))
          (define callable (fresh-callable signature))
          (define raw-names
            (fresh-owned-names
@@ -1299,7 +1302,7 @@
                                      (judgment-core function-result)))
          (match function-type
            [`(NFn (,first-type ,remaining-types ...)
-                  ,return-type ,latent-row ,obligations)
+                  ,return-type ,latent-in ,latent-out ,obligations ,origin)
             (define argument-result
               (check argument first-type
                      environment delta propositions boundaries))
@@ -1308,7 +1311,8 @@
                   `(OwnLeaf ,s ,(judgment-core argument-result))
                   (judgment-core argument-result)))
             (define bare-result
-              `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+              `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
+                    ,obligations ,origin))
             (close-owned-function
              wrap
              (judgment

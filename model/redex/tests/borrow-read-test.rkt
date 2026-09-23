@@ -30,7 +30,7 @@
 (check-false (copy-out-ok? '(Refined (Owned Res) (Prop P))))
 ;; NFn は引数、戻り値、effect の payload まで辿る。
 (check-false
- (copy-out-ok? '(NFn (Int) Int ((Yield (BorrowedMut Res 0))) ())))
+ (copy-out-ok? '(NFn (Int) Int () ((Yield (BorrowedMut Res 0))) () User)))
 ;; 複製してよい型。
 (check-true (copy-out-ok? 'Int))
 (check-true (copy-out-ok? '(Record ((a Int imm) (b Bool mut)))))

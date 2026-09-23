@@ -19,7 +19,7 @@
 (test-case "obligation subsumption compares by canonical key"
   ;; 同値だが表記の違う命題は包含関係を満たす。obligations-subset? は非公開なので
   ;; 公開 API の compat? を通して観測する。
-  (define (nfn q) `(NFn () Unit () ,q))
+  (define (nfn q) `(NFn () Unit () () ,q User))
   (check-true (compat?
                (nfn '((Implements (Record ((a Int imm) (z Int imm))) Printable)))
                (nfn '((Implements (Record ((z Int imm) (a Int imm))) Printable)))))

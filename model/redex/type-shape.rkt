@@ -91,10 +91,11 @@
      (and (type-shape-ok? left) (type-shape-ok? right))]
     [`(Proof ,proposition)
      (proposition-shape-ok? proposition)]
-    [`(NFn ,parameters ,return-type ,row ,obligations)
+    [`(NFn ,parameters ,return-type ,in-row ,out-row ,obligations ,_origin)
      (and (andmap type-shape-ok? parameters)
           (type-shape-ok? return-type)
-          (effect-row-shape-ok? row)
+          (effect-row-shape-ok? in-row)
+          (effect-row-shape-ok? out-row)
           (andmap proposition-shape-ok? obligations))]
     [`(ForallRegion (,_ ...) ,body) (type-shape-ok? body)]
     [_ #t]))

@@ -75,11 +75,11 @@
        (define payload (random-variance-type 2))
        ;; f-a <: f-b <: f-c を引数反変・返り値共変・E/Q 包含すべてが
        ;; 効く形で構成する。
-       (define f-a `(NFn ((Record ())) Never () ()))
+       (define f-a `(NFn ((Record ())) Never () () () User))
        (define f-b `(NFn ((Record ((a ,payload imm)))) Int
-                         ((Yield ,payload)) ()))
+                         () ((Yield ,payload)) () User))
        (define f-c `(NFn ((Record ((a ,payload imm) (b Bool imm)))) Int
-                         ((Yield ,payload) Suspend) (ValidNarrativeTrait)))
+                         () ((Yield ,payload) Suspend) (ValidNarrativeTrait) User))
        (check-true (compat? f-a f-b))
        (check-true (compat? f-b f-c))
        (check-true (compat? f-a f-c))
@@ -111,8 +111,8 @@
              attempts (unbox pair-count) (bounds-seed limits)))))
 
 (test-case "VAR-003: 性質3 mut field は関数 variance を透過しない"
-  (define sub-fn '(NFn ((Record ())) Int () ()))
-  (define sup-fn '(NFn ((Record ((a Int imm)))) Int () ()))
+  (define sub-fn '(NFn ((Record ())) Int () () () User))
+  (define sup-fn '(NFn ((Record ((a Int imm)))) Int () () () User))
   ;; 前提の固定: このペアは互換だが同値でない
   (check-true  (compat? sub-fn sup-fn))
   (check-false (type-equiv? sub-fn sup-fn))
@@ -138,12 +138,12 @@
      (printf "性質4: attempts=~a strict=~a seed=~a\n"
              attempts (unbox strict-count) (bounds-seed limits))))
   ;; 固定の逆向き反例: 各成分を単独で逆向きにすると拒否される
-  (check-false (compat? '(NFn ((Record ((a Int imm)))) Int () ())
-                        '(NFn ((Record ())) Int () ())))
-  (check-false (compat? '(NFn () Int () ()) '(NFn () Never () ())))
-  (check-false (compat? '(NFn () Int (Own) ()) '(NFn () Int () ())))
-  (check-false (compat? '(NFn () Int () (ValidNarrativeTrait))
-                        '(NFn () Int () ()))))
+  (check-false (compat? '(NFn ((Record ((a Int imm)))) Int () () () User)
+                        '(NFn ((Record ())) Int () () () User)))
+  (check-false (compat? '(NFn () Int () () () User) '(NFn () Never () () () User)))
+  (check-false (compat? '(NFn () Int () (Own) () User) '(NFn () Int () () () User)))
+  (check-false (compat? '(NFn () Int () () (ValidNarrativeTrait) User)
+                        '(NFn () Int () () () User))))
 
 (test-case "VAR-003: 性質5 各経路の実効性（6 counter）"
   (call-with-search-seed
@@ -158,27 +158,27 @@
      (for ([_i (in-range attempts)])
        (define payload (random-variance-type 2))
        ;; 引数反変だけが効く受理
-       (define arg-sub `(NFn ((Record ())) ,payload () ()))
-       (define arg-sup `(NFn ((Record ((a Int imm)))) ,payload () ()))
+       (define arg-sub `(NFn ((Record ())) ,payload () () () User))
+       (define arg-sup `(NFn ((Record ((a Int imm)))) ,payload () () () User))
        (check-true (compat? arg-sub arg-sup))
        (set-box! arg-contra (add1 (unbox arg-contra)))
        ;; 返り値共変だけが効く受理
-       (check-true (compat? `(NFn (,payload) Never () ())
-                            `(NFn (,payload) Int () ())))
+       (check-true (compat? `(NFn (,payload) Never () () () User)
+                            `(NFn (,payload) Int () () () User)))
        (set-box! return-cov (add1 (unbox return-cov)))
        ;; E の真部分集合（受理と逆向き拒否の対）
-       (check-true  (compat? '(NFn () Int (Suspend) ())
-                             '(NFn () Int (Suspend Own) ())))
-       (check-false (compat? '(NFn () Int (Suspend Own) ())
-                             '(NFn () Int (Suspend) ())))
+       (check-true  (compat? '(NFn () Int () (Suspend) () User)
+                             '(NFn () Int () (Suspend Own) () User)))
+       (check-false (compat? '(NFn () Int () (Suspend Own) () User)
+                             '(NFn () Int () (Suspend) () User)))
        (set-box! effect-strict (add1 (unbox effect-strict)))
        ;; Q の真部分集合（受理と逆向き拒否の対）
-       (check-true  (compat? '(NFn () Int () (ValidNarrativeTrait))
-                             '(NFn () Int () (ValidNarrativeTrait
-                                              TypeNarrativeCap))))
-       (check-false (compat? '(NFn () Int () (ValidNarrativeTrait
-                                              TypeNarrativeCap))
-                             '(NFn () Int () (ValidNarrativeTrait))))
+       (check-true  (compat? '(NFn () Int () () (ValidNarrativeTrait) User)
+                             '(NFn () Int () () (ValidNarrativeTrait
+                                              TypeNarrativeCap) User)))
+       (check-false (compat? '(NFn () Int () () (ValidNarrativeTrait
+                                              TypeNarrativeCap) User)
+                             '(NFn () Int () () (ValidNarrativeTrait) User)))
        (set-box! obligation-strict (add1 (unbox obligation-strict)))
        ;; imm field の NFn は variance を透過して受理
        (check-true (compat? `(Record ((f ,arg-sub imm)))

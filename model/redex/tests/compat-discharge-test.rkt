@@ -2,7 +2,7 @@
 (require rackunit "../compat.rkt")
 
 (define (nfn obligations)
-  `(NFn (Int) Int () ,obligations))
+  `(NFn (Int) Int () () ,obligations User))
 
 ;; 大域の候補文脈。(Prop ValidPort) の witness を一つ持つ。
 (define gamma
@@ -32,12 +32,12 @@
 ;; RFN-003: 文脈は入れ子の関数型へも伝わる。引数位置は反変であるため、
 ;; sub と sup が入れ替わる。
 (check-true
- (compat? `(NFn (,(nfn '())) Int () ())
-          `(NFn (,(nfn '((Prop ValidPort)))) Int () ())
+ (compat? `(NFn (,(nfn '())) Int () () () User)
+          `(NFn (,(nfn '((Prop ValidPort)))) Int () () () User)
           gamma))
 (check-true
- (compat? `(NFn (Int) ,(nfn '((Prop ValidPort))) () ())
-          `(NFn (Int) ,(nfn '()) () ())
+ (compat? `(NFn (Int) ,(nfn '((Prop ValidPort))) () () () User)
+          `(NFn (Int) ,(nfn '()) () () () User)
           gamma))
 ;; record の field 位置にも伝わる。
 (check-true

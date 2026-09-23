@@ -38,7 +38,7 @@
      (Discharge ,cap-proof
        (Apply (Lam User cap-id (x) x) 1))))
 (define nested-callables
-  '((cap-id (NFn (Int) Int () (TypeNarrativeCap TypeNarrativeCap)))))
+  '((cap-id (NFn (Int) Int () () (TypeNarrativeCap TypeNarrativeCap) User))))
 (check-equal? (core-type-of nested-discharge '() nested-callables)
               '(Int ()))
 (check-equal? (list->set

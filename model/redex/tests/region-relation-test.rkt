@@ -139,8 +139,8 @@
 
 (test-case
  "関係は NFn と構築子の再帰へ届く"
- (for ([shape (in-list (list `(NFn (Int) (Borrowed Int ,outer) () ())
-                             `(NFn ((Borrowed Int ,outer)) Int () ())
+ (for ([shape (in-list (list `(NFn (Int) (Borrowed Int ,outer) () () () User)
+                             `(NFn ((Borrowed Int ,outer)) Int () () () User)
                              `(Record ((f (Borrowed Int ,outer) imm)))
                              `(Union (Borrowed Int ,outer) Int)
                              `(Untrusted (Borrowed Int ,outer))

@@ -22,19 +22,19 @@
 ;; そのため各 test-case は well-typed な項の型が一致することを見る。
 
 (define callable-types
-  (term ((identity-id (NFn (Int) Int () ()))
-         (binary-id (NFn (Int Int) Int () ())))))
+  (term ((identity-id (NFn (Int) Int () () () User))
+         (binary-id (NFn (Int Int) Int () () () User)))))
 
 (test-case "span.md §7.3: core-type-of は spanful な c を投影して受理する"
   (define prim '(PrimVal (Reserved o-lt) lt))
   (check-equal? (core-type-of (annotate-core prim) '() '())
-                '((NFn (Int Int) Bool () ()) ()))
+                '((NFn (Int Int) Bool () () () (Reserved o-lt)) ()))
   (check-equal? (core-type-of (annotate-core prim) '() '())
                 (core-type-of prim '() '()))
   ;; #:bind と Lam の span を含む項。
   (define lam '(Lam User identity-id (x) x))
   (check-equal? (core-type-of (annotate-core lam) '() callable-types)
-                '((NFn (Int) Int () ()) ()))
+                '((NFn (Int) Int () () () User) ()))
   ;; #:lit と Apply の span を含む項。
   (define applied `(Apply (Lam User binary-id (x y) x) 1 2))
   (check-equal? (core-type-of (annotate-core applied) '() callable-types)
@@ -48,7 +48,7 @@
 
 (test-case "span.md §7.3: core-check-row と core-check も spanful な c を受ける"
   (define prim '(PrimVal (Reserved o-lt) lt))
-  (define signature '(NFn (Int Int) Bool () ()))
+  (define signature '(NFn (Int Int) Bool () () () User))
   (check-equal? (core-check-row (annotate-core prim) '() '() signature)
                 '())
   (check-true (core-check (annotate-core prim) '() '() signature '())))
@@ -57,7 +57,7 @@
 ;; 偶然一致しうる。投影の有無を分けるのは structural? と guarded? であり、
 ;; どちらも Eliminate と Apply の内側まで構造を照合する。
 (define structural-callables
-  '((list-loop-id (NFn ((List Int)) Int () ()))))
+  '((list-loop-id (NFn ((List Int)) Int () () () User))))
 
 (define structural-loop
   '(Recur list-loop-id loop (xs)
@@ -116,8 +116,8 @@
   ;; 義務の側は proposition-equiv? 経由で normalize-proposition が落とす。
   (check-exn #rx"^normalize-proposition"
              (lambda ()
-               (compat? `(NFn () Int () (,wrapped-int))
-                        `(NFn () Int () (,wrapped-int))))))
+               (compat? `(NFn () Int () () (,wrapped-int) User)
+                        `(NFn () Int () () (,wrapped-int) User)))))
 
 (test-case "span.md §7.1: 候補の読み出しは ProofRep の両形を受ける"
   (define spanless '(Candidate (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)

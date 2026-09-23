@@ -76,7 +76,7 @@
 (define (check-apply-obligation proposition expected branch)
   (reset-search-log!)
   (define callables
-    `((proof-call (NFn () Int () (,proposition)))))
+    `((proof-call (NFn () Int () () (,proposition) User))))
   (check-equal?
    (core-type-of '(Apply (Lam User proof-call () 1))
                  empty

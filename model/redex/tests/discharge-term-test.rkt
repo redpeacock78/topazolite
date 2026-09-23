@@ -27,10 +27,10 @@
 ;; ---- 型付け ----
 
 (define callables-1
-  '((cap-id (NFn (Int) Int () (TypeNarrativeCap)))))
+  '((cap-id (NFn (Int) Int () () (TypeNarrativeCap) User))))
 (define callables-2
-  '((two-id (NFn (Int) Int ()
-                 (TypeNarrativeCap (Implements Int Printable))))))
+  '((two-id (NFn (Int) Int () ()
+                 (TypeNarrativeCap (Implements Int Printable)) User))))
 
 (test-case "PRF-004: φ 列が義務列と一致する連なりは型付く"
   (check-equal?

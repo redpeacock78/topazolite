@@ -21,8 +21,8 @@
 ;; payload を ForallRegion にすると、normalize が束縛子を書き換えず
 ;; canonical-key/normal だけが添字へ置き換えるので、RawPtr の節が無いと落ちる。
 (test-case "canonical-key/normal が RawPtr の payload を通す（unsafe.md §4.4）"
-  (define forall-a '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))
-  (define forall-b '(ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () ())))
+  (define forall-a '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))
+  (define forall-b '(ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () () () User)))
   (check-equal? (canonical-proposition-key `(PtrProp NonNull ,(ptr forall-a)))
                 (canonical-proposition-key `(PtrProp NonNull ,(ptr forall-b)))))
 

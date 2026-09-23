@@ -10,7 +10,7 @@
 ;; spec §5.7。callables の表は ForallRegion に包まれた署名を受ける。
 ;; 包みは 1 段だけであり、入れ子は受けない。
 
-(define NFN '(NFn (Int) Int () ()))
+(define NFN '(NFn (Int) Int () () () User))
 
 (test-case
  "表は ForallRegion に包まれた署名を受ける"
@@ -33,13 +33,13 @@
     '(Lam User f (x) x) '()
     (list (list 'f '(ForallRegion (a)
                       (NFn ((ForallRegion (b) (Borrowed Int (RParam a))))
-                           Int () ()))))))
+                           Int () () () User))))))
  (check-equal? key 'invalid-callables)
  ;; 包みが無い署名でも同じである。
  (match-define (list 'fail bare-key _n _d)
    (type-of/raw
     '(Lam User f (x) x) '()
-    (list (list 'f '(NFn ((ForallRegion (a) Int)) Int () ())))))
+    (list (list 'f '(NFn ((ForallRegion (a) Int)) Int () () () User)))))
  (check-equal? bare-key 'invalid-callables))
 
 (test-case
@@ -62,34 +62,34 @@
  (check-equal?
   (unwrap-forall-region
    '(ForallRegion (a b) (NFn ((Borrowed Int (RParam a))) (Borrowed Int (RParam b))
-                             () ()))
+                             () () () User))
    '(p.0 p.1))
-  '(NFn ((Borrowed Int (RParam p.0))) (Borrowed Int (RParam p.1)) () ())))
+  '(NFn ((Borrowed Int (RParam p.0))) (Borrowed Int (RParam p.1)) () () () User)))
 
 (test-case
  "unwrap-forall-region は文脈が無い形と数が合わない形で #f を返す"
- (define signature '(ForallRegion (a) (NFn (Int) Int () ())))
+ (define signature '(ForallRegion (a) (NFn (Int) Int () () () User)))
  (check-false (unwrap-forall-region signature #f))
  (check-false (unwrap-forall-region signature '()))
  (check-false (unwrap-forall-region signature '(p.0 p.1)))
  ;; 包まれていない署名も #f である。呼び側が NFn の節で扱う。
- (check-false (unwrap-forall-region '(NFn (Int) Int () ()) '(p.0))))
+ (check-false (unwrap-forall-region '(NFn (Int) Int () () () User) '(p.0))))
 
 ;; spec §5.3、§5.7。RegionLam の型付けと展開。
 
 (define forall-callables
-  '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+  '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
 
 (define boundary-callables
-  '((outer (NFn (Int) Int () ()))
-    (g (ForallRegion (b) (NFn (Int) Int () ())))))
+  '((outer (NFn (Int) Int () () () User))
+    (g (ForallRegion (b) (NFn (Int) Int () () () User)))))
 
 ;; c2/c3 では RecurVal と Recur が署名の ForallRegion を 1 段剥がす。
 ;; 表に ForallRegion の行を持つ両方の構文が受理されることを固定する。
 (test-case
  "region 多相な署名を持つ Recur が通る"
  (define callables
-   '((g (ForallRegion (a) (NFn (Int) Int () ())))))
+   '((g (ForallRegion (a) (NFn (Int) Int () () () User)))))
  ;; Recur は (Recur cid f (x ...) c c) であり、本体と継続の 2 つを取る。
  (define core
    '(Scope ()
@@ -105,7 +105,7 @@
 (test-case
  "region 多相な署名を持つ RecurVal が通る"
  (define callables
-   '((g (ForallRegion (a) (NFn (Int) Int () ())))))
+   '((g (ForallRegion (a) (NFn (Int) Int () () () User)))))
  (define core
    '(Scope ()
            (RecurVal g f (n) n)))
@@ -122,7 +122,7 @@
  (match-define (list 'ok (list type _row))
    (type-of/raw '(RegionLam (a) (Lam User g (x) 1)) '() forall-callables))
  (match-define `(ForallRegion (,binder)
-                  (NFn ((Borrowed Int (RParam ,used))) Int () ()))
+                  (NFn ((Borrowed Int (RParam ,used))) Int () () () User))
    type)
  (check-equal? used binder))
 
@@ -141,8 +141,8 @@
 (test-case
  "入れ子の Lam は外側の binder 文脈を引き継がない"
  (define nested
-   '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))
-     (h (ForallRegion (a) (NFn (Int) Int () ())))))
+   '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))
+     (h (ForallRegion (a) (NFn (Int) Int () () () User)))))
  (match-define (list 'fail key _node _details)
    (type-of/raw '(RegionLam (a) (Lam User g (x) (Apply (Lam User h (y) 1) 1)))
                 '() nested))
@@ -193,7 +193,7 @@
    (type-of/raw (region-arg-core-with region-arg-outer-rho)
                 '() forall-callables '() region-arg-ctx))
  (check-equal? type
-              `(NFn ((Borrowed Int ,region-arg-outer-rho)) Int () ())))
+              `(NFn ((Borrowed Int ,region-arg-outer-rho)) Int () () () User)))
 
 (test-case
  "外側の RParam を内側の RegionApp へ渡す"
@@ -210,7 +210,7 @@
  (match-define (list 'ok (list type _row))
    (type-of/raw nested-core '() forall-callables '() nested-ctx))
  (match-define `(ForallRegion (,binder)
-                  (NFn ((Borrowed Int (RParam ,used))) Int () ()))
+                  (NFn ((Borrowed Int (RParam ,used))) Int () () () User))
    type)
  (check-equal? used binder))
 
@@ -249,7 +249,7 @@
            (Yield (Scope () 0)
                   (RegionLam (a)
                     (Lam User outer (z)
-                         (Let (r let (NFn (Int) Int () ()))
+                         (Let (r let (NFn (Int) Int () () () User))
                               (RegionApp
                                (RegionLam (b) (Lam User g (x) 1))
                                ((RParam a)))
@@ -269,7 +269,7 @@
            (Yield (Scope () 0)
                   (RegionLam (a)
                     (RecurVal outer h (z)
-                      (Let (r let (NFn (Int) Int () ()))
+                      (Let (r let (NFn (Int) Int () () () User))
                            (RegionApp
                             (RegionLam (b) (Lam User g (x) 1))
                             ((RParam a)))
@@ -289,7 +289,7 @@
            (Yield (Scope () 0)
                   (RegionLam (a)
                     (Recur outer h (z)
-                      (Let (r let (NFn (Int) Int () ()))
+                      (Let (r let (NFn (Int) Int () () () User))
                            (RegionApp
                             (RegionLam (b) (Lam User g (x) 1))
                             ((RParam a)))

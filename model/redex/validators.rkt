@@ -162,9 +162,10 @@
     [`(Union ,left ,right) (and (owned-free? left) (owned-free? right))]
     [`(Intersection ,left ,right) (and (owned-free? left) (owned-free? right))]
     [`(ForallRegion (,_ ...) ,body) (owned-free? body)]
-    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
+    [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
      (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
           (owned-free? return-type)
+          (for/and ([effect (in-list in-effects)]) (effect-owned-free? effect))
           (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
     [_ #f]))
 
@@ -200,10 +201,11 @@
      (scan-sequence copy-out-scan (list left right))]
     [`(Intersection ,left ,right)
      (scan-sequence copy-out-scan (list left right))]
-    [`(NFn (,parameters ...) ,return-type (,effects ...) ,_)
+    [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
      (scan-sequence values
                     (list (scan-sequence copy-out-scan parameters)
                           (copy-out-scan return-type)
+                          (scan-sequence effect-copy-out-scan in-effects)
                           (scan-sequence effect-copy-out-scan effects)))]
     ;; 型構成子を追加するときは、複製の可否をここへ明示する。
     [_ #f]))
@@ -256,9 +258,10 @@
     [`(Record ,row)
      (for/or ([field (in-list row)]) (leaks-rawptr? (second field)))]
     ;; Q へは降りない。Refined の φ と同じ理由である。
-    [`(NFn (,parameters ...) ,result (,row ...) ,_)
+    [`(NFn (,parameters ...) ,result (,in-row ...) (,row ...) ,_ ,_)
      (or (for/or ([p (in-list parameters)]) (leaks-rawptr? p))
          (leaks-rawptr? result)
+         (effect-leaks-rawptr? in-row)
          (effect-leaks-rawptr? row))]
     [_ #t]))
 

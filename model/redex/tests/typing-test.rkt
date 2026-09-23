@@ -9,17 +9,17 @@
 
 (define empty '())
 (define callable-types
-  (term ((identity-id (NFn (Int) Int () ()))
-         (binary-id (NFn (Int Int) Int () ()))
-         (yield-id (NFn () Unit ((Yield Int)) ()))
-         (loop-id (NFn (Int) Int () ()))
-         (owned-parameter-id (NFn ((Owned Res)) Unit () ()))
-         (capture-id (NFn () (Owned Res) (Own) ())))))
+  (term ((identity-id (NFn (Int) Int () () () User))
+         (binary-id (NFn (Int Int) Int () () () User))
+         (yield-id (NFn () Unit () ((Yield Int)) () User))
+         (loop-id (NFn (Int) Int () () () User))
+         (owned-parameter-id (NFn ((Owned Res)) Unit () () () User))
+         (capture-id (NFn () (Owned Res) () (Own) () User)))))
 
 ;; 既存の callable-types とは分け、CurryVal の heap entry が持つ
 ;; closure の署名だけをこの configuration 用に宣言する。
 (define curry-callables
-  (term ((leaf-drop-id (NFn ((Owned Res)) Unit (Own) ())))))
+  (term ((leaf-drop-id (NFn ((Owned Res)) Unit () (Own) () User)))))
 
 ;; G5c5b1 の Owned formal encoding に従う closure。Lam の formal は生名で
 ;; 受け、Handle と Scope の内側の Let で Owned place へ開いてから Move する。
@@ -32,9 +32,9 @@
                                  (Drop (Move q))))))))
 
 (test-case "T-Prim/T-MovePlace: synthesis uses Γ0 and Ξ"
-  (check-equal?
+   (check-equal?
    (core-type-of (term (PrimVal (Reserved o-lt) lt)) empty empty)
-   (term ((NFn (Int Int) Bool () ()) ())))
+   (term ((NFn (Int Int) Bool () () () (Reserved o-lt)) ())))
   (check-equal?
    (core-type-of (term (Move 0)) (term ((0 Res))) empty)
    (term ((Owned Res) (Own))))
@@ -48,12 +48,12 @@
    (core-type-of
     (term (Lam User identity-id (x) x))
     empty callable-types)
-   (term ((NFn (Int) Int () ()) ())))
+   (term ((NFn (Int) Int () () () User) ())))
   (check-equal?
    (core-type-of
     (term (Lam User yield-id () (Yield 1 unit)))
     empty callable-types)
-   (term ((NFn () Unit ((Yield Int)) ()) ())))
+   (term ((NFn () Unit () ((Yield Int)) () User) ())))
   (check-equal?
    (core-type-of
     (term (Lam User identity-id (x) unit))
@@ -79,7 +79,7 @@
   (define binary
     (term (Lam User binary-id (x y) x)))
   (define expected
-    (term ((NFn (Int) Int () ()) ())))
+    (term ((NFn (Int) Int () () () User) ())))
   (check-equal?
    (core-type-of (term (Apply ,binary 1 2)) empty callable-types)
    (term (Int ())))
@@ -108,7 +108,7 @@
    (core-type-of
     (term (RecurVal loop-id loop (x) x))
     empty callable-types)
-   (term ((NFn (Int) Int () ()) ())))
+   (term ((NFn (Int) Int () () () User) ())))
   (check-equal?
    (core-type-of
     (term (Recur loop-id loop (x) unit (Apply loop 1)))
@@ -231,8 +231,8 @@
    (core-type-of
     (term (Lam User identity-id (x) x))
     empty
-    (term ((identity-id (NFn (Int) Int () ()))
-           (identity-id (NFn (Bool) Bool () ())))))
+    (term ((identity-id (NFn (Int) Int () () () User))
+           (identity-id (NFn (Bool) Bool () () () User)))))
    'ill-typed))
 
 (test-case "typing accepts an explicit elaboration Γ"

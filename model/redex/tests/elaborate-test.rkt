@@ -76,7 +76,7 @@
                    '(Perform (Return boundary0 Int) 3)))
   (check-equal?
    (second (assoc 'callable1 callables))
-   '(NFn () Int ((Return boundary0 Int) Partial) ())))
+   '(NFn () Int () ((Return boundary0 Int) Partial) () User)))
 
 (test-case "EFF-001: declared rows bound fn and recur bodies"
   (check-true
@@ -88,7 +88,7 @@
   (match-define (list _ type _ _)
     (success
      (elab '(Fn () Unit ((Yield Int)) (Yield 1 unit)))))
-  (check-equal? type '(NFn () Unit ((Yield Int)) ())))
+  (check-equal? type '(NFn () Unit () ((Yield Int)) () User)))
 
 (test-case "REC-001/REC-002: recur uses the real classifier"
   (check-false
@@ -194,7 +194,7 @@
   (check-equal?
    (list (erase-core raw-core) direct-type direct-row direct-callables)
    '((PrimVal (Reserved o-add) add)
-     (NFn (Int Int) Int () ())
+     (NFn (Int Int) Int () () () (Reserved o-add))
      ()
      ()))
   (match-define (list core type row _)
@@ -222,7 +222,7 @@
   (check-equal?
    (list (erase-core raw-core) type row callables)
    '((Curry (PrimVal (Reserved o-add) add) 1)
-     (NFn (Int) Int () ())
+     (NFn (Int) Int () () () (Reserved o-add))
      ()
      ()))
   (match-define (list _core curry-type _row _callables)
@@ -230,8 +230,8 @@
               (Owned (NFn () Unit () ())) (Own)
               (Curry f (Apply acquire 1)))))
   (check-equal? curry-type
-                '(NFn ((NFn ((Owned Res)) Unit () ()))
-                      (Owned (NFn () Unit () ())) (Own) ())))
+                '(NFn ((NFn ((Owned Res)) Unit () () () User))
+                      (Owned (NFn () Unit () () () User)) () (Own) () User)))
 
 (test-case "E-Construct/E-Eliminate: expected and explicit type arguments"
   (match-define (list raw-core direct-type direct-row direct-callables)
@@ -243,7 +243,7 @@
   (match-define (list core type row callables)
     (success
      (elab '(Fn () (List Int) () (Construct nil)))))
-  (check-equal? type '(NFn () (List Int) () ()))
+  (check-equal? type '(NFn () (List Int) () () () User))
   (check-equal? row '())
   (check-equal?
    (core-type-of core '() callables)

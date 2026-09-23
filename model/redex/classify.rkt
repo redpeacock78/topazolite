@@ -41,7 +41,7 @@
                            environment callables)
   (define signature (lookup callables callable))
   (match (and signature (peel-forall-region signature))
-    [(and body-signature `(NFn ,parameter-types ,_ ,_ ,_))
+    [(and body-signature `(NFn ,parameter-types ,_ ,_ ,_ ,_ ,_))
      (and (= (length parameters) (length parameter-types))
           (let ([body-environment
                  (extend environment (list function) (list body-signature))]
@@ -56,7 +56,7 @@
 
 (define (lambda-environment callable parameters environment callables)
   (match (lookup callables callable)
-    [`(NFn ,parameter-types ,_ ,_ ,_)
+    [`(NFn ,parameter-types ,_ ,_ ,_ ,_ ,_)
      (and (= (length parameters) (length parameter-types))
           (function-body-environment environment parameters parameter-types))]
     [_ #f]))
@@ -102,12 +102,12 @@
      (match (core-type-of head '() callables environment)
        [(list type _)
         (match (peel-forall-region type)
-          [`(NFn ,_ ,_ ,latent-row ,_) (row-safe? latent-row)]
+          [`(NFn ,_ ,_ ,_ ,latent-row ,_ ,_) (row-safe? latent-row)]
           [_ #f])]
        [_ #f])]
     [_
      (match (core-type-of function '() callables environment)
-       [(list `(NFn ,_ ,_ ,latent-row ,_) _) (row-safe? latent-row)]
+       [(list `(NFn ,_ ,_ ,_ ,latent-row ,_ ,_) _) (row-safe? latent-row)]
        [_ #f])]))
 
 (define (pre? target core environment callables)
@@ -548,7 +548,7 @@
 ;; 将来入れるときは、この判断を見直す必要がある。
 (define (strip-owned-prefix callable parameters body environment callables)
   (match (peel-forall-region (lookup callables callable))
-    [`(NFn ,parameter-types ,_ ,_ ,_)
+    [`(NFn ,parameter-types ,_ ,_ ,_ ,_ ,_)
      (cond
        [(not (= (length parameters) (length parameter-types))) #f]
        [else
@@ -642,7 +642,7 @@
        (callable-contexts callable function parameters
                           environment callables))
      (match (peel-forall-region signature)
-       [`(NFn ,parameter-types ,_ ,latent-row ,_)
+       [`(NFn ,parameter-types ,_ ,_ ,latent-row ,_ ,_)
         ;; 本体の側だけ署名の包みを外す。継続側は元の署名を見て、形 ii では
         ;; RegionApp がその包みを明示的に剥がす。
         (define stripped

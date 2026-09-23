@@ -42,9 +42,9 @@
                         (term (PTagged ,(tag-code 'Ok) 1))))
   ;; 所有は静的な区別なので実行時表現に現れない。
   (check-true (repr-ok? (term (Owned Res)) (term (PResource 0))))
-  (check-true (repr-ok? (term (NFn (Int) Int () ()))
+  (check-true (repr-ok? (term (NFn (Int) Int () () () User))
                         (term (PClosure () (pa_1) pa_1))))
-  (check-false (repr-ok? (term (NFn (Int) Int () ())) 7))
+  (check-false (repr-ok? (term (NFn (Int) Int () () () User)) 7))
   (check-true (repr-ok? (term (TypeInfo Type)) (term (PTagged typerep))))
   (check-true (repr-ok? (term (Proof ValidNarrativeTrait))
                         (term (PTagged proof))))
@@ -196,7 +196,7 @@
   ;; 本体の環境。self が #f でないとき RecurVal の self binding を足す。
   (define (body-environment callable parameters self environment)
     (match (signature-of callable)
-      [`(NFn (,parameter-types ...) ,_ ,_ ,_)
+      [`(NFn (,parameter-types ...) ,_ () ,_ ,_ User)
        (and (= (length parameters) (length parameter-types))
             (extend (if self
                         (extend (without-owned environment)
@@ -209,7 +209,7 @@
 
   (define (declared-row-tight? callable parameters body self environment)
     (match (signature-of callable)
-      [`(NFn ,_ ,return-type ,latent-row ,_)
+      [`(NFn ,_ ,return-type () ,latent-row ,_ User)
        (define inner (body-environment callable parameters self environment))
        (define body-row
          (and inner
@@ -329,7 +329,7 @@
 
 ;; 宣言 latent row が本体の行と等しい closure への Apply。(2) の等号が立つ。
 (test-case "backend-matrix.md §6 回帰 4: 宣言と本体が一致する closure は等号になる"
-  (define callables (term ((c1 (NFn () Int ((Return b Int)) ())))))
+  (define callables (term ((c1 (NFn () Int () ((Return b Int)) () User)))))
   (define core
     (term (Apply (Lam User c1 () (Perform (Return b Int) 7)))))
   (match-define (list expected actual tight?)
@@ -344,7 +344,7 @@
 ;; この fixture が無いと、(2) の条件を落としたときに検査が黙って通ってしまう。
 (test-case
  "backend-matrix.md §6 回帰 5: 宣言が本体より広い closure は等号を要求しない"
-  (define callables (term ((c1 (NFn () Unit (Suspend Own) ())))))
+  (define callables (term ((c1 (NFn () Unit () (Suspend Own) () User)))))
   (define core (term (Apply (Lam User c1 () unit))))
   (match-define (list expected actual tight?)
     (check-effect-preservation "loose-apply" core callables #:tight? #f))

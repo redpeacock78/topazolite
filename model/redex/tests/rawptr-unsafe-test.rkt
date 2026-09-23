@@ -51,17 +51,17 @@
 ;; NFn を辿るのは、RawPtr を包んだ関数値が境界の外へ出ると呼び出し側が
 ;; pointer を取り出せるためである。
 (test-case "NFn の引数型と返り値型と ε を辿る（unsafe.md §4.3）"
-  (check-true (leaks-rawptr? `(NFn (,ptr) Int () ())))
-  (check-true (leaks-rawptr? `(NFn (Int) ,ptr () ())))
-  (check-true (leaks-rawptr? `(NFn (Int) Int ((Yield ,ptr)) ())))
-  (check-true (leaks-rawptr? `(NFn (Int) Int ((Return b ,ptr)) ())))
-  (check-false (leaks-rawptr? '(NFn (Int) Int (Own Unsafe) ()))))
+  (check-true (leaks-rawptr? `(NFn (,ptr) Int () () () User)))
+  (check-true (leaks-rawptr? `(NFn (Int) ,ptr () () () User)))
+  (check-true (leaks-rawptr? `(NFn (Int) Int () ((Yield ,ptr)) () User)))
+  (check-true (leaks-rawptr? `(NFn (Int) Int () ((Return b ,ptr)) () User)))
+  (check-false (leaks-rawptr? '(NFn (Int) Int () (Own Unsafe) () User))))
 
 ;; φ と Q は命題の対象を運ぶだけであり、pointer 値の持ち出し経路ではない。
 ;; copy-out-scan も Refined の φ と NFn の Q へ降りない形が先例である。
 (test-case "Refined の φ と NFn の Q へは降りない（unsafe.md §4.3）"
   (check-false (leaks-rawptr? `(Refined Int (PtrProp NonNull ,ptr))))
-  (check-false (leaks-rawptr? `(NFn (Int) Int () ((PtrProp NonNull ,ptr))))))
+  (check-false (leaks-rawptr? `(NFn (Int) Int () () ((PtrProp NonNull ,ptr)) User))))
 
 (test-case "未知の型構成子は fail-closed で落ちる（unsafe.md §4.3）"
   (check-true (leaks-rawptr? '(FutureType Int)))

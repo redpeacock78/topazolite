@@ -132,23 +132,27 @@
      (and normalized-ok
           normalized-error
           `(Result ,normalized-ok ,normalized-error))]
-    [`(NFn ,parameters ,return-type ,row ,obligations)
+    [`(NFn ,parameters ,return-type ,in-row ,row ,obligations ,origin)
      (define normalized-parameters
        (for/list ([parameter (in-list parameters)])
          (normalize-type/impl parameter)))
      (define normalized-return (normalize-type/impl return-type))
+     (define normalized-in-row (normalize-effect-row in-row))
      (define normalized-row (normalize-effect-row row))
      (define normalized-obligations
        (for/list ([proposition (in-list obligations)])
          (normalize-proposition proposition)))
      (and (andmap values normalized-parameters)
           normalized-return
+          normalized-in-row
           normalized-row
           (andmap values normalized-obligations)
           `(NFn ,normalized-parameters
                 ,normalized-return
+                ,normalized-in-row
                 ,normalized-row
-                ,normalized-obligations))]
+                ,normalized-obligations
+                ,origin))]
     ;; binder 名は保存する。type-normal? は normalize の結果との equal? なので、
     ;; ここで名前を変えると programmer が書いた宣言型が正規形でなくなる。
     [`(ForallRegion (,rps ...) ,body)
@@ -227,15 +231,17 @@
     [`(Result ,ok-type ,error-type)
      `(Result ,(canonical-key/normal ok-type depth)
               ,(canonical-key/normal error-type depth))]
-    [`(NFn ,parameters ,return-type ,row ,obligations)
+    [`(NFn ,parameters ,return-type ,in-row ,row ,obligations ,origin)
      `(NFn ,(map (lambda (parameter)
                    (canonical-key/normal parameter depth))
                  parameters)
            ,(canonical-key/normal return-type depth)
+           ,(canonical-effect-row-key/normal in-row depth)
            ,(canonical-effect-row-key/normal row depth)
            ,(map (lambda (proposition)
                    (canonical-proposition-key/normal proposition depth))
-                 obligations))]
+                 obligations)
+           ,origin)]
     [`(ForallRegion (,rps ...) ,body)
      `(ForallRegion ,(length rps)
                     ,(canonical-key/normal
@@ -389,12 +395,14 @@
           (proposition-equiv? left-proposition right-proposition))]
     [(`(Record ,left-row) `(Record ,right-row))
      (field-row-equiv? left-row right-row type-equiv?)]
-    [(`(NFn ,left-parameters ,left-return ,left-row ,left-obligations)
-      `(NFn ,right-parameters ,right-return ,right-row ,right-obligations))
+    [(`(NFn ,left-parameters ,left-return ,left-in ,left-row ,left-obligations ,left-origin)
+      `(NFn ,right-parameters ,right-return ,right-in ,right-row ,right-obligations ,right-origin))
      (and (types-equiv? left-parameters right-parameters)
           (type-equiv? left-return right-return)
+          (row-equiv? left-in right-in)
           (row-equiv? left-row right-row)
-          (propositions-equiv? left-obligations right-obligations))]
+          (propositions-equiv? left-obligations right-obligations)
+          (equal? left-origin right-origin))]
     [(`(ForallRegion (,left-binders ...) ,left-body)
       `(ForallRegion (,right-binders ...) ,right-body))
      (and (= (length left-binders) (length right-binders))

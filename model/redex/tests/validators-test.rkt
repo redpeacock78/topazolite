@@ -79,10 +79,10 @@
 (check-false (owned-free? '(Record ((a (Owned Res) imm)))))
 (check-false (owned-free? '(Untrusted (Owned Res))))
 (check-false (owned-free? '(Refined (Owned Res) (Prop ValidPort))))
-(check-false (owned-free? '(NFn (Int) (Owned Res) () ())))
-(check-false (owned-free? '(NFn ((Owned Res)) Int () ())))
-(check-false (owned-free? '(NFn () Unit ((Yield (Owned Res))) ())))
-(check-true (owned-free? '(NFn () Unit (Suspend) ())))
+(check-false (owned-free? '(NFn (Int) (Owned Res) () () () User)))
+(check-false (owned-free? '(NFn ((Owned Res)) Int () () () User)))
+(check-false (owned-free? '(NFn () Unit () ((Yield (Owned Res))) () User)))
+(check-true (owned-free? '(NFn () Unit () (Suspend) () User)))
 
 ;; RFN-001: リテラル型はペイロード束縛検査が使う判定である。
 (check-equal? (literal-type 8080) 'Int)

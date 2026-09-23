@@ -34,15 +34,16 @@
  (assoc 'validPort Γ0)
  '(validPort ((NFn ((Untrusted Int))
                    (Result (Refined Int (Prop ValidPort)) String)
-                   () ())
+                   () () () (Reserved o-valid-port))
               (PrimVal (Reserved o-valid-port) validPort))))
 (check-equal?
  (assoc 'untrustedInt Γ0)
- '(untrustedInt ((NFn (Int) (Untrusted Int) () ())
+ '(untrustedInt ((NFn (Int) (Untrusted Int) () () () (Reserved o-untrusted-int))
                  (PrimVal (Reserved o-untrusted-int) untrustedInt))))
 (check-equal?
  (assoc 'unrefineNonEmpty Γ0)
- '(unrefineNonEmpty ((NFn ((Refined String (Prop NonEmpty))) String () ())
+ '(unrefineNonEmpty ((NFn ((Refined String (Prop NonEmpty))) String () () ()
+                                      (Reserved o-unrefine-non-empty))
                      (PrimVal (Reserved o-unrefine-non-empty)
                               unrefineNonEmpty))))
 

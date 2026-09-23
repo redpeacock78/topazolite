@@ -125,9 +125,9 @@
   (check-equal? body-contents '(#:lbl x))
   (match (elab '(Fn ((x Int)) Int () x))
     [(list _ type row callables)
-     (check-equal? type '(NFn (Int) Int () ()))
+     (check-equal? type '(NFn (Int) Int () () () User))
      (check-equal? row '())
-     (check-equal? callables '((callable0 (NFn (Int) Int () ()))))]
+     (check-equal? callables '((callable0 (NFn (Int) Int () () () User))))]
     [other (fail (format "メタデータの検査用 Fn が失敗した: ~s" other))]))
 
 ;; SCP-002。予約記号を含む束縛子は elaboration の入口で拒否する。

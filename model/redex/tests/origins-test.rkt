@@ -23,7 +23,7 @@
   (check-equal? (assoc 'o-language-narrative R0)
                 (term (o-language-narrative languageNarrative)))
   (check-equal? (assoc 'lt Γ0)
-                (term (lt ((NFn (Int Int) Bool () ())
+                (term (lt ((NFn (Int Int) Bool () () () (Reserved o-lt))
                            (PrimVal (Reserved o-lt) lt)))))
   (check-equal? (assoc 'List Δ0)
                 (term (List (TypeRep (Reserved o-list)

@@ -20,7 +20,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define callables
-    (list (list 'f `(NFn ((Borrowed Int ,rho)) Int () ()))))
+    (list (list 'f `(NFn ((Borrowed Int ,rho)) Int () () () User))))
   (define result (type-of/raw core '() callables '()
                               (region-ctx ir '() (hash) (hash))))
   (check-equal? (key-of result) 'borrowed-function-parameter)
@@ -32,7 +32,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define callables
-    (list (list 'f `(NFn (Int) (Borrowed Int ,rho) () ()))))
+    (list (list 'f `(NFn (Int) (Borrowed Int ,rho) () () () User))))
   (check-equal? (key-of (type-of/raw core '() callables '()
                                        (region-ctx ir '() (hash) (hash))))
                 'borrowed-function-result))
@@ -43,7 +43,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define environment (list (list 'y `(Borrowed Int ,rho))))
-  (define callables (list (list 'f '(NFn (Int) Int () ()))))
+  (define callables (list (list 'f '(NFn (Int) Int () () () User))))
   (define result
     (type-of/raw core '() callables environment
                  (region-ctx ir '() (hash) (hash))))
@@ -56,7 +56,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define environment (list (list 'x `(Borrowed Int ,rho))))
-  (define callables (list (list 'f '(NFn (Int) Int () ()))))
+  (define callables (list (list 'f '(NFn (Int) Int () () () User))))
   (check-equal? (first (type-of/raw core '() callables environment
                                      (region-ctx ir '() (hash) (hash))))
                 'ok))
@@ -67,7 +67,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define environment (list (list 'f `(Borrowed Int ,rho))))
-  (define callables (list (list 'f '(NFn (Int) Int () ()))))
+  (define callables (list (list 'f '(NFn (Int) Int () () () User))))
   (check-equal? (first (type-of/raw core '() callables environment
                                      (region-ctx ir '() (hash) (hash))))
                 'ok))
@@ -78,7 +78,7 @@
   (define ir (build-region-ir core))
   (define rho (region->rho ir (region-at ir '())))
   (define environment (list (list 'y `(Borrowed Int ,rho))))
-  (define callables (list (list 'f '(NFn (Int) Int () ()))))
+  (define callables (list (list 'f '(NFn (Int) Int () () () User))))
   (check-equal? (first (type-of/raw core '() callables environment
                                      (region-ctx ir '() (hash) (hash))))
                 'ok))
@@ -87,17 +87,17 @@
 (check-true (unbound-borrowed-type? '(Union (Borrowed Int 0) Int)))
 (check-true (unbound-borrowed-type? '(Option (BorrowedMut Int 0))))
 (check-true (unbound-borrowed-type? '(Result Int (List (Borrowed Int 0)))))
-(check-true (unbound-borrowed-type? '(NFn (Int) (NFn ((Borrowed Int 0)) Int () ()) () ())))
+(check-true (unbound-borrowed-type? '(NFn (Int) (NFn ((Borrowed Int 0)) Int () () () User) () () () User)))
 (check-true (unbound-borrowed-type? '(List (Option (Borrowed Int 0)))))
 (check-false (unbound-borrowed-type? '(Union Int String)))
-(check-false (unbound-borrowed-type? '(NFn (Int Bool) (Option Int) () ())))
+(check-false (unbound-borrowed-type? '(NFn (Int Bool) (Option Int) () () () User)))
 (check-false (unbound-borrowed-type? '(Refined Int (FieldType a Int))))
 (check-false (unbound-borrowed-type? '(Refined Int (Implements Int Tn))))
 
 ;; 環境由来の署名を Apply で拒む。
 (define bad-environment
-  (list (list 'f '(NFn ((Union (Borrowed Int 0) Int)) Int () ()))
-        (list 'g '(NFn (Int) (Borrowed Int 0) () ()))))
+  (list (list 'f '(NFn ((Union (Borrowed Int 0) Int)) Int () () () User))
+        (list 'g '(NFn (Int) (Borrowed Int 0) () () () User))))
 (check-equal? (key-of (type-of/raw '(Apply f 1) '() '() bad-environment
                                   (empty-region-ctx)))
               'borrowed-function-parameter)
@@ -108,7 +108,7 @@
 ;; 仮引数列の 2 番目。
 (let ()
   (define core '(Scope () (Lam User f (a b) 0)))
-  (define callables (list (list 'f '(NFn (Int (Borrowed Int 0)) Int () ()))))
+  (define callables (list (list 'f '(NFn (Int (Borrowed Int 0)) Int () () () User))))
   (check-equal? (key-of (type-of/raw core '() callables '()
                                        (empty-region-ctx)))
                 'borrowed-function-parameter))
@@ -117,7 +117,7 @@
 (let ()
   (define core '(Scope () (Lam User f (a) 0)))
   (define callables
-    (list (list 'f '(NFn ((Union (Borrowed Int 0) Int)) Int () ()))))
+    (list (list 'f '(NFn ((Union (Borrowed Int 0) Int)) Int () () () User))))
   (check-equal? (key-of (type-of/raw core '() callables '()
                                        (empty-region-ctx)))
                 'borrowed-function-parameter))
@@ -126,7 +126,7 @@
 (let ()
   (define core '(Scope () (Lam User f (a) 0)))
   (define callables
-    (list (list 'f '(NFn (Int) (NFn ((Borrowed Int 0)) Int () ()) () ()))))
+  (list (list 'f '(NFn (Int) (NFn ((Borrowed Int 0)) Int () () () User) () () () User))))
   (check-equal? (key-of (type-of/raw core '() callables '()
                                        (empty-region-ctx)))
                 'borrowed-function-result))
@@ -135,21 +135,21 @@
 (let ()
   (define core '(Scope () (Lam User f (a) 0)))
   (define callables
-    (list (list 'f '(NFn (Int) Int () ((Implements (Borrowed Int 0) Tn))))))
+    (list (list 'f '(NFn (Int) Int () () ((Implements (Borrowed Int 0) Tn)) User))))
   (check-equal? (key-of (type-of/raw core '() callables '()
                                        (empty-region-ctx)))
                 'borrowed-function-result))
 (check-equal? (key-of
                (type-of/raw '(Apply h 1) '() '()
-                            (list (list 'h '(NFn (Int) Int ()
-                                                   ((FieldType a (BorrowedMut Int 0))))))
+                            (list (list 'h '(NFn (Int) Int () ()
+                                                   ((FieldType a (BorrowedMut Int 0))) User)))
                             (empty-region-ctx)))
               'borrowed-function-result)
 
 ;; 具体 NFn の借用仮引数は、実引数の照合より先に従来の key を返す。
 (check-equal? (key-of
                (type-of/raw '(Apply h 1) '() '()
-                            (list (list 'h '(NFn ((Borrowed Int 0)) Int () ())))
+                            (list (list 'h '(NFn ((Borrowed Int 0)) Int () () () User)))
                             (empty-region-ctx)))
               'borrowed-function-parameter)
 
@@ -157,7 +157,7 @@
 (check-equal?
  (key-of
   (type-of/raw '(Curry g 1) '() '()
-               (list (list 'g '(NFn (Int (Borrowed Int 0)) Int () ())))
+               (list (list 'g '(NFn (Int (Borrowed Int 0)) Int () () () User)))
                (empty-region-ctx)))
  'borrowed-function-parameter)
 
@@ -165,6 +165,6 @@
 (check-equal?
  (key-of
   (type-of/raw '(Curry g 1) '() '()
-               (list (list 'g '(NFn (Int) (Borrowed Int 0) () ())))
+               (list (list 'g '(NFn (Int) (Borrowed Int 0) () () () User)))
                (empty-region-ctx)))
  'borrowed-function-result)

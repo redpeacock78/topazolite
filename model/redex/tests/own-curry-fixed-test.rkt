@@ -30,7 +30,7 @@
  "Owned の固定引数を Move 経由で固定でき、結果型が Owned<NFn 残余> になる"
  (match-define (list core type row callables)
    (elaboration-of owned-curry-surface))
- (check-equal? type '(Owned (NFn () Unit (Own) ())))
+ (check-equal? type '(Owned (NFn () Unit () (Own) () User)))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (define plain-curry-surface
@@ -43,7 +43,7 @@
  "関数側も固定引数側も Owned でなければ素の NFn を返す"
  (match-define (list core type row callables)
    (elaboration-of plain-curry-surface))
- (check-equal? type '(NFn (Int) (NFn () Int () ()) () ()))
+ (check-equal? type '(NFn (Int) (NFn () Int () () () User) () () () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 ;; Owned の関数は Move 経由で呼べる。
@@ -59,7 +59,7 @@
  "Owned の関数を Move 経由で呼べる"
  (match-define (list core type row callables)
    (elaboration-of owned-curry-apply-surface))
- (check-equal? type '(NFn ((Owned Res)) Unit (Own) ()))
+ (check-equal? type '(NFn ((Owned Res)) Unit () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 ;; 中間の place を Move で開く形は関数の位置へ置ける。Task 3 の生成形がこの形を使う。
@@ -67,21 +67,21 @@
   '(Curry (Move t) (OwnLeaf (Move r))))
 
 (define owned-curry-environment
-  (list (list 't '(Owned (NFn ((Owned Res)) Unit (Own) ())))
+  (list (list 't '(Owned (NFn ((Owned Res)) Unit () (Own) () User)))
         (list 'r '(Owned Res))))
 
 (test-case
  "Owned の closure を載せた place を Move で開く入れ子の Curry は通る"
  (check-equal? (type-of/raw curried-owned-function-core '() '()
                              owned-curry-environment)
-               '(ok ((Owned (NFn () Unit (Own) ())) (Own)))))
+               '(ok ((Owned (NFn () Unit () (Own) () User)) (Own)))))
 
 ;; Move を経ない形は落ちる。関数式は Apply であり、Move でも CurryVal でもない。
 (define owned-function-not-moved-core
   '(Apply (Apply mk)))
 
 (define owned-maker-environment
-  (list (list 'mk '(NFn () (Owned (NFn () Unit (Own) ())) (Own) ()))))
+  (list (list 'mk '(NFn () (Owned (NFn () Unit () (Own) () User)) () (Own) () User))))
 
 (test-case
  "Owned の関数を Move を経ずに関数の位置へ置くと owned-function-requires-move で落ちる"
@@ -101,4 +101,4 @@
           (Let f (Curry g (Move p))
                (Curry (Move f) 1)))))
  (match-define (list _core type _row _callables) (elaboration-of surface))
- (check-equal? (third type) '(Owned (NFn () Unit (Own) ()))))
+ (check-equal? (third type) '(Owned (NFn () Unit () (Own) () User))))

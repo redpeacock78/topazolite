@@ -779,8 +779,8 @@
             (and (callable-id? callable)
                  (type? signature)
                  (match signature
-                   [`(NFn ,_ ,_ ,_ ,_) (forall-region-free? signature)]
-                   [`(ForallRegion (,rps ...) (NFn ,_ ,_ ,_ ,_))
+                   [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) (forall-region-free? signature)]
+                   [`(ForallRegion (,rps ...) (NFn ,_ ,_ ,_ ,_ ,_ ,_))
                     (and (andmap symbol? rps)
                          (forall-region-free? (third signature)))]
                    [_ #f]))]
@@ -1400,7 +1400,7 @@
   (define expanded
     (or (unwrap-forall-region signature (region-binder-context)) signature))
   (match expanded
-    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
+    [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
@@ -1491,7 +1491,7 @@
       [`(ForallRegion (,rps ...) ,inner) (values inner rps)]
       [_ (values signature '())]))
   (match body-signature
-    [`(NFn ,parameter-types ,return-type ,latent-row ,obligations)
+    [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
@@ -1672,8 +1672,10 @@
 
 ;; 固定引数と関数のどちらかが Owned なら、結果の関数型も Owned で包む。
 ;; 包んだ型は Move を経由してのみ関数の位置へ置ける（§5.4）。
-(define (curry-result-type remaining-types return-type latent-row obligations owned?)
-  (define bare `(NFn ,remaining-types ,return-type ,latent-row ,obligations))
+(define (curry-result-type remaining-types return-type latent-in latent-out
+                           obligations origin owned?)
+  (define bare `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
+                     ,obligations ,origin))
   (if owned? `(Owned ,bare) bare))
 
 ;; 関数の位置に置かれた Owned<NFn ...> を一段だけ剥がす。
@@ -2418,7 +2420,7 @@
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
        [(list `(NFn (,first-type ,remaining-types ...)
-                    ,return-type ,latent-row ,obligations)
+                    ,return-type ,latent-in ,latent-out ,obligations ,origin)
               _ _)
         (define summary
           (or (lookup-callable-summary (enter-child Λ 0) function)
@@ -2461,7 +2463,8 @@
                           type-compatible?))))
         (unless (null? (first argument-row))
           (fail 'effectful-curry-operand argument))
-        (list (curry-result-type remaining-types return-type latent-row obligations
+        (list (curry-result-type remaining-types return-type latent-in latent-out
+                                 obligations origin
                                  (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
@@ -2623,7 +2626,7 @@
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
        [(list `(NFn ,parameter-types
-                    ,return-type ,latent-row ,obligations)
+                    ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
               _ _)
         ;; §4.2。再帰の束縛は、環境から引いた対の同一性で判別する。名前で
         ;; 引くと、本体の中の Let が影にした同名の束縛を再帰と見なす。
@@ -2745,7 +2748,7 @@
           [`(Apply ,function ,_ ...)
            (match (infer function (enter-child base-Λ 0)
                           Ψ environment places callables fail)
-             [(list `(NFn ,_ ,_ ,_ ,obligations) _ function-psi)
+             [(list `(NFn ,_ ,_ ,_ ,_ ,obligations ,_) _ function-psi)
               (unless (= (length propositions) (length obligations))
                 (fail 'discharge-obligation-count core))
               (for ([phi (in-list propositions)]
@@ -3053,7 +3056,7 @@
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
        [(list `(NFn (,first-type ,remaining-types ...)
-                    ,return-type ,latent-row ,obligations)
+                    ,return-type ,latent-in ,latent-out ,obligations ,origin)
               _ _)
         (define summary
           (or (lookup-callable-summary (enter-child Λ 0) function)
@@ -3087,7 +3090,8 @@
             (check-as argument first-type (enter-child Λ 1)
                       function-psi
                       environment places callables fail)))
-        (list (curry-result-type remaining-types return-type latent-row obligations
+        (list (curry-result-type remaining-types return-type latent-in latent-out
+                                 obligations origin
                                  (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]

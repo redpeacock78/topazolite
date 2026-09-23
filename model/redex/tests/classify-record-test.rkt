@@ -2,7 +2,7 @@
 (require rackunit "../classify.rkt")
 
 (define structural-callables
-  '((list-loop-id (NFn ((List Int)) Int () ()))))
+  '((list-loop-id (NFn ((List Int)) Int () () () User))))
 
 ; bmode 付き Let（3 要素 binding）が再帰呼び出しを包んでも structural を保つ。
 ; walker の bmode Let 分岐が無いと (Let (r const Int) ...) が fallthrough し Unknown になる。

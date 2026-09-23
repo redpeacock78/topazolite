@@ -91,10 +91,10 @@
       `(Refined ,sup-payload ,sup-proposition))
      (and (proposition-equiv? sub-proposition sup-proposition)
           (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
-    [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
-      `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
-     (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
-                      sup-parameters sup-return sup-row sup-obligations
+    [(`(NFn ,sub-parameters ,sub-return ,_sub-in ,sub-out ,sub-obligations ,_sub-origin)
+      `(NFn ,sup-parameters ,sup-return ,_sup-in ,sup-out ,sup-obligations ,_sup-origin))
+     (nfn-compatible? sub-parameters sub-return sub-out sub-obligations
+                      sup-parameters sup-return sup-out sup-obligations
                       gamma-pc region-relation)]
     ;; 構成子が一致し、payload が互換であることを要求する。
     ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。

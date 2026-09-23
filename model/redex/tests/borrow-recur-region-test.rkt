@@ -30,9 +30,9 @@
 ;; RegionLam の fresh 名との対応を解決する。
 (define outer-callables
   '((outer (NFn (Int)
-                (NFn ((BorrowedMut Int (RParam a))) Int () ())
-                () ()))
-    (innerb (NFn ((BorrowedMut Int (RParam a))) Int () ()))))
+                (NFn ((BorrowedMut Int (RParam a))) Int () () () User)
+                () () () User))
+    (innerb (NFn ((BorrowedMut Int (RParam a))) Int () () () User))))
 
 ;; 1。署名が言及する region parameter を本体が引き継ぐ。
 ;; 空集合へ置き換える実装は、内側の Lam を borrowed-function-parameter で落とす。
@@ -62,8 +62,8 @@
   (failure-key
    (raw-result core ir 'Int
                (cons '(plain (NFn (Int)
-                                  (NFn (Int) Int () ())
-                                  () ()))
+                                  (NFn (Int) Int () () () User)
+                                  () () () User))
                      outer-callables)))
   'borrowed-function-parameter))
 
@@ -71,8 +71,8 @@
 ;; 名前や型の equal? へ退行した実装は、同じ名前かつ同じ型の別の対を返す。
 (test-case
  "lookup-binding は環境の対そのものを返す"
- (define inner (list 'f '(NFn (Int) Int () ())))
- (define outer (list 'f '(NFn (Int) Int () ())))
+ (define inner (list 'f '(NFn (Int) Int () () () User)))
+ (define outer (list 'f '(NFn (Int) Int () () () User)))
  (define environment (list inner outer))
  (check-eq? (lookup-binding environment 'f) inner))
 
@@ -97,7 +97,7 @@
 ;; 借用の仮引数を 2 つ取る再帰の署名。位置ごとの鍵が別であることを使う。
 (define swap-callables
   '((rec2 (NFn ((BorrowedMut Int (RParam a)) (BorrowedMut Int (RParam a)))
-               Int () ()))))
+               Int () () () User))))
 
 ;; 4。本体の再帰呼出しが仮引数をそのままの位置で渡す。
 (test-case
@@ -124,18 +124,18 @@
                      (RecurVal rec2 f (x y) (Apply f x y))))
                 '() '(NFn ((BorrowedMut Int (RParam a))
                            (BorrowedMut Int (RParam a)))
-                          Int () ())
+                          Int () () () User)
                 swap-callables
                 '(ForallRegion (a.0)
                    (NFn ((BorrowedMut Int (RParam a.0))
                          (BorrowedMut Int (RParam a.0)))
-                        Int () ()))))
+                        Int () () () User))))
 
 ;; 7。Eliminate の tail は仮引数の capability を根に保ったまま位置 1 を
 ;; path へ積む。仮の要約は path を固定せず、根の一致だけでこの射影を受ける。
 (define list-recur-callables
   '((reclist (NFn ((Borrowed (List Int) (RParam a)))
-                    Int () ()))))
+                    Int () () () User))))
 
 (test-case
  "再帰の本体が借用した List の tail を同じ根で渡せる"
@@ -168,8 +168,8 @@
 ;; 形 ii。署名そのものが ForallRegion である再帰。
 (define forall-callables
   '((recf (ForallRegion (a)
-            (NFn ((BorrowedMut Int (RParam a))) Int () ())))
-    (useb (NFn ((BorrowedMut Int (RParam a))) Int () ()))))
+            (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))
+    (useb (NFn ((BorrowedMut Int (RParam a))) Int () () () User))))
 
 ;; 9。dual-cell の回帰。同じ Recur の本体が剥がした NFn を、継続が
 ;; ForallRegion を見る。片方の環境しか直していない実装はここで落ちる。
@@ -181,10 +181,10 @@
        (Recur recf f (x)
               (Apply f x)
               (Lam User useb (y) (Apply (RegionApp f ((RParam a))) y)))))
-  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   forall-callables
   '(ForallRegion (a.0)
-     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () () () User)) ))
 
 ;; 10。継続で包みを剥がさずに呼ぶと、関数の型が ForallRegion のままである。
 (test-case
@@ -195,9 +195,9 @@
        (Recur recf f (x)
               (Apply f x)
               (Lam User useb (y) (Apply f y)))))
-  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   forall-callables
-  '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   'apply-non-function))
 
 ;; 11。Let を挟まない RegionApp。関数の位置が名前でも RegionLam でもない。
@@ -207,10 +207,10 @@
   '(Scope (1)
      (RegionLam (a)
        (RegionApp (RecurVal recf f (x) (Read x)) ((RParam a)))))
-  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   forall-callables
   '(ForallRegion (a.0)
-     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () () () User)) ))
 
 ;; 12。本体の借用の使用が雛形として溜まり、継続の呼出しで実体化される。
 ;; 収集器を template-collectors へ積んでいない実装は、route-deferred! が
@@ -223,10 +223,10 @@
        (Recur recf f (x)
               (Let (t let Int) (Read x) (Apply f x))
               (Lam User useb (y) (Apply (RegionApp f ((RParam a))) y)))))
-  '() '(NFn ((BorrowedMut Int (RParam a))) Int () ())
+  '() '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   forall-callables
   '(ForallRegion (a.0)
-     (NFn ((BorrowedMut Int (RParam a.0))) Int () ())) ))
+     (NFn ((BorrowedMut Int (RParam a.0))) Int () () () User)) ))
 
 ;; 13。外側に RegionLam が無い形 ii。rp を束縛するのは署名だけである。
 ;; 継続は Scope の生きた region を実引数にして包みを剥がす。
@@ -237,7 +237,7 @@
   '(Scope (1)
      (Recur recf f (x)
             (Apply f x)
-            (Let (g let (NFn ((BorrowedMut Int (RVar 0))) Int () ()))
+            (Let (g let (NFn ((BorrowedMut Int (RVar 0))) Int () () () User))
                  (RegionApp f ((RVar 0)))
                  0)))
  '() 'Int forall-callables 'Int))
@@ -248,7 +248,7 @@
   '((rec2 (ForallRegion (a b)
             (NFn ((BorrowedMut Int (RParam a))
                   (BorrowedMut Int (RParam b)))
-                 Int () ())))))
+                 Int () () () User)))))
 
 (test-case
  "複数の region parameter を RegionApp の位置順で置換する"
@@ -264,4 +264,4 @@
      (ForallRegion (b.1)
        (NFn ((BorrowedMut Int (RParam a.0))
              (BorrowedMut Int (RParam b.1)))
-            Int () ())))))
+            Int () () () User)))))

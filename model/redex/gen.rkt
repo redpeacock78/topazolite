@@ -395,8 +395,10 @@
     [(zero? (random 2)) `(Record ,(random-variance-row (sub1 depth)))]
     [else `(NFn (,(random-variance-type (sub1 depth)))
                 ,(random-variance-type (sub1 depth))
+                ()
                 ,(random-subset variance-effect-pool)
-                ,(random-subset variance-obligation-pool))]))
+                ,(random-subset variance-obligation-pool)
+                User)]))
 
 ;; 部分型方向: Record は imm field の narrow か余剰 field 追加、NFn は
 ;; 引数 widen・返り値 narrow・E/Q の部分列化。mut field は触らない。
@@ -413,11 +415,13 @@
         (if (and (pair? fresh-labels) (zero? (random 2)))
             `(Record ,(append row (list (list (first fresh-labels) 'Int 'imm))))
             `(Record ,(map-imm-fields row narrow-variance-type)))]
-       [`(NFn ,parameters ,return-type ,row ,obligations)
+       [`(NFn ,parameters ,return-type ,latent-in ,row ,obligations ,origin)
         `(NFn ,(map widen-variance-type parameters)
               ,(narrow-variance-type return-type)
+              ,latent-in
               ,(random-subset row)
-              ,(random-subset obligations))]
+              ,(random-subset obligations)
+              ,origin)]
        [_ type])]))
 
 ;; 上位型方向: Never は任意型へ、Record は先頭 field 削除か imm field の
@@ -429,11 +433,13 @@
      (if (and (pair? row) (zero? (random 2)))
          `(Record ,(rest row))
          `(Record ,(map-imm-fields row widen-variance-type)))]
-    [`(NFn ,parameters ,return-type ,row ,obligations)
+    [`(NFn ,parameters ,return-type ,latent-in ,row ,obligations ,origin)
      `(NFn ,(map narrow-variance-type parameters)
            ,(widen-variance-type return-type)
+           ,latent-in
            ,(append-missing row variance-effect-pool)
-           ,(append-missing obligations variance-obligation-pool))]
+           ,(append-missing obligations variance-obligation-pool)
+           ,origin)]
     [_ type]))
 
 (define (permute-effect-label label)
@@ -454,11 +460,13 @@
                     [(list label field-type mutability)
                      (list label (permute-variance-type field-type)
                            mutability)]))))]
-    [`(NFn ,parameters ,return-type ,row ,obligations)
+    [`(NFn ,parameters ,return-type ,latent-in ,row ,obligations ,origin)
      `(NFn ,(map permute-variance-type parameters)
            ,(permute-variance-type return-type)
+           ,latent-in
            ,(reverse (map permute-effect-label row))
-           ,obligations)]
+           ,obligations
+           ,origin)]
     [_ type]))
 
 ;; ---------------------------------------------------------------------------

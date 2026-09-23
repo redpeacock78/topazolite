@@ -9,7 +9,7 @@
 ;; spec §6.7。classify は Reassign の節を持たない。既定節へ落ちるため
 ;; Reassign の内側の自己呼出しは構造的下降として見えず Unknown になる。
 ;; Assign も同じ扱いである。
-(define mut-callables '((mut-loop-id (NFn (Int) Int () ()))))
+(define mut-callables '((mut-loop-id (NFn (Int) Int () () () User))))
 
 (check-equal?
  (classify '(Recur mut-loop-id loop (n)

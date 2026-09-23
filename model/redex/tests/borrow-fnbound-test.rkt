@@ -25,7 +25,7 @@
  ;; 走査は型木のどこへでも入る。葉の判定だけが変わる。
  (check-false (unbound-borrowed-type?
                '(NFn ((Union (Borrowed Int (RParam a)) Int))
-                     (Option (BorrowedMut Int (RParam a))) () ())
+                     (Option (BorrowedMut Int (RParam a))) () () () User)
                (set 'a))))
 
 ;; payload の内側も走査する。外側が束縛されていても、内側が未束縛なら違反。
@@ -42,7 +42,7 @@
  ;; 混在。1 つでも束縛されていなければ違反である。
  (check-true
   (unbound-borrowed-type?
-   '(NFn ((Borrowed Int (RParam a)) (Borrowed Int (RParam b))) Int () ())
+   '(NFn ((Borrowed Int (RParam a)) (Borrowed Int (RParam b))) Int () () () User)
    (set 'a))))
 
 ;; (c) 具体的な region の借用は、束縛の集合に何が入っていても違反である。
@@ -56,7 +56,7 @@
 (test-case
  "借用でない型は違反ではない"
  (check-false (unbound-borrowed-type? '(Union Int String)))
- (check-false (unbound-borrowed-type? '(NFn (Int Bool) (Option Int) () ())))
+ (check-false (unbound-borrowed-type? '(NFn (Int Bool) (Option Int) () () () User)))
  (check-false (unbound-borrowed-type? '(Refined Int (Implements Int Tn)))))
 
 ;; (e) parameter の既定は空集合である。
@@ -79,11 +79,11 @@
                         (region-ctx ir '() (hash) (hash)))))
  (check-equal?
   (boundary-key '(Scope () (Let (x let (Owned Res)) (resource 1) (Lam User f (a) 0)))
-                (lambda (rho) `(NFn ((Borrowed Int ,rho)) Int () ())))
+                (lambda (rho) `(NFn ((Borrowed Int ,rho)) Int () () () User)))
   'borrowed-function-parameter)
  (check-equal?
   (boundary-key '(Scope () (Lam User f (a) 0))
-                (lambda (rho) `(NFn (Int) (Borrowed Int ,rho) () ())))
+                (lambda (rho) `(NFn (Int) (Borrowed Int ,rho) () () () User)))
   'borrowed-function-result)
  ;; capture も既定の空集合で同じ key を出す。
  (let* ([core '(Scope () (Lam User f (a) y))]
@@ -91,7 +91,7 @@
         [rho (region->rho ir (region-at ir '()))]
         [environment (list (list 'y `(Borrowed Int ,rho)))])
    (check-equal?
-    (key-of (type-of/raw core '() (list (list 'f '(NFn (Int) Int () ())))
+    (key-of (type-of/raw core '() (list (list 'f '(NFn (Int) Int () () () User)))
                              environment
                              (region-ctx ir '() (hash) (hash))))
     'borrowed-function-capture)))

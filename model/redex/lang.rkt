@@ -43,7 +43,7 @@
          (Borrowed τ ρ)
          (BorrowedMut τ ρ)
          (RawPtr τ ptrmut nul align as prov)
-         (NFn (τ ...) τ ε Q)
+         (NFn (τ ...) τ ε ε Q O)
          (TypeInfo κ)
          (Proof φ))
   (κ ::= Type (κ -> κ))

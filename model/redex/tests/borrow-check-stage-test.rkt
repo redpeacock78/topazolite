@@ -154,7 +154,7 @@
 ;; 段 1 だけを走らせていたころ、後者は emit-region-arg-request! の raw error だった。
 (let ()
   (define forall-callables
-    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
   (define (core-with ρ)
     `(Scope () (Yield (Scope () 0)
                       (RegionApp (RegionLam (a) (Lam User g (x) 1)) (,ρ)))))

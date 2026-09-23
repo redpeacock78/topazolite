@@ -124,7 +124,7 @@
 ;; 使った証拠になる。
 (let ()
   (define forall-callables
-    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ()) ))))
+    '((g (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User) ))))
   (define core
     '(Scope ()
             (Yield (Scope () 0)

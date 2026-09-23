@@ -61,8 +61,8 @@
      (owned-narrowing-kind/impl actual-payload expected-payload compatible? #f)]
     [(`(Refined ,actual-payload ,_) `(Refined ,expected-payload ,_))
      (owned-narrowing-kind/impl actual-payload expected-payload compatible? #f)]
-    [(`(NFn ,actual-parameters ,actual-return ,_ ,_)
-      `(NFn ,expected-parameters ,expected-return ,_ ,_))
+    [(`(NFn ,actual-parameters ,actual-return ,_ ,_ ,_ ,_)
+      `(NFn ,expected-parameters ,expected-return ,_ ,_ ,_ ,_))
      (if (= (length actual-parameters) (length expected-parameters))
          (kind-all
           (cons (owned-narrowing-kind/impl actual-return expected-return

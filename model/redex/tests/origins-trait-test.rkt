@@ -43,7 +43,7 @@
            (list `(NFn ((Record ,requirements))
                        (Proof (Implements ,(impl-target-type row)
                                           ,(impl-trait-name row)))
-                       () ())
+                       () () () (Reserved ,(impl-oid row)))
                  `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row))))))
   (for ([row (in-list intersect-table)])
     (check-equal?
@@ -53,7 +53,7 @@
                         (Proof (ValidNarrativeTrait ,(intersect-right row))))
                        (Proof (RequiresBoth ,(intersect-left row)
                                             ,(intersect-right row)))
-                       () ())
+                       () () () (Reserved ,(intersect-oid row)))
                  `(PrimVal (Reserved ,(intersect-oid row))
                            ,(intersect-name row)))))))
 

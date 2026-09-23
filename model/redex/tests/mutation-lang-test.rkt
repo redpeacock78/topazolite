@@ -28,13 +28,13 @@
 (test-case "Fn の宣言 row に Mutation を書ける（core-calculus.md §3.2）"
   (match-define (list _ type _ _)
     (elab '(Fn () Unit (Mutation) unit)))
-  (check-equal? type '(NFn () Unit (Mutation) ())))
+  (check-equal? type '(NFn () Unit () (Mutation) () User)))
 
 ;; core-calculus.md §3.2。型注釈の row の許可集合が Mutation を通す。
 (test-case "NFn の型注釈に Mutation を書ける（core-calculus.md §3.2）"
   (match-define (list _ type _ _)
     (elab '(Fn ((f (NFn () Int (Mutation) ()))) Int () 1)))
-  (check-equal? type '(NFn ((NFn () Int (Mutation) ())) Int () ())))
+  (check-equal? type '(NFn ((NFn () Int () (Mutation) () User)) Int () () () User)))
 
 ;; core-calculus.md §3.2。trait template の latent row も Mutation を許す。
 (test-case "template-effect? が Mutation を許す（core-calculus.md §3.2）"

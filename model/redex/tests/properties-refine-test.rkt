@@ -250,7 +250,7 @@
 ;; 文脈を並べて、拒否側も探索で踏ませる。
 (define partial-context (list (first global-context)))
 
-(define (nfn obligations) `(NFn (Int) Int () ,obligations))
+(define (nfn obligations) `(NFn (Int) Int () () ,obligations User))
 
 (test-case "RFN-003: Γ_pc⁰ は G1 の命題を候補の有無で分ける"
   (check-true (compat? (nfn '(TypeNarrativeCap)) (nfn '()) Γ-pc0))
@@ -365,8 +365,8 @@
                  [(mut) (type-equiv? sub-type sup-type)]
                  [else #f]))]
          [_ #f]))]
-    [(`(NFn ,sub-parameters ,sub-return ,sub-row ,sub-obligations)
-      `(NFn ,sup-parameters ,sup-return ,sup-row ,sup-obligations))
+    [(`(NFn ,sub-parameters ,sub-return () ,sub-row ,sub-obligations User)
+      `(NFn ,sup-parameters ,sup-return () ,sup-row ,sup-obligations User))
      (and (= (length sub-parameters) (length sup-parameters))
           (for/and ([sub-parameter (in-list sub-parameters)]
                     [sup-parameter (in-list sup-parameters)])

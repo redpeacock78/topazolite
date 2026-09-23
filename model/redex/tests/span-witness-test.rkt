@@ -86,7 +86,7 @@
     (check-false (redex-match? G1+ v value) (format "~a" value))))
 
 (test-case "span を持たない非終端は G1 と同じものを受理する"
-  (for ([type (in-list (term (Int (List Int) (NFn (Int) Bool () ()))))])
+  (for ([type (in-list (term (Int (List Int) (NFn (Int) Bool () () () User))))])
     ;; 両辺が偽でも一致するので、まず基底で真であることを固定する。
     (check-true (redex-match? G1 τ type) (format "~a" type))
     (check-equal? (and (redex-match? G1+ τ type) #t)

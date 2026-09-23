@@ -89,7 +89,7 @@
   (check-golden
    doubled
    '(List Int)
-   '((f⟨1⟩ (NFn (Int) Int () ()))
+   '((f⟨1⟩ (NFn (Int) Int () () () User))
      (values⟨2⟩ (List Int)))
    '(Construct (List Int) cons -2
                (Construct (List Int) cons 4

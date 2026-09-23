@@ -3,7 +3,7 @@
 
 ;; PSR-002: TypeNarrativeCap 義務は、Γ_pc⁰ の一意な候補で discharge され受理される。
 (define callables
-  '((cap-id (NFn (Int) Int () (TypeNarrativeCap)))))
+  '((cap-id (NFn (Int) Int () () (TypeNarrativeCap) User))))
 (reset-search-log!)
 (check-equal?
  (core-type-of '(Apply (Lam User cap-id (x) x) 1) '() callables)
@@ -12,7 +12,7 @@
 
 ;; Π0 に候補が無い ValidNarrativeTrait 義務は充足できず ill-typed。
 (define callables-v
-  '((trait-id (NFn (Int) Int () (ValidNarrativeTrait)))))
+  '((trait-id (NFn (Int) Int () () (ValidNarrativeTrait) User))))
 (reset-search-log!)
 (check-equal?
  (core-type-of '(Apply (Lam User trait-id (x) x) 1) '() callables-v)
@@ -21,7 +21,7 @@
 
 ;; 義務列が空の Apply は従来どおり受理される（回帰）。
 (define callables-0
-  '((plain-id (NFn (Int) Int () ()))))
+  '((plain-id (NFn (Int) Int () () () User))))
 (reset-search-log!)
 (check-equal?
  (core-type-of '(Apply (Lam User plain-id (x) x) 1) '() callables-0)

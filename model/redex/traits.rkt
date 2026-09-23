@@ -53,28 +53,28 @@
 ;; template の Self はメタレベルの placeholder であり、型文法には属さない。
 (define trait-table
   (list (list 'o-trait-printable 'Printable 'root
-              (list (list 'print '(NFn (Self) String () ()) 'imm)))
+              (list (list 'print '(NFn (Self) String () () () User) 'imm)))
         (list 'o-trait-sizable 'Sizable 'root
-              (list (list 'size '(NFn (Self) Int () ()) 'imm)))
+              (list (list 'size '(NFn (Self) Int () () () User) 'imm)))
         (list 'o-trait-printable-sizable 'PrintableSizable 'root
-              (list (list 'print '(NFn (Self) String () ()) 'imm)
-                    (list 'size '(NFn (Self) Int () ()) 'imm)))
+              (list (list 'print '(NFn (Self) String () () () User) 'imm)
+                    (list 'size '(NFn (Self) Int () () () User) 'imm)))
         (list 'o-trait-taggable 'Taggable 's-kernel
-              (list (list 'tag '(NFn (Self) String () ()) 'imm)))
+              (list (list 'tag '(NFn (Self) String () () () User) 'imm)))
         (list 'o-trait-printable-taggable 'PrintableTaggable 'root
-              (list (list 'print '(NFn (Self) String () ()) 'imm)
-                    (list 'tag   '(NFn (Self) String () ()) 'imm)))
+              (list (list 'print '(NFn (Self) String () () () User) 'imm)
+                    (list 'tag   '(NFn (Self) String () () () User) 'imm)))
         ;; COH-001: 生成 scope が s-kernel の合成 trait。成分はどちらも
         ;; (root s-user) から可視であり、出力 scope の可視性だけが落ちる。
         (list 'o-trait-sizable-taggable 'SizableTaggable 's-kernel
-              (list (list 'size '(NFn (Self) Int () ()) 'imm)
-                    (list 'tag  '(NFn (Self) String () ()) 'imm)))
+              (list (list 'size '(NFn (Self) Int () () () User) 'imm)
+                    (list 'tag  '(NFn (Self) String () () () User) 'imm)))
         ;; TRT-006: 合成 trait を成分に取る合成の出力。三項の要求は二項の
         ;; 入れ子で表し、表そのものは二項の関係を保つ。
         (list 'o-trait-printable-sizable-taggable 'PrintableSizableTaggable 'root
-              (list (list 'print '(NFn (Self) String () ()) 'imm)
-                    (list 'size  '(NFn (Self) Int () ()) 'imm)
-                    (list 'tag   '(NFn (Self) String () ()) 'imm)))))
+              (list (list 'print '(NFn (Self) String () () () User) 'imm)
+                    (list 'size  '(NFn (Self) Int () () () User) 'imm)
+                    (list 'tag   '(NFn (Self) String () () () User) 'imm)))))
 
 ;; impl-table の行: (oid nm kind tn τ sid_target)
 ;; 各行は、対応する実装 record が検査済みである信頼された宣言である。
@@ -282,7 +282,7 @@
      (and (template-type? left) (template-type? right))]
     [`(Intersection ,left ,right)
      (and (template-type? left) (template-type? right))]
-    [`(NFn ,parameters ,return-type ,effects ,obligations)
+    [`(NFn ,parameters ,return-type ,_in-effects ,effects ,obligations ,_origin)
      (and (andmap template-type? parameters)
           (template-type? return-type)
           (andmap template-effect? effects)

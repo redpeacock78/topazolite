@@ -128,7 +128,7 @@
                  (Recur loop-id loop (x) 0 (Borrow 1))
                  0)))
   (define ir (build-region-ir (make 0)))
-  (define callables (list (list 'loop-id '(NFn (Int) Int () ()))))
+  (define callables (list (list 'loop-id '(NFn (Int) Int () () () User))))
   (check-equal? (status (make (rho-at ir '(0 0))) ir callables) 'ok))
 
 ;; 最後の枝を通ったとき、推論した型が binding-context まで戻る。

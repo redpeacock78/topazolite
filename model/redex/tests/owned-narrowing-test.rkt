@@ -13,7 +13,7 @@
 
 ;; 関数引数の実型が余剰 Owned 欄を持つ Record になる環境。
 (define narrowing-environment
-  (list (list 'f '(NFn ((Record ((y Int imm)))) Unit () ()))
+  (list (list 'f '(NFn ((Record ((y Int imm)))) Unit () () () User))
         (list 's '(Record ((x (Owned Res) imm) (y Int imm))))))
 (define let-residual-environment
   '((s (Record ((x (Owned Res) imm) (y Int imm))))))
@@ -36,7 +36,7 @@
 
 (define (apply-key actual expected)
   (key-of '(Apply f s)
-          `((f (NFn (,expected) Unit () ()))
+          `((f (NFn (,expected) Unit () () () User))
             (s ,actual))))
 
 (define (key-of core [environment '()])
@@ -83,15 +83,15 @@
 (test-case "NFn の返り値の narrowing を拒否する"
   (check-equal?
    (apply-key
-    `(NFn (Int) (Record ((x ,owned imm) (y Int imm))) () ())
-    '(NFn (Int) (Record ((y Int imm))) () ()))
+    `(NFn (Int) (Record ((x ,owned imm) (y Int imm))) () () () User)
+    '(NFn (Int) (Record ((y Int imm))) () () () User))
    'owned-narrowing-rejected))
 
 (test-case "NFn の引数の narrowing を拒否する"
   (check-equal?
    (apply-key
-    '(NFn ((Record ((y Int imm)))) Int () ())
-    `(NFn ((Record ((x ,owned imm) (y Int imm)))) Int () ()))
+    '(NFn ((Record ((y Int imm)))) Int () () () User)
+    `(NFn ((Record ((x ,owned imm) (y Int imm)))) Int () () () User))
    'owned-narrowing-rejected))
 
 (test-case "Union は安全な候補が一つあれば受理する"
@@ -143,7 +143,7 @@
 (test-case "actual が Never なら narrowing を受理する"
   (check-equal?
    (key-of '(Apply f s)
-           '((f (NFn ((Record ((y Int imm)))) Unit () ()))
+           '((f (NFn ((Record ((y Int imm)))) Unit () () () User))
              (s Never)))
    'ok))
 

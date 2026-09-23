@@ -7,8 +7,8 @@
 ;; P1c2a が入れた undeclared-function-effect の検査がそのまま働くことを固定する。
 ;; callables の綴りは tests/typing-test.rkt:11-17 の callable-types に倣う。
 (define callable-types
-  '((loop-id (NFn (Int) Int () ()))
-    (mut-loop-id (NFn (Int) Int (Mutation) ()))))
+  '((loop-id (NFn (Int) Int () () () User))
+    (mut-loop-id (NFn (Int) Int () (Mutation) () User))))
 
 (define (key-of core)
   (match (type-of/raw core '() callable-types '() (empty-region-ctx))

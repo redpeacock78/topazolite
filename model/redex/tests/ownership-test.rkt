@@ -57,16 +57,16 @@
 (test-case "NFn の返り値は共変に辿る"
   (check-equal?
    (owned-narrowing-kind
-    `(NFn (Int) (Record ((x ,owned imm) (y Int imm))) () ())
-    '(NFn (Int) (Record ((y Int imm))) () ())
+    `(NFn (Int) (Record ((x ,owned imm) (y Int imm))) () () () User)
+    '(NFn (Int) (Record ((y Int imm))) () () () User)
     always-compatible)
    'reject))
 
 (test-case "NFn の引数は反変に辿る"
   (check-equal?
    (owned-narrowing-kind
-    `(NFn ((Record ((y Int imm)))) Int () ())
-    `(NFn ((Record ((x ,owned imm) (y Int imm)))) Int () ())
+    `(NFn ((Record ((y Int imm)))) Int () () () User)
+    `(NFn ((Record ((x ,owned imm) (y Int imm)))) Int () () () User)
     always-compatible)
    'reject))
 

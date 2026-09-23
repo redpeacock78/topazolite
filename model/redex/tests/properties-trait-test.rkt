@@ -53,7 +53,7 @@
     (define source-fields
       (for/list ([field (in-list requirements)])
         (match field
-          [`(,label (NFn (,parameters ...) ,return-type () ()) ,mutability)
+          [`(,label (NFn (,parameters ...) ,return-type () () () User) ,mutability)
            (define names
              (for/list ([_parameter (in-list parameters)]
                         [index (in-naturals)])

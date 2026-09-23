@@ -52,7 +52,7 @@
     (instantiate-requirements
      (trait-template (trait-row-by-name 'Printable))
      'Int))
-  (check-equal? row '((print (NFn (Int) String () ()) imm)))
+  (check-equal? row '((print (NFn (Int) String () () () User) imm)))
   (for ([field (in-list row)])
     (define type (second field))
     (check-equal? (normalize-type type) type)))
@@ -200,11 +200,11 @@
 ;; 検査が実質何も見ない形で通る退化を防ぐ。宣言されていない trait 名は落ちる。
 (test-case "NAR-003: trait-row-shape-ok? は未宣言の trait 名を落とす"
   (define broken (list 'o-trait-bogus 'Bogus 'root
-                       (list (list 'print '(NFn (Self) String () ()) 'imm))))
+                       (list (list 'print '(NFn (Self) String () () () User) 'imm))))
   (check-false (trait-row-shape-ok? broken))
   ;; 第 1 欄が symbol でない行は symbol? の節で落ちる。
   (define non-symbol (list "o-trait-printable" 'Printable 'root
-                           (list (list 'print '(NFn (Self) String () ()) 'imm))))
+                           (list (list 'print '(NFn (Self) String () () () User) 'imm))))
   (check-false (trait-row-shape-ok? non-symbol)))
 
 ;; NAR-003: R0 の実値まで見る。

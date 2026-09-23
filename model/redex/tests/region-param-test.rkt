@@ -10,9 +10,9 @@
          "../type-equiv.rkt")
 
 (define forall-a
-  (term (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ()))))
+  (term (ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User))))
 (define forall-b
-  (term (ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () ()))))
+  (term (ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () () () User))))
 
 ;; 文法。G2 と G2m の双方で region の型と項を受ける。
 (test-case
@@ -52,14 +52,14 @@
  (check-equal? (region-free-params forall-a) (set))
  (check-equal?
   (region-free-params
-   (term (NFn ((Borrowed Int (RParam a))) Int () ())))
+   (term (NFn ((Borrowed Int (RParam a))) Int () () () User)))
   (set 'a))
  (check-equal?
   (region-free-params
    (term (ForallRegion (a)
                        (NFn ((ForallRegion (a)
                                              (Borrowed Int (RParam a))))
-                            Int () ()))))
+                            Int () () () User))))
   (set)))
 
 ;; Core を受けても RegionLam の束縛名を自由な rp に数えない。
@@ -96,7 +96,7 @@
        (RegionLam (a)
          (Let (x let
                  (ForallRegion (b)
-                   (NFn ((Borrowed Int (RParam a))) Int () ())))
+                   (NFn ((Borrowed Int (RParam a))) Int () () () User)))
               1 x))
        ((RParam b)))))
  (define renamed
@@ -118,7 +118,7 @@
  (match-define
    `(Let (x let
             (ForallRegion (,kept)
-              (NFn ((Borrowed Int (RParam ,used))) Int () ())))
+              (NFn ((Borrowed Int (RParam ,used))) Int () () () User)))
          1 x)
    substituted)
  (check-equal? used outer)
@@ -208,11 +208,11 @@
  (check-false (type-equiv? forall-a
                            (term (ForallRegion (a b)
                                                (NFn ((Borrowed Int (RParam a)))
-                                                    Int () ())))))
+                                                    Int () () () User)))))
  (check-false
   (type-equiv?
-   (term (ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () ())))
-   (term (ForallRegion (a) (NFn ((Borrowed Int (RParam b))) Int () ())))))
+   (term (ForallRegion (b) (NFn ((Borrowed Int (RParam b))) Int () () () User)))
+   (term (ForallRegion (a) (NFn ((Borrowed Int (RParam b))) Int () () () User)))))
  (check-true
   (type-equiv?
    (term (ForallRegion (a) (ForallRegion (a) (Borrowed Int (RParam a)))))
@@ -272,10 +272,10 @@
  (check-equal?
   (subst-region-params
    '(NFn ((Borrowed Int (RParam a))) (ForallRegion (a) (Borrowed Int (RParam a)))
-         () ())
+         () () () User)
    (hash 'a 3))
   '(NFn ((Borrowed Int 3)) (ForallRegion (a) (Borrowed Int (RParam a)))
-        () ()))
+        () () () User))
  ;; RegionLam も同じである。項の側で region 欄を持つのは BorrowAt であり、
  ;; (Borrow w) の w は place であって ρ を置く欄ではない。
  (check-equal?
@@ -372,12 +372,12 @@
  "resolve-region-params は署名の内側の束縛を遮蔽する"
  (parameterize ([region-binder-renamings (list (hash 'a 'a.0))])
    (check-equal?
-    (resolve-region-params '(NFn ((Borrowed Int (RParam a))) Int () ()))
-    '(NFn ((Borrowed Int (RParam a.0))) Int () ()))
+    (resolve-region-params '(NFn ((Borrowed Int (RParam a))) Int () () () User))
+    '(NFn ((Borrowed Int (RParam a.0))) Int () () () User))
    (check-equal?
     (resolve-region-params
-     '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))
-    '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () ())))))
+     '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))
+    '(ForallRegion (a) (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
 
 (test-case
  "alpha-rename-all-region-lams は counter 無しでは error を上げる"

@@ -36,7 +36,7 @@
   (check-equal?
    (copy-out-scan
     '(NFn ((Borrowed Int a1)) (Borrowed Int a2)
-          ((Yield (Borrowed Int a3))) ()))
+          () ((Yield (Borrowed Int a3))) () User))
    '(a1 a2 a3)))
 
 (test-case "copy-out-scan は未知の型構成子を拒否する"

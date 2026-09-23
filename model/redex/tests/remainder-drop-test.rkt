@@ -50,10 +50,10 @@
 (define cap-proof '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
 
 (define narrowing-environment
-  `((f (NFn (,narrow) ,narrow () ()))
-    (g (NFn (,reject-narrow) ,reject-narrow () ()))
-    (h (NFn (,ok-narrow) ,ok-narrow () ()))
-    (k (NFn (,ok-narrow) ,ok-narrow () (TypeNarrativeCap)))
+  `((f (NFn (,narrow) ,narrow () () () User))
+    (g (NFn (,reject-narrow) ,reject-narrow () () () User))
+    (h (NFn (,ok-narrow) ,ok-narrow () () () User))
+    (k (NFn (,ok-narrow) ,ok-narrow () () (TypeNarrativeCap) User))
     (s ,wide)
     (s-wider ,wider)
     (s-reject ,reject-wide)

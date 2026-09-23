@@ -54,37 +54,37 @@
   '((useb (ForallRegion (a)
             (NFn ((Borrowed Int (RParam a)))
                  Int
-                 () ())))))
+                 () () () User)))))
 
 (define idf-callables
   '((idf (ForallRegion (a)
            (NFn ((BorrowedMut Int (RParam a)))
                 (BorrowedMut Int (RParam a))
-                () ())))))
+                () () () User)))))
 
 (define lost-callables
   '((lost (ForallRegion (a b)
             (NFn ((BorrowedMut Int (RParam a)))
                  (BorrowedMut Int (RParam b))
-                 () ())))))
+                 () () () User)))))
 
 (define plain-callables
   '((plain (ForallRegion (a)
              (NFn (Int)
                   (BorrowedMut Int (RParam a))
-                  () ())))))
+                  () () () User)))))
 
 (define pair-callables
   '((pairb (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a))
                    (BorrowedMut Int (RParam a)))
                   Int
-                  (Mutation) ())))
+                  () (Mutation) () User)))
     (outer (ForallRegion (a)
              (NFn ((BorrowedMut Int (RParam a))
                    (BorrowedMut Int (RParam a)))
                   Int
-                  (Mutation) ())))))
+                  () (Mutation) () User)))))
 
 (define (call-idf ρ)
   `(Scope (1)

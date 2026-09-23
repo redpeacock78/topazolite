@@ -19,10 +19,10 @@
 
 ;; RFN-001: Untrusted を型注釈に書ける。
 (check-equal? (elab-type '(Fn ((x (Untrusted Int))) (Untrusted Int) () x))
-              '(NFn ((Untrusted Int)) (Untrusted Int) () ()))
+              '(NFn ((Untrusted Int)) (Untrusted Int) () () () User))
 (check-equal?
  (elab-type '(Fn ((x (Refined Int (Prop ValidPort)))) Int () 1))
- '(NFn ((Refined Int (Prop ValidPort))) Int () ()))
+ '(NFn ((Refined Int (Prop ValidPort))) Int () () () User))
 
 ;; RFN-001: 判定表に無い命題は注釈に書けない。
 (check-true (elab-error? '(Fn ((x (Refined Int (Prop ValidHost)))) Int () 1)))

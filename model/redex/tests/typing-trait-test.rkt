@@ -159,13 +159,13 @@
      ((Proof (RequiresBoth Printable Sizable))
       (Refined Int
                (Implements (Union Int String) Printable))
-      (NFn () Unit ()
+      (NFn () Unit () ()
            ((ValidNarrativeTrait Printable)
             (Implements (Union Int String) Printable)
-            (RequiresBoth Printable Sizable))))
+            (RequiresBoth Printable Sizable)) User))
      Unit
-     ()
-     ())))
+     () ()
+     () User)))
 
 (test-case "elaboration uses the shared trait candidate context"
   (define (error? result)

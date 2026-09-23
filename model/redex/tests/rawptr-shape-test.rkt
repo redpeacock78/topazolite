@@ -48,8 +48,8 @@
   (check-false (type-shape-ok? '(Refined Int (PtrProp Bogus Int))))
   (check-true (type-shape-ok? '(Refined Int (PtrProp NonNull Int))))
   ;; Q（NFn の obligations）の内側でも同じ判定が働く。
-  (check-false (type-shape-ok? '(NFn () Int () ((PtrProp Bogus Int)))))
-  (check-true (type-shape-ok? '(NFn () Int () ((PtrProp NonNull Int))))))
+  (check-false (type-shape-ok? '(NFn () Int () () ((PtrProp Bogus Int)) User)))
+  (check-true (type-shape-ok? '(NFn () Int () () ((PtrProp NonNull Int)) User))))
 
 ;; unsafe.md §4.4。core-types-normal? が新しい 7 形を辿る。
 (test-case "core-types-normal? が pointer 操作を辿る（unsafe.md §4.4）"

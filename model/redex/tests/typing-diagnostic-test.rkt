@@ -13,7 +13,7 @@
 (test-case "成功する入力では core-type-of と同じ値を返す"
   (check-equal?
    (core-type-of/diagnostic (term (PrimVal (Reserved o-lt) lt)) empty empty)
-   (term ((NFn (Int Int) Bool () ()) ())))
+   (term ((NFn (Int Int) Bool () () () (Reserved o-lt)) ())))
   ;; 成功値は list であり struct ではないため diagnostic? で判別できる。
   (check-false
    (diagnostic? (core-type-of/diagnostic (term (PrimVal (Reserved o-lt) lt))

@@ -39,7 +39,7 @@
   (check-true (diagnostic?
                (core-type-of/diagnostic core places callables environment))))
 
-(define callables '((f (NFn (Int) Int () ()))))
+(define callables '((f (NFn (Int) Int () () () User))))
 (let ([d (core-type-of/diagnostic
           '(Apply (Lam User f (x) x) "s")
           '()
@@ -126,10 +126,10 @@
 (define (reach-region-ctx core)
   (region-ctx (build-region-ir (erase-core core)) '() (hash) (hash)))
 
-(define reach-call-f '((f (NFn (Int) Int () ()))))
+(define reach-call-f '((f (NFn (Int) Int () () () User))))
 (define reach-call-forall
   '((g (ForallRegion (a)
-                     (NFn ((Borrowed Int (RParam a))) Int () ())))))
+                     (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
 
 (define (region-arg-escape-core-with rho)
   (reach-node 'Scope 1321 1400 '()
@@ -150,16 +150,16 @@
 (define region-arg-escape-rho
   (region->rho region-arg-escape-ir
                (region-at region-arg-escape-ir '(0 0))))
-(define reach-call-opt '((f (NFn ((Option Int)) Int () ()))))
+(define reach-call-opt '((f (NFn ((Option Int)) Int () () () User))))
 (define reach-call-obligation
-  '((f (NFn (Int) Int () ((Prop NonEmpty))))))
+  '((f (NFn (Int) Int () () ((Prop NonEmpty)) User))))
 (define reach-owned-environment '((x (Owned Res))))
 (define reach-int-environment '((x Int)))
 (define reach-narrowing-environment
-  '((f (NFn ((Record ((y Int imm)))) Unit () ()))
+  '((f (NFn ((Record ((y Int imm)))) Unit () () () User))
     (s (Record ((x (Owned Res) imm) (y Int imm))))))
 (define reach-nested-narrowing-environment
-  '((g (NFn ((Record ((r (Record ((y Int imm))) imm)))) Unit () ()))
+  '((g (NFn ((Record ((r (Record ((y Int imm))) imm)))) Unit () () () User))
     (t (Record ((r (Record ((x (Owned Res) imm) (y Int imm))) imm))))))
 (define reach-remainder-actual
   '(Record ((x (Owned Res) imm) (y Int imm))))
@@ -351,7 +351,7 @@
               (reach-node 'Lam 181 190 'User 'f
                           (list (reach-bind 'x 182 183))
                           (reach-lit 1 186 187))
-              '() '((f (NFn ((Owned Res)) Int () ()))) '()
+              '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 181 190))
    (reach-row 'owned-raw-parameter-misuse
               (reach-node 'Lam 191 230 'User 'f
@@ -372,14 +372,14 @@
                                                                    208 209))
                                                    (reach-var 'owned0 210 211)
                                                    (reach-var 'owned0 220 221)))))
-              '() '((f (NFn ((Owned Res)) Int () ()))) '()
+              '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 191 230))
    (reach-row 'owned-parameter-missing-binding
               (reach-node 'RecurVal 191 203 'f
                           (reach-bind 'loop 192 193)
                           (list (reach-bind 'x 194 195))
                           (reach-lit 1 199 200))
-              '() '((f (NFn ((Owned Res)) Int () ()))) '()
+              '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 191 203))
    (reach-row 'owned-parameter-missing-binding
               (reach-node 'Recur 204 220 'f
@@ -387,7 +387,7 @@
                           (list (reach-bind 'x 207 208))
                           (reach-lit 1 211 212)
                           (reach-var 'loop 215 216))
-              '() '((f (NFn ((Owned Res)) Int () ()))) '()
+              '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 204 220))
    (reach-row 'owned-record-field
               (reach-node 'Rec 221 235
@@ -442,7 +442,7 @@
                           (list (reach-bind 'x 342 343)
                                 (reach-bind 'x 344 345))
                           (reach-var 'x 347 348))
-              '() '((f (NFn (Int Int) Int () ()))) '()
+              '() '((f (NFn (Int Int) Int () () () User))) '()
               (reach-span 341 350))
    (reach-row 'duplicate-parameter
               (reach-node 'RecurVal 351 363 'f
@@ -450,7 +450,7 @@
                           (list (reach-bind 'x 354 355)
                                 (reach-bind 'x 356 357))
                           (reach-var 'x 359 360))
-              '() '((f (NFn (Int Int) Int () ()))) '()
+              '() '((f (NFn (Int Int) Int () () () User))) '()
               (reach-span 351 363))
    (reach-row 'duplicate-parameter
               (reach-node 'Recur 364 380 'f
@@ -459,7 +459,7 @@
                                 (reach-bind 'x 369 370))
                           (reach-lit 1 373 374)
                           (reach-var 'loop 376 377))
-              '() '((f (NFn (Int Int) Int () ()))) '()
+              '() '((f (NFn (Int Int) Int () () () User))) '()
               (reach-span 364 380))
    (reach-row 'non-canonical-primitive
               (reach-node 'PrimVal 381 387 'User 'lt)
@@ -535,7 +535,7 @@
                           (list (reach-bind 'x 548 549)
                                 (reach-bind 'y 550 551))
                           (reach-var 'x 553 554))
-              '() '((f (NFn (Int) Int () ()))) '()
+              '() '((f (NFn (Int) Int () () () User))) '()
               (reach-span 547 556))
    (reach-row 'parameter-arity-mismatch
               (reach-node 'RecurVal 557 569 'f
@@ -543,7 +543,7 @@
                           (list (reach-bind 'x 560 561)
                                 (reach-bind 'y 562 563))
                           (reach-var 'x 565 566))
-              '() '((f (NFn (Int) Int () ()))) '()
+              '() '((f (NFn (Int) Int () () () User))) '()
               (reach-span 557 569))
    (reach-row 'parameter-arity-mismatch
               (reach-node 'Recur 570 586 'f
@@ -552,7 +552,7 @@
                                 (reach-bind 'y 575 576))
                           (reach-var 'x 579 580)
                           (reach-var 'loop 583 584))
-              '() '((f (NFn (Int) Int () ()))) '()
+              '() '((f (NFn (Int) Int () () () User))) '()
               (reach-span 570 586))
    (reach-row 'const-record-residual
               (reach-node 'Let 587 607
@@ -768,13 +768,13 @@
               (reach-node 'Lam 1261 1280 'User 'f
                           (list (reach-bind 'a 1265 1266))
                           (reach-lit 0 1270 1271))
-              '() '((f (NFn ((Borrowed Int 0)) Int () ()))) '()
+              '() '((f (NFn ((Borrowed Int 0)) Int () () () User))) '()
               (reach-span 1261 1280))
    (reach-row 'borrowed-function-result
               (reach-node 'Lam 1281 1300 'User 'f
                           (list (reach-bind 'a 1285 1286))
                           (reach-lit 0 1290 1291))
-              '() '((f (NFn (Int) (Borrowed Int 0) () ()))) '()
+              '() '((f (NFn (Int) (Borrowed Int 0) () () () User))) '()
               (reach-span 1281 1300))
    (reach-row 'borrowed-function-capture
               (reach-node 'Lam 1301 1320 'User 'f
@@ -798,7 +798,7 @@
                           '(0 0))
               '() '((g (ForallRegion (a)
                                      (NFn ((Borrowed Int (RParam a)))
-                                          Int () ()))))
+                                          Int () () () User))))
               '() (reach-span 1401 1450))
    (reach-row 'region-app-non-forall
               (reach-node 'RegionApp 1451 1470
@@ -810,7 +810,8 @@
                           (reach-node 'Apply 1475 1490
                                       (reach-var 'mk 1480 1482)))
               '() '()
-              '((mk (NFn () (Owned (NFn () Unit (Own) ())) (Own) ())))
+              '((mk (NFn () (Owned (NFn () Unit () (Own) () User))
+                    () (Own) () User)))
               (reach-span 1475 1490))
    (reach-row 'unexpected-ownleaf
               (reach-node 'OwnLeaf 1501 1520
@@ -1033,7 +1034,7 @@
                        (list (reach-bind 'x 887 888)
                              (reach-bind 'y 889 890))
                        (reach-var 'x 892 893))
-           '() '((f (NFn (Int) Int () ()))) '() 1 2)
+           '() '((f (NFn (Int) Int () () () User))) '() 1 2)
      (list 'branch-binder-arity
            (reach-node 'Eliminate 896 924
                        (reach-node 'Construct 897 900
@@ -1075,7 +1076,7 @@
 ;; この lambda へ details を組み替える処理が入ると、この試験が落ちる。
 (test-case
  "Drop の内側で起きた type-mismatch は expected/found を変えない"
- (define callables '((f (NFn (Int) Int () ()))))
+ (define callables '((f (NFn (Int) Int () () () User))))
  (define inner '(Apply (Lam User f (x) x) "s"))
  (define bare (core-type-of/diagnostic inner '() callables '()))
  (define wrapped (core-type-of/diagnostic `(Drop ,inner) '() callables '()))

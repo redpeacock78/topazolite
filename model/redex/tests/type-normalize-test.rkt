@@ -51,8 +51,8 @@
 
 (test-case "canonical-proposition-key quotients type-equiv?"
   ;; effect row の順序と重複、Record の field 順序をまたいで同じ鍵になる。
-  (define p1 '(Implements (NFn (Int) Unit (Suspend Partial) ()) Printable))
-  (define p2 '(Implements (NFn (Int) Unit (Partial Suspend) ()) Printable))
+  (define p1 '(Implements (NFn (Int) Unit () (Suspend Partial) () User) Printable))
+  (define p2 '(Implements (NFn (Int) Unit () (Partial Suspend) () User) Printable))
   (check-equal? (canonical-proposition-key p1) (canonical-proposition-key p2))
   (define q1 '(FieldType f (Record ((a Int imm) (z Int imm)))))
   (define q2 '(FieldType f (Record ((z Int imm) (a Int imm)))))
@@ -73,11 +73,11 @@
    (type-equiv? '(Refined Int (FieldType f (Record ((a Int imm) (z Int imm)))))
                 '(Refined Int (FieldType f (Record ((z Int imm) (a Int imm)))))))
   (check-true
-   (type-equiv? '(NFn () Unit () ((RequiresBoth Sizable Printable)))
-                '(NFn () Unit () ((RequiresBoth Printable Sizable)))))
+   (type-equiv? '(NFn () Unit () () ((RequiresBoth Sizable Printable)) User)
+                '(NFn () Unit () () ((RequiresBoth Printable Sizable)) User)))
   (check-false
-   (type-equiv? '(NFn () Unit () (ValidNarrativeTrait TypeNarrativeCap))
-                '(NFn () Unit () (TypeNarrativeCap ValidNarrativeTrait)))))
+   (type-equiv? '(NFn () Unit () () (ValidNarrativeTrait TypeNarrativeCap) User)
+                '(NFn () Unit () () (TypeNarrativeCap ValidNarrativeTrait) User))))
 
 (test-case "union equivalence is set equality, not multiset"
   ;; CMP-001 は重複が正規形を分けないと述べる。type-equiv? も同じ扱いにする。
@@ -96,9 +96,9 @@
   (check-false (type-equiv? `(Proof ,bad) `(Proof ,other)))
   (check-true (type-equiv? `(Proof ,bad) `(Proof ,bad)))
   (check-false
-   (type-equiv? `(NFn () Unit () (,bad)) `(NFn () Unit () (,other))))
+   (type-equiv? `(NFn () Unit () () (,bad) User) `(NFn () Unit () () (,other) User)))
   (check-true
-   (type-equiv? `(NFn () Unit () (,bad)) `(NFn () Unit () (,bad))))
+   (type-equiv? `(NFn () Unit () () (,bad) User) `(NFn () Unit () () (,bad) User)))
   (check-false (type-equiv? `(Refined Int ,bad) `(Refined Int ,other)))
   (check-true (type-equiv? `(Refined Int ,bad) `(Refined Int ,bad))))
 
@@ -106,17 +106,17 @@
   ;; 作用列と義務列の並びは正規形の条件に入らない。Task 12 で type? が
   ;; type-normal? を要求するため、ここで整列を求めると
   ;; elaborate-test.rkt:282-283 の型と VAR-002 の型が成立しなくなる。
-  (check-true (type-normal? '(NFn () Unit (Suspend Own) ())))
-  (check-true (type-normal? '(NFn () Unit (Own Suspend) ())))
-  (check-true (type-normal? '(NFn () Int () ((Implements Int Sizable)
-                                            (Implements Int Printable)))))
+  (check-true (type-normal? '(NFn () Unit () (Suspend Own) () User)))
+  (check-true (type-normal? '(NFn () Unit () (Own Suspend) () User)))
+  (check-true (type-normal? '(NFn () Int () () ((Implements Int Sizable)
+                                            (Implements Int Printable)) User)))
   ;; 作用列は集合、義務列は列。type-equiv? の扱いに鍵を一致させる。
-  (check-true (type-equiv? '(NFn () Unit (Suspend Own) ())
-                           '(NFn () Unit (Own Suspend) ())))
-  (check-false (type-equiv? '(NFn () Int () ((Implements Int Sizable)
-                                             (Implements Int Printable)))
-                            '(NFn () Int () ((Implements Int Printable)
-                                             (Implements Int Sizable))))))
+  (check-true (type-equiv? '(NFn () Unit () (Suspend Own) () User)
+                           '(NFn () Unit () (Own Suspend) () User)))
+  (check-false (type-equiv? '(NFn () Int () () ((Implements Int Sizable)
+                                             (Implements Int Printable)) User)
+                            '(NFn () Int () () ((Implements Int Printable)
+                                             (Implements Int Sizable)) User))))
 
 (test-case "core-types-normal? rejects a non-normal type hidden in an annotation"
   (check-false
@@ -153,7 +153,7 @@
   (check-true (type-shape-ok? '(Union Int (Record ((a Int imm))))))
   (check-false (type-shape-ok? `(Proof (FieldType f ,duplicate-row))))
   (check-false (type-shape-ok? `(Refined Int (FieldType f ,duplicate-row))))
-  (check-false (type-shape-ok? `(NFn () Unit () ((FieldType f ,duplicate-row))))))
+  (check-false (type-shape-ok? `(NFn () Unit () () ((FieldType f ,duplicate-row)) User))))
 
 (test-case "型注釈の包みを型として渡すと拒否する"
   (define annotation '(#:ty Int (#:span #:synthetic 0 3)))

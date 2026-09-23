@@ -4,7 +4,7 @@
          "../classify.rkt")
 
 (define structural-callables
-  '((list-loop-id (NFn ((List Int)) Int () ()))))
+  '((list-loop-id (NFn ((List Int)) Int () () () User))))
 
 (define structural-loop
   '(Recur list-loop-id loop (xs)
@@ -22,9 +22,9 @@
 
   ;; The non-recursive mapper comes from the outer elaboration Γ.
   (define map-environment
-    '((mapper (NFn (Int) Int () ()))))
+    '((mapper (NFn (Int) Int () () () User))))
   (define map-callables
-    '((map-loop-id (NFn ((List Int)) (List Int) () ()))))
+    '((map-loop-id (NFn ((List Int)) (List Int) () () () User))))
   (define map-loop
     '(Recur map-loop-id go (values)
             (Eliminate values
@@ -40,7 +40,7 @@
 (test-case "REC-001: structural calls require one common decreasing position"
   (define callables
     '((pair-loop-id
-       (NFn ((List Int) (List Int) Bool) Int () ()))))
+       (NFn ((List Int) (List Int) Bool) Int () () () User))))
   (define no-common-position
     '(Recur pair-loop-id loop (xs ys choose-left)
             (Eliminate choose-left
@@ -61,7 +61,7 @@
 
 (test-case "REC-001: structural descent follows fields, not arbitrary uses of f"
   (define callables
-    '((nested-loop-id (NFn ((List Int)) Int () ()))))
+    '((nested-loop-id (NFn ((List Int)) Int () () () User))))
   (define nested-descent
     '(Recur nested-loop-id loop (values)
             (Eliminate values
@@ -76,17 +76,17 @@
 
   (define non-call-use
     '(Recur curry-loop-id loop (left right)
-            (Let (saved (NFn (Int) Int () ()))
+            (Let (saved (NFn (Int) Int () () () User))
                  (Curry loop left)
                  0)
             (Apply loop 0 0)))
   (check-equal?
    (classify non-call-use '()
-             '((curry-loop-id (NFn (Int Int) Int () ()))))
+             '((curry-loop-id (NFn (Int Int) Int () () () User))))
    'Unknown))
 
 (define guarded-callables
-  '((nats-id (NFn (Int) Unit ((Yield Int)) ()))))
+  '((nats-id (NFn (Int) Unit () ((Yield Int)) () User))))
 
 (define guarded-loop
   '(Recur nats-id nats (n)
@@ -100,7 +100,7 @@
                 '(Productive guarded)))
 
 (test-case "REC-002: f-free and Suspend bodies are not guards"
-  (define callables '((loop-id (NFn () Unit (Partial) ()))))
+  (define callables '((loop-id (NFn () Unit () (Partial) () User))))
   (check-equal?
    (classify '(Recur loop-id loop () unit (Apply loop)) '() callables)
    'Unknown)
@@ -112,7 +112,7 @@
 
 (test-case "REC-002: a guarded body still requires the initial tail call"
   (define callables
-    '((loop-id (NFn () Unit ((Yield Int)) ()))))
+    '((loop-id (NFn () Unit () ((Yield Int)) () User))))
   (check-equal?
    (classify
     '(Recur loop-id loop ()
@@ -123,10 +123,10 @@
 
 (define (guard-component-loop callable callee-labels)
   (define callables
-    `((,callable (NFn () Unit (,@callee-labels (Yield Int)) ()))
-      (callee-id (NFn () Int ,callee-labels ()))))
+    `((,callable (NFn () Unit () (,@callee-labels (Yield Int)) () User))
+      (callee-id (NFn () Int () ,callee-labels () User))))
   (define environment
-    `((callee (NFn () Int ,callee-labels ()))))
+    `((callee (NFn () Int () ,callee-labels () User))))
   (values
    `(Recur ,callable loop ()
            (Yield (Apply callee) (Apply loop))
@@ -181,17 +181,17 @@
                (Apply outer))
               (Apply outer)))
     (define callables
-      `((,outer-id (NFn () Unit ,outer-row ()))
-        (,inner-id (NFn () Int ,inner-row ()))))
+      `((,outer-id (NFn () Unit () ,outer-row () User))
+        (,inner-id (NFn () Int () ,inner-row () User))))
     (check-equal? (classify core '() callables) 'Unknown)))
 
 (test-case "PRF-002/PRF-003: type equality is structural and opaque"
   (check-true
    (type-equiv?
     '(NFn ((List Int)) (Proof TypeNarrativeCap)
-          (Own (Yield Int)) ())
+          () (Own (Yield Int)) () User)
     '(NFn ((List Int)) (Proof TypeNarrativeCap)
-          ((Yield Int) Own) ())))
+          () ((Yield Int) Own) () User)))
   (check-false
    (type-equiv? '(Proof TypeNarrativeCap)
                 '(Proof ValidNarrativeTrait)))
@@ -201,7 +201,7 @@
   (define unknown-calculation
     '(Recur opaque-id compute () unit unit))
   (check-equal? (classify unknown-calculation '()
-                          '((opaque-id (NFn () Unit () ()))))
+                          '((opaque-id (NFn () Unit () () () User))))
                 'Unknown)
   (check-true
    (type-equiv? `(Opaque ,unknown-calculation)
@@ -214,7 +214,7 @@
 (define region-structural-callables
   '((rlist-loop-id (ForallRegion (a)
                      (NFn ((List Int) (BorrowedMut Int (RParam a)))
-                          Int () ())))))
+                          Int () () () User)))))
 
 (define region-structural-loop
   '(Recur rlist-loop-id loop (xs r)
@@ -225,7 +225,7 @@
                  (Construct (List Int) nil) r)))
 
 (define region-guarded-callables
-  '((rnats-id (ForallRegion (a) (NFn (Int) Unit ((Yield Int)) ())))))
+  '((rnats-id (ForallRegion (a) (NFn (Int) Unit () ((Yield Int)) () User)))))
 
 (define region-guarded-loop
   '(Recur rnats-id nats (n)
@@ -243,7 +243,7 @@
 
 ;; G5c5c。再帰の中に対象でない region 多相な関数の呼出しがある場合。
 (define region-other-call-environment
-  '((bump (ForallRegion (b) (NFn (Int) Int () ())))))
+  '((bump (ForallRegion (b) (NFn (Int) Int () () () User)))))
 
 (define region-other-call-loop
   '(Recur rlist-loop-id loop (xs r)
@@ -262,7 +262,7 @@
 ;; G5c5c。項の中に RegionLam を置いた場合。3 つの走査に RegionLam の節が
 ;; 無いと、この形は分類できない。
 (define region-lam-environment
-  '((plus1 (NFn (Int) Int () ()))))
+  '((plus1 (NFn (Int) Int () () () User))))
 
 (define region-lam-loop
   '(Recur rlist-loop-id loop (xs r)
@@ -286,7 +286,7 @@
         ((nil () -> (Lam User f (x) 0))
          (cons (head tail) -> (Apply loop tail))))
        (Apply loop (Construct (List Int) nil)))
-    '((f (ForallRegion (a) (NFn (Int) Int () ()))))
+    '((f (ForallRegion (a) (NFn (Int) Int () () () User))))
     structural-callables)
    'Unknown))
 
@@ -327,7 +327,7 @@
    'Unknown))
 
 (define c4-owned-callables
-  '((c4-owned-loop-id (NFn ((Owned (List Int))) Int () ()))))
+  '((c4-owned-loop-id (NFn ((Owned (List Int))) Int () () () User))))
 
 (define c4-owned-loop
   '(Recur c4-owned-loop-id loop (xs)
@@ -341,7 +341,7 @@
                 '(Finite structural)))
 
 (define (c4-borrowed-callables wrapper)
-  `((c4-borrowed-loop-id (NFn (,wrapper) Int () ()))))
+  `((c4-borrowed-loop-id (NFn (,wrapper) Int () () () User))))
 
 (define (c4-borrowed-loop wrapper)
   `(Recur c4-borrowed-loop-id loop (xs)
@@ -355,7 +355,7 @@
 ;; Unknown は latent-row-safe? の fail-closed な既定によるため、包みつきの関数欄を
 ;; 将来受理する変更を入れるときは、この期待値も見直す。
 (define c4-borrowed-function-type
-  '(Borrowed (Option (NFn (Int) Int () ())) 0))
+  '(Borrowed (Option (NFn (Int) Int () () () User)) 0))
 
 (define c4-borrowed-function-loop
   `(Recur c4-borrowed-loop-id loop (xs)
@@ -365,7 +365,7 @@
           (Apply loop (Construct ,c4-borrowed-function-type none))))
 
 (define (c4-borrowed-function-callables type)
-  `((c4-borrowed-loop-id (NFn (,type) Int () ()))))
+  `((c4-borrowed-loop-id (NFn (,type) Int () () () User))))
 
 (test-case "C4-006c: 分類器は Borrowed も BorrowedMut も剥がす"
   (check-equal?
@@ -387,7 +387,7 @@
    '(Finite structural)))
 
 (define owned-list-callables
-  '((owned-list-id (NFn ((Owned (List Int))) Int () ()))))
+  '((owned-list-id (NFn ((Owned (List Int))) Int () () () User))))
 
 ;; Scope と Let の連なりに包まれ、Move を挟んで分解と再帰呼び出しを行う本体。
 (define owned-move-loop

@@ -48,7 +48,7 @@
 (test-case
  "Owned を 1 件捕捉する closure を elaborate でき、型が Owned<NFn> になる"
  (match-define (list core type row callables) (elaboration-of capture-one-surface))
- (check-equal? type '(NFn ((Owned Res)) (Owned (NFn () Unit (Own) ())) (Own) ()))
+ (check-equal? type '(NFn ((Owned Res)) (Owned (NFn () Unit () (Own) () User)) () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 ;; Owned を 2 件捕捉する closure。
@@ -60,7 +60,7 @@
  "Owned を 2 件捕捉する closure を elaborate できる"
  (match-define (list core type row callables) (elaboration-of capture-two-surface))
  (check-equal? type '(NFn ((Owned Res) (Owned Res))
-                          (Owned (NFn () Unit (Own) ())) (Own) ()))
+                          (Owned (NFn () Unit () (Own) () User)) () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case
@@ -77,7 +77,7 @@
 (test-case
  "捕捉が 0 件の closure は素の NFn を返す"
  (match-define (list core type row callables) (elaboration-of capture-none-surface))
- (check-equal? type '(NFn (Int) (NFn () Int () ()) () ()))
+ (check-equal? type '(NFn (Int) (NFn () Int () () () User) () () () User))
  (check-equal? (core-type-of core '() callables) (list type row))
  (match (erase-core core)
    [`(Lam User ,_ ,_ ,_) (void)]
@@ -92,7 +92,7 @@
           (Curry (Lam User ,_ ,capture-binders ,_)
                  (OwnLeaf (Move ,captured-name)))
           (Move ,same-place))
-    (check-equal? let-type '(Owned (NFn () Unit (Own) ())))
+    (check-equal? let-type '(Owned (NFn () Unit () (Own) () User)))
     (check-equal? (binder-base captured-name) 'p)
     (check-equal? same-place place)
     (check-equal? (length capture-binders) 1)]
@@ -118,8 +118,8 @@
                (Curry (Move ,moved-place) (OwnLeaf (Move ,second-name)))
                (Move ,last-place)))
     (check-equal? first-type
-                  '(Owned (NFn ((Owned Res)) Unit (Own) ())))
-    (check-equal? second-type '(Owned (NFn () Unit (Own) ())))
+                  '(Owned (NFn ((Owned Res)) Unit () (Own) () User)))
+    (check-equal? second-type '(Owned (NFn () Unit () (Own) () User)))
     (check-equal? (binder-base first-name) 'a)
     (check-equal? (binder-base second-name) 'z)
     (check-equal? moved-place first-place)
@@ -147,7 +147,7 @@
  (match-define (list _core _type _row callables)
    (elaboration-of capture-one-surface))
  (check-not-false
-  (member '(callable1 (NFn ((Owned Res)) Unit (Own) ())) callables)))
+  (member '(callable1 (NFn ((Owned Res)) Unit () (Own) () User)) callables)))
 
 ;; inline の Apply。関数の位置に捕捉する closure を直に置く。
 (define inline-apply-surface
@@ -158,7 +158,7 @@
  "closure を inline で Apply する形が外側の Owned な Let へ正規化される"
  (match-define (list core type row callables)
    (elaboration-of inline-apply-surface))
- (check-equal? type '(NFn ((Owned Res)) Unit (Own) ()))
+ (check-equal? type '(NFn ((Owned Res)) Unit () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 ;; inline の Curry。関数の位置に捕捉する closure を直に置く。
@@ -170,7 +170,7 @@
  "closure を inline で Curry する形が外側の Owned な Let へ正規化される"
  (match-define (list core type row callables)
    (elaboration-of inline-curry-surface))
- (check-equal? type '(NFn ((Owned Res)) (Owned (NFn () Unit (Own) ())) (Own) ()))
+ (check-equal? type '(NFn ((Owned Res)) (Owned (NFn () Unit () (Own) () User)) () (Own) () User))
  (check-equal? (core-type-of core '() callables) (list type row)))
 
 ;; 宣言 row が空のため、捕捉した closure の Own を覆えない負例。
@@ -278,7 +278,7 @@
  (define erased (erase-core core))
  (match (normalization-lets erased)
    [(list (list 'Let (list name 'let let-type) bound body))
-    (check-equal? let-type '(Owned (NFn () Unit (Own) ())))
+    (check-equal? let-type '(Owned (NFn () Unit () (Own) () User)))
     (check-true (pair? bound))
     (check-equal? (count-moves-to body name) 1)]
    [_ (fail "inline Apply の正規化 Let が 1 件でない")]))
@@ -298,7 +298,7 @@
   '(Curry (Curry g (OwnLeaf (Move p))) 1))
 
 (define bare-nested-curry-environment
-  (list (list 'g '(NFn ((Owned Res) Int) Unit (Own) ()))
+  (list (list 'g '(NFn ((Owned Res) Int) Unit () (Own) () User))
         (list 'p '(Owned Res))))
 
 (define (owned-capture-diagnostic-of core environment)
