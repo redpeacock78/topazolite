@@ -379,6 +379,31 @@
             (and (member obligation sup-obligations) #t)))]
     [(_ _) (type-equiv? sub sup)]))
 
+;; RFN-003 は εin 導入前の G2c 互換性を参照するため、現行 generator が
+;; 作る非空の εin を旧形の () へ正規化してから比較する。
+(define (g2c-variance-type type)
+  (match type
+    [`(Record ,row)
+     `(Record
+       ,(for/list ([field (in-list row)])
+          (match field
+            [(list label field-type mutability)
+             (list label (g2c-variance-type field-type) mutability)]
+            [_ field])))]
+    [`(NFn ,parameters ,return-type ,_latent-in ,row ,obligations ,origin)
+     `(NFn ,(map g2c-variance-type parameters)
+           ,(g2c-variance-type return-type)
+           ()
+           ,(for/list ([label (in-list row)])
+              (match label
+                [`(Yield ,payload) `(Yield ,(g2c-variance-type payload))]
+                [`(Return ,boundary ,payload)
+                 `(Return ,boundary ,(g2c-variance-type payload))]
+                [_ label]))
+           ,obligations
+           ,origin)]
+    [_ type]))
+
 (test-case "RFN-003: 性質5 G2c 後方互換"
   (call-with-search-seed
    limits
@@ -386,8 +411,8 @@
      (define true-count (box 0))
      (define false-count (box 0))
      (for ([_i (in-range attempts)])
-       (define left (random-variance-type 3))
-       (define right (random-variance-type 3))
+       (define left (g2c-variance-type (random-variance-type 3)))
+       (define right (g2c-variance-type (random-variance-type 3)))
        (define expected (g2c-compat? left right))
        (check-equal? (compat? left right) expected)
        (if expected
