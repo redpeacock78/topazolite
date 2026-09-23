@@ -9,6 +9,26 @@
 
 (provide compat? check-compat-return)
 
+;; 部分型の不変位置では NFn の O を比較しない。
+;; O 以外の型構造は type-equiv? のまま保ち、Owned / BorrowedMut / fallback
+;; の各不変位置で同じ規則を使う。NFn の引数・返り値・row・義務へ潜るため、
+;; ネストした関数型でも O だけが比較から外れる。
+(define (compat-erase-nfn-origins type)
+  (match type
+    [`(NFn ,parameters ,return-type ,in-row ,out-row ,obligations ,_origin)
+     `(NFn ,(map compat-erase-nfn-origins parameters)
+           ,(compat-erase-nfn-origins return-type)
+           ,(map compat-erase-nfn-origins in-row)
+           ,(map compat-erase-nfn-origins out-row)
+           ,(map compat-erase-nfn-origins obligations)
+           User)]
+    [(? list?) (map compat-erase-nfn-origins type)]
+    [_ type]))
+
+(define (compat-type-equiv? left right)
+  (type-equiv? (compat-erase-nfn-origins left)
+               (compat-erase-nfn-origins right)))
+
 ;; ROW-002/ROW-005: field の可変性は一致ではなく互換で照合する。
 ;; imm を要求する位置には mut field を渡せる。書き込み能力を捨てる方向であり、
 ;; その位置からは読み出しだけが可能なため、他の枝が期待する狭い型を破れない。
@@ -24,7 +44,7 @@
                (case sup-mutability
                  [(imm) (compat?/impl sub-type sup-type gamma-pc region-relation)]
                  [(mut) (and (eq? sub-mutability 'mut)
-                             (type-equiv? sub-type sup-type))]
+                             (compat-type-equiv? sub-type sup-type))]
                  [else #f]))]
          [_ #f])]
       [_ #f])))
@@ -82,7 +102,8 @@
     [(`(Record ,sub-row) `(Record ,sup-row))
      (record-compatible? sub-row sup-row gamma-pc region-relation)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
-     (type-equiv? sub-type sup-type)]
+     ;; Owned は不変のまま、NFn の O だけを compat? の比較対象から外す。
+     (compat-type-equiv? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
      (compat?/impl sub-payload sup-payload gamma-pc region-relation)]
     ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。
@@ -114,8 +135,8 @@
     ;; 合わなくなる。
     [(`(BorrowedMut ,sub-payload ,sub-ρ) `(BorrowedMut ,sup-payload ,sup-ρ))
      (and (equal? sub-ρ sup-ρ)
-          (type-equiv? sub-payload sup-payload))]
-    [(_ _) (type-equiv? sub sup)]))
+          (compat-type-equiv? sub-payload sup-payload))]
+    [(_ _) (compat-type-equiv? sub sup)]))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
 ;; 返却を持たない。span 機構の包みは型の形の外にあり、全域性の対象ではないため
@@ -125,7 +146,7 @@
   (match* (args returns)
     [((list sub sup _ ...) (list result))
      (and (boolean? result)
-          (or (not (type-equiv? sub sup)) (eq? result #t)))]
+          (or (not (compat-type-equiv? sub sup)) (eq? result #t)))]
     [(_ _) #f]))
 
 (define compat?

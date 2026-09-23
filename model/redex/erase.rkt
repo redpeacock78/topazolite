@@ -1,6 +1,7 @@
 #lang racket
 
-(provide erase-core erase-surface metadata-form? check-spanless! check-spanless/deep!)
+(provide erase-core erase-surface erase-origin-core
+         metadata-form? check-spanless! check-spanless/deep!)
 
 ;; span 機構の包みかどうかを head だけで判定する。
 ;; 型・表・semantic origin は spanless であり、head に keyword を取る形を持たない。
@@ -53,3 +54,21 @@
 
 (define (erase-core t) (erase-term t))
 (define (erase-surface t) (erase-term t))
+
+;; Curry の origin payload は erased core の比較キーである。
+;; uniquify-binders と substitute が付ける ⟨N⟩ / «N» は実装上の識別子なので
+;; 構造を保ったまま剥がすが、元の束縛名そのものは保持する。型同値の O は
+;; source-level の provenance を正確に比較し、実装上の添字だけに依存しない。
+(define (erase-origin-core t)
+  (define generated-id-rx (pregexp "(⟨[0-9]+⟩|«[0-9]+»)+$"))
+  (define (normalize-symbol value)
+    (if (symbol? value)
+        (string->symbol
+         (regexp-replace generated-id-rx (symbol->string value) ""))
+        value))
+  (define (normalize value)
+    (cond
+      [(symbol? value) (normalize-symbol value)]
+      [(list? value) (map normalize value)]
+      [else value]))
+  (normalize (erase-core t)))

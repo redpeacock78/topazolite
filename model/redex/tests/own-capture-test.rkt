@@ -92,7 +92,9 @@
           (Curry (Lam User ,_ ,capture-binders ,_)
                  (OwnLeaf (Move ,captured-name)))
           (Move ,same-place))
-    (check-equal? let-type '(Owned (NFn () Unit () (Own) () User)))
+    (check-equal? let-type
+                  '(Owned (NFn () Unit () (Own) ()
+                              (Derived User (Curry (OwnLeaf (Move p)))))))
     (check-equal? (binder-base captured-name) 'p)
     (check-equal? same-place place)
     (check-equal? (length capture-binders) 1)]
@@ -118,8 +120,13 @@
                (Curry (Move ,moved-place) (OwnLeaf (Move ,second-name)))
                (Move ,last-place)))
     (check-equal? first-type
-                  '(Owned (NFn ((Owned Res)) Unit () (Own) () User)))
-    (check-equal? second-type '(Owned (NFn () Unit () (Own) () User)))
+                  '(Owned (NFn ((Owned Res)) Unit () (Own) ()
+                              (Derived User (Curry (OwnLeaf (Move a)))))))
+    (check-equal? second-type
+                  '(Owned (NFn () Unit () (Own) ()
+                              (Derived
+                               (Derived User (Curry (OwnLeaf (Move a))))
+                               (Curry (OwnLeaf (Move z)))))))
     (check-equal? (binder-base first-name) 'a)
     (check-equal? (binder-base second-name) 'z)
     (check-equal? moved-place first-place)
@@ -278,7 +285,9 @@
  (define erased (erase-core core))
  (match (normalization-lets erased)
    [(list (list 'Let (list name 'let let-type) bound body))
-    (check-equal? let-type '(Owned (NFn () Unit () (Own) () User)))
+    (check-equal? let-type
+                  '(Owned (NFn () Unit () (Own) ()
+                              (Derived User (Curry (OwnLeaf (Move p)))))))
     (check-true (pair? bound))
     (check-equal? (count-moves-to body name) 1)]
    [_ (fail "inline Apply の正規化 Let が 1 件でない")]))

@@ -56,7 +56,7 @@
   (O ::= User
          (Reserved id)
          (Derived O step))
-  (step ::= (Curry v)
+  (step ::= (Curry c)
             (Make t)
             (Expand nm)
             (Policy nm)

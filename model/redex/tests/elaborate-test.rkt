@@ -222,7 +222,8 @@
   (check-equal?
    (list (erase-core raw-core) type row callables)
    '((Curry (PrimVal (Reserved o-add) add) 1)
-     (NFn (Int) Int () () () (Reserved o-add))
+     (NFn (Int) Int () () ()
+          (Derived (Reserved o-add) (Curry 1)))
      ()
      ()))
   (match-define (list _core curry-type _row _callables)

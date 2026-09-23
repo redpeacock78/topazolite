@@ -1,11 +1,15 @@
 #lang racket
 
 ;; [REQ: OWN-008] Owned の固定引数。
+;; [REQ: NAR-005] NFn の型成分 O。curry は O を Derived で伸ばす。
 
 (require rackunit
          racket/match
+         redex/reduction-semantics
          "../diagnostic.rkt"
          "../elaborate.rkt"
+         "../erase.rkt"
+         "../lang.rkt"
          "../span-core.rkt"
          "../typing.rkt")
 
@@ -30,8 +34,13 @@
  "Owned の固定引数を Move 経由で固定でき、結果型が Owned<NFn 残余> になる"
  (match-define (list core type row callables)
    (elaboration-of owned-curry-surface))
- (check-equal? type '(Owned (NFn () Unit () (Own) () User)))
- (check-equal? (core-type-of core '() callables) (list type row)))
+ (check-equal? type
+               '(Owned (NFn () Unit () (Own) ()
+                            (Derived User (Curry (OwnLeaf (Move p)))))))
+ (check-equal?
+  (core-type-of core '() callables)
+  (list type
+        row)))
 
 (define plain-curry-surface
   '(Fn ((n Int)) (NFn () Int () ()) ()
@@ -74,7 +83,9 @@
  "Owned の closure を載せた place を Move で開く入れ子の Curry は通る"
  (check-equal? (type-of/raw curried-owned-function-core '() '()
                              owned-curry-environment)
-               '(ok ((Owned (NFn () Unit () (Own) () User)) (Own)))))
+               '(ok ((Owned (NFn () Unit () (Own) ()
+                                (Derived User (Curry (OwnLeaf (Move r))))))
+                     (Own)))))
 
 ;; Move を経ない形は落ちる。関数式は Apply であり、Move でも CurryVal でもない。
 (define owned-function-not-moved-core
@@ -102,3 +113,51 @@
                (Curry (Move f) 1)))))
  (match-define (list _core type _row _callables) (elaboration-of surface))
  (check-equal? (third type) '(Owned (NFn () Unit () (Own) () User))))
+
+(test-case
+ "Curry の payload は値でない core 項でも step に合う"
+ (check-true (redex-match? G1 step '(Curry x)))
+ (check-true (redex-match? G1 step '(Curry (Apply f y)))))
+
+(test-case
+ "curry の型 payload は erase 済みなら spanless である"
+ (define erased
+   '(NFn () Unit () () () (Derived User (Curry 1))))
+ (check-not-exn (lambda () (check-spanless! 'own-curry-fixed erased)))
+ (define spanful
+   '(NFn () Unit () () ()
+         (Derived User (Curry (#:lit 1 (#:span src 0 1))))))
+ (check-exn exn:fail?
+            (lambda () (check-spanless/deep! 'own-curry-fixed spanful))))
+
+(test-case
+ "curry の origin payload は uniquify と substitute の添字だけを剥がす"
+ (check-equal?
+  (erase-origin-core '(Curry (Move p⟨1⟩«2»«3»)))
+  '(Curry (Move p)))
+ (check-equal?
+  (erase-origin-core '(Curry (Move q)))
+  '(Curry (Move q))))
+
+(test-case
+ "curry-payload-erase は Curry の payload だけを消す"
+ (check-equal? (curry-payload-erase '(Derived User (Make Int)))
+               '(Derived User (Make Int)))
+ (check-equal? (curry-payload-erase '(Derived User (Expand Box)))
+               '(Derived User (Expand Box)))
+ (check-equal? (curry-payload-erase '(Derived User (Policy Safe)))
+               '(Derived User (Policy Safe)))
+ (check-equal? (curry-payload-erase '(Derived User (Trait Show)))
+               '(Derived User (Trait Show)))
+ (check-equal?
+  (curry-payload-erase
+   '(Derived
+     (Derived User (Curry (Apply f x)))
+     (Compose pair
+              (Derived User (Curry y))
+              (Derived (Reserved add) (Make Int)))))
+  '(Derived
+    (Derived User (Curry #:erased))
+    (Compose pair
+             (Derived User (Curry #:erased))
+             (Derived (Reserved add) (Make Int))))))

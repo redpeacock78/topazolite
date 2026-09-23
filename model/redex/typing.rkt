@@ -62,6 +62,7 @@
          merge-record-types/impl
          merge-record-types
          check-merge-return
+         curry-payload-erase
          merge-witnesses-dischargeable?
          lifetime-unify-context
          unify-borrow-lifetimes
@@ -1684,10 +1685,22 @@
 ;; 固定引数と関数のどちらかが Owned なら、結果の関数型も Owned で包む。
 ;; 包んだ型は Move を経由してのみ関数の位置へ置ける（§5.4）。
 (define (curry-result-type remaining-types return-type latent-in latent-out
-                           obligations origin owned?)
+                           obligations new-origin owned?)
   (define bare `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
-                     ,obligations ,origin))
+                     ,obligations ,new-origin))
   (if owned? `(Owned ,bare) bare))
+
+;; spec §6.2。O の比較キーを作る。(Curry #:erased) は step ではないため、
+;; 戻り値は Redex の O ではなく Racket 側の比較キーである。
+(define (curry-payload-erase origin)
+  (match origin
+    [`(Derived ,inner (Curry ,_))
+     `(Derived ,(curry-payload-erase inner) (Curry #:erased))]
+    [`(Derived ,inner (Compose ,nm ,left ,right))
+     `(Derived ,(curry-payload-erase inner)
+               (Compose ,nm ,(curry-payload-erase left) ,(curry-payload-erase right)))]
+    [`(Derived ,inner ,step) `(Derived ,(curry-payload-erase inner) ,step)]
+    [_ origin]))
 
 ;; 関数の位置に置かれた Owned<NFn ...> を一段だけ剥がす。
 ;; Move と CurryVal は place を経由するため許し、それ以外の根は拒む。
@@ -2474,8 +2487,10 @@
                           type-compatible?))))
         (unless (null? (first argument-row))
           (fail 'effectful-curry-operand argument))
+        (define new-origin
+          `(Derived ,origin (Curry ,(erase-origin-core argument))))
         (list (curry-result-type remaining-types return-type latent-in latent-out
-                                 obligations origin
+                                 obligations new-origin
                                  (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
@@ -3100,8 +3115,10 @@
             (check-as argument first-type (enter-child Λ 1)
                       function-psi
                       environment places callables fail)))
+        (define new-origin
+          `(Derived ,origin (Curry ,(erase-origin-core argument))))
         (list (curry-result-type remaining-types return-type latent-in latent-out
-                                 obligations origin
+                                 obligations new-origin
                                  (or function-owned? (owned-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]

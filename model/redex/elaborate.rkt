@@ -760,15 +760,17 @@
              (error 'wrap-captured-function
                     "捕捉型と Curry の先頭引数型が一致しない: ~s ~s"
                     capture-type first-type))
-           (define residual
-             `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
-                   ,obligations ,origin))
            (define argument-core
              `(#:var ,capture ,span))
            (define fixed-core
              (if (owned-type? capture-type)
                  `(OwnLeaf ,span (Move ,span ,argument-core))
                  `(Move ,span ,argument-core)))
+           (define residual-origin
+             `(Derived ,origin (Curry ,(erase-origin-core fixed-core))))
+           (define residual
+             `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
+                   ,obligations ,residual-origin))
            (define curry-core
              `(Curry ,span ,current-core
                      ,fixed-core))
@@ -1310,9 +1312,11 @@
               (if (owned-type? first-type)
                   `(OwnLeaf ,s ,(judgment-core argument-result))
                   (judgment-core argument-result)))
+            (define new-origin
+              `(Derived ,origin (Curry ,(erase-origin-core argument-core))))
             (define bare-result
               `(NFn ,remaining-types ,return-type ,latent-in ,latent-out
-                    ,obligations ,origin))
+                    ,obligations ,new-origin))
             (close-owned-function
              wrap
              (judgment
