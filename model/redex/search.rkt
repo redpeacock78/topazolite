@@ -120,7 +120,7 @@
               (make-goal `(Implements ,type ,(intersect-right row)))))
            (for*/list ([a (in-list left)] [b (in-list right)])
              (define origin
-               `(Derived (Reserved ,iid)
+               `(Derived ,(intersect-derived-origin row)
                          (Compose ,tn-out
                                   ,(candidate-origin a)
                                   ,(candidate-origin b))))
@@ -232,9 +232,12 @@
              (eq? (intersect-output row) trait)
              (eq? tid (trait-origin trait-row))
              (match origin
-               [`(Derived (Reserved ,iid2) (Compose ,tn-out ,o-a ,o-b))
+               [`(Derived (Derived ,_ (Intersect ,iid2 ,_ ,_ ,_))
+                          (Compose ,tn-out ,o-a ,o-b))
                 (and (eq? iid2 iid)
                      (eq? tn-out trait)
+                     (equal? (second origin)
+                             (intersect-derived-origin row))
                      (equal? o-a origin-a)
                      (equal? o-b origin-b))]
                [_ #f])

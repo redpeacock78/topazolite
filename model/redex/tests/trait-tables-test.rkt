@@ -156,9 +156,12 @@
   ;; 三項の要求を二項の入れ子で表す。外側の origin から内側の合成 origin を
   ;; たどれることが、成分の provenance が消えていないことの証拠である。
   (define nested
-    `(Derived (Reserved o-intersect-print-size-tag)
+    `(Derived ,(intersect-derived-origin
+                (intersect-row-by-name 'intersect-printable-sizable-taggable))
               (Compose PrintableSizableTaggable
-                       (Derived (Reserved o-intersect-print-size)
+                       (Derived ,(intersect-derived-origin
+                                  (intersect-row-by-name
+                                   'intersect-printable-sizable))
                                 (Compose PrintableSizable
                                          ,(impl-derived-origin
                                            (impl-row-by-name 'impl-printable-int))

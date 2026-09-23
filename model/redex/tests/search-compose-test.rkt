@@ -35,13 +35,47 @@
 (define taggable-bool
   (impl-derived-origin (impl-row-by-name 'impl-taggable-bool)))
 
+(define impl-print-int printable-int)
+(define derive-size-int sizable-int)
+(define intersect-ps
+  (intersect-derived-origin
+   (intersect-row-by-name 'intersect-printable-sizable)))
+(define intersect-pt
+  (intersect-derived-origin
+   (intersect-row-by-name 'intersect-printable-taggable)))
+
 (define compose-int
-  `(Derived (Reserved o-intersect-print-size)
+  `(Derived ,intersect-ps
             (Compose PrintableSizable ,printable-int ,sizable-int)))
 
 (test-case "TRT-004: 正しい合成 origin は発行者判定を通る"
   (check-true (proof-issuer-ok? R0 compose-int
                                 '(Implements Int PrintableSizable))))
+
+(test-case "NAR-004: 合成 Proof の親は intersect の派生 origin である"
+  (check-true
+   (proof-issuer-ok? R0
+                     `(Derived ,intersect-ps
+                               (Compose PrintableSizable
+                                        ,impl-print-int ,derive-size-int))
+                     '(Implements Int PrintableSizable))))
+
+(test-case "NAR-004: 旧形の親を持つ合成 origin は発行者検査で拒否される"
+  ;; 新形の受理だけを見ると、旧形が並行して通る状態を検出できない。
+  (check-false
+   (proof-issuer-ok? R0
+                     `(Derived (Reserved o-intersect-print-size)
+                               (Compose PrintableSizable
+                                        ,impl-print-int ,derive-size-int))
+                     '(Implements Int PrintableSizable)))
+  ;; 成分だけ旧形に戻したものも拒否される。
+  (check-false
+   (proof-issuer-ok? R0
+                     `(Derived ,intersect-ps
+                               (Compose PrintableSizable
+                                        (Reserved o-impl-printable-int)
+                                        (Reserved o-derive-sizable-int)))
+                     '(Implements Int PrintableSizable))))
 
 (test-case "TRT-004: 偽造した合成 origin は 4 通りとも拒否される"
   (define rejected (make-hash))
@@ -50,9 +84,13 @@
       (hash-update! rejected tag add1 0)))
   ;; 1. intersect 行ではない既知の oid を issuer に置いたもの。
   ;;    未知の oid を使うと「知らないから落ちた」で済んでしまう。
+  ;; Intersect step の oid 欄だけを impl 行の oid に偽造し、親と成分は正しいままにする。
   (reject! 'wrong-issuer
-           `(Derived (Reserved o-impl-printable-int)
-                     (Compose PrintableSizable ,printable-int ,sizable-int))
+           `(Derived (Derived ,(trait-resolution-origin)
+                              (Intersect o-impl-printable-int
+                                         Printable Sizable PrintableSizable))
+                     (Compose PrintableSizable
+                              ,printable-int ,sizable-int))
            '(Implements Int PrintableSizable))
   ;; 2. 成分 origin の τ が命題の τ と食い違うもの。成分を origin へ
   ;;    埋め込まない設計ではこれが通る。
@@ -61,7 +99,7 @@
            '(Implements Bool PrintableSizable))
   ;; 3. 成分 origin の片方を User に差し替えたもの。
   (reject! 'user-component
-           `(Derived (Reserved o-intersect-print-size)
+           `(Derived ,intersect-ps
                      (Compose PrintableSizable User ,sizable-int))
            '(Implements Int PrintableSizable))
   ;; 4. 正しい origin のまま、iid を別の primitive へ束縛した R0 へ渡したもの。
@@ -82,7 +120,7 @@
   ;; PrintableTaggable は Int でだけ成立する（Task 9 の impl-taggable-int）。
   (check-true
    (proof-issuer-ok? R0
-                     `(Derived (Reserved o-intersect-print-tag)
+                     `(Derived ,intersect-pt
                                (Compose PrintableTaggable
                                         ,printable-int
                                         ,taggable-int))
@@ -90,7 +128,7 @@
   ;; 対象型が違えば成分の発行者判定が落ちる。
   (check-false
    (proof-issuer-ok? R0
-                     `(Derived (Reserved o-intersect-print-tag)
+                     `(Derived ,intersect-pt
                                (Compose PrintableTaggable
                                         ,printable-int
                                         ,taggable-bool))
@@ -107,7 +145,7 @@
               '(o-trait-sizable o-derive-sizable-int))))
 
 (define compose-origin
-  `(Derived (Reserved o-intersect-print-size)
+  `(Derived ,intersect-ps
             (Compose PrintableSizable
                      ,printable-int
                      ,sizable-int)))
@@ -159,7 +197,7 @@
   ;; は s-kernel である。root だけの系譜では右成分が coherent にならない。
   ;; hook 自体は形として正しいため、落ちる場所が coherence だけになる。
   (define tag-origin
-    `(Derived (Reserved o-intersect-print-tag)
+    `(Derived ,intersect-pt
               (Compose PrintableTaggable
                        ,printable-int
                        ,taggable-int)))
@@ -230,7 +268,7 @@
   (define c (first sigma))
   (check-equal? (candidate-prop c) '(Implements Int PrintableSizable))
   (check-equal? (candidate-origin c)
-                `(Derived (Reserved o-intersect-print-size)
+                `(Derived ,intersect-ps
                           (Compose PrintableSizable
                                    ,printable-int
                                    ,sizable-int)))
