@@ -9,6 +9,7 @@
          "../lang.rkt"
          "../origins.rkt"
          "../span-core.rkt"
+         "../traits.rkt"
          "../typing.rkt"
          "properties-test.rkt")
 
@@ -41,8 +42,9 @@
       [_ subject])))
 
 (define PT '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
-(define PP '(ProofRep (Reserved o-impl-printable-int)
-                      (Implements Int Printable)))
+(define PP
+  `(ProofRep ,(impl-derived-origin (impl-row-by-name 'impl-printable-int))
+             (Implements Int Printable)))
 
 (define one-source
   '(Fn ((f (NFn () Int () (TypeNarrativeCap)))) Int () (Apply f)))

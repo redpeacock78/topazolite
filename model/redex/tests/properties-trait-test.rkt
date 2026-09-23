@@ -83,8 +83,9 @@
      ;; 正しい表由来の oid と φ の再表明は新しい事実を作らないため、初期層でも
      ;; 許可される。下の拒否が ProofRep 一般の禁止ではないことを固定する。
      (define authorized
-       '(ProofRep (Reserved o-impl-printable-int)
-                  (Implements Int Printable)))
+       `(ProofRep
+         ,(impl-derived-origin (impl-row-by-name 'impl-printable-int))
+         (Implements Int Printable)))
      (check-equal? (verify-initial authorized) 'ok)
      (check-equal? (verify authorized) 'ok)
      (for ([_i (in-range attempts)])
@@ -124,7 +125,7 @@
           `(Apply (PrimVal (Reserved ,(impl-oid row)) ,(impl-name row))
                   ,(impl-fixture-record fixture))))
        (define expected
-         `(ProofRep (Reserved ,(impl-oid row))
+         `(ProofRep ,(impl-derived-origin row)
                     ,(impl-proposition row)))
        (define verification (verify result))
        (check-equal? result expected)

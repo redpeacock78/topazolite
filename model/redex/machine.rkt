@@ -106,7 +106,7 @@
        ;; impl と derive は同じ規則で Implements Proof を返す。
        [(impl-row-by-name name)
         => (lambda (row)
-             `(ProofRep (Reserved ,(impl-oid row))
+             `(ProofRep ,(impl-derived-origin row)
                         (Implements ,(impl-target-type row)
                                     ,(impl-trait-name row))))]
        [else 'undefined])]
@@ -114,7 +114,7 @@
      (cond
        [(intersect-row-by-name name)
         => (lambda (row)
-             `(ProofRep (Reserved ,(intersect-oid row))
+             `(ProofRep ,(intersect-derived-origin row)
                         (RequiresBoth ,(intersect-left row)
                                       ,(intersect-right row))))]
        [else 'undefined])]

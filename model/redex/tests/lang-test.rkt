@@ -2,7 +2,8 @@
 
 (require rackunit
          redex/reduction-semantics
-         "../lang.rkt")
+         "../lang.rkt"
+         "../traits.rkt")
 
 (test-case "NAR-001/CUR-002/TYP-001/PRF-001: Typed Core values"
   (for ([value (in-list
@@ -69,10 +70,12 @@
                                 (Policy TraitResolution)))))
   (check-true
    (redex-match? G2m O
-                 (term (Derived (Reserved o-intersect-print-size)
-                                (Compose PrintableSizable
-                                         (Reserved o-impl-printable-int)
-                                         (Reserved o-derive-sizable-int))))))
+                 `(Derived (Reserved o-intersect-print-size)
+                           (Compose PrintableSizable
+                                    ,(impl-derived-origin
+                                      (impl-row-by-name 'impl-printable-int))
+                                    ,(impl-derived-origin
+                                      (impl-row-by-name 'derive-sizable-int))))))
   ;; 成分が origin でない形は受理しない。
    (check-false
    (redex-match? G2m O

@@ -43,7 +43,7 @@
            (list `(NFn ((Record ,requirements))
                        (Proof (Implements ,(impl-target-type row)
                                           ,(impl-trait-name row)))
-                       () () () (Reserved ,(impl-oid row)))
+                       () () () ,(impl-derived-origin row))
                  `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row))))))
   (for ([row (in-list intersect-table)])
     (check-equal?
@@ -53,7 +53,7 @@
                         (Proof (ValidNarrativeTrait ,(intersect-right row))))
                        (Proof (RequiresBoth ,(intersect-left row)
                                             ,(intersect-right row)))
-                       () () () (Reserved ,(intersect-oid row)))
+                       () () () ,(intersect-derived-origin row))
                  `(PrimVal (Reserved ,(intersect-oid row))
                            ,(intersect-name row)))))))
 
@@ -81,21 +81,54 @@
                                (Trait Printable))
                      '(ValidNarrativeTrait Printable)))
   (check-true
-   (proof-issuer-ok? R0 '(Reserved o-impl-printable-int)
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'impl-printable-int))
                      '(Implements Int Printable)))
   (check-true
-   (proof-issuer-ok? R0 '(Reserved o-derive-sizable-int)
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'derive-sizable-int))
                      '(Implements Int Sizable)))
   (check-true
+   (proof-issuer-ok? R0
+                     (intersect-derived-origin
+                      (intersect-row-by-name 'intersect-printable-sizable))
+                     '(RequiresBoth Printable Sizable))))
+
+(test-case "NAR-004: 旧形の Reserved oid は Proof 発行者として通らない"
+  (check-false
+   (proof-issuer-ok? R0 '(Reserved o-impl-printable-int)
+                     '(Implements Int Printable)))
+  (check-false
    (proof-issuer-ok? R0 '(Reserved o-intersect-print-size)
                      '(RequiresBoth Printable Sizable))))
 
+(test-case "NAR-004: TraitResolution 以外の親を持つ origin は通らない"
+  (check-false
+   (proof-issuer-ok?
+    R0
+    '(Derived (Reserved o-language-narrative)
+              (Impl o-impl-printable-int impl Int Printable))
+    '(Implements Int Printable)))
+  (check-false
+   (proof-issuer-ok?
+    R0
+    '(Derived (Reserved o-language-narrative)
+              (Intersect o-intersect-print-size
+                         Printable Sizable PrintableSizable))
+    '(RequiresBoth Printable Sizable))))
+
 (test-case "proof-issuer-ok? rejects mismatched trait issuers"
   (check-false
-   (proof-issuer-ok? R0 '(Reserved o-impl-taggable-bool)
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'impl-taggable-bool))
                      '(Implements Int Printable)))
   (check-false
-   (proof-issuer-ok? R0 '(Reserved o-impl-printable-int)
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'impl-printable-int))
                      '(Implements Bool Printable)))
   (check-false
    (proof-issuer-ok? R0 '(Reserved o-trait-printable)
@@ -103,11 +136,27 @@
 
 (test-case "proof-issuer-ok? compares trait propositions canonically"
   (check-true
-   (proof-issuer-ok? R0 '(Reserved o-impl-printable-int)
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'impl-printable-int))
                      '(Implements (Union Int Int) Printable)))
   (check-true
-   (proof-issuer-ok? R0 '(Reserved o-intersect-print-size)
+   (proof-issuer-ok? R0
+                     (intersect-derived-origin
+                      (intersect-row-by-name 'intersect-printable-sizable))
                      '(RequiresBoth Sizable Printable))))
+
+(test-case "NAR-004: 別の行の origin では発行者検査を通らない"
+  (check-false
+   (proof-issuer-ok? R0
+                     (impl-derived-origin
+                      (impl-row-by-name 'impl-printable-str-a))
+                     '(Implements Int Printable))))
+
+(test-case "NAR-004: trait-r0-entries は PrimVal の同定に残る"
+  (check-equal? (lookup R0 'o-impl-printable-int) '(prim impl-printable-int))
+  (check-equal? (lookup R0 'o-intersect-print-size)
+                '(prim intersect-printable-sizable)))
 
 (test-case "FieldType is local-only"
   (define witness
@@ -127,7 +176,7 @@
      (list (impl-name row)
            (list `(Implements ,(impl-target-type row)
                               ,(impl-trait-name row))
-                 `(Reserved ,(impl-oid row))
+                 (impl-derived-origin row)
                  (impl-name row)
                  'root
                  'default
@@ -139,7 +188,7 @@
      (list (intersect-name row)
            (list `(RequiresBoth ,(intersect-left row)
                                 ,(intersect-right row))
-                 `(Reserved ,(intersect-oid row))
+                 (intersect-derived-origin row)
                  (intersect-name row)
                  'root
                  'default

@@ -12,6 +12,7 @@
          "../search.rkt"
          "../span.rkt"
          "../erase.rkt"
+         "../traits.rkt"
          "../typing.rkt")
 
 ;; span.md §7.3: 判定に span を使わない項面の関数は、投影を通してから既存の
@@ -163,8 +164,9 @@
   (check-exn #rx"^candidateize"
              (lambda ()
                (candidateize
-                '((imp ((Implements (#:ty Int (#:span #:synthetic 0 0)) Printable)
-                        (Reserved o-impl-printable-int)))))))
+                `((imp ((Implements (#:ty Int (#:span #:synthetic 0 0)) Printable)
+                        ,(impl-derived-origin
+                          (impl-row-by-name 'impl-printable-int))))))))
   ;; head の検査だけを残す位置は従来どおり通る。
   (check-not-exn
    (lambda ()

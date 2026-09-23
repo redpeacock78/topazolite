@@ -2,6 +2,8 @@
 
 (require rackunit
          racket/list
+         redex/reduction-semantics
+         "../lang.rkt"
          "../traits.rkt"
          "../type-equiv.rkt"
          "../rows.rkt"
@@ -158,9 +160,12 @@
               (Compose PrintableSizableTaggable
                        (Derived (Reserved o-intersect-print-size)
                                 (Compose PrintableSizable
-                                         (Reserved o-impl-printable-int)
-                                         (Reserved o-derive-sizable-int)))
-                       (Reserved o-impl-taggable-int))))
+                                         ,(impl-derived-origin
+                                           (impl-row-by-name 'impl-printable-int))
+                                         ,(impl-derived-origin
+                                           (impl-row-by-name 'derive-sizable-int))))
+                       ,(impl-derived-origin
+                         (impl-row-by-name 'impl-taggable-int)))))
   (check-true
    (proof-issuer-ok? R0 nested '(Implements Int PrintableSizableTaggable))))
 
@@ -191,6 +196,31 @@
   (define row (trait-row-by-name 'Printable))
   (check-equal? (trait-derived-origin row)
                 '(Derived (Reserved o-language-narrative) (Trait Printable))))
+
+(test-case "NAR-004: impl-derived-origin は TraitResolution を親に取る"
+  (define row (impl-row-by-name 'impl-printable-int))
+  (check-equal? (impl-derived-origin row)
+                '(Derived (Derived (Reserved o-language-narrative)
+                                   (Policy TraitResolution))
+                          (Impl o-impl-printable-int impl Int Printable))))
+
+(test-case "NAR-004: intersect-derived-origin は四欄を持つ"
+  (define row (intersect-row-by-name 'intersect-printable-sizable))
+  (check-equal? (intersect-derived-origin row)
+                '(Derived (Derived (Reserved o-language-narrative)
+                                   (Policy TraitResolution))
+                          (Intersect o-intersect-print-size
+                                     Printable Sizable PrintableSizable))))
+
+(test-case "NAR-004: oid の異なる同型同 trait の impl 行は origin が異なる"
+  (check-not-equal? (impl-derived-origin (impl-row-by-name 'impl-printable-str-a))
+                    (impl-derived-origin (impl-row-by-name 'impl-printable-str-b))))
+
+(test-case "NAR-004: 構成子の出力は G1 の O として妥当である"
+  (for ([row (in-list impl-table)])
+    (check-true (redex-match? G1 O (impl-derived-origin row))))
+  (for ([row (in-list intersect-table)])
+    (check-true (redex-match? G1 O (intersect-derived-origin row)))))
 
 ;; NAR-003: 正典の表は全行が形の検査を通る。
 (test-case "NAR-003: 正典の trait 表は全行が trait-row-shape-ok? を通る"

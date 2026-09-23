@@ -214,7 +214,7 @@
         (define impl-row (impl-row-by-oid oid))
         (and trait-row
              impl-row
-             (equal? origin `(Reserved ,oid))
+             (equal? origin (impl-derived-origin impl-row))
              (eq? tid (trait-origin trait-row))
              (eq? trait (impl-trait-name impl-row))
              (proposition-equiv?
@@ -251,7 +251,7 @@
         (and row
              (eq? (intersect-left row) left)
              (eq? (intersect-right row) right)
-             (equal? origin `(Reserved ,iid)))]
+             (equal? origin (intersect-derived-origin row)))]
        [_ (null? hook)])]
     [_ (null? hook)]))
 

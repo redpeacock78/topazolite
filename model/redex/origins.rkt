@@ -135,7 +135,7 @@
            (list `(NFn ((Record ,requirements))
                        (Proof (Implements ,(impl-target-type row)
                                           ,(impl-trait-name row)))
-                       () () () (Reserved ,(impl-oid row)))
+                       () () () ,(impl-derived-origin row))
                  `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row)))))
    (for/list ([row (in-list intersect-table)])
      (list (intersect-name row)
@@ -143,7 +143,7 @@
                         (Proof (ValidNarrativeTrait ,(intersect-right row))))
                        (Proof (RequiresBoth ,(intersect-left row)
                                             ,(intersect-right row)))
-                       () () () (Reserved ,(intersect-oid row)))
+                       () () () ,(intersect-derived-origin row))
                  `(PrimVal (Reserved ,(intersect-oid row))
                            ,(intersect-name row)))))))
 
@@ -206,7 +206,7 @@
      (list (impl-name row)
            (list `(Implements ,(impl-target-type row)
                               ,(impl-trait-name row))
-                 `(Reserved ,(impl-oid row))
+                 (impl-derived-origin row)
                  (impl-name row)
                  'root
                  'default
@@ -215,7 +215,7 @@
      (list (intersect-name row)
            (list `(RequiresBoth ,(intersect-left row)
                                 ,(intersect-right row))
-                 `(Reserved ,(intersect-oid row))
+                 (intersect-derived-origin row)
                  (intersect-name row)
                  'root
                  'default
@@ -308,7 +308,7 @@
        [_ #f])]
     [`(Implements ,type ,trait)
      (match origin
-       [`(Reserved ,id)
+       [`(Derived ,_ (Impl ,id ,_ ,_ ,_))
         (define row (impl-row-by-oid id))
         (define actual-key (canonical-proposition-key proposition))
         (define expected-key
@@ -320,6 +320,7 @@
              actual-key
              expected-key
              (equal? actual-key expected-key)
+             (equal? origin (impl-derived-origin row))
              (equal? (lookup r0 id) `(prim ,(impl-name row))))]
        ;; TRT-004: 合成 trait への所属。親は intersect 行の oid であり、
        ;; 成分の origin は step の中に残る。成果物の検証層は origin しか
@@ -338,7 +339,7 @@
        [_ #f])]
     [`(RequiresBoth ,_ ,_)
      (match origin
-       [`(Reserved ,id)
+       [`(Derived ,_ (Intersect ,id ,_ ,_ ,_))
         (define row (intersect-row-by-oid id))
         (define actual-key (canonical-proposition-key proposition))
         (define expected-key
@@ -350,6 +351,7 @@
              actual-key
              expected-key
              (equal? actual-key expected-key)
+             (equal? origin (intersect-derived-origin row))
              (equal? (lookup r0 id) `(prim ,(intersect-name row))))]
        [_ #f])]
     [`(Presence ,_)

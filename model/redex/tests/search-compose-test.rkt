@@ -24,8 +24,16 @@
    (intersect-acyclic? (list (list 'o-p 'p-name 'A 'B 'AB)
                              (list 'o-q 'q-name 'A 'C 'AC)))))
 
-(define printable-int '(Reserved o-impl-printable-int))
-(define sizable-int   '(Reserved o-derive-sizable-int))
+(define printable-int
+  (impl-derived-origin (impl-row-by-name 'impl-printable-int)))
+(define sizable-int
+  (impl-derived-origin (impl-row-by-name 'derive-sizable-int)))
+(define printable-str-a
+  (impl-derived-origin (impl-row-by-name 'impl-printable-str-a)))
+(define taggable-int
+  (impl-derived-origin (impl-row-by-name 'impl-taggable-int)))
+(define taggable-bool
+  (impl-derived-origin (impl-row-by-name 'impl-taggable-bool)))
 
 (define compose-int
   `(Derived (Reserved o-intersect-print-size)
@@ -77,7 +85,7 @@
                      `(Derived (Reserved o-intersect-print-tag)
                                (Compose PrintableTaggable
                                         ,printable-int
-                                        (Reserved o-impl-taggable-int)))
+                                        ,taggable-int))
                      '(Implements Int PrintableTaggable)))
   ;; 対象型が違えば成分の発行者判定が落ちる。
   (check-false
@@ -85,7 +93,7 @@
                      `(Derived (Reserved o-intersect-print-tag)
                                (Compose PrintableTaggable
                                         ,printable-int
-                                        (Reserved o-impl-taggable-bool)))
+                                        ,taggable-bool))
                      '(Implements Int PrintableTaggable))))
 
 ;; TRT-004: 合成候補の hook は成分の origin と hook を再帰的に保持する。
@@ -93,16 +101,16 @@
 ;; scope であり、可視性を動かさずに hook の判定だけを見られるためである。
 (define compose-hook
   (list 'compose 'o-trait-printable-sizable 'o-intersect-print-size
-        (list '(Reserved o-impl-printable-int)
+        (list printable-int
               '(o-trait-printable o-impl-printable-int))
-        (list '(Reserved o-derive-sizable-int)
+        (list sizable-int
               '(o-trait-sizable o-derive-sizable-int))))
 
 (define compose-origin
-  '(Derived (Reserved o-intersect-print-size)
+  `(Derived (Reserved o-intersect-print-size)
             (Compose PrintableSizable
-                     (Reserved o-impl-printable-int)
-                     (Reserved o-derive-sizable-int))))
+                     ,printable-int
+                     ,sizable-int)))
 
 (define compose-candidate
   (list 'Candidate
@@ -126,9 +134,9 @@
           '(compose o-intersect-print-size derive-sizable-int impl-printable-int)
           'root 'default
           (list 'compose 'o-trait-printable-sizable 'o-intersect-print-size
-                (list '(Reserved o-derive-sizable-int)
+                (list sizable-int
                       '(o-trait-sizable o-derive-sizable-int))
-                (list '(Reserved o-impl-printable-int)
+                (list printable-int
                       '(o-trait-printable o-impl-printable-int)))))
   (check-false (hook-ok? swapped)))
 
@@ -140,9 +148,9 @@
           '(compose o-intersect-print-size impl-printable-str-a derive-sizable-int)
           'root 'default
           (list 'compose 'o-trait-printable-sizable 'o-intersect-print-size
-                (list '(Reserved o-impl-printable-str-a)
+                (list printable-str-a
                       '(o-trait-printable o-impl-printable-str-a))
-                (list '(Reserved o-derive-sizable-int)
+                (list sizable-int
                       '(o-trait-sizable o-derive-sizable-int)))))
   (check-false (hook-ok? detached)))
 
@@ -151,19 +159,19 @@
   ;; は s-kernel である。root だけの系譜では右成分が coherent にならない。
   ;; hook 自体は形として正しいため、落ちる場所が coherence だけになる。
   (define tag-origin
-    '(Derived (Reserved o-intersect-print-tag)
+    `(Derived (Reserved o-intersect-print-tag)
               (Compose PrintableTaggable
-                       (Reserved o-impl-printable-int)
-                       (Reserved o-impl-taggable-int))))
+                       ,printable-int
+                       ,taggable-int)))
   (define tag-candidate
     (list 'Candidate
           (list 'ProofRep tag-origin '(Implements Int PrintableTaggable))
           '(compose o-intersect-print-tag impl-printable-int impl-taggable-int)
           'root 'default
           (list 'compose 'o-trait-printable-taggable 'o-intersect-print-tag
-                (list '(Reserved o-impl-printable-int)
+                (list printable-int
                       '(o-trait-printable o-impl-printable-int))
-                (list '(Reserved o-impl-taggable-int)
+                (list taggable-int
                       '(o-trait-taggable o-impl-taggable-int)))))
   (check-true  (hook-ok? tag-candidate))
   (check-false (coherent-candidate? tag-candidate '(root)))
@@ -172,12 +180,14 @@
 (test-case "TRT-005: RequiresBoth hook is accepted only for its intersect row"
   (check-true
    (hook-ok?/parts '(RequiresBoth Printable Sizable)
-                   '(Reserved o-intersect-print-size)
+                   (intersect-derived-origin
+                    (intersect-row-by-name 'intersect-printable-sizable))
                    '(o-intersect-print-size)))
   ;; 行の左右と食い違う命題では通らない。
   (check-false
    (hook-ok?/parts '(RequiresBoth Printable Taggable)
-                   '(Reserved o-intersect-print-size)
+                   (intersect-derived-origin
+                    (intersect-row-by-name 'intersect-printable-sizable))
                    '(o-intersect-print-size)))
   ;; origin が hook の oid と食い違う場合も通らない。
   (check-false
@@ -187,7 +197,8 @@
   ;; 空 hook は従来どおり通る。
   (check-true
    (hook-ok?/parts '(RequiresBoth Printable Sizable)
-                   '(Reserved o-intersect-print-size)
+                   (intersect-derived-origin
+                    (intersect-row-by-name 'intersect-printable-sizable))
                    '())))
 
 (test-case "TRT-005: RequiresBoth is implicit only for a declared intersect row"
@@ -219,10 +230,10 @@
   (define c (first sigma))
   (check-equal? (candidate-prop c) '(Implements Int PrintableSizable))
   (check-equal? (candidate-origin c)
-                '(Derived (Reserved o-intersect-print-size)
+                `(Derived (Reserved o-intersect-print-size)
                           (Compose PrintableSizable
-                                   (Reserved o-impl-printable-int)
-                                   (Reserved o-derive-sizable-int))))
+                                   ,printable-int
+                                   ,sizable-int)))
   (check-equal? (candidate-cid c)
                 '(compose o-intersect-print-size
                           impl-printable-int

@@ -8,9 +8,18 @@
          "../machine.rkt"
          "../origins.rkt"
          "../search.rkt"
+         "../traits.rkt"
          "../typing.rkt")
 
 (define empty '())
+
+(define printable-int-origin
+  (impl-derived-origin (impl-row-by-name 'impl-printable-int)))
+(define sizable-int-origin
+  (impl-derived-origin (impl-row-by-name 'derive-sizable-int)))
+(define printable-sizable-origin
+  (intersect-derived-origin
+   (intersect-row-by-name 'intersect-printable-sizable)))
 
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) 40)
@@ -36,7 +45,7 @@
    '(Apply impl-printable-int
       (Rec ((print imm (Fn ((x Int)) String () "ok")))))
    '(Proof (Implements Int Printable))
-   '(ProofRep (Reserved o-impl-printable-int)
+   `(ProofRep ,printable-int-origin
               (Implements Int Printable))))
 
 (test-case "TRT-002: derive Apply follows the same integrated path"
@@ -44,14 +53,14 @@
    '(Apply derive-sizable-int
       (Rec ((size imm (Fn ((x Int)) Int () 1)))))
    '(Proof (Implements Int Sizable))
-   '(ProofRep (Reserved o-derive-sizable-int)
+   `(ProofRep ,sizable-int-origin
               (Implements Int Sizable))))
 
 (test-case "trait intersection Apply returns an explicit composite proof"
   (check-surface-application
    '(Apply intersect-printable-sizable Printable-trait Sizable-trait)
    '(Proof (RequiresBoth Printable Sizable))
-   '(ProofRep (Reserved o-intersect-print-size)
+   `(ProofRep ,printable-sizable-origin
               (RequiresBoth Printable Sizable))))
 
 (test-case "trait intersection is implicitly dischargeable"

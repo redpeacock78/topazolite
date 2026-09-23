@@ -3,6 +3,7 @@
 (require racket/list
          racket/match
          "erase.rkt"
+         "policy.rkt"
          "rows.rkt"
          "type-equiv.rkt"
          "type-shape.rkt")
@@ -12,6 +13,9 @@
          intersect-table
          trait-origin
          trait-derived-origin
+         trait-resolution-origin
+         impl-derived-origin
+         intersect-derived-origin
          trait-row-shape-ok?
          trait-origin-ok?
          trait-name
@@ -123,6 +127,29 @@
 ;; 同定しており、proof-issuer-ok? が受け取る trait も名前であるためである。
 (define (trait-derived-origin row)
   `(Derived (Reserved o-language-narrative) (Trait ,(trait-name row))))
+
+;; NAR-004: impl 行と intersect 行の Proof が持つべき origin。親は
+;; TraitResolution policy の origin である。trait の Proof が
+;; o-language-narrative を直接の親に取るのと非対称なのは、正典で trait が
+;; LanguageNarrative の予約語であるのに対し、impl と derive は
+;; TraitResolutionNarrative の操作だからである。
+;; step が oid を持つのは、対象型と trait 名が同じ impl 行が複数あるためで
+;; ある（impl-printable-str-a と impl-printable-str-b）。nm は写さない。
+;; oid から R0 を引けば復元でき、二重に持つと片方だけずれた origin が作れる。
+(define (trait-resolution-origin)
+  (policy-origin (policy-row-by-name 'TraitResolution)))
+
+(define (impl-derived-origin row)
+  `(Derived ,(trait-resolution-origin)
+            (Impl ,(impl-oid row) ,(impl-kind row)
+                  ,(impl-target-type row) ,(impl-trait-name row))))
+
+(define (intersect-derived-origin row)
+  `(Derived ,(trait-resolution-origin)
+            (Intersect ,(intersect-oid row)
+                       ,(intersect-left row)
+                       ,(intersect-right row)
+                       ,(intersect-output row))))
 
 ;; R0 を見ずに済む部分。第 1 欄が symbol であること、投影が組み立てる
 ;; step の引数が行の trait 名と一致すること、その名前が表に宣言済みで

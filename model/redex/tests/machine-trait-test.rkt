@@ -3,7 +3,8 @@
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../traits.rkt")
 
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) 20)
@@ -22,7 +23,7 @@
     `(Apply ,(trait-primitive 'impl-printable-int
                               'o-impl-printable-int)
             (Rec ())))
-   '(ProofRep (Reserved o-impl-printable-int)
+   `(ProofRep ,(impl-derived-origin (impl-row-by-name 'impl-printable-int))
               (Implements Int Printable))))
 
 (test-case "a derive primitive follows the same delta rule"
@@ -31,11 +32,11 @@
     `(Apply ,(trait-primitive 'derive-sizable-int
                               'o-derive-sizable-int)
             (Rec ())))
-   '(ProofRep (Reserved o-derive-sizable-int)
+   `(ProofRep ,(impl-derived-origin (impl-row-by-name 'derive-sizable-int))
               (Implements Int Sizable))))
 
-;; NAR-003: 入力の Proof は Γ0 が配る形と同じ派生 origin を持つ。機械は入力の
-;; origin を見ないが、正典が拒否する形を fixture に残すと古い設計が残る。
+;; NAR-004: 機械が返す intersect Proof は Γ0 と同じ派生 origin を持つ。機械は
+;; 入力の origin を見ないが、出力の系譜は正典の構成子で固定する。
 (test-case "an intersect primitive composes two proofs"
   (check-equal?
    (run-g2-core
@@ -46,7 +47,8 @@
                 (ValidNarrativeTrait Printable))
       (ProofRep (Derived (Reserved o-language-narrative) (Trait Sizable))
                 (ValidNarrativeTrait Sizable))))
-   '(ProofRep (Reserved o-intersect-print-size)
+   `(ProofRep ,(intersect-derived-origin
+                (intersect-row-by-name 'intersect-printable-sizable))
               (RequiresBoth Printable Sizable))))
 
 (test-case "g2-primitive-name? covers trait but not base primitives"

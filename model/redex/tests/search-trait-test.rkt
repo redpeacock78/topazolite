@@ -9,6 +9,11 @@
 (define (sigma proposition [sc-ctx '(root)])
   (project-goal Γ-pc0 sc-ctx (goal proposition)))
 
+(define printable-int-origin
+  (impl-derived-origin (impl-row-by-name 'impl-printable-int)))
+(define sizable-int-origin
+  (impl-derived-origin (impl-row-by-name 'derive-sizable-int)))
+
 (test-case "initial context contains the trait global candidates"
   (define context (initial-candidate-context))
   (for ([row (in-list impl-table)])
@@ -24,8 +29,8 @@
       (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
       typeNarrativeCap root default ()))
   (define valid
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default
       (o-trait-printable o-impl-printable-int)))
@@ -33,21 +38,21 @@
   (check-true (hook-ok? valid))
   (check-false
    (hook-ok?
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default ())))
   (check-false
    (hook-ok?
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default
       (o-trait-sizable o-impl-printable-int))))
   (check-false
    (hook-ok?
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default
       (o-trait-printable o-impl-printable-str-a))))
@@ -60,14 +65,14 @@
 
 (test-case "candidate identity includes the hook"
   (define base
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default
       (o-trait-printable o-impl-printable-int)))
   (define changed
-    '(Candidate
-      (ProofRep (Reserved o-impl-printable-int)
+    `(Candidate
+      (ProofRep ,printable-int-origin
                 (Implements Int Printable))
       impl-printable-int root default
       (o-trait-sizable o-impl-printable-int)))
@@ -79,15 +84,15 @@
    (resolve-candidates (goal '(Implements Int Printable))
                        (sigma '(Implements Int Printable)))
    (resolved
-    '(ProofRep (#:span #:synthetic 0 0)
-               (Reserved o-impl-printable-int)
+    `(ProofRep (#:span #:synthetic 0 0)
+               ,printable-int-origin
                (Implements Int Printable))))
   (check-equal?
    (resolve-candidates (goal '(Implements Int Sizable))
                        (sigma '(Implements Int Sizable)))
    (resolved
-    '(ProofRep (#:span #:synthetic 0 0)
-               (Reserved o-derive-sizable-int)
+    `(ProofRep (#:span #:synthetic 0 0)
+               ,sizable-int-origin
                (Implements Int Sizable)))))
 
 (test-case "duplicate impls are ambiguous"
