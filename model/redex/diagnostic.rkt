@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 17)
+(define diagnostic-registry-version 18)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -294,6 +294,10 @@
     ("E-PRF-011" discharge-proof-issuer
                  "残余 drop の Proof の発行者が o-narrow でない")))
 
+(define typing-entries-v18
+  '(("E-ORG-002" type-origin-invalid
+                 "NFn の型成分 O が初期成果物に由来しない")))
+
 (define elaborate-entries-v16
   '(("E-OWN-031" owned-narrowing-needs-proof
                  "余剰 Owned field を落とす narrowing に Proof が要る")))
@@ -387,6 +391,7 @@
           (rows 'typing 11 typing-entries-v11)
           (rows 'typing 13 typing-entries-v13)
           (rows 'typing 16 typing-entries-v16)
+          (rows 'typing 18 typing-entries-v18)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)

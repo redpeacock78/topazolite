@@ -15,6 +15,7 @@
          Γ0
          Π0
          R0
+         valid-origin?
          kernel-gamma0-entries
          kindOf
          lookup

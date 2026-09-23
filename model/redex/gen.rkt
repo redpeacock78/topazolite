@@ -395,7 +395,7 @@
     [(zero? (random 2)) `(Record ,(random-variance-row (sub1 depth)))]
     [else `(NFn (,(random-variance-type (sub1 depth)))
                 ,(random-variance-type (sub1 depth))
-                ()
+                ,(random-subset variance-effect-pool)
                 ,(random-subset variance-effect-pool)
                 ,(random-subset variance-obligation-pool)
                 User)]))
@@ -463,7 +463,7 @@
     [`(NFn ,parameters ,return-type ,latent-in ,row ,obligations ,origin)
      `(NFn ,(map permute-variance-type parameters)
            ,(permute-variance-type return-type)
-           ,latent-in
+           ,(reverse (map permute-effect-label latent-in))
            ,(reverse (map permute-effect-label row))
            ,obligations
            ,origin)]

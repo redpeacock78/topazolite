@@ -21,7 +21,8 @@
          "diagnostic-fixture-v14.rkt"
          "diagnostic-fixture-v15.rkt"
          "diagnostic-fixture-v16.rkt"
-         "diagnostic-fixture-v17.rkt")
+         "diagnostic-fixture-v17.rkt"
+         "diagnostic-fixture-v18.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -64,13 +65,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 186)
+ (check-equal? (length diagnostic-registry) 187)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
  (check-equal? (count-of 'elaborate) 59)
- (check-equal? (count-of 'typing) 103)
+ (check-equal? (count-of 'typing) 104)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (check-equal? (count-of 'expand) 7)
@@ -98,6 +99,7 @@
  (check-equal? (since-count 15) 11)
  (check-equal? (since-count 16) 5)
  (check-equal? (since-count 17) 1)
+ (check-equal? (since-count 18) 1)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
@@ -187,15 +189,17 @@
 
 ;; test 12
 (test-case
- "schema version は 4、registry version は 17 である"
+ "schema version は 4、registry version は 18 である"
  (check-equal? diagnostic-schema-version 4)
- (check-equal? diagnostic-registry-version 17))
+ (check-equal? diagnostic-registry-version 18))
 
 (test-case
- "typing の registry version 17 と入口 key"
- (check-equal? diagnostic-registry-version 17)
+ "typing の registry version 18 と入口 key"
+ (check-equal? diagnostic-registry-version 18)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
- (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004"))
+ (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004")
+ (check-equal? (diagnostic-code-of 'typing 'type-origin-invalid)
+               "E-ORG-002"))
 
 ;; test 14
 (test-case
@@ -519,6 +523,18 @@
  "凍結 fixture v17 の全 (code phase key) が現在の registry に同じ組で存在する"
  (check-equal? (length diagnostic-entries-v17) 186)
  (for ([entry (in-list diagnostic-entries-v17)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true
+    (and row
+         (eq? (diagnostic-code-phase row) phase)
+         (eq? (diagnostic-code-key row) key))
+    (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v18 の全 (code phase key) が現在の registry に同じ組で存在する"
+ (check-equal? (length diagnostic-entries-v18) 187)
+ (for ([entry (in-list diagnostic-entries-v18)])
    (match-define (list code phase key) entry)
    (define row (diagnostic-code-row code))
    (check-true

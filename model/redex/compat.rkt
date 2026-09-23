@@ -49,8 +49,9 @@
          [_ #f])]
       [_ #f])))
 
-;; VAR-002: latent effect は共変の集合包含。ラベル同一性は row-equiv? と
-;; 同じ effect-equiv? を使い、Yield/Return payload の表記揺れを同一視する。
+;; VAR-002: latent effect は共変の集合包含。εin へ反変で使う場合は呼出し側が
+;; 引数順を入れ替える。ラベル同一性は row-equiv? と同じ effect-equiv? を使い、
+;; Yield/Return payload の表記揺れを同一視する。
 (define (effect-row-subset? sub-row sup-row)
   (for/and ([label (in-list sub-row)])
     (for/or ([sup-label (in-list sup-row)])
@@ -69,16 +70,17 @@
           (proposition-equiv? obligation sup-obligation))
         (obligations-dischargeable? (list obligation) gamma-pc))))
 
-;; VAR-001: 引数反変・返り値共変・引数個数一致。
-(define (nfn-compatible? sub-parameters sub-return sub-row sub-obligations
-                         sup-parameters sup-return sup-row sup-obligations
+;; VAR-001: 引数反変・返り値共変・εin 反変・εout 共変・引数個数一致。
+(define (nfn-compatible? sub-parameters sub-return sub-in sub-out sub-obligations
+                         sup-parameters sup-return sup-in sup-out sup-obligations
                          gamma-pc region-relation)
   (and (= (length sub-parameters) (length sup-parameters))
        (for/and ([sub-parameter (in-list sub-parameters)]
                  [sup-parameter (in-list sup-parameters)])
          (compat?/impl sup-parameter sub-parameter gamma-pc region-relation))
        (compat?/impl sub-return sup-return gamma-pc region-relation)
-       (effect-row-subset? sub-row sup-row)
+       (effect-row-subset? sup-in sub-in)
+       (effect-row-subset? sub-out sup-out)
        (obligations-subset? sub-obligations sup-obligations gamma-pc)))
 
 ;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
@@ -112,10 +114,10 @@
       `(Refined ,sup-payload ,sup-proposition))
      (and (proposition-equiv? sub-proposition sup-proposition)
           (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
-    [(`(NFn ,sub-parameters ,sub-return ,_sub-in ,sub-out ,sub-obligations ,_sub-origin)
-      `(NFn ,sup-parameters ,sup-return ,_sup-in ,sup-out ,sup-obligations ,_sup-origin))
-     (nfn-compatible? sub-parameters sub-return sub-out sub-obligations
-                      sup-parameters sup-return sup-out sup-obligations
+    [(`(NFn ,sub-parameters ,sub-return ,sub-in ,sub-out ,sub-obligations ,_sub-origin)
+      `(NFn ,sup-parameters ,sup-return ,sup-in ,sup-out ,sup-obligations ,_sup-origin))
+     (nfn-compatible? sub-parameters sub-return sub-in sub-out sub-obligations
+                      sup-parameters sup-return sup-in sup-out sup-obligations
                       gamma-pc region-relation)]
     ;; 構成子が一致し、payload が互換であることを要求する。
     ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。

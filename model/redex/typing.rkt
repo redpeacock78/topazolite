@@ -2652,8 +2652,10 @@
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
        [(list `(NFn ,parameter-types
-                    ,return-type ,latent-in ,latent-out ,obligations ,_origin)
+                    ,return-type ,latent-in ,latent-out ,obligations ,function-origin)
               _ _)
+        (unless (valid-origin? R0 function-origin)
+          (fail 'type-origin-invalid function))
         ;; §4.2。再帰の束縛は、環境から引いた対の同一性で判別する。名前で
         ;; 引くと、本体の中の Let が影にした同名の束縛を再帰と見なす。
         (define function-name (peel-node function))

@@ -56,6 +56,16 @@
   (check-equal? (diagnostic-id d) "E-SYN-004")
   (check-eq? (diagnostic-category d) 'SYN))
 
+(test-case "NFn の型 origin が R0 に無いと E-ORG-002 になる"
+  (define d
+    (core-type-of/diagnostic
+     '(Apply f 1)
+     '()
+     '()
+     '((f (NFn (Int) Int () () () (Reserved o-not-in-r0))))))
+  (check-true (diagnostic? d))
+  (check-equal? (diagnostic-id d) "E-ORG-002"))
+
 (test-case "不正な callable 表は typing の入口 key になる"
   (define d (core-type-of/diagnostic 1 empty 'not-a-table))
   (check-equal? (diagnostic-id d) "E-TYP-018")

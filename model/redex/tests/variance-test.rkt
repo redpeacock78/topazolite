@@ -50,6 +50,22 @@
                 '(NFn () Int () ((Yield (Record ((a Int imm) (b Bool imm))))) () User)
                 '(NFn () Int () ((Yield (Record ((b Bool imm) (a Int imm))))) () User))))
 
+(test-case "VAR-002: latent-in は反変の集合包含"
+  (check-true (compat? '(NFn () Int (Suspend Own) () () User)
+                       '(NFn () Int (Suspend) () () User)))
+  (check-false (compat? '(NFn () Int (Suspend) () () User)
+                        '(NFn () Int (Suspend Own) () () User))))
+
+(test-case "VAR-002: latent-out は共変の集合包含"
+  (check-true (compat? '(NFn () Int () (Suspend) () User)
+                       '(NFn () Int () (Suspend Own) () User)))
+  (check-false (compat? '(NFn () Int () (Suspend Own) () User)
+                        '(NFn () Int () (Suspend) () User))))
+
+(test-case "VAR-002: O だけが異なる NFn は compat? で受理する"
+  (check-true (compat? '(NFn () Int () () () User)
+                       '(NFn () Int () () () (Reserved o-add)))))
+
 (test-case "VAR-002: Proof obligation は反変の集合包含"
   ;; sub の Q ⊆ sup の Q。期待側が引き受けると宣言した obligation の
   ;; 範囲内でだけ、実際側は discharge を要求できる。

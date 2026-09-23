@@ -197,7 +197,7 @@
     ;; TYP
     error-needs-expected-type incompatible-branch-types invalid-callables
     invalid-environment invalid-places non-normal-type
-    non-normalizable-result-type type-mismatch
+    non-normalizable-result-type type-mismatch type-origin-invalid
     ;; EFF
     effectful-curry-operand undeclared-function-effect
     ;; OWN
@@ -891,7 +891,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 100)
+  (check-equal? (length producer-keys) 101)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
@@ -938,9 +938,11 @@
   ;; Unsafe 境界からの漏出は rawptr-unsafe-test.rkt が産出元であり、同じ理由で除く。
   ;; この span reachability 表は既存の入口形だけを対象にするため、ここでは除く。
   ;; Discharge の新しい producer は span 到達表の上記 3 行で固定する。
+  ;; type-origin-invalid は typing-diagnostic-test.rkt の負例 fixture が産出する。
   (define unreachable-keys
     '(effectful-curry-operand
       non-normalizable-result-type
+      type-origin-invalid
       unmergeable-branch-records
       projborrow-non-record
       projborrow-unknown-field

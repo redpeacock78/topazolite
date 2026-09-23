@@ -28,3 +28,12 @@
 ; Owned は内部型不変
 (check-true  (compat? '(Owned Int) '(Owned Int)))
 (check-false (compat? '(Owned Never) '(Owned Int)))
+
+; NFn の O は不変位置の compat? では比較しない。
+(define nfn-user '(NFn () Int () () () User))
+(define nfn-reserved '(NFn () Int () () () (Reserved o-add)))
+(check-true (compat? `(Owned ,nfn-user) `(Owned ,nfn-reserved)))
+(check-true (compat? `(BorrowedMut ,nfn-user 0)
+                     `(BorrowedMut ,nfn-reserved 0)))
+(check-true (compat? `(Record ((f ,nfn-user mut)))
+                     `(Record ((f ,nfn-reserved mut)))))
