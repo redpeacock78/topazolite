@@ -215,3 +215,67 @@
    (core-types-normal?
     '(ProofRep (Derived (Reserved o-language-narrative) (Trait Printable))
                (ValidNarrativeTrait Printable)))))
+
+(test-case "NAR-004: G1 と G1+ の step が Impl と Intersect を受理する"
+  (check-true
+   (redex-match? G1 step '(Impl o-impl-printable-int impl Int Printable)))
+  (check-true
+   (redex-match? G1 step '(Impl o-impl-printable-int impl (List Int) Printable)))
+  (check-true
+   (redex-match? G1 step '(Intersect o-intersect-print-size
+                                     Printable Sizable PrintableSizable)))
+  (check-true
+   (redex-match? G1 O '(Derived (Derived (Reserved o-language-narrative)
+                                         (Policy TraitResolution))
+                                (Impl o-impl-printable-int impl Int Printable))))
+  ;; G1+（span-core）でも同じ形が通る。片方だけに足す取りこぼしをここで落とす。
+  (check-true
+   (redex-match? G1+ step '(Impl o-impl-printable-int impl Int Printable)))
+  (check-true
+   (redex-match? G1+ step '(Intersect o-intersect-print-size
+                                      Printable Sizable PrintableSizable))))
+
+(test-case "NAR-004: Impl の target は τ であり裸の型構成子名を受理しない"
+  (check-false
+   (redex-match? G1 step '(Impl o-impl-printable-int impl List Printable)))
+  (check-false
+   (redex-match? G1 step '(Impl o-impl-printable-int impl Option Printable)))
+  (check-false
+   (redex-match? G1+ step '(Impl o-impl-printable-int impl List Printable))))
+
+(test-case "NAR-004: G2m と G2+ は Record と NFn を target に取る Impl を受理する"
+  (check-true
+   (redex-match? G2m step
+                 '(Impl o-impl-printable-int impl (Record ()) Printable)))
+  (check-true
+   (redex-match? G2m step
+                 '(Impl o-impl-printable-int impl
+                        (NFn (Int) Int () () () User) Printable)))
+  (check-true
+   (redex-match? G2+ step
+                 '(Impl o-impl-printable-int impl (Record ()) Printable))))
+
+(test-case "NAR-004: core-types-normal? は Impl の τ を辿る"
+  (check-true
+   (core-types-normal?
+    '(ProofRep (Derived (Derived (Reserved o-language-narrative)
+                                 (Policy TraitResolution))
+                        (Impl o-impl-printable-int impl Int Printable))
+               (Implements Int Printable))))
+  ;; 第 3 欄に非正規形の型を置くと落ちる。辿っていなければ通ってしまう。
+  (check-false
+   (core-types-normal?
+    '(ProofRep (Derived (Derived (Reserved o-language-narrative)
+                                 (Policy TraitResolution))
+                        (Impl o-impl-printable-int impl (Union String Int)
+                              Printable))
+               (Implements Int Printable)))))
+
+(test-case "NAR-004: core-types-normal? は Intersect step を辿る"
+  (check-true
+   (core-types-normal?
+    '(ProofRep (Derived (Derived (Reserved o-language-narrative)
+                                 (Policy TraitResolution))
+                        (Intersect o-intersect-print-size
+                                   Printable Sizable PrintableSizable))
+               (RequiresBoth Printable Sizable)))))

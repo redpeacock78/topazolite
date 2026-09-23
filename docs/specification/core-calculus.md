@@ -248,10 +248,13 @@ O ::= Reserved(id)                               予約 origin。id ∈ dom(R0) 
     | Derived(O, step)                           派生 origin
     | User                                       ユーザー由来
 
-step ::= Curry(c) | Make(t) | Expand(name) | Policy(name) | Trait(tn) | Compose(name, O, O)
+step ::= Curry(c) | Make(t) | Expand(name) | Policy(name) | Trait(tn) | Compose(name, O, O) | Impl(oid, kind, τ, tn) | Intersect(oid, tn, tn, tn)
 
 sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与える種別
 ```
+
+`Impl` の第 3 欄は `t` ではなく `τ` とする。
+`t` は `τ` に加えて裸の型構成子名を許すため、適用されていない `List` などを対象型として受理しないようにする。
 
 `Curry(c)` は部分適用（§5.3 R-CurryVal）の派生を表し、c は値または Typed Core の式である。
 `Make(t)` は TypeInfo 生成（§4.8 E-TypeMake）の派生を表し、生成された TypeRep が保持する型式 t を記録する。

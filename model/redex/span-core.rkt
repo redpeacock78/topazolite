@@ -109,7 +109,11 @@
             (Expand nm)
             (Policy nm)
             (Trait nm)
-            (Compose nm O O))
+            (Compose nm O O)
+            ;; NAR-004: G1 と同じ二形。片方だけに足すと erase-core の往復で
+            ;; 形が合わなくなる。
+            (Impl nm nm τ nm)
+            (Intersect nm nm nm nm))
   (br ::= (s K (xs ...) -> c))
   (h ::= (s xs -> c))
   (c ::= v

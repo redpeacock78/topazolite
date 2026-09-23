@@ -63,7 +63,14 @@
             ;; trait 名は G1 の既存の名前の非終端 nm を使う。trait 専用の tn は
             ;; G2 で初めて導入されるため、G1 では literal になってしまう。
             (Trait nm)
-            (Compose nm O O))
+            (Compose nm O O)
+            ;; NAR-004: 欄は (oid kind τ tn) と (oid tn_left tn_right tn_out)。
+            ;; target に t ではなく τ を使うのは、t が τ に加えて裸の List /
+            ;; Option / Result を許し、適用されていない構成子名まで受理して
+            ;; しまうためである。impl の対象型は Typed Core の型そのものである。
+            ;; kind と trait 名を nm で表すのは Trait と同じ理由による。
+            (Impl nm nm τ nm)
+            (Intersect nm nm nm nm))
 
   (op ::= (Return b τ))
   (w ::= x)
