@@ -79,7 +79,7 @@
   (define binary
     (term (Lam User binary-id (x y) x)))
   (define expected
-    (term ((NFn (Int) Int () () () User) ())))
+    (term ((NFn (Int) Int () () () (Derived User (Curry 1))) ())))
   (check-equal?
    (core-type-of (term (Apply ,binary 1 2)) empty callable-types)
    (term (Int ())))

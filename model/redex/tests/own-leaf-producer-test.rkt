@@ -439,7 +439,8 @@
                      (Curry g (Move p))))))
   (match result
     [(list core type row callables)
-     (check-equal? type '(Owned (NFn () Unit () (Own) () User)))
+     (check-equal? type '(Owned (NFn () Unit () (Own) ()
+                                      (Derived User (Curry (OwnLeaf (Move p)))))))
      (check-equal? (core-type-of core '() callables) (list type row))
      (check-equal? (ownleaf-span-in core) (head-span-in core 'Curry))]
     [_ (check-true #f (format "elab が失敗した: ~s" result))]))
