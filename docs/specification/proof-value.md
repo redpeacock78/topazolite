@@ -182,14 +182,18 @@ R0 と Γ0 への登録、δ 規則、ProofRep の発行者対応、RVal のペ�
 validPort :
   NFn<(Untrusted Int),
       Result<Refined<Int, Prop<ValidPort>>, String>,
+      (),
       {},
-      {}>
+      {},
+      Reserved(o-valid-port)>
 
 nonEmpty :
   NFn<(Untrusted String),
       Result<Refined<String, Prop<NonEmpty>>, String>,
+      (),
       {},
-      {}>
+      {},
+      Reserved(o-non-empty)>
 ```
 
 validator は純粋な全域計算であるため、latent effect と obligation は空である。
@@ -256,11 +260,11 @@ check は型の合わない値にも偽を返すため、その場合も stuck �
 ```text
 (oid, nm, τ) ∈ introduction-table
 ------------------------------------------------------------
-nm : NFn<τ, Untrusted<τ>, {}, {}>
+nm : NFn<(τ), Untrusted<τ>, (), {}, {}, Reserved(oid)>
 
 (oid, nm, φ, τ) ∈ projection-table
 ------------------------------------------------------------
-nm : NFn<Refined<τ, φ>, τ, {}, {}>
+nm : NFn<(Refined<τ, φ>), τ, (), {}, {}, Reserved(oid)>
 ```
 
 導入の δ 規則は値 v を `UVal(v)` で包む。

@@ -79,7 +79,7 @@ impl と intersect の行は、対応する Narrative の生成系譜を origin 
 
 ### NAR-005
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §11.5.2
 
 `NFn` の origin は、検査の時点で導出する派生ではなく、型成分として保持されなければならない。
@@ -917,7 +917,6 @@ P2b では、Phase 2 の実装対象と本表の Phase 2 行を合わせた 41 �
 | 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
-| `NFn` の `εin` と `εout` を単一の row へまとめること | `structural-row.md` §7 | Phase 2 以降 | §5.1 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |

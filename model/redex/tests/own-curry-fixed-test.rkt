@@ -1,6 +1,7 @@
 #lang racket
 
 ;; [REQ: OWN-008] Owned の固定引数。
+;; [REQ: NAR-005] NFn の型成分 O。curry は O を Derived で伸ばす。
 
 (require rackunit
          racket/match

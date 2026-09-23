@@ -282,9 +282,9 @@
 
 ### NFn
 
-- **定義**：Narrative 関数を表す情報束。ホワイトペーパーの完全形は `NFn<P, R, εin, εout, Q, O>`（P は引数 telescope、R は返り値型、εin と εout は Effect 制約と変換、Q は Proof transformer、O は origin）。G1 では εin と εout を単一の潜在 row ε に縮約し、O を値成分へ移した `NFn<P, R, ε, Q>` を使う。
+- **定義**：Narrative 関数を表す情報束。`NFn<P, R, εin, εout, Q, O>` は P（引数 telescope）、R（返り値型）、εin（適用時に消費する入口 Effect row）、εout（呼び出し側へ残る出口 Effect row）、Q（Proof transformer）、O（型成分の origin）を持つ。
 - **参照**：ホワイトペーパー §11.5.2、core-calculus.md §3.2。
-- **関連要件 ID**：NAR-001、NAR-002、CUR-001。
+- **関連要件 ID**：NAR-001、NAR-002、NAR-005、CUR-001。
 
 ### ComputationClass
 

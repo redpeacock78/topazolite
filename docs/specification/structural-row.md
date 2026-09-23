@@ -564,10 +564,9 @@ G2a は次の規則を導入しない。
 - **`ForallRegion` を `NFn` 以外の位置へ置くこと**：region 多相は関数の署名の位置に限る。
   record の field や Union の成分へ置く形は、消去子が束縛を持ち出す経路を増やすため扱わない。
   Phase 4 以降で扱う。
-- **`NFn` の `εin` と `εout` を単一の row へまとめること**：入口と出口の effect row を 1 つにまとめる形は、部分適用の途中の状態を表せない。
-  Phase 2 以降で扱う。
 
 G2a で範囲外とした関数 field の variance は、G2c が §6 として導入した。
+`NFn` の `εin` と `εout` は P2f で正典の二つの欄へ戻したため、単一の row へまとめる申し送りは取り下げる。
 
 必須 field と残余 field を二層に分けた record 型は採らない。
 G2a の現在の flow では平坦な field row から安全に射影でき、合流後の field 回復は Proof witness 側で表現できるためである。

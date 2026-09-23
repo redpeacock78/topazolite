@@ -420,6 +420,7 @@
 (define expected-p2d-ids '(SUR-007))
 (define expected-p2e1-ids '(PRF-005))
 (define expected-p2e2-ids '(SUR-006))
+(define expected-p2f-ids '(NAR-005))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -617,6 +618,13 @@
           (build-path root "model/redex/tests/surface-lower-test.rkt")
           (build-path root "model/redex/tests/fstar-parity-test.rkt")
           (build-path root "model/redex/tests/projrec-typing-test.rkt")))
+  (define p2f-specs
+    (list (build-path root "docs/specification/core-calculus.md")
+          (build-path root "docs/specification/structural-row.md")))
+  (define p2f-tests
+    (list (build-path root "model/redex/tests/variance-test.rkt")
+          (build-path root "model/redex/tests/reassign-effect-test.rkt")
+          (build-path root "model/redex/tests/own-curry-fixed-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -640,7 +648,8 @@
    (cycle-descriptor 'P2c "P2" p2c-specs p2c-tests #f expected-p2c-ids)
    (cycle-descriptor 'P2d "P2" p2d-specs p2d-tests #f expected-p2d-ids)
    (cycle-descriptor 'P2e1 "P2" p2e1-specs p2e1-tests #f expected-p2e1-ids)
-   (cycle-descriptor 'P2e2 "P2" p2e2-specs p2e2-tests #f expected-p2e2-ids)))
+   (cycle-descriptor 'P2e2 "P2" p2e2-specs p2e2-tests #f expected-p2e2-ids)
+   (cycle-descriptor 'P2f "P2" p2f-specs p2f-tests #f expected-p2f-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

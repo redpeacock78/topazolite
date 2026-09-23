@@ -209,16 +209,16 @@ tn-trait : Proof<(ValidNarrativeTrait tn)>
 各 impl 行から、次の Γ0 primitive を導く。
 
 ```text
-nm : NFn<Record(instantiate-requirements(template-of(tn), τ)),
-         Proof<Implements<τ, tn>>, (), ()>
+nm : NFn<(Record(instantiate-requirements(template-of(tn), τ))),
+         Proof<Implements<τ, tn>>, (), (), (), Reserved(oid)>
 ```
 
 各 intersect 行から、次の Γ0 primitive を導く。
 
 ```text
-nm : NFn<Proof<ValidNarrativeTrait<tn_left>>,
-         Proof<ValidNarrativeTrait<tn_right>>,
-         Proof<RequiresBoth<tn_left, tn_right>>, (), ()>
+nm : NFn<(Proof<ValidNarrativeTrait<tn_left>>,
+          Proof<ValidNarrativeTrait<tn_right>>),
+         Proof<RequiresBoth<tn_left, tn_right>>, (), (), (), Reserved(oid)>
 ```
 
 R0 は、impl と intersect の origin を `(prim nm)` へ対応させる。

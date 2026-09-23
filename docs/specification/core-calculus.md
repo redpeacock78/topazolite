@@ -91,7 +91,7 @@ spec ::= T | spec<spec1, …, spek>                型式（型名とその適�
 τ ::= Int | Bool | Unit | String | Never | Res   基本型
     | List<τ> | Option<τ> | Result<τ1, τ2>       組み込みデータ型
     | Owned<τ>                                   affine 所有
-    | NFn<(τ1, …, τk), τ, ε, Q>                  Narrative 関数型
+    | NFn<(τ1, …, τk), τ, εin, εout, Q, O>       Narrative 関数型
     | TypeInfo<κ>                                型情報値の型
     | Proof<φ>                                   Proof 値の型
 
@@ -125,11 +125,9 @@ Effect label を 1 つ足すと、次の 7 箇所が動く。
 文法が 3 層（`lang.rkt` の `ℓ`、`ucore.rkt` の `tℓ` と `uℓ`）。
 許可集合を閉じている検査が 4 つ（`elaborate.rkt` の `resolve-type-row` と `resolve-declaration-row`、`traits.rkt` の `template-effect?`、`lowering.rkt` の `effect-label-kind`）。
 
-`NFn<P, R, ε, Q>` はホワイトペーパー §11.5.2 の `NFn<P, R, εin, εout, Q, O>` の G1 簡約形である。
-G1 では εin と εout を単一の潜在 Effect row ε に縮約し、適用時の `combine(εa, εi, εo)` を和集合で定義する（§4.3）。
-また、origin O は型成分ではなく値成分として扱う（§3.4）。
-εin と εout の分離はホワイトペーパーからの意図的な単純化であり、Phase 2 以降で拡張する。
-origin は §7 の verify-origins による Typed Core 全体の一括検査へ再配置しており、型成分へ戻すことは `NAR-005` が担う。
+`NFn<P, R, εin, εout, Q, O>` が G2 以降の正典形であり、ホワイトペーパー §11.5.2 の完全形と同じ六つの欄を持つ。 [REQ: NAR-005]
+εin は適用時に消費する入口 Effect row、εout は呼び出し側へ残る出口 Effect row、O は型成分としての origin である（§4.3、§4.4）。
+G1 の既存形から移行する場合は εin を `()`、旧来の ε を εout、ユーザー由来の O を `User` とする。
 
 `Res` は affine 資源の基本型であり、G1 の `Owned<τ>` の中身は `Res` に限る（§3.5）。
 `t` は TypeRep（§3.3）が保持する型式である。
@@ -207,9 +205,9 @@ G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `MutSlot(p)` も elaboration の出力には現れず、R-LetMutB が生成する。
 `resource(n)` は G1 で唯一の `Owned` 型の値であり、primitive `acquire`（§3.5）だけが導入する。
 
-`Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, ε, Q>` を項から消去する（`RecurVal` も同様）。
+`Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, (), ε, Q, User>` を項から消去する（`RecurVal` も同様）。
 この消去は `Lam` にも及ぶ。`Curry`/`Apply` の呼び出し先位置に置かれた `Lam(O, ℓ, (x̄), c)` は、その位置の期待型（curry 後の返り値型や apply の結果型）だけからは元の全パラメータ列を復元できない。
-たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(List<Int>, nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, {}, ⟨⟩>` であり、固定した第一引数の型 `List<Int>` を含まない。
+たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(List<Int>, nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, (), {}, ⟨⟩, Derived(User, Curry(Construct(List<Int>, nil)))>` であり、固定した第一引数の型 `List<Int>` を含まない。
 この情報は elaboration の E-Lambda（§4.3）・E-Recur（§4.6）がそれぞれ `NFn` シグネチャを組み立てる際にしか現れず、Typed Core の項単独からは回復できない。
 
 f は表層名にすぎず、同じ表層名を持つ複数の `recur` が同一の CoreArtifact 内に現れうる（E-Recur は f を内部的に改名しない。例：`recur f(x: Int) -> Int ! {} = 0 in 0` と `recur f(x: Bool) -> Int ! {} = 0 in 0` が同じ scope 中の兄弟式として現れる場合）。
@@ -235,7 +233,7 @@ elaboration の出力を c 単体ではなく組 **CoreArtifact** で表す。
 CoreArtifact ::= ⟨Φ, c⟩
 ```
 
-Φ は、e0 の elaboration 導出中に現れるすべての E-Lambda・E-Recur 適用が組み立てる `(ι, NFn<(τ1, …, τk), τ, ε', Q>)` を集めた有限写像である（E-Lambda は ι = ℓ かつ Q = ⟨⟩ を、E-Recur は ι = r かつ Q = ⟨⟩ を組み立てる。§4.3、§4.6）。
+Φ は、e0 の elaboration 導出中に現れるすべての E-Lambda・E-Recur 適用が組み立てる `(ι, NFn<(τ1, …, τk), τ, (), ε', Q, User>)` を集めた有限写像である（E-Lambda は ι = ℓ かつ Q = ⟨⟩ を、E-Recur は ι = r かつ Q = ⟨⟩ を組み立てる。§4.3、§4.6）。
 GUN により Φ は関数である。すなわち同じ CallableId に二つの異なるシグネチャが対応することはない。
 Φ は Ξ（place typing、§5.1）と同じ立場の補助環境であり、特定の elaboration アルゴリズムに依存せず、Typed Core の項に外部から付随するデータとして扱う。
 手書きの Typed Core を検査する場合も、対応する Φ を項と揃えて与える必要があり、項中のすべての ℓ/r が Φ の定義域に属し、かつ GUN を満たすことが前提となる。
@@ -250,12 +248,12 @@ O ::= Reserved(id)                               予約 origin。id ∈ dom(R0) 
     | Derived(O, step)                           派生 origin
     | User                                       ユーザー由来
 
-step ::= Curry(v) | Make(t) | Expand(name) | Policy(name) | Trait(tn) | Compose(name, O, O)
+step ::= Curry(c) | Make(t) | Expand(name) | Policy(name) | Trait(tn) | Compose(name, O, O)
 
 sort ::= prim(name) | type(N) | typeNarrative    R0 が予約 origin ID へ与える種別
 ```
 
-`Curry(v)` は部分適用（§5.3 R-CurryVal）の派生を表す。
+`Curry(c)` は部分適用（§5.3 R-CurryVal）の派生を表し、c は値または Typed Core の式である。
 `Make(t)` は TypeInfo 生成（§4.8 E-TypeMake）の派生を表し、生成された TypeRep が保持する型式 t を記録する。
 `Expand(name)` は Sugar 展開の派生を表し、展開したマクロの名前 name を記録する（`macro.md` §8）。[REQ: MAC-001]
 `Trait(tn)` は予約 Narrative から trait の生成能力を継承したことを表す step である。trait 名 tn を記録する。[REQ: NAR-003]
@@ -324,8 +322,8 @@ Redex model の負例テストはこの拒否を確認する。
 G2d は origin 検証を初期成果物の層と到達成果物の層に分け、validator 正典表に基づく Refined 値の検査を足した。
 規則は `proof-value.md` §7 に置く（本節では二重に定義しない）。
 
-ホワイトペーパー §11.5.2 は適用規則の前提に `valid-origin(O)` を置くが、G1 では origin を型成分から外したため、この前提を `verify-origins` による Typed Core 全体の一括検査へ再配置した。
-origin を型成分として引数位置の関数に固定すると、異なる origin の関数を同じ高階関数へ渡せなくなるためである。
+ホワイトペーパー §11.5.2 は適用規則の前提に `valid-origin(O)` を置くため、G2 以降も `verify-origins` による Typed Core 全体の一括検査を併用する。
+origin を型成分として引数位置の関数に固定すると異なる origin の関数を同じ高階関数へ渡せなくなる懸念は正しいが、これを閉じるのは O を型から外すことではなく `compat?` の判定から外すことである。
 
 ### 3.5 初期環境
 
@@ -346,13 +344,13 @@ R0 = { o-add ↦ prim(add), o-sub ↦ prim(sub), o-mul ↦ prim(mul),
 **Γ0（primitive）**：
 
 ```text
-add : NFn<(Int, Int), Int, {}, ⟨⟩>        値 PrimVal(Reserved(o-add), add)
-sub : NFn<(Int, Int), Int, {}, ⟨⟩>        値 PrimVal(Reserved(o-sub), sub)
-mul : NFn<(Int, Int), Int, {}, ⟨⟩>        値 PrimVal(Reserved(o-mul), mul)
-lt  : NFn<(Int, Int), Bool, {}, ⟨⟩>       値 PrimVal(Reserved(o-lt), lt)
-le  : NFn<(Int, Int), Bool, {}, ⟨⟩>       値 PrimVal(Reserved(o-le), le)
-eq  : NFn<(Int, Int), Bool, {}, ⟨⟩>       値 PrimVal(Reserved(o-eq), eq)
-acquire : NFn<(Int), Owned<Res>, {}, ⟨⟩>  値 PrimVal(Reserved(o-acquire), acquire)
+add : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-add)>        値 PrimVal(Reserved(o-add), add)
+sub : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-sub)>        値 PrimVal(Reserved(o-sub), sub)
+mul : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-mul)>        値 PrimVal(Reserved(o-mul), mul)
+lt  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-lt)>       値 PrimVal(Reserved(o-lt), lt)
+le  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-le)>       値 PrimVal(Reserved(o-le), le)
+eq  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-eq)>       値 PrimVal(Reserved(o-eq), eq)
+acquire : NFn<(Int), Owned<Res>, (), {}, ⟨⟩, Reserved(o-acquire)>  値 PrimVal(Reserved(o-acquire), acquire)
 ```
 
 Γ0 は elaboration の初期 Γ ではなく、E-Prim（§4.2）と T-Prim（§5.1）だけが引く固定表である。
@@ -423,7 +421,7 @@ ng<τ, σ>  : (σ) -> Result<τ, σ>
 プログラム全体の elaboration は `∅; Δ0; Π0; ⟨⟩ ⊢ e0 ⇒ τ0 ! ε0 ⟹ c0` として行う。
 Γ の初期値は空であり、Γ0（§3.5）は Γ の一部ではない。
 primitive 名は E-Prim（§4.2）が PrimVal へ解決するため、初期 Γ に primitive の束縛は要らない。
-この導出中に現れる E-Lambda（§4.3）・E-Recur（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>)` / `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
+この導出中に現れる E-Lambda（§4.3）・E-Recur（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` / `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
 
 **[REQ: SCP-002] 束縛出現の一意化**
 
@@ -571,20 +569,20 @@ bodyC = Let(u1 : Owned<κ1>, c1,
                      … Let(aim : Owned<τim>, yim, c) …)))
 LC = Lam(User, ℓ, (c1, …, cn, y1, …, yk),
          Handle(Return<b, τ>, x -> x, Scope(∅, bodyC)))
-Ti = Owned<NFn<(κi+1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>>
+Ti = Owned<NFn<(κi+1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>>
 
 --------------------------------
 n = 0 のとき
   Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> τ ! εdecl  e
-    ⇒ NFn<(τ1, …, τk), τ, εdecl', ⟨⟩> ! {}
+    ⇒ NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User> ! {}
     ⟹ LC
 
 n > 0 のとき
   Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> τ ! εdecl  e
-    ⇒ Owned<NFn<(τ1, …, τk), τ, εdecl', ⟨⟩>> ! (Own)
+    ⇒ Owned<NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User>> ! (Own)
     ⟹ Let(t1 : T1, Curry(LC, Move(u1)),
          … Let(tn : Tn, Curry(Move(tn-1), Move(un)), Move(tn)) …)
-Φ(ℓ) = NFn<(κ1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>  （両方の枝に共通）
+Φ(ℓ) = NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>  （両方の枝に共通）
 ```
 
 ここで `owned-captures` は、Γ の現在の可視項目から `Owned<κ>` の型を持つ名前を取り、`free-vars(e)` から `(a1, …, ak)` を除いた集合との共通部分を対象にする。
@@ -607,21 +605,23 @@ n > 0 のとき
 `Owned` の仮引数に対応する `Let` はこの Scope の直下に置かれ、R-LetOwned が呼出しごとに place を確保する。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
-ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, εdecl', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
+ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 **(E-Apply)**
 
 ```text
-Γ; Δ; Π; B ⊢ e0 ⇒ NFn<(τ1, …, τk), τ, ε, Q> ! ε0 ⟹ c0
+Γ; Δ; Π; B ⊢ e0 ⇒ NFn<(τ1, …, τk), τ, εin, εout, Q, O> ! ε0 ⟹ c0
 Γ; Δ; Π; B ⊢ ei ⇐ τi ! εi ⟹ ci        （i = 1 … k）
 obligations(Q) ⊆ dom-propositions(Π)
+εa = ε1 ∪ … ∪ εk
 --------------------------------
-Γ; Δ; Π; B ⊢ e0(e1, …, ek) ⇒ τ ! ε0 ∪ ε1 ∪ … ∪ εk ∪ ε
+Γ; Δ; Π; B ⊢ e0(e1, …, ek) ⇒ τ ! ε0 ∪ combine(εa, εin, εout)
   ⟹ Apply(c0, c1, …, ck)
 ```
 
-適用の Effect は、関数式と引数の Effect に潜在 row ε を合わせた和集合とする。
-これはホワイトペーパー §11.5.2 の `combine(εa, εi, εo)` の G1 定義である。
+適用の Effect は、関数式の ε0 と、`combine(εa, εin, εout)` の結果の和集合である。
+`combine(εa, εin, εout) = (εa \ εin) ∪ εout` とし、入口 row εin を引数側の row から消費して出口 row εout を加える。
+row の差と和は Effect 型の同値に従って計算し、同値だが構文の異なる label も一つへ畳む。
 Proof obligation の検査に使う集合は `obligations(⟨φ1, …, φn⟩) = {φ1, …, φn}`、`dom-propositions(Π) = { φ | (φ, O) ∈ range(Π) }` で定める。
 Q の各命題は Π に存在しなければならない。
 origin の検査は §3.4 のとおり `verify-origins` が Typed Core 全体に対して行う。
@@ -632,18 +632,18 @@ origin の検査は §3.4 のとおり `verify-origins` が Typed Core 全体に
 
 ```text
 Γ; Δ; Π; B ⊢ e1 ⇒ F ! εf ⟹ c1        （k ≥ 1）
-peel-owned-function(F) = (NFn<(τ1, τ2, …, τk), τ, ε, Q>, owned_f)
+peel-owned-function(F) = (NFn<(τ1, τ2, …, τk), τ, εin, εout, Q, O>, owned_f)
 Γ; Δ; Π; B ⊢ e2 ⇐ τ1 ! εa ⟹ c2
 b = owned_f ∨ owned-type?(τ1)
 --------------------------------
 Γ; Δ; Π; B ⊢ curry(e1, e2)
-  ⇒ (if b then Owned<NFn<(τ2, …, τk), τ, ε, specialize(Q, e2)>>
-      else NFn<(τ2, …, τk), τ, ε, specialize(Q, e2)>) ! εf ∪ εa
+  ⇒ (if b then Owned<NFn<(τ2, …, τk), τ, εin, εout, specialize(Q, e2), Derived(O, Curry(erase-core(c2)))>>
+      else NFn<(τ2, …, τk), τ, εin, εout, specialize(Q, e2), Derived(O, Curry(erase-core(c2)))>) ! εf ∪ εa
   ⟹ Curry(c1, c2)
 ```
 
-curry は先頭引数を固定し、返り値型 τ と潜在 Effect row ε を保存し、Proof obligation を固定引数で特殊化する（CUR-001）。
-G1 には Effect 多相がないため `specialize(ε, a) = ε` であり、`specialize(Q, a)` は Q の中の先頭引数への参照を a で置換する。
+curry は先頭引数を固定し、返り値型 τ、入口 row εin、出口 row εout を保存し、Proof obligation を固定引数で特殊化する（CUR-001）。
+G1 には Effect 多相がないため `specialize(εin, a) = εin` と `specialize(εout, a) = εout` であり、`specialize(Q, a)` は Q の中の先頭引数への参照を a で置換する。
 
 固定引数の型が `Owned<τ1>` であるか、関数側の型が `Owned<NFn …>` であるとき、結果型も `Owned<NFn 残余>` になる。
 どちらも該当しないときは、結果型は従来どおり素の `NFn 残余` である。
@@ -663,6 +663,8 @@ curry は新しい `Reserved` origin を決して作らない（CUR-002）。
 ```text
 origin(curry(f, a)) ≠ Reserved(new-id)
 ```
+
+F* 側は Surface の構文と lowering の対応を扱い Typed Core の型層を対象にしないため、本サイクルの変更は生じない。
 
 ### 4.5 return と boundary
 
@@ -709,7 +711,7 @@ B' = push(B, ExpressionBoundary(b, τ))
 e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
 r fresh                                            （CallableId、§3.3。表層名 f とは別に割り当てる）
 ε' = resolveReturn(B, εdecl)
-Γf = Γ, f : NFn<(τ1, …, τk), τ, ε', ⟨⟩>
+Γf = Γ, f : NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 Γf, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇐ τ ! εbody ⟹ c1
 εbody ⊆ ε'
 Γf; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
@@ -724,7 +726,7 @@ Recur(r, f, (y1, …, yk),
                      Scope(∅, Let(xi1 : Owned<τi1>, yi1,
                                … Let(xim : Owned<τim>, yim, c1) …)),
                      c2)
-  かつ Φ(r) = NFn<(τ1, …, τk), τ, ε', ⟨⟩>
+  かつ Φ(r) = NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 ```
 
 `Recur` と `RecurVal` の `Owned` 捕捉は G5c5b2 では扱わない。
@@ -746,7 +748,7 @@ m が 0 のとき、つまり `Owned` の仮引数が無いとき、`Scope` も 
 recur は関数境界を押さないため、包まないと呼出し側の `Scope` へ place が積み上がる。
 R-RecurUnfold（§5.4）は本体を複製するが、各呼出しの引数の place はその呼出しの `Scope` が管理する。
 計算分類は、継続 c2 を含む Recur 項全体に対して行う（C-Guarded は c2 が f の適用であることも検査する。§6.2）。
-r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, ε', ⟨⟩>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
+r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 `recur` は loop の lowering 先となる内部 marker であり、関数境界を push しない（RET-003 の適用対象）。
 body の中の `return` は外側の最寄りの境界へ解決される。
@@ -1373,8 +1375,8 @@ p は判定根拠（`no-recursion`、`structural`、`guarded`）である。
 この順序により、複数の規則の前提を同時に満たす項は Finite 側へ分類される。
 
 補助条件 **pre(f, c)** を次で定める。
-c の中の、頭が f でないすべての適用 Apply(c0, c1, …, ck) について、c0 の合成型 `NFn<P, R, ε, Q>` の潜在 row ε が `Partial` も `Yield<_>` も含まないとき、pre(f, c) が成り立つ。
-E-Recur は Unknown な再帰の宣言 row に `Partial` を要求し（§4.6）、guarded な再帰の合成 row には `Yield` が入る（E-Yield、§4.6）。
+c の中の、頭が f でないすべての適用 Apply(c0, c1, …, ck) について、c0 の合成型 `NFn<P, R, εin, εout, Q, O>` の出口 row εout が `Partial` も `Yield<_>` も含まないとき、pre(f, c) が成り立つ。
+E-Recur は Unknown な再帰の宣言 row εout に `Partial` を要求し（§4.6）、guarded な再帰の合成 row εout には `Yield` が入る（E-Yield、§4.6）。
 このため潜在 row の検査は、呼び先の中に隠れた発散と無限観測の可能性を、呼び先の本体を見ずに検出する。
 観測を有限個生成して停止する関数の row も `Yield` を含むため、pre はこれも拒否する。
 この過剰な保守性は、row を超える情報を持たない G1 で sound 側に倒した設計である。
@@ -1477,12 +1479,13 @@ soundness の意味は §7 性質 6 で与える。
 **型同値** `Δ ⊢ τ1 ≡ τ2` は次で定める。
 
 - 基本型と組み込みデータ型は構造的な合同で比較する（`List<τ> ≡ List<τ'>` は `τ ≡ τ'` に帰着する）。
-- `NFn<P, R, ε, Q>` は P、R、ε、Q の成分ごとの一致で比較する。
+- `NFn<P, R, εin, εout, Q, O>` は P、R、εin、εout、Q の成分ごとの一致で比較し、O は `equal?` で比較する。
+- `compat?` では O を比較対象から外す。異なる origin の関数を同じ高階関数へ渡せることは `compat?` の責務であり、`compat-erase-nfn-origins` が O を `User` へ正規化する。
 - 型レベル計算（TypeRep の適用）を正規化して比較できるのは、その計算の ⇓class が Finite の場合に限る。 [REQ: PRF-002]
 - ⇓class が Productive の型レベル計算は、観測深度の上限までの有限観測で比較する。
 - ⇓class が Unknown の型レベル計算と Proof は正規化に使わず、構文的同一性（opaque identity）だけで比較する。 [REQ: PRF-002]
 - `Proof<φ1> ≡ Proof<φ2>` は φ1 = φ2 に帰着する。Proof term 本体（ProofRep の値）は型同一性の判定に関与しない（irrelevance）。 [REQ: PRF-003]
-- origin は型同値の比較対象ではない。origin は valid-origin と authorized の検査（capability の判定）で使われ、そこでは同値な型を持つ値どうしでも origin が異なれば区別される（provenance は relevant）。 [REQ: PRF-003]
+- origin は valid-origin と authorized の検査（capability の判定）で使われ、そこでは同値な型を持つ値どうしでも origin が異なれば区別される（provenance は relevant）。 [REQ: PRF-003]
 
 G1 の型言語に現れる型レベル計算は constructor 適用（spec の解釈）だけであり、すべて Finite である。
 上の ⇓class ガードは、Phase 4 以降で型レベル計算が拡張されたときも型同値の定義を変えずに済ませるための規定である。
@@ -1574,7 +1577,7 @@ curry で作った倍化関数を各要素へ適用する。
 
 ```text
 map =
-  fn(f : NFn<(Int), Int, {}, ⟨⟩>, values : List<Int>) -> List<Int> ! {}
+  fn(f : NFn<(Int), Int, (), {}, ⟨⟩, User>, values : List<Int>) -> List<Int> ! {}
     recur go(rest : List<Int>) -> List<Int> ! {} =
       eliminate rest {
         nil()       => construct nil()
