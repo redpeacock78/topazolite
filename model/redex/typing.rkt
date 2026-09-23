@@ -673,7 +673,11 @@
     [_ #f]))
 
 (define (row-union left right)
-  (term (row-∪ ,left ,right)))
+  (for/fold ([combined left])
+            ([label (in-list right)])
+    (if (for/or ([existing (in-list combined)]) (effect-equiv? existing label))
+        combined
+        (append combined (list label)))))
 
 (define (rows-union rows)
   (for/fold ([combined '()])
@@ -681,10 +685,17 @@
     (row-union combined row)))
 
 (define (row-difference row removed)
-  (term (row-\\ ,row ,removed)))
+  (for/list ([label (in-list row)]
+             #:unless (for/or ([r (in-list removed)]) (effect-equiv? r label)))
+    label))
 
 (define (row-subset? left right)
-  (term (row-⊆ ,left ,right)))
+  (for/and ([label (in-list left)])
+    (for/or ([r (in-list right)]) (effect-equiv? r label))))
+
+;; spec §4.1。引数の Effect のうち εin が受理するものを落とし、εout を足す。
+(define (combine argument-row εin εout)
+  (row-union (row-difference argument-row εin) εout))
 
 (define (row=? left right)
   (row-equiv? left right))
@@ -2626,7 +2637,7 @@
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
        [(list `(NFn ,parameter-types
-                    ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
+                    ,return-type ,latent-in ,latent-out ,obligations ,_origin)
               _ _)
         ;; §4.2。再帰の束縛は、環境から引いた対の同一性で判別する。名前で
         ;; 引くと、本体の中の Let が影にした同名の束縛を再帰と見なす。
@@ -2714,11 +2725,10 @@
            fail))
         (unless (obligations-dischargeable? obligations Γ-pc0)
           (fail 'unsatisfied-proof-obligation core))
+        (define argument-rows-union (rows-union (first argument-result)))
         (list return-type
-              (rows-union
-               (append (list function-row)
-                       (first argument-result)
-                       (list latent-row)))
+              (row-union function-row
+                         (combine argument-rows-union latent-in latent-out))
               next-psi)]
        [_ (fail 'apply-non-function function)])]
 
