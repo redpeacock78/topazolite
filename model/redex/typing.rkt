@@ -694,7 +694,7 @@
   (for/and ([label (in-list left)])
     (for/or ([r (in-list right)]) (effect-equiv? r label))))
 
-;; spec §4.1。引数の Effect のうち εin が受理するものを落とし、εout を足す。
+;; spec §4.3。引数の Effect のうち εin が受理するものを落とし、εout を足す。
 (define (combine argument-row εin εout)
   (row-union (row-difference argument-row εin) εout))
 

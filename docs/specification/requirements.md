@@ -647,6 +647,14 @@ Surface の型注釈と署名は、Typed Core への elaboration を通じて型
 
 関数の戻り型の省略は、省略された戻り型を推論して Typed Core へつながらなければならない。
 
+### SUR-009
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/trait.md` §9
+
+trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering されなければならない。
+
 ### MOD-001
 
 - **状態**：Phase 2 以降
@@ -868,6 +876,7 @@ ID は状態と検証欄を持ち gate の期待集合に入るが、本節の�
 P2b では、Phase 2 の実装対象と本表の Phase 2 行を合わせた 41 項目を A から D の 4 分類へ整理し、B と C を要件 ID として §3 へ起票した。
 分類結果は A が 10 件、B が 20 件、C が 9 件、D が 2 件である。
 §4 の行が既存 ID に覆われていると分かった項目は分類ではなく P2a の監査欠陥として扱い、新しい ID を作らずにその行を削除する。
+P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではなく Surface の独立した未実装だと分かったため、`SUR-009` として §3 へ起こし、その行を削除した。
 
 行き先の値は次の 5 つである。
 
@@ -905,7 +914,6 @@ P2b では、Phase 2 の実装対象と本表の Phase 2 行を合わせた 41 �
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
 | 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
-| 三項以上の trait 合成 | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
 | 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
