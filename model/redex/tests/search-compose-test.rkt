@@ -52,6 +52,7 @@
   (check-true (proof-issuer-ok? R0 compose-int
                                 '(Implements Int PrintableSizable))))
 
+;; [REQ: NAR-004]
 (test-case "NAR-004: 合成 Proof の親は intersect の派生 origin である"
   (check-true
    (proof-issuer-ok? R0

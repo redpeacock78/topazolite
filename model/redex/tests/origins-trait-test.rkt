@@ -96,6 +96,7 @@
                       (intersect-row-by-name 'intersect-printable-sizable))
                      '(RequiresBoth Printable Sizable))))
 
+;; [REQ: NAR-004]
 (test-case "NAR-004: 旧形の Reserved oid は Proof 発行者として通らない"
   (check-false
    (proof-issuer-ok? R0 '(Reserved o-impl-printable-int)

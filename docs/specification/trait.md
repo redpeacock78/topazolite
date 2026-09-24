@@ -210,7 +210,8 @@ tn-trait : Proof<(ValidNarrativeTrait tn)>
 
 ```text
 nm : NFn<(Record(instantiate-requirements(template-of(tn), τ))),
-         Proof<Implements<τ, tn>>, (), (), (), Reserved(oid)>
+         Proof<Implements<τ, tn>>, (), (), (),
+         Derived(TraitResolutionOrigin, Impl(oid, kind, τ, tn))>
 ```
 
 各 intersect 行から、次の Γ0 primitive を導く。
@@ -218,12 +219,17 @@ nm : NFn<(Record(instantiate-requirements(template-of(tn), τ))),
 ```text
 nm : NFn<(Proof<ValidNarrativeTrait<tn_left>>,
           Proof<ValidNarrativeTrait<tn_right>>),
-         Proof<RequiresBoth<tn_left, tn_right>>, (), (), (), Reserved(oid)>
+         Proof<RequiresBoth<tn_left, tn_right>>, (), (), (),
+         Derived(TraitResolutionOrigin,
+                 Intersect(oid, tn_left, tn_right, tn_out))>
 ```
 
-R0 は、impl と intersect の origin を `(prim nm)` へ対応させる。
+R0 は、impl と intersect の行識別子を `(prim nm)` へ対応させる。
 trait 行の第 1 欄は表の鍵であり、R0 の ID ではない。
 trait の Proof が持つ origin は `Derived(Reserved(o-language-narrative), Trait(tn))` であり、予約 Narrative から生成能力を継承したことを表す。[REQ: NAR-003]
+`TraitResolutionOrigin` は `Derived(Reserved(o-language-narrative), Policy(TraitResolution))` である。
+impl と intersect の Proof は `TraitResolutionNarrative` の操作から生成されるため、`TraitResolutionOrigin` を親に取る。
+trait が `o-language-narrative` を直接の親に取るのに対してこの形を取るのは、trait の生成と trait resolution の操作が異なる Narrative に属するためである。
 表由来の名前または引数個数が合わない δ 適用は `undefined` を返し、既存の R-Delta を不発火にする。
 
 ## 5. Proof の生成と検証
@@ -237,12 +243,13 @@ Proof の発行には、`impl-table` の行へ結び付いた予約 origin が�
 
 ### 5.2 impl と derive
 
-`kind` が `impl` と `derive` のどちらでも、対応する単項 primitive は同じ形の Proof を返す。 [REQ: TRT-002]
+`kind` が `impl` と `derive` のどちらでも、対応する単項 primitive は同じ形の Proof を返す。 [REQ: TRT-002] [REQ: NAR-004]
 
 ```text
 impl-table に (oid, nm, kind, tn, τ, sid_target) がある
 δ(nm, record)
-  = ProofRep(Reserved(oid), Implements<τ, tn>)
+  = ProofRep(Derived(TraitResolutionOrigin, Impl(oid, kind, τ, tn)),
+             Implements<τ, tn>)
 ```
 
 δ 規則は `kind` を分岐条件に使わない。
@@ -252,9 +259,9 @@ impl-table に (oid, nm, kind, tn, τ, sid_target) がある
 ### 5.3 発行者対応と出現許可
 
 `ValidNarrativeTrait tn` は、対応する trait 行の `tid` だけが発行できる。
-`Implements τ tn` は、対応する impl 行の `oid` だけが発行できる。
-`RequiresBoth A B` は、対応する intersect 行の `oid` だけが発行できる。
-合成 `Implements τ tn_out` は、対応する intersect 行の `iid` を親に持つ `Compose` step と、成分二つの origin を含む origin だけが発行できる。
+`Implements τ tn` は、対応する impl 行の `Derived(TraitResolutionOrigin, Impl(oid, kind, τ, tn))` だけが発行できる。
+`RequiresBoth A B` は、対応する intersect 行の `Derived(TraitResolutionOrigin, Intersect(iid, A, B, A&B))` だけが発行できる。
+合成 `Implements τ tn_out` は、対応する intersect 行の派生 origin を親に持つ `Compose` step と、成分二つの origin を含む origin だけが発行できる。
 発行者対応は R0 の登録内容も照合する。
 
 `Compose` の発行者検査は、intersect 行の出力 trait と primitive binding を照合し、命題から復元した左右の `Implements` を成分 origin へ再帰的に適用する。
@@ -277,16 +284,21 @@ trait 定数は global 候補へ追加しないため、`ValidNarrativeTrait tn`
 impl 行から作る entry は、次の形を持つ。
 
 ```text
-(Implements τ tn, Reserved(oid), nm, root, default, (tid oid))
+(Implements τ tn, Derived(TraitResolutionOrigin, Impl(oid, kind, τ, tn)),
+             nm, root, default, (tid oid))
 ```
 
 intersect 行から作る entry は、次の形を持つ。
 
 ```text
-(RequiresBoth tn_left tn_right, Reserved(iid), nm, root, default, (iid))
+(RequiresBoth tn_left tn_right,
+             Derived(TraitResolutionOrigin,
+                     Intersect(iid, tn_left, tn_right, tn_out)),
+             nm, root, default, (iid))
 ```
 
 hook `(tid oid)` は、命題、trait 行、impl 行、entry の Proof origin を同じ二つの origin へ束縛する。
+第 6 欄の `oid` は origin そのものではなく、表の行を同定する hook として残す。
 `wf-context?` と `wf-candidate?` は同じ `hook-ok?` を使う。
 trait 以外の候補は、G2b までと同じ空 hook を持つ。
 
@@ -331,7 +343,9 @@ Finite の証拠は、`project-goal` が抽出した goal 単位の完全な候�
 合成候補は次の形を持つ。
 
 ```text
-(Candidate ProofRep(Derived(Reserved(iid), Compose(tn_out, O_A, O_B)),
+(Candidate ProofRep(Derived(Derived(TraitResolutionOrigin,
+                                    Intersect(iid, tn_A, tn_B, tn_out)),
+                            Compose(tn_out, O_A, O_B)),
                     Implements τ tn_out),
            (compose iid cid_A cid_B), root, default,
            (compose tid iid (O_A hook_A) (O_B hook_B)))
@@ -344,6 +358,7 @@ Finite の証拠は、`project-goal` が抽出した goal 単位の完全な候�
 性質検査は表の現在の三つの対象型 `Int`、`String`、`Bool` を使い、型を追加生成せずに `Resolved`、`Ambiguous`、`Absent` の三分岐を観測する。
 
 [REQ: TRT-004]
+[REQ: NAR-004]
 
 ### 6.6 `RequiresBoth` の暗黙充足
 
@@ -436,9 +451,3 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
   選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
   搬送した Proof を消費する下流処理は、Phase 4 以降で扱う。
-- **impl と intersect の origin**：impl 行と intersect 行は `(Reserved oid)` と R0 の `(prim nm)` のままである。
-  §5.3 の発行者検査は、`Implements τ tn` を対応する impl 行の `oid` に、`RequiresBoth A B` を対応する intersect 行の `oid` に結び付けており、行ごとの ID が単独で Proof を正当化する。
-  NAR-003 が trait 行について取り除いたのと同じ構造が、ここに残っている。
-  ホワイトペーパー §8.1 は「正規の所属は `impl` / `derive` Narrative が返す Proof で表す」と述べ、`TraitResolutionNarrative` に `impl` / `derive` と候補収集、一意性、coherence policy を置いている。
-  NAR-003 が回収したのは trait 生成側の系譜であり、この形について何も主張していない。
-  `(Reserved oid)` が最終的に正しい形だと決めたわけではない（`NAR-004`）。

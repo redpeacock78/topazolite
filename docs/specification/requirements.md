@@ -71,9 +71,9 @@
 
 ### NAR-004
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/trait.md` §9
+- **正典**：`docs/specification/trait.md` §4.4、§5.2
 
 impl と intersect の行は、対応する Narrative の生成系譜を origin として保持しなければならない。
 

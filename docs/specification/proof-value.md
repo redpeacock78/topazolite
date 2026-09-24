@@ -485,7 +485,7 @@ forge の拒否は **発行者対応** と **出現許可** に分ける。
 User origin、命題と oid の不一致、型の違うペイロード、check に失敗するペイロードを持つ `RVal` は到達層で拒否する。
 
 G2f では、合成 trait の候補が持つ `ProofRep` も発行者対応の対象に含める。
-`Implements τ tn_out` の origin は、対応する intersect 行の `iid` を親とする `Derived(Reserved(iid), Compose(tn_out, O_A, O_B))` でなければならない。
+`Implements τ tn_out` の origin は、対応する intersect 行の派生 origin `Derived(TraitResolutionOrigin, Intersect(iid, tn_A, tn_B, tn_out))` を親に持つ `Derived(..., Compose(tn_out, O_A, O_B))` でなければならない。
 `O_A` と `O_B` は intersect 行の左右の trait に対する `Implements` の発行者検査を再帰的に満たす。
 intersect 行の primitive binding と出力 trait も同時に照合する。
 この再帰の停止性は trait 表の非巡回性に依存する。
