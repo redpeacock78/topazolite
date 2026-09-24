@@ -17,6 +17,15 @@
          R0
          valid-origin?
          kernel-gamma0-entries
+         current-trait-ledger
+         current-trait-env
+         current-R0
+         current-Γ0
+         current-trait-r0-entries
+         current-trait-gamma0-entries
+         make-trait-ledger
+         (struct-out trait-ledger)
+         canonical-trait-ledger
          kindOf
          lookup
          origin-of
@@ -41,14 +50,7 @@
    (for/list ([row (in-list projection-table)])
      (list (first row) (list 'prim (second row))))))
 
-(define trait-r0-entries
-  (append
-   (for/list ([row (in-list impl-table)])
-     (list (impl-oid row) (list 'prim (impl-name row))))
-   (for/list ([row (in-list intersect-table)])
-     (list (intersect-oid row) (list 'prim (intersect-name row))))))
-
-(define R0
+(define kernel-r0
   (append
    (term ((o-add (prim add))
           (o-sub (prim sub))
@@ -76,18 +78,7 @@
    (term ((o-merge merge)))
    ;; PRF-005: narrowing が発行する残余安全性 witness。Policy Narrative の
    ;; 判定であり Γ0 に載らないため、単独の id として登録する。
-   (term ((o-narrow narrow)))
-   trait-r0-entries))
-
-;; NAR-003: 全 trait 行の origin が R0 の実値まで含めて正しいこと。行の形の
-;; 検査は traits.rkt の check-tables! が持ち、ここは R0 との照合だけを行う。
-;; trait-gamma0-entries より前に置くのは、壊れた origin を持つ Proof 値が
-;; いったん Γ0 へ入ってから検査が走るのを避けるためである。
-(for ([row (in-list trait-table)])
-  (unless (trait-origin-ok? R0 row)
-    (error 'origins
-           "trait row has an invalid origin against R0: ~s"
-           (trait-name row))))
+   (term ((o-narrow narrow)))))
 
 ;; RFN-001: validate primitive の型は行ごとの単相型である。latent effect と
 ;; obligation は空とする。判定は純粋な全域計算であるためである。
@@ -115,39 +106,7 @@
                        ,payload-type () () () (Reserved ,oid))
                  `(PrimVal (Reserved ,oid) ,name))))))
 
-(define (trait-constant-name row)
-  (string->symbol (format "~a-trait" (trait-name row))))
-
-(define trait-gamma0-entries
-  (append
-   (for/list ([row (in-list trait-table)])
-     (define proposition `(ValidNarrativeTrait ,(trait-name row)))
-     (list (trait-constant-name row)
-           (list `(Proof ,proposition)
-                 `(ProofRep ,(trait-derived-origin row) ,proposition))))
-   (for/list ([row (in-list impl-table)])
-     (define trait-row (trait-row-by-name (impl-trait-name row)))
-     (define requirements
-       (instantiate-requirements
-        (trait-template trait-row)
-        (impl-target-type row)))
-     (list (impl-name row)
-           (list `(NFn ((Record ,requirements))
-                       (Proof (Implements ,(impl-target-type row)
-                                          ,(impl-trait-name row)))
-                       () () () ,(impl-derived-origin row))
-                 `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row)))))
-   (for/list ([row (in-list intersect-table)])
-     (list (intersect-name row)
-           (list `(NFn ((Proof (ValidNarrativeTrait ,(intersect-left row)))
-                        (Proof (ValidNarrativeTrait ,(intersect-right row))))
-                       (Proof (RequiresBoth ,(intersect-left row)
-                                            ,(intersect-right row)))
-                       () () () ,(intersect-derived-origin row))
-                 `(PrimVal (Reserved ,(intersect-oid row))
-                           ,(intersect-name row)))))))
-
-(define Γ0
+(define kernel-gamma0
   (append
    (term ((add ((NFn (Int Int) Int () () () (Reserved o-add))
                 (PrimVal (Reserved o-add) add)))
@@ -163,8 +122,114 @@
                (PrimVal (Reserved o-eq) eq)))
           (acquire ((NFn (Int) (Owned Res) () () () (Reserved o-acquire))
                     (PrimVal (Reserved o-acquire) acquire)))))
-   kernel-gamma0-entries
-   trait-gamma0-entries))
+   kernel-gamma0-entries))
+
+(define (trait-r0-entries/env env)
+  (append
+   (for/list ([row (in-list (trait-env-impl-rows env))])
+     (list (impl-oid row) (list 'prim (impl-name row))))
+   (for/list ([row (in-list (trait-env-intersect-rows env))])
+     (list (intersect-oid row) (list 'prim (intersect-name row))))))
+
+(define (trait-gamma0-entries/env env)
+  (append
+   (for/list ([row (in-list (trait-env-trait-rows env))])
+     (define proposition `(ValidNarrativeTrait ,(trait-name row)))
+     (list (trait-constant-name row)
+           (list `(Proof ,proposition)
+                 `(ProofRep ,(trait-derived-origin row) ,proposition))))
+   (for/list ([row (in-list (trait-env-impl-rows env))])
+     (define trait-row (trait-row-by-name (impl-trait-name row) env))
+     (define requirements
+       (instantiate-requirements (trait-template trait-row)
+                                 (impl-target-type row)))
+     (list (impl-name row)
+           (list `(NFn ((Record ,requirements))
+                       (Proof (Implements ,(impl-target-type row)
+                                          ,(impl-trait-name row)))
+                       () () () ,(impl-derived-origin row))
+                 `(PrimVal (Reserved ,(impl-oid row)) ,(impl-name row)))))
+   (for/list ([row (in-list (trait-env-intersect-rows env))])
+     (list (intersect-name row)
+           (list `(NFn ((Proof (ValidNarrativeTrait ,(intersect-left row)))
+                        (Proof (ValidNarrativeTrait ,(intersect-right row))))
+                       (Proof (RequiresBoth ,(intersect-left row)
+                                            ,(intersect-right row)))
+                       () () () ,(intersect-derived-origin row))
+                 `(PrimVal (Reserved ,(intersect-oid row))
+                           ,(intersect-name row)))))))
+
+(define (trait-global-bindings/env env)
+  (append
+   (for/list ([row (in-list (trait-env-impl-rows env))])
+     (define trait-row (trait-row-by-name (impl-trait-name row) env))
+     (list (impl-name row)
+           (list `(Implements ,(impl-target-type row)
+                              ,(impl-trait-name row))
+                 (impl-derived-origin row)
+                 (impl-name row)
+                 'root
+                 'default
+                 (list (trait-origin trait-row) (impl-oid row)))))
+   (for/list ([row (in-list (trait-env-intersect-rows env))])
+     (list (intersect-name row)
+           (list `(RequiresBoth ,(intersect-left row)
+                                ,(intersect-right row))
+                 (intersect-derived-origin row)
+                 (intersect-name row)
+                 'root
+                 'default
+                 (list (intersect-oid row)))))))
+
+(define (check-unique-keys! table bail kind)
+  (let loop ([rows table] [seen (seteq)])
+    (cond [(null? rows) (void)]
+          [(set-member? seen (first (car rows)))
+           (bail 'surface-trait-name-collision kind (first (car rows)))]
+          [else (loop (cdr rows) (set-add seen (first (car rows))))])))
+
+(struct trait-ledger (env r0 gamma0 global-bindings) #:transparent)
+
+(define (make-trait-ledger env #:fail fail)
+  (let/ec return
+    (define (bail reason kind key) (return (fail reason kind key)))
+    (define r0 (append kernel-r0 (trait-r0-entries/env env)))
+    (define gamma0 (append kernel-gamma0 (trait-gamma0-entries/env env)))
+    ;; NAR-003: 行の origin を R0 の実値まで含めて照合する。壊れた origin を
+    ;; 持つ Proof 値は gamma0 に入るが、検査を通るまで台帳の外へ出ない。
+    (for ([row (in-list (trait-env-trait-rows env))])
+      (unless (trait-origin-ok? r0 row env)
+        (bail 'surface-trait-name-collision 'origin-id (trait-origin row))))
+    ;; trait 行の id は R0 の行ではないが、global binding の系譜で
+    ;; R0 の鍵と並ぶので、同じ名前空間で一意にする。
+    (check-unique-keys!
+     (append (for/list ([row (in-list (trait-env-trait-rows env))])
+               (list (trait-origin row) #f))
+             r0)
+     bail 'origin-id)
+    (check-unique-keys! gamma0 bail 'primitive-name)
+    (trait-ledger env r0 gamma0 (trait-global-bindings/env env))))
+
+(define canonical-trait-ledger
+  (make-trait-ledger canonical-trait-env
+                     #:fail (λ (reason kind key)
+                              (error 'origins "~a: ~s ~s" reason kind key))))
+
+(define current-trait-ledger (make-parameter canonical-trait-ledger))
+
+(define (current-trait-env) (trait-ledger-env (current-trait-ledger)))
+(define (current-R0) (trait-ledger-r0 (current-trait-ledger)))
+(define (current-Γ0) (trait-ledger-gamma0 (current-trait-ledger)))
+;; 台帳の構築順は kernel 行の後ろへ trait 行を append する。
+;; 呼出しのたびに env から組み直さず、台帳の欄の後半を切り出す。
+(define (current-trait-r0-entries)
+  (drop (current-R0) (length kernel-r0)))
+(define (current-trait-gamma0-entries)
+  (drop (current-Γ0) (length kernel-gamma0)))
+
+(define R0 (trait-ledger-r0 canonical-trait-ledger))
+(define Γ0 (trait-ledger-gamma0 canonical-trait-ledger))
+(define trait-gamma0-entries (drop Γ0 (length kernel-gamma0)))
 
 (define Δ0
   (term ((Int (TypeRep (Reserved o-int) Int Type))
@@ -185,41 +250,12 @@
 
 (define Π0 kernel-pi0-entries)
 
-;; traits.rkt は 3 表の内部だけを検査する。kernel 行との衝突は、表を既存の
-;; 環境へ足した後にだけ検査できる。
-(define (check-unique-keys! who table message)
-  (define keys (map car table))
-  (unless (= (length keys) (length (remove-duplicates keys)))
-    (error who message)))
-
-(check-unique-keys! 'origins R0 "trait rows collide with kernel R0 entries")
-(check-unique-keys! 'origins Γ0 "trait rows collide with kernel Γ0 entries")
-
 ;; Γ-pc⁰ へ足す global 候補。entry は (φ O cid sid pid hook) の 6 要素で、
 ;; origin と hook は同じ表の行へ決定的に結び付く。
 ;; TRT-005: intersect 行は RequiresBoth 候補も供給する。合成 trait が正典表に
 ;; 載っている以上、その二項要求は利用側が明示的に Apply しなくても立つ。
 (define (trait-global-bindings)
-  (append
-   (for/list ([row (in-list impl-table)])
-     (define trait-row (trait-row-by-name (impl-trait-name row)))
-     (list (impl-name row)
-           (list `(Implements ,(impl-target-type row)
-                              ,(impl-trait-name row))
-                 (impl-derived-origin row)
-                 (impl-name row)
-                 'root
-                 'default
-                 (list (trait-origin trait-row) (impl-oid row)))))
-   (for/list ([row (in-list intersect-table)])
-     (list (intersect-name row)
-           (list `(RequiresBoth ,(intersect-left row)
-                                ,(intersect-right row))
-                 (intersect-derived-origin row)
-                 (intersect-name row)
-                 'root
-                 'default
-                 (list (intersect-oid row)))))))
+  (trait-global-bindings/env (current-trait-env)))
 
 (define (kind-of/proc type-form)
   (case type-form
@@ -300,16 +336,17 @@
        ;; 一致することと、行そのものが R0 に対して正しいことを見る。親と step
        ;; の形をここへ書き写さないのは、正規の構成子を 1 箇所に保つためである。
        [`(Derived ,_ ,_)
-        (define row (trait-row-by-name trait))
+        (define env (current-trait-env))
+        (define row (trait-row-by-name trait env))
         (and row
              (equal? origin (trait-derived-origin row))
-             (trait-origin-ok? r0 row)
+             (trait-origin-ok? r0 row env)
              #t)]
        [_ #f])]
     [`(Implements ,type ,trait)
      (match origin
        [`(Derived ,_ (Impl ,id ,_ ,_ ,_))
-        (define row (impl-row-by-oid id))
+        (define row (impl-row-by-oid id (current-trait-env)))
         (define actual-key (canonical-proposition-key proposition))
         (define expected-key
           (and row
@@ -328,7 +365,7 @@
        ;; 停止性は intersect-table の非巡回性（intersect-acyclic?）から従う。
        [`(Derived (Derived ,_ (Intersect ,iid ,_ ,_ ,_))
                   (Compose ,output ,origin-left ,origin-right))
-        (define row (intersect-row-by-oid iid))
+        (define row (intersect-row-by-oid iid (current-trait-env)))
         (and row
              (eq? output trait)
              (eq? (intersect-output row) trait)
@@ -342,7 +379,7 @@
     [`(RequiresBoth ,_ ,_)
      (match origin
        [`(Derived ,_ (Intersect ,id ,_ ,_ ,_))
-        (define row (intersect-row-by-oid id))
+        (define row (intersect-row-by-oid id (current-trait-env)))
         (define actual-key (canonical-proposition-key proposition))
         (define expected-key
           (and row

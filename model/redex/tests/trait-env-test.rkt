@@ -2,10 +2,24 @@
 
 (require rackunit
          racket/set
+         "../origins.rkt"
          "../traits.rkt")
 
 (define (no-fail reason kind key)
   (error 'test "~s ~s ~s" reason kind key))
+
+(define custom-env
+  (make-trait-env
+   #:trait (append trait-table
+                   (list '(o-trait-env-test EnvTest root ((value Self imm)))))
+   #:impl (append impl-table
+                  (list '(o-impl-env-test impl-env-test impl EnvTest Int root)))
+   #:intersect intersect-table
+   #:scope scope-parent-table
+   #:fail no-fail))
+
+(define (custom-ledger)
+  (make-trait-ledger custom-env #:fail no-fail))
 
 (test-case
  "canonical env matches the module tables"
@@ -121,3 +135,54 @@
  (check-equal?
   (instantiate-requirements (trait-template foo) 'Bool)
   '((Self Int imm) (g (Record ((Self Bool imm))) imm))))
+
+(test-case
+ "the canonical ledger reproduces R0 and gamma0"
+ (check-equal? (trait-ledger-r0 canonical-trait-ledger) R0)
+ (check-equal? (trait-ledger-gamma0 canonical-trait-ledger) Γ0))
+
+(test-case
+ "the parameter is dynamically scoped"
+ (define custom (custom-ledger))
+ (parameterize ([current-trait-ledger custom])
+   (check-eq? (current-trait-ledger) custom)
+   (check-eq? (current-trait-env) custom-env)
+   (check-equal? (current-R0) (trait-ledger-r0 custom))
+   (check-equal? (current-Γ0) (trait-ledger-gamma0 custom))
+   (check-not-false (assoc 'o-impl-env-test (current-trait-r0-entries)))
+   (check-not-false (assoc 'impl-env-test (current-trait-gamma0-entries)))
+   (check-not-false (assoc 'impl-env-test (trait-global-bindings)))
+   (parameterize ([current-trait-ledger canonical-trait-ledger])
+     (check-eq? (current-trait-ledger) canonical-trait-ledger))
+   (check-eq? (current-trait-ledger) custom))
+ (check-eq? (current-trait-ledger) canonical-trait-ledger)
+ ;; 例外で脱出しても既定へ戻る。
+ (with-handlers ([symbol? void])
+   (parameterize ([current-trait-ledger custom]) (raise 'boom)))
+ (check-eq? (current-trait-ledger) canonical-trait-ledger))
+
+(test-case
+ "a trait row colliding with a kernel R0 key fails"
+ (define calls '())
+ (define env
+   (make-trait-env #:trait (cons (list 'o-int 'Collide 'root '())
+                                 trait-table)
+                   #:impl impl-table
+                   #:intersect intersect-table
+                   #:scope scope-parent-table
+                   #:fail no-fail))
+ (check-eq? (make-trait-ledger env
+                               #:fail (λ (reason kind key)
+                                        (set! calls (list reason kind key))
+                                        'failed))
+            'failed)
+ (check-equal? (second calls) 'origin-id))
+
+(test-case
+ "trait-origin-ok? rejects an R0 without the reserved narrative"
+ (define stripped
+   (for/list ([row (in-list R0)]
+              #:unless (eq? (first row) 'o-language-narrative))
+     row))
+ (check-false (trait-origin-ok? stripped (first trait-table)
+                                canonical-trait-env)))
