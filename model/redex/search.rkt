@@ -13,7 +13,7 @@
          resolved Absent ambiguous
          search-result? resolved? absent? ambiguous?
          resolved-proof ambiguous-proofs
-         candidateize initial-candidate-context Γ-pc0
+         candidateize initial-candidate-context Γ-pc0 current-Γ-pc0
          entry-phi entry-origin entry-cid entry-sid entry-pid entry-hook
          project project-goal scope-visible?
          candidate-proof candidate-prop candidate-origin
@@ -73,6 +73,13 @@
 
 (define Γ-pc0 (initial-candidate-context))
 
+;; 台帳ごとに候補文脈を 1 度だけ作る。値が台帳を参照しても台帳を回収
+;; できるよう、weak hash ではなく ephemeron hash にする。
+(define Γ-pc0-cache (make-ephemeron-hasheq))
+(define (current-Γ-pc0)
+  (hash-ref! Γ-pc0-cache (current-trait-ledger)
+             (λ () (initial-candidate-context))))
+
 ;; entry = (φ O cid sid pid hook)
 (define (entry-phi e)    (first e))
 (define (entry-origin e) (second e))
@@ -101,13 +108,14 @@
 (define (compose-candidates gamma-pc sc-ctx goal)
   (match (goal-proposition goal)
     [`(Implements ,type ,tn-out)
-     (define trait-row (trait-row-by-name tn-out))
+     (define trait-row (trait-row-by-name tn-out (current-trait-env)))
      (cond
        [(not trait-row) '()]
        [else
         (define tid (trait-origin trait-row))
         (append*
-         (for/list ([row (in-list intersect-table)]
+         (for/list ([row (in-list
+                          (trait-env-intersect-rows (current-trait-env)))]
                     #:when (eq? (intersect-output row) tn-out))
            (define iid (intersect-oid row))
            (define left
@@ -169,7 +177,10 @@
 ;; (root) から子 scope の宣言が見えてしまうため、この向きに固定する。
 (define (scope-visible? sid sc-ctx)
   (for/or ([s (in-list sc-ctx)])
-    (and (member sid (scope-ancestors s)) #t)))
+    (and (member sid
+                 (scope-ancestors
+                  s (trait-env-scope-rows (current-trait-env))))
+         #t)))
 
 ;; cand = (Candidate (ProofRep O φ) cid sid pid hook) または
 ;;        (Candidate (ProofRep s O φ) cid sid pid hook)
@@ -210,8 +221,8 @@
     [`(Implements ,type ,trait)
      (match hook
        [(list tid oid)
-        (define trait-row (trait-row-by-name trait))
-        (define impl-row (impl-row-by-oid oid))
+        (define trait-row (trait-row-by-name trait (current-trait-env)))
+        (define impl-row (impl-row-by-oid oid (current-trait-env)))
         (and trait-row
              impl-row
              (equal? origin (impl-derived-origin impl-row))
@@ -225,8 +236,8 @@
        ;; origin 内の Compose と一致しなければならない。origin だけを見ると
        ;; 成分の hook が偽装でき、coherence 判定の錨が外れる。
        [(list 'compose tid iid (list origin-a hook-a) (list origin-b hook-b))
-        (define row (intersect-row-by-oid iid))
-        (define trait-row (trait-row-by-name trait))
+        (define row (intersect-row-by-oid iid (current-trait-env)))
+        (define trait-row (trait-row-by-name trait (current-trait-env)))
         (and row
              trait-row
              (eq? (intersect-output row) trait)
@@ -250,7 +261,7 @@
     [`(RequiresBoth ,left ,right)
      (match hook
        [(list iid)
-        (define row (intersect-row-by-oid iid))
+        (define row (intersect-row-by-oid iid (current-trait-env)))
         (and row
              (eq? (intersect-left row) left)
              (eq? (intersect-right row) right)
@@ -272,8 +283,8 @@
      (and (hook-ok?/parts proposition origin hook)
           (match hook
             [(list tid oid)
-             (define trait-row (trait-row-by-oid tid))
-             (define impl-row (impl-row-by-oid oid))
+             (define trait-row (trait-row-by-oid tid (current-trait-env)))
+             (define impl-row (impl-row-by-oid oid (current-trait-env)))
              (and trait-row
                   impl-row
                   (or (scope-visible? (trait-scope trait-row) sc-ctx)
@@ -281,8 +292,8 @@
             ;; 合成候補には impl 行が無い。出力 trait の生成 scope が可視で
             ;; あり、かつ成分が二つとも coherent であることを錨にする。
             [(list 'compose tid iid (list origin-a hook-a) (list origin-b hook-b))
-             (define trait-row (trait-row-by-oid tid))
-             (define row (intersect-row-by-oid iid))
+             (define trait-row (trait-row-by-oid tid (current-trait-env)))
+             (define row (intersect-row-by-oid iid (current-trait-env)))
              (and trait-row
                   row
                   (scope-visible? (trait-scope trait-row) sc-ctx)
@@ -322,7 +333,7 @@
 ;; であり、探索文脈の候補には適用しない。Redex の metafunction を経由しない
 ;; ため、候補ごとの往復も減る。
 (define (origin-ok? O phi)
-  (proof-issuer-ok? R0 O phi))
+  (proof-issuer-ok? (current-R0) O phi))
 
 ;; wf-context?: Γ_pc の各 entry が単独で整合であること。goal に依らない判定で
 ;; あり、goal との一致は wf-Σ? が抽出後に見る。
@@ -527,7 +538,7 @@
      (and key
           key-proof
           (equal? key key-proof)
-          (proof-issuer-ok? R0 origin phi-proof)
+          (proof-issuer-ok? (current-R0) origin phi-proof)
           (proof-occurrence-ok? phi-proof)
           proof)]
     [_ #f]))

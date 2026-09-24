@@ -707,7 +707,7 @@
 ;; region どうしの関係は current-region-relation から取る。既定は equal? で
 ;; あり、region 引数を書かない programme の判定は変わらない。
 (define (type-compatible? actual expected)
-  (compat? actual expected Γ-pc0 (current-region-relation)))
+  (compat? actual expected (current-Γ-pc0) (current-region-relation)))
 
 ;; ROW-005。Eliminate が作った Union の導入点だけで、各枝の具体型を
 ;; 合流型の成分として再照合する。一般の mut field 互換性は不変のままにし、
@@ -1735,7 +1735,7 @@
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (compat? `(Record ,actual-row) declared-type Γ-pc0
+        (unless (compat? `(Record ,actual-row) declared-type (current-Γ-pc0)
                          (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
@@ -1770,7 +1770,7 @@
                 `(Record ,actual-row)
                 `(Record ,binding-row)
                 (lambda (actual expected)
-                  (compat? actual expected Γ-pc0
+                  (compat? actual expected (current-Γ-pc0)
                            (current-region-relation))))
           ['ok
            (void)]
@@ -2271,7 +2271,8 @@
 ;; 実際には boundary の内側であることが条件になる。
 (define (check-raw-obligations! core ids pointee fail)
   (unless (or (unsafe-permitted)
-              (obligations-dischargeable? (raw-obligations ids pointee) Γ-pc0))
+              (obligations-dischargeable? (raw-obligations ids pointee)
+                                          (current-Γ-pc0)))
     (fail 'unsafe-outside-boundary core)))
 
 ;; unsafe.md §2.2。生きた可変借用から native の owned pointer を作る。
@@ -2429,7 +2430,7 @@
      (list `(ForallRegion ,rps ,body-type) body-row body-psi)]
 
     [`(PrimVal ,_ ,name)
-     (match (assoc name Γ0)
+     (match (assoc name (current-Γ0))
        [(list _ (list type canonical-value))
         (unless (equal? canonical-value (peel-node core))
           (fail 'non-canonical-primitive core))
@@ -2654,7 +2655,7 @@
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-in ,latent-out ,obligations ,function-origin)
               _ _)
-        (unless (valid-origin? R0 function-origin)
+        (unless (valid-origin? (current-R0) function-origin)
           (fail 'type-origin-invalid function))
         ;; §4.2。再帰の束縛は、環境から引いた対の同一性で判別する。名前で
         ;; 引くと、本体の中の Let が影にした同名の束縛を再帰と見なす。
@@ -2740,7 +2741,7 @@
                                                 (list-ref actuals i)
                                                 (add1 i)))
            fail))
-        (unless (obligations-dischargeable? obligations Γ-pc0)
+        (unless (obligations-dischargeable? obligations (current-Γ-pc0))
           (fail 'unsatisfied-proof-obligation core))
         (define argument-rows-union (rows-union (first argument-result)))
         (list return-type
@@ -2807,7 +2808,7 @@
         ;; 第 1 要素は必ず RemainderSafelyDropped である。
         (match (first propositions)
           [`(RemainderSafelyDropped ,tau-actual ,tau-expected)
-           (unless (proof-issuer-ok? R0 origin (first propositions))
+           (unless (proof-issuer-ok? (current-R0) origin (first propositions))
              (fail 'discharge-proof-issuer core))
            (match (owned-narrowing-kind tau-actual tau-expected
                                         type-compatible?)

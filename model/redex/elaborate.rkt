@@ -898,7 +898,7 @@
                 (reject s 'owned-variable-requires-move name)
                 (judgment `(#:var ,name ,s) local-type '()))]
            [else
-            (match (lookup Γ0 name)
+            (match (lookup (current-Γ0) name)
               [(list type value) (judgment (attach-span value s) type '())]
               [_ (reject s 'unbound-variable name)])])]
 

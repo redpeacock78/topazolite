@@ -2,7 +2,13 @@
 
 (require rackunit
          racket/set
+         redex/reduction-semantics
+         "../backend-matrix.rkt"
+         "../lang.rkt"
+         "../lowering.rkt"
+         "../machine.rkt"
          "../origins.rkt"
+         "../search.rkt"
          "../traits.rkt")
 
 (define (no-fail reason kind key)
@@ -20,6 +26,52 @@
 
 (define (custom-ledger)
   (make-trait-ledger custom-env #:fail no-fail))
+
+(define scoped-env
+  (make-trait-env #:trait trait-table
+                  #:impl impl-table
+                  #:intersect intersect-table
+                  #:scope (append scope-parent-table '((child root)))
+                  #:fail no-fail))
+
+(define (scoped-ledger)
+  (make-trait-ledger scoped-env #:fail no-fail))
+
+(define no-intersect-env
+  (make-trait-env #:trait trait-table
+                  #:impl impl-table
+                  #:intersect '()
+                  #:scope scope-parent-table
+                  #:fail no-fail))
+
+(define (no-intersect-ledger)
+  (make-trait-ledger no-intersect-env #:fail no-fail))
+
+(define (user-impl-resolves?)
+  (pair? (project-goal (current-Γ-pc0) '(root)
+                       (make-goal '(Implements Int EnvTest)))))
+
+(define (user-impl-core)
+  '(Apply (PrimVal (Reserved o-impl-env-test) impl-env-test)
+          (Rec ((value imm 1)))))
+
+(define (run-g2-core core)
+  (match (run-g2 (inject-g2 core) 40)
+    [`(cfg ,result () () () ()) result]
+    [other (error 'run-g2-core "unexpected result: ~s" other)]))
+
+(define (run-user-impl)
+  (run-g2-core (user-impl-core)))
+
+(define (proof-rep? value)
+  (and (pair? value) (eq? (car value) 'ProofRep)))
+
+(define (lowering-reason-for name)
+  (define-values (status result)
+    (lower/with-matrix `(PrimVal (Reserved o-impl-env-test) ,name)
+                       'racket-cs backend-features))
+  (and (eq? status 'capability)
+       (capability-diagnostic-feature-id result)))
 
 (test-case
  "canonical env matches the module tables"
@@ -186,3 +238,48 @@
      row))
  (check-false (trait-origin-ok? stripped (first trait-table)
                                 canonical-trait-env)))
+
+(test-case
+ "a custom ledger resolves a user impl through project-goal"
+ (parameterize ([current-trait-ledger (custom-ledger)])
+   (check-true (user-impl-resolves?))))
+
+(test-case
+ "a custom ledger runs the user impl primitive"
+ (parameterize ([current-trait-ledger (custom-ledger)])
+   (check-true (proof-rep? (run-user-impl)))))
+
+(test-case
+ "verify-origins reads R0 and the trait rows from the ledger"
+ (parameterize ([current-trait-ledger (custom-ledger)])
+   (define proof (run-user-impl))
+   (check-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok)
+   (parameterize ([current-trait-ledger canonical-trait-ledger])
+     (check-not-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok))))
+
+(test-case
+ "current-Γ-pc0 follows the ledger and is built once per ledger"
+ (check-equal? (current-Γ-pc0) Γ-pc0)
+ (parameterize ([current-trait-ledger (custom-ledger)])
+   (check-not-equal? (current-Γ-pc0) Γ-pc0)
+   (check-eq? (current-Γ-pc0) (current-Γ-pc0))))
+
+(test-case
+ "lowering classifies custom primitives; trait entries exclude kernel names"
+ (parameterize ([current-trait-ledger (custom-ledger)])
+   (check-equal? (lowering-reason-for 'impl-env-test) 'trait-primitive)
+   (for ([name (in-list '(add sub mul lt le eq acquire))])
+     (check-false (assq name (current-trait-gamma0-entries))))))
+
+(test-case
+ "scope-visible? follows the ledger scope rows"
+ (parameterize ([current-trait-ledger (scoped-ledger)])
+   (check-true (scope-visible? 'root '(child))))
+ (check-false (scope-visible? 'root '(child))))
+
+(test-case
+ "compose-candidates reads intersect rows from the ledger"
+ (define goal (make-goal '(Implements Int PrintableSizable)))
+ (check-equal? (length (project-goal (current-Γ-pc0) '(root) goal)) 1)
+ (parameterize ([current-trait-ledger (no-intersect-ledger)])
+   (check-equal? (project-goal (current-Γ-pc0) '(root) goal) '())))

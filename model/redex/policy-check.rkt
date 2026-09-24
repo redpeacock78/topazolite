@@ -34,7 +34,7 @@
          (list->set (registered-policy-operations))))
 
 ;; POL-001: 全行の origin が R0 の実値まで含めて正しいこと。
-(define (policy-origins-ok? [r0 R0] [rows policy-table])
+(define (policy-origins-ok? [r0 (current-R0)] [rows policy-table])
   (for/and ([row (in-list rows)])
     (policy-origin-ok? r0 row)))
 

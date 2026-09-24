@@ -70,7 +70,7 @@
 
 ;; arity を写して二重定義にしない。Γ0 の NFn の引数個数をそのまま使う。
 (define (primitive-arity nm)
-  (match (lookup Γ0 nm)
+  (match (lookup (current-Γ0) nm)
     [(list (list 'NFn (list argument-types ...) _ _ _ _ _) _)
      (length argument-types)]
     [_ #f]))
@@ -166,7 +166,7 @@
       [(assq nm kernel-gamma0-entries)
        (fail 'kernel-primitive node
              (format "Typed Core の kernel primitive は写し先を持たない: ~a" nm))]
-      [(assq nm trait-gamma0-entries)
+      [(assq nm (current-trait-gamma0-entries))
        (fail 'trait-primitive node
              (format "trait primitive は Phase 2 以降の emitter を待つ: ~a" nm))]
       [else

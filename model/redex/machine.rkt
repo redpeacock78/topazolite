@@ -104,7 +104,7 @@
           [`(RVal (ProofRep ,_ ,_) ,payload) payload]
           [_ 'undefined])]
        ;; impl と derive は同じ規則で Implements Proof を返す。
-       [(impl-row-by-name name)
+       [(impl-row-by-name name (current-trait-env))
         => (lambda (row)
              `(ProofRep ,(impl-derived-origin row)
                         (Implements ,(impl-target-type row)
@@ -112,7 +112,7 @@
        [else 'undefined])]
     [(list _ _)
      (cond
-       [(intersect-row-by-name name)
+       [(intersect-row-by-name name (current-trait-env))
         => (lambda (row)
              `(ProofRep ,(intersect-derived-origin row)
                         (RequiresBoth ,(intersect-left row)
@@ -123,7 +123,7 @@
 ;; δ/g2 の側条件。既存の判定 primitive と trait primitive だけを拡張節へ通す。
 (define (g2-primitive-name? name)
   (or (kernel-primitive-name? name)
-      (trait-primitive-name? name)))
+      (trait-primitive-name? name (current-trait-env))))
 
 (define-metafunction/extension δ
   G2m
