@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 18)
+(define diagnostic-registry-version 19)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -372,6 +372,15 @@
 (define surface-entries-v17
   '(("E-SUR-012" surface-projection-labels "多 field 射影の label 列が空か重複している")))
 
+;; registry version 19。trait と impl の宣言の前処理が出す 6 行を足す。
+(define surface-entries-v19
+  '(("E-SUR-013" surface-duplicate-trait-decl "同じ名前の trait を 2 度宣言した")
+    ("E-SUR-014" surface-duplicate-impl-decl "同じ trait と対象型の組へ impl を 2 度宣言した")
+    ("E-SUR-015" surface-unknown-trait-name "宣言の無い trait の名前を impl が参照した")
+    ("E-SUR-016" surface-trait-name-collision "宣言が作る名前が trait 環境の既存の名前と衝突した")
+    ("E-SUR-017" surface-impl-requirement-mismatch "impl の本体のラベルが trait の要求と合わない")
+    ("E-SUR-018" surface-impl-composite-trait "合成 trait へ impl を宣言した")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -397,7 +406,8 @@
           (rows 'lowering 1 lowering-entries)
           (rows 'expand 14 expand-entries-v14)
           (rows 'surface 15 surface-entries-v15)
-          (rows 'surface 17 surface-entries-v17)))
+          (rows 'surface 17 surface-entries-v17)
+          (rows 'surface 19 surface-entries-v19)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。

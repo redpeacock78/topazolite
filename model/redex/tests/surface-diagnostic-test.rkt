@@ -19,14 +19,26 @@
     surface-duplicate-type-alias
     surface-recursive-type-alias
     surface-reserved-type-name
-    surface-projection-labels))
+    surface-projection-labels
+    surface-duplicate-trait-decl
+    surface-duplicate-impl-decl
+    surface-unknown-trait-name
+    surface-trait-name-collision
+    surface-impl-requirement-mismatch
+    surface-impl-composite-trait))
 
-;; v15 の 11 件に v17 の 1 件を足した。since は版ごとに異なる。
+;; v15 の 11 件に v17 の 1 件と v19 の 6 件を足した。since は版ごとに異なる。
 (define surface-since
-  (hasheq 'surface-projection-labels 17))
+  (hasheq 'surface-projection-labels 17
+          'surface-duplicate-trait-decl 19
+          'surface-duplicate-impl-decl 19
+          'surface-unknown-trait-name 19
+          'surface-trait-name-collision 19
+          'surface-impl-requirement-mismatch 19
+          'surface-impl-composite-trait 19))
 
 (test-case
- "12 件の key はすべて registry にあり、相は surface である"
+ "18 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
@@ -35,7 +47,7 @@
                  (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 12 件だけである"
+ "registry の surface 相はこの 18 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -44,8 +56,8 @@
                (sort (map symbol->string surface-keys) string<?)))
 
 ;; producer を持つのは 7 件である。6 件は P2c1 の lexer と parser が出し、
-;; surface-projection-labels は P2e2 の parser が出す。残る 5 件は P2c2 の
-;; surface-lower.rkt が出す。
+;; surface-projection-labels は P2e2 の parser が出す。残る 5 件は P2c2 の、
+;; v19 の 6 件は P2h1 の surface-lower.rkt が出す。
 ;; 3 つ目の欄は入力の byte 長である。primary span の上端をこれと比べる。
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
@@ -89,7 +101,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 12 件を描ける」である。producer の無い 5 件も
+;; spec §12 の「3 つの renderer が全 18 件を描ける」である。producer の無い 11 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -105,7 +117,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 12 件すべてを描ける"
+ "3 つの renderer が 18 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))
