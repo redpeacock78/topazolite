@@ -2,6 +2,7 @@
 
 (require racket/list
          racket/match
+         racket/set
          "erase.rkt"
          "policy.rkt"
          "rows.rkt"
@@ -13,6 +14,7 @@
          intersect-table
          trait-origin
          trait-derived-origin
+         trait-constant-name
          trait-resolution-origin
          impl-derived-origin
          intersect-derived-origin
@@ -32,6 +34,9 @@
          intersect-left
          intersect-right
          intersect-output
+         (struct-out trait-env)
+         make-trait-env
+         canonical-trait-env
          trait-row-by-name
          trait-row-by-oid
          impl-row-by-oid
@@ -128,6 +133,9 @@
 (define (trait-derived-origin row)
   `(Derived (Reserved o-language-narrative) (Trait ,(trait-name row))))
 
+(define (trait-constant-name row)
+  (string->symbol (format "~a-trait" (trait-name row))))
+
 ;; NAR-004: impl 行と intersect 行の Proof が持つべき origin。親は
 ;; TraitResolution policy の origin である。trait の Proof が
 ;; o-language-narrative を直接の親に取るのと非対称なのは、正典で trait が
@@ -154,12 +162,12 @@
 ;; R0 を見ずに済む部分。第 1 欄が symbol であること、投影が組み立てる
 ;; step の引数が行の trait 名と一致すること、その名前が表に宣言済みで
 ;; あることを見る。
-(define (trait-row-shape-ok? row)
+(define (trait-row-shape-ok? row [env canonical-trait-env])
   (match row
     [(list tid name _scope _template)
      (and (symbol? tid)
           (symbol? name)
-          (eq? (trait-row-by-name name) row)
+          (eq? (trait-row-by-name name env) row)
           (match (trait-derived-origin row)
             [`(Derived (Reserved o-language-narrative) (Trait ,step-name))
              (eq? step-name name)]
@@ -168,8 +176,8 @@
 
 ;; 予約 Narrative の id が R0 で実際にその値へ束縛されていることまで見る。
 ;; id の一致だけでは、R0 から予約 Narrative が消えても検査が通る。
-(define (trait-origin-ok? r0 row)
-  (and (trait-row-shape-ok? row)
+(define (trait-origin-ok? r0 row [env canonical-trait-env])
+  (and (trait-row-shape-ok? row env)
        (equal? (assq 'o-language-narrative r0)
                '(o-language-narrative languageNarrative))))
 
@@ -190,20 +198,20 @@
 (define (intersect-right row) (fourth row))
 (define (intersect-output row) (fifth row))
 
-(define (trait-row-by-name trait)
-  (findf (lambda (row) (eq? (trait-name row) trait)) trait-table))
-(define (trait-row-by-oid origin)
-  (findf (lambda (row) (eq? (trait-origin row) origin)) trait-table))
-(define (impl-row-by-oid origin)
-  (findf (lambda (row) (eq? (impl-oid row) origin)) impl-table))
-(define (impl-row-by-name name)
-  (findf (lambda (row) (eq? (impl-name row) name)) impl-table))
-(define (impl-rows-by-trait trait)
-  (filter (lambda (row) (eq? (impl-trait-name row) trait)) impl-table))
-(define (intersect-row-by-oid origin)
-  (findf (lambda (row) (eq? (intersect-oid row) origin)) intersect-table))
-(define (intersect-row-by-name name)
-  (findf (lambda (row) (eq? (intersect-name row) name)) intersect-table))
+(define (trait-row-by-name trait [env canonical-trait-env])
+  (hash-ref (trait-env-trait-by-name env) trait #f))
+(define (trait-row-by-oid origin [env canonical-trait-env])
+  (hash-ref (trait-env-trait-by-oid env) origin #f))
+(define (impl-row-by-oid origin [env canonical-trait-env])
+  (hash-ref (trait-env-impl-by-oid env) origin #f))
+(define (impl-row-by-name name [env canonical-trait-env])
+  (hash-ref (trait-env-impl-by-name env) name #f))
+(define (impl-rows-by-trait trait [env canonical-trait-env])
+  (hash-ref (trait-env-impl-by-trait env) trait '()))
+(define (intersect-row-by-oid origin [env canonical-trait-env])
+  (hash-ref (trait-env-intersect-by-oid env) origin #f))
+(define (intersect-row-by-name name [env canonical-trait-env])
+  (hash-ref (trait-env-intersect-by-name env) name #f))
 
 (define (scope-parent-row row) (first row))
 (define (scope-parent-of row) (second row))
@@ -211,7 +219,7 @@
 ;; COH-001: 自身を含む祖先の列。表に無い scope 識別子は親を持たないものと
 ;; して扱い、自身だけの列を返す。sid と sc-ctx は呼び出し側が組み立てる
 ;; 引数であり、表に無い識別子が渡り得る。
-(define (scope-ancestors sid [rows scope-parent-table])
+(define (scope-ancestors sid [rows (trait-env-scope-rows canonical-trait-env)])
   (let loop ([sid sid] [seen '()])
     (cond
       [(memq sid seen) (reverse seen)]
@@ -226,9 +234,10 @@
 ;; COH-001: 系譜表の内部整合と、trait 行・impl 行の scope が表に載っている
 ;; ことを見る。表を引数に取るのは拒否の経路をテストから実行するためであり、
 ;; intersect-acyclic? と同じ形である。
-(define (scope-genealogy-ok? [scope-rows scope-parent-table]
-                             [trait-rows trait-table]
-                             [impl-rows impl-table])
+(define (scope-genealogy-ok?
+         [scope-rows (trait-env-scope-rows canonical-trait-env)]
+         [trait-rows (trait-env-trait-rows canonical-trait-env)]
+         [impl-rows (trait-env-impl-rows canonical-trait-env)])
   (define shape-ok?
     (and (list? scope-rows)
          (for/and ([row (in-list scope-rows)])
@@ -274,21 +283,20 @@
 (define (instantiate-requirements template type)
   (check-spanless! 'instantiate-requirements type)
   (define (substitute value)
-    (cond
-      [(eq? value 'Self) type]
-      [(pair? value) (map substitute value)]
-      [else value]))
-  (for/list ([field (in-list template)])
-    (list (first field) (substitute (second field)) (third field))))
+    (match value
+      ['Self type]
+      [`(Record ,fields) `(Record ,(substitute-row fields))]
+      [(? pair?) (map substitute value)]
+      [_ value]))
+  (define (substitute-row fields)
+    (for/list ([field (in-list fields)])
+      (list (first field) (substitute (second field)) (third field))))
+  (substitute-row template))
 
-;; trait 由来の kernel primitive 名は、impl 行と intersect 行から導く。
-(define trait-primitive-names-list
-  (append (map impl-name impl-table)
-          (map intersect-name intersect-table)))
-
-(define (trait-primitive-names) trait-primitive-names-list)
-(define (trait-primitive-name? name)
-  (and (memq name trait-primitive-names-list) #t))
+(define (trait-primitive-names [env canonical-trait-env])
+  (set->list (trait-env-primitive-names env)))
+(define (trait-primitive-name? name [env canonical-trait-env])
+  (set-member? (trait-env-primitive-names env) name))
 
 ;; Self を許す template 専用の型検査。Self は型位置だけに現れ、
 ;; instantiate 後は通常の型正規化へ渡せることを load 時に保証する。
@@ -356,7 +364,7 @@
        (for/and ([field (in-list row)])
          (match field
            [(list label type mutability)
-            (and (metadata-symbol? label)
+            (and (symbol? label)
                  (memq mutability '(imm mut))
                  (template-type? type))]
            [_ #f]))))
@@ -366,7 +374,8 @@
 ;; どちらもこの辺を降りる再帰であり、巡回があると停止しない。
 ;; 祖先の連なりだけを path に積むため、同じ trait が別の枝に現れる表
 ;; （成分の共有）は巡回と見なさない。
-(define (intersect-acyclic? [rows intersect-table])
+(define (intersect-acyclic?
+         [rows (trait-env-intersect-rows canonical-trait-env)])
   (define (rows-for trait)
     (filter (lambda (row) (eq? (intersect-output row) trait)) rows))
   (define (descend trait path)
@@ -384,43 +393,96 @@
 ;; 合成 trait の実装は成分の impl から resolve-candidates が導出するものであり、
 ;; 直接行を許すと同じ (τ, tn) に導出経路と直接経路が併存し、coherence の一意性が
 ;; 表の側から破れる。
-(define (impl-not-composite? [impl-rows impl-table]
-                             [intersect-rows intersect-table])
+(define (impl-not-composite?
+         [impl-rows (trait-env-impl-rows canonical-trait-env)]
+         [intersect-rows (trait-env-intersect-rows canonical-trait-env)])
   (define composite-names
     (for/list ([row (in-list intersect-rows)])
       (intersect-output row)))
   (for/and ([row (in-list impl-rows)])
     (not (memq (impl-trait-name row) composite-names))))
 
-;; 3 表の内部整合を load 時に検査する。
-;; R0 と Γ0 との衝突は origins.rkt が append 後に検査する。
-(define (check-tables!)
-  (define (duplicate? values)
-    (not (= (length values) (length (remove-duplicates values)))))
+(struct trait-env
+  (trait-rows impl-rows intersect-rows scope-rows
+   trait-by-name trait-by-oid impl-by-oid impl-by-name impl-by-trait
+   intersect-by-oid intersect-by-name primitive-names)
+  #:transparent)
 
-  (when (duplicate? (map trait-name trait-table))
-    (error 'traits "duplicate trait name"))
+;; 索引は行の並びから 1 度だけ作る。key-of が同じ鍵を 2 度返す場合は
+;; 先に現れた行を残す。重複は check-env! が別に見る。
+(define (index-by key-of rows)
+  (for/fold ([h (hasheq)]) ([row (in-list rows)])
+    (if (hash-has-key? h (key-of row))
+        h
+        (hash-set h (key-of row) row))))
+
+(define (group-by-trait rows)
+  (for/fold ([h (hasheq)]) ([row (in-list rows)])
+    (hash-update h (impl-trait-name row)
+                 (λ (acc) (append acc (list row)))
+                 '())))
+
+(define (make-trait-env #:trait trait-rows
+                        #:impl impl-rows
+                        #:intersect intersect-rows
+                        #:scope scope-rows
+                        #:fail fail)
+  (let/ec return
+    (define (bail reason kind key)
+      (return (fail reason kind key)))
+    (define env
+      (trait-env trait-rows impl-rows intersect-rows scope-rows
+                 (index-by trait-name trait-rows)
+                 (index-by trait-origin trait-rows)
+                 (index-by impl-oid impl-rows)
+                 (index-by impl-name impl-rows)
+                 (group-by-trait impl-rows)
+                 (index-by intersect-oid intersect-rows)
+                 (index-by intersect-name intersect-rows)
+                 (list->seteq (append (map impl-name impl-rows)
+                                      (map intersect-name intersect-rows)))))
+    (check-env! env bail)
+    env))
+
+;; 3 表の内部整合を見る。R0 と Γ0 との衝突は origins.rkt が append 後に
+;; 見る。鍵の重複だけは利用者の宣言が作りうるので bail で返す。残りは
+;; 宣言の lowering が作らない誤りなので、error を上げたままにする。
+(define (check-env! env bail)
+  (define trait-rows (trait-env-trait-rows env))
+  (define impl-rows (trait-env-impl-rows env))
+  (define intersect-rows (trait-env-intersect-rows env))
+
+  (define (duplicate-key keys)
+    ;; 左から右へ見て、最初に 2 度目に現れた鍵を返す。
+    (let loop ([keys keys] [seen (seteq)])
+      (cond [(null? keys) #f]
+            [(set-member? seen (car keys)) (car keys)]
+            [else (loop (cdr keys) (set-add seen (car keys)))])))
+  (define (check-unique! keys kind)
+    (define dup (duplicate-key keys))
+    (when dup (bail 'surface-trait-name-collision kind dup)))
+
+  (check-unique! (map trait-name trait-rows) 'trait-name)
 
   ;; NAR-003 以降、trait 行の第 1 欄は R0 の ID ではなく表の鍵である。
   ;; この検査が守るのは鍵の一意性であり、trait-row-by-oid と search の
   ;; hook がこの鍵で行を引く。impl と intersect の第 1 欄は R0 の ID の
   ;; ままであり、3 つの表をまたいで衝突しないことを一度に見る。
-  (define origins
-    (append (map trait-origin trait-table)
-            (map impl-oid impl-table)
-            (map intersect-oid intersect-table)))
-  (when (duplicate? origins)
-    (error 'traits "duplicate origin id in the trait tables"))
-  (when (duplicate? trait-primitive-names-list)
-    (error 'traits "impl and intersect names collide"))
+  (check-unique! (append (map trait-origin trait-rows)
+                         (map impl-oid impl-rows)
+                         (map intersect-oid intersect-rows))
+                 'origin-id)
+  (check-unique! (append (map impl-name impl-rows)
+                         (map intersect-name intersect-rows))
+                 'primitive-name)
 
-  (for ([row (in-list trait-table)])
+  (for ([row (in-list trait-rows)])
     (unless (template-row? (trait-template row))
       (error 'traits "invalid requirement template in trait ~s"
              (trait-name row))))
 
-  (for ([row (in-list impl-table)])
-    (define trait-row (trait-row-by-name (impl-trait-name row)))
+  (for ([row (in-list impl-rows)])
+    (define trait-row (trait-row-by-name (impl-trait-name row) env))
     (unless trait-row
       (error 'traits "impl ~s names an undeclared trait" (impl-name row)))
     (unless (memq (impl-kind row) '(impl derive))
@@ -439,10 +501,10 @@
                "requirement of ~s is not a well-formed normal type"
                (impl-name row)))))
 
-  (for ([row (in-list intersect-table)])
-    (define left (trait-row-by-name (intersect-left row)))
-    (define right (trait-row-by-name (intersect-right row)))
-    (define output (trait-row-by-name (intersect-output row)))
+  (for ([row (in-list intersect-rows)])
+    (define left (trait-row-by-name (intersect-left row) env))
+    (define right (trait-row-by-name (intersect-right row) env))
+    (define output (trait-row-by-name (intersect-output row) env))
     (unless (and left right output)
       (error 'traits "intersect ~s names an undeclared trait"
              (intersect-name row)))
@@ -458,21 +520,29 @@
       (error 'traits "intersect ~s does not match its output trait"
              (intersect-name row))))
 
-  (unless (intersect-acyclic?)
+  (unless (intersect-acyclic? intersect-rows)
     (error 'traits "intersect rows form a cycle in the trait name graph"))
 
-  (unless (impl-not-composite?)
+  (unless (impl-not-composite? impl-rows intersect-rows)
     (error 'traits "impl rows must not target a composite trait"))
 
   ;; NAR-003: 全行が期待する origin の形を組み立てられること。R0 の実値の
-  ;; 照合は origins.rkt が R0 の定義の直後で行う。この層は表そのものに
+  ;; 照合は origins.rkt の make-trait-ledger が行う。この層は表そのものに
   ;; 閉じた検査だけを持つ。
-  (for ([row (in-list trait-table)])
-    (unless (trait-row-shape-ok? row)
+  (for ([row (in-list trait-rows)])
+    (unless (trait-row-shape-ok? row env)
       (error 'traits "trait row has a malformed origin shape: ~s"
              (trait-name row))))
 
-  (unless (scope-genealogy-ok?)
+  (unless (scope-genealogy-ok? (trait-env-scope-rows env)
+                               trait-rows
+                               impl-rows)
     (error 'traits "scope parent table is malformed")))
 
-(check-tables!)
+(define canonical-trait-env
+  (make-trait-env #:trait trait-table
+                  #:impl impl-table
+                  #:intersect intersect-table
+                  #:scope scope-parent-table
+                  #:fail (λ (reason kind key)
+                           (error 'traits "~a: ~s ~s" reason kind key))))
