@@ -232,6 +232,10 @@ impl と intersect の Proof は `TraitResolutionNarrative` の操作から生�
 trait が `o-language-narrative` を直接の親に取るのに対してこの形を取るのは、trait の生成と trait resolution の操作が異なる Narrative に属するためである。
 表由来の名前または引数個数が合わない δ 適用は `undefined` を返し、既存の R-Delta を不発火にする。
 
+### 4.5 利用者の宣言による行
+
+`trait` と `impl` の宣言構文は、Proof-bearing Narrative trait と `Implements` Proof を正規の Narrative 経路から生成しなければならない。 [REQ: SUR-010]
+
 ## 5. Proof の生成と検証
 
 ### 5.1 shape 一致と宣言 origin
@@ -413,6 +417,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 | TRT-005 | §6.6 `RequiresBoth` の暗黙充足 |
 | TRT-006 | §4.3 合成 trait を成分とする intersect 行、§4.4 非巡回性検査 |
 | TRT-007 | §4.4 合成 trait への直接 impl の禁止 |
+| SUR-010 | §4.5 利用者の宣言による行 |
 | COH-001 | §6.3 scope 系譜による可視性、合成候補の出力 scope 検査 |
 | CMP-001 | §3.2 Union の正規形、§7.1 `imm` field の join |
 | CMP-002 | §3.3 構造型の Intersection |

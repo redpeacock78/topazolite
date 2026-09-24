@@ -655,6 +655,14 @@ Surface の型注釈と署名は、Typed Core への elaboration を通じて型
 
 trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering されなければならない。
 
+### SUR-010
+
+- **状態**：P2
+- **由来**：ホワイトペーパー §8.1
+- **正典**：`docs/specification/trait.md` §4.5
+
+`trait` と `impl` の宣言構文は、Proof-bearing Narrative trait と `Implements` Proof を正規の Narrative 経路から生成しなければならない。
+
 ### MOD-001
 
 - **状態**：Phase 2 以降
