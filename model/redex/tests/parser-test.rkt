@@ -19,6 +19,9 @@
  "予約語は ident に合わない"
  (check-false (redex-match? Surface ident 'const))
  (check-false (redex-match? Surface ident 'fn))
+ (check-false (redex-match? Surface ident 'trait))
+ (check-false (redex-match? Surface ident 'impl))
+ (check-false (redex-match? Surface ident 'for))
  (check-true  (redex-match? Surface ident 'SInt))
  (check-true  (redex-match? Surface ident 'none)))
 
@@ -200,6 +203,26 @@
                            (p "fn f(a: Int) Int { a }\nf(1)"))))
 
 (test-case
+ "trait and impl declarations parse"
+ (define p (parse (lex/string 'src "trait Printable { print: fn(Self) String }\nimpl Printable for Int { print: fn(x: Int) String { \"i\" } }\n0")))
+ (check-true (surface-prog? p))
+ (match p
+   [`(SProgram ,_ (,t ,i) ,_)
+    (check-equal? (first t) 'STraitDecl)
+    (check-equal? (first i) 'SImplDecl)
+    (check-equal? (first (fifth i)) 'SRec)]))
+
+(test-case
+ "the three new keywords are no longer identifiers"
+ (for ([src (in-list '("let trait = 0\n0" "let impl = 0\n0" "let for = 0\n0"))])
+   (check-true (diagnostic? (parse (lex/string 'src src))))))
+
+(test-case
+ "declaration bodies must open with a brace"
+ (for ([src (in-list '("trait P x: Int }\n0" "impl P for Int x: 0 }\n0"))])
+   (check-true (diagnostic? (parse (lex/string 'src src))))))
+
+(test-case
  "字句にならない記号は lexer の診断がそのまま返る"
  (check-equal? (p-code "List<Int>") "E-SUR-002")
  (check-equal? (p-code "fn f() -> Int { 1 }") "E-SUR-002")
@@ -208,10 +231,15 @@
  (check-equal? (p-code "x |> f") "E-SUR-002"))
 
 (test-case
- "字句にはなるが構文に無い語は E-SUR-005 である"
+ "式の頭に置けない語は E-SUR-005 である"
  (check-equal? (p-code "if cond { 1 }") "E-SUR-005")
- (check-equal? (p-code "for x { 1 }") "E-SUR-005")
  (check-equal? (p-code "match e { 1 }") "E-SUR-005"))
+
+(test-case
+ "予約語 for は式の頭に置けず E-SUR-005 である"
+ (check-equal? (p-code "for x { 1 }") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "for x { 1 }"))
+               '(#:span src 0 3)))
 
 (test-case
  "単独の return は変数である"

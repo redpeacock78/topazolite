@@ -53,6 +53,12 @@
                '(let mut eof)))
 
 (test-case
+ "trait と impl と for は kw である"
+ (check-equal? (kinds "trait impl for") '(kw kw kw eof))
+ (check-equal? (map stok-value (lex/string 'src "trait impl for"))
+               '(trait impl for eof)))
+
+(test-case
  "lex は bytes を受け、lex/string は同じ結果を返す"
  (check-equal? (lex 'src #"a b") (lex/string 'src "a b")))
 

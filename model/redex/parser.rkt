@@ -55,6 +55,8 @@
 
 (define (pitem-ahead? ts i)
   (or (kw? ts i 'type)
+      (kw? ts i 'trait)
+      (kw? ts i 'impl)
       (kw? ts i 'const)
       (kw? ts i 'let)
       (and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))))
@@ -69,6 +71,8 @@
 (define (parse-pitem ts fail i)
   (cond
     [(kw? ts i 'type) (parse-type-decl ts fail i)]
+    [(kw? ts i 'trait) (parse-trait-decl ts fail i)]
+    [(kw? ts i 'impl) (parse-impl-decl ts fail i)]
     [(and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))
      (parse-fn-decl ts fail i)]
     [(or (kw? ts i 'const) (kw? ts i 'let))
@@ -83,6 +87,27 @@
     (values `(STypeDecl ,(hull start (node-span ty))
                         (SName ,name-span ,name) ,ty)
             ty-j)))
+
+(define (parse-trait-decl ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
+                [(_open _open-j) (expect-punct ts fail name-j '|{|)]
+                [(ty ty-j) (parse-type-record ts fail name-j)])
+    (values `(STraitDecl ,(hull start (node-span ty))
+                         (SName ,name-span ,name)
+                         ,(third ty))
+            ty-j)))
+
+(define (parse-impl-decl ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
+                [(for-j) (expect-kw ts fail name-j 'for)]
+                [(ty ty-j) (parse-ty ts fail for-j)]
+                [(_open _open-j) (expect-punct ts fail ty-j '|{|)]
+                [(body body-j) (parse-record ts fail ty-j)])
+    (values `(SImplDecl ,(hull start (node-span body))
+                        (SName ,name-span ,name) ,ty ,body)
+            body-j)))
 
 (define (parse-fn-decl ts fail i)
   (define start (span-at ts i))
@@ -100,6 +125,9 @@
   (if (punct? ts i p)
       (values (span-at ts i) (add1 i))
       (fail-at ts fail i)))
+
+(define (expect-kw ts fail i k)
+  (if (kw? ts i k) (add1 i) (fail-at ts fail i)))
 
 (define (expect-ident ts fail i)
   (if (eq? (kind-at ts i) 'ident)
