@@ -3,7 +3,7 @@
 (require racket/match
          "diagnostic.rkt")
 
-(provide lower-surface)
+(provide lower-surface lift-template-type)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
 ;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
@@ -21,6 +21,9 @@
   (for/fold ([env (hash)]) ([item (in-list items)])
     (match item
       [`(STypeDecl ,_ (SName ,s_n ,name) ,ty)
+       ;; spec §6.3。Self は trait 宣言の中だけの名前であり、別名にできない。
+       (when (eq? name 'Self)
+         (fail 'surface-unknown-type-name s_n))
        ;; spec §6.1。原始型との衝突を重複より先に見る。これで
        ;; type Int を 2 回書いても E-SUR-011 が 1 つ目で出る。
        (when (memq name primitive-type-names)
@@ -47,8 +50,10 @@
 ;; spec §6。stack は展開中の別名である。同じ別名を 2 箇所から参照するのは
 ;; 共有であって循環ではないため、「一度でも展開した名前の集合」では
 ;; 判定しない。定義を展開し終えれば呼び出しの戻りとともに降りる。
-(define (lower-sty ty env fail [stack '()])
+(define (lower-sty ty env fail [stack '()] #:self? [self? #f])
   (match ty
+    [`(TName ,s Self)
+     (if self? 'Self (fail 'surface-unknown-type-name s))]
     [`(TName ,s ,name)
      (cond
        [(memq name primitive-type-names) name]
@@ -57,18 +62,19 @@
         => (λ (definition) (lower-sty definition env fail (cons name stack)))]
        [else (fail 'surface-unknown-type-name s)])]
     [`(TRec ,_ ,fields)
-     `(Record ,(lower-ty-fields fields env fail stack))]
+     `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
     [`(TFn ,_ ,arguments ,result)
      ;; spec §7.2.1。効果行と義務は Surface に表記が無いので空である。
-     `(NFn ,(for/list ([a (in-list arguments)]) (lower-sty a env fail stack))
-           ,(lower-sty result env fail stack)
+     `(NFn ,(for/list ([a (in-list arguments)])
+              (lower-sty a env fail stack #:self? self?))
+           ,(lower-sty result env fail stack #:self? self?)
            ()
            ())]))
 
 ;; spec §7.2.1。TRec の欄の可変性は imm に固定する。Surface に mut の
 ;; 表記が無いためである。
 ;; spec §6.1。左から右へ見て、最初の 2 度目で止める。
-(define (lower-ty-fields fields env fail stack)
+(define (lower-ty-fields fields env fail stack #:self? [self? #f])
   (for/fold ([seen '()] [row '()] #:result (reverse row))
             ([field (in-list fields)])
     (match field
@@ -76,7 +82,20 @@
        (when (memq label seen)
          (fail 'surface-duplicate-field s_l))
        (values (cons label seen)
-               (cons (list label (lower-sty ty env fail stack) 'imm) row))])))
+               (cons (list label (lower-sty ty env fail stack #:self? self?) 'imm)
+                     row))])))
+
+;; spec §6.4。lower-sty が作る NFn は UCore の 4 欄であり、template-type? と
+;; type-shape-ok? は Typed Core の 6 欄を要求する。この差を埋める。
+;; 効果行と義務は Surface に表記が無いので空にし、origin は宣言が利用者の
+;; 原文に由来するので User にする。
+(define (lift-template-type t)
+  (match t
+    [`(NFn ,args ,ret ,_ ,_)
+     `(NFn ,(map lift-template-type args) ,(lift-template-type ret)
+           () () () User)]
+    [(? list?) (map lift-template-type t)]
+    [_ t]))
 
 ;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。
 ;; 型注釈の span は sty の使用箇所のものであり、別名を展開しても動かない。

@@ -185,3 +185,30 @@
 (test-case
  "入れ子の射影は内側の %projrec を外側の束縛式の中だけで使う"
  (check-true (redex-match? UCore+ e (low "r.{a}.{a}"))))
+
+(test-case
+ "lift-template-type widens NFn to the typed core shape"
+ (check-equal? (lift-template-type '(NFn (Self) String () ()))
+               '(NFn (Self) String () () () User))
+ (check-equal? (lift-template-type '(Record ((f (NFn (Int) Int () ()) imm))))
+               '(Record ((f (NFn (Int) Int () () () User) imm)))))
+
+(test-case
+ "Self outside a trait declaration is E-SUR-008 at the name"
+ (define d (low "let x: Self = 0\n0"))
+ (check-true (diagnostic? d))
+ (check-equal? (diagnostic-id d) "E-SUR-008")
+ (check-equal? (diagnostic-primary-span d) '(#:span src 7 11)))
+
+(test-case
+ "type Self = Int is E-SUR-008 at the declared name"
+ (define d (low "type Self = Int\n0"))
+ (check-true (diagnostic? d))
+ (check-equal? (diagnostic-id d) "E-SUR-008")
+ (check-equal? (diagnostic-primary-span d) '(#:span src 5 9)))
+
+(test-case
+ "an alias whose definition mentions Self is E-SUR-008"
+ (define d (low "type A = fn(Self) Int\n0"))
+ (check-true (diagnostic? d))
+ (check-equal? (diagnostic-id d) "E-SUR-008"))
