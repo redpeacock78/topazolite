@@ -57,8 +57,9 @@
 
 (test-case
  "the handoff table is not vacuous"
- (check-true (>= (length (table-rows)) 30))
- (check-true (>= (length (all-citations)) 30)))
+ ;; SUR-009 は要件台帳へ昇格して申し送り表から移ったため、現在の下限は29行。
+ (check-true (>= (length (table-rows)) 29))
+ (check-true (>= (length (all-citations)) 29)))
 
 (test-case
  "every handoff row has four columns"
