@@ -9,9 +9,13 @@
          "../parser.rkt"
          "../surface-lower.rkt"
          "../ucore.rkt"
-         "../diagnostic.rkt")
+         "../diagnostic.rkt"
+         (only-in "../origins.rkt" current-trait-env))
 
-(define (low str) (lower-surface (parse (lex/string 'src str))))
+(define (lower-term p)
+  (define r (lower-surface p (current-trait-env)))
+  (if (lowered? r) (lowered-term r) r))
+(define (low str) (lower-term (parse (lex/string 'src str))))
 
 ;; Surface の項を手で組む側の道具である。parser が SBlock を作る形
 ;; （SFn の本体）を、SBlock を落とせないこの段で確かめるために使う。
@@ -21,9 +25,9 @@
 (test-case
  "literal は #:lit になる"
  (check-equal? (low "1") '(#:lit 1 (#:span src 0 1)))
- (check-equal? (lower-surface (prog '() `(SStr ,s0 "a")))
+ (check-equal? (lower-term (prog '() `(SStr ,s0 "a")))
                `(#:lit "a" ,s0))
- (check-equal? (lower-surface (prog '() `(SUnit ,s0)))
+ (check-equal? (lower-term (prog '() `(SUnit ,s0)))
                `(#:lit unit ,s0)))
 
 (test-case
@@ -68,7 +72,7 @@
  "Fn は引数と返り値の型注釈と空の効果行を持つ"
  ;; parser は Fn の本体を必ず SBlock にするので、Surface の項を手で組む。
  (define r
-   (lower-surface
+   (lower-term
     (prog '() `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                     (TName ,s0 Int)
                     (SVar ,s0 x)))))

@@ -4,7 +4,8 @@
          "parser.rkt"
          "surface-lower.rkt"
          "elaborate.rkt"
-         "diagnostic.rkt")
+         "diagnostic.rkt"
+         (only-in "origins.rkt" current-trait-env))
 
 (provide compile-source compile-source/string (struct-out compiled))
 
@@ -22,11 +23,11 @@
 ;; lower-surface は診断を受け取ると素通しするため、段ごとの場合分けは
 ;; elab の手前まで要らない。
 (define (compile-source source-id bytes #:expansion-context [ctx (hash)])
-  (define lowered (lower-surface (parse (lex source-id bytes))))
+  (define low (lower-surface (parse (lex source-id bytes)) (current-trait-env)))
   (cond
-    [(diagnostic? lowered) lowered]
+    [(diagnostic? low) low]
     [else
-     (define result (elab lowered #:expansion-context ctx))
+     (define result (elab (lowered-term low) #:expansion-context ctx))
      (match result
        [`(err ,d) d]
        [(list core type row callables) (compiled core type row callables)])]))

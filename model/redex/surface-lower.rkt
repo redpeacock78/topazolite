@@ -1,9 +1,13 @@
 #lang racket
 
 (require racket/match
-         "diagnostic.rkt")
+         "diagnostic.rkt"
+         "traits.rkt"
+         "type-equiv.rkt")
 
-(provide lower-surface lift-template-type)
+(provide lower-surface lift-template-type (struct-out lowered))
+
+(struct lowered (term trait-rows impl-rows spans) #:transparent)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
 ;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
@@ -97,6 +101,89 @@
     [(? list?) (map lift-template-type t)]
     [_ t]))
 
+;; spec §6.6 手順 3。基底へ行を重ねて trait-env を作り直す。
+;; 衝突した鍵は必ず新しい行の鍵である。基底どうしの衝突は基底を
+;; 作った時点で落ちており、新しい trait 名どうしの衝突は E-SUR-013 が
+;; 先に拾い、新しい impl の oid は next-impl-index が一意にする。
+(define (extend-env base trait-rows impl-rows spans fail)
+  (make-trait-env
+   #:trait (append (trait-env-trait-rows base) trait-rows)
+   #:impl (append (trait-env-impl-rows base) impl-rows)
+   #:intersect (trait-env-intersect-rows base)
+   #:scope (trait-env-scope-rows base)
+   #:fail (λ (reason kind key) (fail reason (hash-ref spans (cons kind key))))))
+
+;; spec §6.6 手順 1。template は欄の並びであり、Record の包みを持たない。
+(define (lower-trait-decls items base env fail)
+  (for/fold ([rows '()] [spans (hash)] #:result (values (reverse rows) spans))
+            ([item (in-list items)])
+    (match item
+      [`(STraitDecl ,s (SName ,s_n ,name) ,fields)
+       (when (or (trait-row-by-name name base)
+                 (findf (λ (r) (eq? (trait-name r) name)) rows))
+         (fail 'surface-duplicate-trait-decl s_n))
+       (define oid (string->symbol (format "o-trait-user-~a" name)))
+       (define template
+         (second (normalize-type
+                  (lift-template-type
+                   `(Record ,(lower-ty-fields fields env fail '() #:self? #t))))))
+       (define row (list oid name 'root template))
+       (values (cons row rows)
+               (hash-set* spans (cons 'trait-name name) s_n
+                          (cons 'origin-id oid) s
+                          (cons 'primitive-name (trait-constant-name row)) s))]
+      [_ (values rows spans)])))
+
+;; spec §6.6。基底を含めた通し番号にする。基底が既定の環境であれば
+;; 利用者の impl 行が無いので 1 から始まる。
+(define (next-impl-index env trait)
+  (define prefix (format "o-impl-user-~a-" trait))
+  (add1
+   (for/fold ([m 0]) ([row (in-list (trait-env-impl-rows env))])
+     (define s (symbol->string (impl-oid row)))
+     (define n (string-length prefix))
+     (define suffix
+       (and (> (string-length s) n)
+            (string=? prefix (substring s 0 n))
+            (substring s n)))
+     ;; <n> は ASCII の数字列だけを番号と読む。string->number は
+     ;; "1/2" や "1.5" も数として返すので、そのまま使うと正整数から外れる。
+     (if (and suffix (regexp-match? #px"^[0-9]+$" suffix))
+         (max m (string->number suffix))
+         m))))
+
+;; spec §6.6 手順 2。core-info は宣言の節点から (binder prim) を引く表で
+;; あり、lower-item が行と同じ番号の項を作るために使う。
+(define (lower-impl-decls items staged spans env fail)
+  (for/fold ([tenv staged] [rows '()] [spans spans] [info (hasheq)]
+             #:result (values (reverse rows) spans info))
+            ([item (in-list items)])
+    (match item
+      [`(SImplDecl ,s (SName ,s_n ,trait) ,ty (SRec ,s_b ,fields))
+       (define trait-row (or (trait-row-by-name trait tenv)
+                             (fail 'surface-unknown-trait-name s_n)))
+       (when (memq trait (map intersect-output (trait-env-intersect-rows tenv)))
+         (fail 'surface-impl-composite-trait s_n))
+       (define labels (for/list ([f (in-list fields)])
+                        (match f [`(SField ,_ (SLabel ,_ ,label) ,_) label])))
+       (unless (equal? (sort labels symbol<?)
+                       (sort (map first (trait-template trait-row)) symbol<?))
+         (fail 'surface-impl-requirement-mismatch s_b))
+       (define target (normalize-type (lift-template-type (lower-sty ty env fail))))
+       (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
+               (type-equiv? (impl-target-type r) target))
+         (fail 'surface-duplicate-impl-decl (node-span ty)))
+       (define n (next-impl-index tenv trait))
+       (define oid (string->symbol (format "o-impl-user-~a-~a" trait n)))
+       (define prim (string->symbol (format "impl-user-~a-~a" trait n)))
+       (define binder (string->symbol (format "%impl-~a-~a" trait n)))
+       (define row (list oid prim 'impl trait target 'root))
+       (define spans* (hash-set* spans (cons 'origin-id oid) s
+                                 (cons 'primitive-name prim) s))
+       (values (extend-env tenv '() (list row) spans* fail)
+               (cons row rows) spans* (hash-set info item (list binder prim)))]
+      [_ (values tenv rows spans info)])))
+
 ;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。
 ;; 型注釈の span は sty の使用箇所のものであり、別名を展開しても動かない。
 (define (lower-params params env fail)
@@ -160,7 +247,7 @@
      `(Rec ,s ,(lower-rec-fields fields env fail))]
     [`(SBlock ,_ ,binds ,tail)
      ;; spec §7.2。block 自身は節点を作らず、束縛の入れ子と末尾式になる。
-     (fold-items binds tail env fail)]))
+     (fold-items binds tail env (hasheq) fail)]))
 
 ;; spec §7.3。尾部の span は「その宣言の始まり」から「末尾式の終わり」までで
 ;; ある。span は (#:span sid lo hi) の 4 要素である。
@@ -168,10 +255,18 @@
   (list '#:span (second end-span) (third (node-span item)) (fourth end-span)))
 
 ;; spec §7.2。spitem 1 つを、残りの項を取って包む手続きへ落とす。
-;; STypeDecl は節点を作らないので、残りをそのまま返す。
-(define (lower-item item s_tail env fail)
+;; 型と trait の宣言は節点を作らないので、残りをそのまま返す。
+(define (lower-item item s_tail env core-info fail)
   (match item
     [`(STypeDecl ,_ ,_ ,_) (λ (rest) rest)]
+    [`(STraitDecl ,_ ,_ ,_) (λ (rest) rest)]
+    [`(SImplDecl ,s ,_ ,_ ,body)
+     ;; spec §6.6。生成した primitive を Let の束縛名にしない。elab は局所の
+     ;; environment を Γ0 より先に引くので、同名の Let は Proof の経路を隠す。
+     (match-define (list binder prim) (hash-ref core-info item))
+     (define body-core (lower-sexpr body env fail))
+     (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
+                     (Apply ,s (#:var ,prim ,s) ,body-core) ,rest))]
     [`(SBind ,_ ,bmode (SName ,s_x ,x) ,ty-or-none ,bound)
      (define binder
        (if (eq? ty-or-none '#:none)
@@ -196,11 +291,11 @@
 ;; spec §6.1。診断は 1 件だけ返すので、どれが返るかは走る順序で決まる。
 ;; 落とす順序は原文の並び順であり、包む順序だけが逆である。末尾式は
 ;; 原文では最後なので、宣言をすべて落とし終えてから落とす。
-(define (fold-items items tail env fail)
+(define (fold-items items tail env core-info fail)
   (define end-span (node-span tail))
   (define wraps
     (for/list ([item (in-list items)])
-      (lower-item item (tail-span item end-span) env fail)))
+      (lower-item item (tail-span item end-span) env core-info fail)))
   (define tail-core (lower-sexpr tail env fail))
   (for/fold ([acc tail-core]) ([wrap (in-list (reverse wraps))])
     (wrap acc)))
@@ -209,7 +304,7 @@
 ;; 「parse の結果を場合分けしてから lower-surface を呼ぶ」手続きを課すと、
 ;; その場合分けを忘れた経路が静かに落ちる（parser.rkt:10-13 と同じ理由）。
 ;; spec §6.1。診断は 1 件だけ返すので、最初の fail で脱出する。
-(define (lower-surface program)
+(define (lower-surface program base)
   (cond
     [(diagnostic? program) program]
     [else
@@ -220,4 +315,10 @@
             (return (diagnostic-of 'surface key #:primary-span s)))
           (define env (build-alias-env items fail))
           (check-alias-definitions items env fail)
-          (fold-items items e env fail))])]))
+          (define-values (trait-rows trait-spans)
+            (lower-trait-decls items base env fail))
+          (define staged (extend-env base trait-rows '() trait-spans fail))
+          (define-values (impl-rows spans core-info)
+            (lower-impl-decls items staged trait-spans env fail))
+          (lowered (fold-items items e env core-info fail)
+                   trait-rows impl-rows spans))])]))

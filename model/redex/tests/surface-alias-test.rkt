@@ -4,11 +4,15 @@
          "../lexer.rkt"
          "../parser.rkt"
          "../surface-lower.rkt"
-         "../diagnostic.rkt")
+         "../diagnostic.rkt"
+         (only-in "../origins.rkt" current-trait-env))
 
 ;; parse を通してから落とす。span を手で組むより、実際に走る経路と同じ形で
 ;; 回帰できる。
-(define (low str) (lower-surface (parse (lex/string 'src str))))
+(define (lower-term p)
+  (define r (lower-surface p (current-trait-env)))
+  (if (lowered? r) (lowered-term r) r))
+(define (low str) (lower-term (parse (lex/string 'src str))))
 (define (code str)
   (define r (low str))
   (and (diagnostic? r) (diagnostic-id r)))
@@ -88,7 +92,7 @@
 (define (decl name ty) `(STypeDecl ,s0 (SName ,s0 ,name) ,ty))
 (define (fn-of ty) `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) ,ty)) ,ty (SVar ,s0 x)))
 (define (param-type items ty)
-  (define r (lower-surface (prog items (fn-of ty))))
+  (define r (lower-term (prog items (fn-of ty))))
   (second (second (first (third r)))))
 
 (test-case
