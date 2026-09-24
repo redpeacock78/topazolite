@@ -18,6 +18,7 @@
          valid-origin?
          kernel-gamma0-entries
          current-trait-ledger
+         call-with-trait-ledger
          current-trait-env
          current-R0
          current-Γ0
@@ -215,7 +216,27 @@
                      #:fail (λ (reason kind key)
                               (error 'origins "~a: ~s ~s" reason kind key))))
 
-(define current-trait-ledger (make-parameter canonical-trait-ledger))
+;; spec §5.2。Redex の metafunction と judgment form は項だけを鍵にキャッシュし、
+;; hit のときは本体を走らせない。台帳を差し替える入口を call-with-trait-ledger の
+;; 1 つに限り、custom の台帳の下ではキャッシュを止める。parameter 自体は provide しない。
+(define ledger-parameter (make-parameter canonical-trait-ledger))
+
+;; custom の台帳をキャッシュが有効なまま読むのは、call-with の thunk が
+;; caching-enabled? を戻した証拠である。キャッシュに当たった節はここを通らないので、
+;; この検査は防御であり保証ではない（spec §5.2 の前提）。
+(define (current-trait-ledger)
+  (define ledger (ledger-parameter))
+  (unless (or (eq? ledger canonical-trait-ledger) (not (caching-enabled?)))
+    (error 'current-trait-ledger "custom ledger read with Redex caching enabled"))
+  ledger)
+
+;; caching-enabled? と ledger-parameter を同じ parameterize で束縛する。
+;; canonical の台帳は外側のキャッシュ設定を保ち、custom の台帳は必ず止める。
+(define (call-with-trait-ledger ledger thunk)
+  (parameterize ([caching-enabled? (and (caching-enabled?)
+                                        (eq? ledger canonical-trait-ledger))]
+                 [ledger-parameter ledger])
+    (thunk)))
 
 (define (current-trait-env) (trait-ledger-env (current-trait-ledger)))
 (define (current-R0) (trait-ledger-r0 (current-trait-ledger)))

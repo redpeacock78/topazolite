@@ -3,6 +3,7 @@
 (require rackunit
          racket/set
          redex/reduction-semantics
+         (only-in "../gen.rkt" elaboration-result bounded-trace-g2 execution-configs)
          "../backend-matrix.rkt"
          "../lang.rkt"
          "../lowering.rkt"
@@ -194,9 +195,12 @@
  (check-equal? (trait-ledger-gamma0 canonical-trait-ledger) Γ0))
 
 (test-case
- "the parameter is dynamically scoped"
+ "call-with-trait-ledger is dynamically scoped"
  (define custom (custom-ledger))
- (parameterize ([current-trait-ledger custom])
+ (check-equal? (call-with-trait-ledger custom (λ () 42)) 42)
+ (call-with-trait-ledger
+  custom
+  (λ ()
    (check-eq? (current-trait-ledger) custom)
    (check-eq? (current-trait-env) custom-env)
    (check-equal? (current-R0) (trait-ledger-r0 custom))
@@ -204,14 +208,79 @@
    (check-not-false (assoc 'o-impl-env-test (current-trait-r0-entries)))
    (check-not-false (assoc 'impl-env-test (current-trait-gamma0-entries)))
    (check-not-false (assoc 'impl-env-test (trait-global-bindings)))
-   (parameterize ([current-trait-ledger canonical-trait-ledger])
-     (check-eq? (current-trait-ledger) canonical-trait-ledger))
-   (check-eq? (current-trait-ledger) custom))
+   (call-with-trait-ledger
+    canonical-trait-ledger
+    (λ () (check-eq? (current-trait-ledger) canonical-trait-ledger)))
+   (check-eq? (current-trait-ledger) custom)))
  (check-eq? (current-trait-ledger) canonical-trait-ledger)
  ;; 例外で脱出しても既定へ戻る。
  (with-handlers ([symbol? void])
-   (parameterize ([current-trait-ledger custom]) (raise 'boom)))
+   (call-with-trait-ledger custom (λ () (raise 'boom))))
  (check-eq? (current-trait-ledger) canonical-trait-ledger))
+
+;; spec §5.2。Redex の metafunction は項だけを鍵にキャッシュするので、
+;; 同じ項を異なる台帳で走らせたときに結果が混ざらないことを両方の順で見る。
+(test-case
+ "the same term reduces per ledger in either order"
+ (define core (inject-g2 (user-impl-core)))
+ (define (proof-result? r)
+   (match r [`(cfg (ProofRep ,_ ,_) ,_ ...) #t] [_ #f]))
+ (define custom (custom-ledger))
+ (check-true (proof-result? (call-with-trait-ledger custom (λ () (run-g2 core 40)))))
+ (check-false (proof-result? (run-g2 core 40)))
+ (check-true (proof-result? (call-with-trait-ledger custom (λ () (run-g2 core 40))))))
+
+(test-case
+ "reading a custom ledger with Redex caching enabled is an error"
+ (check-false (parameter? current-trait-ledger))
+ (call-with-trait-ledger
+  (custom-ledger)
+  (λ ()
+    (check-exn #rx"custom ledger read with Redex caching enabled"
+               (λ () (parameterize ([caching-enabled? #t])
+                       (current-trait-ledger))))))
+ (call-with-trait-ledger
+  canonical-trait-ledger
+  (λ ()
+    (check-eq? (parameterize ([caching-enabled? #t]) (current-trait-ledger))
+               canonical-trait-ledger))))
+
+(test-case
+ "call-with-trait-ledger turns Redex caching off only for a custom ledger"
+ (define outer (caching-enabled?))
+ (call-with-trait-ledger canonical-trait-ledger
+                         (λ () (check-equal? (caching-enabled?) outer)))
+ (call-with-trait-ledger (custom-ledger) (λ () (check-false (caching-enabled?))))
+ (parameterize ([caching-enabled? #f])
+   (call-with-trait-ledger canonical-trait-ledger
+                           (λ () (check-false (caching-enabled?)))))
+ ;; 既定の台帳の外側から custom の台帳へ入り、抜けると外側へ戻る。
+ (parameterize ([caching-enabled? #t])
+   (call-with-trait-ledger
+    canonical-trait-ledger
+    (λ ()
+      (check-true (caching-enabled?))
+      (call-with-trait-ledger (custom-ledger) (λ () (check-false (caching-enabled?))))
+      (check-true (caching-enabled?))
+      (check-eq? (current-trait-ledger) canonical-trait-ledger))))
+ (check-equal? (caching-enabled?) outer))
+
+;; gen.rkt の 2 つの表も項（原文）だけを鍵にするので、同じ規律に従うことを見る。
+(test-case
+ "gen.rkt caches follow the ledger"
+ (define custom (custom-ledger))
+ (define (elaborated?)
+   (match (elaboration-result 'impl-env-test) [(list _ _ _ _) #t] [_ #f]))
+ (check-true (call-with-trait-ledger custom elaborated?))
+ (check-false (elaborated?))
+ (check-true (call-with-trait-ledger custom elaborated?))
+ (define core (inject-g2 (user-impl-core)))
+ (define (traced-proof?)
+   (match (last (execution-configs (bounded-trace-g2 core 40)))
+     [`(cfg (ProofRep ,_ ,_) ,_ ...) #t] [_ #f]))
+ (check-true (call-with-trait-ledger custom traced-proof?))
+ (check-false (traced-proof?))
+ (check-true (call-with-trait-ledger custom traced-proof?)))
 
 (test-case
  "a trait row colliding with a kernel R0 key fails"
@@ -241,45 +310,56 @@
 
 (test-case
  "a custom ledger resolves a user impl through project-goal"
- (parameterize ([current-trait-ledger (custom-ledger)])
-   (check-true (user-impl-resolves?))))
+ (check-true (call-with-trait-ledger (custom-ledger) user-impl-resolves?)))
 
 (test-case
  "a custom ledger runs the user impl primitive"
- (parameterize ([current-trait-ledger (custom-ledger)])
-   (check-true (proof-rep? (run-user-impl)))))
+ (check-true (call-with-trait-ledger (custom-ledger)
+                                     (λ () (proof-rep? (run-user-impl))))))
 
 (test-case
  "verify-origins reads R0 and the trait rows from the ledger"
- (parameterize ([current-trait-ledger (custom-ledger)])
-   (define proof (run-user-impl))
-   (check-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok)
-   (parameterize ([current-trait-ledger canonical-trait-ledger])
-     (check-not-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok))))
+ (call-with-trait-ledger
+  (custom-ledger)
+  (λ ()
+    (define proof (run-user-impl))
+    (check-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok)
+    (call-with-trait-ledger
+     canonical-trait-ledger
+     (λ ()
+       (check-not-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok))))))
 
 (test-case
  "current-Γ-pc0 follows the ledger and is built once per ledger"
  (check-equal? (current-Γ-pc0) Γ-pc0)
- (parameterize ([current-trait-ledger (custom-ledger)])
-   (check-not-equal? (current-Γ-pc0) Γ-pc0)
-   (check-eq? (current-Γ-pc0) (current-Γ-pc0))))
+ (call-with-trait-ledger
+  (custom-ledger)
+  (λ ()
+    (check-not-equal? (current-Γ-pc0) Γ-pc0)
+    (check-eq? (current-Γ-pc0) (current-Γ-pc0)))))
 
 (test-case
  "lowering classifies custom primitives; trait entries exclude kernel names"
- (parameterize ([current-trait-ledger (custom-ledger)])
-   (check-equal? (lowering-reason-for 'impl-env-test) 'trait-primitive)
-   (for ([name (in-list '(add sub mul lt le eq acquire))])
-     (check-false (assq name (current-trait-gamma0-entries))))))
+ (call-with-trait-ledger
+  (custom-ledger)
+  (λ ()
+    (check-equal? (lowering-reason-for 'impl-env-test) 'trait-primitive)
+    (for ([name (in-list '(add sub mul lt le eq acquire))])
+      (check-false (assq name (current-trait-gamma0-entries)))))))
 
 (test-case
  "scope-visible? follows the ledger scope rows"
- (parameterize ([current-trait-ledger (scoped-ledger)])
-   (check-true (scope-visible? 'root '(child))))
+ (check-true (call-with-trait-ledger
+              (scoped-ledger)
+              (λ () (scope-visible? 'root '(child)))))
  (check-false (scope-visible? 'root '(child))))
 
 (test-case
  "compose-candidates reads intersect rows from the ledger"
  (define goal (make-goal '(Implements Int PrintableSizable)))
  (check-equal? (length (project-goal (current-Γ-pc0) '(root) goal)) 1)
- (parameterize ([current-trait-ledger (no-intersect-ledger)])
-   (check-equal? (project-goal (current-Γ-pc0) '(root) goal) '())))
+ (check-equal?
+  (call-with-trait-ledger
+   (no-intersect-ledger)
+   (λ () (project-goal (current-Γ-pc0) '(root) goal)))
+  '()))

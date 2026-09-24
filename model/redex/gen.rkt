@@ -260,8 +260,13 @@
 (define elaboration-cache (make-hash))
 (define trace-cache (make-hash))
 
+(define (cached-ref! table key compute)
+  (if (caching-enabled?)
+      (hash-ref! table key compute)
+      (compute)))
+
 (define (elaboration-result source)
-  (match (hash-ref! elaboration-cache source (lambda () (elab source)))
+  (match (cached-ref! elaboration-cache source (lambda () (elab source)))
     [(list core type row callables)
      (list (erase-core core) type row callables)]
     [other other]))
@@ -320,7 +325,7 @@
   (term (row-⊆ ,left ,right)))
 
 (define (bounded-trace/using who relation initial fuel)
-  (hash-ref!
+  (cached-ref!
    trace-cache
    (list who initial fuel)
    (lambda ()
