@@ -11,7 +11,7 @@
 ;; spec §10.2 のリスト 1。model/redex/surface.rkt の Surface の構成子名である。
 (define racket-surface-constructors
   '(SProgram
-    SBind SFnDecl STypeDecl
+    SBind SFnDecl STypeDecl STraitDecl SImplDecl
     SInt SStr SUnit SBool SVar SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn
     SName SParam SField SLabel TField))
@@ -56,6 +56,8 @@
    (one-to-one 'TFn 'TFn)
    (corr-row '(SBind SFnDecl) '(SDecl) 'many-to-one)
    (no-counterpart 'STypeDecl)
+   (no-counterpart 'STraitDecl)
+   (no-counterpart 'SImplDecl)
    (no-counterpart 'SProgram)
    (no-counterpart 'SName)
    (no-counterpart 'SParam)
