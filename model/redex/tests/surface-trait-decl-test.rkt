@@ -3,11 +3,19 @@
 ;; SUR-010。trait と impl の宣言が行と項へ落ちることの回帰である。
 
 (require rackunit
+         racket/match
+         redex/reduction-semantics
          "../lexer.rkt"
          "../parser.rkt"
          "../surface-lower.rkt"
          "../traits.rkt"
-         "../diagnostic.rkt")
+         "../diagnostic.rkt"
+         "../driver.rkt"
+         "../erase.rkt"
+         "../machine.rkt"
+         "../origins.rkt"
+         "../search.rkt"
+         "../typing.rkt")
 
 (define (parse-src str) (parse (lex/string 'src str)))
 (define (lower str [base canonical-trait-env]) (lower-surface (parse-src str) base))
@@ -172,3 +180,156 @@
 (test-case
  "Self outside a trait is an unknown type name"
  (check-equal? (code "impl Sizable for Self { size: fn(x: Int) Int { 0 } }\n0") "E-SUR-008"))
+
+(define showable-src
+  (string-append
+   "trait Showable { show: fn(Self) String }\n"
+   "impl Showable for Int { show: fn(x: Int) String { \"i\" } }\n"
+   "0"))
+
+;; search-trait-integration-test.rkt の同名ヘルパーと同じ判定である。
+(define (run-g2-core core)
+  (match (run-g2 (inject-g2 core) 40)
+    [`(cfg ,result () () () ()) result]
+    [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
+
+;; 宣言 1 つ分の Let が束縛する項、つまり impl primitive の適用を返す。
+(define (bound-of core)
+  (match core
+    [`(Let ,_ ,bound ,_) bound]
+    [other (fail-check (format "not a Let: ~s" other))]))
+
+;; 停止した構成が、名前 name の impl primitive の適用を残しているか。
+(define (stuck-at-impl? config name)
+  (let walk ([t config])
+    (match t
+      [`(Apply (PrimVal ,_ ,(== name)) ,_) #t]
+      [(cons a d) (or (walk a) (walk d))]
+      [_ #f])))
+
+;; 既定の表へ trait 行と impl 行を足した台帳。構築の失敗は試験の誤りなので例外にする。
+(define (ledger-with #:trait [trait-rows '()] #:impl [impl-rows '()])
+  (define (fail reason kind key)
+    (error 'ledger-with "~s ~s ~s" reason kind key))
+  (define env
+    (make-trait-env
+     #:trait (append (trait-env-trait-rows canonical-trait-env) trait-rows)
+     #:impl (append (trait-env-impl-rows canonical-trait-env) impl-rows)
+     #:intersect (trait-env-intersect-rows canonical-trait-env)
+     #:scope (trait-env-scope-rows canonical-trait-env)
+     #:fail fail))
+  (make-trait-ledger env #:fail fail))
+
+(define (compile-showable)
+  (define r (compile-source/string 'src showable-src))
+  (unless (compiled? r)
+    (fail-check (format "compile failed: ~s" r)))
+  r)
+
+(test-case
+ "a declared impl yields an Implements proof under the returned ledger"
+ (define r (compile-showable))
+ (define core (erase-core (compiled-core r)))
+ (call-with-trait-ledger
+  (compiled-ledger r)
+  (λ ()
+    (define row (impl-row-by-name 'impl-user-Showable-1 (current-trait-env)))
+    (check-not-false row)
+    (define proof (run-g2-core (bound-of core)))
+    (check-equal? proof
+                  `(ProofRep ,(impl-derived-origin row) (Implements Int Showable)))
+    (check-equal? (term (verify-origins ,(current-R0) ,proof)) 'ok)
+    (check-equal? (run-g2-core core) 0))))
+
+(test-case
+ "without the returned ledger the impl application is stuck"
+ (define r (compile-showable))
+ (define bound (bound-of (erase-core (compiled-core r))))
+ (define result (run-g2 (inject-g2 bound) 40))
+ (check-false (match result [`(cfg (ProofRep ,_ ,_) ,_ ...) #t] [_ #f]))
+ (check-true (stuck-at-impl? result 'impl-user-Showable-1)))
+
+(test-case
+ "typing, configuration and search see the returned ledger"
+ (define r (compile-showable))
+ (define core (erase-core (compiled-core r)))
+ (define callables (compiled-callables r))
+ (define goal (make-goal '(Implements Int Showable)))
+ (call-with-trait-ledger
+  (compiled-ledger r)
+  (λ ()
+    (check-equal? (core-type-of core '() callables) (list 'Int '()))
+    (check-true (config-ok? (inject-g2 core) callables 'Int '()))
+    (check-false (null? (project-goal (current-Γ-pc0) '(root) goal)))))
+ (check-equal? (core-type-of core '() callables) 'ill-typed)
+ (check-equal? (project-goal (current-Γ-pc0) '(root) goal) '()))
+
+(test-case
+ "the base env is the outer ledger"
+ (define r
+   (call-with-trait-ledger
+    (ledger-with #:trait '((o-trait-user-Legacy Legacy root ())))
+    compile-showable))
+ (define env (trait-ledger-env (compiled-ledger r)))
+ (check-not-false (trait-row-by-name 'Legacy env))
+ (check-not-false (trait-row-by-name 'Showable env))
+ (check-not-false (trait-row-by-name 'Printable env)))
+
+(test-case
+ "a source without declarations keeps the outer ledger"
+ (define r (compile-source/string 'src "0"))
+ (check-true (compiled? r))
+ (check-eq? (compiled-ledger r) canonical-trait-ledger)
+ (define outer (ledger-with #:trait '((o-trait-user-Legacy Legacy root ()))))
+ (define r2
+   (call-with-trait-ledger
+    outer
+    (λ () (compile-source/string 'src "0"))))
+ (check-eq? (compiled-ledger r2) outer))
+
+(test-case
+ "an origin-id collision with the base env is E-SUR-016 at the declaration"
+ (define r
+   (call-with-trait-ledger
+    (ledger-with #:trait '((o-trait-user-Foo Legacy root ())))
+    (λ () (compile-source/string 'src "trait Foo { }\n0"))))
+ (check-true (diagnostic? r))
+ (check-equal? (diagnostic-id r) "E-SUR-016")
+ (check-equal? (diagnostic-primary-span r) '(#:span src 0 13)))
+
+;; make-trait-env は通り、make-trait-ledger の Γ0 重複で落ちる衝突である。
+(test-case
+ "a trait constant colliding with a base impl primitive is E-SUR-016 at the declaration"
+ (define r
+   (call-with-trait-ledger
+    (ledger-with #:impl '((o-x Foo-trait impl Sizable Bool root)))
+    (λ () (compile-source/string 'src "trait Foo { }\n0"))))
+ (check-true (diagnostic? r))
+ (check-equal? (diagnostic-id r) "E-SUR-016")
+ (check-equal? (diagnostic-primary-span r) '(#:span src 0 13)))
+
+(test-case
+ "a field type mismatch is left to typing, not E-SUR-017"
+ (define r
+   (compile-source/string
+    'src
+    (string-append
+     "trait Showable { show: fn(Self) String }\n"
+     "impl Showable for Int { show: fn(x: Int) Int { x } }\n"
+     "0")))
+ (check-true (diagnostic? r))
+ (check-not-equal? (diagnostic-id r) "E-SUR-017"))
+
+(test-case
+ "record, function and nested function target types compile"
+ (for ([impl (in-list
+              (list
+               "impl Named for { n: Int } { name: fn(r: { n: Int }) String { \"r\" } }\n"
+               "impl Named for fn(Int) Int { name: fn(f: fn(Int) Int) String { \"f\" } }\n"
+               (string-append
+                "impl Named for { g: fn(Int) Int } "
+                "{ name: fn(r: { g: fn(Int) Int }) String { \"g\" } }\n")))])
+   (define r
+     (compile-source/string
+      'src (string-append "trait Named { name: fn(Self) String }\n" impl "0")))
+   (check-true (compiled? r) (format "~a=> ~s" impl r))))
