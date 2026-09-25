@@ -732,8 +732,9 @@ package と module の系譜は、scope の可視性、typing の discharge、ba
 
 ### BIT-003
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/surface.md` §3
 
 `|` と `&` は型位置では Union / Intersection として解決される。
 
@@ -987,6 +988,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 未定 | §4.1 |
+| 型位置の表記（`type` 宣言、Union と Intersection の演算子）を TypeNarrative による TypeInfo 生成として表す機能 | `surface.md` §5 | Phase 未定 | §4.3 |
 | 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 4 以降 | §4.8 |
 | 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 未定 | 無し |
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 未定 | §4.9 |

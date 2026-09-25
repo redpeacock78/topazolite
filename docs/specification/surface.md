@@ -41,7 +41,7 @@ Surface の経路は展開表を生成しない。
 文字列リテラルは `"` で囲む。
 エスケープは `\"`、`\\`、`\n`、`\t` の 4 種だけを許す。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->` の 9 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`|`、`&` の 11 種である。
 `->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 
 トークンの種別は `int`、`str`、`ident`、`kw`、`punct`、`nl`、`eof` の 7 種である。
@@ -86,13 +86,18 @@ record   ::= "{" NL* "}"
            | "{" NL* field (fsep field)* fsep? NL* "}"
 field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
-ty       ::= ident | tyrec
-           | "fn" "(" tys ")" "->" ty
+ty       ::= tyand ("|" tyand)*                         [REQ: BIT-003]
+tyand    ::= tyatom ("&" tyatom)*
+tyatom   ::= ident | tyrec | "fn" "(" tys ")" "->" ty | "(" ty ")"
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
 tys      ::= ε | ty ("," ty)*
 ```
+
+`&` は `|` より強く結合し、どちらも左結合である。
+型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
+型の位置の `()` は `E-SUR-005` で拒否する。
 
 トップレベルにも束縛を置ける。
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
@@ -110,8 +115,11 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 ### 3.1 受理しない構文
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
-単独の `-` と `>`、`+`、`*`、`/`、`%`、`<`、`?`、`|`、`!`、`&`、`[`、`]`、`;` は字句にならない。
+単独の `-` と `>`、`+`、`*`、`/`、`%`、`<`、`?`、`!`、`[`、`]`、`;` は字句にならない。
 `List<Int>`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号の位置で `E-SUR-002` になる。
+`|` と `&` は型位置だけで受理する。
+式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
+`x |> f` は `|` の次に字句にならない `>` が現れるため、`>` の位置で `E-SUR-002` になる。
 
 字句にはなるが構文に無い `if`、`while`、`return`、`match` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
@@ -182,6 +190,9 @@ Surface の節点はすべて `(Ctor span ...)` の形であり、span は必ず
 節点の span は、その子孫のすべての span を包含する。
 包含の検査は、親と子が同じ source id を持ち、親の開始位置が子以下で、親の終了位置が子以上であることを確かめる。
 
+型演算子の節点は `(TUnion s left right)` と `(TInter s left right)` である。
+節点の span は左右 operand の span の hull とし、型の括弧は AST を作らず span も広げない。
+
 括弧で括った式は括弧の span を持たない。
 括弧そのものが節点を作らないため、括弧内の式の span をそのまま使う。
 ただし `()` は単位値の節点を作るため、その節点は 2 個の括弧を含む span を持つ。
@@ -195,6 +206,8 @@ Surface の節点はすべて `(Ctor span ...)` の形であり、span は必ず
 
 型別名は Surface だけの糖衣である。
 UCore+ には型別名を置く欄が無いため、`STypeDecl` は節点を生成せず、lowering の別名環境へ消費する。
+型別名は `TypeNarrative` による `TypeInfo` 生成を経ず、静的な型 `τ` へ直接展開する。
+型宣言と型位置の演算子から `TypeNarrative` を使って `TypeInfo` を生成する経路は、requirements.md §4 の申し送り表に記録する。
 
 別名環境は 2 度の走査で作る。
 1 度目は program の `spitem` を原文順に読み、型別名の名前と未展開の `sty` を登録する。
@@ -264,9 +277,13 @@ lowering の入口は `(lower-surface sprog trait-env)` である。
 その行を基底の環境へ重ねた後、impl と derive の宣言を同じ前処理で原文順に 1 件ずつ検査する。
 どちらも参照先の trait が無ければ `E-SUR-015`、合成 trait なら `E-SUR-018` とする。
 impl では本体の label 集合が要求と異なれば `E-SUR-017` とする。
-対象型を正規化し、未知の型名は `E-SUR-008` とする。
-derive では trait の origin に対応する生成規則を引き、規則が無ければ `E-SUR-019` とする。
+対象型を lowering して正規化し、未知の型名は `E-SUR-008` とする。
+impl では対象型への `Self` 置換後に要求型を正規化し、失敗すれば対象型の span を primary、trait 名の span を `trait-requirement` の related とする `E-SUR-020` を返す。
+derive では trait の origin に対応する生成規則を先に引き、規則が無ければ `E-SUR-019` とする。
+規則がある場合は impl と同じ要求型の検査を行い、正規化に失敗すれば `E-SUR-020` とする。
 同じ trait と型同値な対象型の impl 行または derive 行がすでにあれば、どちらの宣言でも `E-SUR-014` とする。
+このため impl の検査順は `E-SUR-015`、`E-SUR-018`、`E-SUR-017`、対象型の lowering、`E-SUR-020`、`E-SUR-014` である。
+derive の検査順は `E-SUR-015`、`E-SUR-018`、対象型の lowering、`E-SUR-019`、`E-SUR-020`、`E-SUR-014` である。
 生成した origin id または primitive 名が既存の鍵と衝突すれば `E-SUR-016` とする。
 各行は検査を通ってから環境へ加えるため、後続の impl と derive の重複も検出する。
 この前処理の後、項の宣言を右から畳み、`Let` と `Recur` を積む。
@@ -325,6 +342,16 @@ F* 側の `SProjRec` は label の綴りを保持せず、`proj_fields` は欄�
 `TRec` は field mode を `imm` とする `(Record ((l uτ imm) ...))` へ写す。
 `TFn` は effect row と obligation を空にした `(NFn (uτ ...) uτ_r () ())` へ写す。
 Surface に field の可変性と effect 注釈が無いためである。
+`(TUnion s left right)` は `(Union left' right')` へ、`(TInter s left right)` は `(Intersection left' right')` へ写す。
+`TInter` は operand を lowering した後、`Self` を含まなければ `lift-template-type` と `normalize-type` で検査し、失敗時はその `TInter` の span で `E-SUR-020` を返す。
+ここでいう `Self` は型の位置に限り、Record の field label は数えない。
+`Self` を含む Intersection の検査は対象型の具体化まで遅らせる。
+
+trait template はまず Record 全体を正規化する。
+それが失敗した場合は field label 順に並べ、各 field 型を個別に正規化し、失敗した型は未正規化の形で残す。
+impl または derive の対象型で `Self` を置換した後、`instantiate-requirements` は各要求 field の型を正規化する。
+具体化後も正規化できない要求があれば、対象型の span を primary、宣言中の trait 名の span を `trait-requirement` の related として `E-SUR-020` を返す。
+`Self` を含まない型の lowering は正規化に失敗しない。
 
 ### 6.2 宣言の畳み込み
 
@@ -364,6 +391,12 @@ impl の実装 record はこの primitive へ渡す。
 `SProgram`、`SBlock`、`STypeDecl`、`STraitDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を渡さない。
 `SImplDecl` の span は生成する `Apply` へ渡し、`Let` には宣言から後続の項までの尾部 span を使う。
 `uτ` に span を足す改修はこの版の範囲外である。
+
+### 6.4 Sizable の Union
+
+Surface の `Sizable` derive recipe は、正規化後の Union の各異なる成分について葉の数を求め、その和を `size` とする。
+Union の重複成分は正規化で除かれる。
+Intersection は正規化後の Record として扱い、Record に対する葉の数の規則（`trait.md` §4.6）を適用する。
 
 ## 7. 診断
 
@@ -429,11 +462,12 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
 
-Racket 側の Surface 構成子リストは 26 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
+Racket 側の Surface 構成子リストは 28 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 17 個（`sty` は 5 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 
 ### 8.2 UCore+ の対応
@@ -441,7 +475,7 @@ P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur` の 9 構成子だけを parity の対象とする。
 F* 側では、これらに対応する `CLit`、`CVar`、`CApply`、`CProj`、`CRec`、`CFn`、`CConstruct`、`CLet`、`CRecur` を置く。
 `CRecur` は parity の対象を揃えるための構成子であり、この版の lowering は生成しない。
-UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 24 個（`sexpr` 11 個、`sty` 3 個、`sdecl` 1 個、`core` 9 個）である。
+UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 26 個（`sexpr` 11 個、`sty` 5 個、`sdecl` 1 個、`core` 9 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 
