@@ -523,8 +523,6 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
   正規化分類と opaque identity は Phase 4 以降へ送る。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
-- **三項以上の合成の表層構文**：`intersect-table` は三項以上の合成を、成分が合成 trait である行の入れ子で表す（§4.3）。
-  表層構文 `A & B & C` をその入れ子へ落とす lowering は導入しない（`SUR-009`）。
 - **package と module の coherence**：G2e は既存の scope 識別子で系譜を近似し、production の入口を `root` に固定する（`MOD-001`）。
 - **typing 経路の scope 文脈**：`obligations-dischargeable?` は `sc-ctx` を引数に取らず、`discharge?` の既定値 `(root)` を使う。
   typing と elaborate の判断は、いずれもこの経路を通る。

@@ -76,6 +76,7 @@
 (define not-normalizable-source "type T = Int & { a: Int }\n0")
 (define trait-in-type-source "type N = Printable\n0")
 (define name-collision-source "type Printable = Int\n0")
+(define invalid-composition-source "type D = Printable & Printable\n0")
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
         (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
@@ -103,17 +104,22 @@
               (lambda ()
                 (lower-surface (parse (lex/string 'src name-collision-source))
                                canonical-trait-env))
-              (string-length name-collision-source))))
+              (string-length name-collision-source))
+        (list 'surface-invalid-trait-composition
+              (lambda ()
+                (lower-surface (parse (lex/string 'src invalid-composition-source))
+                               canonical-trait-env))
+              (string-length invalid-composition-source))))
 
 (test-case
- "11 件の producer が registry と同じ code を返す"
+ "12 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "11 件の分類は SUR である"
+ "12 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -138,7 +144,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 23 件を描ける」である。producer の無い 12 件も
+;; spec §12 の「3 つの renderer が全 23 件を描ける」である。producer の無い 11 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 

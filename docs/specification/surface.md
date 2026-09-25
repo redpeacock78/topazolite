@@ -270,19 +270,61 @@ trait 名との衝突は基底環境の全 trait 名と原文中の全 trait 宣
 record と record 型の field は左から右へ走査し、最初に見つかった 2 度目の label で `E-SUR-007` を返す。
 3 件以上の重複があっても、最初の 1 件だけを返す。
 
+合成宣言の候補分類は診断を返さず、最大不動点で決める（§5.3）。
+名前の検査と通常の型別名の検査を通った後、合成宣言を原文順、各右辺を後行順に解決する。
+解決中の合成宣言名を再び辿った葉は `E-SUR-010` とし、同じ構造鍵の左右または衝突する要求 label は、その `TInter` 全体を primary span とする `E-SUR-022` とする。
+
+### 5.3 trait の合成
+
+合成 trait の表層宣言は、二項の `intersect` の入れ子へ lowering されなければならない。 [REQ: SUR-009]
+
+`type N = rhs` の右辺が `TInter` を根とし、`TInter` だけを辿った葉がすべて `TName` であるとき、その宣言を合成宣言の候補とする。
+候補から、葉のどれかが既知の trait 名でも候補の宣言名でもないものを除き、除くものがなくなるまで繰り返す。
+残った候補が合成宣言であり、分類は最大不動点を使う。
+このため合成宣言どうしの循環は候補に残り、解決時に `E-SUR-010` となる。
+
+trait 名は基底環境の trait 名と原文の trait 宣言名である。
+型別名と trait 名は一つの宣言名前空間を共有する。
+型宣言と trait 宣言の名前が衝突すれば `E-SUR-023` とし、基本型名 `Int`、`Bool`、`Unit`、`String` の trait 宣言も同じ診断にする。
+型位置にある trait 名は `E-SUR-021` とする。
+
+合成宣言右辺の各葉と `TInter` に、括弧の形を保つ構造鍵を与える。
+通常の trait 名の鍵はその名前、既存の合成 trait 名の鍵はその intersect 行から再帰的に得る鍵とする。
+合成宣言名の鍵はその宣言の右辺の根の鍵であり、`TInter` の鍵は左右の鍵を全順序で並べた組である。
+葉は組より小さく、葉どうしは `symbol<?`、組どうしは左の成分を再帰的に比べ、等しければ右の成分を比べる。
+左右をこの順序で揃えるため、`A & B` と `B & A` は同じ鍵を持つ。
+括弧の形は平坦化しないため、`(A & B) & C` と `A & (B & C)` は異なる鍵になる。
+
+鍵ごとの出力は、基底環境の合成 trait、原文順で最初にその鍵を根に持つ合成宣言名、隠れた名前 `%compose-<n>` の順で決める。
+同じ鍵を持つ後続の宣言は最初の出力への Surface 別名になり、行を追加しない。
+たとえば `type RW = Readable & Writable` の後の `type WR = Writable & Readable` は `RW` への別名である。
+kernel の `Printable & Sizable` と `Printable & Sizable & Taggable` は、それぞれ `PrintableSizable` と `PrintableSizableTaggable` への別名になる。
+
+無括弧の三項合成 `A & B & C` は左結合である。
+最初の鍵に名前付き出力がなければ内側に `%compose-1` を作り、外側の行はその名前を成分として持つ。
+合成宣言の鍵をすべて先に求めてから出力名を決めるため、`type X = (A & B) & C` が `type AB = A & B` より先にあっても、内側の出力は後続する `AB` になる。
+
+trait 名は合成宣言右辺の `TInter` の葉と、`impl` または `derive` の trait 名としてだけ使える。
+通常の型別名、`let` 注釈、関数型、record 型の欄、trait template の欄、impl と derive の対象型では型名として解決し、trait または合成宣言名なら `E-SUR-021` とする。
+型位置の名前は型別名、基本型、trait 名、未知名の順に解決し、型式は左から右へ検査する。
+
 ## 6. UCore+ への lowering
 
 lowering の入口は `(lower-surface sprog trait-env)` である。
-返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows spans))` のいずれかである。
-`term` は UCore+ の項、`trait-rows` と `impl-rows` は宣言から作った行、`spans` は宣言由来の鍵から原文 span への対応表である。
-呼び側はこの行を `trait-env` へ重ねて台帳を作る。
+返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows intersect-rows spans))` のいずれかである。
+`term` は UCore+ の項、`trait-rows`、`impl-rows`、`intersect-rows` は宣言から作った行、`spans` は宣言由来の鍵から原文 span への対応表である。
+合成 trait 行は `trait-rows` に、合成で作った intersect 行は `intersect-rows` に含める。
+呼び側はこれらの行を `trait-env` へ重ねて台帳を作る。
 引数が Diagnostic のときは、それをそのまま返す。
 この節は parser が diagnostic を返した経路を呼び側の分岐漏れで失わないために置く。
 
 別名環境を §5 の規則で先に構築・検査し、`sty` を `uτ` へ落とす際に使う。
+この前処理では合成宣言の候補も分類するが、合成の鍵と出力はまだ確定しない。
 続いて全 trait 宣言を原文順に読み、既存または原文中の同名 trait を `E-SUR-013` とする。
 生成した origin id や primitive 名が基底環境または kernel の `R0`・`Γ0` の鍵と衝突すれば `E-SUR-016` とする。
-その行を基底の環境へ重ねた後、impl と derive の宣言を同じ前処理で原文順に 1 件ずつ検査する。
+次に全合成宣言の鍵と template を解決し、鍵ごとの出力を決めて合成 trait 行と intersect 行を作る。
+基底環境へ trait 行、合成 trait 行、intersect 行を重ねた後、`impl` と `derive` の宣言を原文順に 1 件ずつ検査する。
+この段で原文に書かれた合成宣言名を出力 trait 名へ写してから参照先を調べるため、合成 trait への直接実装は `E-SUR-018` になる。
 どちらも参照先の trait が無ければ `E-SUR-015`、合成 trait なら `E-SUR-018` とする。
 impl では本体の label 集合が要求と異なれば `E-SUR-017` とする。
 対象型を lowering して正規化し、未知の型名は `E-SUR-008` とする。
@@ -434,6 +476,10 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-021` `surface-trait-in-type-position`：trait 名または合成宣言の名前を型の位置で使った
 - `E-SUR-022` `surface-invalid-trait-composition`：同じ鍵の trait、または label が衝突する trait を `&` で並べた
 - `E-SUR-023` `surface-type-trait-name-collision`：型の名前が trait の名前と衝突した。基本型の名前の trait を含む
+
+`E-SUR-022` の primary span は、失敗した `TInter` 全体を指す。
+related は `composition-left` と `composition-right` の 2 件で、原文に書かれた左右の operand の span と表示名を持つ。
+`E-SUR-023` の related は、原文の trait 宣言と衝突した場合の `trait-declaration` である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。

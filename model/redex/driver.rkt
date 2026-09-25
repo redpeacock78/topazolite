@@ -53,7 +53,9 @@
           (compiled core type row callables ledger)]))))
   (cond
     [(diagnostic? low) low]
-    [(and (null? (lowered-trait-rows low)) (null? (lowered-impl-rows low)))
+    [(and (null? (lowered-trait-rows low))
+          (null? (lowered-impl-rows low))
+          (null? (lowered-intersect-rows low)))
      ;; 宣言が無ければ外側の台帳を eq? のまま使い、キャッシュを止めない（spec §6.6）。
      (elab-under base-ledger)]
     [else
@@ -62,7 +64,8 @@
        (make-trait-env
         #:trait (append (trait-env-trait-rows base) (lowered-trait-rows low))
         #:impl (append (trait-env-impl-rows base) (lowered-impl-rows low))
-        #:intersect (trait-env-intersect-rows base)
+        #:intersect (append (trait-env-intersect-rows base)
+                            (lowered-intersect-rows low))
         #:scope (trait-env-scope-rows base)
         #:fail fail))
      (cond

@@ -650,9 +650,9 @@ Surface の型注釈と署名は、Typed Core への elaboration を通じて型
 
 ### SUR-009
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/trait.md` §9
+- **正典**：`docs/specification/surface.md` §5.3
 
 trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering されなければならない。
 

@@ -1,13 +1,15 @@
 #lang racket
 
 (require racket/match
+         racket/set
          "diagnostic.rkt"
+         "rows.rkt"
          "traits.rkt"
          "type-equiv.rkt")
 
 (provide lower-surface lift-template-type (struct-out lowered))
 
-(struct lowered (term trait-rows impl-rows spans) #:transparent)
+(struct lowered (term trait-rows impl-rows intersect-rows spans) #:transparent)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
 ;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
@@ -67,12 +69,176 @@
 ;; ここで見つかる。展開の結果は捨て、診断のためだけに歩く。
 ;; 宣言している名前を stack の初期値にするので、循環の診断は
 ;; 「その宣言の定義の中にある参照」を指す。
-(define (check-alias-definitions items env fail)
+(define (check-alias-definitions items env composite-names fail)
   (for ([item (in-list items)])
     (match item
       [`(STypeDecl ,_ (SName ,_ ,name) ,ty)
-       (lower-sty ty env fail (list name))]
+       (unless (memq name composite-names)
+         (lower-sty ty env fail (list name)))]
       [_ (void)])))
+
+;; spec §5.1。合成候補の根と TInter だけを辿り、その葉を返す。
+(define (inter-leaves ty)
+  (match ty
+    [`(TInter ,_ ,l ,r) (append (inter-leaves l) (inter-leaves r))]
+    [_ (list ty)]))
+
+(define (composition-candidate? ty)
+  (and (match ty [`(TInter ,_ ,_ ,_) #t] [_ #f])
+       (andmap (λ (leaf) (match leaf [`(TName ,_ ,_) #t] [_ #f]))
+               (inter-leaves ty))))
+
+;; spec §5.1。最大不動点を取り、trait 名または候補名以外の葉が残る候補を除く。
+(define (classify-compositions items trait-names)
+  (define candidates
+    (for/list ([item (in-list items)]
+               #:when (match item
+                        [`(STypeDecl ,_ ,_ ,ty) (composition-candidate? ty)]
+                        [_ #f]))
+      (match-define `(STypeDecl ,s (SName ,s_n ,name) ,ty) item)
+      (list name s s_n ty)))
+  (let loop ([cs candidates])
+    (define names (map first cs))
+    (define kept
+      (filter (λ (c)
+                (for/and ([leaf (in-list (inter-leaves (fourth c)))])
+                  (define n (third leaf))
+                  (or (memq n trait-names) (memq n names))))
+              cs))
+    (if (= (length kept) (length cs)) cs (loop kept))))
+
+;; spec §5.3。葉は組より前、葉どうしは symbol<?、組どうしは辞書順である。
+(define (key<? a b)
+  (cond
+    [(and (symbol? a) (symbol? b)) (symbol<? a b)]
+    [(symbol? a) #t]
+    [(symbol? b) #f]
+    [(equal? (first a) (first b)) (key<? (second a) (second b))]
+    [else (key<? (first a) (first b))]))
+
+(define (key-pair a b) (if (key<? b a) (list b a) (list a b)))
+
+;; spec §5.3。基底の出力名から構造鍵を再帰的に求める。
+(define (base-composite-keys base)
+  (define by-output
+    (for/hasheq ([r (in-list (trait-env-intersect-rows base))])
+      (values (intersect-output r) r)))
+  (define (key-of n)
+    (match (hash-ref by-output n #f)
+      [#f n]
+      [r (key-pair (key-of (intersect-left r)) (key-of (intersect-right r)))]))
+  (for/hasheq ([n (in-hash-keys by-output)]) (values n (key-of n))))
+
+(define (sty->string ty)
+  (match ty
+    [`(TName ,_ ,n) (symbol->string n)]
+    [`(TInter ,_ ,l ,r) (format "(~a & ~a)" (sty->string l) (sty->string r))]))
+
+;; spec §6.2 一段目。宣言名の参照を再帰的に解決し、全宣言の根の鍵と template を記録する。
+(define (resolve-composition-keys comps template-of composite-keys fail)
+  (define by-name (for/hasheq ([c (in-list comps)]) (values (first c) c)))
+  (define memo (make-hasheq))
+  (define (node ty visiting)
+    (match ty
+      [`(TName ,s ,n)
+       (cond
+         [(hash-ref by-name n #f)
+          (when (memq n visiting)
+            (fail 'surface-recursive-type-alias s))
+          (decl n visiting)]
+         [else (cons (hash-ref composite-keys n n) (template-of n))])]
+      [`(TInter ,s ,l ,r)
+       (match-define (cons kl tl) (node l visiting))
+       (match-define (cons kr tr) (node r visiting))
+       (define (invalid)
+         (fail 'surface-invalid-trait-composition s
+               #:related (list (list 'composition-left (node-span l)
+                                     (format "`&` の左辺 ~a" (sty->string l)))
+                               (list 'composition-right (node-span r)
+                                     (format "`&` の右辺 ~a" (sty->string r))))))
+       (define t (field-row-⊕ tl tr))
+       (when (equal? kl kr) (invalid))
+       (unless t (invalid))
+       (cons (key-pair kl kr) t)]))
+  (define (decl n visiting)
+    (or (hash-ref memo n #f)
+        (let ([v (node (fourth (hash-ref by-name n)) (cons n visiting))])
+          (hash-set! memo n v)
+          v)))
+  (for ([c (in-list comps)]) (decl (first c) '()))
+  memo)
+
+;; spec §6.2 二段目。出力名を決め、新しい鍵ごとに trait 行と intersect 行を作る。
+(define (emit-compositions comps memo base composite-keys source-rows)
+  (define by-name (for/hasheq ([c (in-list comps)]) (values (first c) c)))
+  (define out (make-hash))
+  (for ([(n k) (in-hash composite-keys)]) (hash-set! out k n))
+  (define named (make-hash))
+  (for ([c (in-list comps)])
+    (define k (car (hash-ref memo (first c))))
+    (unless (hash-has-key? named k) (hash-set! named k c)))
+  (define templates (make-hasheq))
+  (for ([r (in-list (append (trait-env-trait-rows base) source-rows))])
+    (hash-set! templates (trait-name r) (trait-template r)))
+  (define hidden 0)
+  (define index (next-intersect-index base))
+  (define trait-rows '())
+  (define intersect-rows '())
+  (define spans (hash))
+  (define visited (mutable-seteq))
+  (define (emit! k o-l o-r s)
+    (define c (hash-ref named k #f))
+    (define name
+      (if c
+          (first c)
+          (begin
+            (set! hidden (add1 hidden))
+            (string->symbol (format "%compose-~a" hidden)))))
+    (match-define (list l r) (sort (list o-l o-r) symbol<?))
+    (define template (field-row-⊕ (hash-ref templates l) (hash-ref templates r)))
+    (define trow (list (string->symbol (format "o-trait-user-~a" name)) name 'root template))
+    (define irow (list (string->symbol (format "o-intersect-user-~a" index))
+                       (string->symbol (format "intersect-user-~a" index))
+                       l r name))
+    (define-values (s-name s-decl)
+      (if c (values (third c) (second c)) (values s s)))
+    (set! index (add1 index))
+    (hash-set! templates name template)
+    (hash-set! out k name)
+    (set! trait-rows (cons trow trait-rows))
+    (set! intersect-rows (cons irow intersect-rows))
+    (set! spans (hash-set* spans
+                           (cons 'trait-name name) s-name
+                           (cons 'origin-id (first trow)) s-decl
+                           (cons 'primitive-name (trait-constant-name trow)) s-decl
+                           (cons 'origin-id (intersect-oid irow)) s-decl
+                           (cons 'primitive-name (intersect-name irow)) s-decl))
+    name)
+  (define (node ty)
+    (match ty
+      [`(TName ,_ ,n)
+       (cond
+         [(hash-ref by-name n #f)
+          => (λ (c)
+               (unless (set-member? visited n)
+                 (set-add! visited n)
+                 (node (fourth c)))
+               (let ([k (car (hash-ref memo n))])
+                 (cons k (hash-ref out k))))]
+         [else (cons (hash-ref composite-keys n n) n)])]
+      [`(TInter ,s ,l ,r)
+       (match-define (cons kl o-l) (node l))
+       (match-define (cons kr o-r) (node r))
+       (define k (key-pair kl kr))
+       (cons k (or (hash-ref out k #f) (emit! k o-l o-r s)))]))
+  (for ([c (in-list comps)])
+    (unless (set-member? visited (first c))
+      (set-add! visited (first c))
+      (node (fourth c))))
+  (define outputs
+    (for/hasheq ([c (in-list comps)])
+      (values (first c) (hash-ref out (car (hash-ref memo (first c)))))))
+  (values (reverse trait-rows) (reverse intersect-rows) spans outputs))
 
 ;; spec §7.2.1。sty から uτ を作る。span は uτ に残らず、包む側の
 ;; (#:ty uτ s) が持つ。別名を展開しても包みは展開前の使用箇所の span を
@@ -153,11 +319,11 @@
 ;; 衝突した鍵は必ず新しい行の鍵である。基底どうしの衝突は基底を
 ;; 作った時点で落ちており、新しい trait 名どうしの衝突は E-SUR-013 が
 ;; 先に拾い、新しい impl の oid は next-impl-index が一意にする。
-(define (extend-env base trait-rows impl-rows spans fail)
+(define (extend-env base trait-rows impl-rows intersect-rows spans fail)
   (make-trait-env
    #:trait (append (trait-env-trait-rows base) trait-rows)
    #:impl (append (trait-env-impl-rows base) impl-rows)
-   #:intersect (trait-env-intersect-rows base)
+   #:intersect (append (trait-env-intersect-rows base) intersect-rows)
    #:scope (trait-env-scope-rows base)
    #:fail (λ (reason kind key) (fail reason (hash-ref spans (cons kind key))))))
 
@@ -191,11 +357,11 @@
                           (cons 'primitive-name (trait-constant-name row)) s))]
       [_ (values rows spans)])))
 
-;; spec §6.6。基底を含めた接頭辞ごとの通し番号にする。
-(define (next-impl-index env prefix)
+;; spec §6.2。基底を含めた接頭辞ごとの通し番号にする。
+(define (next-index oids prefix)
   (add1
-   (for/fold ([m 0]) ([row (in-list (trait-env-impl-rows env))])
-     (define s (symbol->string (impl-oid row)))
+   (for/fold ([m 0]) ([oid (in-list oids)])
+     (define s (symbol->string oid))
      (define n (string-length prefix))
      (define suffix
        (and (> (string-length s) n)
@@ -206,6 +372,12 @@
      (if (and suffix (regexp-match? #px"^[0-9]+$" suffix))
          (max m (string->number suffix))
          m))))
+
+(define (next-impl-index env prefix)
+  (next-index (map impl-oid (trait-env-impl-rows env)) prefix))
+
+(define (next-intersect-index env)
+  (next-index (map intersect-oid (trait-env-intersect-rows env)) "o-intersect-user-"))
 
 ;; spec §6.4。Surface が作る正規型の形についてだけ葉を数える。
 ;; Intersection は正規化で Record になるので、Record の節で数える。
@@ -241,15 +413,16 @@
 ;; spec §6.6 手順 2。core-info は宣言の節点から (binder prim) を引く表で
 ;; あり、lower-item が行と同じ番号の項を作るために使う。derive の値は
 ;; (binder prim uτ generated-value) である。
-(define (lower-impl-decls items staged spans env fail)
+(define (lower-impl-decls items staged spans env outputs fail)
   (for/fold ([tenv staged] [rows '()] [spans spans] [info (hasheq)]
              #:result (values (reverse rows) spans info))
             ([item (in-list items)])
     (match item
       [`(SImplDecl ,s (SName ,s_n ,trait) ,ty (SRec ,s_b ,fields))
-       (define trait-row (or (trait-row-by-name trait tenv)
+       (define trait* (hash-ref outputs trait trait))
+       (define trait-row (or (trait-row-by-name trait* tenv)
                              (fail 'surface-unknown-trait-name s_n)))
-       (when (memq trait (map intersect-output (trait-env-intersect-rows tenv)))
+       (when (memq trait* (map intersect-output (trait-env-intersect-rows tenv)))
          (fail 'surface-impl-composite-trait s_n))
        (define labels (for/list ([f (in-list fields)])
                         (match f [`(SField ,_ (SLabel ,_ ,label) ,_) label])))
@@ -257,42 +430,43 @@
                        (sort (map first (trait-template trait-row)) symbol<?))
          (fail 'surface-impl-requirement-mismatch s_b))
        (define target (normalize-type (lift-template-type (lower-sty ty env fail))))
-       (check-requirements trait trait-row target ty s_n fail)
-       (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
+       (check-requirements trait* trait-row target ty s_n fail)
+       (when (for/or ([r (in-list (impl-rows-by-trait trait* tenv))])
                (type-equiv? (impl-target-type r) target))
          (fail 'surface-duplicate-impl-decl (node-span ty)))
        (define n (next-impl-index tenv
-                                  (format "o-impl-user-~a-" trait)))
-       (define oid (string->symbol (format "o-impl-user-~a-~a" trait n)))
-       (define prim (string->symbol (format "impl-user-~a-~a" trait n)))
-       (define binder (string->symbol (format "%impl-~a-~a" trait n)))
-       (define row (list oid prim 'impl trait target 'root))
+                                  (format "o-impl-user-~a-" trait*)))
+       (define oid (string->symbol (format "o-impl-user-~a-~a" trait* n)))
+       (define prim (string->symbol (format "impl-user-~a-~a" trait* n)))
+       (define binder (string->symbol (format "%impl-~a-~a" trait* n)))
+       (define row (list oid prim 'impl trait* target 'root))
        (define spans* (hash-set* spans (cons 'origin-id oid) s
                                  (cons 'primitive-name prim) s))
-       (values (extend-env tenv '() (list row) spans* fail)
+       (values (extend-env tenv '() (list row) '() spans* fail)
                (cons row rows) spans* (hash-set info item (list binder prim)))]
       [`(SDeriveDecl ,s (SName ,s_n ,trait) ,ty)
-       (define trait-row (or (trait-row-by-name trait tenv)
+       (define trait* (hash-ref outputs trait trait))
+       (define trait-row (or (trait-row-by-name trait* tenv)
                              (fail 'surface-unknown-trait-name s_n)))
-       (when (memq trait (map intersect-output (trait-env-intersect-rows tenv)))
+       (when (memq trait* (map intersect-output (trait-env-intersect-rows tenv)))
          (fail 'surface-impl-composite-trait s_n))
        (define uτ (lower-sty ty env fail))
        (define target (normalize-type (lift-template-type uτ)))
        (define recipe (or (hash-ref derive-recipes (trait-origin trait-row) #f)
                           (fail 'surface-derive-no-recipe s)))
-       (check-requirements trait trait-row target ty s_n fail)
-       (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
+       (check-requirements trait* trait-row target ty s_n fail)
+       (when (for/or ([r (in-list (impl-rows-by-trait trait* tenv))])
                (type-equiv? (impl-target-type r) target))
          (fail 'surface-duplicate-impl-decl (node-span ty)))
        (define n (next-impl-index tenv
-                                  (format "o-derive-user-~a-" trait)))
-       (define oid (string->symbol (format "o-derive-user-~a-~a" trait n)))
-       (define prim (string->symbol (format "derive-user-~a-~a" trait n)))
-       (define binder (string->symbol (format "%derive-~a-~a" trait n)))
-       (define row (list oid prim 'derive trait target 'root))
+                                  (format "o-derive-user-~a-" trait*)))
+       (define oid (string->symbol (format "o-derive-user-~a-~a" trait* n)))
+       (define prim (string->symbol (format "derive-user-~a-~a" trait* n)))
+       (define binder (string->symbol (format "%derive-~a-~a" trait* n)))
+       (define row (list oid prim 'derive trait* target 'root))
        (define spans* (hash-set* spans (cons 'origin-id oid) s
                                  (cons 'primitive-name prim) s))
-       (values (extend-env tenv '() (list row) spans* fail)
+       (values (extend-env tenv '() (list row) '() spans* fail)
                (cons row rows) spans*
                (hash-set info item (list binder prim uτ (recipe target))))]
       [_ (values tenv rows spans info)])))
@@ -435,12 +609,29 @@
         (let/ec return
           (define (fail key s #:related [related '()])
             (return (diagnostic-of 'surface key #:primary-span s #:related related)))
-          (define env (build-alias-env items base fail))
-          (check-alias-definitions items env fail)
-          (define-values (trait-rows trait-spans)
+          (define env0 (build-alias-env items base fail))
+          (define trait-names
+            (for/list ([(n d) (in-hash env0)] #:when (eq? d 'trait)) n))
+          (define comps (classify-compositions items trait-names))
+          (define env
+            (for/fold ([env env0]) ([c (in-list comps)])
+              (hash-set env (first c) 'trait)))
+          (check-alias-definitions items env (map first comps) fail)
+          (define-values (decl-rows decl-spans)
             (lower-trait-decls items base env fail))
-          (define staged (extend-env base trait-rows '() trait-spans fail))
+          (define composite-keys (base-composite-keys base))
+          (define (template-of n)
+            (trait-template (or (findf (λ (r) (eq? (trait-name r) n)) decl-rows)
+                                (trait-row-by-name n base))))
+          (define memo (resolve-composition-keys comps template-of composite-keys fail))
+          (define-values (composite-rows intersect-rows composite-spans outputs)
+            (emit-compositions comps memo base composite-keys decl-rows))
+          (define trait-rows (append decl-rows composite-rows))
+          (define trait-spans
+            (for/fold ([h decl-spans]) ([(k v) (in-hash composite-spans)])
+              (hash-set h k v)))
+          (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
           (define-values (impl-rows spans core-info)
-            (lower-impl-decls items staged trait-spans env fail))
+            (lower-impl-decls items staged trait-spans env outputs fail))
           (lowered (fold-items items e env core-info fail)
-                   trait-rows impl-rows spans))])]))
+                   trait-rows impl-rows intersect-rows spans))])]))
