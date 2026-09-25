@@ -1,6 +1,6 @@
 # Topazolite Surface 構文
 
-**状態**：P2e2 版
+**状態**：P2h1 版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/requirements.md`
 
@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、無名関数、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、無名関数、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名、`trait` と `impl` の宣言、および block である。
 
 この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、Effect 注釈（`SUR-003`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
@@ -32,7 +32,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false` の 7 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for` の 10 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 
 整数リテラルは `[0-9]+` である。
@@ -61,8 +61,10 @@ Surface の経路は展開表を生成しない。
 
 ```text
 program  ::= NL* pitem* expr NL*
-pitem    ::= typedecl | fndecl | binding NL+
+pitem    ::= typedecl | traitdecl | impldecl | fndecl | binding NL+
 typedecl ::= "type" ident "=" ty NL+
+traitdecl ::= "trait" ident tyrec NL+
+impldecl ::= "impl" ident "for" ty record NL+
 fndecl   ::= "fn" ident "(" params ")" ty block NL+
 expr     ::= postfix
 postfix  ::= primary suffix*
@@ -82,10 +84,10 @@ record   ::= "{" NL* "}"
            | "{" NL* field (fsep field)* fsep? NL* "}"
 field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
-ty       ::= ident
-           | "{" NL* "}"
-           | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
+ty       ::= ident | tyrec
            | "fn" "(" tys ")" ty
+tyrec    ::= "{" NL* "}"
+           | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
 tys      ::= ε | ty ("," ty)*
 ```
@@ -100,18 +102,22 @@ program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
 縮小 Core の項は式であり、式を持たない program には落とし先が無いためである。
 
+型別名は全宣言から作った環境で解決する。
+trait 宣言はすべて impl 宣言より先に環境へ登録するため、impl は対応する trait より前に書ける。
+
 ### 3.1 受理しない構文
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
 `-`、`+`、`*`、`/`、`%`、`<`、`>`、`?`、`|`、`!`、`&`、`[`、`]`、`;` は字句にならない。
 `List<Int>`、`fn f() -> Int`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号の位置で `E-SUR-002` になる。
 
-字句にはなるが構文に無い `if`、`for`、`while`、`return`、`match` は予約語ではなく `ident` になる。
+字句にはなるが構文に無い `if`、`while`、`return`、`match` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
 単独の `return` は変数式として受理し、未束縛変数の診断は後段に委ねる。
+予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
-この版では予約語の集合をこれ以上増やさない。
-後続の構文が実際に必要とする語は、それぞれの要件で定める。
+P2h1 では `trait`、`impl`、`for` を予約語へ加えた。
+以後に必要となる追加は、後続の要件で定める。
 
 ### 3.2 `let mut` の字句と構文
 
@@ -244,13 +250,22 @@ record と record 型の field は左から右へ走査し、最初に見つか�
 
 ## 6. UCore+ への lowering
 
-lowering の入口は `(lower-surface sprog)` である。
-返り値は UCore+ の項か Diagnostic 1 件のいずれかである。
+lowering の入口は `(lower-surface sprog trait-env)` である。
+返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows spans))` のいずれかである。
+`term` は UCore+ の項、`trait-rows` と `impl-rows` は宣言から作った行、`spans` は宣言由来の鍵から原文 span への対応表である。
+呼び側はこの行を `trait-env` へ重ねて台帳を作る。
 引数が Diagnostic のときは、それをそのまま返す。
 この節は parser が diagnostic を返した経路を呼び側の分岐漏れで失わないために置く。
 
-別名環境を §5 の規則で先に構築し、`sty` を `uτ` へ落とす際に使う。
-宣言の並びは右から畳み、`Let` と `Recur` を積む。
+別名環境を §5 の規則で先に構築・検査し、`sty` を `uτ` へ落とす際に使う。
+続いて全 trait 宣言を原文順に読み、既存または原文中の同名 trait を `E-SUR-013` とする。
+生成した origin id や primitive 名が基底環境または kernel の `R0`・`Γ0` の鍵と衝突すれば `E-SUR-016` とする。
+その行を基底の環境へ重ねた後、impl 宣言を原文順に 1 件ずつ検査する。
+参照先の trait が無ければ `E-SUR-015`、合成 trait なら `E-SUR-018`、本体の label 集合が要求と異なれば `E-SUR-017` とする。
+対象型を正規化し、未知の型名は `E-SUR-008` とする。
+同じ trait と型同値な対象型の impl がすでにあれば `E-SUR-014` とする。
+各 impl 行は検査を通ってから環境へ加えるため、後続の宣言との重複も検出する。
+この前処理の後、項の宣言を右から畳み、`Let` と `Recur` を積む。
 
 ### 6.1 対応表
 
@@ -272,6 +287,10 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
 - `(SFnDecl s (SName s_f f) ... )` は、関数本体と後続の項を持つ `Recur` へ落とす。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
+- `(STraitDecl s (SName s_n tn) (tyfield ...))` は trait 環境へ行を追加するだけで、UCore+ 節点を生成しない。
+- trait 宣言の template の型位置では `Self` を実装対象型の placeholder として扱う。欄名の `Self` は通常の label である。
+- `Self` は字句上の予約語ではないが、trait template 以外の型位置と型別名の宣言名では `E-SUR-008` とする。
+- `(SImplDecl s (SName s_n tn) ty (SRec s_b (field ...)))` は生成 primitive の適用を後続の項へ束縛する `Let` と `Apply` へ落とす（§6.2）。
 
 多 field 射影の落とし先は次の形である。
 
@@ -310,6 +329,17 @@ lower [b1 b2 b3] e = L(b1, L(b2, L(b3, lower e)))
 block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`、トップレベルの束縛または関数宣言は `[startByte(宣言 i), endByte(program の末尾式))` を持つ。
 この span は元の `SBind` や `SFnDecl` の span とは一致しない。
 
+impl 宣言の lowering は次の形であり、`Apply` は impl 宣言全体の span、`Let` は尾部 span を持つ。
+
+```text
+(SImplDecl s (SName s_n T) ty (SRec s_b fields))
+  ⟶ (Let s_tail ((#:bind %impl-T-n s) const)
+          (Apply s (#:var impl-user-T-n s) body_core) rest)
+```
+
+`%impl-T-n` は局所の束縛名であり、`impl-user-T-n` は台帳から得る impl primitive 名である。
+impl の実装 record はこの primitive へ渡す。
+
 尾部 span を使うと、`Let` と `Recur` の親 span が後続の項を包含する。
 生成した span は入力の token 位置から決まり、`#:synthetic` は使わない。
 
@@ -318,12 +348,13 @@ block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`�
 `SUR-001` の span 引き継ぎは、UCore+ の節点または包みを 1 個生成する構成子を単位とする。
 `SName`、`SLabel`、`TName`、`TRec`、`TFn` の span は、それぞれ binder、label、型注釈の欄へ渡す。
 
-`SProgram`、`SBlock`、`STypeDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を渡さない。
+`SProgram`、`SBlock`、`STypeDecl`、`STraitDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を渡さない。
+`SImplDecl` の span は生成する `Apply` へ渡し、`Let` には宣言から後続の項までの尾部 span を使う。
 `uτ` に span を足す改修はこの版の範囲外である。
 
 ## 7. 診断
 
-Surface の相は registry の版 15 に `surface` として登録する。
+`surface` 相は registry v15 で登録した。
 字句、構文、型別名、lowering を 1 つの相にまとめ、区別は code で付ける。
 
 - `E-SUR-001` `surface-invalid-byte`：UTF-8 として解釈できない byte 列
@@ -337,6 +368,13 @@ Surface の相は registry の版 15 に `surface` として登録する。
 - `E-SUR-009` `surface-duplicate-type-alias`：同じ型別名を 2 度宣言した
 - `E-SUR-010` `surface-recursive-type-alias`：型別名の参照に循環がある
 - `E-SUR-011` `surface-reserved-type-name`：基本型の名前を型別名として宣言した
+- `E-SUR-012` `surface-projection-labels`：多 field 射影の label 列が空か重複している
+- `E-SUR-013` `surface-duplicate-trait-decl`：同じ名前の trait を 2 度宣言した
+- `E-SUR-014` `surface-duplicate-impl-decl`：同じ trait と型同値な対象型の組へ impl を 2 度宣言した
+- `E-SUR-015` `surface-unknown-trait-name`：宣言の無い trait の名前を impl が参照した
+- `E-SUR-016` `surface-trait-name-collision`：宣言から作る鍵が基底の trait 環境または kernel の `R0`・`Γ0` と衝突した
+- `E-SUR-017` `surface-impl-requirement-mismatch`：impl 本体のラベル集合が trait の要求と合わない
+- `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl を宣言した
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -345,7 +383,7 @@ lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこ�
 `E-SUR-004` の primary span は、逆斜線から許されない escape 文字までを指す。
 
 E-SUR-001 から E-SUR-011 は P2c1 で registry に登録し、fixture v15 をその時点で 1 度だけ凍結した。
-P2c2 は producer を追加するだけで registry を変更しない。
+E-SUR-012 は registry v17、E-SUR-013 から E-SUR-018 は P2h1 の registry v19 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity
@@ -375,9 +413,11 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
+- `STraitDecl` と `SImplDecl` は trait 環境と impl 行へ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
 
-Racket 側の Surface 構成子リストは 23 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
+Racket 側の Surface 構成子リストは 25 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
+P2h1 で加えた `STraitDecl` と `SImplDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 
 ### 8.2 UCore+ の対応
 
@@ -412,8 +452,9 @@ span はこの 4 段のいずれでも落とさない。
 `erase-core` は成果物を受けた側が必要に応じて掛ける。
 経路の途中で span を落とすと、診断の primary span が指す位置を呼び手が復元できない。
 
-成功の成果物は `(struct compiled (core type row callables))` である。
-欄は `elab` の返り値の 4 要素と同じ順で並ぶ。
+成功の成果物は `(struct compiled (core type row callables ledger))` である。
+先頭 4 欄は `elab` の返り値と同じ順で並び、`ledger` はその compilation で使った trait 台帳である。
+成果物を実行するときは、`compiled-ledger` を `call-with-trait-ledger` へ渡して台帳を揃える。
 
 失敗の返り値は Diagnostic 1 件である。
 最初に落ちた段の診断をそのまま返し、phase を書き換えない。

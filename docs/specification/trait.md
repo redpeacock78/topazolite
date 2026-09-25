@@ -1,6 +1,6 @@
 # Topazolite trait 層仕様
 
-**状態**：G2f 執筆版
+**状態**：P2h1 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §4.5.3、§6.4、§8.1、§15（以下、ホワイトペーパー）
 **関連文書**：`core-calculus.md`、`structural-row.md`、`proof-search.md`、`proof-value.md`、`policy-narrative.md`、`requirements.md`、`glossary.md`
 
@@ -190,15 +190,20 @@ G2g の正典表は、次の四行を持つ。
 `tn_left` と `tn_right` は合成 trait でもよい。 [REQ: TRT-006]
 成分が合成 trait である行の候補は、成分側の合成候補を成分として持ち、その origin は `Compose` の入れ子になる。
 
-### 4.4 読み込み時検査と環境の導出
+### 4.4 環境の検査と導出
 
-表の読み込み時に、trait 名、origin 識別子、primitive 名の一意性を検査する。
+`trait-table`、`impl-table`、`intersect-table`、`scope-parent-table` は、1 つの `trait-env` にまとめる。
+各コンパイルは基底の環境を受け取り、宣言があれば追加行を含む環境を作る。
+`make-trait-env` は環境の構築時に表の整合性を検査し、`make-trait-ledger` はその環境から `R0`、`Γ0`、global bindings を導いて origin と既存 kernel 行との衝突を検査する。
+`trait-ledger` は `trait-env` と、この三つの導出値をまとめた台帳である。
+
+環境の構築時に、trait 名、origin 識別子、primitive 名の一意性を検査する。
 各行が参照する trait の存在、template の label 一意性、`Self` の出現位置、具体化後の型の整形式性と正規性も検査する。
 合成行については、trait 名の順序、row 合成の成功、出力 template との一致を検査する。
 intersect 行の trait 名は symbol 順でなければならず、`intersect-acyclic?` が trait 名の依存グラフの非巡回性を検査する。
 `impl` 行と `derive` 行の対象 trait は、`intersect-table` のどの出力 trait でもあってはならない。 [REQ: TRT-007]
 合成 trait への直接実装を許すと、同じ goal に表由来の直接候補と合成候補が並び、`Ambiguous` になるためである。
-R0 と Γ0 へ追加した後に、既存 kernel 行との key 衝突も検査する。
+`make-trait-ledger` は導出した `R0` と `Γ0` の鍵を kernel の鍵と比較し、さらに trait origin を `R0` の実値と照合する。
 
 各 trait 行から、次の Γ0 定数を導く。
 
@@ -232,9 +237,35 @@ impl と intersect の Proof は `TraitResolutionNarrative` の操作から生�
 trait が `o-language-narrative` を直接の親に取るのに対してこの形を取るのは、trait の生成と trait resolution の操作が異なる Narrative に属するためである。
 表由来の名前または引数個数が合わない δ 適用は `undefined` を返し、既存の R-Delta を不発火にする。
 
+台帳を実行時に差し替える入口は `call-with-trait-ledger` だけである。
+`current-trait-ledger` は現在の台帳を読む getter であり、台帳を持つ parameter は公開しない。
+
+Redex の metafunction と judgment form は入力項だけを鍵に結果をキャッシュする。
+cache hit では規則の本体が走らないため、本体で読む台帳が異なっていても同じ項なら以前の結果が返りうる。
+そのため `call-with-trait-ledger` は `caching-enabled?` と台帳を同じ `parameterize` で束縛し、custom の台帳ではキャッシュを `#f` にする。
+canonical の台帳では外側のキャッシュ設定を保つ。
+`caching-enabled?` が `#f` の間は、キャッシュの参照と記録の両方を止める。
+`gen.rkt` の `elaboration-cache` と `trace-cache` も同じスイッチに従う。
+この仕組みにより、trait または impl の宣言を含むプログラムは custom の台帳で走り、Redex と `gen.rkt` の項依存キャッシュを使わない。
+
+この保証は、custom の台帳を渡した thunk の中で `caching-enabled?` を `#t` へ束縛し直さないことを前提とする。
+getter の検査は、この前提が破られたときキャッシュを外れた読み出しを検出する防御であり、保証そのものではない。
+cache hit では本体も getter も走らないためである。
+宣言の無いプログラムでは台帳を組み直さず基底の台帳を使うため、canonical な基底のもとではキャッシュを従来どおり維持する。
+外側が custom の台帳なら、その台帳とキャッシュ設定を引き継ぐ。
+
 ### 4.5 利用者の宣言による行
 
 `trait` と `impl` の宣言構文は、Proof-bearing Narrative trait と `Implements` Proof を正規の Narrative 経路から生成しなければならない。 [REQ: SUR-010]
+
+利用者が宣言した trait 行と impl 行の scope は `root` に固定する。
+Surface に module の表記が無く、`root` 以外の scope を宣言から与える経路は `MOD-001` が担うためである。
+
+trait 行の origin id は `o-trait-user-<trait 名>`、impl 行の origin id は `o-impl-user-<trait 名>-<n>` とする。
+同じ trait 名を持つ基底環境の impl 行のうち、origin id の末尾が ASCII 数字列であるものを番号として読み、その最大値の次から宣言順に増やす。
+既定の基底環境では利用者 impl が無いため 1 から始まる。
+`<n>` はコンパイル中の行を区別する番号であり、永続的な同一性を表さない。
+先行する impl 宣言の挿入や基底環境の変更により、後続の番号は変わりうる。
 
 ## 5. Proof の生成と検証
 
