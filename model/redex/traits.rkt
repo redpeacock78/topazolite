@@ -504,6 +504,23 @@
                "requirement of ~s is not a well-formed normal type"
                (impl-name row)))))
 
+  ;; SUR-009。表層の合成は鍵から出力を逆に引くので、組と出力は一意でなければならない。
+  (for/fold ([seen (set)]) ([row (in-list intersect-rows)])
+    (define pair (list (intersect-left row) (intersect-right row)))
+    (when (set-member? seen pair)
+      (error 'traits "intersect ~s repeats the trait pair of another intersect"
+             (intersect-name row)))
+    (set-add seen pair))
+  (for/fold ([seen (seteq)]) ([row (in-list intersect-rows)])
+    (when (set-member? seen (intersect-output row))
+      (error 'traits "intersect ~s repeats the output trait of another intersect"
+             (intersect-name row)))
+    (set-add seen (intersect-output row)))
+  ;; SUR-009。型と trait は名前空間を共有するので、基本型の名前の trait は置けない。
+  (for ([row (in-list trait-rows)])
+    (when (memq (trait-name row) '(Int Bool Unit String))
+      (error 'traits "trait ~s is named after a primitive type" (trait-name row))))
+
   (for ([row (in-list intersect-rows)])
     (define left (trait-row-by-name (intersect-left row) env))
     (define right (trait-row-by-name (intersect-right row) env))

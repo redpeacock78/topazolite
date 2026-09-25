@@ -201,6 +201,7 @@ G2g の正典表は、次の四行を持つ。
 各行が参照する trait の存在、template の label 一意性、`Self` の出現位置、具体化後の型の整形式性と正規性も検査する。
 合成行については、trait 名の順序、row 合成の成功、出力 template との一致を検査する。
 intersect 行の trait 名は symbol 順でなければならず、`intersect-acyclic?` が trait 名の依存グラフの非巡回性を検査する。
+intersect 行の左右の組と出力はそれぞれ一意であり、trait 名は基本型の名前（`Int`、`Bool`、`Unit`、`String`）でない。
 `impl` 行と `derive` 行の対象 trait は、`intersect-table` のどの出力 trait でもあってはならない。 [REQ: TRT-007]
 合成 trait への直接実装を許すと、同じ goal に表由来の直接候補と合成候補が並び、`Ambiguous` になるためである。
 `make-trait-ledger` は導出した `R0` と `Γ0` の鍵を kernel の鍵と比較し、さらに trait origin を `R0` の実値と照合する。

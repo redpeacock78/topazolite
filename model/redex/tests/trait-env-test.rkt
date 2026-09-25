@@ -156,11 +156,50 @@
     (make-trait-env
      #:trait trait-table
      #:impl impl-table
+     #:intersect (list (list 'o-intersect-test 'intersect-test
+                             (intersect-right row)
+                             (intersect-left row)
+                             (intersect-output row)))
+     #:scope scope-parent-table
+     #:fail no-fail))))
+
+(test-case
+ "an intersect row that repeats a trait pair is rejected"
+ (check-exn
+  #rx"repeats the trait pair of another intersect"
+  (λ ()
+    (make-trait-env
+     #:trait trait-table
+     #:impl impl-table
      #:intersect (append intersect-table
-                         (list (list 'o-intersect-test 'intersect-test
-                                     (intersect-right row)
-                                     (intersect-left row)
-                                     (intersect-output row))))
+                         (list '(o-intersect-dup intersect-dup
+                                 Printable Sizable PrintableSizable)))
+     #:scope scope-parent-table
+     #:fail no-fail))))
+
+(test-case
+ "an intersect row that repeats an output trait is rejected"
+ (check-exn
+  #rx"repeats the output trait of another intersect"
+  (λ ()
+    (make-trait-env
+     #:trait trait-table
+     #:impl impl-table
+     #:intersect (append intersect-table
+                         (list '(o-intersect-dup intersect-dup
+                                 Printable SizableTaggable PrintableSizable)))
+     #:scope scope-parent-table
+     #:fail no-fail))))
+
+(test-case
+ "a trait named after a primitive type is rejected"
+ (check-exn
+  #rx"is named after a primitive type"
+  (λ ()
+    (make-trait-env
+     #:trait (append trait-table (list '(o-trait-user-Int Int root ())))
+     #:impl impl-table
+     #:intersect intersect-table
      #:scope scope-parent-table
      #:fail no-fail))))
 
