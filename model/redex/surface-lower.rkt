@@ -501,7 +501,8 @@
     [`(SStr ,s ,str) `(#:lit ,str ,s)]
     [`(SUnit ,s) `(#:lit unit ,s)]
     ;; true と false は構成子であり literal ではない。
-    [`(SBool ,s ,b) `(Construct ,s ,b)]
+    ;; Bool は型引数を持たない。空の Types が E-Construct-Synth の型引数注釈になる。
+    [`(SBool ,s ,b) `(Construct ,s ,b (Types))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
     [`(SFn ,s ,params ,result-ty ,body)
      ;; Surface に効果の表記が無いので効果行は空である。span は Fn 自身の

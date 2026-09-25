@@ -133,3 +133,16 @@
  "mut で束縛した欄も射影の結果では imm になる"
  (check-equal? (compiled-type (c "{ let mut r = { a: 1 }\n r.{a} }"))
                '(Record ((a Int imm)))))
+
+(test-case
+ "true と false が合成位置でも Bool として型付けされる"
+ (for ([src (list "true"
+                  "false"
+                  "const x: Bool = true\nx"
+                  "{ let x = true\n x }"
+                  "{ b: true }.b"
+                  "fn f(a: Bool) -> Bool { a }\nf(false)")])
+   (define r (c src))
+   (check-true (compiled? r) src)
+   (when (compiled? r)
+     (check-equal? (compiled-type r) 'Bool src))))

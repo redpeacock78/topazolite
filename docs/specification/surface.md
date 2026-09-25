@@ -347,7 +347,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SInt s n)` は `(#:lit n s)` へ落とす。
 - `(SStr s str)` は `(#:lit str s)` へ落とす。
 - `(SUnit s)` は `(#:lit unit s)` へ落とす。
-- `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true)` と `(Construct s false)` へ落とす。
+- `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true (Types))` と `(Construct s false (Types))` へ落とす。
+  `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
@@ -356,6 +357,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SFn s ((SParam s_p (SName s_x x) ty) ...) ty_r body)` は、span を持つ binder、型注釈、空の effect row を持つ `(Fn ...)` へ落とす。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
+  注釈付きの束縛は、宣言型を `Let` の注釈として保持するが、右辺をその型で検査しない。
+  右辺を合成し、その結果へ binding mode の policy を適用する（structural-row.md §4）。
 - `(SFnDecl s (SName s_f f) ... )` は、関数本体と後続の項を持つ `Recur` へ落とす。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
 - `(STraitDecl s (SName s_n tn) (tyfield ...))` は trait 環境へ行を追加するだけで、UCore+ 節点を生成しない。

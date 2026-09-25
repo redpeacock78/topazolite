@@ -32,8 +32,8 @@
 
 (test-case
  "true と false は構成子であり literal ではない"
- (check-equal? (low "true") '(Construct (#:span src 0 4) true))
- (check-equal? (low "false") '(Construct (#:span src 0 5) false)))
+ (check-equal? (low "true") '(Construct (#:span src 0 4) true (Types)))
+ (check-equal? (low "false") '(Construct (#:span src 0 5) false (Types))))
 
 (test-case
  "変数は #:var になる"
