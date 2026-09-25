@@ -82,6 +82,20 @@
      (memq 'Self (flatten row))
      (format "Self remained in ~s" (trait-name trait-row)))))
 
+(test-case "instantiate-requirements normalizes after substituting Self"
+  (check-equal?
+   (instantiate-requirements '((f (Intersection Self (Record ((required Int imm)))) imm))
+                             '(Record ((own Bool imm))))
+   '((f (Record ((own Bool imm) (required Int imm))) imm)))
+  ;; 正規化できない形は置き換えただけの形で返る。
+  (check-equal?
+   (instantiate-requirements '((f (Intersection Self (Record ((required Int imm)))) imm))
+                             'Int)
+   '((f (Intersection Int (Record ((required Int imm)))) imm)))
+  (check-equal?
+   (instantiate-requirements '((f (Union Bool Self) imm)) '(Union Bool String))
+   '((f (Union Bool String) imm))))
+
 (test-case "instantiate-requirements は包んだ型を拒否する"
   (define template (trait-template (trait-row-by-name 'Printable)))
   (check-exn

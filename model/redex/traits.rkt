@@ -290,7 +290,10 @@
       [_ value]))
   (define (substitute-row fields)
     (for/list ([field (in-list fields)])
-      (list (first field) (substitute (second field)) (third field))))
+      (define t (substitute (second field)))
+      ;; spec §6.2.1。Self を置き換えた後の型を正規化する。正規化できない形は
+      ;; そのまま返し、診断は呼び出し側に任せる。
+      (list (first field) (or (normalize-type t) t) (third field))))
   (substitute-row template))
 
 (define (trait-primitive-names [env canonical-trait-env])

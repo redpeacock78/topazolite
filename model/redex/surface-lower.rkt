@@ -54,6 +54,14 @@
 ;; spec §6。stack は展開中の別名である。同じ別名を 2 箇所から参照するのは
 ;; 共有であって循環ではないため、「一度でも展開した名前の集合」では
 ;; 判定しない。定義を展開し終えれば呼び出しの戻りとともに降りる。
+;; spec §6.2。型欄だけを辿る。Record の label の Self は型ではない。
+(define (type-has-self? t)
+  (match t
+    ['Self #t]
+    [`(Record ,row) (for/or ([field (in-list row)]) (type-has-self? (second field)))]
+    [(? pair?) (ormap type-has-self? t)]
+    [_ #f]))
+
 (define (lower-sty ty env fail [stack '()] #:self? [self? #f])
   (match ty
     [`(TName ,s Self)
@@ -73,7 +81,18 @@
               (lower-sty a env fail stack #:self? self?))
            ,(lower-sty result env fail stack #:self? self?)
            ()
-           ())]))
+           ())]
+    [`(TUnion ,_ ,l ,r)
+     `(Union ,(lower-sty l env fail stack #:self? self?)
+             ,(lower-sty r env fail stack #:self? self?))]
+    [`(TInter ,s ,l ,r)
+     (define l* (lower-sty l env fail stack #:self? self?))
+     (define r* (lower-sty r env fail stack #:self? self?))
+     (define t `(Intersection ,l* ,r*))
+     (if (or (type-has-self? l*) (type-has-self? r*)
+             (normalize-type (lift-template-type t)))
+         t
+         (fail 'surface-type-not-normalizable s))]))
 
 ;; spec §7.2.1。TRec の欄の可変性は imm に固定する。Surface に mut の
 ;; 表記が無いためである。
@@ -123,10 +142,19 @@
                  (findf (λ (r) (eq? (trait-name r) name)) rows))
          (fail 'surface-duplicate-trait-decl s_n))
        (define oid (string->symbol (format "o-trait-user-~a" name)))
+       (define lifted
+         (lift-template-type
+          `(Record ,(lower-ty-fields fields env fail '() #:self? #t))))
+       ;; spec §6.2.1。Self を含む & は対象型を見るまで正規化できない。
+       ;; 全体が正規化できなければ、label で並べ、欄ごとに正規化できたものだけを置き換える。
+       ;; 失敗した欄の形はそのまま残し、Intersection の項の順も変えない。
        (define template
-         (second (normalize-type
-                  (lift-template-type
-                   `(Record ,(lower-ty-fields fields env fail '() #:self? #t))))))
+         (match (normalize-type lifted)
+           [`(Record ,row) row]
+           [#f
+            (for/list ([field (in-list (sort (second lifted) symbol<? #:key first))])
+              (match-define (list label t mode) field)
+              (list label (or (normalize-type t) t) mode))]))
        (define row (list oid name 'root template))
        (values (cons row rows)
                (hash-set* spans (cons 'trait-name name) s_n
@@ -151,6 +179,7 @@
          m))))
 
 ;; spec §6.4。Surface が作る正規型の形についてだけ葉を数える。
+;; Intersection は正規化で Record になるので、Record の節で数える。
 (define (sizable-leaves t)
   (match t
     [(or 'Int 'Bool 'Unit 'String) 1]
@@ -158,11 +187,27 @@
     [`(Record ,row)
      (for/sum ([field (in-list row)])
        (sizable-leaves (second field)))]
-    ;; ponytail: Union と Intersection は P2h3 が規則を決める。
+    ;; 正規化した Union は平坦で重複が無いので、成分を一度ずつ数える。
+    [`(Union ,_ ,_)
+     (for/sum ([u (in-list (union-members t))])
+       (sizable-leaves u))]
     [_ (error 'surface-lower "Sizable の生成規則が扱わない型 ~s" t)]))
 
 ;; 生成規則は名義で結び付ける。形が同じ利用者 trait には適用しない。
 (define derive-recipes (hasheq 'o-trait-sizable sizable-leaves))
+
+;; spec §6.2.1。Self を対象型で置き換えた要求型が正規化できなければ E-SUR-020 にする。
+;; primary span は対象型、related は impl または derive が書いた trait 名である。
+(define (check-requirements trait trait-row target ty s_n fail)
+  (define bad
+    (for/first ([field (in-list (instantiate-requirements (trait-template trait-row) target))]
+                #:unless (normalize-type (second field)))
+      field))
+  (when bad
+    (fail 'surface-type-not-normalizable (node-span ty)
+          #:related (list (list 'trait-requirement s_n
+                                (format "trait ~a の要求 ~a を正規化できない"
+                                        trait (first bad)))))))
 
 ;; spec §6.6 手順 2。core-info は宣言の節点から (binder prim) を引く表で
 ;; あり、lower-item が行と同じ番号の項を作るために使う。derive の値は
@@ -183,6 +228,7 @@
                        (sort (map first (trait-template trait-row)) symbol<?))
          (fail 'surface-impl-requirement-mismatch s_b))
        (define target (normalize-type (lift-template-type (lower-sty ty env fail))))
+       (check-requirements trait trait-row target ty s_n fail)
        (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
                (type-equiv? (impl-target-type r) target))
          (fail 'surface-duplicate-impl-decl (node-span ty)))
@@ -205,6 +251,7 @@
        (define target (normalize-type (lift-template-type uτ)))
        (define recipe (or (hash-ref derive-recipes (trait-origin trait-row) #f)
                           (fail 'surface-derive-no-recipe s)))
+       (check-requirements trait trait-row target ty s_n fail)
        (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
                (type-equiv? (impl-target-type r) target))
          (fail 'surface-duplicate-impl-decl (node-span ty)))
@@ -357,8 +404,8 @@
      (match program
        [`(SProgram ,_ ,items ,e)
         (let/ec return
-          (define (fail key s)
-            (return (diagnostic-of 'surface key #:primary-span s)))
+          (define (fail key s #:related [related '()])
+            (return (diagnostic-of 'surface key #:primary-span s #:related related)))
           (define env (build-alias-env items fail))
           (check-alias-definitions items env fail)
           (define-values (trait-rows trait-spans)
