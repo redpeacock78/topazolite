@@ -57,6 +57,57 @@
   (define r (p str))
   (and (diagnostic? r) (diagnostic-id r)))
 
+;; 型の構文木を取り出す。型別名の右辺は型の位置であり、Core の項を作らない。
+(define (ty-of str)
+  (match (p (string-append "type T = " str "\n0"))
+    [`(SProgram ,_ ((STypeDecl ,_ ,_ ,ty)) ,_) ty]
+    [other other]))
+(define (sp lo hi) `(#:span src ,lo ,hi))
+
+(test-case
+ "BIT-003: & は | より強く結合し、どちらも左結合である"
+ ;; "type T = " は 9 byte なので、型は 9 から始まる。
+ (check-equal? (ty-of "A | B & C")
+               `(TUnion ,(sp 9 18) (TName ,(sp 9 10) A)
+                        (TInter ,(sp 13 18) (TName ,(sp 13 14) B)
+                                (TName ,(sp 17 18) C))))
+ (check-equal? (ty-of "A & B & C")
+               `(TInter ,(sp 9 18)
+                        (TInter ,(sp 9 14) (TName ,(sp 9 10) A) (TName ,(sp 13 14) B))
+                        (TName ,(sp 17 18) C)))
+ (check-equal? (ty-of "A | B | C")
+               `(TUnion ,(sp 9 18)
+                        (TUnion ,(sp 9 14) (TName ,(sp 9 10) A) (TName ,(sp 13 14) B))
+                        (TName ,(sp 17 18) C))))
+
+(test-case
+ "BIT-003: 型の括弧は内側の sty を返し、span を括弧まで広げない"
+ (check-equal? (ty-of "(A | B) & C")
+               `(TInter ,(sp 10 20)
+                        (TUnion ,(sp 10 15) (TName ,(sp 10 11) A) (TName ,(sp 14 15) B))
+                        (TName ,(sp 19 20) C))))
+
+(test-case
+ "BIT-003: 関数型の戻り型は型の全体を読む"
+ (check-equal? (ty-of "fn(Int) -> Int | String")
+               `(TFn ,(sp 9 32) ((TName ,(sp 12 15) Int))
+                     (TUnion ,(sp 20 32) (TName ,(sp 20 23) Int)
+                             (TName ,(sp 26 32) String))))
+ (check-equal? (ty-of "(fn(Int) -> Int) | String")
+               `(TUnion ,(sp 10 34)
+                        (TFn ,(sp 10 24) ((TName ,(sp 13 16) Int)) (TName ,(sp 21 24) Int))
+                        (TName ,(sp 28 34) String))))
+
+(test-case
+ "BIT-003: 型の位置の () と、式の位置の | と & は E-SUR-005 である"
+ (check-equal? (p-code "type T = ()\n0") "E-SUR-005")
+ (check-equal? (p-code "x | y") "E-SUR-005")
+ (check-equal? (p-code "x & y") "E-SUR-005"))
+
+(test-case
+ "BIT-003: |> は | の後の > が字句にならない"
+ (check-equal? (diagnostic-primary-span (p "x |> f")) (sp 3 4)))
+
 (test-case
  "整数だけの program"
  (check-equal? (p "1")
@@ -187,6 +238,8 @@
                            "r.{a, b}"
                            "{ let x = 1\n x }"
                            "fn(a: Int) -> Int { a }"
+                           "type T = A | B & C\n0"
+                           "type T = (fn(Int) -> Int) | String\n0"
                            "SInt" "TName" "none" "return"))])
    (check-true (redex-match? Surface sprog (p src))
                (format "~a の出力が Surface に合う" src))))

@@ -9,7 +9,8 @@
 
 (define keywords '(const let mut fn type true false trait impl for derive))
 (define puncts (hash 123 '|{| 125 '|}| 40 '|(| 41 '|)|
-                     44 '|,| 58 '|:| 61 '|=| 46 '|.|))
+                     44 '|,| 58 '|:| 61 '|=| 46 '|.|
+                     124 '\| 38 '&))
 
 (define (span id a b) `(#:span ,id ,a ,b))
 

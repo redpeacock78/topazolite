@@ -344,12 +344,38 @@
                       ,name-node ,annotation ,value)
               value-j))))
 
+;; BIT-003。ty ::= tyand ("|" tyand)*。どちらの演算子も左結合である。
 (define (parse-ty ts fail i)
+  (let-values ([(left j) (parse-tyand ts fail i)])
+    (let loop ([left left] [j j])
+      (if (punct? ts j '\|)
+          (let-values ([(right k) (parse-tyand ts fail (add1 j))])
+            (loop `(TUnion ,(hull (node-span left) (node-span right)) ,left ,right) k))
+          (values left j)))))
+
+;; tyand ::= tyatom ("&" tyatom)*。& は | より強く結合する。
+(define (parse-tyand ts fail i)
+  (let-values ([(left j) (parse-tyatom ts fail i)])
+    (let loop ([left left] [j j])
+      (if (punct? ts j '&)
+          (let-values ([(right k) (parse-tyatom ts fail (add1 j))])
+            (loop `(TInter ,(hull (node-span left) (node-span right)) ,left ,right) k))
+          (values left j)))))
+
+;; 括弧は内側の sty をそのまま返す。式の括弧と同じ扱いである。
+;; () は型の位置では書けない。単位型は Unit と書く。
+(define (parse-tyatom ts fail i)
   (cond
     [(eq? (kind-at ts i) 'ident)
      (values `(TName ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(punct? ts i '|{|) (parse-type-record ts fail i)]
     [(kw? ts i 'fn) (parse-function-type ts fail i)]
+    [(punct? ts i '|(|)
+     (when (punct? ts (add1 i) '|)|)
+       (fail 'surface-unexpected-token (span-at ts (add1 i))))
+     (let*-values ([(ty j) (parse-ty ts fail (add1 i))]
+                   [(_ k) (expect-punct ts fail j '|)|)])
+       (values ty k))]
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail 'surface-unexpected-token (span-at ts i))]))
 

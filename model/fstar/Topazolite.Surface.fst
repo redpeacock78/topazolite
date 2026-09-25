@@ -221,7 +221,8 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
 
 let punctuation (b: FStar.UInt8.t) : bool =
   byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
-  byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46
+  byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
+  byte_is b 124 || byte_is b 38
 
 let rec scan_fuel
   (id: sid) (n: nat) (i: nat) (rest: list FStar.UInt8.t)
@@ -428,6 +429,16 @@ let lex_span_sound id bs =
   | Some i -> utf8_ok_offset bs
   | None -> scan_span_sound id (length bs) 0 bs []
 
+(* BIT-003。| と & は、それぞれ 1 字句の記号になる。 *)
+let lex_bar_amp_ok () : Lemma
+  (match lex SyntheticSid [124uy; 38uy] with
+   | LexOk [a; b; e] -> a.kind = TkPunct && b.kind = TkPunct && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [124uy; 38uy] with
+       | LexOk [a; b; e] -> a.kind = TkPunct && b.kind = TkPunct && e.kind = TkEof
+       | _ -> false)
+
 type dkind = | DBind | DFnDecl
 
 type sexpr =
@@ -446,6 +457,8 @@ and sty =
   | TName     : span -> string -> sty
   | TRec      : span -> list sty -> sty
   | TFn       : span -> list sty -> sty -> sty
+  | TUnion    : span -> sty -> sty -> sty
+  | TInter    : span -> sty -> sty -> sty
 and sdecl =
   | SDecl     : span -> dkind -> list sty -> option sty -> sexpr -> sdecl
 
@@ -470,6 +483,8 @@ let span_of_ty (t: sty) : Tot span =
   | TName s _  -> s
   | TRec s _   -> s
   | TFn s _ _  -> s
+  | TUnion s _ _ -> s
+  | TInter s _ _ -> s
 
 let span_of_decl (d: sdecl) : Tot span =
   match d with
@@ -500,6 +515,8 @@ let kids_of_ty (t: sty) : Tot (list node) =
   | TName _ _  -> []
   | TRec _ fs  -> map NTy fs
   | TFn _ ps r -> map NTy ps @ [NTy r]
+  | TUnion _ l r -> [NTy l; NTy r]
+  | TInter _ l r -> [NTy l; NTy r]
 
 let kids_of_decl (d: sdecl) : Tot (list node) =
   match d with
@@ -591,6 +608,8 @@ and wf_ty (t: sty) : Tot bool (decreases t) =
   | TName _ _  -> true
   | TRec s fs  -> wf_tys s fs
   | TFn s ps r -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+  | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
+  | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
 and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
   match ts with
   | []      -> true
@@ -660,6 +679,7 @@ let parse_span_containment n c =
   | NTy (TFn s ps r) ->
       FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r] c;
       wf_tys_elim s ps c
+  | NTy (TUnion _ _ _) | NTy (TInter _ _ _) -> ()
   | NDecl (SDecl s _ ps r v) ->
       FStar.List.Tot.Properties.append_memP
         (map NTy ps) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr v]) c;

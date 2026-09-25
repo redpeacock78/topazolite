@@ -162,3 +162,11 @@
  (define bs2 (bytes-append (string->bytes/utf-8 "é") (bytes 255 98)))
  (check-equal? (bytes-length (string->bytes/utf-8 (bytes->string/utf-8 bs2 #\?)))
                (bytes-length bs2)))
+
+(test-case
+ "BIT-003: | と & はそれぞれ 1 字句の記号になる"
+ (check-equal? (kinds "A | B & C") '(ident punct ident punct ident eof))
+ (check-equal? (map stok-value (lex/string 'src "A | B & C"))
+               '(A \| B & C eof))
+ (check-equal? (spans "|&")
+               '((#:span src 0 1) (#:span src 1 2) (#:span src 2 2))))
