@@ -22,6 +22,8 @@
  (check-false (redex-match? Surface ident 'trait))
  (check-false (redex-match? Surface ident 'impl))
  (check-false (redex-match? Surface ident 'for))
+ (check-false (redex-match? Surface ident 'derive))
+ (check-false (redex-match? Surface label 'derive))
  (check-true  (redex-match? Surface ident 'SInt))
  (check-true  (redex-match? Surface ident 'none)))
 
@@ -211,6 +213,27 @@
     (check-equal? (first t) 'STraitDecl)
     (check-equal? (first i) 'SImplDecl)
     (check-equal? (first (fifth i)) 'SRec)]))
+
+(test-case
+ "derive 宣言は SDeriveDecl になる"
+ (define r (p "derive Sizable for Bool\n0"))
+ (check-true (redex-match? Surface sprog r))
+ (match r
+   [`(SProgram ,_ ((SDeriveDecl ,s (SName ,s_n Sizable) (TName ,_ Bool))) ,_)
+    (check-equal? s '(#:span src 0 23))
+    (check-equal? s_n '(#:span src 7 14))]))
+
+(test-case
+ "derive 宣言は本体を持たず for を要する"
+ (check-equal? (p-code "derive Sizable for Bool { size: 0 }\n0") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "derive Sizable for Bool { size: 0 }\n0"))
+               '(#:span src 24 25))
+ (check-equal? (p-code "derive Sizable Bool\n0") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "derive Sizable Bool\n0"))
+               '(#:span src 15 19))
+ (check-equal? (p-code "let derive = 0\n0") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "let derive = 0\n0"))
+               '(#:span src 4 10)))
 
 (test-case
  "the three new keywords are no longer identifiers"

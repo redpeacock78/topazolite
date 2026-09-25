@@ -57,6 +57,7 @@
   (or (kw? ts i 'type)
       (kw? ts i 'trait)
       (kw? ts i 'impl)
+      (kw? ts i 'derive)
       (kw? ts i 'const)
       (kw? ts i 'let)
       (and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))))
@@ -73,6 +74,7 @@
     [(kw? ts i 'type) (parse-type-decl ts fail i)]
     [(kw? ts i 'trait) (parse-trait-decl ts fail i)]
     [(kw? ts i 'impl) (parse-impl-decl ts fail i)]
+    [(kw? ts i 'derive) (parse-derive-decl ts fail i)]
     [(and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))
      (parse-fn-decl ts fail i)]
     [(or (kw? ts i 'const) (kw? ts i 'let))
@@ -108,6 +110,15 @@
     (values `(SImplDecl ,(hull start (node-span body))
                         (SName ,name-span ,name) ,ty ,body)
             body-j)))
+
+(define (parse-derive-decl ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
+                [(for-j) (expect-kw ts fail name-j 'for)]
+                [(ty ty-j) (parse-ty ts fail for-j)])
+    (values `(SDeriveDecl ,(hull start (node-span ty))
+                          (SName ,name-span ,name) ,ty)
+            ty-j)))
 
 (define (parse-fn-decl ts fail i)
   (define start (span-at ts i))

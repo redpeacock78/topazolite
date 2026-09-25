@@ -53,10 +53,10 @@
                '(let mut eof)))
 
 (test-case
- "trait と impl と for は kw である"
- (check-equal? (kinds "trait impl for") '(kw kw kw eof))
- (check-equal? (map stok-value (lex/string 'src "trait impl for"))
-               '(trait impl for eof)))
+ "trait と impl と for と derive は kw である"
+ (check-equal? (kinds "trait impl for derive") '(kw kw kw kw eof))
+ (check-equal? (map stok-value (lex/string 'src "trait impl for derive"))
+               '(trait impl for derive eof)))
 
 (test-case
  "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"

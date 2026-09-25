@@ -10,7 +10,7 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 25)
+ (check-equal? (length racket-surface-constructors) 26)
  (check-equal? (length racket-ucore-constructors) 9)
  (check-equal? (length fstar-constructors) 24))
 
@@ -79,6 +79,7 @@
  (check-equal? (row-kind 'STypeDecl) 'none)
  (check-equal? (row-kind 'STraitDecl) 'none)
  (check-equal? (row-kind 'SImplDecl) 'none)
+ (check-equal? (row-kind 'SDeriveDecl) 'none)
  (check-equal? (row-kind 'SProgram) 'none)
  (check-equal? (row-kind 'SBind) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one))
@@ -95,6 +96,7 @@
    (cons 'STypeDecl (redex-match? Surface spitem `(STypeDecl ,s0 (SName ,s0 A) (TName ,s0 Int))))
    (cons 'STraitDecl (redex-match? Surface spitem `(STraitDecl ,s0 (SName ,s0 P) ())))
    (cons 'SImplDecl  (redex-match? Surface spitem `(SImplDecl ,s0 (SName ,s0 P) (TName ,s0 Int) (SRec ,s0 ()))))
+   (cons 'SDeriveDecl (redex-match? Surface spitem `(SDeriveDecl ,s0 (SName ,s0 P) (TName ,s0 Int))))
    (cons 'SInt      (redex-match? Surface sexpr `(SInt ,s0 1)))
    (cons 'SStr      (redex-match? Surface sexpr `(SStr ,s0 "a")))
    (cons 'SUnit     (redex-match? Surface sexpr `(SUnit ,s0)))

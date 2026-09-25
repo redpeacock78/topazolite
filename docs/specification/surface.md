@@ -32,7 +32,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for` の 10 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive` の 11 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 
 整数リテラルは `[0-9]+` である。
@@ -62,10 +62,11 @@ Surface の経路は展開表を生成しない。
 
 ```text
 program  ::= NL* pitem* expr NL*
-pitem    ::= typedecl | traitdecl | impldecl | fndecl | binding NL+
+pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding NL+
 typedecl ::= "type" ident "=" ty NL+
 traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
+derivedecl ::= "derive" ident "for" ty NL+
 fndecl   ::= "fn" ident "(" params ")" "->" ty block NL+
 expr     ::= postfix
 postfix  ::= primary suffix*
@@ -117,8 +118,7 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 単独の `return` は変数式として受理し、未束縛変数の診断は後段に委ねる。
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
-P2h1 では `trait`、`impl`、`for` を予約語へ加えた。
-以後に必要となる追加は、後続の要件で定める。
+P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を加えた。
 
 ### 3.2 `let mut` の字句と構文
 
@@ -414,11 +414,11 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
-- `STraitDecl` と `SImplDecl` は trait 環境と impl 行へ消費されるため、対応する F* 構成子を持たない。
+- `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
 
-Racket 側の Surface 構成子リストは 25 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
-P2h1 で加えた `STraitDecl` と `SImplDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
+Racket 側の Surface 構成子リストは 26 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 15 個である。
+P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 
 ### 8.2 UCore+ の対応
 
