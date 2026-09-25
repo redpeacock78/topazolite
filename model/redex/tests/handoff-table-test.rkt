@@ -86,4 +86,4 @@
                (set "trait.md" "structural-row.md"
                     "proof-value.md" "proof-search.md"
                     "diagnostic.md" "borrow.md"
-                    "core-calculus.md" "unsafe.md")))
+                    "core-calculus.md" "unsafe.md" "surface.md")))
