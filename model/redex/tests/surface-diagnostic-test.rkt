@@ -25,9 +25,11 @@
     surface-unknown-trait-name
     surface-trait-name-collision
     surface-impl-requirement-mismatch
-    surface-impl-composite-trait))
+    surface-impl-composite-trait
+    surface-derive-no-recipe))
 
-;; v15 の 11 件に v17 の 1 件と v19 の 6 件を足した。since は版ごとに異なる。
+;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件を足した。
+;; since は版ごとに異なる。
 (define surface-since
   (hasheq 'surface-projection-labels 17
           'surface-duplicate-trait-decl 19
@@ -35,10 +37,11 @@
           'surface-unknown-trait-name 19
           'surface-trait-name-collision 19
           'surface-impl-requirement-mismatch 19
-          'surface-impl-composite-trait 19))
+          'surface-impl-composite-trait 19
+          'surface-derive-no-recipe 20))
 
 (test-case
- "18 件の key はすべて registry にあり、相は surface である"
+ "19 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
@@ -47,7 +50,7 @@
                  (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 18 件だけである"
+ "registry の surface 相はこの 19 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -55,9 +58,8 @@
  (check-equal? (sort (map symbol->string rows) string<?)
                (sort (map symbol->string surface-keys) string<?)))
 
-;; producer を持つのは 7 件である。6 件は P2c1 の lexer と parser が出し、
-;; surface-projection-labels は P2e2 の parser が出す。残る 5 件は P2c2 の、
-;; v19 の 6 件は P2h1 の surface-lower.rkt が出す。
+;; producer の一覧は網羅ではなく、実際に呼び出せる producer の代表例である。
+;; derive の producer は、lower-surface へ実装する P2h2 Task 5 で追加する。
 ;; 3 つ目の欄は入力の byte 長である。primary span の上端をこれと比べる。
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
@@ -101,7 +103,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 18 件を描ける」である。producer の無い 11 件も
+;; spec §12 の「3 つの renderer が全 19 件を描ける」である。producer の無い 12 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -117,7 +119,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 18 件すべてを描ける"
+ "3 つの renderer が 19 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))

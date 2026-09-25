@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 19)
+(define diagnostic-registry-version 20)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -375,11 +375,14 @@
 ;; registry version 19。trait と impl の宣言の前処理が出す 6 行を足す。
 (define surface-entries-v19
   '(("E-SUR-013" surface-duplicate-trait-decl "同じ名前の trait を 2 度宣言した")
-    ("E-SUR-014" surface-duplicate-impl-decl "同じ trait と対象型の組へ impl を 2 度宣言した")
-    ("E-SUR-015" surface-unknown-trait-name "宣言の無い trait の名前を impl が参照した")
+    ("E-SUR-014" surface-duplicate-impl-decl "同じ trait と対象型の組へ impl または derive を 2 度宣言した")
+    ("E-SUR-015" surface-unknown-trait-name "宣言の無い trait の名前を impl または derive が参照した")
     ("E-SUR-016" surface-trait-name-collision "宣言が作る名前が trait 環境の既存の名前と衝突した")
     ("E-SUR-017" surface-impl-requirement-mismatch "impl の本体のラベルが trait の要求と合わない")
-    ("E-SUR-018" surface-impl-composite-trait "合成 trait へ impl を宣言した")))
+    ("E-SUR-018" surface-impl-composite-trait "合成 trait へ impl または derive を宣言した")))
+
+(define surface-entries-v20
+  '(("E-SUR-019" surface-derive-no-recipe "kernel の生成規則を持たない trait と対象型の組へ derive を宣言した")))
 
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
@@ -407,7 +410,8 @@
           (rows 'expand 14 expand-entries-v14)
           (rows 'surface 15 surface-entries-v15)
           (rows 'surface 17 surface-entries-v17)
-          (rows 'surface 19 surface-entries-v19)))
+          (rows 'surface 19 surface-entries-v19)
+          (rows 'surface 20 surface-entries-v20)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。
