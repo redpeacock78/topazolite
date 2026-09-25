@@ -21,21 +21,47 @@
 ;; spec §6。宣言の並びを 1 度目に読む。名前の衝突と重複だけを見て、
 ;; 展開前の sty のまま表へ入れる。前方参照を許すには、展開を始める前に
 ;; 全宣言を読み終えている必要がある。
-(define (build-alias-env items fail)
-  (for/fold ([env (hash)]) ([item (in-list items)])
-    (match item
-      [`(STypeDecl ,_ (SName ,s_n ,name) ,ty)
-       ;; spec §6.3。Self は trait 宣言の中だけの名前であり、別名にできない。
-       (when (eq? name 'Self)
-         (fail 'surface-unknown-type-name s_n))
-       ;; spec §6.1。原始型との衝突を重複より先に見る。これで
-       ;; type Int を 2 回書いても E-SUR-011 が 1 つ目で出る。
-       (when (memq name primitive-type-names)
-         (fail 'surface-reserved-type-name s_n))
-       (when (hash-has-key? env name)
-         (fail 'surface-duplicate-type-alias s_n))
-       (hash-set env name ty)]
-      [_ env])))
+(define (build-alias-env items base fail)
+  (define source-traits
+    (for/fold ([h (hasheq)]) ([item (in-list items)])
+      (match item
+        [`(STraitDecl ,_ (SName ,s_n ,name) ,_)
+         (if (hash-has-key? h name) h (hash-set h name s_n))]
+        [_ h])))
+  (define types
+    (for/fold ([env (hash)]) ([item (in-list items)])
+      (match item
+        [`(STypeDecl ,_ (SName ,s_n ,name) ,ty)
+         ;; spec §6.3。Self は trait 宣言の中だけの名前であり、別名にできない。
+         (when (eq? name 'Self)
+           (fail 'surface-unknown-type-name s_n))
+         ;; spec §6.1。基本型との衝突を重複より先に見る。
+         (when (memq name primitive-type-names)
+           (fail 'surface-reserved-type-name s_n))
+         (when (hash-has-key? env name)
+           (fail 'surface-duplicate-type-alias s_n))
+         (cond
+           [(hash-ref source-traits name #f)
+            => (λ (s_t)
+                 (fail 'surface-type-trait-name-collision s_n
+                       #:related (list (list 'trait-declaration s_t
+                                             (format "trait ~a の宣言" name)))))]
+           [(trait-row-by-name name base)
+            (fail 'surface-type-trait-name-collision s_n)])
+         (hash-set env name ty)]
+        [`(STraitDecl ,_ (SName ,s_n ,name) ,_)
+         (when (memq name primitive-type-names)
+           (fail 'surface-type-trait-name-collision s_n))
+         env]
+        [_ env])))
+  ;; trait 名を型別名より優先してマークする。衝突は上で既に拒否した。
+  (define trait-marks
+    (for/fold ([h (hash)])
+              ([name (in-list (append (map trait-name (trait-env-trait-rows base))
+                                      (hash-keys source-traits)))])
+      (hash-set h name 'trait)))
+  (for/fold ([env types]) ([(name marker) (in-hash trait-marks)])
+    (hash-set env name marker)))
 
 ;; spec §6.1。2 度目は宣言の並び順に読む。使われない宣言の中の誤りも
 ;; ここで見つかる。展開の結果は捨て、診断のためだけに歩く。
@@ -71,7 +97,10 @@
        [(memq name primitive-type-names) name]
        [(memq name stack) (fail 'surface-recursive-type-alias s)]
        [(hash-ref env name #f)
-        => (λ (definition) (lower-sty definition env fail (cons name stack)))]
+        => (λ (definition)
+             (if (eq? definition 'trait)
+                 (fail 'surface-trait-in-type-position s)
+                 (lower-sty definition env fail (cons name stack))))]
        [else (fail 'surface-unknown-type-name s)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
@@ -406,7 +435,7 @@
         (let/ec return
           (define (fail key s #:related [related '()])
             (return (diagnostic-of 'surface key #:primary-span s #:related related)))
-          (define env (build-alias-env items fail))
+          (define env (build-alias-env items base fail))
           (check-alias-definitions items env fail)
           (define-values (trait-rows trait-spans)
             (lower-trait-decls items base env fail))
