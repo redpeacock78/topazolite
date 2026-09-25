@@ -330,7 +330,8 @@ impl-table に (oid, nm, kind, tn, τ, sid_target) がある
 
 δ 規則は `kind` を分岐条件に使わない。
 `kind` は Proof の形ではなく、宣言を生成した経路の違いを記録する。
-表層構文の `derive` が実装 record を自動生成する規則は、§9 へ送る。
+利用者の derive 行も kernel の derive 行と同じく `kind` が `derive` であり、origin step は `Impl(oid, derive, τ, tn)` となる。
+表層構文の `derive` が実装 record を自動生成する規則は、§4.6 に定める。
 
 ### 5.3 発行者対応と出現許可
 

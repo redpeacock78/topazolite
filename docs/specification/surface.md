@@ -261,11 +261,14 @@ lowering の入口は `(lower-surface sprog trait-env)` である。
 別名環境を §5 の規則で先に構築・検査し、`sty` を `uτ` へ落とす際に使う。
 続いて全 trait 宣言を原文順に読み、既存または原文中の同名 trait を `E-SUR-013` とする。
 生成した origin id や primitive 名が基底環境または kernel の `R0`・`Γ0` の鍵と衝突すれば `E-SUR-016` とする。
-その行を基底の環境へ重ねた後、impl 宣言を原文順に 1 件ずつ検査する。
-参照先の trait が無ければ `E-SUR-015`、合成 trait なら `E-SUR-018`、本体の label 集合が要求と異なれば `E-SUR-017` とする。
+その行を基底の環境へ重ねた後、impl と derive の宣言を同じ前処理で原文順に 1 件ずつ検査する。
+どちらも参照先の trait が無ければ `E-SUR-015`、合成 trait なら `E-SUR-018` とする。
+impl では本体の label 集合が要求と異なれば `E-SUR-017` とする。
 対象型を正規化し、未知の型名は `E-SUR-008` とする。
-同じ trait と型同値な対象型の impl がすでにあれば `E-SUR-014` とする。
-各 impl 行は検査を通ってから環境へ加えるため、後続の宣言との重複も検出する。
+derive では trait の origin に対応する生成規則を引き、規則が無ければ `E-SUR-019` とする。
+同じ trait と型同値な対象型の impl 行または derive 行がすでにあれば、どちらの宣言でも `E-SUR-014` とする。
+生成した origin id または primitive 名が既存の鍵と衝突すれば `E-SUR-016` とする。
+各行は検査を通ってから環境へ加えるため、後続の impl と derive の重複も検出する。
 この前処理の後、項の宣言を右から畳み、`Let` と `Recur` を積む。
 
 ### 6.1 対応表
@@ -292,6 +295,15 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - trait 宣言の template の型位置では `Self` を実装対象型の placeholder として扱う。欄名の `Self` は通常の label である。
 - `Self` は字句上の予約語ではないが、trait template 以外の型位置と型別名の宣言名では `E-SUR-008` とする。
 - `(SImplDecl s (SName s_n tn) ty (SRec s_b (field ...)))` は生成 primitive の適用を後続の項へ束縛する `Let` と `Apply` へ落とす（§6.2）。
+- `(SDeriveDecl s (SName s_n Tr) ty)` は、`trait.md` §4.6 の生成規則が作る `rec_core` を derive primitive へ適用し、その結果を後続の項へ束縛する `Let` と `Apply` へ落とす。
+
+```text
+(SDeriveDecl s (SName s_n Tr) ty)
+  ⟶ (Let s_tail ((#:bind %derive-Tr-n s) const)
+          (Apply s (#:var derive-user-Tr-n s) rec_core) rest)
+```
+
+この版で定義する `rec_core` の形と生成規則は `trait.md` §4.6 に従う。
 
 多 field 射影の落とし先は次の形である。
 
@@ -371,11 +383,12 @@ impl の実装 record はこの primitive へ渡す。
 - `E-SUR-011` `surface-reserved-type-name`：基本型の名前を型別名として宣言した
 - `E-SUR-012` `surface-projection-labels`：多 field 射影の label 列が空か重複している
 - `E-SUR-013` `surface-duplicate-trait-decl`：同じ名前の trait を 2 度宣言した
-- `E-SUR-014` `surface-duplicate-impl-decl`：同じ trait と型同値な対象型の組へ impl を 2 度宣言した
-- `E-SUR-015` `surface-unknown-trait-name`：宣言の無い trait の名前を impl が参照した
+- `E-SUR-014` `surface-duplicate-impl-decl`：同じ trait と型同値な対象型の組へ impl または derive を 2 度宣言した
+- `E-SUR-015` `surface-unknown-trait-name`：宣言の無い trait の名前を impl または derive が参照した
 - `E-SUR-016` `surface-trait-name-collision`：宣言から作る鍵が基底の trait 環境または kernel の `R0`・`Γ0` と衝突した
 - `E-SUR-017` `surface-impl-requirement-mismatch`：impl 本体のラベル集合が trait の要求と合わない
-- `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl を宣言した
+- `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl または derive を宣言した
+- `E-SUR-019` `surface-derive-no-recipe`：kernel の生成規則を持たない trait と対象型の組へ derive を宣言した
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -385,6 +398,7 @@ lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこ�
 
 E-SUR-001 から E-SUR-011 は P2c1 で registry に登録し、fixture v15 をその時点で 1 度だけ凍結した。
 E-SUR-012 は registry v17、E-SUR-013 から E-SUR-018 は P2h1 の registry v19 で追加した。
+E-SUR-019 は P2h2 の registry v20 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity
