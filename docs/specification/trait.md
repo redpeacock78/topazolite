@@ -280,11 +280,15 @@ trait 行の origin id は `o-trait-user-<trait 名>`、impl 行の origin id �
 - `Int`、`Bool`、`Unit`、`String` は 1 とする。
 - `NFn` は関数の中身を数えず 1 とする。
 - `Record` は欄の型の葉の数の和とし、空の record は 0 とする。
+- `Union` は正規化後の異なる成分それぞれの葉の数の和とする。
 - record の欄の順序は結果に影響しない。
 
-derive 宣言は trait の有無、合成 trait かどうか、対象型、生成規則、重複行、生成名の衝突の順に検査する。
-未知の trait は `E-SUR-015`、合成 trait は `E-SUR-018`、未知の型名は `E-SUR-008` 系、生成規則のない trait は `E-SUR-019`、同じ trait と型同値な実装行は `E-SUR-014`、origin id または primitive 名の衝突は `E-SUR-016` で報告する。
-`E-SUR-015` と `E-SUR-018` は trait 名、`E-SUR-019` は宣言全体、`E-SUR-014` は対象型、`E-SUR-016` は生成名を作った宣言全体を指す。
+Intersection は正規化で Record になるため、Record の規則で葉の数を数える。
+
+derive 宣言は trait の有無、合成 trait かどうか、対象型、生成規則、対象型で具体化した要求型の正規化、重複行、生成名の衝突の順に検査する。
+未知の trait は `E-SUR-015`、合成 trait は `E-SUR-018`、未知の型名は `E-SUR-008` 系、生成規則のない trait は `E-SUR-019`、具体化後に正規化できない要求型は `E-SUR-020`、同じ trait と型同値な実装行は `E-SUR-014`、origin id または primitive 名の衝突は `E-SUR-016` で報告する。
+`E-SUR-015` と `E-SUR-018` は trait 名、`E-SUR-019` は宣言全体、`E-SUR-020` と `E-SUR-014` は対象型、`E-SUR-016` は生成名を作った宣言全体を指す。
+`E-SUR-020` は対象型を primary とし、具体化できなかった要求 field を示す `trait-requirement` の related を trait 名の span に付ける。
 
 derive 行は impl 行と同じ形であり、kind だけが異なる。
 

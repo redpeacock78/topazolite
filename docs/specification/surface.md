@@ -351,7 +351,7 @@ trait template はまず Record 全体を正規化する。
 それが失敗した場合は field label 順に並べ、各 field 型を個別に正規化し、失敗した型は未正規化の形で残す。
 impl または derive の対象型で `Self` を置換した後、`instantiate-requirements` は各要求 field の型を正規化する。
 具体化後も正規化できない要求があれば、対象型の span を primary、宣言中の trait 名の span を `trait-requirement` の related として `E-SUR-020` を返す。
-`Self` を含まない型の lowering は正規化に失敗しない。
+lowering の検査を通った `Self` を含まない型は、正規化に成功する。
 
 ### 6.2 宣言の畳み込み
 
