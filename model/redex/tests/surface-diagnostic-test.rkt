@@ -28,9 +28,10 @@
     surface-trait-name-collision
     surface-impl-requirement-mismatch
     surface-impl-composite-trait
-    surface-derive-no-recipe))
+    surface-derive-no-recipe
+    surface-type-not-normalizable))
 
-;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件を足した。
+;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件、v21 の 1 件を足した。
 ;; since は版ごとに異なる。
 (define surface-since
   (hasheq 'surface-projection-labels 17
@@ -40,10 +41,11 @@
           'surface-trait-name-collision 19
           'surface-impl-requirement-mismatch 19
           'surface-impl-composite-trait 19
-          'surface-derive-no-recipe 20))
+          'surface-derive-no-recipe 20
+          'surface-type-not-normalizable 21))
 
 (test-case
- "19 件の key はすべて registry にあり、相は surface である"
+ "20 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
@@ -52,7 +54,7 @@
                  (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 19 件だけである"
+ "registry の surface 相はこの 20 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -111,7 +113,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 19 件を描ける」である。producer の無い 11 件も
+;; spec §12 の「3 つの renderer が全 20 件を描ける」である。producer の無い 12 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -127,7 +129,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 19 件すべてを描ける"
+ "3 つの renderer が 20 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))

@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 20)
+(define diagnostic-registry-version 21)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -384,6 +384,9 @@
 (define surface-entries-v20
   '(("E-SUR-019" surface-derive-no-recipe "kernel の生成規則を持たない trait と対象型の組へ derive を宣言した")))
 
+(define surface-entries-v21
+  '(("E-SUR-020" surface-type-not-normalizable "型位置の &、または trait の要求型の Self を対象型で置き換えた結果が正規化できない")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -411,7 +414,8 @@
           (rows 'surface 15 surface-entries-v15)
           (rows 'surface 17 surface-entries-v17)
           (rows 'surface 19 surface-entries-v19)
-          (rows 'surface 20 surface-entries-v20)))
+          (rows 'surface 20 surface-entries-v20)
+          (rows 'surface 21 surface-entries-v21)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。

@@ -389,6 +389,7 @@ impl の実装 record はこの primitive へ渡す。
 - `E-SUR-017` `surface-impl-requirement-mismatch`：impl 本体のラベル集合が trait の要求と合わない
 - `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl または derive を宣言した
 - `E-SUR-019` `surface-derive-no-recipe`：kernel の生成規則を持たない trait と対象型の組へ derive を宣言した
+- `E-SUR-020` `surface-type-not-normalizable`：型位置の &、または trait の要求型の Self を対象型で置き換えた結果が正規化できない
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -399,6 +400,7 @@ lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこ�
 E-SUR-001 から E-SUR-011 は P2c1 で registry に登録し、fixture v15 をその時点で 1 度だけ凍結した。
 E-SUR-012 は registry v17、E-SUR-013 から E-SUR-018 は P2h1 の registry v19 で追加した。
 E-SUR-019 は P2h2 の registry v20 で追加した。
+E-SUR-020 は P2h3a の registry v21 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity
