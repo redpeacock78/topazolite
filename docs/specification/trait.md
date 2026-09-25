@@ -267,6 +267,47 @@ trait 行の origin id は `o-trait-user-<trait 名>`、impl 行の origin id �
 `<n>` はコンパイル中の行を区別する番号であり、永続的な同一性を表さない。
 先行する impl 宣言の挿入や基底環境の変更により、後続の番号は変わりうる。
 
+### 4.6 derive 宣言による行
+
+[REQ: SUR-005] 表層構文の `derive Tr for T` は、対象の実装 record と対応する `Implements` Proof を正規の Narrative 経路から生成しなければならない。
+
+この版の固定生成規則は、trait origin が `o-trait-sizable` の trait だけを対象とする。
+規則は trait 名ではなく origin で選ぶため、同じ要求 shape を持つ利用者 trait はこの規則を借りない。
+
+`Sizable` の生成規則は、対象型の葉の数を `size` の値とする record を作る。
+これは kernel の例示的な規則であり、`Sizable` の一般的な意味を定めない。
+
+- `Int`、`Bool`、`Unit`、`String` は 1 とする。
+- `NFn` は関数の中身を数えず 1 とする。
+- `Record` は欄の型の葉の数の和とし、空の record は 0 とする。
+- record の欄の順序は結果に影響しない。
+
+derive 宣言は trait の有無、合成 trait かどうか、対象型、生成規則、重複行、生成名の衝突の順に検査する。
+未知の trait は `E-SUR-015`、合成 trait は `E-SUR-018`、未知の型名は `E-SUR-008` 系、生成規則のない trait は `E-SUR-019`、同じ trait と型同値な実装行は `E-SUR-014`、origin id または primitive 名の衝突は `E-SUR-016` で報告する。
+`E-SUR-015` と `E-SUR-018` は trait 名、`E-SUR-019` は宣言全体、`E-SUR-014` は対象型、`E-SUR-016` は生成名を作った宣言全体を指す。
+
+derive 行は impl 行と同じ形であり、kind だけが異なる。
+
+```text
+(o-derive-user-Tr-n derive-user-Tr-n derive Tr τ root)
+```
+
+derive の origin id は `o-derive-user-<trait 名>-<n>`、primitive 名は `derive-user-<trait 名>-<n>` とする。
+`<n>` は impl と独立して番号を付け、基底環境にある同じ接頭辞の番号の最大値の次から宣言順に増やす。
+kernel の derive 行はこの接頭辞に一致しない。
+
+生成した record は impl と同じ primitive へ適用し、同じ `Impl(oid, derive, τ, Tr)` origin を持つ `Implements` Proof を得る。
+行の対象型 `τ` は持ち上げと正規化の後の形であり、生成 record の関数引数型 `uτ` は `lower-sty` が作る UCore の形である。
+`Sizable` の record は次の形であり、`N` は対象型の葉の数である。
+
+```text
+(Rec s (((#:lbl size s) imm
+         (Fn s (((#:bind %self s) (#:ty uτ s)))
+             (#:ty Int s) (#:ef () s) (#:lit N s)))))
+```
+
+生成した項の span はすべて derive 宣言全体を指し、`#:synthetic` は使わない。
+
 ## 5. Proof の生成と検証
 
 ### 5.1 shape 一致と宣言 origin
@@ -441,6 +482,7 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 
 | 要件 ID | 対応する規則、定義 |
 |---|---|
+| SUR-005 | §4.6 derive 宣言による行 |
 | TRT-001 | §5.1 shape 一致と宣言 origin |
 | TRT-002 | §4.2 impl-table、§4.4 環境の導出、§5.2 impl と derive |
 | TRT-003 | §6.1 初期候補、§6.2 候補同一性、§6.3 coherence |
@@ -474,7 +516,6 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
   正規化分類と opaque identity は Phase 4 以降へ送る。
-- **表層構文の derive**：G2e は `impl-table` の `kind` として `derive` origin を区別するが、実装 record を自動生成する表層規則は導入しない（`SUR-005`）。
 - **型引数、継承、supertrait**：G2e の trait は単相の requirement template だけを持つ。
 - **三項以上の合成の表層構文**：`intersect-table` は三項以上の合成を、成分が合成 trait である行の入れ子で表す（§4.3）。
   表層構文 `A & B & C` をその入れ子へ落とす lowering は導入しない（`SUR-009`）。

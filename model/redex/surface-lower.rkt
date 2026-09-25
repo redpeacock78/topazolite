@@ -134,10 +134,8 @@
                           (cons 'primitive-name (trait-constant-name row)) s))]
       [_ (values rows spans)])))
 
-;; spec §6.6。基底を含めた通し番号にする。基底が既定の環境であれば
-;; 利用者の impl 行が無いので 1 から始まる。
-(define (next-impl-index env trait)
-  (define prefix (format "o-impl-user-~a-" trait))
+;; spec §6.6。基底を含めた接頭辞ごとの通し番号にする。
+(define (next-impl-index env prefix)
   (add1
    (for/fold ([m 0]) ([row (in-list (trait-env-impl-rows env))])
      (define s (symbol->string (impl-oid row)))
@@ -152,8 +150,23 @@
          (max m (string->number suffix))
          m))))
 
+;; spec §6.4。Surface が作る正規型の形についてだけ葉を数える。
+(define (sizable-leaves t)
+  (match t
+    [(or 'Int 'Bool 'Unit 'String) 1]
+    [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) 1]
+    [`(Record ,row)
+     (for/sum ([field (in-list row)])
+       (sizable-leaves (second field)))]
+    ;; ponytail: Union と Intersection は P2h3 が規則を決める。
+    [_ (error 'surface-lower "Sizable の生成規則が扱わない型 ~s" t)]))
+
+;; 生成規則は名義で結び付ける。形が同じ利用者 trait には適用しない。
+(define derive-recipes (hasheq 'o-trait-sizable sizable-leaves))
+
 ;; spec §6.6 手順 2。core-info は宣言の節点から (binder prim) を引く表で
-;; あり、lower-item が行と同じ番号の項を作るために使う。
+;; あり、lower-item が行と同じ番号の項を作るために使う。derive の値は
+;; (binder prim uτ generated-value) である。
 (define (lower-impl-decls items staged spans env fail)
   (for/fold ([tenv staged] [rows '()] [spans spans] [info (hasheq)]
              #:result (values (reverse rows) spans info))
@@ -173,7 +186,8 @@
        (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
                (type-equiv? (impl-target-type r) target))
          (fail 'surface-duplicate-impl-decl (node-span ty)))
-       (define n (next-impl-index tenv trait))
+       (define n (next-impl-index tenv
+                                  (format "o-impl-user-~a-" trait)))
        (define oid (string->symbol (format "o-impl-user-~a-~a" trait n)))
        (define prim (string->symbol (format "impl-user-~a-~a" trait n)))
        (define binder (string->symbol (format "%impl-~a-~a" trait n)))
@@ -182,6 +196,29 @@
                                  (cons 'primitive-name prim) s))
        (values (extend-env tenv '() (list row) spans* fail)
                (cons row rows) spans* (hash-set info item (list binder prim)))]
+      [`(SDeriveDecl ,s (SName ,s_n ,trait) ,ty)
+       (define trait-row (or (trait-row-by-name trait tenv)
+                             (fail 'surface-unknown-trait-name s_n)))
+       (when (memq trait (map intersect-output (trait-env-intersect-rows tenv)))
+         (fail 'surface-impl-composite-trait s_n))
+       (define uτ (lower-sty ty env fail))
+       (define target (normalize-type (lift-template-type uτ)))
+       (define recipe (or (hash-ref derive-recipes (trait-origin trait-row) #f)
+                          (fail 'surface-derive-no-recipe s)))
+       (when (for/or ([r (in-list (impl-rows-by-trait trait tenv))])
+               (type-equiv? (impl-target-type r) target))
+         (fail 'surface-duplicate-impl-decl (node-span ty)))
+       (define n (next-impl-index tenv
+                                  (format "o-derive-user-~a-" trait)))
+       (define oid (string->symbol (format "o-derive-user-~a-~a" trait n)))
+       (define prim (string->symbol (format "derive-user-~a-~a" trait n)))
+       (define binder (string->symbol (format "%derive-~a-~a" trait n)))
+       (define row (list oid prim 'derive trait target 'root))
+       (define spans* (hash-set* spans (cons 'origin-id oid) s
+                                 (cons 'primitive-name prim) s))
+       (values (extend-env tenv '() (list row) spans* fail)
+               (cons row rows) spans*
+               (hash-set info item (list binder prim uτ (recipe target))))]
       [_ (values tenv rows spans info)])))
 
 ;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。
@@ -267,6 +304,15 @@
      (define body-core (lower-sexpr body env fail))
      (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
                      (Apply ,s (#:var ,prim ,s) ,body-core) ,rest))]
+    [`(SDeriveDecl ,s ,_ ,_)
+     ;; spec §6.7。生成した節点の span はすべて宣言のものである。
+     (match-define (list binder prim uτ n) (hash-ref core-info item))
+     (define rec-core
+       `(Rec ,s (((#:lbl size ,s) imm
+                  (Fn ,s (((#:bind %self ,s) (#:ty ,uτ ,s)))
+                      (#:ty Int ,s) (#:ef () ,s) (#:lit ,n ,s))))))
+     (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
+                     (Apply ,s (#:var ,prim ,s) ,rec-core) ,rest))]
     [`(SBind ,_ ,bmode (SName ,s_x ,x) ,ty-or-none ,bound)
      (define binder
        (if (eq? ty-or-none '#:none)

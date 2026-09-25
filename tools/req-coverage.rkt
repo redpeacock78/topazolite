@@ -430,7 +430,7 @@
 (define expected-p2f-ids '(NAR-005))
 (define expected-p2g-ids '(NAR-004))
 (define expected-p2h1-ids '(SUR-010))
-(define expected-p2h2-ids '(SUR-011))
+(define expected-p2h2-ids '(SUR-005 SUR-011))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -651,7 +651,8 @@
           (build-path root "docs/specification/trait.md")))
   (define p2h2-tests
     (list (build-path root "model/redex/tests/lexer-test.rkt")
-          (build-path root "model/redex/tests/parser-test.rkt")))
+          (build-path root "model/redex/tests/parser-test.rkt")
+          (build-path root "model/redex/tests/surface-derive-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)

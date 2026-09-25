@@ -5,7 +5,9 @@
          "../parser.rkt"
          "../diagnostic.rkt"
          "../diagnostic-render.rkt"
-         "../source-map.rkt")
+         "../source-map.rkt"
+         "../surface-lower.rkt"
+         "../traits.rkt")
 
 (define surface-keys
   '(surface-invalid-byte
@@ -59,8 +61,9 @@
                (sort (map symbol->string surface-keys) string<?)))
 
 ;; producer の一覧は網羅ではなく、実際に呼び出せる producer の代表例である。
-;; derive の producer は、lower-surface へ実装する P2h2 Task 5 で追加する。
+;; derive の no-recipe 診断も lower-surface の producer である。
 ;; 3 つ目の欄は入力の byte 長である。primary span の上端をこれと比べる。
+(define no-recipe-source "derive Printable for Bool\n0")
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
         (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
@@ -68,17 +71,22 @@
         (list 'surface-invalid-escape      (lambda () (lex 'src #"\"a\\q\""))            5)
         (list 'surface-unexpected-token    (lambda () (parse (lex/string 'src "if x { 1 }"))) 10)
         (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "")))      0)
-        (list 'surface-projection-labels   (lambda () (parse (lex/string 'src "r.{}")))  4)))
+        (list 'surface-projection-labels   (lambda () (parse (lex/string 'src "r.{}")))  4)
+        (list 'surface-derive-no-recipe
+              (lambda ()
+                (lower-surface (parse (lex/string 'src no-recipe-source))
+                               canonical-trait-env))
+              (string-length no-recipe-source))))
 
 (test-case
- "7 件の producer が registry と同じ code を返す"
+ "8 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "7 件の分類は SUR である"
+ "8 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -103,7 +111,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 19 件を描ける」である。producer の無い 12 件も
+;; spec §12 の「3 つの renderer が全 19 件を描ける」である。producer の無い 11 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 

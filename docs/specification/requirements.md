@@ -618,9 +618,9 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 
 ### SUR-005
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/trait.md` §9
+- **正典**：`docs/specification/trait.md` §4.6
 
 表層構文の `derive` は、対象の実装 record と対応する `Implements` Proof を正規の Narrative 経路から生成しなければならない。
 
