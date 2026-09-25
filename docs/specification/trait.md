@@ -488,3 +488,15 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
 - **priority の下流利用**：候補の `pid` は既定値のままであり、勝者選択に使わない。
   選択した Proof の artifact への搬送は、G2g が `proof-value.md` §6.4 として回収した。
   搬送した Proof を消費する下流処理は、Phase 4 以降で扱う。
+- **trait の Proof obligation**：trait の requirement row は要求 shape を表すが、trait が生成する Proof obligation metadata は持たない。
+  trait 宣言で obligation を指定し、typing と discharge へ反映する経路は Phase 4 以降で扱う。
+- **associated TypeInfo**：trait table は associated TypeInfo を持たず、impl が選ぶ型情報を requirement template や利用側へ渡せない。
+  型引数を持つ宣言と多相な型構成子に依存するため、Phase 4 以降で扱う。
+- **default implementation**：trait の requirement row は実装本体を持たず、default implementation を提供できない。
+  本体が `Self` について多相であり、多相 primitive に依存するため Phase 4 以降で扱う。
+- **trait が所有する derive と specialization の規則**：現在の derive recipe は kernel が固定しており、trait が生成規則を所有する仕組みはない。
+  生成関数を第一級値として渡す機能に依存するが、その実装 Phase は未定である。
+- **priority Proof の生成と指定**：priority を宣言から指定し、その値を Proof として生成する経路はない。
+  これは既存の「priority の下流利用」とは別の事項であり、Phase 4 以降で扱う。
+- **trait 水準の Effect 制約と impl の適合**：trait declaration は Effect row 表記を持たず、impl が trait 水準の Effect 制約を満たすかも検査しない。
+  Surface の Effect row 表記とは別の適合検査であり、Phase 2 以降で扱う。

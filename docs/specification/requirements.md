@@ -25,9 +25,10 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
-  - `P2`：Phase 2 のサイクル（P2a から P2c）の対象。
+  - `P2`：Phase 2 のサイクル（P2a から P2h）の対象。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
+  - `Phase 4 以降`：多相な型構成子と型引数を持つ宣言構文に依存する事項を扱う。
   - 状態の値の後ろへ、その事項を起こした要件 ID を括弧で添えてよい。
 - **由来**：`ホワイトペーパー <節番号>` か、`新規（<起こした文書>）` のいずれか。節番号は §15 に限らず、要件を起こしたホワイトペーパーの任意の節を指す。
 - **正典**：（任意）要件を担当する正典文書と節。
@@ -671,6 +672,41 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 関数型、関数宣言、無名関数の明示的な戻り型は、`->` の後ろに書かなければならない。
 
+### SUR-012
+
+- **状態**：Phase 2 以降（SUR-008）
+- **由来**：ホワイトペーパー §8.1
+
+式本体を `=>` で書く無名関数は、引数型と戻り型を推論して Typed Core へつながらなければならない。
+
+### SUR-013
+
+- **状態**：Phase 2 以降
+- **由来**：ホワイトペーパー §15
+
+値位置の算術、比較、論理、bit 演算子と単項 `~` は、対応する NarrativeSugar へ lowering されなければならない。
+
+### SUR-014
+
+- **状態**：Phase 2 以降（ADT-001、PAT-001）
+- **由来**：ホワイトペーパー §15
+
+Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ意味論を保って lowering されなければならない。
+
+### SUR-015
+
+- **状態**：Phase 2 以降（RET-001、RET-002、RET-003）
+- **由来**：ホワイトペーパー §15
+
+Surface の `return` は、対応する `RET-*` Core 規則へ意味論を保って lowering されなければならない。
+
+### SUR-016
+
+- **状態**：Phase 4 以降
+- **由来**：ホワイトペーパー §15
+
+型位置の型適用（`List<Int>`）を型構成子への型引数適用として記述し、型検査できなければならない。
+
 ### MOD-001
 
 - **状態**：Phase 2 以降
@@ -931,6 +967,12 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |
 | 型引数、継承、supertrait | `trait.md` §9 | Phase 4 以降 | §4.4、§8.1 |
 | priority の下流利用 | `trait.md` §9 | Phase 4 以降 | §6.4 |
+| trait の Proof obligation | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| associated TypeInfo | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| default implementation | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| trait が所有する derive と specialization の規則 | `trait.md` §9 | Phase 未定 | §8.1 |
+| priority Proof の生成と指定 | `trait.md` §9 | Phase 4 以降 | §8.1 |
+| trait 水準の Effect 制約と impl の適合 | `trait.md` §9 | Phase 2 以降 | §8.1 |
 | 探索動力学 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 局所 Proof 束縛 | `proof-value.md` §8 | Phase 4 以降 | §6.4 |
 | 多相 primitive | `proof-value.md` §8 | Phase 4 以降 | §4.4 |

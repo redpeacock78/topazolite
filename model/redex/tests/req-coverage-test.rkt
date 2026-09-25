@@ -404,6 +404,33 @@
     #:expected-g1-count 2)
    (list "expected 2 G1 requirements, found 1")))
 
+(test-case "state dependency annotations are stripped only when they contain IDs"
+  (define sur-008 (string-append "SUR" "-008"))
+  (define adt-001 (string-append "ADT" "-001"))
+  (define pat-001 (string-append "PAT" "-001"))
+  (define (state-errors registry)
+    (with-fixture
+     registry
+     ""
+     ""
+     (lambda (registry-path _spec-paths _test-paths)
+       (coverage-errors registry-path #:cycles '() #:pending '()))))
+  (check-equal?
+   (state-errors
+    (string-append
+     (registry-entry known-id (format "Phase 2 以降（~a）" sur-008))
+     (registry-entry retired-state-id
+                     (format "Phase 2 以降（~a、~a）" adt-001 pat-001))))
+   '())
+  (check-equal?
+   (state-errors
+    (registry-entry known-id "Phase 2 以降（未定）"))
+   (list (format "invalid or missing requirement state: ~a" known-id)))
+  (check-equal?
+   (state-errors
+    (registry-entry known-id (format "Phase 9 以降（~a）" sur-008)))
+   (list (format "invalid or missing requirement state: ~a" known-id))))
+
 (test-case "duplicate registry definitions fail"
   (check-equal?
    (fixture-errors

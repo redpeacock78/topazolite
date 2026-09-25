@@ -20,6 +20,8 @@
 
 (define heading-rx #px"^### ([A-Z]{3}-[0-9]{3})(?: +.*)?$")
 (define state-rx #px"^- \\*\\*状態\\*\\*： *(.+?) *$")
+(define state-dependencies-rx
+  #px"^(.+?)（([A-Z]+-[0-9]+(?:、[A-Z]+-[0-9]+)*)）$")
 (define verify-rx #px"^- \\*\\*検証\\*\\*： *(.+?) *$")
 (define spec-id-rx #px"\\[REQ: ([A-Z]{3}-[0-9]{3})\\]")
 ;; 後読みへハイフンを含める。含めないと error code の E-TYP-014 から
@@ -28,7 +30,7 @@
   #px"(?<![-A-Za-z0-9])[A-Z]{3}-[0-9]{3}(?![A-Za-z0-9])")
 (define valid-states
   (set "G1" "G2" "G3" "G4" "G5" "P1" "P2"
-       "Phase 2 以降" "Phase 3 以降"))
+       "Phase 2 以降" "Phase 3 以降" "Phase 4 以降"))
 
 ;; descriptor が名乗れる状態は、着手済みのサイクルの状態に限る。
 ;; valid-states は Phase 送りの状態も含むため、まだ着手していない Phase の状態を
@@ -52,9 +54,14 @@
       [_
        (when current-id
          (match (regexp-match state-rx line)
-           [(list _ state)
+           [(list _ raw-state)
+            (define state (string-trim raw-state))
+            (define base-state
+              (match (regexp-match state-dependencies-rx state)
+                [(list _ base _dependencies) (string-trim base)]
+                [_ state]))
             (set! definitions
-                  (cons (cons current-id (string-trim state))
+                  (cons (cons current-id base-state)
                         (cdr definitions)))]
            [_ (void)]))]))
   (reverse definitions))
