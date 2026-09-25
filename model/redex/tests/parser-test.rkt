@@ -168,23 +168,23 @@
 
 (test-case
  "無名関数は引数と返り値の型を取る"
- (check-equal? (p "fn(a: Int) Int { a }")
+ (check-equal? (p "fn(a: Int) -> Int { a }")
                '(SProgram
-                 (#:span src 0 20) ()
-                 (SFn (#:span src 0 20)
+                 (#:span src 0 23) ()
+                 (SFn (#:span src 0 23)
                       ((SParam (#:span src 3 9)
                                (SName (#:span src 3 4) a)
                                (TName (#:span src 6 9) Int)))
-                      (TName (#:span src 11 14) Int)
-                      (SBlock (#:span src 15 20) ()
-                              (SVar (#:span src 17 18) a))))))
+                      (TName (#:span src 14 17) Int)
+                      (SBlock (#:span src 18 23) ()
+                              (SVar (#:span src 20 21) a))))))
 
 (test-case
  "出力は Surface の言語に合う"
  (for ([src (in-list (list "1" "true" "f(x).a" "{}" "{ a: 1 }"
                            "r.{a, b}"
                            "{ let x = 1\n x }"
-                           "fn(a: Int) Int { a }"
+                           "fn(a: Int) -> Int { a }"
                            "SInt" "TName" "none" "return"))])
    (check-true (redex-match? Surface sprog (p src))
                (format "~a の出力が Surface に合う" src))))
@@ -200,11 +200,11 @@
  "トップレベルの型宣言と関数宣言と束縛を受理する"
  (check-equal? (length (third (p "type A = Int\nconst x: A = 1\n1"))) 2)
  (check-true (redex-match? Surface sprog
-                           (p "fn f(a: Int) Int { a }\nf(1)"))))
+                           (p "fn f(a: Int) -> Int { a }\nf(1)"))))
 
 (test-case
  "trait and impl declarations parse"
- (define p (parse (lex/string 'src "trait Printable { print: fn(Self) String }\nimpl Printable for Int { print: fn(x: Int) String { \"i\" } }\n0")))
+ (define p (parse (lex/string 'src "trait Printable { print: fn(Self) -> String }\nimpl Printable for Int { print: fn(x: Int) -> String { \"i\" } }\n0")))
  (check-true (surface-prog? p))
  (match p
    [`(SProgram ,_ (,t ,i) ,_)
@@ -225,10 +225,26 @@
 (test-case
  "字句にならない記号は lexer の診断がそのまま返る"
  (check-equal? (p-code "List<Int>") "E-SUR-002")
- (check-equal? (p-code "fn f() -> Int { 1 }") "E-SUR-002")
  (check-equal? (p-code "1 + 2") "E-SUR-002")
  (check-equal? (p-code "x ?= y") "E-SUR-002")
  (check-equal? (p-code "x |> f") "E-SUR-002"))
+
+(test-case
+ "SUR-011: 戻り型は -> の後ろに書き、旧表記と省略は E-SUR-005 になる"
+ (for ([src (in-list '("fn f() -> Int { 1 }\n0"
+                       "fn(x: Int) -> Int { x }"
+                       "let g: fn(Int) -> Int = fn(x: Int) -> Int { x }\n0"
+                       "fn f() -> { a: Int } { 1 }\n0"))])
+   (check-false (p-code src)))
+ (for ([src (in-list '("fn f() Int { 1 }\n0"
+                       "let g: fn(Int) Int = 0\n0"
+                       "fn(x: Int) Int { x }"
+                       "fn f() { 1 }\n0"
+                       "fn(x: Int) { x }"))]
+       [at  (in-list (list '(#:span src 7 10) '(#:span src 15 18) '(#:span src 11 14)
+                           '(#:span src 7 8) '(#:span src 11 12)))])
+   (check-equal? (p-code src) "E-SUR-005")
+   (check-equal? (diagnostic-primary-span (p src)) at)))
 
 (test-case
  "式の頭に置けない語は E-SUR-005 である"
@@ -303,7 +319,7 @@
                            "r.{a, b}"
                            "return"
                            "type A = Int\nconst x: A = 1\n1"
-                           "fn f(a: Int) Int { a }\nf(1)"))])
+                           "fn f(a: Int) -> Int { a }\nf(1)"))])
    (define t (p src))
    (check-false (diagnostic? t) (format "~s が受理される" src))
    (check-equal? (containment-violations t) '()

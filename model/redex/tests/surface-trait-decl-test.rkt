@@ -32,12 +32,12 @@
    #:scope (trait-env-scope-rows canonical-trait-env)
    #:fail (λ (r k key) (error 'test "bad base ~s ~s ~s" r k key))))
 
-(define sizable-bool "impl Sizable for Bool { size: fn(x: Bool) Int { 0 } }\n")
+(define sizable-bool "impl Sizable for Bool { size: fn(x: Bool) -> Int { 0 } }\n")
 (define user-sizable-bool '(o-impl-user-Sizable-1 impl-user-Sizable-1 impl Sizable Bool root))
 
 (test-case
  "a trait declaration becomes a root trait row with a normalized field row"
- (define low (lower "trait Foo { b: Int, a: fn(Self) Int }\n0"))
+ (define low (lower "trait Foo { b: Int, a: fn(Self) -> Int }\n0"))
  (check-equal? (lowered-trait-rows low)
                '((o-trait-user-Foo Foo root
                   ((a (NFn (Self) Int () () () User) imm) (b Int imm)))))
@@ -45,7 +45,7 @@
 
 (test-case
  "record types inside a template are normalized too"
- (define low (lower "trait Foo { f: fn({ b: Int, a: Int }) Int }\n0"))
+ (define low (lower "trait Foo { f: fn({ b: Int, a: Int }) -> Int }\n0"))
  (check-equal? (fourth (first (lowered-trait-rows low)))
                '((f (NFn ((Record ((a Int imm) (b Int imm)))) Int () () () User) imm))))
 
@@ -69,7 +69,7 @@
  "impl numbering continues after the base's user impl rows"
  (define base (base+ #:impl (list user-sizable-bool)))
  (check-equal? (map first (lowered-impl-rows
-                           (lower "impl Sizable for Unit { size: fn(x: Unit) Int { 0 } }\n0" base)))
+                           (lower "impl Sizable for Unit { size: fn(x: Unit) -> Int { 0 } }\n0" base)))
                '(o-impl-user-Sizable-2)))
 
 (test-case
@@ -77,7 +77,7 @@
  (define base
    (base+ #:impl '((o-impl-user-Sizable-1/2 impl-user-Sizable-x impl Sizable Bool root))))
  (check-equal? (map first (lowered-impl-rows
-                           (lower "impl Sizable for Unit { size: fn(x: Unit) Int { 0 } }\n0" base)))
+                           (lower "impl Sizable for Unit { size: fn(x: Unit) -> Int { 0 } }\n0" base)))
                '(o-impl-user-Sizable-1)))
 
 (test-case
@@ -109,7 +109,7 @@
 
 (test-case
  "E-SUR-013 at the trait name, against the base and against earlier declarations"
- (define src "trait Printable { print: fn(Self) String }\n0")
+ (define src "trait Printable { print: fn(Self) -> String }\n0")
  (check-equal? (code src) "E-SUR-013")
  (match (parse-src src)
    [`(SProgram ,_ ((STraitDecl ,_ (SName ,s_n ,_) ,_)) ,_)
@@ -131,7 +131,7 @@
 
 (test-case
  "E-SUR-018 at the trait name"
- (define src "impl PrintableSizable for Bool { print: fn(x: Bool) String { \"b\" }, size: fn(x: Bool) Int { 0 } }\n0")
+ (define src "impl PrintableSizable for Bool { print: fn(x: Bool) -> String { \"b\" }, size: fn(x: Bool) -> Int { 0 } }\n0")
  (check-equal? (code src) "E-SUR-018")
  (match (parse-src src)
    [`(SProgram ,_ ((SImplDecl ,_ (SName ,s_n ,_) ,_ ,_)) ,_)
@@ -149,7 +149,7 @@
 
 (test-case
  "E-SUR-014 at the target type, against the canonical rows and the explicit base"
- (define src "impl Printable for Int { print: fn(x: Int) String { \"i\" } }\n0")
+ (define src "impl Printable for Int { print: fn(x: Int) -> String { \"i\" } }\n0")
  (check-equal? (code src) "E-SUR-014")
  (match (parse-src src)
    [`(SProgram ,_ ((SImplDecl ,_ ,_ ,ty ,_)) ,_)
@@ -170,7 +170,7 @@
 
 (test-case
  "E-SUR-016 when a new primitive name collides with the base"
- (define src "impl Sizable for Unit { size: fn(x: Unit) Int { 0 } }\n0")
+ (define src "impl Sizable for Unit { size: fn(x: Unit) -> Int { 0 } }\n0")
  (define base (base+ #:impl '((o-x impl-user-Sizable-1 impl Sizable Bool root))))
  (check-equal? (code src base) "E-SUR-016")
  (match (parse-src src)
@@ -179,12 +179,12 @@
 
 (test-case
  "Self outside a trait is an unknown type name"
- (check-equal? (code "impl Sizable for Self { size: fn(x: Int) Int { 0 } }\n0") "E-SUR-008"))
+ (check-equal? (code "impl Sizable for Self { size: fn(x: Int) -> Int { 0 } }\n0") "E-SUR-008"))
 
 (define showable-src
   (string-append
-   "trait Showable { show: fn(Self) String }\n"
-   "impl Showable for Int { show: fn(x: Int) String { \"i\" } }\n"
+   "trait Showable { show: fn(Self) -> String }\n"
+   "impl Showable for Int { show: fn(x: Int) -> String { \"i\" } }\n"
    "0"))
 
 ;; search-trait-integration-test.rkt の同名ヘルパーと同じ判定である。
@@ -314,8 +314,8 @@
    (compile-source/string
     'src
     (string-append
-     "trait Showable { show: fn(Self) String }\n"
-     "impl Showable for Int { show: fn(x: Int) Int { x } }\n"
+     "trait Showable { show: fn(Self) -> String }\n"
+     "impl Showable for Int { show: fn(x: Int) -> Int { x } }\n"
      "0")))
  (check-true (diagnostic? r))
  (check-not-equal? (diagnostic-id r) "E-SUR-017"))
@@ -324,12 +324,12 @@
  "record, function and nested function target types compile"
  (for ([impl (in-list
               (list
-               "impl Named for { n: Int } { name: fn(r: { n: Int }) String { \"r\" } }\n"
-               "impl Named for fn(Int) Int { name: fn(f: fn(Int) Int) String { \"f\" } }\n"
+               "impl Named for { n: Int } { name: fn(r: { n: Int }) -> String { \"r\" } }\n"
+               "impl Named for fn(Int) -> Int { name: fn(f: fn(Int) -> Int) -> String { \"f\" } }\n"
                (string-append
-                "impl Named for { g: fn(Int) Int } "
-                "{ name: fn(r: { g: fn(Int) Int }) String { \"g\" } }\n")))])
+                "impl Named for { g: fn(Int) -> Int } "
+                "{ name: fn(r: { g: fn(Int) -> Int }) -> String { \"g\" } }\n")))])
    (define r
      (compile-source/string
-      'src (string-append "trait Named { name: fn(Self) String }\n" impl "0")))
+      'src (string-append "trait Named { name: fn(Self) -> String }\n" impl "0")))
    (check-true (compiled? r) (format "~a=> ~s" impl r))))

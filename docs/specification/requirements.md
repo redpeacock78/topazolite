@@ -663,6 +663,14 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 `trait` と `impl` の宣言構文は、Proof-bearing Narrative trait と `Implements` Proof を正規の Narrative 経路から生成しなければならない。
 
+### SUR-011
+
+- **状態**：P2
+- **由来**：ホワイトペーパー §3.2.2、§4.8、§8.1
+- **正典**：`docs/specification/surface.md` §3
+
+関数型、関数宣言、無名関数の明示的な戻り型は、`->` の後ろに書かなければならない。
+
 ### MOD-001
 
 - **状態**：Phase 2 以降

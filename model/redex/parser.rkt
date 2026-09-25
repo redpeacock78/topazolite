@@ -115,7 +115,8 @@
                 [(open open-j) (expect-punct ts fail name-j '|(|)]
                 [(params params-j) (parse-params ts fail open-j)]
                 [(close close-j) (expect-punct ts fail params-j '|)|)]
-                [(return-type type-j) (parse-ty ts fail close-j)]
+                [(_arrow arrow-j) (expect-punct ts fail close-j '->)]
+                [(return-type type-j) (parse-ty ts fail arrow-j)]
                 [(body body-j) (parse-block ts fail type-j)])
     (values `(SFnDecl ,(hull start (node-span body))
                       (SName ,name-span ,name) ,params ,return-type ,body)
@@ -212,8 +213,9 @@
   (define start (span-at ts i))
   (let*-values ([(open open-j) (expect-punct ts fail (add1 i) '|(|)]
                 [(params params-j) (parse-params ts fail open-j)]
-                [(close close-j) (expect-punct ts fail params-j '|)|)])
-    (let*-values ([(return-type type-j) (parse-ty ts fail close-j)]
+                [(close close-j) (expect-punct ts fail params-j '|)|)]
+                [(_arrow arrow-j) (expect-punct ts fail close-j '->)])
+    (let*-values ([(return-type type-j) (parse-ty ts fail arrow-j)]
                  [(body body-j) (parse-block ts fail type-j)])
       (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,body)
               body-j))))
@@ -373,7 +375,8 @@
   (let*-values ([(open open-j) (expect-punct ts fail (add1 i) '|(|)]
                 [(types types-j) (parse-types ts fail open-j)]
                 [(close close-j) (expect-punct ts fail types-j '|)|)]
-                [(result result-j) (parse-ty ts fail close-j)])
+                [(_arrow arrow-j) (expect-punct ts fail close-j '->)]
+                [(result result-j) (parse-ty ts fail arrow-j)])
     (values `(TFn ,(hull start (node-span result)) ,types ,result) result-j)))
 
 (define (parse-params ts fail i)

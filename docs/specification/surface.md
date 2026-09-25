@@ -41,7 +41,8 @@ Surface の経路は展開表を生成しない。
 文字列リテラルは `"` で囲む。
 エスケープは `\"`、`\\`、`\n`、`\t` の 4 種だけを許す。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.` の 8 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->` の 9 種である。
+`->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 
 トークンの種別は `int`、`str`、`ident`、`kw`、`punct`、`nl`、`eof` の 7 種である。
 `int` の値は符号なしの整数である。
@@ -65,7 +66,7 @@ pitem    ::= typedecl | traitdecl | impldecl | fndecl | binding NL+
 typedecl ::= "type" ident "=" ty NL+
 traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
-fndecl   ::= "fn" ident "(" params ")" ty block NL+
+fndecl   ::= "fn" ident "(" params ")" "->" ty block NL+
 expr     ::= postfix
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
@@ -73,7 +74,7 @@ labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")"
-anonfn   ::= "fn" "(" params ")" ty block
+anonfn   ::= "fn" "(" params ")" "->" ty block
 params   ::= ε | param ("," param)*
 param    ::= ident ":" ty
 args     ::= ε | expr ("," expr)*
@@ -85,7 +86,7 @@ record   ::= "{" NL* "}"
 field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
 ty       ::= ident | tyrec
-           | "fn" "(" tys ")" ty
+           | "fn" "(" tys ")" "->" ty
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
@@ -95,7 +96,7 @@ tys      ::= ε | ty ("," ty)*
 トップレベルにも束縛を置ける。
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
 
-関数の戻り型は省略できない。
+関数の戻り型は `->` で区切り、省略できない。 [REQ: SUR-011]
 戻り型の推論は `SUR-008` が担うため、この版では行わない。
 
 program の末尾は式でなければならない。
@@ -108,8 +109,8 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 ### 3.1 受理しない構文
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
-`-`、`+`、`*`、`/`、`%`、`<`、`>`、`?`、`|`、`!`、`&`、`[`、`]`、`;` は字句にならない。
-`List<Int>`、`fn f() -> Int`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号の位置で `E-SUR-002` になる。
+単独の `-` と `>`、`+`、`*`、`/`、`%`、`<`、`?`、`|`、`!`、`&`、`[`、`]`、`;` は字句にならない。
+`List<Int>`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号の位置で `E-SUR-002` になる。
 
 字句にはなるが構文に無い `if`、`while`、`return`、`match` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。

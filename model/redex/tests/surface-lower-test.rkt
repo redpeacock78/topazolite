@@ -146,16 +146,16 @@
 
 (test-case
  "関数宣言は Recur になる"
- (define t (low "fn f(a: Int) Int { a }\nf(1)"))
+ (define t (low "fn f(a: Int) -> Int { a }\nf(1)"))
  (check-equal? (first t) 'Recur)
  (check-equal? (third t) '(#:bind f (#:span src 3 4)))
  (check-equal? (fourth t) '(((#:bind a (#:span src 5 6)) (#:ty Int (#:span src 8 11)))))
- (check-equal? (fifth t) '(#:ty Int (#:span src 13 16)))
- (check-equal? (sixth t) '(#:ef () (#:span src 0 22)))
+ (check-equal? (fifth t) '(#:ty Int (#:span src 16 19)))
+ (check-equal? (sixth t) '(#:ef () (#:span src 0 25)))
  ;; 本体は束縛の無い block なので末尾式そのものである
- (check-equal? (seventh t) '(#:var a (#:span src 19 20)))
+ (check-equal? (seventh t) '(#:var a (#:span src 22 23)))
  ;; 尾部は program の末尾式まで伸びる
- (check-equal? (second t) '(#:span src 0 27)))
+ (check-equal? (second t) '(#:span src 0 30)))
 
 (test-case
  "落とした program は UCore+ の e に合う"
@@ -164,7 +164,7 @@
                            "{ let mut x = 1\n x }"
                            "{ let x = 1\n let y = 2\n x }"
                            "type A = Int\nconst x: A = 1\nx"
-                           "fn f(a: Int) Int { a }\nf(1)"))])
+                           "fn f(a: Int) -> Int { a }\nf(1)"))])
    (define t (low src))
    (check-false (diagnostic? t) (format "~s が受理される" src))
    (check-true (redex-match? UCore+ e t) (format "~s の出力が UCore+ に合う" src))))
@@ -213,6 +213,6 @@
 
 (test-case
  "an alias whose definition mentions Self is E-SUR-008"
- (define d (low "type A = fn(Self) Int\n0"))
+ (define d (low "type A = fn(Self) -> Int\n0"))
  (check-true (diagnostic? d))
  (check-equal? (diagnostic-id d) "E-SUR-008"))

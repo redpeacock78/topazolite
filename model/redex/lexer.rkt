@@ -62,6 +62,11 @@
        (define sym (string->symbol (bytes->string/utf-8 (subbytes bs i j))))
        (define k (if (memq sym keywords) 'kw 'ident))
        (loop j (cons (stok k sym (span id i j)) acc))]
+      ;; SUR-011。- は単独の記号ではなく、直後の > と合わせて 1 token にする。
+      [(and (= (bytes-ref bs i) 45)
+            (< (add1 i) n)
+            (= (bytes-ref bs (add1 i)) 62))
+       (loop (+ i 2) (cons (stok 'punct '-> (span id i (+ i 2))) acc))]
       [(hash-ref puncts (bytes-ref bs i) #f)
        => (lambda (p)
             (loop (add1 i) (cons (stok 'punct p (span id i (add1 i))) acc)))]

@@ -59,6 +59,19 @@
                '(trait impl for eof)))
 
 (test-case
+ "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
+ (check-equal? (kinds "fn() -> Int") '(kw punct punct punct ident eof))
+ ;; a は 0-1、-> は 1-3、b は 3-4。
+ (check-equal? (take (spans "a->b") 3)
+               '((#:span src 0 1) (#:span src 1 3) (#:span src 3 4)))
+ (for ([src (in-list '("- >" "-" ">" "=>"))]
+       [at  (in-list '(0 0 0 1))])
+   (define d (lex/string 'src src))
+   (check-equal? (diagnostic-id d) "E-SUR-002")
+   (check-equal? (diagnostic-primary-span d)
+                 `(#:span src ,at ,(add1 at)))))
+
+(test-case
  "lex は bytes を受け、lex/string は同じ結果を返す"
  (check-equal? (lex 'src #"a b") (lex/string 'src "a b")))
 

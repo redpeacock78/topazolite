@@ -423,6 +423,7 @@
 (define expected-p2f-ids '(NAR-005))
 (define expected-p2g-ids '(NAR-004))
 (define expected-p2h1-ids '(SUR-010))
+(define expected-p2h2-ids '(SUR-011))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -638,6 +639,12 @@
           (build-path root "docs/specification/trait.md")))
   (define p2h1-tests
     (list (build-path root "model/redex/tests/surface-trait-decl-test.rkt")))
+  (define p2h2-specs
+    (list (build-path root "docs/specification/surface.md")
+          (build-path root "docs/specification/trait.md")))
+  (define p2h2-tests
+    (list (build-path root "model/redex/tests/lexer-test.rkt")
+          (build-path root "model/redex/tests/parser-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -664,7 +671,8 @@
    (cycle-descriptor 'P2e2 "P2" p2e2-specs p2e2-tests #f expected-p2e2-ids)
    (cycle-descriptor 'P2f "P2" p2f-specs p2f-tests #f expected-p2f-ids)
    (cycle-descriptor 'P2g "P2" p2g-specs p2g-tests #f expected-p2g-ids)
-   (cycle-descriptor 'P2h1 "P2" p2h1-specs p2h1-tests #f expected-p2h1-ids)))
+   (cycle-descriptor 'P2h1 "P2" p2h1-specs p2h1-tests #f expected-p2h1-ids)
+   (cycle-descriptor 'P2h2 "P2" p2h2-specs p2h2-tests #f expected-p2h2-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

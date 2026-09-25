@@ -24,7 +24,7 @@
 
 (test-case
  "関数宣言と適用が型付きの成果物になる"
- (define r (c "fn f(a: Int) Int { a }\nf(1)"))
+ (define r (c "fn f(a: Int) -> Int { a }\nf(1)"))
  (check-true (compiled? r))
  (check-equal? (compiled-type r) 'Int))
 
@@ -109,7 +109,7 @@
  "成果物の span は入力の source-id を指し親に包含される"
  (for ([str (in-list (list "1"
                            "{ a: 1 }"
-                           "fn f(a: Int) Int { a }\nf(1)"
+                           "fn f(a: Int) -> Int { a }\nf(1)"
                            "type A = Int\nconst x: A = 1\nx"
                            "{ let x = 1\n x }"))])
    (define r (c str))
