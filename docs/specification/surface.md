@@ -423,6 +423,9 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl または derive を宣言した
 - `E-SUR-019` `surface-derive-no-recipe`：kernel の生成規則を持たない trait と対象型の組へ derive を宣言した
 - `E-SUR-020` `surface-type-not-normalizable`：型位置の &、または trait の要求型の Self を対象型で置き換えた結果が正規化できない
+- `E-SUR-021` `surface-trait-in-type-position`：trait 名または合成宣言の名前を型の位置で使った
+- `E-SUR-022` `surface-invalid-trait-composition`：同じ鍵の trait、または label が衝突する trait を `&` で並べた
+- `E-SUR-023` `surface-type-trait-name-collision`：型の名前が trait の名前と衝突した。基本型の名前の trait を含む
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -434,6 +437,7 @@ E-SUR-001 から E-SUR-011 は P2c1 で registry に登録し、fixture v15 を�
 E-SUR-012 は registry v17、E-SUR-013 から E-SUR-018 は P2h1 の registry v19 で追加した。
 E-SUR-019 は P2h2 の registry v20 で追加した。
 E-SUR-020 は P2h3a の registry v21 で追加した。
+E-SUR-021 から E-SUR-023 は P2h3b の registry v22 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity
