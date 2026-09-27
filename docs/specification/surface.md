@@ -13,6 +13,7 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、Effect 注釈（`SUR-003`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
+
 Surface の型注釈と署名から Typed Core への elaboration の入口と返り値は §9 が定める。
 `#:expansion-context` は `compile-source` の任意入力として `elab` へ渡す。
 Surface の経路は展開表を生成しない。

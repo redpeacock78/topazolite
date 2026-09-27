@@ -447,7 +447,7 @@ type sexpr =
   | SUnit     : span -> sexpr
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
-  | SFn       : span -> list sty -> sty -> sexpr -> sexpr
+  | SFn       : span -> list sty -> option sty -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> string -> sexpr
   | SProjRec  : span -> sexpr -> list string -> sexpr
@@ -503,7 +503,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SUnit _       -> []
   | SBool _ _     -> []
   | SVar _ _      -> []
-  | SFn _ ps r b  -> map NTy ps @ [NTy r; NExpr b]
+  | SFn _ ps r b  -> map NTy ps @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
   | SProjRec _ e1 _ -> [NExpr e1]
@@ -592,7 +592,8 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SUnit _       -> true
   | SBool _ _     -> true
   | SVar _ _      -> true
-  | SFn s ps r b  -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+  | SFn s ps r b  -> wf_tys s ps
+                     && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
                      && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
   | SProj s e1 _  -> contains s (span_of_expr e1) && wf_expr e1
@@ -668,7 +669,10 @@ let parse_span_containment n c =
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SFn s ps r b) ->
-      FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r; NExpr b] c;
+      FStar.List.Tot.Properties.append_memP
+        (map NTy ps) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]) c;
+      FStar.List.Tot.Properties.append_memP
+        (match r with None -> [] | Some t -> [NTy t]) [NExpr b] c;
       wf_tys_elim s ps c
   | NExpr (SApply s f a) -> wf_exprs_elim s a c
   | NExpr (SRec s fs) -> wf_exprs_elim s fs c
