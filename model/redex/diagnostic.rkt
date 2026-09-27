@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 23)
+(define diagnostic-registry-version 24)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -306,6 +306,10 @@
   '(("E-TYP-024" return-type-not-inferable
                  "戻り型を省略した関数の戻り型を推論できない")))
 
+(define elaborate-entries-v24
+  '(("E-TYP-025" parameter-type-not-inferable
+                 "仮引数型を省略した無名関数の仮引数型を推論できない")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -403,6 +407,7 @@
           (rows 'elaborate 13 elaborate-entries-v13)
           (rows 'elaborate 16 elaborate-entries-v16)
           (rows 'elaborate 23 elaborate-entries-v23)
+          (rows 'elaborate 24 elaborate-entries-v24)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
