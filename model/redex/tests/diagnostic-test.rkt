@@ -603,7 +603,7 @@
     (format "~a が registry に同じ組で存在する" code))))
 
 (test-case
- "SUR-008 の E-TYP-024 は elaborate の return-type-not-inferable である"
+ "戻り型省略の E-TYP-024 は elaborate の return-type-not-inferable である"
  (check-equal? (diagnostic-code-of 'elaborate 'return-type-not-inferable)
                "E-TYP-024"))
 
