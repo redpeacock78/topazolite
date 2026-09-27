@@ -610,6 +610,37 @@ body が合成する Effect row から自身の境界への Return を除いた�
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
 ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
+**(E-Lambda-Infer)**
+
+```text
+C = owned-captures(e, (a1, …, ak), Γ)
+b fresh
+εdecl' = resolveReturn(B, εdecl)
+B' = push(B, FunctionBoundary(b, ?))
+Γ, a1 : τ1, …, ak : τk; Δ; Π; B' ⊢ e ⇒ τ ! εbody ⟹ c
+εbody \ {Return<b, τ>} ⊆ εdecl'
+ℓ fresh                                            （CallableId、§3.3。本体の導出の後に割り当てる）
+（E-Lambda の結論で、戻り型 τ は上の合成結果を使う）
+--------------------------------
+Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) ! εdecl  e ⇒ …
+```
+
+`FunctionBoundary(b, ?)` は戻り型が未定の境界である。
+`nearestReturn(B') = Frame(b, ?)` のとき、E-Return と `resolveReturn` は導出を持たない。
+
+**(E-Lambda-Infer-Check)**
+
+```text
+τexp = NFn<(σ1, …, σk), σ, εin, εout, Q, O> または Owned<NFn<…, σ, …>>
+Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> σ ! εdecl  e ⇐ τexp ! ε ⟹ c
+--------------------------------
+Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) ! εdecl  e ⇐ τexp ! ε ⟹ c
+```
+
+前提の判断は、E-Lambda の合成を E-Sub で期待型へ突き合わせたものである。
+
+合成位置の本体に現れる `Return` からの戻り型の推論は、この版では扱わず、`SUR-015` が定める。
+
 **(E-Apply)**
 
 ```text
@@ -760,6 +791,24 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 
 計算分類が Unknown の再帰は、宣言 row に `Partial` を含む場合に限り許可する（ホワイトペーパー §7.1 の扱い）。
 分類が保証を持てない場合に Unknown へ落ちること自体は REC-001 の要求である。
+
+**(E-Recur-Infer)**
+
+```text
+f ∉ free-vars(e1)
+e1 の自由変数のうち x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
+ε' = resolveReturn(B, εdecl)
+Γ, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇒ τ ! εbody ⟹ c1
+εbody ⊆ ε'
+r fresh                                            （CallableId、§3.3。本体の導出の後に割り当てる）
+Γ, f : NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+（E-Recur の結論で、戻り型 τ は上の合成結果を使う）
+--------------------------------
+Γ; Δ; Π; B ⊢ recur f(x1 : τ1, …, xk : τk) ! εdecl = e1 in e2 ⇒ τ2 ! ε2 ⟹ …
+```
+
+`f` が `e1` に自由に現れないため、E-Recur の `Γf` の下で `e1` を検査することと、`f` を含まない環境で合成することは同じ結果を与える。
+`Recur` は FunctionBoundary を push しないため、本体の `Return` は外側の最寄りの境界へ向かう。
 
 **(E-Yield)**
 

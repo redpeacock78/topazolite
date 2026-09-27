@@ -360,6 +360,9 @@
      (match label
        ['Return
         (match (nearest-boundary boundaries)
+          [`(,_ ,_ #:infer)
+           ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
+           (reject span 'return-type-not-inferable 'return-in-synth)]
           [`(,_ ,boundary ,type) `(Return ,boundary ,type)]
           [_ (reject span 'return-label-outside-boundary)])]
        [`(Yield ,type)
@@ -872,6 +875,135 @@
         (cons (judgment-row scrutinee-result)
               (map second branch-results)))))
 
+    (define (prepare-fn s parameter-binders raw-parameter-types body
+                        environment delta)
+      (define parameters (map peel-bind parameter-binders))
+      (when (check-duplicates parameters)
+        (reject s 'duplicate-parameter parameters))
+      (define parameter-types
+        (for/list ([type (in-list raw-parameter-types)])
+          (resolve-annotation type delta s)))
+      (define captures (owned-captures body parameters environment))
+      (define capture-types
+        (for/list ([name (in-list captures)])
+          (lookup environment name)))
+      (values parameters parameter-types captures capture-types))
+
+    (define (prepare-fn-binders s parameter-binders parameters parameter-types
+                                captures capture-types body environment)
+      (define reserved
+        (set-union (form-symbols body)
+                   (list->set parameters)
+                   (list->set (map first environment))))
+      (define-values (capture-raw-names reserved-with-captures)
+        (fresh-owned-names/all capture-types reserved))
+      (define-values (raw-names reserved-with-formals)
+        (fresh-owned-names/all parameter-types reserved-with-captures))
+      (define capture-binders
+        (for/list ([raw (in-list capture-raw-names)])
+          `(#:bind ,raw ,s)))
+      (define core-binders
+        (owned-parameter-binders parameter-binders raw-names))
+      (values capture-raw-names raw-names capture-binders core-binders
+              reserved-with-formals))
+
+    (define (check-function-body-row s body-result return-type boundary
+                                     declared-row)
+      (define own-return `((Return ,boundary ,return-type)))
+      (define residual-row
+        (row-difference (judgment-row body-result) own-return))
+      (unless (row-subset? residual-row declared-row)
+        (reject s 'undeclared-function-effect declared-row residual-row)))
+
+    (define (finish-fn s parameter-binders parameter-types
+                       captures capture-types capture-raw-names raw-names
+                       capture-binders core-binders
+                       return-type boundary body-result
+                       signature callable reserved-with-formals)
+      (define lam-core
+        `(Lam ,s User ,callable
+              ,(append capture-binders core-binders)
+              (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
+                      (,s (#:bind return-value ,s) ->
+                          ,(if (owned-type? return-type)
+                               `(Move ,s (#:var return-value ,s))
+                               `(#:var return-value ,s)))
+                      (Scope ,s ()
+                             ,(wrap-capture-lets
+                               captures capture-types capture-raw-names
+                               (wrap-owned-lets
+                                parameter-binders parameter-types raw-names
+                                (judgment-core body-result))
+                               s)))))
+      (if (null? captures)
+          (judgment lam-core signature '())
+          (wrap-captured-function
+           captures capture-types
+           lam-core signature s reserved-with-formals)))
+
+    ;; 注釈付き Fn の共通経路。resolve-return は現在の resolve-annotation の
+    ;; 位置で呼び、診断の優先順位を変えない。
+    (define (elaborate-annotated-fn s parameter-binders raw-parameter-types
+                                   resolve-return raw-row body
+                                   environment delta propositions boundaries)
+      (define-values (parameters parameter-types captures capture-types)
+        (prepare-fn s parameter-binders raw-parameter-types body
+                    environment delta))
+      (define return-type (resolve-return))
+      (define declared-row
+        (resolve-declaration-row raw-row delta boundaries s))
+      (define boundary (fresh-boundary))
+      (define-values (capture-raw-names raw-names capture-binders core-binders
+                                        reserved-with-formals)
+        (prepare-fn-binders s parameter-binders parameters parameter-types
+                            captures capture-types body environment))
+      (define signature
+        `(NFn ,(append capture-types parameter-types)
+             ,return-type () ,declared-row () User))
+      (define callable (fresh-callable signature))
+      (define body-result
+        (check body return-type
+               (extend environment parameters parameter-types)
+               delta propositions
+               (cons `(FunctionBoundary ,boundary ,return-type) boundaries)))
+      (check-function-body-row s body-result return-type boundary declared-row)
+      (finish-fn s parameter-binders parameter-types
+                 captures capture-types capture-raw-names raw-names
+                 capture-binders core-binders
+                 return-type boundary body-result
+                 signature callable reserved-with-formals))
+
+    (define (elaborate-inferred-fn s parameter-binders raw-parameter-types
+                                  raw-row body
+                                  environment delta propositions boundaries)
+      (define-values (parameters parameter-types captures capture-types)
+        (prepare-fn s parameter-binders raw-parameter-types body
+                    environment delta))
+      (define declared-row
+        (resolve-declaration-row raw-row delta boundaries s))
+      (define boundary (fresh-boundary))
+      (define body-result
+        (synth body
+               (extend environment parameters parameter-types)
+               delta propositions
+               (cons `(FunctionBoundary ,boundary #:infer) boundaries)))
+      (define return-type (judgment-type body-result))
+      (check-function-body-row s body-result return-type boundary declared-row)
+      (define-values (capture-raw-names raw-names capture-binders core-binders
+                                        reserved-with-formals)
+        (prepare-fn-binders s parameter-binders parameters parameter-types
+                            captures capture-types body environment))
+      (define signature
+        `(NFn ,(append capture-types parameter-types)
+             ,return-type () ,declared-row () User))
+      ;; 省略時は、本体が作る入れ子の CallableId の後に割り当てる。
+      (define callable (fresh-callable signature))
+      (finish-fn s parameter-binders parameter-types
+                 captures capture-types capture-raw-names raw-names
+                 capture-binders core-binders
+                 return-type boundary body-result
+                 signature callable reserved-with-formals))
+
     (define (synth expression environment delta propositions boundaries)
       (define s (span-of expression))
       (define result
@@ -903,69 +1035,16 @@
               [_ (reject s 'unbound-variable name)])])]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
+              (#:infer ,_) ,raw-row ,body)
+         (elaborate-inferred-fn s parameter-binders raw-parameter-types raw-row
+                                body environment delta propositions boundaries)]
+
+        [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)
-         (define parameters (map peel-bind parameter-binders))
-         (when (check-duplicates parameters)
-           (reject s 'duplicate-parameter parameters))
-         (define parameter-types
-           (for/list ([type (in-list raw-parameter-types)])
-             (resolve-annotation type delta s)))
-         (define captures (owned-captures body parameters environment))
-         (define capture-types
-           (for/list ([name (in-list captures)])
-             (lookup environment name)))
-         (define return-type (resolve-annotation raw-return-type delta s))
-         (define declared-row
-           (resolve-declaration-row raw-row delta boundaries s))
-         (define boundary (fresh-boundary))
-         (define reserved
-           (set-union (form-symbols body)
-                      (list->set parameters)
-                      (list->set (map first environment))))
-         (define-values (capture-raw-names reserved-with-captures)
-           (fresh-owned-names/all capture-types reserved))
-         (define-values (raw-names reserved-with-formals)
-           (fresh-owned-names/all parameter-types reserved-with-captures))
-         (define capture-binders
-           (for/list ([raw (in-list capture-raw-names)])
-             `(#:bind ,raw ,s)))
-         (define core-binders
-           (owned-parameter-binders parameter-binders raw-names))
-         (define signature
-           `(NFn ,(append capture-types parameter-types)
-                ,return-type () ,declared-row () User))
-         (define callable (fresh-callable signature))
-         (define body-result
-           (check body return-type
-                  (extend environment parameters parameter-types)
-                  delta propositions
-                  (cons `(FunctionBoundary ,boundary ,return-type)
-                        boundaries)))
-         (define own-return `((Return ,boundary ,return-type)))
-         (define residual-row
-           (row-difference (judgment-row body-result) own-return))
-         (unless (row-subset? residual-row declared-row)
-           (reject s 'undeclared-function-effect declared-row residual-row))
-         (define lam-core
-           `(Lam ,s User ,callable
-                 ,(append capture-binders core-binders)
-                 (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
-                         (,s (#:bind return-value ,s) ->
-                             ,(if (owned-type? return-type)
-                                  `(Move ,s (#:var return-value ,s))
-                                  `(#:var return-value ,s)))
-                         (Scope ,s ()
-                                ,(wrap-capture-lets
-                                  captures capture-types capture-raw-names
-                                  (wrap-owned-lets
-                                   parameter-binders parameter-types raw-names
-                                   (judgment-core body-result))
-                                  s)))))
-         (if (null? captures)
-             (judgment lam-core signature '())
-             (wrap-captured-function
-              captures capture-types
-              lam-core signature s reserved-with-formals))]
+         (elaborate-annotated-fn
+          s parameter-binders raw-parameter-types
+          (λ () (resolve-annotation raw-return-type delta s))
+          raw-row body environment delta propositions boundaries)]
 
         [`(Apply ,function ,arguments ...)
          (define raw-function-result
@@ -1147,6 +1226,9 @@
 
         [`(Return ,returned)
          (match (nearest-boundary boundaries)
+           [`(,_ ,_ #:infer)
+            ;; SUR-008。推論中の戻り型で Return の payload を検査できない。
+            (reject s 'return-type-not-inferable 'return-in-synth)]
            [`(,_ ,boundary ,return-type)
             (define returned-result
               (check returned return-type
@@ -1161,6 +1243,68 @@
 
         [`(NarrativeExpr ,_)
          (reject s 'narrative-expression-needs-expected-type)]
+
+        [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
+                 (#:infer ,_) ,raw-row ,body ,continuation)
+         (define function (peel-bind raw-function))
+         (define parameters (map peel-bind parameter-binders))
+         (when (check-duplicates (cons function parameters))
+           (reject s 'duplicate-recur-binder function parameters))
+         (define parameter-types
+           (for/list ([type (in-list raw-parameter-types)])
+             (resolve-annotation type delta s)))
+         ;; 省略・注釈付きの両方で同じ順序を保つ。
+         (when (captures-owned? body (cons function parameters) environment)
+           (reject s 'owned-recur-capture))
+         (when (set-member? (free-vars body) function)
+           (reject s 'return-type-not-inferable 'self-reference))
+         (define declared-row
+           (resolve-declaration-row raw-row delta boundaries s))
+         ;; Recur は関数境界を積まない。f をまだ束縛せず、本体から戻り型を合成する。
+         (define body-result
+           (synth body (extend environment parameters parameter-types)
+                  delta propositions boundaries))
+         (define return-type (judgment-type body-result))
+         (unless (row-subset? (judgment-row body-result) declared-row)
+           (reject s 'undeclared-recur-effect
+                   declared-row (judgment-row body-result)))
+         (define signature
+           `(NFn ,parameter-types ,return-type () ,declared-row () User))
+         (define callable (fresh-callable signature))
+         (define raw-names
+           (fresh-owned-names
+            parameter-types
+            (set-union (form-symbols body)
+                       (list->set parameters)
+                       (set function)
+                       (list->set (map first environment)))))
+         (define core-binders
+           (owned-parameter-binders parameter-binders raw-names))
+         (define function-environment
+           (extend environment (list function) (list signature)))
+         (define continuation-result
+           (synth continuation function-environment
+                  delta propositions boundaries))
+         (define wrapped-body
+           (if (ormap values raw-names)
+               `(Scope ,s ()
+                       ,(wrap-owned-lets parameter-binders
+                                         parameter-types raw-names
+                                         (judgment-core body-result)))
+               (judgment-core body-result)))
+         (define recur-core
+           `(Recur ,s ,callable ,raw-function ,core-binders
+                   ,wrapped-body
+                   ,(judgment-core continuation-result)))
+         (define classification
+           (classify recur-core environment
+                     (reverse reversed-callables)))
+         (when (and (eq? classification 'Unknown)
+                    (not (row-member? 'Partial declared-row)))
+           (reject s 'unknown-recur-requires-partial))
+         (judgment recur-core
+                   (judgment-type continuation-result)
+                   (judgment-row continuation-result))]
 
         [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  ,raw-return-type ,raw-row ,body ,continuation)
@@ -1364,6 +1508,19 @@
 
         [_ (reject s 'cannot-synthesize expression)]))
 
+    ;; 合成の結果を期待型と比べる。汎用の _ 節と E-Lambda-Infer-Check が共有する。
+    (define (check-against-expected result expected s propositions)
+      (unless (type-compatible? (judgment-type result) expected propositions)
+        (reject s 'type-mismatch expected (judgment-type result)))
+      (match (narrowing-kind (judgment-type result) expected propositions)
+        ['ok (void)]
+        [`(drop-obligation ,_ ,_)
+         (reject s 'owned-narrowing-needs-proof expected
+                 (judgment-type result))]
+        [_ (reject s 'owned-narrowing-rejected expected
+                   (judgment-type result))])
+      (judgment (judgment-core result) expected (judgment-row result)))
+
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
@@ -1412,20 +1569,31 @@
           expected
           (row-difference (judgment-row body-result) own-return))]
 
+        [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
+              (#:infer ,_) ,raw-row ,body)
+         ;; E-Lambda-Infer-Check。σ は Typed Core の型なので、UCore の型注釈を
+         ;; 解決する resolve-annotation には通さない。
+         (define function-type
+           (match expected
+             [`(Owned ,inner) inner]
+             [_ expected]))
+         (match function-type
+           [`(NFn ,_ ,return-type . ,_)
+            (check-against-expected
+             (elaborate-annotated-fn
+              s parameter-binders raw-parameter-types
+              (λ () return-type) raw-row body
+              environment delta propositions boundaries)
+             expected s propositions)]
+           [_
+            (check-against-expected
+             (synth expression environment delta propositions boundaries)
+             expected s propositions)])]
+
         [_
-         (define result
-           (synth expression environment delta propositions boundaries))
-         (unless (type-compatible? (judgment-type result) expected
-                                   propositions)
-           (reject s 'type-mismatch expected (judgment-type result)))
-         (match (narrowing-kind (judgment-type result) expected propositions)
-           ['ok (void)]
-           [`(drop-obligation ,_ ,_)
-            (reject s 'owned-narrowing-needs-proof expected
-                    (judgment-type result))]
-           [_ (reject s 'owned-narrowing-rejected expected
-                      (judgment-type result))])
-         (judgment (judgment-core result) expected (judgment-row result))]))
+         (check-against-expected
+          (synth expression environment delta propositions boundaries)
+          expected s propositions)]))
 
     (define result (synth expression '() Δ0 Π0 '()))
     (list (uniquify-binders (judgment-core result))
