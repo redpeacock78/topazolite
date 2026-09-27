@@ -73,6 +73,16 @@
   (check-equal? (erase-surface surface+) surface)
   (check-true (redex-match? UCore e (erase-surface surface+))))
 
+;; SUR-008。#:infer は span を持つ包みから裸の標識へ写る。
+(test-case "SUR-008: (#:infer s) は #:infer へ写る"
+  (check-equal? (erase-surface (term (#:infer ,s1))) '#:infer)
+  (check-equal?
+   (erase-surface
+    (term (Fn ,s0 () (#:infer ,s1) (#:ef () ,s1) (#:lit 1 ,s1))))
+   '(Fn () #:infer () 1))
+  ;; #:infer 以外の未知の keyword head は従来どおり落ちる。
+  (check-exn exn:fail? (λ () (erase-surface (term (#:unknown 1 ,s1))))))
+
 ;; 法則 2: 冪等性。spanless な入力では恒等写像である。
 (test-case "erase は冪等であり spanless な入力で恒等である"
   (check-equal? (erase-core (erase-core core+)) (erase-core core+))
@@ -99,8 +109,8 @@
   (check-false (contains-head? (erase-core core+)))
   (check-false (contains-head? (erase-surface surface+))))
 
-;; 閉世界。7 つの head だけを知り、それ以外の keyword head は誤りとする。
-(test-case "span は列の要素として落ち 6 つの包みは開かれる"
+;; 閉世界。8 つの head だけを知り、それ以外の keyword head は誤りとする。
+(test-case "span は列の要素として落ち 7 つの包みは開かれる"
   (check-equal? (erase-core (term (Suspend ,s0 (#:lit 1 ,s1)))) (term (Suspend 1)))
   (check-equal? (erase-core (term (#:var x ,s1))) (term x))
   (check-equal? (erase-core (term (#:lit 1 ,s1))) 1)

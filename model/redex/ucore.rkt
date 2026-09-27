@@ -37,6 +37,8 @@
           (Record ur)
           (Union uτ uτ)
           (Intersection uτ uτ))
+  ;; SUR-008。省略した関数の戻り型は本体の合成から決める。
+  (uret ::= uτ #:infer)
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own Mutation)
   (tε ::= (tℓ ...))
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own Mutation)
@@ -45,7 +47,7 @@
   (ubr ::= (K (x ...) -> e))
   (e ::= l
          x
-         (Fn ((x uτ) ...) uτ uε e)
+         (Fn ((x uτ) ...) uret uε e)
          (Apply e e ...)
          (Let x e e)
          (Let (x bmode) e e)
@@ -57,7 +59,7 @@
          (Eliminate e (ubr ...))
          (Return e)
          (NarrativeExpr e)
-         (Recur f ((x uτ) ...) uτ uε e e)
+         (Recur f ((x uτ) ...) uret uε e e)
          (Yield e e)
          (Suspend e)
          (Move x)
@@ -78,6 +80,8 @@
   (xs ::= (#:bind x s))
   (ls ::= (#:lbl label s))
   (ts ::= (#:ty uτ s))
+  ;; SUR-008。結果欄の span は関数全体のものである。
+  (tr ::= ts (#:infer s))
   (es ::= (#:ef uε s))
   (sps ::= (#:ty spec s))
   (vr ::= (#:var x s))
@@ -85,7 +89,7 @@
   (ubr ::= (s K (xs ...) -> e))
   (e ::= lt
          vr
-         (Fn s ((xs ts) ...) ts es e)
+         (Fn s ((xs ts) ...) tr es e)
          (Apply s e e ...)
          (Let s xs e e)
          (Let s (xs bmode) e e)
@@ -97,7 +101,7 @@
          (Eliminate s e (ubr ...))
          (Return s e)
          (NarrativeExpr s e)
-         (Recur s xs ((xs ts) ...) ts es e e)
+         (Recur s xs ((xs ts) ...) tr es e e)
          (Yield s e e)
          (Suspend s e)
          (Move s vr)

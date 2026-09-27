@@ -2,6 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
+         "../ucore.rkt"
          "../span.rkt"
          "../erase.rkt"
          "../annotate.rkt")
@@ -116,6 +117,16 @@
 (test-case "annotate-surface と erase-surface は往復する"
   (for ([expr (in-list ucore-terms)])
     (check-equal? (erase-surface (annotate-surface expr)) expr (format "~a" expr))))
+
+;; SUR-008。結果欄の #:infer は span を持つ包みになり、erase で戻る。
+(test-case "SUR-008: annotate-surface は結果欄の #:infer を包む"
+  (define fn-term '(Fn ((x Int)) #:infer () x))
+  (define recur-term '(Recur f ((x Int)) #:infer () x (Apply f 1)))
+  (for ([t (list fn-term recur-term)])
+    (check-true (redex-match? UCore e t))
+    (define annotated (annotate-surface t))
+    (check-true (redex-match? UCore+ e annotated))
+    (check-equal? (erase-surface annotated) t)))
 
 (test-case "annotate-surface は決定的であり未対応の production を素通ししない"
   (for ([expr (in-list ucore-terms)])

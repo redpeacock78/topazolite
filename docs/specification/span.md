@@ -44,7 +44,7 @@ keyword は記号ではないため、metadata を何語追加しても記号の
 `elaborate.rkt` の `T` を加えると、UCore が扱う識別子非終端は 9 件になる。
 G1 は 7 件、G2 は `label` を加えた 8 件、UCore は `T` を加えた 9 件として受理集合を検査する。
 
-metadata の head は `#:span`、`#:bind`、`#:lbl`、`#:ty`、`#:ef`、`#:var`、`#:lit` の 7 語である。
+metadata の head は `#:span`、`#:bind`、`#:lbl`、`#:ty`、`#:ef`、`#:var`、`#:lit`、`#:infer` の 8 語である。
 予約 sourceId も `#:synthetic` という keyword である。
 `Var`、`Lit`、`Bind`、`Lbl`、`Ty`、`Ef`、`span`、`%foo`、`%synthetic` は、既存言語と spanful 言語の両方で識別子として受理する。
 この受理集合と annotate、erase の往復は `span-collision-test.rkt` が固定する。
@@ -65,6 +65,7 @@ UCore の `e ::= x` と G1 の `c ::= x` は構成子ではないため、変数
 型そのものは spanless のままにする。
 record 型の row `r ::= ((label tau m) ...)` に現れる label も spanless のままにする。
 型内部の label を指す診断は、その型注釈全体の span で代表する。
+UCore+ の `Fn` と `Recur` で戻り型を省略した場合、結果欄を `(#:infer s)` とし、`s` は関数全体の span とする。
 
 ## 4. spanful 文法
 
@@ -142,8 +143,8 @@ spanful な項へ `substitute` を掛けない。
 
 | 言語 | 構成子 | 注釈の位置 |
 |---|---|---|
-| UCore+ | `Fn` | 引数の各 `u_tau`、返り値 `u_tau`、effect `u_epsilon` |
-| UCore+ | `Recur` | 引数の各 `u_tau`、返り値 `u_tau`、effect `u_epsilon` |
+| UCore+ | `Fn` | 引数の各 `u_tau`、返り値 `u_tau` または `(#:infer s)`、effect `u_epsilon` |
+| UCore+ | `Recur` | 引数の各 `u_tau`、返り値 `u_tau` または `(#:infer s)`、effect `u_epsilon` |
 | UCore+ | `Let` の注釈あり形 | `u_tau` |
 | UCore+ | `Let` の注釈なし形 | 無し |
 | UCore+ | `Construct` の `(Types u_tau ...)` 形 | 各 `u_tau` |
@@ -203,7 +204,7 @@ spanless な入力では恒等写像になり、spanful な入力では metadata
 1. **全域性**：spanful な言語のすべての項に対して投影が定義される。
 2. **冪等性**：`erase(erase(t)) = erase(t)` が成り立つ。
 3. **span 違いの一致**：span だけが異なる 2 項の投影は一致する。
-4. **span 残留なし**：投影結果に `#:span`、`#:bind`、`#:lbl`、`#:ty`、`#:ef`、`#:var`、`#:lit` は現れない。
+4. **span 残留なし**：投影結果に `#:span`、`#:bind`、`#:lbl`、`#:ty`、`#:ef`、`#:var`、`#:lit` は現れず、`#:infer` は span を持たない裸の標識としてだけ現れる。
 
 投影は未知の metadata head を素通ししない。
 span 機構へ新しい head を追加したときに、投影側の更新漏れを検出するためである。

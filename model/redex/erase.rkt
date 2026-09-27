@@ -28,12 +28,12 @@
        (= 4 (length t))
        (eq? (car t) '#:span)))
 
-;; span 機構の 6 つの包みを開き、構成子の直後にある span を落とす。
-;; production ごとの節を書かない。span 機構の head は 7 つに固定されており、
+;; span 機構の 7 つの包みを開き、構成子の直後にある span を落とす。
+;; production ごとの節を書かない。span 機構の head は 8 つに固定されており、
 ;; 構造の再帰 1 本で UCore+ と G1+ と G2+ の全 production を覆える。
 ;; spanless な入力に対しては恒等写像になる。
 ;;
-;; 再帰は閉世界である。head が keyword の list は、上の 7 節のいずれかに
+;; 再帰は閉世界である。head が keyword の list は、上の 8 節のいずれかに
 ;; 一致しなければ誤りとして落とす。head を将来足したときに、span が出力へ残る、
 ;; あるいは意図せず落ちる境界を、黙って通さずここで検出する。
 (define (erase-term t)
@@ -44,6 +44,8 @@
     [(list '#:lbl label _) label]
     [(list '#:ty type _) (erase-term type)]
     [(list '#:ef row _) (erase-term row)]
+    ;; SUR-008。省略した戻り型は span を落とし、裸の標識として残す。
+    [(list '#:infer _) '#:infer]
     [(list '#:span _ _ _)
      (error 'erase-term "span が項の位置に現れた: ~a" t)]
     [(? pair?)

@@ -108,7 +108,8 @@
        (list 'Fn (next)
              (for/list ([name (in-list x)] [t_a (in-list type)])
                (list (bind name) (ty t_a)))
-             (ty result) (ef row) (ann e))]
+             (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
+             (ef row) (ann e))]
       [(list 'Apply e ...) (list* 'Apply (next) (map ann e))]
       [(list 'Let (? symbol? x) e_1 e_2)
        (list 'Let (next) (bind x) (ann e_1) (ann e_2))]
@@ -137,7 +138,8 @@
        (list 'Recur (next) (bind f)
              (for/list ([name (in-list x)] [t_a (in-list type)])
                (list (bind name) (ty t_a)))
-             (ty result) (ef row) (ann e_1) (ann e_2))]
+             (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
+             (ef row) (ann e_1) (ann e_2))]
       [(list 'Yield e_1 e_2) (list 'Yield (next) (ann e_1) (ann e_2))]
       [(list 'Suspend e) (list 'Suspend (next) (ann e))]
       [(list 'Move x) (list 'Move (next) (ann x))]
