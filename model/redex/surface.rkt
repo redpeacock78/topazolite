@@ -40,7 +40,7 @@
              (SUnit s)
              (SBool s sbool)
              (SVar s ident)
-             (SFn s (sparam ...) sty sexpr)
+             (SFn s (sparam ...) sty-or-none sexpr)
              (SApply s sexpr (sexpr ...))
              (SProj s sexpr slabel)
              (SProjRec s sexpr (slabel ...))
@@ -50,7 +50,7 @@
               (STraitDecl s sname (styfield ...))
               (SImplDecl s sname sty (SRec s (sfield ...)))
               (SDeriveDecl s sname sty)
-              (SFnDecl s sname (sparam ...) sty sexpr)
+              (SFnDecl s sname (sparam ...) sty-or-none sexpr)
               sbind)
   (sprog ::= (SProgram s (spitem ...) sexpr)))
 

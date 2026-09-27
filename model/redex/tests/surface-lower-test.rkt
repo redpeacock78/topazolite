@@ -84,6 +84,19 @@
  (check-true (redex-match? UCore+ e r)))
 
 (test-case
+ "SUR-008: 省略した戻り型は関数全体の span を持つ #:infer へ落ちる"
+ (define anon (low "fn(x: Int) { x }"))
+ (check-true (redex-match? UCore+ e anon))
+ (match anon
+   [`(Fn ,_ ,_ (#:infer (#:span src 0 16)) ,_ ,_) (void)]
+   [other (fail-check (format "省略 Fn の #:infer を期待したが ~s" other))])
+ (define decl (low "fn f(x: Int) { x }\n0"))
+ (check-true (redex-match? UCore+ e decl))
+ (match decl
+   [`(Recur ,_ ,_ ,_ (#:infer (#:span src 0 18)) ,_ ,_ ,_) (void)]
+   [other (fail-check (format "省略 Recur の #:infer を期待したが ~s" other))]))
+
+(test-case
  "落とした式は UCore+ の e に合う"
  (for ([src (in-list (list "1" "true" "x" "f(x).a" "{}" "{ a: 1 }"))])
    (define t (low src))

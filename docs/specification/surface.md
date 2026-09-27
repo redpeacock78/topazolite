@@ -13,8 +13,6 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、Effect 注釈（`SUR-003`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
-戻り型の省略（`SUR-008`）も受理しない。
-
 Surface の型注釈と署名から Typed Core への elaboration の入口と返り値は §9 が定める。
 `#:expansion-context` は `compile-source` の任意入力として `elab` へ渡す。
 Surface の経路は展開表を生成しない。
@@ -67,7 +65,7 @@ typedecl ::= "type" ident "=" ty NL+
 traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
-fndecl   ::= "fn" ident "(" params ")" "->" ty block NL+
+fndecl   ::= "fn" ident "(" params ")" ["->" ty] block NL+
 expr     ::= postfix
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
@@ -75,7 +73,7 @@ labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")"
-anonfn   ::= "fn" "(" params ")" "->" ty block
+anonfn   ::= "fn" "(" params ")" ["->" ty] block
 params   ::= ε | param ("," param)*
 param    ::= ident ":" ty
 args     ::= ε | expr ("," expr)*
@@ -102,8 +100,9 @@ tys      ::= ε | ty ("," ty)*
 トップレベルにも束縛を置ける。
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
 
-関数の戻り型は `->` で区切り、省略できない。 [REQ: SUR-011]
-戻り型の推論は `SUR-008` が担うため、この版では行わない。
+関数型の戻り型は `->` で区切り、省略できない。 [REQ: SUR-011]
+関数宣言と無名関数の戻り型は省略でき、省略した戻り型は elaboration が推論する（core-calculus.md §4.3、§4.6）。 [REQ: SUR-008]
+本体が自身を参照する関数宣言は、戻り型を省略できない（`E-TYP-024`）。
 
 program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
@@ -354,12 +353,12 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
 - `(SProjRec s e ((SLabel s_l l) ...))` は、受け側を 1 度だけ束縛する `Let` と、label ごとの `Proj` を並べた `Rec` へ落とす。 [REQ: SUR-006]
 - `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
-- `(SFn s ((SParam s_p (SName s_x x) ty) ...) ty_r body)` は、span を持つ binder、型注釈、空の effect row を持つ `(Fn ...)` へ落とす。
+- `(SFn s ((SParam s_p (SName s_x x) ty) ...) sty-or-none body)` は、span を持つ binder、戻り型、空の effect row を持つ `(Fn ...)` へ落とす。戻り型が `#:none` なら戻り型欄は `(#:infer s)` となり、`s` は関数全体の span である。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
   注釈付きの束縛は、宣言型を `Let` の注釈として保持するが、右辺をその型で検査しない。
   右辺を合成し、その結果へ binding mode の policy を適用する（structural-row.md §4）。
-- `(SFnDecl s (SName s_f f) ... )` は、関数本体と後続の項を持つ `Recur` へ落とす。
+- `(SFnDecl s (SName s_f f) ... sty-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
 - `(STraitDecl s (SName s_n tn) (tyfield ...))` は trait 環境へ行を追加するだけで、UCore+ 節点を生成しない。
 - trait 宣言の template の型位置では `Self` を実装対象型の placeholder として扱う。欄名の `Self` は通常の label である。

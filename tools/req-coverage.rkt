@@ -433,6 +433,7 @@
 (define expected-p2h2-ids '(SUR-005 SUR-011))
 (define expected-p2h3a-ids '(BIT-003))
 (define expected-p2h3b-ids '(SUR-009))
+(define expected-p2i1-ids '(SUR-008))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -665,6 +666,12 @@
     (list (build-path root "docs/specification/surface.md")))
   (define p2h3b-tests
     (list (build-path root "model/redex/tests/surface-trait-compose-test.rkt")))
+  (define p2i1-specs
+    (list (build-path root "docs/specification/surface.md")
+          (build-path root "docs/specification/core-calculus.md")))
+  (define p2i1-tests
+    (list (build-path root "model/redex/tests/elaborate-infer-test.rkt")
+          (build-path root "model/redex/tests/surface-return-infer-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -694,7 +701,8 @@
    (cycle-descriptor 'P2h1 "P2" p2h1-specs p2h1-tests #f expected-p2h1-ids)
    (cycle-descriptor 'P2h2 "P2" p2h2-specs p2h2-tests #f expected-p2h2-ids)
    (cycle-descriptor 'P2h3a "P2" p2h3a-specs p2h3a-tests #f expected-p2h3a-ids)
-   (cycle-descriptor 'P2h3b "P2" p2h3b-specs p2h3b-tests #f expected-p2h3b-ids)))
+   (cycle-descriptor 'P2h3b "P2" p2h3b-specs p2h3b-tests #f expected-p2h3b-ids)
+   (cycle-descriptor 'P2i1 "P2" p2i1-specs p2i1-tests #f expected-p2i1-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

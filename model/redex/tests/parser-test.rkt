@@ -233,11 +233,30 @@
                               (SVar (#:span src 20 21) a))))))
 
 (test-case
+ "SUR-008: 関数宣言と無名関数の戻り型は省略できる"
+ (define decl (p "fn f(x: Int) { x }\n0"))
+ (check-true (redex-match? Surface sprog decl))
+ (match decl
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none ,_)) ,_) (void)]
+   [other (fail-check (format "省略した SFnDecl を期待したが ~s" other))])
+ (define anon (p "fn(x: Int) { x }"))
+ (check-true (redex-match? Surface sprog anon))
+ (match anon
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none ,_)) (void)]
+   [other (fail-check (format "省略した SFn を期待したが ~s" other))]))
+
+(test-case
+ "SUR-008: 型の位置の fn(Int) は -> を省略できない"
+ (check-equal? (p-code "type T = fn(Int)\n0") "E-SUR-005"))
+
+(test-case
  "出力は Surface の言語に合う"
  (for ([src (in-list (list "1" "true" "f(x).a" "{}" "{ a: 1 }"
                            "r.{a, b}"
                            "{ let x = 1\n x }"
                            "fn(a: Int) -> Int { a }"
+                           "fn(a: Int) { a }"
+                           "fn f(a: Int) { a }\nf(1)"
                            "type T = A | B & C\n0"
                            "type T = (fn(Int) -> Int) | String\n0"
                            "SInt" "TName" "none" "return"))])
@@ -306,7 +325,7 @@
  (check-equal? (p-code "x |> f") "E-SUR-002"))
 
 (test-case
- "SUR-011: 戻り型は -> の後ろに書き、旧表記と省略は E-SUR-005 になる"
+ "SUR-011: 明示的な戻り型を -> 無しで書くと E-SUR-005 になる"
  (for ([src (in-list '("fn f() -> Int { 1 }\n0"
                        "fn(x: Int) -> Int { x }"
                        "let g: fn(Int) -> Int = fn(x: Int) -> Int { x }\n0"
@@ -315,10 +334,9 @@
  (for ([src (in-list '("fn f() Int { 1 }\n0"
                        "let g: fn(Int) Int = 0\n0"
                        "fn(x: Int) Int { x }"
-                       "fn f() { 1 }\n0"
-                       "fn(x: Int) { x }"))]
-       [at  (in-list (list '(#:span src 7 10) '(#:span src 15 18) '(#:span src 11 14)
-                           '(#:span src 7 8) '(#:span src 11 12)))])
+                       "fn() Int { 1 }"))]
+       [at  (in-list (list '(#:span src 7 10) '(#:span src 15 18)
+                           '(#:span src 11 14) '(#:span src 5 8)))])
    (check-equal? (p-code src) "E-SUR-005")
    (check-equal? (diagnostic-primary-span (p src)) at)))
 

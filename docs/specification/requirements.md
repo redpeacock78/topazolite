@@ -25,7 +25,7 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
-  - `P2`：Phase 2 のサイクル（P2a から P2h）の対象。
+  - `P2`：Phase 2 のサイクル（P2a から P2i）の対象。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
   - `Phase 4 以降`：多相な型構成子と型引数を持つ宣言構文に依存する事項を扱う。
@@ -643,8 +643,9 @@ Surface の型注釈と署名は、Typed Core への elaboration を通じて型
 
 ### SUR-008
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/surface.md` §3、`docs/specification/core-calculus.md` §4.3、§4.6
 
 関数の戻り型の省略は、省略された戻り型を推論して Typed Core へつながらなければならない。
 

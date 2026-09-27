@@ -610,7 +610,7 @@ body が合成する Effect row から自身の境界への Return を除いた�
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
 ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
-**(E-Lambda-Infer)**
+**(E-Lambda-Infer)** [REQ: SUR-008]
 
 ```text
 C = owned-captures(e, (a1, …, ak), Γ)
@@ -628,7 +628,7 @@ B' = push(B, FunctionBoundary(b, ?))
 `FunctionBoundary(b, ?)` は戻り型が未定の境界である。
 `nearestReturn(B') = Frame(b, ?)` のとき、E-Return と `resolveReturn` は導出を持たない。
 
-**(E-Lambda-Infer-Check)**
+**(E-Lambda-Infer-Check)** [REQ: SUR-008]
 
 ```text
 τexp = NFn<(σ1, …, σk), σ, εin, εout, Q, O> または Owned<NFn<…, σ, …>>
@@ -792,7 +792,7 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 計算分類が Unknown の再帰は、宣言 row に `Partial` を含む場合に限り許可する（ホワイトペーパー §7.1 の扱い）。
 分類が保証を持てない場合に Unknown へ落ちること自体は REC-001 の要求である。
 
-**(E-Recur-Infer)**
+**(E-Recur-Infer)** [REQ: SUR-008]
 
 ```text
 f ∉ free-vars(e1)

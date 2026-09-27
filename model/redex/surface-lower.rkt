@@ -507,8 +507,12 @@
     [`(SFn ,s ,params ,result-ty ,body)
      ;; Surface に効果の表記が無いので効果行は空である。span は Fn 自身の
      ;; ものを使う。
+     (define result-core
+       (if (eq? result-ty '#:none)
+           `(#:infer ,s)
+           `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
      `(Fn ,s ,(lower-params params env fail)
-          (#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))
+          ,result-core
           (#:ef () ,s)
           ,(lower-sexpr body env fail))]
     [`(SApply ,s ,f ,arguments)
@@ -576,11 +580,14 @@
      (λ (rest) `(Let ,s_tail ,binder ,bound-core ,rest))]
     [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,body)
      (define params-core (lower-params params env fail))
-     (define result-core (lower-sty result-ty env fail))
+     (define result-core
+       (if (eq? result-ty '#:none)
+           `(#:infer ,s)
+           `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
      (define body-core (lower-sexpr body env fail))
      ;; 効果行の span は宣言自身のものである。Surface に効果の表記が無い。
      (λ (rest) `(Recur ,s_tail (#:bind ,f ,s_f) ,params-core
-                       (#:ty ,result-core ,(node-span result-ty))
+                       ,result-core
                        (#:ef () ,s)
                        ,body-core ,rest))]))
 

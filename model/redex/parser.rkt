@@ -126,8 +126,11 @@
                 [(open open-j) (expect-punct ts fail name-j '|(|)]
                 [(params params-j) (parse-params ts fail open-j)]
                 [(close close-j) (expect-punct ts fail params-j '|)|)]
-                [(_arrow arrow-j) (expect-punct ts fail close-j '->)]
-                [(return-type type-j) (parse-ty ts fail arrow-j)]
+                [(return-type type-j)
+                 (if (punct? ts close-j '->)
+                     (let-values ([(_arrow arrow-j) (expect-punct ts fail close-j '->)])
+                       (parse-ty ts fail arrow-j))
+                     (values '#:none close-j))]
                 [(body body-j) (parse-block ts fail type-j)])
     (values `(SFnDecl ,(hull start (node-span body))
                       (SName ,name-span ,name) ,params ,return-type ,body)
@@ -225,11 +228,14 @@
   (let*-values ([(open open-j) (expect-punct ts fail (add1 i) '|(|)]
                 [(params params-j) (parse-params ts fail open-j)]
                 [(close close-j) (expect-punct ts fail params-j '|)|)]
-                [(_arrow arrow-j) (expect-punct ts fail close-j '->)])
-    (let*-values ([(return-type type-j) (parse-ty ts fail arrow-j)]
-                 [(body body-j) (parse-block ts fail type-j)])
-      (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,body)
-              body-j))))
+                [(return-type type-j)
+                 (if (punct? ts close-j '->)
+                     (let-values ([(_arrow arrow-j) (expect-punct ts fail close-j '->)])
+                       (parse-ty ts fail arrow-j))
+                     (values '#:none close-j))]
+                [(body body-j) (parse-block ts fail type-j)])
+    (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,body)
+            body-j)))
 
 (define (record-ahead? ts i)
   (define j (skip-nl ts (add1 i)))
@@ -305,6 +311,7 @@
            [else (fail-at ts fail next)]))])))
 
 (define (parse-block ts fail i)
+  (unless (punct? ts i '|{|) (fail-at ts fail i))
   (define open (span-at ts i))
   (let loop ([j (skip-nl ts (add1 i))] [bindings '()])
     (if (or (kw? ts j 'const) (kw? ts j 'let))
