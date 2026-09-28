@@ -4,6 +4,7 @@
          redex/reduction-semantics
          rackunit
          "../elaborate.rkt"
+         "../diagnostic.rkt"
          "../erase.rkt"
          "../lang.rkt"
          "../typing.rkt")
@@ -82,9 +83,17 @@
   (check-true
    (elaboration-error?
     (elab '(Fn () Unit () (Yield 1 unit)))))
-  (check-true
+  (check-false
    (elaboration-error?
     (elab '(Recur f () Int () 1 1))))
+  (define self-application
+    (elab '(Recur f () Int () (Apply f) (Apply f))))
+  (check-true (elaboration-error? self-application))
+  (check-equal?
+   (match self-application
+     [`(err ,diagnostic) (diagnostic-id diagnostic)]
+     [_ #f])
+   (diagnostic-code-of 'elaborate 'unknown-recur-requires-partial))
   (match-define (list _ type _ _)
     (success
      (elab '(Fn () Unit ((Yield Int)) (Yield 1 unit)))))

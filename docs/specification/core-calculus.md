@@ -1502,8 +1502,8 @@ c ⇓class Productive(p)
 c ⇓class Unknown
 ```
 
-p は判定根拠（`no-recursion`、`structural`、`guarded`）である。
-判定規則は次の四つを上から順に試し、前提が最初に成り立った規則で確定する。
+p は判定根拠（`no-recursion`、`no-self-reference`、`structural`、`guarded`）である。
+判定規則は次の五つを上から順に試し、前提が最初に成り立った規則で確定する。
 この順序により、複数の規則の前提を同時に満たす項は Finite 側へ分類される。
 
 補助条件 **pre(f, c)** を次で定める。
@@ -1525,6 +1525,22 @@ pre-all(c)
 --------------------------------
 c ⇓class Finite(no-recursion)
 ```
+
+**(C-NoSelf)** [REQ: REC-001]
+
+```text
+f ∉ fv(c1)
+pre(f, c1)
+pre(f, c2)
+--------------------------------
+Recur(r, f, (x1, …, xk), c1, c2) ⇓class Finite(no-self-reference)
+```
+
+`fv(c1)` は束縛子を考慮して求める。
+`c1` に `f` が現れないため、`f` を何度呼んでも各呼び出しは停止する `c1` を一度評価する。
+この規則は、継続 `c2` に現れる `f` の直接適用を要求しない。
+C-NoSelf は `c2` の `f` を値として渡す形も認めるが、`pre(f, c2)` により他の適用の潜在 row は引き続き検査する。
+C-NoSelf を C-Structural より前に置くのは、仮引数を持つ f-free な本体でも引数の個数に依存しない根拠で Finite に分類するためである。
 
 **(C-Structural)** [REQ: REC-001]
 
@@ -1776,7 +1792,7 @@ G5 はその記録を Ψ として置いた。
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |
-| REC-001 | C-Structural、C-Unknown（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
+| REC-001 | C-NoSelf、C-Structural、C-Unknown（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
 | REC-002 | 観測関係（§6.1）、C-Guarded（§6.2）、性質 6 |
 | OWN-001 | E-Move（§4.7）、T-MovePlace（§5.1）、R-Move、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |

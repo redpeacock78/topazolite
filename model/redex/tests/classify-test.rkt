@@ -206,11 +206,11 @@
   (check-equal? (classify guarded-loop '() guarded-callables)
                 '(Productive guarded)))
 
-(test-case "REC-002: f-free and Suspend bodies are not guards"
+(test-case "REC-002: f-free な本体は C-NoSelf、Suspend の本体は guard にならない"
   (define callables '((loop-id (NFn () Unit () (Partial) () User))))
   (check-equal?
    (classify '(Recur loop-id loop () unit (Apply loop)) '() callables)
-   'Unknown)
+   '(Finite no-self-reference))
   (check-equal?
    (classify
     '(Recur loop-id loop () (Suspend (Apply loop)) (Apply loop))
@@ -303,13 +303,13 @@
    (type-equiv? '(Proof TypeNarrativeCap)
                 '(Proof ValidNarrativeTrait)))
 
-  ;; This zero-argument Recur is conservatively Unknown but reduces to unit.
-  ;; Opaque comparison must not normalize it to the second type expression.
+  ;; この仮引数 0 個の Recur は本体に compute が現れず、C-NoSelf で Finite になる。
+  ;; Opaque の比較は分類に関係なく、2 つ目の型式へ正規化してはならない。
   (define unknown-calculation
     '(Recur opaque-id compute () unit unit))
   (check-equal? (classify unknown-calculation '()
                           '((opaque-id (NFn () Unit () () () User))))
-                'Unknown)
+                '(Finite no-self-reference))
   (check-true
    (type-equiv? `(Opaque ,unknown-calculation)
                 `(Opaque ,unknown-calculation)))
@@ -445,7 +445,42 @@
 
 (test-case "C4-002: Owned を包んだ走査対象の Eliminate が分類できる"
   (check-equal? (classify c4-owned-loop '() c4-owned-callables)
-                '(Finite structural)))
+                '(Finite no-self-reference)))
+
+;; P2i3b。C-NoSelf は binder を考慮し、継続の f に直接適用を課さない。
+(define no-self-callables
+  '((ns-id (NFn (Int) Int () () () User))))
+
+(test-case "REC-001: 継続が f を値として返す f-free な Recur は C-NoSelf"
+  (check-equal?
+   (classify '(Recur ns-id f (x) x f) '() no-self-callables)
+   '(Finite no-self-reference)))
+
+(test-case "REC-001: 本体で束縛し直した f は自由な出現でない"
+  (check-equal?
+   (classify '(Recur ns-id f (x) (Let (f Int) x f) (Apply f 0))
+             '() no-self-callables)
+   '(Finite no-self-reference)))
+
+(test-case "REC-001: 仮引数のある f-free な本体は structural より先に C-NoSelf"
+  (check-equal?
+   (classify '(Recur ns-id f (x) x (Apply f 0)) '() no-self-callables)
+   '(Finite no-self-reference)))
+
+(test-case "REC-001: 継続が Partial の callable を呼ぶと C-NoSelf にならない"
+  (check-equal?
+   (classify '(Recur ns-id f (x) x (Apply g 0))
+             '((g (NFn (Int) Int () (Partial) () User)))
+             no-self-callables)
+   'Unknown))
+
+;; 現行でも Unknown の安全性の回帰。C-NoSelf から pre(f, c1) を落とすと Finite になる。
+(test-case "REC-001: 本体が Partial の callable を呼ぶと C-NoSelf にならない"
+  (check-equal?
+   (classify '(Recur ns-id f (x) (Apply g 0) (Apply f 0))
+             '((g (NFn (Int) Int () (Partial) () User)))
+             no-self-callables)
+   'Unknown))
 
 (define (c4-borrowed-callables wrapper)
   `((c4-borrowed-loop-id (NFn (,wrapper) Int () () () User))))

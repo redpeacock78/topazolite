@@ -611,6 +611,18 @@
 
 (define no-target (list 'no-target))
 
+(define (no-self-reference? core environment callables)
+  (match core
+    [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
+     (define contexts
+       (callable-contexts callable function parameters
+                          environment callables))
+     (and contexts
+          (not (uses-seen? (target-uses function body)))
+          (pre? function body (first contexts) callables)
+          (pre? function continuation (second contexts) callables))]
+    [_ #f]))
+
 (define (structural? core environment callables)
   (match core
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -800,6 +812,8 @@
     [(and (no-recursion? core)
           (pre? no-target core environment callables))
      '(Finite no-recursion)]
+    [(no-self-reference? core environment callables)
+     '(Finite no-self-reference)]
     [(structural? core environment callables) '(Finite structural)]
     [(guarded? core environment callables) '(Productive guarded)]
     [else 'Unknown]))

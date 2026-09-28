@@ -4,7 +4,9 @@
 
 (require rackunit
          "../diagnostic.rkt"
-         "../driver.rkt")
+         "../driver.rkt"
+         "../erase.rkt"
+         "../machine.rkt")
 
 (define (c str) (compile-source/string 'src str))
 (define (code str)
@@ -33,6 +35,14 @@
 (test-case "SUR-012: 合成位置の => は戻り型を本体から決める（ホワイトペーパー §3.3）"
   (check-equal? (type-of "const a = 1\n{ let f = fn() => a\n f() }") 'Int)
   (check-equal? (type-of "{ let f = fn(x: Int) => x\n f(2) }") 'Int))
+
+;; P2i3b spec §7。閉包を返す関数宣言は、本体に自分の名前が無いので gate を通る。
+(test-case "SUR-012: 閉包を返す fn 宣言は受理され 3 へ評価される"
+  (define r (c "fn mk() -> fn(Int) -> Int { fn(y: Int) -> Int { y } }\nmk()(3)"))
+  (check-true (compiled? r))
+  (check-equal? (compiled-type r) 'Int)
+  (check-equal? (run (inject (erase-core (compiled-core r))) 10000)
+                '(cfg 3 () () () ())))
 
 (test-case "SUR-012: 合成位置の仮引数省略は E-TYP-025、span は binder"
   (define r (c "{ let f = x => x\n f(1) }"))
