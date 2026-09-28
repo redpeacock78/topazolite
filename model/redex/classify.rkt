@@ -5,6 +5,7 @@
          "erase.rkt"
          "schema.rkt"
          "type-equiv.rkt"
+         (only-in "type-shape.rkt" proj-borrow-mode)
          "typing.rkt")
 
 (provide classify
@@ -88,6 +89,56 @@
             (and (andmap identity contexts) contexts)))]
     [_ #f]))
 
+;; classify は Λ を持たない。callee の出口 row に必要な型だけを借用形から読み、
+;; 対応できない形は #f にして Unknown 側へ倒す。
+(define (borrow-free-type core environment)
+  (define (recur inner) (borrow-free-type inner environment))
+  (define (borrow-of place mode)
+    (match (and (symbol? place) (lookup environment place))
+      ;; region は row 判定に使わないため、型形を保つ仮値を置く。
+      [`(Owned ,payload) `(,mode ,payload 0)]
+      [_ #f]))
+  (match core
+    [(? symbol? name) (lookup environment name)]
+    [`(Borrow ,place) (borrow-of place 'Borrowed)]
+    [`(BorrowAt ,_ ,_ ,place) (borrow-of place 'Borrowed)]
+    [`(BorrowMut ,place) (borrow-of place 'BorrowedMut)]
+    [`(BorrowMutAt ,_ ,_ ,place) (borrow-of place 'BorrowedMut)]
+    [`(Read ,inner)
+     (match (let ([type (recur inner)]) (and type (normalize-type type)))
+       [`(Borrowed ,payload ,_) payload]
+       [`(BorrowedMut ,payload ,_) payload]
+       [_ #f])]
+    [`(Reborrow ,inner) (recur inner)]
+    [`(ReborrowAt ,_ ,_ ,inner) (recur inner)]
+    [`(ProjBorrow ,inner ,label) (project-borrow-type (recur inner) label)]
+    [`(ProjBorrowAt ,_ ,_ ,inner ,label)
+     (project-borrow-type (recur inner) label)]
+    [_ #f]))
+
+;; T-ProjBorrow と同じ規則で欄の借用型を作る。不正形と欠けた欄では #f。
+(define (project-borrow-type type label)
+  (define-values (parent-mode payload region)
+    (match (and type (normalize-type type))
+      [`(Borrowed ,payload ,region) (values 'Borrowed payload region)]
+      [`(BorrowedMut ,payload ,region) (values 'BorrowedMut payload region)]
+      [_ (values #f #f #f)]))
+  (define field
+    (match (and payload (normalize-type payload))
+      [`(Record ,row) (assoc label row)]
+      [_ #f]))
+  (match field
+    [(list _ field-type field-mode)
+     (match (normalize-type field-type)
+       [`(Owned ,_) #f]
+       [_ `(,(proj-borrow-mode parent-mode field-mode) ,field-type ,region)])]
+    [_ #f]))
+
+(define (callee-type function environment callables)
+  (match (core-type-of function '() callables environment)
+    [(list type _) type]
+    [_ (borrow-free-type function environment)]))
+
 (define (latent-row-safe? function environment callables)
   (define (row-safe? latent-row)
     (not
@@ -99,15 +150,14 @@
   ;; 生きておらず落ちる。頭の型だけを引き、ForallRegion を 1 段剥がす。
   (match function
     [`(RegionApp ,head (,_ ...))
-     (match (core-type-of head '() callables environment)
-       [(list type _)
+     (match (callee-type head environment callables)
+       [type
         (match (peel-forall-region type)
           [`(NFn ,_ ,_ ,_ ,latent-row ,_ ,_) (row-safe? latent-row)]
-          [_ #f])]
-       [_ #f])]
+          [_ #f])])]
     [_
-     (match (core-type-of function '() callables environment)
-       [(list `(NFn ,_ ,_ ,_ ,latent-row ,_ ,_) _) (row-safe? latent-row)]
+     (match (callee-type function environment callables)
+       [`(NFn ,_ ,_ ,_ ,latent-row ,_ ,_) (row-safe? latent-row)]
        [_ #f])]))
 
 (define (pre? target core environment callables)
@@ -136,6 +186,11 @@
                                   (cons function parameters))))))]
       [`(TypeRep ,_ ,_ ,_) #t]
       [`(ProofRep ,_ ,_) #t]
+      [`(UVal ,value) (walk value environment target-visible?)]
+      [`(RVal ,_ ,value) (walk value environment target-visible?)]
+      [`(BorrowRef ,_ ,_ ,_) #t]
+      [`(BorrowMutRef ,_ ,_ ,_) #t]
+      [`(PtrVal ,_ ,_ ,_ ,_) #t]
       [`(resource ,_) #t]
       [`(Construct ,_ ,_ ,fields ...)
        (andmap (lambda (field)
@@ -189,6 +244,10 @@
             (walk body environment target-visible?))]
       [`(Scope ,_ ,body)
        (walk body environment target-visible?)]
+      [`(OwnLeaf ,body)
+       (walk body environment target-visible?)]
+      [`(Discharge ,_ ,body)
+       (walk body environment target-visible?)]
       [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
        (define contexts
          (callable-contexts callable function parameters
@@ -206,6 +265,40 @@
             (walk next environment target-visible?))]
       [`(Suspend ,body) (walk body environment target-visible?)]
       [`(Move ,_) #t]
+      [`(Borrow ,_) #t]
+      [`(BorrowMut ,_) #t]
+      [`(BorrowAt ,_ ,_ ,_) #t]
+      [`(BorrowMutAt ,_ ,_ ,_) #t]
+      [`(MutSlot ,_) #t]
+      [`(Assign ,place ,value)
+       (and (walk place environment target-visible?)
+            (walk value environment target-visible?))]
+      [`(Reassign ,_ ,value)
+       (walk value environment target-visible?)]
+      [`(Read ,argument)
+       (walk argument environment target-visible?)]
+      [`(Reborrow ,argument)
+       (walk argument environment target-visible?)]
+      [`(ReborrowAt ,_ ,_ ,argument)
+       (walk argument environment target-visible?)]
+      [`(ProjBorrow ,argument ,_)
+       (walk argument environment target-visible?)]
+      [`(ProjBorrowAt ,_ ,_ ,argument ,_)
+       (walk argument environment target-visible?)]
+      [`(AddressOf ,argument)
+       (walk argument environment target-visible?)]
+      [`(PtrOffset ,pointer ,offset)
+       (and (walk pointer environment target-visible?)
+            (walk offset environment target-visible?))]
+      [`(RawLoad ,pointer)
+       (walk pointer environment target-visible?)]
+      [`(RawStore ,pointer ,value)
+       (and (walk pointer environment target-visible?)
+            (walk value environment target-visible?))]
+      [`(FromRawPtr ,pointer ,_)
+       (walk pointer environment target-visible?)]
+      [`(Unsafe ,body)
+       (walk body environment target-visible?)]
       [`(Drop ,argument) (walk argument environment target-visible?)]
       [`(Curry ,function ,argument)
        (and (walk function environment target-visible?)
@@ -247,6 +340,11 @@
                   (not (memq target (cons function parameters)))))]
       [`(TypeRep ,_ ,_ ,_) no-uses]
       [`(ProofRep ,_ ,_) no-uses]
+      [`(UVal ,value) (walk value target-visible?)]
+      [`(RVal ,_ ,value) (walk value target-visible?)]
+      [`(BorrowRef ,_ ,_ ,_) no-uses]
+      [`(BorrowMutRef ,_ ,_ ,_) no-uses]
+      [`(PtrVal ,_ ,_ ,_ ,_) no-uses]
       [`(resource ,_) no-uses]
       [`(Construct ,_ ,_ ,fields ...)
        (combine-uses
@@ -303,6 +401,8 @@
                     (and target-visible? (not (eq? name target))))
               (walk body target-visible?)))]
       [`(Scope ,_ ,body) (walk body target-visible?)]
+      [`(OwnLeaf ,body) (walk body target-visible?)]
+      [`(Discharge ,_ ,body) (walk body target-visible?)]
       [`(Recur ,_ ,function (,parameters ...) ,body ,continuation)
        (combine-uses
         (list
@@ -316,6 +416,32 @@
                            (walk next target-visible?)))]
       [`(Suspend ,body) (walk body target-visible?)]
       [`(Move ,name) (walk name target-visible?)]
+      [`(Borrow ,place) (walk place target-visible?)]
+      [`(BorrowMut ,place) (walk place target-visible?)]
+      [`(BorrowAt ,_ ,_ ,place) (walk place target-visible?)]
+      [`(BorrowMutAt ,_ ,_ ,place) (walk place target-visible?)]
+      [`(MutSlot ,_) no-uses]
+      [`(Assign ,place ,value)
+       (combine-uses (list (walk place target-visible?)
+                           (walk value target-visible?)))]
+      [`(Reassign ,place ,value)
+       (combine-uses (list (walk place target-visible?)
+                           (walk value target-visible?)))]
+      [`(Read ,argument) (walk argument target-visible?)]
+      [`(Reborrow ,argument) (walk argument target-visible?)]
+      [`(ReborrowAt ,_ ,_ ,argument) (walk argument target-visible?)]
+      [`(ProjBorrow ,argument ,_) (walk argument target-visible?)]
+      [`(ProjBorrowAt ,_ ,_ ,argument ,_) (walk argument target-visible?)]
+      [`(AddressOf ,argument) (walk argument target-visible?)]
+      [`(PtrOffset ,pointer ,offset)
+       (combine-uses (list (walk pointer target-visible?)
+                           (walk offset target-visible?)))]
+      [`(RawLoad ,pointer) (walk pointer target-visible?)]
+      [`(RawStore ,pointer ,value)
+       (combine-uses (list (walk pointer target-visible?)
+                           (walk value target-visible?)))]
+      [`(FromRawPtr ,pointer ,_) (walk pointer target-visible?)]
+      [`(Unsafe ,body) (walk body target-visible?)]
       [`(Drop ,argument) (walk argument target-visible?)]
       [`(Curry ,function ,argument)
        (combine-uses (list (walk function target-visible?)
@@ -482,6 +608,8 @@
     [(null? core) #t]
     [(memq (car core) '(Recur RecurVal)) #f]
     [else (andmap no-recursion? core)]))
+
+(define no-target (list 'no-target))
 
 (define (structural? core environment callables)
   (match core
@@ -669,7 +797,9 @@
   ;; span.md §7.3: 分類は span を見ない。入口で一度だけ投影する。
   (define core (erase-core core-in))
   (cond
-    [(no-recursion? core) '(Finite no-recursion)]
+    [(and (no-recursion? core)
+          (pre? no-target core environment callables))
+     '(Finite no-recursion)]
     [(structural? core environment callables) '(Finite structural)]
     [(guarded? core environment callables) '(Productive guarded)]
     [else 'Unknown]))

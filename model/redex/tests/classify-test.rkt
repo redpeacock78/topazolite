@@ -1,7 +1,21 @@
 #lang racket
 
 (require rackunit
-         "../classify.rkt")
+         racket/match
+         "../classify.rkt"
+         "../diagnostic.rkt"
+         "../elaborate.rkt"
+         "../erase.rkt")
+
+(define (classify-ucore source)
+  (match (elab source)
+    [(list core _ _ callables) (classify (erase-core core) '() callables)]
+    [`(err ,_) 'elaboration-error]))
+
+(define (elaborate-code-of source)
+  (match (elab source)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ 'ok]))
 
 (define structural-callables
   '((list-loop-id (NFn ((List Int)) Int () () () User))))
@@ -36,6 +50,87 @@
             (Apply go (Construct (List Int) nil))))
   (check-equal? (classify map-loop map-environment map-callables)
                 '(Finite structural)))
+
+(test-case "REC-001: spec §4.1 の Partial の knot は Finite にならない"
+  (check-equal?
+   (classify-ucore
+    '(Let (cell mut (NFn (Int) Int (Partial) ())) (Fn ((x Int)) Int () x)
+       (Let f (Fn ((y Int)) Int (Partial) (Apply cell y))
+         (Let ignored (Reassign cell f) (Apply cell 1)))))
+   'Unknown))
+
+(test-case "REC-001: 環境の Partial の callable を Recur 無しで呼ぶ項は Unknown"
+  (check-equal?
+   (classify '(Apply loop-id unit)
+             '((loop-id (NFn () Unit () (Partial) () User)))
+             '())
+   'Unknown))
+
+(test-case "REC-001: 環境の Yield の callable を Recur 無しで呼ぶ項は Unknown"
+  (check-equal?
+   (classify '(Apply gen-id unit)
+             '((gen-id (NFn () Unit () ((Yield Int)) () User)))
+             '())
+   'Unknown))
+
+(test-case "REC-001: Partial の slot を呼ぶ手書きの Core は Unknown"
+  (check-equal?
+   (classify '(Let (cell mut (NFn (Int) Int () (Partial) () User)) g0
+                (Let (ignored Unit) (Reassign cell f) (Apply cell 1)))
+             '((g0 (NFn (Int) Int () (Partial) () User))
+               (f (NFn (Int) Int () (Partial) () User)))
+             '())
+   'Unknown))
+
+(test-case "REC-001: Partial の callable を continuation で呼ぶ純粋な row の Recur は E-REC-002"
+  (check-equal?
+   (elaborate-code-of
+    '(Let (cell mut (NFn (Int) Int (Partial) ())) (Fn ((x Int)) Int () x)
+       (Recur h ((y Int)) Int () y
+         (Apply cell 1))))
+   "E-REC-002"))
+
+(test-case "REC-001: Recur の外の knot で h の row が Partial なら Unknown"
+  (check-equal?
+   (classify-ucore
+    '(Let (cell mut (NFn (Int) Int (Partial) ())) (Fn ((x Int)) Int () x)
+       (Recur h ((y Int)) Int (Partial) (Apply cell y)
+         (Let ignored (Reassign cell h) (Apply cell 1)))))
+   'Unknown))
+
+(test-case "REC-001: Reassign を含み Partial の callee を呼ばない項は Finite no-recursion"
+  (check-equal?
+   (classify '(Let (cell mut (NFn (Int) Int () (Partial) () User)) g0
+                (Let (ignored Unit) (Reassign cell f) 1))
+             '((g0 (NFn (Int) Int () (Partial) () User))
+               (f (NFn (Int) Int () (Partial) () User)))
+             '())
+   '(Finite no-recursion)))
+
+(test-case "REC-001: Borrow した純粋な関数を Read して呼ぶ項は Finite no-recursion"
+  (check-equal?
+   (classify '(Let (r (Borrowed (NFn (Int) Int () () () User) 0))
+                (Borrow g0)
+                (Apply (Read r) 1))
+             '((g0 (Owned (NFn (Int) Int () () () User))))
+             '())
+   '(Finite no-recursion)))
+
+(test-case "REC-001: Borrow した Partial の関数を Read して呼ぶ項は Unknown"
+  (check-equal?
+   (classify '(Let (r (Borrowed (NFn (Int) Int () (Partial) () User) 0))
+                (Borrow g0)
+                (Apply (Read r) 1))
+             '((g0 (Owned (NFn (Int) Int () (Partial) () User))))
+             '())
+   'Unknown))
+
+(test-case "REC-001: Owned の関数を借用して Read で呼ぶ項は Finite no-recursion"
+  (check-equal?
+   (classify '(Apply (Read (Borrow f)) 1)
+             '((f (Owned (NFn (Int) Int () () () User))))
+             '())
+   '(Finite no-recursion)))
 
 (test-case "REC-001: structural calls require one common decreasing position"
   (define callables
@@ -87,6 +182,18 @@
 
 (define guarded-callables
   '((nats-id (NFn (Int) Unit () ((Yield Int)) () User))))
+
+(test-case "REC-002: guard の成分が target を借用する Recur は Productive にならない"
+  (check-equal?
+   (classify '(Recur nats-id nats (n)
+                (Yield (Let (alias (Borrowed (NFn (Int) Unit () ((Yield Int)) () User) 0))
+                            (Borrow nats)
+                            n)
+                       (Apply nats (Apply (PrimVal (Reserved o-add) add) n 1)))
+                (Apply nats 0))
+             '()
+             guarded-callables)
+   'Unknown))
 
 (define guarded-loop
   '(Recur nats-id nats (n)

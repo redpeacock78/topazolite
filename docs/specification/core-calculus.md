@@ -1515,8 +1515,13 @@ E-Recur は Unknown な再帰の宣言 row εout に `Partial` を要求し（§
 
 **(C-NoRec)**
 
+**pre-all(c)** は、c の中のすべての適用 `Apply(c0, …)` について、c0 の出口 row εout が `Partial` も `Yield<_>` も含まないことである。
+pre(f, c) と違い、例外にする target を持たない。
+`Recur` を含まない項でも、`Partial` を持つ callable を呼べば停止の根拠を失うので、C-NoRec はこの前提を必要とする。
+
 ```text
 c に Recur も RecurVal も出現しない
+pre-all(c)
 --------------------------------
 c ⇓class Finite(no-recursion)
 ```
