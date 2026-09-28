@@ -9,6 +9,7 @@
          "typing.rkt")
 
 (provide classify
+         classify-recur-body
          type-equiv?
          strip-owned-prefix)
 
@@ -623,6 +624,16 @@
           (pre? function continuation (second contexts) callables))]
     [_ #f]))
 
+(define (structural-body? function parameters body environment callables)
+  (and (pre? function body environment callables)
+       (let ([body-uses (target-uses function body)])
+         (and (uses-direct? body-uses)
+              (andmap (lambda (arguments)
+                        (= (length arguments) (length parameters)))
+                      (uses-calls body-uses))
+              (for/or ([position (in-range (length parameters))])
+                (decreases-at? function parameters position body))))))
+
 (define (structural? core environment callables)
   (match core
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -630,19 +641,14 @@
        (callable-contexts callable function parameters
                           environment callables))
      (and contexts
-          (pre? function body (first contexts) callables)
+          (structural-body? function parameters body
+                            (first contexts) callables)
           (pre? function continuation (second contexts) callables)
-          (let ([body-uses (target-uses function body)]
-                [continuation-uses (target-uses function continuation)])
-            (and
-             (uses-direct? body-uses)
-             (uses-direct? continuation-uses)
-             (andmap (lambda (arguments)
-                       (= (length arguments) (length parameters)))
-                     (append (uses-calls body-uses)
-                             (uses-calls continuation-uses)))
-             (for/or ([position (in-range (length parameters))])
-               (decreases-at? function parameters position body)))))]
+          (let ([continuation-uses (target-uses function continuation)])
+            (and (uses-direct? continuation-uses)
+                 (andmap (lambda (arguments)
+                           (= (length arguments) (length parameters)))
+                         (uses-calls continuation-uses)))))]
     [_ #f]))
 
 (define (dangerous-guard-row? row)
@@ -804,6 +810,26 @@
                                  (list expected))))]
        [_ #f])]
     [_ #f]))
+
+(define (classify-recur-body function parameters body-in environment callables)
+  ;; span.md §7.3: 分類は span を見ない。入口で一度だけ投影する。
+  (define body (erase-core body-in))
+  (define signature (lookup environment function))
+  (cond
+    [(and (not (uses-seen? (target-uses function body)))
+          (pre? function body environment callables))
+     '(Finite no-self-reference)]
+    [(structural-body? function parameters body environment callables)
+     '(Finite structural)]
+    [(match (and signature (peel-forall-region signature))
+       [`(NFn ,parameter-types ,_ ,_ ,latent-row ,_ ,_)
+        (and (= (length parameters) (length parameter-types))
+             (guarded-body? function parameter-types
+                            (yield-types latent-row)
+                            body environment callables))]
+       [_ #f])
+     '(Productive guarded)]
+    [else 'Unknown]))
 
 (define (classify core-in environment callables)
   ;; span.md §7.3: 分類は span を見ない。入口で一度だけ投影する。

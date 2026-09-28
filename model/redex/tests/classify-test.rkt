@@ -558,3 +558,56 @@
 (test-case "C4-004: Move で束縛した名前は根の別名にならない"
   (check-not-equal? (classify owned-move-alias-loop '() owned-list-callables)
                     '(Finite structural)))
+
+;; P2i3b spec §6.2。gate 用の本体分類は継続を見ない。
+(test-case "REC-001: classify-recur-body は f-free な本体を B-NoSelf にする"
+  (check-equal?
+   (classify-recur-body 'f '(x) 'x
+                        '((x Int) (f (NFn (Int) Int () () () User)))
+                        '())
+   '(Finite no-self-reference)))
+
+(test-case "REC-001: classify-recur-body は継続なしで構造的減少を認める"
+  (check-equal?
+   (classify-recur-body
+    'loop '(xs)
+    '(Eliminate xs
+                ((nil () -> 0)
+                 (cons (head tail) -> (Apply loop tail))))
+    '((xs (List Int)) (loop (NFn ((List Int)) Int () () () User)))
+    structural-callables)
+   '(Finite structural)))
+
+(test-case "REC-002: classify-recur-body は初回の tail call なしで guarded を認める"
+  (define signature '(NFn () Unit () ((Yield Int)) () User))
+  (check-equal?
+   (classify-recur-body 'loop '() '(Yield 1 (Apply loop))
+                        `((loop ,signature))
+                        `((loop-id ,signature)))
+   '(Productive guarded)))
+
+(test-case "REC-002: classify-recur-body でも guard の成分が target を借用すれば Unknown"
+  (check-equal?
+   (classify-recur-body
+    'nats '(n)
+    '(Yield (Let (alias (Borrowed (NFn (Int) Unit () ((Yield Int)) () User) 0))
+                 (Borrow nats)
+                 n)
+            (Apply nats (Apply (PrimVal (Reserved o-add) add) n 1)))
+    '((n Int) (nats (NFn (Int) Unit () ((Yield Int)) () User)))
+    guarded-callables)
+   'Unknown))
+
+(test-case "REC-001: classify-recur-body は自己適用の繰返しを Unknown にする"
+  (check-equal?
+   (classify-recur-body 'loop '(n) '(Apply loop n)
+                        '((n Int) (loop (NFn (Int) Int () () () User)))
+                        '())
+   'Unknown))
+
+(test-case "REC-001: classify-recur-body は未知の形に Unknown を返す"
+  (check-equal?
+   (classify-recur-body 'f '() '(Mystery 1)
+                        '((f (NFn () Unit () () () User)))
+                        '())
+   'Unknown))

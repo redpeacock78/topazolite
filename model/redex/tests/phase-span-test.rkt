@@ -76,6 +76,22 @@
                           '() '())
                 '(Finite no-recursion)))
 
+(test-case "span.md §7.3: classify-recur-body は spanful な本体を投影して分類する"
+  (define body
+    '(Eliminate xs
+                ((nil () -> 0)
+                 (cons (head tail) -> (Apply loop tail)))))
+  (define environment
+    '((xs (List Int)) (loop (NFn ((List Int)) Int () () () User))))
+  (check-equal?
+   (classify-recur-body 'loop '(xs) (annotate-core body)
+                        environment structural-callables)
+   (classify-recur-body 'loop '(xs) body environment structural-callables))
+  (check-equal?
+   (classify-recur-body 'loop '(xs) (annotate-core body)
+                        environment structural-callables)
+   '(Finite structural)))
+
 ;; span.md §7 の lowering 行は「出力に span を残さない」である。写しが spanless
 ;; 版と一致することでこれを固定する。PR の符号化そのものは lowering-test.rkt が
 ;; 固定しているため、ここでは書き下さない。

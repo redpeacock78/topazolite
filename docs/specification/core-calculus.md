@@ -1627,6 +1627,55 @@ Recur 項の部分項に別の Recur 定義が現れる場合、その定義の�
 実際には停止する再帰でも、上の構文条件を満たさなければ Unknown と判定する（REC-001）。
 soundness の意味は §7 性質 6 で与える。
 
+#### Recur 本体の分類 `⇓body`
+
+E-Recur の gate は、Recur 式全体の停止性ではなく、関数 `f` の各呼出しが停止するか productive であるかを判定する。
+そのため、本体 `c1` だけを対象とする分類 `f; (x1, …, xk); c1 ⇓body κ` を別に定め、以下の規則を上から順に試す。
+
+**(B-NoSelf)** [REQ: REC-001]
+
+```text
+f ∉ fv(c1)      pre(f, c1)
+-----------------------------------------
+f; (x1, …, xk); c1 ⇓body Finite(no-self-reference)
+```
+
+**(B-Structural)** [REQ: REC-001]
+
+```text
+pre(f, c1)、c1 内の f の自由な出現はすべて直接適用 Apply(f, a1, …, ak) の形であり、
+ある引数位置 j が存在して、c1 内のすべての適用で
+aj は xj を Eliminate で分解して得た field 変数（またはその再分解）である
+----------------------------------------------------------
+f; (x1, …, xk); c1 ⇓body Finite(structural)
+```
+
+**(B-Guarded)** [REQ: REC-002]
+
+```text
+guarded(f, c1)
+---------------------------------------
+f; (x1, …, xk); c1 ⇓body Productive(guarded)
+```
+
+**(B-Unknown)** [REQ: REC-001]
+
+```text
+上のどれにも当てはまらない
+---------------------------------------
+f; (x1, …, xk); c1 ⇓body Unknown
+```
+
+B-Structural と B-Guarded は `c2` の条件を課さない。
+gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` を値として渡しても本体の構造的減少や先行する Yield は変わらない。
+一方、whole-term の `⇓class` は `c2` の条件を維持する。
+`c2` 自身の発散は Recur 式全体の有限性に関わり、性質 6 は whole-term の分類を根拠とするためである。
+
+実装上の `classify-recur-body` は `(classify-recur-body f parameters c1 environment callables) → κ` の形で本体だけを分類する。
+`environment` は本体の型検査に使った環境で、`f` と仮引数の束縛を含む。
+推論の E-Recur では、自己参照を拒否した後の仮引数環境を渡す。
+本体の span は入口で消去し、分類器が知らない Core の形は Unknown にする。
+
 ### 6.3 型同値
 
 **型同値** `Δ ⊢ τ1 ≡ τ2` は次で定める。
@@ -1792,8 +1841,8 @@ G5 はその記録を Ψ として置いた。
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |
-| REC-001 | C-NoSelf、C-Structural、C-Unknown（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
-| REC-002 | 観測関係（§6.1）、C-Guarded（§6.2）、性質 6 |
+| REC-001 | C-NoSelf、C-Structural、C-Unknown、B-NoSelf、B-Structural（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
+| REC-002 | 観測関係（§6.1）、C-Guarded、B-Guarded（§6.2）、性質 6 |
 | OWN-001 | E-Move（§4.7）、T-MovePlace（§5.1）、R-Move、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |
 | OWN-003 | R-ScopeAbort、R-ScopeError（§5.6）、性質 7 |
