@@ -11,6 +11,7 @@
          proposition-shape-ok?
          proposition-types-normal?
          effect-row-normal?
+         storage-ok?
          type-carries-capability?
          proj-borrow-mode)
 
@@ -99,6 +100,36 @@
           (andmap proposition-shape-ok? obligations))]
     [`(ForallRegion (,_ ...) ,body) (type-shape-ok? body)]
     [_ #t]))
+
+;; 可変記憶域の書込み先の型が、value path で到達するすべての NFn に
+;; Partial を持たせているかを判定する（REC-001、P2i3 spec §3.2）。
+;; NFn の仮引数型、戻り型、Q へは降りない。Proof と TypeInfo は callable を
+;; 運ばないので辿らない。Intersection は type? が Record へ畳むため現れない前提で、
+;; 現れた場合は知らない形として拒否する。
+;; data 型は現行 schema（List、Option、Result）の型引数を直接辿る。型は有限の木
+;; なので訪問集合は置かない。ADT-001 で schema の walk へ置き換える。
+(define (storage-ok? τ-in)
+  (define τ (normalize-type τ-in))
+  (let walk ([τ τ])
+    (match τ
+      [#f #f]
+      [(or 'Int 'Bool 'Unit 'String 'Never 'Res) #t]
+      [`(TypeInfo ,_) #t]
+      [`(Proof ,_) #t]
+      [`(NFn ,_ ,_ ,_ ,εout ,_ ,_) (and (member 'Partial εout) #t)]
+      [`(Record ,row) (for/and ([field (in-list row)]) (walk (second field)))]
+      [`(Union ,a ,b) (and (walk a) (walk b))]
+      [`(List ,a) (walk a)]
+      [`(Option ,a) (walk a)]
+      [`(Result ,a ,b) (and (walk a) (walk b))]
+      [`(Owned ,a) (walk a)]
+      [`(Borrowed ,a ,_) (walk a)]
+      [`(BorrowedMut ,a ,_) (walk a)]
+      [`(Untrusted ,a) (walk a)]
+      [`(Refined ,a ,_) (walk a)]
+      [`(ForallRegion ,_ ,a) (walk a)]
+      [`(RawPtr ,a ,_ ,_ ,_ ,_ ,_) (walk a)]
+      [_ #f])))
 
 ;; 命題に埋め込まれた型が全て正規形か。
 (define (proposition-types-normal? proposition)
