@@ -128,6 +128,20 @@
     (check-true (redex-match? UCore+ e annotated))
     (check-equal? (erase-surface annotated) t)))
 
+(test-case "仮引数型を省略した Fn は annotate と erase で往復する"
+  (define t '(Fn ((x #:infer) (y Int)) #:infer () x))
+  (check-true (redex-match? UCore e t))
+  (define annotated (annotate-surface t))
+  (check-true (redex-match? UCore+ e annotated))
+  (check-true
+   (match annotated
+     [`(Fn ,_ (((#:bind x ,sx) (#:infer ,sx2))
+               ((#:bind y ,_) (#:ty Int ,_)))
+            (#:infer ,_) (#:ef () ,_) (#:var x ,_))
+      (equal? sx sx2)]
+     [_ #f]))
+  (check-equal? (erase-surface annotated) t))
+
 (test-case "annotate-surface は決定的であり未対応の production を素通ししない"
   (for ([expr (in-list ucore-terms)])
     (check-equal? (annotate-surface expr) (annotate-surface expr)))

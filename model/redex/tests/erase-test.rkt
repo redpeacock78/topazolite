@@ -83,6 +83,15 @@
   ;; #:infer 以外の未知の keyword head は従来どおり落ちる。
   (check-exn exn:fail? (λ () (erase-surface (term (#:unknown 1 ,s1))))))
 
+(test-case "Fn の仮引数の (#:infer s) は #:infer へ写る"
+  (define t
+    `(Fn ,s0 (((#:bind x ,s0) (#:infer ,s0))) (#:infer ,s0) (#:ef () ,s0)
+         (#:var x ,s0)))
+  (check-true (redex-match? UCore+ e t))
+  (define erased (erase-surface t))
+  (check-true (redex-match? UCore e erased))
+  (check-equal? erased '(Fn ((x #:infer)) #:infer () x)))
+
 ;; 法則 2: 冪等性。spanless な入力では恒等写像である。
 (test-case "erase は冪等であり spanless な入力で恒等である"
   (check-equal? (erase-core (erase-core core+)) (erase-core core+))

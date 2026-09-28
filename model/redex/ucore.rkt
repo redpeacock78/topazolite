@@ -37,7 +37,7 @@
           (Record ur)
           (Union uτ uτ)
           (Intersection uτ uτ))
-  ;; SUR-008。省略した関数の戻り型は本体の合成から決める。
+  ;; Fn の仮引数と戻り型は、型か #:infer のどちらかで表す。
   (uret ::= uτ #:infer)
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own Mutation)
   (tε ::= (tℓ ...))
@@ -47,7 +47,7 @@
   (ubr ::= (K (x ...) -> e))
   (e ::= l
          x
-         (Fn ((x uτ) ...) uret uε e)
+         (Fn ((x uret) ...) uret uε e)
          (Apply e e ...)
          (Let x e e)
          (Let (x bmode) e e)
@@ -89,7 +89,7 @@
   (ubr ::= (s K (xs ...) -> e))
   (e ::= lt
          vr
-         (Fn s ((xs ts) ...) tr es e)
+         (Fn s ((xs tr) ...) tr es e)
          (Apply s e e ...)
          (Let s xs e e)
          (Let s (xs bmode) e e)

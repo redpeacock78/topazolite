@@ -107,7 +107,11 @@
       [(list 'Fn (list (list x type) ...) result row e)
        (list 'Fn (next)
              (for/list ([name (in-list x)] [t_a (in-list type)])
-               (list (bind name) (ty t_a)))
+               (define binder (bind name))
+               (list binder
+                     (if (eq? t_a '#:infer)
+                         (list '#:infer (third binder))
+                         (ty t_a))))
              (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
              (ef row) (ann e))]
       [(list 'Apply e ...) (list* 'Apply (next) (map ann e))]
