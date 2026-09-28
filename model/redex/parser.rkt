@@ -171,30 +171,45 @@
                        k))))])))
 
 (define (parse-expr ts fail i)
-  (parse-postfix ts fail i))
+  (cond
+    ;; SUR-012。識別子の直後が => なら式本体の無名関数である。
+    [(and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=>))
+     (define x-span (span-at ts i))
+     (define param `(SParam ,x-span (SName ,x-span ,(value-at ts i)) #:none))
+     (let-values ([(body body-j) (parse-expr ts fail (+ i 2))])
+       (values `(SFn ,(hull x-span (node-span body)) (,param) #:none ,body)
+               body-j))]
+    [(kw? ts i 'fn)
+     (let-values ([(node j arrow?) (parse-anon-fn ts fail i)])
+       ;; => の本体は expr なので、後続の postfix は本体の側で読む。
+       (if arrow? (values node j) (parse-postfix-tail ts fail node j)))]
+    [else (parse-postfix ts fail i)]))
 
 (define (parse-postfix ts fail i)
   (let-values ([(base i0) (parse-primary ts fail i)])
-    (let loop ([node base] [j i0])
-      (cond
-        [(punct? ts j '|(|)
-         (let*-values ([(args j0) (parse-args ts fail (add1 j))]
-                       [(close close-j) (expect-punct ts fail j0 '|)|)])
-           (loop `(SApply ,(hull (node-span node) close) ,node ,args) close-j))]
-        [(punct? ts j '|.|)
-         (define dot-j (add1 j))
-         (cond
-           ;; spec §3。`.` の直後の `{` は多 field 射影である。
-           [(punct? ts dot-j '|{|)
-            (let-values ([(labels close-j) (parse-proj-labels ts fail dot-j)])
-              (loop `(SProjRec ,(hull (node-span node) (span-at ts close-j))
-                               ,node ,labels)
-                    (add1 close-j)))]
-           [else
-            (let-values ([(name s label-j) (expect-ident ts fail dot-j)])
-              (define label `(SLabel ,s ,name))
-              (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j))])]
-        [else (values node j)]))))
+    (parse-postfix-tail ts fail base i0)))
+
+(define (parse-postfix-tail ts fail base i0)
+  (let loop ([node base] [j i0])
+    (cond
+      [(punct? ts j '|(|)
+       (let*-values ([(args j0) (parse-args ts fail (add1 j))]
+                     [(close close-j) (expect-punct ts fail j0 '|)|)])
+         (loop `(SApply ,(hull (node-span node) close) ,node ,args) close-j))]
+      [(punct? ts j '|.|)
+       (define dot-j (add1 j))
+       (cond
+         ;; spec §3。`.` の直後の `{` は多 field 射影である。
+         [(punct? ts dot-j '|{|)
+          (let-values ([(labels close-j) (parse-proj-labels ts fail dot-j)])
+            (loop `(SProjRec ,(hull (node-span node) (span-at ts close-j))
+                             ,node ,labels)
+                  (add1 close-j)))]
+         [else
+          (let-values ([(name s label-j) (expect-ident ts fail dot-j)])
+            (define label `(SLabel ,s ,name))
+            (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j))])]
+      [else (values node j)])))
 
 (define (parse-primary ts fail i)
   (cond
@@ -208,7 +223,6 @@
      (values `(SBool ,(span-at ts i) false) (add1 i))]
     [(eq? (kind-at ts i) 'ident)
      (values `(SVar ,(span-at ts i) ,(value-at ts i)) (add1 i))]
-    [(kw? ts i 'fn) (parse-anon-fn ts fail i)]
     [(punct? ts i '|(|)
      (define open (span-at ts i))
      (define j (add1 i))
@@ -226,16 +240,22 @@
 (define (parse-anon-fn ts fail i)
   (define start (span-at ts i))
   (let*-values ([(open open-j) (expect-punct ts fail (add1 i) '|(|)]
-                [(params params-j) (parse-params ts fail open-j)]
-                [(close close-j) (expect-punct ts fail params-j '|)|)]
-                [(return-type type-j)
-                 (if (punct? ts close-j '->)
-                     (let-values ([(_arrow arrow-j) (expect-punct ts fail close-j '->)])
-                       (parse-ty ts fail arrow-j))
-                     (values '#:none close-j))]
-                [(body body-j) (parse-block ts fail type-j)])
-    (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,body)
-            body-j)))
+                [(params params-j) (parse-lparams ts fail open-j)]
+                [(close close-j) (expect-punct ts fail params-j '|)|)])
+    (if (punct? ts close-j '=>)
+        (let-values ([(_arrow arrow-j) (expect-punct ts fail close-j '=>)])
+          (let-values ([(body body-j) (parse-expr ts fail arrow-j)])
+            (values `(SFn ,(hull start (node-span body)) ,params #:none ,body)
+                    body-j #t)))
+        (let*-values ([(return-type type-j)
+                       (if (punct? ts close-j '->)
+                           (let-values ([(_arrow arrow-j)
+                                         (expect-punct ts fail close-j '->)])
+                             (parse-ty ts fail arrow-j))
+                           (values '#:none close-j))]
+                      [(body body-j) (parse-block ts fail type-j)])
+          (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,body)
+                  body-j #f)))))
 
 (define (record-ahead? ts i)
   (define j (skip-nl ts (add1 i)))
@@ -433,6 +453,25 @@
           (define param
             `(SParam ,(hull name-span (node-span ty))
                      (SName ,name-span ,name) ,ty))
+          (if (punct? ts ty-j '|,|)
+              (loop (add1 ty-j) (cons param params))
+              (values (reverse (cons param params)) ty-j))))))
+
+(define (parse-lparams ts fail i)
+  (if (punct? ts i '|)|)
+      (values '() i)
+      (let loop ([j i] [params '()])
+        (let*-values ([(name name-span name-j) (expect-ident ts fail j)]
+                      [(param ty-j)
+                       (if (punct? ts name-j '|:|)
+                           (let-values ([(ty end-j) (parse-ty ts fail (add1 name-j))])
+                             (values `(SParam ,(hull name-span (node-span ty))
+                                              (SName ,name-span ,name) ,ty)
+                                     end-j))
+                           (values `(SParam ,name-span
+                                            (SName ,name-span ,name)
+                                            #:none)
+                                   name-j))])
           (if (punct? ts ty-j '|,|)
               (loop (add1 ty-j) (cons param params))
               (values (reverse (cons param params)) ty-j))))))

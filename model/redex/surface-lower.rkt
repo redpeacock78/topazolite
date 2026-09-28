@@ -476,6 +476,8 @@
 (define (lower-params params env fail)
   (for/list ([p (in-list params)])
     (match p
+      [`(SParam ,_ (SName ,s_x ,x) #:none)
+       (list (list '#:bind x s_x) (list '#:infer s_x))]
       [`(SParam ,_ (SName ,s_x ,x) ,ty)
        (list (list '#:bind x s_x)
              (list '#:ty (lower-sty ty env fail) (node-span ty)))])))

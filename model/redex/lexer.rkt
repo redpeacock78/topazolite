@@ -68,6 +68,11 @@
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
        (loop (+ i 2) (cons (stok 'punct '-> (span id i (+ i 2))) acc))]
+      ;; SUR-012。=> は式本体の無名関数を導入する。
+      [(and (= (bytes-ref bs i) 61)
+            (< (add1 i) n)
+            (= (bytes-ref bs (add1 i)) 62))
+       (loop (+ i 2) (cons (stok 'punct '=> (span id i (+ i 2))) acc))]
       [(hash-ref puncts (bytes-ref bs i) #f)
        => (lambda (p)
             (loop (add1 i) (cons (stok 'punct p (span id i (add1 i))) acc)))]

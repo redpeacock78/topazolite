@@ -64,12 +64,22 @@
  ;; a は 0-1、-> は 1-3、b は 3-4。
  (check-equal? (take (spans "a->b") 3)
                '((#:span src 0 1) (#:span src 1 3) (#:span src 3 4)))
- (for ([src (in-list '("- >" "-" ">" "=>"))]
-       [at  (in-list '(0 0 0 1))])
+ (for ([src (in-list '("- >" "-" ">"))]
+       [at  (in-list '(0 0 0))])
    (define d (lex/string 'src src))
    (check-equal? (diagnostic-id d) "E-SUR-002")
    (check-equal? (diagnostic-primary-span d)
                  `(#:span src ,at ,(add1 at)))))
+
+(test-case
+ "SUR-012: => は一つの punct token である"
+ (check-equal? (kinds "x => x") '(ident punct ident eof))
+ (check-equal? (spans "a=>b")
+               '((#:span src 0 1) (#:span src 1 3)
+                 (#:span src 3 4) (#:span src 4 4)))
+ (define d (lex/string 'src "= >"))
+ (check-equal? (diagnostic-id d) "E-SUR-002")
+ (check-equal? (diagnostic-primary-span d) '(#:span src 2 3)))
 
 (test-case
  "lex は bytes を受け、lex/string は同じ結果を返す"

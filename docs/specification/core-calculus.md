@@ -497,6 +497,46 @@ machine は値環境を持たず、簡約は PrimVal に直接 R-Delta（§5.3�
 Γ; Δ; Π; B ⊢ let x = e1 in e2 ⇒ τ2 ! ε1 ∪ ε2 ⟹ Let(x : τ1, c1, c2)
 ```
 
+型注釈と binding mode を持つ `Let` は、宣言型を解決してから `mut` の型制約を検査し、その後に右辺を elaboration する。
+右辺が仮引数型を省略した `Fn` でないときは、E-Let-Annot を適用する。
+
+**(E-Let-Annot)** [REQ: SUR-012]
+
+```text
+τ = resolve(T)
+bmode = mut ならば τ は affine でも借用でもない
+Γ; Δ; Π; B ⊢ e1 ⇒ τ1 ! ε1 ⟹ c1
+bind(bmode, τ, τ1) = τb
+Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+--------------------------------
+Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇒ τ2 ! ε1 ∪ ε2 ⟹ Let(x bmode : τ, c1, c2)
+```
+
+前提は上から順に検査し、最初に成り立たない前提の診断を返す。
+したがって、`mut` の束縛で宣言型が affine か借用のときの `mut-binding-unsupported-type` は、右辺の elaboration より先に報告される。
+
+**(E-Let-Fn-Check)** [REQ: SUR-012]
+
+```text
+e1 = fn(a1 : t1, …, ak : tk) -> r ! εdecl  e    ある i で ti = ?
+τ = resolve(T)
+bmode = mut ならば τ は affine でも借用でもない
+Γ; Δ; Π; B ⊢ e1 ⇐ τ ! ε1 ⟹ c1
+bind(bmode, τ, τ) = τb
+Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+--------------------------------
+Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇒ τ2 ! ε1 ∪ ε2 ⟹ Let(x bmode : τ, c1, c2)
+```
+
+E-Let-Fn-Check は、E-Let-Annot の右辺の合成を宣言型 `τ` での検査に置き換えた規則である。
+前提の順は E-Let-Annot と同じである。
+`bind(bmode, τdecl, τact)` は、elaborate の `bind-with-mode` が束縛型を決める手続きである。
+この手続きは、型の互換、`const` の record 残余の拒否、`let` と `mut` の record 残余の復元、`mut` の affine と借用の拒否、OWN-004 の narrowing の順に検査する。
+ただし `τact` が `Never` のときは `τb = τdecl` とし、互換と record 残余の検査を省き、`mut` の検査と OWN-004 の narrowing の検査だけを行う。
+E-Let-Fn-Check では `τact = τdecl = τ` であり、`τ` は `NFn` か `Owned<NFn …>` なので record 残余の節に入らず、`τb = τ` になる。
+`Γ, x :bmode τb` は、`bmode` が `mut` のとき `x` を可変の束縛として加える。
+型注釈付き `Let` の右辺が仮引数型を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。
+
 **(E-Construct-Check)**
 
 ```text
@@ -523,6 +563,24 @@ C0(K) の宣言を型引数注釈 τ̄ で具体化して (σ1, …, σk) -> D �
 
 合成位置では型引数注釈 `construct K<τ̄>(ē)` を必須とする。
 D は C0(K) の宣言を具体化して得られる型そのものであり、Typed Core の `Construct` ノードは検査位置・合成位置のどちらを経由しても、この D を自身のフィールドとして保持する。
+
+期待型が裸の `Record ρexp` で、record 式の label 集合が `ρexp` の label 集合と一致するときは、E-Rec-Check を合成と突き合わせの退避節より先に適用する。
+
+**(E-Rec-Check)** [REQ: SUR-012]
+
+```text
+labels(ℓ1 = e1, …, ℓm = em) = labels(ρexp)，ℓ1, …, ℓm は相異なる
+Γ; Δ; Π; B ⊢ ei ⇐ ρexp(ℓi) ! εi ⟹ ci    τi' は Owned<_> の形でない    （i = 1, …, m、原文順）
+Record((ℓ1 : τ1' m1), …) ≤ Record ρexp
+--------------------------------
+Γ; Δ; Π; B ⊢ {ℓ1 m1 = e1, …, ℓm mm = em} ⇐ Record ρexp ! ε1 ∪ … ∪ εm
+  ⟹ Rec(ℓ1 m1 = c1, …)
+```
+
+`mi` は record 式に書かれた可変性であり、期待型 `ρexp` の可変性ではない。
+label の集合が一致しない場合、期待型が `Owned<Record …>` の場合、または期待型が `Record` でない場合は、record 式を合成してから期待型と突き合わせる既存の導出を使う。
+重複 label は合成と同じ `duplicate-record-label` で拒否し、期待された各欄の型が `Owned<_>` なら `owned-record-field` で拒否する。
+欄の型と record 式の可変性から構成した型を期待型と突き合わせるため、Surface にない `mut` の欄を生成しない。
 
 field 型への `Owned<_>` の禁止は G1 の制限である。
 構成済みデータは通常の値として複製されうる（R-Let の置換など）ため、affine 資源を field に入れると place を経由しない複製経路が生まれる。
@@ -638,6 +696,22 @@ B' = push(B, FunctionBoundary(b, ?))
 ```
 
 前提の判断は、E-Lambda の合成を E-Sub で期待型へ突き合わせたものである。
+
+**(E-Lambda-Param-Infer-Check)** [REQ: SUR-012]
+
+```text
+τexp = NFn<(σ1, …, σk), σ, εin, εout, Q, O> または Owned<NFn<…, σ, …>>
+τi' = σi （τi = ? のとき）、τi' = τi （それ以外）
+ρ' = σ （ρ = ? のとき）、ρ' = ρ （それ以外）
+Γ; Δ; Π; B ⊢ fn(a1 : τ1', …, ak : τk') -> ρ' ! εdecl  e ⇐ τexp ! ε ⟹ c
+--------------------------------
+Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> ρ ! εdecl  e ⇐ τexp ! ε ⟹ c
+```
+
+前提の判断は、E-Lambda の合成を E-Sub で期待型へ突き合わせたものである。
+E-Sub の関数型の互換は仮引数を反変に比べるため、明示した `τi` は期待型の `σi` と等しくなくてよい。
+仮引数を省略した `Fn` を合成する規則はなく、合成位置では `E-TYP-025` で注釈を要求する。
+`?` は省略した仮引数型または戻り型を表す。
 
 合成位置の本体に現れる `Return` からの戻り型の推論は、この版では扱わず、`SUR-015` が定める。
 
@@ -1687,6 +1761,7 @@ G5 はその記録を Ψ として置いた。
 | RET-002 | E-NarrativeExpr（§4.5）、T-Perform（§5.1）、R-HandleReturn（§5.7）、性質 4 |
 | RET-003 | E-Eliminate（§4.2）、E-Recur（§4.6） |
 | EFF-001 | E-Lambda の row 包含（§4.3）、E-Recur の row 包含（§4.6） |
+| SUR-012 | E-Let-Annot、E-Let-Fn-Check、E-Rec-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |

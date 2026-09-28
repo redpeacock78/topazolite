@@ -250,6 +250,64 @@
  (check-equal? (p-code "type T = fn(Int)\n0") "E-SUR-005"))
 
 (test-case
+ "SUR-012: x => x は仮引数一つの SFn"
+ (match (p "x => x")
+   [`(SProgram ,_ ()
+               (SFn ,s ((SParam ,sx (SName ,sx2 x) #:none))
+                    #:none (SVar ,_ x)))
+    (check-equal? sx (sp 0 1))
+    (check-equal? sx2 sx)
+    (check-equal? s (sp 0 6))]
+   [other (fail-check (format "SFn を期待したが ~s" other))]))
+
+(test-case
+ "SUR-012: fn(x, y: Int) => x"
+ (check-match (p "fn(x, y: Int) => x")
+              `(SProgram ,_ ()
+                         (SFn ,_ ((SParam ,_ (SName ,_ x) #:none)
+                                  (SParam ,_ (SName ,_ y) (TName ,_ Int)))
+                              #:none ,_))))
+
+(test-case
+ "SUR-012: fn() => a"
+ (check-match (p "fn() => a")
+              `(SProgram ,_ () (SFn ,_ () #:none (SVar ,_ a)))))
+
+(test-case
+ "SUR-012: 本体は postfix まで伸びる"
+ (check-match (p "x => x(1)")
+              `(SProgram ,_ () (SFn ,_ ,_ #:none (SApply ,_ ,_ ,_)))))
+
+(test-case
+ "SUR-012: => は右結合"
+ (check-match (p "x => y => x")
+              `(SProgram ,_ ()
+                         (SFn ,_ ,_
+                              #:none
+                              (SFn ,_ ,_
+                                   #:none (SVar ,_ x))))))
+
+(test-case
+ "SUR-012: , と } が本体を閉じる"
+ (check-match (p "f(x => x, 1)")
+              `(SProgram ,_ ()
+                         (SApply ,_ ,_
+                                 ((SFn ,_ ,_ #:none ,_) (SInt ,_ 1)))))
+ (check-match (p "{ a: x => x, b: 1 }")
+              `(SProgram ,_ ()
+                         (SRec ,_
+                               ((SField ,_ ,_ (SFn ,_ ,_ #:none ,_))
+                                (SField ,_ ,_ (SInt ,_ 1)))))))
+
+(test-case
+ "SUR-012: fn(x) -> Int => x は E-SUR-005"
+ (check-equal? (p-code "fn(x) -> Int => x") "E-SUR-005"))
+
+(test-case
+ "SUR-012: 関数宣言の仮引数型は省略できない"
+ (check-equal? (p-code "fn f(x) { x }\n0") "E-SUR-005"))
+
+(test-case
  "出力は Surface の言語に合う"
  (for ([src (in-list (list "1" "true" "f(x).a" "{}" "{ a: 1 }"
                            "r.{a, b}"

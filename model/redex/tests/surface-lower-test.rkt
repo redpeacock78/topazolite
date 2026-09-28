@@ -97,6 +97,14 @@
    [other (fail-check (format "省略 Recur の #:infer を期待したが ~s" other))]))
 
 (test-case
+ "SUR-012: 型を省略した仮引数は (#:infer s_x) へ落ちる"
+ (match (low "x => x")
+   [`(Fn ,_ (((#:bind x ,sx) (#:infer ,sx2))) (#:infer ,_) ,_ ,_)
+    (check-equal? sx sx2)
+    (check-equal? sx '(#:span src 0 1))]
+   [other (fail-check (format "省略仮引数の Fn を期待したが ~s" other))]))
+
+(test-case
  "落とした式は UCore+ の e に合う"
  (for ([src (in-list (list "1" "true" "x" "f(x).a" "{}" "{ a: 1 }"))])
    (define t (low src))

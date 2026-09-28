@@ -675,8 +675,9 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 ### SUR-012
 
-- **状態**：Phase 2 以降（SUR-008）
+- **状態**：P2
 - **由来**：ホワイトペーパー §8.1
+- **正典**：`docs/specification/surface.md` §3、`docs/specification/core-calculus.md` §4.3
 
 式本体を `=>` で書く無名関数は、引数型と戻り型を推論して Typed Core へつながらなければならない。
 
