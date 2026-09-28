@@ -1451,6 +1451,8 @@
          (unless (type-equiv? slot-type (judgment-type result))
            (reject s 'reassign-type-mismatch
                    slot-type (judgment-type result)))
+         (unless (storage-ok? slot-type)
+           (reject s 'mutable-callable-storage-requires-partial slot-type))
          (judgment `(Reassign ,s ,raw-name ,(judgment-core result))
                    'Unit
                    (row-union (judgment-row result) '(Mutation)))]

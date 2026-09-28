@@ -60,6 +60,29 @@
     [`(err ,diagnostic) (diagnostic-id diagnostic)]
     [_ 'ok]))
 
+(define knot
+  '(Let (cell mut (NFn (Int) Int () ())) (Fn ((x Int)) Int () x)
+     (Let f (Fn ((y Int)) Int () (Apply cell y))
+       (Let ignored (Reassign cell f) (Apply cell 1)))))
+
+(test-case "REC-001: spec §3.1 の knot は elaborate で E-TYP-027 になる"
+  (check-equal? (elaborate-code-of knot) "E-TYP-027"))
+
+(test-case "REC-001: Partial の slot への Reassign は elaborate を通る"
+  (check-equal?
+   (elaborate-code-of
+    '(Let (cell mut (NFn (Int) Int (Partial) ())) (Fn ((x Int)) Int () x)
+       (Let f (Fn ((y Int)) Int (Partial) (Apply cell y))
+         (Reassign cell f))))
+   'ok))
+
+(test-case "REC-001: 右辺の型の不一致は E-VAR-013 が先に出る"
+  (check-equal?
+   (elaborate-code-of
+    '(Let (cell mut (NFn (Int) Int () ())) (Fn ((x Int)) Int () x)
+       (Reassign cell 1)))
+   "E-VAR-013"))
+
 (define ok-core '(Let (x mut Int) 1 (Reassign x 2)))
 
 ;; mut binding への再代入を受理し、Unit を返す。
