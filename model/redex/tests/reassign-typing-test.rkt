@@ -27,6 +27,33 @@
 (define (type-row-of core [environment '()])
   (core-type-of core '() '() environment (empty-region-ctx)))
 
+(define pure-fn '(NFn (Int) Int () () () User))
+(define partial-fn '(NFn (Int) Int () (Partial) () User))
+
+(test-case "REC-001: 純粋な callable の mut slot への Reassign は E-TYP-026"
+  (check-equal? (key-of '(Reassign cell g)
+                        `((cell ,pure-fn mut) (g ,pure-fn let)))
+                'mutable-callable-storage-requires-partial))
+
+(test-case "REC-001: Partial の callable の mut slot への Reassign は受理する"
+  (check-equal? (key-of '(Reassign cell g)
+                        `((cell ,partial-fn mut) (g ,partial-fn let)))
+                'ok))
+
+(test-case "REC-001: 右辺の型の不一致は E-VAR-010 が先に出る"
+  (check-equal? (key-of '(Reassign cell 1)
+                        `((cell ,pure-fn mut)))
+                'reassign-type-mismatch))
+
+;; mut slot へ純粋な NFn を書き、続けて呼ぶ Core の typing 回帰。
+;; f は environment の型だけの callable で、cell を読む本体を持たない。
+(test-case "REC-001: 純粋な NFn を mut slot へ書いて呼ぶ Core は E-TYP-026"
+  (check-equal?
+   (key-of '(Let (cell mut (NFn (Int) Int () () () User)) g0
+              (Let (ignored Unit) (Reassign cell f) (Apply cell 1)))
+           `((g0 ,pure-fn let) (f ,pure-fn let)))
+   'mutable-callable-storage-requires-partial))
+
 ;; elaborate 側の code。owned-narrowing-test.rkt:24-27 と同じ形である。
 (define (elaborate-code-of source)
   (match (elab source)

@@ -134,6 +134,8 @@ offset の結果が非 null である保証は無く、`NonNull` を保つには
 
 `RawStore` は第一引数が `Mut` の pointer である場合だけ型付けする。
 `Const` の pointer へ書き込む操作は型検査で拒否する。
+`RawStore` は core-calculus.md の Mutation の節で定める `storage-ok` を payload 型に要求する。
+`Partial` を持たない callable を payload に含む pointer へは書き込めない。
 
 ### 2.3 実行時の値と簡約
 

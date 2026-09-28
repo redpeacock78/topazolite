@@ -2189,6 +2189,8 @@
   (for ([τ_i (in-list (union-members τ_payload))])
     (unless (type-compatible? τ_value τ_i)
       (fail 'assign-union-variant core)))
+  (unless (storage-ok? τ_payload)
+    (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
   (for ([cap (in-set (borrow-token-key Λ target #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
@@ -2221,6 +2223,8 @@
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
   (unless (type-equiv? τ_slot τ_value)
     (fail 'reassign-type-mismatch core τ_slot τ_value))
+  (unless (storage-ok? τ_slot)
+    (fail 'mutable-callable-storage-requires-partial core τ_slot))
   (list 'Unit (rows-union (list ε_value '(Mutation))) Ψ_1))
 
 ;; unsafe.md §2.2。pointer の型成分を検査し、成分の並びを返す。
@@ -2328,6 +2332,8 @@
   (unless (type-compatible? τ_value τ_payload)
     (fail 'rawstore-type-mismatch core))
   (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
+  (unless (storage-ok? τ_payload)
+    (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (record-ptr-request! 'raw-store core (raw-store-obligation-ids))
   (list 'Unit (rows-union (list ε_target ε_value '(Unsafe Mutation))) Ψ_2))
 

@@ -120,6 +120,12 @@ C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
 target は binder に限られるため、`Assign` と違って target 側の ε は無い。
 `Unsafe` は `(Unsafe c)` の境界で row から取り除かれる。
 `Mutation` は取り除かれず、関数境界を越えて宣言 row へ現れる。
+三つの書込みはどれも、書込み先の宣言型 `τ_dest` について `storage-ok(τ_dest)` を前提にする。
+`τ_dest` は、`Reassign` では対象 slot の型、`Assign` では `(BorrowedMut τ ρ)` の payload `τ`、`RawStore` では `(RawPtr τ Mut nul align as prov)` の payload `τ` である。
+`storage-ok(τ)` は、`τ` の value path で到達するすべての `NFn` の出口 row `εout` が `Partial` を含むことである。
+value path は `Record` の欄、`Union` の成分、data 型の型引数、`Owned`、`Borrowed`、`BorrowedMut`、`Untrusted`、`Refined` の payload、`ForallRegion` の本体、`RawPtr` の payload を辿り、`NFn` の仮引数型、戻り型、`Q` と、`Proof`、`TypeInfo` へは降りない。
+この前提が無いと、可変記憶域の callable を書き換えて自分自身を呼ばせる循環が、どの宣言 row にも `Partial` を残さずに作れる。
+違反は typing の `E-TYP-026` と、UCore の `Reassign` を検査する elaborate の `E-TYP-027` として拒否する。
 
 Effect label を 1 つ足すと、次の 7 箇所が動く。
 文法が 3 層（`lang.rkt` の `ℓ`、`ucore.rkt` の `tℓ` と `uℓ`）。

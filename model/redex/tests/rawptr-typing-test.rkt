@@ -10,9 +10,9 @@
 ;; borrow-unknown-owner-region で落ちる。
 (define (Λ-of ir) (region-ctx ir '() (hash) (hash)))
 
-(define (check-core core)
+(define (check-core core [environment '()])
   (define ir (build-region-ir core))
-  (type-of/raw core '() '() '() (Λ-of ir)))
+  (type-of/raw core '() '() environment (Λ-of ir)))
 
 (define (key-of result)
   (match result
@@ -157,6 +157,39 @@
             (Unsafe (RawStore (AddressOf (BorrowMut x))
                               (Read (Borrow y)))))))))
   (check-equal? (type-of-ok result) 'Unit))
+
+(define pure-fn '(NFn (Int) Int () () () User))
+(define partial-fn '(NFn (Int) Int () (Partial) () User))
+
+(define (raw-store-through fn [unsafe? #t])
+  (define owned-fn `(Owned ,fn))
+  (define store
+    '(RawStore (AddressOf (BorrowMut x)) (Read (Borrow y))))
+  `(Scope ()
+     (Let (x let ,owned-fn) (Move g)
+       (Let (y let ,owned-fn) (Move h)
+         ,(if unsafe? `(Unsafe ,store) store)))))
+
+(test-case "REC-001: 純粋な callable を指す pointer への RawStore は拒否する"
+  (check-equal?
+   (key-of (check-core (raw-store-through pure-fn)
+                       `((g (Owned ,pure-fn) let)
+                         (h (Owned ,pure-fn) let))))
+   'mutable-callable-storage-requires-partial))
+
+(test-case "REC-001: Partial の callable を指す pointer への RawStore は受理する"
+  (check-equal?
+   (first (check-core (raw-store-through partial-fn)
+                      `((g (Owned ,partial-fn) let)
+                        (h (Owned ,partial-fn) let))))
+   'ok))
+
+(test-case "REC-001: RawStore の obligation 検査は storage-ok より先に出る"
+  (check-equal?
+   (key-of (check-core (raw-store-through pure-fn #f)
+                       `((g (Owned ,pure-fn) let)
+                         (h (Owned ,pure-fn) let))))
+   'unsafe-outside-boundary))
 
 ;; PtrOffset の結果は RawPtr なので boundary の外へは出せない。
 (test-case "PtrOffset の RawPtr は Unsafe の外へ出せない"

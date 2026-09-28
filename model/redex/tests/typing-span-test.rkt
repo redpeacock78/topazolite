@@ -214,6 +214,7 @@
     ;; VAR
     duplicate-branch-binder duplicate-parameter immutable-binding
     mut-binding-unsupported-type non-canonical-primitive reassign-type-mismatch
+    mutable-callable-storage-requires-partial
     unbound-variable unknown-primitive
     ;; APP
     apply-non-function curry-non-function unknown-callable
@@ -883,7 +884,15 @@
                                       reach-remainder-phi)
                           (reach-var 's 1715 1716))
               '() '() reach-narrowing-environment
-              (reach-span 1701 1725))))
+              (reach-span 1701 1725))
+   (reach-row 'mutable-callable-storage-requires-partial
+              (reach-node 'Reassign 1726 1740
+                          (reach-var 'cell 1727 1731)
+                          (reach-var 'g 1732 1733))
+              '() '()
+              '((cell (NFn (Int) Int () () () User) mut)
+                (g (NFn (Int) Int () () () User) let))
+              (reach-span 1726 1740))))
 
 (test-case "typing の producer key 集合が registry v16 と一致する"
   (define registry-keys
@@ -891,7 +900,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 101)
+  (check-equal? (length producer-keys) 102)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
