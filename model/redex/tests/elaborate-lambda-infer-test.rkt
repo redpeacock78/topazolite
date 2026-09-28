@@ -28,6 +28,21 @@
            (or (tree-contains? (car tree) wanted)
                (tree-contains? (cdr tree) wanted)))))
 
+(define (record-field-mode tree wanted)
+  (match tree
+    [`(Rec ,_ (,fields ...))
+     (for/or ([field (in-list fields)])
+       (match field
+         [`((#:lbl ,label ,_) ,mode ,_)
+          (and (eq? label wanted) mode)]
+         [`(,label ,mode ,_)
+          (and (eq? label wanted) mode)]
+         [_ #f]))]
+    [(? pair?)
+     (or (record-field-mode (car tree) wanted)
+         (record-field-mode (cdr tree) wanted))]
+    [_ #f]))
+
 (define (diagnostic-of term)
   (match (elab term)
     [`(err ,d) d]
@@ -36,6 +51,7 @@
 (define e-typ-025 (diagnostic-code-of 'elaborate 'parameter-type-not-inferable))
 (define e-type-mismatch (diagnostic-code-of 'elaborate 'type-mismatch))
 (define e-duplicate-parameter (diagnostic-code-of 'elaborate 'duplicate-parameter))
+(define e-owned-record-field (diagnostic-code-of 'elaborate 'owned-record-field))
 
 (test-case "SUR-012: 期待の関数型から仮引数型を補う"
   (check-equal?
@@ -124,3 +140,61 @@
   (define r (elab '(Fn () (NFn (Int Bool) Bool () ()) ()
                        (Fn ((x Int) (b #:infer)) #:infer () b))))
   (check-false (tree-contains? r '#:infer)))
+
+(test-case "SUR-012: E-Let-Fn-Check は宣言型で仮引数型を補う"
+  (define t '(Let (f const (NFn (Int) Int () ()))
+                  (Fn ((x #:infer)) #:infer () x)
+                  (Apply f 1)))
+  (check-equal? (code-of t) 'ok)
+  (check-equal? (type-of t) 'Int))
+
+(test-case "SUR-012: 宣言型が関数型でない束縛は E-TYP-025"
+  (define t '(Let (f const Int) (Fn ((x #:infer)) #:infer () x) f))
+  (check-equal? (code-of t) e-typ-025)
+  (check-equal? (found-of t) 'no-expected-function))
+
+(test-case "SUR-012: 戻り型だけを省略した Fn の束縛は合成のまま"
+  (match (elab '(Let (f const (NFn (Int) (Union Int String) () ()))
+                     (Fn ((x Int)) #:infer () 1)
+                     (Apply f 1)))
+    [(list _ _ _ callables)
+     (check-false (tree-contains? callables '(Union Int String)))]))
+
+(test-case "SUR-012: E-Rec-Check は欄の期待型で仮引数型を補う"
+  (check-equal?
+   (code-of '(Fn () (Record ((print (NFn (Int) Int () ()) imm))) ()
+                 (Rec ((print imm (Fn ((x #:infer)) #:infer () x))))))
+   'ok))
+
+(test-case "SUR-012: E-Rec-Check は imm の欄を mut の期待へ写さない"
+  (check-equal?
+   (code-of '(Fn () (Record ((a Int mut))) () (Rec ((a imm 1)))))
+   e-type-mismatch))
+
+(test-case "SUR-012: E-Rec-Check は入力 record の mut を Core に保つ"
+  (match (elab '(Fn () (Record ((a Int imm))) () (Rec ((a mut 1)))))
+    [(list core _ _ _)
+     (check-equal? (record-field-mode core 'a) 'mut)]
+    [other (error 'record-field-mode "elaboration failed: ~s" other)]))
+
+(test-case "SUR-012: label の集合が異なる record 式は合成へ退避する"
+  (check-equal?
+   (code-of '(Fn () (Record ((a Int imm))) ()
+                 (Rec ((a imm 1) (b imm 2)))))
+   'ok)
+  (check-equal?
+   (code-of '(Fn () (Record ((a (NFn (Int) Int () ()) imm))) ()
+                 (Rec ((a imm (Fn ((x #:infer)) #:infer () x)) (b imm 2)))))
+   e-typ-025))
+
+(test-case "SUR-012: E-Rec-Check は Owned の欄を拒否する"
+  (check-equal?
+   (code-of '(Fn ((o (Owned Res))) (Record ((a (Owned Res) imm))) ()
+                 (Rec ((a imm (Move o))))))
+   e-owned-record-field))
+
+(test-case "SUR-012: 期待型が Owned<Record> なら合成へ退避する"
+  (check-equal?
+   (code-of '(Fn () (Owned (Record ((a (NFn (Int) Int () ()) imm)))) ()
+                 (Rec ((a imm (Fn ((x #:infer)) #:infer () x))))))
+   e-typ-025))
