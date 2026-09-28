@@ -447,7 +447,7 @@ type sexpr =
   | SUnit     : span -> sexpr
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
-  | SFn       : span -> list sty -> option sty -> sexpr -> sexpr
+  | SFn       : span -> list (option sty) -> option sty -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> string -> sexpr
   | SProjRec  : span -> sexpr -> list string -> sexpr
@@ -463,6 +463,12 @@ and sdecl =
   | SDecl     : span -> dkind -> list sty -> option sty -> sexpr -> sdecl
 
 type node = | NExpr : sexpr -> node | NTy : sty -> node | NDecl : sdecl -> node
+
+let rec option_stys (ts: list (option sty)) : Tot (list sty) (decreases ts) =
+  match ts with
+  | [] -> []
+  | None :: tl -> option_stys tl
+  | Some t :: tl -> t :: option_stys tl
 
 let span_of_expr (e: sexpr) : Tot span =
   match e with
@@ -503,7 +509,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SUnit _       -> []
   | SBool _ _     -> []
   | SVar _ _      -> []
-  | SFn _ ps r b  -> map NTy ps @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]
+  | SFn _ ps r b  -> map NTy (option_stys ps) @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
   | SProjRec _ e1 _ -> [NExpr e1]
@@ -585,6 +591,18 @@ let rec hull_all_contains s0 ks =
                      (hull s0 (span_of_node k)) (span_of_node k);
       hull_all_contains (hull s0 (span_of_node k)) tl
 
+let rec wf_ty (t: sty) : Tot bool (decreases t) =
+  match t with
+  | TName _ _  -> true
+  | TRec s fs  -> wf_tys s fs
+  | TFn s ps r -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+  | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
+  | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
+and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
+  match ts with
+  | []      -> true
+  | t :: tl -> contains s (span_of_ty t) && wf_ty t && wf_tys s tl
+
 let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   match e with
   | SInt _ _      -> true
@@ -592,7 +610,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SUnit _       -> true
   | SBool _ _     -> true
   | SVar _ _      -> true
-  | SFn s ps r b  -> wf_tys s ps
+  | SFn s ps r b  -> wf_tys s (option_stys ps)
                      && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
                      && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
@@ -604,17 +622,6 @@ and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
   match es with
   | []      -> true
   | e :: tl -> contains s (span_of_expr e) && wf_expr e && wf_exprs s tl
-and wf_ty (t: sty) : Tot bool (decreases t) =
-  match t with
-  | TName _ _  -> true
-  | TRec s fs  -> wf_tys s fs
-  | TFn s ps r -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
-  | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
-  | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
-and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
-  match ts with
-  | []      -> true
-  | t :: tl -> contains s (span_of_ty t) && wf_ty t && wf_tys s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
   | SDecl s _ ps r v ->
@@ -670,10 +677,10 @@ let parse_span_containment n c =
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SFn s ps r b) ->
       FStar.List.Tot.Properties.append_memP
-        (map NTy ps) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]) c;
+        (map NTy (option_stys ps)) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]) c;
       FStar.List.Tot.Properties.append_memP
         (match r with None -> [] | Some t -> [NTy t]) [NExpr b] c;
-      wf_tys_elim s ps c
+      wf_tys_elim s (option_stys ps) c
   | NExpr (SApply s f a) -> wf_exprs_elim s a c
   | NExpr (SRec s fs) -> wf_exprs_elim s fs c
   | NExpr (SBlock s ds t) ->
