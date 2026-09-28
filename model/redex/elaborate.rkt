@@ -232,6 +232,14 @@
 (define (row-member? label row)
   (term (row-∈ ,label ,row)))
 
+(define (check-recur-body-gate s function parameters body environment
+                               callables declared-row)
+  (when (and (eq? (classify-recur-body function parameters body
+                                       environment callables)
+                  'Unknown)
+             (not (row-member? 'Partial declared-row)))
+    (reject s 'unknown-recur-requires-partial)))
+
 (define (normalize-row row)
   (for/fold ([normalized '()])
             ([label (in-list row)])
@@ -1296,8 +1304,10 @@
          (define declared-row
            (resolve-declaration-row raw-row delta boundaries s))
          ;; Recur は関数境界を積まない。f をまだ束縛せず、本体から戻り型を合成する。
+         (define parameter-environment
+           (extend environment parameters parameter-types))
          (define body-result
-           (synth body (extend environment parameters parameter-types)
+           (synth body parameter-environment
                   delta propositions boundaries))
          (define return-type (judgment-type body-result))
          (unless (row-subset? (judgment-row body-result) declared-row)
@@ -1331,12 +1341,11 @@
            `(Recur ,s ,callable ,raw-function ,core-binders
                    ,wrapped-body
                    ,(judgment-core continuation-result)))
-         (define classification
-           (classify recur-core environment
-                     (reverse reversed-callables)))
-         (when (and (eq? classification 'Unknown)
-                    (not (row-member? 'Partial declared-row)))
-           (reject s 'unknown-recur-requires-partial))
+         (check-recur-body-gate s function parameters
+                                (judgment-core body-result)
+                                parameter-environment
+                                (reverse reversed-callables)
+                                declared-row)
          (judgment recur-core
                    (judgment-type continuation-result)
                    (judgment-row continuation-result))]
@@ -1395,12 +1404,11 @@
            `(Recur ,s ,callable ,raw-function ,core-binders
                    ,wrapped-body
                    ,(judgment-core continuation-result)))
-         (define classification
-           (classify recur-core environment
-                     (reverse reversed-callables)))
-         (when (and (eq? classification 'Unknown)
-                    (not (row-member? 'Partial declared-row)))
-           (reject s 'unknown-recur-requires-partial))
+         (check-recur-body-gate s function parameters
+                                (judgment-core body-result)
+                                body-environment
+                                (reverse reversed-callables)
+                                declared-row)
          (judgment
           recur-core
           (judgment-type continuation-result)

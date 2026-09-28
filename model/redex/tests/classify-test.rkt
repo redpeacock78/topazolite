@@ -82,13 +82,75 @@
              '())
    'Unknown))
 
-(test-case "REC-001: Partial の callable を continuation で呼ぶ純粋な row の Recur は E-REC-002"
-  (check-equal?
-   (elaborate-code-of
+(test-case "REC-001: Partial の callable を continuation で呼ぶだけなら gate は Partial を求めない"
+  (define source
     '(Let (cell mut (NFn (Int) Int (Partial) ())) (Fn ((x Int)) Int () x)
        (Recur h ((y Int)) Int () y
          (Apply cell 1))))
-   "E-REC-002"))
+  (check-equal? (elaborate-code-of source) 'ok)
+  ;; whole-term は継続の Partial を見るので Unknown のままである。
+  (check-equal? (classify-ucore source) 'Unknown))
+
+;; P2i3b spec §6.1。継続の無関係な Partial は f の宣言 row に載せない。
+(test-case "REC-001: 継続にある別の Recur の Partial は f の gate に効かない"
+  (define source
+    '(Let p (Recur g () Unit (Partial Suspend) (Suspend (Apply g)) g)
+       (Recur f () Unit () unit (Apply p))))
+  (check-equal? (elaborate-code-of source) 'ok)
+  (check-equal? (classify-ucore source) 'Unknown))
+
+(test-case "REC-001: 継続が f を値として返す structural な本体は Partial なしで通る"
+  (define source
+    '(Recur loop ((xs (List Int))) Int ()
+            (Eliminate xs
+             ((nil () -> 0)
+              (cons (head tail) -> (Apply loop tail))))
+            loop))
+  (check-equal? (elaborate-code-of source) 'ok)
+  (check-equal? (classify-ucore source) 'Unknown))
+
+(test-case "REC-002: 継続が f の適用でない guarded な本体は Partial なしで通る"
+  (define source
+    '(Recur nats ((n Int)) Unit ((Yield Int))
+            (Yield n (Apply nats (Apply add n 1)))
+            nats))
+  (check-equal? (elaborate-code-of source) 'ok)
+  (check-equal? (classify-ucore source) 'Unknown))
+
+(test-case "REC-001: 本体が Unknown の Recur は E-REC-002 のまま"
+  (check-equal?
+   (elaborate-code-of
+    '(Recur loop ((n Int)) Int () (Apply loop n) (Apply loop 0)))
+   (diagnostic-code-of 'elaborate 'unknown-recur-requires-partial))
+  ;; 推論の節。本体が Yield の callable を呼ぶので B-NoSelf にならない。
+  (check-equal?
+   (elaborate-code-of
+    '(Let k (Fn () Unit ((Yield Int)) (Yield 1 unit))
+       (Recur h ((y Int)) #:infer ((Yield Int)) (Apply k) 0)))
+   (diagnostic-code-of 'elaborate 'unknown-recur-requires-partial)))
+
+(test-case "REC-001: gate の helper 化で診断の順序が変わらない"
+  ;; 継続の検査は gate より先に出る。
+  (check-equal?
+   (elaborate-code-of
+    '(Recur loop ((n Int)) Int () (Apply loop n) (Apply 1 0)))
+   (elaborate-code-of '(Apply 1 0)))
+  ;; 本体の row の検査は gate より先に出る。
+  (check-equal?
+   (elaborate-code-of
+    '(Recur loop ((n Int)) Int ()
+            (Let z (Yield 1 unit) (Apply loop n))
+            (Apply loop 0)))
+   (diagnostic-code-of 'elaborate 'undeclared-recur-effect)))
+
+;; P2i3a の knot は、gate が本体だけを見るようになっても書込みで落ちる。
+(test-case "REC-001: Recur の外で純粋な slot に h を書く knot は E-TYP-027 のまま"
+  (check-equal?
+   (elaborate-code-of
+    '(Let (cell mut (NFn (Int) Int () ())) (Fn ((x Int)) Int () x)
+       (Recur h ((y Int)) Int () (Apply cell y)
+         (Let ignored (Reassign cell h) (Apply cell 1)))))
+   (diagnostic-code-of 'elaborate 'mutable-callable-storage-requires-partial)))
 
 (test-case "REC-001: Recur の外の knot で h の row が Partial なら Unknown"
   (check-equal?

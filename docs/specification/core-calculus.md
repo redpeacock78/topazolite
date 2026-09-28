@@ -829,11 +829,8 @@ r fresh                                            （CallableId、§3.3。表�
 Γf, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇐ τ ! εbody ⟹ c1
 εbody ⊆ ε'
 Γf; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
-Recur(r, f, (y1, …, yk),
-      Scope(∅, Let(xi1 : Owned<τi1>, yi1,
-                … Let(xim : Owned<τim>, yim, c1) …)),
-      c2) ⇓class κc      （§6.2）
-κc = Unknown ならば Partial ∈ ε'
+f; (x1, …, xk); c1 ⇓body κbody      （§6.2）
+κbody = Unknown ならば Partial ∈ ε'
 --------------------------------
 Γ; Δ; Π; B ⊢ recur f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
   ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk),
@@ -861,7 +858,11 @@ RecurVal(r, f, (y1, …, yk),
 m が 0 のとき、つまり `Owned` の仮引数が無いとき、`Scope` も `Let` も入らない。節の形はこれまでと同一である。
 recur は関数境界を押さないため、包まないと呼出し側の `Scope` へ place が積み上がる。
 R-RecurUnfold（§5.4）は本体を複製するが、各呼出しの引数の place はその呼出しの `Scope` が管理する。
-計算分類は、継続 c2 を含む Recur 項全体に対して行う（C-Guarded は c2 が f の適用であることも検査する。§6.2）。
+gate は本体 c1 だけを `⇓body` で分類する。
+継続 c2 の row は Recur 式全体の row として呼出し元へ伝わる。
+whole-term の `⇓class` は性質 6 と分類結果の報告に使い、継続 c2 の条件を保つ（§6.2）。
+gate の分類で c2 を `unit` に置き換えると、C-Guarded が要求する初回の tail call が失われ、productive な本体も Unknown になる。
+whole-term の分類から c2 の条件を外すと、発散する継続を持つ Recur が Finite になり、性質 6 を破る。
 r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
 `recur` は loop の lowering 先となる内部 marker であり、関数境界を push しない（RET-003 の適用対象）。
