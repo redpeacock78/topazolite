@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 24)
+(define diagnostic-registry-version 25)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -310,6 +310,14 @@
   '(("E-TYP-025" parameter-type-not-inferable
                  "仮引数型を省略した無名関数の仮引数型を推論できない")))
 
+(define elaborate-entries-v25
+  '(("E-TYP-027" mutable-callable-storage-requires-partial
+                 "Partial を持たない callable を可変記憶域へ書き込めない")))
+
+(define typing-entries-v25
+  '(("E-TYP-026" mutable-callable-storage-requires-partial
+                 "Partial を持たない callable を可変記憶域へ書き込めない")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -408,6 +416,7 @@
           (rows 'elaborate 16 elaborate-entries-v16)
           (rows 'elaborate 23 elaborate-entries-v23)
           (rows 'elaborate 24 elaborate-entries-v24)
+          (rows 'elaborate 25 elaborate-entries-v25)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
@@ -422,6 +431,7 @@
           (rows 'typing 13 typing-entries-v13)
           (rows 'typing 16 typing-entries-v16)
           (rows 'typing 18 typing-entries-v18)
+          (rows 'typing 25 typing-entries-v25)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)
