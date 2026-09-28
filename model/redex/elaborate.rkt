@@ -875,14 +875,23 @@
         (cons (judgment-row scrutinee-result)
               (map second branch-results)))))
 
+    ;; SUR-012。UCore+ の型欄が省略の標識かを返す。
+    (define (inferred? type)
+      (match type [`(#:infer ,_) #t] [_ #f]))
+
     (define (prepare-fn s parameter-binders raw-parameter-types body
-                        environment delta)
+                        environment delta
+                        #:expected-parameter-types
+                        [expected-parameter-types #f])
       (define parameters (map peel-bind parameter-binders))
       (when (check-duplicates parameters)
         (reject s 'duplicate-parameter parameters))
       (define parameter-types
-        (for/list ([type (in-list raw-parameter-types)])
-          (resolve-annotation type delta s)))
+        (for/list ([raw (in-list raw-parameter-types)]
+                   [i (in-naturals)])
+          (if (inferred? raw)
+              (list-ref expected-parameter-types i)
+              (resolve-annotation raw delta s))))
       (define captures (owned-captures body parameters environment))
       (define capture-types
         (for/list ([name (in-list captures)])
@@ -945,10 +954,13 @@
     ;; 位置で呼び、診断の優先順位を変えない。
     (define (elaborate-annotated-fn s parameter-binders raw-parameter-types
                                    resolve-return raw-row body
-                                   environment delta propositions boundaries)
+                                   environment delta propositions boundaries
+                                   #:expected-parameter-types
+                                   [expected-parameter-types #f])
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
-                    environment delta))
+                    environment delta
+                    #:expected-parameter-types expected-parameter-types))
       (define return-type (resolve-return))
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
@@ -1033,6 +1045,21 @@
             (match (lookup (current-Γ0) name)
               [(list type value) (judgment (attach-span value s) type '())]
               [_ (reject s 'unbound-variable name)])])]
+
+        [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
+              ,_ ,_ ,_)
+         #:when (ormap inferred? raw-parameter-types)
+         ;; 合成位置では仮引数型を推論する手がかりが無い。
+         ;; 重複の診断は期待型の有無によらず先に行う。
+         (define parameters (map peel-bind parameter-binders))
+         (when (check-duplicates parameters)
+           (reject s 'duplicate-parameter parameters))
+         (define infer-span
+           (for/first ([type (in-list raw-parameter-types)]
+                       #:when (inferred? type))
+             (second type)))
+         (reject infer-span 'parameter-type-not-inferable
+                 'no-expected-function)]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               (#:infer ,_) ,raw-row ,body)
@@ -1570,20 +1597,38 @@
           (row-difference (judgment-row body-result) own-return))]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
-              (#:infer ,_) ,raw-row ,body)
-         ;; E-Lambda-Infer-Check。σ は Typed Core の型なので、UCore の型注釈を
-         ;; 解決する resolve-annotation には通さない。
+              ,raw-return-type ,raw-row ,body)
+         #:when (or (inferred? raw-return-type)
+                    (ormap inferred? raw-parameter-types))
+         ;; σ と σi は Typed Core の型なので、resolve-annotation には通さない。
+         (define omitted-parameters?
+           (ormap inferred? raw-parameter-types))
+         (define parameters (map peel-bind parameter-binders))
+         (when (and omitted-parameters? (check-duplicates parameters))
+           (reject s 'duplicate-parameter parameters))
+         (define infer-span
+           (for/first ([type (in-list raw-parameter-types)]
+                       #:when (inferred? type))
+             (second type)))
          (define function-type
            (match expected
              [`(Owned ,inner) inner]
              [_ expected]))
          (match function-type
-           [`(NFn ,_ ,return-type . ,_)
+           [`(NFn ,parameter-types ,return-type . ,_)
+            (when (and omitted-parameters?
+                       (not (= (length parameter-types)
+                               (length raw-parameter-types))))
+              (reject infer-span 'parameter-type-not-inferable 'arity-mismatch))
             (check-against-expected
              (elaborate-annotated-fn
               s parameter-binders raw-parameter-types
-              (λ () return-type) raw-row body
-              environment delta propositions boundaries)
+              (if (inferred? raw-return-type)
+                  (λ () return-type)
+                  (λ () (resolve-annotation raw-return-type delta s)))
+              raw-row body environment delta propositions boundaries
+              #:expected-parameter-types
+              (and omitted-parameters? parameter-types))
              expected s propositions)]
            [_
             (check-against-expected

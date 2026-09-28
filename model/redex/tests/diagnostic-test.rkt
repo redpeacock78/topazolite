@@ -663,7 +663,8 @@
  ;; では Reassign と mut binding の 3 key を追加した。
  ;; P2e1 では narrowing の判定点へ owned-narrowing-needs-proof を追加した。
  ;; P2i1 では return-type-not-inferable を追加した。
- (check-equal? (length reasons) 53)
+ ;; P2i2 では parameter-type-not-inferable を追加した。
+ (check-equal? (length reasons) 54)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))
