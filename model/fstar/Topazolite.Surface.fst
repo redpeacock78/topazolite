@@ -488,11 +488,11 @@ type sexpr =
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
-  | SFn       : span -> list (option sty) -> option sty -> option seffrow -> sexpr -> sexpr
+  | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
-  | SProj     : span -> sexpr -> string -> sexpr
-  | SProjRec  : span -> sexpr -> list string -> sexpr
-  | SRec      : span -> list sexpr -> sexpr
+  | SProj     : span -> sexpr -> (span & string) -> sexpr
+  | SProjRec  : span -> sexpr -> list (span & string) -> sexpr
+  | SRec      : span -> list (span & sexpr) -> sexpr
   | SBlock    : span -> list sdecl -> sexpr -> sexpr
 and sty =
   | TName     : span -> string -> sty
@@ -501,7 +501,7 @@ and sty =
   | TUnion    : span -> sty -> sty -> sty
   | TInter    : span -> sty -> sty -> sty
 and sdecl =
-  | SDecl     : span -> dkind -> list sty -> option sty -> option seffrow -> sexpr -> sdecl
+  | SDecl     : span -> dkind -> span -> list (span & sty) -> option sty -> option seffrow -> sexpr -> sdecl
 and seffrow =
   | SEffRow   : span -> list sefflabel -> seffrow
 and sefflabel =
@@ -541,7 +541,7 @@ let span_of_ty (t: sty) : Tot span =
 
 let span_of_decl (d: sdecl) : Tot span =
   match d with
-  | SDecl s _ _ _ _ _ -> s
+  | SDecl s _ _ _ _ _ _ -> s
 
 let span_of_row (r: seffrow) : Tot span =
   match r with
@@ -568,13 +568,13 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
   | SFn _ ps r row b ->
-      map NTy (option_stys ps) @
+      map NTy (option_stys (map snd ps)) @
       (match r with None -> [] | Some t -> [NTy t]) @
       (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
   | SProjRec _ e1 _ -> [NExpr e1]
-  | SRec _ fs     -> map NExpr fs
+  | SRec _ fs     -> map NExpr (map snd fs)
   | SBlock _ ds t -> map NDecl ds @ [NExpr t]
 
 let kids_of_ty (t: sty) : Tot (list node) =
@@ -588,8 +588,8 @@ let kids_of_ty (t: sty) : Tot (list node) =
 
 let kids_of_decl (d: sdecl) : Tot (list node) =
   match d with
-  | SDecl _ _ ps r row v ->
-      map NTy ps @
+  | SDecl _ _ _ ps r row v ->
+      map NTy (map snd ps) @
       (match r with None -> [] | Some t -> [NTy t]) @
       (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]
 
@@ -605,6 +605,12 @@ let hull (a b: span) : Tot span =
   { sid = a.sid;
     startByte = (if a.startByte <= b.startByte then a.startByte else b.startByte);
     endByte   = (if a.endByte >= b.endByte then a.endByte else b.endByte) }
+
+// 名前と label の span は子の節点ではないので、wf が親への包含を直接検査する。
+let rec spans_in (s: span) (ss: list span) : Tot bool (decreases ss) =
+  match ss with
+  | []      -> true
+  | x :: tl -> contains s x && spans_in s tl
 
 let rec hull_all (s0: span) (ks: list node) : Tot span (decreases ks) =
   match ks with
@@ -695,23 +701,34 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SVar _ _      -> true
   | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
   | SFn s ps r row b ->
-      wf_tys s (option_stys ps)
+      spans_in s (map fst ps)
+      && wf_tys s (option_stys (map snd ps))
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
       && wf_opt_row s row
       && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
-  | SProj s e1 _  -> contains s (span_of_expr e1) && wf_expr e1
-  | SProjRec s e1 _ -> contains s (span_of_expr e1) && wf_expr e1
-  | SRec s fs     -> wf_exprs s fs
+  | SProj s e1 (sl, _) -> contains s sl && contains s (span_of_expr e1) && wf_expr e1
+  | SProjRec s e1 ls -> spans_in s (map fst ls) && contains s (span_of_expr e1) && wf_expr e1
+  | SRec s fs     -> wf_fields s fs
   | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
 and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
   match es with
   | []      -> true
   | e :: tl -> contains s (span_of_expr e) && wf_expr e && wf_exprs s tl
+and wf_fields (s: span) (fs: list (span & sexpr)) : Tot bool (decreases fs) =
+  match fs with
+  | []            -> true
+  | (sl, e) :: tl -> contains s sl && contains s (span_of_expr e) && wf_expr e && wf_fields s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
-  | SDecl s _ ps r row v ->
-      wf_tys s ps
+  | SDecl s k sx ps r row v ->
+      contains s sx
+      && spans_in s (map fst ps)
+      && (match k with
+          | DBind -> (match ps with [] -> true | _ -> false)
+                     && (match row with None -> true | Some _ -> false)
+          | DFnDecl -> true)
+      && wf_tys s (map snd ps)
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
       && wf_opt_row s row
       && contains s (span_of_expr v) && wf_expr v
@@ -727,6 +744,13 @@ let wf_node (n: node) : Tot bool =
   | NDecl d -> wf_decl d
   | NRow r  -> wf_row r
   | NLabel l -> wf_label l
+
+// DBind の SDecl は仮引数と row を持たない。Racket の SBind に対応しない形を拒む。
+val wf_bind_shape : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
+  -> row:option seffrow -> v:sexpr -> Lemma
+  (requires wf_decl (SDecl s DBind sx ps r row v))
+  (ensures ps == [] /\ row == None)
+let wf_bind_shape s sx ps r row v = ()
 
 val wf_tys_elim : s:span -> ts:list sty -> c:node -> Lemma
   (requires wf_tys s ts)
@@ -756,6 +780,15 @@ let rec wf_exprs_elim s es c =
   | []      -> ()
   | e :: tl -> wf_exprs_elim s tl c
 
+val wf_fields_elim : s:span -> fs:list (span & sexpr) -> c:node -> Lemma
+  (requires wf_fields s fs)
+  (ensures memP c (map NExpr (map snd fs)) ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases fs)
+let rec wf_fields_elim s fs c =
+  match fs with
+  | []      -> ()
+  | _ :: tl -> wf_fields_elim s tl c
+
 val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
   (requires wf_decls s ds)
   (ensures memP c (map NDecl ds) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -777,7 +810,7 @@ let parse_span_containment n c =
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SFn s ps r row b) ->
       FStar.List.Tot.Properties.append_memP
-        (map NTy (option_stys ps))
+        (map NTy (option_stys (map snd ps)))
         ((match r with None -> [] | Some t -> [NTy t]) @
          (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]) c;
       FStar.List.Tot.Properties.append_memP
@@ -785,9 +818,9 @@ let parse_span_containment n c =
         ((match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]) c;
       FStar.List.Tot.Properties.append_memP
         (match row with None -> [] | Some eff -> [NRow eff]) [NExpr b] c;
-      wf_tys_elim s (option_stys ps) c
+      wf_tys_elim s (option_stys (map snd ps)) c
   | NExpr (SApply s f a) -> wf_exprs_elim s a c
-  | NExpr (SRec s fs) -> wf_exprs_elim s fs c
+  | NExpr (SRec s fs) -> wf_fields_elim s fs c
   | NExpr (SBlock s ds t) ->
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
       wf_decls_elim s ds c
@@ -799,9 +832,9 @@ let parse_span_containment n c =
         [NTy r] (match row with None -> [] | Some eff -> [NRow eff]) c;
       wf_tys_elim s ps c
   | NTy (TUnion _ _ _) | NTy (TInter _ _ _) -> ()
-  | NDecl (SDecl s _ ps r row v) ->
+  | NDecl (SDecl s _ _ ps r row v) ->
       FStar.List.Tot.Properties.append_memP
-        (map NTy ps)
+        (map NTy (map snd ps))
         ((match r with None -> [] | Some t -> [NTy t]) @
          (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]) c;
       FStar.List.Tot.Properties.append_memP
@@ -809,7 +842,7 @@ let parse_span_containment n c =
         ((match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]) c;
       FStar.List.Tot.Properties.append_memP
         (match row with None -> [] | Some eff -> [NRow eff]) [NExpr v] c;
-      wf_tys_elim s ps c
+      wf_tys_elim s (map snd ps) c
   | NRow (SEffRow s labels) -> wf_labels_elim s labels c
   | NLabel (SEffLabel _ _ _) -> ()
 
@@ -854,9 +887,8 @@ let one_to_one (e: sexpr) : Tot bool =
   | SRec _ _     -> true
   | SBlock _ _ _ -> false
 
-// 多 field 射影の欄である。F* 側の label は span を持たないので、Proj の span
-// には射影全体の span を、受け側の変数には被射影式の span を与える。
-let rec proj_fields (s_all: span) (s_recv: span) (ls: list string)
+// 多 field 射影の欄である。旧 Core 欄へつなぐ間は label span をまだ保持しない。
+let rec proj_fields (s_all: span) (s_recv: span) (ls: list (span & string))
   : Tot (list core) (decreases ls) =
   match ls with
   | []      -> []
@@ -875,12 +907,16 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SProj s e1 _  -> CProj s (lower_expr e1)
   | SProjRec s e1 ls ->
       CLet s (lower_expr e1) (CRec s (proj_fields s (span_of_expr e1) ls))
-  | SRec s fs     -> CRec s (lower_exprs fs)
+  | SRec s fs     -> CRec s (lower_field_exprs fs)
   | SBlock _ ds t -> lower_block ds (lower_expr t)
 and lower_exprs (es: list sexpr) : Tot (list core) (decreases es) =
   match es with
   | []      -> []
   | e :: tl -> lower_expr e :: lower_exprs tl
+and lower_field_exprs (fs: list (span & sexpr)) : Tot (list core) (decreases fs) =
+  match fs with
+  | []           -> []
+  | (_, e) :: tl -> lower_expr e :: lower_field_exprs tl
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail
@@ -889,7 +925,7 @@ and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
       CLet (hull (span_of_decl d) (span_of_core rest)) (lower_decl d) rest
 and lower_decl (d: sdecl) : Tot core (decreases d) =
   match d with
-  | SDecl _ _ _ _ _ v -> lower_expr v
+  | SDecl _ _ _ _ _ _ v -> lower_expr v
 
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
