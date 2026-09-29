@@ -254,6 +254,30 @@
     [(? pair?) (ormap type-has-self? t)]
     [_ #f]))
 
+;; SUR-003。spec §5.2。Return は宣言 row にだけ書ける。
+(define argless-effect-labels '(Partial Suspend Compile Own Mutation))
+
+(define (lower-row row env fail stack self? #:type-row? type-row?)
+  (match row
+    ['#:none '()]
+    [`(SEffRow ,_ ,labels)
+     (for/list ([label (in-list labels)])
+       (lower-effect-label label env fail stack self? type-row?))]))
+
+;; ラベル名、引数の有無、型引数の lowering の順に検査する。
+(define (lower-effect-label label env fail stack self? type-row?)
+  (match label
+    [`(SEffLabel ,s ,name ,argument)
+     (cond
+       [(eq? name 'Yield)
+        (if (eq? argument '#:none)
+            (fail 'surface-invalid-effect-label s)
+            `(Yield ,(lower-sty argument env fail stack #:self? self?)))]
+       [(or (memq name argless-effect-labels)
+            (and (eq? name 'Return) (not type-row?)))
+        (if (eq? argument '#:none) name (fail 'surface-invalid-effect-label s))]
+       [else (fail 'surface-invalid-effect-label s)])]))
+
 (define (lower-sty ty env fail [stack '()] #:self? [self? #f])
   (match ty
     [`(TName ,s Self)
@@ -270,12 +294,11 @@
        [else (fail 'surface-unknown-type-name s)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
-    [`(TFn ,_ ,arguments ,result ,_row)
-     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、Task 3 で写す。
+    [`(TFn ,_ ,arguments ,result ,row)
      `(NFn ,(for/list ([a (in-list arguments)])
               (lower-sty a env fail stack #:self? self?))
            ,(lower-sty result env fail stack #:self? self?)
-           ()
+           ,(lower-row row env fail stack self? #:type-row? #t)
            ())]
     [`(TUnion ,_ ,l ,r)
      `(Union ,(lower-sty l env fail stack #:self? self?)
@@ -506,16 +529,17 @@
     ;; Bool は型引数を持たない。空の Types が E-Construct-Synth の型引数注釈になる。
     [`(SBool ,s ,b) `(Construct ,s ,b (Types))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
-    [`(SFn ,s ,params ,result-ty ,_row ,body)
-     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、Task 3 で写す。
-     ;; span は Fn 自身のものを使う。
+    [`(SFn ,s ,params ,result-ty ,row ,body)
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
            `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
+     (define effect-row
+       `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
+              ,(if (eq? row '#:none) s (node-span row))))
      `(Fn ,s ,(lower-params params env fail)
           ,result-core
-          (#:ef () ,s)
+          ,effect-row
           ,(lower-sexpr body env fail))]
     [`(SApply ,s ,f ,arguments)
      `(Apply ,s ,(lower-sexpr f env fail)
@@ -580,17 +604,20 @@
                        (node-span ty-or-none)))))
      (define bound-core (lower-sexpr bound env fail))
      (λ (rest) `(Let ,s_tail ,binder ,bound-core ,rest))]
-    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,_row ,body)
-     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、出力 row の span に宣言 span を使う。
+    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,row ,body)
      (define params-core (lower-params params env fail))
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
            `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
+     ;; 明示 row は row 節の span、省略時は関数宣言全体の span を使う。
+     (define effect-row
+       `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
+              ,(if (eq? row '#:none) s (node-span row))))
      (define body-core (lower-sexpr body env fail))
      (λ (rest) `(Recur ,s_tail (#:bind ,f ,s_f) ,params-core
                        ,result-core
-                       (#:ef () ,s)
+                       ,effect-row
                        ,body-core ,rest))]))
 
 ;; spec §7.2。畳み込みは右である。lower [b1 b2] e = L(b1, L(b2, lower e))。

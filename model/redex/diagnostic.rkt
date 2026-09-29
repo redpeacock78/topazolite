@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 25)
+(define diagnostic-registry-version 26)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -408,6 +408,10 @@
     ("E-SUR-022" surface-invalid-trait-composition "合成できない trait を `&` で並べた")
     ("E-SUR-023" surface-type-trait-name-collision "型の名前と trait の名前が衝突した")))
 
+(define surface-entries-v26
+  '(("E-SUR-024" surface-invalid-effect-label
+     "Surface で書けない Effect label、または引数の形が合わない Effect label")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -441,7 +445,8 @@
           (rows 'surface 19 surface-entries-v19)
           (rows 'surface 20 surface-entries-v20)
           (rows 'surface 21 surface-entries-v21)
-          (rows 'surface 22 surface-entries-v22)))
+          (rows 'surface 22 surface-entries-v22)
+          (rows 'surface 26 surface-entries-v26)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。

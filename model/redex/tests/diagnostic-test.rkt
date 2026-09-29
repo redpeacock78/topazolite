@@ -29,7 +29,8 @@
          "diagnostic-fixture-v22.rkt"
          "diagnostic-fixture-v23.rkt"
          "diagnostic-fixture-v24.rkt"
-         "diagnostic-fixture-v25.rkt")
+         "diagnostic-fixture-v25.rkt"
+         "diagnostic-fixture-v26.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -72,7 +73,7 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 202)
+ (check-equal? (length diagnostic-registry) 203)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
@@ -82,7 +83,7 @@
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (check-equal? (count-of 'expand) 7)
- (check-equal? (count-of 'surface) 23)
+ (check-equal? (count-of 'surface) 24)
  (define (since-count v)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (= (diagnostic-code-since row) v))
@@ -91,7 +92,7 @@
  ;; version 11 の elaborate / typing、version 12 の elaborate、version 13 の
  ;; elaborate / typing、version 14 の expand、version 15、17、19、20、21、22 の surface、
  ;; version 16 の elaborate / typing、version 18 の typing、version 23 と 24 の elaborate、
- ;; version 25 の elaborate / typing である。
+ ;; version 25 の elaborate / typing、version 26 の surface である。
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
  (check-equal? (since-count 3) 13)
@@ -116,6 +117,7 @@
  (check-equal? (since-count 23) 1)
  (check-equal? (since-count 24) 1)
  (check-equal? (since-count 25) 2)
+ (check-equal? (since-count 26) 1)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
@@ -205,13 +207,13 @@
 
 ;; test 12
 (test-case
- "schema version は 4、registry version は 25 である"
+ "schema version は 4、registry version は 26 である"
  (check-equal? diagnostic-schema-version 4)
- (check-equal? diagnostic-registry-version 25))
+ (check-equal? diagnostic-registry-version 26))
 
 (test-case
- "registry version 25 と typing の入口 key"
- (check-equal? diagnostic-registry-version 25)
+ "registry version 26 と typing の入口 key"
+ (check-equal? diagnostic-registry-version 26)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004")
  (check-equal? (diagnostic-code-of 'typing 'type-origin-invalid)
@@ -652,6 +654,18 @@
  "凍結 fixture v25 の全 (code phase key) が現在の registry に同じ組で存在する"
  (check-equal? (length diagnostic-entries-v25) 202)
  (for ([entry (in-list diagnostic-entries-v25)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true
+    (and row
+         (eq? (diagnostic-code-phase row) phase)
+         (eq? (diagnostic-code-key row) key))
+    (format "~a が registry に同じ組で存在する" code))))
+
+(test-case
+ "凍結 fixture v26 の全 (code phase key) が現在の registry に同じ組で存在する"
+ (check-equal? (length diagnostic-entries-v26) 203)
+ (for ([entry (in-list diagnostic-entries-v26)])
    (match-define (list code phase key) entry)
    (define row (diagnostic-code-row code))
    (check-true

@@ -506,6 +506,7 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-021` `surface-trait-in-type-position`：trait 名または合成宣言の名前を型の位置で使った
 - `E-SUR-022` `surface-invalid-trait-composition`：同じ鍵の trait、または label が衝突する trait を `&` で並べた
 - `E-SUR-023` `surface-type-trait-name-collision`：型の名前が trait の名前と衝突した。基本型の名前の trait を含む
+- `E-SUR-024` `surface-invalid-effect-label`：Surface で書けない Effect label、または引数の形が合わない Effect label
 
 `E-SUR-022` の primary span は、失敗した `TInter` 全体を指す。
 related は `composition-left` と `composition-right` の 2 件で、原文に書かれた左右の operand の span と表示名を持つ。
@@ -522,6 +523,7 @@ E-SUR-012 は registry v17、E-SUR-013 から E-SUR-018 は P2h1 の registry v1
 E-SUR-019 は P2h2 の registry v20 で追加した。
 E-SUR-020 は P2h3a の registry v21 で追加した。
 E-SUR-021 から E-SUR-023 は P2h3b の registry v22 で追加した。
+E-SUR-024 は P2j の registry v26 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity
