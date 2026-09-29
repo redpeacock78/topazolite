@@ -3,13 +3,16 @@
 (require racket/match
          redex/reduction-semantics
          "diagnostic.rkt"
+         "data-env.rkt"
          "erase.rkt"
          "lang.rkt"
          "macro-expand.rkt"
          "span-core.rkt"
          "traits.rkt"
          "type-equiv.rkt"
-         "validators.rkt")
+         "type-shape.rkt"
+         "validators.rkt"
+         (submod "data-env.rkt" data-env-internal))
 
 (provide Δ0
          Γ0
@@ -189,9 +192,316 @@
            (bail 'surface-trait-name-collision kind (first (car rows)))]
           [else (loop (cdr rows) (set-add seen (first (car rows))))])))
 
-(struct trait-ledger (env r0 gamma0 global-bindings) #:transparent)
+(define data-reserved-type-names
+  '(Int Bool Unit String Never Res List Option Result Owned Borrowed BorrowedMut
+        RawPtr NFn TypeInfo Proof Record Untrusted Refined Union Intersection
+        ForallRegion Data))
+(define builtin-data-constructors '(true false nil cons none some ok ng))
 
-(define (make-trait-ledger env #:fail fail)
+(define (data-type-occurrences type)
+  (define found '())
+  (define (walk term)
+    (match term
+      [`(Data ,T (,arguments ...))
+       (set! found (cons (list T arguments) found))
+       (for-each walk arguments)]
+      [(? pair? terms) (for-each walk terms)]
+      [_ (void)]))
+  (walk type)
+  (reverse found))
+
+(define (type-param-occurrences type)
+  (define found '())
+  (define (walk term)
+    (match term
+      [`(Param ,X) (set! found (cons X found))]
+      [(? pair? terms) (for-each walk terms)]
+      [_ (void)]))
+  (walk type)
+  (reverse found))
+
+(define (contains-param? type X)
+  (match type
+    [`(Param ,Y) (eq? X Y)]
+    [(? pair? terms) (ormap (λ (term) (contains-param? term X)) terms)]
+    [_ #f]))
+
+(define (contains-component-data? type component)
+  (match type
+    [`(Data ,T (,arguments ...))
+     (or (memq T component)
+         (ormap (λ (argument)
+                  (contains-component-data? argument component))
+                arguments))]
+    [(? pair? terms)
+     (ormap (λ (term) (contains-component-data? term component)) terms)]
+    [_ #f]))
+
+(define (region-closed-in? type bound)
+  (match type
+    [`(ForallRegion (,parameters ...) ,body)
+     (region-closed-in? body (append parameters bound))]
+    [`(Borrowed ,payload ,region)
+     (and (match region [`(RParam ,name) (memq name bound)] [_ #f])
+          (region-closed-in? payload bound))]
+    [`(BorrowedMut ,payload ,region)
+     (and (match region [`(RParam ,name) (memq name bound)] [_ #f])
+          (region-closed-in? payload bound))]
+    [(? pair? terms) (andmap (λ (term) (region-closed-in? term bound)) terms)]
+    [_ #t]))
+
+(define (field-param-shape type)
+  (match type
+    [`(Param ,_) 'Int]
+    [(? pair? terms) (map field-param-shape terms)]
+    [_ type]))
+
+(define (data-field-rows declarations)
+  (append-map
+   (λ (declaration)
+     (append-map
+      (λ (constructor)
+        (for/list ([type (in-list (second constructor))]
+                    [position (in-naturals)])
+          (list (first declaration) (first constructor) position type)))
+      (third declaration)))
+   declarations))
+
+(define (validate-data-decls! declarations index bail)
+  (define (fail-data reason T [K #f] [position #f] [X #f])
+    (bail reason 'data (list T K position X)))
+  (define decl-table (data-index-decls index))
+  (define fields (data-field-rows declarations))
+
+  ;; Names are collected before field references are checked, allowing mutual recursion.
+  (let loop ([remaining declarations] [seen (seteq)])
+    (unless (null? remaining)
+      (define T (first (car remaining)))
+      (when (set-member? seen T) (fail-data 'duplicate-data-type T))
+      (when (memq T data-reserved-type-names) (fail-data 'reserved-data-type T))
+      (loop (cdr remaining) (set-add seen T))))
+
+  (for ([declaration (in-list declarations)])
+    (define T (first declaration))
+    (let loop ([parameters (second declaration)] [seen (seteq)])
+      (unless (null? parameters)
+        (define X (car parameters))
+        (when (set-member? seen X) (fail-data 'duplicate-type-parameter T #f #f X))
+        (loop (cdr parameters) (set-add seen X))))
+    (when (null? (third declaration))
+      (fail-data 'empty-data-type T)))
+
+  (let loop ([remaining declarations] [seen (list->seteq builtin-data-constructors)])
+    (unless (null? remaining)
+      (define declaration (car remaining))
+      (for ([constructor (in-list (third declaration))])
+        (define K (first constructor))
+        (when (set-member? seen K) (fail-data 'duplicate-constructor
+                                              (first declaration) K))
+        (set! seen (set-add seen K)))
+      (loop (cdr remaining) seen)))
+
+  (for ([field (in-list fields)])
+    (match-define (list T K position type) field)
+    (define parameters (second (hash-ref decl-table T)))
+    (for ([X (in-list (type-param-occurrences type))])
+      (unless (memq X parameters)
+        (fail-data 'unknown-type-parameter T K position X)))
+    (for ([occurrence (in-list (data-type-occurrences type))])
+      (match-define (list referenced arguments) occurrence)
+      (unless (hash-ref decl-table referenced #f)
+        (fail-data 'unknown-data-type T K position)))
+    (for ([occurrence (in-list (data-type-occurrences type))])
+      (match-define (list referenced arguments) occurrence)
+      (define target (hash-ref decl-table referenced))
+      (unless (= (length arguments) (length (second target)))
+        (fail-data 'data-arity-mismatch T K position)))
+    (unless (region-closed-in? type '())
+      (fail-data 'unbound-region-in-field T K position)))
+
+  (define names (map first declarations))
+  (define dependencies
+    (for/hasheq ([declaration (in-list declarations)])
+      (values
+       (first declaration)
+       (remove-duplicates
+        (append-map (λ (field)
+                      (map first (data-type-occurrences (fourth field))))
+                    (filter (λ (field) (eq? (first field) (first declaration))) fields))
+        eq?))))
+  ;; Ponytail: pairwise reachability is O(V(V+E)); switch to Tarjan if large data
+  ;; declaration sets make ledger construction measurable.
+  (define (reachable-from start)
+    (let loop ([todo (list start)] [seen '()])
+      (cond
+        [(null? todo) seen]
+        [(memq (car todo) seen) (loop (cdr todo) seen)]
+        [else
+         (loop (append (hash-ref dependencies (car todo) '()) (cdr todo))
+               (cons (car todo) seen))])))
+  (define reachability
+    (for/hasheq ([T (in-list names)])
+      (values T (reachable-from T))))
+  (define (component-of T)
+    (filter (λ (other)
+              (and (memq other (hash-ref reachability T))
+                   (memq T (hash-ref reachability other))))
+            names))
+  (define components
+    (for/hasheq ([T (in-list names)]) (values T (component-of T))))
+  (define (cyclic-component? component)
+    (or (> (length component) 1)
+        (memq (car component) (hash-ref dependencies (car component) '()))))
+  (define (first-internal-field component)
+    (for/first ([field (in-list fields)]
+                #:when (and (memq (first field) component)
+                            (ormap (λ (occurrence)
+                                     (memq (first occurrence) component))
+                                   (data-type-occurrences (fourth field)))))
+      field))
+
+  (define checked-components '())
+  (for ([T (in-list names)])
+    (define component (hash-ref components T))
+    (unless (member component checked-components equal?)
+      (set! checked-components (cons component checked-components))
+      (when (cyclic-component? component)
+        (define arities
+          (remove-duplicates
+           (map (λ (member) (length (second (hash-ref decl-table member)))) component)))
+        (when (> (length arities) 1)
+          (match-define (list source K position _) (first-internal-field component))
+          (fail-data 'irregular-recursion source K position))
+        (for ([field (in-list fields)] #:when (memq (first field) component))
+          (match-define (list source K position type) field)
+          (define parameters (second (hash-ref decl-table source)))
+          (for ([occurrence (in-list (data-type-occurrences type))]
+                #:when (memq (first occurrence) component))
+            (unless (equal? (second occurrence)
+                            (map (λ (X) `(Param ,X)) parameters))
+              (fail-data 'irregular-recursion source K position)))))))
+
+  (define variance-cache (make-hasheq))
+  (letrec
+      ([component-variances
+        (λ (T)
+          (or (hash-ref variance-cache T #f)
+              (let* ([component (hash-ref components T)]
+                     [_ (for* ([field (in-list fields)]
+                               #:when (memq (first field) component)
+                               [occurrence (in-list
+                                            (data-type-occurrences (fourth field)))]
+                               #:unless (memq (first occurrence) component))
+                          (component-variances (first occurrence)))]
+                     [arity (length (second (hash-ref decl-table T)))]
+                     [variances
+                      (for/list ([position (in-range arity)])
+                        (for/and ([member (in-list component)])
+                          (define parameters (second (hash-ref decl-table member)))
+                          (define X (list-ref parameters position))
+                          (for/and ([field (in-list fields)]
+                                    #:when (eq? (first field) member))
+                            (parameter-positive? (fourth field) X component))))])
+                (for ([member (in-list component)])
+                  (hash-set! variance-cache member variances))
+                variances)))]
+       [parameter-positive?
+        (λ (type X component)
+          (match type
+            [`(Param ,_) #t]
+            [`(Owned ,inner) (parameter-positive? inner X component)]
+            [`(Untrusted ,inner) (parameter-positive? inner X component)]
+            [`(Refined ,inner ,_) (parameter-positive? inner X component)]
+            [`(List ,inner) (parameter-positive? inner X component)]
+            [`(Option ,inner) (parameter-positive? inner X component)]
+            [`(Result ,left ,right)
+             (and (parameter-positive? left X component)
+                  (parameter-positive? right X component))]
+            [`(Union ,left ,right)
+             (and (parameter-positive? left X component)
+                  (parameter-positive? right X component))]
+            [`(Record ,row)
+             (for/and ([field (in-list row)])
+               (if (eq? (third field) 'imm)
+                   (parameter-positive? (second field) X component)
+                   (not (contains-param? (second field) X))))]
+            [`(NFn (,parameters ...) ,return-type ,in-row ,out-row ,obligations ,origin)
+             (and (not (or (contains-param? parameters X)
+                           (contains-param? in-row X)
+                           (contains-param? out-row X)
+                           (contains-param? obligations X)
+                           (contains-param? origin X)))
+                  (parameter-positive? return-type X component))]
+            [`(Data ,target (,arguments ...))
+             (if (memq target component)
+                 (andmap (λ (argument) (parameter-positive? argument X component))
+                         arguments)
+                 (let ([variances (component-variances target)])
+                   (for/and ([argument (in-list arguments)]
+                             [positive? (in-list variances)])
+                     (or (not (contains-param? argument X))
+                         (and positive?
+                              (parameter-positive? argument X component))))))]
+            [_ (not (contains-param? type X))]))]
+       [recursive-positive?
+        (λ (type component)
+          (match type
+            [`(Owned ,inner) (recursive-positive? inner component)]
+            [`(Untrusted ,inner) (recursive-positive? inner component)]
+            [`(Refined ,inner ,_) (recursive-positive? inner component)]
+            [`(List ,inner) (recursive-positive? inner component)]
+            [`(Option ,inner) (recursive-positive? inner component)]
+            [`(Result ,left ,right)
+             (and (recursive-positive? left component)
+                  (recursive-positive? right component))]
+            [`(Union ,left ,right)
+             (and (recursive-positive? left component)
+                  (recursive-positive? right component))]
+            [`(Record ,row)
+             (for/and ([field (in-list row)])
+               (if (eq? (third field) 'imm)
+                   (recursive-positive? (second field) component)
+                   (not (contains-component-data? (second field) component))))]
+            [`(NFn (,parameters ...) ,return-type ,in-row ,out-row ,obligations ,origin)
+             (and (not (or (contains-component-data? parameters component)
+                           (contains-component-data? in-row component)
+                           (contains-component-data? out-row component)
+                           (contains-component-data? obligations component)
+                           (contains-component-data? origin component)))
+                  (recursive-positive? return-type component))]
+            [`(Data ,target (,arguments ...))
+             (if (memq target component)
+                 #t
+                 (let ([variances (component-variances target)])
+                   (for/and ([argument (in-list arguments)]
+                             [positive? (in-list variances)])
+                     (or (not (contains-component-data? argument component))
+                         (and positive?
+                              (recursive-positive? argument component))))))]
+            [`(Borrowed ,payload ,_) (not (contains-component-data? payload component))]
+            [`(BorrowedMut ,payload ,_) (not (contains-component-data? payload component))]
+            [`(RawPtr ,payload ,_ ,_ ,_ ,_ ,_)
+             (not (contains-component-data? payload component))]
+            [`(ForallRegion (,_ ...) ,body)
+             (not (contains-component-data? body component))]
+            [_ (not (contains-component-data? type component))]))])
+    (for ([field (in-list fields)])
+      (match-define (list T K position type) field)
+      (unless (recursive-positive? type (hash-ref components T))
+        (fail-data 'non-positive-recursion T K position)))
+
+  (parameterize ([caching-enabled? #f]
+                 [data-index-parameter index])
+    (for ([field (in-list fields)])
+      (match-define (list T K position type) field)
+      (define shape-type (field-param-shape type))
+      (unless (and (redex-match? G2m τ shape-type)
+                   (type-shape-ok? shape-type))
+        (fail-data 'ill-formed-field-type T K position))))))
+
+(struct trait-ledger (env r0 gamma0 global-bindings data) #:transparent)
+
+(define (make-trait-ledger env #:data [data-declarations '()] #:fail fail)
   (let/ec return
     (define (bail reason kind key) (return (fail reason kind key)))
     (define r0 (append kernel-r0 (trait-r0-entries/env env)))
@@ -209,7 +519,9 @@
              r0)
      bail 'origin-id)
     (check-unique-keys! gamma0 bail 'primitive-name)
-    (trait-ledger env r0 gamma0 (trait-global-bindings/env env))))
+    (define data-index (build-data-index data-declarations))
+    (validate-data-decls! data-declarations data-index bail)
+    (trait-ledger env r0 gamma0 (trait-global-bindings/env env) data-index)))
 
 (define canonical-trait-ledger
   (make-trait-ledger canonical-trait-env
@@ -235,7 +547,8 @@
 (define (call-with-trait-ledger ledger thunk)
   (parameterize ([caching-enabled? (and (caching-enabled?)
                                         (eq? ledger canonical-trait-ledger))]
-                 [ledger-parameter ledger])
+                 [ledger-parameter ledger]
+                 [data-index-parameter (trait-ledger-data ledger)])
     (thunk)))
 
 (define (current-trait-env) (trait-ledger-env (current-trait-ledger)))
