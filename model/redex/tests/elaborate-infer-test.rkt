@@ -1,11 +1,12 @@
 #lang racket
 
-;; SUR-008。戻り型を省略した Fn と Recur の elaboration を UCore の入力で固定する。
+;; SUR-008 / SUR-015。戻り型を省略した Fn と Recur の elaboration を UCore の入力で固定する。
 
 (require racket/match
          rackunit
          "../diagnostic.rkt"
-         "../elaborate.rkt")
+         "../elaborate.rkt"
+         "../erase.rkt")
 
 (define (code-of term)
   (match (elab term)
@@ -40,15 +41,76 @@
    (type-of '(Recur f ((x Int)) #:infer (Partial) x (Apply f 1)))
    'Int))
 
-(test-case "SUR-008: 合成位置の省略 Fn の本体の Return は E-TYP-024 を返す"
+(test-case "SUR-015: 合成位置の省略 Fn は Return payload から戻り型を推論する"
   (define t '(Fn () #:infer () (Return 1)))
-  (check-equal? (code-of t) e-typ-024)
-  (check-equal? (found-of t) 'return-in-synth))
+  (check-equal? (code-of t) 'ok)
+  (check-match (type-of t) `(NFn () Int . ,_)))
 
-(test-case "SUR-008: 入れ子の関数の宣言 row の Return label も E-TYP-024 を返す"
+(test-case "SUR-015: 候補があれば入れ子の関数宣言 row の Return は解決する"
+  (define t '(Fn () #:infer () (Let g (Fn () Int (Return) 1) 0)))
+  (match (elab t)
+    [(list _ type _ callables)
+     (check-equal? type '(NFn () Int () () () User))
+     (check-true
+      (for/or ([entry (in-list callables)])
+        (match (second entry)
+          [`(NFn () Int () ((Return ,_ Int)) () User) #t]
+          [_ #f])))]
+    [other (fail-check (format "成功しなかった: ~s" other))]))
+
+(test-case "SUR-015: 拒否で終わる下見は内側 callable と boundary の連番を消費しない"
+  ;; 最初の field の Return payload が内側 Fn を合成し、callable/boundary を
+  ;; 割り当てて候補を残す。次の field の省略仮引数 Fn は合成時に拒否されるため
+  ;; Rec 全体の下見も失敗するが、本番は先の候補 Record 型で検査できる。
+  (define inner-fn '(Fn ((x Int)) Int () x))
+  (define inferred-fn '(Fn ((x #:infer)) #:infer () x))
+  (define candidate-record
+    (list 'Rec (list (list 'a 'imm 1) (list 'b 'imm inner-fn))))
+  (define body
+    (list 'Rec
+          (list (list 'a 'imm (list 'Return candidate-record))
+                (list 'b 'imm inferred-fn))))
+  (define inferred (elab `(Fn () #:infer () ,body)))
+  (define explicit
+    (elab `(Fn () (Record ((a Int imm) (b (NFn (Int) Int () ()) imm)))
+                () ,body)))
+  (match* (inferred explicit)
+    [((list core-i _ _ callables-i) (list core-e _ _ callables-e))
+     (check-equal? (erase-core core-i) (erase-core core-e))
+     (check-equal? callables-i callables-e)]
+    [(_ _) (fail-check (format "成功しなかった: ~s ~s" inferred explicit))]))
+
+;; 外側の戻り型を Return row に持つ閉包を返すと、推論型が自己参照する。
+(test-case "SUR-015: 自己参照する戻り型の閉包は E-TYP-012 で拒否する"
   (define t '(Fn () #:infer () (Fn () Int (Return) 1)))
-  (check-equal? (code-of t) e-typ-024)
-  (check-equal? (found-of t) 'return-in-synth))
+  (check-equal? (code-of t)
+                (diagnostic-code-of 'elaborate 'type-mismatch)))
+
+(test-case "SUR-015: 候補が無い入れ子の関数宣言 row は E-TYP-024 を保つ"
+  (check-equal? (code-of '(Fn () #:infer () (Fn () Int (Return) y)))
+                e-typ-024))
+
+(test-case "SUR-015: 期待型付き Fn の省略戻り型は明示注釈と同じ Core と Φ を作る"
+  (define inferred
+    (elab '(Fn () (NFn () Int () ()) () (Fn () #:infer () (Return 1)))))
+  (define explicit
+    (elab '(Fn () (NFn () Int () ()) () (Fn () Int () (Return 1)))))
+  (match* (inferred explicit)
+    [((list core-i _ _ callables-i) (list core-e _ _ callables-e))
+     (check-equal? (erase-core core-i) (erase-core core-e))
+     (check-equal? callables-i callables-e)]
+    [(_ _) (fail-check (format "成功しなかった: ~s ~s" inferred explicit))]))
+
+(test-case "SUR-015: 省略戻り型の FnDecl は明示注釈と同じ Core と Φ を作る"
+  (define inferred
+    (elab '(FnDecl f ((x Int)) #:infer () (Return x) 0)))
+  (define explicit
+    (elab '(FnDecl f ((x Int)) Int () (Return x) 0)))
+  (match* (inferred explicit)
+    [((list core-i _ _ callables-i) (list core-e _ _ callables-e))
+     (check-equal? (erase-core core-i) (erase-core core-e))
+     (check-equal? callables-i callables-e)]
+    [(_ _) (fail-check (format "成功しなかった: ~s ~s" inferred explicit))]))
 
 (test-case "SUR-008: 検査位置の省略 Fn の本体の Return は受理される"
   (check-equal?

@@ -394,6 +394,9 @@
               [`(,_ ,_ #:infer)
                ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
                (reject span 'return-type-not-inferable 'return-in-synth)]
+              [`(,_ ,boundary (#:probe ,_))
+               ;; SUR-015（spec §6.2）。下見では Return row の型を仮置きする。
+               `(Return ,boundary Never)]
               [`(,_ ,boundary ,type) `(Return ,boundary ,type)]
               [_ (reject span 'return-label-outside-boundary)])]
            [`(Yield ,type)
@@ -1040,6 +1043,38 @@
                  return-type boundary body-result
                  signature callable reserved-with-formals))
 
+    ;; SUR-015（spec §6.2）。下見中に消費した連番と callable 表を必ず戻す。
+    (define (call-with-restored-state thunk)
+      (define saved (list boundary-counter callable-counter owned-counter
+                          reversed-callables))
+      (dynamic-wind
+       void
+       thunk
+       (λ ()
+         (set! boundary-counter (first saved))
+         (set! callable-counter (second saved))
+         (set! owned-counter (third saved))
+         (set! reversed-callables (fourth saved)))))
+
+    ;; SUR-015（spec §6.1、§6.2）。通常の本体結果型を優先し、Never なら
+    ;; 最初に合成できた Return payload の型を候補にする。
+    ;; ponytail: 入れ子ごとに下見を行うため深さに対して指数の費用。必要になれば節点ごとに記憶する。
+    (define (probe-return-type body environment delta propositions boundaries)
+      (call-with-restored-state
+       (λ ()
+         (define candidates (box '()))
+         (define boundary (fresh-boundary))
+         (define body-type
+           (with-handlers ([exn:fail:elab? (λ (_) #f)])
+             (judgment-type
+              (synth body environment delta propositions
+                     (cons `(FunctionBoundary ,boundary
+                                              (#:probe ,candidates))
+                           boundaries)))))
+         (cond [(and body-type (not (eq? body-type 'Never))) body-type]
+               [(pair? (unbox candidates)) (first (unbox candidates))]
+               [else #f]))))
+
     (define (elaborate-inferred-fn s parameter-binders raw-parameter-types
                                   raw-row body
                                   environment delta propositions boundaries)
@@ -1048,28 +1083,39 @@
                     environment delta))
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
-      (define boundary (fresh-boundary))
-      (define body-result
-        (synth body
-               (extend environment parameters parameter-types)
-               delta propositions
-               (cons `(FunctionBoundary ,boundary #:infer) boundaries)))
-      (define return-type (judgment-type body-result))
-      (check-function-body-row s body-result return-type boundary declared-row)
-      (define-values (capture-raw-names raw-names capture-binders core-binders
-                                        reserved-with-formals)
-        (prepare-fn-binders s parameter-binders parameters parameter-types
-                            captures capture-types body environment))
-      (define signature
-        `(NFn ,(append capture-types parameter-types)
-             ,return-type () ,declared-row () User))
-      ;; 省略時は、本体が作る入れ子の CallableId の後に割り当てる。
-      (define callable (fresh-callable signature))
-      (finish-fn s parameter-binders parameter-types
-                 captures capture-types capture-raw-names raw-names
-                 capture-binders core-binders
-                 return-type boundary body-result
-                 signature callable reserved-with-formals))
+      (define parameter-environment
+        (extend environment parameters parameter-types))
+      (define inferred-return-type
+        (and (mentions-return? (list raw-row body))
+             (probe-return-type body parameter-environment
+                                delta propositions boundaries)))
+      (if inferred-return-type
+          (elaborate-annotated-fn
+           s parameter-binders raw-parameter-types
+           (λ () inferred-return-type)
+           raw-row body environment delta propositions boundaries)
+          (let ()
+            (define boundary (fresh-boundary))
+            (define body-result
+              (synth body parameter-environment
+                     delta propositions
+                     (cons `(FunctionBoundary ,boundary #:infer) boundaries)))
+            (define return-type (judgment-type body-result))
+            (check-function-body-row s body-result return-type boundary declared-row)
+            (define-values (capture-raw-names raw-names capture-binders core-binders
+                                              reserved-with-formals)
+              (prepare-fn-binders s parameter-binders parameters parameter-types
+                                  captures capture-types body environment))
+            (define signature
+              `(NFn ,(append capture-types parameter-types)
+                   ,return-type () ,declared-row () User))
+            ;; 省略時は、本体が作る入れ子の CallableId の後に割り当てる。
+            (define callable (fresh-callable signature))
+          (finish-fn s parameter-binders parameter-types
+                     captures capture-types capture-raw-names raw-names
+                     capture-binders core-binders
+                     return-type boundary body-result
+                     signature callable reserved-with-formals))))
 
     ;; 注釈付きの Recur と FnDecl は、関数宣言境界の有無だけを共有する。
     (define (elaborate-recur-annotated
@@ -1152,6 +1198,114 @@
                 (judgment-type continuation-result)
                 (judgment-row continuation-result)))
 
+    ;; SUR-008 / SUR-015。Recur の推論前検査を FnDecl の下見前にも共有する。
+    (define (prepare-inferred-recur-header
+             s raw-function parameter-binders raw-parameter-types
+             body environment delta)
+      (define function (peel-bind raw-function))
+      (define parameters (map peel-bind parameter-binders))
+      (when (check-duplicates (cons function parameters))
+        (reject s 'duplicate-recur-binder function parameters))
+      (define parameter-types
+        (for/list ([type (in-list raw-parameter-types)])
+          (resolve-annotation type delta s)))
+      (when (captures-owned? body (cons function parameters) environment)
+        (reject s 'owned-recur-capture))
+      (when (set-member? (free-vars body) function)
+        (reject s 'return-type-not-inferable 'self-reference))
+      (values function parameters parameter-types
+              (extend environment parameters parameter-types)))
+
+    ;; SUR-008 / SUR-015。戻り型が推論される Recur と、候補が無い FnDecl。
+    ;; FnDecl のときだけ body-boundary? により Return の旧 E-TYP-024 を保つ。
+    (define (elaborate-recur-inferred
+             s raw-function parameter-binders raw-parameter-types
+             raw-row body continuation
+             environment delta propositions boundaries
+             #:body-boundary? [body-boundary? #f])
+      (define-values (function parameters parameter-types parameter-environment)
+        (prepare-inferred-recur-header
+         s raw-function parameter-binders raw-parameter-types body environment delta))
+      (define declared-row
+        (resolve-declaration-row raw-row delta boundaries s))
+      (define body-boundary (and body-boundary? (fresh-boundary)))
+      (define body-boundaries
+        (if body-boundary
+            (cons `(FunctionBoundary ,body-boundary #:infer) boundaries)
+            boundaries))
+      (define body-result
+        (synth body parameter-environment delta propositions body-boundaries))
+      (define return-type (judgment-type body-result))
+      (unless (row-subset? (judgment-row body-result) declared-row)
+        (reject s 'undeclared-recur-effect
+                declared-row (judgment-row body-result)))
+      (define signature
+        `(NFn ,parameter-types ,return-type () ,declared-row () User))
+      (define callable (fresh-callable signature))
+      (define raw-names
+        (fresh-owned-names
+         parameter-types
+         (set-union (form-symbols body)
+                    (list->set parameters)
+                    (set function)
+                    (list->set (map first environment)))))
+      (define core-binders
+        (owned-parameter-binders parameter-binders raw-names))
+      (define function-environment
+        (extend environment (list function) (list signature)))
+      (define continuation-result
+        (synth continuation function-environment
+               delta propositions boundaries))
+      (define wrapped-body
+        (if (ormap values raw-names)
+            `(Scope ,s ()
+                    ,(wrap-owned-lets parameter-binders parameter-types
+                                      raw-names (judgment-core body-result)))
+            (judgment-core body-result)))
+      (define recur-core
+        `(Recur ,s ,callable ,raw-function ,core-binders
+                ,wrapped-body ,(judgment-core continuation-result)))
+      (check-recur-body-gate s function parameters
+                             (judgment-core body-result)
+                             parameter-environment
+                             (reverse reversed-callables)
+                             declared-row)
+      (judgment recur-core
+                (judgment-type continuation-result)
+                (judgment-row continuation-result)))
+
+    ;; SUR-015（spec §6.1〜§6.4）。FnDecl の候補なし経路は既存の推論規則へ戻す。
+    (define (elaborate-inferred-fndecl
+             s raw-function parameter-binders raw-parameter-types
+             raw-row body continuation
+             environment delta propositions boundaries)
+      (if (not (mentions-return? (list raw-row body)))
+          (elaborate-recur-inferred
+           s raw-function parameter-binders raw-parameter-types
+           raw-row body continuation environment delta propositions boundaries)
+          (let-values ([(function parameters parameter-types parameter-environment)
+                        (prepare-inferred-recur-header
+                         s raw-function parameter-binders raw-parameter-types
+                         body environment delta)])
+            ;; FnDecl の宣言 row は、自身の境界を積む前に外側で解決する。
+            (define _declared-row
+              (resolve-declaration-row raw-row delta boundaries s))
+            (define inferred-return-type
+              (probe-return-type body parameter-environment
+                                 delta propositions boundaries))
+            (if inferred-return-type
+                (elaborate-recur-annotated
+                 s raw-function parameter-binders raw-parameter-types
+                 (λ () inferred-return-type)
+                 raw-row body continuation
+                 environment delta propositions boundaries
+                 #:boundary? #t)
+                (elaborate-recur-inferred
+                 s raw-function parameter-binders raw-parameter-types
+                 raw-row body continuation
+                 environment delta propositions boundaries
+                 #:body-boundary? #t)))))
+
     (define (synth expression environment delta propositions boundaries)
       (define s (span-of expression))
       (define result
@@ -1192,7 +1346,13 @@
           environment delta propositions boundaries
           #:boundary? (mentions-return? (list raw-row body)))]
 
-        ;; 戻り型を推論する FnDecl は P2k1 Task 4 まで Recur と同じ経路を使う。
+        [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
+                  (#:infer ,_) ,raw-row ,body ,continuation)
+         (elaborate-inferred-fndecl
+          s raw-function parameter-binders raw-parameter-types
+          raw-row body continuation
+          environment delta propositions boundaries)]
+
         [`(FnDecl ,fields ...)
          (synth/raw `(Recur ,s ,@fields)
                     environment delta propositions boundaries)]
@@ -1409,6 +1569,15 @@
            [`(,_ ,_ #:infer)
             ;; SUR-008。推論中の戻り型で Return の payload を検査できない。
             (reject s 'return-type-not-inferable 'return-in-synth)]
+           [`(,_ ,boundary (#:probe ,candidates))
+            ;; SUR-015（spec §6.2）。payload を合成できなければ本番へ回す。
+            (with-handlers ([exn:fail:elab? (λ (_) (void))])
+              (define returned-result
+                (synth returned environment delta propositions boundaries))
+              (set-box! candidates
+                        (append (unbox candidates)
+                                (list (judgment-type returned-result)))))
+            (judgment `(#:lit unit ,s) 'Never `((Return ,boundary Never)))]
            [`(,_ ,boundary ,return-type)
             (define returned-result
               (check returned return-type
@@ -1426,66 +1595,10 @@
 
         [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  (#:infer ,_) ,raw-row ,body ,continuation)
-         (define function (peel-bind raw-function))
-         (define parameters (map peel-bind parameter-binders))
-         (when (check-duplicates (cons function parameters))
-           (reject s 'duplicate-recur-binder function parameters))
-         (define parameter-types
-           (for/list ([type (in-list raw-parameter-types)])
-             (resolve-annotation type delta s)))
-         ;; 省略・注釈付きの両方で同じ順序を保つ。
-         (when (captures-owned? body (cons function parameters) environment)
-           (reject s 'owned-recur-capture))
-         (when (set-member? (free-vars body) function)
-           (reject s 'return-type-not-inferable 'self-reference))
-         (define declared-row
-           (resolve-declaration-row raw-row delta boundaries s))
-         ;; Recur は関数境界を積まない。f をまだ束縛せず、本体から戻り型を合成する。
-         (define parameter-environment
-           (extend environment parameters parameter-types))
-         (define body-result
-           (synth body parameter-environment
-                  delta propositions boundaries))
-         (define return-type (judgment-type body-result))
-         (unless (row-subset? (judgment-row body-result) declared-row)
-           (reject s 'undeclared-recur-effect
-                   declared-row (judgment-row body-result)))
-         (define signature
-           `(NFn ,parameter-types ,return-type () ,declared-row () User))
-         (define callable (fresh-callable signature))
-         (define raw-names
-           (fresh-owned-names
-            parameter-types
-            (set-union (form-symbols body)
-                       (list->set parameters)
-                       (set function)
-                       (list->set (map first environment)))))
-         (define core-binders
-           (owned-parameter-binders parameter-binders raw-names))
-         (define function-environment
-           (extend environment (list function) (list signature)))
-         (define continuation-result
-           (synth continuation function-environment
-                  delta propositions boundaries))
-         (define wrapped-body
-           (if (ormap values raw-names)
-               `(Scope ,s ()
-                       ,(wrap-owned-lets parameter-binders
-                                         parameter-types raw-names
-                                         (judgment-core body-result)))
-               (judgment-core body-result)))
-         (define recur-core
-           `(Recur ,s ,callable ,raw-function ,core-binders
-                   ,wrapped-body
-                   ,(judgment-core continuation-result)))
-         (check-recur-body-gate s function parameters
-                                (judgment-core body-result)
-                                parameter-environment
-                                (reverse reversed-callables)
-                                declared-row)
-         (judgment recur-core
-                   (judgment-type continuation-result)
-                   (judgment-row continuation-result))]
+         (elaborate-recur-inferred
+          s raw-function parameter-binders raw-parameter-types
+          raw-row body continuation
+          environment delta propositions boundaries)]
 
         [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  ,raw-return-type ,raw-row ,body ,continuation)

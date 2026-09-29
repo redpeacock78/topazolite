@@ -696,6 +696,8 @@
           (build-path root "model/redex/tests/fstar-parity-test.rkt")
           (build-path root "model/redex/tests/surface-return-test.rkt")
           (build-path root "model/redex/tests/elaborate-test.rkt")
+          (build-path root "model/redex/tests/elaborate-infer-test.rkt")
+          (build-path root "model/redex/tests/surface-effect-row-test.rkt")
           (build-path root "model/redex/tests/typing-test.rkt")
           (build-path root "model/redex/tests/typing-span-test.rkt")
           (build-path root "model/redex/tests/lexer-test.rkt")

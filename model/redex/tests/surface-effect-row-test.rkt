@@ -134,9 +134,9 @@
   (check-true
    (compiled?
     (compile "fn() -> Int { let g = fn() ! Return => 0\n 0 }")))
-  (check-equal?
-   (code (compile "fn() { let g = fn() ! Return => 0\n 0 }"))
-   "E-TYP-024"))
+  (check-true
+   (compiled?
+    (compile "fn() { let g = fn() ! Return => 0\n 0 }"))))
 
 (test-case "SUR-003: 明示 row は期待型に対して省略扱いにならない"
   (check-equal?
