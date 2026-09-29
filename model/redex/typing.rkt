@@ -3692,8 +3692,8 @@
 ;; 入れ子になるため木全体を歩く。
 ;; これを通さないと、`type-of` の返り値に α が残り、spec §11 の不変性が破れる。
 ;; effect row も同じ関数で解く。row の要素は (Return boundary τ) と (Yield τ) と
-;; 記号であり、型を運ぶ欄はこの走査で覆える。validators.rkt の
-;; effect-owned-free? が row の同じ 2 形から型を取り出しているのと対応する。
+;; 記号であり、型を運ぶ欄はこの走査で覆える。validators.rkt の owned-free? 内部も
+;; 同じ 2 形から型を取り出して走査する。
 (define (subst-type-regions t σ ir)
   (match t
     [`(RVar ,_) (region->rho ir (sigma-ref σ t))]

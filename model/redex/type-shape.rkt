@@ -36,11 +36,12 @@
       [`(Data ,name (,arguments ...))
        (define key (cons name arguments))
        (define schema (data-schema name arguments))
-       (and schema
-            (if (set-member? visited key)
-                #f
-                (for/or ([field (in-list (data-field-types name arguments))])
-                  (walk field (set-add visited key)))))]
+       (cond
+         [(not schema) #t]
+         [(set-member? visited key) #f]
+         [else
+          (for/or ([field (in-list (data-field-types name arguments))])
+            (walk field (set-add visited key)))])]
       [(? list? terms) (ormap (lambda (term) (walk term visited)) terms)]
       [_ #f])))
 

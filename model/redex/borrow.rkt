@@ -410,11 +410,13 @@
         [`(Data ,name (,arguments ...))
          (define key (cons name arguments))
          (define schema (data-schema name arguments))
-         (and schema
-              (not (set-member? (unbound-borrowed-visited) key))
-              (parameterize ([unbound-borrowed-visited
-                              (set-add (unbound-borrowed-visited) key)])
-                (ormap walk (data-field-types name arguments))))]
+         (cond
+           [(not schema) #t]
+           [(set-member? (unbound-borrowed-visited) key) #f]
+           [else
+            (parameterize ([unbound-borrowed-visited
+                            (set-add (unbound-borrowed-visited) key)])
+              (ormap walk (data-field-types name arguments)))])]
         [(? list? ts) (ormap walk ts)]
         [_ #f]))))
 

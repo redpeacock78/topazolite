@@ -63,3 +63,16 @@
     (check-equal? (with-data (storage-ok? type)) (storage-ok? type))
     (check-equal? (with-data (owned-free? type)) (owned-free? type))
     (check-equal? (with-data (copy-out-scan type)) (copy-out-scan type))))
+
+(test-case "未知の Data は各意味走査で拒否側へ倒れる"
+  (with-data
+    (define missing '(Data Missing ()))
+    (check-false (storage-ok? missing))
+    (check-false (owned-free? missing))
+    (check-false (copy-out-scan missing))
+    (check-true (leaks-rawptr? missing))
+    (check-true (type-carries-capability? missing))
+    (check-false (forall-region-free? missing))
+    (check-false (borrow-payload-borrow-free? missing))
+    (check-true (unbound-borrowed-type? missing (set)))
+    (check-false (borrow-payload-borrow-free? `(Borrowed ,missing r)))))
