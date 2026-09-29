@@ -2933,8 +2933,12 @@
                  Ψ environment places callables fail))
      (define handler-result
        (match (peel-branch handler-clause)
-         [`(,name -> ,(? symbol? handler))
-          #:when (eq? handler (peel-bind name))
+         [`(,name -> ,handler)
+          #:when (eq? (match handler
+                        [(? symbol? x) x]
+                        [`(#:var ,x ,_) x]
+                        [_ #f])
+                      (peel-bind name))
           (list '() (psi-join Ψ (second body-result)))]
          [`(,name -> ,handler)
           #:when (and (owned-type? type*)

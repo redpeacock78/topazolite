@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../elaborate.rkt"
          "../gen.rkt"
          "../type-shape.rkt"
          "../typing.rkt")
@@ -182,6 +183,14 @@
                 "E-OWN-032")
   (check-equal? (core-type-of (handled 'return-value) empty empty)
                 '((Owned Res) ())))
+
+(test-case "elaborated spanful Owned Return identity handler typechecks"
+  (match (elab '(Fn ((p (Owned Res))) (Owned Res) (Own) (Move p)))
+    [(list core type row callables)
+     (check-equal? (core-type-of core empty callables)
+                   (list type row))]
+    [other (fail (format "Owned identity Fn の elaboration が失敗した: ~s"
+                         other))]))
 
 (test-case "OWN-001/REC-002: Scope, Drop, Yield, and Suspend compose rows"
   (define places (term ((0 Res))))
