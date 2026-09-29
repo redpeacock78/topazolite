@@ -19,13 +19,14 @@
 (define (sp lo hi) `(#:span src ,lo ,hi))
 (define (compile str) (compile-source/string 'src str))
 
+;; [REQ: SUR-016] Surface の型位置の型適用を UCore の型構成子の適用へ落とす部分の回帰である。
 ;; lowering の結果の木に型 t が現れるかを見る。
 (define (mentions? tree t)
   (or (equal? tree t)
       (and (pair? tree)
            (or (mentions? (car tree) t) (mentions? (cdr tree) t)))))
 
-(test-case "型構成子の適用は UCore の型へ写る"
+(test-case "SUR-016: 型構成子の適用は UCore の型へ写る"
   (for ([src (in-list '("fn f(x: List<Int>) -> Int { 0 }\n0"
                         "fn f(x: Option<Int>) -> Int { 0 }\n0"
                         "fn f(x: Result<Int, String>) -> Int { 0 }\n0"
@@ -50,7 +51,7 @@
   (check-equal? (code "type A = Int\nlet x: A<Int> = 0\n0") "E-SUR-025")
   (check-equal? (primary "type A = Int\nlet x: A<Int> = 0\n0") (sp 20 26)))
 
-(test-case "引数の個数の誤りは全体の span で E-SUR-025 になる"
+(test-case "SUR-016: 引数の個数の誤りは全体の span で E-SUR-025 になる"
   (check-equal? (code "let x: List<Int, Int> = 0\n0") "E-SUR-025")
   (check-equal? (primary "let x: List<Int, Int> = 0\n0") (sp 7 21))
   (check-equal? (code "let x: Result<Int> = 0\n0") "E-SUR-025"))

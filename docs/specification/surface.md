@@ -11,7 +11,8 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名、`trait` と `impl` の宣言、および block である。
 
-この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、型仮引数を持つ宣言と ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
 
 Surface の型注釈と署名から Typed Core への elaboration の入口と返り値は §9 が定める。
@@ -93,7 +94,7 @@ field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
 ty       ::= tyand ("|" tyand)*                         [REQ: BIT-003]
 tyand    ::= tyatom ("&" tyatom)*
-tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"
+tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"  [REQ: SUR-016]
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
@@ -172,8 +173,8 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
 単独の `-`、`+`、`*`、`/`、`%`、`?`、`[`、`]`、`;` は字句にならない。
-`List<Int>`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
-`List<Int>` と `x |> f` は `E-SUR-005` になる。
+算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
+`x |> f` は `E-SUR-005` になる。`List<>` は `>` の位置で `E-SUR-005` になる。
 `|` と `&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 `x |> f` は、式位置の `|` で `E-SUR-005` になる。
