@@ -1611,9 +1611,9 @@ f を適用以外の位置（curry の引数、constructor の field、返り値
 外す個数は署名が決める。形を推測して受かるまで剥がすことはしない。
 包みを外した本体を見る環境は、`Let` の binder を宣言型 `Owned<τ>` で足したものである。
 `Owned` でない位置の構造的減少の判定は、包みの前後で変わらない。
-`Owned` の位置そのものを根とする構造的減少は、現行の data 型では書けない。
-`Eliminate` は `Owned<τ>` を data 型へ剥がすが、既存の data 型の再帰欄は `(List element)` のように素の型で宣言されている。
-再帰欄を `Owned` で宣言する data 型を書く手段が無いため、剥がした先の欄が `Owned` にならない（`ADT-001`）。
+`Owned` の位置を根とする構造的減少は、data schema の実際の欄型で判定する。
+schema は型引数を具体化した欄型を返す。
+そのため、`Owned` の再帰欄を持つ data 型では、`Eliminate` で束縛した欄変数も `Owned` 型になり、C-Structural の減少根拠として使える（`ADT-001`）。
 
 **(C-Guarded)** [REQ: REC-002]
 

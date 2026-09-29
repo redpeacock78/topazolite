@@ -9,6 +9,7 @@
          "lang.rkt"
          "origins.rkt"
          "pr-lang.rkt"
+         "schema.rkt"
          "span-core.rkt")
 
 (provide lower
@@ -407,6 +408,18 @@
     [`(List ,_) (ptagged? value)]
     [`(Option ,_) (ptagged? value)]
     [`(Result ,_ ,_) (ptagged? value)]
+    ;; Data は宣言済み schema の tag と欄の型で表現を検査する。
+    [`(Data ,_ (,_ ...))
+     (match value
+       [`(PTagged ,tag ,fields ...)
+        (define field-types
+          (for/first ([row (in-list (or (constructor-schema type) '()))]
+                      #:when (equal? (tag-code (first row)) tag))
+            (second row)))
+        (and field-types
+             (= (length fields) (length field-types))
+             (andmap repr-ok? field-types fields))]
+       [_ #f])]
     ;; 所有は静的な区別であり実行時表現に現れない。
     [`(Owned ,inner) (repr-ok? inner value)]
     [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) (match value [`(PClosure ,_ ,_ ,_) #t] [_ #f])]
