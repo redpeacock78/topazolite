@@ -90,7 +90,7 @@
 (define s0 '(#:span src 0 1))
 (define (prog items e) `(SProgram ,s0 ,items ,e))
 (define (decl name ty) `(STypeDecl ,s0 (SName ,s0 ,name) ,ty))
-(define (fn-of ty) `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) ,ty)) ,ty (SVar ,s0 x)))
+(define (fn-of ty) `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) ,ty)) ,ty #:none (SVar ,s0 x)))
 (define (param-type items ty)
   (define r (lower-term (prog items (fn-of ty))))
   (second (second (first (third r)))))
@@ -111,5 +111,5 @@
 
 (test-case
  "関数型は効果行と義務が空の NFn になる"
- (check-equal? (param-type '() `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Bool)))
+ (check-equal? (param-type '() `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Bool) #:none))
                '(NFn (Int) Bool () ())))

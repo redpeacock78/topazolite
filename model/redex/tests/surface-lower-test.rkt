@@ -75,6 +75,7 @@
    (lower-term
     (prog '() `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                     (TName ,s0 Int)
+                    #:none
                     (SVar ,s0 x)))))
  (check-equal? r
   `(Fn ,s0 (((#:bind x ,s0) (#:ty Int ,s0)))

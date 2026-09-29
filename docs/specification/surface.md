@@ -9,9 +9,9 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名、`trait` と `impl` の宣言、および block である。
 
-この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、Effect 注釈（`SUR-003`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、ジェネリクスと ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
 
 Surface の型注釈と署名から Typed Core への elaboration の入口と返り値は §9 が定める。
@@ -40,9 +40,10 @@ Surface の経路は展開表を生成しない。
 文字列リテラルは `"` で囲む。
 エスケープは `\"`、`\\`、`\n`、`\t` の 4 種だけを許す。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`|`、`&` の 12 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`|`、`&`、`!`、`<`、`>` の 15 種である。
 `->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 `=>` は `=` と `>` の 2 byte からなる 1 個の `punct` token である。
+`!`、`<`、`>` はそれぞれ 1 byte の `punct` token である。
 
 トークンの種別は `int`、`str`、`ident`、`kw`、`punct`、`nl`、`eof` の 7 種である。
 `int` の値は符号なしの整数である。
@@ -67,17 +68,17 @@ typedecl ::= "type" ident "=" ty NL+
 traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
-fndecl   ::= "fn" ident "(" params ")" ["->" ty] block NL+
+fndecl   ::= "fn" ident "(" params ")" ["->" ty] ["!" row] block NL+
 expr     ::= lambda | postfix
 lambda   ::= ident "=>" expr
-           | "fn" "(" lparams ")" "=>" expr
+           | "fn" "(" lparams ")" ["!" row] "=>" expr
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")"
-anonfn   ::= "fn" "(" lparams ")" ["->" ty] block
+anonfn   ::= "fn" "(" lparams ")" ["->" ty] ["!" row] block
 params   ::= ε | param ("," param)*
 param    ::= ident ":" ty
 lparams  ::= ε | lparam ("," lparam)*
@@ -92,11 +93,13 @@ field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
 ty       ::= tyand ("|" tyand)*                         [REQ: BIT-003]
 tyand    ::= tyatom ("&" tyatom)*
-tyatom   ::= ident | tyrec | "fn" "(" tys ")" "->" ty | "(" ty ")"
+tyatom   ::= ident | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
 tys      ::= ε | ty ("," ty)*
+row      ::= label | "{" [label ("," label)*] "}"          [REQ: SUR-003]
+label    ::= ident ["<" ty ">"]
 ```
 
 `&` は `|` より強く結合し、どちらも左結合である。
@@ -107,6 +110,14 @@ tys      ::= ε | ty ("," ty)*
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
 
 関数型の戻り型は `->` で区切り、省略できない。 [REQ: SUR-011]
+関数宣言、無名関数、関数型には、任意の Effect row を戻り型または仮引数リストの後ろに書ける。 [REQ: SUR-003]
+row は単独の label または波括弧で囲んだ label 列であり、空の列も許す。
+型引数を持つ label は `Yield<T>` だけであり、`Return` は宣言 row に限る。
+関数型の row は直前の戻り型を持つ最も内側の `fn` 型に結び付く。
+`fn(Int) -> Int | Bool ! Partial` は `Int | Bool` を返す `Partial` の関数型である。
+`fn(Int) -> Int ! Partial | Bool` は row 付き関数型と `Bool` の Union である。
+`fn(Int) -> fn(Int) -> Int ! Partial` の row は内側の関数型に結び付き、外側へ付けるには戻り型を括弧で囲む。
+row 内の label は読点だけで区切り、改行は許さない。
 関数宣言と無名関数の戻り型は省略でき、省略した戻り型は elaboration が推論する（core-calculus.md §4.3、§4.6）。 [REQ: SUR-008]
 無名関数の仮引数型は省略でき、省略した仮引数型は期待型から推論する（core-calculus.md §4.3）。 [REQ: SUR-012]
 仮引数型の省略は `=>` の式本体と block 本体の両方で許す。
@@ -128,11 +139,12 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 ### 3.1 受理しない構文
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
-単独の `-` と `>`、`+`、`*`、`/`、`%`、`<`、`?`、`!`、`[`、`]`、`;` は字句にならない。
-`List<Int>`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号の位置で `E-SUR-002` になる。
+単独の `-`、`+`、`*`、`/`、`%`、`?`、`[`、`]`、`;` は字句にならない。
+`List<Int>`、算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
+`List<Int>` と `x |> f` は `E-SUR-005` になる。
 `|` と `&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
-`x |> f` は `|` の次に字句にならない `>` が現れるため、`>` の位置で `E-SUR-002` になる。
+`x |> f` は、式位置の `|` で `E-SUR-005` になる。
 
 字句にはなるが構文に無い `if`、`while`、`return`、`match` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
@@ -214,6 +226,8 @@ Surface の節点はすべて `(Ctor span ...)` の形であり、span は必ず
 区切りの `nl` は節点の span に含めない。
 `SBlock` の span は開き `{` から閉じ `}` までを含む。
 `SProgram` の span は前後の `NL*` を含まず、最初の item（item が無ければ式）から末尾の式までを覆う。
+`SEffRow` の span は `!` から、波括弧形なら `}` まで、単独 label ならその末尾までを含む。
+`SEffLabel` の span は名前の先頭から、型引数があれば `>` までを含む。
 
 ## 5. 型別名
 
@@ -537,13 +551,15 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SEffRow` と `SEffLabel` はこの Task では Racket 側だけにあり、F* 側に対応する構成子を持たない。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は型欄に `sty-or-none` を持ち、F* 側では `option sty` として表す。
 
-Racket 側の Surface 構成子リストは 28 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 17 個（`sty` は 5 個）である。
+Racket 側の Surface 構成子リストは 30 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 17 個（`sty` は 5 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
+P2j の `SEffRow` と `SEffLabel` も Racket 側だけにあり、F* 模型への追加を次 Task で行うまで「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 
 ### 8.2 UCore+ の対応

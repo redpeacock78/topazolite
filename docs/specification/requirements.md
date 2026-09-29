@@ -25,7 +25,7 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
-  - `P2`：Phase 2 のサイクル（P2a から P2i）の対象。
+  - `P2`：Phase 2 のサイクル（P2a から P2j）の対象。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
   - `Phase 4 以降`：多相な型構成子と型引数を持つ宣言構文に依存する事項を扱う。
@@ -604,8 +604,9 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 ### SUR-003
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/surface.md` §3
 
 Surface の Effect row 表記は、宣言と式の Effect 制約を保った Core の Effect row へ elaboration されなければならない。
 

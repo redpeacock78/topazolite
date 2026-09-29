@@ -92,11 +92,73 @@
  (check-equal? (ty-of "fn(Int) -> Int | String")
                `(TFn ,(sp 9 32) ((TName ,(sp 12 15) Int))
                      (TUnion ,(sp 20 32) (TName ,(sp 20 23) Int)
-                             (TName ,(sp 26 32) String))))
+                             (TName ,(sp 26 32) String)) #:none))
  (check-equal? (ty-of "(fn(Int) -> Int) | String")
                `(TUnion ,(sp 10 34)
-                        (TFn ,(sp 10 24) ((TName ,(sp 13 16) Int)) (TName ,(sp 21 24) Int))
+                        (TFn ,(sp 10 24) ((TName ,(sp 13 16) Int)) (TName ,(sp 21 24) Int) #:none)
                         (TName ,(sp 28 34) String))))
+
+(test-case
+ "[REQ: SUR-003] 関数宣言、無名関数、関数型が Effect row を持つ"
+ (match (p "fn f(x: Int) -> Int ! Partial { x }\n0")
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_
+                             (SEffRow ,row-span ((SEffLabel ,label-span Partial #:none))) ,_)) ,_)
+    (check-equal? row-span (sp 20 29))
+    (check-equal? label-span (sp 22 29))]
+   [other (fail-check (format "row 付き SFnDecl を期待したが ~s" other))])
+ (match (p "fn f(x: Int) ! {Partial, Yield<Int>} { x }\n0")
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none
+                             (SEffRow ,_ ((SEffLabel ,_ Partial #:none)
+                                         (SEffLabel ,_ Yield (TName ,_ Int)))) ,_)) ,_)
+    (void)]
+   [other (fail-check (format "複数ラベルの SFnDecl を期待したが ~s" other))])
+ (match (p "fn f() ! {} { 0 }\n0")
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,_ ()) ,_)) ,_) (void)]
+   [other (fail-check (format "空 row の SFnDecl を期待したが ~s" other))])
+ (match (p "fn(x) ! Partial => x")
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none
+                           (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) ,_))
+    (void)]
+   [other (fail-check (format "row 付き arrow Fn を期待したが ~s" other))])
+ (match (p "fn(x: Int) -> Int ! Partial { x }")
+   [`(SProgram ,_ () (SFn ,_ ,_ ,_ (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) ,_))
+    (void)]
+   [other (fail-check (format "row 付き block Fn を期待したが ~s" other))])
+ (match (p "x => x")
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,_)) (void)]
+   [other (fail-check (format "row 省略の SFn を期待したが ~s" other))]))
+
+(test-case
+ "[REQ: SUR-003] 関数型の row は最も内側の fn に結び付く"
+ (match (ty-of "fn(Int) -> Int | Bool ! Partial")
+   [`(TFn ,_ ,_ (TUnion ,_ ,_ ,_) (SEffRow ,_ ,_)) (void)]
+   [other (fail-check (format "結果型 Union の row 付き TFn を期待したが ~s" other))])
+ (match (ty-of "fn(Int) -> Int ! Partial | Bool")
+   [`(TUnion ,_ (TFn ,_ ,_ ,_ (SEffRow ,_ ,_)) (TName ,_ Bool)) (void)]
+   [other (fail-check (format "row 付き TFn と Bool の Union を期待したが ~s" other))])
+ (match (ty-of "fn(Int) -> fn(Int) -> Int ! Partial")
+   [`(TFn ,_ ,_ (TFn ,_ ,_ ,_ (SEffRow ,_ ,_)) #:none) (void)]
+   [other (fail-check (format "内側だけが row を持つ TFn を期待したが ~s" other))]))
+
+(test-case
+ "[REQ: SUR-003] row の span は ! から閉じ記号またはラベル末尾までである"
+ (match (p "fn f() ! Partial { 0 }\n0")
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
+    (check-equal? row-span (sp 7 16))]
+   [other (fail-check (format "単一ラベル row を期待したが ~s" other))])
+ (match (p "fn f() ! {A} { 0 }\n0")
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
+    (check-equal? row-span (sp 7 12))]
+   [other (fail-check (format "brace row を期待したが ~s" other))]))
+
+(test-case
+ "[REQ: SUR-003] 不正な row の区切りと改行は構文誤りである"
+ (for ([src (in-list '("fn f() ! {Partial,} { 0 }\n0"
+                       "fn f() ! {Partial Suspend} { 0 }\n0"
+                       "fn f() ! {Partial\n} { 0 }\n0"
+                       "fn f() ! { 0 }\n0"))])
+   (check-equal? (p-code src) "E-SUR-005"))
+ (check-equal? (p-code "fn f() !") "E-SUR-006"))
 
 (test-case
  "BIT-003: 型の位置の () と、式の位置の | と & は E-SUR-005 である"
@@ -105,8 +167,9 @@
  (check-equal? (p-code "x & y") "E-SUR-005"))
 
 (test-case
- "BIT-003: |> は | の後の > が字句にならない"
- (check-equal? (diagnostic-primary-span (p "x |> f")) (sp 3 4)))
+ "BIT-003: |> は parser が | の位置で拒否する"
+ (check-equal? (p-code "x |> f") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "x |> f")) (sp 2 3)))
 
 (test-case
  "整数だけの program"
@@ -229,6 +292,7 @@
                                (SName (#:span src 3 4) a)
                                (TName (#:span src 6 9) Int)))
                       (TName (#:span src 14 17) Int)
+                      #:none
                       (SBlock (#:span src 18 23) ()
                               (SVar (#:span src 20 21) a))))))
 
@@ -237,12 +301,12 @@
  (define decl (p "fn f(x: Int) { x }\n0"))
  (check-true (redex-match? Surface sprog decl))
  (match decl
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none ,_)) ,_) (void)]
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none #:none ,_)) ,_) (void)]
    [other (fail-check (format "省略した SFnDecl を期待したが ~s" other))])
  (define anon (p "fn(x: Int) { x }"))
  (check-true (redex-match? Surface sprog anon))
  (match anon
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none ,_)) (void)]
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,_)) (void)]
    [other (fail-check (format "省略した SFn を期待したが ~s" other))]))
 
 (test-case
@@ -254,7 +318,7 @@
  (match (p "x => x")
    [`(SProgram ,_ ()
                (SFn ,s ((SParam ,sx (SName ,sx2 x) #:none))
-                    #:none (SVar ,_ x)))
+                    #:none #:none (SVar ,_ x)))
     (check-equal? sx (sp 0 1))
     (check-equal? sx2 sx)
     (check-equal? s (sp 0 6))]
@@ -266,17 +330,17 @@
               `(SProgram ,_ ()
                          (SFn ,_ ((SParam ,_ (SName ,_ x) #:none)
                                   (SParam ,_ (SName ,_ y) (TName ,_ Int)))
-                              #:none ,_))))
+                              #:none #:none ,_))))
 
 (test-case
  "SUR-012: fn() => a"
  (check-match (p "fn() => a")
-              `(SProgram ,_ () (SFn ,_ () #:none (SVar ,_ a)))))
+              `(SProgram ,_ () (SFn ,_ () #:none #:none (SVar ,_ a)))))
 
 (test-case
  "SUR-012: 本体は postfix まで伸びる"
  (check-match (p "x => x(1)")
-              `(SProgram ,_ () (SFn ,_ ,_ #:none (SApply ,_ ,_ ,_)))))
+              `(SProgram ,_ () (SFn ,_ ,_ #:none #:none (SApply ,_ ,_ ,_)))))
 
 (test-case
  "SUR-012: => は右結合"
@@ -284,19 +348,20 @@
               `(SProgram ,_ ()
                          (SFn ,_ ,_
                               #:none
+                              #:none
                               (SFn ,_ ,_
-                                   #:none (SVar ,_ x))))))
+                                   #:none #:none (SVar ,_ x))))))
 
 (test-case
  "SUR-012: , と } が本体を閉じる"
  (check-match (p "f(x => x, 1)")
               `(SProgram ,_ ()
                          (SApply ,_ ,_
-                                 ((SFn ,_ ,_ #:none ,_) (SInt ,_ 1)))))
+                                 ((SFn ,_ ,_ #:none #:none ,_) (SInt ,_ 1)))))
  (check-match (p "{ a: x => x, b: 1 }")
               `(SProgram ,_ ()
                          (SRec ,_
-                               ((SField ,_ ,_ (SFn ,_ ,_ #:none ,_))
+                               ((SField ,_ ,_ (SFn ,_ ,_ #:none #:none ,_))
                                 (SField ,_ ,_ (SInt ,_ 1)))))))
 
 (test-case
@@ -377,10 +442,11 @@
 
 (test-case
  "字句にならない記号は lexer の診断がそのまま返る"
- (check-equal? (p-code "List<Int>") "E-SUR-002")
+ (check-equal? (p-code "List<Int>") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "List<Int>")) (sp 4 5))
  (check-equal? (p-code "1 + 2") "E-SUR-002")
  (check-equal? (p-code "x ?= y") "E-SUR-002")
- (check-equal? (p-code "x |> f") "E-SUR-002"))
+ (check-equal? (p-code "x |> f") "E-SUR-005"))
 
 (test-case
  "SUR-011: 明示的な戻り型を -> 無しで書くと E-SUR-005 になる"

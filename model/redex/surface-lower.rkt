@@ -270,8 +270,8 @@
        [else (fail 'surface-unknown-type-name s)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
-    [`(TFn ,_ ,arguments ,result)
-     ;; spec §7.2.1。効果行と義務は Surface に表記が無いので空である。
+    [`(TFn ,_ ,arguments ,result ,_row)
+     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、Task 3 で写す。
      `(NFn ,(for/list ([a (in-list arguments)])
               (lower-sty a env fail stack #:self? self?))
            ,(lower-sty result env fail stack #:self? self?)
@@ -506,9 +506,9 @@
     ;; Bool は型引数を持たない。空の Types が E-Construct-Synth の型引数注釈になる。
     [`(SBool ,s ,b) `(Construct ,s ,b (Types))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
-    [`(SFn ,s ,params ,result-ty ,body)
-     ;; Surface に効果の表記が無いので効果行は空である。span は Fn 自身の
-     ;; ものを使う。
+    [`(SFn ,s ,params ,result-ty ,_row ,body)
+     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、Task 3 で写す。
+     ;; span は Fn 自身のものを使う。
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
@@ -580,14 +580,14 @@
                        (node-span ty-or-none)))))
      (define bound-core (lower-sexpr bound env fail))
      (λ (rest) `(Let ,s_tail ,binder ,bound-core ,rest))]
-    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,body)
+    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,_row ,body)
+     ;; SUR-003。spec §5.2。Task 1 では row を読み飛ばし、出力 row の span に宣言 span を使う。
      (define params-core (lower-params params env fail))
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
            `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
      (define body-core (lower-sexpr body env fail))
-     ;; 効果行の span は宣言自身のものである。Surface に効果の表記が無い。
      (λ (rest) `(Recur ,s_tail (#:bind ,f ,s_f) ,params-core
                        ,result-core
                        (#:ef () ,s)

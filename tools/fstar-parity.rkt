@@ -14,7 +14,7 @@
     SBind SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SInt SStr SUnit SBool SVar SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter
-    SName SParam SField SLabel TField))
+    SName SParam SField SLabel TField SEffRow SEffLabel))
 
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
@@ -67,6 +67,8 @@
    (no-counterpart 'SField)
    (no-counterpart 'SLabel)
    (no-counterpart 'TField)
+   (no-counterpart 'SEffRow)
+   (no-counterpart 'SEffLabel)
    (one-to-one '#:lit 'CLit)
    (one-to-one '#:var 'CVar)
    (one-to-one 'Apply 'CApply)

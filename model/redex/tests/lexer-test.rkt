@@ -64,8 +64,8 @@
  ;; a は 0-1、-> は 1-3、b は 3-4。
  (check-equal? (take (spans "a->b") 3)
                '((#:span src 0 1) (#:span src 1 3) (#:span src 3 4)))
- (for ([src (in-list '("- >" "-" ">"))]
-       [at  (in-list '(0 0 0))])
+ (for ([src (in-list '("- >" "-"))]
+       [at  (in-list '(0 0))])
    (define d (lex/string 'src src))
    (check-equal? (diagnostic-id d) "E-SUR-002")
    (check-equal? (diagnostic-primary-span d)
@@ -78,8 +78,16 @@
                '((#:span src 0 1) (#:span src 1 3)
                  (#:span src 3 4) (#:span src 4 4)))
  (define d (lex/string 'src "= >"))
- (check-equal? (diagnostic-id d) "E-SUR-002")
- (check-equal? (diagnostic-primary-span d) '(#:span src 2 3)))
+ (check-equal? (map stok-value d) (list '= '> 'eof)))
+
+(test-case
+ "[REQ: SUR-003] !、<、> はそれぞれ 1 字句の記号になる"
+ (check-equal? (kinds "!<>") '(punct punct punct eof))
+ (check-equal? (map stok-value (lex/string 'src "!<>"))
+               (list '! '< '> 'eof))
+ ;; -> と => は記号表より前に照合され、2 byte のままである。
+ (check-equal? (map stok-value (lex/string 'src "-> =>"))
+               (list '-> '=> 'eof)))
 
 (test-case
  "lex は bytes を受け、lex/string は同じ結果を返す"

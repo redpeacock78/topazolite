@@ -10,7 +10,7 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 28)
+ (check-equal? (length racket-surface-constructors) 30)
  (check-equal? (length racket-ucore-constructors) 9)
  (check-equal? (length fstar-constructors) 26))
 
@@ -92,7 +92,7 @@
    (cons 'SBind     (redex-match? Surface spitem `(SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1))))
    (cons 'SFnDecl   (redex-match? Surface spitem `(SFnDecl ,s0 (SName ,s0 f)
                                                            ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
-                                                           (TName ,s0 Int) (SInt ,s0 1))))
+                                                           (TName ,s0 Int) #:none (SInt ,s0 1))))
    (cons 'STypeDecl (redex-match? Surface spitem `(STypeDecl ,s0 (SName ,s0 A) (TName ,s0 Int))))
    (cons 'STraitDecl (redex-match? Surface spitem `(STraitDecl ,s0 (SName ,s0 P) ())))
    (cons 'SImplDecl  (redex-match? Surface spitem `(SImplDecl ,s0 (SName ,s0 P) (TName ,s0 Int) (SRec ,s0 ()))))
@@ -103,7 +103,7 @@
    (cons 'SBool     (redex-match? Surface sexpr `(SBool ,s0 true)))
    (cons 'SVar      (redex-match? Surface sexpr `(SVar ,s0 x)))
    (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
-                                                      (TName ,s0 Int) (SInt ,s0 1))))
+                                                      (TName ,s0 Int) #:none (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
    (cons 'SProj     (redex-match? Surface sexpr `(SProj ,s0 (SVar ,s0 x) (SLabel ,s0 a))))
    (cons 'SProjRec  (redex-match? Surface sexpr
@@ -113,14 +113,16 @@
                                                          (SVar ,s0 x))))
    (cons 'TName     (redex-match? Surface sty `(TName ,s0 Int)))
    (cons 'TRec      (redex-match? Surface sty `(TRec ,s0 ((TField ,s0 (SLabel ,s0 a) (TName ,s0 Int))))))
-   (cons 'TFn       (redex-match? Surface sty `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Int))))
+   (cons 'TFn       (redex-match? Surface sty `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Int) #:none)))
    (cons 'TUnion    (redex-match? Surface sty `(TUnion ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TInter    (redex-match? Surface sty `(TInter ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
    (cons 'SParam    (redex-match? Surface sparam `(SParam ,s0 (SName ,s0 x) (TName ,s0 Int))))
    (cons 'SField    (redex-match? Surface sfield `(SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))
    (cons 'SLabel    (redex-match? Surface slabel `(SLabel ,s0 a)))
-   (cons 'TField    (redex-match? Surface styfield `(TField ,s0 (SLabel ,s0 a) (TName ,s0 Int))))))
+   (cons 'TField    (redex-match? Surface styfield `(TField ,s0 (SLabel ,s0 a) (TName ,s0 Int))))
+   (cons 'SEffRow   (redex-match? Surface srow `(SEffRow ,s0 ((SEffLabel ,s0 Partial #:none)))))
+   (cons 'SEffLabel (redex-match? Surface seffl `(SEffLabel ,s0 Yield (TName ,s0 Int))))))
 
 (define ucore-witnesses
   (list
