@@ -94,8 +94,8 @@
  (define decl (low "fn f(x: Int) { x }\n0"))
  (check-true (redex-match? UCore+ e decl))
  (match decl
-   [`(Recur ,_ ,_ ,_ (#:infer (#:span src 0 18)) ,_ ,_ ,_) (void)]
-   [other (fail-check (format "省略 Recur の #:infer を期待したが ~s" other))]))
+   [`(FnDecl ,_ ,_ ,_ (#:infer (#:span src 0 18)) ,_ ,_ ,_) (void)]
+   [other (fail-check (format "省略 FnDecl の #:infer を期待したが ~s" other))]))
 
 (test-case
  "SUR-012: 型を省略した仮引数は (#:infer s_x) へ落ちる"
@@ -167,9 +167,13 @@
                      (#:var x (#:span src 28 29)))))
 
 (test-case
- "関数宣言は Recur になる"
+ "SUR-015: 関数宣言は FnDecl になり、return は Return になる"
+ (define with-return (low "fn f() -> Int { return 1 }\n0"))
+ (check-match with-return
+              `(FnDecl ,_ (#:bind f ,_) () (#:ty Int ,_) ,_
+                       (Return ,_ (#:lit 1 ,_)) ,_))
  (define t (low "fn f(a: Int) -> Int { a }\nf(1)"))
- (check-equal? (first t) 'Recur)
+ (check-equal? (first t) 'FnDecl)
  (check-equal? (third t) '(#:bind f (#:span src 3 4)))
  (check-equal? (fourth t) '(((#:bind a (#:span src 5 6)) (#:ty Int (#:span src 8 11)))))
  (check-equal? (fifth t) '(#:ty Int (#:span src 16 19)))

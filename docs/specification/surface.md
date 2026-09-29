@@ -31,7 +31,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive` の 11 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return` の 12 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 
 整数リテラルは `[0-9]+` である。
@@ -69,7 +69,7 @@ traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
 fndecl   ::= "fn" ident "(" params ")" ["->" ty] ["!" row] block NL+
-expr     ::= lambda | postfix
+expr     ::= "return" expr | lambda | postfix
 lambda   ::= ident "=>" expr
            | "fn" "(" lparams ")" ["!" row] "=>" expr
 postfix  ::= primary suffix*
@@ -179,12 +179,12 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 `x |> f` は、式位置の `|` で `E-SUR-005` になる。
 
-字句にはなるが構文に無い `if`、`while`、`return`、`match` は予約語ではなく `ident` になる。
+字句にはなるが構文に無い `if`、`while`、`match` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
-単独の `return` は変数式として受理し、未束縛変数の診断は後段に委ねる。
+`return expr` は最も弱く結合する前置式で、`expr` 全体を戻り値とする。
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
-P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を加えた。
+P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を、P2k1 では `return` を加えた。
 
 ### 3.2 `let mut` の字句と構文
 

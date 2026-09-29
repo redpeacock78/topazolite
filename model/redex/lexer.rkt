@@ -7,7 +7,7 @@
 ;; spec §4.2。kind は int str ident kw punct nl eof のいずれかである。
 (struct stok (kind value span) #:transparent)
 
-(define keywords '(const let mut fn type true false trait impl for derive))
+(define keywords '(const let mut fn type true false trait impl for derive return))
 (define puncts (hash 123 '|{| 125 '|}| 40 '|(| 41 '|)|
                      44 '|,| 58 '|:| 61 '|=| 46 '|.|
                      124 '\| 38 '& 33 '! 60 '< 62 '>))

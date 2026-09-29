@@ -207,6 +207,12 @@
 
 (define (parse-expr ts fail i)
   (cond
+    ;; SUR-015。return は最も弱く結合する前置の式であり、後ろの expr
+    ;; 全体を値とする。直後に式が無ければ parse-primary が E-SUR-005 /
+    ;; E-SUR-006 を返す。
+    [(kw? ts i 'return)
+     (let-values ([(value j) (parse-expr ts fail (add1 i))])
+       (values `(SReturn ,(hull (span-at ts i) (node-span value)) ,value) j))]
     ;; SUR-012。識別子の直後が => なら式本体の無名関数である。
     [(and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=>))
      (define x-span (span-at ts i))

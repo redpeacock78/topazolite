@@ -59,6 +59,11 @@
                '(trait impl for derive eof)))
 
 (test-case
+ "SUR-015: return は予約語である"
+ (check-equal? (kinds "return") '(kw eof))
+ (check-equal? (map stok-value (lex/string 'src "return")) '(return eof)))
+
+(test-case
  "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
  (check-equal? (kinds "fn() -> Int") '(kw punct punct punct ident eof))
  ;; a は 0-1、-> は 1-3、b は 3-4。

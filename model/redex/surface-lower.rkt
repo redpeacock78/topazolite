@@ -529,6 +529,8 @@
     ;; Bool は型引数を持たない。空の Types が E-Construct-Synth の型引数注釈になる。
     [`(SBool ,s ,b) `(Construct ,s ,b (Types))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
+    ;; SUR-015。
+    [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]
     [`(SFn ,s ,params ,result-ty ,row ,body)
      (define result-core
        (if (eq? result-ty '#:none)
@@ -617,7 +619,7 @@
        `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
               ,(if (eq? row '#:none) s (node-span row))))
      (define body-core (lower-sexpr body env fail))
-     (λ (rest) `(Recur ,s_tail (#:bind ,f ,s_f) ,params-core
+     (λ (rest) `(FnDecl ,s_tail (#:bind ,f ,s_f) ,params-core
                        ,result-core
                        ,effect-row
                        ,body-core ,rest))]))

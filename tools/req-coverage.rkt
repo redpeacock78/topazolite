@@ -693,7 +693,10 @@
           (build-path root "docs/specification/core-calculus.md")))
   (define p2k1-tests
     (list (build-path root "model/redex/tests/annotate-test.rkt")
-          (build-path root "model/redex/tests/fstar-parity-test.rkt")))
+          (build-path root "model/redex/tests/fstar-parity-test.rkt")
+          (build-path root "model/redex/tests/lexer-test.rkt")
+          (build-path root "model/redex/tests/parser-test.rkt")
+          (build-path root "model/redex/tests/surface-lower-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)

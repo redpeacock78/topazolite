@@ -23,7 +23,9 @@
  (check-false (redex-match? Surface ident 'impl))
  (check-false (redex-match? Surface ident 'for))
  (check-false (redex-match? Surface ident 'derive))
+ (check-false (redex-match? Surface ident 'return))
  (check-false (redex-match? Surface label 'derive))
+ (check-false (redex-match? Surface label 'return))
  (check-true  (redex-match? Surface ident 'SInt))
  (check-true  (redex-match? Surface ident 'none)))
 
@@ -382,7 +384,7 @@
                            "fn f(a: Int) { a }\nf(1)"
                            "type T = A | B & C\n0"
                            "type T = (fn(Int) -> Int) | String\n0"
-                           "SInt" "TName" "none" "return"))])
+                           "SInt" "TName" "none" "return 1"))])
    (check-true (redex-match? Surface sprog (p src))
                (format "~a の出力が Surface に合う" src))))
 
@@ -476,9 +478,23 @@
                '(#:span src 0 3)))
 
 (test-case
- "単独の return は変数である"
- (check-equal? (p "return")
-               '(SProgram (#:span src 0 6) () (SVar (#:span src 0 6) return))))
+ "SUR-015: return は最も弱く結合する前置の式である"
+ (check-match (p "return f(1).a")
+              `(SProgram ,_ () (SReturn ,_ (SProj ,_ (SApply ,_ ,_ ,_) ,_))))
+ (check-match (p "return x => x")
+              `(SProgram ,_ () (SReturn ,_ (SFn ,_ ,_ ,_ ,_ ,_))))
+ (check-match (p "return return 1")
+              `(SProgram ,_ () (SReturn ,_ (SReturn ,_ (SInt ,_ 1)))))
+ (check-equal? (second (fourth (p "return 1"))) '(#:span src 0 8)))
+
+(test-case
+ "SUR-015: return の直後に式が無ければ E-SUR-005 である"
+ (for ([src (in-list '("{ return }" "f(return)" "f(return, 1)" "{ return\n1 }"))])
+   (check-equal? (p-code src) "E-SUR-005" src)))
+
+(test-case
+ "SUR-015: 単独の return は E-SUR-006 である"
+ (check-equal? (p-code "return") "E-SUR-006"))
 
 (test-case
  "let と mut の間の改行は束縛として受理しない"
@@ -535,7 +551,7 @@
  (for ([src (in-list (list "1"
                            "f(x).a"
                            "r.{a, b}"
-                           "return"
+                           "return 1"
                            "type A = Int\nconst x: A = 1\n1"
                            "fn f(a: Int) -> Int { a }\nf(1)"))])
    (define t (p src))

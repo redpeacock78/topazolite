@@ -159,6 +159,17 @@
            (first-reserved (map parameter-name parameters))
            (walk body)
            (walk continuation))]
+      ;; Task 2 では FnDecl を Recur と同じ束縛形として検査する。
+      [`(FnDecl ,function ,parameters ,_ ,_ ,body ,continuation)
+       (or (reserved-name function)
+           (first-reserved (map parameter-name parameters))
+           (walk body)
+           (walk continuation))]
+      [`(FnDecl ,_ ,function ,parameters ,_ ,_ ,body ,continuation)
+       (or (reserved-name function)
+           (first-reserved (map parameter-name parameters))
+           (walk body)
+           (walk continuation))]
       ;; raw の branch は branch-reserved が、UCore+ の branch は generic 走査が拾う。
       [`(Eliminate ,scrutinee ,branches)
        #:when (list? branches)
@@ -526,6 +537,11 @@
     [`(Return ,body) (free-vars/erased body)]
     [`(NarrativeExpr ,body) (free-vars/erased body)]
     [`(Recur ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
+     (set-union
+      (set-subtract (free-vars/erased body)
+                    (list->set (cons function parameters)))
+      (set-remove (free-vars/erased continuation) function))]
+    [`(FnDecl ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
      (set-union
       (set-subtract (free-vars/erased body)
                     (list->set (cons function parameters)))
@@ -1070,6 +1086,12 @@
             (match (lookup (current-Γ0) name)
               [(list type value) (judgment (attach-span value s) type '())]
               [_ (reject s 'unbound-variable name)])])]
+
+        ;; Task 2。Task 3 で FnDecl 固有の境界処理へ置き換えるまでは、
+        ;; 既存の Recur 経路と同じ診断・束縛の挙動にする。
+        [`(FnDecl ,fields ...)
+         (synth/raw `(Recur ,s ,@fields)
+                    environment delta propositions boundaries)]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,_ ,_ ,_)

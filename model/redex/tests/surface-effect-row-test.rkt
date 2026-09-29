@@ -37,8 +37,8 @@
 
 (define (decl-effect-row source)
   (match (low source)
-    [`(Recur ,_ ,_ ,_ ,_ (#:ef ,labels ,span) ,_ ,_) (list labels span)]
-    [other (fail-check (format "Recur と効果 row を期待したが ~s" other))]))
+    [`(FnDecl ,_ ,_ ,_ ,_ (#:ef ,labels ,span) ,_ ,_) (list labels span)]
+    [other (fail-check (format "FnDecl と効果 row を期待したが ~s" other))]))
 
 (define (source-span source needle)
   (define positions (regexp-match-positions (regexp-quote needle) source))
