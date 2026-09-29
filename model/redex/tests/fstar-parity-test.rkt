@@ -4,6 +4,7 @@
          redex/reduction-semantics
          "../surface.rkt"
          "../ucore.rkt"
+         (only-in "../lexer.rkt" keywords)
          "../../../tools/fstar-parity.rkt")
 
 (define s0 '(#:span src 0 1))
@@ -58,6 +59,12 @@
                               (cons (corr-row '(SInt) '() 'excluded)
                                     correspondence-rows))
                '("対象外の行の SInt がリスト 1 から 3 のどれかに在る")))
+
+(test-case
+ "F* の予約語の一覧が lexer.rkt の予約語と一致する"
+ (check-equal? (sort fstar-keywords symbol<?)
+               (sort keywords symbol<?))
+ (check-equal? (length fstar-keywords) 12))
 
 (test-case
  "kind と欄の数が食い違うと違反になる"

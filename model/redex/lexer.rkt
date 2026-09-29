@@ -2,7 +2,7 @@
 
 (require "diagnostic.rkt")
 
-(provide (struct-out stok) lex lex/string)
+(provide (struct-out stok) lex lex/string keywords)
 
 ;; spec §4.2。kind は int str ident kw punct nl eof のいずれかである。
 (struct stok (kind value span) #:transparent)

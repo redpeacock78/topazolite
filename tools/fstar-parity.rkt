@@ -4,6 +4,7 @@
          racket-surface-constructors
          racket-ucore-constructors
          fstar-constructors
+         fstar-keywords
          correspondence-rows
          parity-errors
          main)
@@ -27,6 +28,11 @@
     TName TRec TFn TUnion TInter
     SDecl SEffRow SEffLabel
     CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur CReturn))
+
+;; P2k2 spec §7。model/fstar/Topazolite.Surface.fst の keyword_word が
+;; TkKw を返す語である。F* の補題 keyword_word_reserved と手で対応させる。
+(define fstar-keywords
+  '(fn let mut for true type impl const false trait derive return))
 
 ;; 対応表の 1 行。lefts は Racket 側の名前、rights は F* 側の名前である。
 ;; kind は 'one-to-one と 'many-to-one と 'none と 'excluded を採る。
