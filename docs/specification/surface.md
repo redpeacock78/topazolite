@@ -118,6 +118,39 @@ row は単独の label または波括弧で囲んだ label 列であり、空�
 `fn(Int) -> Int ! Partial | Bool` は row 付き関数型と `Bool` の Union である。
 `fn(Int) -> fn(Int) -> Int ! Partial` の row は内側の関数型に結び付き、外側へ付けるには戻り型を括弧で囲む。
 row 内の label は読点だけで区切り、改行は許さない。
+
+Surface が受理する Effect label は次の 7 個である。
+
+| label | 書ける形 | UCore label |
+|---|---|---|
+| `Partial` | 引数なし | `Partial` |
+| `Suspend` | 引数なし | `Suspend` |
+| `Compile` | 引数なし | `Compile` |
+| `Own` | 引数なし | `Own` |
+| `Mutation` | 引数なし | `Mutation` |
+| `Yield<T>` | 型引数を 1 個 | `(Yield uτ)` |
+| `Return` | 引数なし、宣言 row だけ | `Return` |
+
+row の label は lowering が左から検査し、未知の label、引数の形の不一致、関数型の row に書かれた `Return` は `E-SUR-024` になる。
+診断の primary span は最初に不正となった label の span であり、`Yield<T>` の型引数中にある未知の型名は既存の `E-SUR-008` になる。
+重複 label は lowering ではそのまま保ち、宣言 row と `resolve-type-row` を通る row の正規化で除く。
+
+宣言 row の `Return` は、row を書いた関数を囲む最も近い境界の `Return<b, T>` を指す。
+現行 Surface には式の境界が無いため、今は関数境界だけが到達可能である。
+最上位の関数宣言には囲む境界が無いので、その宣言 row に `Return` を書くと `E-RET-001` になる。
+囲む無名関数の戻り型が省略され、その関数が合成位置にあると、内側の無名関数の `Return` は `E-TYP-024` になる。
+検査位置で期待型から戻り型が補われた場合は、その具体的な境界へ解決される。
+Surface に `return` 式はまだ無いため、`Return` row は境界への effect の宣言だけを行う。
+`SUR-015` で `return` 式を導入するときに、この解決先を `RET-*` の規則と再照合する。
+
+Surface の式が直接起こさない `Suspend`、`Compile`、`Own`、`Mutation`、`Yield<T>` も宣言 row に書ける。
+これらは関数本体の effect row を広げるだけであり、elaboration は本体の row が宣言 row に含まれることを検査する。
+`IO`、`Async`、`State<S>`、`Throw<E>`、`Foreign`、`Allocation`、`Volatile`、`Atomic` は対応する Core label が無いため `E-SUR-024` で拒否する。
+`Unsafe` は Core にあるが UCore の row に無く、Surface に unsafe 境界が無い段階で宣言だけを許すと境界を偽るため受理しない。
+label 名を parser の固定集合で検査する案は採らない。
+引数の無い未知 label と型引数を持つ未知 label を parser で別の段・code に分けず、lowering がどちらも `E-SUR-024` として診断する。
+elaborate の `E-EFF-001` は防御的な分岐として残るが、UCore の row 文法が閉じているため未知 label は公開入力から到達しない。
+
 関数宣言と無名関数の戻り型は省略でき、省略した戻り型は elaboration が推論する（core-calculus.md §4.3、§4.6）。 [REQ: SUR-008]
 無名関数の仮引数型は省略でき、省略した仮引数型は期待型から推論する（core-calculus.md §4.3）。 [REQ: SUR-012]
 仮引数型の省略は `=>` の式本体と block 本体の両方で許す。
@@ -381,12 +414,20 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
 - `(SProjRec s e ((SLabel s_l l) ...))` は、受け側を 1 度だけ束縛する `Let` と、label ごとの `Proj` を並べた `Rec` へ落とす。 [REQ: SUR-006]
 - `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
-- `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) sty-or-none body)` は、span を持つ binder、戻り型、空の effect row を持つ `(Fn ...)` へ落とす。仮引数型が `#:none` なら型欄は `(#:infer s_x)` となり、`s_x` は binder の span である。戻り型が `#:none` なら戻り型欄は `(#:infer s)` となり、`s` は関数全体の span である。
+- `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
+  row が省略されていれば `(#:ef #:infer s)` を置き、`s` は関数全体の span である。
+  `=>` と block の両形の無名関数でこの印を使う。
+  検査位置では期待型から `Owned` を 1 層剥がして `NFn` を得た場合に、その出口 row を継承し、合成位置または `NFn` でない期待型では空 row になる（core-calculus.md §4.2、§4.3）。
+  row が明示されていれば、空の row も期待型から継承せず、宣言 row と期待 row の照合は既存の検査規則で行う。
+  仮引数型が `#:none` なら型欄は `(#:infer s_x)` となり、`s_x` は binder の span である。
+  戻り型が `#:none` なら戻り型欄は `(#:infer s)` となる。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
-  右辺が仮引数型を省略した `Fn` なら宣言型で検査する。
+  右辺が仮引数型または Effect row を省略した `Fn` なら宣言型で検査する。
   それ以外は右辺を合成し、その結果へ binding mode の policy を適用する（core-calculus.md §4.2、structural-row.md §4）。
-- `(SFnDecl s (SName s_f f) ... sty-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
+- `(SFnDecl s (SName s_f f) ... return-sty-or-none row-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。明示 row は lower-row の結果を row 節の span `s_row` とともに置く。
+  row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
+  戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
 - `(STraitDecl s (SName s_n tn) (tyfield ...))` は trait 環境へ行を追加するだけで、UCore+ 節点を生成しない。
 - trait 宣言の template の型位置では `Self` を実装対象型の placeholder として扱う。欄名の `Self` は通常の label である。
@@ -420,8 +461,10 @@ F* 側の `SProjRec` は label の綴りを保持せず、`proj_fields` は欄�
 `TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
 それ以外は §5 の別名環境から解決し、未登録なら `E-SUR-008` とする。
 `TRec` は field mode を `imm` とする `(Record ((l uτ imm) ...))` へ写す。
-`TFn` は effect row と obligation を空にした `(NFn (uτ ...) uτ_r () ())` へ写す。
-Surface に field の可変性と effect 注釈が無いためである。
+`TFn` は `(NFn (uτ ...) uτ_r ε ())` へ写す。
+`ε` は明示された型 Effect row を lower-row した結果であり、省略時は空である。
+型 Effect row の `Return` は拒否する。
+obligation は Surface から表せないため空であり、record 型の field mode は Surface に可変性の構文が無いため `imm` とする。
 `(TUnion s left right)` は `(Union left' right')` へ、`(TInter s left right)` は `(Intersection left' right')` へ写す。
 `TInter` は operand を lowering した後、`Self` を含まなければ `lift-template-type` と `normalize-type` で検査し、失敗時はその `TInter` の span で `E-SUR-020` を返す。
 ここでいう `Self` は型の位置に限り、Record の field label は数えない。

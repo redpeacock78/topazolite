@@ -997,6 +997,11 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | lexical scope ごとの retire | `core-calculus.md` §5.6 | Phase 未定 | §4.9 |
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 未定 | §4.8 |
 | `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 3 以降（FFI-003） | §5.2 |
+| `IO` と `Async` の Effect label | `surface.md` §3 | Phase 3 以降 | §5.1 |
+| `State<S>` と `Throw<E>` の Effect label | `surface.md` §3 | Phase 未定 | §5.1 |
+| `Allocation`、`Volatile`、`Atomic` の Effect label | `surface.md` §3 | Phase 3 以降 | §5.1 |
+| Surface の `Unsafe` label と unsafe 境界 | `surface.md` §3 | Surface に unsafe 境界を足す段階 | §5.1 |
+| 省略した Effect row の推論 | `surface.md` §3 | Phase 未定 | §5.1 |
 | address space をまたぐ pointer の扱い | `unsafe.md` §6 | Phase 3 以降 | §17.13 |
 | 外部の allocation を指す pointer からの safe reference 構築（PTR-002 の縮約） | `unsafe.md` §6 | Phase 3 以降（FFI-003） | §4.10 |
 | `H` の外の allocation としての pointee の生存 | `unsafe.md` §6 | Phase 3 以降 | §17.13 |
