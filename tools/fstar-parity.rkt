@@ -25,7 +25,7 @@
 (define fstar-constructors
   '(SInt SStr SUnit SBool SVar SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter
-    SDecl
+    SDecl SEffRow SEffLabel
     CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur))
 
 ;; 対応表の 1 行。lefts は Racket 側の名前、rights は F* 側の名前である。
@@ -56,6 +56,8 @@
    (one-to-one 'TFn 'TFn)
    (one-to-one 'TUnion 'TUnion)
    (one-to-one 'TInter 'TInter)
+   (one-to-one 'SEffRow 'SEffRow)
+   (one-to-one 'SEffLabel 'SEffLabel)
    (corr-row '(SBind SFnDecl) '(SDecl) 'many-to-one)
    (no-counterpart 'STypeDecl)
    (no-counterpart 'STraitDecl)
@@ -67,8 +69,6 @@
    (no-counterpart 'SField)
    (no-counterpart 'SLabel)
    (no-counterpart 'TField)
-   (no-counterpart 'SEffRow)
-   (no-counterpart 'SEffLabel)
    (one-to-one '#:lit 'CLit)
    (one-to-one '#:var 'CVar)
    (one-to-one 'Apply 'CApply)

@@ -12,7 +12,7 @@
  "3 つのリストの要素数が spec §10.2 と一致する"
  (check-equal? (length racket-surface-constructors) 30)
  (check-equal? (length racket-ucore-constructors) 9)
- (check-equal? (length fstar-constructors) 26))
+ (check-equal? (length fstar-constructors) 28))
 
 (test-case
  "対応表に違反が無い"
@@ -82,7 +82,9 @@
  (check-equal? (row-kind 'SDeriveDecl) 'none)
  (check-equal? (row-kind 'SProgram) 'none)
  (check-equal? (row-kind 'SBind) 'many-to-one)
- (check-equal? (row-kind 'SFnDecl) 'many-to-one))
+ (check-equal? (row-kind 'SFnDecl) 'many-to-one)
+ (check-equal? (row-kind 'SEffRow) 'one-to-one)
+ (check-equal? (row-kind 'SEffLabel) 'one-to-one))
 
 ;; リスト 1 と 2 の名前が、実際に Surface と UCore+ の項として組めることを見る。
 ;; 名前を並べた順序はリストと同じであり、数の一致も同時に確かめる。

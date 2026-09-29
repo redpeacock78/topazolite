@@ -551,15 +551,14 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
-- `SEffRow` と `SEffLabel` はこの Task では Racket 側だけにあり、F* 側に対応する構成子を持たない。
+- `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は型欄に `sty-or-none` を持ち、F* 側では `option sty` として表す。
 
-Racket 側の Surface 構成子リストは 30 個、F* 側の `sexpr`、`sty`、`sdecl` の構成子リストは 17 個（`sty` は 5 個）である。
+Racket 側の Surface 構成子リストは 30 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 19 個（`sty` は 5 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
-P2j の `SEffRow` と `SEffLabel` も Racket 側だけにあり、F* 模型への追加を次 Task で行うまで「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 
 ### 8.2 UCore+ の対応
@@ -567,7 +566,7 @@ P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子�
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur` の 9 構成子だけを parity の対象とする。
 F* 側では、これらに対応する `CLit`、`CVar`、`CApply`、`CProj`、`CRec`、`CFn`、`CConstruct`、`CLet`、`CRecur` を置く。
 `CRecur` は parity の対象を揃えるための構成子であり、この版の lowering は生成しない。
-UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 26 個（`sexpr` 11 個、`sty` 5 個、`sdecl` 1 個、`core` 9 個）である。
+UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 28 個（`sexpr` 11 個、`sty` 5 個、`sdecl` 1 個、Effect row 2 個、`core` 9 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

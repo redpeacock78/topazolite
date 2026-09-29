@@ -222,7 +222,8 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
 let punctuation (b: FStar.UInt8.t) : bool =
   byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
   byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
-  byte_is b 124 || byte_is b 38
+  byte_is b 124 || byte_is b 38 || byte_is b 33 ||
+  byte_is b 60 || byte_is b 62
 
 let rec scan_fuel
   (id: sid) (n: nat) (i: nat) (rest: list FStar.UInt8.t)
@@ -439,6 +440,16 @@ let lex_bar_amp_ok () : Lemma
        | LexOk [a; b; e] -> a.kind = TkPunct && b.kind = TkPunct && e.kind = TkEof
        | _ -> false)
 
+(* P2j。!、<、> はそれぞれ 1 字句の記号になる。 *)
+let lex_bang_angle_ok () : Lemma
+  (match lex SyntheticSid [33uy; 60uy; 62uy] with
+   | LexOk [a; b; c; e] -> a.kind = TkPunct && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [33uy; 60uy; 62uy] with
+       | LexOk [a; b; c; e] -> a.kind = TkPunct && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
+       | _ -> false)
+
 type dkind = | DBind | DFnDecl
 
 type sexpr =
@@ -447,7 +458,7 @@ type sexpr =
   | SUnit     : span -> sexpr
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
-  | SFn       : span -> list (option sty) -> option sty -> sexpr -> sexpr
+  | SFn       : span -> list (option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> string -> sexpr
   | SProjRec  : span -> sexpr -> list string -> sexpr
@@ -456,13 +467,18 @@ type sexpr =
 and sty =
   | TName     : span -> string -> sty
   | TRec      : span -> list sty -> sty
-  | TFn       : span -> list sty -> sty -> sty
+  | TFn       : span -> list sty -> sty -> option seffrow -> sty
   | TUnion    : span -> sty -> sty -> sty
   | TInter    : span -> sty -> sty -> sty
 and sdecl =
-  | SDecl     : span -> dkind -> list sty -> option sty -> sexpr -> sdecl
+  | SDecl     : span -> dkind -> list sty -> option sty -> option seffrow -> sexpr -> sdecl
+and seffrow =
+  | SEffRow   : span -> list sefflabel -> seffrow
+and sefflabel =
+  | SEffLabel : span -> string -> option sty -> sefflabel
 
 type node = | NExpr : sexpr -> node | NTy : sty -> node | NDecl : sdecl -> node
+            | NRow : seffrow -> node | NLabel : sefflabel -> node
 
 let rec option_stys (ts: list (option sty)) : Tot (list sty) (decreases ts) =
   match ts with
@@ -477,7 +493,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SUnit s       -> s
   | SBool s _     -> s
   | SVar s _      -> s
-  | SFn s _ _ _   -> s
+  | SFn s _ _ _ _ -> s
   | SApply s _ _  -> s
   | SProj s _ _   -> s
   | SProjRec s _ _ -> s
@@ -488,19 +504,29 @@ let span_of_ty (t: sty) : Tot span =
   match t with
   | TName s _  -> s
   | TRec s _   -> s
-  | TFn s _ _  -> s
+  | TFn s _ _ _ -> s
   | TUnion s _ _ -> s
   | TInter s _ _ -> s
 
 let span_of_decl (d: sdecl) : Tot span =
   match d with
-  | SDecl s _ _ _ _ -> s
+  | SDecl s _ _ _ _ _ -> s
+
+let span_of_row (r: seffrow) : Tot span =
+  match r with
+  | SEffRow s _ -> s
+
+let span_of_label (l: sefflabel) : Tot span =
+  match l with
+  | SEffLabel s _ _ -> s
 
 let span_of_node (n: node) : Tot span =
   match n with
   | NExpr e -> span_of_expr e
   | NTy t   -> span_of_ty t
   | NDecl d -> span_of_decl d
+  | NRow r  -> span_of_row r
+  | NLabel l -> span_of_label l
 
 let kids_of_expr (e: sexpr) : Tot (list node) =
   match e with
@@ -509,7 +535,10 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SUnit _       -> []
   | SBool _ _     -> []
   | SVar _ _      -> []
-  | SFn _ ps r b  -> map NTy (option_stys ps) @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]
+  | SFn _ ps r row b ->
+      map NTy (option_stys ps) @
+      (match r with None -> [] | Some t -> [NTy t]) @
+      (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
   | SProjRec _ e1 _ -> [NExpr e1]
@@ -520,20 +549,25 @@ let kids_of_ty (t: sty) : Tot (list node) =
   match t with
   | TName _ _  -> []
   | TRec _ fs  -> map NTy fs
-  | TFn _ ps r -> map NTy ps @ [NTy r]
+  | TFn _ ps r row ->
+      map NTy ps @ [NTy r] @ (match row with None -> [] | Some eff -> [NRow eff])
   | TUnion _ l r -> [NTy l; NTy r]
   | TInter _ l r -> [NTy l; NTy r]
 
 let kids_of_decl (d: sdecl) : Tot (list node) =
   match d with
-  | SDecl _ _ ps r v ->
-      map NTy ps @ (match r with None -> [] | Some t -> [NTy t]) @ [NExpr v]
+  | SDecl _ _ ps r row v ->
+      map NTy ps @
+      (match r with None -> [] | Some t -> [NTy t]) @
+      (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]
 
 let kids_of_node (n: node) : Tot (list node) =
   match n with
   | NExpr e -> kids_of_expr e
   | NTy t   -> kids_of_ty t
   | NDecl d -> kids_of_decl d
+  | NRow (SEffRow _ labels) -> map NLabel labels
+  | NLabel (SEffLabel _ _ arg) -> (match arg with None -> [] | Some t -> [NTy t])
 
 let hull (a b: span) : Tot span =
   { sid = a.sid;
@@ -595,13 +629,30 @@ let rec wf_ty (t: sty) : Tot bool (decreases t) =
   match t with
   | TName _ _  -> true
   | TRec s fs  -> wf_tys s fs
-  | TFn s ps r -> wf_tys s ps && contains s (span_of_ty r) && wf_ty r
+  | TFn s ps r row ->
+      wf_tys s ps && contains s (span_of_ty r) && wf_ty r && wf_opt_row s row
   | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
   | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
 and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
   match ts with
   | []      -> true
   | t :: tl -> contains s (span_of_ty t) && wf_ty t && wf_tys s tl
+and wf_opt_row (s: span) (row: option seffrow) : Tot bool (decreases row) =
+  match row with
+  | None -> true
+  | Some r -> contains s (span_of_row r) && wf_row r
+and wf_row (r: seffrow) : Tot bool (decreases r) =
+  match r with
+  | SEffRow s labels -> wf_labels s labels
+and wf_labels (s: span) (labels: list sefflabel) : Tot bool (decreases labels) =
+  match labels with
+  | [] -> true
+  | label :: rest ->
+      contains s (span_of_label label) && wf_label label && wf_labels s rest
+and wf_label (label: sefflabel) : Tot bool (decreases label) =
+  match label with
+  | SEffLabel _ _ None -> true
+  | SEffLabel s _ (Some t) -> contains s (span_of_ty t) && wf_ty t
 
 let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   match e with
@@ -610,9 +661,11 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SUnit _       -> true
   | SBool _ _     -> true
   | SVar _ _      -> true
-  | SFn s ps r b  -> wf_tys s (option_stys ps)
-                     && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
-                     && contains s (span_of_expr b) && wf_expr b
+  | SFn s ps r row b ->
+      wf_tys s (option_stys ps)
+      && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
+      && wf_opt_row s row
+      && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
   | SProj s e1 _  -> contains s (span_of_expr e1) && wf_expr e1
   | SProjRec s e1 _ -> contains s (span_of_expr e1) && wf_expr e1
@@ -624,9 +677,10 @@ and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
   | e :: tl -> contains s (span_of_expr e) && wf_expr e && wf_exprs s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
-  | SDecl s _ ps r v ->
+  | SDecl s _ ps r row v ->
       wf_tys s ps
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
+      && wf_opt_row s row
       && contains s (span_of_expr v) && wf_expr v
 and wf_decls (s: span) (ds: list sdecl) : Tot bool (decreases ds) =
   match ds with
@@ -638,6 +692,8 @@ let wf_node (n: node) : Tot bool =
   | NExpr e -> wf_expr e
   | NTy t   -> wf_ty t
   | NDecl d -> wf_decl d
+  | NRow r  -> wf_row r
+  | NLabel l -> wf_label l
 
 val wf_tys_elim : s:span -> ts:list sty -> c:node -> Lemma
   (requires wf_tys s ts)
@@ -647,6 +703,16 @@ let rec wf_tys_elim s ts c =
   match ts with
   | []      -> ()
   | t :: tl -> wf_tys_elim s tl c
+
+val wf_labels_elim : s:span -> labels:list sefflabel -> c:node -> Lemma
+  (requires wf_labels s labels)
+  (ensures memP c (map NLabel labels) ==>
+           (contains s (span_of_node c) /\ wf_node c))
+  (decreases labels)
+let rec wf_labels_elim s labels c =
+  match labels with
+  | [] -> ()
+  | label :: rest -> wf_labels_elim s rest c
 
 val wf_exprs_elim : s:span -> es:list sexpr -> c:node -> Lemma
   (requires wf_exprs s es)
@@ -675,11 +741,16 @@ let parse_span_containment n c =
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
-  | NExpr (SFn s ps r b) ->
+  | NExpr (SFn s ps r row b) ->
       FStar.List.Tot.Properties.append_memP
-        (map NTy (option_stys ps)) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr b]) c;
+        (map NTy (option_stys ps))
+        ((match r with None -> [] | Some t -> [NTy t]) @
+         (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]) c;
       FStar.List.Tot.Properties.append_memP
-        (match r with None -> [] | Some t -> [NTy t]) [NExpr b] c;
+        (match r with None -> [] | Some t -> [NTy t])
+        ((match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]) c;
+      FStar.List.Tot.Properties.append_memP
+        (match row with None -> [] | Some eff -> [NRow eff]) [NExpr b] c;
       wf_tys_elim s (option_stys ps) c
   | NExpr (SApply s f a) -> wf_exprs_elim s a c
   | NExpr (SRec s fs) -> wf_exprs_elim s fs c
@@ -687,16 +758,26 @@ let parse_span_containment n c =
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
       wf_decls_elim s ds c
   | NTy (TRec s fs) -> wf_tys_elim s fs c
-  | NTy (TFn s ps r) ->
-      FStar.List.Tot.Properties.append_memP (map NTy ps) [NTy r] c;
+  | NTy (TFn s ps r row) ->
+      FStar.List.Tot.Properties.append_memP
+        (map NTy ps) ([NTy r] @ (match row with None -> [] | Some eff -> [NRow eff])) c;
+      FStar.List.Tot.Properties.append_memP
+        [NTy r] (match row with None -> [] | Some eff -> [NRow eff]) c;
       wf_tys_elim s ps c
   | NTy (TUnion _ _ _) | NTy (TInter _ _ _) -> ()
-  | NDecl (SDecl s _ ps r v) ->
+  | NDecl (SDecl s _ ps r row v) ->
       FStar.List.Tot.Properties.append_memP
-        (map NTy ps) ((match r with None -> [] | Some t -> [NTy t]) @ [NExpr v]) c;
+        (map NTy ps)
+        ((match r with None -> [] | Some t -> [NTy t]) @
+         (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]) c;
       FStar.List.Tot.Properties.append_memP
-        (match r with None -> [] | Some t -> [NTy t]) [NExpr v] c;
+        (match r with None -> [] | Some t -> [NTy t])
+        ((match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]) c;
+      FStar.List.Tot.Properties.append_memP
+        (match row with None -> [] | Some eff -> [NRow eff]) [NExpr v] c;
       wf_tys_elim s ps c
+  | NRow (SEffRow s labels) -> wf_labels_elim s labels c
+  | NLabel (SEffLabel _ _ _) -> ()
 
 type core =
   | CLit      : span -> core
@@ -729,7 +810,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SUnit _      -> true
   | SBool _ _    -> true
   | SVar _ _     -> true
-  | SFn _ _ _ _  -> true
+  | SFn _ _ _ _ _ -> true
   | SApply _ _ _ -> true
   | SProj _ _ _  -> true
   | SProjRec _ _ _ -> false
@@ -751,7 +832,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SUnit s       -> CConstruct s "unit" []
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
   | SVar s _      -> CVar s
-  | SFn s _ _ b   -> CFn s [] (lower_expr b)
+  | SFn s _ _ _ b -> CFn s [] (lower_expr b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SProj s e1 _  -> CProj s (lower_expr e1)
   | SProjRec s e1 ls ->
@@ -770,7 +851,7 @@ and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
       CLet (hull (span_of_decl d) (span_of_core rest)) (lower_decl d) rest
 and lower_decl (d: sdecl) : Tot core (decreases d) =
   match d with
-  | SDecl _ _ _ _ v -> lower_expr v
+  | SDecl _ _ _ _ _ v -> lower_expr v
 
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
@@ -782,7 +863,7 @@ let lower_preserves_span e =
   | SUnit _      -> ()
   | SBool _ _    -> ()
   | SVar _ _     -> ()
-  | SFn _ _ _ _  -> ()
+  | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SProj _ _ _  -> ()
   | SProjRec _ _ _ -> ()
