@@ -850,27 +850,26 @@ type core =
   | CLit      : span -> core
   | CVar      : span -> core
   | CApply    : span -> core -> list core -> core
-  | CProj     : span -> core -> core
-  | CRec      : span -> list core -> core
-  | CFn       : span -> list core -> core -> core
+  | CProj     : span -> span -> core -> core
+  | CRec      : span -> list (span & core) -> core
+  | CFn       : span -> list span -> option seffrow -> core -> core
   | CConstruct: span -> string -> list core -> core
-  | CLet      : span -> core -> core -> core
+  | CLet      : span -> span -> core -> core -> core
   | CReturn   : span -> core -> core
-  // parity 専用。このサイクルの lowering は CRecur を作らない。
-  | CRecur    : span -> core -> core -> core
+  | CRecur    : span -> span -> list span -> seffrow -> core -> core -> core
 
 let span_of_core (c: core) : Tot span =
   match c with
   | CLit s           -> s
   | CVar s           -> s
   | CApply s _ _     -> s
-  | CProj s _        -> s
+  | CProj s _ _      -> s
   | CRec s _         -> s
-  | CFn s _ _        -> s
+  | CFn s _ _ _      -> s
   | CConstruct s _ _ -> s
-  | CLet s _ _       -> s
+  | CLet s _ _ _     -> s
   | CReturn s _      -> s
-  | CRecur s _ _     -> s
+  | CRecur s _ _ _ _ _ -> s
 
 let one_to_one (e: sexpr) : Tot bool =
   match e with
@@ -887,12 +886,17 @@ let one_to_one (e: sexpr) : Tot bool =
   | SRec _ _     -> true
   | SBlock _ _ _ -> false
 
-// 多 field 射影の欄である。旧 Core 欄へつなぐ間は label span をまだ保持しない。
-let rec proj_fields (s_all: span) (s_recv: span) (ls: list (span & string))
-  : Tot (list core) (decreases ls) =
+let row_or_empty (s: span) (row: option seffrow) : Tot seffrow =
+  match row with
+  | None   -> SEffRow s []
+  | Some r -> r
+
+// 多 field 射影の各欄は label span を Proj と Rec の両方へ運ぶ。
+let rec proj_fields (s_recv: span) (ls: list (span & string))
+  : Tot (list (span & core)) (decreases ls) =
   match ls with
   | []      -> []
-  | _ :: tl -> CProj s_all (CVar s_recv) :: proj_fields s_all s_recv tl
+  | (sl, _) :: tl -> (sl, CProj sl sl (CVar s_recv)) :: proj_fields s_recv tl
 
 let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   match e with
@@ -902,30 +906,32 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
   | SVar s _      -> CVar s
   | SReturn s e   -> CReturn s (lower_expr e)
-  | SFn s _ _ _ b -> CFn s [] (lower_expr b)
+  | SFn s ps _ row b -> CFn s (map fst ps) row (lower_expr b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
-  | SProj s e1 _  -> CProj s (lower_expr e1)
+  | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
   | SProjRec s e1 ls ->
-      CLet s (lower_expr e1) (CRec s (proj_fields s (span_of_expr e1) ls))
-  | SRec s fs     -> CRec s (lower_field_exprs fs)
+      CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
+  | SRec s fs     -> CRec s (lower_fields fs)
   | SBlock _ ds t -> lower_block ds (lower_expr t)
 and lower_exprs (es: list sexpr) : Tot (list core) (decreases es) =
   match es with
   | []      -> []
   | e :: tl -> lower_expr e :: lower_exprs tl
-and lower_field_exprs (fs: list (span & sexpr)) : Tot (list core) (decreases fs) =
+and lower_fields (fs: list (span & sexpr)) : Tot (list (span & core)) (decreases fs) =
   match fs with
-  | []           -> []
-  | (_, e) :: tl -> lower_expr e :: lower_field_exprs tl
+  | []            -> []
+  | (sl, e) :: tl -> (sl, lower_expr e) :: lower_fields tl
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail
-  | d :: tl ->
-      let rest = lower_block tl tail in
-      CLet (hull (span_of_decl d) (span_of_core rest)) (lower_decl d) rest
-and lower_decl (d: sdecl) : Tot core (decreases d) =
+  | d :: tl -> lower_decl d (lower_block tl tail)
+and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
   match d with
-  | SDecl _ _ _ _ _ _ v -> lower_expr v
+  | SDecl s DBind sx _ _ _ v ->
+      CLet (hull s (span_of_core rest)) sx (lower_expr v) rest
+  | SDecl s DFnDecl sx ps _ row v ->
+      CRecur (hull s (span_of_core rest)) sx (map fst ps) (row_or_empty s row)
+             (lower_expr v) rest
 
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
@@ -944,3 +950,70 @@ let lower_preserves_span e =
   | SProjRec _ _ _ -> ()
   | SRec _ _     -> ()
   | SBlock _ _ _ -> ()
+
+// 命題 6。空でない block の根の span は先頭宣言と後続の根の hull である。
+val lower_block_root_span : d:sdecl -> ds:list sdecl -> tail:core -> Lemma
+  (span_of_core (lower_block (d :: ds) tail)
+   == hull (span_of_decl d) (span_of_core (lower_block ds tail)))
+let lower_block_root_span d ds tail =
+  match d with
+  | SDecl _ DBind _ _ _ _ _ -> ()
+  | SDecl _ DFnDecl _ _ _ _ _ -> ()
+
+// 命題 7。SFn は仮引数名の span と省略を含む row をそのまま運ぶ。
+val lower_fn_fields : s:span -> ps:list (span & option sty) -> r:option sty
+  -> row:option seffrow -> b:sexpr -> Lemma
+  (lower_expr (SFn s ps r row b) == CFn s (map fst ps) row (lower_expr b))
+let lower_fn_fields s ps r row b = ()
+
+// 命題 7。SProj は label の span を運ぶ。
+val lower_proj_label : s:span -> e1:sexpr -> l:(span & string) -> Lemma
+  (lower_expr (SProj s e1 l) == CProj s (fst l) (lower_expr e1))
+let lower_proj_label s e1 l = ()
+
+// 命題 7。SRec の field label の span 列は元の列と等しい。
+val lower_fields_labels : fs:list (span & sexpr) -> Lemma
+  (ensures map fst (lower_fields fs) == map fst fs)
+  (decreases fs)
+let rec lower_fields_labels fs =
+  match fs with
+  | []      -> ()
+  | _ :: tl -> lower_fields_labels tl
+
+val lower_rec_labels : s:span -> fs:list (span & sexpr) -> Lemma
+  (lower_expr (SRec s fs) == CRec s (lower_fields fs) /\
+   map fst (lower_fields fs) == map fst fs)
+let lower_rec_labels s fs = lower_fields_labels fs
+
+// 命題 7。SProjRec の label span は field と Proj の両方へ運ぶ。
+let proj_field_of (s_recv: span) (l: span & string) : Tot (span & core) =
+  (fst l, CProj (fst l) (fst l) (CVar s_recv))
+
+val proj_fields_spans : s_recv:span -> ls:list (span & string) -> Lemma
+  (ensures proj_fields s_recv ls == map (proj_field_of s_recv) ls)
+  (decreases ls)
+let rec proj_fields_spans s_recv ls =
+  match ls with
+  | []      -> ()
+  | _ :: tl -> proj_fields_spans s_recv tl
+
+val lower_projrec_fields : s:span -> e1:sexpr -> ls:list (span & string) -> Lemma
+  (lower_expr (SProjRec s e1 ls)
+   == CLet s (span_of_expr e1) (lower_expr e1)
+        (CRec s (map (proj_field_of (span_of_expr e1)) ls)))
+let lower_projrec_fields s e1 ls = proj_fields_spans (span_of_expr e1) ls
+
+// 命題 7。DBind は束縛名の span を持つ CLet になる。
+val lower_decl_bind : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
+  -> row:option seffrow -> v:sexpr -> rest:core -> Lemma
+  (lower_decl (SDecl s DBind sx ps r row v) rest
+   == CLet (hull s (span_of_core rest)) sx (lower_expr v) rest)
+let lower_decl_bind s sx ps r row v rest = ()
+
+// 命題 7。DFnDecl は後続を含む CRecur になる。
+val lower_decl_fn : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
+  -> row:option seffrow -> v:sexpr -> rest:core -> Lemma
+  (lower_decl (SDecl s DFnDecl sx ps r row v) rest
+   == CRecur (hull s (span_of_core rest)) sx (map fst ps)
+             (row_or_empty s row) (lower_expr v) rest)
+let lower_decl_fn s sx ps r row v rest = ()
