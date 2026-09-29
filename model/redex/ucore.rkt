@@ -25,6 +25,7 @@
   (uQ ::= (uφ ...))
   (uτ ::= Int Bool Unit String Never Res
           T
+          (Data T (uτ ...))
           (List uτ)
           (Option uτ)
           (Result uτ uτ)

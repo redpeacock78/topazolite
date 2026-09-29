@@ -132,6 +132,10 @@
      (and normalized-ok
           normalized-error
           `(Result ,normalized-ok ,normalized-error))]
+    [`(Data ,name (,arguments ...))
+     (define normalized-arguments (map normalize-type/impl arguments))
+     (and (andmap values normalized-arguments)
+          `(Data ,name ,normalized-arguments))]
     [`(NFn ,parameters ,return-type ,in-row ,row ,obligations ,origin)
      (define normalized-parameters
        (for/list ([parameter (in-list parameters)])
@@ -231,6 +235,10 @@
     [`(Result ,ok-type ,error-type)
      `(Result ,(canonical-key/normal ok-type depth)
               ,(canonical-key/normal error-type depth))]
+    [`(Data ,name (,arguments ...))
+     `(Data ,name
+            ,(map (lambda (argument) (canonical-key/normal argument depth))
+                  arguments))]
     [`(NFn ,parameters ,return-type ,in-row ,row ,obligations ,origin)
      `(NFn ,(map (lambda (parameter)
                    (canonical-key/normal parameter depth))
@@ -364,6 +372,10 @@
     [(`(Result ,left-ok ,left-error) `(Result ,right-ok ,right-error))
      (and (type-equiv? left-ok right-ok)
           (type-equiv? left-error right-error))]
+    [(`(Data ,left-name (,left-arguments ...))
+      `(Data ,right-name (,right-arguments ...)))
+     (and (eq? left-name right-name)
+          (types-equiv? left-arguments right-arguments))]
     [(`(Owned ,left-inner) `(Owned ,right-inner))
      (type-equiv? left-inner right-inner)]
     [(`(Borrowed ,left-payload ,left-ρ)

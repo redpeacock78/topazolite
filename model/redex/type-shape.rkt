@@ -1,6 +1,8 @@
 #lang racket
 
 (require racket/match
+         racket/set
+         "data-env.rkt"
          "erase.rkt"
          "rows.rkt"
          "type-equiv.rkt"
@@ -51,6 +53,9 @@
       [`(Yield ,type) (type-shape-ok? type)]
       [_ #t])))
 
+;; 再帰する data schema の形検査で、同じ具体化を再訪したか記録する。
+(define data-shape-visited (make-parameter (set)))
+
 ;; 型の整形式性。record のラベル一意性に加えて、RFN-001 の Owned-free 制限を
 ;; Untrusted と Refined のペイロードへ課す。
 (define (type-shape-ok? type)
@@ -99,6 +104,17 @@
           (effect-row-shape-ok? out-row)
           (andmap proposition-shape-ok? obligations))]
     [`(ForallRegion (,_ ...) ,body) (type-shape-ok? body)]
+    [`(Data ,name (,arguments ...))
+     (define key (cons name arguments))
+     (define schema (data-schema name arguments))
+     (and schema
+          (andmap type-shape-ok? arguments)
+          (or (set-member? (data-shape-visited) key)
+              (parameterize ([data-shape-visited
+                              (set-add (data-shape-visited) key)])
+                (for*/and ([row (in-list schema)]
+                           [field (in-list (second row))])
+                  (type-shape-ok? field)))))]
     [_ #t]))
 
 ;; 可変記憶域の書込み先の型が、value path で到達するすべての NFn に

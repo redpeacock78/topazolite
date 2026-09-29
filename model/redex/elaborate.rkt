@@ -8,6 +8,7 @@
          "classify.rkt"
          "compat.rkt"
          "diagnostic.rkt"
+         "data-env.rkt"
          "erase.rkt"
          "lang.rkt"
          "origins.rkt"
@@ -324,6 +325,10 @@
       [`(Result ,ok-type ,error-type)
        `(Result ,(resolve-annotation ok-type delta span)
                 ,(resolve-annotation error-type delta span))]
+      [`(Data ,name (,arguments ...))
+       `(Data ,name ,(map (lambda (argument)
+                            (resolve-annotation argument delta span))
+                          arguments))]
       [`(Owned ,inner)
        `(Owned ,(resolve-annotation inner delta span))]
       [`(Untrusted ,inner)
@@ -457,6 +462,11 @@
     [(list (or 'none 'some) element) `(Option ,element)]
     [(list (or 'ok 'ng) ok-type error-type)
      `(Result ,ok-type ,error-type)]
+    [(cons (app data-constructor (list name _)) arguments)
+     (define decl (data-decl name))
+     (if (= (length arguments) (length (second decl)))
+         `(Data ,name ,arguments)
+         (reject span 'constructor-type-arity constructor type-arguments))]
     [_ (reject span 'constructor-type-arity constructor type-arguments)]))
 
 (define (sets-union sets)

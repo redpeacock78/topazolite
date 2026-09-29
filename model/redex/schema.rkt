@@ -1,5 +1,7 @@
 #lang racket
 
+(require "data-env.rkt")
+
 (provide constructor-schema
          peel-eliminate-wrapper)
 
@@ -12,6 +14,7 @@
      `((none ()) (some (,element)))]
     [`(Result ,ok-type ,error-type)
      `((ok (,ok-type)) (ng (,error-type)))]
+    [`(Data ,name (,arguments ...)) (data-schema name arguments)]
     [_ #f]))
 
 (define (peel-eliminate-wrapper data-type)
