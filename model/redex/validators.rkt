@@ -1,6 +1,8 @@
 #lang racket
 
-(require racket/match)
+(require racket/match
+         racket/set
+         "data-env.rkt")
 
 (provide validator-table
          validator-oid validator-name validator-proposition
@@ -128,46 +130,52 @@
 (define (validator-error-message name)
   (format "~a: rejected" name))
 
-;; Untrusted と Refined のペイロード型は Owned を部分に含まない型に限る。
-;; wrapper が affine 制約を隠すと、外層しか見ない既存の Owned 判定を素通りして
-;; 資源を複製できてしまう。NFn の内部も含めて再帰する。
-(define (effect-owned-free? effect)
-  (match effect
-    [`(Return ,_ ,type) (owned-free? type)]
-    [`(Yield ,type) (owned-free? type)]
-    [_ #t]))
-
 ;; spec §6.2、unsafe.md §6.5。Untrusted と Refined の payload が Owned を
 ;; 含まないことを検査する。列挙に無い型構成子は #f を返す fail-closed の形で
 ;; あり、型構成子を足すときは所有を含むかどうかをここへ明示する。
 ;; Borrowed と BorrowedMut と RawPtr は #t を返し payload へ降りない。
 ;; 所有値を含む構造の借用は意図された用法である（type-shape.rkt:63）。
 (define (owned-free? type)
-  (match type
-    ['Int #t] ['Bool #t] ['Unit #t] ['String #t] ['Never #t] ['Res #t]
-    [`(TypeInfo ,_) #t]
-    [`(Proof ,_) #t]
-    [`(Owned ,_) #f]
-    [`(Borrowed ,_ ,_) #t]
-    [`(BorrowedMut ,_ ,_) #t]
-    [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
-    [`(List ,element) (owned-free? element)]
-    [`(Option ,element) (owned-free? element)]
-    [`(Result ,ok-type ,error-type)
-     (and (owned-free? ok-type) (owned-free? error-type))]
-    [`(Untrusted ,payload) (owned-free? payload)]
-    [`(Refined ,payload ,_) (owned-free? payload)]
-    [`(Record ,row)
-     (for/and ([field (in-list row)]) (owned-free? (second field)))]
-    [`(Union ,left ,right) (and (owned-free? left) (owned-free? right))]
-    [`(Intersection ,left ,right) (and (owned-free? left) (owned-free? right))]
-    [`(ForallRegion (,_ ...) ,body) (owned-free? body)]
-    [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
-     (and (for/and ([parameter (in-list parameters)]) (owned-free? parameter))
-          (owned-free? return-type)
-          (for/and ([effect (in-list in-effects)]) (effect-owned-free? effect))
-          (for/and ([effect (in-list effects)]) (effect-owned-free? effect)))]
-    [_ #f]))
+  (let walk ([type type] [visited (set)])
+    (define (effect-free? effect)
+      (match effect
+        [`(Return ,_ ,payload) (walk payload visited)]
+        [`(Yield ,payload) (walk payload visited)]
+        [_ #t]))
+    (match type
+      ['Int #t] ['Bool #t] ['Unit #t] ['String #t] ['Never #t] ['Res #t]
+      [`(TypeInfo ,_) #t]
+      [`(Proof ,_) #t]
+      [`(Owned ,_) #f]
+      [`(Borrowed ,_ ,_) #t]
+      [`(BorrowedMut ,_ ,_) #t]
+      [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
+      [`(List ,element) (walk element visited)]
+      [`(Option ,element) (walk element visited)]
+      [`(Result ,ok-type ,error-type)
+       (and (walk ok-type visited) (walk error-type visited))]
+      [`(Untrusted ,payload) (walk payload visited)]
+      [`(Refined ,payload ,_) (walk payload visited)]
+      [`(Record ,row)
+       (for/and ([field (in-list row)]) (walk (second field) visited))]
+      [`(Union ,left ,right)
+       (and (walk left visited) (walk right visited))]
+      [`(Intersection ,left ,right)
+       (and (walk left visited) (walk right visited))]
+      [`(ForallRegion (,_ ...) ,body) (walk body visited)]
+      [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
+       (and (for/and ([parameter (in-list parameters)]) (walk parameter visited))
+            (walk return-type visited)
+            (andmap effect-free? in-effects)
+            (andmap effect-free? effects))]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (or (set-member? visited key)
+                (for/and ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [_ #f])))
 
 ;; 走査の結果を順に連結する。途中で #f が出たら全体が #f になる。
 ;; scanner に values を渡すと、既に走査済みの結果の列を連結できる。
@@ -182,33 +190,48 @@
 ;; 借用の payload の中へは降りない。借用は参照であり、複製されるのは参照だけで
 ;; あって payload ではないからである。
 (define (copy-out-scan type)
-  (match type
-    ['Int '()] ['Bool '()] ['Unit '()] ['String '()] ['Never '()] ['Res '()]
-    [`(TypeInfo ,_) '()] [`(Proof ,_) '()]
-    [`(Owned ,_) #f]
-    [`(Borrowed ,_ ,alpha) (list alpha)]
-    [`(BorrowedMut ,_ ,alpha) (list alpha)]
-    [`(List ,element) (copy-out-scan element)]
-    [`(Option ,element) (copy-out-scan element)]
-    [`(Result ,ok-type ,error-type)
-     (scan-sequence copy-out-scan (list ok-type error-type))]
-    [`(Untrusted ,payload) (copy-out-scan payload)]
-    [`(Refined ,payload ,_) (copy-out-scan payload)]
-    [`(Record ,row)
-     (scan-sequence copy-out-scan
-                    (for/list ([field (in-list row)]) (second field)))]
-    [`(Union ,left ,right)
-     (scan-sequence copy-out-scan (list left right))]
-    [`(Intersection ,left ,right)
-     (scan-sequence copy-out-scan (list left right))]
-    [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
-     (scan-sequence values
-                    (list (scan-sequence copy-out-scan parameters)
-                          (copy-out-scan return-type)
-                          (scan-sequence effect-copy-out-scan in-effects)
-                          (scan-sequence effect-copy-out-scan effects)))]
-    ;; 型構成子を追加するときは、複製の可否をここへ明示する。
-    [_ #f]))
+  (let walk ([type type] [visited (set)])
+    (define (walk-effect effect)
+      (match effect
+        [`(Return ,_ ,payload) (walk payload visited)]
+        [`(Yield ,payload) (walk payload visited)]
+        [_ '()]))
+    (match type
+      ['Int '()] ['Bool '()] ['Unit '()] ['String '()] ['Never '()] ['Res '()]
+      [`(TypeInfo ,_) '()] [`(Proof ,_) '()]
+      [`(Owned ,_) #f]
+      [`(Borrowed ,_ ,alpha) (list alpha)]
+      [`(BorrowedMut ,_ ,alpha) (list alpha)]
+      [`(List ,element) (walk element visited)]
+      [`(Option ,element) (walk element visited)]
+      [`(Result ,ok-type ,error-type)
+       (scan-sequence (lambda (item) (walk item visited))
+                      (list ok-type error-type))]
+      [`(Untrusted ,payload) (walk payload visited)]
+      [`(Refined ,payload ,_) (walk payload visited)]
+      [`(Record ,row)
+       (scan-sequence (lambda (item) (walk item visited))
+                      (for/list ([field (in-list row)]) (second field)))]
+      [`(Union ,left ,right)
+       (scan-sequence (lambda (item) (walk item visited)) (list left right))]
+      [`(Intersection ,left ,right)
+       (scan-sequence (lambda (item) (walk item visited)) (list left right))]
+      [`(NFn (,parameters ...) ,return-type (,in-effects ...) (,effects ...) ,_ ,_)
+       (scan-sequence values
+                      (list (scan-sequence (lambda (item) (walk item visited)) parameters)
+                            (walk return-type visited)
+                            (scan-sequence walk-effect in-effects)
+                            (scan-sequence walk-effect effects)))]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (if (set-member? visited key)
+                '()
+                (scan-sequence (lambda (item) (walk item (set-add visited key)))
+                               (data-field-types name arguments))))]
+      ;; 型構成子を追加するときは、複製の可否をここへ明示する。
+      [_ #f])))
 
 ;; Effect のうち型を運ぶものだけを走査する。
 ;; 型を運ばない Effect は借用を含まないため空の列を返す。
@@ -233,37 +256,53 @@
   (and scanned (null? scanned) #t))
 
 ;; unsafe.md §4.3。(Unsafe c) の外へ raw pointer が出ることを型で落とす。
-;; G2m の型文法は再帰型構成子を持たないため、構造走査は必ず停止する。
+;; 再帰する data 型は具体化ごとの訪問集合で停止させる。
 ;; 判定は fail-closed であり、最後の節が列挙に無い型構成子を漏出ありとする。
 ;; 型構成子を足すときは、漏出の可否をここへ明示する。
 (define (leaks-rawptr? type)
-  (match type
-    ['Int #f] ['Bool #f] ['Unit #f] ['String #f] ['Never #f] ['Res #f]
-    [`(TypeInfo ,_) #f]
-    [`(Proof ,_) #f]
-    [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
-    [`(List ,inner) (leaks-rawptr? inner)]
-    [`(Option ,inner) (leaks-rawptr? inner)]
-    [`(Result ,ok ,err) (or (leaks-rawptr? ok) (leaks-rawptr? err))]
-    [`(Owned ,inner) (leaks-rawptr? inner)]
-    [`(Borrowed ,inner ,_) (leaks-rawptr? inner)]
-    [`(BorrowedMut ,inner ,_) (leaks-rawptr? inner)]
-    [`(Untrusted ,inner) (leaks-rawptr? inner)]
-    ;; φ へは降りない。命題の対象は pointer 値の持ち出し経路ではない。
-    [`(Refined ,inner ,_) (leaks-rawptr? inner)]
-    [`(Union ,left ,right) (or (leaks-rawptr? left) (leaks-rawptr? right))]
-    [`(Intersection ,left ,right)
-     (or (leaks-rawptr? left) (leaks-rawptr? right))]
-    [`(ForallRegion (,_ ...) ,body) (leaks-rawptr? body)]
-    [`(Record ,row)
-     (for/or ([field (in-list row)]) (leaks-rawptr? (second field)))]
-    ;; Q へは降りない。Refined の φ と同じ理由である。
-    [`(NFn (,parameters ...) ,result (,in-row ...) (,row ...) ,_ ,_)
-     (or (for/or ([p (in-list parameters)]) (leaks-rawptr? p))
-         (leaks-rawptr? result)
-         (effect-leaks-rawptr? in-row)
-         (effect-leaks-rawptr? row))]
-    [_ #t]))
+  (let walk ([type type] [visited (set)])
+    (define (walk-effect effect)
+      (match effect
+        [`(Return ,_ ,payload) (walk payload visited)]
+        [`(Yield ,payload) (walk payload visited)]
+        [_ #f]))
+    (match type
+      ['Int #f] ['Bool #f] ['Unit #f] ['String #f] ['Never #f] ['Res #f]
+      [`(TypeInfo ,_) #f]
+      [`(Proof ,_) #f]
+      [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
+      [`(List ,inner) (walk inner visited)]
+      [`(Option ,inner) (walk inner visited)]
+      [`(Result ,ok ,err) (or (walk ok visited) (walk err visited))]
+      [`(Owned ,inner) (walk inner visited)]
+      [`(Borrowed ,inner ,_) (walk inner visited)]
+      [`(BorrowedMut ,inner ,_) (walk inner visited)]
+      [`(Untrusted ,inner) (walk inner visited)]
+      ;; φ へは降りない。命題の対象は pointer 値の持ち出し経路ではない。
+      [`(Refined ,inner ,_) (walk inner visited)]
+      [`(Union ,left ,right)
+       (or (walk left visited) (walk right visited))]
+      [`(Intersection ,left ,right)
+       (or (walk left visited) (walk right visited))]
+      [`(ForallRegion (,_ ...) ,body) (walk body visited)]
+      [`(Record ,row)
+       (for/or ([field (in-list row)]) (walk (second field) visited))]
+      ;; Q へは降りない。Refined の φ と同じ理由である。
+      [`(NFn (,parameters ...) ,result (,in-row ...) (,row ...) ,_ ,_)
+       (or (for/or ([p (in-list parameters)]) (walk p visited))
+           (walk result visited)
+           (ormap walk-effect in-row)
+           (ormap walk-effect row))]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (cond
+         [(not schema) #t]
+         [(set-member? visited key) #f]
+         [else
+          (for/or ([field (in-list (data-field-types name arguments))])
+            (walk field (set-add visited key)))])]
+      [_ #t])))
 
 ;; 型を運ばない label は漏出なしとする。effect-copy-out-scan と同じ形で
 ;; 別の関数へ分ける。

@@ -5,6 +5,7 @@
          "data-env.rkt"
          "erase.rkt"
          "rows.rkt"
+         "schema.rkt"
          "type-equiv.rkt"
          "validators.rkt")
 
@@ -28,11 +29,20 @@
 ;; 型が Borrowed または BorrowedMut を含むか。Eliminate の branch binder へ
 ;; 所有者を運べない段で fail-closed にするために使う。
 (define (type-carries-capability? type)
-  (match type
-    [`(Borrowed ,_ ,_) #t]
-    [`(BorrowedMut ,_ ,_) #t]
-    [(? list? terms) (ormap type-carries-capability? terms)]
-    [_ #f]))
+  (let walk ([type type] [visited (set)])
+    (match type
+      [`(Borrowed ,_ ,_) #t]
+      [`(BorrowedMut ,_ ,_) #t]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (if (set-member? visited key)
+                #f
+                (for/or ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [(? list? terms) (ormap (lambda (term) (walk term visited)) terms)]
+      [_ #f])))
 
 (define (proposition-shape-ok? proposition)
   (match proposition
@@ -120,31 +130,40 @@
 ;; 可変記憶域の書込み先の型が、value path で到達するすべての NFn に
 ;; Partial を持たせているかを判定する（REC-001、P2i3 spec §3.2）。
 ;; NFn の仮引数型、戻り型、Q へは降りない。Proof と TypeInfo は callable を
-;; 運ばないので辿らない。Intersection は type? が Record へ畳むため現れない前提で、
-;; 現れた場合は知らない形として拒否する。
-;; data 型は現行 schema（List、Option、Result）の型引数を直接辿る。型は有限の木
-;; なので訪問集合は置かない。ADT-001 で schema の walk へ置き換える。
+;; 運ばないので辿らない。data schema と組み込み List/Option/Result の欄を辿る。
 (define (storage-ok? τ-in)
-  (define τ (normalize-type τ-in))
-  (let walk ([τ τ])
+  (define (schema-key τ)
+    (match τ
+      [`(Data ,name (,arguments ...)) (cons name arguments)]
+      [`(List ,element) (list 'List element)]
+      [`(Option ,element) (list 'Option element)]
+      [`(Result ,ok-type ,error-type) (list 'Result ok-type error-type)]))
+  (let walk ([τ-in τ-in] [visited (set)])
+    (define τ (normalize-type τ-in))
     (match τ
       [#f #f]
       [(or 'Int 'Bool 'Unit 'String 'Never 'Res) #t]
       [`(TypeInfo ,_) #t]
       [`(Proof ,_) #t]
       [`(NFn ,_ ,_ ,_ ,εout ,_ ,_) (and (member 'Partial εout) #t)]
-      [`(Record ,row) (for/and ([field (in-list row)]) (walk (second field)))]
-      [`(Union ,a ,b) (and (walk a) (walk b))]
-      [`(List ,a) (walk a)]
-      [`(Option ,a) (walk a)]
-      [`(Result ,a ,b) (and (walk a) (walk b))]
-      [`(Owned ,a) (walk a)]
-      [`(Borrowed ,a ,_) (walk a)]
-      [`(BorrowedMut ,a ,_) (walk a)]
-      [`(Untrusted ,a) (walk a)]
-      [`(Refined ,a ,_) (walk a)]
-      [`(ForallRegion ,_ ,a) (walk a)]
-      [`(RawPtr ,a ,_ ,_ ,_ ,_ ,_) (walk a)]
+      [`(Record ,row)
+       (for/and ([field (in-list row)]) (walk (second field) visited))]
+      [`(Union ,a ,b) (and (walk a visited) (walk b visited))]
+      [(or `(Data ,_ (,_ ...)) `(List ,_) `(Option ,_) `(Result ,_ ,_))
+       (define key (schema-key τ))
+       (define schema (constructor-schema τ))
+       (and schema
+            (or (set-member? visited key)
+                (for*/and ([constructor (in-list schema)]
+                           [field (in-list (second constructor))])
+                  (walk field (set-add visited key)))))]
+      [`(Owned ,a) (walk a visited)]
+      [`(Borrowed ,a ,_) (walk a visited)]
+      [`(BorrowedMut ,a ,_) (walk a visited)]
+      [`(Untrusted ,a) (walk a visited)]
+      [`(Refined ,a ,_) (walk a visited)]
+      [`(ForallRegion ,_ ,a) (walk a visited)]
+      [`(RawPtr ,a ,_ ,_ ,_ ,_ ,_) (walk a visited)]
       [_ #f])))
 
 ;; 命題に埋め込まれた型が全て正規形か。

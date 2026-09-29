@@ -5,6 +5,7 @@
          redex/reduction-semantics
          "borrow.rkt"
          "compat.rkt"
+         "data-env.rkt"
          "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
@@ -94,6 +95,7 @@
          typing-solve
          sigma-ref
          subst-type-regions
+         forall-region-free?
          alpha-set
          capability-source
          contains-lifetime-var?
@@ -778,10 +780,19 @@
 ;; type-shape-ok? も ForallRegion の本体へ素通しで降りるだけである。
 ;; そのため入れ子を入口で落とすのはこの検査の仕事である。
 (define (forall-region-free? type)
-  (match type
-    [`(ForallRegion ,_ ,_) #f]
-    [(? list? parts) (andmap forall-region-free? parts)]
-    [_ #t]))
+  (let walk ([type type] [visited (set)])
+    (match type
+      [`(ForallRegion ,_ ,_) #f]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (or (set-member? visited key)
+                (for/and ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [(? list? parts)
+       (andmap (lambda (part) (walk part visited)) parts)]
+      [_ #t])))
 
 (define (valid-callables? callables)
   (and (unique-table? callables)
@@ -2121,11 +2132,19 @@
 ;; payload 内の lifetime-bearing reference を複製して再束縛する規則を定めないため、
 ;; 内側に別の借用を持つ payload は複製を拒否する。
 (define (borrow-payload-borrow-free? type)
-  (let walk ([t type])
+  (let walk ([t type] [visited (set)])
     (match t
       [`(Borrowed ,payload ,_) (not (borrowed-type-anywhere? payload))]
       [`(BorrowedMut ,payload ,_) (not (borrowed-type-anywhere? payload))]
-      [(? list? terms) (andmap walk terms)]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (or (set-member? visited key)
+                (for/and ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [(? list? terms)
+       (andmap (lambda (term) (walk term visited)) terms)]
       [_ #t])))
 
 ;; 型の中の借用がすべて所有者を追えることを確かめ、α の列を返す。

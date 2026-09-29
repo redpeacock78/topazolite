@@ -4,7 +4,8 @@
          racket/set
          "region.rkt"
          "region-param.rkt"
-         "span-core.rkt")
+         "span-core.rkt"
+         "data-env.rkt")
 
 (provide (struct-out region-ctx)
          empty-region-ctx
@@ -395,18 +396,27 @@
 
 ;; docs/specification/borrow.md §8。型木のどこかに、region 欄が束縛された (RParam rp) でない
 ;; 借用型が現れるかを返す。
-;; 型構築子を列挙せずリストを盲目に降りるため、型文法の拡張に追従する。
-;; Borrowed と BorrowedMut の節を先に置くのは、region 欄そのものを盲目に
-;; 降りると (RParam rp) の rp が型の葉として扱われるからである。
+;; Borrowed と BorrowedMut の節を先に置くのは、region 欄を降りると (RParam rp) の
+;; rp が型の葉として扱われるからである。Data では具体化した schema の欄を辿る。
+(define unbound-borrowed-visited (make-parameter (set)))
 (define (unbound-borrowed-type? type [bound-params (bound-region-params)])
-  (let walk ([t type])
-    (match t
-      [`(Borrowed ,payload ,ρ)
-       (or (not (bound-region-param? ρ bound-params)) (walk payload))]
-      [`(BorrowedMut ,payload ,ρ)
-       (or (not (bound-region-param? ρ bound-params)) (walk payload))]
-      [(? list? ts) (ormap walk ts)]
-      [_ #f])))
+  (parameterize ([unbound-borrowed-visited (set)])
+    (let walk ([t type])
+      (match t
+        [`(Borrowed ,payload ,ρ)
+         (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+        [`(BorrowedMut ,payload ,ρ)
+         (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+        [`(Data ,name (,arguments ...))
+         (define key (cons name arguments))
+         (define schema (data-schema name arguments))
+         (and schema
+              (not (set-member? (unbound-borrowed-visited) key))
+              (parameterize ([unbound-borrowed-visited
+                              (set-add (unbound-borrowed-visited) key)])
+                (ormap walk (data-field-types name arguments))))]
+        [(? list? ts) (ormap walk ts)]
+        [_ #f]))))
 
 (define (bound-region-param? ρ bound-params)
   (match ρ
