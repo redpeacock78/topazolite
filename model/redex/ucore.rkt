@@ -39,6 +39,8 @@
           (Intersection uτ uτ))
   ;; Fn の仮引数と戻り型は、型か #:infer のどちらかで表す。
   (uret ::= uτ #:infer)
+  ;; Fn の宣言 row は、省略時に空と区別する。
+  (uεr ::= uε #:infer)
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own Mutation)
   (tε ::= (tℓ ...))
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own Mutation)
@@ -47,7 +49,7 @@
   (ubr ::= (K (x ...) -> e))
   (e ::= l
          x
-         (Fn ((x uret) ...) uret uε e)
+         (Fn ((x uret) ...) uret uεr e)
          (Apply e e ...)
          (Let x e e)
          (Let (x bmode) e e)
@@ -83,13 +85,15 @@
   ;; SUR-008。結果欄の span は関数全体のものである。
   (tr ::= ts (#:infer s))
   (es ::= (#:ef uε s))
+  ;; SUR-003。省略 row の span は関数全体のものである。
+  (esr ::= es (#:ef #:infer s))
   (sps ::= (#:ty spec s))
   (vr ::= (#:var x s))
   (lt ::= (#:lit l s))
   (ubr ::= (s K (xs ...) -> e))
   (e ::= lt
          vr
-         (Fn s ((xs tr) ...) tr es e)
+         (Fn s ((xs tr) ...) tr esr e)
          (Apply s e e ...)
          (Let s xs e e)
          (Let s (xs bmode) e e)

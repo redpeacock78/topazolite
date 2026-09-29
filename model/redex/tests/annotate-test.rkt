@@ -128,6 +128,17 @@
     (check-true (redex-match? UCore+ e annotated))
     (check-equal? (erase-surface annotated) t)))
 
+(test-case "SUR-003: annotate-surface は省略 row を span 付きの #:infer にする"
+  (define fn-term '(Fn ((x Int)) Int #:infer x))
+  (check-true (redex-match? UCore e fn-term))
+  (define annotated (annotate-surface fn-term))
+  (check-true (redex-match? UCore+ e annotated))
+  (check-true
+   (match annotated
+     [`(Fn ,_ ,_ ,_ (#:ef #:infer ,span) ,_) (redex-match? Span s span)]
+     [_ #f]))
+  (check-equal? (erase-surface annotated) fn-term))
+
 (test-case "仮引数型を省略した Fn は annotate と erase で往復する"
   (define t '(Fn ((x #:infer) (y Int)) #:infer () x))
   (check-true (redex-match? UCore e t))

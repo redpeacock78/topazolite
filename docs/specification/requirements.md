@@ -606,7 +606,7 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 - **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/surface.md` §3
+- **正典**：`docs/specification/surface.md` §3、`docs/specification/core-calculus.md` §4.3
 
 Surface の Effect row 表記は、宣言と式の Effect 制約を保った Core の Effect row へ elaboration されなければならない。
 

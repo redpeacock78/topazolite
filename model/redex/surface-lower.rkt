@@ -535,8 +535,10 @@
            `(#:infer ,s)
            `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
      (define effect-row
-       `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
-              ,(if (eq? row '#:none) s (node-span row))))
+       (if (eq? row '#:none)
+           `(#:ef #:infer ,s)
+           `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
+                  ,(node-span row))))
      `(Fn ,s ,(lower-params params env fail)
           ,result-core
           ,effect-row

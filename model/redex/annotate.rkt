@@ -94,7 +94,10 @@
   (define (bind x) (list '#:bind x (next)))
   (define (lbl label) (list '#:lbl label (next)))
   (define (ty type) (list '#:ty type (next)))
-  (define (ef row) (list '#:ef row (next)))
+  (define (ef row)
+    (if (eq? row '#:infer)
+        (list '#:ef '#:infer (next))
+        (list '#:ef row (next))))
   (define (ann-ubr ubr)
     (match ubr
       [(list K (list x ...) '-> e)

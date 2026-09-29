@@ -363,20 +363,22 @@
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
   (define span (nearest-span raw-row inherited-span))
   (define row (peel-ef raw-row))
-  (normalize-row
-   (for/list ([label (in-list row)])
-     (match label
-       ['Return
-        (match (nearest-boundary boundaries)
-          [`(,_ ,_ #:infer)
-           ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
-           (reject span 'return-type-not-inferable 'return-in-synth)]
-          [`(,_ ,boundary ,type) `(Return ,boundary ,type)]
-          [_ (reject span 'return-label-outside-boundary)])]
-       [`(Yield ,type)
-        `(Yield ,(resolve-annotation type delta span))]
-       [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
-       [_ (reject span 'invalid-effect-label label)]))))
+  (if (eq? row '#:infer)
+      '()
+      (normalize-row
+       (for/list ([label (in-list row)])
+         (match label
+           ['Return
+            (match (nearest-boundary boundaries)
+              [`(,_ ,_ #:infer)
+               ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
+               (reject span 'return-type-not-inferable 'return-in-synth)]
+              [`(,_ ,boundary ,type) `(Return ,boundary ,type)]
+              [_ (reject span 'return-label-outside-boundary)])]
+           [`(Yield ,type)
+            `(Yield ,(resolve-annotation type delta span))]
+           [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
+           [_ (reject span 'invalid-effect-label label)])))))
 
 (define (kind-arity kind span)
   (match kind
@@ -887,10 +889,16 @@
     (define (inferred? type)
       (match type [`(#:infer ,_) #t] [_ #f]))
 
-    (define (parameter-omitted-fn? expression)
+    ;; SUR-003。UCore+ の row 欄が省略の標識かを返す。
+    (define (inferred-row? raw-row)
+      (eq? (peel-ef raw-row) '#:infer))
+
+    ;; SUR-012 / SUR-003。どちらの省略も注釈付き Let の期待型を要する。
+    (define (needs-expected-fn-type? expression)
       (match (peel-node expression)
-        [`(Fn ((,_ ,parameter-types) ...) ,_ ,_ ,_)
-         (ormap inferred? parameter-types)]
+        [`(Fn ((,_ ,parameter-types) ...) ,_ ,raw-row ,_)
+         (or (ormap inferred? parameter-types)
+             (inferred-row? raw-row))]
         [_ #f]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body
@@ -970,14 +978,17 @@
                                    resolve-return raw-row body
                                    environment delta propositions boundaries
                                    #:expected-parameter-types
-                                   [expected-parameter-types #f])
+                                   [expected-parameter-types #f]
+                                   #:inherited-row
+                                   [inherited-row #f])
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta
                     #:expected-parameter-types expected-parameter-types))
       (define return-type (resolve-return))
       (define declared-row
-        (resolve-declaration-row raw-row delta boundaries s))
+        (or inherited-row
+            (resolve-declaration-row raw-row delta boundaries s)))
       (define boundary (fresh-boundary))
       (define-values (capture-raw-names raw-names capture-binders core-binders
                                         reserved-with-formals)
@@ -1213,7 +1224,7 @@
            ;; 前に拒むため、elaborate と typing が同じ key を返す。
            (reject s 'mut-binding-unsupported-type declared-type))
          (define bound-result
-           (if (parameter-omitted-fn? bound)
+           (if (needs-expected-fn-type? bound)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
          (define actual-type (judgment-type bound-result))
@@ -1660,7 +1671,8 @@
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)
          #:when (or (inferred? raw-return-type)
-                    (ormap inferred? raw-parameter-types))
+                    (ormap inferred? raw-parameter-types)
+                    (inferred-row? raw-row))
          ;; σ と σi は Typed Core の型なので、resolve-annotation には通さない。
          (define omitted-parameters?
            (ormap inferred? raw-parameter-types))
@@ -1676,7 +1688,7 @@
              [`(Owned ,inner) inner]
              [_ expected]))
          (match function-type
-           [`(NFn ,parameter-types ,return-type . ,_)
+           [`(NFn ,parameter-types ,return-type ,_ ,expected-row . ,_)
             (when (and omitted-parameters?
                        (not (= (length parameter-types)
                                (length raw-parameter-types))))
@@ -1689,7 +1701,9 @@
                   (λ () (resolve-annotation raw-return-type delta s)))
               raw-row body environment delta propositions boundaries
               #:expected-parameter-types
-              (and omitted-parameters? parameter-types))
+              (and omitted-parameters? parameter-types)
+              #:inherited-row
+              (and (inferred-row? raw-row) expected-row))
              expected s propositions)]
            [_
             (check-against-expected

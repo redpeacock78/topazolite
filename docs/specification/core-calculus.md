@@ -504,7 +504,7 @@ machine は値環境を持たず、簡約は PrimVal に直接 R-Delta（§5.3�
 ```
 
 型注釈と binding mode を持つ `Let` は、宣言型を解決してから `mut` の型制約を検査し、その後に右辺を elaboration する。
-右辺が仮引数型を省略した `Fn` でないときは、E-Let-Annot を適用する。
+右辺が仮引数型または Effect row を省略した `Fn` でないときは、E-Let-Annot を適用する。
 
 **(E-Let-Annot)** [REQ: SUR-012]
 
@@ -521,13 +521,15 @@ bind(bmode, τ, τ1) = τb
 前提は上から順に検査し、最初に成り立たない前提の診断を返す。
 したがって、`mut` の束縛で宣言型が affine か借用のときの `mut-binding-unsupported-type` は、右辺の elaboration より先に報告される。
 
-**(E-Let-Fn-Check)** [REQ: SUR-012]
+**(E-Let-Fn-Check)** [REQ: SUR-012] [REQ: SUR-003]
 
 ```text
-e1 = fn(a1 : t1, …, ak : tk) -> r ! εdecl  e    ある i で ti = ?
+e1 = fn(a1 : t1, …, ak : tk) -> r ! εdecl  e    ある i で ti = ? または εdecl = ?
 τ = resolve(T)
+τ = NFn<(σ1, …, σk), ρ, εin, εout, Q, O> または Owned<NFn<…, εout, …>>
+εdecl' = εout （εdecl = ? のとき）、εdecl' = εdecl （それ以外）
 bmode = mut ならば τ は affine でも借用でもない
-Γ; Δ; Π; B ⊢ e1 ⇐ τ ! ε1 ⟹ c1
+Γ; Δ; Π; B ⊢ fn(a1 : t1, …, ak : tk) -> r ! εdecl'  e ⇐ τ ! ε1 ⟹ c1
 bind(bmode, τ, τ) = τb
 Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
 --------------------------------
@@ -541,7 +543,9 @@ E-Let-Fn-Check は、E-Let-Annot の右辺の合成を宣言型 `τ` での検�
 ただし `τact` が `Never` のときは `τb = τdecl` とし、互換と record 残余の検査を省き、`mut` の検査と OWN-004 の narrowing の検査だけを行う。
 E-Let-Fn-Check では `τact = τdecl = τ` であり、`τ` は `NFn` か `Owned<NFn …>` なので record 残余の節に入らず、`τb = τ` になる。
 `Γ, x :bmode τb` は、`bmode` が `mut` のとき `x` を可変の束縛として加える。
-型注釈付き `Let` の右辺が仮引数型を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。
+型注釈付き `Let` の右辺が仮引数型または Effect row を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。
+仮引数型または Effect row を省略した `Fn` を E-Let-Fn-Check で検査するとき、省略した row は期待型の出口 row に置き換える。
+このため row だけを省略した関数も、宣言型の row を本体の検査へ届けられる。
 
 **(E-Construct-Check)**
 
@@ -703,13 +707,14 @@ B' = push(B, FunctionBoundary(b, ?))
 
 前提の判断は、E-Lambda の合成を E-Sub で期待型へ突き合わせたものである。
 
-**(E-Lambda-Param-Infer-Check)** [REQ: SUR-012]
+**(E-Lambda-Param-Infer-Check)** [REQ: SUR-012] [REQ: SUR-003]
 
 ```text
 τexp = NFn<(σ1, …, σk), σ, εin, εout, Q, O> または Owned<NFn<…, σ, …>>
 τi' = σi （τi = ? のとき）、τi' = τi （それ以外）
 ρ' = σ （ρ = ? のとき）、ρ' = ρ （それ以外）
-Γ; Δ; Π; B ⊢ fn(a1 : τ1', …, ak : τk') -> ρ' ! εdecl  e ⇐ τexp ! ε ⟹ c
+εdecl' = εout （εdecl = ? のとき）、εdecl' = εdecl （それ以外）
+Γ; Δ; Π; B ⊢ fn(a1 : τ1', …, ak : τk') -> ρ' ! εdecl'  e ⇐ τexp ! ε ⟹ c
 --------------------------------
 Γ; Δ; Π; B ⊢ fn(a1 : τ1, …, ak : τk) -> ρ ! εdecl  e ⇐ τexp ! ε ⟹ c
 ```
@@ -717,7 +722,8 @@ B' = push(B, FunctionBoundary(b, ?))
 前提の判断は、E-Lambda の合成を E-Sub で期待型へ突き合わせたものである。
 E-Sub の関数型の互換は仮引数を反変に比べるため、明示した `τi` は期待型の `σi` と等しくなくてよい。
 仮引数を省略した `Fn` を合成する規則はなく、合成位置では `E-TYP-025` で注釈を要求する。
-`?` は省略した仮引数型または戻り型を表す。
+`?` は省略した仮引数型、戻り型または Effect row を表す。
+row が省略されていれば、期待型の出口 row を宣言 row とする。
 
 合成位置の本体に現れる `Return` からの戻り型の推論は、この版では扱わず、`SUR-015` が定める。
 
@@ -1839,6 +1845,7 @@ G5 はその記録を Ψ として置いた。
 | RET-003 | E-Eliminate（§4.2）、E-Recur（§4.6） |
 | EFF-001 | E-Lambda の row 包含（§4.3）、E-Recur の row 包含（§4.6） |
 | SUR-012 | E-Let-Annot、E-Let-Fn-Check、E-Rec-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
+| SUR-003 | E-Let-Fn-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |

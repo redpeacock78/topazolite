@@ -681,7 +681,8 @@
     (list (build-path root "model/redex/tests/elaborate-lambda-infer-test.rkt")
           (build-path root "model/redex/tests/surface-lambda-test.rkt")))
   (define p2j-specs
-    (list (build-path root "docs/specification/surface.md")))
+    (list (build-path root "docs/specification/surface.md")
+          (build-path root "docs/specification/core-calculus.md")))
   (define p2j-tests
     (list (build-path root "model/redex/tests/lexer-test.rkt")
           (build-path root "model/redex/tests/parser-test.rkt")
