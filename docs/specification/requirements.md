@@ -25,7 +25,7 @@
   - `G4`：Phase 0 サイクル G4（Diagnostic IR schema、canonical source span）へ延期。
   - `G5`：Phase 0 サイクル G5（borrow、region、unsafe boundary）へ延期。
   - `P1`：Phase 1 のサイクル（P1a から P1e）の対象。
-  - `P2`：Phase 2 のサイクル（P2a から P2j）の対象。
+  - `P2`：Phase 2 のサイクル（P2a から P2k）の対象。
   - `Phase 2 以降`：Phase 1 の成果を前提に、表面構文または backend に依存する事項を扱う Phase で扱う。
   - `Phase 3 以降`：FFI を実装する Phase で扱う。
   - `Phase 4 以降`：多相な型構成子と型引数を持つ宣言構文に依存する事項を扱う。
@@ -698,7 +698,7 @@ Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ�
 
 ### SUR-015
 
-- **状態**：Phase 2 以降（RET-001、RET-002、RET-003）
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
 
 Surface の `return` は、対応する `RET-*` Core 規則へ意味論を保って lowering されなければならない。
@@ -966,6 +966,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
+| `SUR-014` で扱う式 Narrative と文 Narrative を境界とする Surface の `return`（`RET-002`、`RET-003`）、`E-RET-003` の lint、明示的な `return to` | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |

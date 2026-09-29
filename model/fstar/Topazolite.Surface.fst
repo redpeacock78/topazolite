@@ -458,6 +458,7 @@ type sexpr =
   | SUnit     : span -> sexpr
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
+  | SReturn   : span -> sexpr -> sexpr
   | SFn       : span -> list (option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> string -> sexpr
@@ -493,6 +494,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SUnit s       -> s
   | SBool s _     -> s
   | SVar s _      -> s
+  | SReturn s _   -> s
   | SFn s _ _ _ _ -> s
   | SApply s _ _  -> s
   | SProj s _ _   -> s
@@ -535,6 +537,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SUnit _       -> []
   | SBool _ _     -> []
   | SVar _ _      -> []
+  | SReturn _ e   -> [NExpr e]
   | SFn _ ps r row b ->
       map NTy (option_stys ps) @
       (match r with None -> [] | Some t -> [NTy t]) @
@@ -661,6 +664,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SUnit _       -> true
   | SBool _ _     -> true
   | SVar _ _      -> true
+  | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
   | SFn s ps r row b ->
       wf_tys s (option_stys ps)
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
@@ -739,6 +743,7 @@ let parse_span_containment n c =
   match n with
   | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
+  | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SFn s ps r row b) ->
@@ -788,6 +793,7 @@ type core =
   | CFn       : span -> list core -> core -> core
   | CConstruct: span -> string -> list core -> core
   | CLet      : span -> core -> core -> core
+  | CReturn   : span -> core -> core
   // parity 専用。このサイクルの lowering は CRecur を作らない。
   | CRecur    : span -> core -> core -> core
 
@@ -801,6 +807,7 @@ let span_of_core (c: core) : Tot span =
   | CFn s _ _        -> s
   | CConstruct s _ _ -> s
   | CLet s _ _       -> s
+  | CReturn s _      -> s
   | CRecur s _ _     -> s
 
 let one_to_one (e: sexpr) : Tot bool =
@@ -810,6 +817,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SUnit _      -> true
   | SBool _ _    -> true
   | SVar _ _     -> true
+  | SReturn _ _  -> true
   | SFn _ _ _ _ _ -> true
   | SApply _ _ _ -> true
   | SProj _ _ _  -> true
@@ -832,6 +840,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SUnit s       -> CConstruct s "unit" []
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
   | SVar s _      -> CVar s
+  | SReturn s e   -> CReturn s (lower_expr e)
   | SFn s _ _ _ b -> CFn s [] (lower_expr b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SProj s e1 _  -> CProj s (lower_expr e1)
@@ -863,6 +872,7 @@ let lower_preserves_span e =
   | SUnit _      -> ()
   | SBool _ _    -> ()
   | SVar _ _     -> ()
+  | SReturn _ _  -> ()
   | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SProj _ _ _  -> ()

@@ -157,3 +157,14 @@
   (for ([expr (in-list ucore-terms)])
     (check-equal? (annotate-surface expr) (annotate-surface expr)))
   (check-exn exn:fail? (λ () (annotate-surface (term (NoSuchForm 1 2))))))
+
+(test-case "SUR-015: FnDecl は Recur と同じ欄の並びで注釈される"
+  (define recur '(Recur f ((x Int)) Int () (Return x) 0))
+  (define decl '(FnDecl f ((x Int)) Int () (Return x) 0))
+  (check-equal? (rest (annotate-surface decl))
+                (rest (annotate-surface recur)))
+  (check-equal? (first (annotate-surface decl)) 'FnDecl)
+  (define recur-infer '(Recur f () #:infer () 0 0))
+  (define decl-infer '(FnDecl f () #:infer () 0 0))
+  (check-equal? (rest (annotate-surface decl-infer))
+                (rest (annotate-surface recur-infer))))

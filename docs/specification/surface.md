@@ -577,7 +577,7 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
-4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SApply`、`SProj`、`SRec`、`SFn` の 9 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SApply`、`SProj`、`SRec`、`SFn` の 10 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
 
 命題 3 は `wf_node` を前提とする条件付き補題である。
 parser の出力が `wf_node` を満たすことは F* 側からは示さない。
@@ -593,6 +593,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 ### 8.1 Surface AST の対応
 
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
@@ -602,16 +603,19 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は型欄に `sty-or-none` を持ち、F* 側では `option sty` として表す。
 
-Racket 側の Surface 構成子リストは 30 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 19 個（`sty` は 5 個）である。
+Racket 側の Surface 構成子リストは 31 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 20 個（`sexpr` は 12 個、`sty` は 5 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
+P2k1 は `SReturn` と F* の `CReturn` を加える。
+F* の lexer の `keyword_word` は `fn`、`let`、`mut`、`true`、`type`、`const`、`false` の 7 語だけを予約し、`trait`、`impl`、`for`、`derive`、`return` は予約しない。
+F* の予約語の不足は P2k2 で回収する。
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur` の 9 構成子だけを parity の対象とする。
-F* 側では、これらに対応する `CLit`、`CVar`、`CApply`、`CProj`、`CRec`、`CFn`、`CConstruct`、`CLet`、`CRecur` を置く。
-`CRecur` は parity の対象を揃えるための構成子であり、この版の lowering は生成しない。
-UCore+ の対象構成子リストは 9 個、F* 側の `core` の構成子リストも 9 個であり、F* 側の全対象構成子は 28 個（`sexpr` 11 個、`sty` 5 個、`sdecl` 1 個、Effect row 2 個、`core` 9 個）である。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 11 構成子を parity の対象とする。
+F* 側では `Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+`FnDecl` と `Recur` から `CRecur` への行は構造上の対応であり、F* の lowering が関数宣言を `CRecur` へ写すのは P2k2 である。
+UCore+ の対象構成子リストは 11 個、F* 側の `core` の構成子リストは 10 個であり、F* 側の全対象構成子は 30 個（`sexpr` 12 個、`sty` 5 個、`sdecl` 1 個、Effect row 2 個、`core` 10 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

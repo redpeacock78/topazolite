@@ -44,6 +44,7 @@
              (SUnit s)
              (SBool s sbool)
              (SVar s ident)
+             (SReturn s sexpr)
              (SFn s (slparam ...) sty-or-none srow-or-none sexpr)
              (SApply s sexpr (sexpr ...))
              (SProj s sexpr slabel)

@@ -12,21 +12,21 @@
 (define racket-surface-constructors
   '(SProgram
     SBind SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
-    SInt SStr SUnit SBool SVar SFn SApply SProj SProjRec SRec SBlock
+    SInt SStr SUnit SBool SVar SReturn SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter
     SName SParam SField SLabel TField SEffRow SEffLabel))
 
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
 (define racket-ucore-constructors
-  '(#:lit #:var Apply Proj Rec Fn Construct Let Recur))
+  '(#:lit #:var Apply Proj Rec Fn Construct Let Recur Return FnDecl))
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
-  '(SInt SStr SUnit SBool SVar SFn SApply SProj SProjRec SRec SBlock
+  '(SInt SStr SUnit SBool SVar SReturn SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter
     SDecl SEffRow SEffLabel
-    CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur))
+    CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur CReturn))
 
 ;; 対応表の 1 行。lefts は Racket 側の名前、rights は F* 側の名前である。
 ;; kind は 'one-to-one と 'many-to-one と 'none と 'excluded を採る。
@@ -45,6 +45,7 @@
    (one-to-one 'SUnit 'SUnit)
    (one-to-one 'SBool 'SBool)
    (one-to-one 'SVar 'SVar)
+   (one-to-one 'SReturn 'SReturn)
    (one-to-one 'SFn 'SFn)
    (one-to-one 'SApply 'SApply)
    (one-to-one 'SProj 'SProj)
@@ -77,7 +78,8 @@
    (one-to-one 'Fn 'CFn)
    (one-to-one 'Construct 'CConstruct)
    (one-to-one 'Let 'CLet)
-   (one-to-one 'Recur 'CRecur)
+   (corr-row '(Recur FnDecl) '(CRecur) 'many-to-one)
+   (one-to-one 'Return 'CReturn)
    (excluded 'stok)
    (excluded 'Suspend)
    (excluded 'Move)
