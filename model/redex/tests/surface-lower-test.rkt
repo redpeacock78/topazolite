@@ -69,7 +69,7 @@
  (check-equal? (low "{}") '(Rec (#:span src 0 2) ())))
 
 (test-case
- "Fn は引数と返り値の型注釈と空の効果行を持つ"
+ "Fn は引数と返り値の型注釈を持ち、省略した効果行は #:infer へ落ちる"
  ;; parser は Fn の本体を必ず SBlock にするので、Surface の項を手で組む。
  (define r
    (lower-term
@@ -80,7 +80,7 @@
  (check-equal? r
   `(Fn ,s0 (((#:bind x ,s0) (#:ty Int ,s0)))
        (#:ty Int ,s0)
-       (#:ef () ,s0)
+       (#:ef #:infer ,s0)
        (#:var x ,s0)))
  (check-true (redex-match? UCore+ e r)))
 
