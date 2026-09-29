@@ -273,7 +273,7 @@
   (define decl-table (data-index-decls index))
   (define fields (data-field-rows declarations))
 
-  ;; Names are collected before field references are checked, allowing mutual recursion.
+  ;; 欄の参照を確かめる前に名前を集めるため、相互再帰を書ける。
   (let loop ([remaining declarations] [seen (seteq)])
     (unless (null? remaining)
       (define T (first (car remaining)))
@@ -329,8 +329,8 @@
                       (map first (data-type-occurrences (fourth field))))
                     (filter (λ (field) (eq? (first field) (first declaration))) fields))
         eq?))))
-  ;; Ponytail: pairwise reachability is O(V(V+E)); switch to Tarjan if large data
-  ;; declaration sets make ledger construction measurable.
+  ;; ponytail: 対ごとの到達可能性は O(V(V+E))。宣言の集合が大きく、台帳構築に
+  ;; 時間がかかるようになったら Tarjan に替える。
   (define (reachable-from start)
     (let loop ([todo (list start)] [seen '()])
       (cond
