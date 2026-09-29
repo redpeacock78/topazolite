@@ -15,6 +15,13 @@
 ;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
 (define primitive-type-names '(Int Bool Unit String))
 
+;; spec §9.2。Surface の型構成子の名前と引数の個数である。
+;; 写し先はどれも uτ に既にある形で、P2l2b が data 型を足す。
+(define type-constructor-arities
+  '((List . 1) (Option . 1) (Result . 2) (Owned . 1)))
+(define (type-constructor-arity name)
+  (cond [(assq name type-constructor-arities) => cdr] [else #f]))
+
 ;; spec §5.2。Surface の節点はすべて (Ctor span ...) の形なので、span は
 ;; 第 2 要素である。spec §7 が (span-of ty) と書いているものだが、
 ;; span-core.rkt の span-of は #:lit と #:var の形も見るので名前を分ける。
@@ -40,6 +47,10 @@
          ;; spec §6.1。基本型との衝突を重複より先に見る。
          (when (memq name primitive-type-names)
            (fail 'surface-reserved-type-name s_n))
+         ;; spec §9.2。型構成子の名前の別名は、TName と TApp で
+         ;; 同じ名前が別の型を指すので拒否する。
+         (when (type-constructor-arity name)
+           (fail 'surface-reserved-type-constructor-name s_n))
          (when (hash-has-key? env name)
            (fail 'surface-duplicate-type-alias s_n))
          (cond
@@ -53,6 +64,10 @@
          (hash-set env name ty)]
         [`(STraitDecl ,_ (SName ,s_n ,name) ,_)
          (when (memq name primitive-type-names)
+           (fail 'surface-type-trait-name-collision s_n))
+         ;; spec §9.2。型構成子の名前の trait は、TApp の解決で
+         ;; 組み込みの型構成子を隠すので型と trait の衝突として拒否する。
+         (when (type-constructor-arity name)
            (fail 'surface-type-trait-name-collision s_n))
          env]
         [_ env])))
@@ -285,6 +300,8 @@
     [`(TName ,s ,name)
      (cond
        [(memq name primitive-type-names) name]
+       [(type-constructor-arity name)
+        (fail 'surface-type-application-mismatch s)]
        [(memq name stack) (fail 'surface-recursive-type-alias s)]
        [(hash-ref env name #f)
         => (λ (definition)
@@ -292,6 +309,23 @@
                  (fail 'surface-trait-in-type-position s)
                  (lower-sty definition env fail (cons name stack))))]
        [else (fail 'surface-unknown-type-name s)])]
+    [`(TApp ,s (SName ,s_h ,name) ,arguments)
+     (define (mismatch) (fail 'surface-type-application-mismatch s))
+     (cond
+       [(eq? name 'Self)
+        (if self? (mismatch) (fail 'surface-unknown-type-name s_h))]
+       [(memq name stack) (fail 'surface-recursive-type-alias s_h)]
+       [(eq? (hash-ref env name #f) 'trait)
+        (fail 'surface-trait-in-type-position s_h)]
+       [(or (memq name primitive-type-names) (hash-ref env name #f))
+        (mismatch)]
+       [(type-constructor-arity name)
+        => (λ (arity)
+             (unless (= arity (length arguments)) (mismatch))
+             (cons name
+                   (for/list ([a (in-list arguments)])
+                     (lower-sty a env fail stack #:self? self?))))]
+       [else (fail 'surface-unknown-type-name s_h)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
     [`(TFn ,_ ,arguments ,result ,row)
@@ -404,18 +438,19 @@
 
 ;; spec §6.4。Surface が作る正規型の形についてだけ葉を数える。
 ;; Intersection は正規化で Record になるので、Record の節で数える。
+;; spec §9.2。型構成子の適用は葉の個数が型から決まらないので #f を返す。
 (define (sizable-leaves t)
+  (define (sum ts)
+    (for/fold ([n 0]) ([u (in-list ts)])
+      (define k (and n (sizable-leaves u)))
+      (and k (+ n k))))
   (match t
     [(or 'Int 'Bool 'Unit 'String) 1]
     [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) 1]
-    [`(Record ,row)
-     (for/sum ([field (in-list row)])
-       (sizable-leaves (second field)))]
+    [`(Record ,row) (sum (map second row))]
     ;; 正規化した Union は平坦で重複が無いので、成分を一度ずつ数える。
-    [`(Union ,_ ,_)
-     (for/sum ([u (in-list (union-members t))])
-       (sizable-leaves u))]
-    [_ (error 'surface-lower "Sizable の生成規則が扱わない型 ~s" t)]))
+    [`(Union ,_ ,_) (sum (union-members t))]
+    [_ #f]))
 
 ;; 生成規則は名義で結び付ける。形が同じ利用者 trait には適用しない。
 (define derive-recipes (hasheq 'o-trait-sizable sizable-leaves))
@@ -477,6 +512,8 @@
        (define target (normalize-type (lift-template-type uτ)))
        (define recipe (or (hash-ref derive-recipes (trait-origin trait-row) #f)
                           (fail 'surface-derive-no-recipe s)))
+       (define leaves (or (recipe target)
+                          (fail 'surface-derive-no-recipe s)))
        (check-requirements trait* trait-row target ty s_n fail)
        (when (for/or ([r (in-list (impl-rows-by-trait trait* tenv))])
                (type-equiv? (impl-target-type r) target))
@@ -491,7 +528,7 @@
                                  (cons 'primitive-name prim) s))
        (values (extend-env tenv '() (list row) '() spans* fail)
                (cons row rows) spans*
-               (hash-set info item (list binder prim uτ (recipe target))))]
+               (hash-set info item (list binder prim uτ leaves)))]
       [_ (values tenv rows spans info)])))
 
 ;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。

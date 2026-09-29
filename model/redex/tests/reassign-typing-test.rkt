@@ -139,7 +139,7 @@
               "E-VAR-013")
 
 ;; registry の版と 6 本の対応。
-(check-equal? diagnostic-registry-version 27)
+(check-equal? diagnostic-registry-version 28)
 (check-equal? (diagnostic-code-of 'typing 'immutable-binding) "E-VAR-008")
 (check-equal? (diagnostic-code-of 'typing 'mut-binding-unsupported-type)
               "E-VAR-009")

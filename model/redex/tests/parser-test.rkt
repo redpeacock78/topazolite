@@ -82,6 +82,33 @@
                         (TUnion ,(sp 9 14) (TName ,(sp 9 10) A) (TName ,(sp 13 14) B))
                         (TName ,(sp 17 18) C))))
 
+(test-case "型適用は頭の名前と型引数の並びを持つ"
+  (check-equal? (ty-of "List<Int>")
+                `(TApp ,(sp 9 18) (SName ,(sp 9 13) List)
+                       ((TName ,(sp 14 17) Int)))))
+
+(test-case "型適用の入れ子の >> は 2 つの > として閉じる"
+  (check-match (ty-of "List<Option<Int>>")
+               `(TApp (#:span src 9 26) (SName ,_ List)
+                      ((TApp (#:span src 14 25) (SName ,_ Option) ((TName ,_ Int)))))))
+
+(test-case "型適用は複数の引数を , で区切る"
+  (check-match (ty-of "Result<Int, String>")
+               `(TApp ,_ (SName ,_ Result) ((TName ,_ Int) (TName ,_ String)))))
+
+(test-case "関数型の引数と戻り型に型適用を書ける"
+  (check-match (ty-of "fn(List<Int>) -> Option<Int>")
+               `(TFn ,_ ((TApp ,_ (SName ,_ List) ,_))
+                     (TApp ,_ (SName ,_ Option) ,_) #:none)))
+
+(test-case "引数の無い型適用は > の位置で E-SUR-005 になる"
+  (check-equal? (p-code "let x: List<> = 0\n0") "E-SUR-005")
+  (check-equal? (diagnostic-primary-span (p "let x: List<> = 0\n0")) (sp 12 13)))
+
+(test-case "閉じない型適用は次の token の位置で E-SUR-005 になる"
+  (check-equal? (p-code "let x: List<Int = 0\n0") "E-SUR-005")
+  (check-equal? (diagnostic-primary-span (p "let x: List<Int = 0\n0")) (sp 16 17)))
+
 (test-case
  "BIT-003: 型の括弧は内側の sty を返し、span を括弧まで広げない"
  (check-equal? (ty-of "(A | B) & C")

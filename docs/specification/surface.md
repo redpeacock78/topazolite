@@ -93,7 +93,7 @@ field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
 ty       ::= tyand ("|" tyand)*                         [REQ: BIT-003]
 tyand    ::= tyatom ("&" tyatom)*
-tyatom   ::= ident | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"
+tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident ":" ty
@@ -549,6 +549,8 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-022` `surface-invalid-trait-composition`：同じ鍵の trait、または label が衝突する trait を `&` で並べた
 - `E-SUR-023` `surface-type-trait-name-collision`：型の名前が trait の名前と衝突した。基本型の名前の trait を含む
 - `E-SUR-024` `surface-invalid-effect-label`：Surface で書けない Effect label、または引数の形が合わない Effect label
+- `E-SUR-025` `surface-type-application-mismatch`：型構成子でない名前への型適用、型引数の個数が合わない型適用、または型引数の無い型構成子
+- `E-SUR-026` `surface-reserved-type-constructor-name`：型構成子の名前（List、Option、Result、Owned）を型別名として宣言した
 
 `E-SUR-022` の primary span は、失敗した `TInter` 全体を指す。
 related は `composition-left` と `composition-right` の 2 件で、原文に書かれた左右の operand の span と表示名を持つ。
@@ -566,6 +568,7 @@ E-SUR-019 は P2h2 の registry v20 で追加した。
 E-SUR-020 は P2h3a の registry v21 で追加した。
 E-SUR-021 から E-SUR-023 は P2h3b の registry v22 で追加した。
 E-SUR-024 は P2j の registry v26 で追加した。
+E-SUR-025 と E-SUR-026 は P2l2a の registry v28 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity

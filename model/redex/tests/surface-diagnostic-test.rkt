@@ -33,9 +33,12 @@
     surface-trait-in-type-position
     surface-invalid-trait-composition
     surface-type-trait-name-collision
-    surface-invalid-effect-label))
+    surface-invalid-effect-label
+    surface-type-application-mismatch
+    surface-reserved-type-constructor-name))
 
-;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件、v21 の 1 件、v22 の 3 件、v26 の 1 件を足した。
+;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件、v21 の 1 件、v22 の 3 件、
+;; v26 の 1 件と v28 の 2 件を足した。
 ;; since は版ごとに異なる。
 (define surface-since
   (hasheq 'surface-projection-labels 17
@@ -50,10 +53,12 @@
           'surface-trait-in-type-position 22
           'surface-invalid-trait-composition 22
           'surface-type-trait-name-collision 22
-          'surface-invalid-effect-label 26))
+          'surface-invalid-effect-label 26
+          'surface-type-application-mismatch 28
+          'surface-reserved-type-constructor-name 28))
 
 (test-case
- "24 件の key はすべて registry にあり、相は surface である"
+ "26 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
@@ -62,7 +67,7 @@
                  (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 24 件だけである"
+ "registry の surface 相はこの 26 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -117,17 +122,27 @@
               (lambda ()
                 (lower-surface (parse (lex/string 'src invalid-effect-source))
                                canonical-trait-env))
-              (string-length invalid-effect-source))))
+              (string-length invalid-effect-source))
+        (list 'surface-type-application-mismatch
+              (lambda ()
+                (lower-surface (parse (lex/string 'src "let x: Int<Int> = 0\n0"))
+                               canonical-trait-env))
+              (string-length "let x: Int<Int> = 0\n0"))
+        (list 'surface-reserved-type-constructor-name
+              (lambda ()
+                (lower-surface (parse (lex/string 'src "type List = Int\n0"))
+                               canonical-trait-env))
+              (string-length "type List = Int\n0"))))
 
 (test-case
- "13 件の producer が registry と同じ code を返す"
+ "15 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "13 件の分類は SUR である"
+ "15 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -152,7 +167,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 24 件を描ける」である。producer の無い 11 件も
+;; spec §12 の「3 つの renderer が全 26 件を描ける」である。producer の無い 11 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -168,7 +183,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 24 件すべてを描ける"
+ "3 つの renderer が 26 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))

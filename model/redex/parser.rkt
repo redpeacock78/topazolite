@@ -431,12 +431,26 @@
             (loop `(TInter ,(hull (node-span left) (node-span right)) ,left ,right) k))
           (values left j)))))
 
+;; spec §9.2。Name<τ, ...> を読む。引数の無い Name<> は構文として受理しない。
+(define (parse-type-application ts fail i head)
+  (let loop ([j (+ i 2)] [args '()])
+    (let*-values ([(ty k) (parse-ty ts fail j)])
+      (cond
+        [(punct? ts k '|,|) (loop (add1 k) (cons ty args))]
+        [else
+         (let-values ([(close k*) (expect-punct ts fail k '>)])
+           (values `(TApp ,(hull (span-at ts i) close) ,head ,(reverse (cons ty args)))
+                   k*))]))))
+
 ;; 括弧は内側の sty をそのまま返す。式の括弧と同じ扱いである。
 ;; () は型の位置では書けない。単位型は Unit と書く。
 (define (parse-tyatom ts fail i)
   (cond
     [(eq? (kind-at ts i) 'ident)
-     (values `(TName ,(span-at ts i) ,(value-at ts i)) (add1 i))]
+     (define head `(SName ,(span-at ts i) ,(value-at ts i)))
+     (if (punct? ts (add1 i) '<)
+         (parse-type-application ts fail i head)
+         (values `(TName ,(span-at ts i) ,(value-at ts i)) (add1 i)))]
     [(punct? ts i '|{|) (parse-type-record ts fail i)]
     [(kw? ts i 'fn) (parse-function-type ts fail i)]
     [(punct? ts i '|(|)

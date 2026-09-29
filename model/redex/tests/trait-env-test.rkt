@@ -204,6 +204,22 @@
      #:fail no-fail))))
 
 (test-case
+ "a trait named after a built-in type constructor is rejected"
+ (for ([name (in-list '(List Option Result Owned))])
+   (check-exn
+    #rx"is named after a built-in type"
+    (λ ()
+      (make-trait-env
+       #:trait (append trait-table
+                       (list (list (string->symbol (format "o-trait-user-~a" name))
+                                   name 'root '())))
+       #:impl impl-table
+       #:intersect intersect-table
+       #:scope scope-parent-table
+       #:fail no-fail))
+    (symbol->string name))))
+
+(test-case
  "instantiate-requirements keeps a nested Self label"
  (check-equal?
   (instantiate-requirements '((f (Record ((Self Self imm))) imm)) 'Int)

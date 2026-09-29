@@ -517,9 +517,13 @@
              (intersect-name row)))
     (set-add seen (intersect-output row)))
   ;; SUR-009。型と trait は名前空間を共有するので、基本型の名前の trait は置けない。
+  ;; 型構成子の名前も TApp の頭を隠すため、trait 名に使えない。
   (for ([row (in-list trait-rows)])
-    (when (memq (trait-name row) '(Int Bool Unit String))
-      (error 'traits "trait ~s is named after a primitive type" (trait-name row))))
+    (define name (trait-name row))
+    (when (memq name '(Int Bool Unit String))
+      (error 'traits "trait ~s is named after a primitive type" name))
+    (when (memq name '(List Option Result Owned))
+      (error 'traits "trait ~s is named after a built-in type constructor" name)))
 
   (for ([row (in-list intersect-rows)])
     (define left (trait-row-by-name (intersect-left row) env))
