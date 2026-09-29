@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 31)
+ (check-equal? (length racket-surface-constructors) 32)
  (check-equal? (length racket-ucore-constructors) 11)
- (check-equal? (length fstar-constructors) 30))
+ (check-equal? (length fstar-constructors) 31))
 
 (test-case
  "対応表に違反が無い"
@@ -126,6 +126,7 @@
    (cons 'TFn       (redex-match? Surface sty `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Int) #:none)))
    (cons 'TUnion    (redex-match? Surface sty `(TUnion ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TInter    (redex-match? Surface sty `(TInter ,s0 (TName ,s0 Int) (TName ,s0 String))))
+   (cons 'TApp      (redex-match? Surface sty `(TApp ,s0 (SName ,s0 List) ((TName ,s0 Int)))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
    (cons 'SParam    (redex-match? Surface sparam `(SParam ,s0 (SName ,s0 x) (TName ,s0 Int))))
    (cons 'SField    (redex-match? Surface sfield `(SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))

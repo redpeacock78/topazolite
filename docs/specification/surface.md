@@ -606,7 +606,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
-- `TName`、`TRec`、`TFn` は、同名の F* 構成子と 1 対 1 で対応する。
+- `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
@@ -616,8 +616,9 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
+  `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
 
-Racket 側の Surface 構成子リストは 31 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 20 個（`sexpr` は 12 個、`sty` は 5 個）である。
+Racket 側の Surface 構成子リストは 32 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 21 個（`sexpr` は 12 個、`sty` は 6 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。

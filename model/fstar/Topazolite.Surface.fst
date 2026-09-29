@@ -500,6 +500,7 @@ and sty =
   | TFn       : span -> list sty -> sty -> option seffrow -> sty
   | TUnion    : span -> sty -> sty -> sty
   | TInter    : span -> sty -> sty -> sty
+  | TApp      : span -> span -> string -> list sty -> sty
 and sdecl =
   | SDecl     : span -> dkind -> span -> list (span & sty) -> option sty -> option seffrow -> sexpr -> sdecl
 and seffrow =
@@ -538,6 +539,7 @@ let span_of_ty (t: sty) : Tot span =
   | TFn s _ _ _ -> s
   | TUnion s _ _ -> s
   | TInter s _ _ -> s
+  | TApp s _ _ _ -> s
 
 let span_of_decl (d: sdecl) : Tot span =
   match d with
@@ -585,6 +587,7 @@ let kids_of_ty (t: sty) : Tot (list node) =
       map NTy ps @ [NTy r] @ (match row with None -> [] | Some eff -> [NRow eff])
   | TUnion _ l r -> [NTy l; NTy r]
   | TInter _ l r -> [NTy l; NTy r]
+  | TApp _ _ _ args -> map NTy args
 
 let kids_of_decl (d: sdecl) : Tot (list node) =
   match d with
@@ -671,6 +674,7 @@ let rec wf_ty (t: sty) : Tot bool (decreases t) =
       wf_tys s ps && contains s (span_of_ty r) && wf_ty r && wf_opt_row s row
   | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
   | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
+  | TApp s h _ args -> contains s h && wf_tys s args
 and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
   match ts with
   | []      -> true
@@ -825,6 +829,7 @@ let parse_span_containment n c =
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
       wf_decls_elim s ds c
   | NTy (TRec s fs) -> wf_tys_elim s fs c
+  | NTy (TApp s _ _ args) -> wf_tys_elim s args c
   | NTy (TFn s ps r row) ->
       FStar.List.Tot.Properties.append_memP
         (map NTy ps) ([NTy r] @ (match row with None -> [] | Some eff -> [NRow eff])) c;
