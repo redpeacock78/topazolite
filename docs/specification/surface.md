@@ -454,7 +454,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 受け側の束縛の mode は `const` であり、結果の欄はすべて `imm` である。
 元の field が `mut` でも結果は `imm` になる。
 `Owned` の欄を残す射影は、`Rec` が `Owned` の欄を持てないため `T-Rec` が拒否する（`structural-row.md` §3.1）。
-F* 側の `SProjRec` は label の綴りを保持せず、`proj_fields` は欄の個数だけを写す。
+F* 側の `SProjRec` は Surface 欄に label の綴りと span を持つが、`proj_fields` は綴りを Core へ渡さず、各 field の label span を `Rec` と `Proj` に保持する。
 受け側の綴り `%projrec` は、`lexer.rkt` の `ident-start?` が `%` を受理しないため入力の識別子と衝突しない。
 
 `TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
@@ -571,17 +571,30 @@ surface の producer 突合は producer のある code だけを対象とする�
 ## 8. F* と parity
 
 F* 側では、Redex の有限例では示せない Surface の全域性と span の性質を並行して検査する。
-この版で書く命題は 4 つである。
+この版で書く命題は 7 つである。
 
 1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
 4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SApply`、`SProj`、`SRec`、`SFn` の 10 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+5. **予約語**：Racket の `lexer.rkt` が予約する 12 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
+7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
 
 命題 3 は `wf_node` を前提とする条件付き補題である。
 parser の出力が `wf_node` を満たすことは F* 側からは示さない。
 命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、1 つの節点を複数の節点へ増やす `SProjRec`、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
 `SProjRec` の lowering の根の span は入力の span を保存するが、複数の節点へ展開するため命題 4 の対象外である。
+命題 6 は、空の block の元の span を保存するとは主張しない。
+空の block の lowering は末尾式の lowering そのものであり、`SBlock` の span を持たない。
+命題 7 は、`SFn` の仮引数名の span と row、`SProj` の label の span、`SRec` の label の span の列、`SProjRec` の受け側の span と各 field の label の span、`SBind` の束縛名の span、`SFnDecl` の関数名と仮引数名の span と row を扱う。
+`SFn` の省略した row は省略のまま保ち、`SFnDecl` の省略した row は宣言全体の span の空の row とする。
+これは Racket の `surface-lower` が `SFn` の省略を推論へ回し、`SFnDecl` の省略を空の row へ写すことに合わせる。
+名前と label の span が親の span に含まれることは、`wf_expr` と `wf_decl` の定義が直接検査する。
+これらの span は子の節点ではないので、命題 3 の結論には入らない。
+
+F* の `core` は span と項の形の模型であり、型を検査しない。
+型注釈、戻り型、束縛の種別は `core` へ写さないので、命題 7 は型注釈の span の保存を主張しない。
 
 parity の対応表には、1 対 1、多対 1、対応なし、対象外の 4 種類の行を置く。
 parity 検査は、ツール内の構成子リストと対応表の自己整合性だけを保証する。
@@ -600,20 +613,23 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
-  `SFn` の `SParam` は型欄に `sty-or-none` を持ち、F* 側では `option sty` として表す。
+  `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
+  `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
+  `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
 
 Racket 側の Surface 構成子リストは 31 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 20 個（`sexpr` は 12 個、`sty` は 5 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
-F* の lexer の `keyword_word` は `fn`、`let`、`mut`、`true`、`type`、`const`、`false` の 7 語だけを予約し、`trait`、`impl`、`for`、`derive`、`return` は予約しない。
-F* の予約語の不足は P2k2 で回収する。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 12 語を予約する。
+`tools/fstar-parity.rkt` の `fstar-keywords` は F* が予約する語を手で書いた一覧であり、`fstar-parity-test.rkt` がこれを `lexer.rkt` の `keywords` と照合する。
+F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保ち、CI はこの対応の食い違いを検出しない。
 
 ### 8.2 UCore+ の対応
 
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 11 構成子を parity の対象とする。
 F* 側では `Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
-`FnDecl` と `Recur` から `CRecur` への行は構造上の対応であり、F* の lowering が関数宣言を `CRecur` へ写すのは P2k2 である。
+`FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 UCore+ の対象構成子リストは 11 個、F* 側の `core` の構成子リストは 10 個であり、F* 側の全対象構成子は 30 個（`sexpr` 12 個、`sty` 5 個、`sdecl` 1 個、Effect row 2 個、`core` 10 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
