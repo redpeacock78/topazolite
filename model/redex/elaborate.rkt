@@ -23,7 +23,8 @@
          "validators.rkt")
 
 (provide UCore
-         elab)
+         elab
+         mentions-return?)
 
 (struct judgment (core type row) #:transparent)
 (struct exn:fail:elab exn:fail (primary-span reason details) #:transparent)
@@ -148,13 +149,13 @@
        (or (reserved-name binder) (walk bound) (walk body))]
       [`(Let ,_ ,binder ,bound ,body)
        (or (reserved-name binder) (walk bound) (walk body))]
-      ;; Recur: raw UCore は関数名が第 2 欄、UCore+ は span の第 3 欄。
+      ;; Recur: raw UCore は関数名が第 2 要素、UCore+ は span と callable の後に関数名が来る。
       [`(Recur ,function ,parameters ,_ ,_ ,body ,continuation)
        (or (reserved-name function)
            (first-reserved (map parameter-name parameters))
            (walk body)
            (walk continuation))]
-      [`(Recur ,_ ,_ ,function ,parameters ,body ,continuation)
+      [`(Recur ,_ ,_ ,function ,parameters ,_ ,_ ,body ,continuation)
        (or (reserved-name function)
            (first-reserved (map parameter-name parameters))
            (walk body)
@@ -183,6 +184,15 @@
          (walk child))]
       [_ #f]))
   (walk term))
+
+;; 条件 1 は構文上の走査であり、型注釈と変数名の Return は数えない。
+(define (mentions-return? node)
+  (match node
+    [`(Return ,_ ,_) #t]
+    [`(#:ef ,labels ,_) (and (list? labels) (memq 'Return labels) #t)]
+    [`(,(or '#:ty '#:var '#:bind '#:lit) ,_ ...) #f]
+    [(? list?) (ormap mentions-return? node)]
+    [_ #f]))
 
 ;; P1c2b。modes を渡すと 3 要素 entry を作る。typing.rkt の同名手続きと同じ
 ;; 契約である。elaborate は typing を require しないため別に持つ。
@@ -962,6 +972,12 @@
       (unless (row-subset? residual-row declared-row)
         (reject s 'undeclared-function-effect declared-row residual-row)))
 
+    (define (row-member-return? row boundary)
+      (for/or ([label (in-list row)])
+        (match label
+          [`(Return ,candidate ,_) (equal? candidate boundary)]
+          [_ #f])))
+
     (define (finish-fn s parameter-binders parameter-types
                        captures capture-types capture-raw-names raw-names
                        capture-binders core-binders
@@ -972,9 +988,7 @@
               ,(append capture-binders core-binders)
               (Handle ,s (Return ,boundary (#:ty ,return-type ,s))
                       (,s (#:bind return-value ,s) ->
-                          ,(if (owned-type? return-type)
-                               `(Move ,s (#:var return-value ,s))
-                               `(#:var return-value ,s)))
+                          (#:var return-value ,s))
                       (Scope ,s ()
                              ,(wrap-capture-lets
                                captures capture-types capture-raw-names
@@ -1057,6 +1071,87 @@
                  return-type boundary body-result
                  signature callable reserved-with-formals))
 
+    ;; 注釈付きの Recur と FnDecl は、関数宣言境界の有無だけを共有する。
+    (define (elaborate-recur-annotated
+             s raw-function parameter-binders raw-parameter-types
+             resolve-return raw-row body continuation
+             environment delta propositions boundaries
+             #:boundary? boundary?)
+      (define function (peel-bind raw-function))
+      (define parameters (map peel-bind parameter-binders))
+      (when (check-duplicates (cons function parameters))
+        (reject s 'duplicate-recur-binder function parameters))
+      (define parameter-types
+        (for/list ([type (in-list raw-parameter-types)])
+          (resolve-annotation type delta s)))
+      (when (captures-owned? body (cons function parameters) environment)
+        (reject s 'owned-recur-capture))
+      (define return-type (resolve-return))
+      (define declared-row
+        (resolve-declaration-row raw-row delta boundaries s))
+      (define signature
+        `(NFn ,parameter-types ,return-type () ,declared-row () User))
+      (define boundary (and boundary? (fresh-boundary)))
+      (define callable (fresh-callable signature))
+      (define raw-names
+        (fresh-owned-names
+         parameter-types
+         (set-union (form-symbols body)
+                    (list->set parameters)
+                    (set function)
+                    (list->set (map first environment)))))
+      (define core-binders
+        (owned-parameter-binders parameter-binders raw-names))
+      (define function-environment
+        (extend environment (list function) (list signature)))
+      (define body-environment
+        (extend function-environment parameters parameter-types))
+      (define body-boundaries
+        (if boundary
+            (cons `(FunctionBoundary ,boundary ,return-type) boundaries)
+            boundaries))
+      (define body-result
+        (check body return-type body-environment
+               delta propositions body-boundaries))
+      (if boundary
+          (check-function-body-row s body-result return-type boundary declared-row)
+          (unless (row-subset? (judgment-row body-result) declared-row)
+            (reject s 'undeclared-recur-effect
+                    declared-row (judgment-row body-result))))
+      (define continuation-result
+        (synth continuation function-environment
+               delta propositions boundaries))
+      (define handled-body
+        (if (and boundary
+                 (row-member-return? (judgment-row body-result) boundary))
+            `(Handle ,s (Return ,boundary (#:ty ,return-type ,s))
+                     (,s (#:bind return-value ,s) ->
+                         (#:var return-value ,s))
+                     (Scope ,s () ,(judgment-core body-result)))
+            (judgment-core body-result)))
+      ;; Owned の仮引数を 1 つ以上持つときだけ Scope で包む。recur は
+      ;; 関数境界を押さないため、包まないと呼出し側の Scope へ place が
+      ;; 積み上がる。Owned を持たない Recur の形は変えない。既存の
+      ;; lowering に PScopeExit を増やさないためである。
+      (define wrapped-body
+        (if (ormap values raw-names)
+            `(Scope ,s ()
+                    ,(wrap-owned-lets parameter-binders parameter-types
+                                      raw-names handled-body))
+            handled-body))
+      (define recur-core
+        `(Recur ,s ,callable ,raw-function ,core-binders
+                ,wrapped-body
+                ,(judgment-core continuation-result)))
+      (check-recur-body-gate s function parameters
+                             (judgment-core body-result)
+                             body-environment
+                             (reverse reversed-callables)
+                             declared-row)
+      (judgment recur-core
+                (judgment-type continuation-result)
+                (judgment-row continuation-result)))
+
     (define (synth expression environment delta propositions boundaries)
       (define s (span-of expression))
       (define result
@@ -1087,8 +1182,17 @@
               [(list type value) (judgment (attach-span value s) type '())]
               [_ (reject s 'unbound-variable name)])])]
 
-        ;; Task 2。Task 3 で FnDecl 固有の境界処理へ置き換えるまでは、
-        ;; 既存の Recur 経路と同じ診断・束縛の挙動にする。
+        [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
+                  ,raw-return-type ,raw-row ,body ,continuation)
+         #:when (not (inferred? raw-return-type))
+         (elaborate-recur-annotated
+          s raw-function parameter-binders raw-parameter-types
+          (λ () (resolve-annotation raw-return-type delta s))
+          raw-row body continuation
+          environment delta propositions boundaries
+          #:boundary? (mentions-return? (list raw-row body)))]
+
+        ;; 戻り型を推論する FnDecl は P2k1 Task 4 まで Recur と同じ経路を使う。
         [`(FnDecl ,fields ...)
          (synth/raw `(Recur ,s ,@fields)
                     environment delta propositions boundaries)]
@@ -1385,67 +1489,12 @@
 
         [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  ,raw-return-type ,raw-row ,body ,continuation)
-         (define function (peel-bind raw-function))
-         (define parameters (map peel-bind parameter-binders))
-         (when (check-duplicates (cons function parameters))
-           (reject s 'duplicate-recur-binder function parameters))
-         (define parameter-types
-           (for/list ([type (in-list raw-parameter-types)])
-             (resolve-annotation type delta s)))
-         (when (captures-owned? body (cons function parameters) environment)
-           (reject s 'owned-recur-capture))
-         (define return-type (resolve-annotation raw-return-type delta s))
-         (define declared-row
-           (resolve-declaration-row raw-row delta boundaries s))
-         (define signature
-           `(NFn ,parameter-types ,return-type () ,declared-row () User))
-         (define callable (fresh-callable signature))
-         (define raw-names
-           (fresh-owned-names
-            parameter-types
-            (set-union (form-symbols body)
-                       (list->set parameters)
-                       (set function)
-                       (list->set (map first environment)))))
-         (define core-binders
-           (owned-parameter-binders parameter-binders raw-names))
-         (define function-environment
-           (extend environment (list function) (list signature)))
-         (define body-environment
-           (extend function-environment parameters parameter-types))
-         (define body-result
-           (check body return-type body-environment
-                  delta propositions boundaries))
-         (unless (row-subset? (judgment-row body-result) declared-row)
-           (reject s 'undeclared-recur-effect
-                   declared-row (judgment-row body-result)))
-         (define continuation-result
-           (synth continuation function-environment
-                  delta propositions boundaries))
-         ;; Owned の仮引数を 1 つ以上持つときだけ Scope で包む。recur は
-         ;; 関数境界を押さないため、包まないと呼出し側の Scope へ place が
-         ;; 積み上がる。Owned を持たない Recur の形は変えない。既存の
-         ;; lowering に PScopeExit を増やさないためである。
-         (define wrapped-body
-           (if (ormap values raw-names)
-               `(Scope ,s ()
-                       ,(wrap-owned-lets parameter-binders
-                                         parameter-types raw-names
-                                         (judgment-core body-result)))
-               (judgment-core body-result)))
-         (define recur-core
-           `(Recur ,s ,callable ,raw-function ,core-binders
-                   ,wrapped-body
-                   ,(judgment-core continuation-result)))
-         (check-recur-body-gate s function parameters
-                                (judgment-core body-result)
-                                body-environment
-                                (reverse reversed-callables)
-                                declared-row)
-         (judgment
-          recur-core
-          (judgment-type continuation-result)
-          (judgment-row continuation-result))]
+         (elaborate-recur-annotated
+          s raw-function parameter-binders raw-parameter-types
+          (λ () (resolve-annotation raw-return-type delta s))
+          raw-row body continuation
+          environment delta propositions boundaries
+          #:boundary? #f)]
 
         [`(Yield ,observed ,next)
          (define observed-result
@@ -1640,9 +1689,7 @@
          (judgment
           `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
                    (,s (#:bind return-value ,s) ->
-                       ,(if (owned-type? expected)
-                            `(Move ,s (#:var return-value ,s))
-                            `(#:var return-value ,s)))
+                       (#:var return-value ,s))
                    (Scope ,s () ,(judgment-core body-result)))
           expected
           (row-difference (judgment-row body-result) own-return))]

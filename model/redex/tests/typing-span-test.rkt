@@ -208,7 +208,7 @@
     owned-narrowing-needs-proof
     owned-narrowing-rejected
     owned-parameter-missing-binding owned-raw-parameter-misuse
-    owned-record-field
+    owned-record-field owned-return-binder-misuse
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unexpected-ownleaf unknown-place unmanaged-place
     ;; VAR
@@ -390,6 +390,20 @@
                           (reach-var 'loop 215 216))
               '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 204 220))
+   (reach-row 'owned-return-binder-misuse
+              (reach-node 'Handle 230 278
+                          (list 'Return 'boundary
+                                (reach-ty '(Owned Res) 237 238))
+                          (list (reach-span 239 260)
+                                (reach-bind 'return-value 240 241)
+                                '->
+                                (reach-node 'Move 244 257
+                                            (reach-var 'return-value 249 250)))
+                          (reach-node 'Perform 261 277
+                                      (list 'Return 'boundary
+                                            (reach-ty '(Owned Res) 268 269))
+                                      (reach-node 'resource 270 276 1)))
+              '() '() '() (reach-span 230 278))
    (reach-row 'owned-record-field
               (reach-node 'Rec 221 235
                           (list (list (reach-lbl 'a 222 223) 'imm
@@ -894,13 +908,13 @@
                 (g (NFn (Int) Int () () () User) let))
               (reach-span 1726 1740))))
 
-(test-case "typing の producer key 集合が registry v16 と一致する"
+(test-case "typing の producer key 集合が registry v27 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 102)
+  (check-equal? (length producer-keys) 103)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

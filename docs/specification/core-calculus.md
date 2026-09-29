@@ -66,6 +66,7 @@ e ::= l                                          リテラル
     | return e                                   返却
     | narrativeExpr(e)                           式 Narrative 境界
     | recur f(x1 : τ1, …, xk : τk) -> τ ! ε = e1 in e2   再帰定義
+    | fnDecl f(x1 : τ1, …, xk : τk) -> τ ! ε = e1 in e2  関数宣言
     | yield e1; e2                               観測値の生成
     | suspend e                                  評価の区切り
     | move x                                     affine 資源の消費
@@ -214,7 +215,7 @@ G1 の handler 対象 Effect は `Return<b, τ>` だけである。
 `Recur(r, f, (x1, …, xk), c1, c2)` は f の再帰関数シグネチャ `NFn<(τ1, …, τk), τ, (), ε, Q, User>` を項から消去する（`RecurVal` も同様）。
 この消去は `Lam` にも及ぶ。`Curry`/`Apply` の呼び出し先位置に置かれた `Lam(O, ℓ, (x̄), c)` は、その位置の期待型（curry 後の返り値型や apply の結果型）だけからは元の全パラメータ列を復元できない。
 たとえば `curry(fn(xs: List<Int>, y: Bool) -> Int ! {} { … }, nil<Int>())` は `Curry(Lam(User, ℓ, (xs, y), c), Construct(List<Int>, nil))` へ elaboration されるが、curry 適用後の期待型は `NFn<(Bool), Int, (), {}, ⟨⟩, Derived(User, Curry(Construct(List<Int>, nil)))>` であり、固定した第一引数の型 `List<Int>` を含まない。
-この情報は elaboration の E-Lambda（§4.3）・E-Recur（§4.6）がそれぞれ `NFn` シグネチャを組み立てる際にしか現れず、Typed Core の項単独からは回復できない。
+この情報は elaboration の E-Lambda（§4.3）・E-Recur・E-FnDecl（§4.6）がそれぞれ `NFn` シグネチャを組み立てる際にしか現れず、Typed Core の項単独からは回復できない。
 
 f は表層名にすぎず、同じ表層名を持つ複数の `recur` が同一の CoreArtifact 内に現れうる（E-Recur は f を内部的に改名しない。例：`recur f(x: Int) -> Int ! {} = 0 in 0` と `recur f(x: Bool) -> Int ! {} = 0 in 0` が同じ scope 中の兄弟式として現れる場合）。
 そのためシグネチャを f の表層名で indexしても一意には取り出せない。origin で代用することもできない。`verify-origins`（§3.4）は `Lam` に対し常に `O = User` を要求しており、origin は個体識別に使えない。
@@ -239,7 +240,7 @@ elaboration の出力を c 単体ではなく組 **CoreArtifact** で表す。
 CoreArtifact ::= ⟨Φ, c⟩
 ```
 
-Φ は、e0 の elaboration 導出中に現れるすべての E-Lambda・E-Recur 適用が組み立てる `(ι, NFn<(τ1, …, τk), τ, (), ε', Q, User>)` を集めた有限写像である（E-Lambda は ι = ℓ かつ Q = ⟨⟩ を、E-Recur は ι = r かつ Q = ⟨⟩ を組み立てる。§4.3、§4.6）。
+Φ は、e0 の elaboration 導出中に現れるすべての E-Lambda・E-Recur・E-FnDecl 適用が組み立てる `(ι, NFn<(τ1, …, τk), τ, (), ε', Q, User>)` を集めた有限写像である（E-Lambda は ι = ℓ かつ Q = ⟨⟩ を、E-Recur と E-FnDecl は ι = r かつ Q = ⟨⟩ を組み立てる。§4.3、§4.6）。
 GUN により Φ は関数である。すなわち同じ CallableId に二つの異なるシグネチャが対応することはない。
 Φ は Ξ（place typing、§5.1）と同じ立場の補助環境であり、特定の elaboration アルゴリズムに依存せず、Typed Core の項に外部から付随するデータとして扱う。
 手書きの Typed Core を検査する場合も、対応する Φ を項と揃えて与える必要があり、項中のすべての ℓ/r が Φ の定義域に属し、かつ GUN を満たすことが前提となる。
@@ -430,7 +431,7 @@ ng<τ, σ>  : (σ) -> Result<τ, σ>
 プログラム全体の elaboration は `∅; Δ0; Π0; ⟨⟩ ⊢ e0 ⇒ τ0 ! ε0 ⟹ c0` として行う。
 Γ の初期値は空であり、Γ0（§3.5）は Γ の一部ではない。
 primitive 名は E-Prim（§4.2）が PrimVal へ解決するため、初期 Γ に primitive の束縛は要らない。
-この導出中に現れる E-Lambda（§4.3）・E-Recur（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` / `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
+この導出中に現れる E-Lambda（§4.3）・E-Recur・E-FnDecl（§4.6）の適用がそれぞれ組み立てる `(ℓ, NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` / `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` をすべて集めた表を Φ0 とし、elaboration 全体の出力は c0 単体ではなく CoreArtifact（§3.3）`⟨Φ0, c0⟩` とする。
 
 **[REQ: SCP-002] 束縛出現の一意化**
 
@@ -879,6 +880,38 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 計算分類が Unknown の再帰は、宣言 row に `Partial` を含む場合に限り許可する（ホワイトペーパー §7.1 の扱い）。
 分類が保証を持てない場合に Unknown へ落ちること自体は REC-001 の要求である。
 
+**(E-FnDecl)** [REQ: SUR-015]
+
+関数宣言 `fnDecl` は `recur` と同じ callable を組み立て、Typed Core では `Recur` へ消去する。
+宣言 row は本体の境界を積む前の B で解決し、継続も B で elaboration する。
+本体の構文に `Return` 式または宣言 row の `Return` label があるときだけ fresh な境界 b を積む。
+その場合、本体を `FunctionBoundary(b, τ)` の下で検査し、自身の `Return<b, τ>` を宣言 row の包含検査から除く。
+本体の合成 row に自身の `Return<b, τ>` がある場合だけ、Typed Core の本体を `Handle` で包む。
+`Handle` は Owned 仮引数の `Scope` と `Let` の内側に置き、分類 gate には Handle で包む前の本体を渡す。
+
+```text
+ε' = resolveReturn(B, εdecl)
+b fresh iff e1 または εdecl に Return 式または label が現れる
+Bfn = if b is fresh then push(B, FunctionBoundary(b, τ)) else B
+r fresh
+Γf = Γ, f : NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
+Γf, x1 : τ1, …, xk : τk; Δ; Π; Bfn ⊢ e1 ⇐ τ ! εbody ⟹ c1
+εbody' = if b is fresh then εbody \ {Return<b, τ>} else εbody
+εbody' ⊆ ε'
+Γf; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+f; (x1, …, xk); c1 ⇓body κbody      （§6.2）
+κbody = Unknown ならば Partial ∈ ε'
+c1' = Handle(Return<b, τ>, x -> x, Scope(∅, c1))
+       iff b is fresh and Return<b, _> ∈ εbody; otherwise c1' = c1
+--------------------------------
+Γ; Δ; Π; B ⊢ fnDecl f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
+  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk), OwnedScope(c1'), c2)
+Φ(r) = NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
+```
+
+`OwnedScope(c1')` は E-Recur と同じく、Owned 仮引数があるときだけ `Scope` と `Let` で包む。
+条件を満たさないときは境界を消費せず、Typed Core の本体に `Handle` を加えない。
+
 **(E-Recur-Infer)** [REQ: SUR-008]
 
 ```text
@@ -1053,6 +1086,11 @@ elaboration 規則と重複しない規則だけを挙げる。
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
 ```
+
+`τ` が `Owned<σ>` のとき、handler の束縛子 `x` は R-HandleReturn が値そのものへ置換する名前であり、place ではない。
+そのため `ch` が `x` そのものである場合に限り、T-Var を通さず `Γ, x : τ ⊢core x : τ ! {}` として型付けする。
+`ch` が `x` そのものでなく `x` を自由に含む場合は `E-OWN-032 owned-return-binder-misuse` で拒否する。
+それ以外の handler は上の通常の T-Handle 前提で検査する。
 
 **(T-Perform)** [REQ: RET-002]
 
@@ -1843,9 +1881,10 @@ G5 はその記録を Ψ として置いた。
 | RET-001 | E-Return、resolveReturn（§4.5） |
 | RET-002 | E-NarrativeExpr（§4.5）、T-Perform（§5.1）、R-HandleReturn（§5.7）、性質 4 |
 | RET-003 | E-Eliminate（§4.2）、E-Recur（§4.6） |
-| EFF-001 | E-Lambda の row 包含（§4.3）、E-Recur の row 包含（§4.6） |
+| EFF-001 | E-Lambda の row 包含（§4.3）、E-Recur と E-FnDecl の row 包含（§4.6） |
 | SUR-012 | E-Let-Annot、E-Let-Fn-Check、E-Rec-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
 | SUR-003 | E-Let-Fn-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
+| SUR-015 | E-FnDecl（§4.6） |
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |

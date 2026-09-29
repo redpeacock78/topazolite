@@ -4,9 +4,11 @@
          redex/reduction-semantics
          rackunit
          "../elaborate.rkt"
+         "../classify.rkt"
          "../diagnostic.rkt"
          "../erase.rkt"
          "../lang.rkt"
+         "../machine.rkt"
          "../typing.rkt")
 
 (define (success result)
@@ -43,6 +45,15 @@
                           tree)
               '())))
 
+(define (run-elaborated core)
+  (run-g2 (inject-g2m (erase-core core)) 10000))
+
+(define (check-owned-return-finalization core)
+  (check-equal?
+   (run-elaborated core)
+   '(cfg unit ((0 (resource 1)) (1 (resource 2)))
+         ((0 Moved) (1 Dropped)) () ((fin 1)))))
+
 (test-case "RET-001/RET-002/RET-003: return resolves to the nearest boundary"
   (match-define (list function-core _ _ _)
     (success
@@ -78,6 +89,124 @@
   (check-equal?
    (second (assoc 'callable1 callables))
    '(NFn () Int () ((Return boundary0 Int) Partial) () User)))
+
+(test-case "SUR-015: FnDecl が独自の Return 境界を持つ"
+  (match-define (list core type _row _callables)
+    (success
+     (elab '(FnDecl f ((x Int)) Int () (Return x) (Apply f 7)))))
+  (check-equal? type 'Int)
+  (check-equal? (run-elaborated core)
+                '(cfg 7 () () () ())))
+
+(test-case "SUR-015: 入れ子 FnDecl の宣言 row は外側の境界を参照する"
+  (match-define (list _core _type _row callables)
+    (success
+     (elab '(FnDecl outer () Int ()
+                   (FnDecl inner () Int (Return) 0 0)
+                   0))))
+  (check-not-false
+   (member '(callable1 (NFn () Int () ((Return boundary0 Int)) () User))
+           callables)))
+
+(test-case "SUR-015: Recur の本体の Return は外側の Fn が受ける"
+  (match-define (list core _type _row _callables)
+    (success
+     (elab '(Apply (Fn () Int ()
+                       (Recur f () Int (Return) (Return 3) (Apply f)))))))
+  (check-equal? (run-elaborated core)
+                '(cfg 3 () () () ())))
+
+(test-case "SUR-015: Return の無い FnDecl は Recur と Core と分類が同じ"
+  (define declared (elab '(FnDecl f ((x Int)) Int () x 1)))
+  (define recurred (elab '(Recur f ((x Int)) Int () x 1)))
+  (match* (declared recurred)
+    [((list declared-core _ _ declared-callables)
+      (list recurred-core _ _ recurred-callables))
+     (check-equal? (erase-core declared-core) (erase-core recurred-core))
+     (check-equal? declared-callables recurred-callables)
+     (check-equal? (classify (erase-core declared-core) '() declared-callables)
+                   (classify (erase-core recurred-core) '() recurred-callables))]
+    [(_ _) (fail-check
+            (format "FnDecl と Recur の成功を期待した: ~s / ~s"
+                    declared recurred))]))
+
+(test-case "SUR-015: mentions-return は束縛名、変数名、型注釈を走査しない"
+  (define s '(#:span synthetic 0 0))
+  (check-false (mentions-return? `(#:bind Return ,s)))
+  (check-false (mentions-return? `(#:var Return ,s)))
+  (check-false
+   (mentions-return? `(#:ty (Fn () Int (#:ef (Return) ,s)) ,s)))
+  (check-true (mentions-return? `(Return ,s (#:lit 1 ,s))))
+  (check-true (mentions-return? `(#:ef (Return) ,s))))
+
+(test-case "SUR-015: Owned の仮引数の包み内で Handle が本体を囲み分類を保つ"
+  (define result
+    (elab
+     '(FnDecl f ((xs (List Int)) (item (Owned Res))) Int (Own)
+               (Eliminate xs
+                          ((nil () -> (Return 0))
+                           (cons (head tail) ->
+                                 (Apply f tail (Move item)))))
+               (Apply f (Construct nil (Types Int)) (Apply acquire 1)))))
+  (match result
+    [(list core _type _row _callables)
+     (define recur-body (list-ref core 5))
+     (check-true
+      (match recur-body
+        [`(Scope ,_ () (Let ,_ ,_ ,_ (Handle ,_ ,_ ,_ (Scope ,_ () ,_))))
+         #t]
+        [_ #f]))]
+    [_ (fail-check (format "elaboration success を期待したが ~s" result))]))
+
+(test-case "SUR-015: Owned を Return すると残りと返却値を一度ずつ解放する"
+  (define result
+    (elab
+     '(FnDecl f ((returned (Owned Res)) (remaining (Owned Res)))
+               (Owned Res) (Own)
+               (Return (Move returned))
+               (Drop (Apply f (Apply acquire 1) (Apply acquire 2))))))
+  (match result
+    [(list core _type _row _callables)
+     (check-owned-return-finalization core)]
+    [_ (fail-check (format "elaboration success を期待したが ~s" result))]))
+
+(test-case "RET-002: E-Lambda は Owned Return の payload を一度ずつ解放する"
+  (define result
+    (elab
+     '(Drop
+       (Apply
+        (Fn ((returned (Owned Res)) (remaining (Owned Res)))
+            (Owned Res) (Own)
+            (Return (Move returned)))
+        (Apply acquire 1)
+        (Apply acquire 2)))))
+  (match result
+    [(list core _type _row _callables)
+     (check-owned-return-finalization core)]
+    [_ (fail-check (format "elaboration success を期待したが ~s" result))]))
+
+(test-case "RET-002: NarrativeExpr と Fn の Owned Return handler は共に恒等"
+  (define result
+    (elab
+     '(Drop
+       (Apply
+        (Fn ((returned (Owned Res)) (remaining (Owned Res)))
+            (Owned Res) (Own)
+            (NarrativeExpr (Return (Move returned))))
+        (Apply acquire 1)
+        (Apply acquire 2)))))
+  (match result
+    [(list core _type _row _callables)
+     (define erased (erase-core core))
+     (define (identity-handles term)
+       (match term
+         [`(Handle ,_ (,name -> ,handler) ,body)
+          (+ (if (eq? name handler) 1 0) (identity-handles body))]
+         [(? list?) (for/sum ([part (in-list term)]) (identity-handles part))]
+         [_ 0]))
+     (check-equal? (identity-handles erased) 2)
+     (check-owned-return-finalization core)]
+    [_ (fail-check (format "elaboration success を期待したが ~s" result))]))
 
 (test-case "EFF-001: declared rows bound fn and recur bodies"
   (check-true

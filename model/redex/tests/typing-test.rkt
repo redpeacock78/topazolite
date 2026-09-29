@@ -3,11 +3,14 @@
 (require rackunit
          redex/reduction-semantics
          "../borrow.rkt"
+         "../diagnostic.rkt"
          "../gen.rkt"
          "../type-shape.rkt"
          "../typing.rkt")
 
 (define empty '())
+(define (typing-code core)
+  (diagnostic-id (core-type-of/diagnostic core empty empty)))
 (define callable-types
   (term ((identity-id (NFn (Int) Int () () () User))
          (binary-id (NFn (Int Int) Int () () () User))
@@ -162,11 +165,23 @@
    (term (Never ((Return boundary Int)))))
   (check-equal?
    (core-type-of
-    (term (Handle (Return boundary Int)
+   (term (Handle (Return boundary Int)
                   (result -> result)
                   ,performed))
     empty empty)
    (term (Int ()))))
+
+(test-case "RET-002: Owned Return handlers only use their binder as identity"
+  (define (handled handler)
+    `(Handle (Return boundary (Owned Res))
+             (return-value -> ,handler)
+             (Perform (Return boundary (Owned Res)) (resource 1))))
+  (check-equal? (typing-code (handled '(Move return-value)))
+                "E-OWN-032")
+  (check-equal? (typing-code (handled '(Apply return-value return-value)))
+                "E-OWN-032")
+  (check-equal? (core-type-of (handled 'return-value) empty empty)
+                '((Owned Res) ())))
 
 (test-case "OWN-001/REC-002: Scope, Drop, Yield, and Suspend compose rows"
   (define places (term ((0 Res))))

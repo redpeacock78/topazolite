@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 26)
+(define diagnostic-registry-version 27)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -318,6 +318,10 @@
   '(("E-TYP-026" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
 
+(define typing-entries-v27
+  '(("E-OWN-032" owned-return-binder-misuse
+                 "Owned の Return handler の束縛子は handler の本体そのものとしてだけ現れる")))
+
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
 ;; 仮引数を本体の形で符号化して受けるため、仮引数の位置で落とす場所が
@@ -436,6 +440,7 @@
           (rows 'typing 16 typing-entries-v16)
           (rows 'typing 18 typing-entries-v18)
           (rows 'typing 25 typing-entries-v25)
+          (rows 'typing 27 typing-entries-v27)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)

@@ -694,6 +694,10 @@
   (define p2k1-tests
     (list (build-path root "model/redex/tests/annotate-test.rkt")
           (build-path root "model/redex/tests/fstar-parity-test.rkt")
+          (build-path root "model/redex/tests/surface-return-test.rkt")
+          (build-path root "model/redex/tests/elaborate-test.rkt")
+          (build-path root "model/redex/tests/typing-test.rkt")
+          (build-path root "model/redex/tests/typing-span-test.rkt")
           (build-path root "model/redex/tests/lexer-test.rkt")
           (build-path root "model/redex/tests/parser-test.rkt")
           (build-path root "model/redex/tests/surface-lower-test.rkt")))
