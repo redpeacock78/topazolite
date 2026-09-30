@@ -1223,8 +1223,10 @@
          (first (field-row-lookup (second type) label))))
      (define distinct-types (distinct-normal-types branch-types))
      (define presence-name (presence-binding-name label))
-     (cons
-      (merge-witness-binding presence-name `(Presence ,label))
+     (append
+      (if (field-optional? field)
+          '()
+          (list (merge-witness-binding presence-name `(Presence ,label))))
       (if (> (length distinct-types) 1)
           (for/list ([type (in-list distinct-types)]
                      [index (in-naturals)])
@@ -1240,14 +1242,20 @@
   ;; imm 枝の不変性を破りうるため imm へ落とす。
   (define all-mutable?
     (for/and ([field (in-list fields)]) (eq? (third field) 'mut)))
+  (define any-optional?
+    (for/or ([field (in-list fields)]) (field-optional? field)))
   (define types (distinct-normal-types (map second fields)))
+  (define (make-field type mutability)
+    (if any-optional?
+        (list label type mutability 'opt)
+        (list label type mutability)))
   (and
    (for/and ([field (in-list fields)])
      (eq? (first field) label))
    types
    (cond
      [(null? (rest types))
-      (list label (first types) (if all-mutable? 'mut 'imm))]
+      (make-field (first types) (if all-mutable? 'mut 'imm))]
      ;; 異型でも可変性は保つ。field の型を Union にしたまま mut で残す
      ;; （spec §9.1、ホワイトペーパー §4.5.3）。書き戻しの安全性は
      ;; Assign の側が受け持ち、Union の全成分と両立しない値を拒む
@@ -1257,7 +1265,7 @@
         (for/fold ([joined (first types)])
                   ([type (in-list (rest types))])
           (join-types joined type)))
-      (and joined (list label joined (if all-mutable? 'mut 'imm)))])))
+      (and joined (make-field joined (if all-mutable? 'mut 'imm)))])))
 
 ;; ROW-005: 返り値は 3 状態である。field 行なら合流成功、'absent は「どれかの
 ;; branch にこの field が無い」正常な脱落、#f は正規化または join の失敗であり

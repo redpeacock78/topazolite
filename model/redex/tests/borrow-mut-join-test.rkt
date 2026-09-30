@@ -12,6 +12,10 @@
 
 (define joined-type (normalize-type '(Union Int String)))
 
+(check-equal? (merge-field '(a Int imm) '(a Int imm opt)) '(a Int imm opt))
+(check-equal? (merge-field '(a Int mut opt) '(a Int mut opt)) '(a Int mut opt))
+(check-equal? (merge-field '(a Int mut) '(a Int mut)) '(a Int mut))
+
 (define (run core ir τ_place)
   (type-of/raw (annotate-regions core ir)
                (list (list 1 τ_place)) '() '()

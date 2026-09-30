@@ -17,6 +17,24 @@
                  [merge-alpha-sources (make-hash)])
     (merge-record-types/impl types)))
 
+(define (presence-labels witnesses)
+  (for/list ([w (in-list witnesses)]
+             #:do [(define proposition (first (second w)))]
+             #:when (match proposition [`(Presence ,_) #t] [_ #f]))
+    (second proposition)))
+
+(let-values ([(merged witnesses)
+              (merge/fresh '((Record ((a Int imm) (b Int imm)))
+                             (Record ((a Int imm) (b Int imm opt)))))])
+  (check-equal? merged '(Record ((a Int imm) (b Int imm opt))))
+  (check-equal? (presence-labels witnesses) '(a)))
+
+(let-values ([(merged witnesses)
+              (merge/fresh '((Record ((a Int imm) (c Int imm opt)))
+                             (Record ((a Int imm)))))])
+  (check-equal? merged '(Record ((a Int imm))))
+  (check-equal? (presence-labels witnesses) '(a)))
+
 ;; 制約まで見る版。merge-position を張り、立った制約を型と witness に添えて返す。
 (define merge-ir (build-region-ir `(Scope () (Scope () (resource 1)))))
 (define merge-point '(0))
