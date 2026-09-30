@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 33)
+ (check-equal? (length racket-surface-constructors) 34)
  (check-equal? (length racket-ucore-constructors) 11)
- (check-equal? (length fstar-constructors) 31))
+ (check-equal? (length fstar-constructors) 32))
 
 (test-case
  "対応表に違反が無い"
@@ -118,6 +118,8 @@
    (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                                                       (TName ,s0 Int) #:none (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
+   (cons 'SConstruct (redex-match? Surface sexpr
+                                   `(SConstruct ,s0 (SName ,s0 k) ((SInt ,s0 1)))))
    (cons 'SProj     (redex-match? Surface sexpr `(SProj ,s0 (SVar ,s0 x) (SLabel ,s0 a))))
    (cons 'SProjRec  (redex-match? Surface sexpr
                                   `(SProjRec ,s0 (SVar ,s0 x) ((SLabel ,s0 a)))))

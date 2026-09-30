@@ -14,7 +14,7 @@
   '(SProgram
     SBind SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SDataDecl
-    SInt SStr SUnit SBool SVar SReturn SFn SApply SProj SProjRec SRec SBlock
+    SInt SStr SUnit SBool SVar SReturn SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SName SParam SField SLabel TField SEffRow SEffLabel))
 
@@ -25,7 +25,7 @@
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
-  '(SInt SStr SUnit SBool SVar SReturn SFn SApply SProj SProjRec SRec SBlock
+  '(SInt SStr SUnit SBool SVar SReturn SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SDecl SEffRow SEffLabel
     CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur CReturn))
@@ -55,6 +55,7 @@
    (one-to-one 'SReturn 'SReturn)
    (one-to-one 'SFn 'SFn)
    (one-to-one 'SApply 'SApply)
+   (one-to-one 'SConstruct 'SConstruct)
    (one-to-one 'SProj 'SProj)
    (one-to-one 'SProjRec 'SProjRec)
    (one-to-one 'SRec 'SRec)

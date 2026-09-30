@@ -36,6 +36,18 @@
  (check-equal? (low "false") '(Construct (#:span src 0 5) false (Types))))
 
 (test-case
+ "constructor の lowering は式全体の span を保つ"
+ (define (check-span source)
+   (define parsed (parse (lex/string 'src source)))
+   (match-define `(SProgram ,_ ,_ ,surface-expr) parsed)
+   (match (lower-term parsed)
+     [`(Construct ,core-span . ,_)
+      (check-equal? core-span (second surface-expr))]
+     [other (fail-check (format "Construct を期待したが ~s" other))]))
+ (check-span "type Color =\n  | red\nred")
+ (check-span "type Pair<A> =\n  | pair<A, A>\npair(1, 2)"))
+
+(test-case
  "変数は #:var になる"
  (check-equal? (low "x") '(#:var x (#:span src 0 1))))
 

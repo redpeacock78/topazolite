@@ -490,6 +490,7 @@ type sexpr =
   | SReturn   : span -> sexpr -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
+  | SConstruct : span -> (span & string) -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> (span & string) -> sexpr
   | SProjRec  : span -> sexpr -> list (span & string) -> sexpr
   | SRec      : span -> list (span & sexpr) -> sexpr
@@ -527,6 +528,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SReturn s _   -> s
   | SFn s _ _ _ _ -> s
   | SApply s _ _  -> s
+  | SConstruct s _ _ -> s
   | SProj s _ _   -> s
   | SProjRec s _ _ -> s
   | SRec s _      -> s
@@ -574,6 +576,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
       (match r with None -> [] | Some t -> [NTy t]) @
       (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]
   | SApply _ f a  -> NExpr f :: map NExpr a
+  | SConstruct _ _ a -> map NExpr a
   | SProj _ e1 _  -> [NExpr e1]
   | SProjRec _ e1 _ -> [NExpr e1]
   | SRec _ fs     -> map NExpr (map snd fs)
@@ -711,6 +714,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
       && wf_opt_row s row
       && contains s (span_of_expr b) && wf_expr b
   | SApply s f a  -> contains s (span_of_expr f) && wf_expr f && wf_exprs s a
+  | SConstruct s (sk, _) a -> contains s sk && wf_exprs s a
   | SProj s e1 (sl, _) -> contains s sl && contains s (span_of_expr e1) && wf_expr e1
   | SProjRec s e1 ls -> spans_in s (map fst ls) && contains s (span_of_expr e1) && wf_expr e1
   | SRec s fs     -> wf_fields s fs
@@ -824,6 +828,7 @@ let parse_span_containment n c =
         (match row with None -> [] | Some eff -> [NRow eff]) [NExpr b] c;
       wf_tys_elim s (option_stys (map snd ps)) c
   | NExpr (SApply s f a) -> wf_exprs_elim s a c
+  | NExpr (SConstruct s _ a) -> wf_exprs_elim s a c
   | NExpr (SRec s fs) -> wf_fields_elim s fs c
   | NExpr (SBlock s ds t) ->
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
@@ -886,6 +891,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SReturn _ _  -> true
   | SFn _ _ _ _ _ -> true
   | SApply _ _ _ -> true
+  | SConstruct _ _ _ -> true
   | SProj _ _ _  -> true
   | SProjRec _ _ _ -> false
   | SRec _ _     -> true
@@ -913,6 +919,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SReturn s e   -> CReturn s (lower_expr e)
   | SFn s ps _ row b -> CFn s (map fst ps) row (lower_expr b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
+  | SConstruct s (_, k) a -> CConstruct s k (lower_exprs a)
   | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
   | SProjRec s e1 ls ->
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
@@ -951,6 +958,7 @@ let lower_preserves_span e =
   | SReturn _ _  -> ()
   | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
+  | SConstruct _ _ _ -> ()
   | SProj _ _ _  -> ()
   | SProjRec _ _ _ -> ()
   | SRec _ _     -> ()
