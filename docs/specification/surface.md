@@ -9,9 +9,12 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、型仮引数を持つ宣言と ADT（`ADT-001`）、パターン照合（`PAT-001`）、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
+constructor の式とパターン照合（`PAT-001`）は受理しないので、`ADT-001` はこの版では完了していない。
+関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
 
@@ -66,6 +69,9 @@ Surface の経路は展開表を生成しない。
 program  ::= NL* pitem* expr NL*
 pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding NL+
 typedecl ::= "type" ident "=" ty NL+
+           | "type" ident tparams? "=" NL* "|" variant (NL* "|" variant)* NL+
+tparams  ::= "<" ident ("," ident)* ">"
+variant  ::= ident ("<" ty ("," ty)* ">")?
 traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
@@ -166,7 +172,15 @@ program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
 縮小 Core の項は式であり、式を持たない program には落とし先が無いためである。
 
-型別名は全宣言から作った環境で解決する。
+`typedecl` の 2 つ目の形は data 型宣言であり、`=` の後の改行を読み飛ばした次の token が `|` の場合に選ぶ。
+型仮引数を持つ宣言の右辺が `|` で始まらない場合は、`E-SUR-005` で拒否する。
+型仮引数を持たない型別名の文法は従来どおりである。
+`<>` と constructor を持たない宣言も `E-SUR-005` で拒否する。
+`true` と `false` は予約語なので constructor 名にならず、構文解析で `E-SUR-005` になる。
+識別子として書ける組み込み constructor（`nil`、`cons`、`none`、`some`、`ok`、`ng`）との重なりは、名前検査で `E-SUR-029` になる。
+
+型別名と data 型の名前は、trait 名と共有する型の名前空間で解決する。
+型別名と data 型の名前をすべて先に集めるため、型別名の右辺と欄の型は後方の data 型も参照でき、data 型どうしの相互参照も書ける。
 trait 宣言はすべて impl 宣言より先に環境へ登録するため、impl は対応する trait より前に書ける。
 
 ### 3.1 受理しない構文
@@ -262,16 +276,17 @@ Surface の節点はすべて `(Ctor span ...)` の形であり、span は必ず
 `SEffRow` の span は `!` から、波括弧形なら `}` まで、単独 label ならその末尾までを含む。
 `SEffLabel` の span は名前の先頭から、型引数があれば `>` までを含む。
 
-## 5. 型別名
+## 5. 型別名と data 型
 
 型別名は Surface だけの糖衣である。
 UCore+ には型別名を置く欄が無いため、`STypeDecl` は節点を生成せず、lowering の別名環境へ消費する。
 型別名は `TypeNarrative` による `TypeInfo` 生成を経ず、静的な型 `τ` へ直接展開する。
 型宣言と型位置の演算子から `TypeNarrative` を使って `TypeInfo` を生成する経路は、requirements.md §4 の申し送り表に記録する。
+`SDataDecl` も UCore+ の節点を生成せず、宣言表として台帳へ渡す。
 
 別名環境は 2 度の走査で作る。
-1 度目は program の `spitem` を原文順に読み、型別名の名前と未展開の `sty` を登録する。
-2 度目は各 `sty` の中の `TName` を環境の定義へ置き換え、展開結果に現れる `TName` も同じ規則で解決する。
+1 度目は program の `spitem` を原文順に読み、型別名の名前と未展開の `sty`、および data 型の名前を登録する。
+2 度目は型別名の各 `sty` の中の `TName` を環境の定義へ置き換え、展開結果に現れる `TName` も同じ規則で解決する。
 
 1 度目の走査で名前をすべて登録してから 2 度目の走査を行うため、宣言より前の位置から後の宣言を参照できる。
 宣言順に 1 度で読む方式は採らない。
@@ -281,7 +296,7 @@ UCore+ には型別名を置く欄が無いため、`STypeDecl` は節点を生�
 
 ### 5.1 拒否する型別名
 
-型別名と trait 名は一つの名前空間を共有する。
+型別名、data 型、trait 名は一つの名前空間を共有する。
 型別名の展開は次の誤りを拒否する。
 
 - 環境に無く、基本型でもない名前は `E-SUR-008` とする。
@@ -326,7 +341,8 @@ trait 名との衝突は基底環境の全 trait 名と原文中の全 trait 宣
 
 2 度目の走査では、型名を左から右へ検査する。
 展開中の stack にある名前は `E-SUR-010` とし、環境の trait 名へ解決される名前は `E-SUR-021` とする。
-型別名でも基本型でも trait 名でもない名前は `E-SUR-008` とする。
+型別名、data 型、基本型、trait 名、または型構成子のいずれでもない名前は `E-SUR-008` とする。
+型構成子を引数なしで使う場合は `E-SUR-025` とする。
 record と record 型の field は左から右へ走査し、最初に見つかった 2 度目の label で `E-SUR-007` を返す。
 3 件以上の重複があっても、最初の 1 件だけを返す。
 
@@ -366,20 +382,64 @@ kernel の `Printable & Sizable` と `Printable & Sizable & Taggable` は、そ�
 
 trait 名は合成宣言右辺の `TInter` の葉と、`impl` または `derive` の trait 名としてだけ使える。
 通常の型別名、`let` 注釈、関数型、record 型の欄、trait template の欄、impl と derive の対象型では型名として解決し、trait または合成宣言名なら `E-SUR-021` とする。
-型位置の名前は型別名、基本型、trait 名、未知名の順に解決し、型式は左から右へ検査する。
+型位置の `TName` は、`Self`、型仮引数、基本型、型構成子の単独使用、展開中の型別名、環境中の型別名・data 型・trait、未知名の順で解決する。
+`TApp` の頭は、型仮引数、`Self`、展開中の型別名、trait、型構成子でない既知の型、組み込み型構成子と data 型、未知名の順で解決する。
+型式は左から右へ検査する。
+
+### 5.4 data 型宣言の名前と診断
+
+data 型の名前は、型別名と trait の名前と共有する型の名前空間に属する。
+原文の data 型の名前は欄の型を解決する前にすべて集めるため、data 型の前方参照と相互参照ができる。
+基底の data 型も名前表へ含め、同じ名前空間に属する原文の名前との衝突を検査する。
+
+data 型の宣言名は、次の順で検査する。
+`Self` は型別名と同じく `E-SUR-008`、組み込み型の名前は `E-SUR-028`、既出の data 型名は `E-SUR-027`、型別名との重なりは `E-SUR-031`、trait 名との重なりは `E-SUR-023` とする。
+組み込み型の名前には基本型のほか、`Never`、`Res`、`List`、`Option`、`Result`、`Owned`、`Borrowed`、`BorrowedMut`、`RawPtr`、`NFn`、`TypeInfo`、`Proof`、`Record`、`Untrusted`、`Refined`、`Union`、`Intersection`、`ForallRegion`、`Data` を含む。
+原文の宣言どうしが重なる場合は後の宣言名を primary、先の宣言名を related とする。
+基底の宣言との重なりは原文の名前を primary とし、基底に span が無いため related を付けない。
+基底の data 型名と原文の constructor 名、および基底の constructor 名と原文の data 型名は別の名前空間に属するため衝突しない。
+
+constructor 名は全ての data 型で一意とし、組み込み constructor の名前とも重ねない。
+識別子として書ける組み込み constructor `nil`、`cons`、`none`、`some`、`ok`、`ng` との重なりは `E-SUR-029` とする。
+`true` と `false` は予約語であり、constructor 名として書くと構文段階で `E-SUR-005` になる。
+原文の constructor 名どうしの重なりは、後の名前を primary、先の名前を related とする。
+組み込みまたは基底の constructor との重なりでは related を付けない。
+constructor 名を top-level 関数、基底環境、または kernel の `Γ0` の名前と重ねることは `E-SUR-032` とする。
+原文の関数と重なる場合は後に現れた名前を primary、先の名前を related とする。
+原文の関数名と基底の constructor 名が重なる場合は、原文の関数名を primary とし、related を付けない。
+基底環境または kernel の `Γ0` の名前と重なる場合は constructor 名を primary とし、related を付けない。
+局所束縛による constructor 名の遮蔽は constructor 式を導入する P2l2b2 の名前解決が定める。
+
+型仮引数はその data 型の欄の型だけで有効であり、型別名、data 型、組み込み型より先に解決する。
+同じ宣言で型仮引数名を重ねた場合は `E-SUR-030` とし、後の名前を primary、先の名前を related とする。
+欄の型の未知名は `E-SUR-008`、型適用の個数不一致は `E-SUR-025` とする。
+
+data 宣言に複数の誤りがある場合は、型名、constructor 名、型仮引数、欄の型、regularity、positivity の順で最初の 1 件を返す。
+同じ段では原文の順で最初に見つかった誤りを返す。
+regularity の違反は `E-SUR-033`、positivity の違反は `E-SUR-034` とする。
+どちらも違反する出現を含む欄の型を primary、欄を持つ data 型宣言の名前を related とする。
 
 ## 6. UCore+ への lowering
 
 lowering の入口は `(lower-surface sprog trait-env)` である。
-返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows intersect-rows spans))` のいずれかである。
-`term` は UCore+ の項、`trait-rows`、`impl-rows`、`intersect-rows` は宣言から作った行、`spans` は宣言由来の鍵から原文 span への対応表である。
+返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows intersect-rows data-decls spans))` のいずれかである。
+`term` は UCore+ の項、`trait-rows`、`impl-rows`、`intersect-rows` は宣言から作った行、`data-decls` は data 型宣言の並び、`spans` は宣言由来の鍵から原文 span への対応表である。
+各 data 型宣言は `(T (X ...) ((K (σ ...)) ...))` の形であり、`T` は型名、`X ...` は型仮引数、各 `K` は constructor 名、各 `σ ...` はその欄の型である。
 合成 trait 行は `trait-rows` に、合成で作った intersect 行は `intersect-rows` に含める。
-呼び側はこれらの行を `trait-env` へ重ねて台帳を作る。
+呼び側はこれらの行を基底の `trait-env` へ重ね、`data-decls` を基底の data 宣言と合わせて台帳を作る。
 引数が Diagnostic のときは、それをそのまま返す。
 この節は parser が diagnostic を返した経路を呼び側の分岐漏れで失わないために置く。
 
 別名環境を §5 の規則で先に構築・検査し、`sty` を `uτ` へ落とす際に使う。
 この前処理では合成宣言の候補も分類するが、合成の鍵と出力はまだ確定しない。
+data 型宣言は先行収集した名前の下で欄の型を解決し、`data-decls` へ写す。
+欄の型の解決までに名前、constructor、型仮引数を検査し、型適用の不一致や未知名を Surface 診断として返す。
+欄の型を解決した後、基底と原文の data 宣言から台帳用の索引を作り、原文に data 宣言がある場合は regularity と positivity を検証する。
+この検証は trait、impl、intersect の宣言を lowering する前に行い、違反はそれぞれ `E-SUR-033` と `E-SUR-034` にする。
+primary は違反する出現を含む欄の型、related はその data 型宣言の名前である。
+台帳の `#:fail` に kind `data` の失敗が届くことはない。
+lowering が regularity と positivity を先に検証するためであり、届いた場合は内部の誤りとして扱う。
+この検証済みの索引は、trait と impl の要求型を検査する残りの lowering でも使う。
 続いて全 trait 宣言を原文順に読み、既存または原文中の同名 trait を `E-SUR-013` とする。
 生成した origin id や primitive 名が基底環境または kernel の `R0`・`Γ0` の鍵と衝突すれば `E-SUR-016` とする。
 次に全合成宣言の鍵と template を解決し、鍵ごとの出力を決めて合成 trait 行と intersect 行を作る。
@@ -429,6 +489,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
   戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
+- `(SDataDecl s (SName s_T T) ((SName s_X X) ...) ((SName s_K K) (sty ...)) ...)` は data 宣言表へ入り、節点を生成しない。
+  `lowered-data-decls` の各要素は `(T (X ...) ((K (σ ...)) ...))` である。
+  欄の型を解決して `σ` へ写す。
+  `spans` には `(data . (T K i #f))` を欄の型の span として記録し、`i` は 0 始まりの欄の位置である。
+  `(data-name . T)` には宣言名の span を記録する。
 - `(STraitDecl s (SName s_n tn) (tyfield ...))` は trait 環境へ行を追加するだけで、UCore+ 節点を生成しない。
 - trait 宣言の template の型位置では `Self` を実装対象型の placeholder として扱う。欄名の `Self` は通常の label である。
 - `Self` は字句上の予約語ではないが、trait template 以外の型位置と型別名の宣言名では `E-SUR-008` とする。
@@ -491,6 +556,7 @@ lower [b1 b2 b3] e = L(b1, L(b2, L(b3, lower e)))
 `Let` と `Recur` の span は、宣言の先頭から後続の項の末尾までを覆う尾部 span である。
 block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`、トップレベルの束縛または関数宣言は `[startByte(宣言 i), endByte(program の末尾式))` を持つ。
 この span は元の `SBind` や `SFnDecl` の span とは一致しない。
+`SDataDecl` は項へ畳まず、`data-decls` に宣言を残す。
 
 impl 宣言の lowering は次の形であり、`Apply` は impl 宣言全体の span、`Let` は尾部 span を持つ。
 
@@ -511,7 +577,8 @@ impl の実装 record はこの primitive へ渡す。
 `SUR-001` の span 引き継ぎは、UCore+ の節点または包みを 1 個生成する構成子を単位とする。
 `SName`、`SLabel`、`TName`、`TRec`、`TFn` の span は、それぞれ binder、label、型注釈の欄へ渡す。
 
-`SProgram`、`SBlock`、`STypeDecl`、`STraitDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を渡さない。
+`SProgram`、`SBlock`、`STypeDecl`、`SDataDecl`、`STraitDecl`、`SParam`、`SField`、`TField` は、対応する UCore+ の節点または欄が無いため、その構成子自身の span を項へ渡さない。
+`SDataDecl` の宣言名と欄の型の span は、data 検証の診断用に `spans` へ記録する。
 `SImplDecl` の span は生成する `Apply` へ渡し、`Let` には宣言から後続の項までの尾部 span を使う。
 `uτ` に span を足す改修はこの版の範囲外である。
 
@@ -552,10 +619,22 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-024` `surface-invalid-effect-label`：Surface で書けない Effect label、または引数の形が合わない Effect label
 - `E-SUR-025` `surface-type-application-mismatch`：型構成子でない名前への型適用、型引数の個数が合わない型適用、または型引数の無い型構成子
 - `E-SUR-026` `surface-reserved-type-constructor-name`：型構成子の名前（List、Option、Result、Owned）を型別名として宣言した
+- `E-SUR-027` `surface-duplicate-data-type`：同じ名前の data 型を 2 度宣言した、または基底の data 型と同じ名前の data 型を宣言した
+- `E-SUR-028` `surface-reserved-data-type-name`：組み込み型の名前を data 型の名前として宣言した
+- `E-SUR-029` `surface-duplicate-constructor`：constructor の名前が組み込み、基底、または他の宣言の constructor と重なった
+- `E-SUR-030` `surface-duplicate-type-parameter`：data 型の宣言で同じ型仮引数を 2 度書いた
+- `E-SUR-031` `surface-type-data-name-collision`：data 型の名前と型別名の名前が重なった
+- `E-SUR-032` `surface-constructor-value-name-collision`：constructor の名前が top-level の関数、基底の constructor、または kernel の `Γ0` の名前と重なった
+- `E-SUR-033` `surface-irregular-data-recursion`：data 型の再帰的な出現の型引数が宣言の型仮引数の並びと一致しない
+- `E-SUR-034` `surface-non-positive-data-recursion`：data 型の再帰的な出現が関数型の引数の側にある
 
 `E-SUR-022` の primary span は、失敗した `TInter` 全体を指す。
 related は `composition-left` と `composition-right` の 2 件で、原文に書かれた左右の operand の span と表示名を持つ。
 `E-SUR-023` の related は、原文の trait 宣言と衝突した場合の `trait-declaration` である。
+`E-SUR-033` と `E-SUR-034` は `lower-surface` が段 5 と段 6 の data 宣言の検証で返す。
+primary は違反する出現を含む欄の型、related は欄を持つ data 型宣言の名前である。
+これらは trait、impl、intersect の宣言を lowering する前に検査される。
+台帳の `#:fail` に kind `data` の失敗が届くことはなく、届いた場合は内部の誤りである。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -570,6 +649,7 @@ E-SUR-020 は P2h3a の registry v21 で追加した。
 E-SUR-021 から E-SUR-023 は P2h3b の registry v22 で追加した。
 E-SUR-024 は P2j の registry v26 で追加した。
 E-SUR-025 と E-SUR-026 は P2l2a の registry v28 で追加した。
+E-SUR-027 から E-SUR-034 は P2l2b1 の registry v29 で追加した。
 surface の producer 突合は producer のある code だけを対象とするため、未実装の producer をこの文書の契約へ先取りしない。
 
 ## 8. F* と parity

@@ -968,6 +968,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
 | `SUR-014` で扱う式 Narrative と文 Narrative を境界とする Surface の `return`（`RET-002`、`RET-003`）、`E-RET-003` の lint、明示的な `return to` | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | recursive Union の opaque identity | `trait.md` §9 | Phase 4 以降 | §4.5.3 |

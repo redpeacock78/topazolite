@@ -16,8 +16,7 @@
          (only-in "../data-env.rkt" build-data-index))
 
 ;; P2l2b1 spec §12。Surface の data 型宣言の名前と欄の検査である。
-;; 台帳を通る検査（regularity、positivity、基底の data）は driver-level で
-;; Task 3 が足す。
+;; regularity と positivity は lowering が検査し、基底の data は driver 経由の試験で確かめる。
 (define (lower str)
   (lower-surface (parse (lex/string 'src str)) canonical-trait-env))
 (define (code str)

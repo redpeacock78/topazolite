@@ -545,3 +545,8 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   これは既存の「priority の下流利用」とは別の事項であり、Phase 4 以降で扱う。
 - **trait 水準の Effect 制約と impl の適合**：trait declaration は Effect row 表記を持たず、impl が trait 水準の Effect 制約を満たすかも検査しない。
   Surface の Effect row 表記とは別の適合検査であり、Phase 2 以降で扱う。
+- **data 型への derive Sizable**：Surface は data 型への `derive Sizable` を `E-SUR-019` で拒否する。
+  `sizable-leaves` は型から決まる固定個数の葉を数える規則であり、data 型の constructor ごとに欄の数が異なるためである。
+  最短の着手条件は `PAT-001` の後とする。
+  値ごとに変わる大きさをどの規則で測るかは未決とする。
+  それまで `E-SUR-019` を維持する。
