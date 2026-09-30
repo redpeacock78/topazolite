@@ -95,7 +95,7 @@
   (kind-all
    (for/list ([field (in-list expected-row)])
      (match field
-       [(list label expected-type 'imm)
+       [(list label expected-type 'imm _ ...)
         (match (field-row-lookup actual-row label)
           [(list actual-type _)
            (owned-narrowing-kind/impl actual-type expected-type compatible? #f)]

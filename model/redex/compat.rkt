@@ -37,10 +37,12 @@
 (define (record-compatible? sub-row sup-row gamma-pc region-relation)
   (for/and ([field (in-list sup-row)])
     (match field
-      [(list label sup-type sup-mutability)
-       (match (field-row-lookup sub-row label)
-         [(list sub-type sub-mutability)
-          (and (memq sub-mutability '(imm mut))
+      [(list label sup-type sup-mutability _ ...)
+       (match (assoc label sub-row)
+         [(and sub-field (list _ sub-type sub-mutability _ ...))
+          (and (or (not (field-optional? sub-field))
+                   (field-optional? field))
+               (memq sub-mutability '(imm mut))
                (case sup-mutability
                  [(imm) (compat?/impl sub-type sup-type gamma-pc region-relation)]
                  [(mut) (and (eq? sub-mutability 'mut)

@@ -80,6 +80,13 @@
     '(Record ((a (Record ((y Int imm))) imm))))
    'owned-narrowing-rejected))
 
+(test-case "optional の imm 欄の内側の narrowing も拒否する"
+  (check-equal?
+   (apply-key
+    `(Record ((a (Record ((payload ,owned imm))) imm)))
+    '(Record ((a (Record ()) imm opt))))
+   'owned-narrowing-rejected))
+
 (test-case "NFn の返り値の narrowing を拒否する"
   (check-equal?
    (apply-key

@@ -60,3 +60,11 @@
      ((true () -> (Rec ((a imm 1) (b imm unit))))
       (false () -> (Rec ((a imm 2) (c imm unit))))))
   '() '() '(Record ((a Int imm))) '()))
+
+;; merge の枝は required の欄で optional の結果型を満たせる。
+(check-true
+ (core-check
+  '(Eliminate (Construct Bool true)
+     ((true () -> (Rec ((a imm 1))))
+      (false () -> (Rec ((a imm 2))))))
+  '() '() '(Record ((a Int imm opt))) '()))

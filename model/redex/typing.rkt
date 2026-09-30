@@ -733,17 +733,19 @@
     [((list 'Record actual-row) (list 'Record expected-row))
      (for/and ([field (in-list expected-row)])
        (match field
-         [`(,label ,expected-type ,expected-mode)
-          (match (field-row-lookup actual-row label)
-            [`(,actual-type ,actual-mode)
-             (case expected-mode
-               [(imm) (and (memq actual-mode '(imm mut))
-                           (type-compatible? actual-type expected-type))]
-               [(mut) (and (eq? actual-mode 'mut)
-                           (or (type-equiv? actual-type expected-type)
-                               (union-members-compatible?
-                                actual-type expected-type)))]
-               [else #f])]
+         [(list label expected-type expected-mode _ ...)
+          (match (assoc label actual-row)
+            [(and actual-field (list _ actual-type actual-mode _ ...))
+             (and (or (not (field-optional? actual-field))
+                      (field-optional? field))
+                  (case expected-mode
+                    [(imm) (and (memq actual-mode '(imm mut))
+                                (type-compatible? actual-type expected-type))]
+                    [(mut) (and (eq? actual-mode 'mut)
+                                (or (type-equiv? actual-type expected-type)
+                                    (union-members-compatible?
+                                     actual-type expected-type)))]
+                    [else #f]))]
             [_ #f])]
          [_ #f]))]
     [(_ _) (type-compatible? actual expected)]))

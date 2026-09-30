@@ -37,3 +37,24 @@
                      `(BorrowedMut ,nfn-reserved 0)))
 (check-true (compat? `(Record ((f ,nfn-user mut)))
                      `(Record ((f ,nfn-reserved mut)))))
+
+;; required の actual は optional の expected を満たす。
+(check-true  (compat? '(Record ((a Int imm))) '(Record ((a Int imm opt)))))
+(check-true  (compat? '(Record ((a Never imm))) '(Record ((a Int imm opt)))))
+(check-false (compat? '(Record ((a Bool imm))) '(Record ((a Int imm opt)))))
+(check-true  (compat? '(Record ((a Int mut))) '(Record ((a Int mut opt)))))
+(check-false (compat? '(Record ((a Int imm))) '(Record ((a Int mut opt)))))
+
+;; optional の actual は required の expected を満たさない。
+(check-false (compat? '(Record ((a Int imm opt))) '(Record ((a Int imm)))))
+
+;; 両方 optional なら従来どおり可変性と型で判定する。
+(check-true  (compat? '(Record ((a Int mut opt))) '(Record ((a Int imm opt)))))
+(check-false (compat? '(Record ((a Int imm opt))) '(Record ((a Int mut opt)))))
+
+;; expected の optional 欄も actual に無ければ満たせない。
+(check-false (compat? '(Record ()) '(Record ((a Int imm opt)))))
+(check-false (compat? '(BorrowedMut (Record ((a Int imm))) 0)
+                      '(BorrowedMut (Record ((a Int imm opt))) 0)
+                      '()))
+(check-false (compat? '(Record ((a Int bogus opt))) '(Record ((a Int imm opt)))))
