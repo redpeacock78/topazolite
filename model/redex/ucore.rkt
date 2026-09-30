@@ -15,7 +15,9 @@
   (m ::= imm mut)
   (bmode ::= const let mut)
   (tn ::= id)
-  (ur ::= ((label uτ m) ...))
+  (ur ::= (urf ...))
+  (urf ::= (label uτ m) (label uτ m pr))
+  (pr ::= opt)
   ;; RFN-001: 表層に書ける命題。判定表の (Prop id) を足す。常在性 witness の
   ;; (Presence label) は含めない。merge の局所検査だけで立つ命題である。
   (uφ ::= ValidNarrativeTrait TypeNarrativeCap (Prop id)

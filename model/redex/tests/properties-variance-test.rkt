@@ -203,3 +203,8 @@
              (unbox effect-strict) (unbox obligation-strict)
              (unbox imm-nfn-accept) (unbox mut-nfn-reject)
              (bounds-seed limits)))))
+
+(check-equal? (permute-variance-type '(Record ((a Int imm) (b Bool mut opt))))
+              '(Record ((b Bool mut opt) (a Int imm))))
+(check-true (type-equiv? '(Record ((a Int imm) (b Bool mut opt)))
+                         (permute-variance-type '(Record ((a Int imm) (b Bool mut opt))))))

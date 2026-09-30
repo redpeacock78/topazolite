@@ -8,6 +8,7 @@
          "erase.rkt"
          "lang.rkt"
          "machine.rkt"
+         "rows.rkt"
          "typing.rkt"
          "validators.rkt")
 
@@ -386,9 +387,9 @@
 
 (define (map-imm-fields row transform)
   (for/list ([field (in-list row)])
-    (match field
-      [(list label field-type 'imm) (list label (transform field-type) 'imm)]
-      [_ field])))
+    (if (eq? (third field) 'imm)
+        (field-with-type field (transform (second field)))
+        field)))
 
 (define (random-variance-row depth)
   (for/list ([label (in-list (take '(a b c) (add1 (random 3))))])
@@ -461,10 +462,8 @@
     [`(Record ,row)
      `(Record ,(reverse
                 (for/list ([field (in-list row)])
-                  (match field
-                    [(list label field-type mutability)
-                     (list label (permute-variance-type field-type)
-                           mutability)]))))]
+                  (field-with-type field
+                                   (permute-variance-type (second field))))))]
     [`(NFn ,parameters ,return-type ,latent-in ,row ,obligations ,origin)
      `(NFn ,(map permute-variance-type parameters)
            ,(permute-variance-type return-type)

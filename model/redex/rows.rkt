@@ -1,15 +1,37 @@
 #lang racket
 
-(provide field-row-lookup
+(provide field-presence
+         field-optional?
+         field-with-type
+         field-row-map-type
+         field-row-lookup
          field-row-⊕
          field-row-residual
          field-row-equiv?
          field-row-intersection
          field-row-unique?)
 
+(define (field-presence field)
+  (match field
+    [(list _ _ _) 'req]
+    [(list _ _ _ 'opt) 'opt]))
+
+(define (field-optional? field)
+  (eq? (field-presence field) 'opt))
+
+(define (field-with-type field type)
+  (list* (first field) type (cddr field)))
+
+(define (field-row-map-type row transform)
+  (define fields
+    (for/list ([field (in-list row)])
+      (define type (transform (second field)))
+      (and type (field-with-type field type))))
+  (and (andmap values fields) fields))
+
 (define (field-row-lookup row label)
   (match (assoc label row)
-    [(list _ type mutability) (list type mutability)]
+    [(list _ type mutability _ ...) (list type mutability)]
     [_ #f]))
 
 (define (field-row-⊕ left right)
@@ -24,10 +46,12 @@
 
 (define (matching-field? field row type=?)
   (match field
-    [(list label type mutability)
+    [(list label type mutability _ ...)
      (match (field-row-lookup row label)
        [(list other-type other-mutability)
         (and (eq? mutability other-mutability)
+             (eq? (field-presence field)
+                  (field-presence (assoc label row)))
              (type=? type other-type))]
        [_ #f])]
     [_ #f]))

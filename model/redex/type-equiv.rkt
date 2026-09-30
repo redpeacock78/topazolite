@@ -55,11 +55,7 @@
 
 ;; 行の各 field 型を正規化する。1 つでも失敗したら #f。
 (define (normalize-row row)
-  (define normalized
-    (for/list ([field (in-list row)])
-      (define type (normalize-type/impl (cadr field)))
-      (and type (list (car field) type (caddr field)))))
-  (and (andmap values normalized) normalized))
+  (field-row-map-type row normalize-type/impl))
 
 ;; 作用列の並びと重複を保ったまま、Return/Yield の内包型を正規化する。
 (define (normalize-effect-row row)
@@ -209,9 +205,8 @@
      `(Record
        ,(sort
          (for/list ([field (in-list row)])
-           (list (car field)
-                 (canonical-key/normal (cadr field) depth)
-                 (caddr field)))
+           (field-with-type field
+                            (canonical-key/normal (second field) depth)))
          symbol<?
          #:key car))]
     [`(Union ,_ ,_)
