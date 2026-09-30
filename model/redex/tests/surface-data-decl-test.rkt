@@ -6,7 +6,14 @@
          "../parser.rkt"
          "../surface-lower.rkt"
          "../diagnostic.rkt"
-         "../traits.rkt")
+         "../traits.rkt"
+         "../driver.rkt"
+         (only-in "../origins.rkt"
+                  make-trait-ledger
+                  call-with-trait-ledger
+                  canonical-trait-ledger
+                  trait-ledger-env)
+         (only-in "../data-env.rkt" build-data-index))
 
 ;; P2l2b1 spec §12。Surface の data 型宣言の名前と欄の検査である。
 ;; 台帳を通る検査（regularity、positivity、基底の data）は driver-level で
@@ -21,6 +28,10 @@
 (define (related-spans str) (map second (related str)))
 (define (decls str) (lowered-data-decls (lower str)))
 (define (sp lo hi) `(#:span src ,lo ,hi))
+(define (compile str) (compile-source/string 'src str))
+(define (compile-code str)
+  (define r (compile str))
+  (and (diagnostic? r) (diagnostic-id r)))
 
 (test-case "data 型宣言は台帳の宣言の形へ写る"
   (check-equal? (decls "type Box<A> =\n  | box<A>\n0")
@@ -133,3 +144,98 @@
   (check-equal? (code "type T<A> =\n  | a<Missing>\ntype U<B, B> =\n  | b\n0") "E-SUR-030")
   ;; 型別名の本体の誤りは段 2 より先である。
   (check-equal? (code "type X = Missing\ntype T =\n  | nil\n0") "E-SUR-008"))
+
+(test-case "data 型を引数と返り値に持つ関数が compile できる"
+  (check-true (compiled? (compile "type T =\n  | a\n  | b\nfn f(x: T) -> T { x }\n0")))
+  (check-true (compiled? (compile "type Box<A> =\n  | box<A>\nfn f(x: Box<Int>) -> Box<Int> { x }\n0"))))
+
+(test-case "非正則な再帰は E-SUR-033 で、欄の型を primary にする"
+  ;; 欄 N<List<A>> は 19-29、宣言の名前 N は 5-6。
+  (define source "type N<A> =\n  | mk<N<List<A>>>\n0")
+  (for ([r (in-list (list (lower source) (compile source)))])
+    (check-equal? (diagnostic-id r) "E-SUR-033")
+    (check-equal? (diagnostic-primary-span r) (sp 19 29))
+    (check-equal? (map second (diagnostic-related r)) (list (sp 5 6)))
+    (check-equal? (map first (diagnostic-related r)) '(data-declaration))))
+
+(test-case "正でない位置の再帰は E-SUR-034 で、欄の型を primary にする"
+  ;; 欄 fn(Bad) -> Int は 18-32、宣言の名前 Bad は 5-8。
+  (define source "type Bad =\n  | mk<fn(Bad) -> Int>\n0")
+  (for ([r (in-list (list (lower source) (compile source)))])
+    (check-equal? (diagnostic-id r) "E-SUR-034")
+    (check-equal? (diagnostic-primary-span r) (sp 18 32))
+    (check-equal? (map second (diagnostic-related r)) (list (sp 5 8)))))
+
+(test-case "段 4 は段 5 より先、段 5 は段 6 より先である"
+  (check-equal? (compile-code
+                 "type N<A> =\n  | mk<N<List<A>>>\ntype M =\n  | m<Missing>\n0")
+                "E-SUR-008")
+  (check-equal? (compile-code
+                 "type Bad =\n  | mk<fn(Bad) -> Int>\ntype N<A> =\n  | k<N<List<A>>>\n0")
+                "E-SUR-033")
+  ;; 未知の trait への impl より positivity を先に報告する。
+  (check-equal? (code
+                 "type Bad =\n  | mk<fn(Bad) -> Int>\nimpl Missing for Int { f: 1 }\n0")
+                "E-SUR-034"))
+
+(test-case "data 型への impl は host 例外を出さない"
+  (check-true (compiled? (compile
+                          "type T =\n  | k\nimpl Sizable for T { size: fn(x: T) -> Int { 0 } }\n0")))
+  (check-true (compiled? (compile
+                          "type Box<A> =\n  | box<A>\nimpl Sizable for Box<Int> { size: fn(x: Box<Int>) -> Int { 0 } }\n0"))))
+
+(test-case "template の欄が原文の data 型を含む trait と impl は host 例外を出さない"
+  (check-true
+   (compiled? (compile
+               "type T =\n  | k\ntrait Tr { f: fn(T) -> Int }\nimpl Tr for Int { f: fn(x: T) -> Int { 0 } }\n0"))))
+
+(test-case "非正則な再帰の具体化への impl は停止して E-SUR-033 になる"
+  (check-equal?
+   (compile-code
+    "type N<A> =\n  | mk<N<List<A>>>\nimpl Sizable for N<Int> { size: fn(x: N<Int>) -> Int { 0 } }\n0")
+   "E-SUR-033"))
+
+(define base-data '((Color () ((red ()) (blue ())))))
+(define base-ledger
+  (make-trait-ledger (trait-ledger-env canonical-trait-ledger)
+                     #:data base-data
+                     #:fail (λ args (error 'base-ledger "~s" args))))
+(define (compile/base str)
+  (call-with-trait-ledger base-ledger (λ () (compile str))))
+(define (base-code str)
+  (define r (compile/base str))
+  (and (diagnostic? r) (diagnostic-id r)))
+(define (base-related str) (diagnostic-related (compile/base str)))
+
+(test-case "基底の data は原文の宣言があっても残る"
+  (check-true (compiled? (compile/base "fn f(x: Color) -> Color { x }\n0")))
+  (check-true (compiled? (compile/base
+                          "type T =\n  | mk\nfn f(x: Color, y: T) -> Color { x }\n0")))
+  (check-true (compiled? (compile/base
+                          "impl Sizable for Color { size: fn(x: Color) -> Int { 0 } }\n0"))))
+
+(test-case "基底の data 索引を直接渡した lowering は host 例外を出さない"
+  ;; 原文に data 宣言が無くても、束ねる条件は合成索引で決まる。
+  (define r
+    (lower-surface (parse (lex/string 'src
+                                     "impl Sizable for Color { size: fn(x: Color) -> Int { 0 } }\n0"))
+                   canonical-trait-env
+                   #:data-index (build-data-index base-data)))
+  (check-true (lowered? r)))
+
+(test-case "基底の data との重なりは原文の名前を primary にし、related を持たない"
+  (for ([c (in-list '(("type Color =\n  | c\n0" "E-SUR-027")
+                      ("type D =\n  | red\n0" "E-SUR-029")
+                      ("fn red(x: Int) -> Int { x }\n0" "E-SUR-032")
+                      ("trait Color { f: Int }\n0" "E-SUR-023")
+                      ("type Color = Int\n0" "E-SUR-031")
+                      ("type Sizable =\n  | k\n0" "E-SUR-023")))])
+    (check-equal? (base-code (first c)) (second c) (first c))
+    (check-equal? (base-related (first c)) '() (first c))))
+
+(test-case "異なる名前空間の基底 data は衝突にならない"
+  (for ([source (in-list '("fn Color(x: Int) -> Int { x }\n0"
+                           "type red = Int\n0"
+                           "type T =\n  | Color\n0"
+                           "type add =\n  | k\n0"))])
+    (check-false (diagnostic? (compile/base source)) source)))

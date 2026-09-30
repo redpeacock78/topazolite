@@ -107,6 +107,8 @@
 (define duplicate-type-parameter-source "type T<A, A> =\n  | k\n0")
 (define type-data-collision-source "type A = Int\ntype A =\n  | k\n0")
 (define constructor-value-collision-source "type A =\n  | add\n0")
+(define irregular-data-source "type N<A> =\n  | mk<N<List<A>>>\n0")
+(define non-positive-data-source "type Bad =\n  | mk<fn(Bad) -> Int>\n0")
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
         (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
@@ -178,17 +180,27 @@
         (list 'surface-constructor-value-name-collision
               (lambda () (lower-surface (parse (lex/string 'src constructor-value-collision-source))
                                         canonical-trait-env))
-              (string-length constructor-value-collision-source))))
+              (string-length constructor-value-collision-source))
+        (list 'surface-irregular-data-recursion
+              (lambda ()
+                (lower-surface (parse (lex/string 'src irregular-data-source))
+                               canonical-trait-env))
+              (string-length irregular-data-source))
+        (list 'surface-non-positive-data-recursion
+              (lambda ()
+                (lower-surface (parse (lex/string 'src non-positive-data-source))
+                               canonical-trait-env))
+              (string-length non-positive-data-source))))
 
 (test-case
- "21 件の producer が registry と同じ code を返す"
+ "23 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "21 件の分類は SUR である"
+ "23 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -213,7 +225,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 34 件を描ける」である。producer の無い 13 件も
+;; spec §12 の「3 つの renderer が全 34 件を描ける」である。producer の無い 11 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 

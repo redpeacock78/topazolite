@@ -2,6 +2,7 @@
 
 (require racket/match
          racket/set
+         (only-in redex/reduction-semantics caching-enabled?)
          "diagnostic.rkt"
          "rows.rkt"
          "traits.rkt"
@@ -10,9 +11,11 @@
                   data-index-decls
                   data-index-constructors
                   empty-data-index
+                  build-data-index
                   data-reserved-type-names
                   builtin-data-constructors)
-         (only-in "origins.rkt" Γ0))
+         (only-in "origins.rkt" Γ0 validate-data-decls!)
+         (only-in (submod "data-env.rkt" data-env-internal) data-index-parameter))
 
 (provide lower-surface lift-template-type (struct-out lowered))
 
@@ -42,6 +45,20 @@
   (if s_T
       (list (list 'data-declaration s_T (format "data 型 ~a の宣言" T)))
       '()))
+
+;; P2l2b1 spec §9.3.4。正則性と正値性の失敗を Surface の span へ戻す。
+(define ((data-validation-bail spans fail) reason kind key)
+  (define (span-of k)
+    (hash-ref spans k (λ () (error 'lower-surface "span の無い data の失敗: ~s ~s" reason key))))
+  (match* (kind reason)
+    [('data (or 'irregular-recursion 'non-positive-recursion))
+     (define T (first key))
+     (fail (if (eq? reason 'irregular-recursion)
+               'surface-irregular-data-recursion
+               'surface-non-positive-data-recursion)
+           (span-of (cons 'data key))
+           #:related (data-declaration-related (span-of (cons 'data-name T)) T))]
+    [(_ _) (error 'lower-surface "Surface から届かない data の失敗: ~s ~s ~s" kind reason key)]))
 
 (define (build-alias-env items base base-data fail)
   (define source-traits
@@ -870,23 +887,36 @@
                                    gamma0-names fail)
           (check-data-type-parameters items fail)
           (define-values (data-decls data-spans) (lower-data-decls items env fail))
-          (define-values (decl-rows decl-spans)
-            (lower-trait-decls items base env fail))
-          (define composite-keys (base-composite-keys base))
-          (define (template-of n)
-            (trait-template (or (findf (λ (r) (eq? (trait-name r) n)) decl-rows)
-                                (trait-row-by-name n base))))
-          (define memo (resolve-composition-keys comps template-of composite-keys fail))
-          (define-values (composite-rows intersect-rows composite-spans outputs)
-            (emit-compositions comps memo base composite-keys decl-rows))
-          (define trait-rows (append decl-rows composite-rows))
-          (define trait-spans
-            (for/fold ([h decl-spans]) ([(k v) (in-hash composite-spans)])
-              (hash-set h k v)))
-          (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
-          (define-values (impl-rows spans core-info)
-            (lower-impl-decls items staged trait-spans env outputs fail))
-          (lowered (fold-items items e env core-info fail)
-                   trait-rows impl-rows intersect-rows data-decls
-                   (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
-                     (hash-set h k v))))])]))
+          ;; 段 5 と段 6。基底の宣言を名前順に並べ、原文の宣言を続ける。
+          (define all-data
+            (append (sort (hash-values (data-index-decls data-index)) symbol<? #:key first)
+                    data-decls))
+          (define all-index (build-data-index all-data))
+          (unless (null? data-decls)
+            (validate-data-decls! all-data all-index (data-validation-bail data-spans fail)))
+          (define (lower-rest)
+            (define-values (decl-rows decl-spans)
+              (lower-trait-decls items base env fail))
+            (define composite-keys (base-composite-keys base))
+            (define (template-of n)
+              (trait-template (or (findf (λ (r) (eq? (trait-name r) n)) decl-rows)
+                                  (trait-row-by-name n base))))
+            (define memo (resolve-composition-keys comps template-of composite-keys fail))
+            (define-values (composite-rows intersect-rows composite-spans outputs)
+              (emit-compositions comps memo base composite-keys decl-rows))
+            (define trait-rows (append decl-rows composite-rows))
+            (define trait-spans
+              (for/fold ([h decl-spans]) ([(k v) (in-hash composite-spans)])
+                (hash-set h k v)))
+            (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
+            (define-values (impl-rows spans core-info)
+              (lower-impl-decls items staged trait-spans env outputs fail))
+            (lowered (fold-items items e env core-info fail)
+                     trait-rows impl-rows intersect-rows data-decls
+                     (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
+                       (hash-set h k v))))
+          (if (eq? all-index empty-data-index)
+              (lower-rest)
+              (parameterize ([caching-enabled? #f]
+                             [data-index-parameter all-index])
+                (lower-rest))))])]))

@@ -7,7 +7,8 @@
          "policy.rkt"
          "rows.rkt"
          "type-equiv.rkt"
-         "type-shape.rkt")
+         "type-shape.rkt"
+         (only-in "data-env.rkt" data-schema))
 
 (provide trait-table
          impl-table
@@ -312,6 +313,9 @@
     [`(Result ,ok-type ,error-type)
      (and (template-type? ok-type) (template-type? error-type))]
     [`(Owned ,inner) (template-type? inner)]
+    ;; P2l2b1 spec §9.3.2。data template は検証済み索引の宣言から読む。
+    [`(Data ,T (,arguments ...))
+     (and (data-schema T arguments) (andmap template-type? arguments) #t)]
     [`(Record ,row) (template-row? row)]
     [`(Untrusted ,inner) (template-type? inner)]
     [`(Refined ,inner ,proposition)

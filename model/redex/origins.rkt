@@ -28,6 +28,7 @@
          current-trait-r0-entries
          current-trait-gamma0-entries
          make-trait-ledger
+         validate-data-decls!
          (struct-out trait-ledger)
          canonical-trait-ledger
          kindOf
