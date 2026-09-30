@@ -4,6 +4,7 @@
          field-optional?
          field-with-type
          field-row-map-type
+         omitted-optional-labels
          field-row-lookup
          field-row-⊕
          field-row-residual
@@ -28,6 +29,16 @@
       (define type (transform (second field)))
       (and type (field-with-type field type))))
   (and (andmap values fields) fields))
+
+;; Rec リテラルの省略欄を返す。未知のラベルや required 欄の省略は拒否する。
+(define (omitted-optional-labels written-labels declared-row)
+  (define declared-labels (map first declared-row))
+  (define omitted
+    (filter (lambda (field) (not (memq (first field) written-labels)))
+            declared-row))
+  (and (andmap (lambda (label) (memq label declared-labels)) written-labels)
+       (andmap field-optional? omitted)
+       (map first omitted)))
 
 (define (field-row-lookup row label)
   (match (assoc label row)

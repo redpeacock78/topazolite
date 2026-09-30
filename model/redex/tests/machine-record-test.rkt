@@ -75,3 +75,28 @@
                  (answer -> answer)
                  (Rec ((a imm (Perform (Return boundary Int) 42))))))) fuel)
  (term (cfg 42 () () () ())))
+
+;; optional 欄を省略した literal は Let で宣言型に束縛される。
+(check-equal?
+ (run-g2-core
+  (term (Proj
+         (Let (x const (Record ((a Int imm) (b Int imm opt))))
+              (Rec ((a imm 1)))
+              x)
+         a)))
+ (term 1))
+
+;; by-value の再代入は元の場所を書き換えない。
+(check-equal?
+ (run-g2 (inject-g2
+          (term (Let (s const (Record ((a Int imm))))
+                     (Rec ((a imm 1)))
+                 (Let (x mut (Record ((a Int imm opt))))
+                      s
+                  (Let (y const (Record ((a Int imm opt))))
+                       (Rec ((a imm 2)))
+                   (Let (ignored const Unit)
+                        (Reassign x y)
+                        (Proj s a)))))))
+         fuel)
+ (term (cfg 1 ((0 (Rec ((a imm 2))))) ((0 Dropped)) () ((fin 0)))))

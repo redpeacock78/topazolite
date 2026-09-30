@@ -23,3 +23,48 @@
  '(Int ((Return boundary Int))))
 ; Let の effect row は bound と body の effect の和（structural-row.md §5.4）
 (check-equal? (core-type-of '(Let (x const Int) (Suspend 1) x) '() '()) '(Int (Suspend)))
+
+;; optional 欄だけを Rec から省略した const は宣言型のまま束縛する。
+(check-equal?
+ (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+                     (Rec ((a imm 1)))
+                     x)
+               '() '())
+ '((Record ((a Int imm) (b Int imm opt))) ()))
+;; required 欄の省略と宣言に無い欄の記述は拒否する。
+(check-equal?
+ (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+                     (Rec ((b imm 1)))
+                     x)
+               '() '())
+ 'ill-typed)
+(check-equal?
+ (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+                     (Rec ((a imm 1) (z imm 2)))
+                     x)
+               '() '())
+ 'ill-typed)
+;; 中間束縛を挟むと bound は Rec でないため、optional の型不一致を拒否する。
+(check-equal?
+ (core-type-of '(Let (p let (Record ((name Int imm))))
+                     (Rec ((name imm 1) (age imm unit)))
+                     (Let (q const (Record ((name Int imm) (age Int imm opt))))
+                          p
+                          q))
+               '() '())
+ 'ill-typed)
+
+;; Reassign は Mutability row を追加し、元の by-value 値の型を保つ。
+(check-equal?
+ (core-type-of
+  '(Let (s const (Record ((a Int imm))))
+        (Rec ((a imm 1)))
+        (Let (x mut (Record ((a Int imm opt))))
+             s
+             (Let (y const (Record ((a Int imm opt))))
+                  (Rec ((a imm 2)))
+                  (Let (ignored const Unit)
+                       (Reassign x y)
+                       (Proj s a)))))
+  '() '())
+ '(Int (Mutation)))

@@ -68,3 +68,17 @@
      ((true () -> (Rec ((a imm 1))))
       (false () -> (Rec ((a imm 2))))))
   '() '() '(Record ((a Int imm opt))) '()))
+
+;; optional な枝の結果を required の型へ照合してはならない。
+(define optional-branch-core
+  '(Eliminate (Construct Bool true)
+     ((true () -> (Let (x const (Record ((a Int imm opt))))
+                       (Rec ((a imm 1)))
+                       x))
+      (false () -> (Let (y const (Record ((a Int imm opt))))
+                        (Rec ())
+                        y)))))
+(check-true
+ (core-check optional-branch-core '() '() '(Record ((a Int imm opt))) '()))
+(check-false
+ (core-check optional-branch-core '() '() '(Record ((a Int imm))) '()))

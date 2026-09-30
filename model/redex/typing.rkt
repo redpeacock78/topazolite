@@ -1752,15 +1752,28 @@
     (fail 'mut-binding-unsupported-type node))
   (match declared-type
     [`(Record ,declared-row)
+     (define omitted
+       (match (peel-node bound)
+         [`(Rec (,fields ...))
+          (omitted-optional-labels
+           (map (lambda (field) (peel-lbl (first field))) fields)
+           declared-row)]
+         [_ #f]))
+     (define compatibility-row
+       (if (and omitted (pair? omitted))
+           (filter (lambda (field) (not (memq (first field) omitted)))
+                   declared-row)
+           declared-row))
      (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (compat? `(Record ,actual-row) declared-type (current-Γ-pc0)
+        (unless (compat? `(Record ,actual-row) `(Record ,compatibility-row)
+                         (current-Γ-pc0)
                          (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
-          (field-row-residual actual-row declared-row))
+          (field-row-residual actual-row compatibility-row))
         (define binding-row
           (case binding-mode
             [(const)
@@ -1785,11 +1798,15 @@
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
-        ;; OWN-004。let は最上位の残余を束縛型へ戻すため、残余反映後の
-        ;; binding-row を expected 側に使う。これで入れ子の欄だけを検査する。
+        (define narrowing-row
+          (if (and omitted (pair? omitted))
+              (filter (lambda (field) (not (memq (first field) omitted)))
+                      binding-row)
+              binding-row))
+        ;; OWN-004。let の残余は expected 側へ残し、省略欄だけを除いて検査する。
         (match (owned-narrowing-kind
                 `(Record ,actual-row)
-                `(Record ,binding-row)
+                `(Record ,narrowing-row)
                 (lambda (actual expected)
                   (compat? actual expected (current-Γ-pc0)
                            (current-region-relation))))

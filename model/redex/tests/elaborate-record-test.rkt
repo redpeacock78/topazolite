@@ -41,3 +41,37 @@
 ; let は残余 {b} を x の型へ保持し、body で Proj x b が Int を返す（structural-row.md §3.2）
 (check-equal? (elab-type '(Let (x let (Record ((a Int imm)))) (Rec ((a imm 1) (b imm 2))) (Proj x b)))
               'Int)
+
+;; 注釈の解決は optional の presence を保つ。
+(check-equal?
+ (elab-type '(Let (x let (Record ((a Int imm) (b Int imm opt))))
+                  (Rec ((a imm 1) (b imm 2)))
+                  x))
+ '(Record ((a Int imm) (b Int imm opt))))
+;; 省略した optional 欄は宣言型で束縛される。
+(check-equal?
+ (elab-type '(Let (x let (Record ((a Int imm) (b Int imm opt))))
+                  (Rec ((a imm 1)))
+                  x))
+ '(Record ((a Int imm) (b Int imm opt))))
+(check-true
+ (match
+  (elab-core '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+                   (Rec ((a imm 1)))
+                   x))
+  [`(Let (,outer const ,outer-type)
+         (Let (,inner const ,inner-type) (Rec ((a imm 1))) ,inner-ref)
+         ,outer-ref)
+   (and (equal? outer-type '(Record ((a Int imm) (b Int imm opt))))
+        (equal? inner-type outer-type)
+        (equal? inner inner-ref)
+        (equal? outer outer-ref))]
+  [_ #f]))
+(check-true
+ (elab-error? '(Let (x let (Record ((a Int imm) (b Int imm opt))))
+                    (Rec ((b imm 1)))
+                    x)))
+(check-true
+ (elab-error? '(Let (x let (Record ((a Int imm) (b Int imm opt))))
+                    (Rec ((a imm 1) (z imm 2)))
+                    x)))

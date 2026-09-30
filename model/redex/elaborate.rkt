@@ -316,8 +316,8 @@
          (reject span 'duplicate-record-label row))
        `(Record
          ,(for/list ([field (in-list row)])
-            (match-define `(,label ,type ,mutability) field)
-            `(,label ,(resolve-annotation type delta span) ,mutability)))]
+            (match-define (list* label type rest) field)
+            (list* label (resolve-annotation type delta span) rest)))]
       [`(List ,element)
        `(List ,(resolve-annotation element delta span))]
       [`(Option ,element)
@@ -1521,8 +1521,17 @@
            ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
            ;; 前に拒むため、elaborate と typing が同じ key を返す。
            (reject s 'mut-binding-unsupported-type declared-type))
+         (define omitted-optional?
+           (match* ((peel-node bound) declared-type)
+             [(`(Rec (,fields ...)) `(Record ,row))
+              (define omitted
+                (omitted-optional-labels
+                 (map (lambda (field) (peel-lbl (first field))) fields)
+                 row))
+              (and omitted (pair? omitted))]
+             [(_ _) #f]))
          (define bound-result
-           (if (needs-expected-type? bound)
+           (if (or (needs-expected-type? bound) omitted-optional?)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
          (define actual-type (judgment-type bound-result))
@@ -1821,46 +1830,63 @@
 
         [`(Rec (,raw-fields ...))
          #:when (match expected
-                  [`(Record ((,labels ,_ ,_) ...))
+                  [(list 'Record expected-fields)
                    (define written
                      (map (λ (field) (peel-lbl (first field))) raw-fields))
-                   (and (= (length written) (length labels))
-                        (equal? (sort written symbol<?)
-                                (sort labels symbol<?)))]
+                   (define omitted
+                     (omitted-optional-labels written expected-fields))
+                   (or (and (= (length written) (length expected-fields))
+                            (equal? (sort written symbol<?)
+                                    (sort (map first expected-fields) symbol<?)))
+                       (and omitted (pair? omitted)))]
                   [_ #f])
          (define raw-labels (map first raw-fields))
+         (define written-labels (map peel-lbl raw-labels))
+         (match-define `(Record ,expected-fields) expected)
+         (define omitted
+           (omitted-optional-labels written-labels expected-fields))
          (define fields
            (for/list ([field (in-list raw-fields)])
              (match-define `(,raw-label ,mutability ,field-expression) field)
              (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject s 'duplicate-record-label fields))
-         (match-define `(Record ,expected-fields) expected)
          (define field-results
            (for/list ([field (in-list fields)])
              (match-define `(,label ,mutability ,field-expression) field)
              (define field-type (second (assq label expected-fields)))
              (define result
                (check field-expression field-type environment delta propositions
-                      boundaries))
+                     boundaries))
              (when (owned-type? (judgment-type result))
                (reject s 'owned-record-field label))
              (list label mutability result)))
-         (check-against-expected
-          (judgment
-           `(Rec ,s
-             ,(for/list ([field (in-list field-results)]
-                         [raw-label (in-list raw-labels)])
-                (match-define (list _ mutability result) field)
-                `(,raw-label ,mutability ,(judgment-core result))))
-           `(Record
-             ,(for/list ([field (in-list field-results)])
-                (match-define (list label mutability result) field)
-                `(,label ,(judgment-type result) ,mutability)))
-           (rows-union
-            (for/list ([field (in-list field-results)])
-              (judgment-row (third field)))))
-          expected s propositions)]
+         (define rec-result
+           (judgment
+            `(Rec ,s
+              ,(for/list ([field (in-list field-results)]
+                          [raw-label (in-list raw-labels)])
+                 (match-define (list _ mutability result) field)
+                 `(,raw-label ,mutability ,(judgment-core result))))
+            `(Record
+              ,(for/list ([field (in-list field-results)])
+                 (match-define (list label mutability result) field)
+                 `(,label ,(judgment-type result) ,mutability)))
+            (rows-union
+             (for/list ([field (in-list field-results)])
+               (judgment-row (third field))))))
+         (if (and omitted (pair? omitted))
+             (let ([name
+                    (fresh-owned-name
+                     (set-union (form-symbols expression)
+                                (list->set (map first environment))))])
+               (judgment
+                `(Let ,s ((#:bind ,name ,s) const (#:ty ,expected ,s))
+                      ,(judgment-core rec-result)
+                      (#:var ,name ,s))
+                expected
+                (judgment-row rec-result)))
+             (check-against-expected rec-result expected s propositions))]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)
