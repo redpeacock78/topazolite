@@ -56,6 +56,8 @@
               (STraitDecl s sname (styfield ...))
               (SImplDecl s sname sty (SRec s (sfield ...)))
               (SDeriveDecl s sname sty)
+              ;; P2l2b1 spec §9.3.1。型仮引数の並びと、1 個以上の constructor である。
+              (SDataDecl s sname (sname ...) (sname (sty ...)) (sname (sty ...)) ...)
               (SFnDecl s sname (sparam ...) sty-or-none srow-or-none sexpr)
               sbind)
   (sprog ::= (SProgram s (spitem ...) sexpr)))

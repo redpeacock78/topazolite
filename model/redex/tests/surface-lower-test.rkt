@@ -157,6 +157,10 @@
  (check-equal? (low "type A = Int\n1") '(#:lit 1 (#:span src 13 14))))
 
 (test-case
+ "data 型宣言は節点を作らない"
+ (check-equal? (low "type T =\n  | a\n1") '(#:lit 1 (#:span src 15 16))))
+
+(test-case
  "トップレベルの束縛も Let になり、尾部は program の末尾式まで伸びる"
  ;; 型宣言を前に置くと、別名の展開と尾部 span の両方を一度に固定できる。
  ;; 注釈の #:ty は展開後の Int を持つが、span は使用箇所の A のままである。

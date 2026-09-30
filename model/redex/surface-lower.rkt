@@ -618,6 +618,8 @@
 (define (lower-item item s_tail env core-info fail)
   (match item
     [`(STypeDecl ,_ ,_ ,_) (λ (rest) rest)]
+    ;; P2l2b1。data 型宣言は項を作らない。名前と欄の検査は lower-surface が行う。
+    [`(SDataDecl ,_ ...) (λ (rest) rest)]
     [`(STraitDecl ,_ ,_ ,_) (λ (rest) rest)]
     [`(SImplDecl ,s ,_ ,_ ,body)
      ;; spec §6.6。生成した primitive を Let の束縛名にしない。elab は局所の

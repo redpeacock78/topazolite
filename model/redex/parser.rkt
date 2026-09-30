@@ -84,11 +84,56 @@
 (define (parse-type-decl ts fail i)
   (define start (span-at ts i))
   (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
-                [(equal equal-j) (expect-punct ts fail name-j '|=|)]
-                [(ty ty-j) (parse-ty ts fail equal-j)])
-    (values `(STypeDecl ,(hull start (node-span ty))
-                        (SName ,name-span ,name) ,ty)
-            ty-j)))
+                [(params params-j) (if (punct? ts name-j '<)
+                                       (parse-type-params ts fail name-j)
+                                       (values #f name-j))]
+                [(equal equal-j) (expect-punct ts fail params-j '|=|)])
+    (define bar-j (skip-nl ts equal-j))
+    (cond
+      [(punct? ts bar-j '\|)
+       (let-values ([(variants end end-j) (parse-variants ts fail bar-j)])
+         (values `(SDataDecl ,(hull start end) (SName ,name-span ,name)
+                             ,(or params '()) ,@variants)
+                 end-j))]
+      [params (fail-at ts fail bar-j)]
+      [else
+       (let-values ([(ty ty-j) (parse-ty ts fail equal-j)])
+         (values `(STypeDecl ,(hull start (node-span ty)) (SName ,name-span ,name) ,ty)
+                 ty-j))])))
+
+;; tparams ::= "<" ident ("," ident)* ">"。空の <> は expect-ident が > で拒否する。
+(define (parse-type-params ts fail i)
+  (let loop ([j (add1 i)] [params '()])
+    (let-values ([(name name-span k) (expect-ident ts fail j)])
+      (define params* (cons `(SName ,name-span ,name) params))
+      (if (punct? ts k '|,|)
+          (loop (add1 k) params*)
+          (let-values ([(_close k*) (expect-punct ts fail k '>)])
+            (values (reverse params*) k*))))))
+
+;; variant (NL* "|" variant)*。最後の constructor の後の改行は読む位置に残す。
+(define (parse-variants ts fail i)
+  (let loop ([j i] [variants '()] [end #f])
+    (cond
+      [(punct? ts j '\|)
+       (let*-values ([(name name-span k) (expect-ident ts fail (add1 j))]
+                     [(fields close k*) (if (punct? ts k '<)
+                                            (parse-variant-fields ts fail k)
+                                            (values '() name-span k))])
+         (define next (skip-nl ts k*))
+         (loop (if (punct? ts next '\|) next k*)
+               (cons `((SName ,name-span ,name) ,fields) variants)
+               close))]
+      [else (values (reverse variants) end j)])))
+
+;; "<" ty ("," ty)* ">"。閉じの > の span を宣言の終わりに使う。
+(define (parse-variant-fields ts fail i)
+  (let loop ([j (add1 i)] [fields '()])
+    (let-values ([(ty k) (parse-ty ts fail j)])
+      (if (punct? ts k '|,|)
+          (loop (add1 k) (cons ty fields))
+          (let-values ([(close k*) (expect-punct ts fail k '>)])
+            (values (reverse (cons ty fields)) close k*))))))
 
 (define (parse-trait-decl ts fail i)
   (define start (span-at ts i))

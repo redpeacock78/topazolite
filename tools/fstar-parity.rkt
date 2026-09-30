@@ -13,6 +13,7 @@
 (define racket-surface-constructors
   '(SProgram
     SBind SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
+    SDataDecl
     SInt SStr SUnit SBool SVar SReturn SFn SApply SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SName SParam SField SLabel TField SEffRow SEffLabel))
@@ -71,6 +72,7 @@
    (no-counterpart 'STraitDecl)
    (no-counterpart 'SImplDecl)
    (no-counterpart 'SDeriveDecl)
+   (no-counterpart 'SDataDecl)
    (no-counterpart 'SProgram)
    (no-counterpart 'SName)
    (no-counterpart 'SParam)

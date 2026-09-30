@@ -622,8 +622,8 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
 
-Racket 側の Surface 構成子リストは 32 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 21 個（`sexpr` は 12 個、`sty` は 6 個）である。
-P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
+Racket 側の Surface 構成子リストは 33 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 21 個（`sexpr` は 12 個、`sty` は 6 個）である。
+P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 12 語を予約する。

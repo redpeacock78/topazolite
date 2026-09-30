@@ -585,3 +585,35 @@
    (check-false (diagnostic? t) (format "~s が受理される" src))
    (check-equal? (containment-violations t) '()
                  (format "~s の span 包含" src))))
+
+;; P2l2b1 spec §9.3.1。data 型宣言は = の後の改行を読み飛ばし、先頭の | で始まる。
+(test-case "data 型宣言を読む"
+  ;; "type T =\n  | a\n  | b<Int>\n0" の byte 位置：T は 5、a は 13、b は 19、Int は 21-24、> は 24。
+  (check-equal? (p "type T =\n  | a\n  | b<Int>\n0")
+                `(SProgram ,(sp 0 27)
+                           ((SDataDecl ,(sp 0 25) (SName ,(sp 5 6) T) ()
+                                       ((SName ,(sp 13 14) a) ())
+                                       ((SName ,(sp 19 20) b) ((TName ,(sp 21 24) Int)))))
+                           (SInt ,(sp 26 27) 0)))
+  (check-match (p "type Tree<A> =\n  | leaf\n  | node<Tree<A>, A>\n0")
+               `(SProgram ,_ ((SDataDecl ,_ (SName ,_ Tree) ((SName ,_ A))
+                                         ((SName ,_ leaf) ())
+                                         ((SName ,_ node) ((TApp ,_ (SName ,_ Tree) ((TName ,_ A)))
+                                                           (TName ,_ A)))))
+                          ,_))
+  ;; 同じ行に続けて書いてもよい。
+  (check-match (p "type T = | a | b\n0")
+               `(SProgram ,_ ((SDataDecl ,_ ,_ () ((SName ,_ a) ()) ((SName ,_ b) ()))) ,_))
+  ;; 型別名は従来どおりで、右辺の Union は data 型宣言にならない。
+  (check-match (p "type T = A | B\n0")
+               `(SProgram ,_ ((STypeDecl ,_ ,_ (TUnion ,_ ,_ ,_))) ,_)))
+
+(test-case "data 型宣言の構文誤りは E-SUR-005 である"
+  (for ([src (in-list '("type T<A> = Int\n0"
+                        "type T<> =\n  | a\n0"
+                        "type T<A,> =\n  | a\n0"
+                        "type T = |\n0"
+                        "type T =\n  | a<>\n0"
+                        "type T =\n  | true\n0"
+                        "type T =\n  | false\n0"))])
+    (check-equal? (p-code src) "E-SUR-005" src)))
