@@ -106,6 +106,14 @@
   (check-equal? (primary "type A =\n  | add\n0") (sp 13 16))
   (check-equal? (related "type A =\n  | add\n0") '()))
 
+(test-case "組み込みの constructor と同名の関数は E-SUR-032 で、related を持たない"
+  (for ([k '("nil" "cons" "none" "some" "ok" "ng")])
+    (define src (format "fn ~a(x: Int) -> Int { x }\n0" k))
+    (check-equal? (code src) "E-SUR-032" k)
+    ;; primary は関数の名前の span である。
+    (check-equal? (primary src) (sp 3 (+ 3 (string-length k))) k)
+    (check-equal? (related src) '() k)))
+
 (test-case "型仮引数の重複は E-SUR-030、Self は E-SUR-008 である"
   (define s "type T<A, A> =\n  | k\n0")
   (check-equal? (code s) "E-SUR-030")

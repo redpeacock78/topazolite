@@ -218,6 +218,9 @@
                            #:related (related-of 'constructor-declaration "constructor" f s0)))]
          [(hash-has-key? base-constructors f)
           (fail 'surface-constructor-value-name-collision s)]
+         ;; P2l2b2 spec §9.3.7。組み込みの constructor は宣言の位置を持たないので related を付けない。
+         [(memq f builtin-data-constructors)
+          (fail 'surface-constructor-value-name-collision s)]
          [else (values ctors (hash-set fns f s))])]
       [_ (values ctors fns)])))
 

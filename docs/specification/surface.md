@@ -405,6 +405,7 @@ constructor 名は全ての data 型で一意とし、組み込み constructor �
 原文の constructor 名どうしの重なりは、後の名前を primary、先の名前を related とする。
 組み込みまたは基底の constructor との重なりでは related を付けない。
 constructor 名を top-level 関数、基底環境、または kernel の `Γ0` の名前と重ねることは `E-SUR-032` とする。
+top-level 関数の名前を組み込みの constructor 名（`nil`、`cons`、`none`、`some`、`ok`、`ng`）と重ねることも `E-SUR-032` とし、関数の名前を primary として related を付けない。
 原文の関数と重なる場合は後に現れた名前を primary、先の名前を related とする。
 原文の関数名と基底の constructor 名が重なる場合は、原文の関数名を primary とし、related を付けない。
 基底環境または kernel の `Γ0` の名前と重なる場合は constructor 名を primary とし、related を付けない。
@@ -624,7 +625,7 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-029` `surface-duplicate-constructor`：constructor の名前が組み込み、基底、または他の宣言の constructor と重なった
 - `E-SUR-030` `surface-duplicate-type-parameter`：data 型の宣言で同じ型仮引数を 2 度書いた
 - `E-SUR-031` `surface-type-data-name-collision`：data 型の名前と型別名の名前が重なった
-- `E-SUR-032` `surface-constructor-value-name-collision`：constructor の名前が top-level の関数、基底の constructor、または kernel の `Γ0` の名前と重なった
+- `E-SUR-032` `surface-constructor-value-name-collision`：constructor の名前が top-level の関数、基底の constructor、または kernel の `Γ0` の名前と重なった。組み込み constructor と top-level 関数の重なりも含む
 - `E-SUR-033` `surface-irregular-data-recursion`：data 型の再帰的な出現の型引数が宣言の型仮引数の並びと一致しない
 - `E-SUR-034` `surface-non-positive-data-recursion`：data 型の再帰的な出現が関数型の引数の側にある
 
