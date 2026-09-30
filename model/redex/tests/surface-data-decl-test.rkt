@@ -221,6 +221,11 @@
   (check-true (compiled? (compile/base
                           "impl Sizable for Color { size: fn(x: Color) -> Int { 0 } }\n0"))))
 
+(test-case "基底の台帳の data 型の constructor を原文から適用できる"
+  ;; base-data の Color は red と blue を持つ。
+  (check-false (base-code "let c = red\nc"))
+  (check-false (base-code "fn f(x: Color) -> Color { x }\nf(blue)")))
+
 (test-case "基底の data 索引を直接渡した lowering は host 例外を出さない"
   ;; 原文に data 宣言が無くても、束ねる条件は合成索引で決まる。
   (define r

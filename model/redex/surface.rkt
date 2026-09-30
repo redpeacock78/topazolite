@@ -48,6 +48,8 @@
              (SReturn s sexpr)
              (SFn s (slparam ...) sty-or-none srow-or-none sexpr)
              (SApply s sexpr (sexpr ...))
+             ;; P2l2b2 spec §9.3.5。parser では作らず、名前解決が作る。
+             (SConstruct s sname (sexpr ...))
              (SProj s sexpr slabel)
              (SProjRec s sexpr (slabel ...))
              (SRec s (sfield ...))

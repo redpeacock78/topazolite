@@ -125,6 +125,14 @@
                  (Fn () #:infer () (Construct none))))
    'ok))
 
+(test-case "P2l2b2: 注釈付き Let の宣言型は generic Construct の期待型になる"
+  (check-equal? (code-of '(Let (o let (Option Int)) (Construct none) 0)) 'ok)
+  (check-equal? (code-of '(Let (o let (Option Int)) (Construct some 1) 0)) 'ok)
+  (check-equal? (code-of '(Let (o let Int) (Construct none) 0))
+                (diagnostic-code-of 'elaborate 'constructor-type-mismatch))
+  (check-equal? (code-of '(Let o (Construct none) 0))
+                (diagnostic-code-of 'elaborate 'constructor-needs-expected-type)))
+
 (test-case "SUR-008: 期待型が関数型でない位置の省略 Fn は type-mismatch を返す"
   (check-equal? (code-of '(Fn () Int () (Fn () #:infer () 1)))
                 (diagnostic-code-of 'elaborate 'type-mismatch)))

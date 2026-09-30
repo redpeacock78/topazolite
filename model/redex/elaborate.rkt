@@ -932,12 +932,14 @@
     (define (inferred-row? raw-row)
       (eq? (peel-ef raw-row) '#:infer))
 
-    ;; SUR-012 / SUR-003。どちらの省略も注釈付き Let の期待型を要する。
-    (define (needs-expected-fn-type? expression)
+    ;; SUR-012 / SUR-003 / P2l2b2。注釈付き Let の宣言型を期待型に使う形である。
+    (define (needs-expected-type? expression)
       (match (peel-node expression)
         [`(Fn ((,_ ,parameter-types) ...) ,_ ,raw-row ,_)
          (or (ormap inferred? parameter-types)
              (inferred-row? raw-row))]
+        [`(Construct ,_ (Types ,_ ...) ,_ ...) #f]
+        [`(Construct ,_ ,_ ...) #t]
         [_ #f]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body
@@ -1520,7 +1522,7 @@
            ;; 前に拒むため、elaborate と typing が同じ key を返す。
            (reject s 'mut-binding-unsupported-type declared-type))
          (define bound-result
-           (if (needs-expected-fn-type? bound)
+           (if (needs-expected-type? bound)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
          (define actual-type (judgment-type bound-result))

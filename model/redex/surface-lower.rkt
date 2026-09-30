@@ -10,6 +10,8 @@
          (only-in "data-env.rkt"
                   data-index-decls
                   data-index-constructors
+                  data-constructor
+                  data-decl
                   empty-data-index
                   build-data-index
                   data-reserved-type-names
@@ -742,6 +744,67 @@
                (cons (list (list '#:lbl label s_l) 'imm (lower-sexpr e env fail))
                      row))])))
 
+;; P2l2b2 spec §9.3.5 と §9.3.7。束縛されていない constructor 名を解決する。
+;; let の右辺は外側の有効範囲で、継続は束縛子を加えた有効範囲で走査する。
+(define (resolve-constructors items tail ctor-names)
+  (define (ctor? x bound)
+    (and (set-member? ctor-names x) (not (set-member? bound x))))
+  (define (param-names params)
+    (for/list ([p (in-list params)])
+      (match p [`(SParam ,_ (SName ,_ ,x) ,_) x])))
+  (define (expr e bound)
+    (define (r e) (expr e bound))
+    (match e
+      [`(SVar ,s ,x)
+       #:when (ctor? x bound)
+       `(SConstruct ,s (SName ,s ,x) ())]
+      [`(SApply ,s (SVar ,s_k ,k) ,args)
+       #:when (ctor? k bound)
+       `(SConstruct ,s (SName ,s_k ,k) ,(map r args))]
+      [`(SApply ,s ,f ,args) `(SApply ,s ,(r f) ,(map r args))]
+      [`(SConstruct ,s ,k ,args) `(SConstruct ,s ,k ,(map r args))]
+      [`(SReturn ,s ,v) `(SReturn ,s ,(r v))]
+      [`(SFn ,s ,params ,ty ,row ,body)
+       `(SFn ,s ,params ,ty ,row
+             ,(expr body (set-union bound (list->seteq (param-names params)))))]
+      [`(SProj ,s ,target ,label) `(SProj ,s ,(r target) ,label)]
+      [`(SProjRec ,s ,target ,labels) `(SProjRec ,s ,(r target) ,labels)]
+      [`(SRec ,s ,fields) `(SRec ,s ,(rec-fields fields bound))]
+      [`(SBlock ,s ,binds ,body)
+       (define-values (binds* bound*) (seq binds bound))
+       `(SBlock ,s ,binds* ,(expr body bound*))]
+      [_ e]))
+  (define (rec-fields fields bound)
+    (for/list ([field (in-list fields)])
+      (match field
+        [`(SField ,s ,label ,value)
+         `(SField ,s ,label ,(expr value bound))])))
+  (define (seq declarations bound)
+    (define-values (reversed bound*)
+      (for/fold ([reversed '()] [scope bound]) ([declaration (in-list declarations)])
+        (match declaration
+          [`(SBind ,s ,mode (SName ,s_x ,x) ,ty ,value)
+           (values (cons `(SBind ,s ,mode (SName ,s_x ,x) ,ty
+                                 ,(expr value scope))
+                         reversed)
+                   (set-add scope x))]
+          [`(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row ,body)
+           (define inner
+             (set-union (set-add scope f) (list->seteq (param-names params))))
+           (values (cons `(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row
+                                   ,(expr body inner))
+                         reversed)
+                   (set-add scope f))]
+          [`(SImplDecl ,s ,name ,ty (SRec ,s_r ,fields))
+           (values (cons `(SImplDecl ,s ,name ,ty
+                                    (SRec ,s_r ,(rec-fields fields scope)))
+                         reversed)
+                   scope)]
+          [_ (values (cons declaration reversed) scope)])))
+    (values (reverse reversed) bound*))
+  (define-values (items* bound*) (seq items (seteq)))
+  (values items* (expr tail bound*)))
+
 ;; spec §7.2 の対応表である。
 (define (lower-sexpr e env fail)
   (match e
@@ -771,6 +834,14 @@
     [`(SApply ,s ,f ,arguments)
      `(Apply ,s ,(lower-sexpr f env fail)
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
+    ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
+    ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。
+    [`(SConstruct ,s (SName ,_ ,k) ,args)
+     (define fields (for/list ([a (in-list args)]) (lower-sexpr a env fail)))
+     (define owner (data-constructor k))
+     (if (and owner (null? (second (data-decl (first owner)))))
+         `(Construct ,s ,k (Types) ,@fields)
+         `(Construct ,s ,k ,@fields))]
     [`(SProj ,s ,target (SLabel ,s_l ,label))
      `(Proj ,s ,(lower-sexpr target env fail) (#:lbl ,label ,s_l))]
     ;; spec §6.1。受け側を 1 度だけ束縛し、選んだ label ごとに Proj を積んだ
@@ -898,8 +969,15 @@
           (unless (null? data-decls)
             (validate-data-decls! all-data all-index (data-validation-bail data-spans fail)))
           (define (lower-rest)
+            ;; P2l2b2 spec §9.3.7。宣言の前処理と項の畳み込みに同じ AST を渡す。
+            (define ctor-names
+              (list->seteq
+               (append (filter (λ (name) (not (memq name '(true false))))
+                               builtin-data-constructors)
+                       (hash-keys (data-index-constructors all-index)))))
+            (define-values (items* e*) (resolve-constructors items e ctor-names))
             (define-values (decl-rows decl-spans)
-              (lower-trait-decls items base env fail))
+              (lower-trait-decls items* base env fail))
             (define composite-keys (base-composite-keys base))
             (define (template-of n)
               (trait-template (or (findf (λ (r) (eq? (trait-name r) n)) decl-rows)
@@ -913,8 +991,8 @@
                 (hash-set h k v)))
             (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
             (define-values (impl-rows spans core-info)
-              (lower-impl-decls items staged trait-spans env outputs fail))
-            (lowered (fold-items items e env core-info fail)
+              (lower-impl-decls items* staged trait-spans env outputs fail))
+            (lowered (fold-items items* e* env core-info fail)
                      trait-rows impl-rows intersect-rows data-decls
                      (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
                        (hash-set h k v))))

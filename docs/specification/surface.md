@@ -13,7 +13,8 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版は、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
-constructor の式とパターン照合（`PAT-001`）は受理しないので、`ADT-001` はこの版では完了していない。
+constructor の式は受理する。
+パターン照合（`PAT-001`）は受理しないので、`ADT-001` はこの版では完了していない。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
@@ -409,7 +410,10 @@ top-level 関数の名前を組み込みの constructor 名（`nil`、`cons`、`
 原文の関数と重なる場合は後に現れた名前を primary、先の名前を related とする。
 原文の関数名と基底の constructor 名が重なる場合は、原文の関数名を primary とし、related を付けない。
 基底環境または kernel の `Γ0` の名前と重なる場合は constructor 名を primary とし、related を付けない。
-局所束縛による constructor 名の遮蔽は constructor 式を導入する P2l2b2 の名前解決が定める。
+Surface の式構文は `SVar` と `SApply` を保ち、parse 後の名前解決が constructor を内部 AST の `SConstruct` へ置き換える。
+`let` の右辺は外側の有効範囲で調べ、継続は束縛子を加えた有効範囲で調べる。
+関数の仮引数と `=>` の仮引数は、その本体だけで同名の constructor を隠す。
+この pass は局所束縛子に無い constructor 名だけを置き換え、その他の未束縛名は変数として残す。
 
 型仮引数はその data 型の欄の型だけで有効であり、型別名、data 型、組み込み型より先に解決する。
 同じ宣言で型仮引数名を重ねた場合は `E-SUR-030` とし、後の名前を primary、先の名前を related とする。
@@ -472,6 +476,12 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
+- `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
+  型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
+  型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。
+  constructor の単独使用は 0 欄の適用として扱う。
+  型仮引数の無い constructor の欄数不一致は常に `E-ARI-001` とする。
+  型仮引数のある constructor は、期待型が所属 data 型なら欄数不一致を `E-ARI-001`、期待型が無ければ `E-TYP-003`、他の型なら `E-DAT-002` とする。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
 - `(SProjRec s e ((SLabel s_l l) ...))` は、受け側を 1 度だけ束縛する `Let` と、label ごとの `Proj` を並べた `Rec` へ落とす。 [REQ: SUR-006]
 - `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
@@ -484,7 +494,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   戻り型が `#:none` なら戻り型欄は `(#:infer s)` となる。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
-  右辺が仮引数型または Effect row を省略した `Fn` なら宣言型で検査する。
+  右辺が仮引数型または Effect row を省略した `Fn`、または型引数欄の無い `Construct` なら宣言型で検査する。
   それ以外は右辺を合成し、その結果へ binding mode の policy を適用する（core-calculus.md §4.2、structural-row.md §4）。
 - `(SFnDecl s (SName s_f f) ... return-sty-or-none row-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。明示 row は lower-row の結果を row 節の span `s_row` とともに置く。
   row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
