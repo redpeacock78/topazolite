@@ -5,15 +5,23 @@
          "diagnostic.rkt"
          "rows.rkt"
          "traits.rkt"
-         "type-equiv.rkt")
+         "type-equiv.rkt"
+         (only-in "data-env.rkt"
+                  data-index-decls
+                  data-index-constructors
+                  empty-data-index
+                  data-reserved-type-names
+                  builtin-data-constructors)
+         (only-in "origins.rkt" Γ0))
 
 (provide lower-surface lift-template-type (struct-out lowered))
 
-(struct lowered (term trait-rows impl-rows intersect-rows spans) #:transparent)
+(struct lowered (term trait-rows impl-rows intersect-rows data-decls spans) #:transparent)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
 ;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
 (define primitive-type-names '(Int Bool Unit String))
+(define type-params (make-parameter '()))
 
 ;; spec §9.2。Surface の型構成子の名前と引数の個数である。
 ;; 写し先はどれも uτ に既にある形で、P2l2b が data 型を足す。
@@ -30,15 +38,20 @@
 ;; spec §6。宣言の並びを 1 度目に読む。名前の衝突と重複だけを見て、
 ;; 展開前の sty のまま表へ入れる。前方参照を許すには、展開を始める前に
 ;; 全宣言を読み終えている必要がある。
-(define (build-alias-env items base fail)
+(define (data-declaration-related s_T T)
+  (if s_T
+      (list (list 'data-declaration s_T (format "data 型 ~a の宣言" T)))
+      '()))
+
+(define (build-alias-env items base base-data fail)
   (define source-traits
     (for/fold ([h (hasheq)]) ([item (in-list items)])
       (match item
         [`(STraitDecl ,_ (SName ,s_n ,name) ,_)
          (if (hash-has-key? h name) h (hash-set h name s_n))]
         [_ h])))
-  (define types
-    (for/fold ([env (hash)]) ([item (in-list items)])
+  (define-values (types seen)
+    (for/fold ([env (hash)] [seen (hasheq)]) ([item (in-list items)])
       (match item
         [`(STypeDecl ,_ (SName ,s_n ,name) ,ty)
          ;; spec §6.3。Self は trait 宣言の中だけの名前であり、別名にできない。
@@ -53,6 +66,13 @@
            (fail 'surface-reserved-type-constructor-name s_n))
          (when (hash-has-key? env name)
            (fail 'surface-duplicate-type-alias s_n))
+         (match (hash-ref seen name #f)
+           [(list 'data s_d)
+            (fail 'surface-type-data-name-collision s_n
+                  #:related (data-declaration-related s_d name))]
+           [_ (void)])
+         (when (hash-has-key? base-data name)
+           (fail 'surface-type-data-name-collision s_n))
          (cond
            [(hash-ref source-traits name #f)
             => (λ (s_t)
@@ -61,7 +81,8 @@
                                              (format "trait ~a の宣言" name)))))]
            [(trait-row-by-name name base)
             (fail 'surface-type-trait-name-collision s_n)])
-         (hash-set env name ty)]
+         (values (hash-set env name ty)
+                 (hash-set seen name (list 'alias s_n)))]
         [`(STraitDecl ,_ (SName ,s_n ,name) ,_)
          (when (memq name primitive-type-names)
            (fail 'surface-type-trait-name-collision s_n))
@@ -69,15 +90,61 @@
          ;; 組み込みの型構成子を隠すので型と trait の衝突として拒否する。
          (when (type-constructor-arity name)
            (fail 'surface-type-trait-name-collision s_n))
-         env]
+         (match (hash-ref seen name #f)
+           [(list 'data s_d)
+            (fail 'surface-type-trait-name-collision s_n
+                  #:related (data-declaration-related s_d name))]
+           [_ (void)])
+         (when (hash-has-key? base-data name)
+           (fail 'surface-type-trait-name-collision s_n))
+         (values env (if (hash-has-key? seen name)
+                         seen
+                         (hash-set seen name (list 'trait s_n))))]
+        [`(SDataDecl ,_ (SName ,s_n ,name) ,_ ,_ ...)
+         ;; P2l2b1 spec §4.3 と §11 の段 1。Self、組み込みの型、data 型どうし、
+         ;; 型別名、trait の順に見る。
+         (when (eq? name 'Self)
+           (fail 'surface-unknown-type-name s_n))
+         (when (memq name data-reserved-type-names)
+           (fail 'surface-reserved-data-type-name s_n))
+         (match (hash-ref seen name #f)
+           [(list 'data s_d)
+            (fail 'surface-duplicate-data-type s_n
+                  #:related (data-declaration-related s_d name))]
+           [_ (void)])
+         (when (hash-has-key? base-data name)
+           (fail 'surface-duplicate-data-type s_n))
+         (match (hash-ref seen name #f)
+           [(list 'alias s_a)
+            (fail 'surface-type-data-name-collision s_n
+                  #:related (list (list 'type-alias-declaration s_a
+                                        (format "型別名 ~a の宣言" name))))]
+           [(list 'trait s_t)
+            (fail 'surface-type-trait-name-collision s_n
+                  #:related (list (list 'trait-declaration s_t
+                                        (format "trait ~a の宣言" name))))]
+           [_ (void)])
+         (when (trait-row-by-name name base)
+           (fail 'surface-type-trait-name-collision s_n))
+         (values env (hash-set seen name (list 'data s_n)))]
+        [_ (values env seen)])))
+  ;; data 型と基底 data 型の marker を全て先に置き、前方参照を許す。
+  (define with-data
+    (for/fold ([env types]) ([item (in-list items)])
+      (match item
+        [`(SDataDecl ,_ (SName ,s_n ,name) ,params ,_ ...)
+         (hash-set env name (list 'data s_n (length params)))]
         [_ env])))
+  (define with-base-data
+    (for/fold ([env with-data]) ([(name decl) (in-hash base-data)])
+      (hash-set env name (list 'data #f (length (second decl))))))
   ;; trait 名を型別名より優先してマークする。衝突は上で既に拒否した。
   (define trait-marks
     (for/fold ([h (hash)])
               ([name (in-list (append (map trait-name (trait-env-trait-rows base))
                                       (hash-keys source-traits)))])
       (hash-set h name 'trait)))
-  (for/fold ([env types]) ([(name marker) (in-hash trait-marks)])
+  (for/fold ([env with-base-data]) ([(name marker) (in-hash trait-marks)])
     (hash-set env name marker)))
 
 ;; spec §6.1。2 度目は宣言の並び順に読む。使われない宣言の中の誤りも
@@ -91,6 +158,90 @@
        (unless (memq name composite-names)
          (lower-sty ty env fail (list name)))]
       [_ (void)])))
+
+;; spec §4.3 と §11 の段 2。constructor 名の重なりを原文の順に見る。
+;; 重複の検査を値の名前との検査より先に全宣言について終える。
+;; 組み込みと基底の constructor は原文の span を持たないので related を持たない。
+(define (check-data-constructors items base-constructors gamma0-names fail)
+  (define (constructors-of item)
+    (match item
+      [`(SDataDecl ,_ ,_ ,_ ,variants ...)
+       (for/list ([v (in-list variants)])
+         (match v [`((SName ,s ,k) ,_) (list k s)]))]
+      [_ '()]))
+  (define (related-of relation what name s)
+    (list (list relation s (format "~a ~a の宣言" what name))))
+  (for/fold ([seen (hasheq)]) ([c (in-list (append-map constructors-of items))])
+    (match-define (list k s) c)
+    (cond
+      [(or (memq k builtin-data-constructors) (hash-has-key? base-constructors k))
+       (fail 'surface-duplicate-constructor s)]
+      [(hash-ref seen k #f)
+       => (λ (s0) (fail 'surface-duplicate-constructor s
+                        #:related (related-of 'constructor-declaration "constructor" k s0)))]
+      [else (hash-set seen k s)]))
+  ;; 値の名前との重なり。原文の関数とはどちらが先でも後の名前を primary にする。
+  (for/fold ([ctors (hasheq)] [fns (hasheq)] #:result (void))
+            ([item (in-list items)])
+    (match item
+      [`(SDataDecl ,_ ,_ ,_ ,_ ...)
+       (for/fold ([ctors ctors] [fns fns]) ([c (in-list (constructors-of item))])
+         (match-define (list k s) c)
+         (cond
+           [(hash-ref fns k #f)
+            => (λ (s0) (fail 'surface-constructor-value-name-collision s
+                             #:related (related-of 'function-declaration "関数" k s0)))]
+           [(memq k gamma0-names)
+            (fail 'surface-constructor-value-name-collision s)]
+           [else (values (hash-set ctors k s) fns)]))]
+      [`(SFnDecl ,_ (SName ,s ,f) ,_ ,_ ,_ ,_)
+       (cond
+         [(hash-ref ctors f #f)
+          => (λ (s0) (fail 'surface-constructor-value-name-collision s
+                           #:related (related-of 'constructor-declaration "constructor" f s0)))]
+         [(hash-has-key? base-constructors f)
+          (fail 'surface-constructor-value-name-collision s)]
+         [else (values ctors (hash-set fns f s))])]
+      [_ (values ctors fns)])))
+
+;; spec §11 の段 3。型仮引数の重複と Self を見る。
+(define (check-data-type-parameters items fail)
+  (for ([item (in-list items)])
+    (match item
+      [`(SDataDecl ,_ ,_ ,params ,_ ...)
+       (for/fold ([seen (hasheq)]) ([p (in-list params)])
+         (match-define `(SName ,s ,x) p)
+         (when (eq? x 'Self)
+           (fail 'surface-unknown-type-name s))
+         (cond
+           [(hash-ref seen x #f)
+            => (λ (s0) (fail 'surface-duplicate-type-parameter s
+                             #:related (list (list 'type-parameter-declaration s0
+                                                   (format "型仮引数 ~a の宣言" x)))))]
+           [else (hash-set seen x s)]))]
+      [_ (void)])))
+
+;; spec §9.3.3 と §11 の段 4。欄の型を型仮引数の下で解決し、台帳の宣言の形へ写す。
+;; 欄ごとの span と宣言の名前の span を返し、driver が台帳の失敗を原文へ戻す。
+(define (lower-data-decls items env fail)
+  (for/fold ([decls '()] [spans (hash)] #:result (values (reverse decls) spans))
+            ([item (in-list items)])
+    (match item
+      [`(SDataDecl ,_ (SName ,s_T ,T) ,params ,variants ...)
+       (define xs (map third params))
+       (parameterize ([type-params xs])
+         (for/fold ([ctors '()] [spans (hash-set spans (cons 'data-name T) s_T)]
+                    #:result (values (cons (list T xs (reverse ctors)) decls) spans))
+                   ([v (in-list variants)])
+           (match-define `((SName ,_ ,K) ,fields) v)
+           (define σs
+             (for/list ([f (in-list fields)])
+               (or (normalize-type (lift-template-type (lower-sty f env fail)))
+                   (fail 'surface-type-not-normalizable (node-span f)))))
+           (values (cons (list K σs) ctors)
+                   (for/fold ([h spans]) ([f (in-list fields)] [i (in-naturals)])
+                     (hash-set h (cons 'data (list T K i #f)) (node-span f))))))]
+      [_ (values decls spans)])))
 
 ;; spec §5.1。合成候補の根と TInter だけを辿り、その葉を返す。
 (define (inter-leaves ty)
@@ -299,24 +450,39 @@
      (if self? 'Self (fail 'surface-unknown-type-name s))]
     [`(TName ,s ,name)
      (cond
+       [(memq name (type-params)) `(Param ,name)]
        [(memq name primitive-type-names) name]
        [(type-constructor-arity name)
         (fail 'surface-type-application-mismatch s)]
        [(memq name stack) (fail 'surface-recursive-type-alias s)]
        [(hash-ref env name #f)
         => (λ (definition)
-             (if (eq? definition 'trait)
-                 (fail 'surface-trait-in-type-position s)
-                 (lower-sty definition env fail (cons name stack))))]
+             (match definition
+               ['trait (fail 'surface-trait-in-type-position s)]
+               [(list 'data _ 0) `(Data ,name ())]
+               [(list 'data s_T _)
+                (fail 'surface-type-application-mismatch s
+                      #:related (data-declaration-related s_T name))]
+               [_ (parameterize ([type-params '()])
+                    (lower-sty definition env fail (cons name stack)))]))]
        [else (fail 'surface-unknown-type-name s)])]
     [`(TApp ,s (SName ,s_h ,name) ,arguments)
      (define (mismatch) (fail 'surface-type-application-mismatch s))
      (cond
+       [(memq name (type-params)) (mismatch)]
        [(eq? name 'Self)
         (if self? (mismatch) (fail 'surface-unknown-type-name s_h))]
        [(memq name stack) (fail 'surface-recursive-type-alias s_h)]
        [(eq? (hash-ref env name #f) 'trait)
         (fail 'surface-trait-in-type-position s_h)]
+       [(match (hash-ref env name #f) [(list 'data s_T n) (list s_T n)] [_ #f])
+        => (λ (d)
+             (match-define (list s_T n) d)
+             (unless (= n (length arguments))
+               (fail 'surface-type-application-mismatch s
+                     #:related (data-declaration-related s_T name)))
+             `(Data ,name ,(for/list ([a (in-list arguments)])
+                             (lower-sty a env fail stack #:self? self?))))]
        [(or (memq name primitive-type-names) (hash-ref env name #f))
         (mismatch)]
        [(type-constructor-arity name)
@@ -680,7 +846,9 @@
 ;; 「parse の結果を場合分けしてから lower-surface を呼ぶ」手続きを課すと、
 ;; その場合分けを忘れた経路が静かに落ちる（parser.rkt:10-13 と同じ理由）。
 ;; spec §6.1。診断は 1 件だけ返すので、最初の fail で脱出する。
-(define (lower-surface program base)
+(define (lower-surface program base
+                       #:data-index [data-index empty-data-index]
+                       #:gamma0-names [gamma0-names (map first Γ0)])
   (cond
     [(diagnostic? program) program]
     [else
@@ -689,7 +857,7 @@
         (let/ec return
           (define (fail key s #:related [related '()])
             (return (diagnostic-of 'surface key #:primary-span s #:related related)))
-          (define env0 (build-alias-env items base fail))
+          (define env0 (build-alias-env items base (data-index-decls data-index) fail))
           (define trait-names
             (for/list ([(n d) (in-hash env0)] #:when (eq? d 'trait)) n))
           (define comps (classify-compositions items trait-names))
@@ -697,6 +865,11 @@
             (for/fold ([env env0]) ([c (in-list comps)])
               (hash-set env (first c) 'trait)))
           (check-alias-definitions items env (map first comps) fail)
+          ;; P2l2b1 spec §11 の段 2 から段 4。別名の検査後、trait の lowering 前に置く。
+          (check-data-constructors items (data-index-constructors data-index)
+                                   gamma0-names fail)
+          (check-data-type-parameters items fail)
+          (define-values (data-decls data-spans) (lower-data-decls items env fail))
           (define-values (decl-rows decl-spans)
             (lower-trait-decls items base env fail))
           (define composite-keys (base-composite-keys base))
@@ -714,4 +887,6 @@
           (define-values (impl-rows spans core-info)
             (lower-impl-decls items staged trait-spans env outputs fail))
           (lowered (fold-items items e env core-info fail)
-                   trait-rows impl-rows intersect-rows spans))])]))
+                   trait-rows impl-rows intersect-rows data-decls
+                   (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
+                     (hash-set h k v))))])]))

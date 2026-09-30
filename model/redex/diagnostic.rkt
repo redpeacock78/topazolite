@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 28)
+(define diagnostic-registry-version 29)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -422,6 +422,24 @@
     ("E-SUR-026" surface-reserved-type-constructor-name
      "型構成子の名前（List、Option、Result、Owned）を型別名として宣言した")))
 
+(define surface-entries-v29
+  '(("E-SUR-027" surface-duplicate-data-type
+     "同じ名前の data 型を 2 度宣言した、または基底の data 型と同じ名前の data 型を宣言した")
+    ("E-SUR-028" surface-reserved-data-type-name
+     "組み込みの型の名前を data 型の名前として宣言した")
+    ("E-SUR-029" surface-duplicate-constructor
+     "constructor の名前が組み込み、基底、または他の宣言の constructor と重なった")
+    ("E-SUR-030" surface-duplicate-type-parameter
+     "data 型の宣言で同じ型仮引数を 2 度書いた")
+    ("E-SUR-031" surface-type-data-name-collision
+     "data 型の名前と型別名の名前が重なった")
+    ("E-SUR-032" surface-constructor-value-name-collision
+     "constructor の名前が top-level の関数、基底の constructor、または kernel の Γ0 の名前と重なった")
+    ("E-SUR-033" surface-irregular-data-recursion
+     "data 型の再帰的な出現の型引数が宣言の型仮引数の並びと一致しない")
+    ("E-SUR-034" surface-non-positive-data-recursion
+     "data 型の再帰的な出現が関数型の引数の側にある")))
+
 (define diagnostic-registry
   (append (rows 'elaborate 1 elaborate-entries)
           (rows 'elaborate 11 elaborate-entries-v11)
@@ -458,7 +476,8 @@
           (rows 'surface 21 surface-entries-v21)
           (rows 'surface 22 surface-entries-v22)
           (rows 'surface 26 surface-entries-v26)
-          (rows 'surface 28 surface-entries-v28)))
+          (rows 'surface 28 surface-entries-v28)
+          (rows 'surface 29 surface-entries-v29)))
 
 ;; 見つからなければ #f を返す。G4d1 は key から Diagnostic を作る関数で
 ;; この #f を error に変え、握り潰さない形にする。

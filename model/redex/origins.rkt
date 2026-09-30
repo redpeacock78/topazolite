@@ -192,12 +192,6 @@
            (bail 'surface-trait-name-collision kind (first (car rows)))]
           [else (loop (cdr rows) (set-add seen (first (car rows))))])))
 
-(define data-reserved-type-names
-  '(Int Bool Unit String Never Res List Option Result Owned Borrowed BorrowedMut
-        RawPtr NFn TypeInfo Proof Record Untrusted Refined Union Intersection
-        ForallRegion Data))
-(define builtin-data-constructors '(true false nil cons none some ok ng))
-
 (define (data-type-occurrences type)
   (define found '())
   (define (walk term)

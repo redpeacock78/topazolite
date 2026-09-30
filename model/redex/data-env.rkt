@@ -13,6 +13,8 @@
          data-constructor
          data-schema
          data-field-types
+         data-reserved-type-names
+         builtin-data-constructors
          build-data-index)
 
 (module+ data-env-internal
@@ -22,6 +24,12 @@
 
 (define empty-data-index (data-index (hash) (hash)))
 (define data-index-parameter (make-parameter empty-data-index))
+
+(define data-reserved-type-names
+  '(Int Bool Unit String Never Res List Option Result Owned Borrowed BorrowedMut
+        RawPtr NFn TypeInfo Proof Record Untrusted Refined Union Intersection
+        ForallRegion Data))
+(define builtin-data-constructors '(true false nil cons none some ok ng))
 
 (define (current-data-index)
   (define index (data-index-parameter))

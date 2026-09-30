@@ -35,10 +35,18 @@
     surface-type-trait-name-collision
     surface-invalid-effect-label
     surface-type-application-mismatch
-    surface-reserved-type-constructor-name))
+    surface-reserved-type-constructor-name
+    surface-duplicate-data-type
+    surface-reserved-data-type-name
+    surface-duplicate-constructor
+    surface-duplicate-type-parameter
+    surface-type-data-name-collision
+    surface-constructor-value-name-collision
+    surface-irregular-data-recursion
+    surface-non-positive-data-recursion))
 
 ;; v15 の 11 件に v17 の 1 件、v19 の 6 件、v20 の 1 件、v21 の 1 件、v22 の 3 件、
-;; v26 の 1 件と v28 の 2 件を足した。
+;; v26 の 1 件、v28 の 2 件と v29 の 8 件を足した。
 ;; since は版ごとに異なる。
 (define surface-since
   (hasheq 'surface-projection-labels 17
@@ -55,10 +63,18 @@
           'surface-type-trait-name-collision 22
           'surface-invalid-effect-label 26
           'surface-type-application-mismatch 28
-          'surface-reserved-type-constructor-name 28))
+          'surface-reserved-type-constructor-name 28
+          'surface-duplicate-data-type 29
+          'surface-reserved-data-type-name 29
+          'surface-duplicate-constructor 29
+          'surface-duplicate-type-parameter 29
+          'surface-type-data-name-collision 29
+          'surface-constructor-value-name-collision 29
+          'surface-irregular-data-recursion 29
+          'surface-non-positive-data-recursion 29))
 
 (test-case
- "26 件の key はすべて registry にあり、相は surface である"
+ "34 件の key はすべて registry にあり、相は surface である"
  (for ([k (in-list surface-keys)])
    (define code (diagnostic-code-of 'surface k))
    (check-true (string? code) (format "~a が registry にある" k))
@@ -67,7 +83,7 @@
                  (hash-ref surface-since k 15))))
 
 (test-case
- "registry の surface 相はこの 26 件だけである"
+ "registry の surface 相はこの 34 件だけである"
  (define rows
    (for/list ([row (in-list diagnostic-registry)]
               #:when (eq? (diagnostic-code-phase row) 'surface))
@@ -85,6 +101,12 @@
 (define name-collision-source "type Printable = Int\n0")
 (define invalid-composition-source "type D = Printable & Printable\n0")
 (define invalid-effect-source "fn f() ! State { 0 }\n0")
+(define duplicate-data-source "type A =\n  | k\ntype A =\n  | j\n0")
+(define reserved-data-source "type Int =\n  | k\n0")
+(define duplicate-constructor-source "type A =\n  | none\n0")
+(define duplicate-type-parameter-source "type T<A, A> =\n  | k\n0")
+(define type-data-collision-source "type A = Int\ntype A =\n  | k\n0")
+(define constructor-value-collision-source "type A =\n  | add\n0")
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
         (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
@@ -132,17 +154,41 @@
               (lambda ()
                 (lower-surface (parse (lex/string 'src "type List = Int\n0"))
                                canonical-trait-env))
-              (string-length "type List = Int\n0"))))
+              (string-length "type List = Int\n0"))
+        (list 'surface-duplicate-data-type
+              (lambda () (lower-surface (parse (lex/string 'src duplicate-data-source))
+                                        canonical-trait-env))
+              (string-length duplicate-data-source))
+        (list 'surface-reserved-data-type-name
+              (lambda () (lower-surface (parse (lex/string 'src reserved-data-source))
+                                        canonical-trait-env))
+              (string-length reserved-data-source))
+        (list 'surface-duplicate-constructor
+              (lambda () (lower-surface (parse (lex/string 'src duplicate-constructor-source))
+                                        canonical-trait-env))
+              (string-length duplicate-constructor-source))
+        (list 'surface-duplicate-type-parameter
+              (lambda () (lower-surface (parse (lex/string 'src duplicate-type-parameter-source))
+                                        canonical-trait-env))
+              (string-length duplicate-type-parameter-source))
+        (list 'surface-type-data-name-collision
+              (lambda () (lower-surface (parse (lex/string 'src type-data-collision-source))
+                                        canonical-trait-env))
+              (string-length type-data-collision-source))
+        (list 'surface-constructor-value-name-collision
+              (lambda () (lower-surface (parse (lex/string 'src constructor-value-collision-source))
+                                        canonical-trait-env))
+              (string-length constructor-value-collision-source))))
 
 (test-case
- "15 件の producer が registry と同じ code を返す"
+ "21 件の producer が registry と同じ code を返す"
  (for ([pr (in-list producers)])
    (define d ((second pr)))
    (check-true (diagnostic? d) (format "~a が Diagnostic を返す" (first pr)))
    (check-equal? (diagnostic-id d) (diagnostic-code-of 'surface (first pr)))))
 
 (test-case
- "15 件の分類は SUR である"
+ "21 件の分類は SUR である"
  (for ([pr (in-list producers)])
    (check-equal? (diagnostic-category ((second pr))) 'SUR)))
 
@@ -167,7 +213,7 @@
                 (parse (lex/string 'src "r.{a, a}")))
                '(#:span src 2 8)))
 
-;; spec §12 の「3 つの renderer が全 26 件を描ける」である。producer の無い 11 件も
+;; spec §12 の「3 つの renderer が全 34 件を描ける」である。producer の無い 13 件も
 ;; 対象にするため、registry の code から直に Diagnostic を組み立てる。
 (define sm (make-source-map (hasheq 'src "let x = 1\n")))
 
@@ -183,7 +229,7 @@
                    #:source-chain '((surface verbatim (#:span src 4 5)))))
 
 (test-case
- "3 つの renderer が 26 件すべてを描ける"
+ "3 つの renderer が 34 件すべてを描ける"
  (for ([k (in-list surface-keys)])
    (define d (sample-diagnostic k))
    (check-true (diagnostic-valid? d) (format "~a の Diagnostic が schema に合う" k))
