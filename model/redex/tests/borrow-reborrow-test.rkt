@@ -36,6 +36,10 @@
   (define Λ_0 (empty-region-ctx))
   (check-equal? (borrow-token-key Λ_0 '(Proj (Rec ((a imm (BorrowMut x)))) a))
                 (set (list 'x)))
+  (check-equal? (borrow-token-key
+                 Λ_0
+                 '(ProjOpt Int (Rec ((a imm (BorrowMut x)))) a))
+                (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(Suspend (BorrowMut x))) (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(Yield 1 (BorrowMut x))) (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0

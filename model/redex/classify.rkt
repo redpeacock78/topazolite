@@ -203,6 +203,8 @@
                fields)]
       [`(Proj ,record ,_)
        (walk record environment target-visible?)]
+      [`(ProjOpt ,_ ,record ,_)
+       (walk record environment target-visible?)]
       [`(Apply ,function ,arguments ...)
        (define head
          (match function
@@ -357,6 +359,8 @@
              fields))]
       [`(Proj ,record ,_)
        (walk record target-visible?)]
+      [`(ProjOpt ,_ ,record ,_)
+       (walk record target-visible?)]
       [`(Apply ,function ,arguments ...)
        (define head
          (match function
@@ -510,6 +514,8 @@
                        decomposable strict target-visible?))
                fields)]
       [`(Proj ,record ,_)
+       (walk record decomposable strict target-visible?)]
+      [`(ProjOpt ,_ ,record ,_)
        (walk record decomposable strict target-visible?)]
       [`(Apply ,function ,arguments ...)
        (define head

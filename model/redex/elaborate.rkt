@@ -544,6 +544,7 @@
           [`(,_ ,_ ,body) (free-vars/erased body)]
           [_ (set)])))]
     [`(Proj ,record ,_) (free-vars/erased record)]
+    [`(ProjOpt ,_ ,record ,_) (free-vars/erased record)]
     [`(Construct ,_ (Types ,_ ...) ,fields ...)
      (sets-union (map free-vars/erased fields))]
     [`(Construct ,_ ,fields ...)

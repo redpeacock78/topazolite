@@ -26,3 +26,19 @@
                             (Proj (Rec ((r imm (Apply loop tail)))) r))))
           (Apply loop (Construct (List Int) nil))))
 (check-equal? (classify rec-loop '() structural-callables) '(Finite structural))
+
+(define projopt-loop
+  '(Recur list-loop-id loop (xs)
+          (Eliminate xs
+                     ((nil () -> 0)
+                      (cons (head tail) ->
+                            (Let (record const
+                                         (Record ((a Int imm) (r Int imm opt))))
+                                 (Rec ((a imm 0)
+                                       (r imm (Apply loop tail))))
+                              (Eliminate (ProjOpt Int record r)
+                                         ((some (projected) -> projected)
+                                          (none () -> 0)))))))
+          (Apply loop (Construct (List Int) nil))))
+(check-equal? (classify projopt-loop '() structural-callables)
+              '(Finite structural))

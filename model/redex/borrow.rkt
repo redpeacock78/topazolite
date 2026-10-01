@@ -582,6 +582,7 @@
                  (table-join (cdr acc) (cdr r)))))]
     [`(Scope ,_ ,body) (recur body)]
     [`(Proj ,c_1 ,_) (only (ws-of c_1))]
+    [`(ProjOpt ,_ ,c_1 ,_) (only (ws-of c_1))]
     [`(Suspend ,c_1) (only (ws-of c_1))]
     [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
