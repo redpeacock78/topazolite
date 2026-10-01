@@ -7,7 +7,7 @@
          "search.rkt"
          "type-equiv.rkt")
 
-(provide compat? check-compat-return)
+(provide compat? tag-compat? tag-narrowing? check-compat-return)
 
 ;; 部分型の不変位置では NFn の O を比較しない。
 ;; O 以外の型構造は type-equiv? のまま保ち、Owned / BorrowedMut / fallback
@@ -33,8 +33,9 @@
 ;; imm を要求する位置には mut field を渡せる。書き込み能力を捨てる方向であり、
 ;; その位置からは読み出しだけが可能なため、他の枝が期待する狭い型を破れない。
 ;; 逆方向は能力を増やすため許さない。mut を要求する位置の field 型は、読みと
-;; 書きの双方に使われるため type-equiv? の不変一致に留める。
-(define (record-compatible? sub-row sup-row gamma-pc region-relation)
+;; 書きの双方に使われるため、通常の compat? では type-equiv? を求める。
+;; tag 保存互換では tag の狭まりを求める。
+(define (record-compatible? sub-row sup-row gamma-pc region-relation recur invariant?)
   (for/and ([field (in-list sup-row)])
     (match field
       [(list label sup-type sup-mutability _ ...)
@@ -44,9 +45,9 @@
                    (field-optional? field))
                (memq sub-mutability '(imm mut))
                (case sup-mutability
-                 [(imm) (compat?/impl sub-type sup-type gamma-pc region-relation)]
+                 [(imm) (recur sub-type sup-type gamma-pc region-relation)]
                  [(mut) (and (eq? sub-mutability 'mut)
-                             (compat-type-equiv? sub-type sup-type))]
+                             (invariant? sub-type sup-type))]
                  [else #f]))]
          [_ #f])]
       [_ #f])))
@@ -75,52 +76,40 @@
 ;; VAR-001: 引数反変・返り値共変・εin 反変・εout 共変・引数個数一致。
 (define (nfn-compatible? sub-parameters sub-return sub-in sub-out sub-obligations
                          sup-parameters sup-return sup-in sup-out sup-obligations
-                         gamma-pc region-relation)
+                         gamma-pc region-relation recur)
   (and (= (length sub-parameters) (length sup-parameters))
        (for/and ([sub-parameter (in-list sub-parameters)]
                  [sup-parameter (in-list sup-parameters)])
-         (compat?/impl sup-parameter sub-parameter gamma-pc region-relation))
-       (compat?/impl sub-return sup-return gamma-pc region-relation)
+         (recur sup-parameter sub-parameter gamma-pc region-relation))
+       (recur sub-return sup-return gamma-pc region-relation)
        (effect-row-subset? sup-in sub-in)
        (effect-row-subset? sub-out sup-out)
        (obligations-subset? sub-obligations sup-obligations gamma-pc)))
 
-;; gamma-pc の既定は空。そのとき obligations-subset? は集合包含だけを見るため、
-;; G2c までの挙動と一致する。
-(define (compat?/impl sub sup [gamma-pc '()] [region-relation equal?])
-  (check-spanless! 'compat? sub)
-  (check-spanless! 'compat? sup)
-  ;; Union は節順に預けず、sub の各要素が sup のいずれかと互換かで判定する。
-  (if (or (union? sub) (union? sup))
-      (for/and ([sub-member (in-list (union-members sub))])
-        (for/or ([sup-member (in-list (union-members sup))])
-          (compat?/impl sub-member sup-member gamma-pc region-relation)))
-      (compat?/non-union sub sup gamma-pc region-relation)))
-
 (define (union? type)
   (and (pair? type) (eq? (car type) 'Union)))
 
-(define (compat?/non-union sub sup gamma-pc region-relation)
+(define (compat?/non-union sub sup gamma-pc region-relation recur invariant?)
   (match* (sub sup)
     [('Never _) #t]
     [(`(Record ,sub-row) `(Record ,sup-row))
-     (record-compatible? sub-row sup-row gamma-pc region-relation)]
+     (record-compatible? sub-row sup-row gamma-pc region-relation recur invariant?)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
-     ;; Owned は不変のまま、NFn の O だけを compat? の比較対象から外す。
-     (compat-type-equiv? sub-type sup-type)]
+     ;; Owned は通常は不変だが、tag mode では tag の狭まりまで受け取る。
+     (invariant? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
-     (compat?/impl sub-payload sup-payload gamma-pc region-relation)]
+     (recur sub-payload sup-payload gamma-pc region-relation)]
     ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。
     ;; type-equiv? と同じ proposition-equiv? を使い、同値型の互換性を保つ。
     [(`(Refined ,sub-payload ,sub-proposition)
-      `(Refined ,sup-payload ,sup-proposition))
+     `(Refined ,sup-payload ,sup-proposition))
      (and (proposition-equiv? sub-proposition sup-proposition)
-          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
+          (recur sub-payload sup-payload gamma-pc region-relation))]
     [(`(NFn ,sub-parameters ,sub-return ,sub-in ,sub-out ,sub-obligations ,_sub-origin)
       `(NFn ,sup-parameters ,sup-return ,sup-in ,sup-out ,sup-obligations ,_sup-origin))
      (nfn-compatible? sub-parameters sub-return sub-in sub-out sub-obligations
                       sup-parameters sup-return sup-in sup-out sup-obligations
-                      gamma-pc region-relation)]
+                      gamma-pc region-relation recur)]
     ;; 構成子が一致し、payload が互換であることを要求する。
     ;; Borrowed と BorrowedMut のあいだの暗黙の強化と弱化を認めない。
     ;; 弱化を認めると、可変借用を共有借用の位置へ渡しつつ元の可変借用が
@@ -132,7 +121,7 @@
     ;; だけ共変になり、1 段下で equal? に戻る。
     [(`(Borrowed ,sub-payload ,sub-ρ) `(Borrowed ,sup-payload ,sup-ρ))
      (and (region-relation sub-ρ sup-ρ)
-          (compat?/impl sub-payload sup-payload gamma-pc region-relation))]
+          (recur sub-payload sup-payload gamma-pc region-relation))]
     ;; VAR-004。可変借用は書き込みの経路であり、region 欄も payload も
     ;; 不変である。region を共変にすると、書き込んだ値の region が宣言より
     ;; 短くなりうる。payload を広げると、書き込んだ値が元の場所の型に
@@ -141,6 +130,66 @@
      (and (equal? sub-ρ sup-ρ)
           (compat-type-equiv? sub-payload sup-payload))]
     [(_ _) (compat-type-equiv? sub sup)]))
+
+;; tag の狭まりでは Union の成分位置だけを緩める。
+;; それ以外の型の形は compat-type-equiv? で閉じる。
+(define (record-narrowing? actual-row expected-row)
+  (field-row-equiv? actual-row expected-row tag-narrowing?))
+
+(define (tag-narrowing? actual expected)
+  (define a (normalize-type actual))
+  (define e (normalize-type expected))
+  (and a e
+       (match* (a e)
+         [('Never `(Union ,_ ,_)) #t]
+         [(`(Union ,_ ,_) `(Union ,_ ,_))
+          (for/and ([member (in-list (union-members a))])
+            (for/or ([expected-member (in-list (union-members e))])
+              (type-equiv? member expected-member)))]
+         [(`(Record ,actual-row) `(Record ,expected-row))
+          (record-narrowing? actual-row expected-row)]
+         [(`(Owned ,actual-payload) `(Owned ,expected-payload))
+          (tag-narrowing? actual-payload expected-payload)]
+         [(`(Untrusted ,actual-payload) `(Untrusted ,expected-payload))
+          (tag-narrowing? actual-payload expected-payload)]
+         [(`(Refined ,actual-payload ,actual-proposition)
+           `(Refined ,expected-payload ,expected-proposition))
+          (and (proposition-equiv? actual-proposition expected-proposition)
+               (tag-narrowing? actual-payload expected-payload))]
+         [(_ _) (compat-type-equiv? a e)])))
+
+;; 通常の互換と tag 保存互換で再帰だけを切り替え、既存の compat? は保つ。
+(define (compat?/impl/tag tag-mode? sub sup gamma-pc region-relation)
+  (check-spanless! (if tag-mode? 'tag-compat? 'compat?) sub)
+  (check-spanless! (if tag-mode? 'tag-compat? 'compat?) sup)
+  (define (recur actual expected gamma relation)
+    (compat?/impl/tag tag-mode? actual expected gamma relation))
+  (define invariant?
+    (if tag-mode? tag-narrowing? compat-type-equiv?))
+  (cond
+    [tag-mode?
+     (cond
+       [(union? sup)
+        (or (eq? sub 'Never)
+            (and (union? sub)
+                 (for/and ([member (in-list (union-members sub))])
+                   (for/or ([expected-member (in-list (union-members sup))])
+                     (type-equiv? member expected-member)))))]
+       [(union? sub) #f]
+       [else
+        (compat?/non-union sub sup gamma-pc region-relation recur invariant?)])]
+    [(or (union? sub) (union? sup))
+     (for/and ([sub-member (in-list (union-members sub))])
+       (for/or ([sup-member (in-list (union-members sup))])
+         (recur sub-member sup-member gamma-pc region-relation)))]
+    [else
+     (compat?/non-union sub sup gamma-pc region-relation recur invariant?)]))
+
+(define (compat?/impl sub sup [gamma-pc '()] [region-relation equal?])
+  (compat?/impl/tag #f sub sup gamma-pc region-relation))
+
+(define (tag-compat? actual expected [gamma-pc '()] [region-relation equal?])
+  (compat?/impl/tag #t actual expected gamma-pc region-relation))
 
 ;; POL-002/VAR-002: 同値な二型は互換である。compat? は全域であり fail-closed
 ;; 返却を持たない。span 機構の包みは型の形の外にあり、全域性の対象ではないため

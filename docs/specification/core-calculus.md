@@ -1746,6 +1746,13 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
 - 基本型と組み込みデータ型は構造的な合同で比較する（`List<τ> ≡ List<τ'>` は `τ ≡ τ'` に帰着する）。
 - `NFn<P, R, εin, εout, Q, O>` は P、R、εin、εout、Q の成分ごとの一致で比較し、O は `equal?` で比較する。
 - `compat?` では O を比較対象から外す。異なる origin の関数を同じ高階関数へ渡せることは `compat?` の責務であり、`compat-erase-nfn-origins` が O を `User` へ正規化する。
+- `tag-compat?` は値を渡す境界で使い、`compat?` と同じ再帰を Union の規則だけ変えて行う。
+  期待型が Union のとき、実際の型は `Never` か Union であり、実際の Union の各成分は期待型の成分と `type-equiv?` で等しくなければならない。
+  Union 型の値を非 Union 型の位置へ渡すことはできない。
+  record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
+- `tag-narrowing?` は Union の成分集合を狭める関係であり、Union の成分型の内部へは再帰しない。
+  Record では欄の集合、可変性、optional の印を保って各欄の型へ再帰する。
+  `Owned`、`Untrusted`、命題が同値な `Refined` の payload にも再帰し、`NFn`、借用型、data 型の内部では `compat-type-equiv?` を使う。
 - 型レベル計算（TypeRep の適用）を正規化して比較できるのは、その計算の ⇓class が Finite の場合に限る。 [REQ: PRF-002]
 - ⇓class が Productive の型レベル計算は、観測深度の上限までの有限観測で比較する。
 - ⇓class が Unknown の型レベル計算と Proof は正規化に使わず、構文的同一性（opaque identity）だけで比較する。 [REQ: PRF-002]

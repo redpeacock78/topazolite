@@ -5,6 +5,7 @@
          racket/set
          redex/reduction-semantics
          "../annotate.rkt"
+         "../compat.rkt"
          "../erase.rkt"
          "../lang.rkt"
          "../machine.rkt"
@@ -18,6 +19,8 @@
 (define U1 '(Union Int Bool))
 (define U2 '(Union String Bool))
 (define IS '(Union Int String))
+(define nfn-u1 `(NFn (,U1) Int () () () User))
+(define nfn-u `(NFn (,U) Int () () () User))
 
 (define inject-int `(UnionInject ,IS Int 1))
 (define elim-is
@@ -27,6 +30,9 @@
   (match (type-of/raw core '() '() environment)
     [(list 'fail key _node _details ...) key]
     [(list 'ok _) 'ok]))
+
+(define (tc? actual expected)
+  (tag-compat? actual expected '() equal?))
 
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
@@ -107,3 +113,55 @@
   (check-false (current-union-tag-mode))
   (check-equal? (key-of inject-int) 'ill-typed)
   (check-equal? (key-of elim-is) 'ill-typed))
+
+(test-case "tag 保存互換：Union は既に tag を持つ部分集合だけを渡す"
+  (check-true (tc? U1 U))
+  (check-true (tc? 'Never U))
+  (check-false (tc? 'Int U))
+  (check-false (tc? U 'Int))
+  (check-false (tc? U U1)))
+
+(test-case "tag 保存互換：record の imm 欄と関数の変性"
+  (check-true (tc? `(Record ((a ,U1 imm))) `(Record ((a ,U imm)))))
+  (check-false (tc? '(Record ((a Int imm))) `(Record ((a ,U imm)))))
+  (check-false (tc? '(NFn (Int) Int () () () User) nfn-u)))
+
+(test-case "tag 保存互換：借用と Untrusted、Refined の payload"
+  (check-true (tc? `(Borrowed ,U1 0) `(Borrowed ,U 0)))
+  (check-false (tc? `(BorrowedMut ,U1 0) `(BorrowedMut ,U 0)))
+  (check-true (tc? `(Untrusted ,U1) `(Untrusted ,U)))
+  (check-false (tc? `(Untrusted Int) `(Untrusted ,U)))
+  (check-true (tc? `(Refined ,U1 (Prop p)) `(Refined ,U (Prop p)))))
+
+(test-case "tag の狭まり：Union と Record の構造を保つ"
+  (check-true (tag-narrowing? U1 U))
+  (check-true (tag-narrowing? 'Never U))
+  (check-false (tag-narrowing? 'Int U))
+  (check-false (tag-narrowing? 'Int 'Bool))
+  (check-true
+   (tag-narrowing? `(Record ((a ,U1 mut))) `(Record ((a ,U mut)))))
+  (check-false
+   (tag-narrowing? `(Record ((a ,U1 mut) (b Int imm)))
+                   `(Record ((a ,U mut)))))
+  (check-false
+   (tag-narrowing? `(Record ((a ,U1 imm))) `(Record ((a ,U mut)))))
+  (check-false
+   (tag-narrowing? `(Record ((a ,U1 imm opt))) `(Record ((a ,U imm))))))
+
+(test-case "tag の狭まり：NFn、借用、data 型の内側は緩めない"
+  (check-false (tag-narrowing? nfn-u1 nfn-u))
+  (check-false
+   (tag-narrowing? `(Record ((f ,nfn-u1 mut))) `(Record ((f ,nfn-u mut)))))
+  (check-false (tag-narrowing? `(Owned ,nfn-u1) `(Owned ,nfn-u)))
+  (check-false
+   (tag-narrowing? `(Owned (Record ((f (Option ,U1) mut))))
+                   `(Owned (Record ((f (Option ,U) mut))))))
+  (check-false (tag-narrowing? `(Borrowed ,U1 0) `(Borrowed ,U 0)))
+  (check-false
+   (tag-narrowing? `(Data Box (,U1)) `(Data Box (,U)))))
+
+(test-case "tag 保存互換：mut 欄と Owned payload は tag の狭まりを求める"
+  (check-true (tc? `(Record ((a ,U1 mut))) `(Record ((a ,U mut)))))
+  (check-false (tc? '(Record ((a Int mut))) '(Record ((a Bool mut)))))
+  (check-true (tc? `(Owned ,U1) `(Owned ,U)))
+  (check-false (tc? `(Owned ,nfn-u1) `(Owned ,nfn-u))))
