@@ -1529,17 +1529,16 @@
            ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
            ;; 前に拒むため、elaborate と typing が同じ key を返す。
            (reject s 'mut-binding-unsupported-type declared-type))
-         (define omitted-optional?
+         (define record-literal-checkable?
            (match* ((peel-node bound) declared-type)
              [(`(Rec (,fields ...)) `(Record ,row))
-              (define omitted
-                (omitted-optional-labels
-                 (map (lambda (field) (peel-lbl (first field))) fields)
-                 row))
-              (and omitted (pair? omitted))]
+              ;; 空リストも有効な Rec なので、欄ごとの check を内側へ伝える。
+              (list? (omitted-optional-labels
+                      (map (lambda (field) (peel-lbl (first field))) fields)
+                      row))]
              [(_ _) #f]))
          (define bound-result
-           (if (or (needs-expected-type? bound) omitted-optional?)
+           (if (or (needs-expected-type? bound) record-literal-checkable?)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
          (define actual-type (judgment-type bound-result))

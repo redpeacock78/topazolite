@@ -82,6 +82,30 @@
                       (outer Int imm opt))))
         (Rec ((inner imm (Rec ((a imm 2))))))
         0)))))
+(define nested-inner-record-type
+  '(Record ((a Int imm) (b Int imm opt))))
+(define nested-record-type
+  `(Record ((inner ,nested-inner-record-type imm))))
+(define nested-record-literal
+  '(Rec ((inner imm (Rec ((a imm 2)))))))
+(define nested-record-let
+  `(Let (n const ,nested-record-type) ,nested-record-literal 0))
+(define nested-absent-literal
+  '(Rec ((inner imm (Rec ((a imm 2) (b imm (Absent Int))))))))
+(define (contains-nested-absent? value)
+  (or (equal? value nested-absent-literal)
+      (and (list? value) (ormap contains-nested-absent? value))))
+(check-equal? (elab-code nested-record-let) #f)
+(check-true (contains-nested-absent? (elab-core nested-record-let)))
+(check-true
+ (contains-nested-absent?
+  (elab-core `(Apply (Fn ((x ,nested-record-type)) Int () 0)
+                     ,nested-record-literal))))
+(check-true
+ (contains-nested-absent?
+  (elab-core `(Construct cons (Types ,nested-record-type)
+                         ,nested-record-literal
+                         (Construct nil (Types ,nested-record-type))))))
 (check-equal? (elab-code '(Absent Int)) "E-SYN-003")
 (check-equal?
  (elab-code '(Let (x let (Record ((a Int mut) (b Int imm opt))))
