@@ -5,6 +5,11 @@
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md`（以下、ホワイトペーパー）§4.5、§17.4
 **関連文書**：`docs/specification/trait.md`、`docs/specification/glossary.md`、`docs/specification/requirements.md`
 
+**実装注記**：P2l3a は Core の field row に optional presence を加える。
+required 欄は `(label τ m)`、optional 欄は `(label τ m opt)` で表す。
+P2l3a では optional 欄への `Proj` と `ProjBorrow` を診断で拒否する。
+optional 欄を射影する `ProjOpt` は P2l3b で導入する。
+
 ## 1. 本仕様の位置づけ
 
 本文書は、G1 仕様へ record 型、field row、binding policy、構造互換性、制御フロー合流、record の簡約意味論を追加する差分仕様である。
@@ -27,11 +32,16 @@ trait 層は、この構造 row を基礎として G2e の `trait.md` が定め�
 
 ```text
 τ ::= ... | (Record r)
-r ::= ((label1 τ1 m1) ... (labeln τn mn))
+r ::= (f ...)
+f ::= (label τ m)
+   | (label τ m opt)
 m ::= imm | mut
 ```
 
-**field row** r は、field ラベル、field 型、可変性の三つ組からなる有限集合である。
+**field row** r は、field ラベル、field 型、可変性、presence を持つ有限集合である。
+3 要素の欄は required を表し、4 要素の欄は optional を表す。
+required 欄では `req` を書かず、第 4 要素を省略する。
+欄 f の presence は、3 要素なら required、4 要素なら optional である。
 `imm` は immutable field を表し、`mut` は mutable field を表す。
 省略時の可変性は `imm` とする。
 
@@ -43,8 +53,9 @@ field row はラベルを鍵に型と可変性も照合するため、§2.2 の�
 closed と open の違いは §3.2 の binding policy が決める。
 この分離により、簡約前後で保存すべき型は一種類の `(Record r)` だけになる。
 
-G2a の field はすべて required である。
-optional field は §7 の後続層で導入する。
+G2a の field row は required 欄だけを持つ。
+P2l3a は Core の field row に optional 欄を加える。
+Surface から optional field を書く構文は P2l3c で導入する。
 
 ### 2.2 field row の well-formedness と演算
 
@@ -58,8 +69,8 @@ field row 専用の演算を次のように定める。
 - **参照 `lookup(r, label)`**：指定ラベルの field 型と可変性を返す。
   指定ラベルが存在しないときは未定義である。
 - **残余 `residual(r_b, r_T)`**：`r_b` のうち、ラベルが `r_T` に存在しない field だけを返す。
-- **同値 `row-equiv?(r_1, r_2)`**：ラベル集合が一致し、各ラベルの型が `type-equiv?` で一致し、可変性も一致するときに真を返す。
-- **交差 `r_1 ⋂ r_2`**：両方に存在し、型が `type-equiv?` で一致し、可変性も一致する field だけを返す。
+- **同値 `row-equiv?(r_1, r_2)`**：ラベル集合が一致し、各ラベルの型、可変性、presence が一致するときに真を返す。
+- **交差 `r_1 ⋂ r_2`**：両方に存在し、型が `type-equiv?` で一致し、可変性と presence も一致する field だけを返す。
 
 `residual(r_b, r_T)` のラベルは定義上 `r_T` に存在しないため、`r_T ⊕ residual(r_b, r_T)` は常に結合の前提を満たす。
 
@@ -147,9 +158,16 @@ issuer(O) = o-narrow
 ```text
 Γ; Δ; Π; Ξ; Φ ⊢core c : (Record r) ! ε
 lookup(r, label) = (τ, m)
+対応する欄は required である
 ------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core (Proj c label) : τ ! ε
 ```
+
+P2l3a では optional 欄に Core の `Proj` と `ProjBorrow` を適用しない。
+UCore の `Proj` は elaboration で `E-RCD-011` を返し、Typed Core の `Proj` は typing で `E-RCD-012` を返す。
+Typed Core の `ProjBorrow` は typing で `E-BOR-026` を返す。
+欄の有無を先に検査し、存在しない場合は従来どおり欠落欄の診断を返す。
+optional 欄を射影する `ProjOpt` は P2l3b で導入する。
 
 指定ラベルが r に存在しなければ型エラーである。
 `let` が保持する残余 field も束縛変数の平坦な field row に含まれるため、合流前の現在の flow では射影できる。
@@ -166,6 +184,11 @@ binding mode 付き `Let` は record 型以外にも使える。
 
 注釈型が `(Record r_T)` の場合、bound を synthesis して得た `(Record r_b)` と §3.3 の `compat?` を照合する。
 このときの**残余 row**は `ρ = residual(r_b, r_T)` である。
+
+bound が構文上の `Rec` であり、書かれた欄が `r_T` に含まれ、省略欄がすべて optional なら、省略欄を除いた `r_T` と `r_b` を `compat?` で照合する。
+右辺が中間束縛などを経由して `Rec` の値になった場合は、この省略規則を適用しない。
+省略欄は束縛後の宣言型に残るため、optional 欄の不在はその束縛の型に保持される。
+この条件を満たさない bound は既存の互換規則で照合する。
 
 **(T-LetConstRecord)** [REQ: ROW-001]
 
@@ -214,7 +237,10 @@ G2a の `let` は immutable binding であり、再代入を意味しない。
 compat?(Never, sup) = true
 
 compat?((Record r_sub), (Record r_sup)) =
-  r_sup の各 (label : τ_sup @ m_sup) について、次をすべて満たす
+  r_sup の各欄 f_sup について、次をすべて満たす
+    r_sub に同じ label の欄 f_sub が存在する
+    (presence(f_sub), presence(f_sup)) ∈
+      {(required, required), (required, optional), (optional, optional)}
     lookup(r_sub, label) = (τ_sub, m_sub) が存在する
     m_sub ∈ {imm, mut}
     m_sup = imm なら compat?(τ_sub, τ_sup)
@@ -224,6 +250,10 @@ compat?(Owned<τ_sub>, Owned<τ_sup>) = type-equiv?(τ_sub, τ_sup)
 compat?(NFn_sub, NFn_sup) = §6.1 の関数互換性
 compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
 ```
+
+presence の判定は可変性の判定と独立して行う。
+actual が required で expected が optional の欄、および両方が optional の欄は、型と可変性の規則で照合する。
+actual が optional で expected が required の欄と、expected が optional なのに actual に欄が無い場合は拒否する。
 
 record の sub は、sup が要求する field をすべて満たす限り余剰 field を持てる。
 この width subsumption によって型同値でない二つの record 型が互換になりうる。
@@ -245,6 +275,7 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 [REQ: OWN-004] `compat?` の外側には、OwnershipPolicy による narrowing の制限がある。
 引き金は余剰欄の存在ではなく、余剰欄に含まれる `Owned` が失われることである。
 判定は `compat?` と同型の並行再帰で行い、`Record` の共通 `imm` 欄、`Untrusted` と `Refined` の payload、`Union` の候補、`NFn` の返り値と反変引数を辿る。
+`Record` の共通 `imm` 欄には、expected 側で optional とされた欄も含める。
 `Borrowed` の payload では打ち切る。
 借用した view は正典が挙げる救済策そのものであり、所有者が元の値を保つためである。
 `Union` は互換かつ安全な候補が一つ以上あることを要求し、候補の順序で判定が変わってはならない。
@@ -277,7 +308,7 @@ record 型の `type-equiv?` は `row-equiv?` に帰着する。
 
 ### 3.5 制御フロー合流
 
-`Eliminate` の非 `Never` 枝がすべて record 型を返す場合、結果型を field row の構造的交差で求める。
+`Eliminate` の非 `Never` 枝がすべて record 型を返す場合、各行に共通する label を基礎に結果 row を合流する。
 
 **(T-EliminateRecordMerge)** [REQ: ROW-003]
 
@@ -285,14 +316,17 @@ record 型の `type-equiv?` は `row-equiv?` に帰着する。
 各枝 ci の型を τi とする
 Never の枝を merge 入力から除外する
 残る型が (Record r1), ..., (Record rn) なら
-  r = r1 ⋂ ... ⋂ rn
+  r = merge-row(r1, ..., rn)
 ------------------------------------------------------------
 Eliminate(c0, branches) : (Record r)
 ```
 
-交差に残す field は全枝に存在する field だけである。 [REQ: ROW-005]
+`merge-row` は全ての行に存在する label の欄を残す。
+その欄の型は次の規則で合わせ、可変性は各枝の値に従って決める。
 型が `type-equiv?` で一致しない field は、可変性を保ったまま Union join する。 [REQ: ROW-005]
 可変性が枝の間で食い違う field だけを `imm` へ降格する。
+一つ以上の枝で optional の欄は合流後も optional とし、全ての枝で required の欄は required とする。
+`(Presence label)` は合流後も required の欄にだけ発行する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
 
 非 `Never` 枝が一つもなければ結果型は `Never` である。
@@ -543,8 +577,8 @@ G2a は次の規則を導入しない。
 送り先は、その規則が必要とする意味論に合わせて定める。
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
-- **optional field**：G2a の field はすべて required とする。
-  optional と required の不一致検査は、optional を Core semantics として導入する G2 の後続層で扱う（`ADT-001`）。
+- **optional field**：P2l3a は Core の field row に optional presence とその互換性を導入する。
+  optional 欄への射影は P2l3b の `ProjOpt` まで拒否し、Surface 構文と `ADT-001` の完了は P2l3c で扱う。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
