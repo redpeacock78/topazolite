@@ -48,6 +48,7 @@
          intersect-acyclic?
          impl-not-composite?
          template-effect?
+         template-row?
          scope-parent-table
          scope-ancestors
          scope-genealogy-ok?
@@ -294,7 +295,7 @@
       (define t (substitute (second field)))
       ;; spec §6.2.1。Self を置き換えた後の型を正規化する。正規化できない形は
       ;; そのまま返し、診断は呼び出し側に任せる。
-      (list (first field) (or (normalize-type t) t) (third field))))
+      (field-with-type field (or (normalize-type t) t))))
   (substitute-row template))
 
 (define (trait-primitive-names [env canonical-trait-env])
@@ -370,8 +371,11 @@
        (field-row-unique? row)
        (for/and ([field (in-list row)])
          (match field
-           [(list label type mutability)
-            (and (symbol? label)
+           [(list label type mutability _ ...)
+            (and (or (= (length field) 3)
+                     (and (= (length field) 4)
+                          (eq? (fourth field) 'opt)))
+                 (symbol? label)
                  (memq mutability '(imm mut))
                  (template-type? type))]
            [_ #f]))))

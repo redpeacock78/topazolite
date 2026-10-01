@@ -4,6 +4,7 @@
          racket/list
          redex/reduction-semantics
          "../lang.rkt"
+         "../compat.rkt"
          "../traits.rkt"
          "../type-equiv.rkt"
          "../rows.rkt"
@@ -95,6 +96,35 @@
   (check-equal?
    (instantiate-requirements '((f (Union Bool Self) imm)) '(Union Bool String))
    '((f (Union Bool String) imm))))
+
+(test-case "optional template の保持と compat の回帰試験（統合試験ではない）"
+  (define template '((print (NFn (Self) String () () () User) imm)
+                     (hint String imm opt)))
+  (define instantiated (instantiate-requirements template 'Int))
+  (check-true (template-row? template))
+  (check-false (template-row? '((hint String imm invalid))))
+  (check-equal? instantiated
+                '((print (NFn (Int) String () () () User) imm)
+                  (hint String imm opt)))
+  (check-true
+   (field-row-equiv? instantiated
+                     '((hint String imm opt)
+                       (print (NFn (Int) String () () () User) imm))
+                     type-equiv?))
+  (check-false
+   (field-row-equiv? instantiated
+                     '((hint String imm)
+                       (print (NFn (Int) String () () () User) imm))
+                     type-equiv?))
+  ;; required の実装は optional の要求を満たす。
+  (check-true
+   (compat? '(Record ((print (NFn (Int) String () () () User) imm)
+                      (hint String imm)))
+            `(Record ,instantiated)))
+  ;; 欠けた optional の実装は要求を満たさない。
+  (check-false
+   (compat? '(Record ((print (NFn (Int) String () () () User) imm)))
+            `(Record ,instantiated))))
 
 (test-case "instantiate-requirements は包んだ型を拒否する"
   (define template (trait-template (trait-row-by-name 'Printable)))
