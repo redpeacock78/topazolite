@@ -189,7 +189,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 30 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 31 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
