@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 34)
- (check-equal? (length racket-ucore-constructors) 11)
- (check-equal? (length fstar-constructors) 32))
+ (check-equal? (length racket-surface-constructors) 36)
+ (check-equal? (length racket-ucore-constructors) 12)
+ (check-equal? (length fstar-constructors) 34))
 
 (test-case
  "対応表に違反が無い"
@@ -89,6 +89,9 @@
  (check-equal? (row-kind 'SDeriveDecl) 'none)
  (check-equal? (row-kind 'SDataDecl) 'none)
  (check-equal? (row-kind 'SProgram) 'none)
+ (check-equal? (row-kind 'SArm) 'none)
+ (check-equal? (row-kind 'SMatch) 'one-to-one)
+ (check-equal? (row-kind 'Eliminate) 'one-to-one)
  (check-equal? (row-kind 'SBind) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
@@ -115,6 +118,9 @@
    (cons 'SBool     (redex-match? Surface sexpr `(SBool ,s0 true)))
    (cons 'SVar      (redex-match? Surface sexpr `(SVar ,s0 x)))
    (cons 'SReturn   (redex-match? Surface sexpr `(SReturn ,s0 (SInt ,s0 1))))
+   (cons 'SMatch    (redex-match? Surface sexpr
+                                  `(SMatch ,s0 (SVar ,s0 c)
+                                           ((SArm ,s0 (SName ,s0 red) () (SInt ,s0 1))))))
    (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                                                       (TName ,s0 Int) #:none (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
@@ -133,6 +139,8 @@
    (cons 'TInter    (redex-match? Surface sty `(TInter ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TApp      (redex-match? Surface sty `(TApp ,s0 (SName ,s0 List) ((TName ,s0 Int)))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
+   (cons 'SArm      (redex-match? Surface sarm
+                                  `(SArm ,s0 (SName ,s0 red) () (SInt ,s0 1))))
    (cons 'SParam    (redex-match? Surface sparam `(SParam ,s0 (SName ,s0 x) (TName ,s0 Int))))
    (cons 'SField    (redex-match? Surface sfield `(SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))
    (cons 'SLabel    (redex-match? Surface slabel `(SLabel ,s0 a)))
@@ -146,6 +154,9 @@
    (cons '#:var    (redex-match? UCore+ e `(#:var x ,s0)))
    (cons 'Apply    (redex-match? UCore+ e `(Apply ,s0 (#:var f ,s0) (#:lit 1 ,s0))))
    (cons 'Proj     (redex-match? UCore+ e `(Proj ,s0 (#:var x ,s0) (#:lbl a ,s0))))
+   (cons 'Eliminate (redex-match? UCore+ e
+                                  `(Eliminate ,s0 (#:var c ,s0)
+                                              ((,s0 red () -> (#:lit 1 ,s0))))))
    (cons 'Rec      (redex-match? UCore+ e `(Rec ,s0 (((#:lbl a ,s0) imm (#:lit 1 ,s0))))))
    (cons 'Fn       (redex-match? UCore+ e `(Fn ,s0 (((#:bind x ,s0) (#:ty Int ,s0)))
                                                (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0))))

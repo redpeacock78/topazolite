@@ -695,7 +695,7 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
-4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 11 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 12 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
 5. **予約語**：Racket の `lexer.rkt` が予約する 13 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
 6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
 7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
@@ -723,7 +723,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 
 ### 8.1 Surface AST の対応
 
-- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SMatch`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
@@ -731,7 +731,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
-- `SName`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
+- `SName`、`SArm`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
@@ -740,7 +740,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 
-Racket 側の Surface 構成子リストは 34 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 22 個（`sexpr` は 13 個、`sty` は 6 個）である。
+Racket 側の Surface 構成子リストは 36 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 23 個（`sexpr` は 14 個、`sty` は 6 個）である。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
@@ -750,10 +750,10 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 11 構成子を parity の対象とする。
-F* 側では `Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 12 構成子を parity の対象とする。
+F* 側では `Eliminate` に対応する `CEliminate` と `Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 11 個、F* 側の `core` の構成子リストは 10 個であり、F* 側の全対象構成子は 32 個（`sexpr` 13 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 10 個）である。
+UCore+ の対象構成子リストは 12 個、F* 側の `core` の構成子リストは 11 個であり、F* 側の全対象構成子は 34 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 11 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

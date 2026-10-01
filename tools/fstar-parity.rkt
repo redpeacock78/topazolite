@@ -14,21 +14,21 @@
   '(SProgram
     SBind SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SDataDecl
-    SInt SStr SUnit SBool SVar SReturn SFn SApply SConstruct SProj SProjRec SRec SBlock
+    SInt SStr SUnit SBool SVar SReturn SMatch SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
-    SName SParam SField SLabel TField SEffRow SEffLabel))
+    SName SArm SParam SField SLabel TField SEffRow SEffLabel))
 
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
 (define racket-ucore-constructors
-  '(#:lit #:var Apply Proj Rec Fn Construct Let Recur Return FnDecl))
+  '(#:lit #:var Apply Proj Eliminate Rec Fn Construct Let Recur Return FnDecl))
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
-  '(SInt SStr SUnit SBool SVar SReturn SFn SApply SConstruct SProj SProjRec SRec SBlock
+  '(SInt SStr SUnit SBool SVar SReturn SMatch SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SDecl SEffRow SEffLabel
-    CLit CVar CApply CProj CRec CFn CConstruct CLet CRecur CReturn))
+    CLit CVar CApply CProj CEliminate CRec CFn CConstruct CLet CRecur CReturn))
 
 ;; P2k2 spec §7 / P2m spec §5.1。model/fstar/Topazolite.Surface.fst の keyword_word が
 ;; TkKw を返す語である。F* の補題 keyword_word_reserved と手で対応させる。
@@ -53,6 +53,7 @@
    (one-to-one 'SBool 'SBool)
    (one-to-one 'SVar 'SVar)
    (one-to-one 'SReturn 'SReturn)
+   (one-to-one 'SMatch 'SMatch)
    (one-to-one 'SFn 'SFn)
    (one-to-one 'SApply 'SApply)
    (one-to-one 'SConstruct 'SConstruct)
@@ -76,6 +77,7 @@
    (no-counterpart 'SDataDecl)
    (no-counterpart 'SProgram)
    (no-counterpart 'SName)
+   (no-counterpart 'SArm)
    (no-counterpart 'SParam)
    (no-counterpart 'SField)
    (no-counterpart 'SLabel)
@@ -84,6 +86,7 @@
    (one-to-one '#:var 'CVar)
    (one-to-one 'Apply 'CApply)
    (one-to-one 'Proj 'CProj)
+   (one-to-one 'Eliminate 'CEliminate)
    (one-to-one 'Rec 'CRec)
    (one-to-one 'Fn 'CFn)
    (one-to-one 'Construct 'CConstruct)

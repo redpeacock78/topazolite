@@ -501,6 +501,7 @@ type sexpr =
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
+  | SMatch    : span -> sexpr -> list (span & (span & string) & list (span & string) & sexpr) -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SConstruct : span -> (span & string) -> list sexpr -> sexpr
@@ -539,6 +540,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SBool s _     -> s
   | SVar s _      -> s
   | SReturn s _   -> s
+  | SMatch s _ _  -> s
   | SFn s _ _ _ _ -> s
   | SApply s _ _  -> s
   | SConstruct s _ _ -> s
@@ -584,6 +586,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SBool _ _     -> []
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
+  | SMatch _ e arms -> NExpr e :: map (fun (_, _, _, b) -> NExpr b) arms
   | SFn _ ps r row b ->
       map NTy (option_stys (map snd ps)) @
       (match r with None -> [] | Some t -> [NTy t]) @
@@ -730,6 +733,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SConstruct s (sk, _) a -> contains s sk && wf_exprs s a
   | SProj s e1 (sl, _) -> contains s sl && contains s (span_of_expr e1) && wf_expr e1
   | SProjRec s e1 ls -> spans_in s (map fst ls) && contains s (span_of_expr e1) && wf_expr e1
+  | SMatch s e arms -> contains s (span_of_expr e) && wf_expr e && wf_arms s arms
   | SRec s fs     -> wf_fields s fs
   | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
 and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
@@ -740,6 +744,13 @@ and wf_fields (s: span) (fs: list (span & sexpr)) : Tot bool (decreases fs) =
   match fs with
   | []            -> true
   | (sl, e) :: tl -> contains s sl && contains s (span_of_expr e) && wf_expr e && wf_fields s tl
+and wf_arms (s: span) (arms: list (span & (span & string) & list (span & string) & sexpr))
+  : Tot bool (decreases arms) =
+  match arms with
+  | [] -> true
+  | (sa, (sk, _), bs, b) :: tl ->
+      contains s sa && contains sa sk && spans_in sa (map fst bs)
+      && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
   | SDecl s k sx ps r row v ->
@@ -810,6 +821,19 @@ let rec wf_fields_elim s fs c =
   | []      -> ()
   | _ :: tl -> wf_fields_elim s tl c
 
+val wf_arms_elim : s:span -> arms:list (span & (span & string) & list (span & string) & sexpr)
+  -> c:node -> Lemma
+  (requires wf_arms s arms)
+  (ensures memP c (map (fun (_, _, _, b) -> NExpr b) arms)
+           ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases arms)
+let rec wf_arms_elim s arms c =
+  match arms with
+  | [] -> ()
+  | (sa, (_, _), _, b) :: tl ->
+      contains_trans s sa (span_of_expr b);
+      wf_arms_elim s tl c
+
 val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
   (requires wf_decls s ds)
   (ensures memP c (map NDecl ds) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -829,6 +853,11 @@ let parse_span_containment n c =
   | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
+  | NExpr (SMatch s e arms) ->
+      FStar.List.Tot.Properties.append_memP
+        [NExpr e] (map (fun (_, _, _, b) -> NExpr b) arms) c;
+      wf_exprs_elim s [e] c;
+      wf_arms_elim s arms c
   | NExpr (SFn s ps r row b) ->
       FStar.List.Tot.Properties.append_memP
         (map NTy (option_stys (map snd ps)))
@@ -874,6 +903,7 @@ type core =
   | CVar      : span -> core
   | CApply    : span -> core -> list core -> core
   | CProj     : span -> span -> core -> core
+  | CEliminate: span -> core -> list (span & string & list span & core) -> core
   | CRec      : span -> list (span & core) -> core
   | CFn       : span -> list span -> option seffrow -> core -> core
   | CConstruct: span -> string -> list core -> core
@@ -887,6 +917,7 @@ let span_of_core (c: core) : Tot span =
   | CVar s           -> s
   | CApply s _ _     -> s
   | CProj s _ _      -> s
+  | CEliminate s _ _ -> s
   | CRec s _         -> s
   | CFn s _ _ _      -> s
   | CConstruct s _ _ -> s
@@ -902,6 +933,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SBool _ _    -> true
   | SVar _ _     -> true
   | SReturn _ _  -> true
+  | SMatch _ _ _ -> true
   | SFn _ _ _ _ _ -> true
   | SApply _ _ _ -> true
   | SConstruct _ _ _ -> true
@@ -934,6 +966,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SConstruct s (_, k) a -> CConstruct s k (lower_exprs a)
   | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
+  | SMatch s e arms -> CEliminate s (lower_expr e) (lower_arms arms)
   | SProjRec s e1 ls ->
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_fields fs)
@@ -946,6 +979,12 @@ and lower_fields (fs: list (span & sexpr)) : Tot (list (span & core)) (decreases
   match fs with
   | []            -> []
   | (sl, e) :: tl -> (sl, lower_expr e) :: lower_fields tl
+and lower_arms (arms: list (span & (span & string) & list (span & string) & sexpr))
+  : Tot (list (span & string & list span & core)) (decreases arms) =
+  match arms with
+  | [] -> []
+  | (sa, (_, k), bs, b) :: tl ->
+      (sa, k, map fst bs, lower_expr b) :: lower_arms tl
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail
@@ -969,6 +1008,7 @@ let lower_preserves_span e =
   | SBool _ _    -> ()
   | SVar _ _     -> ()
   | SReturn _ _  -> ()
+  | SMatch _ _ _ -> ()
   | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SConstruct _ _ _ -> ()
