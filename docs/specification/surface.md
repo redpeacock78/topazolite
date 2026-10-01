@@ -37,7 +37,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return` の 12 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`match` の 13 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 
 整数リテラルは `[0-9]+` である。
@@ -46,10 +46,10 @@ Surface の経路は展開表を生成しない。
 文字列リテラルは `"` で囲む。
 エスケープは `\"`、`\\`、`\n`、`\t` の 4 種だけを許す。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`|`、`&`、`!`、`<`、`>` の 15 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`|`、`&`、`!`、`<`、`>`、`?` の 16 種である。
 `->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 `=>` は `=` と `>` の 2 byte からなる 1 個の `punct` token である。
-`!`、`<`、`>` はそれぞれ 1 byte の `punct` token である。
+`!`、`<`、`>`、`?` はそれぞれ 1 byte の `punct` token である。
 
 トークンの種別は `int`、`str`、`ident`、`kw`、`punct`、`nl`、`eof` の 7 種である。
 `int` の値は符号なしの整数である。
@@ -86,7 +86,11 @@ suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
-           | ident | anonfn | record | block | "(" expr ")"
+           | ident | anonfn | record | block | "(" expr ")" | match
+match    ::= "match" expr "{" NL* arm (NL* arm)* NL* "}"
+arm      ::= "|" ctor ["(" binders ")"] "=>" expr
+ctor     ::= ident | "true" | "false"
+binders  ::= ε | ident ("," ident)*
 anonfn   ::= "fn" "(" lparams ")" ["->" ty] ["!" row] block
 params   ::= ε | param ("," param)*
 param    ::= ident ":" ty
@@ -113,6 +117,11 @@ label    ::= ident ["<" ty ">"]
 
 `&` は `|` より強く結合し、どちらも左結合である。
 `?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
+`match` の各枝は `|` で始まり、枝の間は空白または改行で区切る。
+枝の本体は次の `|` または閉じ波括弧の手前で終わる。
+`K` と `K()` は同じ束縛子の列を表す。
+`true` と `false` は Bool の constructor 名として枝の頭に書ける。
+`match` の後ろには呼び出しや射影の suffix を続けられる。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
 
@@ -189,19 +198,19 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 ### 3.1 受理しない構文
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
-単独の `-`、`+`、`*`、`/`、`%`、`?`、`[`、`]`、`;` は字句にならない。
+単独の `-`、`+`、`*`、`/`、`%`、`[`、`]`、`;` は字句にならない。
 算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
 `x |> f` は `E-SUR-005` になる。`List<>` は `>` の位置で `E-SUR-005` になる。
-`|` と `&` は型位置だけで受理する。
+`|` は型位置と match の枝の先頭で受理し、`&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 `x |> f` は、式位置の `|` で `E-SUR-005` になる。
 
-字句にはなるが構文に無い `if`、`while`、`match` は予約語ではなく `ident` になる。
+字句にはなるが構文に無い `if` と `while` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
 `return expr` は最も弱く結合する前置式で、`expr` 全体を戻り値とする。
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
-P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を、P2k1 では `return` を加えた。
+P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を、P2k1 では `return` を、P2m1 では `match` を加えた。
 
 ### 3.2 `let mut` の字句と構文
 
@@ -676,7 +685,7 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
 4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 11 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
-5. **予約語**：Racket の `lexer.rkt` が予約する 12 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+5. **予約語**：Racket の `lexer.rkt` が予約する 13 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
 6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
 7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
 
@@ -724,7 +733,7 @@ Racket 側の Surface 構成子リストは 34 個、F* 側の `sexpr`、`sty`�
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
-F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 12 語を予約する。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約する。
 `tools/fstar-parity.rkt` の `fstar-keywords` は F* が予約する語を手で書いた一覧であり、`fstar-parity-test.rkt` がこれを `lexer.rkt` の `keywords` と照合する。
 F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保ち、CI はこの対応の食い違いを検出しない。
 

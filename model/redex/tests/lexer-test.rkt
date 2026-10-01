@@ -64,6 +64,10 @@
  (check-equal? (map stok-value (lex/string 'src "return")) '(return eof)))
 
 (test-case
+ "P2m1: match は予約語の字句になる"
+ (check-equal? (kinds "match x") '(kw ident eof)))
+
+(test-case
  "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
  (check-equal? (kinds "fn() -> Int") '(kw punct punct punct ident eof))
  ;; a は 0-1、-> は 1-3、b は 3-4。

@@ -11,7 +11,7 @@
 ;; variable-not-otherwise-mentioned を使わないのは、それが言語の literal に
 ;; 現れる記号をすべて除くからである。SInt や TName は構成子名であると同時に
 ;; 変数名や label 名として書ける必要があり、lexer もそれらを ident として
-;; 字句化する。variable-except なら除く記号を §2 の予約語 12 語と
+;; 字句化する。variable-except なら除く記号を §2 の予約語 13 語と
 ;; ちょうど一致させられる。
 ;; usid の上書きは spec §5.4 である。Span の usid は
 ;; variable-not-otherwise-mentioned なので、Surface へ拡張すると Surface の
@@ -19,8 +19,8 @@
 ;; source-id は任意の symbol なので variable へ広げる。
 (define-extended-language Surface Span
   (usid ::= variable)
-  (ident ::= (variable-except const let mut fn type true false trait impl for derive return))
-  (label ::= (variable-except const let mut fn type true false trait impl for derive return))
+  (ident ::= (variable-except const let mut fn type true false trait impl for derive return match))
+  (label ::= (variable-except const let mut fn type true false trait impl for derive return match))
   (sbool ::= true false)
   (sbmode ::= const let mut)
   (sname ::= (SName s ident))
@@ -47,6 +47,8 @@
              (SBool s sbool)
              (SVar s ident)
              (SReturn s sexpr)
+             ;; P2m spec §5.3。枝の列は空でない。
+             (SMatch s sexpr (sarm sarm ...))
              (SFn s (slparam ...) sty-or-none srow-or-none sexpr)
              (SApply s sexpr (sexpr ...))
              ;; P2l2b2 spec §9.3.5。parser では作らず、名前解決が作る。
@@ -55,6 +57,9 @@
              (SProjRec s sexpr (slabel ...))
              (SRec s (sfield ...))
              (SBlock s (sbind ...) sexpr))
+  ;; P2m spec §5.3。Bool も constructor 名として使える。
+  (sarm ::= (SArm s sctor (sname ...) sexpr))
+  (sctor ::= sname (SName s true) (SName s false))
   (spitem ::= (STypeDecl s sname sty)
               (STraitDecl s sname (styfield ...))
               (SImplDecl s sname sty (SRec s (sfield ...)))
