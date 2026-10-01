@@ -76,6 +76,35 @@
                  (Rec ((a imm (Perform (Return boundary Int) 42))))))) fuel)
  (term (cfg 42 () () () ())))
 
+; R-ProjOpt は欄があれば some、無ければ none を作る。
+(check-equal?
+ (run-g2-core
+  (term (ProjOpt Int
+                 (Let (r const (Record ((a Int imm) (b Int imm opt))))
+                      (Rec ((a imm 1) (b imm 2)))
+                      r)
+                 b)))
+ (term (Construct (Option Int) some 2)))
+(check-equal?
+ (run-g2-core
+  (term (ProjOpt Int
+                 (Let (r const (Record ((a Int imm) (b Int imm opt))))
+                      (Rec ((a imm 1)))
+                      r)
+                 b)))
+ (term (Construct (Option Int) none)))
+; 型が optional でも値に欄が残れば some を返す。
+(check-equal?
+ (run-g2-core
+  (term (Let (s const (Record ((a Int imm) (b Int imm))))
+             (Rec ((a imm 1) (b imm 2)))
+             (ProjOpt Int
+                      (Let (r const (Record ((a Int imm) (b Int imm opt))))
+                           s
+                           r)
+                      b))))
+ (term (Construct (Option Int) some 2)))
+
 ;; optional 欄を省略した literal は Let で宣言型に束縛される。
 (check-equal?
  (run-g2-core

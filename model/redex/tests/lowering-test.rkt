@@ -206,6 +206,9 @@
  (check-equal? (lower-ok '(Rec ((a imm x))))
                `(PRec ((,(label-code 'a) ,(var-code 'x)))))
  (check-equal? (lower-ok '(Proj x a)) `(PProj ,(var-code 'x) ,(label-code 'a)))
+ (check-equal? (lower-ok '(ProjOpt Int x b))
+               `(PProjOpt ,(tag-code 'some) ,(tag-code 'none)
+                          ,(var-code 'x) ,(label-code 'b)))
  (check-equal? (lower-ok '(Discharge (ProofRep User TypeNarrativeCap) x))
                (var-code 'x))
  (check-equal?
@@ -242,6 +245,7 @@
     (Curry     core  (Curry x 1))
     (Rec       core  (Rec ((a imm x))))
     (Proj      core  (Proj x a))
+    (ProjOpt   core  (ProjOpt Int x b))
     (Discharge core  (Discharge (ProofRep User TypeNarrativeCap) x))
     (Error     core  (Error 0))
     (resource  value (resource 3))

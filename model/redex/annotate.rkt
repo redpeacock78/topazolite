@@ -65,6 +65,8 @@
                                     [body (in-list c)])
                            (list (lbl l) mode (ann body))))]
       [(list 'Proj c label) (list 'Proj (next) (ann c) (lbl label))]
+      [(list 'ProjOpt τ c label)
+       (list 'ProjOpt (next) (ty τ) (ann c) (lbl label))]
       [(list 'Discharge (list 'ProofRep O phi) c)
        (list 'Discharge (next) (list 'ProofRep (next) O phi) (ann c))]
       [(list 'UVal v) (list 'UVal (next) (ann v))]

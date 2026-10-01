@@ -155,6 +155,18 @@
   (term (PScopeExit () (PProj (PRec ((f 1))) g)))))
 
 (test-case
+ "R-PR-ProjOpt returns some or none and requires unique labels"
+ (check-equal?
+  (eval-pr (term (PProjOpt some-tag none-tag (PRec ((f 1) (g 2))) g)))
+  (term (PTagged some-tag 2)))
+ (check-equal?
+  (eval-pr (term (PProjOpt some-tag none-tag (PRec ((f 1))) g)))
+  (term (PTagged none-tag)))
+ (check-equal?
+  (eval-pr (term (PProjOpt some-tag none-tag (PRec ((f 1) (f 2))) f)))
+  (term (PScopeExit () (PProjOpt some-tag none-tag (PRec ((f 1) (f 2))) f)))))
+
+(test-case
  "R-PR-LetOwned registers a fresh place and substitutes PPlace"
  (check-equal?
   (eval-pr/config (term (PLetOwned a 5 (PRuntime move a))))
@@ -292,7 +304,7 @@
    (check-deterministic core)))
 
 (test-case
- "-->pr/rules declares exactly the 20 target rule names"
+ "-->pr/rules declares exactly the 21 target rule names"
  ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
  (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
                target-rule-names))

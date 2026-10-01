@@ -87,6 +87,17 @@
   [(pproj-lookup () label_target) #f])
 
 (define-metafunction PR
+  pprojopt-result : K K ((label pv) ...) label -> any
+  [(pprojopt-result K_some K_none
+                    ((label_before pv_before) ...
+                     (label_target pv_target)
+                     (label_after pv_after) ...)
+                    label_target)
+   (PTagged K_some pv_target)]
+  [(pprojopt-result K_some K_none _ label_target)
+   (PTagged K_none)])
+
+(define-metafunction PR
   punique-labels? : (label ...) -> boolean
   [(punique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
@@ -209,6 +220,19 @@
         (where pv_result
                (pproj-lookup ((label_field pv_field) ...) label_target))
         R-PR-Proj)
+
+   (--> (pcfg (in-hole PE
+                      (PProjOpt K_some K_none
+                                (PRec ((label_field pv_field) ...))
+                                label_target))
+              PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (side-condition (term (punique-labels? (label_field ...))))
+        (where pv_result
+               (pprojopt-result K_some K_none
+                                ((label_field pv_field) ...)
+                                label_target))
+        R-PR-ProjOpt)
 
    ;; 内側の文脈を PG にするのは、間に scope が挟まったときに内側の scope へ
    ;; 登録させるためである。源の R-LetOwned の G_inner に対応する。型ではなく

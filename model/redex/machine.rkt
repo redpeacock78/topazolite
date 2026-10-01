@@ -160,6 +160,13 @@
   [(proj-lookup () label_target) #f])
 
 (define-metafunction G2m
+  projopt-result : τ ((label v) ...) label -> any
+  [(projopt-result τ (_ ... (label_target v_target) _ ...) label_target)
+   (Construct (Option τ) some v_target)]
+  [(projopt-result τ _ label_target)
+   (Construct (Option τ) none)])
+
+(define-metafunction G2m
   unique-labels? : (label ...) -> boolean
   [(unique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
@@ -862,6 +869,19 @@
                (proj-lookup ((label_field v_field) ...)
                             label_target))
         R-Proj)
+
+   ;; 値に欄があれば some、無ければ none を作る。型の presence は見ない。
+   (--> (cfg (in-hole E
+                      (ProjOpt τ (Rec ((label_field m v_field) ...))
+                               label_target))
+             H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
+        (side-condition
+         (term (unique-labels? (label_field ...))))
+        (where v_result
+               (projopt-result τ ((label_field v_field) ...)
+                               label_target))
+        R-ProjOpt)
 
    ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では
    ;; ないため、包まれた c は Discharge が消えるまで還元されない。入れ子は外側から一段

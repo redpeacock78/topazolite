@@ -73,6 +73,7 @@
 (define g2-terms
   (term ((Rec ((a imm 1)))
          (Proj (Rec ((a imm 1))) a)
+         (ProjOpt Int (Rec ((a imm 1))) a)
          (Let (x const Int) 1 x)
          (Discharge (ProofRep User ValidNarrativeTrait) 1)
          (UVal 1)

@@ -145,6 +145,7 @@
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
+         (ProjOpt τ c label)
          (Let (x bmode τ) c c)
          (Discharge (ProofRep O φ) c)
          (Borrow w)
@@ -262,6 +263,7 @@
   (c ::= ....
          (Rec ((label m c) ...))
          (Proj c label)
+         (ProjOpt τ c label)
          (Let (x bmode τ) c c)
          (Discharge (ProofRep O φ) c)
          (Borrow w)
@@ -297,6 +299,7 @@
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))
          (Proj F label)
+         (ProjOpt τ F label)
          (Let (x bmode τ) F c)
          (ReborrowAt ρ own F)
          (ProjBorrowAt ρ own F label)
@@ -316,6 +319,7 @@
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (Proj E label)
+         (ProjOpt τ E label)
          (Let (x bmode τ) E c)
          (ReborrowAt ρ own E)
          (ProjBorrowAt ρ own E label)
@@ -335,6 +339,7 @@
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (Proj G label)
+         (ProjOpt τ G label)
          (Let (x bmode τ) G c)
          (ReborrowAt ρ own G)
          (ProjBorrowAt ρ own G label)

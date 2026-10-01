@@ -311,6 +311,9 @@
                        labels fields))]
          [`(Proj ,record ,label)
           `(PProj ,(lower-core record) ,(label-code (peel-lbl label)))]
+         [`(ProjOpt ,τ ,record ,label)
+          `(PProjOpt ,(tag-code 'some) ,(tag-code 'none)
+                     ,(lower-core record) ,(label-code (peel-lbl label)))]
          ;; Proof は実行時に意味を持たない。内側の写しをそのまま返す。
          [`(Discharge ,_ ,body) (lower-core body)]
          ;; spec §21: Error は G2m だけの形であり spanful な項に現れない。
@@ -507,6 +510,7 @@
     [`(PRec ((,_ ,fields) ...)) (kinds-of-all fields)]
     ;; Proj は row を足さない。
     [`(PProj ,record ,_) (effect-kinds-of record)]
+    [`(PProjOpt ,_ ,_ ,record ,_) (effect-kinds-of record)]
     [`(PMatch ,scrutinee (,branches ...))
      (set-union (effect-kinds-of scrutinee)
                 (kinds-of-all

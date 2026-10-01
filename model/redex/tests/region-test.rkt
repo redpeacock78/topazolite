@@ -19,6 +19,7 @@
   (check-equal? (core-children '(Handle (Return b Int) (k -> 1) 2)) '(1 2))
   (check-equal? (core-children '(Scope () 1)) '(1))
   (check-equal? (core-children '(Proj 1 fld)) '(1))
+  (check-equal? (core-children '(ProjOpt Int 1 fld)) '(1))
   (check-equal? (core-children '(Lam User c0 (x y) 1)) '(1)))
 
 (test-case "Eliminate は scrutinee に続けて分岐の本体を分岐の順に並べる"
@@ -74,6 +75,11 @@
 (test-case "core-with-children は Owned leaf を組み直す"
   (check-equal? (core-with-children '(OwnedLeaf (tok 0) x) '(y))
                 '(OwnedLeaf (tok 0) y)))
+
+(test-case "ProjOpt の意味的な子を差し替える"
+  (check-equal? (core-with-children '(ProjOpt Int (Apply f 1) fld)
+                                     '((Apply g 2)))
+                '(ProjOpt Int (Apply g 2) fld)))
 
 (test-case "core-free-vars は Owned leaf の payload を見る"
   (check-equal? (core-free-vars '(OwnedLeaf (tok 0) x)) (set 'x)))

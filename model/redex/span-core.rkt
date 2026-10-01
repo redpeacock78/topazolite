@@ -173,6 +173,7 @@
   (c ::= ....
          (Rec s ((ls m c) ...))
          (Proj s c ls)
+         (ProjOpt s ts c ls)
          (Let s (xs bmode ts) c c)
          (Discharge s (ProofRep s O φ) c)
          ;; macro.md §5.1: 展開前の呼出し節点である。展開器の出力には

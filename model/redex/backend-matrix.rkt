@@ -111,6 +111,7 @@
     (RVal       tagged-adt)
     (Rec        immutable-record)
     (Proj       immutable-record)
+    (ProjOpt    immutable-record)
     (Perform    effect-dispatch)
     (Handle     effect-dispatch)
     (Scope      scope-exit)
