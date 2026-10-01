@@ -57,7 +57,7 @@ closed と open の違いは §3.2 の binding policy が決める。
 
 G2a の field row は required 欄だけを持つ。
 P2l3a は Core の field row に optional 欄を加える。
-Surface から optional field を書く構文は P2l3c で導入する。
+Surface から optional field を書く構文は P2l3c が導入した（§3.1）。
 
 ### 2.2 field row の well-formedness と演算
 
@@ -195,6 +195,8 @@ compat?(τ_field, τ)
 `let` が保持する残余 field も束縛変数の平坦な field row に含まれるため、合流前の現在の flow では射影できる。
 必須 field と残余 field を型の中で二層に分ける表現は採らない。
 G2a では平坦な field row だけで安全に射影でき、二層表現は Proof witness を導入する後続層まで必要ないためである。
+
+Surface の `label?: τ` は P2l3c が導入し、data 型の constructor の引数の optional の欄と合わせて `ADT-001` を満たす。 [REQ: ADT-001]
 
 ### 3.2 binding policy
 
@@ -351,8 +353,6 @@ Eliminate(c0, branches) : (Record r)
 一つ以上の枝で optional の欄は合流後も optional とし、全ての枝で required の欄は required とする。
 `(Presence label)` は合流後も required の欄にだけ発行する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
-
-Surface の `label?: τ` は P2l3c が導入し、data 型の constructor の引数の optional の欄と合わせて `ADT-001` を満たす。 [REQ: ADT-001]
 
 非 `Never` 枝が一つもなければ結果型は `Never` である。
 非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
