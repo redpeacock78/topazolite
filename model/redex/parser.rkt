@@ -514,11 +514,17 @@
       (values `(TRec ,(hull open (span-at ts j0)) ()) (add1 j0))
       (let loop ([j j0] [fields '()])
         (let*-values ([(label label-span label-j) (expect-ident ts fail j)]
-                     [(colon colon-j) (expect-punct ts fail label-j '|:|)]
+                     ;; P2l3 spec §9。? と : は別の字句であり、間の空白を許す。
+                     [(optional? colon-start)
+                      (if (punct? ts label-j '?)
+                          (values #t (add1 label-j))
+                          (values #f label-j))]
+                     [(colon colon-j) (expect-punct ts fail colon-start '|:|)]
                      [(ty ty-j) (parse-ty ts fail colon-j)])
           (define field
             `(TField ,(hull label-span (node-span ty))
-                     (SLabel ,label-span ,label) ,ty))
+                     (SLabel ,label-span ,label) ,ty
+                     ,@(if optional? '(opt) '())))
           (define next (skip-nl ts ty-j))
           (cond
             [(punct? ts next '|}|)

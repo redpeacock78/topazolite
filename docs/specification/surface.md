@@ -104,13 +104,14 @@ tyand    ::= tyatom ("&" tyatom)*
 tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"  [REQ: SUR-016]
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
-tyfield  ::= ident ":" ty
+tyfield  ::= ident "?"? ":" ty
 tys      ::= ε | ty ("," ty)*
 row      ::= label | "{" [label ("," label)*] "}"          [REQ: SUR-003]
 label    ::= ident ["<" ty ">"]
 ```
 
 `&` は `|` より強く結合し、どちらも左結合である。
+`?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
 
@@ -537,6 +538,8 @@ F* 側の `SProjRec` は Surface 欄に label の綴りと span を持つが、`
 `TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
 それ以外は §5 の別名環境から解決し、未登録なら `E-SUR-008` とする。
 `TRec` は field mode を `imm` とする `(Record ((l uτ imm) ...))` へ写す。
+`?` を付けた欄は `(l uτ imm opt)` へ写す。
+省略の受理と `ProjOpt` への写しは elaborate が行う（`structural-row.md` §3）。
 `TFn` は `(NFn (uτ ...) uτ_r ε ())` へ写す。
 `ε` は明示された型 Effect row を lower-row した結果であり、省略時は空である。
 型 Effect row の `Return` は拒否する。
@@ -711,6 +714,8 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
+  `TField` の末尾の `opt` も F* には残らない。
+  F* の `TRec` は欄の label を持たないので、presence も持たない。
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 

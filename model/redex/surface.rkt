@@ -32,7 +32,8 @@
   (sparam ::= (SParam s sname sty))
   (slparam ::= (SParam s sname sty-or-none))
   (sfield ::= (SField s slabel sexpr))
-  (styfield ::= (TField s slabel sty))
+  ;; P2l3 spec §9。末尾の opt は欄が optional であることを表す。
+  (styfield ::= (TField s slabel sty) (TField s slabel sty opt))
   (sty ::= (TName s ident)
            (TRec s (styfield ...))
            (TFn s (sty ...) sty srow-or-none)

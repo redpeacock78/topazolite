@@ -69,6 +69,16 @@
                      (((#:lbl a (#:span src 2 3)) imm (#:lit 1 (#:span src 5 6)))))))
 
 (test-case
+ "P2l3c。opt を持つ TField は Core の 4 要素の欄へ写る"
+ (check-match (low "const r: { a?: Int, b: Int } = { b: 1 }\n0")
+              `(Let ,_ (,_ const (#:ty (Record ((a Int imm opt) (b Int imm))) ,_)) ,_ ,_))
+ ;; 型の欄の重複は presence によらず E-SUR-007 である。
+ (check-equal? (diagnostic-id (low "const r: { a?: Int, a: Int } = {}\n0")) "E-SUR-007")
+ (check-equal? (diagnostic-id (low "const r: { a: Int, a?: Int } = {}\n0")) "E-SUR-007")
+ ;; trait の宣言の欄も同じ parser を通る。
+ (check-match (low "trait T { a?: Int }\n0") `(#:lit 0 ,_)))
+
+(test-case
  "record の重複した label は E-SUR-007 である"
  (define r (low "{ a: 1, a: 2 }"))
  (check-true (diagnostic? r))

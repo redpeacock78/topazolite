@@ -94,6 +94,10 @@
  (check-equal? (map stok-value (lex/string 'src "-> =>"))
                (list '-> '=> 'eof)))
 
+(test-case "P2l3c。? は 1 字句の記号になる"
+  (check-equal? (kinds "a?:") '(ident punct punct eof))
+  (check-equal? (stok-value (second (lex/string 'src "a?:"))) '?))
+
 (test-case
  "lex は bytes を受け、lex/string は同じ結果を返す"
  (check-equal? (lex 'src #"a b") (lex/string 'src "a b")))

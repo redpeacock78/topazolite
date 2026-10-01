@@ -252,7 +252,7 @@ let punctuation (b: FStar.UInt8.t) : bool =
   byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
   byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
   byte_is b 124 || byte_is b 38 || byte_is b 33 ||
-  byte_is b 60 || byte_is b 62
+  byte_is b 60 || byte_is b 62 || byte_is b 63
 
 let rec scan_fuel
   (id: sid) (n: nat) (i: nat) (rest: list FStar.UInt8.t)
@@ -477,6 +477,16 @@ let lex_bang_angle_ok () : Lemma
   = assert_norm
       (match lex SyntheticSid [33uy; 60uy; 62uy] with
        | LexOk [a; b; c; e] -> a.kind = TkPunct && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
+       | _ -> false)
+
+(* P2l3c。? は 1 字句の記号になる。 *)
+let lex_question_ok () : Lemma
+  (match lex SyntheticSid [97uy; 63uy; 58uy] with
+   | LexOk [a; b; c; e] -> a.kind = TkIdent && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [97uy; 63uy; 58uy] with
+       | LexOk [a; b; c; e] -> a.kind = TkIdent && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
        | _ -> false)
 
 type dkind = | DBind | DFnDecl

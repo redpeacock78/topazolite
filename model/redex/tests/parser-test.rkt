@@ -101,6 +101,25 @@
                `(TFn ,_ ((TApp ,_ (SName ,_ List) ,_))
                      (TApp ,_ (SName ,_ Option) ,_) #:none)))
 
+(test-case
+ "P2l3c。tyfield の ? は TField の末尾の opt になる"
+ (check-match (p "const r: { a?: Int, b: Int } = { b: 1 }\n0")
+              `(SProgram ,_ ((SBind ,_ const ,_
+                                    (TRec ,_ ((TField ,_ (SLabel ,_ a) (TName ,_ Int) opt)
+                                              (TField ,_ (SLabel ,_ b) (TName ,_ Int))))
+                                    ,_))
+                         ,_))
+ ;; ? と : の間の空白を許す。
+ (check-match (p "const r: { a ? : Int } = {}\n0")
+              `(SProgram ,_ ((SBind ,_ ,_ ,_ (TRec ,_ ((TField ,_ ,_ ,_ opt))) ,_)) ,_))
+ ;; TField の span は label から型までであり、? は独立した span を持たない。
+ (check-match (p "const r: { a?: Int } = {}\n0")
+              `(SProgram ,_ ((SBind ,_ ,_ ,_ (TRec ,_ ((TField ,(== (sp 11 18)) ,_ ,_ opt))) ,_)) ,_))
+ ;; record 式の欄には ? を書けない。
+ (check-equal? (p-code "{ a?: 1 }") "E-SUR-005")
+ ;; ? の後に : が無ければ構文誤りである。
+ (check-equal? (p-code "const r: { a? Int } = {}\n0") "E-SUR-005"))
+
 (test-case "引数の無い型適用は > の位置で E-SUR-005 になる"
   (check-equal? (p-code "let x: List<> = 0\n0") "E-SUR-005")
   (check-equal? (diagnostic-primary-span (p "let x: List<> = 0\n0")) (sp 12 13)))
@@ -470,11 +489,13 @@
    (check-true (diagnostic? (parse (lex/string 'src src))))))
 
 (test-case
- "字句にならない記号は lexer の診断がそのまま返る"
+ "未対応の記号は字句または構文で拒否される"
  (check-equal? (p-code "List<Int>") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "List<Int>")) (sp 4 5))
  (check-equal? (p-code "1 + 2") "E-SUR-002")
- (check-equal? (p-code "x ?= y") "E-SUR-002")
+ ;; ? を字句化した後、parse-expr は x の後の ? で止まり、parse-program が拒む。
+ (check-equal? (p-code "x ?= y") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "x ?= y")) (sp 2 3))
  (check-equal? (p-code "x |> f") "E-SUR-005"))
 
 (test-case

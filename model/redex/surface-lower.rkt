@@ -541,11 +541,11 @@
   (for/fold ([seen '()] [row '()] #:result (reverse row))
             ([field (in-list fields)])
     (match field
-      [`(TField ,_ (SLabel ,s_l ,label) ,ty)
+      [`(TField ,_ (SLabel ,s_l ,label) ,ty ,presence ...)
        (when (memq label seen)
          (fail 'surface-duplicate-field s_l))
        (values (cons label seen)
-               (cons (list label (lower-sty ty env fail stack #:self? self?) 'imm)
+               (cons `(,label ,(lower-sty ty env fail stack #:self? self?) imm ,@presence)
                      row))])))
 
 ;; spec §6.4。lower-sty が作る NFn は UCore の 4 欄であり、template-type? と
