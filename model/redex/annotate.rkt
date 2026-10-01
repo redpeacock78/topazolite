@@ -32,8 +32,12 @@
        (list 'Let (next) (list (bind x) (ty type)) (ann c_1) (ann c_2))]
       [(list 'Construct type K c ...)
        (list* 'Construct (next) (ty type) K (map ann c))]
+      [(list 'UnionInject union-type member-type c)
+       (list 'UnionInject (next) (ty union-type) (ty member-type) (ann c))]
       [(list 'Eliminate c (list br ...))
        (list 'Eliminate (next) (ann c) (map ann-br br))]
+      [(list 'UnionEliminate c (list ubr ...))
+       (list 'UnionEliminate (next) (ann c) (map ann-ubr ubr))]
       [(list 'Perform op c) (list 'Perform (next) (ann-op op) (ann c))]
       [(list 'Handle op h c)
        (list 'Handle (next) (ann-op op) (ann-h h) (ann c))]
@@ -86,6 +90,11 @@
       [(list K (list x ...) '-> c)
        (list (next) K (map bind x) '-> (ann c))]
       [_ (error 'annotate-core "未対応の br: ~a" br)]))
+  (define (ann-ubr ubr)
+    (match ubr
+      [(list type x '-> c)
+       (list (next) (ty type) (bind x) '-> (ann c))]
+      [_ (error 'annotate-core "未対応の ubr: ~a" ubr)]))
   (define (ann-h h)
     (match h
       [(list x '-> c) (list (next) (bind x) '-> (ann c))]

@@ -5,6 +5,7 @@
 
 (provide Span span-ok? span-of entry-span G1+ G2+
          peel-node peel-branch branch-span
+         peel-ubr ubr-span
          peel-ty peel-bind peel-lbl peel-ef
          wrapper-span)
 
@@ -170,6 +171,7 @@
          (Implements τ tn) (RequiresBoth tn tn) (FieldType label τ)
          (RemainderSafelyDropped τ τ))
   (ls ::= (#:lbl label s))
+  (ubr ::= (s ts xs -> c))
   (c ::= ....
          (Rec s ((ls m c) ...))
          (Absent s ts)
@@ -177,6 +179,8 @@
          (ProjOpt s ts c ls)
          (Let s (xs bmode ts) c c)
          (Discharge s (ProofRep s O φ) c)
+         (UnionInject s ts ts c)
+         (UnionEliminate s c (ubr ...))
          ;; macro.md §5.1: 展開前の呼出し節点である。展開器の出力には
          ;; 現れない。O は呼出しの由来であり、spanless な G1 の O を使う。
          (MacroCall s O nm (c ...)))
@@ -186,4 +190,15 @@
          (UVal s v)
          (RVal s (ProofRep s O φ) v))
   #:binding-forms
-  (Let s ((#:bind x s_b) bmode ts) c_1 c_2 #:refers-to x))
+  (Let s ((#:bind x s_b) bmode ts) c_1 c_2 #:refers-to x)
+  (s ts (#:bind x s_b) -> c #:refers-to x))
+
+;; span 付き Union branch の専用 peel。branch span は先頭に、型注釈と束縛子は
+;; それぞれの包みに span を持つ。
+(define (ubr-span branch) (branch-span branch))
+
+(define (peel-ubr branch)
+  (match branch
+    [(list _ (list '#:ty type _) (list '#:bind x _) '-> body)
+     (list type x '-> body)]
+    [_ (error 'peel-ubr "span 付き ubr の形が不正である: ~s" branch)]))

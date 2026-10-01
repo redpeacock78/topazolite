@@ -149,6 +149,8 @@
          (ProjOpt τ c label)
          (Let (x bmode τ) c c)
          (Discharge (ProofRep O φ) c)
+         (UnionInject τ τ c)
+         (UnionEliminate c (ubr ...))
          (Borrow w)
          (BorrowMut w)
          (Reborrow c)
@@ -172,9 +174,11 @@
          (UVal v)
          (RVal (ProofRep O φ) v)
          (RegionLam (rp ...) c))
+  (ubr ::= (τ x -> c))
 
   #:binding-forms
-  (Let (x bmode τ) c_1 c_2 #:refers-to x))
+  (Let (x bmode τ) c_1 c_2 #:refers-to x)
+  (τ x -> c #:refers-to x))
 
 (define-extended-language G1m G1
   (p ::= natural)
@@ -193,7 +197,7 @@
   ;; G2m ではなくこの共通機械言語に置く。
   (label ::= variable-not-otherwise-mentioned)
   ;; path の segment。record は label、位置指定は natural を使う。
-  (fseg ::= label natural)
+  (fseg ::= label natural (Payload))
   (fp ::= (fseg ...))
   (H ::= ((p v) ...))
   (Ω ::= ((p state) ...))
@@ -269,6 +273,8 @@
          (ProjOpt τ c label)
          (Let (x bmode τ) c c)
          (Discharge (ProofRep O φ) c)
+         (UnionInject τ τ c)
+         (UnionEliminate c (ubr ...))
          (Borrow w)
          (BorrowMut w)
          (Reborrow c)
@@ -298,10 +304,14 @@
          (BorrowMutRef p fp ρ)
          ;; unsafe.md §4.3。ptrmut を実行時にも運ぶ。
          (PtrVal p fp ptrmut prov)
+         (UnionVal τ τ v)
          (RegionLam (rp ...) c))
+  (ubr ::= (τ x -> c))
 
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))
+         (UnionInject τ τ F)
+         (UnionEliminate F (ubr ...))
          (Proj F label)
          (ProjOpt τ F label)
          (Let (x bmode τ) F c)
@@ -322,6 +332,8 @@
          (Unsafe F))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
+         (UnionInject τ τ E)
+         (UnionEliminate E (ubr ...))
          (Proj E label)
          (ProjOpt τ E label)
          (Let (x bmode τ) E c)
@@ -342,6 +354,8 @@
          (Unsafe E))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
+         (UnionInject τ τ G)
+         (UnionEliminate G (ubr ...))
          (Proj G label)
          (ProjOpt τ G label)
          (Let (x bmode τ) G c)
@@ -362,7 +376,8 @@
          (Unsafe G))
 
   #:binding-forms
-  (Let (x bmode τ) c_1 c_2 #:refers-to x))
+  (Let (x bmode τ) c_1 c_2 #:refers-to x)
+  (τ x -> c #:refers-to x))
 
 (define-metafunction G2
   row-∈ : ℓ ε -> boolean

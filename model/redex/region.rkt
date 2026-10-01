@@ -34,6 +34,9 @@
     [`(Apply ,c_f ,c_a ...) (cons c_f c_a)]
     [`(Let (,_ ...) ,c_1 ,c_2) (list c_1 c_2)]
     [`(Construct ,_ ,_ ,cs ...) cs]
+    [`(UnionInject ,_ ,_ ,payload) (list payload)]
+    [`(UnionEliminate ,scrutinee ,branches)
+     (cons scrutinee (map last branches))]
     [`(Eliminate ,c ,brs)
      (cons c (for/list ([br (in-list brs)]) (last br)))]
     [`(Perform ,_ ,c) (list c)]
@@ -105,6 +108,13 @@
     [`(Apply ,_ ,_ ...) `(Apply ,@children)]
     [`(Let ,binder ,_ ,_) `(Let ,binder ,(first children) ,(second children))]
     [`(Construct ,τ ,K ,_ ...) `(Construct ,τ ,K ,@children)]
+    [`(UnionInject ,union-type ,member-type ,_)
+     `(UnionInject ,union-type ,member-type ,(first-child))]
+    [`(UnionEliminate ,_ ,branches)
+     `(UnionEliminate ,(first children)
+                      ,(for/list ([branch (in-list branches)]
+                                  [body (in-list (rest children))])
+                         (append (drop-right branch 1) (list body))))]
     [`(Eliminate ,_ ,brs)
      `(Eliminate ,(first children)
                  ,(for/list ([br (in-list brs)] [c (in-list (rest children))])
@@ -198,6 +208,11 @@
          (match branch
            [`(,_ (,parameters ...) -> ,body)
             (set-union free (bind body parameters))]))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (for/fold ([free (walk scrutinee)]) ([branch (in-list branches)])
+         (match branch
+           [`(,_ ,name -> ,body)
+            (set-union free (bind body (list name)))]))]
       [`(Handle ,_ (,name -> ,handler) ,body)
        (set-union (bind handler (list name)) (walk body))]
       [`(Borrow ,w) (if (symbol? w) (set w) (set))]

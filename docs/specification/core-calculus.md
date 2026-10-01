@@ -91,6 +91,7 @@ spec ::= T | spec<spec1, …, spek>                型式（型名とその適�
 ```text
 τ ::= Int | Bool | Unit | String | Never | Res   基本型
     | List<τ> | Option<τ> | Result<τ1, τ2>       組み込みデータ型
+    | Union<τ1, τ2>                              tagged Union
     | Owned<τ>                                   affine 所有
     | NFn<(τ1, …, τk), τ, εin, εout, Q, O>       Narrative 関数型
     | TypeInfo<κ>                                型情報値の型
@@ -157,6 +158,7 @@ kind が `Type` の TypeRep は monotype τ を持ち、kind が矢印の TypeRe
 
 ```text
 mw ::= w | MutSlot(p)                            Reassign の target
+ubr ::= (τm x -> c)                              UnionEliminate の枝
 
 c ::= v                                          値
     | x                                          変数
@@ -164,6 +166,8 @@ c ::= v                                          値
     | Let(x : τ, c1, c2)                         束縛（型注釈付き）
     | Construct(D, K, c1, …, ck)                 constructor 適用（D は具体化されたデータ型）
     | Eliminate(c0, (K1(x̄1) -> c1), …, (Kn(x̄n) -> cn))   場合分け
+    | UnionInject(τU, τm, c)                     Union 成分の注入
+    | UnionEliminate(c, (τm1 x1 -> c1), …, (τmn xn -> cn)) Union の tag による場合分け
     | Perform(op, c)                             Effect の発生
     | Handle(op, x -> ch, c)                     abortive handler
     | Scope(π, c)                                finalization 境界
@@ -185,10 +189,17 @@ v ::= l                                          リテラル
     | CurryVal(O, vf, va)                        部分適用値（origin 付き）
     | RecurVal(r, f, (x1, …, xk), c)             再帰関数値
     | Construct(D, K, v1, …, vk)                 構成済みデータ
+    | UnionVal(τU, τm, v)                        tag と payload を持つ Union 値
     | resource(n)                                affine 資源値（acquire が生成、§3.5）
     | TypeRep(O, t, κ)                           型情報値（origin 付き）
     | ProofRep(O, φ)                             Proof 値（origin 付き）
 ```
+
+`UnionInject` は対象 Union 型 `τU`、選んだ成分型 `τm`、payload を持つ。
+`UnionEliminate` の各枝は成分型と束縛子を持ち、束縛子はその枝の本体だけで有効である。
+`UnionVal` は machine が `UnionInject` の簡約で生成する値であり、Typed Core の入力には書けない。
+Union への暗黙 widening は P2m2b の elaboration が `UnionInject` を挿入する。
+Surface の Union pattern を `UnionEliminate` へ写すのは P2m3 とする。
 
 #### 3.3.1 binding mode
 
@@ -1267,6 +1278,7 @@ Phase 4 以降で扱う。
 F ::= []                                          純粋文脈（Scope と Handle を含まない）
     | Apply(v̄, F, c̄) | Let(x : τ, F, c)
     | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄)
+    | UnionInject(τU, τm, F) | UnionEliminate(F, ubr̄)
     | Perform(op, F) | Drop(F) | Yield(F, c)
     | Curry(F, c) | Curry(v, F)
 
@@ -1274,6 +1286,12 @@ E ::= F | E[Scope(π, F)] | E[Handle(op, h, F)]    一般文脈
 
 G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文脈
 ```
+
+実装を段階的に進める間、`typing.rkt` は `current-union-tag-mode` parameter を持つ。
+`#f` が既定値であり、このとき新しい Union Core 構文は既存の未知 Core 形の診断で拒否する。
+`#t` は Union の typing 規則と tag 保存互換を同時に有効にする試験用の切替である。
+P2m2b で elaboration が tag の挿入を担う段階では切替を取り除く。
+この parameter は programme の構文や judgment の一部ではない。
 
 以降の規則は、明示しない限り一般文脈 E の下で適用される。
 項だけを書いた規則 `E[c] → E[c']` は、H、Ω、Λtok、θ を変えない構成遷移 `⟨E[c], H, Ω, Λtok, θ⟩ → ⟨E[c'], H, Ω, Λtok, θ⟩` の略記である。

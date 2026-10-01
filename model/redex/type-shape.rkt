@@ -218,6 +218,11 @@
       [`(,_ (,_ ...) -> ,body) (walk body)]
       [_ (error 'core-types-normal? "unhandled branch form: ~s" branch)]))
 
+  (define (walk-ubr branch)
+    (match branch
+      [`(,type ,_ -> ,body) (and (type-normal? type) (walk body))]
+      [_ (error 'core-types-normal? "unhandled ubr form: ~s" branch)]))
+
   (define (walk-record-field field)
     (match field
       [`(,_ ,_ ,core) (walk core)]
@@ -252,6 +257,12 @@
           (and (type-normal? type) (walk bound) (walk body))]
          [`(Construct ,type ,_ ,fields ...)
           (and (type-normal? type) (andmap walk fields))]
+         [`(UnionInject ,union-type ,member-type ,payload)
+          (and (type-normal? union-type)
+               (type-normal? member-type)
+               (walk payload))]
+         [`(UnionEliminate ,scrutinee ,branches)
+          (and (walk scrutinee) (andmap walk-ubr branches))]
          [`(Eliminate ,scrutinee ,branches)
           (and (walk scrutinee) (andmap walk-branch branches))]
          [`(Perform (Return ,_ ,type) ,argument)
@@ -308,6 +319,10 @@
          [`(resource ,_) #t]
          [`(OwnLeaf ,payload) (walk payload)]
          [`(OwnedLeaf ,_ ,payload) (walk payload)]
+         [`(UnionVal ,union-type ,member-type ,payload)
+          (and (type-normal? union-type)
+               (type-normal? member-type)
+               (walk payload))]
          [`(UVal ,payload) (walk payload)]
          [`(RVal ,proof ,payload) (and (walk proof) (walk payload))]
          ;; PRF-004: 搬送された ProofRep は core に現れる。包み先と Proof の

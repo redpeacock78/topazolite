@@ -31,6 +31,7 @@
          type-of/raw
          type-of/raw*+borrows
          type-of/raw*+ptr
+         current-union-tag-mode
          typing-visited-points
          config-ok?
          with-config-typing
@@ -708,6 +709,9 @@
 ;; RFN-003: discharge に使う文脈は大域の Γ_pc⁰ に限る。merge の W は渡さない。
 ;; region どうしの関係は current-region-relation から取る。既定は equal? で
 ;; あり、region 引数を書かない programme の判定は変わらない。
+;; P2m2a。Union tag の typing と値の受け渡しを一緒に段階導入する。
+(define current-union-tag-mode (make-parameter #f))
+
 (define (type-compatible? actual expected)
   (compat? actual expected (current-Γ-pc0) (current-region-relation)))
 

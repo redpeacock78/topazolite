@@ -79,6 +79,13 @@
        `(Let ,span (,(first renamed) ,type)
              ,bound* ,(walk extended body))]
 
+      ;; UnionEliminate の枝は 1 個の束縛子を本体だけで使う。
+      [`(,span ,type ,binder -> ,body)
+       #:when (binder-form? binder)
+       (define-values (renamed extended)
+         (bind-all environment (list binder)))
+       `(,span ,type ,(first renamed) -> ,(walk extended body))]
+
       ;; Eliminate の branch。構成子の引数が branch body の scope に入る。
       [`(,span ,constructor ,parameters -> ,body)
        #:when (list? parameters)
