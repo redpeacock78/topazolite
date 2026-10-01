@@ -1880,12 +1880,20 @@
                     (fresh-owned-name
                      (set-union (form-symbols expression)
                                 (list->set (map first environment))))])
+               (define checked-rec
+                 (check-against-expected
+                  rec-result
+                  `(Record
+                    ,(filter (lambda (field)
+                               (not (memq (first field) omitted)))
+                             expected-fields))
+                  s propositions))
                (judgment
                 `(Let ,s ((#:bind ,name ,s) const (#:ty ,expected ,s))
-                      ,(judgment-core rec-result)
+                      ,(judgment-core checked-rec)
                       (#:var ,name ,s))
                 expected
-                (judgment-row rec-result)))
+                (judgment-row checked-rec)))
              (check-against-expected rec-result expected s propositions))]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
