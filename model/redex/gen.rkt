@@ -160,6 +160,16 @@
              (Rec ((nested imm g-rec-leaf) (a mut gn))))
   (g-record ::= g-rec
                 (Proj g-rec-leaf a)
+                (Proj (Let (record const
+                                   (Record ((a Int imm) (opt-field Int imm opt))))
+                           (Rec ((a imm gn) (opt-field imm gn)))
+                           record)
+                      opt-field)
+                (Proj (Let (record const
+                                   (Record ((a Int imm) (opt-field Int imm opt))))
+                           (Rec ((a imm gn)))
+                           record)
+                      opt-field)
                 (Proj (Rec ((a imm gn) (extra mut unit))) extra)
                 (Proj (Rec ((nested imm g-rec-leaf))) nested)
                 (Let (record let (Record ((a Int imm))))

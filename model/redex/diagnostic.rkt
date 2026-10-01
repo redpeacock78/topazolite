@@ -314,10 +314,6 @@
   '(("E-TYP-027" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
 
-(define elaborate-entries-v30
-  '(("E-RCD-011" project-optional-field
-                 "optional の欄は射影できない")))
-
 (define typing-entries-v25
   '(("E-TYP-026" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
@@ -355,6 +351,8 @@
 ;; 受け、Owned の捕捉は Curry の固定引数へ変換して受けるため、該当位置で
 ;; 落とす場所が無くなる。行は registry に残す。番号の再利用と意味の付け替え
 ;; を凍結 fixture が検出できるようにするためである。
+;; P2l3b では UCore の optional 欄への Proj を ProjOpt へ写すため、旧診断を
+;; 31 で廃止する。行は registry に残し、番号を再利用しない。
 (define deprecated-elaborate-entries
   (list (diagnostic-code "E-OWN-004" 'elaborate 'owned-curry-argument
                          "Curry の引数に owned を置けない" 1 8)
@@ -363,7 +361,9 @@
         (diagnostic-code "E-OWN-006" 'elaborate 'owned-function-parameter
                          "関数の仮引数に owned を置けない" 1 7)
         (diagnostic-code "E-OWN-009" 'elaborate 'owned-recur-parameter
-                         "recur の仮引数に owned を置けない" 1 7)))
+                         "recur の仮引数に owned を置けない" 1 7)
+        (diagnostic-code "E-RCD-011" 'elaborate 'project-optional-field
+                         "optional の欄は射影できない" 30 31)))
 
 (define origins-entries
   '(("E-ORG-001" forged "origin が初期成果物に由来しない")))
@@ -465,7 +465,6 @@
           (rows 'elaborate 23 elaborate-entries-v23)
           (rows 'elaborate 24 elaborate-entries-v24)
           (rows 'elaborate 25 elaborate-entries-v25)
-          (rows 'elaborate 30 elaborate-entries-v30)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)

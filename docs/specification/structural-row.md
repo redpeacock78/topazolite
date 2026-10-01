@@ -7,8 +7,9 @@
 
 **実装注記**：P2l3a は Core の field row に optional presence を加える。
 required 欄は `(label τ m)`、optional 欄は `(label τ m opt)` で表す。
-P2l3a では optional 欄への `Proj` と `ProjBorrow` を診断で拒否する。
-optional 欄を射影する `ProjOpt` は P2l3b で導入する。
+P2l3b は optional 欄を `(Option τ)` として射影する `ProjOpt` を導入する。
+UCore の `Proj` は optional 欄に対して `ProjOpt` へ elaboration される。
+Typed Core の `Proj` と `ProjBorrow` は optional 欄に適用できない。
 
 ## 1. 本仕様の位置づけ
 
@@ -169,14 +170,25 @@ lookup(r, label) = (τ, m)
 Γ; Δ; Π; Ξ; Φ ⊢core (Proj c label) : τ ! ε
 ```
 
-P2l3a では optional 欄に Core の `Proj` と `ProjBorrow` を適用しない。
-UCore の `Proj` は elaboration で `E-RCD-011` を返し、Typed Core の `Proj` は typing で `E-RCD-012` を返す。
-Typed Core の `ProjBorrow` は typing で `E-BOR-026` を返す。
+Typed Core の `Proj` と `ProjBorrow` は optional 欄に適用しない。
+前者は typing が `E-RCD-012` を返し、後者は typing が `E-BOR-026` を返す。
 欄の有無を先に検査し、存在しない場合は従来どおり欠落欄の診断を返す。
-`ProjOpt` は、欄が存在し、その型が注釈型 `τ` と互換なら presence によらず `(Option τ)` を返す。
+UCore の `Proj` は elaboration が optional 欄を検出して `ProjOpt` へ写す。
+elaborate の `E-RCD-011` は、この写し替えにより発火しなくなるため registry version 31 で廃止した。
+
+`ProjOpt` は、欄の presence によらず、その型が注釈 `τ` と互換なら `(Option τ)` を返す。
 欄の型が互換でなければ `E-RCD-013` で拒否し、欄が row に無ければ既存の欠落欄診断を返す。
 値の欄が `(Absent τ')` なら `ProjOpt` は `none` を返し、値があれば `some` を返す。
-Surface の射影を `ProjOpt` へ振り分ける処理は P2l3b で導入する。
+
+**(T-ProjOpt)**
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : (Record r) ! ε
+lookup(r, label) = (τ_field, m)
+compat?(τ_field, τ)
+------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core (ProjOpt τ c label) : (Option τ) ! ε
+```
 
 指定ラベルが r に存在しなければ型エラーである。
 `let` が保持する残余 field も束縛変数の平坦な field row に含まれるため、合流前の現在の flow では射影できる。
@@ -429,6 +441,23 @@ E[(Proj (Rec ((labeli mi vi) ...)) labelk)] → E[vk]
 ラベルが重複する record に対しても R-Proj は発火しない。
 この二つの不正項は例外を起こさず stuck に留まるが、well-typed な項ではラベル一意性と field の存在が保証される。
 
+`ProjOpt` は値の record に指定ラベルがあり、その値が `Absent` でなければ `some` を返す。
+指定欄の値が `Absent` か欄自体が無ければ `none` を返す。
+型の presence ではなく、値が実際に欄の値を持つかを判定する。
+
+**(R-ProjOpt)**
+
+```text
+labels は重複しない
+------------------------------------------------------------
+E[(ProjOpt τ (Rec ((labeli mi vi) ...)) label_target)]
+  → E[projopt-result(τ, ((labeli vi) ...), label_target)]
+```
+
+`projopt-result` は値の欄に `label_target` があり、その値が `Absent` でなければ `(Construct (Option τ) some v)` を返す。
+欄が `Absent` か無ければ `(Construct (Option τ) none)` を返す。
+ラベルが重複する record では R-ProjOpt は発火しない。
+
 ### 5.3 binding mode 付き Let
 
 `const` と `let` は再代入を許さず、`mut` は `Reassign` による binder の slot 更新を許す。
@@ -587,8 +616,8 @@ G2a は次の規則を導入しない。
 送り先は、その規則が必要とする意味論に合わせて定める。
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
-- **optional field**：P2l3a は Core の field row に optional presence とその互換性を導入する。
-  optional 欄への射影は P2l3b の `ProjOpt` まで拒否し、Surface 構文と `ADT-001` の完了は P2l3c で扱う。
+- **optional field**：P2l3a は Core の field row に optional presence とその互換性を導入し、P2l3b は optional 欄を `ProjOpt` で射影する。
+  Surface 構文と `ADT-001` の完了は P2l3c で扱う。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。

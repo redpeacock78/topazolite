@@ -1480,7 +1480,11 @@
             (cond
               [(not field) (reject s 'unknown-record-label label)]
               [(field-optional? field)
-               (reject s 'project-optional-field label)]
+               (define field-type (second field))
+               (judgment `(ProjOpt ,s (#:ty ,field-type ,s)
+                                   ,(judgment-core record-result) ,raw-label)
+                         `(Option ,field-type)
+                         (judgment-row record-result))]
               [else
                (match (field-row-lookup row label)
                  [(list field-type _)

@@ -133,7 +133,14 @@
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
      ("E-OWN-006" . 7)
-     ("E-OWN-009" . 7) ("E-OWN-014" . 8) ("E-OWN-015" . 7)))
+     ("E-OWN-009" . 7) ("E-OWN-014" . 8) ("E-OWN-015" . 7)
+     ("E-RCD-011" . 31)))
+ (check-equal? (length deprecated-map) 8)
+ (check-equal?
+  (for/sum ([row (in-list diagnostic-registry)]
+            #:when (diagnostic-code-deprecated-in row))
+    1)
+  8)
  (for ([row (in-list diagnostic-registry)])
    (define expected (assoc (diagnostic-code-code row) deprecated-map))
    (if expected
@@ -780,8 +787,9 @@
  ;; P2i1 では return-type-not-inferable を追加した。
  ;; P2i2 では parameter-type-not-inferable を追加した。
  ;; P2i3a では mutable-callable-storage-requires-partial を追加した。
- ;; P2l3a Task 6 では project-optional-field を追加した。
- (check-equal? (length reasons) 56)
+ ;; P2l3a Task 6 では optional 欄の射影を拒否する reason を加えた。
+ ;; P2l3b では UCore Proj を ProjOpt へ振り分け、その reason が到達しなくなる。
+ (check-equal? (length reasons) 55)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

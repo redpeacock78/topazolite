@@ -490,11 +490,19 @@
     [other (error 'properties-lowering-test
                   "prepared term no longer elaborates: ~e" other)]))
 
+(define (contains-absent? value)
+  (or (match value [`(Absent ,_) #t] [_ #f])
+      (and (pair? value)
+           (or (contains-absent? (car value))
+               (contains-absent? (cdr value))))))
+
 (define repr-witness (box 0))
 (define effect-nonempty-witness (box 0))
 (define effect-tight-witness (box 0))
 (define trace-compared (box 0))
 (define trace-discarded (box 0))
+(define projopt-some-witness (box 0))
+(define projopt-none-witness (box 0))
 
 ;; backend-matrix.md §6。評価結果が値なら repr(τ) に属する。
 ;; τ は Typed Core の型付け判定から取り、elaboration-result の型を
@@ -556,6 +564,33 @@
        ['match (bump! trace-compared) #t]
        ['mismatch (bump! trace-compared) #f])]))
 
+(define (projopt-preserved? source)
+  (define (check-projopt source present?)
+    (define-values (core _type _row callables) (artifact source))
+    (check-true (redex-match? G2m (in-hole E (ProjOpt τ c label)) core))
+    (check-equal? (contains-absent? core) (not present?))
+    (match-define (list type _core-row) (core-fixture core callables))
+    (check-equal? type '(Option Int))
+    (define-values (status target) (lower core 'racket-cs))
+    (check-eq? status 'ok)
+    (check-eq? (compare-observations core target depth) 'match)
+    (bump! (if present? projopt-some-witness projopt-none-witness))
+    #t)
+  (match source
+    [`(Proj (Let (record const
+                        (Record ((a Int imm) (opt-field Int imm opt))))
+                  (Rec ((a imm ,_) (opt-field imm ,_)))
+                  record)
+            opt-field)
+     (check-projopt source #t)]
+    [`(Proj (Let (record const
+                        (Record ((a Int imm) (opt-field Int imm opt))))
+                  (Rec ((a imm ,_)))
+                  record)
+            opt-field)
+     (check-projopt source #f)]
+    [_ #t]))
+
 (module+ test
   ;; properties-record-test.rkt:34 の bounded-check-g2 と同じ形である。証人の箱を
   ;; 引数に取るのは、性質ごとに「実際に主張が働いた項」の定義が違うためである。
@@ -605,6 +640,26 @@
    "BAK-001 backend-matrix.md §6: 観測列と終端種別が一致する"
    trace-preserved?
    (list (cons 'compared trace-compared)))
+
+  (test-case "BAK-001: optional 欄への Proj の生成結果を比較する"
+    (define counts (make-search-counts limits))
+    (define result
+      (call-with-search-seed
+       limits
+       (lambda ()
+         (redex-check
+          G2gen g-record #:ad-hoc
+          (begin
+            (note-accepted! counts)
+            (projopt-preserved? (term g-record)))
+          #:attempts (bounds-attempts limits)
+          #:attempt-size (lambda (_attempt) (bounds-term-depth limits))
+          #:prepare (lambda (source) (prepare-elaborable counts source))
+          #:print? #f))))
+    (check-equal? result #t)
+    (check-true (positive? (search-counts-accepted counts)))
+    (check-true (positive? (unbox projopt-some-witness)))
+    (check-true (positive? (unbox projopt-none-witness))))
 
   ;; discard は受理項の半分を超えない。超えたときは fuel の与え方か生成器の
   ;; 分布のどちらかが壊れており、性質が実質的に空振りしている。

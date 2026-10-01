@@ -289,9 +289,10 @@ registry version 11 で足した elaborate の 1 行と typing の 1 行は `sin
 
 現在の registry は 218 行である。
 
-`deprecated-in` を持つのは 7 行である。
+`deprecated-in` を持つのは 8 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
-残る 211 行は `#f` である。
+`E-RCD-011` は 31 を持つ。
+残る 210 行は `#f` である。
 
 ## 11. 凍結 fixture
 
@@ -389,9 +390,9 @@ v29 は surface へ `E-SUR-027` `surface-duplicate-data-type`、`E-SUR-028` `sur
 v30 は elaborate へ `E-RCD-011` `project-optional-field`、typing へ `E-RCD-012` `project-optional-field` と `E-BOR-026` `projborrow-optional-field` の 3 行を足した。
 廃止した行は無いため、組は 214 に 3 を足した 217 になる。
 
-v31 は typing へ `E-RCD-013` `projopt-invalid-field` を 1 行足した。
+v31 は typing へ `E-RCD-013` `projopt-invalid-field` を 1 行足し、elaborate の `E-RCD-011` を廃止した。
 この key は `ProjOpt` の欄の型と `τ` が互換でない場合に使う。
-廃止した行は無いため、組は 217 に 1 を足した 218 になる。
+廃止行は registry に残るため、組は 217 に 1 を足した 218 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

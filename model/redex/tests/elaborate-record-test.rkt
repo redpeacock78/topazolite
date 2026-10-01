@@ -126,8 +126,20 @@
                   x))
  (diagnostic-code-of 'elaborate 'type-mismatch))
 
+;; optional 欄への UCore Proj は ProjOpt へ写る。
+(define optional-projection
+  '(Let (r let (Record ((a Int imm) (b Int imm opt))))
+     (Rec ((a imm 1) (b imm 2)))
+     (Proj r b)))
+(check-equal? (elab-type optional-projection) '(Option Int))
+(check-match
+ (elab-core '(Let (r const (Record ((a Int imm) (b Int imm opt))))
+                   (Rec ((a imm 1)))
+                   (Proj r b)))
+ `(Let ,_ ,_ (ProjOpt Int ,_ b)))
+;; required 欄への UCore Proj は従来どおり τ を返す。
 (check-equal?
- (elab-code '(Let (r let (Record ((a Int imm) (b Int imm opt))))
-                  (Rec ((a imm 1) (b imm 2)))
-                  (Proj r b)))
- "E-RCD-011")
+ (elab-type '(Let (r let (Record ((a Int imm) (b Int imm opt))))
+                  (Rec ((a imm 1)))
+                  (Proj r a)))
+ 'Int)
