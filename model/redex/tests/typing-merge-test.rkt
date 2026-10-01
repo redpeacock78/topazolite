@@ -76,7 +76,7 @@
                        (Rec ((a imm 1)))
                        x))
       (false () -> (Let (y const (Record ((a Int imm opt))))
-                        (Rec ())
+                        (Rec ((a imm (Absent Int))))
                         y)))))
 (check-true
  (core-check optional-branch-core '() '() '(Record ((a Int imm opt))) '()))
