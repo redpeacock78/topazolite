@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 29)
+(define diagnostic-registry-version 30)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -314,9 +314,21 @@
   '(("E-TYP-027" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
 
+(define elaborate-entries-v30
+  '(("E-RCD-011" project-optional-field
+                 "optional の欄は射影できない")))
+
 (define typing-entries-v25
   '(("E-TYP-026" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
+
+(define typing-entries-v30
+  '(("E-RCD-012" project-optional-field
+                 "optional の欄は射影できない")))
+
+(define borrow-entries-v30
+  '(("E-BOR-026" projborrow-optional-field
+                 "optional の欄は借用で射影できない")))
 
 (define typing-entries-v27
   '(("E-OWN-032" owned-return-binder-misuse
@@ -449,6 +461,7 @@
           (rows 'elaborate 23 elaborate-entries-v23)
           (rows 'elaborate 24 elaborate-entries-v24)
           (rows 'elaborate 25 elaborate-entries-v25)
+          (rows 'elaborate 30 elaborate-entries-v30)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)
@@ -465,6 +478,8 @@
           (rows 'typing 18 typing-entries-v18)
           (rows 'typing 25 typing-entries-v25)
           (rows 'typing 27 typing-entries-v27)
+          (rows 'typing 30 typing-entries-v30)
+          (rows 'typing 30 borrow-entries-v30)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
           (rows 'lowering 1 lowering-entries)

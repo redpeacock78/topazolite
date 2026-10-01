@@ -5,6 +5,7 @@
 (require rackunit
          racket/set
          redex/reduction-semantics
+         "../diagnostic.rkt"
          "../lang.rkt"
          "../region.rkt"
          "../borrow.rkt"
@@ -213,3 +214,17 @@
                ()
                ())))
   (check-equal? (apply-reduction-relation -->g2 config) '()))
+
+(test-case "optional field の ProjBorrow は専用診断で拒否する"
+  (define opt-rec-τ '(Record ((a Int imm) (b Int imm opt))))
+  (define core '(Scope (1) (ProjBorrow (Borrow 1) b)))
+  (define ir (build-region-ir core))
+  (define annotated (annotate-regions core ir))
+  (define result
+    (core-type-of/diagnostic
+     annotated
+     (list (list 1 opt-rec-τ))
+     '() '()
+     (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
+  (check-equal? (and (diagnostic? result) (diagnostic-id result))
+                "E-BOR-026"))

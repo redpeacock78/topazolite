@@ -84,3 +84,9 @@
                   (Rec ((a imm 1)))
                   x))
  (diagnostic-code-of 'elaborate 'type-mismatch))
+
+(check-equal?
+ (elab-code '(Let (r let (Record ((a Int imm) (b Int imm opt))))
+                  (Rec ((a imm 1) (b imm 2)))
+                  (Proj r b)))
+ "E-RCD-011")

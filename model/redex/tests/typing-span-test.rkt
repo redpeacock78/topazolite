@@ -169,6 +169,24 @@
   `(RemainderSafelyDropped ,reach-remainder-actual ,reach-remainder-expected))
 (define reach-record-a '(Record ((a Int imm))))
 (define reach-list-int '(List Int))
+(define reach-record-optional
+  '(Record ((a Int imm) (b Int imm opt))))
+(define reach-projborrow-optional-ir
+  (build-region-ir '(Scope (1) (ProjBorrow (Borrow 1) b))))
+(define reach-projborrow-optional-rho
+  (region->rho reach-projborrow-optional-ir
+               (region-at reach-projborrow-optional-ir '(0 0))))
+(define reach-projborrow-optional-core
+  (reach-node 'Scope 1760 1790 '(1)
+              (reach-node 'ProjBorrowAt 1766 1788
+                          reach-projborrow-optional-rho '(Own 1 (b))
+                          (reach-node 'BorrowAt 1770 1781
+                                      reach-projborrow-optional-rho '(Own 1 ()) 1)
+                          'b)))
+(define (reach-projborrow-optional-region-ctx _core)
+  (region-ctx reach-projborrow-optional-ir '()
+              (hash 1 (region-at reach-projborrow-optional-ir '()))
+              (hash)))
 
 ;; concrete な親の寿命は、外側の位置へ広がれないため Reborrow の上限を破る。
 ;; IR と environment を同じ build の結果から作り、rho の所属を保つ。
@@ -222,7 +240,7 @@
     arity-mismatch branch-binder-arity parameter-arity-mismatch
     ;; RCD
     const-record-residual duplicate-record-label project-non-record
-    record-binding-incompatible unknown-record-label
+    project-optional-field record-binding-incompatible unknown-record-label
     unmergeable-branch-records
     ;; DAT
     duplicate-branch-constructor non-data-eliminate non-exhaustive-eliminate
@@ -238,6 +256,7 @@
     borrow-conflicting-alias borrow-conflicting-use
     borrow-escapes-owner borrow-non-owned
     borrow-unknown-owner-region drop-borrowed move-borrowed
+    projborrow-optional-field
     reborrow-non-mutable reborrow-region-escapes
     borrowed-function-capture borrowed-function-parameter
     borrowed-function-result
@@ -611,6 +630,16 @@
                                                   (reach-lit 1 649 650))))
                           (reach-lbl 'b 653 654))
               '() '() '() (reach-span 645 656))
+   (reach-row 'project-optional-field
+              (reach-node 'Proj 1740 1758
+                          (reach-var 'r 1741 1742)
+                          (reach-lbl 'b 1755 1756))
+              '() '() `((r ,reach-record-optional)) (reach-span 1740 1758))
+   (reach-row 'projborrow-optional-field
+              reach-projborrow-optional-core
+              '((1 (Record ((a Int imm) (b Int imm opt))))) '() '()
+              (reach-span 1766 1788)
+              reach-projborrow-optional-region-ctx)
    (reach-row 'duplicate-branch-constructor
               (reach-node 'Eliminate 657 682
                           (reach-node 'Construct 658 661
@@ -908,13 +937,13 @@
                 (g (NFn (Int) Int () () () User) let))
               (reach-span 1726 1740))))
 
-(test-case "typing の producer key 集合が registry v27 と一致する"
+(test-case "typing の producer key 集合が registry v30 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 103)
+  (check-equal? (length producer-keys) 105)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

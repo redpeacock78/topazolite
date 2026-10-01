@@ -1,5 +1,9 @@
 #lang racket
-(require rackunit "../typing.rkt")
+(require rackunit "../diagnostic.rkt" "../typing.rkt")
+
+(define opt-env '((r (Record ((a Int imm) (b Int imm opt))))))
+(define (code-of result)
+  (and (diagnostic? result) (diagnostic-id result)))
 
 ; Rec の synthesis（field を synth、可変性を保持）
 (check-equal? (core-type-of '(Rec ((a imm 1) (b imm unit))) '() '())
@@ -32,3 +36,23 @@
 ; その Proj は scrutinee の effect (Suspend) を保つ
 (check-equal? (core-type-of '(Proj (Rec ((a imm (Suspend 1)))) a) '() '())
               '(Int (Suspend)))
+
+; optional 欄は optional 専用診断で拒否し、未知欄は従来の診断を保つ。
+(check-equal?
+ (code-of (core-type-of/diagnostic '(Proj r b) '() '() opt-env))
+ "E-RCD-012")
+(check-equal?
+ (code-of (core-type-of/diagnostic '(Proj r z) '() '() opt-env))
+ "E-RCD-009")
+(check-equal? (core-type-of '(Proj r a) '() '() opt-env) '(Int ()))
+
+; 入れ子の optional row も型検査の入口で例外にならない。
+(check-not-exn
+ (lambda ()
+   (core-type-of
+    '(Let (x const
+           (Record ((a Int imm)
+                    (b (Record ((c Int imm opt))) imm opt))))
+       (Rec ((a imm 1)))
+       (Proj x a))
+    '() '())))

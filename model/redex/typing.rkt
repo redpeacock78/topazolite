@@ -2136,6 +2136,8 @@
   (define field
     (or (assoc label row)
         (fail 'projborrow-unknown-field core)))
+  (when (field-optional? field)
+    (fail 'projborrow-optional-field core))
   (match-define (list _ τ_f m_f) field)
   ;; spec §5.4 の例外。直接の Owned payload は Borrowed の禁止形になる。
   (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
@@ -2647,9 +2649,14 @@
      (match (infer record (enter-child Λ 0)
                     Ψ environment places callables fail)
        [(list `(Record ,row) record-row record-psi)
-        (match (field-row-lookup row (peel-lbl label))
-          [(list field-type _) (list field-type record-row record-psi)]
-          [_ (fail 'unknown-record-label core)])]
+        (define field (assoc (peel-lbl label) row))
+        (cond
+          [(not field) (fail 'unknown-record-label core)]
+          [(field-optional? field) (fail 'project-optional-field core)]
+          [else
+           (match (field-row-lookup row (peel-lbl label))
+             [(list field-type _) (list field-type record-row record-psi)]
+             [_ (fail 'unknown-record-label core)])])]
        [_ (fail 'project-non-record record)])]
 
     [`(RegionApp ,function (,rhos ...))

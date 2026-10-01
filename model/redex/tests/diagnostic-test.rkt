@@ -33,7 +33,8 @@
          "diagnostic-fixture-v26.rkt"
          "diagnostic-fixture-v27.rkt"
          "diagnostic-fixture-v28.rkt"
-         "diagnostic-fixture-v29.rkt")
+         "diagnostic-fixture-v29.rkt"
+         "diagnostic-fixture-v30.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -76,13 +77,13 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 214)
+ (check-equal? (length diagnostic-registry) 217)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
- (check-equal? (count-of 'elaborate) 62)
- (check-equal? (count-of 'typing) 106)
+ (check-equal? (count-of 'elaborate) 63)
+ (check-equal? (count-of 'typing) 108)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
  (check-equal? (count-of 'expand) 7)
@@ -96,7 +97,7 @@
  ;; elaborate / typing、version 14 の expand、version 15、17、19、20、21、22 の surface、
  ;; version 16 の elaborate / typing、version 18 の typing、version 23 と 24 の elaborate、
  ;; version 25 の elaborate / typing、version 26 の surface、version 27 の typing、
- ;; version 28 と 29 の surface である。
+ ;; version 28 と 29 の surface、version 30 の elaborate と typing である。
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
  (check-equal? (since-count 3) 13)
@@ -125,6 +126,7 @@
  (check-equal? (since-count 27) 1)
  (check-equal? (since-count 28) 2)
  (check-equal? (since-count 29) 8)
+ (check-equal? (since-count 30) 3)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
@@ -214,17 +216,23 @@
 
 ;; test 12
 (test-case
- "schema version は 4、registry version は 29 である"
+ "schema version は 4、registry version は 30 である"
  (check-equal? diagnostic-schema-version 4)
- (check-equal? diagnostic-registry-version 29))
+ (check-equal? diagnostic-registry-version 30))
 
 (test-case
- "registry version 29 と typing の入口 key"
- (check-equal? diagnostic-registry-version 29)
+ "registry version 30 と typing の入口 key"
+ (check-equal? diagnostic-registry-version 30)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004")
  (check-equal? (diagnostic-code-of 'typing 'type-origin-invalid)
-               "E-ORG-002"))
+               "E-ORG-002")
+ (check-equal? (diagnostic-code-of 'elaborate 'project-optional-field)
+               "E-RCD-011")
+ (check-equal? (diagnostic-code-of 'typing 'project-optional-field)
+               "E-RCD-012")
+ (check-equal? (diagnostic-code-of 'typing 'projborrow-optional-field)
+               "E-BOR-026"))
 
 ;; test 14
 (test-case
@@ -717,6 +725,18 @@
          (eq? (diagnostic-code-key row) key))
     (format "~a が registry に同じ組で存在する" code))))
 
+(test-case
+ "凍結 fixture v30 の全 (code phase key) が現在の registry に同じ組で存在する"
+ (check-equal? (length diagnostic-entries-v30) 217)
+ (for ([entry (in-list diagnostic-entries-v30)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true
+    (and row
+         (eq? (diagnostic-code-phase row) phase)
+         (eq? (diagnostic-code-key row) key))
+    (format "~a が registry に同じ組で存在する" code))))
+
 (define-runtime-path elaborate-source "../elaborate.rkt")
 
 ;; test 7
@@ -744,7 +764,8 @@
  ;; P2i1 では return-type-not-inferable を追加した。
  ;; P2i2 では parameter-type-not-inferable を追加した。
  ;; P2i3a では mutable-callable-storage-requires-partial を追加した。
- (check-equal? (length reasons) 55)
+ ;; P2l3a Task 6 では project-optional-field を追加した。
+ (check-equal? (length reasons) 56)
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)
                     (format "registry に無い reason: ~a" reason)))

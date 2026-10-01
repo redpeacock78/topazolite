@@ -189,7 +189,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 29 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 30 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
@@ -287,19 +287,19 @@ registry version 10 で足した typing の 12 行は `since` が10である。
 
 registry version 11 で足した elaborate の 1 行と typing の 1 行は `since` が11である。
 
-現在の registry は 214 行である。
+現在の registry は 217 行である。
 
 `deprecated-in` を持つのは 7 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
-残る 195 行は `#f` である。
+残る 210 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v29.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v30.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -385,6 +385,9 @@ v28 は surface へ `E-SUR-025` `surface-type-application-mismatch` と `E-SUR-0
 
 v29 は surface へ `E-SUR-027` `surface-duplicate-data-type`、`E-SUR-028` `surface-reserved-data-type-name`、`E-SUR-029` `surface-duplicate-constructor`、`E-SUR-030` `surface-duplicate-type-parameter`、`E-SUR-031` `surface-type-data-name-collision`、`E-SUR-032` `surface-constructor-value-name-collision`、`E-SUR-033` `surface-irregular-data-recursion`、`E-SUR-034` `surface-non-positive-data-recursion` の 8 行を足した。
 廃止した行は無いため、組は 206 に 8 を足した 214 になる。
+
+v30 は elaborate へ `E-RCD-011` `project-optional-field`、typing へ `E-RCD-012` `project-optional-field` と `E-BOR-026` `projborrow-optional-field` の 3 行を足した。
+廃止した行は無いため、組は 214 に 3 を足した 217 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

@@ -1474,12 +1474,18 @@
            (synth record environment delta propositions boundaries))
          (match (judgment-type record-result)
            [`(Record ,row)
-            (match (field-row-lookup row label)
-              [(list field-type _)
-               (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
-                         field-type
-                         (judgment-row record-result))]
-              [_ (reject s 'unknown-record-label label)])]
+            (define field (assoc label row))
+            (cond
+              [(not field) (reject s 'unknown-record-label label)]
+              [(field-optional? field)
+               (reject s 'project-optional-field label)]
+              [else
+               (match (field-row-lookup row label)
+                 [(list field-type _)
+                  (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
+                            field-type
+                            (judgment-row record-result))]
+                 [_ (reject s 'unknown-record-label label)])])]
            [_ (reject s 'project-non-record (judgment-type record-result))])]
 
         ;; spec §8。注釈なしの const と let と let mut である。宣言型が
