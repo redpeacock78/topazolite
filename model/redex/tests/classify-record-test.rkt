@@ -17,13 +17,15 @@
 
 ; Rec は record リテラルであり productivity guard ではない（core-calculus.md §6.2）。
 ; よって Rec／Proj で再帰呼び出しを包んでも productivity は変わらず、構造再帰として (Finite structural)。
-; walker に Rec／Proj 分岐が無いと fallthrough し Unknown へ誤分類する。
+; walker に Rec／Proj／Absent の分岐が無いと fallthrough し Unknown へ誤分類する。
 (define rec-loop
   '(Recur list-loop-id loop (xs)
           (Eliminate xs
                      ((nil () -> 0)
                       (cons (head tail) ->
-                            (Proj (Rec ((r imm (Apply loop tail)))) r))))
+                            (Proj (Rec ((r imm (Apply loop tail))
+                                       (absent imm (Absent Int))))
+                                  r))))
           (Apply loop (Construct (List Int) nil))))
 (check-equal? (classify rec-loop '() structural-callables) '(Finite structural))
 

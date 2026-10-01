@@ -101,14 +101,18 @@ bmode ::= const | let | mut
 
 c ::= ...
     | (Rec ((label1 m1 c1) ... (labeln mn cn)))
+    | (Absent τ)
     | (Proj c label)
     | (Let (x bmode τ) c1 c2)
 
 v ::= ...
     | (Rec ((label1 m1 v1) ... (labeln mn vn)))
+    | (Absent τ)
 ```
 
 `Rec` は record の各 field と可変性を保持する。
+`Absent τ` は optional 欄の不在を示す内部印であり、値 `τ` を作らない。
+型付けは `Absent` を `Rec` の欄の値としてだけ受理し、その欄を optional として合成する。
 `Proj` は record の field をラベルで射影する。
 binding mode 付き `Let` は `const`、`let`、`mut` の静的な binding policy を区別する。
 
@@ -134,8 +138,10 @@ label1, ..., labeln は互いに相異なる
 ```
 
 `Rec` が可変性を値に保持するため、`mut` field を持つ record 型にも well-typed な値が存在する。
-record 値の field に `Owned` を許すと affine 検査を record 内部へ迂回できるため、G2a は先頭型が `Owned` の field を拒否する。
-この制限は G1 が constructor field、関数引数、closure capture から `Owned` を除外する方針を保つ。
+`T-Rec` は通常の欄の値を合成し、先頭型が `Owned` の欄を拒否する。
+欄の値が `(Absent τ)` の場合は `τ` の値を合成せず、効果を加えずに `(label τ m opt)` として合成する。
+この場合の `τ` は `Owned` でもよい。値や affine token を欄に格納しないためである。
+`Absent` を `Rec` の欄以外で使う項は型付けで拒否する。
 
 **(T-Drop-Remainder)** [REQ: PRF-005]
 
@@ -167,7 +173,10 @@ P2l3a では optional 欄に Core の `Proj` と `ProjBorrow` を適用しない
 UCore の `Proj` は elaboration で `E-RCD-011` を返し、Typed Core の `Proj` は typing で `E-RCD-012` を返す。
 Typed Core の `ProjBorrow` は typing で `E-BOR-026` を返す。
 欄の有無を先に検査し、存在しない場合は従来どおり欠落欄の診断を返す。
-optional 欄を射影する `ProjOpt` は P2l3b で導入する。
+`ProjOpt` は、欄が存在し、その型が注釈型 `τ` と互換なら presence によらず `(Option τ)` を返す。
+欄の型が互換でなければ `E-RCD-013` で拒否し、欄が row に無ければ既存の欠落欄診断を返す。
+値の欄が `(Absent τ')` なら `ProjOpt` は `none` を返し、値があれば `some` を返す。
+Surface の射影を `ProjOpt` へ振り分ける処理は P2l3b で導入する。
 
 指定ラベルが r に存在しなければ型エラーである。
 `let` が保持する残余 field も束縛変数の平坦な field row に含まれるため、合流前の現在の flow では射影できる。
@@ -185,10 +194,11 @@ binding mode 付き `Let` は record 型以外にも使える。
 注釈型が `(Record r_T)` の場合、bound を synthesis して得た `(Record r_b)` と §3.3 の `compat?` を照合する。
 このときの**残余 row**は `ρ = residual(r_b, r_T)` である。
 
-bound が構文上の `Rec` であり、書かれた欄が `r_T` に含まれ、省略欄がすべて optional なら、省略欄を除いた `r_T` と `r_b` を `compat?` で照合する。
-右辺が中間束縛などを経由して `Rec` の値になった場合は、この省略規則を適用しない。
-省略欄は束縛後の宣言型に残るため、optional 欄の不在はその束縛の型に保持される。
-この条件を満たさない bound は既存の互換規則で照合する。
+elaborate の check は、`Rec` が期待型の欄を全て書き、省略欄がすべて optional なら受理する。
+受理した場合、elaborate は省略欄ごとに `(label m (Absent τ))` を補う。
+`m` と `τ` は期待型の欄から取り、補った `Rec` の推論型にも optional presence を残す。
+Core の `binding-context` は構文上の bound が `Rec` かどうかを調べず、合成した型と宣言型を通常の `compat?` で照合する。
+そのため、束縛変数を値で置き換えても optional 欄の不在は値に保持される。
 
 **(T-LetConstRecord)** [REQ: ROW-001]
 

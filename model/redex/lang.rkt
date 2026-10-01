@@ -144,6 +144,7 @@
          (RemainderSafelyDropped τ τ))
   (c ::= ....
          (Rec ((label m c) ...))
+         (Absent τ)
          (Proj c label)
          (ProjOpt τ c label)
          (Let (x bmode τ) c c)
@@ -167,6 +168,7 @@
          (Unsafe c))
   (v ::= ....
          (Rec ((label m v) ...))
+         (Absent τ)
          (UVal v)
          (RVal (ProofRep O φ) v)
          (RegionLam (rp ...) c))
@@ -262,6 +264,7 @@
          (RemainderSafelyDropped τ τ))
   (c ::= ....
          (Rec ((label m c) ...))
+         (Absent τ)
          (Proj c label)
          (ProjOpt τ c label)
          (Let (x bmode τ) c c)
@@ -288,6 +291,7 @@
   (own ::= (Own w fp))
   (v ::= ....
          (Rec ((label m v) ...))
+         (Absent τ)
          (UVal v)
          (RVal (ProofRep O φ) v)
          (BorrowRef p fp ρ)

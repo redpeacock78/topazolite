@@ -192,6 +192,14 @@
    (core-types-normal?
     (annotate-core '(Construct (Union String Int) MkPair 1 2)))))
 
+(test-case "core-types-normal? は Absent に埋めた型を検査する"
+  (check-true (core-types-normal? '(Rec ((o imm (Absent Int))))))
+  (check-false
+   (core-types-normal? '(Rec ((o imm (Absent (Union Int Int)))))))
+  (check-equal?
+   (core-types-normal? (annotate-core '(Rec ((o imm (Absent Int))))))
+   (core-types-normal? '(Rec ((o imm (Absent Int)))))))
+
 (test-case "core-types-normal? は知らない metadata head を通さない"
   (check-exn exn:fail?
              (λ () (core-types-normal? '(Apply (#:tag Int) 1))))

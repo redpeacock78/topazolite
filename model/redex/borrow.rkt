@@ -155,6 +155,7 @@
 (define (collect-tokens value)
   (match value
     [`(OwnedLeaf ,tk ,payload) (cons tk (collect-tokens payload))]
+    [`(Absent ,_) '()]
     ;; CurryVal の origin は生成履歴であり、固定引数と同じ値を複製して
     ;; 持つことがあるため走査しない。
     [`(CurryVal ,_origin ,function ,fixed)
@@ -185,6 +186,7 @@
                    (list (list tk (reverse path)))
                    '())
                (walk payload path #f))]
+      [`(Absent ,_) '()]
       [`(Rec ((,names ,_modes ,values) ...))
        (append-map (lambda (name child)
                      (walk child (cons name path) #f))
@@ -219,6 +221,7 @@
     [`(OwnedLeaf ,_tk ,payload)
      (and (not (owned-leaf? payload))
           (walk-leaf-positions payload))]
+    [`(Absent ,_) #t]
     [`(Rec ((,_name ,_mode ,values) ...))
      (andmap walk-leaf-positions values)]
     [`(Construct ,_type ,_constructor ,fields ...)
@@ -593,6 +596,7 @@
     [`(Rec (,fields ...))
      (only (for/fold ([acc (set)]) ([field (in-list fields)])
              (set-union acc (ws-of (third field)))))]
+    [`(Absent ,_) (only (set))]
     [`(Construct ,_ ,K ,fields ...)
      (define entries (for/list ([field (in-list fields)]) (recur field)))
      (cons (for/fold ([acc (set)]) ([e (in-list entries)])

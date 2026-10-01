@@ -52,7 +52,7 @@
                   (Rec ((a imm 1) (b imm 2)))
                   x))
  '(Record ((a Int imm) (b Int imm opt))))
-;; 省略した optional 欄は宣言型で束縛される。
+;; elaborate は省略した optional 欄を Absent として明示する。
 (check-equal?
  (elab-type '(Let (x let (Record ((a Int imm) (b Int imm opt))))
                   (Rec ((a imm 1)))
@@ -63,14 +63,31 @@
   (elab-core '(Let (x const (Record ((a Int imm) (b Int imm opt))))
                    (Rec ((a imm 1)))
                    x))
-  [`(Let (,outer const ,outer-type)
-         (Let (,inner const ,inner-type) (Rec ((a imm 1))) ,inner-ref)
-         ,outer-ref)
-   (and (equal? outer-type '(Record ((a Int imm) (b Int imm opt))))
-        (equal? inner-type outer-type)
-        (equal? inner inner-ref)
-        (equal? outer outer-ref))]
+  [`(Let (,name const ,type)
+         (Rec ((a imm 1) (b imm (Absent Int))))
+         ,body)
+   (and (equal? type '(Record ((a Int imm) (b Int imm opt))))
+        (equal? name body))]
   [_ #f]))
+(define (contains-absent? value)
+  (or (match value [`(Absent ,_) #t] [_ #f])
+      (and (list? value) (ormap contains-absent? value))))
+(check-true
+ (contains-absent?
+  (elab-core
+   '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+      (Rec ((a imm 1)))
+      (Let (n const (Record
+                     ((inner (Record ((a Int imm) (b Int imm opt))) imm)
+                      (outer Int imm opt))))
+        (Rec ((inner imm (Rec ((a imm 2))))))
+        0)))))
+(check-equal? (elab-code '(Absent Int)) "E-SYN-003")
+(check-equal?
+ (elab-code '(Let (x let (Record ((a Int mut) (b Int imm opt))))
+                  (Rec ((a imm 1)))
+                  x))
+ "E-TYP-012")
 (check-true
  (elab-error? '(Let (x let (Record ((a Int imm) (b Int imm opt))))
                     (Rec ((b imm 1)))

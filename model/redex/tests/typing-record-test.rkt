@@ -46,13 +46,45 @@
  "E-RCD-009")
 (check-equal? (core-type-of '(Proj r a) '() '() opt-env) '(Int ()))
 
-; ProjOpt は optional の欄だけを (Option τ) として射影する。
+; ProjOpt は欄の型が互換なら、presence によらず (Option τ) として射影する。
 (check-equal? (core-type-of '(ProjOpt Int r b) '() '() opt-env)
               '((Option Int) ()))
-; required の欄と τ の不一致は E-RCD-013、未知欄と record 以外は従来の診断を保つ。
+; Absent は Rec の欄の値としてだけ optional を表す。
 (check-equal?
- (code-of (core-type-of/diagnostic '(ProjOpt Int r a) '() '() opt-env))
- "E-RCD-013")
+ (core-type-of '(Rec ((a imm 1) (b imm (Absent Int)))) '() '())
+ '((Record ((a Int imm) (b Int imm opt))) ()))
+(check-equal?
+ (core-type-of '(Rec ((owned imm (Absent (Owned Res))))) '() '())
+ '((Record ((owned (Owned Res) imm opt))) ()))
+; optional 欄の型は値の置換後も推論型に残る。
+(define absent-record
+  '(Rec ((a imm 1) (b imm (Absent Int)))))
+(check-equal?
+ (core-type-of `(Let (r const ,(second (first opt-env)))
+                      ,absent-record
+                      (ProjOpt Int r b))
+               '() '())
+ '((Option Int) ()))
+(check-equal?
+ (core-type-of
+  '(Let (y const (Record ((a Int imm) (b Int imm opt))))
+     (Rec ((a imm 1) (b imm (Absent Int))))
+     (Let (n const (Record ((inner (Record ((a Int imm) (b Int imm opt))) imm))))
+       (Rec ((inner imm y)))
+       0))
+ '() '())
+ '(Int ()))
+;; Function の formal へ渡しても absent 欄の型が引数の置換後に残る。
+(define absent-parameter-type
+  '(NFn ((Record ((a Int imm) (b Int imm opt))))
+        (Option Int) () () () User))
+(check-equal?
+ (core-type-of '(Apply f (Rec ((a imm 1) (b imm (Absent Int)))))
+               '() '() `((f ,absent-parameter-type)))
+ '((Option Int) ()))
+; required の欄も受理し、型不一致は E-RCD-013、未知欄と非 record は従来どおり。
+(check-equal? (core-type-of '(ProjOpt Int r a) '() '() opt-env)
+              '((Option Int) ()))
 (check-equal?
  (code-of (core-type-of/diagnostic '(ProjOpt Bool r b) '() '() opt-env))
  "E-RCD-013")
@@ -62,6 +94,10 @@
 (check-equal?
  (code-of (core-type-of/diagnostic '(ProjOpt Int 1 b) '() '() '()))
  "E-RCD-007")
+; Rec の欄の位置以外では Absent を値として使えない。
+(check-equal? (core-type-of '(Absent Int) '() '()) 'ill-typed)
+(check-equal? (core-type-of '(OwnedLeaf (tok 0) (Absent Int)) '() '())
+              'ill-typed)
 
 ; 入れ子の optional 欄を some 枝で射影し、none 枝と同じ Option 型へ合流する。
 (check-equal?

@@ -24,13 +24,20 @@
 ; Let の effect row は bound と body の effect の和（structural-row.md §5.4）
 (check-equal? (core-type-of '(Let (x const Int) (Suspend 1) x) '() '()) '(Int (Suspend)))
 
-;; optional 欄だけを Rec から省略した const は宣言型のまま束縛する。
+;; Absent が optional の欄を明示するため、通常の互換規則で束縛できる。
+(check-equal?
+ (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))
+                     (Rec ((a imm 1) (b imm (Absent Int))))
+                     x)
+               '() '())
+ '((Record ((a Int imm) (b Int imm opt))) ()))
+;; Core の Rec が欄を省略しても、typing は不在を推測しない。
 (check-equal?
  (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))
                      (Rec ((a imm 1)))
                      x)
                '() '())
- '((Record ((a Int imm) (b Int imm opt))) ()))
+ 'ill-typed)
 ;; required 欄の省略と宣言に無い欄の記述は拒否する。
 (check-equal?
  (core-type-of '(Let (x const (Record ((a Int imm) (b Int imm opt))))

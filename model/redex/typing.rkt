@@ -1752,28 +1752,16 @@
     (fail 'mut-binding-unsupported-type node))
   (match declared-type
     [`(Record ,declared-row)
-     (define omitted
-       (match (peel-node bound)
-         [`(Rec (,fields ...))
-          (omitted-optional-labels
-           (map (lambda (field) (peel-lbl (first field))) fields)
-           declared-row)]
-         [_ #f]))
-     (define compatibility-row
-       (if (and omitted (pair? omitted))
-           (filter (lambda (field) (not (memq (first field) omitted)))
-                   declared-row)
-           declared-row))
      (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (compat? `(Record ,actual-row) `(Record ,compatibility-row)
+        (unless (compat? `(Record ,actual-row) `(Record ,declared-row)
                          (current-Γ-pc0)
                          (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
-          (field-row-residual actual-row compatibility-row))
+          (field-row-residual actual-row declared-row))
         (define binding-row
           (case binding-mode
             [(const)
@@ -1798,12 +1786,8 @@
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
-        (define narrowing-row
-          (if (and omitted (pair? omitted))
-              (filter (lambda (field) (not (memq (first field) omitted)))
-                      binding-row)
-              binding-row))
-        ;; OWN-004。let の残余は expected 側へ残し、省略欄だけを除いて検査する。
+        (define narrowing-row binding-row)
+        ;; OWN-004。binding-row の宣言欄と残余欄を保って narrowing を検査する。
         (match (owned-narrowing-kind
                 `(Record ,actual-row)
                 `(Record ,narrowing-row)
@@ -2601,12 +2585,17 @@
                  ([field (in-list plain-fields)]
                   [i (in-naturals)])
          (define result
-           (infer (third field) (enter-child Λ i)
-                  current-psi environment places callables fail))
+           (match (peel-node (third field))
+             [`(Absent ,type) (list (peel-ty type) '() current-psi)]
+             [_ (infer (third field) (enter-child Λ i)
+                       current-psi environment places callables fail)]))
          (values (append results (list result)) (third result))))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
        (when (and (owned-type? (first result))
+                  (not (match (peel-node (third field))
+                         [`(Absent ,_) #t]
+                         [_ #f]))
                   (not (and (deriving-config?)
                             (match (peel-node (third field))
                               [`(OwnedLeaf ,_ ,_) #t]
@@ -2616,7 +2605,9 @@
       `(Record
         ,(for/list ([field (in-list plain-fields)]
                     [result (in-list results)])
-           `(,(first field) ,(first result) ,(second field))))
+           (if (match (peel-node (third field)) [`(Absent ,_) #t] [_ #f])
+               `(,(first field) ,(first result) ,(second field) opt)
+               `(,(first field) ,(first result) ,(second field)))))
       (rows-union (map second results))
       final-psi)]
 
@@ -2667,7 +2658,7 @@
         (define type (peel-ty τ))
         (cond
           [(not field) (fail 'unknown-record-label core)]
-          [(and (field-optional? field) (type-equiv? (second field) type))
+          [(type-compatible? (second field) type)
            (list `(Option ,type) record-row record-psi)]
           [else (fail 'projopt-invalid-field core)])]
        [_ (fail 'project-non-record record)])]

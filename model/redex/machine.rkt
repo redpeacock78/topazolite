@@ -161,6 +161,8 @@
 
 (define-metafunction G2m
   projopt-result : τ ((label v) ...) label -> any
+  [(projopt-result τ (_ ... (label_target (Absent _)) _ ...) label_target)
+   (Construct (Option τ) none)]
   [(projopt-result τ (_ ... (label_target v_target) _ ...) label_target)
    (Construct (Option τ) some v_target)]
   [(projopt-result τ _ label_target)

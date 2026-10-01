@@ -172,6 +172,7 @@
   (ls ::= (#:lbl label s))
   (c ::= ....
          (Rec s ((ls m c) ...))
+         (Absent s ts)
          (Proj s c ls)
          (ProjOpt s ts c ls)
          (Let s (xs bmode ts) c c)
@@ -181,6 +182,7 @@
          (MacroCall s O nm (c ...)))
   (v ::= ....
          (Rec s ((ls m v) ...))
+         (Absent s ts)
          (UVal s v)
          (RVal s (ProofRep s O φ) v))
   #:binding-forms

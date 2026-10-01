@@ -93,6 +93,9 @@
   (check-match (compile-code "foo(1)") (or "E-VAR-002" "E-VAR-006"))
   (check-match (compile-code "foo") (or "E-VAR-002" "E-VAR-006")))
 
+(test-case "Absent は Surface の印ではなく通常の未束縛識別子である"
+  (check-equal? (compile-code "Absent") "E-VAR-002"))
+
 (test-case "関数の本体、impl の本体、record、射影の中の constructor を置き換える"
   (check-true (ok? (string-append color "fn f() -> Color { red }\nf()")))
   (check-true (ok? (string-append color "let r = { c: red }\nr.c")))

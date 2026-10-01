@@ -81,6 +81,15 @@
                                      '((Apply g 2)))
                 '(ProjOpt Int (Apply g 2) fld)))
 
+(test-case "Absent は Rec の欄の子であり、自身は葉である"
+  (define core '(Rec ((a imm 1) (o imm (Absent Int)))))
+  (define children (core-children core))
+  (check-equal? children '(1 (Absent Int)))
+  (check-equal? (core-children '(Absent Int)) '())
+  (define rebuilt (core-with-children core children))
+  (check-equal? rebuilt core)
+  (check-equal? (core-points rebuilt) (core-points core)))
+
 (test-case "core-free-vars は Owned leaf の payload を見る"
   (check-equal? (core-free-vars '(OwnedLeaf (tok 0) x)) (set 'x)))
 

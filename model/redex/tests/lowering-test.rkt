@@ -138,9 +138,28 @@
                '(PTagged proof))
  (check-equal? (lower-value-ok '(Rec ((a imm 1) (b imm 2))))
                `(PRec ((,(label-code 'a) 1) (,(label-code 'b) 2))))
+ (check-equal?
+  (lower-value-ok '(Rec ((a imm 1) (o imm (Absent (Owned Res))))))
+  `(PRec ((,(label-code 'a) 1))))
  (check-equal? (lower-value-ok '(UVal 1)) '(PTagged uval 1))
  (check-equal? (lower-value-ok '(RVal (ProofRep User TypeNarrativeCap) 1))
                '(PTagged rval 1)))
+
+(test-case "Absent 欄の lowering は観測値から欄を落とす"
+  (define core
+    '(Yield (Rec ((a imm 1) (o imm (Absent Int)))) unit))
+  (define-values (status target) (lower core 'racket-cs))
+  (check-eq? status 'ok)
+  (define source-observation (obs-eval-g2 core 1 20))
+  (define target-observation (obs-eval-pr target 1 20))
+  (check-equal?
+   source-observation
+   (list (list '(Rec ((a imm 1) (o imm (Absent Int))))) 'observed))
+  (check-equal?
+   target-observation
+   (list (list `(PRec ((,(label-code 'a) 1)))) 'observed))
+  (check-equal? (map lower-value-ok (first source-observation))
+                (first target-observation)))
 
 (test-case
  "the fixed tags lowering invents never collide with encoded tags"

@@ -117,6 +117,11 @@
 
 ;; backend / matrix / fail を閉じ込めて、写しの各行を 1 引数の関数として書く。
 (define (make-lowering backend matrix fail)
+  (define (absent-field? field)
+    (match (peel-node field)
+      [`(Absent ,_) #t]
+      [_ #f]))
+
   ;; 形の feature を引き、backend が非対応なら診断へ脱出する。対応表に無い頭
   ;; シンボルは unknown-core-form で閉じる（backend-matrix.md §8）。
   (define (require-feature-id! feature-id node)
@@ -234,9 +239,9 @@
       [`(TypeRep ,_ ,_ ,_) '(PTagged typerep)]
       [`(ProofRep ,_ ,_) '(PTagged proof)]
       [`(Rec ((,labels ,_ ,fields) ...))
-       `(PRec ,(map (lambda (label field)
-                      (list (label-code (peel-lbl label)) (lower-val field)))
-                    labels fields))]
+       `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
+                          #:unless (absent-field? field))
+                 (list (label-code (peel-lbl label)) (lower-val field))))]
       [`(UVal ,inner) `(PTagged uval ,(lower-val inner))]
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
       ;; RegionLam は実行時に意味を持たない静的な包みであり、本体へ落とす。
@@ -306,9 +311,9 @@
          [`(Curry ,function ,argument)
           `(PRuntime curry ,(lower-core function) ,(lower-core argument))]
          [`(Rec ((,labels ,_ ,fields) ...))
-          `(PRec ,(map (lambda (label field)
-                         (list (label-code (peel-lbl label)) (lower-core field)))
-                       labels fields))]
+          `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
+                             #:unless (absent-field? field))
+                    (list (label-code (peel-lbl label)) (lower-core field))))]
          [`(Proj ,record ,label)
           `(PProj ,(lower-core record) ,(label-code (peel-lbl label)))]
          [`(ProjOpt ,τ ,record ,label)

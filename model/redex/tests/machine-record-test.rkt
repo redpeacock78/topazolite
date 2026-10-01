@@ -2,7 +2,8 @@
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../typing.rkt")
 
 (define fuel 40)
 (define acquire (term (PrimVal (Reserved o-acquire) acquire)))
@@ -93,6 +94,34 @@
                       r)
                  b)))
  (term (Construct (Option Int) none)))
+; Absent は欄の不在を値に保ち、束縛後も none へ射影される。
+(check-equal?
+ (run-g2-core
+  '(Let (r const (Record ((a Int imm) (b Int imm opt))))
+     (Rec ((a imm 1) (b imm (Absent Int))))
+     (ProjOpt Int r b)))
+ '(Construct (Option Int) none))
+(check-equal?
+ (run-g2-core
+  '(ProjOpt Int
+     (Rec ((a imm 1) (b imm (Absent Int))))
+     b))
+ '(Construct (Option Int) none))
+(define absent-projopt-after-let
+  (first
+   (raw-steps-g2
+    (inject-g2
+     '(Let (r const (Record ((a Int imm) (o Int imm opt))))
+        (Rec ((a imm 1) (o imm (Absent Int))))
+        (ProjOpt Int r o))))))
+(check-equal?
+ absent-projopt-after-let
+ '(cfg (Scope () (ProjOpt Int (Rec ((a imm 1) (o imm (Absent Int)))) o))
+       () () () ()))
+(check-equal?
+ (core-type-of '(Scope () (ProjOpt Int (Rec ((a imm 1) (o imm (Absent Int)))) o))
+               '() '())
+ '((Option Int) ()))
 ; 型が optional でも値に欄が残れば some を返す。
 (check-equal?
  (run-g2-core
@@ -105,12 +134,12 @@
                       b))))
  (term (Construct (Option Int) some 2)))
 
-;; optional 欄を省略した literal は Let で宣言型に束縛される。
+;; Absent 欄を持つ literal は置換後も optional の欄として射影できる。
 (check-equal?
  (run-g2-core
   (term (Proj
          (Let (x const (Record ((a Int imm) (b Int imm opt))))
-              (Rec ((a imm 1)))
+              (Rec ((a imm 1) (b imm (Absent Int))))
               x)
          a)))
  (term 1))
@@ -129,3 +158,15 @@
                         (Proj s a)))))))
          fuel)
  (term (cfg 1 ((0 (Rec ((a imm 2))))) ((0 Dropped)) () ((fin 0)))))
+
+; Absent の Owned 欄は drop でも観測でも token を要求しない。
+(check-equal?
+ (run-g2 (inject-g2
+          '(Drop (Rec ((owned imm (Absent (Owned Res)))))))
+         fuel)
+ '(cfg unit () () () ()))
+(check-equal?
+ (run-g2 (inject-g2
+          '(Yield (Rec ((owned imm (Absent (Owned Res))))) unit))
+         fuel)
+ '(cfg unit () () () ((obs (Rec ((owned imm (Absent (Owned Res)))))))))

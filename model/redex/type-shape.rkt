@@ -296,6 +296,7 @@
          [`(PtrVal ,_ ,_ ,_ ,_) #t]
          [`(Move ,_) #t]
          [`(MutSlot ,_) #t]
+         [`(Absent ,type) (type-normal? type)]
          [`(Drop ,argument) (walk argument)]
          [`(Curry ,function ,argument)
           (and (walk function) (walk argument))]

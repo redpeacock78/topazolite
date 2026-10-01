@@ -328,7 +328,7 @@
 
 (define typing-entries-v31
   '(("E-RCD-013" projopt-invalid-field
-                 "ProjOpt の注釈が optional の欄と合わない")))
+                 "ProjOpt の τ が欄の型と互換でない")))
 
 (define borrow-entries-v30
   '(("E-BOR-026" projborrow-optional-field

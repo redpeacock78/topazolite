@@ -193,6 +193,7 @@
       [`(BorrowMutRef ,_ ,_ ,_) #t]
       [`(PtrVal ,_ ,_ ,_ ,_) #t]
       [`(resource ,_) #t]
+      [`(Absent ,_) #t]
       [`(Construct ,_ ,_ ,fields ...)
        (andmap (lambda (field)
                  (walk field environment target-visible?))
@@ -349,6 +350,7 @@
       [`(BorrowMutRef ,_ ,_ ,_) no-uses]
       [`(PtrVal ,_ ,_ ,_ ,_) no-uses]
       [`(resource ,_) no-uses]
+      [`(Absent ,_) no-uses]
       [`(Construct ,_ ,_ ,fields ...)
        (combine-uses
         (map (lambda (field) (walk field target-visible?)) fields))]
@@ -504,6 +506,7 @@
       [`(TypeRep ,_ ,_ ,_) #t]
       [`(ProofRep ,_ ,_) #t]
       [`(resource ,_) #t]
+      [`(Absent ,_) #t]
       [`(Construct ,_ ,_ ,fields ...)
        (andmap (lambda (field)
                  (walk field decomposable strict target-visible?))

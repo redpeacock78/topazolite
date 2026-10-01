@@ -60,6 +60,11 @@
                 (set (list 'x)))
   (check-equal? (borrow-token-key Λ_0 '(Rec ((a imm (resource 1))))) (set)))
 
+(check-equal?
+ (borrow-token-key (empty-region-ctx)
+                   '(Rec ((absent imm (Absent (BorrowedMut Int 0))))))
+ (set))
+
 ;; 登録のない designator は、明示的な fail が無い限り空集合になる。
 (let ()
   (define core '(Scope () (Let (x let (Owned Res)) (resource 1) (Borrow x))))

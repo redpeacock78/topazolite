@@ -64,6 +64,7 @@
                                     [mode (in-list m)]
                                     [body (in-list c)])
                            (list (lbl l) mode (ann body))))]
+      [(list 'Absent type) (list 'Absent (next) (ty type))]
       [(list 'Proj c label) (list 'Proj (next) (ann c) (lbl label))]
       [(list 'ProjOpt τ c label)
        (list 'ProjOpt (next) (ty τ) (ann c) (lbl label))]

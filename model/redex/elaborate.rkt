@@ -543,6 +543,7 @@
         (match field
           [`(,_ ,_ ,body) (free-vars/erased body)]
           [_ (set)])))]
+    [`(Absent ,_) (set)]
     [`(Proj ,record ,_) (free-vars/erased record)]
     [`(ProjOpt ,_ ,record ,_) (free-vars/erased record)]
     [`(Construct ,_ (Types ,_ ...) ,fields ...)
@@ -1868,40 +1869,34 @@
              (when (owned-type? (judgment-type result))
                (reject s 'owned-record-field label))
              (list label mutability result)))
+         (define absent-fields
+           (for/list ([field (in-list expected-fields)]
+                      #:when (memq (first field) (or omitted '())))
+             (match-define (list label field-type mutability 'opt) field)
+             (list (list '#:lbl label s)
+                   mutability
+                   (list 'Absent s (list '#:ty field-type s)))))
          (define rec-result
            (judgment
             `(Rec ,s
-              ,(for/list ([field (in-list field-results)]
-                          [raw-label (in-list raw-labels)])
-                 (match-define (list _ mutability result) field)
-                 `(,raw-label ,mutability ,(judgment-core result))))
+              ,(append
+                (for/list ([field (in-list field-results)]
+                           [raw-label (in-list raw-labels)])
+                  (match-define (list _ mutability result) field)
+                  `(,raw-label ,mutability ,(judgment-core result)))
+                absent-fields))
             `(Record
-              ,(for/list ([field (in-list field-results)])
-                 (match-define (list label mutability result) field)
-                 `(,label ,(judgment-type result) ,mutability)))
+              ,(append
+                (for/list ([field (in-list field-results)])
+                  (match-define (list label mutability result) field)
+                  `(,label ,(judgment-type result) ,mutability))
+                (for/list ([field (in-list expected-fields)]
+                           #:when (memq (first field) (or omitted '())))
+                  `(,(first field) ,(second field) ,(third field) opt))))
             (rows-union
              (for/list ([field (in-list field-results)])
                (judgment-row (third field))))))
-         (if (and omitted (pair? omitted))
-             (let ([name
-                    (fresh-owned-name
-                     (set-union (form-symbols expression)
-                                (list->set (map first environment))))])
-               (define checked-rec
-                 (check-against-expected
-                  rec-result
-                  `(Record
-                    ,(filter (lambda (field)
-                               (not (memq (first field) omitted)))
-                             expected-fields))
-                  s propositions))
-               (judgment
-                `(Let ,s ((#:bind ,name ,s) const (#:ty ,expected ,s))
-                      ,(judgment-core checked-rec)
-                      (#:var ,name ,s))
-                expected
-                (judgment-row checked-rec)))
-             (check-against-expected rec-result expected s propositions))]
+         (check-against-expected rec-result expected s propositions)]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)

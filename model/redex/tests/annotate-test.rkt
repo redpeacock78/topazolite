@@ -72,6 +72,7 @@
 
 (define g2-terms
   (term ((Rec ((a imm 1)))
+         (Rec ((a imm 1) (o imm (Absent Int))))
          (Proj (Rec ((a imm 1))) a)
          (ProjOpt Int (Rec ((a imm 1))) a)
          (Let (x const Int) 1 x)

@@ -390,6 +390,7 @@ v30 は elaborate へ `E-RCD-011` `project-optional-field`、typing へ `E-RCD-0
 廃止した行は無いため、組は 214 に 3 を足した 217 になる。
 
 v31 は typing へ `E-RCD-013` `projopt-invalid-field` を 1 行足した。
+この key は `ProjOpt` の欄の型と `τ` が互換でない場合に使う。
 廃止した行は無いため、組は 217 に 1 を足した 218 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。

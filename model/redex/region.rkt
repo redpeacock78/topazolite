@@ -45,6 +45,7 @@
     [`(Drop ,c) (list c)]
     [`(Curry ,c_1 ,c_2) (list c_1 c_2)]
     [`(Rec ((,_ ,_ ,cs) ...)) cs]
+    [`(Absent ,_) '()]
     [`(Proj ,c ,_) (list c)]
     [`(ProjOpt ,_ ,c ,_) (list c)]
     [`(Discharge (ProofRep ,_ ,_) ,c) (list c)]
