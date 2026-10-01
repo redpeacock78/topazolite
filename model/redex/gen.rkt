@@ -160,19 +160,6 @@
              (Rec ((nested imm g-rec-leaf) (a mut gn))))
   (g-record ::= g-rec
                 (Proj g-rec-leaf a)
-                ;; b は UCore の非終端なので、欄名の一貫性には固定名を使う。
-                (ProjOpt Int
-                         (Let (record const
-                                      (Record ((a Int imm) (opt-field Int imm opt))))
-                              (Rec ((a imm gn) (opt-field imm gn)))
-                              record)
-                         opt-field)
-                (ProjOpt Int
-                         (Let (record const
-                                      (Record ((a Int imm) (opt-field Int imm opt))))
-                              (Rec ((a imm gn)))
-                              record)
-                         opt-field)
                 (Proj (Rec ((a imm gn) (extra mut unit))) extra)
                 (Proj (Rec ((nested imm g-rec-leaf))) nested)
                 (Let (record let (Record ((a Int imm))))

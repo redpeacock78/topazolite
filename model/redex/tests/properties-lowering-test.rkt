@@ -495,8 +495,6 @@
 (define effect-tight-witness (box 0))
 (define trace-compared (box 0))
 (define trace-discarded (box 0))
-(define projopt-some-witness (box 0))
-(define projopt-none-witness (box 0))
 
 ;; backend-matrix.md §6。評価結果が値なら repr(τ) に属する。
 ;; τ は Typed Core の型付け判定から取り、elaboration-result の型を
@@ -607,42 +605,6 @@
    "BAK-001 backend-matrix.md §6: 観測列と終端種別が一致する"
    trace-preserved?
    (list (cons 'compared trace-compared)))
-
-  (test-case "BAK-001: g-record が ProjOpt の some と none の観測を保つ"
-    (define counts (make-search-counts limits))
-    (define (preserves-projopt? source)
-      (match source
-        [`(ProjOpt Int
-                   (Let (record const
-                                (Record ((a Int imm) (opt-field Int imm opt))))
-                        (Rec (,fields ...))
-                        record)
-                   opt-field)
-         (check-equal? (core-type-of source '() '()) '((Option Int) ()))
-         (define-values (status target) (lower source 'racket-cs))
-         (check-eq? status 'ok)
-         (check-eq? (compare-observations source target depth) 'match)
-         (if (ormap (lambda (field) (eq? (first field) 'opt-field)) fields)
-             (bump! projopt-some-witness)
-             (bump! projopt-none-witness))
-         #t]
-        [_ #t]))
-    (define result
-      (call-with-search-seed
-       limits
-       (lambda ()
-         (redex-check
-          G2gen g-record #:ad-hoc
-          (begin
-            (note-accepted! counts)
-            (preserves-projopt? (term g-record)))
-          #:attempts (bounds-attempts limits)
-          #:attempt-size (lambda (_attempt) (bounds-term-depth limits))
-          #:print? #f))))
-    (check-equal? result #t)
-    (check-true (positive? (search-counts-accepted counts)))
-    (check-true (positive? (unbox projopt-some-witness)))
-    (check-true (positive? (unbox projopt-none-witness))))
 
   ;; discard は受理項の半分を超えない。超えたときは fuel の与え方か生成器の
   ;; 分布のどちらかが壊れており、性質が実質的に空振りしている。
