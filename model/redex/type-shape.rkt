@@ -302,6 +302,8 @@
          [`(Error ,_) #t]
          [`(Rec ,fields) (andmap walk-record-field fields)]
          [`(Proj ,record ,_) (walk record)]
+         [`(ProjOpt ,type ,record ,_)
+          (and (type-normal? type) (walk record))]
          [`(resource ,_) #t]
          [`(OwnLeaf ,payload) (walk payload)]
          [`(OwnedLeaf ,_ ,payload) (walk payload)]

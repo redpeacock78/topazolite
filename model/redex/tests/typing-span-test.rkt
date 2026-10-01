@@ -240,7 +240,8 @@
     arity-mismatch branch-binder-arity parameter-arity-mismatch
     ;; RCD
     const-record-residual duplicate-record-label project-non-record
-    project-optional-field record-binding-incompatible unknown-record-label
+    project-optional-field projopt-invalid-field
+    record-binding-incompatible unknown-record-label
     unmergeable-branch-records
     ;; DAT
     duplicate-branch-constructor non-data-eliminate non-exhaustive-eliminate
@@ -635,6 +636,12 @@
                           (reach-var 'r 1741 1742)
                           (reach-lbl 'b 1755 1756))
               '() '() `((r ,reach-record-optional)) (reach-span 1740 1758))
+   (reach-row 'projopt-invalid-field
+              (reach-node 'ProjOpt 1789 1808
+                          (reach-ty 'Bool 1790 1794)
+                          (reach-var 'r 1795 1796)
+                          (reach-lbl 'b 1800 1801))
+              '() '() `((r ,reach-record-optional)) (reach-span 1789 1808))
    (reach-row 'projborrow-optional-field
               reach-projborrow-optional-core
               '((1 (Record ((a Int imm) (b Int imm opt))))) '() '()
@@ -943,7 +950,7 @@
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 105)
+  (check-equal? (length producer-keys) 106)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

@@ -2659,6 +2659,19 @@
              [_ (fail 'unknown-record-label core)])])]
        [_ (fail 'project-non-record record)])]
 
+    [`(ProjOpt ,τ ,record ,label)
+     (match (infer record (enter-child Λ 0)
+                   Ψ environment places callables fail)
+       [(list `(Record ,row) record-row record-psi)
+        (define field (assoc (peel-lbl label) row))
+        (define type (peel-ty τ))
+        (cond
+          [(not field) (fail 'unknown-record-label core)]
+          [(and (field-optional? field) (type-equiv? (second field) type))
+           (list `(Option ,type) record-row record-psi)]
+          [else (fail 'projopt-invalid-field core)])]
+       [_ (fail 'project-non-record record)])]
+
     [`(RegionApp ,function (,rhos ...))
      (match-define (list function-type function-row function-psi)
        (infer function (enter-child Λ 0)

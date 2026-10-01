@@ -46,6 +46,33 @@
  "E-RCD-009")
 (check-equal? (core-type-of '(Proj r a) '() '() opt-env) '(Int ()))
 
+; ProjOpt は optional の欄だけを (Option τ) として射影する。
+(check-equal? (core-type-of '(ProjOpt Int r b) '() '() opt-env)
+              '((Option Int) ()))
+; required の欄と τ の不一致は E-RCD-013、未知欄と record 以外は従来の診断を保つ。
+(check-equal?
+ (code-of (core-type-of/diagnostic '(ProjOpt Int r a) '() '() opt-env))
+ "E-RCD-013")
+(check-equal?
+ (code-of (core-type-of/diagnostic '(ProjOpt Bool r b) '() '() opt-env))
+ "E-RCD-013")
+(check-equal?
+ (code-of (core-type-of/diagnostic '(ProjOpt Int r z) '() '() opt-env))
+ "E-RCD-009")
+(check-equal?
+ (code-of (core-type-of/diagnostic '(ProjOpt Int 1 b) '() '() '()))
+ "E-RCD-007")
+
+; 入れ子の optional 欄を some 枝で射影し、none 枝と同じ Option 型へ合流する。
+(check-equal?
+ (core-type-of
+  '(Eliminate (ProjOpt (Record ((c Int imm opt))) n o)
+     ((some (inner) -> (ProjOpt Int inner c))
+      (none () -> (Construct (Option Int) none))))
+  '() '()
+  '((n (Record ((o (Record ((c Int imm opt))) imm opt))))))
+ '((Option Int) ()))
+
 ; 入れ子の optional row も型検査の入口で例外にならない。
 (check-not-exn
  (lambda ()
