@@ -14,7 +14,8 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 この版は、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
-パターン照合（`PAT-001`）は受理しないので、`ADT-001` はこの版では完了していない。
+record 型の欄の `label?: τ` は受理する（`ADT-001`）。
+パターン照合（`PAT-001`）は受理しない。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。

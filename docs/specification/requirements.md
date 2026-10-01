@@ -692,7 +692,7 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 ### SUR-014
 
-- **状態**：Phase 2 以降（ADT-001、PAT-001）
+- **状態**：Phase 2 以降（PAT-001）
 - **由来**：ホワイトペーパー §15
 
 Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ意味論を保って lowering されなければならない。
@@ -751,9 +751,9 @@ fixed-width integer の型と literal は、幅と符号を保った表現へ lo
 
 ### ADT-001
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/structural-row.md` §7、`docs/specification/core-calculus.md` §6.2
+- **正典**：`docs/specification/structural-row.md` §3、`docs/specification/core-calculus.md` §6.2
 
 ユーザー定義 data 型は optional field と `Owned` の再帰欄を宣言でき、対応する constructor を Core へ lowering できなければならない。
 

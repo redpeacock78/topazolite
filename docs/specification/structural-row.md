@@ -10,6 +10,7 @@ required 欄は `(label τ m)`、optional 欄は `(label τ m opt)` で表す。
 P2l3b は optional 欄を `(Option τ)` として射影する `ProjOpt` を導入する。
 UCore の `Proj` は optional 欄に対して `ProjOpt` へ elaboration される。
 Typed Core の `Proj` と `ProjBorrow` は optional 欄に適用できない。
+P2l3c は Surface の record 型の欄に `label?: τ` を導入した。
 
 ## 1. 本仕様の位置づけ
 
@@ -351,6 +352,8 @@ Eliminate(c0, branches) : (Record r)
 `(Presence label)` は合流後も required の欄にだけ発行する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
 
+Surface の `label?: τ` は P2l3c が導入し、data 型の constructor の引数の optional の欄と合わせて `ADT-001` を満たす。 [REQ: ADT-001]
+
 非 `Never` 枝が一つもなければ結果型は `Never` である。
 非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
@@ -616,8 +619,6 @@ G2a は次の規則を導入しない。
 送り先は、その規則が必要とする意味論に合わせて定める。
 本節に項目を足したときは、`requirements.md` §4 の申し送り表へも 1 行追記する。
 
-- **optional field**：P2l3a は Core の field row に optional presence とその互換性を導入し、P2l3b は optional 欄を `ProjOpt` で射影する。
-  Surface 構文と `ADT-001` の完了は P2l3c で扱う。
 - **Union と Intersection**：有限な Union の正規形と構造型の Intersection 消去は、G2e が `trait.md` §3 として導入した。
   trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
