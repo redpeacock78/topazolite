@@ -942,6 +942,8 @@
              (inferred-row? raw-row))]
         [`(Construct ,_ (Types ,_ ...) ,_ ...) #f]
         [`(Construct ,_ ,_ ...) #t]
+        ;; P2m spec §7.2。Eliminate は結果型の期待型を必要とする。
+        [`(Eliminate ,_ ,_) #t]
         [_ #f]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body

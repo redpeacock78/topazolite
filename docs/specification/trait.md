@@ -512,6 +512,9 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
   この操作は Phase 2 以降へ送る（`PAT-001`）。
+  P2m1 は data 型の constructor pattern に限る Surface の `match` を導入し、既存の `Eliminate` へ lowering する。
+  Union member pattern は受理せず、Union の tag と eliminator は P2m2 と P2m3 で扱う。
+  したがって、P2m1 は `PAT-001` の部分実装であり、要件の完了を意味しない。
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
   Union 値に runtime tag が無い以上、eliminator を足すと Preservation が破れる。
   次の三案は採らなかった。

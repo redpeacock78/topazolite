@@ -767,6 +767,18 @@
       [`(SFn ,s ,params ,ty ,row ,body)
        `(SFn ,s ,params ,ty ,row
              ,(expr body (set-union bound (list->seteq (param-names params)))))]
+      ;; P2m spec §6。枝の本体では束縛子が同名 constructor を隠す。
+      [`(SMatch ,s ,scrutinee ,arms)
+       `(SMatch ,s ,(r scrutinee)
+                ,(for/list ([arm (in-list arms)])
+                   (match arm
+                     [`(SArm ,s_a ,k ,binders ,body)
+                      (define names
+                        (for/list ([b (in-list binders)])
+                          (match b [`(SName ,_ ,x) x])))
+                      `(SArm ,s_a ,k ,binders
+                             ,(expr body (set-union bound
+                                                    (list->seteq names))))])))]
       [`(SProj ,s ,target ,label) `(SProj ,s ,(r target) ,label)]
       [`(SProjRec ,s ,target ,labels) `(SProjRec ,s ,(r target) ,labels)]
       [`(SRec ,s ,fields) `(SRec ,s ,(rec-fields fields bound))]
@@ -834,6 +846,17 @@
     [`(SApply ,s ,f ,arguments)
      `(Apply ,s ,(lower-sexpr f env fail)
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
+    ;; P2m spec §7.1。枝の束縛子は UCore+ の xs へ写す。
+    [`(SMatch ,s ,scrutinee ,arms)
+     `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
+                 ,(for/list ([arm (in-list arms)])
+                    (match arm
+                      [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
+                       `(,s_a ,k
+                              ,(for/list ([b (in-list binders)])
+                                 (match b
+                                   [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
+                              -> ,(lower-sexpr body env fail))])))]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。
     [`(SConstruct ,s (SName ,_ ,k) ,args)

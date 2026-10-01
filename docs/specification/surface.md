@@ -15,7 +15,9 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
-パターン照合（`PAT-001`）は受理しない。
+data 型の constructor を対象とする `match` は受理する。
+Union member pattern は `E-SUR-005` で拒み、P2m3 まで受理しない。
+このため `PAT-001` は完了していない。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
@@ -487,6 +489,9 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
+- `(SMatch s e ((SArm s_a (SName s_k K) ((SName s_x x) ...) body) ...))` は `(Eliminate s e' ((s_a K ((#:bind x s_x) ...) -> body') ...))` へ落とす。
+  scrutinee と各枝の本体を再帰的に下ろす。
+  枝の束縛子は `Eliminate` の枝へ渡し、constructor 名はそのまま保つ。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
   型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。
@@ -659,6 +664,12 @@ related は `composition-left` と `composition-right` の 2 件で、原文に�
 primary は違反する出現を含む欄の型、related は欄を持つ data 型宣言の名前である。
 これらは trait、impl、intersect の宣言を lowering する前に検査される。
 台帳の `#:fail` に kind `data` の失敗が届くことはなく、届いた場合は内部の誤りである。
+
+`match` の網羅性、重複枝、未知の constructor は elaborate が `E-DAT-004` で拒む。
+枝の束縛子の個数違いと重複は `E-SYN-002` で拒む。
+scrutinee が data 型でない場合は `E-DAT-003` で拒む。
+注釈の無い位置に置いた `match` は、結果型を推論できないため `E-TYP-004` で拒む。
+これらの診断の primary span は `match` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
