@@ -85,6 +85,18 @@
 (define (machine-steps config)
   (raw-steps-g2 config))
 
+(define (check-config-run config expected)
+  (tagged
+   (let loop ([current config] [fuel 20])
+     (check-true (config-ok? current '() expected '())
+                 (format "ill-formed intermediate config: ~s" current))
+     (if (zero? fuel)
+         (fail (format "machine did not finish: ~s" current))
+         (match (machine-steps current)
+           ['() current]
+           [(list next) (loop next (sub1 fuel))]
+           [many (fail (format "nondeterministic machine step: ~s" many))])))))
+
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
   (check-true (redex-match? G2 c elim-is))
@@ -626,6 +638,26 @@
    (check-equal? (key-of `(UnionVal ,(normalize-type IS) Int "s"))
                  'ill-typed)))
 
+;; config-ok? は machine 内部の BorrowRef/BorrowMutRef を再型付けできない。
+;; 借用 eliminate の中間 config は Task 8 の型回復まで対象外とする。
+(test-case "borrowed member の capability は UnionInject、UnionVal、枝選択で保たれる"
+  (define member-type '(Borrowed Int (RVar 0)))
+  (define union-type `(Union ,member-type String))
+  (define injected `(UnionInject ,union-type ,member-type (Borrow 1)))
+  (define value `(UnionVal ,(normalize-type union-type) ,member-type
+                           (BorrowRef 1 () (RVar 0))))
+  (define eliminated
+    `(UnionEliminate ,value
+       ((,member-type borrowed -> borrowed)
+        (String text -> 0))))
+  (define Λ (region-ctx #f '() (hash) (hash)))
+  (define expected (set '(1)))
+  (check-equal? (borrow-token-key Λ injected) expected)
+  (check-equal? (borrow-token-key Λ value) expected)
+  (check-equal? (borrow-token-key Λ eliminated) expected)
+  (check-equal? (capability-field-table Λ injected)
+                (capability-field-table Λ value)))
+
 (test-case "BorrowRef の UnionEliminate は payload path を渡す"
   (define union-value `(UnionVal ,(normalize-type IS) Int 17))
   (define config
@@ -699,16 +731,15 @@
   (check-equal? (machine-run config)
                 '(cfg unit () () (((tok 12) Dropped)) ())))
 
-(test-case "tag mode の全ての UnionInject 中間構成が config-ok? を満たす"
-  (define initial
+(test-case "UnionInject と値の UnionEliminate の全中間 config が config-ok? を満たす"
+  (define injected-config
     (machine-config `(UnionInject (Union Int (Union String Int)) Int 1)))
-  (tagged
-   (let loop ([current initial] [fuel 10])
-     (define type (type-of (second current)))
-     (check-true (config-ok? current '() type '())
-                 (format "ill-formed intermediate config: ~s" current))
-     (unless (zero? fuel)
-       (match (machine-steps current)
-         ['() (void)]
-         [(list next) (loop next (sub1 fuel))]
-         [many (fail (format "nondeterministic machine step: ~s" many))])))))
+  (define eliminated-config
+    (machine-config
+     `(UnionEliminate ,inject-int ((Int i -> i) (String s -> 0)))))
+  (check-equal?
+   (check-config-run injected-config (normalize-type IS))
+   `(cfg (UnionVal ,(normalize-type IS) Int 1) () () () ()))
+  (check-equal?
+   (check-config-run eliminated-config 'Int)
+   '(cfg 1 () () () ())))

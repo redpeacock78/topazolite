@@ -638,6 +638,9 @@
     [`(UnionInject ,_ ,member-type ,payload)
      (define entry (recur payload))
      (cons (car entry) (hash (member-key member-type) entry))]
+    [`(UnionVal ,_ ,member-type ,payload)
+     (define entry (recur payload))
+     (cons (car entry) (hash (member-key member-type) entry))]
     ;; R-RegionApp は包みを剥がすだけで値を変えない。関数の位置が RegionLam
     ;; であればその本体の表をそのまま通す。ws は借用を作らないため空である。
     ;; region-lam-parts は span の有無の両方に対応する。
