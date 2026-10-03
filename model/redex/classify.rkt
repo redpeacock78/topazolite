@@ -639,23 +639,16 @@
             [_ #f])))]
       [`(UnionEliminate ,scrutinee (,branches ...))
        (define root-of-scrutinee (transparent-root scrutinee))
-       (define decomposed?
-         (and (symbol? root-of-scrutinee)
-              (set-member? decomposable root-of-scrutinee)))
        (and
         (walk scrutinee decomposable strict target-visible?)
         (for/and ([branch (in-list branches)])
           (match branch
             [`(,_ ,bound -> ,branch-body)
-             (define branch-decomposable (set-remove decomposable bound))
-             (define branch-strict (set-remove strict bound))
+             (define-values (branch-decomposable branch-strict)
+               (rebind bound root-of-scrutinee decomposable strict))
              (walk branch-body
-                   (if decomposed?
-                       (set-add branch-decomposable bound)
-                       branch-decomposable)
-                   (if decomposed?
-                       (set-add branch-strict bound)
-                       branch-strict)
+                   branch-decomposable
+                   branch-strict
                    (and target-visible? (not (eq? target bound))))]
             [_ #f])))]
       [`(Perform ,_ ,argument)

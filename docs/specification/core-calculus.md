@@ -1656,12 +1656,14 @@ Recur(r, f, (x1, …, xk), c1, c2) について、
 pre(f, c1) かつ pre(f, c2) であり、
 c1 と c2 内の f のすべての自由な出現は直接適用 Apply(f, a1, …, ak) の形であり、
 ある引数位置 j が存在して、c1 内のすべての適用で
-aj は xj を Eliminate で分解して得た field 変数、または UnionEliminate で得た成分値（またはその再分解）である
+aj は xj を Eliminate で分解して得た field 変数、またはその再分解である
 --------------------------------
 Recur(r, f, (x1, …, xk), c1, c2) ⇓class Finite(structural)
 ```
 
 `UnionEliminate` の枝束縛子は、その枝の本体だけで有効な成分値として分類する。
+成分値は scrutinee と同じ大きさを保つため、それ自体を減少には数えない。
+成分値を `Eliminate` でさらに分解して得た field 変数は減少に数える。
 `UnionInject` は payload の構造を変えないため、再帰引数を包んでいても payload まで辿る。
 分類器は `UnionEliminate` の scrutinee と全ての枝本体を調べる。
 scrutinee の Union 成分に対応しない余剰枝も型検査されるため、構造的減少の判定から除外しない。

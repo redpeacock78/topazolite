@@ -79,12 +79,24 @@
      (Apply loop
        (UnionInject ,union-list-type (List Int)
                     (Construct (List Int) nil)))))
+(define union-list-loop-nondecreasing
+  `(Recur union-list-loop-id loop (xs)
+     (UnionEliminate xs
+       (((List Int) items ->
+         (Apply loop (UnionInject ,union-list-type (List Int) items)))
+        (String text -> 0)))
+     (Apply loop
+       (UnionInject ,union-list-type (List Int)
+                    (Construct (List Int) nil)))))
 
 (test-case "REC-001: UnionEliminate の payload は構造的減少で全枝を調べる"
   (check-equal? (classify union-list-loop '() union-list-callables)
                 '(Finite structural))
   (check-equal?
    (classify union-list-loop-extra-recursion '() union-list-callables)
+   'Unknown)
+  (check-equal?
+   (classify union-list-loop-nondecreasing '() union-list-callables)
    'Unknown))
 
 (define union-yield-callables
