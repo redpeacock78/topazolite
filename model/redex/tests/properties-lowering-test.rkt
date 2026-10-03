@@ -592,6 +592,44 @@
     [_ #t]))
 
 (module+ test
+  (test-case "P2m2a: Union tag の Core と PR の観測が一致する"
+    (define union-type '(Union Int String))
+    (define integer-branch
+      `(UnionEliminate
+        (UnionInject ,union-type Int 17)
+        ((Int n -> (Yield n unit))
+         (String s -> (Yield 0 unit)))))
+    (define string-branch
+      `(UnionEliminate
+        (UnionInject ,union-type String "s")
+        ((Int n -> (Yield 0 unit))
+         (String s -> (Yield s unit)))))
+    (define owned-member '(Record ((owned (Owned Res) imm))))
+    (define owned-union `(Union ,owned-member String))
+    (define owned-drop
+      `(UnionEliminate
+        (UnionInject ,owned-union ,owned-member
+                     (Rec ((owned imm (resource 7)))))
+        ((,owned-member record -> (Drop (Proj record owned)))
+         (String s -> unit))))
+    (define noncanonical-member
+      '(Record ((nested (Union String Int) imm))))
+    (define noncanonical-union `(Union ,noncanonical-member Bool))
+    (define noncanonical-component
+      `(UnionEliminate
+        (UnionInject ,noncanonical-union ,noncanonical-member
+                     (Rec ((nested imm
+                                  (UnionInject (Union String Int) String "s")))))
+        ((,noncanonical-member record -> (Yield (Proj record nested) unit))
+         (Bool b -> (Yield (UnionInject (Union Int String) Int 0) unit)))))
+    (parameterize ([current-union-tag-mode #t])
+      (for ([core (in-list (list integer-branch string-branch owned-drop
+                                 noncanonical-component))])
+        (define-values (status target) (lower core 'racket-cs))
+        (check-eq? status 'ok (format "lower: ~s" target))
+        (check-eq? (compare-observations core target depth) 'match
+                   (format "Core/PR observation: ~s" core)))))
+
   ;; properties-record-test.rkt:34 の bounded-check-g2 と同じ形である。証人の箱を
   ;; 引数に取るのは、性質ごとに「実際に主張が働いた項」の定義が違うためである。
   (define-syntax-rule (bounded-check-lowering test-name property witnesses)

@@ -223,11 +223,23 @@ lowering が型を見て `PLet` と `PLetOwned` のどちらへ写すかを決�
 | record の field 名 | `f:` | `a` → `f:a` |
 | Effect 境界名 | `b:` | `b` → `b:b` |
 | 型符号 | `ty:` | `Int` → `ty:Int` |
+| Union 成分型 | `u:` | `Int` → `u:Int` |
 | shim 名 | `tz:` | `add` → `tz:add` |
 
-像は最初の `:` で一意に分かれ、目標側の literal に `:` を含むものは無いので、写しは単射である。
+接頭辞は互いに異なる。
+最初の `:` より後ろは元名全体なので、元名に `:` が含まれても写しは単射である。
 型符号は型同値で正規化しない。
 源の handler 選択が Effect ラベル全体を構文の等号で比べるので、正規化すると源が別物として扱う 2 つのラベルを目標側が同一視する。
+
+Union 成分型の符号は、型を正規化して span を除いた形の `~s` 表現を `u:` の後ろに置く。
+
+Union の Core 構成子は次の形へ写す。
+
+| Typed Core | PR |
+|---|---|
+| `(UnionVal τ_U τ_m v)` | `(PTagged (union-tag-code τ_m) (lower-value v))` |
+| `(UnionInject τ_U τ_m c)` | `(PTagged (union-tag-code τ_m) (lower c))` |
+| `(UnionEliminate c ((τ_m x -> c) ...))` | `(PMatch (lower c) ((<union-tag-code τ_m> (v:x) -> lower c) ...))` |
 
 **表現規約** `repr` は型から目標値の形への写像である。
 
@@ -247,7 +259,7 @@ lowering が型を見て `PLet` と `PLetOwned` のどちらへ写すかを決�
 | record 型 | `PRec` |
 | 非信頼型 | `(PTagged uval repr(τ))` |
 | 篩型 | `(PTagged rval repr(τ))` |
-| 合併型 | 成分のいずれかの `repr` |
+| 合併型 | `(PTagged (union-tag-code τ_m) repr(τ_m))` |
 | 交叉型 | 成分すべての `repr` |
 
 所有を `repr(τ)` と同じにするのは、所有が静的な区別であり実行時表現に現れないためである。
@@ -255,8 +267,10 @@ lowering が型を見て `PLet` と `PLetOwned` のどちらへ写すかを決�
 非信頼型と篩型の tag を残すのは、源の `δ` が両者を実行時に区別しているためである。
 篩型の tag は残すが、証明の値そのものは消去する。
 
-合併型と交叉型の行は、成分の行を分配して定める。
-Phase 0 の Typed Core が両者を持つので、`repr` を全域にするために必要である。
+合併型の tag は、値が属する正規化済み成分型から決める。
+`UnionEliminate` はこの tag で一つの枝を選ぶ。
+交叉型の表現は成分すべての表現を満たす。
+移行中に tag mode を無効にした試験では、合併型の従来の分配表現を互換用 fallback として使う。
 
 ## 6. 保存の言明
 

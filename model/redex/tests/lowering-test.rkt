@@ -205,6 +205,14 @@
  (check-equal? (lower-ok '(Eliminate x ((Some (a) -> a))))
                `(PMatch ,(var-code 'x)
                         ((,(tag-code 'Some) (,(var-code 'a)) -> ,(var-code 'a)))))
+ (check-equal? (lower-ok '(UnionInject (Union Int String) Int 1))
+               `(PTagged ,(union-tag-code 'Int) 1))
+ (check-equal? (lower-ok '(UnionEliminate (UnionInject (Union Int String) Int 1)
+                             ((Int i -> i) (String s -> 0))))
+               `(PMatch (PTagged ,(union-tag-code 'Int) 1)
+                        ((,(union-tag-code 'Int) (,(var-code 'i))
+                          -> ,(var-code 'i))
+                         (,(union-tag-code 'String) (,(var-code 's)) -> 0))))
  (check-equal? (lower-ok '(Perform (Return io Int) 1))
                `(PEffect (return ,(boundary-code 'io) ,(tycode 'Int)) 1))
  (check-equal? (lower-ok '(Handle (Return io Int) (a -> a) 1))
@@ -253,6 +261,8 @@
     (Let       core  (Let (a Int) 1 a))
     (Construct core  (Construct (Option Int) Some x))
     (Eliminate core  (Eliminate x ((Some (a) -> a))))
+    (UnionInject core (UnionInject (Union Int String) Int 1))
+    (UnionEliminate core (UnionEliminate x ((Int i -> i))))
     (Perform   core  (Perform (Return io Int) 1))
     (Handle    core  (Handle (Return io Int) (a -> a) 1))
     (Scope     core  (Scope (0) x))
@@ -275,7 +285,8 @@
     (TypeRep   value (TypeRep User Int Type))
     (ProofRep  value (ProofRep User TypeNarrativeCap))
     (UVal      value (UVal 1))
-    (RVal      value (RVal (ProofRep User TypeNarrativeCap) 1))))
+    (RVal      value (RVal (ProofRep User TypeNarrativeCap) 1))
+    (UnionVal  value (UnionVal (Union Int String) Int 1))))
 
 (test-case
  "the form table's left-hand side matches the fixture roster"

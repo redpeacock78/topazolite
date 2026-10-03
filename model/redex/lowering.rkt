@@ -10,7 +10,9 @@
          "origins.rkt"
          "pr-lang.rkt"
          "schema.rkt"
-         "span-core.rkt")
+         "span-core.rkt"
+         (only-in "type-equiv.rkt" normalize-type union-members)
+         (only-in "typing.rkt" current-union-tag-mode))
 
 (provide lower
          lower/with-matrix
@@ -21,6 +23,7 @@
          boundary-code
          shim
          tycode
+         union-tag-code
          primitive-arity
          arithmetic-primitives
          resource-primitives
@@ -33,8 +36,9 @@
 
 ;;; backend-matrix.md §5 の符号化
 
-;; 源の記号空間を種類ごとの接頭辞つきの記号へ写す。単射性は接頭辞の一意性から
-;; 従う。像は最初の : で一意に分かれ、PR の literal に : を含むものは無い。
+;; 源の記号空間を種類ごとの接頭辞つきの記号へ写す。最初の : より後ろは元名全体
+;; なので、元名に : が含まれても一意性を損なわない。符号化ごとの接頭辞は異なり、
+;; PR 固有の tag と bare literal は Union の u: 接頭辞を使わない。
 (define (encode-name prefix name)
   (string->symbol (format "~a:~a" prefix name)))
 
@@ -50,6 +54,10 @@
 ;; 同一視する。
 (define (tycode type)
   (encode-name 'ty (format "~s" type)))
+
+;; spec §4.5。成分型の正規形を write した文字列を tag の名前にする。
+(define (union-tag-code type)
+  (encode-name 'u (format "~s" (normalize-type (erase-core type)))))
 
 ;; (Return b τ) の符号の組み立て。make-lowering の op-code は τ の検査を足して
 ;; ここへ委ねる。backend-matrix.md §6 の row-kinds は検査を通った源の行だけを
@@ -209,6 +217,16 @@
       [_ (fail 'unknown-core-form br
                (format "分岐の形が br でない: ~s" (erase-core br)))]))
 
+  ;; Union の枝は成分型から tag を作り、束縛子を PR の変数へ写す。
+  (define (union-branch ubr)
+    (match (peel-branch ubr)
+      [`(,member-type ,formal -> ,body)
+       `(,(union-tag-code member-type)
+         (,(var-code (peel-bind formal)))
+         -> ,(lower-core body))]
+      [_ (fail 'unknown-core-form ubr
+               (format "Union の分岐の形が ubr でない: ~s" (erase-core ubr)))]))
+
   ;; backend-matrix.md §7 の値の表
   ;; spec §18: 節点は剥がした形で照合し、子は spanful のまま再帰へ渡す。
   (define (lower-val value)
@@ -242,6 +260,8 @@
        `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
                           #:unless (absent-field? field))
                  (list (label-code (peel-lbl label)) (lower-val field))))]
+      [`(UnionVal ,_ ,member-type ,payload)
+       `(PTagged ,(union-tag-code member-type) ,(lower-val payload))]
       [`(UVal ,inner) `(PTagged uval ,(lower-val inner))]
       [`(RVal ,_ ,inner) `(PTagged rval ,(lower-val inner))]
       ;; RegionLam は実行時に意味を持たない静的な包みであり、本体へ落とす。
@@ -278,6 +298,10 @@
           `(PTagged ,(tag-code tag) ,@(map lower-core arguments))]
          [`(Eliminate ,scrutinee (,branches ...))
           `(PMatch ,(lower-core scrutinee) ,(map branch branches))]
+         [`(UnionInject ,_ ,member-type ,payload)
+          `(PTagged ,(union-tag-code member-type) ,(lower-core payload))]
+         [`(UnionEliminate ,scrutinee (,branches ...))
+          `(PMatch ,(lower-core scrutinee) ,(map union-branch branches))]
          [`(Perform ,op ,argument)
           `(PEffect ,(op-code op core) ,(lower-core argument))]
          ;; spec §18: G1+ の h は (s xs -> c) であり span を先頭へ持つため、
@@ -444,12 +468,20 @@
      (match value
        [`(PTagged rval ,payload) (repr-ok? inner payload)]
        [_ #f])]
-    ;; backend-matrix.md §5 の表に行が無い 2 形。lang.rkt:76 の G2 の τ には
-    ;; あるので、
-    ;; 表を分配して補う。行を落とすと repr-ok? が生成項の一部で偽を返し、
-    ;; backend-matrix.md §5 の言明がその項について述べられなくなる。
-    ;; 狭めではなく表の補完である。
-    [`(Union ,left ,right) (or (repr-ok? left value) (repr-ok? right value))]
+    ;; 表に行が無い 2 形として従来分配していた判定は、mode off の互換 fallback
+    ;; として残す。mode on の Union は §5 の正式行で検査し、Intersection は分配する。
+    [`(Union ,left ,right)
+     (if (current-union-tag-mode)
+         (let ([normalized (normalize-type type)])
+           (match value
+             [`(PTagged ,code ,payload)
+              (and normalized
+                   (for/or ([member (in-list (union-members normalized))])
+                     (and (equal? code (union-tag-code member))
+                          (repr-ok? member payload))))]
+             [_ #f]))
+         ;; mode off の間だけ、従来の分配表現を互換用に残す。
+         (or (repr-ok? left value) (repr-ok? right value)))]
     [`(Intersection ,left ,right)
      (and (repr-ok? left value) (repr-ok? right value))]
     [_ #f]))

@@ -9,6 +9,7 @@
          "../compat.rkt"
          "../erase.rkt"
          "../lang.rkt"
+         "../lowering.rkt"
          "../machine.rkt"
          "../borrow-oracle.rkt"
          "../region.rkt"
@@ -85,6 +86,11 @@
 
 (define (machine-steps config)
   (raw-steps-g2 config))
+
+(define (lower-value-result value)
+  (define-values (status result) (lower-value value 'racket-cs))
+  (check-eq? status 'ok (format "lower-value: ~s" result))
+  result)
 
 (define (contains-mutation? core)
   (match core
@@ -708,6 +714,34 @@
                  'ill-typed)
    (check-equal? (key-of `(UnionVal ,(normalize-type IS) Int "s"))
                  'ill-typed)))
+
+(test-case "tag mode の repr-ok? は Union の tag と payload を検査する"
+  (define normalized (normalize-type IS))
+  (tagged
+   (check-true (repr-ok? normalized `(PTagged ,(union-tag-code 'Int) 1)))
+   (check-false
+    (repr-ok? normalized
+              `(PTagged ,(union-tag-code 'Bool) (PTagged ,(tag-code 'true)))))
+   (check-false (repr-ok? normalized `(PTagged ,(union-tag-code 'Int) "s")))
+   (check-false (repr-ok? normalized 1))))
+
+(test-case "UnionVal の lowering と union tag code は型を正規化する"
+  (define member-raw '(Record ((a (Union String Int) imm))))
+  (define member-normal '(Record ((a (Union Int String) imm))))
+  (check-equal? (union-tag-code member-raw)
+                (union-tag-code member-normal))
+  (check-not-equal? (union-tag-code '(Record ((|a:b| Int imm))))
+                    (union-tag-code '(Record ((ab Int imm)))))
+  (check-equal?
+   (lower-value-result `(UnionVal ,IS Int 1))
+   `(PTagged ,(union-tag-code 'Int) 1))
+  (define nested
+    (lower-value-result
+     '(Rec ((a imm (UnionVal (Union Int String) Int 1))))))
+  (check-true
+   (tagged
+    (repr-ok? (normalize-type `(Union ,member-raw Bool))
+              `(PTagged ,(union-tag-code member-normal) ,nested)))))
 
 (test-case "borrowed member の capability は UnionInject、UnionVal、枝選択で保たれる"
   (define member-type '(Borrowed Int (RVar 0)))
