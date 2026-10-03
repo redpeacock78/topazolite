@@ -5,7 +5,8 @@
          "borrow.rkt"
          "borrow-gen.rkt"
          "machine.rkt"
-         "region.rkt")
+         "region.rkt"
+         "type-equiv.rkt")
 
 (provide control-diff
          borrow-form-candidates
@@ -35,6 +36,21 @@
     [`(BorrowRef ,_ ,_ ,_) #t]
     [`(BorrowMutRef ,_ ,_ ,_) #t]
     [_ #f]))
+
+(define (plain-ubr branch)
+  (match branch
+    [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
+     (list type binder '-> body)]
+    [_ branch]))
+
+(define (matching-union-branch member-type branches)
+  (for/first ([branch (in-list branches)]
+              #:do [(define plain (plain-ubr branch))]
+              #:when (match plain
+                       [`(,branch-type ,_binder -> ,_body)
+                        (type-equiv? member-type branch-type)]
+                       [_ #f]))
+    (plain-ubr branch)))
 
 ;; 簡約前後の制御項について、差分をすべて含む最小の位置を求め、その位置の
 ;; 部分項の対を返す。制御項が等しいときだけ #f を返す。
@@ -114,6 +130,20 @@
                   p cfp ρ p fp ρ)]
            [_ (list 'unverified)])))
      (if (null? expected) (list (list 'unverified)) expected)]
+    [(list `(UnionEliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
+     #:when (memq tag '(BorrowRef BorrowMutRef))
+     (define expected-path (append fp '((Payload))))
+     (define expected
+       (for/list ([child (in-list (collect-borrow-values contractum))])
+         (match child
+           [(list (== tag) cp cfp cρ)
+            #:when (and (equal? cp p) (equal? cfp expected-path)
+                        (equal? cρ ρ))
+            (list 'derived
+                  (if (eq? tag 'BorrowMutRef) 'mut 'shared)
+                  p cfp ρ p fp ρ)]
+           [_ (list 'unverified)])))
+     (if (null? expected) (list (list 'unverified)) expected)]
     [(list `(Read (,tag ,p ,fp ,ρ)) _)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (list (list 'use (if (eq? tag 'BorrowMutRef) 'mut 'shared) p fp ρ))]
@@ -145,17 +175,19 @@
 ;; G1 側の名前も発火しうるので両方を挙げる。
 (define substituting-rule-names
   (seteq 'R-Beta 'R-Let 'R-LetB 'R-LetOwned 'R-LetOwnedB 'R-LetMutB
-         'R-Eliminate 'R-EliminateRef 'R-EliminateMutRef
+         'R-Eliminate 'R-EliminateRef 'R-EliminateMutRef 'R-UnionEliminate
+         'R-UnionEliminateRef 'R-UnionEliminateMutRef
          'R-RecurUnfold 'R-HandleReturn))
 
 ;; spec §4.6。置換を行わない規則。名前が増えたときに黙って取りこぼさないよう
 ;; 明示的に挙げ、どちらにも無い名前は unknown として検査を失敗させる。
-;; 二つの集合の和は -->g2/rules の 53 名と一致する。Step の回帰がこれを検査する。
+;; 二つの集合の和は -->g2/rules の 57 名と一致する。Step の回帰がこれを検査する。
 (define non-substituting-rule-names
   (seteq 'R-Delta 'R-Proj 'R-ProjOpt 'R-Drop 'R-Borrow 'R-BorrowError
          'R-BorrowMut 'R-BorrowMutError 'R-Reborrow
          'R-ProjBorrow 'R-ProjBorrowMut 'R-Read 'R-ReadMut 'R-Assign
          'R-ReadMutSlot 'R-Reassign
+         'R-UnionInject
          'R-AddressOf 'R-PtrOffset 'R-RawLoad 'R-RawStore
          'R-FromRawPtrConst 'R-FromRawPtrMut 'R-UnsafeExit
          'R-Move 'R-MoveError 'R-ScopeValue 'R-ScopeError 'R-ScopeAbort
@@ -229,6 +261,12 @@
   ;; 呼び出し側が fail させる。
   (and (= (length found) 1) (second (first found))))
 
+(define (union-branch-bindings member-type branches)
+  (define branch (matching-union-branch member-type branches))
+  (match branch
+    [`(,_member ,binder -> ,_body) (list binder)]
+    [_ #f]))
+
 ;; spec §4.6。置換規則の redex から (記号 . 値) の対を取り出す。
 ;; 取り出せない形なら #f を返し、呼び出し側が fail させる。
 (define (substitution-pairs name redex contractum)
@@ -246,6 +284,12 @@
     [(list 'R-Eliminate `(Eliminate (Construct ,_τ ,K ,v ...) ,branches))
      (define binders (branch-binders K branches))
      (and binders (= (length binders) (length v)) (map cons binders v))]
+    [(list 'R-UnionEliminate
+           `(UnionEliminate (UnionVal ,_union-type ,member-type ,payload)
+                           ,branches))
+     (define binders (union-branch-bindings member-type branches))
+     (and binders (= (length binders) 1)
+          (list (cons (first binders) payload)))]
     [(list (and rule (or 'R-EliminateRef 'R-EliminateMutRef))
            `(Eliminate (,tag ,p ,fp ,ρ) ,branches))
      #:when (equal? tag
@@ -273,6 +317,26 @@
          (for/list ([x (in-list (second b))]
                     [i (in-naturals 0)])
            (cons x (child-ref i)))))
+     (if (null? matching) #f (apply append matching))]
+    [(list (and rule (or 'R-UnionEliminateRef 'R-UnionEliminateMutRef))
+           `(UnionEliminate (,tag ,p ,fp ,ρ) ,branches))
+     #:when (equal? tag
+                    (if (eq? rule 'R-UnionEliminateMutRef)
+                        'BorrowMutRef
+                        'BorrowRef))
+     (define child-ref
+       (list tag p (append fp '((Payload))) ρ))
+     (define matching
+       (filter
+        values
+        (for/list ([branch (in-list branches)])
+          (match (plain-ubr branch)
+            [`(,_member ,binder -> ,body)
+             (and (equal? (substitute-branch-body
+                           body (list binder) (list child-ref))
+                          contractum)
+                  (list (cons binder child-ref)))]
+            [_ #f]))))
      (if (null? matching) #f (apply append matching))]
     [(list 'R-HandleReturn
            `(Handle ,_op (,x -> ,handler) ,_inner))

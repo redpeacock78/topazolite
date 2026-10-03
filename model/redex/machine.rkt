@@ -7,6 +7,7 @@
          "origins.rkt"
          "region-param.rkt"
          "traits.rkt"
+         "type-equiv.rkt"
          "validators.rkt")
 
 (provide -->g1
@@ -147,6 +148,23 @@
    (select-branch/g2 K (v_arg ...) (br_rest ...))]
   [(select-branch/g2 K (v_arg ...) ()) #f])
 
+(define (select-union-branch member-type payload branches)
+  (let loop ([remaining branches])
+    (match remaining
+      ['() #f]
+      [(cons branch rest)
+       (define plain
+         (match branch
+           [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
+            (list type binder '-> body)]
+           [_ branch]))
+       (match plain
+         [`(,branch-type ,binder -> ,body)
+          (if (type-equiv? member-type branch-type)
+              (term (substitute*/g2 ,body (,binder) (,payload)))
+              (loop rest))]
+         [_ (loop rest)])])))
+
 (define-metafunction G2m
   proj-lookup : ((label v) ...) label -> any
   [(proj-lookup ((label_target v_target)
@@ -200,6 +218,8 @@
                  (and (exact-nonnegative-integer? seg)
                       (< seg (length fields))
                       (list-ref fields seg))]
+                [`(UnionVal ,_ ,_ ,payload)
+                 (and (equal? seg '(Payload)) payload)]
                 [_ #f])))))
 
 ;; 可変借用から field を射影するときの実行時 mode は H から読む。
@@ -259,6 +279,10 @@
                             (and updated (list name mode updated)))
                           field))])
                (and (andmap values rebuilt) `(Rec ,rebuilt))))]
+       [`(UnionVal ,union-type ,member-type ,payload)
+        (and (equal? (first fp) '(Payload))
+             (let ([updated (value-set-path payload (rest fp) new)])
+               (and updated `(UnionVal ,union-type ,member-type ,updated))))]
        [_ #f])]))
 
 (define (path-set H p fp value)
@@ -812,6 +836,57 @@
         (where c_result
                (select-branch/g2 K (v_arg ...) (br ...)))
         R-Eliminate)
+
+   ;; UnionInject は値へ正規化済みの Union tag を付ける。
+   (--> (cfg (in-hole E (UnionInject τ_union τ_member v_payload))
+             H Ω Λtok θ)
+        (cfg (in-hole E (UnionVal τ_union* τ_member* v_payload))
+             H Ω Λtok θ)
+        (where τ_union* ,(normalize-type (term τ_union)))
+        (where τ_member* ,(normalize-type (term τ_member)))
+        R-UnionInject)
+
+   ;; UnionEliminate は実行時 tag と同じ型の枝を選び、payload を束縛子へ渡す。
+   (--> (cfg (in-hole E
+                      (UnionEliminate (UnionVal τ_union τ_member v_payload)
+                                      (ubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where c_result
+               ,(select-union-branch (term τ_member) (term v_payload)
+                                     (term (ubr ...))))
+        R-UnionEliminate)
+
+   ;; 借用の枝束縛子は UnionVal 全体ではなく payload を指す。
+   (--> (cfg (in-hole E (UnionEliminate (BorrowRef p fp ρ) (ubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (UnionVal τ_union τ_member v_payload)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where c_result
+               ,(select-union-branch
+                 (term τ_member)
+                 `(BorrowRef ,(term p)
+                             ,(append (term fp) '((Payload)))
+                             ,(term ρ))
+                 (term (ubr ...))))
+        R-UnionEliminateRef)
+
+   (--> (cfg (in-hole E (UnionEliminate (BorrowMutRef p fp ρ) (ubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (UnionVal τ_union τ_member v_payload)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where c_result
+               ,(select-union-branch
+                 (term τ_member)
+                 `(BorrowMutRef ,(term p)
+                                ,(append (term fp) '((Payload)))
+                                ,(term ρ))
+                 (term (ubr ...))))
+        R-UnionEliminateMutRef)
 
    ;; 借用参照の Eliminate。H の値の構成子で分岐を選び、束縛子へは欄の値では
    ;; なく欄を指す借用参照を渡す。位置は R-ProjBorrow と同じ 0 起点であり、

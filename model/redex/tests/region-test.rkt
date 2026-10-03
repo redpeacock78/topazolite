@@ -97,6 +97,14 @@
                                      '((Apply g 2)))
                 '(ProjOpt Int (Apply g 2) fld)))
 
+(test-case "UnionVal の region walker は payload だけを一度辿る"
+  (define value '(UnionVal (Union Int String) Int x))
+  (check-equal? (core-children value) '(x))
+  (check-equal? (core-with-children value '(y))
+                '(UnionVal (Union Int String) Int y))
+  (check-equal? (core-points value) '(() (0)))
+  (check-equal? (core-free-vars value) (set 'x)))
+
 (test-case "Absent は Rec の欄の子であり、自身は葉である"
   (define core '(Rec ((a imm 1) (o imm (Absent Int)))))
   (define children (core-children core))

@@ -9,6 +9,10 @@
   (check-equal? (rule-bucket 'R-LetOwnedB) 'substituting)
   (check-equal? (rule-bucket 'R-EliminateRef) 'substituting)
   (check-equal? (rule-bucket 'R-EliminateMutRef) 'substituting)
+  (check-equal? (rule-bucket 'R-UnionEliminate) 'substituting)
+  (check-equal? (rule-bucket 'R-UnionEliminateRef) 'substituting)
+  (check-equal? (rule-bucket 'R-UnionEliminateMutRef) 'substituting)
+  (check-equal? (rule-bucket 'R-UnionInject) 'non-substituting)
   (check-equal? (rule-bucket 'R-Borrow) 'non-substituting)
   (check-equal? (rule-bucket 'R-Assign) 'non-substituting))
 
@@ -252,3 +256,40 @@
   (check-true (provenance? prov))
   (check-equal? (resolve-designator prov 'head) '(0))
   (check-equal? (resolve-designator prov 'tail) '(0)))
+
+(test-case "実機の UnionEliminate 遷移から payload の provenance を取る"
+  (define pre
+    '(cfg (UnionEliminate (UnionVal (Union Int String) Int 0)
+                          ((Int item -> (Read item))
+                           (String text -> 0)))
+          ((0 (resource 1))) ((0 Available)) () ()))
+  (define step
+    (for/first ([candidate (in-list (raw-steps-g2/named pre))]
+                #:when (eq? (first candidate) 'R-UnionEliminate))
+      candidate))
+  (check-not-false step)
+  (define prov
+    (provenance-extend (empty-provenance) (first step) pre (second step)))
+  (check-true (provenance? prov))
+  (check-equal? (resolve-designator prov 'item) '(0)))
+
+(test-case "実機の借用 UnionEliminate 遷移から payload path の provenance を取る"
+  (for ([borrow-tag (in-list '(BorrowRef BorrowMutRef))]
+        [rule (in-list '(R-UnionEliminateRef R-UnionEliminateMutRef))])
+    (define pre
+      `(cfg (UnionEliminate (,borrow-tag 0 () (RVar 0))
+                            ((Int item -> (Read item))
+                             (String text -> 0)))
+            ((0 (UnionVal (Union Int String) Int 1)))
+            ((0 Available)) () ()))
+    (define step
+      (for/first ([candidate (in-list (raw-steps-g2/named pre))]
+                  #:when (eq? (first candidate) rule))
+        candidate))
+    (check-not-false step)
+    (define post (second step))
+    (check-equal? (second post)
+                  `(Read (,borrow-tag 0 ((Payload)) (RVar 0))))
+    (define prov (provenance-extend (empty-provenance) rule pre post))
+    (check-true (provenance? prov))
+    (check-equal? (resolve-designator prov 'item) '(0))))

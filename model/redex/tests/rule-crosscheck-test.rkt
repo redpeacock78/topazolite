@@ -12,7 +12,7 @@
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
-;; 4 組が 1 本へ畳まれ、R-Discharge、R-OwnLeaf、R-EliminateRef、R-EliminateMutRef、
+;; 4 組が 1 本へ畳まれ、R-Discharge、R-OwnLeaf、各借用 Eliminate、
 ;; R-RetireValue、R-RetireError、R-RetirePerform と G2m 固有規則が
 ;; 目標側に無いため、値の相異なる集合は 20 本になる。raw pointer の
 ;; 7 規則も G2m 固有で目標側には無い。
@@ -30,6 +30,10 @@
     (R-Eliminate    . R-PR-Match)
     (R-EliminateRef . #f)
     (R-EliminateMutRef . #f)
+    (R-UnionInject . #f)
+    (R-UnionEliminate . #f)
+    (R-UnionEliminateRef . #f)
+    (R-UnionEliminateMutRef . #f)
     (R-Proj         . R-PR-Proj)
     (R-ProjOpt      . R-PR-ProjOpt)
     (R-Discharge    . #f)
@@ -86,26 +90,28 @@
  (check-equal? (set-count g1-rule-names) 25))
 
 (test-case
- "-->g2/rules adds exactly twenty-eight names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 28 本である。
+ "-->g2/rules adds exactly thirty-two names to -->g1/rules"
+ ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 32 本である。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-ProjOpt 'R-Discharge 'R-LetB 'R-LetOwnedB
                     'R-LetMutB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
                     'R-BorrowMutError 'R-Reborrow
                     'R-ProjBorrow 'R-ProjBorrowMut
+                    'R-UnionInject 'R-UnionEliminate
+                    'R-UnionEliminateRef 'R-UnionEliminateMutRef
                     'R-Read 'R-ReadMut 'R-Assign 'R-ReadMutSlot 'R-Reassign
                     'R-RegionApp
                     'R-EliminateRef 'R-EliminateMutRef 'R-AddressOf 'R-PtrOffset
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 53))
+ (check-equal? (set-count g2-rule-names) 57))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 53))
+ (check-equal? (length rule-correspondence) 57))
 
 (test-case
  "the target side has 21 rules"

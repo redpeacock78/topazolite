@@ -35,6 +35,7 @@
     [`(Let (,_ ...) ,c_1 ,c_2) (list c_1 c_2)]
     [`(Construct ,_ ,_ ,cs ...) cs]
     [`(UnionInject ,_ ,_ ,payload) (list payload)]
+    [`(UnionVal ,_ ,_ ,payload) (list payload)]
     [`(UnionEliminate ,scrutinee ,branches)
      (cons scrutinee (map last branches))]
     [`(Eliminate ,c ,brs)
@@ -110,6 +111,8 @@
     [`(Construct ,τ ,K ,_ ...) `(Construct ,τ ,K ,@children)]
     [`(UnionInject ,union-type ,member-type ,_)
      `(UnionInject ,union-type ,member-type ,(first-child))]
+    [`(UnionVal ,union-type ,member-type ,_)
+     `(UnionVal ,union-type ,member-type ,(first-child))]
     [`(UnionEliminate ,_ ,branches)
      `(UnionEliminate ,(first children)
                       ,(for/list ([branch (in-list branches)]

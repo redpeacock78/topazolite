@@ -76,6 +76,15 @@
     [(list 'fail key _node _details ...) key]
     [(list 'ok _) 'ok]))
 
+(define (machine-config core [heap '()] [states '()] [tokens '()] [trace '()])
+  `(cfg ,core ,heap ,states ,tokens ,trace))
+
+(define (machine-run config)
+  (run-g2 config 200))
+
+(define (machine-steps config)
+  (raw-steps-g2 config))
+
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
   (check-true (redex-match? G2 c elim-is))
@@ -559,3 +568,147 @@
                   (list (list 1 IS)) '() '() borrowed-mut-union-Λ)))
   (check-equal? (first result) 'ok)
   (check-equal? (first (second result)) 'Unit))
+
+(test-case "UnionInject と UnionEliminate が値を正規化して分岐する"
+  (tagged
+   (define start (machine-config
+                  '(UnionInject (Union Int (Union String Int)) Int 1)))
+   (define after-inject (machine-steps start))
+   (check-equal? (length after-inject) 1)
+   (check-equal? (first after-inject)
+                 `(cfg (UnionVal ,(normalize-type IS) Int 1) () () () ()))
+   (define finished
+     (machine-run
+      (machine-config
+       `(UnionEliminate (UnionInject ,IS String "s")
+          ((Int i -> 1) (String s -> 2))))))
+   (check-equal? finished '(cfg 2 () () () ()))
+   (check-equal?
+    (machine-steps
+     (machine-config
+      `(UnionEliminate (UnionVal ,(normalize-type IS) Int 1)
+         ((String s -> 0)))))
+    '())))
+
+(test-case "config-ok? は UnionVal の形と payload token を検査する"
+  (define record-type '(Record ((owned (Owned Res) imm))))
+  (define normalized-union
+    (normalize-type `(Union ,record-type String)))
+  (define good-value
+    `(UnionVal ,normalized-union ,record-type
+               (Rec ((owned imm (OwnedLeaf (tok 0) (resource 1)))))))
+  (define bad-tag
+    `(UnionVal ,normalized-union Bool (Construct Bool true)))
+  (define bad-payload `(UnionVal ,normalized-union ,record-type "s"))
+  (define bad-union `(UnionVal Int Int 1))
+  (tagged
+   (check-true
+    (config-ok? (machine-config good-value '() '() '(((tok 0) Available)))
+                '() normalized-union '()))
+   (check-false
+    (config-ok? (machine-config good-value)
+                '() normalized-union '()))
+   (check-false
+    (config-ok? (machine-config bad-tag) '() normalized-union '()))
+   (check-false
+    (config-ok? (machine-config bad-payload) '() normalized-union '()))
+   (check-false
+    (config-ok? (machine-config bad-union) '() normalized-union '()))))
+
+(test-case "UnionVal は tag mode のみで型付けされ、well-formedness を満たす"
+  (define value `(UnionVal ,(normalize-type IS) Int 1))
+  (check-equal? (key-of value) 'ill-typed)
+  (tagged
+   (check-equal? (type-of value) (normalize-type IS))
+   (check-equal? (key-of `(UnionVal ,(normalize-type IS) Bool
+                                   (Construct Bool true)))
+                 'ill-typed)
+   (check-equal? (key-of `(UnionVal ,(normalize-type IS) Int "s"))
+                 'ill-typed)))
+
+(test-case "BorrowRef の UnionEliminate は payload path を渡す"
+  (define union-value `(UnionVal ,(normalize-type IS) Int 17))
+  (define config
+    (machine-config
+     '(UnionEliminate (BorrowRef 0 () 0)
+        ((Int i -> (Read i)) (String s -> (Read s))))
+     `((0 ,union-value)) '((0 Available))))
+  (tagged
+   (check-equal? (machine-run config) `(cfg 17 ((0 ,union-value)) ((0 Available)) () ()))
+   (check-equal? (heap-walk-path union-value '((Payload))) 17)
+   (check-equal? (path-lookup `((0 ,union-value)) 0 '((Payload))) 17)
+   (check-false (path-lookup '((0 17)) 0 '((Payload))))))
+
+(test-case "BorrowMutRef は UnionVal の payload だけを書き換える"
+  (define union-value `(UnionVal ,(normalize-type IS) Int 17))
+  (define config
+    (machine-config
+     '(UnionEliminate (BorrowMutRef 0 () 0)
+        ((Int i -> (Assign i 23)) (String s -> (Assign s "changed"))))
+     `((0 ,union-value)) '((0 Available))))
+  (tagged
+   (check-equal?
+    (machine-run config)
+    `(cfg unit ((0 (UnionVal ,(normalize-type IS) Int 23))) ((0 Available)) () ()))
+   (check-equal?
+    (value-set-path union-value '((Payload)) 23)
+    `(UnionVal ,(normalize-type IS) Int 23))
+   (check-false (value-set-path 17 '((Payload)) 23))))
+
+(test-case "Union payload 内の record 欄は ProjBorrowAt から読める"
+  (define record-type '(Record ((a Int imm))))
+  (define union-type `(Union ,record-type String))
+  (define union-value `(UnionVal ,(normalize-type union-type)
+                                 ,(normalize-type record-type)
+                                 (Rec ((a imm 31)))))
+  (define config
+    (machine-config
+     `(UnionEliminate (BorrowRef 0 () 0)
+        ((,record-type record ->
+          (Read (ProjBorrowAt 0 (Own 0 ((Payload) a)) record a)))
+         (String text -> 0)))
+     `((0 ,union-value)) '((0 Available))))
+  (tagged (check-equal? (machine-run config) `(cfg 31 ((0 ,union-value))
+                                                  ((0 Available)) () ()))))
+
+(test-case "UnionVal の token walker は payload を一度だけ辿る"
+  (define record-type '(Record ((a (Owned Res) imm))))
+  (define union-type `(Union ,record-type String))
+  (define value `(UnionVal ,(normalize-type union-type)
+                           ,(normalize-type record-type)
+                           (Rec ((a imm (OwnedLeaf (tok 9) (resource 4)))))))
+  (check-equal? (collect-tokens value) '((tok 9)))
+  (check-true (leaf-positions-ok? value))
+  (check-equal? (walk-owned-leaves value) '(((tok 9) ((Payload) a))))
+  (check-equal? (walk-owned-leaves-for-drop value)
+                '(((tok 9) ((Payload) a))))
+  (check-true (contains-owned-leaf? value)))
+
+(test-case "UnionEliminate 後の Drop は payload token を一度だけ Dropped にする"
+  (define record-type '(Record ((a (Owned Res) imm))))
+  (define union-type `(Union ,record-type String))
+  (define value `(UnionVal ,(normalize-type union-type)
+                           ,(normalize-type record-type)
+                           (Rec ((a imm (OwnedLeaf (tok 12) (resource 4)))))))
+  (define config
+    (machine-config
+     `(UnionEliminate ,value
+        ((,record-type record -> (Drop (Proj record a)))
+         (String text -> unit)))
+     '() '() '(((tok 12) Available))))
+  (check-equal? (machine-run config)
+                '(cfg unit () () (((tok 12) Dropped)) ())))
+
+(test-case "tag mode の全ての UnionInject 中間構成が config-ok? を満たす"
+  (define initial
+    (machine-config `(UnionInject (Union Int (Union String Int)) Int 1)))
+  (tagged
+   (let loop ([current initial] [fuel 10])
+     (define type (type-of (second current)))
+     (check-true (config-ok? current '() type '())
+                 (format "ill-formed intermediate config: ~s" current))
+     (unless (zero? fuel)
+       (match (machine-steps current)
+         ['() (void)]
+         [(list next) (loop next (sub1 fuel))]
+         [many (fail (format "nondeterministic machine step: ~s" many))])))))

@@ -134,11 +134,12 @@
            (set-add (psi-suspended Ψ) (list w fp α_parent α_child node))
            (psi-suspended Ψ))))
 
-;; path の形そのもの。segment は record の label または位置 natural である。
+;; path の形そのもの。segment は record の label、位置 natural、union payload である。
 (define (path-wf? fp)
   (and (list? fp)
        (andmap (lambda (seg)
                  (or (symbol? seg)
+                     (equal? seg '(Payload))
                      (exact-nonnegative-integer? seg)))
                fp)))
 
@@ -157,6 +158,7 @@
   (match value
     [`(OwnedLeaf ,tk ,payload) (cons tk (collect-tokens payload))]
     [`(Absent ,_) '()]
+    [`(UnionVal ,_ ,_ ,payload) (collect-tokens payload)]
     ;; CurryVal の origin は生成履歴であり、固定引数と同じ値を複製して
     ;; 持つことがあるため走査しない。
     [`(CurryVal ,_origin ,function ,fixed)
@@ -172,8 +174,10 @@
 
 ;; 値のどこかに leaf があるか。位置の妥当性は問わない。
 (define (contains-owned-leaf? value)
-  (or (owned-leaf? value)
-      (and (list? value) (ormap contains-owned-leaf? value))))
+  (match value
+    [`(UnionVal ,_ ,_ ,payload) (contains-owned-leaf? payload)]
+    [_ (or (owned-leaf? value)
+           (and (list? value) (ormap contains-owned-leaf? value)))]))
 
 ;; 値の内部の Owned leaf を、その path とともに前順で列挙する。
 ;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
@@ -198,6 +202,8 @@
                      (walk child (cons index path) #f))
                    (range (length fields))
                    fields)]
+      [`(UnionVal ,_ ,_ ,payload)
+       (walk payload (cons '(Payload) path) #f)]
       [`(CurryVal ,_own ,function ,fixed)
        (append (walk function (cons 0 path) #f)
                (walk fixed (cons 1 path) #f))]
@@ -227,6 +233,7 @@
      (andmap walk-leaf-positions values)]
     [`(Construct ,_type ,_constructor ,fields ...)
      (andmap walk-leaf-positions fields)]
+    [`(UnionVal ,_ ,_ ,payload) (walk-leaf-positions payload)]
     [`(CurryVal ,_own ,function ,fixed)
      (and (walk-leaf-positions function)
           (walk-leaf-positions fixed))]

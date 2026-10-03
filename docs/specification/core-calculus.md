@@ -1404,6 +1404,42 @@ E[Eliminate(Construct(D, Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
   → E[ci[v1/xi1, …, vk/xik]]
 ```
 
+**(R-UnionInject)**
+
+```text
+τU* = normalize-type(τU)
+τm* = normalize-type(τm)
+⟨E[UnionInject(τU, τm, v)], H, Ω, Λtok, θ⟩
+  → ⟨E[UnionVal(τU*, τm*, v)], H, Ω, Λtok, θ⟩
+```
+
+UnionInject は Union 型と成分型を正規化し、値に成分型の tag を付ける。
+
+**(R-UnionEliminate)**
+
+```text
+τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi -> ci) がある
+-------------------------------------------------------------------
+E[UnionEliminate(UnionVal(τU, τm, v), ubr̄)] → E[ci[v/xi]]
+```
+
+UnionEliminate は値の成分型と type-equiv? な型を持つ枝を選ぶ。
+該当する枝が無い場合は簡約しない。
+
+**(R-UnionEliminateRef)** と **(R-UnionEliminateMutRef)**
+
+```text
+H(p)[fp] = UnionVal(τU, τm, v)    Ω(p) = Available
+τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi -> ci) がある
+------------------------------------------------------------------------
+⟨E[UnionEliminate(BorrowRef(p, fp, ρ), ubr̄)], H, Ω, Λtok, θ⟩
+  → ⟨E[ci[BorrowRef(p, fp ++ [(Payload)], ρ)/xi]], H, Ω, Λtok, θ⟩
+```
+
+R-UnionEliminateMutRef は同じ規則で BorrowRef を BorrowMutRef に置き換える。
+借用の枝束縛子は UnionVal 全体ではなく payload を指す。
+Payload path は payload を差し替えても UnionVal の Union 型と成分型を保つ。
+
 **(R-RecurBind)**
 
 ```text

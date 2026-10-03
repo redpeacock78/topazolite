@@ -1223,6 +1223,26 @@
     [(list row next-psi _actual)
      (list union-type* row next-psi)]))
 
+(define (infer-union-value union-type member-type payload Λ Ψ
+                           environment places callables node fail)
+  (define union-type* (normalize-type union-type))
+  (define member-type* (normalize-type member-type))
+  (unless (and (type-normal? union-type)
+               (match union-type* [`(Union ,_ ,_) #t] [_ #f])
+               (type-normal? member-type)
+               (= (for/sum ([member (in-list (union-members union-type*))]
+                            #:when (type-equiv? member member-type*))
+                    1)
+                  1))
+    (fail 'ill-typed node))
+  (match (infer payload (enter-child Λ 0) Ψ
+                environment places callables fail)
+    [(list payload-type row next-psi)
+     (unless (tag-compat? payload-type member-type*
+                          (current-Γ-pc0) (current-region-relation))
+       (fail 'ill-typed node))
+     (list union-type* row next-psi)]))
+
 (define (check-eliminate scrutinee branches expected
                          Λ Ψ environment places callables node fail
                          [compatible? type-compatible?])
@@ -2758,6 +2778,11 @@
      (infer-union-inject union-type member-type payload Λ Ψ
                          environment places callables core fail)]
 
+    [`(UnionVal ,union-type ,member-type ,payload)
+     #:when (current-union-tag-mode)
+     (infer-union-value union-type member-type payload Λ Ψ
+                        environment places callables core fail)]
+
     [`(Construct ,data-type ,constructor ,fields ...)
      (define result
        (check-construct constructor fields data-type Λ
@@ -4136,6 +4161,14 @@
                       [`(,_constructor (,_names ...) -> ,body)
                        (value-position-ok? body)]
                       ;; 文法上は br 形しか来ないが、未知の枝も厳格側へ落とす。
+                      [_ (control-leaf-positions-ok? branch)]))
+                  branches))]
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     (and (control-leaf-positions-ok? scrutinee)
+          (andmap (lambda (branch)
+                    (match (erase-core branch)
+                      [`(,_member ,_binder -> ,body)
+                       (value-position-ok? body)]
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
     [_
