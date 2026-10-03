@@ -29,7 +29,7 @@
                                (Perform (Return boundary Int) 42))))))
     fuel)
    (term (cfg 42
-              ((0 (resource 7)))
+              ((0 (resource 7) (declared (Owned Res))))
               ((0 Dropped))
               () ((fin 0))))))
 

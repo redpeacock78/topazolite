@@ -51,7 +51,7 @@
   (check-equal?
    (run (inject fin-before-observation) fuel)
    (term (cfg unit
-              ((0 (resource 8)))
+              ((0 (resource 8) (declared (Owned Res))))
               ((0 Dropped))
               () ((fin 0) (obs 1))))))
 
