@@ -1245,21 +1245,27 @@ payload はその成分型へ check し、値の型に tag を付けた後も pa
 
 **(T-UnionEliminate)**
 
+tag mode では、`⊔tag` を §6.3 の tag 保存の上界の列への畳み込みとする。
+入力が空なら結果は `Never` であり、畳み込みが定義されない場合は型検査に失敗する。
+
 ```text
 Γ; Δ; Π; Ξ; Φ ⊢core c0 : Union(τ1, …, τn) ! ε0
 ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 各 τi に対して type-equiv?(σk, τi) で一致する枝 k がちょうど一つある
 σ1, …, σm は重複しない。余った枝の本体も型付けする
 Γ, xk : σk; Δ; Π; Ξ; Φ ⊢core ck : ρk ! εk       （k = 1 … m）
-τ = Never（全ての ρk が Never）か、全ての ρk は Never または τ
+τ = ⊔tag {ρk | ρk ≠ Never}
 ----------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core UnionEliminate(c0, ubr̄) : τ ! (ε0 ∪ ε1 ∪ … ∪ εm)
 ```
 
 `Never` の枝は結果型の選択から除くが、本体の型検査と Effect row の合流には含める。
 借用された Union を分岐するときは、枝の束縛子へ対応する成分型の借用を与える。
-この初期規則では全ての非 `Never` 枝に同じ結果型を求める。
-P2m2a の後続 Task 5 で、この条件を tag 保存の上界へ置き換える。
+tag mode では、全ての非 `Never` 枝の型を tag 保存の上界で合流する。
+一方が `Never` なら他方を使い、二つの Union は成分の和を正規化する。
+二つの Record は共通欄だけを残し、各欄の型を再帰的に合流する。
+その他の Union でない型は `type-equiv?` で同値の場合だけ合流する。
+tag mode が無効な経路は従来の規則を保つ。
 期待型がある位置では、全ての枝の本体をその型へ check する。
 
 **(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
@@ -1785,9 +1791,19 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   期待型が Union のとき、実際の型は `Never` か Union であり、実際の Union の各成分は期待型の成分と `type-equiv?` で等しくなければならない。
   Union 型の値を非 Union 型の位置へ渡すことはできない。
   record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
+- tag mode の record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
+  `Reassign` は slot の宣言型に対して `tag-narrowing?` を使い、余剰欄を落とす narrowing を許さない。
+  synth 位置の枝合流は tag 保存の上界を使い、tag の無い値から Union を作らない。
 - `tag-narrowing?` は Union の成分集合を狭める関係であり、Union の成分型の内部へは再帰しない。
   Record では欄の集合、可変性、optional の印を保って各欄の型へ再帰する。
   `Owned`、`Untrusted`、命題が同値な `Refined` の payload にも再帰し、`NFn`、借用型、data 型の内部では `compat-type-equiv?` を使う。
+- tag 保存の上界 `τ1 ⊔tag τ2` は、tag mode の synth 合流に使う。
+  一方が `Never` なら他方を返し、二つの Union なら成分の和を正規化する。
+  片方だけが Union の場合は未定義とする。
+  二つの Record は既存の row 合流を使い、共通欄の型へ再帰し、残余欄を落とす。
+  可変性は全ての枝で `mut` のときだけ `mut` を保つ。
+  その他の型は `type-equiv?` で同値の場合だけ結果を返す。
+  tag mode が無効な経路では既存の `join-types` と row 合流を使う。
 - 型レベル計算（TypeRep の適用）を正規化して比較できるのは、その計算の ⇓class が Finite の場合に限る。 [REQ: PRF-002]
 - ⇓class が Productive の型レベル計算は、観測深度の上限までの有限観測で比較する。
 - ⇓class が Unknown の型レベル計算と Proof は正規化に使わず、構文的同一性（opaque identity）だけで比較する。 [REQ: PRF-002]

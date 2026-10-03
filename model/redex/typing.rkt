@@ -58,6 +58,7 @@
          control-leaf-positions-ok?
          derive-places
          join-types
+         tag-upper-bound
          merge-field
          presence-binding-name
          field-type-binding-name
@@ -716,44 +717,42 @@
   ((if (current-union-tag-mode) tag-compat? compat?)
    actual expected (current-Γ-pc0) (current-region-relation)))
 
-;; ROW-005。Eliminate が作った Union の導入点だけで、各枝の具体型を
-;; 合流型の成分として再照合する。一般の mut field 互換性は不変のままにし、
-;; Assign の全成分検査へこの緩和を漏らさない。
-;; mut の否定側は fail-closed の番人である。infer-eliminate の expected は
-;; 常に枝型の merge なので、well-formed な枝では member 性が構造的に成り立つ。
-;; この側は将来の不正な拡張を黙って受理しないために残す。
+;; mode 無効時の ROW-005 の枝検査。tag mode では通常の tag 保存互換を使う。
 (define (merge-branch-compatible? actual expected)
-  (define (union-type? type)
-    (and (pair? type) (eq? (first type) 'Union)))
-  (define (union-members-compatible? actual expected)
-    (and (union-type? expected)
-         (for/and ([actual-member
-                    (in-list (if (union-type? actual)
-                                 (union-members actual)
-                                 (list actual)))])
-           (for/or ([expected-member (in-list (union-members expected))])
-             (type-equiv? actual-member expected-member)))))
-  (match* (actual expected)
-    [('Never _) #t]
-    [((list 'Record actual-row) (list 'Record expected-row))
-     (for/and ([field (in-list expected-row)])
-       (match field
-         [(list label expected-type expected-mode _ ...)
-          (match (assoc label actual-row)
-            [(and actual-field (list _ actual-type actual-mode _ ...))
-             (and (or (not (field-optional? actual-field))
-                      (field-optional? field))
-                  (case expected-mode
-                    [(imm) (and (memq actual-mode '(imm mut))
-                                (type-compatible? actual-type expected-type))]
-                    [(mut) (and (eq? actual-mode 'mut)
-                                (or (type-equiv? actual-type expected-type)
-                                    (union-members-compatible?
-                                     actual-type expected-type)))]
-                    [else #f]))]
-            [_ #f])]
-         [_ #f]))]
-    [(_ _) (type-compatible? actual expected)]))
+  (if (current-union-tag-mode)
+      (tag-compat? actual expected (current-Γ-pc0) (current-region-relation))
+      (let ()
+        (define (union-type? type)
+          (and (pair? type) (eq? (first type) 'Union)))
+        (define (union-members-compatible? actual expected)
+          (and (union-type? expected)
+               (for/and ([actual-member
+                          (in-list (if (union-type? actual)
+                                       (union-members actual)
+                                       (list actual)))])
+                 (for/or ([expected-member (in-list (union-members expected))])
+                   (type-equiv? actual-member expected-member)))))
+        (match* (actual expected)
+          [('Never _) #t]
+          [((list 'Record actual-row) (list 'Record expected-row))
+           (for/and ([field (in-list expected-row)])
+             (match field
+               [(list label expected-type expected-mode _ ...)
+                (match (assoc label actual-row)
+                  [(and actual-field (list _ actual-type actual-mode _ ...))
+                   (and (or (not (field-optional? actual-field))
+                            (field-optional? field))
+                        (case expected-mode
+                          [(imm) (and (memq actual-mode '(imm mut))
+                                      (type-compatible? actual-type expected-type))]
+                          [(mut) (and (eq? actual-mode 'mut)
+                                      (or (type-equiv? actual-type expected-type)
+                                          (union-members-compatible?
+                                           actual-type expected-type)))]
+                          [else #f]))]
+                  [_ #f])]
+               [_ #f]))]
+          [(_ _) (type-compatible? actual expected)]))))
 
 (define (type? value)
   (and (redex-match? G2m τ value)
@@ -1185,6 +1184,11 @@
   (define result-type
     (cond
       [(null? types) 'Never]
+      [(current-union-tag-mode)
+       (for/fold ([upper (first types)])
+                 ([type (in-list (rest types))])
+         (or (tag-upper-bound upper type)
+             (fail 'type-mismatch node upper type)))]
       [else
        (define expected (first types))
        (for ([actual (in-list (rest types))])
@@ -1265,6 +1269,26 @@
 ;; CMP-001: 2 つの型を Union で合わせ、同値な構成要素を正規化で畳む。
 (define (join-types left right)
   (normalize-type `(Union ,left ,right)))
+
+;; §2.8。既に tag を持つ値の型だけを合わせ、tag の無い値から Union を作らない。
+(define (tag-upper-bound left right)
+  (define l (normalize-type left))
+  (define r (normalize-type right))
+  (and l r
+       (match* (l r)
+         [('Never _) r]
+         [(_ 'Never) l]
+         [(`(Union ,_ ,_) `(Union ,_ ,_)) (normalize-type `(Union ,l ,r))]
+         [(`(Union ,_ ,_) _) #f]
+         [(_ `(Union ,_ ,_)) #f]
+         [(`(Record ,_) `(Record ,_))
+          (tag-merge-record-types l r)]
+         [(_ _) (and (type-equiv? l r) l)])))
+
+(define (tag-merge-record-types left right)
+  (define-values (merged _witnesses)
+    (merge-record-types/impl (list left right) tag-upper-bound))
+  merged)
 
 ;; §10.1。合流の memo。merge-record-types/impl が 1 回の合流につき 1 つ張る。
 ;; merge-fields と merge-witness-context が同じ型の並びへ同じ α_m を得るための共有である。
@@ -1388,7 +1412,10 @@
           '())))
    merged-row))
 
-(define (merge-fields fields)
+(define (merge-fields fields
+                      [join-type (if (current-union-tag-mode)
+                                     tag-upper-bound
+                                     join-types)])
   (define first-field (first fields))
   (define label (first first-field))
   ;; 全枝が mut のときにだけ mut を保つ。1 枝でも imm なら、書き込みが
@@ -1409,39 +1436,43 @@
    (cond
      [(null? (rest types))
       (make-field (first types) (if all-mutable? 'mut 'imm))]
-     ;; 異型でも可変性は保つ。field の型を Union にしたまま mut で残す
-     ;; （spec §9.1、ホワイトペーパー §4.5.3）。書き戻しの安全性は
-     ;; Assign の側が受け持ち、Union の全成分と両立しない値を拒む
-     ;; （spec §9.2 の infer-assign）。
+     ;; mode 無効時は既存どおり join-type で欄の型を合わせる。
+     ;; tag mode では既に Union tag を持つ型どうしだけが上界へ合流する。
      [else
       (define joined
         (for/fold ([joined (first types)])
                   ([type (in-list (rest types))])
-          (join-types joined type)))
+          (if (eq? join-type join-types)
+              (join-type joined type)
+              (and joined (join-type joined type)))))
       (and joined (make-field joined (if all-mutable? 'mut 'imm)))])))
 
 ;; ROW-005: 返り値は 3 状態である。field 行なら合流成功、'absent は「どれかの
 ;; branch にこの field が無い」正常な脱落、#f は正規化または join の失敗であり
 ;; merge 全体の fail-closed へ伝播する。
 ;; 両者を #f で兼ねると、失敗が脱落として黙って握り潰される。
-(define (merge-common-field types first-field)
+(define (merge-common-field types first-field join-type)
   (define label (first first-field))
   (define fields
     (for/list ([type (in-list types)])
       (assoc label (second type))))
   (if (andmap values fields)
-      (merge-fields fields)
+      (merge-fields fields join-type)
       'absent))
 
 ;; RFN-002/CMP-001/ROW-005: 全 branch に常在する field を合わせる。異型は
 ;; 可変性を保ったまま Union join する。どれかの branch に無い field だけが落ちる。
 ;; types は空でないことを呼び出し側が保証する。
-(define (merge-record-types/impl types)
+(define (merge-record-types/impl
+         types
+         [join-type (if (current-union-tag-mode)
+                        tag-upper-bound
+                        join-types)])
   (with-lifetime-unify
    (lambda ()
      (define merged-fields
        (for/list ([field (in-list (second (first types)))])
-         (merge-common-field types field)))
+         (merge-common-field types field join-type)))
      (cond
        [(memq #f merged-fields) (values #f '())]
        [else
@@ -1508,6 +1539,23 @@
   (define result-type
     (cond
       [(null? types) 'Never]
+      [(current-union-tag-mode)
+       (cond
+         [(andmap record-type? types)
+          ;; 元の全枝を渡し、FieldType witness が実際の枝型を記録するようにする。
+          (define-values (merged _witnesses)
+            (parameterize ([merge-position
+                            (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
+              (merge-record-types/impl types tag-upper-bound)))
+          (unless merged (fail 'unmergeable-branch-records node))
+          merged]
+         [(ormap record-type? types)
+          (fail 'incompatible-branch-types node)]
+         [else
+          (for/fold ([upper (first types)])
+                    ([type (in-list (rest types))])
+            (or (tag-upper-bound upper type)
+                (fail 'type-mismatch node upper type)))])]
       [(andmap record-type? types)
        ;; RFN-002: W は merge の局所検査だけで使う。型へは載せない。
        (define-values (merged _witnesses)
@@ -1909,9 +1957,10 @@
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (compat? `(Record ,actual-row) `(Record ,declared-row)
-                         (current-Γ-pc0)
-                         (current-region-relation))
+        (unless ((if (current-union-tag-mode) tag-compat? compat?)
+                 `(Record ,actual-row) `(Record ,declared-row)
+                 (current-Γ-pc0)
+                 (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
           (field-row-residual actual-row declared-row))
@@ -2351,7 +2400,7 @@
   (list τ_payload ε_operand Ψ_1))
 
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
-;; target の payload が Union のときは、実行時の全成分と互換でなければならない。
+;; tag mode は値全体を Union payload と照合し、既定 mode は従来どおり各成分を調べる。
 (define (infer-assign core target value Λ Ψ environment places callables fail)
   (match-define (list τ_target ε_target Ψ_1)
     (infer target (enter-child Λ 0) Ψ environment places callables fail))
@@ -2371,9 +2420,12 @@
   (for ([α (in-list α_value)])
     (emit-constraint!
      (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
-  (for ([τ_i (in-list (union-members τ_payload))])
-    (unless (type-compatible? τ_value τ_i)
-      (fail 'assign-union-variant core)))
+  (if (current-union-tag-mode)
+      (unless (type-compatible? τ_value τ_payload)
+        (fail 'assign-union-variant core))
+      (for ([τ_i (in-list (union-members τ_payload))])
+        (unless (type-compatible? τ_value τ_i)
+          (fail 'assign-union-variant core))))
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
@@ -2383,9 +2435,8 @@
   (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
 
 ;; spec §7.1 §7.2。Reassign は固定された slot の中身を差し替える。slot の型は
-;; binding の宣言で決まり、再代入で変わらない。そのため値の型は compat? では
-;; なく type-equiv? で見る。compat? を採ると右辺の余剰 Owned を落とす経路が
-;; 開き、P1b が閉じた資源損失の穴を別の入口から開け直すことになる。
+;; binding の宣言で決まり、再代入で変わらない。既定 mode は type-equiv?、tag mode
+;; は tag-narrowing? で照合する。一般の compat? は余剰 Owned を落としうる。
 (define (infer-reassign core target value Λ Ψ environment places callables fail)
   (define τ_slot
     (match target
@@ -2406,7 +2457,8 @@
        type]))
   (match-define (list τ_value ε_value Ψ_1)
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
-  (unless (type-equiv? τ_slot τ_value)
+  (unless ((if (current-union-tag-mode) tag-narrowing? type-equiv?)
+           τ_value τ_slot)
     (fail 'reassign-type-mismatch core τ_slot τ_value))
   (unless (storage-ok? τ_slot)
     (fail 'mutable-callable-storage-requires-partial core τ_slot))

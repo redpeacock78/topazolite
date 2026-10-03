@@ -28,6 +28,20 @@
 (define elim-is
   `(UnionEliminate ,inject-int ((Int i -> i) (String s -> 0))))
 
+(define (if-term then else)
+  `(Eliminate (Construct Bool true)
+              ((true () -> ,then) (false () -> ,else))))
+
+(define plain-record-join-term
+  (if-term '(Rec ((a imm 1)))
+           '(Rec ((a imm (Construct Bool true))))))
+(define record-imm-join-term
+  (if-term `(Rec ((a imm (UnionInject ,U1 Int 1)) (b imm 2)))
+           `(Rec ((a imm (UnionInject ,U2 String "s")) (c imm 3)))))
+(define record-mut-join-term
+  (if-term `(Rec ((a mut (UnionInject ,U1 Int 1))))
+           `(Rec ((a mut (UnionInject ,U2 String "s"))))))
+
 (define (key-of core [environment '()])
   (match (type-of/raw core '() '() environment)
     [(list 'fail key _node _details ...) key]
@@ -257,6 +271,80 @@
                   (UnionEliminate ,inject-int ((Int i -> i) (String s -> 0)))
                   y))
     'ok)))
+
+(test-case "tag 保存の上界"
+  (check-equal? (tag-upper-bound 'Never U1) (normalize-type U1))
+  (check-equal? (tag-upper-bound U1 'Never) (normalize-type U1))
+  (check-equal? (tag-upper-bound U1 U2) (normalize-type U))
+  (check-false (tag-upper-bound U1 'Int))
+  (check-false (tag-upper-bound 'Int 'Bool))
+  (check-equal? (tag-upper-bound 'Int 'Int) 'Int)
+  (check-equal?
+   (tag-upper-bound `(Record ((a ,U1 imm) (b Int imm)))
+                    `(Record ((a ,U2 imm) (c Int imm))))
+   (normalize-type `(Record ((a ,U imm)))))
+  (check-equal?
+   (tag-upper-bound `(Record ((a ,U1 mut))) `(Record ((a ,U2 mut))))
+   (normalize-type `(Record ((a ,U mut))))))
+
+(test-case "synth 合流は tag 保存の上界を使い tag の無い値から Union を作らない"
+  (check-equal? (type-of plain-record-join-term)
+                (normalize-type '(Record ((a (Union Int Bool) imm)))))
+  (tagged
+   (check-equal? (key-of plain-record-join-term) 'unmergeable-branch-records)
+   (check-equal? (type-of record-imm-join-term)
+                 (normalize-type `(Record ((a ,U imm)))))
+   (check-equal? (type-of record-mut-join-term)
+                 (normalize-type `(Record ((a ,U mut)))))))
+
+(test-case "UnionEliminate の synth は枝の tag 保存の上界を使う"
+  (define core
+    `(UnionEliminate ,inject-int
+       ((Int i -> (UnionInject ,U1 Int 1))
+        (String s -> (UnionInject ,U2 String "s")))))
+  (tagged
+   (check-equal? (type-of core) (normalize-type U))))
+
+(test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
+  (define rec-term
+    `(Let (r const (Record ((a ,IS imm))))
+          (Rec ((a imm 1)))
+          (Proj r a)))
+  (define assign-term
+    `(Let (m mut ,IS) ,inject-int
+          (Assign (BorrowMut m) 1)))
+  (define bare-let
+    `(Let (x const ,IS) 1
+          (UnionEliminate x ((Int i -> 0) (String s -> 0)))))
+  (define rec-union
+    '(Union (Record ((a Int imm) (b Int imm)))
+            (Record ((a Int imm) (c Bool imm)))))
+  (define union-to-rec
+    `(Let (u const ,rec-union)
+          (UnionInject ,rec-union
+                       (Record ((a Int imm) (b Int imm)))
+                       (Rec ((a imm 1) (b imm 2))))
+          (Let (r const (Record ((a Int imm)))) u (Proj r a))))
+  (check-equal? (type-of rec-term) IS)
+  (tagged
+   (check-not-equal? (key-of rec-term) 'ok)
+   (check-not-equal? (key-of assign-term) 'ok)
+   (check-not-equal? (key-of bare-let) 'ok)
+   (check-not-equal? (key-of union-to-rec) 'ok)))
+
+(test-case "Reassign は tag の狭まりを受け入れ、Owned 欄の損失を拒否する"
+  (define wide-union (normalize-type U))
+  (define narrow-reassign
+    `(Let (x mut ,wide-union)
+          (UnionInject ,U1 Int 1)
+          (Reassign x (UnionInject ,U1 Int 2))))
+  (define owned-loss-environment
+    '((slot (Record ((y Int imm))) mut)
+      (source (Record ((x (Owned Res) imm) (y Int imm))) const)))
+  (tagged
+   (check-equal? (key-of narrow-reassign) 'ok)
+   (check-equal? (key-of '(Reassign slot source) owned-loss-environment)
+                 'reassign-type-mismatch)))
 
 (define borrowed-union-core
   '(Scope (1)

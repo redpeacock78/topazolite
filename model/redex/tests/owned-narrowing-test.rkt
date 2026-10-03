@@ -63,6 +63,11 @@
   (check-equal? (key-of core narrowing-environment) 'owned-narrowing-needs-proof)
   (check-equal? (code-of core narrowing-environment) "E-OWN-030"))
 
+(test-case "tag mode でも余剰 Owned 欄を落とす narrowing は Proof を求める"
+  (parameterize ([current-union-tag-mode #t])
+    (check-equal? (key-of '(Apply f s) narrowing-environment)
+                  'owned-narrowing-needs-proof)))
+
 (test-case "Proof を求める診断は expected と found を分けて持つ"
   (define diagnostic
     (core-type-of/diagnostic '(Apply f s) '() '()

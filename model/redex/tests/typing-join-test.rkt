@@ -147,3 +147,22 @@
                        '(Record ((a Int imm)))))])
     (check-false merged)
     (check-equal? witnesses '())))
+
+(test-case "tag mode: row merge は既存 Union の tag 保存上界を使う"
+  (define u1 '(Union Int Bool))
+  (define u2 '(Union String Bool))
+  (define merged-union (normalize-type `(Union ,u1 ,u2)))
+  (parameterize ([current-union-tag-mode #t])
+    (check-equal? (merge-field `(a ,u1 imm) `(a ,u2 imm))
+                  `(a ,merged-union imm))
+    (check-equal? (merge-field `(a ,u1 mut) `(a ,u2 mut))
+                  `(a ,merged-union mut))
+    (let-values ([(merged witnesses)
+                  (merge-record-types
+                   (list `(Record ((a ,u1 imm) (left Int imm)))
+                         `(Record ((a ,u2 imm) (right Int imm)))))])
+      (check-equal? merged `(Record ((a ,merged-union imm))))
+      (check-equal? (witness-propositions witnesses)
+                    `((Presence a)
+                      (FieldType a ,(normalize-type u1))
+                      (FieldType a ,(normalize-type u2)))))))
