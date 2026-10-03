@@ -1185,10 +1185,7 @@
     (cond
       [(null? types) 'Never]
       [(current-union-tag-mode)
-       (for/fold ([upper (first types)])
-                 ([type (in-list (rest types))])
-         (or (tag-upper-bound upper type)
-             (fail 'type-mismatch node upper type)))]
+       (tagged-branch-upper-bound types Λ node fail)]
       [else
        (define expected (first types))
        (for ([actual (in-list (rest types))])
@@ -1284,6 +1281,27 @@
          [(`(Record ,_) `(Record ,_))
           (tag-merge-record-types l r)]
          [(_ _) (and (type-equiv? l r) l)])))
+
+(define (tagged-branch-upper-bound types Λ node fail)
+  (parameterize ([merge-position
+                  (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
+    (cond
+      [(andmap record-type? types)
+       ;; 元の全枝を渡し、FieldType witness が実際の枝型を記録するようにする。
+       (define-values (merged _witnesses)
+         (merge-record-types/impl types tag-upper-bound))
+       (or merged (fail 'unmergeable-branch-records node))]
+      [(ormap record-type? types)
+       (fail 'incompatible-branch-types node)]
+      [else
+       (with-lifetime-unify
+        (lambda ()
+          ;; 同じ借用を返す枝の寿命だけを合流してから、型の上界を求める。
+          (define unified (unify-borrow-lifetimes types))
+          (for/fold ([upper (first unified)])
+                    ([type (in-list (rest unified))])
+            (or (tag-upper-bound upper type)
+                (fail 'type-mismatch node upper type)))))])))
 
 (define (tag-merge-record-types left right)
   (define-values (merged _witnesses)
@@ -1442,9 +1460,7 @@
       (define joined
         (for/fold ([joined (first types)])
                   ([type (in-list (rest types))])
-          (if (eq? join-type join-types)
-              (join-type joined type)
-              (and joined (join-type joined type)))))
+          (and joined (join-type joined type))))
       (and joined (make-field joined (if all-mutable? 'mut 'imm)))])))
 
 ;; ROW-005: 返り値は 3 状態である。field 行なら合流成功、'absent は「どれかの
@@ -1540,22 +1556,7 @@
     (cond
       [(null? types) 'Never]
       [(current-union-tag-mode)
-       (cond
-         [(andmap record-type? types)
-          ;; 元の全枝を渡し、FieldType witness が実際の枝型を記録するようにする。
-          (define-values (merged _witnesses)
-            (parameterize ([merge-position
-                            (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
-              (merge-record-types/impl types tag-upper-bound)))
-          (unless merged (fail 'unmergeable-branch-records node))
-          merged]
-         [(ormap record-type? types)
-          (fail 'incompatible-branch-types node)]
-         [else
-          (for/fold ([upper (first types)])
-                    ([type (in-list (rest types))])
-            (or (tag-upper-bound upper type)
-                (fail 'type-mismatch node upper type)))])]
+       (tagged-branch-upper-bound types Λ node fail)]
       [(andmap record-type? types)
        ;; RFN-002: W は merge の局所検査だけで使う。型へは載せない。
        (define-values (merged _witnesses)

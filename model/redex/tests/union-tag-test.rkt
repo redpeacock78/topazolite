@@ -58,6 +58,16 @@
 (define (tc? actual expected)
   (tag-compat? actual expected '() equal?))
 
+(define (type-of/in-regions core places owner-points)
+  (define ir (build-region-ir core))
+  (define owners
+    (for/hash ([place (in-list places)])
+      (define id (first place))
+      (values id (region-at ir (hash-ref owner-points id)))))
+  (type-of/raw (annotate-regions core ir)
+               places '() '()
+               (region-ctx ir '() owners (hash))))
+
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
   (check-true (redex-match? G2 c elim-is))
@@ -304,6 +314,125 @@
         (String s -> (UnionInject ,U2 String "s")))))
   (tagged
    (check-equal? (type-of core) (normalize-type U))))
+
+(test-case "tag mode の Eliminate と UnionEliminate は枝の借用寿命を合流する"
+  (define cores
+    (list
+     '(Scope (1)
+        (Eliminate (Construct Bool true)
+          ((true () -> (Borrow 1)) (false () -> (Borrow 1)))))
+     '(Scope (1) (Scope (2)
+        (Eliminate (Construct Bool true)
+          ((true () -> (Borrow 1)) (false () -> (Borrow 2))))))
+     `(Scope (1)
+        (UnionEliminate (UnionInject ,IS Int 1)
+          ((Int i -> (Borrow 1)) (String s -> (Borrow 1)))))
+     `(Scope (1) (Scope (2)
+        (UnionEliminate (UnionInject ,IS Int 1)
+          ((Int i -> (Borrow 1)) (String s -> (Borrow 2))))))))
+  (for ([core (in-list cores)])
+    (define has-second-place
+      (match core [`(Scope (1) (Scope (2) ,_)) #t] [_ #f]))
+    (define owner-points (if has-second-place (hash 1 '() 2 '()) (hash 1 '())))
+    (define result
+      (tagged (type-of/in-regions
+               core
+               (if has-second-place
+                   '((1 Int) (2 Int))
+                   '((1 Int)))
+               owner-points)))
+    (check-equal? (first result) 'ok
+                  (format "core: ~s; result: ~s" core result))))
+
+(test-case "tag mode の UnionEliminate は 3 枝の record 借用寿命を一度に合流する"
+  (define union-type U)
+  (define core
+    `(Scope (1)
+       (UnionEliminate (UnionInject ,union-type Int 1)
+         ((Int i -> (Rec ((a imm (Borrow 1)))))
+          (String s -> (Rec ((a imm (Borrow 1)))))
+          (Bool b -> (Rec ((a imm (Borrow 1)))))))))
+  (define ir (build-region-ir core))
+  (define inference
+    (tagged
+     (typing-inference (annotate-regions core ir)
+                       '((1 Res)) '() '()
+                       (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))))
+  (define result-type (first inference))
+  (define merged-region
+    (match result-type
+      [`(Record ((a (Borrowed Res ,ρ) imm))) ρ]
+      [other (error 'union-tag-test "unexpected result type: ~s" other)]))
+  (define merge-constraints
+    (filter (lambda (constraint)
+              (eq? (region-constraint-kind constraint) 'merge))
+            (third inference)))
+  (check-equal? (length merge-constraints) 3)
+  (check-equal? (remove-duplicates
+                 (map region-constraint-right merge-constraints))
+                (list merged-region)))
+
+(test-case "tag mode の借用枝は内側 owner からの脱出を拒む"
+  (define cores
+    (list
+     '(Scope (1) (Scope (2)
+        (Eliminate (Construct Bool true)
+          ((true () -> (Borrow 1)) (false () -> (Borrow 2))))))
+     `(Scope (1) (Scope (2)
+        (UnionEliminate (UnionInject ,IS Int 1)
+          ((Int i -> (Borrow 1)) (String s -> (Borrow 2))))))))
+  (for ([core (in-list cores)])
+    (define result
+      (tagged
+       (type-of/in-regions core '((1 Int) (2 Int))
+                           (hash 1 '() 2 '(0)))))
+    (check-equal? (first result) 'fail (format "core: ~s" core))
+    (check-equal? (second result) 'borrow-escapes-owner
+                  (format "core: ~s; result: ~s" core result))))
+
+(test-case "UnionEliminate と Eliminate の借用 record 合流は同じ Move を拒む"
+  (define (record-with-type type eliminate)
+    `(Scope (1)
+       (Let (record let ,type)
+         ,eliminate
+         (Let (m const (Owned Res)) (Move 1) 0))))
+  (define (record-eliminate)
+    '(Eliminate (Construct Bool true)
+       ((true () -> (Rec ((a imm (Borrow 1)))))
+        (false () -> (Rec ((a imm (Borrow 1))))))))
+  (define (record-union-eliminate)
+    `(UnionEliminate (UnionInject ,IS Int 1)
+       ((Int i -> (Rec ((a imm (Borrow 1)))))
+        (String s -> (Rec ((a imm (Borrow 1))))))))
+  (define (record-result-type eliminate)
+    (define core `(Scope (1) ,eliminate))
+    (define ir (build-region-ir core))
+    (first
+     (tagged
+      (typing-inference (annotate-regions core ir)
+                        '((1 Res)) '() '()
+                        (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))))
+  (define (result eliminate)
+    (define type (record-result-type eliminate))
+    (define core (record-with-type type eliminate))
+    (define ir (build-region-ir core))
+    (tagged
+     (type-of/raw (annotate-regions core ir)
+                  '((1 Res)) '() '()
+                  (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))))
+  (define (result-key result)
+    (match result
+      [(list 'fail key _node _details ...) key]
+      [_ 'ok]))
+  (define eliminate-result (result (record-eliminate)))
+  (define union-eliminate-result (result (record-union-eliminate)))
+  (define eliminate-key (result-key eliminate-result))
+  (define union-eliminate-key (result-key union-eliminate-result))
+  (tagged
+   (check-equal? eliminate-key 'move-borrowed
+                 (format "Eliminate: ~s" eliminate-result))
+   (check-equal? union-eliminate-key eliminate-key
+                 (format "UnionEliminate: ~s" union-eliminate-result))))
 
 (test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
   (define rec-term
