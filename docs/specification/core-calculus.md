@@ -129,6 +129,10 @@ value path は `Record` の欄、`Union` の成分、data 型の型引数、`Own
 この前提が無いと、可変記憶域の callable を書き換えて自分自身を呼ばせる循環が、どの宣言 row にも `Partial` を残さずに作れる。
 違反は typing の `E-TYP-026` と、UCore の `Reassign` を検査する elaborate の `E-TYP-027` として拒否する。
 
+正規化後の Union の各成分は、`Owned` を直接の外側に持てない。
+この制約は入れ子の Union を平坦化した後の全成分に適用し、型注釈と `UnionInject` の型引数を含む全ての型位置で検査する。
+違反は `owned-union-member` として拒否する。
+
 Effect label を 1 つ足すと、次の 7 箇所が動く。
 文法が 3 層（`lang.rkt` の `ℓ`、`ucore.rkt` の `tℓ` と `uℓ`）。
 許可集合を閉じている検査が 4 つ（`elaborate.rkt` の `resolve-type-row` と `resolve-declaration-row`、`traits.rkt` の `template-effect?`、`lowering.rkt` の `effect-label-kind`）。
@@ -1226,6 +1230,37 @@ C0(K) の宣言を D の型引数で具体化して (σ1, …, σk) -> D を得�
 
 `Construct` も `D` を自身のフィールドとして保持するため、`vf` と同様に外部の期待型を経由せず単独で synthesize できる。
 これは E-Construct-Check・E-Construct-Synth（§4.2）双方の前提をそのまま Typed Core の型付けへ転写した規則であり、手書きの Typed Core が D と K・field の型を食い違わせて偽造することも防ぐ。
+
+**(T-UnionInject)**
+
+```text
+normalize(τU) = Union(τ1, …, τn)        normalize(τm) ≡ τi
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ' ! ε        tag-compat?(τ', τi)
+------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core UnionInject(τU, τm, c) : normalize(τU) ! ε
+```
+
+`UnionInject` は対象型を正規化し、選んだ成分が正規化後の Union に一度だけ現れることを検査する。
+payload はその成分型へ check し、値の型に tag を付けた後も payload の Effect row を保つ。
+
+**(T-UnionEliminate)**
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c0 : Union(τ1, …, τn) ! ε0
+ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
+各 τi に対して type-equiv?(σk, τi) で一致する枝 k がちょうど一つある
+σ1, …, σm は重複しない。余った枝の本体も型付けする
+Γ, xk : σk; Δ; Π; Ξ; Φ ⊢core ck : ρk ! εk       （k = 1 … m）
+τ = Never（全ての ρk が Never）か、全ての ρk は Never または τ
+----------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core UnionEliminate(c0, ubr̄) : τ ! (ε0 ∪ ε1 ∪ … ∪ εm)
+```
+
+`Never` の枝は結果型の選択から除くが、本体の型検査と Effect row の合流には含める。
+借用された Union を分岐するときは、枝の束縛子へ対応する成分型の借用を与える。
+この初期規則では全ての非 `Never` 枝に同じ結果型を求める。
+P2m2a の後続 Task 5 で、この条件を tag 保存の上界へ置き換える。
+期待型がある位置では、全ての枝の本体をその型へ check する。
 
 **(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
 `TypeRep(O, t, κ)` は `TypeInfo<κ>`、`ProofRep(O, φ)` は `Proof<φ>` で型付けする。

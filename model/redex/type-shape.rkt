@@ -10,6 +10,7 @@
          "validators.rkt")
 
 (provide type-shape-ok?
+         owned-union-member?
          core-types-normal?
          proposition-shape-ok?
          proposition-types-normal?
@@ -103,7 +104,10 @@
           (type-shape-ok? inner)
           (proposition-shape-ok? proposition))]
     [`(Union ,left ,right)
-     (and (type-shape-ok? left) (type-shape-ok? right))]
+     (and (not (match left [`(Owned ,_) #t] [_ #f]))
+          (not (match right [`(Owned ,_) #t] [_ #f]))
+          (type-shape-ok? left)
+          (type-shape-ok? right))]
     [`(Intersection ,left ,right)
      (and (type-shape-ok? left) (type-shape-ok? right))]
     [`(Proof ,proposition)
@@ -127,6 +131,28 @@
                            [field (in-list (second row))])
                   (type-shape-ok? field)))))]
     [_ #t]))
+
+;; PAT-001。Owned は Union の直下の成分に置けない。
+;; Data の欄に現れる Union も同じ制約で調べる。
+(define (owned-union-member? subject)
+  (let walk ([type subject] [visited (set)])
+    (match type
+      [`(Union ,left ,right)
+       (or (ormap (lambda (member)
+                    (match member [`(Owned ,_) #t] [_ #f]))
+                  (union-members type))
+           (walk left visited)
+           (walk right visited))]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (or (ormap (lambda (argument) (walk argument visited)) arguments)
+           (and schema
+                (not (set-member? visited key))
+                (for/or ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [(? list? terms) (ormap (lambda (term) (walk term visited)) terms)]
+      [_ #f])))
 
 ;; 可変記憶域の書込み先の型が、value path で到達するすべての NFn に
 ;; Partial を持たせているかを判定する（REC-001、P2i3 spec §3.2）。
@@ -258,8 +284,8 @@
          [`(Construct ,type ,_ ,fields ...)
           (and (type-normal? type) (andmap walk fields))]
          [`(UnionInject ,union-type ,member-type ,payload)
-          (and (type-normal? union-type)
-               (type-normal? member-type)
+          (and (normalize-type union-type)
+               (normalize-type member-type)
                (walk payload))]
          [`(UnionEliminate ,scrutinee ,branches)
           (and (walk scrutinee) (andmap walk-ubr branches))]

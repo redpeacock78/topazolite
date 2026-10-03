@@ -119,9 +119,15 @@
         (map (λ (name) (reach-bind name start end)) names)
         '->
         body))
+(define (reach-ubr start end type binder body)
+  (list (reach-span start end)
+        (reach-ty type start end)
+        (reach-bind binder start end)
+        '->
+        body))
 (define (reach-row key core places callables environment expected-span
-                   [make-Λ #f])
-  (list key core places callables environment expected-span make-Λ))
+                   [make-Λ #f] [tag-mode? #f])
+  (list key core places callables environment expected-span make-Λ tag-mode?))
 
 (define (reach-region-ctx core)
   (region-ctx (build-region-ir (erase-core core)) '() (hash) (hash)))
@@ -216,6 +222,8 @@
     error-needs-expected-type incompatible-branch-types invalid-callables
     invalid-environment invalid-places non-normal-type
     non-normalizable-result-type type-mismatch type-origin-invalid
+    non-union-eliminate non-exhaustive-union-eliminate
+    union-inject-not-member
     ;; EFF
     effectful-curry-operand undeclared-function-effect
     ;; OWN
@@ -225,6 +233,7 @@
     owned-function-requires-move
     owned-narrowing-needs-proof
     owned-narrowing-rejected
+    owned-union-member
     owned-parameter-missing-binding owned-raw-parameter-misuse
     owned-record-field owned-return-binder-misuse
     owned-refined-payload owned-untrusted-payload
@@ -295,6 +304,26 @@
               (reach-node 'Construct 16 20
                           (reach-ty '(Union Int Int) 17 19) 'nil)
               '() '() '() (reach-span 16 20))
+   (reach-row 'union-inject-not-member
+              (reach-node 'UnionInject 1801 1815
+                          (reach-ty 'Int 1803 1805)
+                          (reach-ty 'Int 1806 1808)
+                          (reach-lit 1 1811 1812))
+              '() '() '() (reach-span 1801 1815) #f #t)
+   (reach-row 'non-union-eliminate
+              (reach-node 'UnionEliminate 1816 1835
+                          (reach-lit 1 1828 1829)
+                          '())
+              '() '() '() (reach-span 1828 1829) #f #t)
+   (reach-row 'non-exhaustive-union-eliminate
+              (reach-node 'UnionEliminate 1836 1870
+                          (reach-node 'UnionInject 1837 1850
+                                      (reach-ty '(Union Int String) 1838 1842)
+                                      (reach-ty 'Int 1843 1845)
+                                      (reach-lit 1 1847 1848))
+                          (list (reach-ubr 1851 1869 'Int 'x
+                                           (reach-var 'x 1864 1865))))
+              '() '() '() (reach-span 1836 1870) #f #t)
    (reach-row 'incompatible-branch-types
               (reach-node 'Eliminate 21 45
                           (reach-node 'Construct 22 25
@@ -429,6 +458,13 @@
                           (list (list (reach-lbl 'a 222 223) 'imm
                                       (reach-node 'resource 228 234 0))))
               '() '() '() (reach-span 228 234))
+   (reach-row 'owned-union-member
+              (reach-node 'Let 236 260
+                          (list (reach-bind 'x 237 238) 'const
+                                (reach-ty '(Union Int (Owned Res)) 239 244))
+                          (reach-lit 1 245 246)
+                          (reach-var 'x 247 248))
+              '() '() '() (reach-span 236 260))
    (reach-row 'owned-refined-payload
               (reach-node 'RVal 236 250
                           (reach-node 'ProofRep 237 240 'User
@@ -944,30 +980,31 @@
                 (g (NFn (Int) Int () () () User) let))
               (reach-span 1726 1740))))
 
-(test-case "typing の producer key 集合が registry v30 と一致する"
+(test-case "typing の producer key 集合が registry v32 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 106)
+  (check-equal? (length producer-keys) 110)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
 (test-case "typing の全到達可能 key が正しい primary-span を持つ"
   (for ([entry (in-list reachability-table)])
     (match-define (list key core places callables environment expected-span
-                        make-Λ) entry)
+                        make-Λ tag-mode?) entry)
     (if (eq? key 'not-core-term)
         (check-false (redex-match? G2m c (erase-core core))
                      "not-core-term の入力は G2m の c ではない")
         (check-true (redex-match? G2m c (erase-core core))
                     (format "~a の入力が G2m の c に属する" key)))
     (define diagnostic
-      (if make-Λ
-          (core-type-of/diagnostic core places callables environment
-                                   (make-Λ core))
-          (core-type-of/diagnostic core places callables environment)))
+      (parameterize ([current-union-tag-mode tag-mode?])
+        (if make-Λ
+            (core-type-of/diagnostic core places callables environment
+                                     (make-Λ core))
+            (core-type-of/diagnostic core places callables environment))))
     (check-true (diagnostic? diagnostic)
                 (format "~a が Diagnostic を返す" key))
     (when (diagnostic? diagnostic)

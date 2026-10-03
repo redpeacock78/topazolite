@@ -5,6 +5,7 @@
          racket/set
          redex/reduction-semantics
          "../annotate.rkt"
+         "../borrow.rkt"
          "../compat.rkt"
          "../erase.rkt"
          "../lang.rkt"
@@ -12,6 +13,7 @@
          "../region.rkt"
          "../span-core.rkt"
          "../type-shape.rkt"
+         "../type-equiv.rkt"
          "../typing.rkt"
          "../uniquify.rkt")
 
@@ -30,6 +32,14 @@
   (match (type-of/raw core '() '() environment)
     [(list 'fail key _node _details ...) key]
     [(list 'ok _) 'ok]))
+
+(define-syntax-rule (tagged body ...)
+  (parameterize ([current-union-tag-mode #t]) body ...))
+
+(define (type-of core [environment '()])
+  (match (type-of/raw core '() '() environment)
+    [(list 'ok (list type _row)) type]
+    [other other]))
 
 (define (tc? actual expected)
   (tag-compat? actual expected '() equal?))
@@ -87,10 +97,10 @@
      (check-equal? outer other-body)]
     [_ (fail (format "unexpected uniquified core: ~s" renamed))]))
 
-(test-case "core-types-normal? は inject と ubr の型を走査する"
+(test-case "core-types-normal? は inject の型を正規化し ubr の型を走査する"
   (check-true (core-types-normal? inject-int))
   (check-true (core-types-normal? elim-is))
-  (check-false
+  (check-true
    (core-types-normal?
     '(UnionInject (Union (Union Int Bool) String) Int 1)))
   (check-false
@@ -165,3 +175,124 @@
   (check-false (tc? '(Record ((a Int mut))) '(Record ((a Bool mut)))))
   (check-true (tc? `(Owned ,U1) `(Owned ,U)))
   (check-false (tc? `(Owned ,nfn-u1) `(Owned ,nfn-u))))
+
+(test-case "UnionInject：成分の inject と正規化"
+  (tagged
+   (check-equal? (type-of inject-int) (normalize-type IS))
+   (check-equal? (type-of '(UnionInject (Union Int (Union Int String)) Int 1))
+                 (normalize-type IS))
+   (check-equal? (key-of `(UnionInject ,IS Bool (Construct Bool true)))
+                 'union-inject-not-member)
+   (check-equal? (key-of '(UnionInject Int Int 1)) 'union-inject-not-member)
+   (check-not-equal? (key-of `(UnionInject ,IS Int (Construct Bool true))) 'ok)
+   (check-equal?
+    (type-of '(UnionInject (Union (Option Int) String) (Option Int)
+                           (Construct (Option Int) some 1)))
+    '(Union (Option Int) String))))
+
+(test-case "UnionEliminate：synth、check、枝検査"
+  (tagged
+   (check-equal? (type-of elim-is) 'Int)
+   (check-equal? (key-of '(UnionEliminate 1 ((Int i -> i)))) 'non-union-eliminate)
+   (check-equal? (key-of `(UnionEliminate ,inject-int ((Int i -> i))))
+                 'non-exhaustive-union-eliminate)
+   (check-equal? (key-of `(UnionEliminate ,inject-int
+                            ((Int i -> i) (Int j -> j) (String s -> 0))))
+                 'non-exhaustive-union-eliminate)
+   (check-equal? (key-of `(UnionEliminate ,inject-int
+                            ((Int i -> i) (String s -> (Construct Bool true)))))
+                         'type-mismatch)
+   (check-equal?
+    (type-of '(Let (y const Int)
+                (UnionEliminate (UnionInject (Union Int String) Int 1)
+                  ((Int i -> i) (String s -> 0)))
+                y))
+    'Int)
+   (check-equal?
+    (type-of `(UnionEliminate ,inject-int
+                ((Int i -> (Perform (Return boundary Int) 1))
+                 (String s -> 0))))
+    'Int)))
+
+(test-case "UnionEliminate：余った枝も型付けする"
+  (tagged
+   (check-equal? (type-of `(UnionEliminate ,inject-int
+                             ((Int i -> i) (String s -> 0) (Bool b -> 0))))
+                 'Int)
+   (check-equal? (key-of `(UnionEliminate ,inject-int
+                            ((Int i -> i) (String s -> 0) (Bool b -> (Read b)))))
+                 'read-non-borrow)))
+
+(test-case "Owned を直接の成分に持つ Union は入れ子でも拒否する"
+  (tagged
+   (check-equal? (key-of `(UnionInject (Union Int (Union String (Owned Res))) Int 1))
+                 'owned-union-member)
+   (check-equal?
+    (key-of '(Let (x const (Union Int (Owned Res)))
+               (UnionInject (Union Int (Owned Res)) Int 1)
+               x))
+    'owned-union-member)))
+
+(test-case "Data 型の引数にある Owned 成分の Union も well-formedness 検査が見つける"
+  (check-true
+   (owned-union-member? '(Data Phantom ((Union Int (Owned Res)))))))
+
+(test-case "Owned を直接の成分に持つ Union は tag mode が無効でも拒否する"
+  (check-false (current-union-tag-mode))
+  (check-equal? (key-of '(Let (x const (Union Int (Owned Res))) 1 x))
+                'owned-union-member)
+  (check-equal?
+   (key-of '(Let (x const (Union Int (Union String (Owned Res)))) 1 x))
+   'owned-union-member))
+
+(test-case "tag mode の check 境界は tag の無い値を Union の位置へ入れない"
+  (tagged
+   (check-not-equal?
+    (key-of `(UnionInject (Union (Record ((a ,IS imm))) Bool)
+                          (Record ((a ,IS imm)))
+                          (Rec ((a imm 1)))))
+    'ok)
+   (check-not-equal?
+    (key-of `(Let (y const ,IS)
+                  (UnionEliminate ,inject-int ((Int i -> i) (String s -> 0)))
+                  y))
+    'ok)))
+
+(define borrowed-union-core
+  '(Scope (1)
+     (UnionEliminate (Borrow 1)
+                     ((Int i -> (Let (value const Int) (Read i) unit))
+                      (String s -> (Let (value const String) (Read s) unit))))))
+(define borrowed-union-ir (build-region-ir borrowed-union-core))
+(define borrowed-union-Λ
+  (region-ctx borrowed-union-ir '()
+              (hash 1 (region-at borrowed-union-ir '()))
+              (hash)))
+
+(test-case "借用した Union の枝は成分の共有借用を渡す"
+  (define result
+    (tagged
+     (type-of/raw (annotate-regions borrowed-union-core borrowed-union-ir)
+                  (list (list 1 IS)) '() '() borrowed-union-Λ)))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Unit))
+
+(define borrowed-mut-union-core
+  '(Scope (1)
+     (UnionEliminate (BorrowMut 1)
+                     ((Int i -> (Assign i 7))
+                      (String s -> (Assign s "s"))))))
+(define borrowed-mut-union-ir (build-region-ir borrowed-mut-union-core))
+(define borrowed-mut-union-Λ
+  (region-ctx borrowed-mut-union-ir '()
+              (hash 1 (region-at borrowed-mut-union-ir '()))
+              (hash)))
+
+(test-case "借用した Union の枝は成分の可変借用を渡す"
+  (define result
+    (tagged
+     (type-of/raw (annotate-regions borrowed-mut-union-core
+                                    borrowed-mut-union-ir)
+                  (list (list 1 IS)) '() '() borrowed-mut-union-Λ)))
+  (check-equal? (first result) 'ok)
+  (check-equal? (first (second result)) 'Unit))

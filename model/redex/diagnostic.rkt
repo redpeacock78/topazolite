@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 31)
+(define diagnostic-registry-version 32)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -326,6 +326,16 @@
   '(("E-RCD-013" projopt-invalid-field
                  "ProjOpt の τ が欄の型と互換でない")))
 
+(define typing-entries-v32
+  '(("E-TYP-028" union-inject-not-member
+                 "UnionInject の成分が Union に含まれない")
+    ("E-TYP-029" non-union-eliminate
+                 "UnionEliminate の対象が Union でない")
+    ("E-TYP-030" non-exhaustive-union-eliminate
+                 "UnionEliminate の枝が成分を尽くしていない")
+    ("E-OWN-033" owned-union-member
+                 "Union の成分に Owned を直接置けない")))
+
 (define borrow-entries-v30
   '(("E-BOR-026" projborrow-optional-field
                  "optional の欄は借用で射影できない")))
@@ -483,6 +493,7 @@
           (rows 'typing 27 typing-entries-v27)
           (rows 'typing 30 typing-entries-v30)
           (rows 'typing 31 typing-entries-v31)
+          (rows 'typing 32 typing-entries-v32)
           (rows 'typing 30 borrow-entries-v30)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)

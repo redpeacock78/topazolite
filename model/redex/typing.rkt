@@ -713,7 +713,8 @@
 (define current-union-tag-mode (make-parameter #f))
 
 (define (type-compatible? actual expected)
-  (compat? actual expected (current-Γ-pc0) (current-region-relation)))
+  ((if (current-union-tag-mode) tag-compat? compat?)
+   actual expected (current-Γ-pc0) (current-region-relation)))
 
 ;; ROW-005。Eliminate が作った Union の導入点だけで、各枝の具体型を
 ;; 合流型の成分として再照合する。一般の mut field 互換性は不変のままにし、
@@ -1072,6 +1073,154 @@
                   binders
                   field-types)
           (enter-child Λ_branch i))))
+
+;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
+;; 各枝の束縛子へ payload path を引き継ぐ。
+(define (union-branch-contexts branches union-type wrapper Λ environment
+                               node scrutinee fail)
+  (define plain-branches
+    (for/list ([branch (in-list branches)])
+      (match branch
+        [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
+         (list type binder '-> body)]
+        [_ branch])))
+  (for ([branch (in-list plain-branches)])
+    (unless (redex-match? G2m ubr (erase-core branch))
+      (fail 'ill-typed node)))
+  (define branch-types (map first plain-branches))
+  (let check-duplicates ([remaining branch-types] [seen '()])
+    (unless (null? remaining)
+      (when (ormap (lambda (prior) (type-equiv? (first remaining) prior)) seen)
+        (fail 'non-exhaustive-union-eliminate node))
+      (check-duplicates (rest remaining) (cons (first remaining) seen))))
+  (for ([member (in-list (union-members union-type))])
+    (unless (= (for/sum ([type (in-list branch-types)]
+                         #:when (type-equiv? type member))
+                1)
+               1)
+      (fail 'non-exhaustive-union-eliminate node)))
+  (define borrowed? (pair? wrapper))
+  (define scrutinee-ws
+    (and borrowed? (borrow-token-key Λ scrutinee)))
+  (when (and borrowed? (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
+    (fail 'unresolved-borrow-owner scrutinee))
+  (for/list ([branch (in-list plain-branches)]
+             [i (in-naturals 1)])
+    (match-define `(,member ,binder -> ,body) branch)
+    (define x (peel-bind binder))
+    (define binding-type
+      (if borrowed? `(,(first wrapper) ,member ,(second wrapper)) member))
+    (define token
+      (if borrowed?
+          (for/set ([cap (in-set scrutinee-ws)])
+            (cons (car cap) (append (cdr cap) '(Payload))))
+          (set)))
+    (define Λ_branch
+      (region-ctx-add-token (register-owner Λ x binding-type)
+                            x token #f #f #f))
+    (list body
+          (extend environment (list x) (list binding-type))
+          (enter-child Λ_branch i))))
+
+(define (union-eliminate-branches scrutinee-type branches Λ environment
+                                  node scrutinee fail)
+  (match (normalize-type scrutinee-type)
+    [`(Union ,_ ,_)
+     (union-branch-contexts branches (normalize-type scrutinee-type) #f
+                            Λ environment node scrutinee fail)]
+    [`(Borrowed (Union ,_ ,_) ,ρ)
+     (union-branch-contexts branches
+                            (second (normalize-type scrutinee-type))
+                            (list 'Borrowed ρ) Λ environment node scrutinee fail)]
+    [`(BorrowedMut (Union ,_ ,_) ,ρ)
+     (union-branch-contexts branches
+                            (second (normalize-type scrutinee-type))
+                            (list 'BorrowedMut ρ) Λ environment node scrutinee fail)]
+    [_ (fail 'non-union-eliminate scrutinee)]))
+
+(define (check-union-eliminate scrutinee branches expected
+                               Λ Ψ environment places callables node fail
+                               compatible?)
+  (define scrutinee-result
+    (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
+  (define contexts
+    (union-eliminate-branches (first scrutinee-result) branches Λ environment
+                              node scrutinee fail))
+  (define branch-results
+    (for/list ([context (in-list contexts)])
+      (check-as/full (first context) expected (third context)
+                     (third scrutinee-result) (second context)
+                     places callables fail compatible?)))
+  (define branch-psi
+    (for/fold ([joined (third scrutinee-result)])
+              ([result (in-list branch-results)])
+      (psi-join joined (second result))))
+  (define unified
+    (parameterize ([merge-position
+                    (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
+      (with-lifetime-unify
+       (lambda ()
+         (unify-borrow-lifetimes
+          (map (lambda (result) (normalize-type (third result)))
+               branch-results))))))
+  (list (rows-union
+         (cons (second scrutinee-result) (map first branch-results)))
+        branch-psi
+        (if (= (length unified) 1) (first unified) expected)))
+
+(define (infer-union-eliminate scrutinee branches Λ Ψ environment
+                               places callables node fail)
+  (define scrutinee-result
+    (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
+  (define contexts
+    (union-eliminate-branches (first scrutinee-result) branches Λ environment
+                              node scrutinee fail))
+  (define attempts
+    (for/list ([context (in-list contexts)])
+      (infer (first context) (third context) (third scrutinee-result)
+             (second context) places callables fail)))
+  (define non-never
+    (filter (lambda (result) (not (eq? (first result) 'Never))) attempts))
+  (define types (map first non-never))
+  (define result-type
+    (cond
+      [(null? types) 'Never]
+      [else
+       (define expected (first types))
+       (for ([actual (in-list (rest types))])
+         (unless (type-equiv? expected actual)
+           (fail 'type-mismatch node expected actual)))
+       expected]))
+  (define branch-results
+    (for/list ([context (in-list contexts)])
+      (check-as/full (first context) result-type (third context)
+                     (third scrutinee-result) (second context)
+                     places callables fail merge-branch-compatible?)))
+  (define branch-psi
+    (for/fold ([joined (third scrutinee-result)])
+              ([result (in-list branch-results)])
+      (psi-join joined (second result))))
+  (list result-type
+        (rows-union (cons (second scrutinee-result)
+                          (map first branch-results)))
+        branch-psi))
+
+(define (infer-union-inject union-type member-type payload Λ Ψ
+                            environment places callables node fail)
+  (define union-type* (normalize-type (peel-ty union-type)))
+  (define member-type* (normalize-type (peel-ty member-type)))
+  (unless (and union-type*
+               (match union-type* [`(Union ,_ ,_) #t] [_ #f])
+               member-type*
+               (= (for/sum ([member (in-list (union-members union-type*))]
+                            #:when (type-equiv? member member-type*))
+                    1)
+                  1))
+    (fail 'union-inject-not-member node))
+  (match (check-as/full payload member-type* (enter-child Λ 0) Ψ
+                        environment places callables fail)
+    [(list row next-psi _actual)
+     (list union-type* row next-psi)]))
 
 (define (check-eliminate scrutinee branches expected
                          Λ Ψ environment places callables node fail
@@ -2551,6 +2700,11 @@
     [`(ProofRep ,_ ,proposition)
      (list `(Proof ,proposition) '() Ψ)]
 
+    [`(UnionInject ,union-type ,member-type ,payload)
+     #:when (current-union-tag-mode)
+     (infer-union-inject union-type member-type payload Λ Ψ
+                         environment places callables core fail)]
+
     [`(Construct ,data-type ,constructor ,fields ...)
      (define result
        (check-construct constructor fields data-type Λ
@@ -2976,6 +3130,11 @@
      (infer-eliminate scrutinee branches Λ
                       Ψ
                       environment places callables core fail)]
+
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     #:when (current-union-tag-mode)
+     (infer-union-eliminate scrutinee branches Λ Ψ
+                             environment places callables core fail)]
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
@@ -3444,6 +3603,11 @@
            (second body-result)
            (third body-result))]
 
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     #:when (current-union-tag-mode)
+     (check-union-eliminate scrutinee branches expected Λ Ψ
+                            environment places callables core fail compatible?)]
+
     [`(Eliminate ,scrutinee (,branches ...))
      (check-eliminate scrutinee branches expected
                       Λ
@@ -3561,6 +3725,8 @@
      => (lambda (found) (list 'own-designator-mismatch found))]
     [(borrowed-owned-payload-type core)
      => (lambda (found) (list 'borrowed-owned-payload found))]
+    [(ormap owned-union-member? (list core places callables environment))
+     '(owned-union-member)]
     [(not (core-types-normal? core)) '(non-normal-type)]
     [(not (valid-environment? environment))
      (list 'invalid-environment environment)]
