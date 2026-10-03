@@ -161,3 +161,25 @@
                '(Eliminate 0 ((C1 () -> (BorrowMut x))
                               (C2 () -> (BorrowMut z)))))
               (set (list 'x) (list 'z)))
+
+(check-equal?
+ (borrow-token-key (region-ctx #f '() (hash) (hash))
+                   '(UnionEliminate (Borrow 1)
+                      ((Int i -> i) (String s -> s))))
+ (set (list 1 'Payload)))
+(check-equal?
+ (borrow-token-key (region-ctx #f '() (hash) (hash))
+                   '(UnionEliminate
+                     (UnionInject (Union (Borrowed Int 0) String)
+                                  (Borrowed Int 0) (Borrow 1))
+                     (((Borrowed Int 0) i -> i) (String s -> 0))))
+ (set (list 1)))
+
+(test-case "UnionEliminate は余った枝の借用 capability も解析する"
+  (check-equal?
+   (borrow-token-key (region-ctx #f '() (hash) (hash))
+                     '(UnionEliminate (Borrow 1)
+                        ((Int i -> 0)
+                         (String s -> 0)
+                         (Bool b -> (Reborrow b)))))
+   (set (list 1 'Payload))))

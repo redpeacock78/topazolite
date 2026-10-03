@@ -90,6 +90,46 @@
             (and (andmap identity contexts) contexts)))]
     [_ #f]))
 
+(define (union-branch-contexts scrutinee branches environment callables)
+  (match (core-type-of scrutinee '() callables environment)
+    [(list source-type _)
+     (define normalized (normalize-type source-type))
+     (define-values (union-type rewrap)
+       (match normalized
+         [`(Union ,_ ,_) (values normalized values)]
+         [`(Borrowed (Union ,_ ,_) ,rho)
+          (values (second normalized)
+                  (lambda (member) `(Borrowed ,member ,rho)))]
+         [`(BorrowedMut (Union ,_ ,_) ,rho)
+          (values (second normalized)
+                  (lambda (member) `(BorrowedMut ,member ,rho)))]
+         [_ (values #f #f)]))
+     (and union-type
+          (let* ([parsed
+                  (for/list ([branch (in-list branches)])
+                    (match branch
+                      [`(,member ,binder -> ,body)
+                       (list (normalize-type member) binder body)]
+                      [_ #f]))]
+                 [members (union-members union-type)])
+            (and (andmap identity parsed)
+                 (andmap (lambda (branch) (symbol? (second branch))) parsed)
+                 (= (length parsed)
+                    (length (remove-duplicates (map first parsed) type-equiv?)))
+                 (for/and ([member (in-list members)])
+                   (= (for/sum ([branch (in-list parsed)]
+                                #:when (type-equiv? member (first branch)))
+                        1)
+                      1))
+                 (for/list ([branch (in-list parsed)])
+                   (define member (first branch))
+                   (define binder (second branch))
+                   (list (third branch)
+                         (extend environment (list binder)
+                                 (list (rewrap member)))
+                         (list binder))))))]
+    [_ #f]))
+
 ;; classify は Λ を持たない。callee の出口 row に必要な型だけを借用形から読み、
 ;; 対応できない形は #f にして Unknown 側へ倒す。
 (define (borrow-free-type core environment)
@@ -198,6 +238,8 @@
        (andmap (lambda (field)
                  (walk field environment target-visible?))
                fields)]
+      [`(UnionInject ,_ ,_ ,payload)
+       (walk payload environment target-visible?)]
       [`(Rec (,fields ...))
        (andmap (lambda (field)
                  (walk (third field) environment target-visible?))
@@ -233,6 +275,15 @@
       [`(Eliminate ,scrutinee (,branches ...))
        (define contexts
          (branch-contexts scrutinee branches environment callables))
+       (and contexts
+            (walk scrutinee environment target-visible?)
+            (for/and ([context (in-list contexts)])
+              (walk (first context) (second context)
+                    (and target-visible?
+                         (not (memq target (third context)))))))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (define contexts
+         (union-branch-contexts scrutinee branches environment callables))
        (and contexts
             (walk scrutinee environment target-visible?)
             (for/and ([context (in-list contexts)])
@@ -354,6 +405,7 @@
       [`(Construct ,_ ,_ ,fields ...)
        (combine-uses
         (map (lambda (field) (walk field target-visible?)) fields))]
+      [`(UnionInject ,_ ,_ ,payload) (walk payload target-visible?)]
       [`(Rec (,fields ...))
        (combine-uses
         (map (lambda (field)
@@ -400,6 +452,16 @@
               (walk body
                     (and target-visible?
                          (not (memq target parameters))))]
+             [_ (uses #f #f '())]))))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (combine-uses
+        (cons
+         (walk scrutinee target-visible?)
+         (for/list ([branch (in-list branches)])
+           (match branch
+             [`(,_ ,binder -> ,body)
+              (walk body
+                    (and target-visible? (not (eq? target binder))))]
              [_ (uses #f #f '())]))))]
       [`(Perform ,_ ,argument) (walk argument target-visible?)]
       [`(Handle ,_ (,name -> ,handler) ,body)
@@ -472,6 +534,7 @@
   (define (transparent-root core)
     (match core
       [`(Move ,inner) (transparent-root inner)]
+      [`(UnionInject ,_ ,_ ,inner) (transparent-root inner)]
       [_ core]))
   ;; Let の binder は外側の名前を落とすが、束縛する項がその名前そのものなら
   ;; 別名であり、根の資格をそのまま引き継ぐ。落としてから引き継ぎ直す。
@@ -511,6 +574,8 @@
        (andmap (lambda (field)
                  (walk field decomposable strict target-visible?))
                fields)]
+      [`(UnionInject ,_ ,_ ,payload)
+       (walk payload decomposable strict target-visible?)]
       [`(Rec (,fields ...))
        (andmap (lambda (field)
                  (walk (third field)
@@ -571,6 +636,27 @@
                          (set-add result name))
                        branch-strict)
                    (and target-visible? (not (memq target bound))))]
+            [_ #f])))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (define root-of-scrutinee (transparent-root scrutinee))
+       (define decomposed?
+         (and (symbol? root-of-scrutinee)
+              (set-member? decomposable root-of-scrutinee)))
+       (and
+        (walk scrutinee decomposable strict target-visible?)
+        (for/and ([branch (in-list branches)])
+          (match branch
+            [`(,_ ,bound -> ,branch-body)
+             (define branch-decomposable (set-remove decomposable bound))
+             (define branch-strict (set-remove strict bound))
+             (walk branch-body
+                   (if decomposed?
+                       (set-add branch-decomposable bound)
+                       branch-decomposable)
+                   (if decomposed?
+                       (set-add branch-strict bound)
+                       branch-strict)
+                   (and target-visible? (not (eq? target bound))))]
             [_ #f])))]
       [`(Perform ,_ ,argument)
        (walk argument decomposable strict target-visible?)]
@@ -766,6 +852,16 @@
     [`(Eliminate ,scrutinee (,branches ...))
      (define contexts
        (branch-contexts scrutinee branches environment callables))
+     (and contexts
+          (guard-component? target scrutinee environment callables)
+          (for/and ([context (in-list contexts)])
+            (and (not (memq target (third context)))
+                 (guarded-body? target parameter-types observed-types
+                                (first context) (second context)
+                                callables))))]
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     (define contexts
+       (union-branch-contexts scrutinee branches environment callables))
      (and contexts
           (guard-component? target scrutinee environment callables)
           (for/and ([context (in-list contexts)])

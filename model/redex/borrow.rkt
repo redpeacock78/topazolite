@@ -5,7 +5,8 @@
          "region.rkt"
          "region-param.rkt"
          "span-core.rkt"
-         "data-env.rkt")
+         "data-env.rkt"
+         "type-equiv.rkt")
 
 (provide (struct-out region-ctx)
          empty-region-ctx
@@ -522,6 +523,7 @@
   ;; 表だけを取る再帰。fail を伝えない。
   (define (table-of c* [locals* locals])
     (cdr (capability-of Λ c* locals*)))
+  (define (member-key type) (normalize-type (peel-ty type)))
   (match (peel-node c)
     [`(Borrow ,w) (only (set (cons (peel-node w) '())))]
     [`(BorrowMut ,w) (only (set (cons (peel-node w) '())))]
@@ -583,6 +585,29 @@
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
            (cons (set-union (car acc) (car r))
                  (table-join (cdr acc) (cdr r)))))]
+    [`(UnionEliminate ,scrutinee ,branches)
+     (define entry_s (recur scrutinee))
+     (define tbl_s (cdr entry_s))
+     (define ws_s (car entry_s))
+     (define results
+       (for/list ([branch (in-list branches)])
+         (define plain
+           (match branch
+             [(list (list '#:span _ _ _) _ ...) (peel-ubr branch)]
+             [_ branch]))
+         (match-define `(,member ,binder -> ,body) plain)
+         (define binding
+           (if (hash? tbl_s)
+               (hash-ref tbl_s (member-key member) (cons (set) #f))
+               (cons (for/set ([cap (in-set ws_s)])
+                       (cons (car cap) (append (cdr cap) '(Payload))))
+                     #f)))
+         (recur body (hash-set locals (peel-bind binder) binding))))
+     (if (null? results)
+         (only (set))
+         (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
+           (cons (set-union (car acc) (car r))
+                 (table-join (cdr acc) (cdr r)))))]
     [`(Scope ,_ ,body) (recur body)]
     [`(Proj ,c_1 ,_) (only (ws-of c_1))]
     [`(ProjOpt ,_ ,c_1 ,_) (only (ws-of c_1))]
@@ -603,6 +628,9 @@
              (set-union acc (car e)))
            (for/hash ([e (in-list entries)] [i (in-naturals 0)])
              (values (cons K i) e)))]
+    [`(UnionInject ,_ ,member-type ,payload)
+     (define entry (recur payload))
+     (cons (car entry) (hash (member-key member-type) entry))]
     ;; R-RegionApp は包みを剥がすだけで値を変えない。関数の位置が RegionLam
     ;; であればその本体の表をそのまま通す。ws は借用を作らないため空である。
     ;; region-lam-parts は span の有無の両方に対応する。

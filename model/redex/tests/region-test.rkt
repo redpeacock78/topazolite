@@ -27,6 +27,22 @@
    (core-children '(Eliminate 0 ((nil () -> 1) (cons (h t) -> 2))))
    '(0 1 2)))
 
+(test-case "UnionEliminate の全枝が同じ borrow owner を返す"
+  (define core
+    '(Scope (1)
+       (Let (borrowed const (Borrowed Res 0))
+            (UnionEliminate (Borrow 1)
+              ((Int i -> (Borrow 1))
+               (String s -> (Borrow 1))))
+         (Reborrow borrowed))))
+  (define annotated (annotate-regions core (build-region-ir core)))
+  (match annotated
+    [`(Scope ,_ (Let (borrowed const ,_)
+                      (UnionEliminate ,_ ,_)
+                      (ReborrowAt ,_ (Own 1 ()) borrowed)))
+     (void)]
+    [_ (fail (format "unexpected annotated UnionEliminate: ~s" annotated))]))
+
 ;; docs/specification/region.md §3 の production を 1 件ずつ実データで通す。
 ;; 未知形の error は落ちた production を見つけない。既定へ落ちず個別の節が
 ;; 受けていることは、この試験だけが押さえる。

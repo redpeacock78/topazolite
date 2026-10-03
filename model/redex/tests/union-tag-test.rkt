@@ -68,6 +68,14 @@
                places '() '()
                (region-ctx ir '() owners (hash))))
 
+(define (result-of/owned-place core)
+  (tagged (type-of/in-regions core '((1 Res)) (hash 1 '()))))
+
+(define (key-of/owned-place core)
+  (match (result-of/owned-place core)
+    [(list 'fail key _node _details ...) key]
+    [(list 'ok _) 'ok]))
+
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
   (check-true (redex-match? G2 c elim-is))
@@ -269,6 +277,13 @@
    (key-of '(Let (x const (Union Int (Union String (Owned Res)))) 1 x))
    'owned-union-member))
 
+(test-case "Owned Union の scrutinee は解析前に non-union-eliminate で拒否する"
+  (tagged
+   (check-equal?
+    (key-of '(UnionEliminate (Move u) ((Int i -> 0) (String s -> 0)))
+            `((u (Owned ,IS) const)))
+    'non-union-eliminate)))
+
 (test-case "tag mode の check 境界は tag の無い値を Union の位置へ入れない"
   (tagged
    (check-not-equal?
@@ -433,6 +448,37 @@
                  (format "Eliminate: ~s" eliminate-result))
    (check-equal? union-eliminate-key eliminate-key
                  (format "UnionEliminate: ~s" union-eliminate-result))))
+
+(test-case "UnionEliminate は余った枝も借用と所有の検査へ渡す"
+  (define (branch-elimination branch-type branch-body other-body)
+    `(UnionEliminate u
+       ((Int i -> ,(if (eq? branch-type 'Int) branch-body other-body))
+        (String s -> ,other-body)
+        (Bool b -> ,(if (eq? branch-type 'Bool) branch-body other-body)))))
+  (define (with-branch branch-type branch-body other-body)
+    `(Scope (1)
+       (Let (u const ,IS) ,inject-int
+         ,(branch-elimination branch-type branch-body other-body))))
+  (define (with-owned-branch branch-type branch-body other-body)
+    `(Scope (1)
+       (Let (owned const (Owned Res)) (Move 1)
+         (Let (u const ,IS) ,inject-int
+           ,(branch-elimination branch-type branch-body other-body)))))
+  (define unreachable-borrow
+    (key-of/owned-place
+     (with-branch 'Bool '(Yield (BorrowMut 1) (BorrowMut 1)) '(BorrowMut 1))))
+  (define reachable-borrow
+    (key-of/owned-place
+     (with-branch 'Int '(Yield (BorrowMut 1) (BorrowMut 1)) '(BorrowMut 1))))
+  (check-equal? (key-of/owned-place
+                 (with-owned-branch 'Int '(Drop (Move owned)) 'unit))
+                'ok)
+  (check-equal? (key-of/owned-place
+                 (with-owned-branch #f '(Drop (Move owned))
+                                    '(Drop (Move owned))))
+                'ok)
+  (check-equal? unreachable-borrow reachable-borrow)
+  (check-not-equal? unreachable-borrow 'ok))
 
 (test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
   (define rec-term

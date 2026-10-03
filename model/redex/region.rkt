@@ -598,6 +598,14 @@
        (same-branch-own
         (for/list ([branch (in-list branches)])
           (walk (last branch) env*)))]
+      [`(UnionEliminate ,_ (,branches ...))
+       (same-branch-own
+        (for/list ([branch (in-list branches)])
+          (match branch
+            [`(,_ ,_ -> ,body) (walk body env*)]
+            [_ (error 'annotate-regions
+                      "UnionEliminate の枝を辿れない operand である: ~s"
+                      t)])))]
       [`(Yield ,_ ,next) (walk next env*)]
       [`(Suspend ,body) (walk body env*)]
       [`(Recur ,_ ,_ ,_ ,_ ,continuation) (walk continuation env*)]

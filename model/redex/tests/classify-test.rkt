@@ -51,6 +51,57 @@
   (check-equal? (classify map-loop map-environment map-callables)
                 '(Finite structural)))
 
+(define union-list-type '(Union (List Int) String))
+(define union-list-callables
+  `((union-list-loop-id (NFn (,union-list-type) Int () () () User))))
+(define union-list-loop
+  `(Recur union-list-loop-id loop (xs)
+     (UnionEliminate xs
+       (((List Int) items ->
+         (Eliminate items
+           ((nil () -> 0)
+            (cons (head tail) ->
+              (Apply loop (UnionInject ,union-list-type (List Int) tail))))))
+        (String text -> 0)))
+     (Apply loop
+       (UnionInject ,union-list-type (List Int)
+                    (Construct (List Int) nil)))))
+(define union-list-loop-extra-recursion
+  `(Recur union-list-loop-id loop (xs)
+     (UnionEliminate xs
+       (((List Int) items ->
+         (Eliminate items
+           ((nil () -> 0)
+            (cons (head tail) ->
+              (Apply loop (UnionInject ,union-list-type (List Int) tail))))))
+        (String text -> 0)
+        (Bool extra -> (Apply loop xs))))
+     (Apply loop
+       (UnionInject ,union-list-type (List Int)
+                    (Construct (List Int) nil)))))
+
+(test-case "REC-001: UnionEliminate の payload は構造的減少で全枝を調べる"
+  (check-equal? (classify union-list-loop '() union-list-callables)
+                '(Finite structural))
+  (check-equal?
+   (classify union-list-loop-extra-recursion '() union-list-callables)
+   'Unknown))
+
+(define union-yield-callables
+  '((union-yield-id (NFn ((Union Int String)) Unit () ((Yield Int)) () User))))
+(define union-yield-loop
+  '(Recur union-yield-id loop (value)
+     (UnionEliminate value
+       ((Int number -> (Yield number (Apply loop value)))
+        (String text -> (Yield 0 (Apply loop value)))))
+     (Apply loop initial)))
+
+(test-case "REC-002: guarded-body? は UnionEliminate の全枝を調べる"
+  (check-equal?
+   (classify union-yield-loop '((initial (Union Int String)))
+             union-yield-callables)
+                '(Productive guarded)))
+
 (test-case "REC-001: spec §4.1 の Partial の knot は Finite にならない"
   (check-equal?
    (classify-ucore
