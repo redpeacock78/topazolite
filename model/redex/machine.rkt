@@ -198,7 +198,7 @@
 
 (define (table-ref table key)
   (match (assoc key table)
-    [(list _ value) value]
+    [(list _ value _ ...) value]
     [_ #f]))
 
 ;; spec §5.3。H の値を field path に沿って辿る。
@@ -293,9 +293,16 @@
   (if (assoc key table)
       (for/list ([entry (in-list table)])
         (if (equal? (first entry) key)
-            (list key value)
+            (append (list key value) (drop entry 2))
             entry))
       (append table (list (list key value)))))
+
+;; place の値を更新しても、束縛時の宣言型は heap entry に残す。
+(define (record-declared-type heap place declared-type)
+  (for/list ([entry (in-list heap)])
+    (if (equal? (first entry) place)
+        (list place (second entry) `(declared ,declared-type))
+        entry)))
 
 ;; An OwnedLeaf that crosses an Owned binding becomes the root value managed by
 ;; the new place. Retain a Dropped token tombstone to prevent token reuse.
@@ -327,7 +334,7 @@
   (match-define `(cfg ,core ,heap ,_states ,tokens ,events) configuration)
   (define used
     (append (token-numbers core)
-            (token-numbers heap)
+            (token-numbers (map second heap))
             (token-numbers tokens)
             (token-numbers events)))
   (term (tok ,(if (null? used) 0 (add1 (apply max used))))))
@@ -530,7 +537,9 @@
         (where (v_stored Λtok_new)
                ,(rehome-owned-root (term v_bound) (term Λtok)))
         (where H_new
-               ,(table-set (term H) (term p_new) (term v_stored)))
+               ,(record-declared-type
+                 (table-set (term H) (term p_new) (term v_stored))
+                 (term p_new) (term τ_owned)))
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
         R-LetOwned)
@@ -1013,7 +1022,9 @@
         (where (v_stored Λtok_new)
                ,(rehome-owned-root (term v_bound) (term Λtok)))
         (where H_new
-               ,(table-set (term H) (term p_new) (term v_stored)))
+               ,(record-declared-type
+                 (table-set (term H) (term p_new) (term v_stored))
+                 (term p_new) (term τ_owned)))
         (where Ω_new
                ,(table-set (term Ω) (term p_new) 'Available))
         R-LetOwnedB)
@@ -1036,7 +1047,10 @@
                              (eq? (term bmode) 'mut)))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x (MutSlot p_new)))
-        (where H_new ,(table-set (term H) (term p_new) (term v_bound)))
+        (where H_new
+               ,(record-declared-type
+                 (table-set (term H) (term p_new) (term v_bound))
+                 (term p_new) (term τ)))
         (where Ω_new ,(table-set (term Ω) (term p_new) 'Available))
         R-LetMutB)
 

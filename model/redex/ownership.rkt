@@ -41,6 +41,12 @@
 ;; compat?/impl と同型の再帰。Union の分岐位置も compat?/impl に合わせる。
 (define (owned-narrowing-kind/impl actual expected compatible? [top? #t])
   (cond
+    ;; Heap root の Owned へ Union 値を持ち上げる比較は tag を狭めない。
+    ;; compatible? が持ち上げを認めた組だけ OWN-004 の追加検査を通す。
+    [(and (union-type? actual)
+          (match expected [`(Owned ,_) #t] [_ #f])
+          (compatible? actual expected))
+     'ok]
     [(or (union-type? actual) (union-type? expected))
      (if (for/and ([actual-member (in-list (union-members actual))])
            (for/or ([expected-member (in-list (union-members expected))])

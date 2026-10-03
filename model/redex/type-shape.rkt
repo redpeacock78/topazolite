@@ -257,6 +257,8 @@
   (define (walk-heap-entry entry)
     (match entry
       [`(,_ ,value) (walk value)]
+      [`(,_ ,value (declared ,type))
+       (and (type-normal? type) (walk value))]
       [_ (error 'core-types-normal? "unhandled heap entry: ~s" entry)]))
 
   (define (walk-event event)

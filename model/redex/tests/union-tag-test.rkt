@@ -10,6 +10,7 @@
          "../erase.rkt"
          "../lang.rkt"
          "../machine.rkt"
+         "../borrow-oracle.rkt"
          "../region.rkt"
          "../span-core.rkt"
          "../type-shape.rkt"
@@ -96,6 +97,28 @@
            ['() current]
            [(list next) (loop next (sub1 fuel))]
            [many (fail (format "nondeterministic machine step: ~s" many))])))))
+
+(define (steps-ok? core expected row [fuel 200])
+  (tagged
+   (let loop ([cfg `(cfg ,core () () () ())] [fuel fuel] [initial? #t])
+     (define current-row
+       (match cfg
+         [`(cfg ,current-core ,heap ,_ ,_ ,_)
+          (define places
+            (derive-places heap '() #:declared (config-declared-types cfg)))
+          (and places
+               (match (type-of/raw current-core places '() '())
+                 [(list 'ok (list _ inferred-row)) inferred-row]
+                 [_ #f]))]
+         [_ #f]))
+     (and current-row
+          (or (not initial?) (equal? current-row row))
+          (config-ok? cfg '() expected current-row)
+          (match (raw-steps-g2 cfg)
+            ['() #t]
+            [(list next)
+             (and (positive? fuel) (loop next (sub1 fuel) #f))]
+            [_ #f])))))
 
 (test-case "G2 と G2m は UnionInject と UnionEliminate を受理する"
   (check-true (redex-match? G2 c inject-int))
@@ -743,3 +766,267 @@
   (check-equal?
    (check-config-run eliminated-config 'Int)
    '(cfg 1 () () () ())))
+
+(test-case "§2.8：狭い τ_U を const へ渡し、余った枝で消費する"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (check-true
+   (steps-ok?
+    `(Let (x const ,wide) (UnionInject ,narrow Int 1)
+       (UnionEliminate x ((Int i -> 0) (String s -> 0) (Bool b -> 0))))
+    'Int '())))
+
+(test-case "§2.8：互いに合わない狭い Union を If の枝に置く"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define left (normalize-type '(Union Int Bool)))
+  (define right (normalize-type '(Union String Bool)))
+  (check-true
+   (steps-ok?
+    `(Let (x const ,wide) (UnionInject ,left Int 1)
+       (Let (y const ,wide) (UnionInject ,right String "s")
+         (Let (z const ,wide)
+              (Eliminate (Construct Bool true)
+                ((true () -> x) (false () -> y)))
+           (UnionEliminate z
+             ((Int i -> 0) (String s -> 0) (Bool b -> 0))))))
+    'Int '())))
+
+(test-case "tagged Union と wide Union の If 合流を再型付けできる"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (define core
+    `(Eliminate (Construct Bool true)
+       ((true () -> (UnionInject ,narrow Int 7))
+        (false () -> (UnionInject ,wide Int 8)))))
+  (check-equal? (tagged (type-of core)) wide)
+  (check-true (steps-ok? core wide '())))
+
+(test-case "record の imm 欄で狭い Union を合流し、残余欄を落とす"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define left (normalize-type '(Union Int Bool)))
+  (define right (normalize-type '(Union String Bool)))
+  (define core
+    (if-term `(Rec ((a imm (UnionInject ,left Int 1)) (b imm 2)))
+             `(Rec ((a imm (UnionInject ,right String "s")) (c imm 3)))))
+  (check-equal? (tagged (type-of core))
+                (normalize-type `(Record ((a ,wide imm)))))
+  (check-true
+   (steps-ok? core (normalize-type `(Record ((a ,wide imm)))) '())))
+
+(test-case "R-LetMutB は slot の宣言型を記録する"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (define value `(UnionVal ,narrow Int 1))
+  (define start
+    (machine-config `(Scope () (Let (m mut ,wide) ,value 0))))
+  (check-equal?
+   (machine-steps start)
+   (list `(cfg (Scope (0) 0)
+                ((0 ,value (declared ,wide)))
+                ((0 Available)) () ()))))
+
+(test-case "R-LetOwned と R-LetOwnedB は束縛の宣言型を記録する"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (define value `(UnionVal ,narrow Int 1))
+  (for ([binding (in-list `((o (Owned ,wide))
+                            (o const (Owned ,wide))))])
+    (define start
+      (machine-config `(Scope () (Let ,binding ,value 0))))
+    (check-equal?
+     (machine-steps start)
+     (list `(cfg (Scope (0) 0)
+                  ((0 ,value (declared (Owned ,wide))))
+                  ((0 Available)) () ())))))
+
+(test-case "Owned place の Ξ と Move は記録した広い Union 型を使う"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (define value `(UnionVal ,narrow Int 1))
+  (for ([binding (in-list `((o (Owned ,wide))
+                            (o const (Owned ,wide))))])
+    (define start
+      (machine-config `(Scope () (Let ,binding ,value (Move o)))))
+    (define next (first (machine-steps start)))
+    (define heap (match next [`(cfg ,_ ,heap ,_ ,_ ,_) heap]))
+    (define declared (config-declared-types next))
+    (define places
+      (tagged (derive-places heap '() #:declared declared)))
+    (check-equal? declared `((0 (Owned ,wide))))
+    (check-equal? places `((0 ,wide)))
+    (check-equal? (tagged (type-of/raw '(Move 0) places '() '()))
+                  `(ok ((Owned ,wide) (Own))))
+    (tagged
+     (check-true (config-ok? next '() `(Owned ,wide) '(Own))))))
+
+(test-case "R-LetMutB の後も narrow な UnionVal を wide slot に再代入できる"
+  (define wide (normalize-type '(Union Int (Union String Bool))))
+  (define narrow (normalize-type '(Union Int Bool)))
+  (check-true
+   (steps-ok?
+    `(Scope ()
+       (Let (m mut ,wide) (UnionInject ,narrow Int 1)
+         (Reassign m (UnionInject ,wide Bool (Construct Bool true)))))
+    'Unit '(Mutation))))
+
+(test-case "Assign、Reassign、BorrowMutRef の書込みは宣言型 metadata を保つ"
+  (define record-type '(Record ((a Int mut))))
+  (define record '(Rec ((a mut 1))))
+  (define wide (normalize-type U))
+  (define narrow (normalize-type U1))
+  (define union-type (normalize-type `(Union ,record-type String)))
+  (define union-value
+    `(UnionVal ,union-type ,record-type (Rec ((a mut 1)))))
+  (define assigned
+    (machine-run
+     `(cfg (Assign (BorrowMutRef 0 (a) 0) 2)
+           ((0 ,record (declared ,record-type))) ((0 Available)) () ())))
+  (define union-written
+    (machine-run
+     `(cfg (Assign (BorrowMutRef 0 ((Payload) a) 0) 3)
+           ((0 ,union-value (declared (Owned ,union-type))))
+           ((0 Available)) () ())))
+  (define reassigned
+    (machine-run
+     `(cfg (Reassign (MutSlot 0) (UnionInject ,wide Int 5))
+           ((0 (UnionVal ,narrow Int 1) (declared ,wide)))
+           ((0 Available)) () ())))
+  (check-equal? assigned
+                `(cfg unit ((0 (Rec ((a mut 2))) (declared ,record-type)))
+                      ((0 Available)) () ()))
+  (check-equal? union-written
+                `(cfg unit
+                      ((0 (UnionVal ,union-type ,record-type
+                                    (Rec ((a mut 3))))
+                          (declared (Owned ,union-type))))
+                      ((0 Available)) () ()))
+  (check-equal? (config-declared-types reassigned) `((0 ,wide))))
+
+(test-case "const alias から Assign で狭い値を書き、別の成分へ書き換えて分岐する"
+  (define wide (normalize-type U))
+  (define core
+    `(Scope ()
+       (Let (source const ,wide) (UnionInject ,U1 Int 1)
+         (Let (slot mut ,wide) (UnionInject ,wide String "initial")
+           (Let (first-write const Unit)
+                (Assign (BorrowMutRef 0 () 0) source)
+             (Let (second-write const Unit)
+                  (Assign (BorrowMutRef 0 () 0)
+                          (UnionInject ,wide Bool (Construct Bool true)))
+               (UnionEliminate (MutSlot 0)
+                 ((Int i -> 0) (String s -> 1) (Bool b -> 2)))))))))
+  (define final (tagged (machine-run (machine-config core))))
+  (check-equal? (match final [`(cfg ,result ,_ ,_ ,_ ,_) result]) 2)
+  (check-equal? (config-declared-types final) `((0 ,wide)))
+  (check-equal?
+   (second (first (match final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
+   `(UnionVal ,wide Bool (Construct Bool true))))
+
+(test-case "mut 欄の Union 合流は slot の宣言型を保って書換え後に分岐する"
+  (define wide (normalize-type U))
+  (define left (normalize-type U1))
+  (define right (normalize-type U2))
+  (define record-type `(Record ((a ,wide mut))))
+  (define join
+    (if-term `(Rec ((a mut (UnionInject ,left Int 1))))
+             `(Rec ((a mut (UnionInject ,right String "s"))))))
+  (define read-member
+    '(UnionEliminate (Proj (MutSlot 0) a)
+       ((Int i -> 0) (String s -> 1) (Bool b -> 2))))
+  (define const-final
+    (tagged
+     (machine-run
+      (machine-config `(Let (record const ,record-type) ,join
+                         (UnionEliminate (Proj record a)
+                           ((Int i -> 0) (String s -> 1) (Bool b -> 2))))))))
+  (check-equal? (match const-final [`(cfg ,result ,_ ,_ ,_ ,_) result]) 0)
+  (define mut-core
+    `(Scope ()
+       (Let (record mut ,record-type) ,join
+         (Let (written const Unit)
+              (Assign (BorrowMutRef 0 (a) 0)
+                      (UnionInject ,wide String "written"))
+           ,read-member))))
+  (define mut-final (tagged (machine-run (machine-config mut-core))))
+  (check-equal? (match mut-final [`(cfg ,result ,_ ,_ ,_ ,_) result]) 1)
+  (check-equal? (config-declared-types mut-final) `((0 ,record-type)))
+  (check-equal?
+   (second (first (match mut-final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
+   `(Rec ((a mut (UnionVal ,wide String "written"))))))
+
+(test-case "Owned Union と Owned record の BorrowMutRef 書込みは宣言型を保つ"
+  (define wide (normalize-type U))
+  (define union-value `(UnionInject ,U1 Int 1))
+  (define record-type `(Record ((a ,wide mut))))
+  (define record-value `(Rec ((a mut ,union-value))))
+  (define cases
+    (list
+     (list `(Owned ,wide) wide union-value '()
+           `(UnionInject ,wide String "written")
+           `(UnionVal ,wide String "written"))
+     (list `(Owned ,record-type) record-type record-value '(a)
+           `(UnionInject ,wide String "written")
+           `(Rec ((a mut (UnionVal ,wide String "written")))))))
+  (for ([case (in-list cases)])
+    (match-define
+      (list declared-type source-type value path replacement final-value)
+      case)
+    (define config
+      (tagged
+       (machine-run
+        (machine-config
+         `(Scope ()
+            (Let (source const ,source-type) ,value
+              (Let (owned const ,declared-type) source
+                (Let (written const Unit)
+                     (Assign (BorrowMutRef 0 ,path 0) ,replacement)
+                  unit))))))))
+    (check-equal?
+     (match config [`(cfg ,result ,_ ,_ ,_ ,_) result])
+     'unit)
+    (check-equal? (config-declared-types config) `((0 ,declared-type)))
+    (check-equal?
+     (second (first (match config [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
+     final-value)))
+
+(test-case "Scope 後も stale heap entry と一緒に宣言型 metadata が残る"
+  (define final
+    (machine-run (machine-config '(Scope () (Let (m mut Int) 1 0)))))
+  (check-equal? (config-declared-types final) '((0 Int)))
+  (check-equal? (third (first (match final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
+                '(declared Int)))
+
+(test-case "tag mode が無効なら derive-places は宣言型を読まない"
+  (define heap '((0 (resource 4) (declared String))))
+  (check-equal? (derive-places heap '() #:declared '((0 String)))
+                '((0 Res))))
+
+(test-case "heap の宣言型 metadata は値、token、借用として走査されない"
+  (define value `(Rec ((owned imm (OwnedLeaf (tok 8) (resource 9))))))
+  (define value-type '(Record ((owned (Owned Res) imm))))
+  (define plain
+    `(cfg unit ((0 ,value)) ((0 Available)) (((tok 8) Available)) ()))
+  (define recorded
+    `(cfg unit ((0 ,value (declared ,value-type)))
+          ((0 Available)) (((tok 8) Available)) ()))
+  (define borrow-core
+    '(Scope (0) (Assign (BorrowMutRef 0 () 1)
+                        (Read (BorrowRef 0 () 0)))))
+  (define borrowed-value '(BorrowRef 0 () 0))
+  (define plain-borrow
+    `(cfg ,borrow-core ((0 ,borrowed-value)) ((0 Available)) () ()))
+  (define recorded-borrow
+    `(cfg ,borrow-core ((0 ,borrowed-value (declared Int)))
+          ((0 Available)) () ()))
+  (check-equal? (fresh-token plain) '(tok 9))
+  (check-equal? (fresh-token recorded) '(tok 9))
+  (check-equal? (collect-tokens (second (first (third recorded))))
+                '((tok 8)))
+  (tagged
+   (check-true (config-ok? plain '() 'Unit '()))
+   (check-true (config-ok? recorded '() 'Unit '())))
+  (check-true (pair? (live-borrows plain-borrow)))
+  (check-equal? (live-borrows plain-borrow)
+                (live-borrows recorded-borrow))
+  (check-equal? (check-mut-exclusive plain-borrow)
+                (check-mut-exclusive recorded-borrow)))

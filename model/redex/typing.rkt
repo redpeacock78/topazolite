@@ -57,6 +57,7 @@
          config-runtime-leaf?
          control-leaf-positions-ok?
          derive-places
+         config-declared-types
          join-types
          tag-upper-bound
          merge-field
@@ -772,6 +773,15 @@
                  (and (list? entry) (= (length entry) 2)))
                table)
        (not (check-duplicates (map first table)))))
+
+(define (unique-heap? heap)
+  (and (list? heap)
+       (not (check-duplicates (map first heap)))
+       (for/and ([entry (in-list heap)])
+         (match entry
+           [(list _ _) #t]
+           [(list _ _ `(declared ,type)) (type? type)]
+           [_ #f]))))
 
 (define (valid-places? places)
   (and (unique-table? places)
@@ -4077,14 +4087,28 @@
 ;; 閉包の捕捉先もこの順序に従うため、R-Assign の後に再検査しても前方参照の
 ;; 拒否は同じように効く。
 ;; H の entry の並びは規定されないため、先に番号で整列する。
-(define (derive-places heap callables)
+(define (derive-places heap callables #:declared [declared '()])
   (for/fold ([acc '()] #:result (and acc (reverse acc)))
             ([entry (in-list (sort heap < #:key first))])
     #:break (not acc)
-    (match (type-of/raw (second entry) (reverse acc) callables)
-      [(list 'ok (list type _row))
-       (cons (list (first entry) (strip-owned type)) acc)]
-      [_ #f])))
+    (define recorded
+      (and (current-union-tag-mode) (assoc (first entry) declared)))
+    (if recorded
+        (cons (list (first entry) (strip-owned (second recorded))) acc)
+        (match (type-of/raw (second entry) (reverse acc) callables)
+          [(list 'ok (list type _row))
+           (cons (list (first entry) (strip-owned type)) acc)]
+          [_ #f]))))
+
+(define (config-declared-types configuration)
+  (match configuration
+    [`(cfg ,_ ,heap ,_ ,_ ,_)
+     (for/list ([entry (in-list heap)]
+                #:when (match entry
+                         [`(,_ ,_ (declared ,_)) #t]
+                         [_ #f]))
+       (list (first entry) (second (third entry))))]
+    [_ '()]))
 
 ;; Ξ は place の指す値そのものの型を持ち、Owned の包みは place 側が担う。
 ;; heap の値の型が常に Owned で始まるとは仮定しない。
@@ -4199,14 +4223,19 @@
          (row? row)
          (match configuration
            [`(cfg ,core ,heap ,states ,token-states ,trace)
-            (and (unique-table? heap)
+            (and (unique-heap? heap)
                  (unique-table? states)
                  (equal? (sort (map first heap) <)
                          (sort (map first states) <))
                  (unique-table? token-states)
                  (trace-paths-ok? trace)
                  ;; G5 derives Ξ from each heap value rather than assuming Res.
-                 (let ([places (derive-places heap callables)])
+                 (let ([places
+                        (derive-places
+                         heap callables
+                         #:declared (if (current-union-tag-mode)
+                                        (config-declared-types configuration)
+                                        '()))])
                    (and
                     places
                     (for/and ([entry (in-list heap)])
@@ -4222,7 +4251,13 @@
                                           ;; Rec の leaf は payload の bare Record を
                                           ;; 推論するため、place の Owned 宣言へ持ち上げる。
                                           ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
-                                          (if (contains-owned-leaf? (second entry))
+                                          ;; tag mode で記録を持つ root place も、値の型を
+                                          ;; place の宣言型へ Owned の根として照合する。
+                                          (if (or (contains-owned-leaf? (second entry))
+                                                  (and (current-union-tag-mode)
+                                                       (match entry
+                                                         [`(,_ ,_ (declared ,_)) #t]
+                                                         [_ #f])))
                                               owned-lift-compatible?
                                               type-compatible?)))
                       (and value-row (null? value-row)))

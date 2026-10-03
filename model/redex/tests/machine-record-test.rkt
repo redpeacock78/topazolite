@@ -36,7 +36,7 @@
 ; (e) R-LetOwnedB: Owned は bmode 付き Let でも move される（G1 R-LetOwned と同じ heap 遷移）
 (check-equal?
  (run-g2 (inject-g2 (term (Let (r const (Owned Res)) (Apply ,acquire 0) (Move r)))) fuel)
- (term (cfg (resource 0) ((0 (resource 0))) ((0 Moved)) () ())))
+ (term (cfg (resource 0) ((0 (resource 0) (declared (Owned Res)))) ((0 Moved)) () ())))
 
 ; (f) Rec のフィールドは記述順に E 文脈で簡約される（congruence）
 (check-equal?
@@ -157,7 +157,7 @@
                         (Reassign x y)
                         (Proj s a)))))))
          fuel)
- (term (cfg 1 ((0 (Rec ((a imm 2))))) ((0 Dropped)) () ((fin 0)))))
+ (term (cfg 1 ((0 (Rec ((a imm 2))) (declared (Record ((a Int imm opt)))))) ((0 Dropped)) () ((fin 0)))))
 
 ; Absent の Owned 欄は drop でも観測でも token を要求しない。
 (check-equal?

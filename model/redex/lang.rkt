@@ -199,7 +199,8 @@
   ;; path の segment。record は label、位置指定は natural を使う。
   (fseg ::= label natural (Payload))
   (fp ::= (fseg ...))
-  (H ::= ((p v) ...))
+  (heap-entry ::= (p v) (p v (declared τ)))
+  (H ::= (heap-entry ...))
   (Ω ::= ((p state) ...))
   ;; 値の内部の Owned 資源を識別する token。
   (tk ::= (tok natural))

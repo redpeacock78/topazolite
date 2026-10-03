@@ -11,7 +11,7 @@
 ;; 再代入した値が読み出せる。
 (check-equal?
  (run '(Scope () (Let (x mut Int) 1 (Let (y const Unit) (Reassign x 2) x))))
- '((cfg 2 ((0 2)) ((0 Dropped)) () ((fin 0)))))
+ '((cfg 2 ((0 2 (declared Int))) ((0 Dropped)) () ((fin 0)))))
 
 ;; MutSlot は値位置で読める。R-ReadMutSlot が無いと Proj が詰まる。
 (check-equal?
@@ -19,7 +19,7 @@
               (Let (r mut (Record ((a Int imm))))
                    (Rec ((a imm 1)))
                    (Proj r a))))
- '((cfg 1 ((0 (Rec ((a imm 1))))) ((0 Dropped)) () ((fin 0)))))
+ '((cfg 1 ((0 (Rec ((a imm 1))) (declared (Record ((a Int imm)))))) ((0 Dropped)) () ((fin 0)))))
 
 ;; Scope 退出の観測は (fin p) 1 件だけであり、finLeaf は出ない。
 (check-equal?

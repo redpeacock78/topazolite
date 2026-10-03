@@ -25,7 +25,7 @@
                 (Move r))))
     fuel)
    (term (cfg (resource 0)
-              ((0 (resource 0)))
+              ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
               () ())))
   (check-equal?
@@ -36,7 +36,7 @@
                 (Let (used Res) (Move r) (Move r)))))
     fuel)
    (term (cfg (Error 0)
-              ((0 (resource 0)))
+              ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
               () ())))
   (check-equal?
@@ -60,7 +60,7 @@
                 (Drop (Move r)))))
     fuel)
    (term (cfg unit
-              ((0 (resource 0)))
+              ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
               () ()))))
 
@@ -84,7 +84,8 @@
                          (Handle (Return b Int)
                                  (answer -> answer)
                                  (Move 4))))
-           ((0 (resource 0)) (3 (resource 3)) (4 (resource 9)))
+           ((0 (resource 0)) (3 (resource 3))
+            (4 (resource 9) (declared (Owned Res))))
            ((0 Moved) (3 Moved) (4 Available))
            () ())))
   (match (apply-reduction-relation -->g1 source)
@@ -103,7 +104,7 @@
   (check-equal?
    (first root-leaf-results)
    (term (cfg (Scope (0) (Move 0))
-              ((0 (resource 9)))
+              ((0 (resource 9) (declared (Owned Res))))
               ((0 Available))
               (((tok 5) Dropped)) ())))
   (define root-leaf-source-g2
@@ -119,7 +120,7 @@
   (check-equal?
    (first root-leaf-results-g2)
    (term (cfg (Scope (0) (Move 0))
-              ((0 (resource 10)))
+              ((0 (resource 10) (declared (Owned Res))))
               ((0 Available))
               (((tok 6) Dropped)) ())))
   (check-equal?
@@ -131,7 +132,7 @@
                () ()))
     fuel)
    (term (cfg 42
-              ((1 (resource 1)))
+              ((1 (resource 1) (declared (Owned Res))))
               ((0 Moved) (1 Dropped))
               () ((fin 1))))))
 
@@ -146,7 +147,8 @@
                      unit))))
     fuel)
    (term (cfg unit
-              ((0 (resource 10)) (1 (resource 20)))
+              ((0 (resource 10) (declared (Owned Res)))
+               (1 (resource 20) (declared (Owned Res))))
               ((0 Dropped) (1 Dropped))
               () ((fin 1) (fin 0)))))
   (check-equal?
@@ -170,7 +172,7 @@
                 (Perform (Return boundary Int) 42))))
     fuel)
    (term (cfg (Perform (Return boundary Int) 42)
-              ((0 (resource 7)))
+              ((0 (resource 7) (declared (Owned Res))))
               ((0 Dropped))
               () ((fin 0)))))
   (check-equal?
@@ -198,7 +200,8 @@
                           (Move second))))))
     fuel)
    (term (cfg (Error 1)
-              ((0 (resource 10)) (1 (resource 20)))
+              ((0 (resource 10) (declared (Owned Res)))
+               (1 (resource 20) (declared (Owned Res))))
               ((0 Dropped) (1 Moved))
               () ((fin 0))))))
 
@@ -215,7 +218,7 @@
                              (Move r))))))
     fuel)
    (term (cfg (Error 0)
-              ((0 (resource 5)))
+              ((0 (resource 5) (declared (Owned Res))))
               ((0 Moved))
               () ()))))
 

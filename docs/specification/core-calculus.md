@@ -1284,14 +1284,24 @@ dom(Ξ) = dom(H) = dom(Ω)
 Ξ; Φ ⊢config ⟨c, H, Ω, Λtok, θ⟩ : τ ! ε
 ```
 
-`Ξ` は heap の値から導く写像である。heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けし、place の型から外側の `Owned` を取り除いて次の写像へ加える。前方の place を参照する値はこの導出に失敗する。
+`Ξ` は heap の値または束縛時に記録した宣言型から導く写像である。
+`R-LetOwned`、`R-LetOwnedB`、`R-LetMutB` は place を作るとき、heap entry に束縛の宣言型を記録する。
+tag mode では記録がある place に対して `strip-owned(τdecl)` を `Ξ` の型にする。
+記録が無い place と tag mode が無効な構成では、heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けして place の型を導く。
+前方の place を参照する値はこの導出に失敗する。
+
+heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
+宣言型の欄は place を作った規則だけが設定し、`Assign`、`Reassign`、`BorrowMutRef` による値の更新はその欄を保つ。
+宣言型は値や資源ではないため、token、capability、借用資源の走査には含めない。
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
 
 `Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
 
-Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
+Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。
+heap の値は、記録から得た宣言型に対する `Owned` 型へ tag mode の互換で照合する。
+通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
