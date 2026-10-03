@@ -1302,6 +1302,13 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。
 heap の値は、記録から得た宣言型に対する `Owned` 型へ tag mode の互換で照合する。
 通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
+構成検査の再型付けでは、制御項と heap 値に現れる実行時の `BorrowRef` と `BorrowMutRef` の型も回復する。
+回復する payload 型は、place の型から借用 path を順に辿って得る。
+Record 欄は place の宣言型の欄型を使い、現在の値がより狭い Union でも宣言型を保つ。
+`(Payload)` は現在の値が持つ `UnionVal` の成分型を使い、data constructor の欄は constructor schema から得る。
+tag mode が無効なら place の型は heap 値から導く。
+path が辿れない場合、Payload の位置が `UnionVal` でない場合、または place が `Available` でない場合、構成検査は失敗する。
+この回復は `config-ok?` の内部だけで行い、通常の `type-of/raw` と `key-of` は実行時借用値を型付けしない。
 
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。

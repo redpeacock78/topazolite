@@ -436,6 +436,29 @@
    (control-leaf-positions-ok?
     (term (Drop (Rec ((f mut (OwnedLeaf (tok 0) (resource 1))))))))))
 
+(test-case "config-ok? は Record 欄の実行時借用値を型回復する"
+  (define heap
+    '((0 (Rec ((a imm 7)
+              (b mut 8)
+              (owned imm (OwnedLeaf (tok 0) (resource 9))))))))
+  (define states '((0 Available)))
+  (define tokens '(((tok 0) Available)))
+  (check-true
+   (config-ok? `(cfg (Read (BorrowRef 0 (a) 0)) ,heap ,states ,tokens ())
+               empty 'Int '()))
+  (check-true
+   (config-ok? `(cfg (Assign (BorrowMutRef 0 (b) 0) 9)
+                     ,heap ,states ,tokens ())
+               empty 'Unit '(Mutation)))
+  (check-equal?
+   (core-type-of '(BorrowRef 0 (a) 0)
+                 '((0 (Record ((a Int imm) (b Int mut))))) '())
+   'ill-typed)
+  (check-equal?
+   (core-type-of '(BorrowMutRef 0 (a) 0)
+                 '((0 (Record ((a Int mut))))) '())
+   'ill-typed))
+
 (test-case "根位置の leaf を持つ configuration を config-ok? が拒否する"
   (define leaf (term (OwnedLeaf (tok 0) (resource 7))))
   (check-false

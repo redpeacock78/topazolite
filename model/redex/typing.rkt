@@ -10,6 +10,7 @@
          "erase.rkt"
          "lang.rkt"
          "macro-expand.rkt"
+         "machine.rkt"
          "origins.rkt"
          "ownership.rkt"
          "policy.rkt"
@@ -124,6 +125,10 @@
 ;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
 ;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
 (define deriving-config? (make-parameter #f))
+
+;; config-ok? の再型付けでだけ runtime borrow に型を与える。
+;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
+(define config-runtime-borrow-types (make-parameter #f))
 
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
 (define (with-config-typing thunk)
@@ -3471,6 +3476,16 @@
     [`(BorrowMutAt ,ρ ,_ ,w)
      (check-region-annotation Λ ρ core fail)
      (infer-borrow core w #t Λ Ψ environment places callables fail)]
+    [`(BorrowRef ,_ ,_ ,_)
+     #:when (and (deriving-config?) (config-runtime-borrow-types))
+     (define type
+       (hash-ref (config-runtime-borrow-types) (peel-node core) #f))
+     (if type (list type '() Ψ) (fail 'ill-typed core))]
+    [`(BorrowMutRef ,_ ,_ ,_)
+     #:when (and (deriving-config?) (config-runtime-borrow-types))
+     (define type
+       (hash-ref (config-runtime-borrow-types) (peel-node core) #f))
+     (if type (list type '() Ψ) (fail 'ill-typed core))]
     [`(Reborrow ,c_operand)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
     [`(ReborrowAt ,ρ ,_ ,c_operand)
@@ -4080,8 +4095,9 @@
               (core-check-row core places callables expected environment Λ)])
          (and actual-row (row=? actual-row row)))))
 
-;; Ξ の第 1 段。place を直接含む値は BorrowRef と BorrowMutRef だけだが、
-;; typing.rkt にその値の節はないため type-of/raw が拒否する。OwnedLeaf を
+;; Ξ の第 1 段。derive-places は heap 値から型を得るため、BorrowRef と
+;; BorrowMutRef を含む値は通常の type-of/raw が拒否する。config-ok? は place
+;; を導出した後の再型付けに限り、これらの実行時値を別に型回復する。OwnedLeaf を
 ;; 含む Rec 欄は config 専用の with-config-typing でだけ許されるが、heap を
 ;; place の番号順に畳み込むため、前方参照を含む値は依然として拒否される。
 ;; 閉包の捕捉先もこの順序に従うため、R-Assign の後に再検査しても前方参照の
@@ -4212,6 +4228,87 @@
    trace))
 
 (define (config-ok? configuration callables expected row)
+  (define (recover-runtime-borrow-types core heap states places)
+    (define recovered (make-hash))
+    (define valid? #t)
+    (define (member-of? union member)
+      (for/or ([candidate (in-list (union-members (normalize-type union)))])
+        (type-equiv? candidate member)))
+    (define (path-type place path)
+      (and (match (assoc place states)
+             [(list _ 'Available) #t]
+             [_ #f])
+           (let ([place-entry (assoc place places)])
+             (and place-entry
+                  (let walk ([type (second place-entry)] [prefix '()]
+                             [segments path])
+                    (define value (path-lookup heap place prefix))
+                    (and value
+                         (not (match (peel-node value)
+                                [`(Absent ,_) #t]
+                                [_ #f]))
+                         (if (null? segments)
+                             type
+                             (let* ([segment (peel-lbl (first segments))]
+                                    [normalized (normalize-type type)]
+                                    [next-type
+                                     (match segment
+                                       [`(Payload)
+                                        (match* (normalized (peel-node value))
+                                          [(`(Union ,_ ,_)
+                                            `(UnionVal ,value-union ,member ,_))
+                                           (and (tag-compat? value-union normalized)
+                                                (member-of? value-union member)
+                                                (member-of? normalized member)
+                                                member)]
+                                          [(_ _) #f])]
+                                       [(? exact-nonnegative-integer? position)
+                                        (match (peel-node value)
+                                          [`(Construct ,value-type ,constructor
+                                                       ,_fields ...)
+                                           (and (type-equiv? normalized value-type)
+                                                (let* ([schema
+                                                        (constructor-schema normalized)]
+                                                       [field-types
+                                                        (and schema
+                                                             (lookup schema constructor))])
+                                                  (and field-types
+                                                       (< position
+                                                          (length field-types))
+                                                       (list-ref field-types position))))]
+                                          [_ #f])]
+                                       [(? symbol? label)
+                                        (match normalized
+                                          [`(Record ,fields)
+                                           (match (field-row-lookup fields label)
+                                             [(list field-type _) field-type]
+                                             [_ #f])]
+                                          [_ #f])]
+                                       [_ #f])])
+                               (and next-type
+                                    (walk next-type
+                                          (append prefix (list segment))
+                                          (rest segments)))))))))))
+    (define (record-borrow! node place path region mutable?)
+      (define payload-type (path-type place path))
+      (if payload-type
+          (hash-set! recovered node
+                     (list (if mutable? 'BorrowedMut 'Borrowed)
+                           payload-type region))
+          (set! valid? #f)))
+    (define (visit term)
+      (match (peel-node term)
+        [`(BorrowRef ,place ,path ,region)
+         (record-borrow! (peel-node term) place path region #f)]
+        [`(BorrowMutRef ,place ,path ,region)
+         (record-borrow! (peel-node term) place path region #t)]
+        [_
+         (when (list? term)
+           (for-each visit term))]))
+    (visit core)
+    (for ([entry (in-list heap)])
+      (visit (second entry)))
+    (and valid? recovered))
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
   ;; root/leaf 位置と token 状態も検査する。G2m config を見る別の入口なので、
   ;; places を heap から導出する entry-violation はそのまま呼ばない。
@@ -4238,72 +4335,79 @@
                                         '()))])
                    (and
                     places
-                    (for/and ([entry (in-list heap)])
-                      (define declared
-                        (second (assoc (first entry) places)))
-                      (define value-row
-                        (check-as/boolean (second entry)
-                                          (list 'Owned declared)
-                                          '()
-                                          places
-                                          callables
-                                          #:compatible?
-                                          ;; Rec の leaf は payload の bare Record を
-                                          ;; 推論するため、place の Owned 宣言へ持ち上げる。
-                                          ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
-                                          ;; tag mode で記録を持つ root place も、値の型を
-                                          ;; place の宣言型へ Owned の根として照合する。
-                                          (if (or (contains-owned-leaf? (second entry))
-                                                  (and (current-union-tag-mode)
-                                                       (match entry
-                                                         [`(,_ ,_ (declared ,_)) #t]
-                                                         [_ #f])))
-                                              owned-lift-compatible?
-                                              type-compatible?)))
-                      (and value-row (null? value-row)))
-                    (let ([actual-row
-                           (check-as/boolean core expected '()
-                                             places callables)])
-                      (and actual-row
-                           (row=? actual-row row)
-                           ;; 根の位置に leaf は置かない。
-                           (not (owned-leaf? core))
-                           ;; H の leaf は走査で辿れる位置に限る。
-                           (andmap (lambda (entry)
-                                     (leaf-positions-ok? (second entry)))
-                                   heap)
-                           (andmap observed-leaf-positions-ok?
-                                   (observed-values trace))
-                           (control-leaf-positions-ok? core)
-                           ;; token の構造側・観測側の出現と Λtok の状態を
-                           ;; 突き合わせる。
-                           (let ([structural
-                                  (structural-tokens core heap states)]
-                                 [observed (observed-tokens trace)])
-                             (and
-                              (= (length structural)
-                                 (length (remove-duplicates structural)))
-                              (= (length observed)
-                                 (length (remove-duplicates observed)))
-                              (not (ormap (lambda (tk)
-                                            (member tk observed))
-                                          structural))
-                              (for/and ([tk (in-list (append structural
-                                                              observed))])
-                                (assoc tk token-states))
-                              (for/and ([entry (in-list token-states)])
-                                (define (count tokens)
-                                  (length
-                                   (filter (lambda (tk)
-                                             (equal? tk (first entry)))
-                                           tokens)))
-                                (define s (count structural))
-                                (define o (count observed))
-                                (case (second entry)
-                                  [(Available Moved) (and (= s 1) (= o 0))]
-                                  [(Observed) (and (= s 0) (= o 1))]
-                                  [(Dropped) (and (= s 0) (<= o 1))]
-                                  [else #f])))))))))]
+                    (let ([borrow-types
+                           (recover-runtime-borrow-types
+                            core heap states places)])
+                      (and
+                       borrow-types
+                       (parameterize ([config-runtime-borrow-types borrow-types])
+                         (and
+                          (for/and ([entry (in-list heap)])
+                            (define declared
+                              (second (assoc (first entry) places)))
+                            (define value-row
+                              (check-as/boolean (second entry)
+                                                (list 'Owned declared)
+                                                '()
+                                                places
+                                                callables
+                                                #:compatible?
+                                                ;; Rec の leaf は payload の bare Record を
+                                                ;; 推論するため、place の Owned 宣言へ持ち上げる。
+                                                ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
+                                                ;; tag mode で記録を持つ root place も、値の型を
+                                                ;; place の宣言型へ Owned の根として照合する。
+                                                (if (or (contains-owned-leaf? (second entry))
+                                                        (and (current-union-tag-mode)
+                                                             (match entry
+                                                               [`(,_ ,_ (declared ,_)) #t]
+                                                               [_ #f])))
+                                                    owned-lift-compatible?
+                                                    type-compatible?)))
+                            (and value-row (null? value-row)))
+                          (let ([actual-row
+                                 (check-as/boolean core expected '()
+                                                   places callables)])
+                            (and actual-row
+                                 (row=? actual-row row)
+                                 ;; 根の位置に leaf は置かない。
+                                 (not (owned-leaf? core))
+                                 ;; H の leaf は走査で辿れる位置に限る。
+                                 (andmap (lambda (entry)
+                                           (leaf-positions-ok? (second entry)))
+                                         heap)
+                                 (andmap observed-leaf-positions-ok?
+                                         (observed-values trace))
+                                 (control-leaf-positions-ok? core)
+                                 ;; token の構造側・観測側の出現と Λtok の状態を
+                                 ;; 突き合わせる。
+                                 (let ([structural
+                                        (structural-tokens core heap states)]
+                                       [observed (observed-tokens trace)])
+                                   (and
+                                    (= (length structural)
+                                       (length (remove-duplicates structural)))
+                                    (= (length observed)
+                                       (length (remove-duplicates observed)))
+                                    (not (ormap (lambda (tk)
+                                                  (member tk observed))
+                                                structural))
+                                    (for/and ([tk (in-list (append structural
+                                                                    observed))])
+                                      (assoc tk token-states))
+                                    (for/and ([entry (in-list token-states)])
+                                      (define (count tokens)
+                                        (length
+                                         (filter (lambda (tk)
+                                                   (equal? tk (first entry)))
+                                                 tokens)))
+                                      (define s (count structural))
+                                      (define o (count observed))
+                                      (case (second entry)
+                                        [(Available Moved) (and (= s 1) (= o 0))]
+                                        [(Observed) (and (= s 0) (= o 1))]
+                                        [(Dropped) (and (= s 0) (<= o 1))]
+                                        [else #f])))))))))))))]
            [_ #f])))))
 
 (module+ test

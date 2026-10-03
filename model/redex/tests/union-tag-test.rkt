@@ -86,10 +86,26 @@
 (define (machine-steps config)
   (raw-steps-g2 config))
 
-(define (check-config-run config expected)
+(define (contains-mutation? core)
+  (match core
+    [`(Assign ,_ ,_) #t]
+    [`(Reassign ,_ ,_) #t]
+    [(? list? parts) (ormap contains-mutation? parts)]
+    [_ #f]))
+
+(define (current-config-row config row)
+  (match config
+    [`(cfg ,core ,_ ,_ ,_ ,_)
+     (if (and (member 'Mutation row) (not (contains-mutation? core)))
+         (remove 'Mutation row)
+         row)]
+    [_ row]))
+
+(define (check-config-run config expected [row '()] [fuel-limit 20])
   (tagged
-   (let loop ([current config] [fuel 20])
-     (check-true (config-ok? current '() expected '())
+   (let loop ([current config] [fuel fuel-limit])
+     (check-true (config-ok? current '() expected
+                             (current-config-row current row))
                  (format "ill-formed intermediate config: ~s" current))
      (if (zero? fuel)
          (fail (format "machine did not finish: ~s" current))
@@ -97,6 +113,25 @@
            ['() current]
            [(list next) (loop next (sub1 fuel))]
            [many (fail (format "nondeterministic machine step: ~s" many))])))))
+
+;; 既存の §2.8 machine fixture は実行時 BorrowMutRef を初期 Core に直接書く。
+;; place が確保される前は config-ok? が拒否するため、最初に成立する config から
+;; 終状態までを検査する。
+(define (check-config-run-from-first-valid config expected row)
+  (tagged
+   (let loop ([current config] [fuel 200])
+     (define current-row (current-config-row current row))
+     (cond
+       [(config-ok? current '() expected current-row)
+        (check-config-run current expected row 100)]
+       [(zero? fuel)
+        (fail (format "no well-formed config before machine stopped: ~s" current))]
+       [else
+        (match (machine-steps current)
+          ['() (fail (format "no well-formed config before machine stopped: ~s"
+                             current))]
+          [(list next) (loop next (sub1 fuel))]
+          [many (fail (format "nondeterministic machine step: ~s" many))])]))))
 
 (define (steps-ok? core expected row [fuel 200])
   (tagged
@@ -661,8 +696,6 @@
    (check-equal? (key-of `(UnionVal ,(normalize-type IS) Int "s"))
                  'ill-typed)))
 
-;; config-ok? は machine 内部の BorrowRef/BorrowMutRef を再型付けできない。
-;; 借用 eliminate の中間 config は Task 8 の型回復まで対象外とする。
 (test-case "borrowed member の capability は UnionInject、UnionVal、枝選択で保たれる"
   (define member-type '(Borrowed Int (RVar 0)))
   (define union-type `(Union ,member-type String))
@@ -686,10 +719,13 @@
   (define config
     (machine-config
      '(UnionEliminate (BorrowRef 0 () 0)
-        ((Int i -> (Read i)) (String s -> (Read s))))
-     `((0 ,union-value)) '((0 Available))))
+        ((Int i -> (Read i)) (String s -> 0)))
+     `((0 ,union-value (declared (Owned ,(normalize-type IS)))))
+     '((0 Available))))
   (tagged
-   (check-equal? (machine-run config) `(cfg 17 ((0 ,union-value)) ((0 Available)) () ()))
+   (check-equal? (check-config-run config 'Int)
+                 `(cfg 17 ((0 ,union-value (declared (Owned ,(normalize-type IS)))))
+                       ((0 Available)) () ()))
    (check-equal? (heap-walk-path union-value '((Payload))) 17)
    (check-equal? (path-lookup `((0 ,union-value)) 0 '((Payload))) 17)
    (check-false (path-lookup '((0 17)) 0 '((Payload))))))
@@ -700,15 +736,60 @@
     (machine-config
      '(UnionEliminate (BorrowMutRef 0 () 0)
         ((Int i -> (Assign i 23)) (String s -> (Assign s "changed"))))
-     `((0 ,union-value)) '((0 Available))))
+     `((0 ,union-value (declared (Owned ,(normalize-type IS)))))
+     '((0 Available))))
   (tagged
    (check-equal?
-    (machine-run config)
-    `(cfg unit ((0 (UnionVal ,(normalize-type IS) Int 23))) ((0 Available)) () ()))
+    (check-config-run config 'Unit '(Mutation))
+    `(cfg unit ((0 (UnionVal ,(normalize-type IS) Int 23)
+                    (declared (Owned ,(normalize-type IS)))))
+          ((0 Available)) () ()))
    (check-equal?
     (value-set-path union-value '((Payload)) 23)
     `(UnionVal ,(normalize-type IS) Int 23))
    (check-false (value-set-path 17 '((Payload)) 23))))
+
+(test-case "実行時借用値の回復は config-ok? に限る"
+  (tagged
+   (for ([borrow (in-list '((BorrowRef 0 () 0)
+                            (BorrowMutRef 0 () 0)))])
+     (check-equal? (key-of borrow) 'ill-typed)
+     (check-false (match (type-of borrow)
+                    [`(Borrowed ,_ ,_) #t]
+                    [`(BorrowedMut ,_ ,_) #t]
+                    [_ #f])))))
+
+(test-case "config-ok? は不正な借用 path と place state を拒否する"
+  (define available '((0 Available)))
+  (check-false
+   (tagged
+    (config-ok?
+     (machine-config '(Read (BorrowRef 0 ((Payload)) 0))
+                     '((0 17 (declared (Owned Int)))) available)
+     '() 'Int '())))
+  (define union-type (normalize-type IS))
+  (check-false
+   (tagged
+    (config-ok?
+     (machine-config
+      '(Read (BorrowRef 0 ((Payload)) 0))
+      `((0 (UnionVal ,union-type String 17)
+           (declared (Owned ,union-type)))) available)
+     '() 'Int '())))
+  (check-false
+   (tagged
+    (config-ok?
+     (machine-config '(Read (BorrowRef 0 () 0))
+                     '((0 17 (declared (Owned Int)))) '((0 Dropped)))
+     '() 'Int '())))
+  (check-false
+   (tagged
+    (config-ok?
+     (machine-config '(Read (BorrowRef 0 (missing) 0))
+                     '((0 (Rec ((a imm 17)))
+                         (declared (Owned (Record ((a Int imm)))))))
+                     available)
+     '() 'Int '()))))
 
 (test-case "Union payload 内の record 欄は ProjBorrowAt から読める"
   (define record-type '(Record ((a Int imm))))
@@ -725,6 +806,34 @@
      `((0 ,union-value)) '((0 Available))))
   (tagged (check-equal? (machine-run config) `(cfg 31 ((0 ,union-value))
                                                   ((0 Available)) () ()))))
+
+(test-case "config-ok? は宣言欄と constructor 欄から借用型を回復する"
+  (define wide (normalize-type U))
+  (define narrow (normalize-type U1))
+  (define record-type `(Record ((u ,wide imm))))
+  (define record-value
+    `(Rec ((u imm (UnionVal ,narrow Int 17)))))
+  (define record-config
+    (machine-config
+     '(Read (BorrowRef 0 (u (Payload)) 0))
+     `((0 ,record-value (declared (Owned ,record-type))))
+     '((0 Available))))
+  (check-equal?
+   (check-config-run record-config 'Int)
+   `(cfg 17 ((0 ,record-value (declared (Owned ,record-type))))
+         ((0 Available)) () ()))
+  (define list-value
+    '(Construct (List Int) cons 1 (Construct (List Int) nil)))
+  (define list-config
+    (machine-config
+     '(Read (BorrowRef 0 (1) 0))
+     `((0 ,list-value (declared (Owned (List Int)))))
+     '((0 Available))))
+  (check-equal?
+   (check-config-run list-config '(List Int))
+   `(cfg (Construct (List Int) nil)
+         ((0 ,list-value (declared (Owned (List Int)))))
+         ((0 Available)) () ())))
 
 (test-case "UnionVal の token walker は payload を一度だけ辿る"
   (define record-type '(Record ((a (Owned Res) imm))))
@@ -941,7 +1050,8 @@
                           (UnionInject ,wide Bool (Construct Bool true)))
                (UnionEliminate (MutSlot 0)
                  ((Int i -> 0) (String s -> 1) (Bool b -> 2)))))))))
-  (define final (tagged (machine-run (machine-config core))))
+  (define final
+    (check-config-run-from-first-valid (machine-config core) 'Int '(Mutation)))
   (check-equal? (match final [`(cfg ,result ,_ ,_ ,_ ,_) result]) 2)
   (check-equal? (config-declared-types final) `((0 ,wide)))
   (check-equal?
@@ -973,7 +1083,9 @@
               (Assign (BorrowMutRef 0 (a) 0)
                       (UnionInject ,wide String "written"))
            ,read-member))))
-  (define mut-final (tagged (machine-run (machine-config mut-core))))
+  (define mut-final
+    (check-config-run-from-first-valid
+     (machine-config mut-core) 'Int '(Mutation)))
   (check-equal? (match mut-final [`(cfg ,result ,_ ,_ ,_ ,_) result]) 1)
   (check-equal? (config-declared-types mut-final) `((0 ,record-type)))
   (check-equal?
@@ -997,16 +1109,16 @@
     (match-define
       (list declared-type source-type value path replacement final-value)
       case)
+    (define core
+      `(Scope ()
+         (Let (source const ,source-type) ,value
+           (Let (owned const ,declared-type) source
+             (Let (written const Unit)
+                  (Assign (BorrowMutRef 0 ,path 0) ,replacement)
+               unit)))))
     (define config
-      (tagged
-       (machine-run
-        (machine-config
-         `(Scope ()
-            (Let (source const ,source-type) ,value
-              (Let (owned const ,declared-type) source
-                (Let (written const Unit)
-                     (Assign (BorrowMutRef 0 ,path 0) ,replacement)
-                  unit))))))))
+      (check-config-run-from-first-valid
+       (machine-config core) 'Unit '(Mutation)))
     (check-equal?
      (match config [`(cfg ,result ,_ ,_ ,_ ,_) result])
      'unit)
@@ -1014,6 +1126,31 @@
     (check-equal?
      (second (first (match config [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
      final-value)))
+
+(test-case "R-LetOwned と R-LetOwnedB の後に BorrowMutRef を型回復する"
+  (define record-type '(Record ((a Int mut))))
+  (define record '(Rec ((a mut 1))))
+  (for ([binding (in-list
+                  (list `(owned (Owned ,record-type))
+                        `(owned const (Owned ,record-type))))])
+    (define start
+      (machine-config
+       `(Scope ()
+          (Let ,binding ,record
+            (Assign (BorrowMutRef 0 (a) 0) 2)))))
+    (define after-allocation
+      (match (tagged (machine-steps start))
+        [(list next) next]
+        [steps (fail (format "expected one place-allocation step: ~s" steps))]))
+    (check-equal? (config-declared-types after-allocation)
+                  `((0 (Owned ,record-type))))
+    (define final
+      (check-config-run after-allocation 'Unit '(Mutation)))
+    (check-equal? (config-declared-types final)
+                  `((0 (Owned ,record-type))))
+    (check-equal?
+     (second (first (match final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
+     '(Rec ((a mut 2))))))
 
 (test-case "Scope 後も stale heap entry と一緒に宣言型 metadata が残る"
   (define final
