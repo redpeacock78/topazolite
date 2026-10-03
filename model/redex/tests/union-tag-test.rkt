@@ -869,6 +869,32 @@
          (Reassign m (UnionInject ,wide Bool (Construct Bool true)))))
     'Unit '(Mutation))))
 
+(test-case "const alias を mut binding へ渡した後も wide slot に再代入できる"
+  (define wide (normalize-type U))
+  (define narrow (normalize-type U1))
+  (check-true
+   (steps-ok?
+    `(Scope ()
+       (Let (x const ,wide) (UnionInject ,narrow Int 1)
+         (Let (m mut ,wide) x
+           (Reassign m (UnionInject ,wide Bool (Construct Bool true))))))
+    'Unit '(Mutation))))
+
+(test-case "config-ok? は heap 値を記録した宣言型と照合する"
+  (define wide (normalize-type U))
+  (define narrow (normalize-type U1))
+  (define (config-with value declared)
+    (machine-config 1 `((0 ,value (declared ,declared))) '((0 Available))))
+  (tagged
+   (check-true (config-ok? (config-with 2 'Int) '() 'Int '()))
+   (check-false (config-ok? (config-with "s" 'Int) '() 'Int '()))
+   (check-true
+    (config-ok? (config-with `(UnionVal ,narrow Int 1) wide) '() 'Int '()))
+   (check-false
+    (config-ok? (config-with `(UnionVal ,wide Int 1) narrow) '() 'Int '()))
+   (check-false
+    (config-ok? (config-with `(UnionVal ,narrow Int 1) 'Int) '() 'Int '()))))
+
 (test-case "Assign、Reassign、BorrowMutRef の書込みは宣言型 metadata を保つ"
   (define record-type '(Record ((a Int mut))))
   (define record '(Rec ((a mut 1))))
