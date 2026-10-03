@@ -38,6 +38,14 @@
                                  (contains-union-form? part form))
                                tree))))
 
+(define (tree-any? tree predicate)
+  (or (predicate tree)
+      (and (pair? tree) (ormap (lambda (part) (tree-any? part predicate)) tree))))
+
+(define (contains-symbol? tree name)
+  (or (eq? tree name)
+      (and (pair? tree) (ormap (lambda (part) (contains-symbol? part name)) tree))))
+
 (test-case "Union の生成経路は opt-in である"
   (check-false (generate-union-core))
   (define core (generate-union-core #:include-union? #t))
@@ -49,6 +57,90 @@
   (define borrowed (gen-borrow-term 4 #:include-union? #t))
   (check-true (contains-union-form? borrowed 'UnionInject))
   (check-true (contains-union-form? borrowed 'UnionEliminate)))
+
+(test-case "opt-in Union generator varies values, branches, and tag-preserving joins"
+  (define limits (struct-copy bounds (read-bounds) [attempts 120]))
+  (define generated
+    (call-with-search-seed
+     limits
+     (lambda ()
+       (for/list ([_ (in-range (bounds-attempts limits))])
+         (generate-union-core #:include-union? #t)))))
+  (define (union-let-and-eliminate? node)
+    (match node
+      [`(Let (,name const (Union ,_ ...))
+             (UnionInject ,_ ,_ ,_)
+             ,body)
+       (tree-any? body
+                  (lambda (candidate)
+                    (match candidate
+                      [`(UnionEliminate ,scrutinee ,_) (eq? scrutinee name)]
+                      [_ #f])))]
+      [_ #f]))
+  (define (union-merge? node)
+    (match node
+      [`(Eliminate (Construct Bool ,_) ,arms)
+       (define injected-types
+         (for/list ([arm (in-list arms)]
+                    #:when (match arm
+                             [`(,_ () -> (UnionInject ,_ ,_ ,_)) #t]
+                             [_ #f]))
+           (match arm
+             [`(,_ () -> (UnionInject ,type ,_ ,_)) type])))
+       (and (= (length injected-types) 2)
+            (not (equal? (first injected-types) (second injected-types))))]
+      [_ #f]))
+  (define (used-union-binder? node)
+    (match node
+      [`(UnionEliminate ,_ ,arms)
+       (for/or ([arm (in-list arms)])
+         (match arm
+           [`(,_ ,binder -> ,body) (contains-symbol? body binder)]
+           [_ #f]))]
+      [_ #f]))
+  (define (permuted-union-arms? node)
+    (match node
+      [`(UnionEliminate ,_ ,arms)
+       (define arm-types
+         (for/list ([arm (in-list arms)])
+           (match arm [`(,type ,_ -> ,_) type])))
+       (and (> (length arm-types) 1)
+            (not (equal? arm-types
+                         (union-members (normalize-type `(Union ,@arm-types))))))]
+      [_ #f]))
+  (define (three-member-union? node)
+    (match node
+      [`(UnionInject ,type ,_ ,_)
+       (and (match type [`(Union ,_ ,_) #t] [_ #f])
+            (>= (length (union-members type)) 3))]
+      [`(Let (,_ ,_ ,type) ,_ ,_)
+       (and (match type [`(Union ,_ ,_) #t] [_ #f])
+            (>= (length (union-members type)) 3))]
+      [_ #f]))
+  (define (union-types-normal? node)
+    (and (or (not (match node [`(Union ,_ ,_ ...) #t] [_ #f]))
+             (equal? node (normalize-type node)))
+         (or (not (pair? node))
+             (andmap union-types-normal? node))))
+  (check-true (ormap (lambda (core) (tree-any? core union-let-and-eliminate?)) generated))
+  (check-true (ormap (lambda (core) (tree-any? core union-merge?)) generated))
+  (check-true (ormap (lambda (core) (tree-any? core used-union-binder?)) generated))
+  (check-true
+   (ormap (lambda (core) (tree-any? core (lambda (node)
+                                          (match node
+                                            [`(UnionInject ,_ Bool ,_) #t]
+                                            [_ #f]))))
+          generated))
+  (check-true
+   (ormap (lambda (core) (tree-any? core (lambda (node)
+                                          (match node
+                                            [`(UnionInject ,_ (Record ,_) ,_) #t]
+                                            [_ #f]))))
+          generated))
+  (check-true (ormap (lambda (core) (tree-any? core three-member-union?)) generated))
+  (check-true (ormap (lambda (core) (tree-any? core permuted-union-arms?)) generated))
+  (check-true (andmap union-types-normal? generated))
+  (check-true (> (set-count (list->set generated)) 80)))
 
 (define (if-term then else)
   `(Eliminate (Construct Bool true)

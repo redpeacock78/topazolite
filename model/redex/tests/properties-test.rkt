@@ -647,21 +647,23 @@
 
   (test-case "P2m2a: opt-in Union programme は型付けと Progress/Preservation を通る"
     (define started (current-inexact-milliseconds))
+    (define union-attempts 160)
     (define generated 0)
     (define typed 0)
     (define ill-typed 0)
     (define reached 0)
+    (define distinct (mutable-set))
     (parameterize ([current-union-tag-mode #t])
       (call-with-search-seed
        limits
        (lambda ()
-         (for ([_attempt (in-range (bounds-attempts limits))])
+         (for ([_attempt (in-range union-attempts)])
            (define core
-             (generate-union-core #:include-union? #t
-                                  #:size (bounds-term-depth limits)))
+             (generate-union-core #:include-union? #t))
            (check-not-false core "Union generator returned no programme")
            (when core
              (set! generated (add1 generated))
+             (set-add! distinct core)
              (let ([inferred (core-type-of core '() '())])
                (if (eq? inferred 'ill-typed)
                    (set! ill-typed (add1 ill-typed))
@@ -684,12 +686,14 @@
                         "every non-value config must make progress")
                        (when (union-eliminate-reached? configs)
                          (set! reached (add1 reached)))))))))))
-    (check-equal? generated (bounds-attempts limits))
+    (check-equal? generated union-attempts)
     (check-equal? ill-typed 0 "ill-typed Union programmes are not discarded")
-  (check-true (positive? typed))
-  (check-true (positive? reached))
-  (printf "P2m2a Union: generated=~a typed=~a ill-typed=~a UnionEliminate=~a seed=~a elapsed-ms=~a\n"
-          generated typed ill-typed reached (bounds-seed limits)
-          (inexact->exact
-           (round (- (current-inexact-milliseconds) started)))))
-  ))
+    (check-true (positive? typed))
+    (check-true (positive? reached))
+    (check-true (> (set-count distinct) 100))
+    (printf "P2m2a Union: generated=~a unique=~a typed=~a ill-typed=~a UnionEliminate=~a seed=~a elapsed-ms=~a\n"
+            generated (set-count distinct) typed ill-typed reached (bounds-seed limits)
+            (inexact->exact
+             (round (- (current-inexact-milliseconds) started)))))
+  )
+)
