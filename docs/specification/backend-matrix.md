@@ -240,6 +240,7 @@ Union の Core 構成子は次の形へ写す。
 | `(UnionVal τ_U τ_m v)` | `(PTagged (union-tag-code τ_m) (lower-value v))` |
 | `(UnionInject τ_U τ_m c)` | `(PTagged (union-tag-code τ_m) (lower c))` |
 | `(UnionEliminate c ((τ_m x -> c) ...))` | `(PMatch (lower c) ((<union-tag-code τ_m> (v:x) -> lower c) ...))` |
+
 所有 token を含む値は、payload の表現を保って token の操作だけを消去する。
 
 | Typed Core | PR |
