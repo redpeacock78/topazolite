@@ -93,6 +93,12 @@
     [(? list? parts) (ormap contains-mutation? parts)]
     [_ #f]))
 
+(define (contains-runtime-borrow? core)
+  (match (peel-node core)
+    [`(BorrowRef ,_ ,_ ,_) #t]
+    [`(BorrowMutRef ,_ ,_ ,_) #t]
+    [_ (and (list? core) (ormap contains-runtime-borrow? core))]))
+
 (define (current-config-row config row)
   (match config
     [`(cfg ,core ,_ ,_ ,_ ,_)
@@ -119,10 +125,17 @@
 ;; 終状態までを検査する。
 (define (check-config-run-from-first-valid config expected row)
   (tagged
-   (let loop ([current config] [fuel 200])
+   (let loop ([current config] [fuel 200] [skipped 0])
      (define current-row (current-config-row current row))
      (cond
        [(config-ok? current '() expected current-row)
+        (check-true (positive? skipped)
+                    "the helper must skip place-allocation steps")
+        (check-true
+         (match current
+           [`(cfg ,core ,_ ,_ ,_ ,_) (contains-runtime-borrow? core)]
+           [_ #f])
+         "type recovery must be exercised in the first checked config")
         (check-config-run current expected row 100)]
        [(zero? fuel)
         (fail (format "no well-formed config before machine stopped: ~s" current))]
@@ -130,7 +143,7 @@
         (match (machine-steps current)
           ['() (fail (format "no well-formed config before machine stopped: ~s"
                              current))]
-          [(list next) (loop next (sub1 fuel))]
+          [(list next) (loop next (sub1 fuel) (add1 skipped))]
           [many (fail (format "nondeterministic machine step: ~s" many))])]))))
 
 (define (steps-ok? core expected row [fuel 200])
@@ -761,31 +774,47 @@
 
 (test-case "config-ok? は不正な借用 path と place state を拒否する"
   (define available '((0 Available)))
+  (define (int-config path state)
+    (machine-config `(Read (BorrowRef 0 ,path 0))
+                    '((0 17 (declared (Owned Int)))) state))
   (check-false
    (tagged
-    (config-ok?
-     (machine-config '(Read (BorrowRef 0 ((Payload)) 0))
-                     '((0 17 (declared (Owned Int)))) available)
+    (config-ok? (int-config '((Payload)) available)
      '() 'Int '())))
+  (check-true
+   (tagged
+    (config-ok? (int-config '() available) '() 'Int '())))
   (define union-type (normalize-type IS))
+  (define payload-config
+    (machine-config '(Read (BorrowRef 0 ((Payload)) 0))
+                    `((0 (UnionVal ,union-type String "s")
+                         (declared (Owned ,union-type))))
+                    available))
   (check-false
    (tagged
-    (config-ok?
-     (machine-config
-      '(Read (BorrowRef 0 ((Payload)) 0))
-      `((0 (UnionVal ,union-type String 17)
-           (declared (Owned ,union-type)))) available)
-     '() 'Int '())))
+    (config-ok? payload-config '() 'Int '())))
+  (check-true
+   (tagged
+    (config-ok? payload-config '() 'String '())))
+  (define dropped-config (int-config '() '((0 Dropped))))
   (check-false
    (tagged
-    (config-ok?
-     (machine-config '(Read (BorrowRef 0 () 0))
-                     '((0 17 (declared (Owned Int)))) '((0 Dropped)))
-     '() 'Int '())))
+    (config-ok? dropped-config '() 'Int '())))
+  (check-true
+   (tagged
+    (config-ok? (int-config '() available) '() 'Int '())))
+  (define record-config
+    (machine-config '(Read (BorrowRef 0 (missing) 0))
+                    '((0 (Rec ((a imm 17)))
+                        (declared (Owned (Record ((a Int imm)))))))
+                    available))
   (check-false
    (tagged
+    (config-ok? record-config '() 'Int '())))
+  (check-true
+   (tagged
     (config-ok?
-     (machine-config '(Read (BorrowRef 0 (missing) 0))
+     (machine-config '(Read (BorrowRef 0 (a) 0))
                      '((0 (Rec ((a imm 17)))
                          (declared (Owned (Record ((a Int imm)))))))
                      available)
