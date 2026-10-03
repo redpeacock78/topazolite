@@ -126,6 +126,8 @@
     (Error      resource-runtime)
     (resource   resource-runtime)
     (Discharge  static-erasure)
+    (OwnLeaf    static-erasure)
+    (OwnedLeaf  static-erasure)
     (TypeRep    static-erasure)
     (ProofRep   static-erasure)
     (PrimVal    primitive-value)))

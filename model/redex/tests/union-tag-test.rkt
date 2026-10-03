@@ -730,6 +730,14 @@
   (define member-normal '(Record ((a (Union Int String) imm))))
   (check-equal? (union-tag-code member-raw)
                 (union-tag-code member-normal))
+  ;; Typed Core は UnionEliminate の枝型を入口で正規化検査する。
+  ;; union-tag-code 内の正規化は、検証済み Core の通常経路では要らない防御である。
+  (define non-normal-branch
+    '(UnionEliminate
+      (UnionInject (Union Int String) Int 1)
+      (((Record ((a (Union String Int) imm))) r -> 0))))
+  (tagged
+   (check-equal? (key-of non-normal-branch) 'non-normal-type))
   (check-not-equal? (union-tag-code '(Record ((|a:b| Int imm))))
                     (union-tag-code '(Record ((ab Int imm)))))
   (check-equal?

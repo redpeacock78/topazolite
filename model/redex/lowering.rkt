@@ -256,6 +256,8 @@
                            (PApp ,px-f ,@pxs)))]
       [`(TypeRep ,_ ,_ ,_) '(PTagged typerep)]
       [`(ProofRep ,_ ,_) '(PTagged proof)]
+      ;; 所有 token は静的な記録なので、値では payload だけを残す。
+      [`(OwnedLeaf ,_ ,payload) (lower-val payload)]
       [`(Rec ((,labels ,_ ,fields) ...))
        `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
                           #:unless (absent-field? field))
@@ -345,6 +347,8 @@
                      ,(lower-core record) ,(label-code (peel-lbl label)))]
          ;; Proof は実行時に意味を持たない。内側の写しをそのまま返す。
          [`(Discharge ,_ ,body) (lower-core body)]
+         ;; 所有 token の導入も実行時表現を持たない。payload の評価は残す。
+         [`(OwnLeaf ,payload) (lower-core payload)]
          ;; spec §21: Error は G2m だけの形であり spanful な項に現れない。
          [`(Error ,p) `(PError ,p)]
          [_ (fail 'unknown-core-form core (format "lower: ~s" (erase-core core)))])]))

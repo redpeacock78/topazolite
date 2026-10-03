@@ -238,6 +238,8 @@
                           ,(var-code 'x) ,(label-code 'b)))
  (check-equal? (lower-ok '(Discharge (ProofRep User TypeNarrativeCap) x))
                (var-code 'x))
+ (check-equal? (lower-ok '(OwnLeaf (resource 3))) '(PResource 3))
+ (check-equal? (lower-ok '(OwnedLeaf (tok 0) (resource 3))) '(PResource 3))
  (check-equal?
   (lower-ok
    '(Discharge
@@ -276,6 +278,8 @@
     (Proj      core  (Proj x a))
     (ProjOpt   core  (ProjOpt Int x b))
     (Discharge core  (Discharge (ProofRep User TypeNarrativeCap) x))
+    (OwnLeaf    core  (OwnLeaf (resource 3)))
+    (OwnedLeaf  value (OwnedLeaf (tok 0) (resource 3)))
     (Error     core  (Error 0))
     (resource  value (resource 3))
     (Lam       value (Lam User c0 (a) a))

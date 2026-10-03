@@ -163,7 +163,7 @@ pstate ::= Available | Moved | Dropped
 | `R-RecurBind`、`R-RecurUnfold` | `R-PR-Letrec` | 2 本が 1 本になる。展開は `R-PR-App` との合成になり、呼び出しごとに 1 段増える |
 | `R-Move` | `R-PR-Move` | なし |
 | `R-MoveError` | `R-PR-MoveError` | なし |
-| `R-OwnLeaf` | なし | Portable Racket backend は所有 token を持たない |
+| `R-OwnLeaf` | なし | token は消去し、payload の評価だけを残す |
 | `R-Drop` | `R-PR-Drop` | なし。状態表は触らない |
 | `R-Yield` | `R-PR-Yield` | なし |
 | `R-Suspend` | `R-PR-Suspend` | なし |
@@ -240,6 +240,12 @@ Union の Core 構成子は次の形へ写す。
 | `(UnionVal τ_U τ_m v)` | `(PTagged (union-tag-code τ_m) (lower-value v))` |
 | `(UnionInject τ_U τ_m c)` | `(PTagged (union-tag-code τ_m) (lower c))` |
 | `(UnionEliminate c ((τ_m x -> c) ...))` | `(PMatch (lower c) ((<union-tag-code τ_m> (v:x) -> lower c) ...))` |
+所有 token を含む値は、payload の表現を保って token の操作だけを消去する。
+
+| Typed Core | PR |
+|---|---|
+| `(OwnLeaf c)` | `(lower c)` |
+| `(OwnedLeaf tk v)` | `(lower-value v)` |
 
 **表現規約** `repr` は型から目標値の形への写像である。
 

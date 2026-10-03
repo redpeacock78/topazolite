@@ -604,27 +604,23 @@
         (UnionInject ,union-type String "s")
         ((Int n -> (Yield 0 unit))
          (String s -> (Yield s unit)))))
-    (define owned-member '(Record ((owned (Owned Res) imm))))
+    (define owned-member '(Option (Owned Res)))
     (define owned-union `(Union ,owned-member String))
     (define owned-drop
       `(UnionEliminate
         (UnionInject ,owned-union ,owned-member
-                     (Rec ((owned imm (resource 7)))))
-        ((,owned-member record -> (Drop (Proj record owned)))
-         (String s -> unit))))
-    (define noncanonical-member
-      '(Record ((nested (Union String Int) imm))))
-    (define noncanonical-union `(Union ,noncanonical-member Bool))
-    (define noncanonical-component
-      `(UnionEliminate
-        (UnionInject ,noncanonical-union ,noncanonical-member
-                     (Rec ((nested imm
-                                  (UnionInject (Union String Int) String "s")))))
-        ((,noncanonical-member record -> (Yield (Proj record nested) unit))
-         (Bool b -> (Yield (UnionInject (Union Int String) Int 0) unit)))))
+                     (Construct ,owned-member some
+                                (OwnLeaf (resource 7))))
+        ((,owned-member option ->
+          (Eliminate option
+            ((some (owned) ->
+                   (Let (d Unit) (Drop (Move owned)) (Yield unit unit)))
+             (none () -> (Yield unit unit)))))
+         (String s -> (Yield unit unit)))))
     (parameterize ([current-union-tag-mode #t])
-      (for ([core (in-list (list integer-branch string-branch owned-drop
-                                 noncanonical-component))])
+      (for ([core (in-list (list integer-branch string-branch owned-drop))])
+        (check-not-eq? (core-type-of core '() '()) 'ill-typed
+                       (format "well-typed Core: ~s" core))
         (define-values (status target) (lower core 'racket-cs))
         (check-eq? status 'ok (format "lower: ~s" target))
         (check-eq? (compare-observations core target depth) 'match
