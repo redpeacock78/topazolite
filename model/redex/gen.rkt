@@ -9,6 +9,7 @@
          "lang.rkt"
          "machine.rkt"
          "rows.rkt"
+         "type-equiv.rkt"
          "typing.rkt"
          "validators.rkt")
 
@@ -42,7 +43,8 @@
          random-variance-type
          narrow-variance-type
          widen-variance-type
-         permute-variance-type)
+         permute-variance-type
+         generate-union-core)
 
 ;; Every generated form is a closed UCore term.  Separate nonterminals make the
 ;; seven searches hit the rules they are intended to check instead of spending
@@ -136,7 +138,17 @@
                 (Apply loop ga-list))
          g-boundary
          g-own
-         g-type))
+         g-type)
+  ;; Union の生成域は g へ混ぜず、明示的な opt-in からだけ使う。
+  (g-union-type ::= (Union Int String))
+  (g-union ::= (UnionEliminate
+                (UnionInject g-union-type Int gn)
+                ((Int union-int -> gn)
+                 (String union-string -> gn)))
+               (UnionEliminate
+                (UnionInject g-union-type String "generated")
+                ((Int union-int -> gn)
+                 (String union-string -> gn)))))
 
 ;; Record generation is deliberately finite by construction: every row has at
 ;; most three fields, and nested record types/terms have at most two Rec/Record
@@ -264,6 +276,25 @@
   (parameterize ([current-pseudo-random-generator generator]
                  [redex-pseudo-random-generator generator])
     (thunk)))
+
+;; 既定の g の分布を保つため、Union 用の非終端は keyword で明示した呼び出し
+;; だけが生成する。型注釈は normalize-type を通してから Core へ返す。
+(define (generate-union-core #:include-union? [include-union? #f]
+                             #:size [size 7])
+  (and include-union?
+       (match (generate-term G1gen g-union size)
+         [`(UnionEliminate
+            (UnionInject ,union-type ,member-type ,payload)
+            (,branches ...))
+          `(UnionEliminate
+            (UnionInject ,(normalize-type union-type)
+                         ,(normalize-type member-type)
+                         ,payload)
+            ,(for/list ([branch (in-list branches)])
+               (match branch
+                 [`(,τ ,x -> ,body)
+                  `(,(normalize-type τ) ,x -> ,body)])))]
+         [_ #f])))
 
 (define (make-search-counts limits)
   (search-counts 0 0 (bounds-discard-limit limits)))

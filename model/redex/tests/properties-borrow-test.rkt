@@ -5,7 +5,10 @@
          "../gen.rkt"
          "../borrow.rkt"
          "../borrow-gen.rkt"
-         "../borrow-oracle.rkt")
+         "../borrow-oracle.rkt"
+         "../typing.rkt")
+
+(define limits (read-bounds))
 
 (test-case "R-Yield が continuation 内の借用を新規生成と誤認しない"
   (check-equal?
@@ -68,6 +71,119 @@
 
 (test-case "6 つのカウンタがすべて非零"
   (check-equal? (bcounters-zeros (fourth search-result)) '()))
+
+(define (union-borrow-eliminate-reached? configs)
+  (for/or ([before (in-list configs)]
+           [after (in-list (cdr configs))])
+    (and (contains-ready-borrowed-union-eliminate? (config-core before))
+         (not (contains-ready-borrowed-union-eliminate? (config-core after))))))
+
+(define (contains-ready-borrowed-union-eliminate? tree)
+  (match tree
+    [(or `(UnionEliminate (BorrowRef ,_ ,_ ,_) ,_)
+         `(UnionEliminate (BorrowMutRef ,_ ,_ ,_) ,_)) #t]
+    [(? list?) (ormap contains-ready-borrowed-union-eliminate? tree)]
+    [_ #f]))
+
+(define (contains-form? tree form)
+  (or (and (pair? tree) (eq? (first tree) form))
+      (and (list? tree) (ormap (lambda (part) (contains-form? part form)) tree))))
+
+(define (contains-owned-union-binding? tree)
+  (match tree
+    [`(Let (,_ ,_ (Owned (Union ,_ ,_))) ,_ ,_) #t]
+    [(? list?) (ormap contains-owned-union-binding? tree)]
+    [_ #f]))
+
+(define (place-allocation-pending? configuration)
+  (match configuration
+    [`(cfg ,core ,heap ,_ ,_ ,_)
+     (or (and (null? heap) (contains-owned-union-binding? core))
+         (and (or (contains-form? core 'BorrowAt)
+                  (contains-form? core 'BorrowMutAt))
+              (for/or ([entry (in-list heap)])
+                (match entry
+                  [`(,_ ,_ (declared (Owned (Union ,_ ,_)))) #t]
+                  [_ #f]))))]
+    [_ #f]))
+
+(define (check-union-borrow-configs configs)
+  (define first-valid
+    (for/first ([configuration (in-list configs)]
+                [index (in-naturals)]
+                #:when (config-ok? configuration '() 'Int '()))
+      index))
+  (check-not-false first-valid "a well-formed config must be reached")
+  (if first-valid
+      (let ([skipped (take configs first-valid)]
+            [checked (drop configs first-valid)])
+        (check-true (andmap place-allocation-pending? skipped)
+                    "only Owned-place/borrow allocation setup may be skipped")
+        (when (positive? first-valid)
+          (check-true
+           (or (contains-form? (config-core (list-ref configs first-valid))
+                               'BorrowRef)
+               (contains-form? (config-core (list-ref configs first-valid))
+                               'BorrowMutRef))
+           "the first checked config must contain the materialized borrow"))
+        (check-true (andmap (lambda (configuration)
+                              (config-ok? configuration '() 'Int '()))
+                            checked)
+                    "every config after place allocation must be valid")
+        first-valid)
+      (length configs)))
+
+(test-case "opt-in borrowed Union programme は全 config と borrow oracle を通る"
+  (define started (current-inexact-milliseconds))
+  (define generated 0)
+  (define typed 0)
+  (define discarded 0)
+  (define reached 0)
+  (define skipped-configs 0)
+  (define oracle-failures '())
+  (parameterize ([current-union-tag-mode #t])
+    (call-with-search-seed
+     limits
+     (lambda ()
+       (for ([_attempt (in-range 100)])
+         (define source (gen-borrow-term (bounds-term-depth limits)
+                                         #:include-union? #t))
+         (set! generated (add1 generated))
+         (match (prepare-borrow-term source)
+           [(list 'ok config sidecar ir)
+            (set! typed (add1 typed))
+            (let* ([run (bounded-trace-g2 config (bounds-fuel limits))]
+                   [configs (execution-configs run)])
+              (unless (eq? (execution-outcome run) 'terminal)
+                (set! oracle-failures
+                      (cons (list 'nonterminal source) oracle-failures)))
+              (set! skipped-configs
+                    (+ skipped-configs (check-union-borrow-configs configs)))
+              (unless (eq? (check-borrow-execution
+                            config sidecar ir (bounds-fuel limits)
+                            (make-bcounters))
+                           'ok)
+                (set! oracle-failures (cons source oracle-failures)))
+              (when (union-borrow-eliminate-reached? configs)
+                (set! reached (add1 reached))))]
+           ['discard (set! discarded (add1 discarded))]
+           [other
+            (set! discarded (add1 discarded))
+            (set! oracle-failures
+                  (cons (list 'unexpected-prepare-result other source)
+                        oracle-failures))])))))
+  (check-equal? generated 100)
+  (check-equal? discarded 0 "ill-typed Union borrow programmes are not discarded")
+  (check-equal? typed generated)
+  (check-true (positive? skipped-configs)
+              "generated borrowed unions exercise allocation setup")
+  (check-equal? oracle-failures '())
+  (check-true (positive? typed))
+  (check-true (positive? reached))
+  (printf "P2m2a borrowed Union: generated=~a typed=~a discarded=~a skipped-allocation-configs=~a UnionEliminate=~a elapsed-ms=~a\n"
+          generated typed discarded skipped-configs reached
+          (inexact->exact
+           (round (- (current-inexact-milliseconds) started)))))
 
 ;; ここから負例。oracle が三条件を実際に見ていることを、
 ;; 条件ごとに違反する config を手で組んで確かめる。

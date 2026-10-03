@@ -8,10 +8,12 @@
          "../borrow.rkt"
          "../compat.rkt"
          "../erase.rkt"
+         "../gen.rkt"
          "../lang.rkt"
          "../lowering.rkt"
          "../machine.rkt"
          "../borrow-oracle.rkt"
+         "../borrow-gen.rkt"
          "../region.rkt"
          "../span-core.rkt"
          "../type-shape.rkt"
@@ -29,6 +31,24 @@
 (define inject-int `(UnionInject ,IS Int 1))
 (define elim-is
   `(UnionEliminate ,inject-int ((Int i -> i) (String s -> 0))))
+
+(define (contains-union-form? tree form)
+  (or (and (pair? tree) (eq? (car tree) form))
+      (and (pair? tree) (ormap (lambda (part)
+                                 (contains-union-form? part form))
+                               tree))))
+
+(test-case "Union の生成経路は opt-in である"
+  (check-false (generate-union-core))
+  (define core (generate-union-core #:include-union? #t))
+  (check-true (redex-match? G2 c core))
+  (check-true (contains-union-form? core 'UnionInject))
+  (check-true (contains-union-form? core 'UnionEliminate))
+  (check-false (redex-match? G1gen g core))
+  (check-false (contains-union-form? (gen-borrow-term 4) 'UnionInject))
+  (define borrowed (gen-borrow-term 4 #:include-union? #t))
+  (check-true (contains-union-form? borrowed 'UnionInject))
+  (check-true (contains-union-form? borrowed 'UnionEliminate)))
 
 (define (if-term then else)
   `(Eliminate (Construct Bool true)

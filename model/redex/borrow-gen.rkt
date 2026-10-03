@@ -4,6 +4,7 @@
          "borrow.rkt"
          "machine.rkt"
          "region.rkt"
+         "type-equiv.rkt"
          "typing.rkt")
 
 (provide gen-borrow-term
@@ -44,14 +45,16 @@
 ;; だけを持ち、Int と record と data の所有束縛は ints / recs / datas に分ける。
 ;; gen-borrow-let が型を (Borrowed Res ph) に固定しているため、型の違う束縛を
 ;; owned へ混ぜると借用の型が合わなくなる。
-(struct genv (owned ints shared muts recs datas) #:transparent)
-(define empty-genv (genv '() '() '() '() '() '()))
+(struct genv (owned ints shared muts recs datas unions) #:transparent)
+(define empty-genv (genv '() '() '() '() '() '() '()))
 
 (define (pick lst) (list-ref lst (random (length lst))))
 
-(define (gen-borrow-term depth)
+(define (gen-borrow-term depth #:include-union? [include-union? #f])
   (set-box! binder-counter 0)
-  (gen-scope depth empty-genv))
+  (if include-union?
+      (gen-union-borrow-term)
+      (gen-scope depth empty-genv)))
 
 (define (gen-scope depth env)
   `(Scope () ,(gen-core depth env)))
@@ -206,29 +209,80 @@
                 (struct-copy genv env
                              [datas (cons x (genv-datas env))]))))
 
+;; Union の借用分解は既定の候補分布から分離する。呼び出し側が opt-in
+;; したときだけ、正規化した Union 値を作り 3 種の分解規則から一つを生成する。
+(define union-τ (normalize-type '(Union Int String)))
+
+(define (gen-union-borrow-term)
+  (case (random 3)
+    [(0)
+     `(Scope ()
+        ,(gen-eliminate (struct-copy genv empty-genv [unions '(union)])))]
+    [else
+     (define x (fresh-binder! 'u))
+     (define member (pick '(Int String)))
+     (define payload (if (eq? member 'Int)
+                         (gen-literal)
+                         (format "s~a" (gen-literal))))
+     (define env (struct-copy genv empty-genv [unions (list x)]))
+     `(Scope ()
+        (Let (,x let (Owned ,union-τ))
+             (UnionInject ,union-τ ,member ,payload)
+          (Scope ()
+            ,((if (eq? (random 2) 0)
+                  gen-eliminate-ref
+                  gen-eliminate-mut-ref)
+              env))))]))
+
 ;; R-EliminateRef を発火させる。枝は (K (x ...) -> c) であり、schema と同数で
 ;; なければ branch-contexts が non-exhaustive-eliminate で落ちる。借用を分解
 ;; すると束縛子へは欄の値ではなく欄を指す借用参照が渡る。
 (define (gen-eliminate-ref env)
-  (define a (fresh-binder! 'e))
-  `(Eliminate (Borrow ,(pick (genv-datas env)))
-              ((none () -> ,(gen-literal))
-               (some (,a) -> (Read ,a)))))
+  (if (pair? (genv-unions env))
+      (gen-union-eliminate-ref env #f)
+      (let ([a (fresh-binder! 'e)])
+        `(Eliminate (Borrow ,(pick (genv-datas env)))
+                    ((none () -> ,(gen-literal))
+                     (some (,a) -> (Read ,a)))))))
 
 ;; R-EliminateMutRef を発火させる。scrutinee が可変借用であることを除いて
 ;; gen-eliminate-ref と同じ形であり、束縛子へは欄を指す可変借用参照が渡る。
 (define (gen-eliminate-mut-ref env)
-  (define a (fresh-binder! 'e))
-  `(Eliminate (BorrowMut ,(pick (genv-datas env)))
-              ((none () -> ,(gen-literal))
-               (some (,a) -> (Read ,a)))))
+  (if (pair? (genv-unions env))
+      (gen-union-eliminate-ref env #t)
+      (let ([a (fresh-binder! 'e)])
+        `(Eliminate (BorrowMut ,(pick (genv-datas env)))
+                    ((none () -> ,(gen-literal))
+                     (some (,a) -> (Read ,a)))))))
 
 ;; R-Eliminate を発火させる。所有の値を分解するので束縛子へは欄の値が渡る。
 (define (gen-eliminate env)
-  (define a (fresh-binder! 'e))
-  `(Eliminate (Move ,(pick (genv-datas env)))
-              ((none () -> ,(gen-literal))
-               (some (,a) -> ,a))))
+  (if (pair? (genv-unions env))
+      (let* ([member (pick '(Int String))]
+             [payload (if (eq? member 'Int)
+                          (gen-literal)
+                          (format "s~a" (gen-literal)))]
+             [x (fresh-binder! 'e-int)]
+             [y (fresh-binder! 'e-string)])
+        `(UnionEliminate (UnionInject ,union-τ ,member ,payload)
+                         ((Int ,x -> ,x)
+                          (String ,y ->
+                                  (Let (ignored const String) ,y 0)))))
+      (let ([a (fresh-binder! 'e)])
+        `(Eliminate (Move ,(pick (genv-datas env)))
+                    ((none () -> ,(gen-literal))
+                     (some (,a) -> ,a))))))
+
+(define (gen-union-eliminate-ref env mutable?)
+  (define int-binder (fresh-binder! 'e-int))
+  (define string-binder (fresh-binder! 'e-string))
+  (define borrow-form (if mutable? 'BorrowMut 'Borrow))
+  `(UnionEliminate (,borrow-form ,(pick (genv-unions env)))
+                   ((Int ,int-binder -> (Read ,int-binder))
+                    (String ,string-binder ->
+                            (Let (ignored const String)
+                                 (Read ,string-binder)
+                                 0)))))
 
 ;; payload は借用形を含まないリテラルに限る。spec §4.5 が obs 経由の借用だけの
 ;; 実行を捨てるため、借用を入れても必ず捨てられる。

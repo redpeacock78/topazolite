@@ -631,4 +631,65 @@
   (bounded-row-check "ROW-003: branch merge is structural intersection"
                      g-row-merge row-003?)
   (bounded-row-check "ROW-004: mutable fields are invariant and inhabited"
-                     g-row-mut row-004?))
+                     g-row-mut row-004?)
+
+  (define (union-eliminate-reached? configs)
+    (for/or ([before (in-list configs)]
+             [after (in-list (cdr configs))])
+      (and (contains-ready-union-eliminate? (config-core before))
+           (not (contains-ready-union-eliminate? (config-core after))))))
+
+  (define (contains-ready-union-eliminate? tree)
+    (match tree
+      [`(UnionEliminate (UnionVal ,_ ,_ ,_) ,_) #t]
+      [(? list?) (ormap contains-ready-union-eliminate? tree)]
+      [_ #f]))
+
+  (test-case "P2m2a: opt-in Union programme は型付けと Progress/Preservation を通る"
+    (define started (current-inexact-milliseconds))
+    (define generated 0)
+    (define typed 0)
+    (define ill-typed 0)
+    (define reached 0)
+    (parameterize ([current-union-tag-mode #t])
+      (call-with-search-seed
+       limits
+       (lambda ()
+         (for ([_attempt (in-range (bounds-attempts limits))])
+           (define core
+             (generate-union-core #:include-union? #t
+                                  #:size (bounds-term-depth limits)))
+           (check-not-false core "Union generator returned no programme")
+           (when core
+             (set! generated (add1 generated))
+             (let ([inferred (core-type-of core '() '())])
+               (if (eq? inferred 'ill-typed)
+                   (set! ill-typed (add1 ill-typed))
+                   (begin
+                     (set! typed (add1 typed))
+                     (check-equal? inferred '(Int ()))
+                     (let* ([initial (inject-g2m core)]
+                            [run (bounded-trace-g2
+                                  initial (bounds-fuel limits))]
+                            [configs (execution-configs run)])
+                       (check-eq? (execution-outcome run) 'terminal)
+                       (check-true
+                        (for/and ([configuration (in-list configs)])
+                          (config-ok? configuration '() 'Int '()))
+                        "every intermediate config must be valid in tag mode")
+                       (check-true
+                        (for/and ([configuration (in-list configs)])
+                          (or (pair? (successors-g2 configuration))
+                              (redex-match? G2m v (config-core configuration))))
+                        "every non-value config must make progress")
+                       (when (union-eliminate-reached? configs)
+                         (set! reached (add1 reached)))))))))))
+    (check-equal? generated (bounds-attempts limits))
+    (check-equal? ill-typed 0 "ill-typed Union programmes are not discarded")
+  (check-true (positive? typed))
+  (check-true (positive? reached))
+  (printf "P2m2a Union: generated=~a typed=~a ill-typed=~a UnionEliminate=~a seed=~a elapsed-ms=~a\n"
+          generated typed ill-typed reached (bounds-seed limits)
+          (inexact->exact
+           (round (- (current-inexact-milliseconds) started)))))
+  ))

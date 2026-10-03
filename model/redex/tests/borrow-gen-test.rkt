@@ -198,3 +198,23 @@
           [else #f]))))
   ;; 可変借用の Eliminate だけは頭の記号が共有借用と同じなので、scrutinee まで見る。
   (check-true found?))
+
+(test-case "opt-in 生成器は Union の値と 3 種の UnionEliminate を作る"
+  (define (union-eliminate-source t)
+    (match t
+      [`(UnionEliminate (Borrow ,_) ,_) 'Borrow]
+      [`(UnionEliminate (BorrowMut ,_) ,_) 'BorrowMut]
+      [`(UnionEliminate (UnionInject ,_ ,_ ,_) ,_) 'inject]
+      [(? list?)
+       (for/or ([part (in-list t)]) (union-eliminate-source part))]
+      [_ #f]))
+  (define sources
+    (call-with-search-seed
+     limits
+     (lambda ()
+       (for/set ([_ (in-range 300)])
+         (define term (gen-borrow-term 4 #:include-union? #t))
+         (check-not-false (memq 'UnionInject (flatten term)) (format "~s" term))
+         (check-not-false (memq 'UnionEliminate (flatten term)) (format "~s" term))
+         (union-eliminate-source term)))))
+  (check-equal? sources (set 'Borrow 'BorrowMut 'inject)))
