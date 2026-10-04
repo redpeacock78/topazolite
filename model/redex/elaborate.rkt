@@ -54,9 +54,13 @@
 ;; key の allowlist は残す。表に無い key でも details を 2 件渡す site が
 ;; あり（unsaturated-type、invalid-type-application、kind-mismatch、
 ;; constructor-type-arity）、その 2 件は expected と actual の対ではない。
-;; 例外表の reason でも details の長さが 2 でなければ既定へ落ちる。
+;; ambiguous-union-member は expected、actual、候補列を渡し、Diagnostic の
+;; expected と found には expected と (actual candidates) を置く。
+;; 例外表の reason でも details の長さが合わなければ既定へ落ちる。
 (define (distribute-details reason details)
   (match* (reason details)
+    [('ambiguous-union-member (list expected actual candidates))
+     (values expected (list actual candidates))]
     [((or 'type-mismatch
           'arity-mismatch
           'constructor-type-mismatch
@@ -1988,4 +1992,13 @@
   (check-pred exn:fail:elab? failure)
   (check-equal? (exn:fail:elab-primary-span failure) ok-span)
   (check-equal? (exn:fail:elab-reason failure) 'unknown-type)
-  (check-equal? (exn:fail:elab-details failure) '(Foo)))
+  (check-equal? (exn:fail:elab-details failure) '(Foo))
+
+  ;; 3 つの details を Diagnostic の 2 欄へ落とさず保持する。
+  (define ambiguous-failure
+    (with-handlers ([exn:fail:elab? values])
+      (reject ok-span 'ambiguous-union-member 'Expected 'Actual '(A B))))
+  (define ambiguous-diagnostic
+    (elab-failure->diagnostic ambiguous-failure (hash)))
+  (check-equal? (diagnostic-expected ambiguous-diagnostic) 'Expected)
+  (check-equal? (diagnostic-found ambiguous-diagnostic) '(Actual (A B))))

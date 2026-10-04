@@ -177,6 +177,9 @@ producer は `details` の先頭を `expected`、次を `actual` とする。
 
 表に無い key の `details` 2件は `expected` と `actual` の対ではなく、`found` へ list ごと入る。
 
+elaborate の `ambiguous-union-member` は `expected`、`actual`、候補型の list の3値を渡す。
+`expected` 欄には第1値を置き、`found` 欄には `(actual candidates)` を置く。
+
 既定では `details` の件数だけで配り、意味を推測して `expected` を作らない。
 
 `found` は「実測した型」ではなく、棄却の対象になった値を指す欄である。
@@ -189,7 +192,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 32 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 33 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
@@ -287,20 +290,20 @@ registry version 10 で足した typing の 12 行は `since` が10である。
 
 registry version 11 で足した elaborate の 1 行と typing の 1 行は `since` が11である。
 
-現在の registry は 222 行である。
+現在の registry は 223 行である。
 
 `deprecated-in` を持つのは 8 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
 `E-RCD-011` は 31 を持つ。
-残る 214 行は `#f` である。
+残る 215 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v32.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v33.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222、223 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -396,6 +399,9 @@ v31 は typing へ `E-RCD-013` `projopt-invalid-field` を 1 行足し、elabora
 
 v32 は typing へ `E-TYP-028` `union-inject-not-member`、`E-TYP-029` `non-union-eliminate`、`E-TYP-030` `non-exhaustive-union-eliminate`、`E-OWN-033` `owned-union-member` の 4 行を足した。
 廃止した行は無いため、組は 218 に 4 を足した 222 になる。
+
+v33 は elaborate へ `E-TYP-031` `ambiguous-union-member` を 1 行足した。
+廃止した行は無いため、組は 222 に 1 を足した 223 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 
