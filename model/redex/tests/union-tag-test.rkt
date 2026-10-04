@@ -1376,3 +1376,54 @@
                 (live-borrows recorded-borrow))
   (check-equal? (check-mut-exclusive plain-borrow)
                 (check-mut-exclusive recorded-borrow)))
+
+(test-case "tag-types-upper-bound は文脈を取らずに上界を返す"
+  (check-equal? (tag-types-upper-bound (list U1 U2)) (normalize-type U))
+  (check-equal? (tag-types-upper-bound '(Never Int)) 'Int)
+  (check-equal?
+   (tag-types-upper-bound
+    '((Record ((a Int imm) (b Bool imm)))
+      (Record ((a Int imm) (c String imm)))))
+   '(Record ((a Int imm))))
+  (check-equal?
+   (tag-types-upper-bound
+    `((Record ((a Int imm) (b ,U1 imm)))
+      (Record ((a Int imm) (b ,U2 imm)))))
+   `(Record ((a Int imm) (b ,(normalize-type U) imm))))
+  (check-equal?
+   (tag-types-upper-bound '(Int String))
+   (tag-bound-failure 'type-mismatch '(Int String)))
+  (check-equal?
+   (tag-types-upper-bound '((Record ((a Int imm))) Int))
+   (tag-bound-failure 'incompatible-branch-types '()))
+  (check-equal?
+   (tag-types-upper-bound
+    '((Record ((a Int imm) (b Int imm)))
+      (Record ((a Int imm) (b String imm)))))
+   (tag-bound-failure 'unmergeable-branch-records '())))
+
+;; P2m2b spec §4。elaborate が生成する形（全ての枝を同じ Union へ inject した形）で、
+;; tag mode の Core が枝の借用の寿命を合わせる。
+(test-case "同じ Union へ inject した枝の借用寿命を tag mode で合流する"
+  (define bool-core
+    `(Scope (1) (Scope (2)
+       (Eliminate (Construct Bool true)
+         ((true () -> (Rec ((r imm (Borrow 1))
+                            (u imm (UnionInject ,IS Int 1)))))
+          (false () -> (Rec ((r imm (Borrow 2))
+                             (u imm (UnionInject ,IS String "s")))))))))
+  )
+  (define option-core
+    `(Scope (1) (Scope (2)
+       (Eliminate (Construct (Option Int) some 1)
+         ((some (y) -> (Rec ((r imm (Borrow 1))
+                             (u imm (UnionInject ,IS Int y)))))
+          (none () -> (Rec ((r imm (Borrow 2))
+                            (u imm (UnionInject ,IS String "s")))))))))
+  )
+  (for ([core (list bool-core option-core)])
+    (define result
+      (tagged (type-of/in-regions core '((1 Int) (2 Int))
+                                  (hash 1 '() 2 '()))))
+    (check-equal? (first result) 'ok
+                  (format "core: ~s; result: ~s" core result))))

@@ -61,6 +61,8 @@
          config-declared-types
          join-types
          tag-upper-bound
+         tag-types-upper-bound
+         (struct-out tag-bound-failure)
          merge-field
          presence-binding-name
          field-type-binding-name
@@ -1317,26 +1319,38 @@
           (tag-merge-record-types l r)]
          [(_ _) (and (type-equiv? l r) l)])))
 
+(struct tag-bound-failure (reason details) #:transparent)
+
+(define (tag-types-upper-bound types)
+  (cond
+    [(andmap record-type? types)
+     ;; 全ての枝を一度に渡す。2 つずつ畳み込むと witness と合流の規則がずれる。
+     (define-values (merged _witnesses)
+       (merge-record-types/impl types tag-upper-bound))
+     (or merged (tag-bound-failure 'unmergeable-branch-records '()))]
+    [(ormap record-type? types)
+     (tag-bound-failure 'incompatible-branch-types '())]
+    [else
+     (let loop ([upper (first types)] [remaining (rest types)])
+       (cond
+         [(null? remaining) upper]
+         [(tag-upper-bound upper (first remaining))
+          => (lambda (next) (loop next (rest remaining)))]
+         [else (tag-bound-failure 'type-mismatch
+                                  (list upper (first remaining)))]))]))
+
 (define (tagged-branch-upper-bound types Λ node fail)
+  (define (bound types)
+    (match (tag-types-upper-bound types)
+      [(tag-bound-failure reason details)
+       (apply fail reason node details)]
+      [upper upper]))
   (parameterize ([merge-position
                   (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
-    (cond
-      [(andmap record-type? types)
-       ;; 元の全枝を渡し、FieldType witness が実際の枝型を記録するようにする。
-       (define-values (merged _witnesses)
-         (merge-record-types/impl types tag-upper-bound))
-       (or merged (fail 'unmergeable-branch-records node))]
-      [(ormap record-type? types)
-       (fail 'incompatible-branch-types node)]
-      [else
-       (with-lifetime-unify
-        (lambda ()
-          ;; 同じ借用を返す枝の寿命だけを合流してから、型の上界を求める。
-          (define unified (unify-borrow-lifetimes types))
-          (for/fold ([upper (first unified)])
-                    ([type (in-list (rest unified))])
-            (or (tag-upper-bound upper type)
-                (fail 'type-mismatch node upper type)))))])))
+    (if (ormap record-type? types)
+        (bound types)
+        (with-lifetime-unify
+         (lambda () (bound (unify-borrow-lifetimes types)))))))
 
 (define (tag-merge-record-types left right)
   (define-values (merged _witnesses)
