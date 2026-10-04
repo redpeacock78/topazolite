@@ -1005,8 +1005,9 @@
                 expected
                 (rows-union (map judgment-row results))))
 
-    (define (check-eliminate scrutinee branches expected eliminate-span
-                             environment delta propositions boundaries)
+    (define (eliminate-front scrutinee branches eliminate-span
+                             environment delta propositions boundaries
+                             #:on-clause [on-clause void])
       (define scrutinee-result
         (synth scrutinee environment delta propositions boundaries))
       ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引く。
@@ -1030,7 +1031,7 @@
                              (member constructor actual-constructors))
                            expected-constructors))
         (reject eliminate-span 'non-exhaustive-eliminate actual-constructors))
-      (define branch-results
+      (define clauses
         (for/list ([raw-branch (in-list branches)])
           (match-define `(,constructor (,raw-parameters ...) -> ,body)
             (peel-branch raw-branch))
@@ -1040,17 +1041,40 @@
                        (= (length parameters) (length field-types))
                        (not (check-duplicates parameters)))
             (reject eliminate-span 'invalid-branch-binders raw-branch))
-          (define result
-            (check body expected
-                   (extend environment parameters field-types)
-                   delta propositions boundaries))
-            (list `(,(branch-span raw-branch) ,constructor ,raw-parameters
-                    -> ,(judgment-core result))
-                  (judgment-row result))))
+          (define clause
+            (list raw-branch constructor raw-parameters body
+                  (extend environment parameters field-types)))
+          ;; check-eliminate の互換な診断順を保つため、利用側の枝検査は
+          ;; binder の検査直後、次の枝の binder 検査より前に呼ぶ。
+          (on-clause clause)
+          clause))
+      (values scrutinee-result clauses))
+
+    (define (check-eliminate scrutinee branches expected eliminate-span
+                             environment delta propositions boundaries)
+      (define reversed-branch-results '())
+      (define-values (scrutinee-result clauses)
+        (eliminate-front
+         scrutinee branches eliminate-span environment delta propositions boundaries
+         #:on-clause
+         (lambda (clause)
+           (match-define (list _ _ _ body branch-environment) clause)
+           (define result
+             (check body expected branch-environment
+                    delta propositions boundaries))
+           (set! reversed-branch-results
+                 (cons (list (judgment-core result) (judgment-row result))
+                       reversed-branch-results)))))
+      (define branch-results (reverse reversed-branch-results))
       (judgment
        `(Eliminate ,eliminate-span
                    ,(judgment-core scrutinee-result)
-                   ,(map first branch-results))
+                   ,(for/list ([clause (in-list clauses)]
+                               [result (in-list branch-results)])
+                      (match-define
+                        (list raw-branch constructor raw-parameters _ _) clause)
+                      `(,(branch-span raw-branch) ,constructor ,raw-parameters
+                        -> ,(first result))))
        expected
        (rows-union
         (cons (judgment-row scrutinee-result)
@@ -1730,6 +1754,75 @@
 
         [`(Construct ,_ ,_ ...)
          (reject s 'constructor-needs-expected-type)]
+
+        [`(Eliminate ,scrutinee (,branches ...))
+         #:when (current-union-tag-mode)
+         ;; 構文だけで決まる拒否を枝の elaboration より先に行い、callable
+         ;; 登録などの副作用を起こさない。
+         (for ([raw-branch (in-list branches)])
+           (match (peel-branch raw-branch)
+             [`(,_ (,_ ...) -> ,body)
+              #:when (needs-expected-type? body)
+              (reject s 'eliminate-needs-expected-type)]
+             [_ (void)]))
+         (define-values (scrutinee-result clauses)
+           (eliminate-front scrutinee branches s
+                            environment delta propositions boundaries))
+         (define results
+           (for/list ([clause (in-list clauses)])
+             (match-define (list _ _ _ body branch-environment) clause)
+             (synth body branch-environment delta propositions boundaries)))
+         (define live-types
+           (filter (lambda (type) (not (eq? type 'Never)))
+                   (map judgment-type results)))
+         (define (first-mismatch)
+           (define first-type (first live-types))
+           (list first-type
+                 (or (findf (lambda (type) (not (type-equiv? type first-type)))
+                            live-types)
+                     first-type)))
+         (define candidate
+           (cond
+             [(null? live-types) 'Never]
+             [(andmap (lambda (type)
+                        (type-equiv? type (first live-types)))
+                      live-types)
+              (first live-types)]
+             [(andmap (match-lambda [`(Record ,_) #t] [_ #f]) live-types)
+              (define upper (tag-types-upper-bound live-types))
+              (when (tag-bound-failure? upper)
+                (apply reject s 'type-mismatch (first-mismatch)))
+              upper]
+             [else
+              (define union
+                (normalize-type
+                 (foldr (lambda (type rest) `(Union ,type ,rest))
+                        (last live-types)
+                        (drop-right live-types 1))))
+              (when (owned-union-member? union)
+                (apply reject s 'type-mismatch (first-mismatch)))
+              union]))
+         (define branch-cores
+           (for/list ([result (in-list results)])
+             (if (eq? candidate 'Never)
+                 (judgment-core result)
+                 (let-values ([(core _type)
+                               (convert (judgment-core result)
+                                        (judgment-type result)
+                                        candidate s propositions)])
+                   core))))
+         (judgment
+          `(Eliminate ,s ,(judgment-core scrutinee-result)
+                      ,(for/list ([clause (in-list clauses)]
+                                  [core (in-list branch-cores)])
+                         (match-define
+                           (list raw-branch constructor raw-parameters _ _) clause)
+                         `(,(branch-span raw-branch) ,constructor ,raw-parameters
+                           -> ,core)))
+          candidate
+          (rows-union
+           (cons (judgment-row scrutinee-result)
+                 (map judgment-row results))))]
 
         [`(Eliminate ,_ ,_)
          (reject s 'eliminate-needs-expected-type)]

@@ -40,6 +40,19 @@
 (define IS '(Union Int String))
 (define ISB '(Union Int (Union String Bool)))
 
+(define (if-source then-branch else-branch)
+  `(Eliminate (Construct true (Types))
+              ((true () -> ,then-branch) (false () -> ,else-branch))))
+
+(define (all-never-if-source)
+  '(Fn ((s (NFn () Never (Suspend) ()))
+        (p (NFn () Never (Partial) ())))
+       Int (Suspend Partial)
+       (Let x
+            (Eliminate (Construct true (Types))
+                       ((true () -> (Apply s)) (false () -> (Apply p))))
+            (Let (n const Never) x 0))))
+
 (test-case "注釈付き Let は非 Union の値を Union へ inject する"
   (match-define (list core type _) (accepted `(Let (x const ,IS) 1 x)))
   (check-equal? type (normalize-type IS))
@@ -170,3 +183,138 @@
     [(list core _ _ _)
      (check-equal? (count-nodes 'UnionInject (erase-core core)) 0)]
     [other (fail-check (format "mode off で拒否した: ~s" other))]))
+
+(test-case "注釈の無い if は枝の型の Union を返す"
+  (match-define (list core type _) (accepted `(Let x ,(if-source 1 "s") x)))
+  (check-equal? type (normalize-type IS))
+  (check-equal? (count-nodes 'UnionInject core) 2))
+
+(test-case "同値な枝の if は inject を置かない"
+  (match-define (list core type _) (accepted `(Let x ,(if-source 1 2) x)))
+  (check-equal? type 'Int)
+  (check-equal? (count-nodes 'UnionInject core) 0))
+
+(test-case "全ての枝が Never の match は Never を返し、行は枝の行の和である"
+  (match-define (list _ type _)
+    (accepted (all-never-if-source)))
+  (match type
+    [`(NFn ,_ Int () ,row () User)
+     (check-equal? row '(Suspend Partial))]
+    [_ (fail-check (format "関数型の形が違う: ~s" type))])
+  (check-equal?
+   (rejected-code
+    '(Fn ((s (NFn () Never (Suspend) ()))
+          (p (NFn () Never (Partial) ())))
+         Int (Suspend)
+         (Let x
+              (Eliminate (Construct true (Types))
+                         ((true () -> (Apply s)) (false () -> (Apply p))))
+              (Let (n const Never) x 0))))
+   (code 'undeclared-function-effect)))
+
+(test-case "Record の枝は helper で合流する"
+  (match-define (list _ type _)
+    (accepted
+     `(Let x
+          ,(if-source '(Rec ((a imm 1) (b imm (Construct true (Types)))))
+                      '(Rec ((a imm 3) (c imm "s"))))
+          x)))
+  (check-equal? type '(Record ((a Int imm)))))
+
+(test-case "合流できない Record の枝は type-mismatch で拒否する"
+  (check-equal?
+   (rejected-code
+    `(Let x
+         ,(if-source '(Rec ((a imm 1))) '(Rec ((a imm "s"))))
+         x))
+   (code 'type-mismatch)))
+
+(test-case "Owned の枝が 2 種類ある match は type-mismatch で拒否する"
+  (check-equal?
+   (rejected-code
+    '(Fn ((p (Owned Int)) (q (Owned String))) Unit ()
+         (Let x
+              (Eliminate (Construct true (Types))
+                         ((true () -> (Move p)) (false () -> (Move q))))
+              unit)))
+   (code 'type-mismatch)))
+
+(test-case "expected を必要とする枝の本体は先に拒否する"
+  (check-equal?
+   (rejected-code `(Let x ,(if-source '(Construct some 1) 1) x))
+   (code 'eliminate-needs-expected-type)))
+
+(test-case "枝の無名関数は 1 回だけ登録する"
+  (match (elab/tag
+          `(Let x
+               ,(if-source '(Fn ((v Int)) Int () v)
+                           '(Fn ((v Int)) Int () 1))
+               x))
+    [(list _ _ _ callables) (check-equal? (length callables) 2)]
+    [other (fail-check (format "elaborate が拒否した: ~s" other))]))
+
+(test-case "mode off の synth の Eliminate は従来どおり拒否する"
+  (match (elab `(Let x ,(if-source 1 "s") x))
+    [`(err ,d)
+     (check-equal? (diagnostic-id d)
+                   (code 'eliminate-needs-expected-type))]
+    [other (fail-check (format "mode off で受理した: ~s" other))]))
+
+(test-case "Record expected は欄関数の行だけが異なる Union を合流する"
+  (define plain-function '(NFn (Int) Int () ()))
+  (define partial-function '(NFn (Int) Int (Partial) ()))
+  (define plain-record `(Record ((f ,plain-function imm))))
+  (define partial-record `(Record ((f ,partial-function imm))))
+  (void
+   (accepted
+    `(Fn ((u (Union ,plain-record ,partial-record)))
+         ,partial-record () u))))
+
+(test-case "Record expected は Absent optional 欄と Owned 欄を残して分解する"
+  (define optional-member
+    '(Record ((a Int imm) (o Int imm opt) (b Bool imm))))
+  (define optional-other
+    '(Record ((a Int imm) (o Int imm opt) (c String imm))))
+  (define optional-target '(Record ((a Int imm) (o Int imm opt))))
+  (define optional-union `(Union ,optional-member ,optional-other))
+  (match-define
+    (list optional-core _ _)
+    (accepted
+     `(Let (source const ,optional-member)
+           (Rec ((a imm 1) (b imm (Construct true (Types)))))
+           (Let (u const ,optional-union) source
+                (Let (r let ,optional-target) u r)))))
+  (check-equal? (count-nodes 'Absent optional-core) 1)
+  (define owned-member
+    '(Record ((a Int imm) (o (Owned Res) imm) (b Bool imm))))
+  (define owned-other
+    '(Record ((a Int imm) (o (Owned Res) imm) (c String imm))))
+  (define owned-target '(Record ((a Int imm) (o (Owned Res) imm))))
+  (define owned-union `(Union ,owned-member ,owned-other))
+  (void
+   (accepted
+    `(Fn ((u ,owned-union)) ,owned-target ()
+         (Let (r let ,owned-target) u r)))))
+
+(test-case "Record expected rejects residual Owned and unmergeable common fields"
+  (check-equal?
+   (rejected-code
+    '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))
+                    (Record ((a Int imm) (c String imm))))))
+         Int () (Let (r let (Record ((a Int imm)))) u 0)))
+   (code 'type-mismatch))
+  (check-equal?
+   (rejected-code
+    '(Fn ((u (Union (Record ((a Int imm) (b Int imm)))
+                    (Record ((a Int imm) (b String imm))))))
+         Int () (Let (r let (Record ((a Int imm)))) u 0)))
+   (code 'type-mismatch)))
+
+(test-case "Owned expected への Union 分解は型付け可能な成分である必要がある"
+  ;; P2m2a の owned-union-member 制約により、実行可能な Union が Owned を
+  ;; 直接の成分に持てない。よって decompose の Owned wrapper/Move 枝には
+  ;; well-typed な入力経路がない。
+  (check-equal?
+   (rejected-code
+    '(Fn ((p (Union (Owned Int) (Owned String)))) (Owned Int) () (Move p)))
+   (code 'invalid-resolved-type)))
