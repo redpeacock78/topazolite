@@ -720,7 +720,8 @@
         (if (set-member? union-reserved candidate) (next) candidate)))
 
     ;; P2m2b spec §3.2。完全一致を優先し、無ければ tag-compat? で一意に選ぶ。
-    (define (choose-union-member actual expected s propositions)
+    (define (choose-union-member actual expected s propositions
+                                 #:no-member-key [no-member-key 'type-mismatch])
       (define members (union-members expected))
       (define context (initial-candidate-context propositions))
       (define exact
@@ -735,12 +736,14 @@
                    members))
          (match candidates
            [(list member) member]
-           ['() (reject s 'type-mismatch expected actual)]
+           ['() (reject s no-member-key expected actual)]
            [_ (reject s 'ambiguous-union-member expected actual candidates)])]))
 
-    (define (union-inject core actual expected s propositions)
+    (define (union-inject core actual expected s propositions
+                          #:no-member-key [no-member-key 'type-mismatch])
       (define member
-        (choose-union-member actual expected s propositions))
+        (choose-union-member actual expected s propositions
+                             #:no-member-key no-member-key))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,core))
 
     ;; P2m2b spec §3.1。(values Core 変換後の型) を返すか、その位置で拒否する。
@@ -1818,12 +1821,34 @@
            (reject s 'immutable-binding name))
          (define result
            (synth value environment delta propositions boundaries))
-         (unless (type-equiv? slot-type (judgment-type result))
-           (reject s 'reassign-type-mismatch
-                   slot-type (judgment-type result)))
+         (define value-type (judgment-type result))
+         (define slot-union?
+           (match (normalize-type slot-type)
+             [`(Union ,_ ,_) #t]
+             [_ #f]))
+         (define value-union?
+           (match (normalize-type value-type)
+             [`(Union ,_ ,_) #t]
+             [_ #f]))
+         (define value-core
+           (cond
+             [(not (current-union-tag-mode))
+              (unless (type-equiv? slot-type value-type)
+                (reject s 'reassign-type-mismatch slot-type value-type))
+              (judgment-core result)]
+             ;; P2m2b spec §3.4。Never は変換を置かずそのまま通す。
+             [(eq? (normalize-type value-type) 'Never)
+              (judgment-core result)]
+             ;; Union への代入は成分を一意に選んで tag を付ける。
+             [(and slot-union? (not value-union?))
+              (union-inject (judgment-core result) value-type slot-type
+                            s propositions
+                            #:no-member-key 'reassign-type-mismatch)]
+             [(tag-narrowing? value-type slot-type) (judgment-core result)]
+             [else (reject s 'reassign-type-mismatch slot-type value-type)]))
          (unless (storage-ok? slot-type)
            (reject s 'mutable-callable-storage-requires-partial slot-type))
-         (judgment `(Reassign ,s ,raw-name ,(judgment-core result))
+         (judgment `(Reassign ,s ,raw-name ,value-core)
                    'Unit
                    (row-union (judgment-row result) '(Mutation)))]
 

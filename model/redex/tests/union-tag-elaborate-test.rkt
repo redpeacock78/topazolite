@@ -126,6 +126,45 @@
                  (Let (y const Int) union0 y))))
   (check-equal? (count-nodes 'UnionEliminate core) 1))
 
+(test-case "tag mode の Reassign は非 Union の右辺を slot の Union へ inject する"
+  (match-define (list core _ _)
+    (accepted `(Let (x mut ,IS) 1 (Reassign x "s"))))
+  (check-equal? (count-nodes 'UnionInject core) 2))
+
+(test-case "Reassign は Union の右辺を分解しない"
+  (check-equal?
+   (rejected-code
+    `(Let (x mut Int) 1
+          (Let (y const ,IS) 1 (Reassign x y))))
+   (code 'reassign-type-mismatch)))
+
+(test-case "Reassign は tag-narrowing? で合う Union の右辺をそのまま渡す"
+  (match-define (list core _ _)
+    (accepted `(Let (x mut ,ISB) 1
+                 (Let (y const ,IS) 1 (Reassign x y)))))
+  (check-equal? (count-nodes 'UnionEliminate core) 0))
+
+(test-case "Reassign の Never の右辺は inject しない"
+  ;; Return は右辺で synth されて Never になる。§3.2 へ渡すと
+  ;; 全ての成分が候補になり ambiguous-union-member になる。
+  (match-define (list core _ _)
+    (accepted `(Fn () Unit (Mutation)
+                 (Let (x mut ,IS) 1 (Reassign x (Return unit))))))
+  (check-equal? (count-nodes 'UnionInject core) 1))
+
+(test-case "mode off の Reassign は従来どおり type-equiv? を使う"
+  (match (elab `(Let (x mut ,IS) 1 (Reassign x "s")))
+    [`(err ,d) (check-equal? (diagnostic-id d)
+                             (code 'reassign-type-mismatch))]
+    [other (fail-check (format "mode off で受理した: ~s" other))]))
+
+(test-case "Reassign で slot の Union に合わない値は reassign-type-mismatch"
+  (check-equal?
+   (rejected-code
+    `(Let (x mut ,IS) 1
+          (Reassign x (Construct true (Types)))))
+   (code 'reassign-type-mismatch)))
+
 (test-case "mode off では変換を置かない"
   (match (elab `(Let (x const ,IS) 1 x))
     [(list core _ _ _)
