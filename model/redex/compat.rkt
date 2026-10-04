@@ -95,7 +95,7 @@
     [(`(Record ,sub-row) `(Record ,sup-row))
      (record-compatible? sub-row sup-row gamma-pc region-relation recur invariant?)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
-     ;; Owned は通常は不変だが、tag mode では tag の狭まりまで受け取る。
+     ;; Owned は tag 保存互換では tag の狭まりまで受け取る。
      (invariant? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
      (recur sub-payload sup-payload gamma-pc region-relation)]

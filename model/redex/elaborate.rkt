@@ -22,7 +22,6 @@
          "uniquify.rkt"
          "ucore.rkt"
          (only-in "typing.rkt"
-                  current-union-tag-mode
                   tag-types-upper-bound
                   tag-bound-failure?)
          "validators.rkt")
@@ -1702,12 +1701,9 @@
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
          (define-values (bound-core actual-type)
-           (if (current-union-tag-mode)
-               (convert (judgment-core bound-result)
-                        (judgment-type bound-result)
-                        declared-type s propositions)
-               (values (judgment-core bound-result)
-                       (judgment-type bound-result))))
+           (convert (judgment-core bound-result)
+                    (judgment-type bound-result)
+                    declared-type s propositions))
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
@@ -1756,7 +1752,6 @@
          (reject s 'constructor-needs-expected-type)]
 
         [`(Eliminate ,scrutinee (,branches ...))
-         #:when (current-union-tag-mode)
          ;; 構文だけで決まる拒否を枝の elaboration より先に行い、callable
          ;; 登録などの副作用を起こさない。
          (for ([raw-branch (in-list branches)])
@@ -1925,10 +1920,6 @@
              [_ #f]))
          (define value-core
            (cond
-             [(not (current-union-tag-mode))
-              (unless (type-equiv? slot-type value-type)
-                (reject s 'reassign-type-mismatch slot-type value-type))
-              (judgment-core result)]
              ;; P2m2b spec §3.4。Never は変換を置かずそのまま通す。
              [(eq? (normalize-type value-type) 'Never)
               (judgment-core result)]
@@ -2045,10 +2036,8 @@
         [_ (reject s 'owned-narrowing-rejected expected
                    (judgment-type result))])
       (define-values (core _type)
-        (if (current-union-tag-mode)
-            (convert (judgment-core result) (judgment-type result)
-                     expected s propositions)
-            (values (judgment-core result) (judgment-type result))))
+        (convert (judgment-core result) (judgment-type result)
+                 expected s propositions))
       (judgment core expected (judgment-row result)))
 
     (define (check expression expected environment delta propositions boundaries)
@@ -2071,10 +2060,8 @@
            [_ (reject s 'owned-narrowing-rejected expected
                       (judgment-type result))])
          (define-values (core _type)
-           (if (current-union-tag-mode)
-               (convert (judgment-core result) (judgment-type result)
-                        expected s propositions)
-               (values (judgment-core result) (judgment-type result))))
+           (convert (judgment-core result) (judgment-type result)
+                    expected s propositions))
          (judgment core expected (judgment-row result))]
 
         [`(Construct ,constructor ,fields ...)

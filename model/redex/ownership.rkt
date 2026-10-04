@@ -11,8 +11,7 @@
 ;; (drop-obligation τ_actual τ_expected) は RemainderSafelyDropped の Proof を
 ;; 求める場合、'reject は救済できない場合である。借用 view は SUR-004 で扱う。
 ;; compat.rkt へは依存しない。互換性述語は呼び出し側から受け取る。
-;; 呼び出し側が merge-branch-compatible? を使った位置では Union の候補選択も
-;; 同じ述語で行われ、判定の食い違いが起きない。
+;; 呼び出し側の値互換性述語は Union の候補選択にも使われ、判定の食い違いが起きない。
 
 (require racket/list
          racket/match

@@ -133,7 +133,7 @@
         first-valid)
       (length configs)))
 
-(test-case "opt-in borrowed Union programme は全 config と borrow oracle を通る"
+(test-case "borrowed Union programme は全 config と borrow oracle を通る"
   (define started (current-inexact-milliseconds))
   (define generated 0)
   (define typed 0)
@@ -141,11 +141,10 @@
   (define reached 0)
   (define skipped-configs 0)
   (define oracle-failures '())
-  (parameterize ([current-union-tag-mode #t])
-    (call-with-search-seed
-     limits
-     (lambda ()
-       (for ([_attempt (in-range 100)])
+  (call-with-search-seed
+   limits
+   (lambda ()
+     (for ([_attempt (in-range 100)])
          (define source (gen-borrow-term (bounds-term-depth limits)
                                          #:include-union? #t))
          (set! generated (add1 generated))
@@ -171,7 +170,7 @@
             (set! discarded (add1 discarded))
             (set! oracle-failures
                   (cons (list 'unexpected-prepare-result other source)
-                        oracle-failures))])))))
+                        oracle-failures))]))))
   (check-equal? generated 100)
   (check-equal? discarded 0 "ill-typed Union borrow programmes are not discarded")
   (check-equal? typed generated)

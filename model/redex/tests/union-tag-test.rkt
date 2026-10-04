@@ -162,7 +162,7 @@
     [(list 'ok _) 'ok]))
 
 (define-syntax-rule (tagged body ...)
-  (parameterize ([current-union-tag-mode #t]) body ...))
+  (begin body ...))
 
 (define (type-of core [environment '()])
   (match (type-of/raw core '() '() environment)
@@ -361,8 +361,7 @@
      (check-equal? core elim-is)]
     [other (fail (format "unexpected injected config: ~s" other))]))
 
-(test-case "tag mode の既定は #t で、新しい構成子を型付けする"
-  (check-true (current-union-tag-mode))
+(test-case "Union の新しい構成子を型付けする"
   (check-equal? (type-of inject-int) IS)
   (check-equal? (type-of elim-is) 'Int))
 
@@ -479,8 +478,7 @@
   (check-true
    (owned-union-member? '(Data Phantom ((Union Int (Owned Res)))))))
 
-(test-case "Owned を直接の成分に持つ Union は tag mode でも拒否する"
-  (check-true (current-union-tag-mode))
+(test-case "Owned を直接の成分に持つ Union は拒否する"
   (check-equal? (key-of '(Let (x const (Union Int (Owned Res))) 1 x))
                 'owned-union-member)
   (check-equal?
@@ -494,7 +492,7 @@
             `((u (Owned ,IS) const)))
     'non-union-eliminate)))
 
-(test-case "tag mode の check 境界は tag の無い値を Union の位置へ入れない"
+(test-case "check 境界は tag の無い値を Union の位置へ入れない"
   (tagged
    (check-not-equal?
     (key-of `(UnionInject (Union (Record ((a ,IS imm))) Bool)
@@ -538,7 +536,7 @@
   (tagged
    (check-equal? (type-of core) (normalize-type U))))
 
-(test-case "tag mode の Eliminate と UnionEliminate は枝の借用寿命を合流する"
+(test-case "Eliminate と UnionEliminate は枝の借用寿命を合流する"
   (define cores
     (list
      '(Scope (1)
@@ -567,7 +565,7 @@
     (check-equal? (first result) 'ok
                   (format "core: ~s; result: ~s" core result))))
 
-(test-case "tag mode の UnionEliminate は 3 枝の record 借用寿命を一度に合流する"
+(test-case "UnionEliminate は 3 枝の record 借用寿命を一度に合流する"
   (define union-type U)
   (define core
     `(Scope (1)
@@ -595,7 +593,7 @@
                  (map region-constraint-right merge-constraints))
                 (list merged-region)))
 
-(test-case "tag mode の借用枝は内側 owner からの脱出を拒む"
+(test-case "借用枝は内側 owner からの脱出を拒む"
   (define cores
     (list
      '(Scope (1) (Scope (2)
@@ -688,7 +686,7 @@
   (check-equal? unreachable-borrow reachable-borrow)
   (check-not-equal? unreachable-borrow 'ok))
 
-(test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
+(test-case "値を渡す境界は暗黙の tag 無し widening を拒否する"
   (define rec-term
     `(Let (r const (Record ((a ,IS imm))))
           (Rec ((a imm 1)))
@@ -830,7 +828,7 @@
    (check-equal? (key-of `(UnionVal ,(normalize-type IS) Int "s"))
                  'ill-typed)))
 
-(test-case "tag mode の repr-ok? は Union の tag と payload を検査する"
+(test-case "repr-ok? は Union の tag と payload を検査する"
   (define normalized (normalize-type IS))
   (tagged
    (check-true (repr-ok? normalized `(PTagged ,(union-tag-code 'Int) 1)))
@@ -1345,7 +1343,7 @@
   (check-equal? (third (first (match final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
                 '(declared Int)))
 
-(test-case "derive-places は tag mode で宣言型を読む"
+(test-case "derive-places は宣言型を読む"
   (define heap '((0 (resource 4) (declared String))))
   (check-equal? (derive-places heap '() #:declared '((0 String)))
                 '((0 String))))
@@ -1406,8 +1404,8 @@
    (tag-bound-failure 'unmergeable-branch-records '())))
 
 ;; P2m2b spec §4。elaborate が生成する形（全ての枝を同じ Union へ inject した形）で、
-;; tag mode の Core が枝の借用の寿命を合わせる。
-(test-case "同じ Union へ inject した枝の借用寿命を tag mode で合流する"
+;; Core typing が枝の借用の寿命を合わせる。
+(test-case "同じ Union へ inject した枝の借用寿命を合流する"
   (define bool-core
     `(Scope (1) (Scope (2)
        (Eliminate (Construct Bool true)

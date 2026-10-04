@@ -621,14 +621,13 @@
                    (Let (d Unit) (Drop (Move owned)) (Yield unit unit)))
              (none () -> (Yield unit unit)))))
          (String s -> (Yield unit unit)))))
-    (parameterize ([current-union-tag-mode #t])
-      (for ([core (in-list (list integer-branch string-branch owned-drop))])
-        (check-not-eq? (core-type-of core '() '()) 'ill-typed
-                       (format "well-typed Core: ~s" core))
-        (define-values (status target) (lower core 'racket-cs))
-        (check-eq? status 'ok (format "lower: ~s" target))
-        (check-eq? (compare-observations core target depth) 'match
-                   (format "Core/PR observation: ~s" core)))))
+    (for ([core (in-list (list integer-branch string-branch owned-drop))])
+      (check-not-eq? (core-type-of core '() '()) 'ill-typed
+                     (format "well-typed Core: ~s" core))
+      (define-values (status target) (lower core 'racket-cs))
+      (check-eq? status 'ok (format "lower: ~s" target))
+      (check-eq? (compare-observations core target depth) 'match
+                 (format "Core/PR observation: ~s" core))))
 
   ;; properties-record-test.rkt:34 の bounded-check-g2 と同じ形である。証人の箱を
   ;; 引数に取るのは、性質ごとに「実際に主張が働いた項」の定義が違うためである。

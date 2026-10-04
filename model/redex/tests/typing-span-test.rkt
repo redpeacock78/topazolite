@@ -125,9 +125,8 @@
         (reach-bind binder start end)
         '->
         body))
-(define (reach-row key core places callables environment expected-span
-                   [make-Λ #f] [tag-mode? #f])
-  (list key core places callables environment expected-span make-Λ tag-mode?))
+(define (reach-row key core places callables environment expected-span [make-Λ #f])
+  (list key core places callables environment expected-span make-Λ))
 
 (define (reach-region-ctx core)
   (region-ctx (build-region-ir (erase-core core)) '() (hash) (hash)))
@@ -309,12 +308,12 @@
                           (reach-ty 'Int 1803 1805)
                           (reach-ty 'Int 1806 1808)
                           (reach-lit 1 1811 1812))
-              '() '() '() (reach-span 1801 1815) #f #t)
+              '() '() '() (reach-span 1801 1815))
    (reach-row 'non-union-eliminate
               (reach-node 'UnionEliminate 1816 1835
                           (reach-lit 1 1828 1829)
                           '())
-              '() '() '() (reach-span 1828 1829) #f #t)
+              '() '() '() (reach-span 1828 1829))
    (reach-row 'non-exhaustive-union-eliminate
               (reach-node 'UnionEliminate 1836 1870
                           (reach-node 'UnionInject 1837 1850
@@ -323,7 +322,7 @@
                                       (reach-lit 1 1847 1848))
                           (list (reach-ubr 1851 1869 'Int 'x
                                            (reach-var 'x 1864 1865))))
-              '() '() '() (reach-span 1836 1870) #f #t)
+              '() '() '() (reach-span 1836 1870))
    (reach-row 'incompatible-branch-types
               (reach-node 'Eliminate 21 45
                           (reach-node 'Construct 22 25
@@ -993,18 +992,17 @@
 (test-case "typing の全到達可能 key が正しい primary-span を持つ"
   (for ([entry (in-list reachability-table)])
     (match-define (list key core places callables environment expected-span
-                        make-Λ tag-mode?) entry)
+                        make-Λ) entry)
     (if (eq? key 'not-core-term)
         (check-false (redex-match? G2m c (erase-core core))
                      "not-core-term の入力は G2m の c ではない")
         (check-true (redex-match? G2m c (erase-core core))
                     (format "~a の入力が G2m の c に属する" key)))
     (define diagnostic
-      (parameterize ([current-union-tag-mode tag-mode?])
-        (if make-Λ
-            (core-type-of/diagnostic core places callables environment
-                                     (make-Λ core))
-            (core-type-of/diagnostic core places callables environment))))
+      (if make-Λ
+          (core-type-of/diagnostic core places callables environment
+                                   (make-Λ core))
+          (core-type-of/diagnostic core places callables environment)))
     (check-true (diagnostic? diagnostic)
                 (format "~a が Diagnostic を返す" key))
     (when (diagnostic? diagnostic)

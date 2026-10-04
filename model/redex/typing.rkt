@@ -32,7 +32,6 @@
          type-of/raw
          type-of/raw*+borrows
          type-of/raw*+ptr
-         current-union-tag-mode
          typing-visited-points
          config-ok?
          with-config-typing
@@ -59,7 +58,6 @@
          control-leaf-positions-ok?
          derive-places
          config-declared-types
-         join-types
          tag-upper-bound
          tag-types-upper-bound
          (struct-out tag-bound-failure)
@@ -718,49 +716,9 @@
 ;; RFN-003: discharge に使う文脈は大域の Γ_pc⁰ に限る。merge の W は渡さない。
 ;; region どうしの関係は current-region-relation から取る。既定は equal? で
 ;; あり、region 引数を書かない programme の判定は変わらない。
-;; P2m2a。Union tag の typing と値の受け渡しを一緒に段階導入する。
-(define current-union-tag-mode (make-parameter #t))
-
+;; Union tag 保存互換で値の受け渡しを判定する。
 (define (type-compatible? actual expected)
-  ((if (current-union-tag-mode) tag-compat? compat?)
-   actual expected (current-Γ-pc0) (current-region-relation)))
-
-;; mode 無効時の ROW-005 の枝検査。tag mode では通常の tag 保存互換を使う。
-(define (merge-branch-compatible? actual expected)
-  (if (current-union-tag-mode)
-      (tag-compat? actual expected (current-Γ-pc0) (current-region-relation))
-      (let ()
-        (define (union-type? type)
-          (and (pair? type) (eq? (first type) 'Union)))
-        (define (union-members-compatible? actual expected)
-          (and (union-type? expected)
-               (for/and ([actual-member
-                          (in-list (if (union-type? actual)
-                                       (union-members actual)
-                                       (list actual)))])
-                 (for/or ([expected-member (in-list (union-members expected))])
-                   (type-equiv? actual-member expected-member)))))
-        (match* (actual expected)
-          [('Never _) #t]
-          [((list 'Record actual-row) (list 'Record expected-row))
-           (for/and ([field (in-list expected-row)])
-             (match field
-               [(list label expected-type expected-mode _ ...)
-                (match (assoc label actual-row)
-                  [(and actual-field (list _ actual-type actual-mode _ ...))
-                   (and (or (not (field-optional? actual-field))
-                            (field-optional? field))
-                        (case expected-mode
-                          [(imm) (and (memq actual-mode '(imm mut))
-                                      (type-compatible? actual-type expected-type))]
-                          [(mut) (and (eq? actual-mode 'mut)
-                                      (or (type-equiv? actual-type expected-type)
-                                          (union-members-compatible?
-                                           actual-type expected-type)))]
-                          [else #f]))]
-                  [_ #f])]
-               [_ #f]))]
-          [(_ _) (type-compatible? actual expected)]))))
+  (tag-compat? actual expected (current-Γ-pc0) (current-region-relation)))
 
 (define (type? value)
   (and (redex-match? G2m τ value)
@@ -1199,21 +1157,14 @@
     (filter (lambda (result) (not (eq? (first result) 'Never))) attempts))
   (define types (map first non-never))
   (define result-type
-    (cond
-      [(null? types) 'Never]
-      [(current-union-tag-mode)
-       (tagged-branch-upper-bound types Λ node fail)]
-      [else
-       (define expected (first types))
-       (for ([actual (in-list (rest types))])
-         (unless (type-equiv? expected actual)
-           (fail 'type-mismatch node expected actual)))
-       expected]))
+    (if (null? types)
+        'Never
+        (tagged-branch-upper-bound types Λ node fail)))
   (define branch-results
     (for/list ([context (in-list contexts)])
       (check-as/full (first context) result-type (third context)
                      (third scrutinee-result) (second context)
-                     places callables fail merge-branch-compatible?)))
+                     places callables fail type-compatible?)))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
@@ -1299,10 +1250,6 @@
                (map first branch-results)))
         branch-psi
         merged))
-
-;; CMP-001: 2 つの型を Union で合わせ、同値な構成要素を正規化で畳む。
-(define (join-types left right)
-  (normalize-type `(Union ,left ,right)))
 
 ;; §2.8。既に tag を持つ値の型だけを合わせ、tag の無い値から Union を作らない。
 (define (tag-upper-bound left right)
@@ -1479,10 +1426,7 @@
           '())))
    merged-row))
 
-(define (merge-fields fields
-                      [join-type (if (current-union-tag-mode)
-                                     tag-upper-bound
-                                     join-types)])
+(define (merge-fields fields [join-type tag-upper-bound])
   (define first-field (first fields))
   (define label (first first-field))
   ;; 全枝が mut のときにだけ mut を保つ。1 枝でも imm なら、書き込みが
@@ -1503,8 +1447,7 @@
    (cond
      [(null? (rest types))
       (make-field (first types) (if all-mutable? 'mut 'imm))]
-     ;; mode 無効時は既存どおり join-type で欄の型を合わせる。
-     ;; tag mode では既に Union tag を持つ型どうしだけが上界へ合流する。
+     ;; 既に Union tag を持つ型どうしだけが上界へ合流する。
      [else
       (define joined
         (for/fold ([joined (first types)])
@@ -1528,11 +1471,7 @@
 ;; RFN-002/CMP-001/ROW-005: 全 branch に常在する field を合わせる。異型は
 ;; 可変性を保ったまま Union join する。どれかの branch に無い field だけが落ちる。
 ;; types は空でないことを呼び出し側が保証する。
-(define (merge-record-types/impl
-         types
-         [join-type (if (current-union-tag-mode)
-                        tag-upper-bound
-                        join-types)])
+(define (merge-record-types/impl types [join-type tag-upper-bound])
   (with-lifetime-unify
    (lambda ()
      (define merged-fields
@@ -1602,21 +1541,9 @@
             attempts))
   (define types (map first non-never))
   (define result-type
-    (cond
-      [(null? types) 'Never]
-      [(current-union-tag-mode)
-       (tagged-branch-upper-bound types Λ node fail)]
-      [(andmap record-type? types)
-       ;; RFN-002: W は merge の局所検査だけで使う。型へは載せない。
-       (define-values (merged _witnesses)
-         (parameterize ([merge-position
-                         (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
-           (merge-record-types/impl types)))
-       (unless merged (fail 'unmergeable-branch-records node))
-       merged]
-      [(ormap record-type? types)
-       (fail 'incompatible-branch-types node)]
-      [else (first types)]))
+    (if (null? types)
+        'Never
+        (tagged-branch-upper-bound types Λ node fail)))
   (define branch-rows
     (for/list ([context (in-list contexts)])
       (check-as (first context)
@@ -1627,7 +1554,7 @@
                 places
                 callables
                 fail
-                merge-branch-compatible?)))
+                type-compatible?)))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-rows)])
@@ -2007,10 +1934,9 @@
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless ((if (current-union-tag-mode) tag-compat? compat?)
-                 `(Record ,actual-row) `(Record ,declared-row)
-                 (current-Γ-pc0)
-                 (current-region-relation))
+        (unless (tag-compat? `(Record ,actual-row) `(Record ,declared-row)
+                             (current-Γ-pc0)
+                             (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
           (field-row-residual actual-row declared-row))
@@ -2450,7 +2376,7 @@
   (list τ_payload ε_operand Ψ_1))
 
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
-;; tag mode は値全体を Union payload と照合し、既定 mode は従来どおり各成分を調べる。
+;; Union payload は値全体の tag 保存互換で照合する。
 (define (infer-assign core target value Λ Ψ environment places callables fail)
   (match-define (list τ_target ε_target Ψ_1)
     (infer target (enter-child Λ 0) Ψ environment places callables fail))
@@ -2470,12 +2396,8 @@
   (for ([α (in-list α_value)])
     (emit-constraint!
      (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
-  (if (current-union-tag-mode)
-      (unless (type-compatible? τ_value τ_payload)
-        (fail 'assign-union-variant core))
-      (for ([τ_i (in-list (union-members τ_payload))])
-        (unless (type-compatible? τ_value τ_i)
-          (fail 'assign-union-variant core))))
+  (unless (type-compatible? τ_value τ_payload)
+    (fail 'assign-union-variant core))
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
@@ -2485,8 +2407,8 @@
   (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
 
 ;; spec §7.1 §7.2。Reassign は固定された slot の中身を差し替える。slot の型は
-;; binding の宣言で決まり、再代入で変わらない。既定 mode は type-equiv?、tag mode
-;; は tag-narrowing? で照合する。一般の compat? は余剰 Owned を落としうる。
+;; binding の宣言で決まり、再代入で変わらない。tag-narrowing? で照合する。
+;; 一般の compat? は余剰 Owned を落としうる。
 (define (infer-reassign core target value Λ Ψ environment places callables fail)
   (define τ_slot
     (match target
@@ -2507,8 +2429,7 @@
        type]))
   (match-define (list τ_value ε_value Ψ_1)
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
-  (unless ((if (current-union-tag-mode) tag-narrowing? type-equiv?)
-           τ_value τ_slot)
+  (unless (tag-narrowing? τ_value τ_slot)
     (fail 'reassign-type-mismatch core τ_slot τ_value))
   (unless (storage-ok? τ_slot)
     (fail 'mutable-callable-storage-requires-partial core τ_slot))
@@ -2803,12 +2724,10 @@
      (list `(Proof ,proposition) '() Ψ)]
 
     [`(UnionInject ,union-type ,member-type ,payload)
-     #:when (current-union-tag-mode)
      (infer-union-inject union-type member-type payload Λ Ψ
                          environment places callables core fail)]
 
     [`(UnionVal ,union-type ,member-type ,payload)
-     #:when (current-union-tag-mode)
      (infer-union-value union-type member-type payload Λ Ψ
                         environment places callables core fail)]
 
@@ -3239,7 +3158,6 @@
                       environment places callables core fail)]
 
     [`(UnionEliminate ,scrutinee (,branches ...))
-     #:when (current-union-tag-mode)
      (infer-union-eliminate scrutinee branches Λ Ψ
                              environment places callables core fail)]
 
@@ -3721,7 +3639,6 @@
            (third body-result))]
 
     [`(UnionEliminate ,scrutinee (,branches ...))
-     #:when (current-union-tag-mode)
      (check-union-eliminate scrutinee branches expected Λ Ψ
                             environment places callables core fail compatible?)]
 
@@ -4121,8 +4038,7 @@
   (for/fold ([acc '()] #:result (and acc (reverse acc)))
             ([entry (in-list (sort heap < #:key first))])
     #:break (not acc)
-    (define recorded
-      (and (current-union-tag-mode) (assoc (first entry) declared)))
+    (define recorded (assoc (first entry) declared))
     (if recorded
         (cons (list (first entry) (strip-owned (second recorded))) acc)
         (match (type-of/raw (second entry) (reverse acc) callables)
@@ -4344,9 +4260,7 @@
                  (let ([places
                         (derive-places
                          heap callables
-                         #:declared (if (current-union-tag-mode)
-                                        (config-declared-types configuration)
-                                        '()))])
+                         #:declared (config-declared-types configuration))])
                    (and
                     places
                     (let ([borrow-types
@@ -4369,13 +4283,12 @@
                                                 ;; Rec の leaf は payload の bare Record を
                                                 ;; 推論するため、place の Owned 宣言へ持ち上げる。
                                                 ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
-                                                ;; tag mode で記録を持つ root place も、値の型を
-                                                ;; place の宣言型へ Owned の根として照合する。
+                                                ;; 記録を持つ root place も、値の型を place の
+                                                ;; 宣言型へ Owned の根として照合する。
                                                 (if (or (contains-owned-leaf? (second entry))
-                                                        (and (current-union-tag-mode)
-                                                             (match entry
-                                                               [`(,_ ,_ (declared ,_)) #t]
-                                                               [_ #f])))
+                                                        (match entry
+                                                          [`(,_ ,_ (declared ,_)) #t]
+                                                          [_ #f]))
                                                     owned-lift-compatible?
                                                     type-compatible?)))
                             (and value-row (null? value-row)))

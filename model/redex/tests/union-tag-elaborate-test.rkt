@@ -8,10 +8,10 @@
          "../type-equiv.rkt"
          "../typing.rkt")
 
-;; P2m2b spec の回帰。tag mode の下で elaborate し、生成した Core を
-;; 同じ mode の Core typing に通して、型と行が elaborate と一致することを確かめる。
+;; P2m2b spec の回帰。elaborate が生成した Core を型検査し、型と行が
+;; elaborate の結果と一致することを確かめる。
 (define-syntax-rule (tagged body ...)
-  (parameterize ([current-union-tag-mode #t]) body ...))
+  (begin body ...))
 
 (define (elab/tag source) (tagged (elab source)))
 
@@ -139,7 +139,7 @@
                  (Let (y const Int) union0 y))))
   (check-equal? (count-nodes 'UnionEliminate core) 1))
 
-(test-case "tag mode の Reassign は非 Union の右辺を slot の Union へ inject する"
+(test-case "Reassign は非 Union の右辺を slot の Union へ inject する"
   (match-define (list core _ _)
     (accepted `(Let (x mut ,IS) 1 (Reassign x "s"))))
   (check-equal? (count-nodes 'UnionInject core) 2))

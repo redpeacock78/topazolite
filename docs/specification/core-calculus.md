@@ -1245,7 +1245,7 @@ payload はその成分型へ check し、値の型に tag を付けた後も pa
 
 **(T-UnionEliminate)**
 
-tag mode では、`⊔tag` を §6.3 の tag 保存の上界の列への畳み込みとする。
+`⊔tag` は §6.3 の tag 保存の上界を列へ畳み込む。
 入力が空なら結果は `Never` であり、畳み込みが定義されない場合は型検査に失敗する。
 
 ```text
@@ -1261,14 +1261,13 @@ ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 
 `Never` の枝は結果型の選択から除くが、本体の型検査と Effect row の合流には含める。
 借用された Union を分岐するときは、枝の束縛子へ対応する成分型の借用を与える。
-tag mode では、全ての非 `Never` 枝の型を tag 保存の上界で合流する。
+全ての非 `Never` 枝の型を tag 保存の上界で合流する。
 一方が `Never` なら他方を使い、二つの Union は成分の和を正規化する。
 二つの Record は共通欄だけを残し、各欄の型を再帰的に合流する。
 その他の Union でない型は `type-equiv?` で同値の場合だけ合流する。
 枝結果が同じ payload を持つ `Borrowed` または `BorrowedMut` で寿命変数だけが異なる場合は、上界を求める前に合流位置の寿命変数へ統合する。
 この統合は全枝を一度に行い、各枝の寿命から合流した寿命への制約と、合流した寿命から合流位置への制約を立てる。
 Record の枝も全枝を一度の row 合流へ渡し、共通欄の借用寿命を同じ合流位置で統合する。
-tag mode が無効な経路は従来の規則を保つ。
 期待型がある位置では、全ての枝の本体をその型へ check する。
 
 **(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
@@ -1286,8 +1285,8 @@ dom(Ξ) = dom(H) = dom(Ω)
 
 `Ξ` は heap の値または束縛時に記録した宣言型から導く写像である。
 `R-LetOwned`、`R-LetOwnedB`、`R-LetMutB` は place を作るとき、heap entry に束縛の宣言型を記録する。
-tag mode では記録がある place に対して `strip-owned(τdecl)` を `Ξ` の型にする。
-記録が無い place と tag mode が無効な構成では、heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けして place の型を導く。
+記録がある place に対して `strip-owned(τdecl)` を `Ξ` の型にする。
+記録が無い place は heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けして place の型を導く。
 前方の place を参照する値はこの導出に失敗する。
 
 heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
@@ -1300,13 +1299,12 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 `Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
 
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。
-heap の値は、記録から得た宣言型に対する `Owned` 型へ tag mode の互換で照合する。
+heap の値は、記録から得た宣言型に対する `Owned` 型へ tag 保存互換で照合する。
 通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 構成検査の再型付けでは、制御項と heap 値に現れる実行時の `BorrowRef` と `BorrowMutRef` の型も回復する。
 回復する payload 型は、place の型から借用 path を順に辿って得る。
 Record 欄は place の宣言型の欄型を使い、現在の値がより狭い Union でも宣言型を保つ。
 `(Payload)` は現在の値が持つ `UnionVal` の成分型を使い、data constructor の欄は constructor schema から得る。
-tag mode が無効なら place の型は heap 値から導く。
 path が辿れない場合、Payload の位置が `UnionVal` でない場合、または place が `Available` でない場合、構成検査は失敗する。
 この回復は `config-ok?` の内部だけで行い、通常の `type-of/raw` と `key-of` は実行時借用値を型付けしない。
 
@@ -1347,12 +1345,6 @@ E ::= F | E[Scope(π, F)] | E[Handle(op, h, F)]    一般文脈
 
 G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文脈
 ```
-
-実装を段階的に進める間、`typing.rkt` は `current-union-tag-mode` parameter を持つ。
-`#f` が既定値であり、このとき新しい Union Core 構文は既存の未知 Core 形の診断で拒否する。
-`#t` は Union の typing 規則と tag 保存互換を同時に有効にする試験用の切替である。
-P2m2b で elaboration が tag の挿入を担う段階では切替を取り除く。
-この parameter は programme の構文や judgment の一部ではない。
 
 以降の規則は、明示しない限り一般文脈 E の下で適用される。
 項だけを書いた規則 `E[c] → E[c']` は、H、Ω、Λtok、θ を変えない構成遷移 `⟨E[c], H, Ω, Λtok, θ⟩ → ⟨E[c'], H, Ω, Λtok, θ⟩` の略記である。
@@ -1855,19 +1847,21 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   期待型が Union のとき、実際の型は `Never` か Union であり、実際の Union の各成分は期待型の成分と `type-equiv?` で等しくなければならない。
   Union 型の値を非 Union 型の位置へ渡すことはできない。
   record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
-- tag mode の record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
+- record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
   `Reassign` は slot の宣言型に対して `tag-narrowing?` を使い、余剰欄を落とす narrowing を許さない。
   synth 位置の枝合流は tag 保存の上界を使い、tag の無い値から Union を作らない。
 - `tag-narrowing?` は Union の成分集合を狭める関係であり、Union の成分型の内部へは再帰しない。
   Record では欄の集合、可変性、optional の印を保って各欄の型へ再帰する。
   `Owned`、`Untrusted`、命題が同値な `Refined` の payload にも再帰し、`NFn`、借用型、data 型の内部では `compat-type-equiv?` を使う。
-- tag 保存の上界 `τ1 ⊔tag τ2` は、tag mode の synth 合流に使う。
+- tag 保存の上界 `τ1 ⊔tag τ2` は、synth 合流に使う。
   一方が `Never` なら他方を返し、二つの Union なら成分の和を正規化する。
   片方だけが Union の場合は未定義とする。
   二つの Record は既存の row 合流を使い、共通欄の型へ再帰し、残余欄を落とす。
   可変性は全ての枝で `mut` のときだけ `mut` を保つ。
   その他の型は `type-equiv?` で同値の場合だけ結果を返す。
-  tag mode が無効な経路では既存の `join-types` と row 合流を使う。
+- `Borrowed`、`Untrusted`、`Refined` の payload では、tag の無い値を内側の Union へ変換しない。
+  `Borrowed` は参照先の値を書き換えられず、`Untrusted` と `Refined` は trust と命題の証明を新しい値へ運ぶ規則を持たないからである。
+  既に tag を持つ Union の値を広い Union の位置へ渡す widening は、tag 保存互換がそのまま受理するので、この決定に含まない。
 - 型レベル計算（TypeRep の適用）を正規化して比較できるのは、その計算の ⇓class が Finite の場合に限る。 [REQ: PRF-002]
 - ⇓class が Productive の型レベル計算は、観測深度の上限までの有限観測で比較する。
 - ⇓class が Unknown の型レベル計算と Proof は正規化に使わず、構文的同一性（opaque identity）だけで比較する。 [REQ: PRF-002]

@@ -11,8 +11,7 @@
          "pr-lang.rkt"
          "schema.rkt"
          "span-core.rkt"
-         (only-in "type-equiv.rkt" normalize-type union-members)
-         (only-in "typing.rkt" current-union-tag-mode))
+         (only-in "type-equiv.rkt" normalize-type union-members))
 
 (provide lower
          lower/with-matrix
@@ -472,20 +471,17 @@
      (match value
        [`(PTagged rval ,payload) (repr-ok? inner payload)]
        [_ #f])]
-    ;; 表に行が無い 2 形として従来分配していた判定は、mode off の互換 fallback
-    ;; として残す。mode on の Union は §5 の正式行で検査し、Intersection は分配する。
-    [`(Union ,left ,right)
-     (if (current-union-tag-mode)
-         (let ([normalized (normalize-type type)])
-           (match value
-             [`(PTagged ,code ,payload)
-              (and normalized
-                   (for/or ([member (in-list (union-members normalized))])
-                     (and (equal? code (union-tag-code member))
-                          (repr-ok? member payload))))]
-             [_ #f]))
-         ;; mode off の間だけ、従来の分配表現を互換用に残す。
-         (or (repr-ok? left value) (repr-ok? right value)))]
+    ;; Union は tag を持つ PR 値だけを受ける。Intersection は §5 の表に独立した
+    ;; 行を持たないため、構成要素へ分配して検査する。
+    [`(Union ,_ ,_)
+     (let ([normalized (normalize-type type)])
+       (match value
+         [`(PTagged ,code ,payload)
+          (and normalized
+               (for/or ([member (in-list (union-members normalized))])
+                 (and (equal? code (union-tag-code member))
+                      (repr-ok? member payload))))]
+         [_ #f]))]
     [`(Intersection ,left ,right)
      (and (repr-ok? left value) (repr-ok? right value))]
     [_ #f]))

@@ -94,8 +94,8 @@
 (define region-binder-context (make-parameter #f))
 
 ;; compat? へ渡す region どうしの関係。既定は equal? である。
-;; typing の funnel は type-compatible? であり、merge-branch-compatible? は
-;; 引数 2 つの callback として渡るため、引数ではなく parameter で供給する。
+;; typing の funnel は type-compatible? であり、型互換 callback は
+;; 引数 2 つで渡るため、region 関係は引数ではなく parameter で供給する。
 (define current-region-relation (make-parameter equal?))
 
 (define (call-with-region-params thunk)
