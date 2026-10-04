@@ -200,13 +200,19 @@
   (call-with-search-seed
    limits
    (lambda ()
-     (define nontrivial-count (box 0))
      (define multi-branch-count (box 0))
+     (define merged-count (box 0))
+     (define unmergeable-count (box 0))
      (for ([_i (in-range attempts)])
        (define branches (random-branch-rows))
        (define types
          (for/list ([row (in-list branches)]) `(Record ,row)))
        (define-values (merged witnesses) (merge-record-types types))
+       (if merged
+           (set-box! merged-count (add1 (unbox merged-count)))
+           (begin
+             (set-box! unmergeable-count (add1 (unbox unmergeable-count)))
+             (check-pred tag-bound-failure? (tag-types-upper-bound types))))
        (when (>= (length types) 2)
          (set-box! multi-branch-count
                    (add1 (unbox multi-branch-count))))
@@ -215,17 +221,14 @@
            (merge-record-types permutation))
          (check-equal? permuted-merged merged)
          (check-equal? permuted-witnesses witnesses))
-       (match merged
-         [`(Record ,row)
-          (when
-              (for/or ([field (in-list row)])
-                (>= (length (union-members (second field))) 2))
-            (set-box! nontrivial-count
-                      (add1 (unbox nontrivial-count))))]))
-     (check-true (positive? (unbox nontrivial-count)))
+       (when (not merged)
+         (check-equal? witnesses '())))
+     (check-true (positive? (unbox merged-count)))
+     (check-true (positive? (unbox unmergeable-count)))
      (check-true (positive? (unbox multi-branch-count)))
-     (printf "性質5: attempts=~a multi-branch=~a nontrivial-joins=~a seed=~a\n"
-             attempts (unbox multi-branch-count) (unbox nontrivial-count)
+     (printf "性質5: attempts=~a merged=~a unmergeable=~a multi-branch=~a seed=~a\n"
+             attempts (unbox merged-count) (unbox unmergeable-count)
+             (unbox multi-branch-count)
              (bounds-seed limits)))))
 
 (test-case "CMP-001: 性質6 join は全枝が mut のときだけ mut を保つ"
@@ -239,15 +242,19 @@
        ;; と異なる型を必ず置き、可変性によらず join する経路を分離する。
        (define left (pick-one field-types))
        (define right (pick-one (remove left field-types)))
+       (define shared '(Record ((shared Int imm))))
+       (define left-tagged (normalize-type `(Union ,left ,shared)))
+       (define right-tagged (normalize-type `(Union ,right ,shared)))
+       (define tagged-upper (normalize-type `(Union ,left-tagged ,right-tagged)))
        (define mutability (pick-one '(imm mut)))
        (define-values (merged witnesses)
          (merge-record-types
-          (list `(Record ((a ,left ,mutability)))
-                `(Record ((a ,right ,mutability))))))
+          (list `(Record ((a ,left-tagged ,mutability)))
+                `(Record ((a ,right-tagged ,mutability))))))
        (case mutability
          [(imm)
           (define expected
-            `(Record ((a ,(normalize-type `(Union ,left ,right)) imm))))
+            `(Record ((a ,tagged-upper imm))))
           (check-equal?
            merged
            expected)
@@ -257,7 +264,7 @@
                       (add1 (unbox imm-joined-count))))]
          [(mut)
           (define expected
-            `(Record ((a ,(normalize-type `(Union ,left ,right)) mut))))
+            `(Record ((a ,tagged-upper mut))))
           (check-equal? merged expected)
           (check-true (pair? witnesses))
           (when (equal? merged expected)
@@ -265,12 +272,17 @@
                       (add1 (unbox mut-joined-count))))])
        (define-values (mismatched mismatch-witnesses)
          (merge-record-types
-          (list `(Record ((a ,left imm)))
-                `(Record ((a ,right mut))))))
+          (list `(Record ((a ,left-tagged imm)))
+                `(Record ((a ,right-tagged mut))))))
        (define expected-mismatch
-         `(Record ((a ,(normalize-type `(Union ,left ,right)) imm))))
+         `(Record ((a ,tagged-upper imm))))
        (check-equal? mismatched expected-mismatch)
-       (check-true (pair? mismatch-witnesses)))
+       (check-true (pair? mismatch-witnesses))
+       (let-values ([(untagged _untagged-witnesses)
+                     (merge-record-types
+                      (list `(Record ((a ,left mut)))
+                            `(Record ((a ,right mut)))))])
+         (check-false untagged)))
      (check-true (positive? (unbox imm-joined-count)))
      (check-true (positive? (unbox mut-joined-count)))
      (printf "性質6: attempts=~a imm-joined=~a mut-joined=~a seed=~a\n"

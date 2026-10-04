@@ -53,12 +53,16 @@
   (check-false (repr-ok? (term (Untrusted Int)) (term (PTagged uval unit))))
   (check-true (repr-ok? (term (Refined Int ValidNarrativeTrait))
                         (term (PTagged rval 1))))
-  ;; backend-matrix.md §5 の表に行が無い 2 形。表を分配して補った行である。
-  (check-true (repr-ok? (term (Union Int Bool)) 7))
+  ;; Union 値は成分と payload を tag 付きで持つ。
+  (check-true
+   (repr-ok? (term (Union Int Bool))
+             (term (PTagged ,(union-tag-code 'Int) 7))))
   (check-true (repr-ok? (term (Union Int Bool))
-                        (term (PTagged ,(tag-code 'true)))))
+                        (term (PTagged ,(union-tag-code 'Bool)
+                                       (PTagged ,(tag-code 'true))))))
   (check-false (repr-ok? (term (Union Int Unit)) "a"))
-  (check-true (repr-ok? (term (Intersection Int (Union Int Bool))) 7))
+  ;; raw Int は Union tag を持たないため、この intersection の値でもない。
+  (check-false (repr-ok? (term (Intersection Int (Union Int Bool))) 7))
   (check-false (repr-ok? (term (Intersection Int Bool)) 7)))
 
 ;;; backend-matrix.md §6 ラベル種別の単位検査

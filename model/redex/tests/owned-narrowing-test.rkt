@@ -39,6 +39,11 @@
           `((f (NFn (,expected) Unit () () () User))
             (s ,actual))))
 
+(define (apply-union-key actual expected member)
+  (key-of `(Apply f (UnionInject ,expected ,member s))
+          `((f (NFn (,expected) Unit () () () User))
+            (s ,actual))))
+
 (define (key-of core [environment '()])
   (match (type-of/raw core '() '() environment (empty-region-ctx))
     [(list 'fail key _node _details ...) key]
@@ -108,18 +113,20 @@
 
 (test-case "Union は安全な候補が一つあれば受理する"
   (check-equal?
-   (apply-key
+   (apply-union-key
     `(Record ((x ,owned imm) (y Int imm)))
     `(Union (Record ((x ,owned imm) (y Int imm)))
-            (Record ((y Int imm)))))
+            (Record ((y Int imm))))
+    `(Record ((x ,owned imm) (y Int imm))))
    'ok))
 
-(test-case "Union に安全な候補が無ければ拒否する"
+(test-case "Owned を失う Union member への inject は Proof を要する"
   (check-equal?
-   (apply-key
+   (apply-union-key
     `(Record ((x ,owned imm) (y Int imm)))
-    '(Union (Record ((y Int imm))) (Record ((z Int imm)))))
-   'owned-narrowing-rejected))
+    '(Union (Record ((y Int imm))) (Record ((z Int imm))))
+    '(Record ((y Int imm))))
+   'owned-narrowing-needs-proof))
 
 (test-case "3 要素 binder は residual を束縛へ残す"
   (check-equal?

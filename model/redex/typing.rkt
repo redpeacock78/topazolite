@@ -719,7 +719,7 @@
 ;; region どうしの関係は current-region-relation から取る。既定は equal? で
 ;; あり、region 引数を書かない programme の判定は変わらない。
 ;; P2m2a。Union tag の typing と値の受け渡しを一緒に段階導入する。
-(define current-union-tag-mode (make-parameter #f))
+(define current-union-tag-mode (make-parameter #t))
 
 (define (type-compatible? actual expected)
   ((if (current-union-tag-mode) tag-compat? compat?)

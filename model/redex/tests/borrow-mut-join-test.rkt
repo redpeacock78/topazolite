@@ -10,8 +10,6 @@
          "../type-equiv.rkt"
          "../typing.rkt")
 
-(define joined-type (normalize-type '(Union Int String)))
-
 (check-equal? (merge-field '(a Int imm) '(a Int imm opt)) '(a Int imm opt))
 (check-equal? (merge-field '(a Int mut opt) '(a Int mut opt)) '(a Int mut opt))
 (check-equal? (merge-field '(a Int mut) '(a Int mut)) '(a Int mut))
@@ -21,23 +19,20 @@
                (list (list 1 τ_place)) '() '()
                (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
 
-;; 単位 1。異型の mut field は mut のまま Union へ join する（spec §9.1）。
-(check-equal? (merge-field '(a Int mut) '(a String mut))
-              `(a ,joined-type mut))
+;; tag の無い異型 field からは mut Union field を作らない。
+(check-false (merge-field '(a Int mut) '(a String mut)))
 
 ;; 単位 2。可変性が食い違えば、異型でも imm へ落とす。
 ;; 落とす理由は異型ではなく可変性の不一致であり、本段はこの規則を変えない。
-(check-equal? (merge-field '(a Int imm) '(a String mut))
-              `(a ,joined-type imm))
+(check-false (merge-field '(a Int imm) '(a String mut)))
 
 ;; 単位 3。record 全体でも同じ結果になる。
 (let-values ([(merged witnesses)
               (merge-record-types
                (list '(Record ((a Int mut)))
                      '(Record ((a String mut)))))])
-  (check-equal? merged `(Record ((a ,joined-type mut))))
-  ;; witness は降格の有無と無関係に、これまでどおり両枝の FieldType を出す。
-  (check-true (pair? witnesses)))
+  (check-false merged)
+  (check-equal? witnesses '()))
 
 ;; Union の mut field 型。Eliminate の異型 mut 結果は上の枝再照合を通って
 ;; Let まで運ぶ。以下は同じ Union mut field 型に対する ProjBorrow/Assign
@@ -45,13 +40,16 @@
 (define LEFT '(Record ((p Int imm))))
 (define RIGHT '(Record ((q Int imm))))
 (define JOINED (normalize-type `(Union ,LEFT ,RIGHT)))
+(define LEFT-VALUE `(UnionInject ,JOINED ,LEFT (Rec ((p imm 1)))))
+(define RIGHT-VALUE `(UnionInject ,JOINED ,RIGHT (Rec ((q imm 2)))))
 
 ;; Eliminate の異型 mut field も、専用の枝再照合で実際の型付け経路へ届く。
 (define merged-eliminate-core
   `(Let (b let (Record ((a ,JOINED mut))))
-     (Eliminate (Construct Bool true)
-                ((true () -> (Rec ((a mut (Rec ((p imm 1)))))))
-                 (false () -> (Rec ((a mut (Rec ((q imm 2)))))))))
+     (Eliminate
+      (Construct Bool true)
+      ((true () -> (Rec ((a mut ,LEFT-VALUE))))
+       (false () -> (Rec ((a mut ,RIGHT-VALUE))))))
      b))
 (check-equal? (core-type-of merged-eliminate-core '() '())
               `((Record ((a ,JOINED mut))) ()))
@@ -60,14 +58,16 @@
 (define THIRD '(Record ((r Int imm))))
 (define OUTER-JOINED
   (normalize-type `(Union ,(normalize-type `(Union ,LEFT ,RIGHT)) ,THIRD)))
+(define THIRD-OUTER-VALUE
+  `(UnionInject ,OUTER-JOINED ,THIRD (Rec ((r imm 3)))))
 (define inner-merge-core
-  '(Eliminate (Construct Bool true)
-              ((true () -> (Rec ((a mut (Rec ((p imm 1)))))))
-               (false () -> (Rec ((a mut (Rec ((q imm 2))))))))))
+  `(Eliminate (Construct Bool true)
+              ((true () -> (Rec ((a mut ,LEFT-VALUE))))
+               (false () -> (Rec ((a mut ,RIGHT-VALUE)))))))
 (define nested-merge-core
   `(Eliminate (Construct Bool true)
               ((true () -> ,inner-merge-core)
-               (false () -> (Rec ((a mut (Rec ((r imm 3))))))))))
+               (false () -> (Rec ((a mut ,THIRD-OUTER-VALUE)))))))
 (check-equal? (core-type-of nested-merge-core '() '())
               `((Record ((a ,OUTER-JOINED mut))) ()))
 
@@ -75,8 +75,8 @@
 (define imm-merge-core
   `(Let (b let (Record ((a ,JOINED imm))))
      (Eliminate (Construct Bool true)
-                ((true () -> (Rec ((a imm (Rec ((p imm 1)))))))
-                 (false () -> (Rec ((a mut (Rec ((q imm 2)))))))))
+       ((true () -> (Rec ((a imm ,LEFT-VALUE))))
+        (false () -> (Rec ((a mut ,RIGHT-VALUE))))))
      b))
 (check-equal? (core-type-of imm-merge-core '() '())
               `((Record ((a ,JOINED imm))) ()))
@@ -85,8 +85,8 @@
 ;; Eliminate の合流そのものではなく、Union mut field の射影・代入規則を判別する。
 (let ()
   (define core
-    '(Assign (ProjBorrow (BorrowMut 1) a)
-             (Rec ((p imm 1) (q imm 2)))))
+    `(Assign (ProjBorrow (BorrowMut 1) a)
+             ,LEFT-VALUE))
   (define ir (build-region-ir core))
   (define result (run core ir `(Record ((a ,JOINED mut)))))
   (check-equal? (first result) 'ok)

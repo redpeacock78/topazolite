@@ -165,11 +165,10 @@
                  (Let (x mut ,IS) 1 (Reassign x (Return unit))))))
   (check-equal? (count-nodes 'UnionInject core) 1))
 
-(test-case "mode off の Reassign は従来どおり type-equiv? を使う"
-  (match (elab `(Let (x mut ,IS) 1 (Reassign x "s")))
-    [`(err ,d) (check-equal? (diagnostic-id d)
-                             (code 'reassign-type-mismatch))]
-    [other (fail-check (format "mode off で受理した: ~s" other))]))
+(test-case "Reassign は非 Union の右辺を slot の Union へ inject する"
+  (match-define (list core _ _)
+    (accepted `(Let (x mut ,IS) 1 (Reassign x "s"))))
+  (check-equal? (count-nodes 'UnionInject core) 2))
 
 (test-case "Reassign で slot の Union に合わない値は reassign-type-mismatch"
   (check-equal?
@@ -178,11 +177,10 @@
           (Reassign x (Construct true (Types)))))
    (code 'reassign-type-mismatch)))
 
-(test-case "mode off では変換を置かない"
-  (match (elab `(Let (x const ,IS) 1 x))
-    [(list core _ _ _)
-     (check-equal? (count-nodes 'UnionInject (erase-core core)) 0)]
-    [other (fail-check (format "mode off で拒否した: ~s" other))]))
+(test-case "注釈付き Let は tag を持つ Union 値へ変換する"
+  (match-define (list core _ _)
+    (accepted `(Let (x const ,IS) 1 x)))
+  (check-equal? (count-nodes 'UnionInject core) 1))
 
 (test-case "注釈の無い if は枝の型の Union を返す"
   (match-define (list core type _) (accepted `(Let x ,(if-source 1 "s") x)))
@@ -253,12 +251,11 @@
     [(list _ _ _ callables) (check-equal? (length callables) 2)]
     [other (fail-check (format "elaborate が拒否した: ~s" other))]))
 
-(test-case "mode off の synth の Eliminate は従来どおり拒否する"
-  (match (elab `(Let x ,(if-source 1 "s") x))
-    [`(err ,d)
-     (check-equal? (diagnostic-id d)
-                   (code 'eliminate-needs-expected-type))]
-    [other (fail-check (format "mode off で受理した: ~s" other))]))
+(test-case "注釈の無い if は合流した Union 型を合成する"
+  (match-define (list core type _)
+    (accepted `(Let x ,(if-source 1 "s") x)))
+  (check-equal? type (normalize-type IS))
+  (check-equal? (count-nodes 'UnionInject core) 2))
 
 (test-case "Record expected は欄関数の行だけが異なる Union を合流する"
   (define plain-function '(NFn (Int) Int () ()))
@@ -296,7 +293,7 @@
     `(Fn ((u ,owned-union)) ,owned-target ()
          (Let (r let ,owned-target) u r)))))
 
-(test-case "Record expected rejects residual Owned and unmergeable common fields"
+(test-case "Record expected は残余 Owned と合流不能な欄を拒否する"
   (check-equal?
    (rejected-code
     '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))

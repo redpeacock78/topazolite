@@ -124,12 +124,13 @@
   (define-values (merged _w) (merge/fresh (list left right)))
   (check-equal? (first (second (first (second merged)))) 'BorrowedMut))
 
-;; payload が違えば合流しない。G5b の Union の経路のままである。
+;; Borrowed payload の違いから tag の無い Union を合成しない。
 (let ()
   (define left `(Record ((a (Borrowed Int (RVar 0)) imm))))
   (define right `(Record ((a (Borrowed String (RVar 1)) imm))))
-  (define-values (merged _w) (merge/fresh (list left right)))
-  (check-equal? (first (second (first (second merged)))) 'Union))
+  (define-values (merged witnesses) (merge/fresh (list left right)))
+  (check-false merged)
+  (check-equal? witnesses '()))
 
 ;; α の採番差で結果が変わらない。
 (let ()
@@ -176,10 +177,11 @@
           (region-constraint 'contains `(RVar 1) merge-here merge-point #f)))
   (check-equal? (first (region-solve merge-ir (append lowers cs))) 'ok))
 
-;; 両方が具体的な region のときは合流しない。G5b の Union の経路のままである。
+;; 具体的な region の違いからも tag の無い Union を合成しない。
 (let ()
   (define left `(Record ((a (Borrowed Int ,merge-outer-rho) imm))))
   (define right `(Record ((a (Borrowed Int ,merge-here-rho) imm))))
-  (match-define (list merged _witnesses cs) (merge/positioned (list left right)))
-  (check-equal? (first (second (first (second merged)))) 'Union)
+  (match-define (list merged witnesses cs) (merge/positioned (list left right)))
+  (check-false merged)
+  (check-equal? witnesses '())
   (check-equal? cs '()))

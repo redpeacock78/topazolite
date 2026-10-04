@@ -22,7 +22,8 @@
 
 (test-case "normal unions are accepted and non-normal types are rejected"
   (check-true
-   (core-check 1 empty empty '(Union Int String) empty))
+   (core-check '(UnionInject (Union Int String) Int 1)
+               empty empty '(Union Int String) empty))
   (check-false
    (core-check 1 empty empty '(Union String Int) empty))
   (check-false
@@ -114,7 +115,9 @@
 (test-case "elaboration normalizes composite annotations"
   (check-equal?
    (elab-core '(Let (x let (Union String Int)) 1 x))
-   '(Let (x⟨1⟩ let (Union Int String)) 1 x⟨1⟩))
+   '(Let (x⟨1⟩ let (Union Int String))
+      (UnionInject (Union Int String) Int 1)
+      x⟨1⟩))
   (define record-type
     '(Record ((a Int imm) (b Int imm))))
   (check-equal?

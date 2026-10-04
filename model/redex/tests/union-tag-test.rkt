@@ -361,10 +361,10 @@
      (check-equal? core elim-is)]
     [other (fail (format "unexpected injected config: ~s" other))]))
 
-(test-case "tag mode の既定は #f で、新しい構成子を E-TYP-001 で拒否する"
-  (check-false (current-union-tag-mode))
-  (check-equal? (key-of inject-int) 'ill-typed)
-  (check-equal? (key-of elim-is) 'ill-typed))
+(test-case "tag mode の既定は #t で、新しい構成子を型付けする"
+  (check-true (current-union-tag-mode))
+  (check-equal? (type-of inject-int) IS)
+  (check-equal? (type-of elim-is) 'Int))
 
 (test-case "tag 保存互換：Union は既に tag を持つ部分集合だけを渡す"
   (check-true (tc? U1 U))
@@ -479,8 +479,8 @@
   (check-true
    (owned-union-member? '(Data Phantom ((Union Int (Owned Res)))))))
 
-(test-case "Owned を直接の成分に持つ Union は tag mode が無効でも拒否する"
-  (check-false (current-union-tag-mode))
+(test-case "Owned を直接の成分に持つ Union は tag mode でも拒否する"
+  (check-true (current-union-tag-mode))
   (check-equal? (key-of '(Let (x const (Union Int (Owned Res))) 1 x))
                 'owned-union-member)
   (check-equal?
@@ -523,8 +523,6 @@
    (normalize-type `(Record ((a ,U mut))))))
 
 (test-case "synth 合流は tag 保存の上界を使い tag の無い値から Union を作らない"
-  (check-equal? (type-of plain-record-join-term)
-                (normalize-type '(Record ((a (Union Int Bool) imm)))))
   (tagged
    (check-equal? (key-of plain-record-join-term) 'unmergeable-branch-records)
    (check-equal? (type-of record-imm-join-term)
@@ -693,7 +691,7 @@
 (test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
   (define rec-term
     `(Let (r const (Record ((a ,IS imm))))
-          (Rec ((a imm 1)))
+          (Rec ((a imm (UnionInject ,IS Int 1))))
           (Proj r a)))
   (define assign-term
     `(Let (m mut ,IS) ,inject-int
@@ -712,7 +710,7 @@
           (Let (r const (Record ((a Int imm)))) u (Proj r a))))
   (check-equal? (type-of rec-term) IS)
   (tagged
-   (check-not-equal? (key-of rec-term) 'ok)
+   (check-equal? (key-of rec-term) 'ok)
    (check-not-equal? (key-of assign-term) 'ok)
    (check-not-equal? (key-of bare-let) 'ok)
    (check-not-equal? (key-of union-to-rec) 'ok)))
@@ -816,9 +814,9 @@
    (check-false
     (config-ok? (machine-config bad-union) '() normalized-union '()))))
 
-(test-case "UnionVal は tag mode のみで型付けされ、well-formedness を満たす"
+(test-case "UnionVal は well-formedness を満たすと型付けされる"
   (define value `(UnionVal ,(normalize-type IS) Int 1))
-  (check-equal? (key-of value) 'ill-typed)
+  (check-equal? (type-of value) (normalize-type IS))
   (tagged
    (check-equal? (type-of value) (normalize-type IS))
    (check-equal? (key-of `(UnionVal ,(normalize-type IS) Bool
@@ -1342,10 +1340,10 @@
   (check-equal? (third (first (match final [`(cfg ,_ ,heap ,_ ,_ ,_) heap])))
                 '(declared Int)))
 
-(test-case "tag mode が無効なら derive-places は宣言型を読まない"
+(test-case "derive-places は tag mode で宣言型を読む"
   (define heap '((0 (resource 4) (declared String))))
   (check-equal? (derive-places heap '() #:declared '((0 String)))
-                '((0 Res))))
+                '((0 String))))
 
 (test-case "heap の宣言型 metadata は値、token、借用として走査されない"
   (define value `(Rec ((owned imm (OwnedLeaf (tok 8) (resource 9))))))

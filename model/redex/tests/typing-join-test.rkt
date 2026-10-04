@@ -6,8 +6,11 @@
          "../type-equiv.rkt"
          "../typing.rkt")
 
-(define int-branch '(Record ((a Int imm))))
-(define string-branch '(Record ((a String imm))))
+(define u1 (normalize-type '(Union Int Bool)))
+(define u2 (normalize-type '(Union String Bool)))
+(define tagged-int-branch `(Record ((a ,u1 imm))))
+(define tagged-string-branch `(Record ((a ,u2 imm))))
+(define tagged-joined-type (normalize-type `(Union ,u1 ,u2)))
 (define joined-type (normalize-type '(Union Int String)))
 
 (define (witness-propositions witnesses)
@@ -25,47 +28,41 @@
    '(Record ((a Int imm) (z Int imm)))))
 
 (test-case "ROW-005: merge-field は異型を可変性を保ったまま join する"
-  (check-equal?
-   (merge-field '(a Int imm) '(a String imm))
-   `(a ,joined-type imm))
+  ;; tag の無い field の型差から Union を合成しない。
+  (check-false (merge-field '(a Int imm) '(a String imm)))
   (check-equal?
    (merge-field '(a Int mut) '(a Int mut))
    '(a Int mut))
-  ;; 異型 mut は降格せず、mut のまま Union へ join する。
-  (check-equal?
-   (merge-field '(a Int mut) '(a String mut))
-   `(a ,joined-type mut))
+  (check-false (merge-field '(a Int mut) '(a String mut)))
   ;; 可変性が食い違えば、同型でも imm になる。
   (check-equal?
    (merge-field '(a Int imm) '(a Int mut))
    '(a Int imm))
-  (check-equal?
-   (merge-field '(a Int imm) '(a String mut))
-   `(a ,joined-type imm)))
+  (check-false (merge-field '(a Int imm) '(a String mut))))
 
 (test-case "merge joins colliding immutable fields and emits local witnesses"
   (let-values ([(merged witnesses)
-                (merge-record-types (list int-branch string-branch))])
-    (check-equal? merged `(Record ((a ,joined-type imm))))
+   (merge-record-types (list tagged-int-branch tagged-string-branch))])
+    (check-equal? merged `(Record ((a ,tagged-joined-type imm))))
     (check-equal? (map car witnesses)
                   '(presence-a field-type-a-0 field-type-a-1))
     (check-equal? (witness-propositions witnesses)
-                  '((Presence a)
-                    (FieldType a Int)
-                    (FieldType a String)))
+                  `((Presence a)
+                    (FieldType a ,u1)
+                    (FieldType a ,u2)))
     (check-false (check-duplicates (map car witnesses)))
     (check-true (wf-context? witnesses))))
 
 (test-case "ROW-005: 異型 mut は mut のまま残り、可変性不一致だけが降格する"
   (let-values ([(merged witnesses)
                 (merge-record-types
-                 (list '(Record ((a Int mut)))
-                       '(Record ((a String mut)))))])
-    (check-equal? merged `(Record ((a ,joined-type mut))))
+                 (list `(Record ((a ,u1 mut)))
+                       `(Record ((a ,u2 mut)))))])
+    (check-equal? merged `(Record ((a ,tagged-joined-type mut))))
     (check-equal? (witness-propositions witnesses)
-                  '((Presence a)
-                    (FieldType a Int)
-                    (FieldType a String))))
+                  `((Presence a)
+                    (FieldType a ,u1)
+                    (FieldType a ,u2))))
   (let-values ([(merged witnesses)
                 (merge-record-types
                  (list '(Record ((a Int imm)))
@@ -93,46 +90,47 @@
 
 (test-case "merge and witness order are independent of branch order"
   (define-values (left-type left-witnesses)
-    (merge-record-types (list int-branch string-branch)))
+   (merge-record-types (list tagged-int-branch tagged-string-branch)))
   (define-values (right-type right-witnesses)
-    (merge-record-types (list string-branch int-branch)))
+    (merge-record-types (list tagged-string-branch tagged-int-branch)))
   (check-equal? left-type right-type)
   (check-equal? left-witnesses right-witnesses))
 
 (test-case "duplicate branch types do not duplicate FieldType witnesses"
-  (define-values (_merged witnesses)
-    (merge-record-types (list int-branch string-branch int-branch)))
-  (check-equal? (witness-propositions witnesses)
-                '((Presence a)
-                  (FieldType a Int)
-                  (FieldType a String))))
-
-(test-case "FieldType witnesses describe branch types, not Union members"
-  (define union-type (normalize-type '(Union Int Bool)))
-  (define-values (_merged witnesses)
+  (define-values (merged witnesses)
     (merge-record-types
-     (list int-branch
-           `(Record ((a ,union-type imm))))))
+     (list tagged-int-branch tagged-string-branch tagged-int-branch)))
+  (check-equal? merged `(Record ((a ,tagged-joined-type imm))))
   (check-equal? (witness-propositions witnesses)
                 `((Presence a)
-                  (FieldType a ,union-type)
-                  (FieldType a Int))))
+                  (FieldType a ,u1)
+                  (FieldType a ,u2))))
+
+(test-case "FieldType witnesses describe branch types, not Union members"
+  (define-values (merged witnesses)
+    (merge-record-types
+     (list tagged-int-branch tagged-string-branch)))
+  (check-equal? merged `(Record ((a ,tagged-joined-type imm))))
+  (check-equal? (witness-propositions witnesses)
+                `((Presence a)
+                  (FieldType a ,u1)
+                  (FieldType a ,u2))))
 
 (test-case "join witnesses discharge only their recorded field types"
-  (define types (list int-branch string-branch))
+  (define types (list tagged-int-branch tagged-string-branch))
   (check-true
    (merge-witnesses-dischargeable?
     types
-    '((Presence a) (FieldType a Int) (FieldType a String))))
+    `((Presence a) (FieldType a ,u1) (FieldType a ,u2))))
   (check-false
    (merge-witnesses-dischargeable?
     types
     '((FieldType a Bool))))
-  ;; join 型そのものは branch 型 witness ではない。
+  ;; 合流型そのものは branch 型 witness ではない。
   (check-false
    (merge-witnesses-dischargeable?
     types
-    `((FieldType a ,joined-type)))))
+    `((FieldType a ,tagged-joined-type)))))
 
 (test-case "witness binding names follow the declared scheme"
   (check-equal? (presence-binding-name 'a) 'presence-a)
