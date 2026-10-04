@@ -128,6 +128,15 @@
     '(Record ((y Int imm))))
    'owned-narrowing-needs-proof))
 
+(test-case "Union に安全な候補が無い場合の elaboration は拒否する"
+  (check-equal?
+   (elaborate-code-of
+    '(Fn ((p (Record ((x (Owned Res) imm) (y Int imm)))))
+         (Union (Record ((y Int imm))) (Record ((z Int imm))))
+         ()
+         p))
+   "E-OWN-029"))
+
 (test-case "3 要素 binder は residual を束縛へ残す"
   (check-equal?
    (key-of '(Let (r let (Record ((y Int imm))))

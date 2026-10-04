@@ -203,6 +203,7 @@
      (define multi-branch-count (box 0))
      (define merged-count (box 0))
      (define unmergeable-count (box 0))
+     (define nontrivial-count (box 0))
      (for ([_i (in-range attempts)])
        (define branches (random-branch-rows))
        (define types
@@ -213,6 +214,12 @@
            (begin
              (set-box! unmergeable-count (add1 (unbox unmergeable-count)))
              (check-pred tag-bound-failure? (tag-types-upper-bound types))))
+       (when (match merged
+               [`(Record ,row)
+                (for/or ([field (in-list row)])
+                  (>= (length (union-members (second field))) 2))]
+               [_ #f])
+         (set-box! nontrivial-count (add1 (unbox nontrivial-count))))
        (when (>= (length types) 2)
          (set-box! multi-branch-count
                    (add1 (unbox multi-branch-count))))
@@ -226,9 +233,11 @@
      (check-true (positive? (unbox merged-count)))
      (check-true (positive? (unbox unmergeable-count)))
      (check-true (positive? (unbox multi-branch-count)))
-     (printf "性質5: attempts=~a merged=~a unmergeable=~a multi-branch=~a seed=~a\n"
+     (check-true (positive? (unbox nontrivial-count)))
+     (printf "性質5: attempts=~a merged=~a unmergeable=~a multi-branch=~a nontrivial-joins=~a seed=~a\n"
              attempts (unbox merged-count) (unbox unmergeable-count)
              (unbox multi-branch-count)
+             (unbox nontrivial-count)
              (bounds-seed limits)))))
 
 (test-case "CMP-001: 性質6 join は全枝が mut のときだけ mut を保つ"

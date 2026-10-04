@@ -185,6 +185,7 @@
                    (for/list ([type (in-list distinct-types)])
                      `(FieldType ,label ,type)))])]))
      (define issued-count (box 0))
+     (define field-type-issued-count (box 0))
      (define dropped-count (box 0))
      (define merged-count (box 0))
      (define unmergeable-count (box 0))
@@ -209,6 +210,13 @@
                               [`(Presence ,_) #t]
                               [_ #f]))
                           issued)])
+            (set-box!
+             field-type-issued-count
+             (+ (unbox field-type-issued-count)
+                (for/sum ([proposition (in-list issued)])
+                  (match proposition
+                    [`(FieldType ,_ ,_) 1]
+                    [_ 0]))))
             (set-box! merged-count (add1 (unbox merged-count)))
             (check-equal? issued expected-issued)
             ;; 過剰発行が無い: 3 分類で残る field にだけ Presence が立つ。
@@ -237,16 +245,18 @@
             (check-true (merge-witnesses-dischargeable? types issued))
             (check-equal? (length merged-row) (length presence-issued)))]
          [else
-          ;; 生成域は Int/Bool/String のみ。異なる tag 無し field の上界は無い。
+          ;; tag 保存の上界が無い field 型の組は合流できない。
           (set-box! unmergeable-count (add1 (unbox unmergeable-count)))
           (check-pred tag-bound-failure? (tag-types-upper-bound types))]))
      (check-true (positive? (unbox issued-count)))
+     (check-true (positive? (unbox field-type-issued-count)))
      (check-true (positive? (unbox dropped-count)))
      (check-true (positive? (unbox merged-count)))
      (check-true (positive? (unbox unmergeable-count)))
-     (printf "merge witness: attempts=~a merged=~a unmergeable=~a issued=~a dropped=~a seed=~a\n"
+     (printf "merge witness: attempts=~a merged=~a unmergeable=~a issued=~a field-type-issued=~a dropped=~a seed=~a\n"
              attempts (unbox merged-count) (unbox unmergeable-count)
-             (unbox issued-count) (unbox dropped-count)
+             (unbox issued-count) (unbox field-type-issued-count)
+             (unbox dropped-count)
              (bounds-seed limits)))))
 
 ;; 大域候補文脈。判定表の各命題の witness を一つずつ持つ。

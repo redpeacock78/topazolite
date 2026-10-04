@@ -691,6 +691,10 @@
 (test-case "tag mode の値を渡す境界は暗黙の tag 無し widening を拒否する"
   (define rec-term
     `(Let (r const (Record ((a ,IS imm))))
+          (Rec ((a imm 1)))
+          (Proj r a)))
+  (define tagged-rec-term
+    `(Let (r const (Record ((a ,IS imm))))
           (Rec ((a imm (UnionInject ,IS Int 1))))
           (Proj r a)))
   (define assign-term
@@ -708,9 +712,10 @@
                        (Record ((a Int imm) (b Int imm)))
                        (Rec ((a imm 1) (b imm 2))))
           (Let (r const (Record ((a Int imm)))) u (Proj r a))))
-  (check-equal? (type-of rec-term) IS)
+  (check-equal? (key-of rec-term) 'record-binding-incompatible)
   (tagged
-   (check-equal? (key-of rec-term) 'ok)
+   (check-equal? (type-of tagged-rec-term) IS)
+   (check-equal? (key-of tagged-rec-term) 'ok)
    (check-not-equal? (key-of assign-term) 'ok)
    (check-not-equal? (key-of bare-let) 'ok)
    (check-not-equal? (key-of union-to-rec) 'ok)))

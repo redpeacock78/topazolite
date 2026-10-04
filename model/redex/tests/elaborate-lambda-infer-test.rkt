@@ -159,7 +159,7 @@
   (check-equal?
    (code-of '(Let (f const (NFn (Int) (Union Int String) () ()))
                   (Fn ((x Int)) #:infer () 1)
-                  (Apply f 1)) )
+                  (Apply f 1)))
    e-type-mismatch))
 
 (test-case "SUR-012: E-Rec-Check は欄の期待型で仮引数型を補う"

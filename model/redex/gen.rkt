@@ -559,6 +559,10 @@
 
 (define refine-labels '(a b c d))
 (define refine-field-types '(Int Bool String))
+(define merge-field-types
+  (append refine-field-types
+          (list (normalize-type '(Union Int Bool))
+                (normalize-type '(Union String Bool)))))
 
 (define (random-validator-row)
   (pick-one validator-table))
@@ -576,7 +580,10 @@
 
 (define (random-branch-rows)
   (for/list ([_i (in-range (add1 (random 3)))])
-    (random-refine-row)))
+    (for/list ([field (in-list (random-refine-row))])
+      (list (first field)
+            (pick-one merge-field-types)
+            (third field)))))
 
 (define (random-obligation-subset)
   (for/list ([proposition (in-list refine-propositions)]

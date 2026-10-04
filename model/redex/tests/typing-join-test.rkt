@@ -27,7 +27,7 @@
                '(Record ((z Int imm) (a Int imm))))
    '(Record ((a Int imm) (z Int imm)))))
 
-(test-case "ROW-005: merge-field は異型を可変性を保ったまま join する"
+(test-case "ROW-005: tag の無い異型 field は Union を合成しない"
   ;; tag の無い field の型差から Union を合成しない。
   (check-false (merge-field '(a Int imm) '(a String imm)))
   (check-equal?

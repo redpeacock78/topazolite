@@ -22,8 +22,7 @@
 ;; tag の無い異型 field からは mut Union field を作らない。
 (check-false (merge-field '(a Int mut) '(a String mut)))
 
-;; 単位 2。可変性が食い違えば、異型でも imm へ落とす。
-;; 落とす理由は異型ではなく可変性の不一致であり、本段はこの規則を変えない。
+;; 単位 2。可変性が食い違う場合でも、tag の無い異型からは合流しない。
 (check-false (merge-field '(a Int imm) '(a String mut)))
 
 ;; 単位 3。record 全体でも同じ結果になる。
