@@ -82,6 +82,15 @@
           (Rec ((a imm 1) (b imm (Construct true (Types)))))
           (Let (r let (Record ((a Int imm)))) u r)))))
 
+(test-case "Record への分解では Never 成分を合流から除く"
+  (match-define (list core type _)
+    (accepted
+     '(Let (u const (Union (Record ((a Int imm) (b Int imm))) Never))
+           (Rec ((a imm 1) (b imm 2)))
+           (Let (r let (Record ((a Int imm)))) u r))))
+  (check-equal? type '(Record ((a Int imm) (b Int imm))))
+  (check-equal? (count-nodes 'UnionEliminate core) 1))
+
 (test-case "共通の残余が上界で合流できない Union は type-mismatch で拒否する"
   (check-equal?
    (rejected-code

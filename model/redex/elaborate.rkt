@@ -783,8 +783,11 @@
       (match expected
         [`(Record ,expected-row)
          ;; Record は branch ごとの let で残余を保ち、型の上界で合流する。
+         (define record-members
+           (filter (lambda (member) (not (eq? member 'Never)))
+                   (union-members actual)))
          (define wrapped-types
-           (for/list ([member (in-list (union-members actual))])
+           (for/list ([member (in-list record-members)])
              (unless (tag-compat? member expected context)
                (reject s 'type-mismatch expected actual))
              (define member-row
@@ -795,15 +798,20 @@
              (unless (owned-free? `(Record ,residual))
                (reject s 'type-mismatch expected actual))
              `(Record ,(append expected-row residual))))
-         (define upper (tag-types-upper-bound wrapped-types))
-         (when (tag-bound-failure? upper)
-           (reject s 'type-mismatch expected actual))
+         (define upper
+           (if (null? wrapped-types)
+               'Never
+               (let ([upper (tag-types-upper-bound wrapped-types)])
+                 (when (tag-bound-failure? upper)
+                   (reject s 'type-mismatch expected actual))
+                 upper)))
          (values
           (eliminate
            (for/list ([branch (in-list branches)])
              (match-define (list member name) branch)
              (define ref (reference name))
-             (if (type-equiv? member expected)
+             (if (or (eq? member 'Never)
+                     (type-equiv? member expected))
                  ref
                  (wrap-reference 'let expected ref))))
           upper)]
