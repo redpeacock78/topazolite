@@ -828,8 +828,8 @@
  ;; P2i3a では mutable-callable-storage-requires-partial を追加した。
  ;; P2l3a Task 6 では optional 欄の射影を拒否する reason を加えた。
  ;; P2l3b では UCore Proj を ProjOpt へ振り分け、その reason が到達しなくなる。
- (check-equal? (length reasons) 55)
- ;; P2m2b1 Task 3 で registry に先行登録し、Task 4 で producer に加える。
+ (check-equal? (length reasons) 56)
+ ;; P2m2b1 Task 3 で先行登録し、Task 4 で曖昧性の producer を加えた。
  (check-not-false (diagnostic-code-of 'elaborate 'ambiguous-union-member))
  (for ([reason (in-list reasons)])
    (check-not-false (diagnostic-code-of 'elaborate reason)

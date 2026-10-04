@@ -21,6 +21,10 @@
          "type-shape.rkt"
          "uniquify.rkt"
          "ucore.rkt"
+         (only-in "typing.rkt"
+                  current-union-tag-mode
+                  tag-types-upper-bound
+                  tag-bound-failure?)
          "validators.rkt")
 
 (provide UCore
@@ -703,6 +707,117 @@
         (if (set-member? reserved candidate)
             (next)
             candidate)))
+
+    ;; P2m2b spec §3.1。変換が置く枝と Let の binder に使う生名。
+    ;; 入力の式に現れる symbol と衝突させず、elab 内で一意にする。
+    (define union-counter 0)
+    (define union-reserved (form-symbols raw-expression))
+    (define (fresh-union-name)
+      (let next ()
+        (define candidate
+          (string->symbol (format "union~a" union-counter)))
+        (set! union-counter (add1 union-counter))
+        (if (set-member? union-reserved candidate) (next) candidate)))
+
+    ;; P2m2b spec §3.2。完全一致を優先し、無ければ tag-compat? で一意に選ぶ。
+    (define (choose-union-member actual expected s propositions)
+      (define members (union-members expected))
+      (define context (initial-candidate-context propositions))
+      (define exact
+        (for/first ([member (in-list members)]
+                    #:when (type-equiv? member actual))
+          member))
+      (cond
+        [exact exact]
+        [else
+         (define candidates
+           (filter (lambda (member) (tag-compat? actual member context))
+                   members))
+         (match candidates
+           [(list member) member]
+           ['() (reject s 'type-mismatch expected actual)]
+           [_ (reject s 'ambiguous-union-member expected actual candidates)])]))
+
+    (define (union-inject core actual expected s propositions)
+      (define member
+        (choose-union-member actual expected s propositions))
+      `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,core))
+
+    ;; P2m2b spec §3.1。(values Core 変換後の型) を返すか、その位置で拒否する。
+    (define (convert core actual expected s propositions)
+      (define actual* (normalize-type actual))
+      (define expected* (normalize-type expected))
+      (define context (initial-candidate-context propositions))
+      (define actual-union?
+        (match actual* [`(Union ,_ ,_) #t] [_ #f]))
+      (define expected-union?
+        (match expected* [`(Union ,_ ,_) #t] [_ #f]))
+      (cond
+        [(tag-compat? actual* expected* context)
+         (values core actual*)]
+        [(and expected-union? (not actual-union?))
+         (values (union-inject core actual* expected* s propositions)
+                 expected*)]
+        [actual-union?
+         (decompose core actual* expected* s propositions)]
+        [else (reject s 'type-mismatch expected actual)]))
+
+    (define (decompose core actual expected s propositions)
+      (define context (initial-candidate-context propositions))
+      (define branches
+        (for/list ([member (in-list (union-members actual))])
+          (list member (fresh-union-name))))
+      (define (reference name) `(#:var ,name ,s))
+      (define (eliminate bodies)
+        `(UnionEliminate ,s ,core
+           ,(for/list ([branch (in-list branches)]
+                       [body (in-list bodies)])
+              (match-define (list member name) branch)
+              `(,s (#:ty ,member ,s) (#:bind ,name ,s) -> ,body))))
+      (define (wrap-reference mode type bound [move? #f])
+        (define name (fresh-union-name))
+        (define ref (reference name))
+        `(Let ,s ((#:bind ,name ,s) ,mode (#:ty ,type ,s))
+              ,bound
+              ,(if move? `(Move ,s ,ref) ref)))
+      (match expected
+        [`(Record ,expected-row)
+         ;; Record は branch ごとの let で残余を保ち、型の上界で合流する。
+         (define wrapped-types
+           (for/list ([member (in-list (union-members actual))])
+             (unless (tag-compat? member expected context)
+               (reject s 'type-mismatch expected actual))
+             (define member-row
+               (match member
+                 [`(Record ,row) row]
+                 [_ (reject s 'type-mismatch expected actual)]))
+             (define residual (field-row-residual member-row expected-row))
+             (unless (owned-free? `(Record ,residual))
+               (reject s 'type-mismatch expected actual))
+             `(Record ,(append expected-row residual))))
+         (define upper (tag-types-upper-bound wrapped-types))
+         (when (tag-bound-failure? upper)
+           (reject s 'type-mismatch expected actual))
+         (values
+          (eliminate
+           (for/list ([branch (in-list branches)])
+             (match-define (list member name) branch)
+             (define ref (reference name))
+             (if (type-equiv? member expected)
+                 ref
+                 (wrap-reference 'let expected ref))))
+          upper)]
+        [_
+         (define bodies
+           (for/list ([branch (in-list branches)])
+             (match-define (list member name) branch)
+             (define-values (body _type)
+               (convert (reference name) member expected s propositions))
+             body))
+         (values
+          (wrap-reference 'const expected (eliminate bodies)
+                          (owned-type? expected))
+          expected)]))
 
     (define (fresh-owned-names/all parameter-types reserved)
       (let loop ([types parameter-types] [taken reserved] [acc '()])
@@ -1551,7 +1666,13 @@
            (if (or (needs-expected-type? bound) record-literal-checkable?)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
-         (define actual-type (judgment-type bound-result))
+         (define-values (bound-core actual-type)
+           (if (current-union-tag-mode)
+               (convert (judgment-core bound-result)
+                        (judgment-type bound-result)
+                        declared-type s propositions)
+               (values (judgment-core bound-result)
+                       (judgment-type bound-result))))
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
@@ -1563,7 +1684,7 @@
          (judgment
           `(Let ,s (,raw-name ,binding-mode
                               (#:ty ,declared-type ,(wrapper-span raw-type)))
-                ,(judgment-core bound-result)
+                ,bound-core
                 ,(judgment-core body-result))
           (judgment-type body-result)
           (row-union (judgment-row bound-result)
@@ -1797,7 +1918,12 @@
                  (judgment-type result))]
         [_ (reject s 'owned-narrowing-rejected expected
                    (judgment-type result))])
-      (judgment (judgment-core result) expected (judgment-row result)))
+      (define-values (core _type)
+        (if (current-union-tag-mode)
+            (convert (judgment-core result) (judgment-type result)
+                     expected s propositions)
+            (values (judgment-core result) (judgment-type result))))
+      (judgment core expected (judgment-row result)))
 
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
@@ -1818,7 +1944,12 @@
                     (judgment-type result))]
            [_ (reject s 'owned-narrowing-rejected expected
                       (judgment-type result))])
-         (judgment (judgment-core result) expected (judgment-row result))]
+         (define-values (core _type)
+           (if (current-union-tag-mode)
+               (convert (judgment-core result) (judgment-type result)
+                        expected s propositions)
+               (values (judgment-core result) (judgment-type result))))
+         (judgment core expected (judgment-row result))]
 
         [`(Construct ,constructor ,fields ...)
          (elaborate-constructor constructor fields expected
