@@ -8,6 +8,7 @@
          "../gen.rkt"
          "../lang.rkt"
          "../lowering.rkt"
+         (only-in "../machine.rkt" inject-g2m)
          "../obs.rkt"
          "../origins.rkt"
          "../pr-lang.rkt"
@@ -21,6 +22,18 @@
 (define limits (read-bounds))
 (define depth (bounds-observation-depth limits))
 (define source-fuel (bounds-fuel limits))
+
+(define (union-eliminate-reached? configs)
+  (for/or ([before (in-list configs)]
+           [after (in-list (cdr configs))])
+    (and (contains-ready-union-eliminate? (config-core before))
+         (not (contains-ready-union-eliminate? (config-core after))))))
+
+(define (contains-ready-union-eliminate? tree)
+  (match tree
+    [`(UnionEliminate (UnionVal ,_ ,_ ,_) ,_) #t]
+    [(? list?) (ormap contains-ready-union-eliminate? tree)]
+    [_ #f]))
 
 ;;; backend-matrix.md §6 repr 適合の単位検査
 
@@ -628,6 +641,32 @@
       (check-eq? status 'ok (format "lower: ~s" target))
       (check-eq? (compare-observations core target depth) 'match
                  (format "Core/PR observation: ~s" core))))
+
+  (test-case "BAK-001: Union の Core の観測が lowering の前後で一致する"
+    (define compared 0)
+    (define reached 0)
+    (call-with-search-seed
+     limits
+     (lambda ()
+       (for ([_attempt (in-range 100)])
+         (define core (generate-union-core))
+         (check-not-eq? (core-type-of core '() '()) 'ill-typed
+                        (format "well-typed Core: ~s" core))
+         (let-values ([(status target) (lower core 'racket-cs)])
+           (check-eq? status 'ok (format "lower: ~s" target))
+           (check-eq? (compare-observations core target depth) 'match
+                      (format "Core/PR observation: ~s" core))
+           (set! compared (add1 compared))
+           (let* ([run (bounded-trace-g2 (inject-g2m core)
+                                         (bounds-fuel limits))]
+                  [configs (execution-configs run)])
+             (check-eq? (execution-outcome run) 'terminal)
+             (when (union-eliminate-reached? configs)
+               (set! reached (add1 reached))))))))
+    (check-equal? compared 100)
+    (check-true (positive? reached))
+    (printf "BAK-001 Union: compared=~a UnionEliminate=~a seed=~a\n"
+            compared reached (bounds-seed limits)))
 
   ;; properties-record-test.rkt:34 の bounded-check-g2 と同じ形である。証人の箱を
   ;; 引数に取るのは、性質ごとに「実際に主張が働いた項」の定義が違うためである。

@@ -650,51 +650,61 @@
     (define union-attempts 160)
     (define typed 0)
     (define ill-typed 0)
+    (define discarded 0)
     (define reached 0)
+    (define embedded (box 0))
+    (define literal (box 0))
     (define distinct (mutable-set))
-    (define generated
+    (define attempted
       (call-with-search-seed
        limits
        (lambda ()
          (for/fold ([attempt-count 0])
                    ([_attempt (in-range union-attempts)])
-          (let ([next-attempt-count (add1 attempt-count)])
-            (let ([core (generate-union-core #:include-union? #t)])
-              (check-not-false core "Union generator returned no programme")
-              (when core
-                (set-add! distinct core)
-                (let ([inferred (core-type-of core '() '())])
-                  (if (eq? inferred 'ill-typed)
-                      (set! ill-typed (add1 ill-typed))
-                      (begin
-                        (set! typed (add1 typed))
-                        (check-equal? inferred '(Int ()))
-                        (let* ([initial (inject-g2m core)]
-                               [run (bounded-trace-g2
-                                     initial (bounds-fuel limits))]
-                               [configs (execution-configs run)])
-                          (check-eq? (execution-outcome run) 'terminal)
-                          (check-true
-                           (for/and ([configuration (in-list configs)])
-                             (config-ok? configuration '() 'Int '()))
-                           "every intermediate config must be valid")
-                          (check-true
-                           (for/and ([configuration (in-list configs)])
-                             (or (pair? (successors-g2 configuration))
-                                 (redex-match? G2m v
-                                               (config-core configuration))))
-                           "every non-value config must make progress")
-                          (when (union-eliminate-reached? configs)
-                            (set! reached (add1 reached)))))))))
-              next-attempt-count)))))
-    (check-equal? generated union-attempts)
+           (define core
+             (generate-union-core #:embedded-count embedded
+                                  #:literal-count literal))
+           (define next-attempt-count (add1 attempt-count))
+           (if (not core)
+               (begin
+                 (set! discarded (add1 discarded))
+                 next-attempt-count)
+               (let ([inferred (core-type-of core '() '())])
+                 (set-add! distinct core)
+                 (if (eq? inferred 'ill-typed)
+                     (set! ill-typed (add1 ill-typed))
+                     (begin
+                       (set! typed (add1 typed))
+                       (check-equal? inferred '(Int ()))
+                       (let* ([initial (inject-g2m core)]
+                              [run (bounded-trace-g2
+                                    initial (bounds-fuel limits))]
+                              [configs (execution-configs run)])
+                         (check-eq? (execution-outcome run) 'terminal)
+                         (check-true
+                          (for/and ([configuration (in-list configs)])
+                            (config-ok? configuration '() 'Int '()))
+                          "every intermediate config must be valid")
+                         (check-true
+                          (for/and ([configuration (in-list configs)])
+                            (or (pair? (successors-g2 configuration))
+                                (redex-match? G2m v
+                                              (config-core configuration))))
+                          "every non-value config must make progress")
+                         (when (union-eliminate-reached? configs)
+                           (set! reached (add1 reached))))))
+                   next-attempt-count))))))
+    (check-equal? attempted union-attempts)
     (check-equal? ill-typed 0 "ill-typed Union programmes are not discarded")
+    (check-equal? discarded 0 "generate-union-core always returns a programme")
     (check-true (positive? typed))
     (check-true (positive? reached))
+    (check-true (positive? (unbox embedded)))
+    (check-true (positive? (unbox literal)))
     (check-true (> (set-count distinct) 100))
-    (printf "P2m2a Union: generated=~a unique=~a typed=~a ill-typed=~a UnionEliminate=~a seed=~a elapsed-ms=~a\n"
-            generated (set-count distinct) typed ill-typed reached (bounds-seed limits)
+    (printf "Union: attempted=~a typed=~a ill-typed=~a discarded=~a UnionEliminate=~a embedded=~a literal=~a seed=~a elapsed-ms=~a\n"
+            attempted typed ill-typed discarded reached
+            (unbox embedded) (unbox literal) (bounds-seed limits)
             (inexact->exact
-             (round (- (current-inexact-milliseconds) started))))
-  )
+             (round (- (current-inexact-milliseconds) started)))))
 )

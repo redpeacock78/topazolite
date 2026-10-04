@@ -46,10 +46,10 @@
   (or (eq? tree name)
       (and (pair? tree) (ormap (lambda (part) (contains-symbol? part name)) tree))))
 
-(test-case "Union の生成経路は opt-in である"
-  (check-false (generate-union-core))
-  (define core (generate-union-core #:include-union? #t))
+(test-case "Union generator は型付け可能な Core 項を生成する"
+  (define core (generate-union-core))
   (check-true (redex-match? G2 c core))
+  (check-not-eq? (core-type-of core '() '()) 'ill-typed)
   (check-true (contains-union-form? core 'UnionInject))
   (check-true (contains-union-form? core 'UnionEliminate))
   (check-false (redex-match? G1gen g core))
@@ -58,14 +58,14 @@
   (check-true (contains-union-form? borrowed 'UnionInject))
   (check-true (contains-union-form? borrowed 'UnionEliminate)))
 
-(test-case "opt-in Union generator varies values, branches, and tag-preserving joins"
+(test-case "Union generator varies values, branches, and tag-preserving joins"
   (define limits (struct-copy bounds (read-bounds) [attempts 120]))
   (define generated
     (call-with-search-seed
      limits
      (lambda ()
        (for/list ([_ (in-range (bounds-attempts limits))])
-         (generate-union-core #:include-union? #t)))))
+         (generate-union-core)))))
   (define (union-let-and-eliminate? node)
     (match node
       [`(Let (,name const (Union ,_ ...))

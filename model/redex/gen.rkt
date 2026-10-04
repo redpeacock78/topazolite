@@ -267,67 +267,78 @@
                  [redex-pseudo-random-generator generator])
     (thunk)))
 
-;; Union の生成域は既定の g から分離し、opt-in の呼び出しだけで使う。
+;; Union は G2gen の表層文法には無いため、Core の property から直接使う。
 (define union-generation-types
   (list '(Union Int String)
         '(Union (Union Int Bool) String)
         '(Union (Record ((a Int imm))) (Union Bool String))))
 
-(define (generate-union-core #:include-union? [include-union? #f])
-  (and include-union?
-       (let ()
-         (define (choose choices)
-           (list-ref choices (random (length choices))))
-         (define (payload-for member)
-           (match member
-             ['Int (random 100000)]
-             ['String (format "union-~a" (random 100000))]
-             ['Bool `(Construct Bool ,(choose '(true false)))]
-             [`(Record ((a Int imm))) `(Rec ((a imm ,(random 100000))))]))
-         (define (inject type member)
-           (define normalized-type (normalize-type type))
-           (define normalized-member (normalize-type member))
-           `(UnionInject ,normalized-type ,normalized-member
-                         ,(payload-for normalized-member)))
-         (define (elimination-arms type)
-           (define members (union-members (normalize-type type)))
-           (define arms
-             (for/list ([member (in-list members)] [index (in-naturals)])
-               (define binder (string->symbol (format "union-payload-~a" index)))
-               (match member
-                 ['Int `(Int ,binder -> ,binder)]
-                 ['String `(String ,binder -> (Let (ignored const String) ,binder 0))]
-                 ['Bool `(Bool ,binder ->
-                               (Eliminate ,binder
-                                ((true () -> 1) (false () -> 0))))]
-                 [`(Record ((a Int imm)))
-                  `(,member ,binder -> (Proj ,binder a))])))
-           (if (zero? (random 2)) arms (reverse arms)))
-         (case (random 3)
-           [(0 1)
-            (define type (normalize-type (choose union-generation-types)))
-            (define member (choose (union-members type)))
-            (define value (inject type member))
-            (define arms (elimination-arms type))
-            (if (zero? (random 2))
-                `(UnionEliminate ,value ,arms)
-                `(Let (union-value const ,type) ,value
-                      (UnionEliminate union-value ,arms)))]
-           [else
-            (define left-type (normalize-type '(Union Int Bool)))
-            (define right-type (normalize-type '(Union String Bool)))
-            (define result-type
-              (normalize-type '(Union (Union Int Bool) (Union String Bool))))
-            (define boolean-arms
-              `((true () -> ,(inject left-type 'Int))
-                (false () -> ,(inject right-type 'String))))
-            (define selected-arms
-              (if (zero? (random 2)) boolean-arms (reverse boolean-arms)))
-            `(Let (union-value const ,result-type)
-                  (Eliminate (Construct Bool ,(choose '(true false)))
-                             ,selected-arms)
-                  (UnionEliminate union-value
-                                  ,(elimination-arms result-type)))]))))
+(define (generate-union-core #:embedded-count [embedded-count #f]
+                             #:literal-count [literal-count #f])
+  (define (choose choices)
+    (list-ref choices (random (length choices))))
+  (define (increment! counter)
+    (when counter (set-box! counter (add1 (unbox counter)))))
+  (define (embedded-int-core depth)
+    (match (elaboration-result (generate-term G2gen g depth))
+      [(list core 'Int '() '()) core]
+      [_ #f]))
+  (define (int-payload)
+    (or (let ([core (embedded-int-core 3)])
+          (and core (begin (increment! embedded-count) core)))
+        (begin
+          (increment! literal-count)
+          (random 100000))))
+  (define (payload-for member)
+    (match member
+      ['Int (int-payload)]
+      ['String (format "union-~a" (random 100000))]
+      ['Bool `(Construct Bool ,(choose '(true false)))]
+      [`(Record ((a Int imm))) `(Rec ((a imm ,(random 100000))))]))
+  (define (inject type member)
+    (define normalized-type (normalize-type type))
+    (define normalized-member (normalize-type member))
+    `(UnionInject ,normalized-type ,normalized-member
+                  ,(payload-for normalized-member)))
+  (define (elimination-arms type)
+    (define members (union-members (normalize-type type)))
+    (define arms
+      (for/list ([member (in-list members)] [index (in-naturals)])
+        (define binder (string->symbol (format "union-payload-~a" index)))
+        (match member
+          ['Int `(Int ,binder -> ,binder)]
+          ['String `(String ,binder -> (Let (ignored const String) ,binder 0))]
+          ['Bool `(Bool ,binder ->
+                        (Eliminate ,binder
+                         ((true () -> 1) (false () -> 0))))]
+          [`(Record ((a Int imm)))
+           `(,member ,binder -> (Proj ,binder a))])))
+    (if (zero? (random 2)) arms (reverse arms)))
+  (case (random 3)
+    [(0 1)
+     (define type (normalize-type (choose union-generation-types)))
+     (define member (choose (union-members type)))
+     (define value (inject type member))
+     (define arms (elimination-arms type))
+     (if (zero? (random 2))
+         `(UnionEliminate ,value ,arms)
+         `(Let (union-value const ,type) ,value
+               (UnionEliminate union-value ,arms)))]
+    [else
+     (define left-type (normalize-type '(Union Int Bool)))
+     (define right-type (normalize-type '(Union String Bool)))
+     (define result-type
+       (normalize-type '(Union (Union Int Bool) (Union String Bool))))
+     (define boolean-arms
+       `((true () -> ,(inject left-type 'Int))
+         (false () -> ,(inject right-type 'String))))
+     (define selected-arms
+       (if (zero? (random 2)) boolean-arms (reverse boolean-arms)))
+     `(Let (union-value const ,result-type)
+           (Eliminate (Construct Bool ,(choose '(true false)))
+                      ,selected-arms)
+           (UnionEliminate union-value
+                           ,(elimination-arms result-type)))]))
 
 (define (make-search-counts limits)
   (search-counts 0 0 (bounds-discard-limit limits)))

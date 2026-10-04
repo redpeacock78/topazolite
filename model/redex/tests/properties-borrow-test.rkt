@@ -33,29 +33,52 @@
 
 ;; 性質 8。生成した G2 項の到達可能な実行の上で、借用の生存が
 ;; 三条件を満たし、根の発生が静的側の借用要求と対応する。
+(define (union-borrow-eliminate-reached? configs)
+  (for/or ([before (in-list configs)]
+           [after (in-list (cdr configs))])
+    (and (contains-ready-borrowed-union-eliminate? (config-core before))
+         (not (contains-ready-borrowed-union-eliminate? (config-core after))))))
+
+(define (contains-ready-borrowed-union-eliminate? tree)
+  (match tree
+    [(or `(UnionEliminate (BorrowRef ,_ ,_ ,_) ,_)
+         `(UnionEliminate (BorrowMutRef ,_ ,_ ,_) ,_)) #t]
+    [(? list?) (ormap contains-ready-borrowed-union-eliminate? tree)]
+    [_ #f]))
+
 (define (run-borrow-search)
   (define limits (read-bounds))
   (define counters (make-bcounters))
   (define failures '())
   (define discarded 0)
   (define accepted 0)
+  (define union-attempted 0)
+  (define union-reached 0)
   (call-with-search-seed
    limits
    (lambda ()
      (for ([_i (in-range (bounds-attempts limits))])
-       (define term (gen-borrow-term (bounds-term-depth limits)))
+       (define union? (zero? (random 10)))
+       (define term (gen-borrow-term (bounds-term-depth limits)
+                                     #:include-union? union?))
+       (when union? (set! union-attempted (add1 union-attempted)))
        (match (prepare-borrow-term term)
          [(list 'ok config sidecar ir)
           (define outcome
             (check-borrow-execution config sidecar ir
                                     (bounds-fuel limits) counters))
+          (when (and union?
+                     (union-borrow-eliminate-reached?
+                      (execution-configs
+                       (bounded-trace-g2 config (bounds-fuel limits)))))
+            (set! union-reached (add1 union-reached)))
           (match outcome
             ['ok (set! accepted (add1 accepted))]
             ['discard (set! discarded (add1 discarded))]
             [(list 'fail reason detail)
              (set! failures (cons (list reason detail term) failures))])]
          ['discard (set! discarded (add1 discarded))]))))
-  (list accepted discarded failures counters))
+  (list accepted discarded failures counters union-attempted union-reached))
 
 (define search-result (run-borrow-search))
 
@@ -72,18 +95,11 @@
 (test-case "6 つのカウンタがすべて非零"
   (check-equal? (bcounters-zeros (fourth search-result)) '()))
 
-(define (union-borrow-eliminate-reached? configs)
-  (for/or ([before (in-list configs)]
-           [after (in-list (cdr configs))])
-    (and (contains-ready-borrowed-union-eliminate? (config-core before))
-         (not (contains-ready-borrowed-union-eliminate? (config-core after))))))
-
-(define (contains-ready-borrowed-union-eliminate? tree)
-  (match tree
-    [(or `(UnionEliminate (BorrowRef ,_ ,_ ,_) ,_)
-         `(UnionEliminate (BorrowMutRef ,_ ,_ ,_) ,_)) #t]
-    [(? list?) (ormap contains-ready-borrowed-union-eliminate? tree)]
-    [_ #f]))
+(test-case "借用探索の Union 項が分解規則へ到達する"
+  (check-true (positive? (fifth search-result)))
+  (check-true (positive? (sixth search-result)))
+  (printf "Borrow search: Union attempted=~a UnionEliminate=~a\n"
+          (fifth search-result) (sixth search-result)))
 
 (define (contains-form? tree form)
   (or (and (pair? tree) (eq? (first tree) form))
