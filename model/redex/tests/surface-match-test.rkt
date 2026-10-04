@@ -76,15 +76,22 @@
                                   "}\npred(succ(zero))")))
   (check-true (ok? "fn not(b: Bool) -> Bool {\n  match b { | true => false | false => true }\n}\nnot(true)")))
 
-(test-case "注釈付き束縛は match を check し、省略注釈の束縛は E-TYP-004 になる"
+(test-case "注釈付き束縛は match を check し、注釈なし match は synth する"
   (check-true (ok? (string-append color
                                   "const c = green\n"
                                   "const n: Int = match c { | red => 1 | green => 2 | leaf => 3 }\n"
                                   "n")))
-  (check-equal? (compile-code (string-append color
-                                             "const c = green\n"
-                                             "let n = match c { | red => 1 | green => 2 | leaf => 3 }\n"
-                                             "n"))
+  (define inferred
+    (compile (string-append color
+                            "const c = green\n"
+                            "let n = match c { | red => 1 | green => 2 | leaf => 3 }\n"
+                            "n")))
+  (check-true (compiled? inferred))
+  (check-equal? (compiled-type inferred) 'Int))
+
+(test-case "枝が期待型を要する注釈なし match は E-TYP-004 になる"
+  ;; some/none の型引数を決める期待型がないため、synth の事前検査で拒否する。
+  (check-equal? (compile-code "let n = match true { | true => some(1) | false => none }\nn")
                 "E-TYP-004"))
 
 (test-case "match の網羅性、枝の束縛子、scrutinee は既存診断を使う"
