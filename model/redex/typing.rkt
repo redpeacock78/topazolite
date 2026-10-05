@@ -2623,6 +2623,187 @@
   (unless (ownleaf-root? core)
     (fail key node)))
 
+;; RecRewrite の資源条件は、値が実際に OwnLeaf を運ぶ型だけを辿る。
+;; 関数型や借用型の payload は値自身の token を表さない。
+(define (resource-type? type)
+  (match type
+    [`(Owned ,_) #t]
+    [`(Record (,fields ...))
+     (for/or ([field (in-list fields)]) (resource-type? (second field)))]
+    [`(Union ,members ...)
+     (for/or ([member (in-list members)]) (resource-type? member))]
+    [`(Option ,inner) (resource-type? inner)]
+    [_ #f]))
+
+;; (total . under-Lam) の形で、name の束縛対応の自由出現を数える。
+;; core-children は名前の参照を子に含めない形もあるため、その形だけ明示する。
+(define (resource-variable-occurrences core name)
+  (define (sum-counts counts)
+    (cons (for/sum ([counts (in-list counts)]) (car counts))
+          (for/sum ([counts (in-list counts)]) (cdr counts))))
+  (define (reference-count reference shadowed? under-lam?)
+    (if (and (not shadowed?)
+             (eq? (peel-node reference) name))
+        (if under-lam? '(1 . 1) '(1 . 0))
+        '(0 . 0)))
+  (define (shadows? binders)
+    (for/or ([binder (in-list binders)])
+      (eq? (peel-bind binder) name)))
+  (let walk ([term (erase-core core)] [shadowed? #f] [under-lam? #f])
+    (define (child child-term)
+      (walk child-term shadowed? under-lam?))
+    (match term
+      [`(Let (,binder ,_ ...) ,bound ,body)
+       (sum-counts
+        (list (child bound)
+              (walk body (or shadowed? (eq? (peel-bind binder) name))
+                    under-lam?)))]
+      [`(Lam ,_ ,_ (,parameters ...) ,body)
+       (walk body (or shadowed? (shadows? parameters)) #t)]
+      [`(RecurVal ,_ ,function (,parameters ...) ,body)
+       (walk body (or shadowed?
+                      (shadows? (cons function parameters)))
+             under-lam?)]
+      [`(Recur ,_ ,function (,parameters ...) ,body ,continuation)
+       (sum-counts
+        (list (walk body (or shadowed?
+                             (shadows? (cons function parameters)))
+                    under-lam?)
+              (walk continuation (or shadowed?
+                                    (eq? (peel-bind function) name))
+                    under-lam?)))]
+      [`(Eliminate ,scrutinee (,branches ...))
+       (sum-counts
+        (cons (child scrutinee)
+              (for/list ([branch (in-list branches)])
+                (match branch
+                  [`(,_ (,parameters ...) -> ,body)
+                   (walk body (or shadowed? (shadows? parameters))
+                         under-lam?)]))))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (sum-counts
+        (cons (child scrutinee)
+              (for/list ([branch (in-list branches)])
+                (match branch
+                  [`(,_ ,binder -> ,body)
+                   (walk body (or shadowed?
+                                  (eq? (peel-bind binder) name))
+                         under-lam?)]))))]
+      [`(RecRewrite ,input (,entries ...))
+       (sum-counts
+        (cons (child input)
+              (for/list ([entry (in-list entries)])
+                (match entry
+                  [`(,_ ,binder ,_ ,_ ,_ ,body)
+                   (walk body (or shadowed?
+                                  (eq? (peel-bind binder) name))
+                         under-lam?)]))))]
+      [`(Handle ,_ (,binder -> ,handler) ,body)
+       (sum-counts
+        (list (walk handler (or shadowed?
+                               (eq? (peel-bind binder) name))
+                    under-lam?)
+              (child body)))]
+      [`(Move ,reference) (reference-count reference shadowed? under-lam?)]
+      [`(Borrow ,reference) (reference-count reference shadowed? under-lam?)]
+      [`(BorrowMut ,reference)
+       (reference-count reference shadowed? under-lam?)]
+      [`(BorrowAt ,_ (Own ,owner ,_) ,reference)
+       (sum-counts (list (reference-count owner shadowed? under-lam?)
+                         (reference-count reference shadowed? under-lam?)))]
+      [`(BorrowMutAt ,_ (Own ,owner ,_) ,reference)
+       (sum-counts (list (reference-count owner shadowed? under-lam?)
+                         (reference-count reference shadowed? under-lam?)))]
+      [`(ReborrowAt ,_ (Own ,owner ,_) ,operand)
+       (sum-counts (list (reference-count owner shadowed? under-lam?)
+                         (child operand)))]
+      [`(ProjBorrowAt ,_ (Own ,owner ,_) ,operand ,_)
+       (sum-counts (list (reference-count owner shadowed? under-lam?)
+                         (child operand)))]
+      [`(Reassign ,target ,value)
+       (sum-counts (list (reference-count target shadowed? under-lam?)
+                         (child value)))]
+      [(? symbol? variable)
+       (if (redex-match? G2 x variable)
+           (reference-count variable shadowed? under-lam?)
+           '(0 . 0))]
+      [_ (sum-counts (map child (core-children term)))])))
+
+(define (core-contains-ownleaf? core)
+  (let walk ([term (erase-core core)])
+    (match term
+      [`(OwnLeaf ,_) #t]
+      [_ (for/or ([child (in-list (core-children term))])
+           (walk child))])))
+
+(define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
+  (match (infer input (enter-child Λ 0) Ψ
+                environment places callables fail)
+    [(list `(Record ,row) input-row input-psi)
+     (define labels
+       (for/list ([entry (in-list entries)]) (peel-lbl (first entry))))
+     (when (check-duplicates labels)
+       (fail 'duplicate-record-label core))
+     (define normalized-entries
+       (for/list ([entry (in-list entries)])
+         (match-define (list label binder tau output-mode output-type body) entry)
+         (list (peel-lbl label) (peel-bind binder) (peel-ty tau)
+               output-mode (peel-ty output-type) body)))
+     (define replacements '())
+     (define final-psi
+       (for/fold ([current-psi input-psi])
+                 ([entry (in-list normalized-entries)]
+                  [index (in-naturals)])
+         (match-define (list label binder tau output-mode output-type body) entry)
+         (define field (assoc label row))
+         (unless field (fail 'unknown-record-label core))
+         (match-define (list input-type input-mode)
+           (field-row-lookup row label))
+         (unless (and (type-equiv? tau input-type)
+                      (memq output-mode '(imm mut))
+                      (or (eq? output-mode input-mode)
+                          (eq? output-mode 'imm)))
+           (fail 'ill-typed core))
+         (cond
+           [(owned-type? tau)
+            (unless (and (type-equiv? tau output-type)
+                         (eq? (peel-node body) binder))
+              (fail 'ill-typed core))
+            (set! replacements
+                  (append replacements
+                          (list (list label output-type output-mode))))
+            current-psi]
+           [else
+            (define occurrences
+              (resource-variable-occurrences body binder))
+            (when (and (resource-type? tau)
+                       (not (and (= (car occurrences) 1)
+                                 (zero? (cdr occurrences)))))
+              (fail 'ill-typed core))
+            (when (core-contains-ownleaf? body)
+              (fail 'ill-typed core))
+            (match (check-as/full body output-type
+                                  (enter-child Λ (add1 index))
+                                  current-psi
+                                  (extend '() (list binder) (list tau))
+                                  places callables fail)
+              [(list body-row body-psi _)
+               (unless (row=? body-row '())
+                 (fail 'ill-typed core))
+               (set! replacements
+                     (append replacements
+                             (list (list label output-type output-mode))))
+               body-psi])])))
+     (list `(Record
+             ,(for/list ([field (in-list row)])
+                (match (assoc (first field) replacements)
+                  [(list _ output-type output-mode)
+                   (append (list (first field) output-type output-mode)
+                           (drop field 3))]
+                  [_ field])))
+           input-row final-psi)]
+    [_ (fail 'ill-typed core)]))
+
 (define (infer/body core Λ Ψ environment places callables fail)
   (match (peel-node core)
     [(? integer?) (list 'Int '() Ψ)]
@@ -2758,6 +2939,10 @@
      (unless (owned-type? payload-type)
        (fail 'ill-typed core))
      (list payload-type payload-row payload-psi)]
+
+    [`(RecRewrite ,input (,entries ...))
+     (infer-rec-rewrite core input entries Λ Ψ
+                        environment places callables fail)]
 
     [`(Rec (,fields ...))
      (define plain-fields
