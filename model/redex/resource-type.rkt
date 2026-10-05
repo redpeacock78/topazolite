@@ -10,6 +10,8 @@
          owned-type?)
 
 ;; 型付けと実行時が共有する資源型の構成子表。
+;; 関数値は token を運ばないため、NFn の署名だけは辿らない。
+;; 未知の型と schema の無い Data は、型付けでは fail-closed に資源ありとする。
 ;; schema が無い Data の扱いだけは各入口の契約に応じて呼び分ける。
 (define (resource-type/missing type on-missing-schema)
   (let walk ([type type] [visited (set)])

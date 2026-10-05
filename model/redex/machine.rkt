@@ -193,8 +193,9 @@
   [(unique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
 
-;; 入力値の欄順で RecRewriteOpen の作業列を作る。Owned root の恒等 entry は
-;; 値を直接移し、Absent は変換本体を評価せずに新しい印だけを持たせる。
+;; 入力値の欄順で RecRewriteOpen の作業列を作る。
+;; present な列挙欄は値を変換本体へ直接置換し、Owned root の恒等 entry は値をそのまま移す。
+;; Absent は変換本体を評価せず、新しい印だけを持たせる。
 (define (rec-rewrite-open/proc fields entries)
   (define labels (map first fields))
   (define entry-labels (map first entries))
@@ -216,7 +217,7 @@
                   (list label output-mode `(Absent ,output-type))]
                  [else
                   (list label output-mode
-                        `(Let (,binder ,input-type) ,value ,body))])])))))
+                        (term (substitute ,body ,binder ,value)))])])))))
 
 (define-metafunction G2m
   rec-rewrite-open : ((label m v) ...)

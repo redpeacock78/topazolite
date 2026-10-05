@@ -2619,9 +2619,6 @@
   (unless (ownleaf-root? core)
     (fail key node)))
 
-(module+ rec-rewrite-test-support
-  (provide resource-type?))
-
 ;; 資源を持つ binder は、token を結果へ一度だけ運べる文脈の穴にだけ置く。
 ;; siblings は binder-aware な自由変数集合で個別に検査する。
 (define (linear-hole? core name)

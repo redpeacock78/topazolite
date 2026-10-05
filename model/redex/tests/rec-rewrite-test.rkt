@@ -92,6 +92,18 @@
     [`(pcfg ,value ,_heap ,_states ,_trace) value]
     [other (error 'lowered-core-result "unexpected result: ~s" other)]))
 
+(define (tagged-pr-trace initial)
+  (let loop ([current initial] [rules '()] [fuel 40])
+    (when (zero? fuel)
+      (error 'tagged-pr-trace "還元の上限に達した: ~s" current))
+    (match (apply-reduction-relation/tag-with-names -->pr/rules current)
+      ['() (list current rules)]
+      [(list (list rule next))
+       (loop next
+             (append rules (list (string->symbol rule)))
+             (sub1 fuel))]
+      [steps (error 'tagged-pr-trace "1 ステップを期待したが複数あった: ~s" steps)])))
+
 (define (lowered-value-result value)
   (define-values (status target) (lower-value value 'racket-cs))
   (check-eq? status 'ok (format "lower-value failed: ~s" target))
@@ -290,9 +302,7 @@
   (check-equal? (config-core (second configs))
                 '(RecRewriteOpen
                   ((owned imm (OwnedLeaf (tok 11) (resource 11)))
-                   (number imm
-                           (Let (x Int) 1
-                             (UnionInject (Union Bool Int) Int x))))))
+                   (number imm (UnionInject (Union Bool Int) Int 1)))))
   (check-equal? (config-core (last configs))
                 '(Rec ((owned imm (OwnedLeaf (tok 11) (resource 11)))
                       (number imm (UnionVal (Union Bool Int) Int 1))))))
@@ -314,7 +324,37 @@
   (check-equal? (config-core (last configs))
                 '(Rec ((owned imm (OwnedLeaf (tok 12) (resource 12))) (number imm 1)))))
 
-(test-case "入れ子の RecRewrite は一時 Let で OwnedLeaf を一度だけ運ぶ"
+(test-case "資源型の entry は Open で一時 Let を作らず値を直接置換する"
+  (define input-value
+    '(Rec ((box imm (Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))))))))
+  (define inner-type (normalize-type '(Record ((owned (Owned Res) imm)))))
+  (define core
+    `(RecRewrite ,input-value ((box x ,inner-type imm ,inner-type x))))
+  (define-values (configs rules)
+    (apply values
+           (g2-trace `(cfg ,core () () (((tok 13) Available)) ()))))
+  (check-false (member 'R-Let rules))
+  (check-equal? (config-core (last configs)) input-value)
+  (check-rec-rewrite-lowering core))
+
+(test-case "PRecRewrite は entry を受け渡す PLet を加えない"
+  (define input-value
+    '(Rec ((box imm (Rec ((owned imm (OwnedLeaf (tok 14) (resource 14)))))))))
+  (define inner-type (normalize-type '(Record ((owned (Owned Res) imm)))))
+  (define core
+    `(RecRewrite ,input-value ((box x ,inner-type imm ,inner-type x))))
+  (define-values (status target) (lower core 'racket-cs))
+  (check-eq? status 'ok)
+  (define trace (tagged-pr-trace `(pcfg ,target () () ())))
+  (define final-config (first trace))
+  (define rules (second trace))
+  (check-false (member 'R-PR-Let rules))
+  (check-equal? final-config
+                `(pcfg (PRec ((,(label-code 'box)
+                               (PRec ((,(label-code 'owned) (PResource 14)))))))
+                       () () ())))
+
+(test-case "入れ子の RecRewrite は直接置換で OwnedLeaf を一度だけ運ぶ"
   (define inner-input
     (normalize-type '(Record ((owned (Owned Res) imm) (number Int imm)))))
   (define inner-output
@@ -339,17 +379,18 @@
     (apply values
            (g2-trace `(cfg ,core () () (((tok 13) Available)) ()))))
   (check-valid-token-trace configs expected '() '(13))
-  (check-not-false (member 'R-Let rules))
+  (check-false (member 'R-Let rules))
   (check-false (member 'R-LetOwned rules))
   (check-false (member 'R-Move rules))
   (check-true
    (match (config-core (second configs))
-     [`(RecRewriteOpen ((box imm (Let (,name ,binding-type) ,bound ,body))))
-      (and (type-equiv? binding-type inner-input)
-           (contains-owned-leaf? bound)
-           (match body [`(RecRewrite ,_ ,_) #t] [_ #f]))]
+     [`(RecRewriteOpen ((box imm (RecRewrite ,opened-input ,_))))
+      (and (equal? opened-input
+                   '(Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))
+                          (number imm 1))))
+           (contains-owned-leaf? opened-input))]
      [_ #f])
-   "Open は OwnedLeaf を含む Record を一時 Let に置く")
+   "Open は欄の値を RecRewrite の入力へ直接置換する")
   (check-equal? (config-core (last configs))
                 '(Rec ((box imm
                        (Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))

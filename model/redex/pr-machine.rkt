@@ -102,14 +102,15 @@
   [(punique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
 
-;; 列挙した欄だけを一時 Let へ展開する。入力 PRec に無い optional 欄は
-;; 走査されないため、出力にも現れない。
+;; 入力 PRec の欄を走査し、present な列挙欄では値を変換本体へ直接置換する。
+;; 入力に無い optional 欄は走査されないため、出力にも現れない。
 (define (prec-rewrite-fields fields entries)
   (for/list ([field (in-list fields)])
     (match field
       [`(,label ,value)
        (match (assoc label entries)
-         [(list _ px body) (list label `(PLet ,px ,value ,body))]
+         [(list _ px body)
+          (list label (term (substitute ,body ,px ,value)))]
          [_ field])])))
 
 ;; machine.rkt:157 から 184 の table-ref / table-set / fresh-place /
