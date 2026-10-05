@@ -287,6 +287,7 @@ record の sub は、sup が要求する field をすべて満たす限り余剰
 `mut` field は読みと書きの双方に使われるため、`mut` を要求する位置では field 型が `type-equiv?` で一致する場合だけ互換とする。
 `imm` を要求する位置には `mut` field を渡せる。 [REQ: ROW-005]
 書き込み能力を捨てる方向であり、その位置からは読み出しだけが可能なため、§3.5 の降格した field を構成できる。
+`Reassign` の slot も値を imm 欄へ渡す位置なので、実際の値に mut 欄があっても代入できるが、slot の宣言型と能力は変わらない。
 一方だけが `Owned` である field 型は互換でなく、双方が `Owned` の場合も内部型を不変に照合する。
 `NFn` field の照合は §6.3 が定める（`imm` は関数 variance、`mut` は不変一致）。
 

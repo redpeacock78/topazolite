@@ -1854,7 +1854,8 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   Union 型の値を非 Union 型の位置へ渡すことはできない。
   record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
 - record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
-  `Reassign` は slot の宣言型に対して `tag-narrowing?` を使い、余剰欄を落とす narrowing を許さない。
+  `Reassign` は `reassign-narrowing?` を使い、slot の宣言型と欄の集合および optional の印を保ちながら、期待が `imm` の欄に限り実際の `mut` を許す。
+  期待が `mut` の欄と `Owned` などの wrapper の内側は `tag-narrowing?` のままであり、余剰欄を落とす narrowing は許さない。
   synth 位置の枝合流は tag 保存の上界を使い、tag の無い値から Union を作らない。
 - `tag-narrowing?` は Union の成分集合を狭める関係であり、Union の成分型の内部へは再帰しない。
   Record では欄の集合、可変性、optional の印を保って各欄の型へ再帰する。

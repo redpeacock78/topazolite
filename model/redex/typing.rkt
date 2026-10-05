@@ -2407,7 +2407,8 @@
   (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
 
 ;; spec §7.1 §7.2。Reassign は固定された slot の中身を差し替える。slot の型は
-;; binding の宣言で決まり、再代入で変わらない。tag-narrowing? で照合する。
+;; binding の宣言で決まり、再代入で変わらない。imm 欄への mut 欄の代入を許す
+;; reassign-narrowing? で値を照合する。
 ;; 一般の compat? は余剰 Owned を落としうる。
 (define (infer-reassign core target value Λ Ψ environment places callables fail)
   (define τ_slot
@@ -2429,7 +2430,7 @@
        type]))
   (match-define (list τ_value ε_value Ψ_1)
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
-  (unless (tag-narrowing? τ_value τ_slot)
+  (unless (reassign-narrowing? τ_value τ_slot)
     (fail 'reassign-type-mismatch core τ_slot τ_value))
   (unless (storage-ok? τ_slot)
     (fail 'mutable-callable-storage-requires-partial core τ_slot))

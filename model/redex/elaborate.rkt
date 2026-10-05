@@ -1928,7 +1928,7 @@
               (union-inject (judgment-core result) value-type slot-type
                             s propositions
                             #:no-member-key 'reassign-type-mismatch)]
-             [(tag-narrowing? value-type slot-type) (judgment-core result)]
+             [(reassign-narrowing? value-type slot-type) (judgment-core result)]
              [else (reject s 'reassign-type-mismatch slot-type value-type)]))
          (unless (storage-ok? slot-type)
            (reject s 'mutable-callable-storage-requires-partial slot-type))

@@ -4,6 +4,7 @@
          racket/match
          "../region.rkt"
          "../borrow.rkt"
+         "../compat.rkt"
          "../typing.rkt"
          "../machine.rkt")
 
@@ -22,6 +23,22 @@
   (if (and (member 'Mutation row) (not (has-mutation? core)))
       (remove 'Mutation row)
       row))
+
+(define (result-key core [environment '()])
+  (match (type-of/raw core '() '() environment (empty-region-ctx))
+    [`(fail ,key ,_ ,_ ...) key]
+    [`(ok ,_) 'ok]))
+
+(define (config-control config)
+  (match config [`(cfg ,core ,_ ...) core] [_ #f]))
+
+(define (heap-place-value config place)
+  (match config
+    [`(cfg ,_ ,heap ,_ ...)
+     (match (assoc place heap)
+       [(list _ value _ ...) value]
+       [_ #f])]
+    [_ #f]))
 
 (define (contains-form? tree form)
   (or (and (pair? tree) (eq? (first tree) form))
@@ -46,11 +63,13 @@
                   [_ #f]))))]
     [_ #f]))
 
-(define (typed-trace core #:skip-borrow-allocation-prefix? [skip-prefix? #f])
+(define (typed-trace core
+                     #:skip-borrow-allocation-prefix? [skip-prefix? #f]
+                     #:callables [callables '()])
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (define result
-    (type-of/raw annotated '() '() '()
+    (type-of/raw annotated '() callables '()
                  (region-ctx ir '() (hash) (hash))))
   (match result
     [`(ok (,expected ,row))
@@ -64,8 +83,13 @@
             (loop (first next) (sub1 remaining) (cons config seen))]
            [else (fail (format "nondeterministic machine step: ~s" next))])))
      (define (config-valid? config)
-       (config-ok? config '() expected
-                   (current-row (second config) row)))
+       (with-handlers
+           ([exn:fail?
+             (lambda (problem)
+               (error 'typed-trace "config ~s: ~a"
+                      config (exn-message problem)))])
+         (config-ok? config callables expected
+                     (current-row (second config) row))))
      (if skip-prefix?
          (let ([first-valid
                 (for/first ([config (in-list configs)]
@@ -112,7 +136,128 @@
     (filter (lambda (config) (pair? (config-declared-types config))) configs))
   (check-true (>= (length recorded) 2))
   (for ([config (in-list recorded)])
-    (check-equal? (config-declared-types config) `((0 ,record-type)))))
+    (check-equal? (config-declared-types config) `((0 ,record-type))))
+  (define before-index
+    (for/first ([config (in-list configs)]
+                [index (in-naturals)]
+                #:when (and (equal? (heap-place-value config 0)
+                                    '(Rec ((a imm 1))))
+                            (contains-form? (config-control config) 'Reassign)))
+      index))
+  (check-not-false before-index)
+  (when before-index
+    (define after
+      (for/first ([config (in-list (drop configs (add1 before-index)))]
+                  #:when (equal? (heap-place-value config 0)
+                                 '(Rec ((a imm 2)))))
+        config))
+    (check-not-false after)
+    (check-equal? (heap-place-value (list-ref configs before-index) 0)
+                  '(Rec ((a imm 1))))
+    (when after
+      (check-equal? (heap-place-value after 0) '(Rec ((a imm 2))))))
+  (check-equal? (match _final [`(cfg ,value ,_ ...) value] [_ #f])
+                '(Rec ((a imm 2)))))
+
+(test-case "Reassign の四つの束縛境界で再型付けを保つ"
+  (define union-type `(Union ,record-type Bool))
+  (define callable-id 'reassign-mut-boundary)
+  (define callable-type
+    `(NFn (,record-type) Unit () (Mutation) () User))
+  (define cores
+    (list
+     `(Scope ()
+        (Let (m mut ,record-type) (Rec ((a imm 1)))
+          (Let (s const ,record-type) (Rec ((a mut 2)))
+            (Let (written let Unit) (Reassign m s) m))))
+     `(Scope ()
+        (Let (m mut ,record-type) (Rec ((a imm 1)))
+          (Let (called let Unit)
+            (Apply (Lam User ,callable-id (s) (Reassign m s))
+                   (Rec ((a mut 2))))
+            m)))
+     `(Scope ()
+        (Let (m mut ,record-type) (Rec ((a imm 1)))
+          (Eliminate
+           (Construct (Option ,record-type) some (Rec ((a mut 2))))
+           ((some (s) -> (Let (written let Unit) (Reassign m s) m))
+            (none () -> m)))))
+     `(Scope ()
+        (Let (m mut ,record-type) (Rec ((a imm 1)))
+          (UnionEliminate
+           (UnionInject ,union-type ,record-type (Rec ((a mut 2))))
+           ((,record-type s -> (Let (written let Unit) (Reassign m s) m))
+            (Bool b -> m)))))))
+  (for ([core (in-list cores)] [index (in-naturals)])
+    (define callables (if (= index 1) `((,callable-id ,callable-type)) '()))
+    (define-values (type row configs final)
+      (typed-trace core #:callables callables))
+    (check-equal? type record-type (format "boundary ~a type" index))
+    (check-not-false (member 'Mutation row)
+                     (format "boundary ~a mutation row" index))
+    (check-true (andmap (lambda (config)
+                          (config-ok? config callables type
+                                      (current-row (second config) row)))
+                        configs)
+                (format "boundary ~a config validity" index))
+    (check-equal? (match final [`(cfg ,value ,_ ...) value] [_ #f])
+                  '(Rec ((a mut 2)))
+                  (format "boundary ~a final value" index))))
+
+(test-case "Reassign は imm 欄へ mut 欄の値を代入できる"
+  (define core
+    `(Scope ()
+       (Let (m mut ,record-type) (Rec ((a imm 1)))
+         (Reassign m (Rec ((a mut 2)))))))
+  (define-values (type row _configs _final) (typed-trace core))
+  (check-equal? type 'Unit)
+  (check-not-false (member 'Mutation row)))
+
+(test-case "Reassign は mut 欄への imm 欄と欄構造の違いを拒む"
+  (define mut-record-type '(Record ((a Int mut))))
+  (define base-env `((m ,mut-record-type mut)))
+  (check-equal?
+   (result-key '(Reassign m (Rec ((a imm 2)))) base-env)
+   'reassign-type-mismatch "mut slot type mismatch")
+  (check-equal?
+   (result-key '(Reassign m (Rec ((a imm 2) (b imm 3)))) base-env)
+   'reassign-type-mismatch "extra field")
+  (check-equal?
+   (result-key
+    '(Reassign m (Rec ((a imm 2))))
+    '((m (Record ((a Int imm opt))) mut)))
+   'reassign-type-mismatch "optional mismatch"))
+
+(test-case "Reassign の mut から imm への縮小は入れ子の imm 欄でも再帰する"
+  (define nested-imm
+    '(Record ((a (Record ((c Int imm))) imm))))
+  (check-equal?
+   (result-key '(Reassign m (Rec ((a imm (Rec ((c mut 2)))))))
+               `((m ,nested-imm mut)))
+   'ok)
+  (define outer-mut
+    '(Record ((a (Record ((c Int imm))) mut))))
+  (check-equal?
+   (result-key '(Reassign m (Rec ((a mut (Rec ((c mut 2)))))))
+               `((m ,outer-mut mut)))
+   'reassign-type-mismatch))
+
+(test-case "reassign-narrowing? は wrapper の不変性と Union narrowing を保つ"
+  (check-false
+   (reassign-narrowing? '(Owned (Record ((a Int mut))))
+                        '(Owned (Record ((a Int imm))))))
+  (check-true (reassign-narrowing? '(Union Int Bool)
+                                   '(Union Int (Union String Bool))))
+  (check-false (reassign-narrowing? '(Union Int (Union String Bool))
+                                    '(Union Int Bool))))
+
+(test-case "Reassign 専用の緩和は tag narrowing と tag compatibility を変えない"
+  (check-false
+   (tag-narrowing? '(Record ((a Int mut)))
+                   '(Record ((a Int imm)))))
+  (check-true
+   (tag-compat? '(Record ((a Int mut)))
+                '(Record ((a Int imm))))))
 
 (test-case "proj-borrow-mut は runtime の欄印より宣言型を優先する"
   (check-equal?

@@ -7,7 +7,8 @@
          "search.rkt"
          "type-equiv.rkt")
 
-(provide compat? tag-compat? tag-narrowing? check-compat-return)
+(provide compat? tag-compat? tag-narrowing? reassign-narrowing?
+         check-compat-return)
 
 ;; 部分型の不変位置では NFn の O を比較しない。
 ;; O 以外の型構造は type-equiv? のまま保ち、Owned / BorrowedMut / fallback
@@ -157,6 +158,41 @@
           (and (proposition-equiv? actual-proposition expected-proposition)
                (tag-narrowing? actual-payload expected-payload))]
          [(_ _) (compat-type-equiv? a e)])))
+
+;; Reassign の値の照合。期待が imm の欄に限り実際の mut を許す。
+;; 欄の集合と optional の印、期待が mut の欄、Owned などの wrapper は
+;; 従来の tag-narrowing? の制約を保つ。
+(define (reassign-narrowing? actual expected)
+  (define a (normalize-type actual))
+  (define e (normalize-type expected))
+  (and a e
+       (match* (a e)
+         [(`(Record ,actual-row) `(Record ,expected-row))
+          (and (= (length actual-row) (length expected-row))
+               (for/and ([field (in-list expected-row)])
+                 (match field
+                   [(list label type 'imm _ ...)
+                    (define actual-field (assoc label actual-row))
+                    (match (field-row-lookup actual-row label)
+                      [(list actual-type actual-mutability)
+                       (and actual-field
+                            (memq actual-mutability '(imm mut))
+                            (eq? (field-presence actual-field)
+                                 (field-presence field))
+                            (reassign-narrowing? actual-type type))]
+                      [_ #f])]
+                   [(list label type 'mut _ ...)
+                    (define actual-field (assoc label actual-row))
+                    (match (field-row-lookup actual-row label)
+                      [(list actual-type actual-mutability)
+                       (and actual-field
+                            (eq? actual-mutability 'mut)
+                            (eq? (field-presence actual-field)
+                                 (field-presence field))
+                            (tag-narrowing? actual-type type))]
+                      [_ #f])]
+                   [_ #f])))]
+         [(_ _) (tag-narrowing? a e)])))
 
 ;; 通常の互換と tag 保存互換で再帰だけを切り替え、既存の compat? は保つ。
 (define (compat?/impl/tag tag-mode? sub sup gamma-pc region-relation)
