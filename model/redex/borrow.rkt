@@ -641,6 +641,23 @@
     [`(UnionVal ,_ ,member-type ,payload)
      (define entry (recur payload))
      (cons (car entry) (hash (member-key member-type) entry))]
+    [`(RecRewrite ,input ,entries)
+     (define input-entry (recur input))
+     (define input-ws (car input-entry))
+     ;; RecRewriteOpen は入力の borrow capability を各 entry の一時 binder へ
+     ;; 保守的に伝え、出力側で作る capability と合併する。record の欄別表は
+     ;; Rec の既存契約どおり作らない。
+     (define entry-ws
+       (for/list ([entry (in-list entries)])
+         (match entry
+           [(list _ binder _ _ _ body)
+            (define name (peel-bind binder))
+            (if (eq? (peel-node body) name)
+                (set)
+                (car (recur body (hash-set locals name (only input-ws)))))])))
+     (cons (for/fold ([all input-ws]) ([ws (in-list entry-ws)])
+             (set-union all ws))
+           #f)]
     ;; R-RegionApp は包みを剥がすだけで値を変えない。関数の位置が RegionLam
     ;; であればその本体の表をそのまま通す。ws は借用を作らないため空である。
     ;; region-lam-parts は span の有無の両方に対応する。

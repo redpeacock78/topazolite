@@ -128,6 +128,22 @@
   (check-true
    (core-types-normal? '(Let (x let Int) 1 x))))
 
+(test-case "core-types-normal? は RecRewrite の入力・出力型と本体を辿る"
+  (define good
+    '(RecRewrite (Rec ((a imm 1))) ((a x Int imm (Union Bool Int) x))))
+  (define bad-input-type
+    '(RecRewrite (Rec ((a imm 1)))
+                 ((a x (Union Int Int) imm Int x))))
+  (define bad-output-type
+    '(RecRewrite (Rec ((a imm 1)))
+                 ((a x Int imm (Union Int Int) x))))
+  (define bad-body
+    '(RecRewrite (Rec ((a imm 1)))
+                 ((a x Int imm Int (Let (y (Union Int Int)) 1 y)))))
+  (check-true (core-types-normal? good))
+  (for ([bad (in-list (list bad-input-type bad-output-type bad-body))])
+    (check-false (core-types-normal? bad))))
+
 (test-case "core-types-normal? rejects a residual Intersection"
   (check-false
    (core-types-normal?

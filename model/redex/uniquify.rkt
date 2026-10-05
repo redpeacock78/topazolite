@@ -79,6 +79,18 @@
        `(Let ,span (,(first renamed) ,type)
              ,bound* ,(walk extended body))]
 
+      ;; RecRewrite の各 entry の束縛子は対応する c だけを束縛する。
+      [`(RecRewrite ,span ,input (,entries ...))
+       (define input* (walk environment input))
+       `(RecRewrite ,span ,input*
+                    ,(for/list ([entry (in-list entries)])
+                       (match entry
+                         [`(,label ,binder ,input-type ,mode ,output-type ,body)
+                          (define-values (renamed extended)
+                            (bind-all environment (list binder)))
+                          `(,label ,(first renamed) ,input-type ,mode
+                                   ,output-type ,(walk extended body))])))]
+
       ;; UnionEliminate の枝は 1 個の束縛子を本体だけで使う。
       [`(,span ,type ,binder -> ,body)
        #:when (binder-form? binder)

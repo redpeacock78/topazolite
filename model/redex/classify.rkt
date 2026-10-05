@@ -244,6 +244,15 @@
        (andmap (lambda (field)
                  (walk (third field) environment target-visible?))
                fields)]
+      [`(RecRewrite ,input ,entries)
+       (and (walk input environment target-visible?)
+            (for/and ([entry (in-list entries)])
+              (match entry
+                [`(,_ ,name ,type ,_ ,_ ,body)
+                 (walk body
+                       (extend environment (list name) (list type))
+                       (and target-visible? (not (eq? name target))))]
+                [_ #f])))]
       [`(Proj ,record ,_)
        (walk record environment target-visible?)]
       [`(ProjOpt ,_ ,record ,_)
@@ -411,6 +420,15 @@
         (map (lambda (field)
                (walk (third field) target-visible?))
              fields))]
+      [`(RecRewrite ,input ,entries)
+       (combine-uses
+        (cons (walk input target-visible?)
+              (for/list ([entry (in-list entries)])
+                (match entry
+                  [`(,_ ,name ,_ ,_ ,_ ,body)
+                   (walk body
+                         (and target-visible? (not (eq? name target))))]
+                  [_ (uses #f #f '())]))))]
       [`(Proj ,record ,_)
        (walk record target-visible?)]
       [`(ProjOpt ,_ ,record ,_)
@@ -581,6 +599,17 @@
                  (walk (third field)
                        decomposable strict target-visible?))
                fields)]
+      [`(RecRewrite ,input ,entries)
+       (and (walk input decomposable strict target-visible?)
+            (for/and ([entry (in-list entries)])
+              (match entry
+                [`(,_ ,name ,_ ,_ ,_ ,body)
+                 ;; RecRewrite は欄を移すだけで小さくしない。
+                 (walk body
+                       (remove-bound (list name) decomposable)
+                       (remove-bound (list name) strict)
+                       (and target-visible? (not (eq? name target))))]
+                [_ #f])))]
       [`(Proj ,record ,_)
        (walk record decomposable strict target-visible?)]
       [`(ProjOpt ,_ ,record ,_)
@@ -862,6 +891,9 @@
                  (guarded-body? target parameter-types observed-types
                                 (first context) (second context)
                                 callables))))]
+    [`(RecRewrite ,_ ,_)
+     ;; 欄の移送は guarded recursion の境界ではない。
+     #f]
     [_ #f]))
 
 (define (guarded? core environment callables)

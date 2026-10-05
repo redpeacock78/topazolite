@@ -44,6 +44,14 @@
     [`(Let ,_s (,b ,_bmode ,_ts) ,c_1 ,c_2)
      (append (free-var-nodes c_1 bound)
              (free-var-nodes c_2 (extend bound (list b))))]
+    [`(RecRewrite ,_s ,input (,entries ...))
+     (append (free-var-nodes input bound)
+             (append-map
+              (lambda (entry)
+                (match entry
+                  [`(,_label ,binder ,_input-type ,_mode ,_output-type ,body)
+                   (free-var-nodes body (extend bound (list binder)))]))
+              entries))]
     [`(,_s ,_K ,binds -> ,c)
      #:when (and (list? binds) (andmap bind? binds))
      (free-var-nodes c (extend bound binds))]
@@ -130,6 +138,15 @@
         (define-values (binds* bodies* σ*) (open-scope (list b) (list c_2) σ))
         `(Let ,s (,(car binds*) ,bmode ,ts)
               ,(subst c_1 σ) ,(subst (car bodies*) σ*))]
+       [`(RecRewrite ,s ,input (,entries ...))
+        `(RecRewrite ,s ,(subst input σ)
+                     ,(for/list ([entry (in-list entries)])
+                        (match entry
+                          [`(,label ,binder ,input-type ,mode ,output-type ,body)
+                           (define-values (binders* bodies* σ*)
+                             (open-scope (list binder) (list body) σ))
+                           `(,label ,(car binders*) ,input-type ,mode
+                                    ,output-type ,(subst (car bodies*) σ*))])))]
        [`(,s ,K ,binds -> ,c)
         #:when (and (list? binds) (andmap bind? binds))
         (define-values (binds* bodies* σ*) (open-scope binds (list c) σ))

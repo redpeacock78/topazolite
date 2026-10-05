@@ -151,6 +151,7 @@
          (Discharge (ProofRep O φ) c)
          (UnionInject τ τ c)
          (UnionEliminate c (ubr ...))
+         (RecRewrite c ((label x τ m τ c) ...))
          (Borrow w)
          (BorrowMut w)
          (Reborrow c)
@@ -178,6 +179,7 @@
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x)
+  (label x τ m τ c #:refers-to x)
   (τ x -> c #:refers-to x))
 
 (define-extended-language G1m G1
@@ -276,6 +278,7 @@
          (Discharge (ProofRep O φ) c)
          (UnionInject τ τ c)
          (UnionEliminate c (ubr ...))
+         (RecRewrite c ((label x τ m τ c) ...))
          (Borrow w)
          (BorrowMut w)
          (Reborrow c)
@@ -313,6 +316,7 @@
          (Rec ((label m v) ... (label m F) (label m c) ...))
          (UnionInject τ τ F)
          (UnionEliminate F (ubr ...))
+         (RecRewrite F ((label x τ m τ c) ...))
          (Proj F label)
          (ProjOpt τ F label)
          (Let (x bmode τ) F c)
@@ -335,6 +339,7 @@
          (Rec ((label m v) ... (label m E) (label m c) ...))
          (UnionInject τ τ E)
          (UnionEliminate E (ubr ...))
+         (RecRewrite E ((label x τ m τ c) ...))
          (Proj E label)
          (ProjOpt τ E label)
          (Let (x bmode τ) E c)
@@ -357,6 +362,7 @@
          (Rec ((label m v) ... (label m G) (label m c) ...))
          (UnionInject τ τ G)
          (UnionEliminate G (ubr ...))
+         (RecRewrite G ((label x τ m τ c) ...))
          (Proj G label)
          (ProjOpt τ G label)
          (Let (x bmode τ) G c)
@@ -378,6 +384,7 @@
 
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x)
+  (label x τ m τ c #:refers-to x)
   (τ x -> c #:refers-to x))
 
 (define-metafunction G2

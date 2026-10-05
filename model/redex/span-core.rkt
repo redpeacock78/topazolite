@@ -181,6 +181,7 @@
          (Discharge s (ProofRep s O φ) c)
          (UnionInject s ts ts c)
          (UnionEliminate s c (ubr ...))
+         (RecRewrite s c ((ls xs ts m ts c) ...))
          ;; macro.md §5.1: 展開前の呼出し節点である。展開器の出力には
          ;; 現れない。O は呼出しの由来であり、spanless な G1 の O を使う。
          (MacroCall s O nm (c ...)))
@@ -191,6 +192,7 @@
          (RVal s (ProofRep s O φ) v))
   #:binding-forms
   (Let s ((#:bind x s_b) bmode ts) c_1 c_2 #:refers-to x)
+  (ls (#:bind x s_b) ts m ts c #:refers-to x)
   (s ts (#:bind x s_b) -> c #:refers-to x))
 
 ;; span 付き Union branch の専用 peel。branch span は先頭に、型注釈と束縛子は

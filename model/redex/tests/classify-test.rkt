@@ -730,6 +730,26 @@
                         '())
    'Unknown))
 
+(test-case "REC-001: RecRewrite 内の再帰呼出しを見付けるが欄移送は減少にしない"
+  (check-equal?
+   (classify-recur-body
+    'loop '(n)
+    '(RecRewrite n ((a value Int imm Int (Apply loop value))))
+    '((n Int) (loop (NFn (Int) Int () () () User)))
+    '())
+   'Unknown))
+
+(test-case "REC-001: RecRewrite の entry binder は再帰関数を隠す範囲だけに届く"
+  (check-equal?
+   (classify-recur-body
+    'loop '(n)
+    '(RecRewrite n
+                 ((a loop (NFn (Int) Int () () () User) imm Int
+                   (Apply loop 1))))
+    '((n Int) (loop (NFn (Int) Int () () () User)))
+    '())
+   '(Finite no-self-reference)))
+
 (test-case "REC-001: classify-recur-body は未知の形に Unknown を返す"
   (check-equal?
    (classify-recur-body 'f '() '(Mystery 1)

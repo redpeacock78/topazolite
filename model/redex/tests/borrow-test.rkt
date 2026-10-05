@@ -183,3 +183,12 @@
                          (String s -> 0)
                          (Bool b -> (Reborrow b)))))
    (set (list 1 'Payload))))
+
+(test-case "RecRewrite は入力の capability を書き換え後も保つ"
+  (check-equal?
+   (borrow-token-key
+    (region-ctx #f '() (hash) (hash))
+    '(RecRewrite (BorrowRef 1 (a) 0)
+                 ((a x (Borrowed Int 0) imm (Borrowed Int 0)
+                   (Reborrow x)))))
+   (set (list 1 'a))))

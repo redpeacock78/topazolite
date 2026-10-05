@@ -3,7 +3,9 @@
 (require rackunit
          redex/reduction-semantics
          "../lang.rkt"
+         "../span-core.rkt"
          "../span.rkt"
+         "../uniquify.rkt"
          "../erase.rkt")
 
 (define s0 (term (#:span main.tz 0 4)))
@@ -109,6 +111,35 @@
                                  (#:lit 1 ,s1) (#:var z ,s1)))
                       (term (Let ,s0 ((#:bind y ,s1) const (#:ty Int ,s1))
                                  (#:lit 1 ,s1) (#:var w ,s1))))))
+
+(test-case "G2+ の RecRewrite entry は対応する本体だけを束縛する"
+  (define left
+    (term (RecRewrite ,s0 (#:var x ,s1)
+                      (((#:lbl a ,s1) (#:bind x ,s1) (#:ty Int ,s1)
+                        imm (#:ty Int ,s1) (#:var x ,s1))))))
+  (define right
+    (term (RecRewrite ,s0 (#:var x ,s1)
+                      (((#:lbl a ,s1) (#:bind y ,s1) (#:ty Int ,s1)
+                        imm (#:ty Int ,s1) (#:var y ,s1))))))
+  (check-true (redex-match? G2+ c left))
+  (check-true (alpha-equivalent? G2+ left right))
+  (define shadowed
+    (term (Let ,s0 ((#:bind x ,s1) const (#:ty Int ,s1))
+                (#:lit 5 ,s1)
+                (RecRewrite ,s0 (#:var x ,s1)
+                            (((#:lbl a ,s1) (#:bind x ,s1) (#:ty Int ,s1)
+                              imm (#:ty Int ,s1) (#:var x ,s1)))))))
+  (define renamed (uniquify-binders shadowed))
+  (check-true (redex-match? G2+ c renamed))
+  (define rewrite (list-ref renamed 4))
+  (define entry (first (list-ref rewrite 3)))
+  (define outer (second (first (list-ref renamed 2))))
+  (define input (second (list-ref rewrite 2)))
+  (define inner (second (second entry)))
+  (define body (second (list-ref entry 5)))
+  (check-equal? input outer)
+  (check-equal? body inner)
+  (check-not-equal? outer inner))
 
 (test-case "alpha 同値の判定は基底の G1 と一致する"
   (define pairs

@@ -38,6 +38,8 @@
     [`(UnionVal ,_ ,_ ,payload) (list payload)]
     [`(UnionEliminate ,scrutinee ,branches)
      (cons scrutinee (map last branches))]
+    [`(RecRewrite ,input (,entries ...))
+     (cons input (map last entries))]
     [`(Eliminate ,c ,brs)
      (cons c (for/list ([br (in-list brs)]) (last br)))]
     [`(Perform ,_ ,c) (list c)]
@@ -118,6 +120,11 @@
                       ,(for/list ([branch (in-list branches)]
                                   [body (in-list (rest children))])
                          (append (drop-right branch 1) (list body))))]
+    [`(RecRewrite ,_ (,entries ...))
+     `(RecRewrite ,(first children)
+                  ,(for/list ([entry (in-list entries)]
+                              [body (in-list (rest children))])
+                     (append (drop-right entry 1) (list body))))]
     [`(Eliminate ,_ ,brs)
      `(Eliminate ,(first children)
                  ,(for/list ([br (in-list brs)] [c (in-list (rest children))])
@@ -215,6 +222,11 @@
        (for/fold ([free (walk scrutinee)]) ([branch (in-list branches)])
          (match branch
            [`(,_ ,name -> ,body)
+            (set-union free (bind body (list name)))]))]
+      [`(RecRewrite ,input (,entries ...))
+       (for/fold ([free (walk input)]) ([entry (in-list entries)])
+         (match entry
+           [`(,_ ,name ,_ ,_ ,_ ,body)
             (set-union free (bind body (list name)))]))]
       [`(Handle ,_ (,name -> ,handler) ,body)
        (set-union (bind handler (list name)) (walk body))]

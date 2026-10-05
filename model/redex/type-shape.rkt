@@ -341,6 +341,15 @@
           (and (walk function) (walk argument))]
          [`(Error ,_) #t]
          [`(Rec ,fields) (andmap walk-record-field fields)]
+         [`(RecRewrite ,input ,entries)
+          (and (walk input)
+               (for/and ([entry (in-list entries)])
+                 (match entry
+                   [`(,_ ,_ ,input-type ,_ ,output-type ,body)
+                    (and (type-normal? input-type)
+                         (type-normal? output-type)
+                         (walk body))]
+                   [_ #f])))]
          [`(Proj ,record ,_) (walk record)]
          [`(ProjOpt ,type ,record ,_)
           (and (type-normal? type) (walk record))]

@@ -15,6 +15,26 @@
                 '(b a))
   (check-equal? (span-free-vars (term (#:lit 1 ,s0))) '()))
 
+(test-case "RecRewrite entry は対応する c だけを束縛し置換時に捕捉を避ける"
+  (define t
+    (term (RecRewrite ,s0 (#:var m ,s0)
+                      (((#:lbl a ,s0) (#:bind y ,s1) (#:ty Int ,s1)
+                        imm (#:ty Int ,s1) (#:var m ,s2))))))
+  (check-equal? (length (span-free-var-nodes t)) 2)
+  (check-equal? (span-free-vars t) '(m))
+  (define out
+    (span-subst t (list (cons 'm (term (#:var y ,s2))))))
+  (check-true (redex-match? G2+ c out))
+  (define input (second (third out)))
+  (define entry (first (fourth out)))
+  (define binder (second (second entry)))
+  (define body (second (list-ref entry 5)))
+  (check-equal? input 'y)
+  (check-not-equal? binder 'y)
+  (check-equal? body 'y)
+  (check-equal? (length (span-free-var-nodes out)) 2)
+  (check-equal? (span-free-vars out) '(y)))
+
 (test-case "7 つの束縛形が束縛名を落とし、範囲の外は落とさない"
   ;; Lam
   (check-equal? (span-free-vars
