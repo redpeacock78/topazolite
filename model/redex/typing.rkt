@@ -2623,111 +2623,89 @@
   (unless (ownleaf-root? core)
     (fail key node)))
 
-;; RecRewrite の資源条件は、値が実際に OwnLeaf を運ぶ型だけを辿る。
-;; 関数型や借用型の payload は値自身の token を表さない。
+;; RecRewrite の資源条件は owned-free? の型構成子表に従うが、関数値が
+;; token を運ばないため NFn の署名だけは辿らない。未知の型と schema の無い
+;; Data は fail-closed に資源ありとする。
 (define (resource-type? type)
-  (match type
-    [`(Owned ,_) #t]
-    [`(Record (,fields ...))
-     (for/or ([field (in-list fields)]) (resource-type? (second field)))]
-    [`(Union ,members ...)
-     (for/or ([member (in-list members)]) (resource-type? member))]
-    [`(Option ,inner) (resource-type? inner)]
-    [_ #f]))
+  (let walk ([type type] [visited (set)])
+    (match type
+      ['Int #f] ['Bool #f] ['Unit #f] ['String #f] ['Never #f] ['Res #f]
+      [`(TypeInfo ,_) #f]
+      [`(Proof ,_) #f]
+      [`(Owned ,_) #t]
+      [`(Borrowed ,_ ,_) #f]
+      [`(BorrowedMut ,_ ,_) #f]
+      [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #f]
+      [`(NFn ,_ ...) #f]
+      [`(List ,element) (walk element visited)]
+      [`(Option ,element) (walk element visited)]
+      [`(Result ,ok-type ,error-type)
+       (or (walk ok-type visited) (walk error-type visited))]
+      [`(Untrusted ,payload) (walk payload visited)]
+      [`(Refined ,payload ,_) (walk payload visited)]
+      [`(Record ,row)
+       (for/or ([field (in-list row)]) (walk (second field) visited))]
+      [`(Union ,left ,right)
+       (or (walk left visited) (walk right visited))]
+      [`(Intersection ,left ,right)
+       (or (walk left visited) (walk right visited))]
+      [`(ForallRegion (,_ ...) ,body) (walk body visited)]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (cond
+         [(not schema) #t]
+         [(set-member? visited key) #f]
+         [else
+          (for/or ([field (in-list (data-field-types name arguments))])
+            (walk field (set-add visited key)))])]
+      [_ #t])))
 
-;; (total . under-Lam) の形で、name の束縛対応の自由出現を数える。
-;; core-children は名前の参照を子に含めない形もあるため、その形だけ明示する。
-(define (resource-variable-occurrences core name)
-  (define (sum-counts counts)
-    (cons (for/sum ([counts (in-list counts)]) (car counts))
-          (for/sum ([counts (in-list counts)]) (cdr counts))))
-  (define (reference-count reference shadowed? under-lam?)
-    (if (and (not shadowed?)
-             (eq? (peel-node reference) name))
-        (if under-lam? '(1 . 1) '(1 . 0))
-        '(0 . 0)))
-  (define (shadows? binders)
-    (for/or ([binder (in-list binders)])
-      (eq? (peel-bind binder) name)))
-  (let walk ([term (erase-core core)] [shadowed? #f] [under-lam? #f])
-    (define (child child-term)
-      (walk child-term shadowed? under-lam?))
-    (match term
-      [`(Let (,binder ,_ ...) ,bound ,body)
-       (sum-counts
-        (list (child bound)
-              (walk body (or shadowed? (eq? (peel-bind binder) name))
-                    under-lam?)))]
-      [`(Lam ,_ ,_ (,parameters ...) ,body)
-       (walk body (or shadowed? (shadows? parameters)) #t)]
-      [`(RecurVal ,_ ,function (,parameters ...) ,body)
-       (walk body (or shadowed?
-                      (shadows? (cons function parameters)))
-             under-lam?)]
-      [`(Recur ,_ ,function (,parameters ...) ,body ,continuation)
-       (sum-counts
-        (list (walk body (or shadowed?
-                             (shadows? (cons function parameters)))
-                    under-lam?)
-              (walk continuation (or shadowed?
-                                    (eq? (peel-bind function) name))
-                    under-lam?)))]
-      [`(Eliminate ,scrutinee (,branches ...))
-       (sum-counts
-        (cons (child scrutinee)
-              (for/list ([branch (in-list branches)])
-                (match branch
-                  [`(,_ (,parameters ...) -> ,body)
-                   (walk body (or shadowed? (shadows? parameters))
-                         under-lam?)]))))]
-      [`(UnionEliminate ,scrutinee (,branches ...))
-       (sum-counts
-        (cons (child scrutinee)
-              (for/list ([branch (in-list branches)])
-                (match branch
-                  [`(,_ ,binder -> ,body)
-                   (walk body (or shadowed?
-                                  (eq? (peel-bind binder) name))
-                         under-lam?)]))))]
-      [`(RecRewrite ,input (,entries ...))
-       (sum-counts
-        (cons (child input)
-              (for/list ([entry (in-list entries)])
-                (match entry
-                  [`(,_ ,binder ,_ ,_ ,_ ,body)
-                   (walk body (or shadowed?
-                                  (eq? (peel-bind binder) name))
-                         under-lam?)]))))]
-      [`(Handle ,_ (,binder -> ,handler) ,body)
-       (sum-counts
-        (list (walk handler (or shadowed?
-                               (eq? (peel-bind binder) name))
-                    under-lam?)
-              (child body)))]
-      [`(Move ,reference) (reference-count reference shadowed? under-lam?)]
-      [`(Borrow ,reference) (reference-count reference shadowed? under-lam?)]
-      [`(BorrowMut ,reference)
-       (reference-count reference shadowed? under-lam?)]
-      [`(BorrowAt ,_ (Own ,owner ,_) ,reference)
-       (sum-counts (list (reference-count owner shadowed? under-lam?)
-                         (reference-count reference shadowed? under-lam?)))]
-      [`(BorrowMutAt ,_ (Own ,owner ,_) ,reference)
-       (sum-counts (list (reference-count owner shadowed? under-lam?)
-                         (reference-count reference shadowed? under-lam?)))]
-      [`(ReborrowAt ,_ (Own ,owner ,_) ,operand)
-       (sum-counts (list (reference-count owner shadowed? under-lam?)
-                         (child operand)))]
-      [`(ProjBorrowAt ,_ (Own ,owner ,_) ,operand ,_)
-       (sum-counts (list (reference-count owner shadowed? under-lam?)
-                         (child operand)))]
-      [`(Reassign ,target ,value)
-       (sum-counts (list (reference-count target shadowed? under-lam?)
-                         (child value)))]
-      [(? symbol? variable)
-       (if (redex-match? G2 x variable)
-           (reference-count variable shadowed? under-lam?)
-           '(0 . 0))]
-      [_ (sum-counts (map child (core-children term)))])))
+(module+ rec-rewrite-test-support
+  (provide resource-type?))
+
+;; 資源を持つ binder は、token を結果へ一度だけ運べる文脈の穴にだけ置く。
+;; siblings は binder-aware な自由変数集合で個別に検査する。
+(define (linear-hole? core name)
+  (define term (erase-core core))
+  (define (free-under-binding? binder body)
+    (and (not (eq? (peel-bind binder) name))
+         (set-member? (core-free-vars body) name)))
+  (define (one-child-hole? children)
+    (for/or ([hole (in-list children)]
+             [hole-index (in-naturals)])
+      (and
+       (linear-hole? hole name)
+       (for/and ([sibling (in-list children)]
+                 [sibling-index (in-naturals)]
+                 #:unless (= hole-index sibling-index))
+         (not (set-member? (core-free-vars sibling) name))))))
+  (match term
+    [(? symbol? variable)
+     (and (eq? variable name) (redex-match? G2 x variable))]
+    [`(UnionInject ,_ ,_ ,payload) (linear-hole? payload name)]
+    [`(Rec ,_) (one-child-hole? (core-children term))]
+    [`(Construct ,_ ,_ ,_ ...) (one-child-hole? (core-children term))]
+    [`(RecRewrite ,input (,entries ...))
+     (and (linear-hole? input name)
+          (for/and ([entry (in-list entries)])
+            (match entry
+              [`(,_ ,binder ,_ ,_ ,_ ,body)
+               (not (free-under-binding? binder body))])))]
+    [`(Let (,binder ,mode ,_) ,bound ,body)
+     (and (memq mode '(const let))
+          (not (eq? (peel-bind binder) name))
+          (eq? (peel-node body) (peel-bind binder))
+          (linear-hole? bound name))]
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     (and (linear-hole? scrutinee name)
+          (for/and ([branch (in-list branches)])
+            (match branch
+              [`(,branch-type ,binder -> ,body)
+               (and (not (free-under-binding? binder body))
+                    (or (not (resource-type? (peel-ty branch-type)))
+                        (linear-hole? body (peel-bind binder))))])))]
+    [_ #f]))
 
 (define (core-contains-ownleaf? core)
   (let walk ([term (erase-core core)])
@@ -2774,11 +2752,8 @@
                           (list (list label output-type output-mode))))
             current-psi]
            [else
-            (define occurrences
-              (resource-variable-occurrences body binder))
             (when (and (resource-type? tau)
-                       (not (and (= (car occurrences) 1)
-                                 (zero? (cdr occurrences)))))
+                       (not (linear-hole? body binder)))
               (fail 'ill-typed core))
             (when (core-contains-ownleaf? body)
               (fail 'ill-typed core))

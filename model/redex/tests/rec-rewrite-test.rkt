@@ -6,7 +6,11 @@
          redex/reduction-semantics
          "../lang.rkt"
          "../region.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         "../origins.rkt"
+         "../traits.rkt"
+         "../type-equiv.rkt"
+         (submod "../typing.rkt" rec-rewrite-test-support))
 
 (define (type-of core [callables '()] [environment '()])
   (match (type-of/raw core '() callables environment)
@@ -45,6 +49,27 @@
            `((rec-rewrite-test
               (NFn (,input-type) ,output-type () () () User)))
            extra-callables)))
+
+(define (key-with-rewritten-field body input-type output-type
+                                  [extra-callables '()])
+  (key-with-record-parameter
+   `(RecRewrite r ((a x ,input-type imm ,output-type ,body)))
+   `((a ,input-type imm)) `((a ,output-type imm)) extra-callables))
+
+(define (test-fail reason kind key)
+  (error 'rec-rewrite-test "~s ~s ~s" reason kind key))
+
+(define rec-rewrite-ledger
+  (make-trait-ledger
+   canonical-trait-env
+   #:data
+   '((Pair (A B) ((mkpair ((Param A) (Param B)))))
+     (Nat () ((zero ()) (succ ((Data Nat ())))))
+     (Chain () ((cnil ()) (ccons (Int (Owned (Data Chain ())))))))
+   #:fail test-fail))
+
+(define-syntax-rule (with-data body ...)
+  (call-with-trait-ledger rec-rewrite-ledger (lambda () body ...)))
 
 (define rewrite-a
   '(RecRewrite (Rec ((a imm 1) (b imm 2)))
@@ -151,36 +176,95 @@
    `(NFn (,(record-parameter-type row))
          ,(record-parameter-type row) () () () User)))
 
-(test-case "Let と内側の RecRewrite の再束縛は自由出現に数えない"
+(test-case "線形な Let と内側の RecRewrite は資源を一度だけ運ぶ"
   (define owned-row '((a (Owned Int) imm) (b Int imm)))
   (define outer-row `((box (Record ,owned-row) imm)))
   (check-equal?
-   (key-with-record-parameter
-    `(RecRewrite r
-                 ((box x (Record ,owned-row) imm (Record ,owned-row)
-                   (Let (x const (Record ,owned-row)) x
+   (type-with-record-parameter
+    `(RecRewrite r ((box x (Record ,owned-row) imm (Record ,owned-row)
                      (RecRewrite x
-                                  ((a inner-own (Owned Int) imm
-                                    (Owned Int) inner-own)))))))
+                                 ((a inner-own (Owned Int) imm
+                                   (Owned Int) inner-own))))))
     outer-row outer-row)
-   'ok)
+   `(NFn (,(record-parameter-type outer-row))
+         ,(record-parameter-type outer-row) () () () User))
+  (define option-owned '(Option (Owned Int)))
+  (define option-row `((a ,option-owned imm)))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r
-                 ((box x (Record ,owned-row) imm (Record ,owned-row)
-                   (Let (x const (Record ,owned-row)) x
-                     (RecRewrite x
-                                  ((a inner-own (Owned Int) imm
-                                    (Owned Int) inner-own)))))))
-    outer-row outer-row)
-  `(NFn (,(record-parameter-type outer-row))
-         ,(record-parameter-type outer-row) () () () User))
+    `(RecRewrite r ((a x ,option-owned imm ,option-owned
+                     (Let (alias let ,option-owned) x alias))))
+    option-row option-row)
+   `(NFn (,(record-parameter-type option-row))
+         ,(record-parameter-type option-row) () () () User))
   (check-equal?
    (type-of
     `(RecRewrite (Rec ((a imm (Absent (Option (Owned Int))))))
                  ((a x (Option (Owned Int)) imm (Option (Owned Int))
                    x))))
    '(Record ((a (Option (Owned Int)) imm opt)))))
+
+(test-case "資源型の判定は ForallRegion と data schema を辿り、NFn を除く"
+  (check-true (resource-type? '(ForallRegion (r) (Option (Owned Int)))))
+  (check-false
+   (resource-type?
+    '(ForallRegion (r) (NFn ((Owned Int)) (Owned Int) () () () User))))
+  (check-true (resource-type? '(Intersection Int (Owned Int))))
+  (check-true (resource-type? '(Untrusted (Owned Int))))
+  (check-true (resource-type? '(Refined (Owned Int) (Prop p))))
+  (check-false (resource-type? '(Borrowed (Owned Int) 0)))
+  (check-true (resource-type? '(UnknownResourceType Int)))
+  (check-true (resource-type? '(Data MissingSchema ())))
+  (with-data
+    (check-false (resource-type? '(Data Nat ())))
+    (check-true (resource-type? '(Data Chain ())))))
+
+(test-case "資源を持つ Union の UnionEliminate は各枝で線形に運ぶ"
+  (define base (normalize-type '(Record ((o (Owned Int) imm)))))
+  (define wide (normalize-type '(Record ((o (Owned Int) imm) (b Bool imm)))))
+  (define resource-union (normalize-type `(Union ,base ,wide)))
+  (define input-row `((a ,resource-union imm)))
+  (define output-row `((a ,base imm)))
+  (define branch-term
+    `(UnionEliminate x
+       ((,base direct -> direct)
+        (,wide alias -> (Let (union_k let ,wide) alias union_k)))))
+  (check-equal?
+   (type-with-record-parameter
+    `(RecRewrite r ((a x ,resource-union imm ,base ,branch-term)))
+    input-row output-row)
+   `(NFn (,(record-parameter-type input-row))
+         ,(record-parameter-type output-row) () () () User))
+  (check-equal?
+   (type-with-record-parameter
+    `(RecRewrite r
+       ((a x ,resource-union imm ,base
+         (Let (rewritten const ,base) ,branch-term rewritten))))
+    input-row output-row)
+   `(NFn (,(record-parameter-type input-row))
+         ,(record-parameter-type output-row) () () () User)))
+
+(test-case "資源を持たない Union 枝の binder は複数回使える"
+  (define resource-member (normalize-type '(Record ((o (Owned Int) imm)))))
+  (define input-type (normalize-type `(Union Int ,resource-member)))
+  (define output-type
+    (normalize-type `(Record ((p Int imm) (q Int imm) (tag ,input-type imm)))))
+  (define body
+    `(UnionEliminate x
+       ((Int number ->
+         (Rec ((p imm number)
+              (q imm number)
+              (tag imm (UnionInject ,input-type Int number)))))
+        (,resource-member payload ->
+         (Rec ((p imm 0)
+              (q imm 0)
+              (tag imm (UnionInject ,input-type ,resource-member payload))))))))
+  (check-equal?
+   (type-with-record-parameter
+    `(RecRewrite r ((a x ,input-type imm ,output-type ,body)))
+    `((a ,input-type imm)) `((a ,output-type imm)))
+   `(NFn (,(record-parameter-type `((a ,input-type imm))))
+         ,(record-parameter-type `((a ,output-type imm))) () () () User)))
 
 (test-case "RecRewrite の入力が Record でない場合は拒否する"
   (check-equal?
@@ -239,25 +323,32 @@
     '((a (Owned Int) imm)))
    'ill-typed))
 
-(test-case "資源を持つ欄の自由出現はちょうど 1 回で Lam の外に限る"
-  (define row '((a (Option (Owned Int)) imm)))
+(test-case "資源を持つ値を線形文脈の外へ出す形は拒否する"
   (define option-owned '(Option (Owned Int)))
+  (define row `((a ,option-owned imm)))
   (define nfn `(NFn () ,option-owned () () () User))
-  (define resource-union
-    '(Union (Record ((o (Owned Int) imm))) Int))
+  (define nested-result `(Record ((seed ,option-owned imm))))
+  (define resource-list '(List (Owned Int)))
+  (define resource-result '(Result (Owned Int) Int))
+  (define forall-resource `(ForallRegion (r) ,option-owned))
+  (define union-base (normalize-type '(Record ((o (Owned Int) imm)))))
+  (define union-wide (normalize-type '(Record ((o (Owned Int) imm) (b Bool imm)))))
+  (define resource-union (normalize-type `(Union ,union-base ,union-wide)))
+  (define resource-pair
+    (normalize-type `(Record ((p ,union-base imm) (q ,union-base imm)))))
+  (define int-resource-union (normalize-type `(Union Int ,union-base)))
   (check-equal?
-   (key-with-record-parameter
-    `(RecRewrite r ((a x ,option-owned imm ,option-owned
-                     (Construct (Option (Owned Int)) none))))
-    row row)
+   (key-with-rewritten-field
+    '(Construct (Option (Owned Int)) none) option-owned option-owned)
    'ill-typed)
   (check-equal?
-   (key-with-record-parameter
-    `(RecRewrite r
-                 ((a x ,option-owned imm ,option-owned
-                   (Let (y const ,option-owned) x
-                     (Let (z const ,option-owned) x y)))))
-    row row)
+   (key-with-rewritten-field
+    `(Let (y let ,option-owned) x (Rec ((p imm y) (q imm y))))
+    option-owned `(Record ((p ,option-owned imm) (q ,option-owned imm))))
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    `(Let (y mut ,option-owned) x y) option-owned option-owned)
    'ill-typed)
   (check-equal?
    (key-with-record-parameter
@@ -267,10 +358,81 @@
     `((rec-rewrite-inner (NFn () ,option-owned () () () User))))
    'ill-typed)
   (check-equal?
+   (key-with-rewritten-field
+    `(RegionLam (r) x) option-owned option-owned)
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    '(Recur loop-id loop () x (Apply loop)) option-owned option-owned)
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    `(Eliminate x ((some (payload) -> (Construct ,option-owned none))
+                   (none () -> (Construct ,option-owned none))))
+    option-owned option-owned)
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    `(Handle (Return boundary ,option-owned) (returned -> returned) x)
+    option-owned option-owned)
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    `(RecRewrite (Rec ((seed imm 0)))
+                 ((seed inner Int imm ,option-owned x)))
+    option-owned nested-result)
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    '(Rec ((p imm x) (q imm x)))
+    resource-list `(Record ((p ,resource-list imm) (q ,resource-list imm))))
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    '(Rec ((p imm x) (q imm x)))
+    resource-result
+    `(Record ((p ,resource-result imm) (q ,resource-result imm))))
+   'ill-typed)
+  (check-true (resource-type? forall-resource))
+  (check-equal?
    (key-with-record-parameter
     `(RecRewrite r
-                 ((a x ,resource-union imm ,resource-union
-                   (UnionInject ,resource-union Int 1))))
-    `((a ,resource-union imm))
-    `((a ,resource-union imm)))
+       ((a x ,resource-union imm ,resource-pair
+         (UnionEliminate x
+           ((,union-base left -> (Rec ((p imm left) (q imm left))))
+            (,union-wide right -> (Rec ((p imm right) (q imm right)))))))))
+    `((a ,resource-union imm)) `((a ,resource-pair imm)))
+   'ill-typed)
+  (check-equal?
+   (key-with-rewritten-field
+    `(UnionEliminate x ((,union-base left -> unit)
+                        (,union-wide right -> unit)))
+    resource-union 'Unit)
+   'ill-typed)
+  ;; 外側の x は scrutinee ではなく一方の枝だけに現れる。
+  (check-equal?
+   (key-with-rewritten-field
+    `(UnionEliminate
+      (UnionInject ,int-resource-union Int 1)
+      ((Int number -> x)
+       (,union-base payload -> (UnionInject ,int-resource-union ,union-base payload))))
+    int-resource-union int-resource-union)
    'ill-typed))
+
+(test-case "資源を持つ Data の schema を線形条件が辿る"
+  (define chain '(Data Chain ()))
+  (define output-type `(Record ((p ,chain imm) (q ,chain imm))))
+  (define pair-type `(Data Pair (,chain ,chain)))
+  (with-data
+    (check-equal?
+     (key-with-rewritten-field
+      '(Rec ((p imm x) (q imm x))) chain output-type)
+     'ill-typed)
+    (check-equal?
+     (key-with-rewritten-field
+      `(Construct ,pair-type mkpair x x) chain pair-type)
+     'ill-typed)))
+
+(test-case "Intersection は正規化入口では使えないが資源判定は fail-closed に扱う"
+  (check-true (resource-type? '(Intersection Int (Owned Int))))
+  (check-true (resource-type? '(UnknownTypeConstructor (Owned Int)))))
