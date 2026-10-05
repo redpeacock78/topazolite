@@ -197,6 +197,39 @@
     [`(Owned ,_) #t]
     [_ #f]))
 
+;; 入力値の欄順で RecRewriteOpen の作業列を作る。Owned root の恒等 entry は
+;; 値を直接移し、Absent は変換本体を評価せずに新しい印だけを持たせる。
+(define (rec-rewrite-open/proc fields entries)
+  (define labels (map first fields))
+  (define entry-labels (map first entries))
+  (and (not (check-duplicates labels))
+       (not (check-duplicates entry-labels))
+       (andmap (lambda (label) (member label labels)) entry-labels)
+       `(RecRewriteOpen
+         ,(for/list ([field (in-list fields)])
+            (match-define (list label input-mode value) field)
+            (match (assoc label entries)
+              [#f (list label input-mode value)]
+              [(list _ binder input-type output-mode output-type body)
+               (cond
+                 [(owned-type? input-type)
+                  (and (type-equiv? input-type output-type)
+                       (equal? binder body)
+                       (list label output-mode value))]
+                 [(match value [`(Absent ,_) #t] [_ #f])
+                  (list label output-mode `(Absent ,output-type))]
+                 [else
+                  (list label output-mode
+                        `(Let (,binder ,input-type) ,value ,body))])])))))
+
+(define-metafunction G2m
+  rec-rewrite-open : ((label m v) ...)
+                      ((label x τ m τ c) ...) -> c
+  [(rec-rewrite-open ((label_1 m_1 v_1) ...)
+                     ((label_2 x_2 τ_2 m_2 τ_3 c_2) ...))
+   ,(rec-rewrite-open/proc (term ((label_1 m_1 v_1) ...))
+                            (term ((label_2 x_2 τ_2 m_2 τ_3 c_2) ...)))])
+
 (define (table-ref table key)
   (match (assoc key table)
     [(list _ value _ ...) value]
@@ -753,6 +786,25 @@
         (side-condition (memq (term state_old) '(Moved Dropped)))
         (side-condition (own-agrees? (term w) (term p) (term fp)))
         R-BorrowMutError)
+
+   ;; RecRewrite は入力 record を一度消費し、各欄を欄順の作業列へ移す。
+   (--> (cfg (in-hole E
+                    (RecRewrite (Rec ((label_field m_field v_field) ...))
+                                ((label_entry x_entry τ_input m_output
+                                              τ_output c_entry) ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E
+                    (rec-rewrite-open ((label_field m_field v_field) ...)
+                                      ((label_entry x_entry τ_input m_output
+                                                    τ_output c_entry) ...)))
+             H Ω Λtok θ)
+        R-RecRewrite-Open)
+
+   (--> (cfg (in-hole E (RecRewriteOpen ((label m v) ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (Rec ((label m v) ...)))
+             H Ω Λtok θ)
+        R-RecRewrite-Close)
 
    (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω Λtok θ)
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)

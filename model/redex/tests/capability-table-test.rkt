@@ -107,6 +107,18 @@
  (check-false (capability-field-table (empty-region-ctx) '(Borrow 1))))
 
 (test-case
+ "RecRewriteOpen は各作業 Let の shadowing を欄ごとに保つ"
+ (define core
+   '(Let (x let (Borrowed Res (RVar 0))) (Borrow 1)
+      (RecRewriteOpen
+       ((a imm
+           (Let (x let (Borrowed Res (RVar 0))) (Borrow 2) (Reborrow x)))
+        (b imm (Reborrow x))))))
+ ;; a の内側 x は Borrow 2、兄弟欄 b の x は外側の Borrow 1 を指す。
+ (check-equal? (borrow-token-key (empty-region-ctx) core)
+               (set '(1) '(2))))
+
+(test-case
  "borrow-token-key の返り値は組み替えの前後で変わらない"
  (define Λ (region-ctx-add-token (empty-region-ctx) 'b (set '(1))))
  (check-equal? (borrow-token-key Λ '(Reborrow b)) (set '(1)))

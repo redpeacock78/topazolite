@@ -144,6 +144,29 @@
   (for ([bad (in-list (list bad-input-type bad-output-type bad-body))])
     (check-false (core-types-normal? bad))))
 
+(test-case "core-types-normal? は RecRewriteOpen と R-Let 後の entry を辿る"
+  (define entry
+    '(n y Int imm (Union Bool Int)
+         (UnionInject (Union Bool Int) Int y)))
+  (define before
+    `(RecRewriteOpen
+      ((a imm
+          (Let (x (Record ((n Int imm))))
+            (Rec ((n imm 1)))
+            (RecRewrite x (,entry)))))))
+  ;; R-Let が作業 Let を縮約すると x だけが入力項へ置き換わる。
+  ;; entry の型注釈 τ と τ' は RecRewrite にそのまま残る。
+  (define after
+    `(RecRewriteOpen
+      ((a imm
+          (RecRewrite (Rec ((n imm 1))) (,entry))))))
+  (check-true (core-types-normal? before))
+  (check-true (core-types-normal? after))
+  (check-false
+   (core-types-normal?
+    '(RecRewriteOpen
+      ((a imm (Let (x (Union Int Int)) 1 x)))))))
+
 (test-case "core-types-normal? rejects a residual Intersection"
   (check-false
    (core-types-normal?

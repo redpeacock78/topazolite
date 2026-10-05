@@ -40,6 +40,16 @@
                      (OwnedLeaf (tok 3) (resource 1)))
               () () (((tok 4) Available)) ()))))
 
+(test-case "collect-tokens は RecRewriteOpen の shadowing 下でも欄を一度ずつ走査する"
+  (define core
+    '(Let (x (Owned Res)) (OwnedLeaf (tok 0) (resource 10))
+       (RecRewriteOpen
+         ((a imm (Let (x (Owned Res)) (OwnedLeaf (tok 1) (resource 11)) x))
+         (b imm x)))))
+  ;; a の一時 Let は x を隠すが、b は外側の x を参照する。token は値の欄
+  ;; にあるものだけを数え、変数参照から再計上しない。
+  (check-equal? (collect-tokens core) '((tok 0) (tok 1))))
+
 (test-case "producer 位置でない OwnLeaf は unexpected-ownleaf で落ちる"
   (check-equal? (core-type-of '(OwnLeaf 1) '() '()) 'ill-typed)
   (define diagnostic (core-type-of/diagnostic '(OwnLeaf 1) '() '()))

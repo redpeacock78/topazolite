@@ -350,6 +350,12 @@
                          (type-normal? output-type)
                          (walk body))]
                    [_ #f])))]
+         [`(RecRewriteOpen ,fields)
+          (for/and ([field (in-list fields)])
+            (match field
+              [`(,_label ,mode ,work)
+               (and (memq mode '(imm mut)) (walk work))]
+              [_ #f]))]
          [`(Proj ,record ,_) (walk record)]
          [`(ProjOpt ,type ,record ,_)
           (and (type-normal? type) (walk record))]

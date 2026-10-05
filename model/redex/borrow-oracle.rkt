@@ -78,6 +78,9 @@
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
 (define (approved-forms redex contractum)
   (match (list redex contractum)
+    ;; RecRewriteOpen は借用値を一度だけ作業列へ移すだけである。
+    [(list `(RecRewrite ,_ ,_) `(RecRewriteOpen ,_)) '()]
+    [(list `(RecRewriteOpen ,_) `(Rec ,_)) '()]
     ;; R-ScopeValue は finalization 後に値を unwrap するだけであり、借用値を
     ;; 保ったまま新しい借用形を作らない。
     [(list `(Scope ,_π ,value) value) '()]
@@ -181,13 +184,13 @@
 
 ;; spec §4.6。置換を行わない規則。名前が増えたときに黙って取りこぼさないよう
 ;; 明示的に挙げ、どちらにも無い名前は unknown として検査を失敗させる。
-;; 二つの集合の和は -->g2/rules の 57 名と一致する。Step の回帰がこれを検査する。
+;; 二つの集合の和は -->g2/rules の 59 名と一致する。Step の回帰がこれを検査する。
 (define non-substituting-rule-names
   (seteq 'R-Delta 'R-Proj 'R-ProjOpt 'R-Drop 'R-Borrow 'R-BorrowError
          'R-BorrowMut 'R-BorrowMutError 'R-Reborrow
          'R-ProjBorrow 'R-ProjBorrowMut 'R-Read 'R-ReadMut 'R-Assign
          'R-ReadMutSlot 'R-Reassign
-         'R-UnionInject
+         'R-UnionInject 'R-RecRewrite-Open 'R-RecRewrite-Close
          'R-AddressOf 'R-PtrOffset 'R-RawLoad 'R-RawStore
          'R-FromRawPtrConst 'R-FromRawPtrMut 'R-UnsafeExit
          'R-Move 'R-MoveError 'R-ScopeValue 'R-ScopeError 'R-ScopeAbort

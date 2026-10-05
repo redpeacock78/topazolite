@@ -4,9 +4,12 @@
          racket/match
          racket/set
          redex/reduction-semantics
+         "../borrow.rkt"
          "../lang.rkt"
+         "../machine.rkt"
          "../region.rkt"
          "../typing.rkt"
+         "../type-shape.rkt"
          "../origins.rkt"
          "../traits.rkt"
          "../type-equiv.rkt"
@@ -26,6 +29,75 @@
   (match (type-of/raw core '() callables environment)
     [(list 'ok _) 'ok]
     [(list 'fail key _node _details ...) key]))
+
+(define (config-core config)
+  (match config [`(cfg ,core ,_heap ,_states ,_tokens ,_trace) core]))
+
+(define (g2-trace initial)
+  (let loop ([current initial] [configs (list initial)] [rules '()] [fuel 40])
+    (when (zero? fuel)
+      (error 'g2-trace "fuel exhausted: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['()
+       (check-false (member 'R-LetOwned rules)
+                    "RecRewrite traces must not use R-LetOwned")
+       (check-false (member 'R-Move rules)
+                    "RecRewrite traces must not use R-Move")
+       (list configs rules)]
+      [(list (list rule next))
+       (loop next (append configs (list next)) (append rules (list rule))
+             (sub1 fuel))]
+      [steps (error 'g2-trace "expected one step, got: ~s" steps)])))
+
+(define (contains-mutation? core)
+  (match core
+    [`(Assign ,_ ,_) #t]
+    [`(Reassign ,_ ,_) #t]
+    [(? list? parts) (ormap contains-mutation? parts)]
+    [_ #f]))
+
+(define (config-row config row)
+  (match config
+    [`(cfg ,core ,_ ...)
+     (if (and (member 'Mutation row)
+              (not (contains-mutation? core)))
+         (remove 'Mutation row)
+         row)]))
+
+(define (check-config-trace configs expected row)
+  (for ([config (in-list configs)] [index (in-naturals)])
+    (check-true (config-ok? config '() expected (config-row config row))
+                (format "invalid intermediate config ~a: ~s" index config))))
+
+(define (config-tokens config)
+  (match config
+    [`(cfg ,core ,heap ,_states ,_token-states ,trace)
+     (append (collect-tokens core)
+             (append-map (lambda (entry) (collect-tokens (second entry))) heap)
+             (append-map (lambda (event)
+                           (match event [`(obs ,value) (collect-tokens value)] [_ '()]))
+                         trace))]))
+
+(define (machine-result core)
+  (match (run-g2 (inject-g2m core) 100)
+    [`(cfg ,value ,_heap ,_states ,_tokens ,_trace) value]
+    [other (error 'machine-result "unexpected result: ~s" other)]))
+
+(define (token-multiset config)
+  (sort (map second (config-tokens config)) <))
+
+(define (check-valid-token-trace configs expected row initial-tokens)
+  (define initial (first configs))
+  (check-true
+   (config-ok? initial '() expected (config-row initial row))
+   (format "initial config must be valid: ~s; normal=~s; type=~s"
+           initial (core-types-normal? initial)
+           (with-config-typing
+            (lambda () (type-of/raw (config-core initial) '() '() '())))))
+  (check-config-trace configs expected row)
+  (for ([config (in-list configs)])
+    (check-equal? (token-multiset config) initial-tokens
+                  (format "token multiset changed: ~s" config))))
 
 (define (record-parameter-type row)
   `(Record ,row))
@@ -155,6 +227,198 @@
                  ((a x Int imm (Union Bool Int)
                    (UnionInject (Union Bool Int) Int x)))))
    '(Record ((a (Union Bool Int) imm) (b Int imm opt)))))
+
+(test-case "present の欄は c を評価して置き換える"
+  (define expected '(Record ((a (Union Bool Int) imm) (b Int imm))))
+  (define-values (configs _rules)
+    (apply values (g2-trace `(cfg ,rewrite-a () () () ()))))
+  (check-valid-token-trace configs expected '() '())
+  (check-equal? (config-core (last configs))
+                '(Rec ((a imm (UnionVal (Union Bool Int) Int 1))
+                      (b imm 2))))
+  (check-equal?
+   (machine-result rewrite-a)
+   '(Rec ((a imm (UnionVal (Union Bool Int) Int 1)) (b imm 2)))))
+
+(test-case "Absent の欄は c を評価せず optional Union として保つ"
+  (define union-type '(Union Bool Int))
+  (define core
+    `(RecRewrite (Rec ((a imm (Absent Int))))
+       ((a x Int imm ,union-type
+         (UnionInject ,union-type Int
+           (Apply (PrimVal (Reserved o-add) add) x 1))))))
+  (define expected '(Record ((a (Union Bool Int) imm opt))))
+  (define-values (configs _rules)
+    (apply values (g2-trace `(cfg ,core () () () ()))))
+  (check-valid-token-trace configs expected '() '())
+  (check-equal? (config-core (last configs))
+                '(Rec ((a imm (Absent (Union Bool Int))))))
+  (check-equal? (type-of (config-core (last configs))) expected))
+
+(test-case "列挙しない Owned 欄は Open 後も一度だけ残る"
+  (define output-type
+    (normalize-type
+     '(Record ((owned (Owned Res) imm) (number (Union Bool Int) imm)))))
+  (define core
+    `(RecRewrite
+      (Rec ((owned imm (OwnedLeaf (tok 11) (resource 11))) (number imm 1)))
+      ((number x Int imm (Union Bool Int)
+        (UnionInject (Union Bool Int) Int x)))))
+  (define-values (configs _rules)
+    (apply values
+           (g2-trace `(cfg ,core () () (((tok 11) Available)) ()))))
+  (check-valid-token-trace configs output-type '() '(11))
+  (check-equal? (config-core (second configs))
+                '(RecRewriteOpen
+                  ((owned imm (OwnedLeaf (tok 11) (resource 11)))
+                   (number imm
+                           (Let (x Int) 1
+                             (UnionInject (Union Bool Int) Int x))))))
+  (check-equal? (config-core (last configs))
+                '(Rec ((owned imm (OwnedLeaf (tok 11) (resource 11)))
+                      (number imm (UnionVal (Union Bool Int) Int 1))))))
+
+(test-case "root-Owned identity entry は token を直接移し R-LetOwned と Move を使わない"
+  (define output-type
+    (normalize-type '(Record ((owned (Owned Res) imm) (number Int imm)))))
+  (define core
+    '(RecRewrite
+      (Rec ((owned mut (OwnedLeaf (tok 12) (resource 12))) (number imm 1)))
+      ((owned owner (Owned Res) imm (Owned Res) owner))))
+  (define-values (configs rules)
+    (apply values (g2-trace `(cfg ,core () () (((tok 12) Available)) ()))))
+  (check-valid-token-trace configs output-type '() '(12))
+  (check-equal? rules '(R-RecRewrite-Open R-RecRewrite-Close))
+  (check-equal? (config-core (second configs))
+                '(RecRewriteOpen
+                  ((owned imm (OwnedLeaf (tok 12) (resource 12))) (number imm 1))))
+  (check-equal? (config-core (last configs))
+                '(Rec ((owned imm (OwnedLeaf (tok 12) (resource 12))) (number imm 1)))))
+
+(test-case "入れ子の RecRewrite は一時 Let で OwnedLeaf を一度だけ運ぶ"
+  (define inner-input
+    (normalize-type '(Record ((owned (Owned Res) imm) (number Int imm)))))
+  (define inner-output
+    (normalize-type
+     '(Record ((owned (Owned Res) imm) (number (Union Bool Int) imm)))))
+  (define expected (normalize-type `(Record ((box ,inner-output imm)))))
+  (define input-value
+    '(Rec ((box imm (Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))
+                         (number imm 1)))))))
+  (define inner-rewrite
+    `(RecRewrite nested
+       ((number number-value Int imm (Union Bool Int)
+         (UnionInject (Union Bool Int) Int number-value)))))
+  (define core
+    `(RecRewrite ,input-value
+       ((box nested ,inner-input imm ,inner-output ,inner-rewrite))))
+  (check-true (redex-match? G2m τ inner-input))
+  (check-true (redex-match? G2m v input-value))
+  (check-true (redex-match? G2m c inner-rewrite))
+  (check-true (redex-match? G2m c core) (format "not G2m core: ~s" core))
+  (define-values (configs rules)
+    (apply values
+           (g2-trace `(cfg ,core () () (((tok 13) Available)) ()))))
+  (check-valid-token-trace configs expected '() '(13))
+  (check-not-false (member 'R-Let rules))
+  (check-false (member 'R-LetOwned rules))
+  (check-false (member 'R-Move rules))
+  (check-true
+   (match (config-core (second configs))
+     [`(RecRewriteOpen ((box imm (Let (,name ,binding-type) ,bound ,body))))
+      (and (type-equiv? binding-type inner-input)
+           (contains-owned-leaf? bound)
+           (match body [`(RecRewrite ,_ ,_) #t] [_ #f]))]
+     [_ #f])
+   "Open は OwnedLeaf を含む Record を一時 Let に置く")
+  (check-equal? (config-core (last configs))
+                '(Rec ((box imm
+                       (Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))
+                             (number imm (UnionVal (Union Bool Int) Int 1)))))))))
+
+(test-case "RecRewrite は entry 順でなく入力欄順に処理する"
+  (define input '(Rec ((a mut 1) (b mut (Construct Bool false)))))
+  (define union-type '(Union Bool Int))
+  (define entry-a
+    `(a x Int mut ,union-type
+      (UnionInject ,union-type Int x)))
+  (define entry-b
+    `(b y Bool mut ,union-type
+      (UnionInject ,union-type Bool y)))
+  (define expected '(Record ((a (Union Bool Int) mut)
+                            (b (Union Bool Int) mut))))
+  (define forward `(RecRewrite ,input (,entry-a ,entry-b)))
+  (define reverse `(RecRewrite ,input (,entry-b ,entry-a)))
+  (for ([core (in-list (list forward reverse))])
+    (define-values (configs _rules)
+      (apply values (g2-trace `(cfg ,core () () () ()))))
+    (check-valid-token-trace configs expected '() '()))
+  (check-equal? (machine-result reverse) (machine-result forward))
+  (check-equal? (machine-result forward)
+                '(Rec ((a mut (UnionVal (Union Bool Int) Int 1))
+                      (b mut (UnionVal (Union Bool Int)
+                                       Bool (Construct Bool false)))))))
+
+(test-case "出力印 m' は変換、identity、残余の欄でそれぞれ保たれる"
+  (define union-type '(Union Bool Int))
+  (define core
+    `(RecRewrite (Rec ((a mut 1) (b mut 2) (c mut 3)))
+       ((a x Int mut ,union-type
+         (UnionInject ,union-type Int x))
+        (b y Int imm Int y))))
+  (define expected
+    '(Record ((a (Union Bool Int) mut) (b Int imm) (c Int mut))))
+  (define-values (configs _rules)
+    (apply values (g2-trace `(cfg ,core () () () ()))))
+  (check-valid-token-trace configs expected '() '())
+  (check-equal? (config-core (last configs))
+                '(Rec ((a mut (UnionVal (Union Bool Int) Int 1))
+                      (b imm 2)
+                      (c mut 3)))))
+
+(test-case "Read の copy-out 後の RecRewrite は元 place の更新から独立する"
+  (define input-type (normalize-type '(Record ((a Int mut)))))
+  (define union-type (normalize-type '(Union Int String)))
+  (define rewritten-type
+    (normalize-type `(Record ((a ,union-type mut)))))
+  (define borrow-ref '(BorrowMutRef 0 () 0))
+  (define baseline-core
+    `(Let (snapshot const ,input-type) (Read ,borrow-ref)
+       (Let (written let Unit)
+         (Reassign (MutSlot 0) (Rec ((a mut 2))))
+         snapshot)))
+  (define rewritten-core
+    `(Let (snapshot const ,rewritten-type)
+       (RecRewrite (Read ,borrow-ref)
+         ((a source Int mut ,union-type
+           (UnionInject ,union-type Int source))))
+       (Let (written let Unit)
+         (Reassign (MutSlot 0) (Rec ((a mut 2))))
+         snapshot)))
+  (define heap
+    `((0 (Rec ((a mut 1))) (declared (Owned ,input-type)))))
+  (define states '((0 Available)))
+  (check-true
+   (config-ok? `(cfg (Read ,borrow-ref) ,heap ,states () ())
+               '() input-type '())
+   "BorrowMutRef の copy-out は単独でも config-ok?")
+  (define (trace core)
+    (first (g2-trace `(cfg ,core ,heap ,states () ()))))
+  (define baseline-configs (trace baseline-core))
+  (define rewritten-configs (trace rewritten-core))
+  (check-valid-token-trace baseline-configs input-type '(Mutation) '())
+  (check-valid-token-trace rewritten-configs rewritten-type
+                            '(Mutation) '())
+  (define baseline-final (config-core (last baseline-configs)))
+  (define rewritten-final (config-core (last rewritten-configs)))
+  (check-equal? baseline-final
+                '(Rec ((a mut 1))))
+  (check-equal? rewritten-final
+                `(Rec ((a mut (UnionVal ,union-type Int 1)))))
+  (check-equal? (second (assoc 0 (list-ref (last baseline-configs) 2)))
+                '(Rec ((a mut 2))))
+  (check-equal? (second (assoc 0 (list-ref (last rewritten-configs) 2)))
+                '(Rec ((a mut 2)))))
 
 (test-case "root Owned 欄は identity transfer として印だけを変えられる"
   (define input-row '((a (Owned Int) mut) (b Int imm)))

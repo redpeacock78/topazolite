@@ -2779,6 +2779,33 @@
            input-row final-psi)]
     [_ (fail 'ill-typed core)]))
 
+(define (infer-rec-rewrite-open core fields Λ Ψ environment places callables fail)
+  (define plain-fields
+    (for/list ([field (in-list fields)])
+      (list (peel-lbl (first field)) (second field) (third field))))
+  (unless (and (field-row-unique? plain-fields)
+               (andmap (lambda (field) (memq (second field) '(imm mut)))
+                       plain-fields))
+    (fail 'ill-typed core))
+  (define-values (typed-fields field-rows final-psi)
+    (for/fold ([typed-fields '()] [field-rows '()] [current-psi Ψ])
+              ([field (in-list plain-fields)] [index (in-naturals)])
+      (define work (third field))
+      (define absent? (match (peel-node work) [`(Absent ,_) #t] [_ #f]))
+      (define result
+        (if absent?
+            (list (peel-ty (second (peel-node work))) '() current-psi)
+            (infer work (enter-child Λ index) current-psi
+                   environment places callables fail)))
+      (define row-field
+        (if absent?
+            (list (first field) (first result) (second field) 'opt)
+            (list (first field) (first result) (second field))))
+      (values (append typed-fields (list row-field))
+              (append field-rows (list (second result)))
+              (third result))))
+  (list `(Record ,typed-fields) (rows-union field-rows) final-psi))
+
 (define (infer/body core Λ Ψ environment places callables fail)
   (match (peel-node core)
     [(? integer?) (list 'Int '() Ψ)]
@@ -2918,6 +2945,10 @@
     [`(RecRewrite ,input (,entries ...))
      (infer-rec-rewrite core input entries Λ Ψ
                         environment places callables fail)]
+
+    [`(RecRewriteOpen (,fields ...))
+     (infer-rec-rewrite-open core fields Λ Ψ
+                             environment places callables fail)]
 
     [`(Rec (,fields ...))
      (define plain-fields
@@ -4356,6 +4387,8 @@
                        (value-position-ok? body)]
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
+    [`(RecRewriteOpen ((,_label ,_mode ,work) ...))
+     (andmap value-position-ok? work)]
     [_
      (cond
        [(redex-match? G2m v core) (leaf-positions-ok? core)]
