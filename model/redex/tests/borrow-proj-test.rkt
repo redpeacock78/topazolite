@@ -54,7 +54,7 @@
 ;; 補助。1 番の place に record 型を与えて型付けする。
 (define rec-τ '(Record ((a Int mut) (b Bool imm))))
 (define (proj-heap)
-  '((1 (Rec ((a mut 0) (b imm 1))))))
+  `((1 (Rec ((a mut 0) (b imm 1))) (declared ,rec-τ))))
 (define (proj-omega)
   '((1 Available)))
 

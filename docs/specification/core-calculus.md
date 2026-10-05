@@ -1293,6 +1293,10 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 宣言型の欄は place を作った規則だけが設定し、`Assign`、`Reassign`、`BorrowMutRef` による値の更新はその欄を保つ。
 宣言型は値や資源ではないため、token、capability、借用資源の走査には含めない。
 
+`R-ProjBorrowMut` は、heap entry の宣言型から `Owned` の外側を一度外し、field path を Record 型の欄へ辿って最終欄の mode を選ぶ。
+機械は同じ path が heap の Record 値にも存在することを確かめ、最終欄の値が `Absent` なら簡約しない。
+metadata が無い place、型または値から辿れない path、空 path では規則は発火しない。
+
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
 
@@ -1300,6 +1304,8 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。
 heap の値は、記録から得た宣言型に対する `Owned` 型へ tag 保存互換で照合する。
+ただし、記録型が `Owned` で始まらず、heap 値に `OwnedLeaf` が無い通常の mutable slot は、記録した型へ直接 `type-compatible?` で照合する。
+そのほかの entry は既存どおり `Owned` を介した照合を行い、`Owned` と `OwnedLeaf` の token 検査を保つ。
 通常の型検査入口は `OwnedLeaf` の `Rec` 欄を `owned-record-field` で拒否するが、構成検査の再型付けに限って leaf payload の `Owned` を許す。
 構成検査の再型付けでは、制御項と heap 値に現れる実行時の `BorrowRef` と `BorrowMutRef` の型も回復する。
 回復する payload 型は、place の型から借用 path を順に辿って得る。

@@ -1176,6 +1176,8 @@
 (test-case "config-ok? は heap 値を記録した宣言型と照合する"
   (define wide (normalize-type U))
   (define narrow (normalize-type U1))
+  (define plain-mut-type '(Record ((a Int imm))))
+  (define plain-mut-value '(Rec ((a mut 1))))
   (define (config-with value declared)
     (machine-config 1 `((0 ,value (declared ,declared))) '((0 Available))))
   (tagged
@@ -1186,7 +1188,17 @@
    (check-false
     (config-ok? (config-with `(UnionVal ,wide Int 1) narrow) '() 'Int '()))
    (check-false
-    (config-ok? (config-with `(UnionVal ,narrow Int 1) 'Int) '() 'Int '()))))
+    (config-ok? (config-with `(UnionVal ,narrow Int 1) 'Int) '() 'Int '()))
+   ;; R-LetMutB の通常 slot は宣言型へ直接照合する。
+   (check-true
+    (config-ok? (config-with plain-mut-value plain-mut-type) '() 'Int '()))
+   (check-false
+    (config-ok?
+     (config-with '(Rec ((a mut "s"))) plain-mut-type) '() 'Int '()))
+   ;; Owned root は従来どおり Owned-lift と token 検査を通す。
+   (check-false
+    (config-ok?
+     (config-with plain-mut-value `(Owned ,plain-mut-type)) '() 'Int '()))))
 
 (test-case "Assign、Reassign、BorrowMutRef の書込みは宣言型 metadata を保つ"
   (define record-type '(Record ((a Int mut))))

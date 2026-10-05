@@ -22,7 +22,8 @@
                 (term (Rec ((a mut (resource 2)))))))
 
 (test-case "proj-borrow-mut は空の path と欠落した label で #f を返す"
-  (define H (term ((0 ,rec))))
+  (define H
+    (term ((0 ,rec (declared (Record ((a Res mut))))))))
   (check-false (proj-borrow-mut 0 (term ()) (term ρ) H))
   (check-false (proj-borrow-mut 0 (term (b)) (term ρ) H))
   (check-equal? (proj-borrow-mut 0 (term (a)) (term ρ) H)

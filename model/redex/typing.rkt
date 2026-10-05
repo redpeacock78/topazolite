@@ -4273,24 +4273,36 @@
                           (for/and ([entry (in-list heap)])
                             (define declared
                               (second (assoc (first entry) places)))
+                            (define value (second entry))
+                            (define plain-mut-slot?
+                              (and (not (contains-owned-leaf? value))
+                                   (match entry
+                                     [`(,_ ,_ (declared (Owned ,_))) #f]
+                                     [`(,_ ,_ (declared ,_)) #t]
+                                     [_ #f])))
+                            ;; binding-context は mut の宣言型と有効 row の各欄が
+                            ;; Owned と借用を含まないことを検査する。したがって通常の
+                            ;; mut slot を宣言型そのものへ照合しても token 条件は弱まらない。
                             (define value-row
-                              (check-as/boolean (second entry)
-                                                (list 'Owned declared)
-                                                '()
-                                                places
-                                                callables
-                                                #:compatible?
-                                                ;; Rec の leaf は payload の bare Record を
-                                                ;; 推論するため、place の Owned 宣言へ持ち上げる。
-                                                ;; leaf を含まない通常の値は旧来の厳密比較を保つ。
-                                                ;; 記録を持つ root place も、値の型を place の
-                                                ;; 宣言型へ Owned の根として照合する。
-                                                (if (or (contains-owned-leaf? (second entry))
-                                                        (match entry
-                                                          [`(,_ ,_ (declared ,_)) #t]
-                                                          [_ #f]))
-                                                    owned-lift-compatible?
-                                                    type-compatible?)))
+                              (if plain-mut-slot?
+                                  (check-as/boolean value declared '()
+                                                    places callables
+                                                    #:compatible? type-compatible?)
+                                  (check-as/boolean value
+                                                    (list 'Owned declared)
+                                                    '()
+                                                    places
+                                                    callables
+                                                    #:compatible?
+                                                    ;; Rec の leaf は payload の bare Record を
+                                                    ;; 推論するため、place の Owned 宣言へ持ち上げる。
+                                                    ;; Owned と OwnedLeaf を含む経路は厳密に保つ。
+                                                    (if (or (contains-owned-leaf? value)
+                                                            (match entry
+                                                              [`(,_ ,_ (declared ,_)) #t]
+                                                              [_ #f]))
+                                                        owned-lift-compatible?
+                                                        type-compatible?))))
                             (and value-row (null? value-row)))
                           (let ([actual-row
                                  (check-as/boolean core expected '()

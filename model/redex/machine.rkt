@@ -6,6 +6,7 @@
          "borrow.rkt"
          "origins.rkt"
          "region-param.rkt"
+         "rows.rkt"
          "traits.rkt"
          "type-equiv.rkt"
          "validators.rkt")
@@ -223,26 +224,46 @@
                 [_ #f])))))
 
 ;; 可変借用から field を射影するときの実行時 mode は H から読む。
-;; 型付け側の field mode と食い違う configuration は型付け済みの項からは
-;; 作れないので、ここでは heap の値だけを根拠にする。空 path、非 list、
-;; record でない親、欠落 label はすべて #f で返す。
+;; 可変借用から field を射影するときの能力は place の有効型から読む。
+;; heap の欄は mut から imm への互換で宣言型と異なる印を持ちうるため、
+;; runtime の印だけを根拠にすると可変能力を誤って作る。
+;; path の実在と Absent でないことは heap の値で別に確かめる。
+;; metadata が無い place、空 path、非 list、辿れない型または値は #f を返す。
 ;; 構成子の欄には mode が無いため、可変の射影は label の path だけを許す。
 ;; 借用した data 値の可変な分解は申し送りとして残す。
 (define (proj-borrow-mut p fp ρ H)
   (and (record-path? fp)
        (pair? fp)
-       (let* ([label (last fp)]
-              [parent-fp (take fp (sub1 (length fp)))]
-              [record (heap-walk-path (table-ref H p) parent-fp)])
-         (match record
-           [`(Rec ,fields)
-            (match (assoc label fields)
-              [(list _ field-mode _)
-               (if (eq? field-mode 'mut)
-                   `(BorrowMutRef ,p ,fp ,ρ)
-                   `(BorrowRef ,p ,fp ,ρ))]
-              [_ #f])]
-           [_ #f]))))
+       (match (assoc p H)
+         [`(,_ ,value (declared ,declared-type))
+          (define label (last fp))
+          (define parent-fp (take fp (sub1 (length fp))))
+          (define root-type
+            (match declared-type
+              [`(Owned ,payload-type) payload-type]
+              [_ declared-type]))
+          (define parent-type
+            (for/fold ([type root-type]) ([segment (in-list parent-fp)])
+              (and type
+                   (match type
+                     [`(Record ,fields)
+                      (match (field-row-lookup fields segment)
+                        [(list field-type _) field-type]
+                        [_ #f])]
+                     [_ #f]))))
+          (define parent-value (heap-walk-path value parent-fp))
+          (match* (parent-type parent-value)
+            [(`(Record ,fields) `(Rec ,values))
+             (match* ((field-row-lookup fields label) (assoc label values))
+               [((list _ field-mode) (list _ _ field-value))
+                (and (not (match field-value [`(Absent ,_) #t] [_ #f]))
+                     (case field-mode
+                       [(mut) `(BorrowMutRef ,p ,fp ,ρ)]
+                       [(imm) `(BorrowRef ,p ,fp ,ρ)]
+                       [else #f]))]
+               [(_ _) #f])]
+            [(_ _) #f])]
+         [_ #f])))
 
 ;; spec §6.3。H から p の値を引き、path の segment を順に辿る。
 ;; label と 0 起点の位置の両方を許す。不正な path や不一致は #f となり、
