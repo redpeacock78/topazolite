@@ -1593,6 +1593,7 @@ Absent の欄だけは Open が保持した `Absent` の型から optional な�
 
 `RecRewrite` が扱う値の token の多重集合は、入力の `Rec` と Close 後の `Rec` で等しい。
 `Tok(v)` を `v` 内の `OwnedLeaf` が持つ token の多重集合とすると、各 `Rec` の token は各欄値の `Tok` の多重集合和である。
+
 ```text
 Tok(Rec((ℓi, mi, vi) ...)) = ⊎i Tok(vi)
 Tok(input) = Tok(output)
@@ -1628,7 +1629,6 @@ Tok(input) = Tok(output)
 | `ci` に `OwnedLeaf` がある | `ill-typed`（E-TYP-001） |
 
 `e` が `Record` 型でない場合は表のとおり `ill-typed` で拒否し、`project-non-record` は流用しない。
-欄の型が Record でない場合は `project-non-record` を流用せず、次の表に従って拒否する。
 
 **(R-RecurBind)**
 
