@@ -6,6 +6,7 @@
          "borrow.rkt"
          "origins.rkt"
          "region-param.rkt"
+         "resource-type.rkt"
          "rows.rkt"
          "traits.rkt"
          "type-equiv.rkt"
@@ -191,11 +192,6 @@
   unique-labels? : (label ...) -> boolean
   [(unique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
-
-(define (owned-type? type)
-  (match type
-    [`(Owned ,_) #t]
-    [_ #f]))
 
 ;; 入力値の欄順で RecRewriteOpen の作業列を作る。Owned root の恒等 entry は
 ;; 値を直接移し、Absent は変換本体を評価せずに新しい印だけを持たせる。

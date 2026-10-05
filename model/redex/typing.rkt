@@ -18,6 +18,7 @@
          "region.rkt"
          "region-param.rkt"
          "rows.rkt"
+         "resource-type.rkt"
          "schema.rkt"
          "search.rkt"
          "span-core.rkt"
@@ -674,11 +675,6 @@
 ;; 呼出し側へ届かない。重ねの照合はこの手続きだけを使う。包み直さない。
 (define (lookup-binding table key)
   (assoc key table))
-
-(define (owned-type? type)
-  (match type
-    [`(Owned ,_) #t]
-    [_ #f]))
 
 (define (record-type? type)
   (match type
@@ -2622,44 +2618,6 @@
 (define (require-ownleaf-root core key node fail)
   (unless (ownleaf-root? core)
     (fail key node)))
-
-;; RecRewrite の資源条件は owned-free? の型構成子表に従うが、関数値が
-;; token を運ばないため NFn の署名だけは辿らない。未知の型と schema の無い
-;; Data は fail-closed に資源ありとする。
-(define (resource-type? type)
-  (let walk ([type type] [visited (set)])
-    (match type
-      ['Int #f] ['Bool #f] ['Unit #f] ['String #f] ['Never #f] ['Res #f]
-      [`(TypeInfo ,_) #f]
-      [`(Proof ,_) #f]
-      [`(Owned ,_) #t]
-      [`(Borrowed ,_ ,_) #f]
-      [`(BorrowedMut ,_ ,_) #f]
-      [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #f]
-      [`(NFn ,_ ...) #f]
-      [`(List ,element) (walk element visited)]
-      [`(Option ,element) (walk element visited)]
-      [`(Result ,ok-type ,error-type)
-       (or (walk ok-type visited) (walk error-type visited))]
-      [`(Untrusted ,payload) (walk payload visited)]
-      [`(Refined ,payload ,_) (walk payload visited)]
-      [`(Record ,row)
-       (for/or ([field (in-list row)]) (walk (second field) visited))]
-      [`(Union ,left ,right)
-       (or (walk left visited) (walk right visited))]
-      [`(Intersection ,left ,right)
-       (or (walk left visited) (walk right visited))]
-      [`(ForallRegion (,_ ...) ,body) (walk body visited)]
-      [`(Data ,name (,arguments ...))
-       (define key (cons name arguments))
-       (define schema (data-schema name arguments))
-       (cond
-         [(not schema) #t]
-         [(set-member? visited key) #f]
-         [else
-          (for/or ([field (in-list (data-field-types name arguments))])
-            (walk field (set-add visited key)))])]
-      [_ #t])))
 
 (module+ rec-rewrite-test-support
   (provide resource-type?))

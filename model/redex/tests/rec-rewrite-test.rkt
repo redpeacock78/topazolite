@@ -15,7 +15,7 @@
          "../origins.rkt"
          "../traits.rkt"
          "../type-equiv.rkt"
-         (submod "../typing.rkt" rec-rewrite-test-support))
+         (only-in "../resource-type.rkt" resource-type?))
 
 (define (type-of core [callables '()] [environment '()])
   (match (type-of/raw core '() callables environment)

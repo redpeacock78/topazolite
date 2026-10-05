@@ -9,6 +9,7 @@
          "lang.rkt"
          "origins.rkt"
          "pr-lang.rkt"
+         "resource-type.rkt"
          "schema.rkt"
          "span-core.rkt"
          (only-in "type-equiv.rkt" normalize-type union-members))
@@ -112,13 +113,6 @@
 
 (define (core-literal? value)
   (or (exact-integer? value) (string? value) (eq? value 'unit)))
-
-;; classify.rkt:17 と elaborate.rkt:98 の同名の判定と同じものである。どちらも
-;; module 内に閉じているので、ここでも 3 行を持つ。
-(define (owned-type? type)
-  (match type
-    [`(Owned ,_) #t]
-    [_ #f]))
 
 ;;; lowering 本体
 
