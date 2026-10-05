@@ -47,11 +47,15 @@
                          (fill-stage-1 (cdr t)))]
         [else t]))
 (define stage-1 (fill-stage-1 stage-1-skeleton))
+(define stage-1-mut-types (box (hash)))
 (check-equal? (first (type-of/raw stage-1 '() '() '()
-                                  (region-ctx ir '() (hash) (hash))))
+                                  (region-ctx ir '() (hash) (hash))
+                                  #:mut-types stage-1-mut-types))
               'ok)
 (define stage-2 (annotate-regions stage-1 ir))
-(define stage-3 (inject-g2m stage-2))
+(define stage-3
+  (inject-g2m (annotate-mut-binding-types stage-2
+                                          (unbox stage-1-mut-types))))
 
 ;; 型検査済み config の到達列では、生きている借用の place は Available である。
 (let ()

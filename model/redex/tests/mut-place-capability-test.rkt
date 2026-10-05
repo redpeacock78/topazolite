@@ -29,6 +29,16 @@
     [`(fail ,key ,_ ,_ ...) key]
     [`(ok ,_) 'ok]))
 
+(define (typed-input core [callables '()])
+  (define ir (build-region-ir core))
+  (define annotated (annotate-regions core ir))
+  (define mut-types (box 'stale))
+  (define result
+    (type-of/raw annotated '() callables '()
+                 (region-ctx ir '() (hash) (hash))
+                 #:mut-types mut-types))
+  (values ir annotated result mut-types))
+
 (define (config-control config)
   (match config [`(cfg ,core ,_ ...) core] [_ #f]))
 
@@ -66,15 +76,15 @@
 (define (typed-trace core
                      #:skip-borrow-allocation-prefix? [skip-prefix? #f]
                      #:callables [callables '()])
-  (define ir (build-region-ir core))
-  (define annotated (annotate-regions core ir))
-  (define result
-    (type-of/raw annotated '() callables '()
-                 (region-ctx ir '() (hash) (hash))))
+  (define-values (ir annotated result mut-types) (typed-input core callables))
   (match result
     [`(ok (,expected ,row))
+     (define machine-core
+       (annotate-mut-binding-types annotated (unbox mut-types)))
      (define configs
-       (let loop ([config (inject-g2m annotated)] [remaining 100] [seen '()])
+       (let loop ([config (inject-g2m machine-core)]
+                  [remaining 100]
+                  [seen '()])
          (define next (raw-steps-g2 config))
          (cond
            [(null? next) (reverse (cons config seen))]
@@ -258,6 +268,170 @@
   (check-true
    (tag-compat? '(Record ((a Int mut)))
                 '(Record ((a Int imm))))))
+
+(test-case "mut 束縛の有効型を記録して注釈し、residual の射影を保つ"
+  (define core
+    '(Let (x mut (Record ((a Int imm))))
+       (Rec ((a imm 1) (b imm (Construct Bool true))))
+       (Proj x b)))
+  (define effective-type '(Record ((a Int imm) (b Bool imm))))
+  (define-values (_ir annotated result mut-types) (typed-input core))
+  (check-equal? result '(ok (Bool ())))
+  (check-equal? (unbox mut-types) (hash '() effective-type))
+  (check-equal?
+   (annotate-mut-binding-types annotated (unbox mut-types))
+   `(Let (x mut ,effective-type)
+      (Rec ((a imm 1) (b imm (Construct Bool true))))
+      (Proj x b)))
+  (define-values (type _row configs final) (typed-trace core))
+  (check-equal? type 'Bool)
+  (define recorded
+    (filter (lambda (config) (pair? (config-declared-types config))) configs))
+  (check-true (pair? recorded))
+  (check-true (andmap (lambda (config)
+                        (equal? (config-declared-types config)
+                                `((0 ,effective-type))))
+                      recorded))
+  (check-equal? (match final [`(cfg ,value ,_ ...) value] [_ #f])
+                '(Construct Bool true)))
+
+(test-case "const alias の residual も有効型として metadata に記録する"
+  (define core
+    '(Let (source const (Record ((a Int imm) (b Bool imm))))
+       (Rec ((a mut 1) (b mut (Construct Bool true))))
+       (Let (m mut (Record ((a Int imm))))
+         source
+         (Proj m b))))
+  (define effective-type '(Record ((a Int imm) (b Bool imm))))
+  (define-values (type _row configs final) (typed-trace core))
+  (check-equal? type 'Bool)
+  (check-true (for/or ([config (in-list configs)])
+                (equal? (config-declared-types config)
+                        `((0 ,effective-type)))))
+  (check-equal? (match final [`(cfg ,value ,_ ...) value] [_ #f])
+                '(Construct Bool true))
+  (check-equal?
+   (proj-borrow-mut
+    0 '(b) ρ
+    '((0
+       (Rec ((a mut 1) (b mut (Construct Bool true))))
+       (declared (Record ((a Int imm) (b Bool imm)))))))
+   '(BorrowRef 0 (b) ρ)))
+
+(test-case "residual のない mut 束縛は宣言型を記録する"
+  (define core
+    '(Scope () (Let (m mut (Record ((a Int imm))))
+             (Rec ((a imm 1))) m)))
+  (define-values (_ir _annotated result mut-types) (typed-input core))
+  (check-equal? result '(ok ((Record ((a Int imm))) ())))
+  (check-equal? (unbox mut-types)
+                (hash '(0) '(Record ((a Int imm)))))
+  (define-values (_type _row configs _final) (typed-trace core))
+  (check-true (for/or ([config (in-list configs)])
+                (equal? (config-declared-types config)
+                        '((0 (Record ((a Int imm)))))))))
+
+(test-case "有効型で注釈した三つの項は再型付けで同じ型を得る"
+  (define residual-core
+    '(Let (x mut (Record ((a Int imm))))
+       (Rec ((a imm 1) (b imm (Construct Bool true))))
+       (Proj x b)))
+  (define alias-core
+    '(Let (source const (Record ((a Int imm) (b Bool imm))))
+       (Rec ((a mut 1) (b mut (Construct Bool true))))
+       (Let (m mut (Record ((a Int imm)))) source (Proj m b))))
+  (define reassign-core
+    '(Scope ()
+       (Let (m mut (Record ((a Int imm)))) (Rec ((a imm 1)))
+         (Let (written let Unit) (Reassign m (Rec ((a imm 2)))) m))))
+  (for ([core (in-list (list residual-core alias-core reassign-core))])
+    (define-values (ir annotated result mut-types) (typed-input core))
+    (check-true (match result [`(ok ,_) #t] [_ #f]))
+    (define typed-core
+      (annotate-mut-binding-types annotated (unbox mut-types)))
+    (check-equal?
+     (type-of/raw typed-core '() '() '()
+                  (region-ctx ir '() (hash) (hash)))
+     result)))
+
+(test-case "同名の入れ子 mut 束縛は内側だけ有効型へ置き換える"
+  (define core
+    '(Let (x mut (Record ((a Int imm))))
+       (Rec ((a imm 1)))
+       (Let (x mut (Record ((a Int imm))))
+         (Rec ((a imm 2) (b imm (Construct Bool true))))
+         (Proj x b))))
+  (define outer-type '(Record ((a Int imm))))
+  (define inner-type '(Record ((a Int imm) (b Bool imm))))
+  (define-values (_ir annotated result mut-types) (typed-input core))
+  (check-equal? result '(ok (Bool ())))
+  (check-equal? (unbox mut-types)
+                (hash '() outer-type '(1) inner-type))
+  (check-equal?
+   (annotate-mut-binding-types annotated (unbox mut-types))
+   `(Let (x mut ,outer-type)
+      (Rec ((a imm 1)))
+      (Let (x mut ,inner-type)
+        (Rec ((a imm 2) (b imm (Construct Bool true))))
+        (Proj x b)))))
+
+(test-case "mut 型の keyword は各入口で成功時だけ表を返す"
+  (define core
+    '(Let (m mut (Record ((a Int imm)))) (Rec ((a imm 1))) m))
+  (define expected (hash '() '(Record ((a Int imm)))))
+  (define raw-types (box 'stale))
+  (check-true (match (type-of/raw core '() '() '() (empty-region-ctx)
+                                #:mut-types raw-types)
+                [`(ok ,_) #t]
+                [_ #f]))
+  (check-equal? (unbox raw-types) expected)
+  (define borrow-types (box 'stale))
+  (check-true (match (type-of/raw*+borrows
+                      core '() '() '() (empty-region-ctx)
+                      #:mut-types borrow-types)
+                [`(ok ,_) #t]
+                [_ #f]))
+  (check-equal? (unbox borrow-types) expected)
+  (define ptr-types (box 'stale))
+  (check-true (match (type-of/raw*+ptr
+                      core '() '() '() (empty-region-ctx)
+                      #:mut-types ptr-types)
+                [`(ok ,_) #t]
+                [_ #f]))
+  (check-equal? (unbox ptr-types) expected)
+  (define failed-types (box (hash 'stale 'Int)))
+  (check-true (match (type-of/raw
+                      '(Let (m mut (Record ((a Int imm))))
+                         (Rec ((a imm 1)))
+                         (Apply 1 2))
+                      '() '() '() (empty-region-ctx)
+                      #:mut-types failed-types)
+                [`(fail ,_ ,_ ,_) #t]
+                [_ #f]))
+  (check-equal? (unbox failed-types) (hash)))
+
+(test-case "spanful mut Let の位置は spanless の注釈走査と一致する"
+  (define span '(#:span src 0 1))
+  (define core
+    `(Let ,span
+       ((#:bind m ,span) mut (#:ty ,record-type ,span))
+       (Rec ,span ((a imm (#:lit 1 ,span))))
+       (#:var m ,span)))
+  (define mut-types (box 'stale))
+  (check-true (match (type-of/raw core '() '() '() (empty-region-ctx)
+                                #:mut-types mut-types)
+                [`(ok ,_) #t]
+                [_ #f]))
+  (check-equal? (unbox mut-types) (hash '() record-type))
+  (check-equal? (annotate-mut-binding-types core (unbox mut-types))
+                `(Let (m mut ,record-type)
+                   (Rec ((a imm 1)))
+                   m)))
+
+(test-case "mut 型の表にない Let は元の型を保つ"
+  (define core
+    '(Let (m mut (Record ((a Int imm)))) (Rec ((a imm 1))) m))
+  (check-equal? (annotate-mut-binding-types core (hash)) core))
 
 (test-case "proj-borrow-mut は runtime の欄印より宣言型を優先する"
   (check-equal?

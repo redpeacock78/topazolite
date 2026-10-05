@@ -327,15 +327,19 @@
   (define annotated
     (with-handlers ([exn:fail? (lambda (_e) #f)])
       (annotate-regions filled ir)))
+  (define mut-types (box (hash)))
   (define result
     (if annotated
         (with-handlers ([exn:fail? (lambda (_e) 'discard)])
           (type-of/raw*+borrows annotated '() '()
-                                '() (region-ctx ir '() (hash) (hash))))
+                                '() (region-ctx ir '() (hash) (hash))
+                                #:mut-types mut-types))
         'discard))
   (match result
     [(list 'ok (list _type _row _table _σ _renamed sidecar))
-     (define config (inject-g2m annotated))
+     (define machine-core
+       (annotate-mut-binding-types annotated (unbox mut-types)))
+     (define config (inject-g2m machine-core))
      ;; spec §4.6。初期 config に借用値が現れる項は入口の制限に反する。
      (if (initial-has-borrow? config)
          'discard

@@ -1284,10 +1284,18 @@ dom(Ξ) = dom(H) = dom(Ω)
 ```
 
 `Ξ` は heap の値または束縛時に記録した宣言型から導く写像である。
-`R-LetOwned`、`R-LetOwnedB`、`R-LetMutB` は place を作るとき、heap entry に束縛の宣言型を記録する。
+`R-LetOwned` と `R-LetOwnedB` は place を作るとき、heap entry に束縛の宣言型を記録する。
+`R-LetMutB` は mut の `Let` に書かれた型を記録する。
 記録がある place に対して `strip-owned(τdecl)` を `Ξ` の型にする。
 記録が無い place は heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けして place の型を導く。
 前方の place を参照する値はこの導出に失敗する。
+
+型検査を通した項では、mut binding の有効型（宣言 row と residual を合わせた型）を `Let` の位置ごとに記録する。
+machine へ入れる前に、その表を使って mut の `Let` の型欄を有効型へ置き換える。
+このため `R-LetMutB` は宣言型でなく有効型を metadata に記録し、`Ξ` は residual の欄も持つ。
+
+型検査の結果を使わずに項を machine へ入れる経路では、`R-LetMutB` は構文上の型を記録する。
+その metadata には residual の欄が含まれず、その経路で得た config は Preservation の証拠に使わない。
 
 heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 宣言型の欄は place を作った規則だけが設定し、`Assign`、`Reassign`、`BorrowMutRef` による値の更新はその欄を保つ。

@@ -117,13 +117,18 @@
   (define annotated
     (with-handlers ([exn:fail? (lambda (_e) #f)])
       (annotate-regions region-filled ir)))
+  (define mut-types (box (hash)))
   (define result
     (if annotated
         (with-handlers ([exn:fail? (lambda (_e) 'discard)])
           (type-of/raw*+ptr annotated '() '() '()
-                              (region-ctx ir '() (hash) (hash))))
+                              (region-ctx ir '() (hash) (hash))
+                              #:mut-types mut-types))
         'discard))
   (match result
     [(list 'ok (list _τ _ε sidecar))
-     (list 'ok (inject-g2m annotated) sidecar)]
+     (list 'ok
+           (inject-g2m (annotate-mut-binding-types
+                        annotated (unbox mut-types)))
+           sidecar)]
     [_ 'discard]))

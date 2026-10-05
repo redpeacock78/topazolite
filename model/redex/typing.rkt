@@ -32,6 +32,7 @@
          type-of/raw
          type-of/raw*+borrows
          type-of/raw*+ptr
+         annotate-mut-binding-types
          typing-visited-points
          config-ok?
          with-config-typing
@@ -646,6 +647,7 @@
 ;; （region.md §2 の識別子の不透明性）。
 (define lifetime-counter (make-parameter #f))
 (define alpha-table (make-parameter #f))
+(define mut-binding-types-table (make-parameter #f))
 
 ;; §5.4。alpha-table へ登録せずに寿命変数だけを採る。
 (define (fresh-local-lifetime!)
@@ -3076,6 +3078,15 @@
      (match (binding-context binding-mode (peel-ty type) bound Λ
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
+        ;; mut binding の有効型を Let 自身の位置へ記録する。
+        ;; infer-eliminate の attempts と check-as は失敗を局所回復せず
+        ;; with-typing 全体を脱出する。同じ節点の再走査は同じ
+        ;; binding-context を使うため、同じ位置へ同じ型を書き込む。
+        (when (eq? binding-mode 'mut)
+          (define table (mut-binding-types-table))
+          (when table
+            (define point (region-ctx-point Λ))
+            (set-box! table (hash-set (unbox table) point binding-type))))
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
@@ -3771,7 +3782,13 @@
 
 (define (type-of/raw* core-in places callables environment Λ
                       #:sidecar [sidecar-box #f]
-                      #:ptr-sidecar [ptr-box #f])
+                      #:ptr-sidecar [ptr-box #f]
+                      #:mut-types [mut-types-box #f])
+  (when mut-types-box
+    (unless (box? mut-types-box)
+      (raise-argument-error 'type-of/raw* "box?" mut-types-box))
+    (set-box! mut-types-box (hash)))
+  (define collected-mut-types (and mut-types-box (box (hash))))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -3788,6 +3805,7 @@
                    [region-param-origins origins]
                    [region-binder-renamings '()]
                    [alpha-table tbl]
+                   [mut-binding-types-table collected-mut-types]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
@@ -3854,22 +3872,31 @@
                     renamed)]))))))
   ;; 失敗の details も同じ σ の下へ置く。段 1 の fail は脱出継続で
   ;; with-typing の外へ出るため、σ を掛ける位置はここしかない。
-  (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
+  (define completed
+    (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
+  (when (and mut-types-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (set-box! mut-types-box (unbox collected-mut-types)))
+  completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
 (define (type-of/raw core-in places callables [environment '()]
-                     [Λ (empty-region-ctx)])
-  (match (type-of/raw* core-in places callables environment Λ)
+                     [Λ (empty-region-ctx)]
+                     #:mut-types [mut-types-box #f])
+  (match (type-of/raw* core-in places callables environment Λ
+                       #:mut-types mut-types-box)
     [(list 'ok (list type row _table _σ _renamed)) (list 'ok (list type row))]
     [other other]))
 
 ;; spec §4.4。性質 8 の bounded 検査だけが使う入口。
 ;; 既存の type-of/raw* の返り値と既存の 2 箇所の呼び出しは変えず、成功結果の末尾へ sidecar を足す。
 (define (type-of/raw*+borrows core-in places callables [environment '()]
-                              [Λ (empty-region-ctx)])
+                              [Λ (empty-region-ctx)]
+                              #:mut-types [mut-types-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
-                       #:sidecar sidecar-box)
+                       #:sidecar sidecar-box
+                       #:mut-types mut-types-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -3877,13 +3904,40 @@
 ;; unsafe.md §5.2。既存の type-of/raw* の返り値を変えず、raw 操作の
 ;; sidecar を返す入口を足す。
 (define (type-of/raw*+ptr core-in places callables [environment '()]
-                          [Λ (empty-region-ctx)])
+                          [Λ (empty-region-ctx)]
+                          #:mut-types [mut-types-box #f])
   (define ptr-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
-                       #:ptr-sidecar ptr-box)
+                       #:ptr-sidecar ptr-box
+                       #:mut-types mut-types-box)
     [(list 'ok (list type row _table _σ _renamed))
      (list 'ok (list type row (unbox ptr-box)))]
     [other other]))
+
+;; machine へ入れる前に、型付けが記録した mut binding の有効型を
+;; Let の型欄へ反映する。位置は region walker と同じ core-children の添字である。
+;; alpha-rename-all-region-lams は領域名だけを変え、束縛子と型注釈は
+;; core-children の子に数えないため、型付け側の renamed と位置列が一致する。
+;; span を持つ項も erase-core の前後で木の形を保つ。
+(define (annotate-mut-binding-types core table)
+  (unless (hash? table)
+    (raise-argument-error 'annotate-mut-binding-types "hash?" table))
+  (define spanless (erase-core core))
+  (define (walk node point)
+    (define replaced
+      (match node
+        [`(Let (,name mut ,declared) ,bound ,body)
+         `(Let (,name mut ,(hash-ref table point (lambda () declared)))
+            ,bound ,body)]
+        [_ node]))
+    (define children (core-children replaced))
+    (if (null? children)
+        replaced
+        (core-with-children
+         replaced
+         (for/list ([child (in-list children)] [index (in-naturals)])
+           (walk child (append point (list index)))))))
+  (walk spanless '()))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
 (define (core-type-of/materialized core-in places callables
