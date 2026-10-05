@@ -19,7 +19,7 @@ Typed Core verifier を通過した意味論を実行形式へ写像するだけ
 |---|---|
 | lambda / application | `PLam`、`PClosure`、`PApp` |
 | let / letrec | `PLet`、`PLetOwned`、`PLetrec` |
-| immutable record | `PRec`、`PProj` |
+| immutable record | `PRec`、`PRecRewrite`、`PProj` |
 | explicit tagged ADT | `PTagged`、`PMatch` |
 | primitive arithmetic and comparison | `PPrim` |
 | explicit closure environment | `PClosure` の `penv` |
@@ -80,6 +80,7 @@ pc   ::= pv | px
        | (PLetrec px pc pc)
        | (PTagged K pc ...)
        | (PRec ((label pc) ...))
+       | (PRecRewrite pc ((label px pc) ...))
        | (PProj pc label)
        | (PMatch pc (pbr ...))
        | (PPrim pnm pc ...)
@@ -99,6 +100,7 @@ pc   ::= pv | px
 
 評価文脈は `PF`、`PG`、`PE` の 3 つを別々に展開する。
 `PF` の句を貼ったうえで `PInstall` の句だけを足す書き方では、`PE` が `PInstall` の本体の内側へ届かない。
+`PRecRewrite` の評価文脈は入力 `pc` だけを進め、entry の本体は入力が値になってから `PRec` の欄へ展開する。
 `PRuntime` の評価位置は源の評価文脈 `F` と同じ 4 本に限る。
 総称の `(PRuntime prt pv ... PF pc ...)` を置くと `yield` の継続と `suspend` の本体まで掘れてしまい、後続が 2 つ残って §4 の決定性が壊れる。
 
@@ -121,8 +123,8 @@ pstate ::= Available | Moved | Dropped
 観測に基づく評価器は、重複除去後に 2 つ以上の後続 config が残ると error を投げる。
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
-規則は 20 本である。
-源の `-->g2` の 52 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB` をそれぞれ 1 本へ畳んで 4 本減り、目標側に規則を持たない 28 本が対象外となって減る。
+規則は 22 本である。
+`R-RecRewrite-Open` と `R-RecRewrite-Close` は `R-PR-RecRewrite` の一度の展開規則へ写る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -135,6 +137,7 @@ pstate ::= Available | Moved | Dropped
 | `R-ReadMutSlot` | なし | 同上 |
 | `R-Reassign` | なし | 同上 |
 | `R-Eliminate` | `R-PR-Match` | なし |
+| `R-RecRewrite-Open`、`R-RecRewrite-Close` | `R-PR-RecRewrite` | 2 本を入力 `PRec` から欄を展開する 1 本へまとめる |
 | `R-EliminateRef` | なし | Portable Racket backend は借用した data 値の分解を未設計である |
 | `R-EliminateMutRef` | なし | Portable Racket backend は借用した data 値の分解を未設計である |
 | `R-AddressOf` | なし | Portable Racket backend は raw pointer を持たない |
@@ -240,6 +243,12 @@ Union の Core 構成子は次の形へ写す。
 | `(UnionVal τ_U τ_m v)` | `(PTagged (union-tag-code τ_m) (lower-value v))` |
 | `(UnionInject τ_U τ_m c)` | `(PTagged (union-tag-code τ_m) (lower c))` |
 | `(UnionEliminate c ((τ_m x -> c) ...))` | `(PMatch (lower c) ((<union-tag-code τ_m> (v:x) -> lower c) ...))` |
+| `(RecRewrite c ((ℓ x τ m' τ' c) ...))` | `(PRecRewrite (lower c) ((f:ℓ v:x (lower c)) ...))` |
+
+`lower` は root が `Owned` の identity entry を `PRecRewrite` の entry 列から外す。
+PR ではその欄の値をそのまま残し、型と可変性の印は持たない。
+`PRecRewrite` の規則は入力の `PRec` を欄順に走査し、値のある列挙欄だけを `PLet` を含む欄へ一度だけ展開する。
+入力に無い欄は出力にも現れない。
 
 所有 token を含む値は、payload の表現を保って token の操作だけを消去する。
 

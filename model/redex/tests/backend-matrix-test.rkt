@@ -136,6 +136,7 @@
 (test-case
  "core-form-feature reads the table and fails closed"
  (check-eq? (core-form-feature 'Apply) 'closure)
+ (check-eq? (core-form-feature 'RecRewrite) 'immutable-record)
  (check-eq? (core-form-feature '%literal) 'literal)
  (check-eq? (core-form-feature 'PrimVal) 'primitive-value)
  ;; 対応表に無い頭シンボルは例外ではなく #f を返す。lower はこれを

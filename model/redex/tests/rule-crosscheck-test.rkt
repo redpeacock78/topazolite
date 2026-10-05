@@ -12,10 +12,9 @@
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
-;; 4 組が 1 本へ畳まれ、R-Discharge、R-OwnLeaf、各借用 Eliminate、
-;; R-RetireValue、R-RetireError、R-RetirePerform と G2m 固有規則が
-;; 目標側に無いため、値の相異なる集合は 20 本になる。raw pointer の
-;; 7 規則も G2m 固有で目標側には無い。
+;; Curry、Recur、Let、LetOwned、RecRewrite の 5 組は目標側でそれぞれ 1 本へ畳む。
+;; R-Discharge、R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、
+;; R-RetirePerform と G2m 固有規則は目標側に無く、raw pointer の 7 規則も対象外である。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
@@ -34,8 +33,8 @@
     (R-UnionEliminate . #f)
     (R-UnionEliminateRef . #f)
     (R-UnionEliminateMutRef . #f)
-    (R-RecRewrite-Open . #f)
-    (R-RecRewrite-Close . #f)
+    (R-RecRewrite-Open . R-PR-RecRewrite)
+    (R-RecRewrite-Close . R-PR-RecRewrite)
     (R-Proj         . R-PR-Proj)
     (R-ProjOpt      . R-PR-ProjOpt)
     (R-Discharge    . #f)
@@ -117,5 +116,5 @@
  (check-equal? (length rule-correspondence) 59))
 
 (test-case
- "the target side has 21 rules"
- (check-equal? (set-count target-rule-names) 21))
+ "the target side has 22 rules"
+ (check-equal? (set-count target-rule-names) 22))

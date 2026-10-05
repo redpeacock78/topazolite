@@ -335,6 +335,17 @@
          [`(Drop ,body) `(PRuntime drop ,(lower-core body))]
          [`(Curry ,function ,argument)
           `(PRuntime curry ,(lower-core function) ,(lower-core argument))]
+         [`(RecRewrite ,input ((,labels ,variables ,types ,_modes ,_output-types ,bodies) ...))
+          `(PRecRewrite
+            ,(lower-core input)
+            ,(for/list ([label (in-list labels)]
+                        [variable (in-list variables)]
+                        [type (in-list types)]
+                        [body (in-list bodies)]
+                        #:unless (owned-type? (peel-ty type)))
+               (list (label-code (peel-lbl label))
+                     (var-code (peel-bind variable))
+                     (lower-core body))))]
          [`(Rec ((,labels ,_ ,fields) ...))
           `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
                              #:unless (absent-field? field))

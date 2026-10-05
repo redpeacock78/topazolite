@@ -6,7 +6,9 @@
          redex/reduction-semantics
          "../borrow.rkt"
          "../lang.rkt"
+         "../lowering.rkt"
          "../machine.rkt"
+         "../pr-machine.rkt"
          "../region.rkt"
          "../typing.rkt"
          "../type-shape.rkt"
@@ -82,6 +84,23 @@
   (match (run-g2 (inject-g2m core) 100)
     [`(cfg ,value ,_heap ,_states ,_tokens ,_trace) value]
     [other (error 'machine-result "unexpected result: ~s" other)]))
+
+(define (lowered-core-result core)
+  (define-values (status target) (lower core 'racket-cs))
+  (check-eq? status 'ok (format "lower failed: ~s" target))
+  (match (run-pr (inject-pr target) 1000)
+    [`(pcfg ,value ,_heap ,_states ,_trace) value]
+    [other (error 'lowered-core-result "unexpected result: ~s" other)]))
+
+(define (lowered-value-result value)
+  (define-values (status target) (lower-value value 'racket-cs))
+  (check-eq? status 'ok (format "lower-value failed: ~s" target))
+  target)
+
+(define (check-rec-rewrite-lowering core)
+  (check-equal? (lowered-core-result core)
+                (lowered-value-result (machine-result core))
+                (format "Core/PR result mismatch: ~s" core)))
 
 (define (token-multiset config)
   (sort (map second (config-tokens config)) <))
@@ -375,6 +394,76 @@
                 '(Rec ((a mut (UnionVal (Union Bool Int) Int 1))
                       (b imm 2)
                       (c mut 3)))))
+
+(test-case "RecRewrite の lowering は Core の結果と PR の結果を一致させる"
+  (define union-type '(Union Bool Int))
+  (define absent
+    `(RecRewrite (Rec ((a imm (Absent Int))))
+       ((a x Int imm ,union-type
+         (UnionInject ,union-type Int
+           (Apply (PrimVal (Reserved o-add) add) x 1))))))
+  (define owned-unlisted
+    '(RecRewrite
+      (Rec ((owned imm (OwnedLeaf (tok 51) (resource 51)))
+           (number imm 1)))
+      ((number x Int imm (Union Bool Int)
+        (UnionInject (Union Bool Int) Int x)))))
+  (define owned-identity
+    '(RecRewrite
+      (Rec ((owned mut (OwnedLeaf (tok 52) (resource 52))) (number imm 1)))
+      ((owned owner (Owned Res) imm (Owned Res) owner))))
+  (define inner-input
+    '(Record ((owned (Owned Res) imm) (number Int imm))))
+  (define inner-output
+    '(Record ((owned (Owned Res) imm) (number (Union Bool Int) imm))))
+  (define nested
+    `(RecRewrite
+      (Rec ((box imm (Rec ((owned imm (OwnedLeaf (tok 53) (resource 53)))
+                           (number imm 1))))))
+      ((box nested ,inner-input imm ,inner-output
+        (RecRewrite nested
+          ((number number-value Int imm (Union Bool Int)
+            (UnionInject (Union Bool Int) Int number-value))))))))
+  (define reverse
+    `(RecRewrite
+      (Rec ((a mut 1) (b mut (Construct Bool false))))
+      ((b y Bool mut ,union-type
+        (UnionInject ,union-type Bool y))
+       (a x Int mut ,union-type
+        (UnionInject ,union-type Int x)))))
+  (define output-modes
+    `(RecRewrite (Rec ((a mut 1) (b mut 2) (c mut 3)))
+       ((a x Int mut ,union-type
+         (UnionInject ,union-type Int x))
+        (b y Int imm Int y))))
+  (define optional-present
+    `(Let (present const (Record ((a Int imm opt))))
+       (Rec ((a imm 5)))
+       (RecRewrite present
+         ((a payload Int imm ,union-type
+           (UnionInject ,union-type Int payload))))))
+  ;; Borrow / Assign は Portable Racket backend の対象外なので、copy-out 後の値を直接使う。
+  (define snapshot-copy-out
+    `(RecRewrite (Rec ((a mut 1)))
+       ((a source Int mut ,union-type
+         (UnionInject ,union-type Int source)))))
+  (check-equal? (type-of optional-present)
+                '(Record ((a (Union Bool Int) imm opt))))
+  (for ([core (in-list (list rewrite-a absent owned-unlisted owned-identity
+                             nested reverse output-modes optional-present
+                             snapshot-copy-out))])
+    (check-rec-rewrite-lowering core))
+  (check-equal? (lowered-core-result absent) '(PRec ())))
+
+(test-case "Owned の identity entry は PR 項から除かれる"
+  (define core
+    '(RecRewrite
+      (Rec ((owned imm (OwnedLeaf (tok 54) (resource 54)))))
+      ((owned owner (Owned Res) imm (Owned Res) owner))))
+  (define-values (status target) (lower core 'racket-cs))
+  (check-eq? status 'ok)
+  (check-equal? target
+                `(PRecRewrite (PRec ((,(label-code 'owned) (PResource 54)))) ())))
 
 (test-case "Read の copy-out 後の RecRewrite は元 place の更新から独立する"
   (define input-type (normalize-type '(Record ((a Int mut)))))

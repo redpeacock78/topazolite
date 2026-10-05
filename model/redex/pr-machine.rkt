@@ -102,6 +102,16 @@
   [(punique-labels? (label ...))
    ,(not (check-duplicates (term (label ...))))])
 
+;; 列挙した欄だけを一時 Let へ展開する。入力 PRec に無い optional 欄は
+;; 走査されないため、出力にも現れない。
+(define (prec-rewrite-fields fields entries)
+  (for/list ([field (in-list fields)])
+    (match field
+      [`(,label ,value)
+       (match (assoc label entries)
+         [(list _ px body) (list label `(PLet ,px ,value ,body))]
+         [_ field])])))
+
 ;; machine.rkt:157 から 184 の table-ref / table-set / fresh-place /
 ;; finalize/proc と同じ実装である。machine.rkt はこれらを provide しておらず、
 ;; provide を広げるより写すほうが公開面を増やさない。θ へ足す順序も揃える。
@@ -220,6 +230,21 @@
         (where pv_result
                (pproj-lookup ((label_field pv_field) ...) label_target))
         R-PR-Proj)
+
+   ;; 一時形を残さず、Present な列挙欄だけを PLet を含む PRec へ展開する。
+   (--> (pcfg (in-hole PE
+                      (PRecRewrite (PRec ((label_field pv_field) ...))
+                                   ((label_entry px_body pc_body) ...)))
+              PH PΩ θ)
+        (pcfg (in-hole PE (PRec ((label_output pc_output) ...))) PH PΩ θ)
+        (side-condition
+         (and (term (punique-labels? (label_field ...)))
+              (term (punique-labels? (label_entry ...)))))
+        (where ((label_output pc_output) ...)
+               ,(prec-rewrite-fields
+                 (term ((label_field pv_field) ...))
+                 (term ((label_entry px_body pc_body) ...))))
+        R-PR-RecRewrite)
 
    (--> (pcfg (in-hole PE
                       (PProjOpt K_some K_none

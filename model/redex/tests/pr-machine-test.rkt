@@ -7,7 +7,7 @@
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
-;; [REQ: BAK-001] 目標機械 -->pr の 20 本の規則（backend-matrix.md §4）
+;; [REQ: BAK-001] 目標機械 -->pr の 22 本の規則（backend-matrix.md §4）
 
 (define fuel 10000)
 
@@ -155,6 +155,15 @@
   (term (PScopeExit () (PProj (PRec ((f 1))) g)))))
 
 (test-case
+ "R-PR-RecRewrite expands present entries and ignores absent entries"
+ (check-equal?
+  (eval-pr
+   (term (PRecRewrite (PRec ((f:a 2) (f:b 7)))
+                      ((f:a x (PPrim tz:add x 1))
+                       (f:absent y y)))))
+  (term (PRec ((f:a 3) (f:b 7))))))
+
+(test-case
  "R-PR-ProjOpt returns some or none and requires unique labels"
  (check-equal?
   (eval-pr (term (PProjOpt some-tag none-tag (PRec ((f 1) (g 2))) g)))
@@ -274,7 +283,7 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
   (term (PError 0))))
 
-;; 20 本の規則それぞれを少なくとも 1 回通る fixture。
+;; 22 本の規則それぞれを少なくとも 1 回通る fixture。
 ;; backend-matrix.md §4 の決定性は obs-eval-pr が動く前提そのものなので、
 ;; 規則を足すたびにここで確かめる。
 (define determinism-fixtures
@@ -296,7 +305,9 @@
         (term (PInstall ,pop-a (PLam (x) x) (PEffect ,pop-b 3)))
         (term (PInstall ,pop-a (PLam (x) x)
                         (PScopeExit () (PEffect ,pop-a 3))))
-        (term (PInstall ,pop-a (PLam (x) x) (PError 0)))))
+        (term (PInstall ,pop-a (PLam (x) x) (PError 0)))
+        (term (PRecRewrite (PRec ((f:a 2)))
+                           ((f:a x (PPrim tz:add x 1)))))))
 
 (test-case
  "-->pr is deterministic on every fixture"
@@ -304,7 +315,7 @@
    (check-deterministic core)))
 
 (test-case
- "-->pr/rules declares exactly the 21 target rule names"
+ "-->pr/rules declares exactly the 22 target rule names"
  ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
  (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
                target-rule-names))

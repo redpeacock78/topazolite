@@ -113,6 +113,7 @@
     (UVal       tagged-adt)
     (RVal       tagged-adt)
     (Rec        immutable-record)
+    (RecRewrite immutable-record)
     (Proj       immutable-record)
     (ProjOpt    immutable-record)
     (Perform    effect-dispatch)
