@@ -172,6 +172,8 @@ c ::= v                                          値
     | Eliminate(c0, (K1(x̄1) -> c1), …, (Kn(x̄n) -> cn))   場合分け
     | UnionInject(τU, τm, c)                     Union 成分の注入
     | UnionEliminate(c, (τm1 x1 -> c1), …, (τmn xn -> cn)) Union の tag による場合分け
+    | RecRewrite(e, ((ℓ1, x1, τ1, m'1, τ'1, c1), …)) Record の欄の再構成
+    | RecRewriteOpen((ℓ1, m1, c1), …)            machine 専用の作業形
     | Perform(op, c)                             Effect の発生
     | Handle(op, x -> ch, c)                     abortive handler
     | Scope(π, c)                                finalization 境界
@@ -204,6 +206,10 @@ v ::= l                                          リテラル
 `UnionVal` は machine が `UnionInject` の簡約で生成する値であり、Typed Core の入力には書けない。
 Union への暗黙 widening は P2m2b の elaboration が `UnionInject` を挿入する。
 Surface の Union pattern を `UnionEliminate` へ写すのは P2m3 とする。
+`RecRewrite(e, ((ℓ, x, τ, m', τ', c) ...))` は elaboration が挿入する Typed Core 専用の内部形である。
+Surface と UCore には現れず、c1b の生成器も作らない。
+各 entry の `x` は対応する `c` の中だけで束縛される。
+`RecRewriteOpen` は簡約が生成する machine 専用の中間形であり、初期の Typed Core には書けない。
 
 #### 3.3.1 binding mode
 
@@ -1270,6 +1276,88 @@ ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 Record の枝も全枝を一度の row 合流へ渡し、共通欄の借用寿命を同じ合流位置で統合する。
 期待型がある位置では、全ての枝の本体をその型へ check する。
 
+**(T-RecRewrite)**
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core e : Record(ρ) ! ε
+ρ(ℓi) = (σi, mi, qi)                 type-equiv?(τi, σi)
+ℓi は相異なる。m'i = mi または m'i = imm
+τi の root が Owned なら type-equiv?(τ'i, τi) かつ ci = xi
+τi の root が Owned でないなら
+  Γ, xi : τi; Δ; Π; Ξ; Φ ⊢core ci : τ'i ! {}
+  FV(ci) ⊆ {xi}                       ci に OwnedLeaf が無い
+  resource-type?(τi) なら ci = Li[xi] （下記の線形条件）
+ρ' は各 ℓi の欄だけを (τ'i, m'i, qi) に置き換えた行
+--------------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core RecRewrite(e, ((ℓi, xi, τi, m'i, τ'i, ci) ...))
+  : Record(ρ') ! ε
+```
+
+`τi` は入力の `Record` の欄の型であり、`τ'i` は出力の欄の型である。
+型付けは entry の `τi` と入力の欄型 `σi` の一致を検査する。
+出力の行は指定した欄の型と可変性だけを置き換え、optional の印と残余の欄を保つ。
+root が `Owned` の欄は identity entry に限り、`ci` を合成も評価もせず、`xi` を束縛しない構文上の transfer とする。
+それ以外の entry は `xi : τi` の下で `ci` を `τ'i` に check し、effect row が空であることを要求する。
+`ci` の自由変数は `xi` だけであり、`ci` は `OwnedLeaf` を含まない。
+entry の出力 mode `m'i` は入力 mode `mi` と同じか `imm` でなければならない。
+`imm` の欄を `mut` にすることは書き込み能力を増やすため認めない。
+
+資源を持つ型は次の表で判定する。
+
+| 型 | 判定 |
+|---|---|
+| `Owned τ` | 資源を持つ |
+| `Record`、`Union`、`Intersection`、`Option`、`List`、`Result` | 内側の型を再帰的に調べる |
+| `Untrusted`、`Refined` | payload を再帰的に調べる |
+| `ForallRegion` | 本体を再帰的に調べる |
+| `Data` | schema の欄型を再帰的に調べ、具体化ごとの訪問済み集合で再帰を止める |
+| `Int`、`Bool`、`Unit`、`String`、`Never`、`Res`、`TypeInfo`、`Proof`、`Borrowed`、`BorrowedMut`、`RawPtr` | 資源を持たない |
+| `NFn` | 資源を持たず、仮引数、返り値、effect を辿らない |
+| 列挙に無い型構成子、schema の無い `Data` | 資源を持つものとして扱う |
+
+借用と raw pointer の payload は値自身の token を表さないため辿らない。
+`owned-free?` は `NFn` の署名まで辿るため、この判定にはそのまま使わない。
+
+資源を持つ型の `xi` は、`ci` の線形文脈 `L` の穴にだけ置く。
+`ci` が `L[xi]` の形でない場合は型付けに失敗する。
+
+```text
+L ::= □
+    | (UnionInject τ τ L)
+    | (Rec (… (ℓ m L) …))
+    | (Construct τ K c … L c …)
+    | (RecRewrite L entries)
+    | (Let (y b τ) L y)                b は const か let
+    | (UnionEliminate L ((τj yj -> Lj[yj]) …))
+```
+
+`xi` は穴の位置にだけ現れ、`L` の兄弟の項、内側の `RecRewrite` の全 entry、`UnionEliminate` の全枝に自由に現れてはならない。
+判定では文法に従って穴を持つ子を一つ選び、それ以外の各子に `xi` が自由変数として現れないことを確かめる。
+`Let` の束縛 mode は `const` か `let` に限る。
+資源を持つ型の `UnionEliminate` の枝 binder `yj` も、それぞれの枝の `Lj` の穴にだけ現れなければならない。
+`L` の穴は選んだ経路に一つだけあり、`xi` はその穴に一度だけ現れる。
+この条件は別名による複製や、`Lam`、`RegionLam`、`Recur`、`Handle`、通常の `Eliminate`、`Apply`、`Drop`、`Proj` の内側での消失を防ぐ。
+`Option` の `Eliminate` は共変な `Option` の変換を `compat?` が認めないため含めない。
+`Move` は `RecRewrite` の生成形に現れず、root が `Owned` の欄も identity entry で処理するため含めない。
+
+**(T-RecRewriteOpen)** は machine 専用の作業形に限って使う。
+
+```text
+ℓi は相異なる。mi ∈ {imm, mut}
+ci = (Absent τi) なら ρ(ℓi) = (τi, mi, opt)、εi = {}
+ci が (Absent τi) でないなら Γ; Δ; Π; Ξ; Φ ⊢core ci : τi ! εi
+                         ρ(ℓi) = (τi, mi)
+--------------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core RecRewriteOpen((ℓ1, m1, c1), …, (ℓk, mk, ck))
+  : Record(ρ) ! (ε1 ∪ … ∪ εk)
+```
+
+作業列は入力欄の順に型付けする。
+present な欄は optional の印を付けない行にし、`Absent τ` の欄だけは `opt` の印を付けた行にして型を `τ` とする。
+したがって `config-ok?` は、optional の期待欄に present な値がある作業形を受理する。
+専用の token walker は各 work を一度だけ走査し、型注釈を token として数えない。
+この専用規則は通常の `Rec` の `owned-record-field` 制限を緩めない。
+
 **(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
 `TypeRep(O, t, κ)` は `TypeInfo<κ>`、`ProofRep(O, φ)` は `Proof<φ>` で型付けする。
 
@@ -1352,12 +1440,18 @@ F ::= []                                          純粋文脈（Scope と Handl
     | Apply(v̄, F, c̄) | Let(x : τ, F, c)
     | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄)
     | UnionInject(τU, τm, F) | UnionEliminate(F, ubr̄)
+    | RecRewrite(F, entries)
+    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, F), (ℓk+1, mk+1, ck+1), …)
     | Perform(op, F) | Drop(F) | Yield(F, c)
     | Curry(F, c) | Curry(v, F)
 
 E ::= F | E[Scope(π, F)] | E[Handle(op, h, F)]    一般文脈
+    | RecRewrite(E, entries)
+    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, E), (ℓk+1, mk+1, ck+1), …)
 
 G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文脈
+    | RecRewrite(G, entries)
+    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, G), (ℓk+1, mk+1, ck+1), …)
 ```
 
 以降の規則は、明示しない限り一般文脈 E の下で適用される。
@@ -1462,6 +1556,79 @@ H(p)[fp] = UnionVal(τU, τm, v)    Ω(p) = Available
 R-UnionEliminateMutRef は同じ規則で BorrowRef を BorrowMutRef に置き換える。
 借用の枝束縛子は UnionVal 全体ではなく payload を指す。
 Payload path は payload を差し替えても UnionVal の Union 型と成分型を保つ。
+
+**(R-RecRewrite-Open)**
+
+```text
+open((ℓ, m, v), entries) =
+  (ℓ, m, v)                                  対応する entry が無い
+  (ℓ, m', v)                                 τ の root が Owned で identity entry
+  (ℓ, m', (Absent τ'))                       entry があり v = (Absent τ)
+  (ℓ, m', Let(x : τ, v, c))                   entry があり v が present
+
+E[RecRewrite(Rec(fields), entries)]
+  → E[RecRewriteOpen(open(fields, entries))]
+```
+
+`open` は入力の欄順に処理し、entry の並び順には依存しない。
+root が `Owned` の identity entry は、`type-equiv?(τ, τ')` と `c = x` を満たし、`x` を束縛せず値をそのまま移す。
+Absent の欄では `c` を評価せず、`Absent τ'` を出力する。
+present な列挙欄だけは入力の型 `τ` を注釈に持つ `Let` を作り、通常の R-Let で本体を評価する。
+列挙しない欄は値と mode をそのまま移す。
+Open 後に入力の `Rec` は残らず、各欄の値は作業列の一箇所だけに現れる。
+
+**(R-RecRewrite-Close)**
+
+```text
+全ての ci が値である
+-----------------------------------------------
+E[RecRewriteOpen((ℓ1, m1, c1), …, (ℓk, mk, ck))]
+  → E[Rec((ℓ1, m1, c1), …, (ℓk, mk, ck))]
+```
+
+Close は作業列を通常の `Rec` に戻す。
+列挙された欄の出力 mode は `RecRewrite` の entry に書かれた mode である。
+present な欄は required として推論されるが、`config-ok?` はそれを optional の期待欄に対しても受理する。
+Absent の欄だけは Open が保持した `Absent` の型から optional な欄として推論される。
+
+`RecRewrite` が扱う値の token の多重集合は、入力の `Rec` と Close 後の `Rec` で等しい。
+`Tok(v)` を `v` 内の `OwnedLeaf` が持つ token の多重集合とすると、各 `Rec` の token は各欄値の `Tok` の多重集合和である。
+```text
+Tok(Rec((ℓi, mi, vi) ...)) = ⊎i Tok(vi)
+Tok(input) = Tok(output)
+```
+
+`⊎` は多重集合和を表す。
+`input` は R-RecRewrite-Open が消費する `Rec` 値であり、`output` は R-RecRewrite-Close が生成する `Rec` 値である。
+この過程では、各 token は変換本体を評価する一時の `Let`、identity entry の欄、または列挙しない欄のいずれか一箇所だけに現れる。
+この保存条件は開始時に `config-ok?` を満たす `RecRewrite` の遷移に限る。
+通常の Core には値内部の `OwnedLeaf` を持つ値を `Let` の別名から複数回読む OWN-009 違反が残り、この大域の穴は c1c で回収する。
+`RecRewrite` は record の値を再構成する演算であり、元の place との alias を保つことも切ることもしない。
+その関係は入力 `e` の評価が決める。
+`BorrowMutRef` を経由する `Read` は copy-out の時点で値を元の place から分けるため、Core の machine 試験では copy-out した後に元の place を更新しても、再構成した値がその更新を受けないことを確かめる。
+`e` は `Record` 型を要し、`Move` の結果は `Owned τ` 型なので、`Move` を `e` に直接置けない。
+元 place からの独立性を確認するのは Core machine の試験だけであり、PR の試験は copy-out 後の値を用いる。
+その試験範囲と Portable Racket backend で借用と可変 slot を扱わない理由は `backend-matrix.md` §5 に記す。
+
+次の違反は既存の診断で拒否する。
+
+| 違反 | 診断 |
+|---|---|
+| `e` が `Record` でない | `ill-typed`（E-TYP-001） |
+| entry の欄が存在しない | `unknown-record-label`（E-RCD-009） |
+| entry の欄が重複する | `duplicate-record-label`（E-RCD-006） |
+| entry の `τ` が入力欄の型と異なる | `ill-typed`（E-TYP-001） |
+| `imm` 欄の出力 mode が `mut` | `ill-typed`（E-TYP-001） |
+| `ci` が effect を持つ | `ill-typed`（E-TYP-001） |
+| `ci` が `xi` 以外の自由変数を持つ | `unbound-variable`（E-VAR-006） |
+| `ci` が `τ'i` に check できない | `type-mismatch`（E-TYP-023） |
+| root が `Owned` の欄の entry が identity でない | `ill-typed`（E-TYP-001） |
+| 資源を持つ `xi` が線形文脈の穴以外に現れる、未使用、または複数回出現する | `ill-typed`（E-TYP-001） |
+| 資源を持つ枝 binder が同じ線形条件に違反する | `ill-typed`（E-TYP-001） |
+| `ci` に `OwnedLeaf` がある | `ill-typed`（E-TYP-001） |
+
+`e` が `Record` 型でない場合は表のとおり `ill-typed` で拒否し、`project-non-record` は流用しない。
+欄の型が Record でない場合は `project-non-record` を流用せず、次の表に従って拒否する。
 
 **(R-RecurBind)**
 
