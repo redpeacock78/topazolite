@@ -124,7 +124,7 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 22 本である。
-`R-RecRewrite-Open` と `R-RecRewrite-Close` は `R-PR-RecRewrite` の一度の展開規則へ写る。
+源の `-->g2` の 59 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` をそれぞれ 1 本へ畳んで 5 本減り、目標側に規則を持たない 32 本が対象外となって減る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
