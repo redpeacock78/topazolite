@@ -2,8 +2,11 @@
 
 ;; P2m2c1c2 Task 2。関数仮引数の資源型 transfer encoding を検査する。
 (require rackunit
+         "../annotate.rkt"
+         "../borrow.rkt"
          "../diagnostic.rkt"
          "../origins.rkt"
+         "../region.rkt"
          "../traits.rkt"
          "../type-equiv.rkt"
          "../typing.rkt")
@@ -45,6 +48,14 @@
    #:fail test-ledger-fail))
 (define-syntax-rule (with-branch-data body ...)
   (call-with-trait-ledger branch-ledger (lambda () body ...)))
+
+(define (type-borrowed-local core environment)
+  (define ir (build-region-ir core))
+  (type-of/raw (annotate-regions core ir)
+               '()
+               '()
+               environment
+               (region-ctx ir '() (hash) (hash))))
 
 (test-case "集約資源型の Option と Record 仮引数は encoding を通る"
   (for ([parameter-type (in-list (list option-owned-type record-owned-type))])
@@ -232,11 +243,38 @@
     `(Eliminate source ((box (raw) -> ,body))))
   (for ([body (in-list
                (list '(Rec ((left imm raw) (right imm raw)))
-                     '(Drop raw)))])
+                     '(Drop raw)
+                     '(Eliminate (Construct Bool true)
+                        ((true () -> raw)
+                         (false () -> raw)))))])
     (check-equal?
      (with-branch-data
        (key-of (eliminate body) '() `((source ,owned-box))))
      "E-OWN-034")))
+
+(test-case "借用 scrutinee の資源型枝 binder は encoding なしで受理する"
+  (define member '(Option (Owned Res)))
+  (define union-type (normalize-type `(Union Int ,member)))
+  (define borrowed-union
+    `(Scope ()
+       (Let (owner let ,union-type) source
+         (UnionEliminate (Borrow owner)
+           ((Int number -> 0)
+            (,member payload -> 0))))))
+  (define union-result
+    (type-borrowed-local borrowed-union `((source ,union-type))))
+  (check-equal? (first union-result) 'ok (format "結果: ~s" union-result))
+
+  (define owned-box '(Data OwnedBox ()))
+  (define borrowed-data
+    '(Scope ()
+       (Let (owner let (Data OwnedBox ())) source
+         (Eliminate (Borrow owner)
+           ((box (payload) -> 0))))))
+  (check-equal?
+   (with-branch-data
+     (first (type-borrowed-local borrowed-data `((source ,owned-box)))))
+   'ok))
 
 (test-case "複数の線形穴 binder は同じ Rec の別欄へ一度ずつ運べる"
   (define member '(Option (Owned Res)))
