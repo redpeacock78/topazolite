@@ -41,6 +41,16 @@
     [(list 'ok _) 'ok]
     [(list 'fail key _node _details ...) key]))
 
+(define (type-of/with-ir core [callables '()] [environment '()])
+  (define ir (build-region-ir (erase-core core)))
+  (type-of/raw core '() callables environment
+               (region-ctx ir '() (hash) (hash))))
+
+(define (key-of/with-ir core [callables '()] [environment '()])
+  (match (type-of/with-ir core callables environment)
+    [(list 'ok _) 'ok]
+    [(list 'fail key _node _details ...) key]))
+
 (define resource-environment `((y ,resource-record-type)))
 (define (typed-let body) `(Let (x ,resource-record-type) y ,body))
 
@@ -154,6 +164,22 @@
   (check-not-false (member 'R-Move rules))
   (check-config-trace configs '() 'Unit)
   (check-equal? (token-states (last configs)) '(((tok 13) Dropped))))
+
+(test-case "Drop は Move 済みの root Owned と集約資源型を受け付ける"
+  (define root-owned
+    '(Let (x (Owned Res))
+       (Apply (PrimVal (Reserved o-acquire) acquire) 13)
+       (Drop (Move x))))
+  (define aggregate (typed-let '(Drop (Move x))))
+  (check-equal? (first (type-of/with-ir root-owned)) 'ok)
+  (check-equal? (key-of/with-ir
+                 '(Let (x (Owned Res))
+                    (Apply (PrimVal (Reserved o-acquire) acquire) 13)
+                    (Drop x)))
+                'owned-variable-requires-move)
+  (check-equal? (first (type-of/with-ir aggregate '() resource-environment)) 'ok)
+  (check-equal? (key-of/with-ir (typed-let '(Drop x)) '() resource-environment)
+                'owned-variable-requires-move))
 
 (test-case "集約資源型の identity Let は値をそのまま返す"
   (define core `(Let (x ,resource-record-type) ,owned-record-value x))

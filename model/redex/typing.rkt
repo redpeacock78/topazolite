@@ -3657,9 +3657,7 @@
                 (set-member? (resource-place-set) dropped))))
      (when dropped
        (emit-use-request! Λ dropped '() 'move (set) argument 'drop-borrowed
-                          (and (or (owned-type? (or dropped-type '()))
-                                   (set-member? (resource-place-set) dropped))
-                               'owned-variable-requires-move)))
+                          (and bare-resource? 'owned-variable-requires-move)))
      (when (and dropped
                 (borrow-typed? (or (lookup environment dropped) '())))
        (fail 'drop-borrowed argument))
