@@ -277,8 +277,14 @@
 
 (define (check-recur-body-gate s function parameters body environment
                                callables declared-row)
+  ;; 分類器は型環境だけを使うため、elaborate の束縛 metadata を渡さない。
+  (define classifier-environment
+    (for/list ([entry (in-list environment)])
+      (match entry
+        [(list name type _ ...) (list name type)]
+        [_ entry])))
   (when (and (eq? (classify-recur-body function parameters body
-                                       environment callables)
+                                       classifier-environment callables)
                   'Unknown)
              (not (row-member? 'Partial declared-row)))
     (reject s 'unknown-recur-requires-partial)))
@@ -852,17 +858,14 @@
            (loop (cdr types) (set-add taken name) (cons name acc))]
           [else (loop (cdr types) taken (cons #f acc))])))
 
-    (define (fresh-owned-names/all parameter-types reserved)
-      (fresh-names/all parameter-types reserved owned-type?))
-
     (define (fresh-resource-names/all parameter-types reserved)
       (fresh-names/all parameter-types reserved resource-type?))
 
-    ;; 返り値は仮引数の位置と同じ長さの列であり、Owned でない位置には #f を
+    ;; 返り値は仮引数の位置と同じ長さの列であり、資源型でない位置には #f を
     ;; 置く。位置の対応を崩さないためである。
-    (define (fresh-owned-names parameter-types reserved)
+    (define (fresh-resource-names parameter-types reserved)
       (define-values (names _)
-        (fresh-owned-names/all parameter-types reserved))
+        (fresh-resource-names/all parameter-types reserved))
       names)
 
     ;; 関数位置の Owned<NFn ...> を一時的な place へ載せる。Core を再度
@@ -900,7 +903,7 @@
     ;; 生名の binder は対応する仮引数の binder の span をそのまま持つ。
     ;; 名前だけを差し替えて位置は動かさない。G2+ は各仮引数へ
     ;; (#:bind x s_b) を要求するためである。
-    (define (owned-parameter-binders parameter-binders raw-names)
+    (define (resource-parameter-binders parameter-binders raw-names)
       (for/list ([binder (in-list parameter-binders)]
                  [raw (in-list raw-names)])
         (if raw
@@ -911,7 +914,7 @@
     ;; この Let が仮引数の宣言そのものを Core へ写したものだからである。
     ;; binder は surface が書いた binder をそのまま使う。名前も span も
     ;; 仮引数の宣言と一致する。
-    (define (wrap-owned-lets parameter-binders parameter-types raw-names core)
+    (define (wrap-resource-lets parameter-binders parameter-types raw-names core)
       (for/fold ([acc core])
                 ([binder (in-list (reverse parameter-binders))]
                  [type (in-list (reverse parameter-types))]
@@ -1155,12 +1158,12 @@
       (define-values (capture-raw-names reserved-with-captures)
         (fresh-resource-names/all capture-types reserved))
       (define-values (raw-names reserved-with-formals)
-        (fresh-owned-names/all parameter-types reserved-with-captures))
+        (fresh-resource-names/all parameter-types reserved-with-captures))
       (define capture-binders
         (for/list ([raw (in-list capture-raw-names)])
           `(#:bind ,raw ,s)))
       (define core-binders
-        (owned-parameter-binders parameter-binders raw-names))
+        (resource-parameter-binders parameter-binders raw-names))
       (values capture-raw-names raw-names capture-binders core-binders
               reserved-with-formals))
 
@@ -1192,7 +1195,7 @@
                       (Scope ,s ()
                              ,(wrap-capture-lets
                                captures capture-types capture-raw-names
-                               (wrap-owned-lets
+                               (wrap-resource-lets
                                 parameter-binders parameter-types raw-names
                                 (judgment-core body-result))
                                s)))))
@@ -1230,7 +1233,8 @@
       (define callable (fresh-callable signature))
       (define body-result
         (check body return-type
-               (extend environment parameters parameter-types)
+               (extend environment parameters parameter-types #f
+                       (map resource-type? parameter-types))
                delta propositions
                (cons `(FunctionBoundary ,boundary ,return-type) boundaries)))
       (check-function-body-row s body-result return-type boundary declared-row)
@@ -1281,7 +1285,8 @@
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
       (define parameter-environment
-        (extend environment parameters parameter-types))
+        (extend environment parameters parameter-types #f
+                (map resource-type? parameter-types)))
       (define inferred-return-type
         (and (mentions-return? (list raw-row body))
              (probe-return-type body parameter-environment
@@ -1337,18 +1342,19 @@
       (define boundary (and boundary? (fresh-boundary)))
       (define callable (fresh-callable signature))
       (define raw-names
-        (fresh-owned-names
+        (fresh-resource-names
          parameter-types
          (set-union (form-symbols body)
                     (list->set parameters)
                     (set function)
                     (list->set (map first environment)))))
       (define core-binders
-        (owned-parameter-binders parameter-binders raw-names))
+        (resource-parameter-binders parameter-binders raw-names))
       (define function-environment
         (extend environment (list function) (list signature)))
       (define body-environment
-        (extend function-environment parameters parameter-types))
+        (extend function-environment parameters parameter-types #f
+                (map resource-type? parameter-types)))
       (define body-boundaries
         (if boundary
             (cons `(FunctionBoundary ,boundary ,return-type) boundaries)
@@ -1379,7 +1385,7 @@
       (define wrapped-body
         (if (ormap values raw-names)
             `(Scope ,s ()
-                    ,(wrap-owned-lets parameter-binders parameter-types
+                    ,(wrap-resource-lets parameter-binders parameter-types
                                       raw-names handled-body))
             handled-body))
       (define recur-core
@@ -1411,7 +1417,8 @@
       (when (set-member? (free-vars body) function)
         (reject s 'return-type-not-inferable 'self-reference))
       (values function parameters parameter-types
-              (extend environment parameters parameter-types)))
+              (extend environment parameters parameter-types #f
+                      (map resource-type? parameter-types))))
 
     ;; SUR-008 / SUR-015。戻り型が推論される Recur と、候補が無い FnDecl。
     ;; FnDecl のときだけ body-boundary? により Return の旧 E-TYP-024 を保つ。
@@ -1440,14 +1447,14 @@
         `(NFn ,parameter-types ,return-type () ,declared-row () User))
       (define callable (fresh-callable signature))
       (define raw-names
-        (fresh-owned-names
+        (fresh-resource-names
          parameter-types
          (set-union (form-symbols body)
                     (list->set parameters)
                     (set function)
                     (list->set (map first environment)))))
       (define core-binders
-        (owned-parameter-binders parameter-binders raw-names))
+        (resource-parameter-binders parameter-binders raw-names))
       (define function-environment
         (extend environment (list function) (list signature)))
       (define continuation-result
@@ -1456,7 +1463,7 @@
       (define wrapped-body
         (if (ormap values raw-names)
             `(Scope ,s ()
-                    ,(wrap-owned-lets parameter-binders parameter-types
+                    ,(wrap-resource-lets parameter-binders parameter-types
                                       raw-names (judgment-core body-result)))
             (judgment-core body-result)))
       (define recur-core

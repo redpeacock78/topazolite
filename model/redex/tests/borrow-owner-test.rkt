@@ -178,11 +178,17 @@
      (check-equal? payload aggregate-owner-type)]
     [_ (fail (format "集約資源型の借用結果が合わない: ~s" result))]))
 
-(test-case "集約資源型の仮引数は c1c1 では Borrow の owner にならない"
-  (define core '(Scope () (Borrow y)))
+(test-case "集約資源型の仮引数は encoding の後に Borrow の owner になる"
+  (define core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y
+         (Borrow x))))
   (define-values (result _ir)
     (typed-core core `((y ,aggregate-owner-type))))
-  (check-equal? (core-result-key result) 'borrow-non-owned))
+  (match result
+    [`(ok ((Borrowed ,payload ,_rho) ,_row))
+     (check-equal? payload aggregate-owner-type)]
+    [_ (fail (format "encoding 後の Borrow が失敗した: ~s" result))]))
 
 (test-case "集約資源型の Borrow は scalar 欄を読めるが Owned 欄を射影できない"
   (define scalar-core

@@ -385,21 +385,34 @@
 (define aggregate-parameter-capture-surface
   `(Fn ((x ,aggregate-resource-type))
        (Owned (NFn () Int () ()))
-       ()
+       (Own)
      (Fn () Int () (Proj x n))))
 
 (test-case
- "関数仮引数の集約資源型を捕捉する Lam は Move の不足で拒否する"
- (define core
-   '(Curry (Lam User captured-lam (captured) (Proj captured n))
-           (Move x)))
- (define callables
-   `((captured-lam (NFn (,aggregate-resource-type) Int () () () User))))
+ "P に無い集約資源型の値は Core の Move で拒否する"
  (define environment `((x ,aggregate-resource-type)))
- (check-equal? (elaboration-key-of aggregate-parameter-capture-surface)
-               'move-non-owned)
- (check-equal? (core-key-of core callables environment)
+ (check-equal? (core-key-of '(Move x) '() environment)
                'move-non-owned))
+
+(test-case
+ "集約資源型の仮引数は encoding の後に Curry の Move で捕捉できる"
+ (match-define (list core type row callables)
+   (elaboration-of aggregate-parameter-capture-surface))
+ (check-equal? (core-type-of core '() callables) (list type row))
+ (check-true
+  (match type
+    [`(NFn (,aggregate-resource-type)
+           (Owned (NFn () Int () () () User)) () (Own) () User)
+     #t]
+    [_ #f]))
+ (match (find-capture-let (erase-core core))
+   [`(Let (,place let (Owned (NFn () Int () ,_ () ,_)))
+          (Curry (Lam User ,_ ,_ ,_) (Move ,captured))
+          (Move ,same-place))
+    (check-equal? (binder-base captured) 'x)
+    (check-equal? place same-place)]
+   [other (fail-check (format "仮引数の捕捉が Curry の Move にならない: ~s"
+                              other))]))
 
 (test-case
  "Let の集約資源型を捕捉する Lam は Curry の Move に変換される"
@@ -407,7 +420,7 @@
    `(Fn ((source ,aggregate-resource-type))
         (Owned (NFn () Int () ()))
         (Own)
-      (Let x source
+      (Let x (Move source)
         (Fn () Int () (Proj x n)))))
  (match-define (list core type row callables) (elaboration-of source))
  (check-equal? (core-type-of core '() callables) (list type row))
@@ -431,7 +444,7 @@
    `(Fn ((source ,aggregate-resource-type))
         (Owned (NFn () Int () ()))
         (Own)
-      (Let x source
+      (Let x (Move source)
         (Fn () Int () (Proj x n)))))
  (match-define (list core _type _row callables) (elaboration-of source))
  (define executable (execution-core core callables))

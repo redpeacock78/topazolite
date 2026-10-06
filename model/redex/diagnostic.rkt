@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 33)
+(define diagnostic-registry-version 34)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -340,13 +340,19 @@
     ("E-OWN-033" owned-union-member
                  "Union の成分に Owned を直接置けない")))
 
+(define typing-entries-v34
+  '(("E-OWN-034" resource-binder-missing-binding
+                 "資源型の束縛子に対応する Let の符号化がない")
+    ("E-OWN-035" resource-binder-raw-misuse
+                 "Let の符号化後に資源型の束縛子の生名が現れる")))
+
 (define borrow-entries-v30
   '(("E-BOR-026" projborrow-optional-field
                  "optional の欄は借用で射影できない")))
 
 (define typing-entries-v27
   '(("E-OWN-032" owned-return-binder-misuse
-                 "Owned の Return handler の束縛子は handler の本体そのものとしてだけ現れる")))
+                 "Owned の Return handler の束縛子は恒等形または対応する Let の符号化以外で使えない")))
 
 ;; G5c4 と G5c5b1 で廃止した行。E-BOR-024 は表を持つ形では発火する場所が
 ;; 無くなり、辿れない scrutinee は E-BOR-020 で落ちる。E-OWN-015 は Owned の
@@ -499,6 +505,7 @@
           (rows 'typing 30 typing-entries-v30)
           (rows 'typing 31 typing-entries-v31)
           (rows 'typing 32 typing-entries-v32)
+          (rows 'typing 34 typing-entries-v34)
           (rows 'typing 30 borrow-entries-v30)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)

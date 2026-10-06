@@ -21,6 +21,7 @@
          "../traits.rkt"
          "../type-equiv.rkt"
          "../type-shape.rkt"
+         "../uniquify.rkt"
          "../typing.rkt")
 
 (define resource-record-type
@@ -60,7 +61,8 @@
   (error 'test-ledger-fail "~s ~s ~s" reason kind key))
 (define plain-data-ledger
   (make-trait-ledger canonical-trait-env
-                     #:data '((Plain () ((plain (Int)))))
+                     #:data '((Plain () ((plain (Int))))
+                              (Nat () ((zero ()) (succ ((Data Nat ()))))))
                      #:fail test-ledger-fail))
 (define-syntax-rule (with-data body ...)
   (call-with-trait-ledger plain-data-ledger (lambda () body ...)))
@@ -121,11 +123,13 @@
 (define (fin-leaf-count trace)
   (count (match-lambda [`(finLeaf ,_ ,_) #t] [_ #f]) trace))
 
-(define (first-let-type core)
+(define (let-type-for core target)
   (let walk ([term (erase-core core)])
     (match term
-      [`(Let (,_ ,type) ,_ ,_) type]
-      [`(Let (,_ ,_ ,type) ,_ ,_) type]
+      [`(Let (,name ,type) ,_ ,_)
+       #:when (eq? (binder-base name) target) type]
+      [`(Let (,name ,_ ,type) ,_ ,_)
+       #:when (eq? (binder-base name) target) type]
       [(? list? terms) (for/or ([child (in-list terms)]) (walk child))]
       [_ #f])))
 
@@ -171,6 +175,8 @@
      (compiled core type row callables ledger executable)]))
 
 (define (check-compiled-source-core artifact)
+  (unless (compiled? artifact)
+    (fail-check (format "コンパイル結果が診断になった: ~s" artifact)))
   (call-with-trait-ledger
    (compiled-ledger artifact)
    (lambda ()
@@ -307,14 +313,19 @@
 
 (test-case "check 側の Let も資源型を注釈する"
   (define callables
-    `((f (NFn (,resource-record-type) Int () () () User))))
+    `((f (NFn (,resource-record-type) Int () (Own) () User))))
   (define core
-    `(Lam User f (y) (Let (x ,resource-record-type) y 0)))
+    `(Lam User f (y)
+       (Handle (Return boundary Int) (return-value -> return-value)
+         (Scope ()
+           (Let (formal let ,resource-record-type) y
+             (Let (x ,resource-record-type) (Move formal) 0))))))
   (define effective (box (hash)))
   (check-equal? (first (type-of/raw core '() callables '()
                                      #:mut-types effective))
                 'ok)
-  (check-equal? (hash-values (unbox effective)) (list resource-record-type)))
+  (check-equal? (hash-values (unbox effective))
+                (list resource-record-type resource-record-type)))
 
 (test-case "mut Let の residual 型は machine へ注釈される"
   (define declared '(Record ()))
@@ -463,21 +474,18 @@
   (check-exn exn:fail?
              (lambda () (execution-core '(Move 0) '()))))
 
-(test-case "compile-source は residual を含む有効型を実行用 Core へ注釈する"
-  (define source
-    (string-append
-     "fn f(x: { owned: Owned<Int>, n: Int }) -> Int {\n"
-     "  let y: { n: Int } = x\n"
-     "  0\n"
-     "}\n"
-     "0"))
-  (define result (compile-source/string 'affine-let source))
-  (check-true (compiled? result))
+(test-case "elaborate の spanful Core は residual を実行用 Core へ注釈する"
   (define declared '(Record ((n Int imm))))
+  (define actual '(Record ((owned (Owned Res) imm) (n Int imm))))
+  (define source
+    `(Fn ((x ,actual)) Int (Own)
+         (Let (y let ,declared) (Move x) 0)))
+  (define result (elaborate-compiled source))
+  (check-true (compiled? result) (format "elaborate の結果: ~s" result))
   (define effective
-    '(Record ((n Int imm) (owned (Owned Int) imm))))
-  (check-equal? (first-let-type (compiled-core result)) declared)
-  (check-equal? (first-let-type (compiled-execution-core result)) effective)
+    '(Record ((n Int imm) (owned (Owned Res) imm))))
+  (check-equal? (let-type-for (compiled-core result) 'y) declared)
+  (check-equal? (let-type-for (compiled-execution-core result) 'y) effective)
   (call-with-trait-ledger
    (compiled-ledger result)
    (lambda ()
@@ -519,15 +527,21 @@
   (check-equal? (type-of initialized-from-outer '() resource-environment)
                 resource-record-type)
   (define function-type
-    `(NFn (Int ,resource-record-type) ,resource-record-type () () () User))
+    `(NFn (Int ,resource-record-type) ,resource-record-type () (Own) () User))
   (define callables `((f ,function-type)))
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y (Lam User f (n x) x))
+   (type-of `(Let (x ,resource-record-type) y
+               (Lam User f (n x)
+                 (Handle (Return boundary ,resource-record-type)
+                   (return-value -> return-value)
+                   (Scope ()
+                     (Let (formal let ,resource-record-type) x
+                       (Move formal))))))
             callables resource-environment)
    function-type)
   (check-equal?
    (key-of '(Lam User f (x) (Move x))
-           `((f (NFn (,resource-record-type) ,resource-record-type () (Own) () User))))
+           '((f (NFn (Int) Int () (Own) () User))))
    'move-non-owned))
 
 (test-case "Eliminate と UnionEliminate の branch binder は P から除かれる"
@@ -572,10 +586,13 @@
             recur-callables environment)
    recur-signature)
   (define parameter-signature
-    `(NFn (,resource-record-type) ,resource-record-type () () () User))
+    `(NFn (,resource-record-type) ,resource-record-type () (Own) () User))
   (check-equal?
    (type-of `(Let (x ,resource-record-type) y
-               (RecurVal f f (x) x))
+               (RecurVal f f (x)
+                 (Scope ()
+                   (Let (formal let ,resource-record-type) x
+                     (Move formal)))))
             `((f ,parameter-signature)) environment)
    parameter-signature)
   (check-equal?
@@ -682,7 +699,7 @@
 
 (test-case "Surface の資源型 let は Move を二度通し、実行時に R-MoveError へ進む"
   (define body
-    `(Let (y let ,aggregate-option-type) argument
+    `(Let (y let ,aggregate-option-type) (Move argument)
        (Let (z let ,aggregate-option-type) (Move y) (Move y))))
   (define artifact
     (check-compiled-source-core
@@ -700,7 +717,7 @@
 
 (test-case "Surface の Drop x は Drop (Move x) へ写り、leaf を Dropped にする"
   (define body
-    `(Let (y let ,aggregate-option-type) argument (Drop y)))
+    `(Let (y let ,aggregate-option-type) (Move argument) (Drop y)))
   (define artifact
     (check-compiled-source-core
      (elaborate-compiled
@@ -739,14 +756,102 @@
      (compiled?
       (check-compiled-source-core (elaborate-compiled source))))))
 
-(test-case "c1c1 の経過措置では仮引数を裸で読める（c1c2 で期待を反転する）"
+(test-case "集約資源型の仮引数は二度裸で読むと E-OWN-010 になる"
+  (define duplicate-type
+    `(Record ((left ,aggregate-option-type imm)
+              (right ,aggregate-option-type imm))))
   (define source
-    `(Fn ((x ,aggregate-option-type)) Int () (Proj x a)))
+    `(Fn ((x ,aggregate-option-type)) ,duplicate-type ()
+         (Rec ((left imm x) (right imm x)))))
+  (match (elab source)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+    [other (fail-check (format "仮引数の二度読みを拒否しなかった: ~s" other))]))
+
+(test-case "集約資源型の仮引数を Move、Drop、未使用で処理できる"
+  (define moved
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function aggregate-option-type aggregate-option-value
+                      '(Move argument) aggregate-option-type '(Own)))))
+  (define-values (moved-config moved-rules)
+    (apply values (run-compiled-execution-core moved)))
+  (check-not-false (member 'R-LetOwnedB moved-rules))
+  (match moved-config
+    [`(cfg ,value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (collect-tokens value) '((tok 0)))
+     (check-equal? tokens '(((tok 0) Available)))]
+    [other (fail-check (format "Move の最終 config が不正: ~s" other))])
+  (for ([body (in-list (list '(Drop argument) 0))])
+    (define artifact
+      (check-compiled-source-core
+       (elaborate-compiled
+        (apply-function aggregate-option-type aggregate-option-value
+                        body (if (equal? body 0) 'Int 'Unit) '(Own)))))
+    (define-values (configuration _rules)
+      (apply values (run-compiled-execution-core artifact)))
+    (match configuration
+      [`(cfg ,_value ,_heap ,_states ,tokens ,_trace)
+       (check-equal? tokens '(((tok 0) Dropped)))]
+      [other (fail-check (format "drop と未使用の最終 config が不正: ~s"
+                                 other))])))
+
+(test-case "資源型の仮引数を二段以上の再帰で渡し spanful Core を検査する"
+  (define nat-two
+    '(Construct succ (Types)
+       (Construct succ (Types) (Construct zero (Types)))))
+  (define source
+    `(Recur consume ((count (Data Nat ()))
+                     (item ,aggregate-option-type))
+       Unit (Partial Own)
+       (Eliminate count
+         ((zero () -> (Drop item))
+          (succ (next) -> (Apply consume next (Move item)))))
+       (Apply consume ,nat-two ,aggregate-option-value)))
   (define artifact
-    (check-compiled-source-core (elaborate-compiled source)))
-  (check-equal? (compiled-type artifact)
-                (normalize-type
-                 `(NFn (,aggregate-option-type) Int () () () User))))
+    (with-data
+      (match (elab source)
+        [(list core type row callables)
+         (define execution
+           (call-with-trait-ledger
+            plain-data-ledger
+            (lambda () (execution-core core callables))))
+         (compiled core type row callables plain-data-ledger execution)]
+        [other (fail-check (format "再帰関数の elaboration が失敗: ~s" other))])))
+  (check-true (compiled? artifact))
+  (call-with-trait-ledger
+   (compiled-ledger artifact)
+   (lambda ()
+     (check-equal?
+      (core-type-of (compiled-core artifact) '() (compiled-callables artifact))
+      (list (compiled-type artifact) (compiled-row artifact)))))
+  (define-values (configuration rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (check-true (>= (count (lambda (rule) (eq? rule 'R-RecurUnfold)) rules) 2))
+  (match configuration
+    [`(cfg unit ,_heap ,_states ,tokens ,_trace)
+     (check-equal? tokens '(((tok 0) Dropped)))]
+    [other (fail-check (format "再帰実行の最終 config が不正: ~s" other))]))
+
+(test-case "注釈付きと推論付きの Recur と FnDecl は資源型の仮引数を符号化する"
+  (define terms
+    (list
+     `(Recur consume ((item ,aggregate-option-type))
+        Unit (Partial Own) (Drop item) unit)
+     `(Recur consume ((item ,aggregate-option-type))
+        #:infer (Partial Own) (Drop item) unit)
+     `(FnDecl consume ((item ,aggregate-option-type))
+        Unit (Partial Own) (Return (Drop item)) unit)
+     `(FnDecl consume ((item ,aggregate-option-type))
+        #:infer (Partial Own) (Return (Drop item)) unit)))
+  (for ([term (in-list terms)])
+    (match (elab term)
+      [(list core type row callables)
+       (check-equal?
+        (core-type-of (erase-core core) '() callables)
+        (list type row))
+       (check-true (contains-node? 'Let (erase-core core)))]
+      [other (fail-check (format "資源型 Recur/FnDecl が失敗: ~s" other))])))
 
 (test-case "Surface の place 射影は x.a、z.n.a、optional 末端を両 phase で扱う"
   (define direct
@@ -754,16 +859,16 @@
      (elaborate-compiled
       (apply-function
        aggregate-option-type aggregate-option-value
-       `(Let (x let ,aggregate-option-type) argument (Proj x a))
-       'Int '()))))
+       `(Let (x let ,aggregate-option-type) (Move argument) (Proj x a))
+       'Int '(Own)))))
   (define nested
     (check-compiled-source-core
      (elaborate-compiled
       (apply-function
        nested-aggregate-type nested-aggregate-value
-       `(Let (z let ,nested-aggregate-type) argument
+       `(Let (z let ,nested-aggregate-type) (Move argument)
           (Proj (Proj z n) a))
-       'Int '()))))
+       'Int '(Own)))))
   (define optional
     (check-compiled-source-core
      (elaborate-compiled
@@ -797,8 +902,8 @@
   (define source
     (apply-function
      aggregate-option-type aggregate-option-value
-     `(Let (x let ,aggregate-option-type) argument (Proj x owner))
-     '(Option (Owned Res)) '()))
+     `(Let (x let ,aggregate-option-type) (Move argument) (Proj x owner))
+     '(Option (Owned Res)) '(Own)))
   (match (elab source)
     [`(err ,diagnostic)
      (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]

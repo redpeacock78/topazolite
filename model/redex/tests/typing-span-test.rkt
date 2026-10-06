@@ -234,6 +234,7 @@
     owned-narrowing-rejected
     owned-union-member
     owned-parameter-missing-binding owned-raw-parameter-misuse
+    resource-binder-missing-binding resource-binder-raw-misuse
     owned-record-field owned-return-binder-misuse
     owned-refined-payload owned-untrusted-payload
     owned-variable-requires-move unexpected-ownleaf unknown-place unmanaged-place
@@ -423,6 +424,38 @@
                                                    (reach-var 'owned0 220 221)))))
               '() '((f (NFn ((Owned Res)) Int () () () User))) '()
               (reach-span 191 230))
+   (reach-row 'resource-binder-missing-binding
+              (reach-node 'Lam 231 240 'User 'f
+                          (list (reach-bind 'aggregate 232 233))
+                          (reach-lit 1 236 237))
+              '() '((f (NFn ((Record ((n Int imm)
+                                     (owned (Owned Res) imm))))
+                           Int () () () User))) '()
+              (reach-span 231 240))
+   (reach-row 'resource-binder-raw-misuse
+              (reach-node 'Lam 241 285 'User 'f
+                          (list (reach-bind 'aggregate 242 243))
+                          (reach-node 'Handle 244 284
+                                      (list 'Return 'boundary
+                                            (reach-ty 'Int 245 246))
+                                      (list (reach-span 247 253)
+                                            (reach-bind 'return-value 248 249)
+                                            '->
+                                            (reach-var 'return-value 250 251))
+                                      (reach-node 'Scope 254 283 '()
+                                                  (reach-node
+                                                   'Let 255 275
+                                                   (list (reach-bind 'place 256 257)
+                                                         'let
+                                                         (reach-ty '(Record ((n Int imm)
+                                                                             (owned (Owned Res) imm)))
+                                                                   258 260))
+                                                   (reach-var 'aggregate 261 262)
+                                                   (reach-var 'aggregate 277 278)))))
+              '() '((f (NFn ((Record ((n Int imm)
+                                     (owned (Owned Res) imm))))
+                           Int () () () User))) '()
+              (reach-span 241 285))
    (reach-row 'owned-parameter-missing-binding
               (reach-node 'RecurVal 191 203 'f
                           (reach-bind 'loop 192 193)
@@ -979,13 +1012,13 @@
                 (g (NFn (Int) Int () () () User) let))
               (reach-span 1726 1740))))
 
-(test-case "typing の producer key 集合が registry v33 と一致する"
+(test-case "typing の producer key 集合が registry v34 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 110)
+  (check-equal? (length producer-keys) 112)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

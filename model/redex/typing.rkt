@@ -899,21 +899,38 @@
       [(pair? t) (or (walk (car t)) (walk (cdr t)))]
       [else #f])))
 
-;; G5c5b1 spec §8。Owned の仮引数を本体の形で符号化した Typed Core を
-;; 検査する。parameters は Lam または Recur の仮引数列であり、Owned の位置
+;; G5c5b1 spec §8。資源型の仮引数を本体の形で符号化した Typed Core を
+;; 検査する。parameters は Lam または Recur の仮引数列であり、資源型の位置
 ;; には生名が入っている。inner は本体を包む Scope の直下の計算である。
 ;;
 ;; 条件を満たさない Typed Core は拒否する。値の形から生名を推測して救う
 ;; ことはしない。手で書いた不正な Core をここで止める。
+(define (resource-encoding-missing-key type)
+  (if (owned-type? type)
+      'owned-parameter-missing-binding
+      'resource-binder-missing-binding))
+
+(define (resource-encoding-raw-key type)
+  (if (owned-type? type)
+      'owned-raw-parameter-misuse
+      'resource-binder-raw-misuse))
+
+(define (resource-encoding-outer-missing-key parameter-types)
+  (if (ormap (λ (type)
+               (and (resource-type? type) (not (owned-type? type))))
+             parameter-types)
+      'resource-binder-missing-binding
+      'owned-parameter-missing-binding))
+
 (define (check-owned-encoding parameters parameter-types inner node fail)
-  (define owned-positions
+  (define resource-positions
     (for/list ([name (in-list parameters)]
                [type (in-list parameter-types)]
-               #:when (owned-type? type))
+               #:when (resource-type? type))
       (list name type)))
   (define reserved (list->set parameters))
   (define body
-    (let loop ([pending owned-positions] [core inner] [seen '()])
+    (let loop ([pending resource-positions] [core inner] [seen '()])
       (cond
         [(null? pending) core]
         [else
@@ -929,17 +946,17 @@
                          (type-equiv? (peel-ty type-node) declared)
                          (not (set-member? reserved binder))
                          (not (memq binder seen)))
-              (fail 'owned-parameter-missing-binding node))
+              (fail (resource-encoding-missing-key declared) node))
             (loop (cdr pending) next (cons binder seen))]
-           [_ (fail 'owned-parameter-missing-binding node)])])))
+           [_ (fail (resource-encoding-missing-key declared) node)])])))
   ;; 生名は対応する Let の右辺にちょうど 1 回だけ現れる。外したあとの本体
   ;; に 1 度でも現れれば符号化が壊れている。自由出現だけを数えると、内側の
   ;; Let が生名を shadow する形を見逃す。束縛の位置も数える。
   ;; elab 全体で共有する連番と生成側の予約集合が本体の記号を避けるため、
   ;; 正しく生成した Core がこの検査に当たることはない。
-  (for ([entry (in-list owned-positions)])
+  (for ([entry (in-list resource-positions)])
     (when (core-mentions? body (first entry))
-      (fail 'owned-raw-parameter-misuse node)))
+      (fail (resource-encoding-raw-key (second entry)) node)))
   body)
 
 (define (check-many/full cores types Λ Ψ environment places callables node fail
@@ -1689,16 +1706,18 @@
      (parameterize ([bound-region-params signature-region-params])
        (check-function-boundary parameter-types return-type obligations
                                 body parameters environment node fail))
-     ;; 署名が Owned の仮引数を持つなら、本体は生名と Let の連なりで
+     ;; 署名が資源型の仮引数を持つなら、本体は生名と Let の連なりで
      ;; 符号化されている。仮引数の位置ではなく本体の形で検査する。
-     (when (ormap owned-type? parameter-types)
+     (when (ormap resource-type? parameter-types)
        (match (peel-node body)
          [`(Handle ,_ ,_ ,scope)
           (match (peel-node scope)
             [`(Scope () ,inner)
              (check-owned-encoding parameters parameter-types inner node fail)]
-            [_ (fail 'owned-parameter-missing-binding node)])]
-         [_ (fail 'owned-parameter-missing-binding node)]))
+            [_ (fail (resource-encoding-outer-missing-key parameter-types)
+                     node)])]
+         [_ (fail (resource-encoding-outer-missing-key parameter-types)
+                  node)]))
      (define body-environment
        (function-body-environment environment parameters parameter-types))
      ;; §5.4。借用の仮引数の位置ごとに文脈局所の formal 鍵を採る。
@@ -1784,11 +1803,12 @@
        (check-function-boundary parameter-types return-type obligations
                                 body (cons function parameters)
                                 environment node fail))
-     (when (ormap owned-type? parameter-types)
+     (when (ormap resource-type? parameter-types)
        (match (peel-node body)
          [`(Scope () ,inner)
           (check-owned-encoding parameters parameter-types inner node fail)]
-         [_ (fail 'owned-parameter-missing-binding node)]))
+         [_ (fail (resource-encoding-outer-missing-key parameter-types)
+                  node)]))
      (recur-prelude signature body-signature binder-params region-params
                     parameter-types return-type latent-row obligations)]
     ;; 表の行が NFn でない場合は fail-closed にする。
