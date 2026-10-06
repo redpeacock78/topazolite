@@ -641,10 +641,15 @@
                      (Construct ,owned-member some
                                 (OwnLeaf (resource 7))))
         ((,owned-member option ->
-          (Eliminate option
-            ((some (owned) ->
-                   (Let (d Unit) (Drop (Move owned)) (Yield unit unit)))
-             (none () -> (Yield unit unit)))))
+          (Scope ()
+            (Let (option-value let ,owned-member) option
+                 (Eliminate (Move option-value)
+                   ((some (owned-raw) ->
+                      (Scope ()
+                        (Let (owned let (Owned Res)) owned-raw
+                             (Let (d Unit) (Drop (Move owned))
+                                  (Yield unit unit)))))
+                     (none () -> (Yield unit unit)))))))
          (String s -> (Yield unit unit)))))
     (for ([core (in-list (list integer-branch string-branch owned-drop))])
       (check-not-eq? (core-type-of core '() '()) 'ill-typed

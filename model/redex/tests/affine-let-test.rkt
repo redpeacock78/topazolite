@@ -62,7 +62,8 @@
 (define plain-data-ledger
   (make-trait-ledger canonical-trait-env
                      #:data '((Plain () ((plain (Int))))
-                              (Nat () ((zero ()) (succ ((Data Nat ()))))))
+                              (Nat () ((zero ()) (succ ((Data Nat ())))))
+                              (OwnedBox () ((box ((Owned Res))))))
                      #:fail test-ledger-fail))
 (define-syntax-rule (with-data body ...)
   (call-with-trait-ledger plain-data-ledger (lambda () body ...)))
@@ -552,7 +553,10 @@
   (check-equal?
    (type-of `(Let (x ,resource-record-type) y
                (Let (z ,resource-record-type)
-                 (Eliminate option ((some (x) -> x)
+                 (Eliminate option ((some (raw-x) ->
+                                     (Scope ()
+                                       (Let (x let ,resource-record-type)
+                                            raw-x (Move x))))
                                     (none () -> fallback)))
                  (Move x)))
             '() environment)
@@ -565,7 +569,9 @@
    (type-of `(Let (x ,resource-record-type) y
                (Let (z ,resource-record-type)
                  (UnionEliminate union
-                   ((,resource-record-type x -> x)
+                   ((,resource-record-type raw-x ->
+                     (Scope ()
+                       (Let (x let ,resource-record-type) raw-x (Move x))))
                     (Bool b -> fallback)))
                  (Move x)))
             '() union-environment)
@@ -611,11 +617,170 @@
   (check-equal?
    (type-of `(Let (x ,resource-record-type) y
                (Let (z ,resource-record-type)
-                 (Eliminate items ((nil () -> fallback)
-                                   (cons (x tail) -> x)))
+                 (Eliminate items
+                   ((nil () -> fallback)
+                    (cons (raw-x raw-tail) ->
+                      (Scope ()
+                        (Let (x let ,resource-record-type)
+                             raw-x
+                             (Let (tail let ,list-type)
+                                  raw-tail (Move x)))))))
                  (Move x)))
             '() environment)
    resource-record-type))
+
+(test-case "Eliminate の root Owned branch encoding は全状態で token を保つ"
+  (define typing-core
+    '(Eliminate
+      (Construct (Option (Owned Res)) some
+                 (OwnLeaf (resource 13)))
+      ((some (raw) ->
+         (Scope ()
+           (Let (owned let (Owned Res)) raw (Drop (Move owned)))))
+       (none () -> unit))))
+  (define machine-core
+    '(Eliminate
+      (Construct (Option (Owned Res)) some
+                 (OwnedLeaf (tok 13) (resource 13)))
+      ((some (raw) ->
+         (Scope ()
+           (Let (owned let (Owned Res)) raw (Drop (Move owned)))))
+       (none () -> unit))))
+  (check-equal? (core-type-of typing-core '() '()) '(Unit (Own)))
+  (define-values (configs rules) (g2-trace (initial machine-core)))
+  (check-not-false (member 'R-LetOwnedB rules))
+  (check-config-trace configs '() 'Unit)
+  (check-equal? (map second (token-states (last configs))) '(Dropped)))
+
+(test-case "線形の穴の方式は root Owned を Eliminate から値のまま返す"
+  (define typing-core
+    '(Drop
+      (Eliminate
+        (Construct (Data OwnedBox ()) box (OwnLeaf (resource 13)))
+        ((box (raw) -> raw)))))
+  (define machine-core
+    '(Drop
+      (Eliminate
+        (Construct (Data OwnedBox ()) box
+                   (OwnedLeaf (tok 13) (resource 13)))
+        ((box (raw) -> raw)))))
+  (with-data
+    (check-equal? (type-of typing-core) 'Unit)
+    (define-values (configs rules) (g2-trace (initial machine-core)))
+    (check-false (member 'R-LetOwnedB rules))
+    (check-false (member 'R-Move rules))
+    (check-config-trace configs '() 'Unit)
+    (check-true
+     (for/or ([config (in-list configs)])
+       (match config
+         [`(cfg (Scope () (Drop (OwnedLeaf (tok 13) (resource 13))))
+                ,_heap ,_states
+                (((tok 13) Available)) ,_trace)
+          #t]
+         [_ #f]))
+     (format "Available の OwnedLeaf を含む中間 config が無い: ~s" configs))
+    (match (last configs)
+      [`(cfg unit ,_heap ,_states ,tokens ,_trace)
+       (check-equal? tokens '(((tok 13) Dropped)))]
+      [other (fail-check (format "Owned の線形穴の終端 config が不正: ~s" other))])))
+
+(test-case "線形の穴の方式は Union の集約資源 payload を Rec に一度運ぶ"
+  (define aggregate
+    '(Record ((n Int imm) (owned (Owned Res) imm))))
+  (define input-union (normalize-type `(Union Int ,aggregate)))
+  (define output-type `(Record ((saved ,aggregate imm))))
+  (define typing-core
+    `(UnionEliminate source
+       ((Int number ->
+         (Rec ((saved imm fallback))))
+        (,aggregate payload ->
+         (Rec ((saved imm payload)))))))
+  (define machine-core
+    `(Let (fallback let ,aggregate)
+          (Rec ((n imm 2)
+                (owned imm (OwnedLeaf (tok 15) (resource 15)))))
+       (UnionEliminate
+        (UnionInject ,input-union ,aggregate
+                     (Rec ((n imm 1)
+                          (owned imm (OwnedLeaf (tok 14) (resource 14))))))
+        ((Int number ->
+          (Rec ((saved imm (Move fallback)))))
+         (,aggregate payload ->
+          (Rec ((saved imm payload))))))))
+  (with-data
+    (check-equal? (type-of typing-core '()
+                            `((source ,input-union) (fallback ,aggregate)))
+                  output-type)
+    (define-values (configs _rules)
+      (g2-trace (initial machine-core
+                         '(((tok 14) Available) ((tok 15) Available)))))
+    (check-config-trace configs '() output-type)
+    (match (last configs)
+      [`(cfg ,value ,_heap ,_states ,tokens ,_trace)
+       (check-equal? (collect-tokens value) '((tok 14)))
+       (check-equal? tokens '(((tok 14) Available) ((tok 15) Dropped)))]
+      [other (fail-check (format "Union の線形穴の終端 config が不正: ~s" other))])))
+
+(test-case "Surface の match 枝の資源型 binder は二度読みを拒否する"
+  (define input-type `(Option ,aggregate-option-type))
+  (define source
+    `(Fn ((argument ,input-type)) Int ()
+         (Eliminate (Move argument)
+           ((some (owned) ->
+            (Apply (Fn ((left ,aggregate-option-type)
+                        (right ,aggregate-option-type)) Int () 0)
+                   owned owned))
+            (none () -> 0)))))
+  (match (elab source)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+    [other (fail-check (format "枝 binder の二度読みを拒否しなかった: ~s" other))]))
+
+(test-case "Surface の match 枝は Move と未使用を config-ok? の下で実行する"
+  (for ([body (in-list
+               (list '(Drop owned) 'unit))])
+    (define source
+      `(Eliminate (Move argument)
+         ((some (owned) -> ,body)
+          (none () -> unit))))
+    (define artifact
+      (check-compiled-source-core
+       (elaborate-compiled
+        (apply-function '(Option (Owned Res))
+                        '(Construct some (Types (Owned Res))
+                                    (Apply acquire 13))
+                        source 'Unit '(Own)))))
+    (define-values (configuration _rules)
+      (apply values (run-compiled-execution-core artifact)))
+    (check-equal?
+     (match configuration
+       [`(cfg unit ,_heap ,_states ,tokens ,_trace) (map second tokens)]
+       [other (list 'unexpected other)])
+     '(Dropped))))
+
+(test-case "入れ子の match で同名 binder を shadow した後に外側を Move する"
+  (define option-owned '(Option (Owned Res)))
+  (define source
+    `(Apply
+      (Fn ((outer ,option-owned) (inner ,option-owned)) Unit (Own)
+        (Eliminate (Move outer)
+          ((some (owned) ->
+             (Let (nested let Unit)
+                  (Eliminate (Move inner)
+                    ((some (owned) -> (Drop (Move owned)))
+                     (none () -> unit)))
+                  (Drop (Move owned))))
+           (none () -> unit))))
+      (Construct some (Types (Owned Res)) (Apply acquire 13))
+      (Construct some (Types (Owned Res)) (Apply acquire 14))))
+  (define artifact
+    (check-compiled-source-core (elaborate-compiled source)))
+  (define-values (configuration _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (match configuration
+    [`(cfg unit ,_heap ,_states ,tokens ,_trace)
+     (check-equal? tokens '(((tok 0) Dropped) ((tok 1) Dropped)))]
+    [other (fail-check (format "入れ子 match の終端 config が不正: ~s" other))]))
 
 (test-case "T-MovePlace は metadata の集約資源型を返す"
   (define config

@@ -922,7 +922,11 @@
       'resource-binder-missing-binding
       'owned-parameter-missing-binding))
 
-(define (check-owned-encoding parameters parameter-types inner node fail)
+(define (check-owned-encoding parameters parameter-types inner node fail
+                              #:missing-key
+                              [missing-key resource-encoding-missing-key]
+                              #:raw-key
+                              [raw-key resource-encoding-raw-key])
   (define resource-positions
     (for/list ([name (in-list parameters)]
                [type (in-list parameter-types)]
@@ -946,9 +950,9 @@
                          (type-equiv? (peel-ty type-node) declared)
                          (not (set-member? reserved binder))
                          (not (memq binder seen)))
-              (fail (resource-encoding-missing-key declared) node))
+              (fail (missing-key declared) node))
             (loop (cdr pending) next (cons binder seen))]
-           [_ (fail (resource-encoding-missing-key declared) node)])])))
+           [_ (fail (missing-key declared) node)])])))
   ;; 生名は対応する Let の右辺にちょうど 1 回だけ現れる。外したあとの本体
   ;; に 1 度でも現れれば符号化が壊れている。自由出現だけを数えると、内側の
   ;; Let が生名を shadow する形を見逃す。束縛の位置も数える。
@@ -956,8 +960,47 @@
   ;; 正しく生成した Core がこの検査に当たることはない。
   (for ([entry (in-list resource-positions)])
     (when (core-mentions? body (first entry))
-      (fail (resource-encoding-raw-key (second entry)) node)))
+      (fail (raw-key (second entry)) node)))
   body)
+
+(define (resource-branch-binding-type type)
+  (match type
+    [`(Owned ,payload) payload]
+    [_ type]))
+
+(define (check-resource-branch-encoding binders declared-types body node fail)
+  (define resource-binders
+    (for/list ([binder (in-list binders)]
+               [type (in-list declared-types)]
+               #:when (resource-type? type))
+      binder))
+  (cond
+    [(null? resource-binders) (values body #f '())]
+    [else
+     (match (peel-node body)
+       [`(Scope ,managed ,inner)
+        (unless (null? managed)
+          (fail 'resource-binder-missing-binding node))
+        (check-owned-encoding
+         binders declared-types inner node fail
+         #:missing-key (lambda (_) 'resource-binder-missing-binding)
+         #:raw-key (lambda (_) 'resource-binder-raw-misuse))
+        (values body #t '())]
+       [_
+        (for ([binder (in-list resource-binders)])
+          (unless (linear-hole? body binder)
+            (fail 'resource-binder-missing-binding node)))
+        (values body #f resource-binders)])]))
+
+(define (with-branch-context context thunk)
+  (with-place-shadowing
+   (fourth context)
+   (lambda ()
+     (parameterize
+         ([resource-identity-transfers
+           (set-union (resource-identity-transfers)
+                     (list->set (fifth context)))])
+       (thunk)))))
 
 (define (check-many/full cores types Λ Ψ environment places callables node fail
                          [start-index 0]
@@ -1081,6 +1124,8 @@
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (define field-types (lookup schema constructor))
     (define binders (map peel-bind parameters))
+    (define-values (checked-body encoded? identity-transfers)
+      (check-resource-branch-encoding binders field-types body node fail))
     ;; 分配の規則は capability-of と共有する。鍵が表に無い分岐は
     ;; その label の値が来ないことを意味するため、空の token を張る。
     (define bindings
@@ -1101,12 +1146,15 @@
                               #f
                               #f
                               (cdr entry))))
-    (list body
+    (list checked-body
           (extend environment
                   binders
-                  field-types)
+                  (if encoded?
+                      (map resource-branch-binding-type field-types)
+                      field-types))
           (enter-child Λ_branch i)
-          binders)))
+          binders
+          identity-transfers)))
 
 ;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
 ;; 各枝の束縛子へ payload path を引き継ぐ。
@@ -1144,6 +1192,11 @@
     (define x (peel-bind binder))
     (define binding-type
       (if borrowed? `(,(first wrapper) ,member ,(second wrapper)) member))
+    (define-values (checked-body encoded? identity-transfers)
+      (if borrowed?
+          (values body #f '())
+          (check-resource-branch-encoding
+           (list x) (list member) body node fail)))
     (define token
       (if borrowed?
           (for/set ([cap (in-set scrutinee-ws)])
@@ -1152,10 +1205,17 @@
     (define Λ_branch
       (region-ctx-add-token (register-owner Λ x binding-type)
                             x token #f #f #f))
-    (list body
-          (extend environment (list x) (list binding-type))
+    (list checked-body
+          (extend environment
+                  (list x)
+                  (list (if borrowed?
+                            binding-type
+                            (if encoded?
+                                (resource-branch-binding-type member)
+                                member))))
           (enter-child Λ_branch i)
-          (list x))))
+          (list x)
+          identity-transfers)))
 
 (define (union-eliminate-branches scrutinee-type branches Λ environment
                                   node scrutinee fail)
@@ -1183,8 +1243,8 @@
                               node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (check-as/full (first context) expected (third context)
                         (third scrutinee-result) (second context)
@@ -1215,8 +1275,8 @@
                               node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (infer (first context) (third context) (third scrutinee-result)
                 (second context) places callables fail)))))
@@ -1229,8 +1289,8 @@
         (tagged-branch-upper-bound types Λ node fail)))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (check-as/full (first context) result-type (third context)
                         (third scrutinee-result) (second context)
@@ -1291,8 +1351,8 @@
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (check-as/full (first context)
                         expected
@@ -1601,8 +1661,8 @@
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (infer (first context)
                 (third context)
@@ -1622,8 +1682,8 @@
         (tagged-branch-upper-bound types Λ node fail)))
   (define branch-rows
     (for/list ([context (in-list contexts)])
-      (with-place-shadowing
-       (fourth context)
+      (with-branch-context
+       context
        (lambda ()
          (check-as (first context)
                    result-type

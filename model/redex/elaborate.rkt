@@ -788,14 +788,25 @@
       (define context (initial-candidate-context propositions))
       (define branches
         (for/list ([member (in-list (union-members actual))])
-          (list member (fresh-union-name))))
+          (define name (fresh-union-name))
+          (define alias
+            (and (resource-type? member)
+                 (fresh-owned-name (set-add union-reserved name))))
+          (list member name alias)))
       (define (reference name) `(#:var ,name ,s))
       (define (eliminate bodies)
         `(UnionEliminate ,s ,core
            ,(for/list ([branch (in-list branches)]
                        [body (in-list bodies)])
-              (match-define (list member name) branch)
+              (match-define (list member name _alias) branch)
               `(,s (#:ty ,member ,s) (#:bind ,name ,s) -> ,body))))
+      (define (resource-branch-body member name alias body)
+        (if alias
+            `(Scope ,s ()
+                    (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
+                         ,(reference name)
+                         ,body))
+            body))
       (define (wrap-reference mode type bound [move? #f])
         (define name (fresh-union-name))
         (define ref (reference name))
@@ -830,23 +841,31 @@
          (values
           (eliminate
            (for/list ([branch (in-list branches)])
-             (match-define (list member name) branch)
-             (define ref (reference name))
-             (if (or (eq? member 'Never)
-                     (type-equiv? member expected))
-                 ref
-                 (wrap-reference 'let expected ref))))
+             (match-define (list member name alias) branch)
+             (define ref (reference (or alias name)))
+             (define consumed-ref
+               (if alias `(Move ,s ,ref) ref))
+             (define converted
+               (if (or (eq? member 'Never)
+                       (type-equiv? member expected))
+                   consumed-ref
+                   (wrap-reference 'let expected consumed-ref
+                                   (resource-type? expected))))
+             (resource-branch-body member name alias converted)))
           upper)]
         [_
          (define bodies
            (for/list ([branch (in-list branches)])
-             (match-define (list member name) branch)
+             (match-define (list member name alias) branch)
              (define-values (body _type)
-               (convert (reference name) member expected s propositions))
-             body))
+               (convert (if alias
+                            `(Move ,s ,(reference alias))
+                            (reference name))
+                        member expected s propositions))
+             (resource-branch-body member name alias body)))
          (values
           (wrap-reference 'const expected (eliminate bodies)
-                          (owned-type? expected))
+                          (resource-type? expected))
           expected)]))
 
     (define (fresh-names/all parameter-types reserved predicate)
@@ -1063,9 +1082,18 @@
                        (= (length parameters) (length field-types))
                        (not (check-duplicates parameters)))
             (reject eliminate-span 'invalid-branch-binders raw-branch))
+          (define-values (resource-names _reserved)
+            (fresh-resource-names/all
+             field-types
+             (set-union (form-symbols raw-branch)
+                        (list->set (map first environment)))))
+          (define core-parameters
+            (resource-parameter-binders raw-parameters resource-names))
           (define clause
             (list raw-branch constructor raw-parameters body
-                  (extend environment parameters field-types)))
+                  (extend environment parameters field-types #f
+                          (map resource-type? field-types))
+                  field-types resource-names core-parameters))
           ;; check-eliminate の互換な診断順を保つため、利用側の枝検査は
           ;; binder の検査直後、次の枝の binder 検査より前に呼ぶ。
           (on-clause clause)
@@ -1080,7 +1108,7 @@
          scrutinee branches eliminate-span environment delta propositions boundaries
          #:on-clause
          (lambda (clause)
-           (match-define (list _ _ _ body branch-environment) clause)
+           (match-define (list _ _ _ body branch-environment _ _ _) clause)
            (define result
              (check body expected branch-environment
                     delta propositions boundaries))
@@ -1094,9 +1122,18 @@
                    ,(for/list ([clause (in-list clauses)]
                                [result (in-list branch-results)])
                       (match-define
-                        (list raw-branch constructor raw-parameters _ _) clause)
-                      `(,(branch-span raw-branch) ,constructor ,raw-parameters
-                        -> ,(first result))))
+                        (list raw-branch constructor raw-parameters _ _ field-types
+                              resource-names core-parameters)
+                        clause)
+                      (define core
+                        (if (ormap values resource-names)
+                            `(Scope ,eliminate-span ()
+                                    ,(wrap-resource-lets
+                                      raw-parameters field-types resource-names
+                                      (first result)))
+                            (first result)))
+                      `(,(branch-span raw-branch) ,constructor ,core-parameters
+                        -> ,core)))
        expected
        (rows-union
         (cons (judgment-row scrutinee-result)
@@ -1870,7 +1907,7 @@
                             environment delta propositions boundaries))
          (define results
            (for/list ([clause (in-list clauses)])
-             (match-define (list _ _ _ body branch-environment) clause)
+             (match-define (list _ _ _ body branch-environment _ _ _) clause)
              (synth body branch-environment delta propositions boundaries)))
          (define live-types
            (filter (lambda (type) (not (eq? type 'Never)))
@@ -1916,9 +1953,18 @@
                       ,(for/list ([clause (in-list clauses)]
                                   [core (in-list branch-cores)])
                          (match-define
-                           (list raw-branch constructor raw-parameters _ _) clause)
-                         `(,(branch-span raw-branch) ,constructor ,raw-parameters
-                           -> ,core)))
+                           (list raw-branch constructor raw-parameters _ _
+                                 field-types resource-names core-parameters)
+                           clause)
+                         (define wrapped-core
+                           (if (ormap values resource-names)
+                               `(Scope ,s ()
+                                       ,(wrap-resource-lets
+                                         raw-parameters field-types resource-names
+                                         core))
+                               core))
+                         `(,(branch-span raw-branch) ,constructor ,core-parameters
+                           -> ,wrapped-core)))
           candidate
           (rows-union
            (cons (judgment-row scrutinee-result)

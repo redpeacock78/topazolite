@@ -814,7 +814,10 @@
    'ill-typed)
   (check-equal?
    (key-with-rewritten-field
-    `(Eliminate x ((some (payload) -> (Construct ,option-owned none))
+    `(Eliminate x ((some (raw-payload) ->
+                   (Scope ()
+                     (Let (payload let (Owned Res)) raw-payload
+                          (Construct ,option-owned none))))
                    (none () -> (Construct ,option-owned none))))
     option-owned option-owned)
    'ill-typed)
@@ -846,14 +849,23 @@
     `(RecRewrite record-source
        ((a x ,resource-union imm ,resource-pair
          (UnionEliminate x
-           ((,union-base left -> (Rec ((p imm left) (q imm left))))
-            (,union-wide right -> (Rec ((p imm right) (q imm right)))))))))
+           ((,union-base raw-left ->
+             (Scope ()
+               (Let (left let ,union-base) raw-left
+                    (Rec ((p imm (Move left)) (q imm (Move left)))))))
+            (,union-wide raw-right ->
+             (Scope ()
+               (Let (right let ,union-wide) raw-right
+                    (Rec ((p imm (Move right)) (q imm (Move right))))))))))))
     `((a ,resource-union imm)) `((a ,resource-pair imm)))
    'ill-typed)
   (check-equal?
    (key-with-rewritten-field
-    `(UnionEliminate x ((,union-base left -> unit)
-                        (,union-wide right -> unit)))
+    `(UnionEliminate x
+       ((,union-base raw-left ->
+         (Scope () (Let (left let ,union-base) raw-left unit)))
+        (,union-wide raw-right ->
+         (Scope () (Let (right let ,union-wide) raw-right unit)))))
     resource-union 'Unit)
    'ill-typed)
   ;; 外側の x は scrutinee ではなく一方の枝だけに現れる。
@@ -862,7 +874,11 @@
     `(UnionEliminate
       (UnionInject ,int-resource-union Int 1)
       ((Int number -> x)
-       (,union-base payload -> (UnionInject ,int-resource-union ,union-base payload))))
+       (,union-base raw-payload ->
+        (Scope ()
+          (Let (payload let ,union-base) raw-payload
+               (UnionInject ,int-resource-union ,union-base
+                            (Move payload)))))))
     int-resource-union int-resource-union)
    'ill-typed))
 
