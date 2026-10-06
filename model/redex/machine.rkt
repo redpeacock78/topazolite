@@ -232,6 +232,63 @@
     [(list _ value _ ...) value]
     [_ #f]))
 
+;; place を根とする射影連鎖を、値を中間生成せず一つの path として読む。
+(define (place-projection-path receiver final-label)
+  (let loop ([current receiver] [labels (list final-label)])
+    (match current
+      [(? exact-nonnegative-integer? place)
+       (list place labels)]
+      [`(Proj ,prefix ,label)
+       (loop prefix (cons label labels))]
+      [_ #f])))
+
+(define (project-place-path fields labels)
+  (let walk ([current-fields fields] [remaining labels])
+    (and (pair? remaining)
+         (not (check-duplicates (map first current-fields)))
+         (match (assoc (first remaining) current-fields)
+           [(list _ _ value)
+            (if (null? (rest remaining))
+                value
+                (match value
+                  [`(Rec ,nested-fields) (walk nested-fields (rest remaining))]
+                  [_ #f]))]
+           [_ #f]))))
+
+(define (project-place-path/optional fields labels type)
+  (define parent-labels (drop-right labels 1))
+  (define final-label (last labels))
+  (define parent-fields
+    (if (null? parent-labels)
+        fields
+        (match (project-place-path fields parent-labels)
+          [`(Rec ,nested-fields) nested-fields]
+          [_ #f])))
+  (and parent-fields
+       (not (check-duplicates (map first parent-fields)))
+       (match (assoc final-label parent-fields)
+         [(list _ _ `(Absent ,_)) `(Construct (Option ,type) none)]
+         [(list _ _ value) `(Construct (Option ,type) some ,value)]
+         [_ `(Construct (Option ,type) none)])))
+
+;; place 射影の prefix は、外側の射影を先に一段で処理する。
+;; 内側を先に値へすると資源を含む部分 record が複製される。
+(define (projection-context-parent? context)
+  (define hole-value (term hole))
+  (define (contains-hole? value)
+    (or (equal? value hole-value)
+        (and (list? value) (ormap contains-hole? value))))
+  (define (parent value)
+    (match value
+      [(? list? parts)
+       (for/or ([part (in-list parts)])
+         (cond
+           [(equal? part hole-value) (and (pair? parts) (first parts))]
+           [(contains-hole? part) (parent part)]
+           [else #f]))]
+      [_ #f]))
+  (memq (parent context) '(Proj ProjOpt)))
+
 ;; spec §5.3。H の値を field path に沿って辿る。
 ;; Rec の欄は label で、Construct の欄は 0 起点の位置で指す。
 ;; path が list でない、辿れない値、欠落した欄、範囲外の位置はすべて #f を
@@ -1051,26 +1108,40 @@
                                label_target))
         R-ProjOpt)
 
-   ;; 資源型の Let が置いた Available place から、静的に許された欄を読む。
-   ;; 欄値の複製可否は型付けが資源型でないことを検査し、機械は H と Ω を保つ。
-   (--> (cfg (in-hole E (Proj p label_target)) H Ω Λtok θ)
+   ;; 資源型の Let が置いた Available place から、静的に許された欄 path を読む。
+   ;; path 全体を一度に辿り、中間の資源型 record を値として複製しない。
+   (--> (cfg (in-hole E (Proj c_projection label_target)) H Ω Λtok θ)
         (cfg (in-hole E v_result) H Ω Λtok θ)
+        (where (p (label_path ...))
+               ,(place-projection-path (term c_projection)
+                                       (term label_target)))
         (where Available ,(table-ref (term Ω) (term p)))
         (where (Rec ((label_field m v_field) ...))
                ,(table-ref (term H) (term p)))
-        (side-condition (term (unique-labels? (label_field ...))))
         (where v_result
-               (proj-lookup ((label_field v_field) ...) label_target))
+               ,(project-place-path (term ((label_field m v_field) ...))
+                                    (term (label_path ...))))
+        (side-condition
+         (and (term (unique-labels? (label_field ...)))
+              (not (projection-context-parent? (term E)))))
         R-ProjPlace)
 
-   (--> (cfg (in-hole E (ProjOpt τ p label_target)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (ProjOpt τ c_projection label_target)) H Ω Λtok θ)
         (cfg (in-hole E v_result) H Ω Λtok θ)
+        (where (p (label_path ...))
+               ,(place-projection-path (term c_projection)
+                                       (term label_target)))
         (where Available ,(table-ref (term Ω) (term p)))
         (where (Rec ((label_field m v_field) ...))
                ,(table-ref (term H) (term p)))
-        (side-condition (term (unique-labels? (label_field ...))))
         (where v_result
-               (projopt-result τ ((label_field v_field) ...) label_target))
+               ,(project-place-path/optional
+                 (term ((label_field m v_field) ...))
+                 (term (label_path ...))
+                 (term τ)))
+        (side-condition
+         (and (term (unique-labels? (label_field ...)))
+              (not (projection-context-parent? (term E)))))
         R-ProjOptPlace)
 
    ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では

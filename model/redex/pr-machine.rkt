@@ -122,6 +122,60 @@
     [(list _ value) value]
     [_ #f]))
 
+;; place を根とする射影連鎖を、値を中間生成せず一つの path として読む。
+(define (pr-place-projection-path receiver final-label)
+  (let loop ([current receiver] [labels (list final-label)])
+    (match current
+      [`(PPlace ,place) (list place labels)]
+      [`(PProj ,prefix ,label)
+       (loop prefix (cons label labels))]
+      [_ #f])))
+
+(define (pr-project-place-path fields labels)
+  (let walk ([current-fields fields] [remaining labels])
+    (and (pair? remaining)
+         (not (check-duplicates (map first current-fields)))
+         (match (assoc (first remaining) current-fields)
+           [(list _ value)
+            (if (null? (rest remaining))
+                value
+                (match value
+                  [`(PRec ,nested-fields)
+                   (walk nested-fields (rest remaining))]
+                  [_ #f]))]
+           [_ #f]))))
+
+(define (pr-project-place-path/optional fields labels some-tag none-tag)
+  (define parent-labels (drop-right labels 1))
+  (define final-label (last labels))
+  (define parent-fields
+    (if (null? parent-labels)
+        fields
+        (match (pr-project-place-path fields parent-labels)
+          [`(PRec ,nested-fields) nested-fields]
+          [_ #f])))
+  (and parent-fields
+       (not (check-duplicates (map first parent-fields)))
+       (match (assoc final-label parent-fields)
+         [(list _ value) `(PTagged ,some-tag ,value)]
+         [_ `(PTagged ,none-tag)])))
+
+(define (pr-projection-context-parent? context)
+  (define hole-value (term hole))
+  (define (contains-hole? value)
+    (or (equal? value hole-value)
+        (and (list? value) (ormap contains-hole? value))))
+  (define (parent value)
+    (match value
+      [(? list? parts)
+       (for/or ([part (in-list parts)])
+         (cond
+           [(equal? part hole-value) (and (pair? parts) (first parts))]
+           [(contains-hole? part) (parent part)]
+           [else #f]))]
+      [_ #f]))
+  (memq (parent context) '(PProj PProjOpt)))
+
 (define (ptable-set table key value)
   (if (assoc key table)
       (for/list ([entry (in-list table)])
@@ -260,27 +314,42 @@
                                 label_target))
         R-PR-ProjOpt)
 
-   (--> (pcfg (in-hole PE (PProj (PPlace pp) label_target)) PH PΩ θ)
+   (--> (pcfg (in-hole PE (PProj pc_projection label_target)) PH PΩ θ)
         (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (where (pp (label_path ...))
+               ,(pr-place-projection-path (term pc_projection)
+                                          (term label_target)))
         (where Available ,(ptable-ref (term PΩ) (term pp)))
         (where (PRec ((label_field pv_field) ...))
                ,(ptable-ref (term PH) (term pp)))
-        (side-condition (term (punique-labels? (label_field ...))))
         (where pv_result
-               (pproj-lookup ((label_field pv_field) ...) label_target))
+               ,(pr-project-place-path
+                 (term ((label_field pv_field) ...))
+                 (term (label_path ...))))
+        (side-condition
+         (and (term (punique-labels? (label_field ...)))
+              (not (pr-projection-context-parent? (term PE)))))
         R-PR-ProjPlace)
 
    (--> (pcfg (in-hole PE
-                      (PProjOpt K_some K_none (PPlace pp) label_target))
+                      (PProjOpt K_some K_none pc_projection label_target))
               PH PΩ θ)
         (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (where (pp (label_path ...))
+               ,(pr-place-projection-path (term pc_projection)
+                                          (term label_target)))
         (where Available ,(ptable-ref (term PΩ) (term pp)))
         (where (PRec ((label_field pv_field) ...))
                ,(ptable-ref (term PH) (term pp)))
-        (side-condition (term (punique-labels? (label_field ...))))
         (where pv_result
-               (pprojopt-result K_some K_none
-                                ((label_field pv_field) ...) label_target))
+               ,(pr-project-place-path/optional
+                 (term ((label_field pv_field) ...))
+                 (term (label_path ...))
+                 (term K_some)
+                 (term K_none)))
+        (side-condition
+         (and (term (punique-labels? (label_field ...)))
+              (not (pr-projection-context-parent? (term PE)))))
         R-PR-ProjOptPlace)
 
    ;; 内側の文脈を PG にするのは、間に scope が挟まったときに内側の scope へ

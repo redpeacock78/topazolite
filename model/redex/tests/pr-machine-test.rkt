@@ -194,10 +194,32 @@
    (term (PLetOwned r (PRec ((a 5) (o 6)))
            (PProjOpt some-tag none-tag r o))))
   (term (PTagged some-tag 6)))
- (check-equal?
-  (eval-pr
+  (check-equal?
+   (eval-pr
    (term (PLetOwned r (PRec ((a 5)))
            (PProjOpt some-tag none-tag r o))))
+  (term (PTagged none-tag))))
+
+(test-case
+ "place 射影は入れ子 path の接頭辞を値にしない"
+ (define nested-place-value
+   (term (PRec ((n (PRec ((a 7) (owner (PResource 13)))))))))
+ (define nested-place-without-a
+   (term (PRec ((n (PRec ((owner (PResource 13)))))))))
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r ,nested-place-value
+           (PProj (PProj r n) a))))
+  7)
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r ,nested-place-value
+           (PProjOpt some-tag none-tag (PProj r n) a))))
+  (term (PTagged some-tag 7)))
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r ,nested-place-without-a
+           (PProjOpt some-tag none-tag (PProj r n) a))))
   (term (PTagged none-tag))))
 
 (test-case

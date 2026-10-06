@@ -2668,26 +2668,68 @@
 ;; 資源型の Let 変数から欄を読むときは、変数全体を裸で複製せず、
 ;; 非資源型の欄だけを読む。使用要求には欄の label を capability path として
 ;; 積むため、同じ欄への可変借用とだけ競合する。
-(define (infer-place-projection core name label optional-type
-                                Λ Ψ environment fail)
-  (define record-type (lookup environment name))
-  (match (and record-type (normalize-type record-type))
-    [`(Record ,row)
-     (define field (assoc label row))
-     (unless field (fail 'unknown-record-label core))
-     (define field-type (second field))
-     (when (resource-type? field-type)
-       (fail 'owned-variable-requires-move core))
-     (cond
-       [(and (not optional-type) (field-optional? field))
-        (fail 'project-optional-field core)]
-       [(and optional-type
-             (not (type-compatible? field-type optional-type)))
-        (fail 'projopt-invalid-field core)])
-     (emit-use-request! Λ name (list label) 'read (set) core
-                        'borrow-conflicting-use #f fail)
-     (list (if optional-type `(Option ,optional-type) field-type) '() Ψ)]
-    [_ (fail 'project-non-record name)]))
+(define (projection-prefix core)
+  (match (peel-node core)
+    [(? symbol? name) (list name '())]
+    [(? exact-nonnegative-integer? place) (list place '())]
+    [`(Proj ,record ,label)
+     (match (projection-prefix record)
+       [(list root path) (list root (append path (list (peel-lbl label))))]
+       [_ #f])]
+    [_ #f]))
+
+(define (place-projection-info core)
+  (match (peel-node core)
+    [`(Proj ,record ,label)
+     (match (projection-prefix record)
+       [(list root path)
+        (list root (append path (list (peel-lbl label))) #f)]
+       [_ #f])]
+    [`(ProjOpt ,type ,record ,label)
+     (match (projection-prefix record)
+       [(list root path)
+        (list root (append path (list (peel-lbl label))) (peel-ty type))]
+       [_ #f])]
+    [_ #f]))
+
+(define (infer-place-projection core root path optional-type
+                                Λ Ψ environment places fail)
+  (define root-type
+    (if (symbol? root)
+        (lookup environment root)
+        (lookup places root)))
+  (unless root-type (fail 'project-non-record core))
+  (define result-type
+    (let walk ([type (normalize-type root-type)] [labels path])
+      (match type
+        [`(Record ,row)
+         (define field (assoc (first labels) row))
+         (unless field (fail 'unknown-record-label core))
+         (define field-type (second field))
+         (if (null? (rest labels))
+             (begin
+               (when (resource-type? field-type)
+                 (fail 'owned-variable-requires-move core))
+               (cond
+                 [(and (not optional-type) (field-optional? field))
+                  (fail 'project-optional-field core)]
+                 [(and optional-type
+                       (not (type-compatible? field-type optional-type)))
+                  (fail 'projopt-invalid-field core)])
+               (if optional-type `(Option ,optional-type) field-type))
+             (if (field-optional? field)
+                 (fail 'project-optional-field core)
+                 (walk (normalize-type field-type) (rest labels))))]
+        [_ (fail 'project-non-record core)])))
+  (emit-use-request! Λ root path 'read (set) core
+                     'borrow-conflicting-use #f fail)
+  (list result-type '() Ψ))
+
+(define (place-projection-root? root places)
+  (or (and (symbol? root)
+           (set-member? (resource-place-set) root))
+      (and (exact-nonnegative-integer? root)
+           (lookup places root))))
 
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
@@ -3078,11 +3120,12 @@
        [_ (fail 'ill-typed core)])]
 
     [`(Proj ,record ,label)
-     (define record-node (peel-node record))
-     (if (and (symbol? record-node)
-              (set-member? (resource-place-set) record-node))
-         (infer-place-projection core record-node (peel-lbl label) #f
-                                 Λ Ψ environment fail)
+     (define projection (place-projection-info core))
+     (if (and projection
+              (not (third projection))
+              (place-projection-root? (first projection) places))
+         (infer-place-projection core (first projection) (second projection)
+                                 #f Λ Ψ environment places fail)
          (match (infer record (enter-child Λ 0)
                        Ψ environment places callables fail)
            [(list `(Record ,row) record-row record-psi)
@@ -3097,12 +3140,13 @@
            [_ (fail 'project-non-record record)]))]
 
     [`(ProjOpt ,τ ,record ,label)
-     (define record-node (peel-node record))
      (define type (peel-ty τ))
-     (if (and (symbol? record-node)
-              (set-member? (resource-place-set) record-node))
-         (infer-place-projection core record-node (peel-lbl label) type
-                                 Λ Ψ environment fail)
+     (define projection (place-projection-info core))
+     (if (and projection
+              (third projection)
+              (place-projection-root? (first projection) places))
+         (infer-place-projection core (first projection) (second projection)
+                                 (third projection) Λ Ψ environment places fail)
          (match (infer record (enter-child Λ 0)
                        Ψ environment places callables fail)
            [(list `(Record ,row) record-row record-psi)
@@ -4681,39 +4725,37 @@
                           (for/and ([entry (in-list heap)])
                             (define declared
                               (second (assoc (first entry) places)))
+                            (define declared-entry
+                              (assoc (first entry)
+                                     (config-declared-types configuration)))
+                            (define declared-root-owned?
+                              (and declared-entry
+                                   (owned-type? (second declared-entry))))
                             (define value (second entry))
-                            (define plain-mut-slot?
-                              (and (not (contains-owned-leaf? value))
-                                   (match entry
-                                     [`(,_ ,_ (declared (Owned ,_))) #f]
-                                     [`(,_ ,_ (declared ,_)) #t]
-                                     [_ #f])))
-                            ;; binding-context は mut の宣言型と有効 row の各欄が
-                            ;; Owned と借用を含まないことを検査する。したがって通常の
-                            ;; mut slot を宣言型そのものへ照合しても token 条件は弱まらない。
+                            (define expected-value-type
+                              (if (or declared-root-owned?
+                                      (not declared-entry))
+                                  `(Owned ,declared)
+                                  declared))
+                            (define compatible?
+                              (if (or declared-root-owned?
+                                      (and (not declared-entry)
+                                           (contains-owned-leaf? value)))
+                                  owned-lift-compatible?
+                                  type-compatible?))
+                            ;; root Owned の place だけ payload を Owned へ持ち上げる。
+                            ;; 内側に Owned leaf を持つ Record は宣言型の row のまま
+                            ;; 照合し、欄の互換性と token 検査をそれぞれ保つ。
                             (define value-row
                               (parameterize
                                   ([declared-place-types
-                                    (config-declared-types configuration)])
-                                (if plain-mut-slot?
-                                    (check-as/boolean value declared '()
-                                                      places callables
-                                                      #:compatible? type-compatible?)
-                                    (check-as/boolean value
-                                                      (list 'Owned declared)
-                                                      '()
-                                                      places
-                                                      callables
-                                                      #:compatible?
-                                                      ;; Rec の leaf は payload の bare Record を
-                                                      ;; 推論するため、place の Owned 宣言へ持ち上げる。
-                                                      ;; Owned と OwnedLeaf を含む経路は厳密に保つ。
-                                                      (if (or (contains-owned-leaf? value)
-                                                              (match entry
-                                                                [`(,_ ,_ (declared ,_)) #t]
-                                                                [_ #f]))
-                                                          owned-lift-compatible?
-                                                          type-compatible?)))))
+                                   (config-declared-types configuration)])
+                                (check-as/boolean value
+                                                  expected-value-type
+                                                  '()
+                                                  places
+                                                  callables
+                                                  #:compatible? compatible?)))
                             (and value-row (null? value-row)))
                           (let ([actual-row
                                  (parameterize

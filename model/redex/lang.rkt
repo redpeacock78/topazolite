@@ -274,7 +274,10 @@
          (Rec ((label m c) ...))
          (Absent τ)
          (Proj c label)
+         ;; Let の実行後は数値 place が射影の根として現れる。
+         (Proj p label)
          (ProjOpt τ c label)
+         (ProjOpt τ p label)
          (Let (x bmode τ) c c)
          (Discharge (ProofRep O φ) c)
          (UnionInject τ τ c)
