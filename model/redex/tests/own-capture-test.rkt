@@ -3,10 +3,14 @@
 ;; G5c5b2。Owned を捕捉する closure の生成を検査する。
 ;; [REQ: OWN-007] Owned を捕捉する closure。
 (require rackunit
+         racket/list
          racket/match
+         "../borrow.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../gen.rkt"
+         "../machine.rkt"
          "../span-core.rkt"
          "../typing.rkt"
          "../uniquify.rkt")
@@ -39,6 +43,33 @@
      (for/or ([item (in-list core)])
        (find-lam-by-callable item callable))]
     [else #f]))
+
+(define (g2-trace start)
+  (let loop ([current start] [configs (list start)] [rules '()] [fuel 80])
+    (when (zero? fuel)
+      (error 'g2-trace "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values configs rules)]
+      [(list (list rule next))
+       (loop next (append configs (list next)) (append rules (list rule))
+             (sub1 fuel))]
+      [steps (error 'g2-trace "一意な次状態を期待したが複数ある: ~s" steps)])))
+
+(define (check-config-trace configs callables expected)
+  (define rows
+    (for/list ([config (in-list configs)] [index (in-naturals)])
+      (define row (runtime-row config callables expected))
+      (check-not-false row
+                       (format "runtime row を得られない config ~a: ~s"
+                               index config))
+      (check-true (config-ok? config callables expected row)
+                  (format "不正な中間 config ~a: ~s" index config))
+      row))
+  (for ([before (in-list rows)] [after (in-list (cdr rows))]
+        [index (in-naturals)])
+    (check-true (row-subset? after before)
+                (format "config ~a から次の config で row が増えた: ~s -> ~s"
+                        index before after))))
 
 ;; Owned を 1 件捕捉する closure。
 (define capture-one-surface
@@ -312,6 +343,133 @@
 
 (define (owned-capture-diagnostic-of core environment)
   (diagnostic-id (core-type-of/diagnostic core '() '() environment)))
+
+(define (core-key-of core callables environment)
+  (match (type-of/raw core '() callables environment)
+    [(list 'ok _) 'ok]
+    [(list 'fail key _node _details ...) key]))
+
+(define (elaboration-key-of source)
+  (diagnostic-code-key
+   (diagnostic-code-row (elaborate-diagnostic-of source))))
+
+(define aggregate-resource-type
+  '(Record ((n Int imm) (owned (Owned Res) imm))))
+
+(test-case
+ "Lam が外側の集約資源型を捕捉する Core は拒否する"
+ (define callables '((aggregate-lam (NFn () Int () () () User))))
+ (check-equal?
+  (core-key-of '(Lam User aggregate-lam () (Proj x n))
+               callables
+               `((x ,aggregate-resource-type)))
+  'unbound-variable))
+
+(test-case
+ "RegionLam が外側の集約資源型を捕捉する Core は拒否する"
+ (check-equal?
+  (core-key-of '(RegionLam (rho) (Proj x n))
+               '()
+               `((x ,aggregate-resource-type)))
+  'unbound-variable))
+
+(test-case
+ "Recur が外側の集約資源型を捕捉する Core は拒否する"
+ (define signature '(NFn () Int () () () User))
+ (check-equal?
+  (core-key-of '(Recur recur-id f () (Proj x n) 0)
+               `((recur-id ,signature))
+               `((x ,aggregate-resource-type) (f ,signature)))
+  'unbound-variable))
+
+(define aggregate-parameter-capture-surface
+  `(Fn ((x ,aggregate-resource-type))
+       (Owned (NFn () Int () ()))
+       ()
+     (Fn () Int () (Proj x n))))
+
+(test-case
+ "関数仮引数の集約資源型を捕捉する Lam は Move の不足で拒否する"
+ (define core
+   '(Curry (Lam User captured-lam (captured) (Proj captured n))
+           (Move x)))
+ (define callables
+   `((captured-lam (NFn (,aggregate-resource-type) Int () () () User))))
+ (define environment `((x ,aggregate-resource-type)))
+ (check-equal? (elaboration-key-of aggregate-parameter-capture-surface)
+               'move-non-owned)
+ (check-equal? (core-key-of core callables environment)
+               'move-non-owned))
+
+(test-case
+ "Let の集約資源型を捕捉する Lam は Curry の Move に変換される"
+ (define source
+   `(Fn ((source ,aggregate-resource-type))
+        (Owned (NFn () Int () ()))
+        (Own)
+      (Let x source
+        (Fn () Int () (Proj x n)))))
+ (match-define (list core type row callables) (elaboration-of source))
+ (check-equal? (core-type-of core '() callables) (list type row))
+ (check-true
+  (match type
+    [`(NFn (,aggregate-resource-type)
+           (Owned (NFn () Int () () () User)) () (Own) () User)
+     #t]
+    [_ #f]))
+ (match (find-capture-let (erase-core core))
+   [`(Let (,place let (Owned (NFn () Int () ,_ () ,_)))
+          (Curry (Lam User ,_ ,_ ,_) (Move ,captured))
+          (Move ,same-place))
+    (check-equal? (binder-base captured) 'x)
+    (check-equal? place same-place)]
+   [_ (fail "集約資源型の捕捉を Move の Curry へ変換しなかった")]))
+
+(test-case
+ "集約資源型を捕捉した Curry の実行は各段階で token を保つ"
+ (define source
+   `(Fn ((source ,aggregate-resource-type))
+        (Owned (NFn () Int () ()))
+        (Own)
+      (Let x source
+        (Fn () Int () (Proj x n)))))
+ (match-define (list core _type _row callables) (elaboration-of source))
+ (define executable (execution-core core callables))
+ (define argument
+   '(Rec ((n imm 41)
+         (owned imm (OwnedLeaf (tok 13) (resource 13))))))
+ (define expected '(Owned (NFn () Int () () () User)))
+ (define initial
+   `(cfg (Scope () (Apply ,executable ,argument))
+         () () (((tok 13) Available)) ()))
+ (define-values (configs rules) (g2-trace initial))
+ (check-not-false (member 'R-LetOwned rules))
+ (check-not-false (member 'R-Move rules))
+ (check-config-trace configs callables expected)
+ (match (last configs)
+   [`(cfg ,value ,_heap ,_states ,tokens ,_events)
+    (check-equal? (collect-tokens value) '((tok 13)))
+    (check-equal? tokens '(((tok 13) Available)))]
+   [_ (fail "最終 config の形が合わない")]))
+
+(test-case
+ "非資源型の変数を捕捉する Lam は従来どおり受理する"
+ (define source
+   '(Fn ((outer Int)) (NFn () Int () ()) ()
+        (Fn () Int () outer)))
+ (match-define (list core type row callables) (elaboration-of source))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
+(test-case
+ "Recur の集約資源型捕捉は注釈の有無にかかわらず E-OWN-008"
+ (define annotated
+   `(Fn ((x ,aggregate-resource-type)) Unit (Partial)
+        (Recur f () Int (Partial) (Proj x n) unit)))
+ (define inferred
+   `(Fn ((x ,aggregate-resource-type)) Unit (Partial)
+        (Recur f () #:infer (Partial) (Proj x n) unit)))
+ (check-equal? (elaboration-key-of annotated) 'owned-recur-capture)
+ (check-equal? (elaboration-key-of inferred) 'owned-recur-capture))
 
 (test-case
  "Core を直に書いた Curry の根は owned-function-requires-move で落ちる"

@@ -610,15 +610,15 @@
       (if (assoc (first entry) visible)
           visible
           (cons entry visible))))
-  (define outer-owned
+  (define outer-resources
     (for/set ([entry (in-list visible-environment)]
-              #:when (owned-type? (second entry)))
+              #:when (resource-type? (second entry)))
       (first entry)))
   (sort
    (set->list
     (set-intersect
      (set-subtract (free-vars expression) (list->set locally-bound))
-     outer-owned))
+     outer-resources))
    symbol<?))
 
 (define (captures-owned? expression locally-bound environment)
@@ -843,14 +843,20 @@
                           (owned-type? expected))
           expected)]))
 
-    (define (fresh-owned-names/all parameter-types reserved)
+    (define (fresh-names/all parameter-types reserved predicate)
       (let loop ([types parameter-types] [taken reserved] [acc '()])
         (cond
           [(null? types) (values (reverse acc) taken)]
-          [(owned-type? (car types))
+          [(predicate (car types))
            (define name (fresh-owned-name taken))
            (loop (cdr types) (set-add taken name) (cons name acc))]
           [else (loop (cdr types) taken (cons #f acc))])))
+
+    (define (fresh-owned-names/all parameter-types reserved)
+      (fresh-names/all parameter-types reserved owned-type?))
+
+    (define (fresh-resource-names/all parameter-types reserved)
+      (fresh-names/all parameter-types reserved resource-type?))
 
     ;; 返り値は仮引数の位置と同じ長さの列であり、Owned でない位置には #f を
     ;; 置く。位置の対応を崩さないためである。
@@ -1130,6 +1136,14 @@
       (define capture-types
         (for/list ([name (in-list captures)])
           (lookup environment name)))
+      (for ([name (in-list captures)] [type (in-list capture-types)])
+        (when (and (resource-type? type)
+                   (not (owned-type? type))
+                   (not (place-binding? environment name)))
+          ;; 集約資源型を Move できるのは P の place だけである。
+          ;; 仮引数など place でない資源型の捕捉は Curry 化する前に拒否し、
+          ;; Core の Move と同じ診断 key を保つ。
+          (reject s 'move-non-owned name)))
       (values parameters parameter-types captures capture-types))
 
     (define (prepare-fn-binders s parameter-binders parameters parameter-types
@@ -1139,7 +1153,7 @@
                    (list->set parameters)
                    (list->set (map first environment))))
       (define-values (capture-raw-names reserved-with-captures)
-        (fresh-owned-names/all capture-types reserved))
+        (fresh-resource-names/all capture-types reserved))
       (define-values (raw-names reserved-with-formals)
         (fresh-owned-names/all parameter-types reserved-with-captures))
       (define capture-binders
@@ -2073,7 +2087,7 @@
              (judgment
               `(Curry ,s ,(judgment-core function-result)
                       ,argument-core)
-              (if (or function-owned? (owned-type? first-type))
+              (if (or function-owned? (resource-type? first-type))
                   `(Owned ,bare-result)
                   bare-result)
               (row-union (judgment-row function-result)

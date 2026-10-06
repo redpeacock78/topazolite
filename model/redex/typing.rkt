@@ -870,14 +870,17 @@
     [_ #f]))
 
 (define (without-owned environment)
-  (filter (λ (entry) (not (owned-type? (second entry))))
+  ;; OWN-009。高々一回の資源を運ぶ外側の値は、閉包や再帰関数へ
+  ;; 暗黙に複製できない。仮引数として明示的に受け取る場合は呼出し側が
+  ;; 供給するので、function-body-environment で後から追加する。
+  (filter (λ (entry) (not (resource-type? (second entry))))
           environment))
 
 ;; G5c5b1 spec §7 と §8。本体の環境を作る。Owned<τ> の仮引数は payload の型
 ;; τ で束縛する。生名は本体から直接見えず、生成した Let が surface の名前へ
 ;; Owned<τ> を与えるためである。E-Var は Owned<_> の変数を裸で参照すること
 ;; を禁じており、生名を Owned<τ> で入れると Let の右辺の参照が落ちる。
-;; 外側の環境から Owned の項目を落とすのは従来どおりである。Owned の捕捉は
+;; 外側の環境から資源型の項目を落とす。資源型の捕捉は
 ;; elaborate が Curry の固定引数へ変換するため、この補助は外側の Owned を
 ;; 本体へ直接見せない。
 (define (function-body-environment environment parameters parameter-types)
@@ -2931,7 +2934,8 @@
                              (region-binder-renamings))]
                       [bound-region-params
                        (set-union (bound-region-params) (list->set rps))])
-         (infer body (enter-child Λ 0) Ψ environment places callables fail)))
+         (infer body (enter-child Λ 0) Ψ
+                (without-owned environment) places callables fail)))
      (list `(ForallRegion ,rps ,body-type) body-row body-psi)]
 
     [`(PrimVal ,_ ,name)
@@ -2997,7 +3001,7 @@
           `(Derived ,origin (Curry ,(erase-origin-core argument))))
         (list (curry-result-type remaining-types return-type latent-in latent-out
                                  obligations new-origin
-                                 (or function-owned? (owned-type? first-type)))
+                                 (or function-owned? (resource-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
        [_ (fail 'curry-non-function function)])]
@@ -3736,7 +3740,7 @@
           `(Derived ,origin (Curry ,(erase-origin-core argument))))
         (list (curry-result-type remaining-types return-type latent-in latent-out
                                  obligations new-origin
-                                 (or function-owned? (owned-type? first-type)))
+                                 (or function-owned? (resource-type? first-type)))
               (row-union function-row (first argument-row))
               (second argument-row))]
        [_ (fail 'curry-non-function function)])]

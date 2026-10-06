@@ -100,6 +100,93 @@
                                      owned-maker-environment))
                'owned-function-requires-move))
 
+(define aggregate-resource-type
+  '(Record ((n Int imm) (owned (Owned Res) imm))))
+
+(define aggregate-curry-environment
+  `((f (NFn (,aggregate-resource-type Int) Int () () () User))
+    (x ,aggregate-resource-type)))
+
+(test-case
+ "集約資源型の引数を固定した Curry の型は Owned になる"
+ (match-define (list 'ok (list result-type '()))
+   (type-of/raw '(Curry f x) '() '() aggregate-curry-environment))
+ (check-true
+  (match result-type
+    [`(Owned (NFn (Int) Int () () () (Derived User (Curry x)))) #t]
+    [_ #f])))
+
+(test-case
+ "集約資源型を固定した CurryVal の型も Owned になる"
+ (define argument
+   '(Rec ((n imm 7)
+         (owned imm (OwnedLeaf (tok 13) (resource 13))))))
+ (define function
+   '(Lam User aggregate-curry-lam (aggregate n) n))
+ (define callables
+   `((aggregate-curry-lam
+      (NFn (,aggregate-resource-type Int) Int () () () User))))
+ (define core
+   `(CurryVal (Derived User (Curry ,argument)) ,function ,argument))
+ (define expected
+   `(Owned (NFn (Int) Int () () () (Derived User (Curry ,argument)))))
+ (define config
+   `(cfg (Scope () ,core) () () (((tok 13) Available)) ()))
+ (check-true (config-ok? config callables expected '())))
+
+(test-case
+ "Owned の Curry は Record 欄へ置けず、Int の Curry は二欄へ置ける"
+ (define aggregate-closure `(Curry f x))
+ (check-equal?
+  (key-of
+   (type-of/raw `(Rec ((left imm ,aggregate-closure)))
+                '() '() aggregate-curry-environment))
+  'owned-record-field)
+ (check-equal?
+  (key-of
+   (type-of/raw
+    `(Rec ((left imm ,aggregate-closure) (right imm ,aggregate-closure)))
+    '() '() aggregate-curry-environment))
+  'owned-record-field)
+ (define int-curry-environment
+   '((f (NFn (Int Int) Int () () () User)) (x Int)))
+ (check-true
+  (match (type-of/raw
+    '(Rec ((left imm (Curry f x)) (right imm (Curry f x))))
+          '() '() int-curry-environment)
+    [(list 'ok _) #t]
+    [_ #f])))
+
+(test-case
+ "集約資源型を固定した閉包は裸で二度呼べない"
+ (define closure-type
+   '(Owned (NFn (Int) Int () () () User)))
+  (define core
+   `(Let (closure let ,closure-type)
+         (Curry f x)
+      (Rec ((left imm (Apply closure 1))
+            (right imm (Apply closure 1))))))
+ (check-equal?
+  (key-of (type-of/raw core '() '() aggregate-curry-environment))
+  'owned-variable-requires-move))
+
+(test-case
+ "elaborate は集約資源型の固定引数で作る Curry の閉包を Owned にする"
+ (define source
+   `(Fn ((x ,aggregate-resource-type))
+        (Owned (NFn (Int) Int () ()))
+        ()
+      (Curry (Fn ((aggregate ,aggregate-resource-type) (n Int)) Int () n)
+             x)))
+ (match-define (list core type row callables) (elaboration-of source))
+ (check-true
+  (match type
+    [`(NFn (,aggregate-resource-type)
+           (Owned (NFn (Int) Int () () () User)) () () () User)
+     #t]
+    [_ #f]))
+ (check-equal? (core-type-of core '() callables) (list type row)))
+
 ;; 関数側だけが Owned で固定引数が Int の Curry を踏む。
 ;; 内側の Fn は自分の仮引数しか使わない。Task 3 まで E-OWN-005 が
 ;; Owned の捕捉を禁じるため、捕捉のある形はここでは使えない。
