@@ -1516,14 +1516,7 @@
            (match (walk record)
              [(list name root steps)
               (list name root
-                    (append steps (list (list 'proj raw-label node))))]
-             [_ #f])]
-          [`(ProjOpt ,raw-type ,record ,raw-label)
-           (match (walk record)
-             [(list name root steps)
-              (list name root
-                    (append steps
-                            (list (list 'proj-opt raw-type raw-label node))))]
+                    (append steps (list (list raw-label node))))]
              [_ #f])]
           [_ #f]))
       (match (walk expression)
@@ -1532,7 +1525,7 @@
               (list name root steps))]
         [_ #f]))
 
-    (define (elaborate-place-projection expression environment delta propositions)
+    (define (elaborate-place-projection expression environment)
       (match (projection-chain expression environment)
         [(list root root-node steps)
          (define initial-type (normalize-type (lookup environment root)))
@@ -1543,12 +1536,7 @@
                       [index 0])
                      ([step (in-list steps)])
              (define terminal? (= index (sub1 (length steps))))
-             (define-values (kind raw-type raw-label node)
-               (match step
-                 [(list 'proj label source-node)
-                  (values 'proj #f label source-node)]
-                 [(list 'proj-opt annotation label source-node)
-                  (values 'proj-opt annotation label source-node)]))
+             (match-define (list raw-label node) step)
              (define span (span-of node))
              (define label (peel-lbl raw-label))
              (match current-type
@@ -1559,24 +1547,14 @@
                 (define optional? (field-optional? field))
                 (when (and optional? (not terminal?))
                   (reject span 'project-non-record `(Option ,field-type)))
-                (when (and (eq? kind 'proj-opt) (not optional?))
-                  (reject span 'projopt-invalid-field label))
-                (define projected-type
-                  (if (eq? kind 'proj-opt)
-                      (resolve-annotation (peel-ty raw-type) delta span)
-                      field-type))
-                (when (and (eq? kind 'proj-opt)
-                           (not (type-compatible? field-type projected-type
-                                                  propositions)))
-                  (reject span 'projopt-invalid-field label))
                 (when (and terminal? (resource-type? field-type))
                   (reject span 'owned-variable-requires-move label))
                 (if optional?
-                    (values `(Option ,projected-type)
-                            `(ProjOpt ,span (#:ty ,projected-type ,span)
+                    (values `(Option ,field-type)
+                            `(ProjOpt ,span (#:ty ,field-type ,span)
                                       ,current-core ,raw-label)
                             (add1 index))
-                    (values projected-type
+                    (values field-type
                             `(Proj ,span ,current-core ,raw-label)
                             (add1 index)))]
                [_ (reject span 'project-non-record current-type)])))
@@ -1725,7 +1703,7 @@
              (judgment-row (third field)))))]
 
         [`(Proj ,record ,raw-label)
-         (or (elaborate-place-projection expression environment delta propositions)
+         (or (elaborate-place-projection expression environment)
              (let ([label (peel-lbl raw-label)])
                (define record-result
                  (synth record environment delta propositions boundaries))
