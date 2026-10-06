@@ -481,7 +481,15 @@ E-* の規則が c0 を構成した後、elaboration は束縛出現の記号へ
 ```
 
 G1 の elaboration は flow-sensitive な ownership 解析を行わない。
-affine 規律（move 済み place の再利用禁止など）は簡約意味論の Ω 遷移（§5.5）で動的に検査し、静的な flow 解析は G5 の borrow 解析と併せて導入する。
+affine 規律（move 済み place の再利用禁止など）は簡約意味論の Ω 遷移（§5.5）で動的に検査する。
+型付けと elaboration は補助集合 P を持ち、P は有効型が資源型である `Let` が束縛した変数のうち、現在の lexical scope で place を表す名前の集合である。
+以下の judgment 表記では P を省略し、Γ と並行して lexical に受け渡す。
+P は移動済みかどうかを追跡する集合ではなく、move の成否は引き続き Ω が実行時に検査する。
+`Let` の初期化子は外側の P で検査し、本体では有効型が資源型なら束縛名を P に加え、そうでなければ同名の外側の所属を隠す。
+本体が束縛名そのものである資源型の identity `Let` は値の受け渡しであり、束縛名を P に加えずにそのまま返す。
+内側の binder が同名を隠した場合はその binder の本体だけで P から除き、そこを抜けた時点で外側の所属へ戻す。
+c1c1 では `Let` 以外の binder は P に資源型の名前を加えない。
+関数の仮引数、`Eliminate` と `UnionEliminate` の枝 binder による値の移送は c1c2 で扱う。
 
 ### 4.2 基本規則
 
@@ -496,13 +504,17 @@ typeof(l) = τ
 **(E-Var)**
 
 ```text
-Γ(x) = τ        τ は Owned<_> の形でない
+Γ(x) = τ        τ は root Owned でない
+                x ∉ P または resource-type?(τ) が偽
 --------------------------------
 Γ; Δ; Π; B ⊢ x ⇒ τ ! {} ⟹ x
 ```
 
-`Owned<τ>` 型の変数を裸で参照することはできない。
-消費は必ず `move x`（E-Move）を経由する。
+root が `Owned` の変数は従来どおり裸で参照できない。
+有効型が資源型である `Let` が束縛した変数も、通常の裸の参照を拒否する。
+identity `Let` の本体で束縛名をそのまま返す場合は値の受け渡しとして受理し、E-Var を経由しない。
+`Let` 以外の binder が束縛した集約資源型の変数は c1c1 では P に入らず、c1c2 の transfer encoding が入るまで裸で参照できる。
+place にある資源型の値を消費するときは `move x`（E-Move）を経由する。
 
 **(E-Prim)**
 
@@ -616,7 +628,9 @@ label の集合が一致しない場合、期待型が `Owned<Record …>` の�
 
 field 型への `Owned<_>` の禁止は G1 の制限である。
 構成済みデータは通常の値として複製されうる（R-Let の置換など）ため、affine 資源を field に入れると place を経由しない複製経路が生まれる。
-コンテナ内の affine 資源は、G5 の borrow 設計と併せて扱う。
+コンテナ内の affine 資源を含む値は、c1c1 で有効型に基づいて `Let` の place へ載せ、未使用時には scope の finalization で内部 leaf を破棄する。
+関数の仮引数、`Eliminate` と `UnionEliminate` の枝 binder など、`Let` 以外の置換で生じる同じ穴は c1c2 で回収する。
+c1c2 が完了するまでは c1b の保存の主張を `config-ok?` から始まる `RecRewrite` の局所的な遷移に限る。
 
 **(E-Eliminate)** [REQ: RET-003]
 
@@ -636,15 +650,17 @@ field 型への `Owned<_>` の禁止は G1 の制限である。
 
 ### 4.3 関数と Narrative 適用
 
-関数引数の署名は `Owned<_>` の形を含みうる。
-E-Lambda は `Owned` の仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
+関数引数の署名は資源型を含みうる。
+E-Lambda は root `Owned` の仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
 β 簡約（§5.3 R-Beta）は実引数の値を生名の位置へ置換する。
-置換の結果として `Let` の右辺に来た値は R-LetOwned が place へ移すため、引数値は place を経由して管理される。
+置換の結果として `Let` の右辺に来た root `Owned` 値は R-LetOwned が place へ移すため、引数値は place を経由して管理される。
+c1c1 では集約資源型の仮引数に transfer encoding を生成しないため、その値の置換に関する穴は c1c2 で回収する。
 
-関数は、外側の `Owned<_>` 束縛を closure の捕捉へ変換できる。
-E-Lambda は捕捉した値を `Move` で `Curry` の固定引数へ渡し、closure の型を `Owned<NFn …>` とする。
+関数は、外側の place にある資源型の束縛を closure の捕捉へ変換できる。
+E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ渡し、closure の型を `Owned<NFn …>` とする。
+集約資源型の捕捉元は P に入っていなければならず、P の外にある仮引数などを捕捉すると `move-non-owned` で拒否する。
 元の place は `Move` によって `Moved` になり、closure の関数位置には `Move` を経由して到達する。
-`Recur` と `RecurVal` の `Owned` 捕捉は、再帰本体の複製を一回の `Move` で制限できないため、E-Recur の制限として残す（§4.6）。
+`Recur` と `RecurVal` の資源型捕捉は、再帰本体の複製を一回の `Move` で制限できないため、E-Recur の制限として残す（§4.6）。
 
 **(E-Lambda)** [REQ: EFF-001]
 
@@ -656,8 +672,8 @@ b fresh
 B' = push(B, FunctionBoundary(b, τ))
 Γ, a1 : τ1, …, ak : τk; Δ; Π; B' ⊢ e ⇐ τ ! εbody ⟹ c
 εbody \ {Return<b, τ>} ⊆ εdecl'
-bodyC = Let(u1 : Owned<κ1>, c1,
-             … Let(un : Owned<κn>, cn,
+bodyC = Let(u1 : κ1, c1,
+             … Let(un : κn, cn,
                    Let(ai1 : Owned<τi1>, yi1,
                      … Let(aim : Owned<τim>, yim, c) …)))
 LC = Lam(User, ℓ, (c1, …, cn, y1, …, yk),
@@ -678,7 +694,7 @@ n > 0 のとき
 Φ(ℓ) = NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>  （両方の枝に共通）
 ```
 
-ここで `owned-captures` は、Γ の現在の可視項目から `Owned<κ>` の型を持つ名前を取り、`free-vars(e)` から `(a1, …, ak)` を除いた集合との共通部分を対象にする。
+ここで `owned-captures` は、Γ の現在の可視項目から資源型 κ を持つ名前を取り、`free-vars(e)` から `(a1, …, ak)` を除いた集合との共通部分を対象にする。
 Γ に同名項目が複数あるときは、内側の項目だけを可視とする。
 対象の名前は `symbol<?` の昇順に並べ、これを `u1, …, un` とする。
 `ui` は捕捉元の surface 名であり、`ci` は捕捉 formal の生名である。
@@ -689,13 +705,15 @@ n > 0 のとき
 元の仮引数に対応する `Let` の入れ子は仮引数の位置の順序に一致する。
 生名は対応する `Let` の右辺にちょうど 1 回だけ現れ、それ以外の位置には現れない。
 `Let` の binder は surface が書いた仮引数の名前であり、束縛の様式は `let` である。
-Φ に登録する署名は、捕捉位置の型を `Owned<κi>`、元の `Owned` 位置の型を `Owned<τi>` のまま持つ。
+Φ に登録する署名は、捕捉位置の型を `κi`、元の root `Owned` 位置の型を `Owned<τi>` のまま持つ。
 生名への読み替えは Core の項の側だけに起こる。
-呼出し側は実引数を `Owned<τi>` として検査され、`move p` の形を要求される。
+呼出し側は捕捉引数をその資源型 `κi` として検査され、`move p` の形を要求される。
+集約資源型の捕捉では p が P に入っていなければならない。
 `n = 0` のときは `bodyC` の捕捉 `Let` 連鎖も省く。
 
 関数抽象は自身の FunctionBoundary を push し、body を Return handler と Scope で包む。
 `Owned` の仮引数に対応する `Let` はこの Scope の直下に置かれ、R-LetOwned が呼出しごとに place を確保する。
+この仮引数の transfer encoding は c1c1 では root `Owned` に限り、集約資源型への拡張は c1c2 で行う。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
 ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
@@ -776,7 +794,7 @@ origin の検査は §3.4 のとおり `verify-origins` が Typed Core 全体に
 Γ; Δ; Π; B ⊢ e1 ⇒ F ! εf ⟹ c1        （k ≥ 1）
 peel-owned-function(F) = (NFn<(τ1, τ2, …, τk), τ, εin, εout, Q, O>, owned_f)
 Γ; Δ; Π; B ⊢ e2 ⇐ τ1 ! εa ⟹ c2
-b = owned_f ∨ owned-type?(τ1)
+b = owned_f ∨ resource-type?(τ1)
 --------------------------------
 Γ; Δ; Π; B ⊢ curry(e1, e2)
   ⇒ (if b then Owned<NFn<(τ2, …, τk), τ, εin, εout, specialize(Q, e2), Derived(O, Curry(erase-core(c2)))>>
@@ -787,11 +805,13 @@ b = owned_f ∨ owned-type?(τ1)
 curry は先頭引数を固定し、返り値型 τ、入口 row εin、出口 row εout を保存し、Proof obligation を固定引数で特殊化する（CUR-001）。
 G1 には Effect 多相がないため `specialize(εin, a) = εin` と `specialize(εout, a) = εout` であり、`specialize(Q, a)` は Q の中の先頭引数への参照を a で置換する。
 
-固定引数の型が `Owned<τ1>` であるか、関数側の型が `Owned<NFn …>` であるとき、結果型も `Owned<NFn 残余>` になる。
+固定引数の型が資源型であるか、関数側の型が `Owned<NFn …>` であるとき、結果型も `Owned<NFn 残余>` になる。
 どちらも該当しないときは、結果型は従来どおり素の `NFn 残余` である。
+資源型の引数を固定した閉包は `Owned` となるため、通常の record 欄へ置いて複製することはできない。
 関数側の標識は連鎖の次の段へ引き継ぐ。
 関数の位置で `Owned<NFn …>` を使うときは `Move` または `CurryVal` を経由する。
-`CurryVal` の固定引数は還元後に payload の型で現れるため、宣言型が `Owned<τ1>` のときは payload を `Owned` で包んで照合する。
+`CurryVal` の固定引数は還元後に payload の型で現れるため、宣言型が root `Owned<τ1>` のときは payload を `Owned` で包んで照合する。
+この payload の照合と `OwnLeaf` の付与は root `Owned` の場合に限り、集約資源型の引数を `Owned` で包み直さない。
 
 値レベルの origin は簡約規則（§5.3 R-CurryVal）が §3.4 の origin metafunction を使って定める。
 `origin(RecurVal(…)) = User` なので、recur で束縛した関数の curry は User に根ざす派生 origin を持つ。
@@ -850,7 +870,7 @@ B' = push(B, ExpressionBoundary(b, τ))
 **(E-Recur)** [REQ: RET-003] [REQ: REC-001] [REQ: EFF-001]
 
 ```text
-e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
+e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で資源型を持たない
 r fresh                                            （CallableId、§3.3。表層名 f とは別に割り当てる）
 ε' = resolveReturn(B, εdecl)
 Γf = Γ, f : NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
@@ -868,9 +888,11 @@ f; (x1, …, xk); c1 ⇓body κbody      （§6.2）
   かつ Φ(r) = NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 ```
 
-`Recur` と `RecurVal` の `Owned` 捕捉は G5c5b2 では扱わない。
+`Recur` と `RecurVal` の資源型捕捉は c1c1 で `owned-recur-capture`（E-OWN-008）により拒否する。
 R-RecurUnfold（§5.4）は再帰本体を呼出しごとに複製するため、`RecurVal` の型を `Owned` にしても捕捉した値の使用回数を上限づけられない。
-この制限は Phase 4 以降へ送る。
+資源型捕捉を許す拡張は、従来どおり Phase 4 以降へ送る。
+`Lam` と `RegionLam` の本体も資源型の外側の束縛を直接捕捉できない。
+Surface の Lam は P にある資源型変数を Curry の固定引数へ変換し、P にない集約資源型の捕捉は `move-non-owned` で拒否する。
 
 R-RecurBind（§5.4）が生成する `RecurVal` は次の形を持つ。
 
@@ -937,7 +959,7 @@ c1' = Handle(Return<b, τ>, x -> x, Scope(∅, c1))
 
 ```text
 f ∉ free-vars(e1)
-e1 の自由変数のうち x1, …, xk 以外のものは、Γ で Owned<_> の形の型を持たない
+e1 の自由変数のうち x1, …, xk 以外のものは、Γ で資源型を持たない
 ε' = resolveReturn(B, εdecl)
 Γ, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇒ τ ! εbody ⟹ c1
 εbody ⊆ ε'
@@ -979,10 +1001,19 @@ r fresh                                            （CallableId、§3.3。本�
 Γ; Δ; Π; B ⊢ move x ⇒ Owned<τ> ! {Own} ⟹ Move(x)
 ```
 
+```text
+Γ(x) = σ        σ は集約資源型        x ∈ P
+--------------------------------
+Γ; Δ; Π; B ⊢ move x ⇒ σ ! {Own} ⟹ Move(x)
+```
+
+二つ目の規則は P にある名前だけを受理する。
+P にない集約資源型の名前の `move` は `move-non-owned` で拒否する。
+
 **(E-Drop)** [REQ: OWN-002]
 
 ```text
-Γ; Δ; Π; B ⊢ e ⇒ Owned<τ> ! ε ⟹ c
+Γ; Δ; Π; B ⊢ e ⇒ τ ! ε ⟹ c        resource-type?(τ)
 --------------------------------
 Γ; Δ; Π; B ⊢ drop e ⇒ Unit ! ε ∪ {Own} ⟹ Drop(c)
 ```
@@ -995,7 +1026,13 @@ r fresh                                            （CallableId、§3.3。本�
 Γ; Δ; Π; B ⊢ drop x ⇒ Unit ! {Own} ⟹ Drop(Move(x))
 ```
 
-`Owned` 型の変数は裸で参照できない（E-Var）ため、`drop x` は E-Drop からは導出できない。
+```text
+Γ(x) = σ        σ は集約資源型        x ∈ P
+--------------------------------
+Γ; Δ; Π; B ⊢ drop x ⇒ Unit ! {Own} ⟹ Drop(Move(x))
+```
+
+root `Owned` の変数と P にある集約資源型の変数は裸で参照できない（E-Var）ため、`drop x` は E-Drop からは導出できない。
 E-DropVar が Move を挿入し、place の消費を Move が担う。
 
 E-Move、E-Drop、E-DropVar は row に `Own` を記録する。
@@ -1091,6 +1128,19 @@ elaboration 済みの c が `Recur` ノードを含む限り、その `f` の署
 Φ は CoreArtifact `⟨Φ, c⟩` の一部として elaboration 時点で確定し、以後の簡約はこれを一切変更しない。
 elaboration 規則と重複しない規則だけを挙げる。
 
+Typed Core の型付けも P を Γ と並行して追跡し、その lexical 更新は §4.2 と同じである。
+この節の judgment 表記では P を省略する。
+通常の変数規則は root `Owned` の参照と、P にある資源型変数の裸の参照を拒否する。
+identity `Let` の本体が束縛名そのものである場合だけは、値をそのまま返す transfer として変数規則を通さない。
+
+実行時の資源型判定には型付け用の `resource-type?` でなく `runtime-resource-type?` を使う。
+machine と lowering は型付けに使ったものと同じ trait 台帳の下で呼び、custom の `Data` を含む項でもその台帳を維持する。
+schema の無い `Data` に実行の述語が出会うと内部 error になる。
+machine と lowering へ渡す項は `execution-core` が有効型を注釈した実行用の Core である。
+Surface の入口は source の `compiled-core` と実行用の `compiled-execution-core` を区別し、実行系は後者を受け取る。
+実行用の Core は宣言型と residual を区別する OWN-004 の型検査へ戻さず、machine と lowering も再型検査しない。
+型付けを通さず直接構成した項はこの契約の対象外であり、その実行結果を Preservation の根拠にしない。
+
 **(T-Prim)**
 
 ```text
@@ -1108,9 +1158,11 @@ elaboration 規則と重複しない規則だけを挙げる。
 Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
 ```
 
-`τ` が `Owned<σ>` のとき、handler の束縛子 `x` は R-HandleReturn が値そのものへ置換する名前であり、place ではない。
+`τ` が資源型のとき、handler の束縛子 `x` は R-HandleReturn が値そのものへ置換する名前であり、place ではない。
 そのため `ch` が `x` そのものである場合に限り、T-Var を通さず `Γ, x : τ ⊢core x : τ ! {}` として型付けする。
+この identity handler は root `Owned` と集約資源型の両方で許す。
 `ch` が `x` そのものでなく `x` を自由に含む場合は `E-OWN-032 owned-return-binder-misuse` で拒否する。
+identity でない handler は c1c2 で transfer encoding を要求する。
 それ以外の handler は上の通常の T-Handle 前提で検査する。
 
 **(T-Perform)** [REQ: RET-002]
@@ -1136,10 +1188,38 @@ Perform が運ぶ値の型は op の型成分 τ と一致する。
 **(T-MovePlace)** [REQ: OWN-001]
 
 ```text
-Ξ(p) = τ
+Ξ(p) = τ        p に declared metadata がない
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core Move(p) : Owned<τ> ! {Own}
 ```
+
+```text
+Ξ(p) = τ        declared metadata が Owned<τ> を記録する
+------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Move(p) : Owned<τ> ! {Own}
+```
+
+```text
+Ξ(p) = σ        declared metadata が root Owned でない型 σ を記録する
+------------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Move(p) : σ ! {Own}
+```
+
+metadata のある集約資源型 place からの `Move` は宣言型全体を返す。
+metadata のない place は従来どおり `Owned<Ξ(p)>` を返す。
+metadata の宣言型が root `Owned<τ>` なら `Move` は `Owned<τ>` を返す。
+Move の Effect は全ての場合で `{Own}` である。
+
+**(T-Drop)** [REQ: OWN-002]
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε        resource-type?(τ)
+------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Drop(c) : Unit ! ε ∪ {Own}
+```
+
+`T-Drop` は root `Owned` と集約資源型の値を受け付ける。
+place にある値の消費は `Move` が行い、Drop は取り出した値の内部 leaf を破棄する（§5.5）。
 
 **(T-Resource)**
 
@@ -1215,7 +1295,7 @@ Lam のパラメータ・返り値型・宣言 row は項から消去されて�
 peel-owned-function(F) = (NFn(τ1, τ2, ..., τk, τ, ε, Q), owned_f)
 Γ; Δ; Π; Ξ; Φ ⊢core va : A ! {}
 A と τ1 が互換である。τ1 が Owned<τ> のときは A を Owned<A> として照合する。
-b = owned_f ∨ owned-type?(τ1)
+b = owned_f ∨ resource-type?(τ1)
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core CurryVal(O, vf, va)
   : (if b then Owned<NFn(τ2, ..., τk, τ, ε, specialize(Q, va))>
@@ -1372,15 +1452,16 @@ dom(Ξ) = dom(H) = dom(Ω)
 ```
 
 `Ξ` は heap の値または束縛時に記録した宣言型から導く写像である。
-`R-LetOwned` と `R-LetOwnedB` は place を作るとき、heap entry に束縛の宣言型を記録する。
+`R-LetOwned` と `R-LetOwnedB` は place を作るとき、heap entry に実行用 Core の有効型を宣言型として記録する。
 `R-LetMutB` は mut の `Let` に書かれた型を記録する。
 記録がある place に対して `strip-owned(τdecl)` を `Ξ` の型にする。
 記録が無い place は heap を place 番号順に走査し、各値をそれまでに確定した `Ξ` の下で型付けして place の型を導く。
 前方の place を参照する値はこの導出に失敗する。
 
-型検査を通した項では、mut binding の有効型（宣言 row と residual を合わせた型）を `Let` の位置ごとに記録する。
-machine へ入れる前に、その表を使って mut の `Let` の型欄を有効型へ置き換える。
-このため `R-LetMutB` は宣言型でなく有効型を metadata に記録し、`Ξ` は residual の欄も持つ。
+型検査を通した項では、有効型が資源型である全ての `Let` について、束縛位置ごとに有効型（宣言 row と residual を合わせた型）を記録する。
+machine へ入れる前に、その表を使って該当する `Let` の型欄を有効型へ置き換える。
+このため `R-LetOwned` 系は source の注釈型でなく有効型を metadata に記録し、`Ξ` は residual の欄も持つ。
+資源型の `mut` 束縛は E-VAR-009 で拒否されるため、正当な入力では `R-LetMutB` による資源型 place は生じない。
 
 型検査の結果を使わずに項を machine へ入れる経路では、`R-LetMutB` は構文上の型を記録する。
 その metadata には residual の欄が含まれず、その経路で得た config は Preservation の証拠に使わない。
@@ -1392,6 +1473,12 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 `R-ProjBorrowMut` は、heap entry の宣言型から `Owned` の外側を一度外し、field path を Record 型の欄へ辿って最終欄の mode を選ぶ。
 機械は同じ path が heap の Record 値にも存在することを確かめ、最終欄の値が `Absent` なら簡約しない。
 metadata が無い place、型または値から辿れない path、空 path では規則は発火しない。
+
+P にある集約資源型の `Let` 変数は借用の owner として登録され、借用 payload はその有効型全体である。
+root `Owned<τ>` の束縛だけは、従来どおり外側の `Owned` を除いた `τ` を借用 payload とする。
+`R-LetOwned` 系が変数を数値 place へ置換した後の Borrow は、その place metadata から同じ payload を回復する。
+c1c1 では関数仮引数と `Eliminate`、`UnionEliminate` の枝 binder は P に入らず、集約資源型の仮引数への Borrow は `borrow-non-owned` で拒否する。
+これらの binder を owner として扱う変更は c1c2 で行う。
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
@@ -1494,23 +1581,43 @@ E[Apply(CurryVal(O, vf, va), v1, …, vk)] → E[Apply(vf, va, v1, …, vk)]
 **(R-Let)**
 
 ```text
-E[Let(x : τ, v, c)] → E[c[v/x]]        （τ が Owned<_> の形でないとき）
+E[Let(x : τ, v, c)] → E[c[v/x]]
+  runtime-resource-type?(τ) が偽
+```
+
+**(R-LetIdentity)**
+
+```text
+E[Let(x : τ, v, x)] → E[v]
+  runtime-resource-type?(τ)
 ```
 
 **(R-LetOwned)**
 
 ```text
-p fresh
+runtime-resource-type?(τ)        c ≠ x        p fresh
 --------------------------------
-⟨E[Scope(π, G[Let(x : Owned<τ>, v, c)])], H, Ω, Λtok, θ⟩
+⟨E[Scope(π, G[Let(x : τ, v, c)])], H, Ω, Λtok, θ⟩
   → ⟨E[Scope(π · p, G[c[p/x]])], H[p ↦ v], Ω[p ↦ Available], Λtok, θ⟩
 ```
 
-Owned 値の束縛は place を確保し、最も内側の Scope の管理列 π へ登録する。
+資源型の束縛は place を確保し、最も内側の Scope の管理列 π へ登録する。
 文脈 G は Scope を含まないため、割り当て先は redex を囲む最寄りの Scope に一意に定まる（間に Handle frame があってもよい）。
 変数 x の出現は place p で置換され、以後の消費は Move(p) を通る。
-束縛値が根の `OwnedLeaf(tk, v)` のときは、`v` を place へ移して `tk` を `Dropped` の tombstone とする。
-この場合は place と `Ω` が root の所有を引き継ぎ、入れ子の根 leaf は拒否する。
+束縛値が root `OwnedLeaf(tk, v)` のときだけ、`v` を place へ移して `tk` を `Dropped` の tombstone とする。
+集約資源型の値はそのまま heap へ移し、内部 leaf は scope の finalization が回収する。
+
+G2m の `Let` 規則は mode を含み、次の条件で排他的に選ぶ。
+`R-LetB` は bmode が mut でなく τ が資源型でない場合に適用する。
+`R-LetIdentityB` は bmode が mut でなく τ が資源型で本体が x の場合に適用し、place を作らず v を返す。
+`R-LetOwnedB` は bmode が mut でなく τ が資源型で本体が x でない場合に適用し、上の `R-LetOwned` と同じ place を確保する。
+`R-LetMutB` は bmode が mut の場合に従来どおり適用し、資源型の mut 束縛は E-VAR-009 で型付けが拒否する。
+従って通常の非資源型規則と資源型規則は重ならず、mut 規則も資源型規則と重ならない。
+
+```text
+E[Let(x bmode : τ, v, x)] → E[v]
+  bmode ≠ mut        runtime-resource-type?(τ)        R-LetIdentityB
+```
 
 ### 5.4 データと再帰
 
@@ -1564,7 +1671,7 @@ open((ℓ, m, v), entries) =
   (ℓ, m, v)                                  対応する entry が無い
   (ℓ, m', v)                                 τ の root が Owned で identity entry
   (ℓ, m', (Absent τ'))                       entry があり v = (Absent τ)
-  (ℓ, m', Let(x : τ, v, c))                   entry があり v が present
+  (ℓ, m', c[v/x])                            entry があり v が present
 
 E[RecRewrite(Rec(fields), entries)]
   → E[RecRewriteOpen(open(fields, entries))]
@@ -1573,7 +1680,7 @@ E[RecRewrite(Rec(fields), entries)]
 `open` は入力の欄順に処理し、entry の並び順には依存しない。
 root が `Owned` の identity entry は、`type-equiv?(τ, τ')` と `c = x` を満たし、`x` を束縛せず値をそのまま移す。
 Absent の欄では `c` を評価せず、`Absent τ'` を出力する。
-present な列挙欄だけは入力の型 `τ` を注釈に持つ `Let` を作り、通常の R-Let で本体を評価する。
+present な列挙欄は、一時の `Let` を作らず `c` に値 `v` を直接置換する。
 列挙しない欄は値と mode をそのまま移す。
 Open 後に入力の `Rec` は残らず、各欄の値は作業列の一箇所だけに現れる。
 
@@ -1601,9 +1708,10 @@ Tok(input) = Tok(output)
 
 `⊎` は多重集合和を表す。
 `input` は R-RecRewrite-Open が消費する `Rec` 値であり、`output` は R-RecRewrite-Close が生成する `Rec` 値である。
-この過程では、各 token は変換本体を評価する一時の `Let`、identity entry の欄、または列挙しない欄のいずれか一箇所だけに現れる。
+この過程では、各 token は置換した変換本体、identity entry の欄、または列挙しない欄のいずれか一箇所だけに現れる。
 この保存条件は開始時に `config-ok?` を満たす `RecRewrite` の遷移に限る。
-通常の Core には値内部の `OwnedLeaf` を持つ値を `Let` の別名から複数回読む OWN-009 違反が残り、この大域の穴は c1c で回収する。
+Let 束縛の OWN-009 の穴は c1c1 で回収するが、関数仮引数と `Eliminate`、`UnionEliminate` の枝 binder など Let 以外の置換には穴が残り、c1c2 で回収する。
+従って c1c2 が完了するまでは、この `RecRewrite` の局所的な保存条件を全ての well-typed Core の Preservation へ一般化しない。
 `RecRewrite` は record の値を再構成する演算であり、元の place との alias を保つことも切ることもしない。
 その関係は入力 `e` の評価が決める。
 `BorrowMutRef` を経由する `Read` は copy-out の時点で値を元の place から分けるため、Core の machine 試験では copy-out した後に元の place を更新しても、再構成した値がその更新を受けないことを確かめる。
