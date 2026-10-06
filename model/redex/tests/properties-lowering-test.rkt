@@ -499,11 +499,23 @@
 
 (define (bump! counter) (set-box! counter (add1 (unbox counter))))
 
+(define execution-core-identity-cache (make-hash))
+
 ;; 生成項は表層構文である。elaboration-result が (core type row callables) を
 ;; 返す（properties-test.rkt:29 と同じ流儀）。
 (define (artifact source)
   (match (elaboration-result source)
-    [(list core type row callables) (values core type row callables)]
+    [(list core type row callables)
+     ;; G2gen の Data は無く、Record の欄型も Int、Unit、Bool に限られる。
+     ;; acquire が作る資源は root Owned だけなので、実行用注釈は恒等になる。
+     ;; 生成された各 artifact でこの前提も検査する。
+     (define key (list source callables))
+     (unless (hash-ref execution-core-identity-cache key #f)
+       (check-equal? (execution-core core callables) core
+                     (format "生成 Core の execution-core が恒等でない: ~s"
+                             source))
+       (hash-set! execution-core-identity-cache key #t))
+     (values core type row callables)]
     [other (error 'properties-lowering-test
                   "prepared term no longer elaborates: ~e" other)]))
 
@@ -653,6 +665,9 @@
          (check-not-eq? (core-type-of core '() '()) 'ill-typed
                         (format "well-typed Core: ~s" core))
          (let-values ([(status target) (lower core 'racket-cs)])
+           (check-equal? (execution-core core '()) core
+                         (format "生成 Union Core の注釈が恒等でない: ~s"
+                                 core))
            (check-eq? status 'ok (format "lower: ~s" target))
            (check-eq? (compare-observations core target depth) 'match
                       (format "Core/PR observation: ~s" core))

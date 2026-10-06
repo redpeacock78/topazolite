@@ -294,6 +294,42 @@
   (check-equal? (second (second result)) '())
   (check-config-trace (list config) '() 'Int))
 
+(test-case "Recur の固定点再走査は資源 Let の借用型を安定させる"
+  (define declared '(Record ((owned (Option (Owned Res)) imm))))
+  ;; Record の root-Owned 欄は通常の Rec では組み立てられないため、
+  ;; Option 内の Owned leaf と Borrowed の残余欄で集約資源型を作る。
+  (define value
+    '(Rec ((borrow imm (Borrow 1))
+          (owned imm (Construct (Option (Owned Res)) some
+                                (OwnLeaf (resource 13)))))))
+  ;; Borrow は最初の Ψ に capability を加えるため、Recur の本体は固定点まで
+  ;; 少なくとも 2 回検査される。同じ Let 位置の RVar が走査ごとに変わると、
+  ;; 有効型 side table の衝突 error になっていた。
+  (define core
+    `(Scope (1)
+       (Recur recur-id f ()
+         (Let (x let ,declared) ,value 0)
+         0)))
+  (define callables '((recur-id (NFn () Int () () () User))))
+  (define ir (build-region-ir core))
+  (define borrow-point '(0 0 0 0))
+  (define borrow-rho (region->rho ir (region-at ir borrow-point)))
+  (define Λ
+    (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
+  (define effective (box (hash)))
+  (define result
+    (type-of/raw (annotate-regions core ir)
+                 '((1 Int)) callables '() Λ
+                 #:mut-types effective))
+  (check-equal? (first result) 'ok)
+  (check-equal? (second result) (list 'Int '()))
+  (check-equal? (hash-count (unbox effective)) 1)
+  (define expected-effective
+    `(Record ((borrow (Borrowed Int ,borrow-rho) imm)
+              (owned (Option (Owned Res)) imm))))
+  (check-equal? (hash-values (unbox effective)) (list expected-effective))
+  (check-true (type-normal? expected-effective)))
+
 (test-case "注釈は spanful Core の Let の位置にも一致する"
   (define span '(#:span synthetic 0 1))
   (define core

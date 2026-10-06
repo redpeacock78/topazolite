@@ -27,9 +27,22 @@
 
 (define limits (read-bounds))
 
+(define execution-core-identity-cache (make-hash))
+
+(define (check-generated-core-identity! source core callables)
+  (define key (list source callables))
+  (unless (hash-ref execution-core-identity-cache key #f)
+    ;; G1gen/G2gen の Record 欄は Int、Unit、Bool に限られ、Data は生成しない。
+    ;; Owned の生成は acquire の root 型だけで、Record の欄へ入らない。
+    ;; 生成された全 artifact で実行用注釈が恒等であることも検査する。
+    (check-equal? (execution-core core callables) core
+                  (format "生成 Core の execution-core が恒等でない: ~s" source))
+    (hash-set! execution-core-identity-cache key #t)))
+
 (define (artifact source)
   (match (elaboration-result source)
     [(list core type row callables)
+     (check-generated-core-identity! source core callables)
      (values core type row callables)]
     [other (error 'properties-test "prepared term no longer elaborates: ~e"
                   other)]))
@@ -545,7 +558,8 @@
   (define (row-002? source)
     (match (elaboration-result source)
       [(list core 'Unit row callables)
-       (and (equal? (core-type-of core '() callables) `(Unit ,row))
+       (and (equal? (execution-core core callables) core)
+            (equal? (core-type-of core '() callables) `(Unit ,row))
             (match (run-g2 (inject-g2 core) (bounds-fuel limits))
               [`(cfg unit ,_ ,_ () ,_) #t]
               [_ #f])
@@ -671,6 +685,9 @@
                  next-attempt-count)
                (let ([inferred (core-type-of core '() '())])
                  (set-add! distinct core)
+                 (check-equal? (execution-core core '()) core
+                               (format "生成 Union Core の注釈が恒等でない: ~s"
+                                       core))
                  (if (eq? inferred 'ill-typed)
                      (set! ill-typed (add1 ill-typed))
                      (begin

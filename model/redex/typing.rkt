@@ -680,10 +680,8 @@
     (define table (mut-binding-types-table))
     (when table
       (define point (region-ctx-point Λ))
-      (define prior (hash-ref (unbox table) point #f))
-      (when (and prior (not (equal? prior type)))
-        (error 'typing "同じ Let の位置へ異なる有効型を記録した: ~s: ~s / ~s"
-               point prior type))
+      ;; Recur の固定点や infer/check の再走査では同じ構文位置を複数回
+      ;; 検査する。実行用注釈には最後に成功した走査の有効型を残す。
       (set-box! table (hash-set (unbox table) point type)))))
 
 ;; §5.4。alpha-table へ登録せずに寿命変数だけを採る。
@@ -694,11 +692,18 @@
   `(RVar ,k))
 
 (define (fresh-lifetime! point)
-  (define α (fresh-local-lifetime!))
-  (unless (and (pair? point) (eq? (car point) 'merge))
-    (define t (alpha-table))
-    (when t (set-box! t (hash-set (unbox t) point α))))
-  α)
+  (define table (alpha-table))
+  (define merge-point? (and (pair? point) (eq? (car point) 'merge)))
+  (define prior (and table (not merge-point?)
+                     (hash-ref (unbox table) point #f)))
+  (or prior
+      (let ([α (fresh-local-lifetime!)])
+        ;; 再走査は同じ AST point の借用を同じ寿命変数で表す。これにより
+        ;; Recur の Ψ 固定点が検査のたびに新しい α を増やさず、alpha-table
+        ;; が表す「構文位置ごとに一つの α」という契約も保つ。
+        (unless merge-point?
+          (when table (set-box! table (hash-set (unbox table) point α))))
+        α)))
 
 (define (lookup table key)
   (match (assoc key table)
