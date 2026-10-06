@@ -5,6 +5,9 @@
          "../annotate.rkt"
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../driver.rkt"
+         "../gen.rkt"
+         "../machine.rkt"
          "../origins.rkt"
          "../region.rkt"
          "../traits.rkt"
@@ -14,6 +17,9 @@
 (define option-owned-type '(Option (Owned Res)))
 (define record-owned-type
   '(Record ((n Int imm) (owned (Owned Res) imm))))
+(define handler-record-type '(Record ((owned (Owned Res) imm))))
+(define handler-record-value
+  '(Rec ((owned imm (OwnedLeaf (tok 31) (resource 31))))))
 
 (define (function-signature parameter-type)
   `(NFn (,parameter-type) Int () (Own) () User))
@@ -35,6 +41,40 @@
   (function-core
    parameter-type
    `(Let (value let ,parameter-type) raw 1)))
+
+(define (handler-core return-type handler argument)
+  `(Handle (Return boundary ,return-type)
+           (raw -> ,handler)
+           (Perform (Return boundary ,return-type) ,argument)))
+
+(define (runtime-handler-trace return-type handler value tokens)
+  (define core
+    (handler-core return-type handler '(Move 0)))
+  (define start
+    `(cfg (Scope (0) ,core)
+          ((0 ,value (declared ,return-type)))
+          ((0 Available))
+          ,tokens
+          ()))
+  (let loop ([current start] [configs (list start)] [fuel 60])
+    (when (zero? fuel)
+      (error 'runtime-handler-trace "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() configs]
+      [(list (list _rule next))
+       (loop next (append configs (list next)) (sub1 fuel))]
+      [steps
+       (error 'runtime-handler-trace "一意な次状態を期待したが複数ある: ~s"
+              steps)])))
+
+(define (check-runtime-handler configs expected)
+  (for ([config (in-list configs)] [index (in-naturals)])
+    (define row (runtime-row config '() expected))
+    (check-not-false row
+                     (format "runtime row を得られない config ~a: ~s"
+                             index config))
+    (check-true (config-ok? config '() expected row)
+                (format "不正な中間 config ~a: ~s" index config))))
 
 (define (test-ledger-fail reason kind key)
   (error 'test-ledger-fail "~s ~s ~s" reason kind key))
@@ -116,6 +156,98 @@
       (equal? actual-type parameter-type)]
      [_ #f]))
   (check-equal? (core-type-of recur '() callables) '(Int ())))
+
+(test-case "Return binder の identity は集約資源型と root Owned で受理される"
+  (define aggregate
+    (handler-core record-owned-type 'raw '(Move source)))
+  (check-equal?
+   (core-type-of `(Let (source let ,record-owned-type) input ,aggregate)
+                 '() '() `((input ,record-owned-type)))
+   (list record-owned-type '(Own)))
+  (define owned
+    (handler-core '(Owned Res) 'raw '(resource 31)))
+  (check-equal? (core-type-of owned '() '()) '((Owned Res) ())))
+
+(test-case "Return binder の encoding は宣言型の payload view で受理される"
+  (define aggregate-handler
+    '(Scope ()
+       (Let (place let (Record ((owned (Owned Res) imm))))
+            raw (Move place))))
+  (check-equal?
+   (core-type-of `(Let (source let ,handler-record-type) input
+                   ,(handler-core handler-record-type aggregate-handler
+                                  '(Move source)))
+                 '() '() `((input ,handler-record-type)))
+   (list handler-record-type '(Own)))
+  (define owned-handler
+    '(Scope () (Let (place let (Owned Res)) raw (Move place))))
+  (check-equal?
+   (core-type-of (handler-core '(Owned Res) owned-handler '(resource 31))
+                 '() '())
+   '((Owned Res) (Own))))
+
+(test-case "Return binder の aggregate identity と encoding は全状態で構成を保つ"
+  (define encoded-handler
+    `(Scope () (Let (place let ,handler-record-type) raw (Move place))))
+  (for ([case
+         (in-list
+          (list
+           (list 'raw handler-record-value '(((tok 31) Available)))
+           (list encoded-handler
+                 handler-record-value '(((tok 31) Available)))))])
+    (define configs
+      (runtime-handler-trace handler-record-type
+                             (first case)
+                             (second case)
+                             (third case)))
+    (check-runtime-handler configs handler-record-type)
+    (check-equal? (match (last configs)
+                    [`(cfg ,value ,_heap ,_states ,_tokens ,_) value])
+                  handler-record-value)))
+
+(test-case "Return binder の root Owned encoding は全状態で構成を保つ"
+  (define configs
+    (runtime-handler-trace '(Owned Res)
+                           '(Scope ()
+                              (Let (owned let (Owned Res)) raw
+                                   (Move owned)))
+                           '(resource 31)
+                           '()))
+  (check-runtime-handler configs '(Owned Res)))
+
+(test-case "Return binder の encoding 欠落と生名の漏出は binder ごとの key で拒否する"
+  (define record-handler
+    (lambda (body)
+      `(Let (source let ,handler-record-type) input
+         ,(handler-core handler-record-type body '(Move source)))))
+  (define owned-handler
+    (lambda (body)
+      (handler-core '(Owned Res) body '(resource 31))))
+  (check-equal? (key-of (record-handler 'unit) '()
+                        `((input ,handler-record-type)))
+                "E-OWN-034")
+  (check-equal?
+   (key-of (record-handler
+            '(Scope () (Let (place let Int) raw unit)))
+           '() `((input ,handler-record-type)))
+   "E-OWN-034")
+  (check-equal?
+    (key-of
+     (record-handler
+     '(Scope ()
+        (Let (place let (Record ((owned (Owned Res) imm)))) raw raw)))
+    '() `((input ,handler-record-type)))
+   "E-OWN-035")
+  (check-equal? (key-of (owned-handler 'unit) '()) "E-OWN-032")
+  (check-equal?
+   (key-of (owned-handler '(Drop (Move raw))) '())
+   "E-OWN-032")
+  (check-equal?
+   (key-of
+    (owned-handler
+     '(Scope () (Let (place let (Owned Res)) raw raw)))
+    '())
+   "E-OWN-032"))
 
 (test-case "集約資源型 Let の encoding 後の bare read は E-OWN-019"
   (define parameter-type option-owned-type)

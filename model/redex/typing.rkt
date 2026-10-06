@@ -3616,10 +3616,38 @@
                       (peel-bind name))
           (list '() (psi-join Ψ (second body-result)))]
          [`(,name -> ,handler)
-          #:when (and (owned-type? type*)
-                      (set-member? (core-free-vars handler)
-                                   (peel-bind name)))
-          (fail 'owned-return-binder-misuse core)]
+          #:when (resource-type? type*)
+          (define binder (peel-bind name))
+          (define missing-key
+            (if (owned-type? type*)
+                (lambda (_) 'owned-return-binder-misuse)
+                (lambda (_) 'resource-binder-missing-binding)))
+          (define raw-key
+            (if (owned-type? type*)
+                (lambda (_) 'owned-return-binder-misuse)
+                (lambda (_) 'resource-binder-raw-misuse)))
+          (match (peel-node handler)
+            [`(Scope ,managed ,inner)
+             (unless (null? managed)
+               (fail (missing-key type*) core))
+             (check-owned-encoding
+              (list binder) (list type*) inner core fail
+              #:missing-key missing-key
+              #:raw-key raw-key)]
+            [_ (fail (missing-key type*) core)])
+          (with-place-shadowing
+           (list binder)
+           (lambda ()
+             (check-as handler
+                       type*
+                       (enter-child Λ 0)
+                       (psi-join Ψ (second body-result))
+                       (extend environment
+                               (list binder)
+                               (list (resource-branch-binding-type type*)))
+                       places
+                       callables
+                       fail)))]
          [`(,name -> ,handler)
           (with-place-shadowing
            (list (peel-bind name))

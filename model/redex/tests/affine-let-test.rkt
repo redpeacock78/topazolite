@@ -604,7 +604,8 @@
   (check-equal?
    (type-of `(Let (x ,resource-record-type) y
                (Handle (Return boundary ,resource-record-type)
-                 (x -> (Let (z ,resource-record-type) x (Move z)))
+                 (x -> (Scope ()
+                        (Let (z let ,resource-record-type) x (Move z))))
                  (Perform (Return boundary ,resource-record-type) y)))
             '() environment)
    resource-record-type))
