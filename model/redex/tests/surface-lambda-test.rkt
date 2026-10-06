@@ -6,7 +6,8 @@
          "../diagnostic.rkt"
          "../driver.rkt"
          "../erase.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../origins.rkt")
 
 (define (c str) (compile-source/string 'src str))
 (define (code str)
@@ -41,8 +42,11 @@
   (define r (c "fn mk() -> fn(Int) -> Int { fn(y: Int) -> Int { y } }\nmk()(3)"))
   (check-true (compiled? r))
   (check-equal? (compiled-type r) 'Int)
-  (check-equal? (run (inject (erase-core (compiled-core r))) 10000)
-                '(cfg 3 () () () ())))
+  (call-with-trait-ledger
+   (compiled-ledger r)
+   (lambda ()
+     (check-equal? (run (inject (erase-core (compiled-execution-core r))) 10000)
+                   '(cfg 3 () () () ())))))
 
 (test-case "SUR-012: 合成位置の仮引数省略は E-TYP-025、span は binder"
   (define r (c "{ let f = x => x\n f(1) }"))

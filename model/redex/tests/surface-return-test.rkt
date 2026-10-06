@@ -6,16 +6,20 @@
          "../diagnostic.rkt"
          "../driver.rkt"
          "../erase.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../origins.rkt")
 
 (define (c source) (compile-source/string 'src source))
 (define (code source)
   (define result (c source))
   (and (diagnostic? result) (diagnostic-id result)))
 (define (run-value result)
-  (match (run-g2 (inject-g2m (erase-core (compiled-core result))) 10000)
-    [`(cfg ,value () () () ()) value]
-    [other (fail-check (format "純粋な整数値の終端状態を期待したが ~s" other))]))
+  (call-with-trait-ledger
+   (compiled-ledger result)
+   (lambda ()
+     (match (run-g2 (inject-g2m (erase-core (compiled-execution-core result))) 10000)
+       [`(cfg ,value () () () ()) value]
+       [other (fail-check (format "純粋な整数値の終端状態を期待したが ~s" other))]))))
 
 (test-case "SUR-015: 関数宣言の return は受理され、早期に戻る"
   (define result (c "fn f(x: Int) -> Int { let a = return x\n 0 }\nf(7)"))

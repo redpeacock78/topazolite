@@ -334,6 +334,7 @@
     (apply values
            (g2-trace `(cfg ,core () () (((tok 13) Available)) ()))))
   (check-false (member 'R-Let rules))
+  (check-false (member 'R-LetOwned rules))
   (check-equal? (config-core (last configs)) input-value)
   (check-rec-rewrite-lowering core))
 
@@ -353,6 +354,34 @@
                 `(pcfg (PRec ((,(label-code 'box)
                                (PRec ((,(label-code 'owned) (PResource 14)))))))
                        () () ())))
+
+(test-case "直接置換後も entry 本体が持つ別名 Let は Core と PR に残る"
+  (define option-owned '(Option (Owned Res)))
+  (define input
+    '(Rec ((a imm (Construct (Option (Owned Res)) some
+                             (OwnedLeaf (tok 15) (resource 15)))))))
+  (define body `(Let (alias let ,option-owned) x alias))
+  (define core
+    `(RecRewrite ,input
+       ((a x ,option-owned imm ,option-owned ,body))))
+  (define expected `(Record ((a ,option-owned imm))))
+  (define-values (configs rules)
+    (apply values
+           (g2-trace `(cfg ,core () () (((tok 15) Available)) ()))))
+  (check-valid-token-trace configs expected '() '(15))
+  (check-equal? rules
+                '(R-RecRewrite-Open R-LetIdentityB R-RecRewrite-Close))
+  (check-false (member 'R-LetOwned rules))
+  (check-false (member 'R-Move rules))
+  (define-values (status target) (lower core 'racket-cs))
+  (check-eq? status 'ok)
+  (check-true
+   (match target
+     [`(PRecRewrite ,_ ((,_label ,_source (PLet ,alias ,_value ,alias-use)))
+                    ,_ ...)
+      (equal? alias alias-use)]
+     [_ #f])
+   (format "entry 本体に由来する PLet が残っていない: ~s" target)))
 
 (test-case "入れ子の RecRewrite は直接置換で OwnedLeaf を一度だけ運ぶ"
   (define inner-input

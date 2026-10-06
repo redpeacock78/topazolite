@@ -26,8 +26,9 @@
 (define (verify-initial core)
   (term (verify-initial-origins ,R0 ,core)))
 
-(define (run-g2-core core)
-  (match (run-g2 (inject-g2 core) (bounds-fuel limits))
+(define (run-g2-core core [callables '()])
+  (match (run-g2 (inject-g2 (execution-core core callables))
+                 (bounds-fuel limits))
     [`(cfg ,result () () () ()) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
@@ -123,7 +124,8 @@
        (define result
          (run-g2-core
           `(Apply (PrimVal (Reserved ,(impl-oid row)) ,(impl-name row))
-                  ,(impl-fixture-record fixture))))
+                  ,(impl-fixture-record fixture))
+          (impl-fixture-callables fixture)))
        (define expected
          `(ProofRep ,(impl-derived-origin row)
                     ,(impl-proposition row)))

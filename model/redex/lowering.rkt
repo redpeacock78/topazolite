@@ -195,7 +195,7 @@
   ;; 型に依存する規則の選択を写す側で解く（backend-matrix.md §5）。
   ;; 目標項には結果だけが残る。
   (define (let-form type px bound body)
-    (if (owned-type? type)
+    (if (and (runtime-resource-type? type) (not (equal? body px)))
         `(PLetOwned ,px ,bound ,body)
         `(PLet ,px ,bound ,body)))
 

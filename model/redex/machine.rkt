@@ -368,6 +368,11 @@
           (list payload (table-set tokens tk 'Dropped)))]
     [_ (list value tokens)]))
 
+(define (let-owned-value value tokens declared-type)
+  (if (owned-type? declared-type)
+      (rehome-owned-root value tokens)
+      (list value tokens)))
+
 (define (fresh-place heap states)
   (for/fold ([next 0])
             ([entry (in-list (append heap states))])
@@ -565,9 +570,14 @@
         (cfg (in-hole E (Apply v_f v_fixed v_arg ...)) H Ω Λtok θ)
         R-ApplyCurry)
 
+   (--> (cfg (in-hole E (Let (x τ) v_bound x)) H Ω Λtok θ)
+        (cfg (in-hole E v_bound) H Ω Λtok θ)
+        (side-condition (runtime-resource-type? (term τ)))
+        R-LetIdentity)
+
    (--> (cfg (in-hole E (Let (x τ) v_bound c_body)) H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
-        (side-condition (not (owned-type? (term τ))))
+        (side-condition (not (runtime-resource-type? (term τ))))
         (where c_result (substitute c_body x v_bound))
         R-Let)
 
@@ -582,11 +592,13 @@
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
              H_new Ω_new Λtok_new θ)
-        (side-condition (owned-type? (term τ_owned)))
+        (side-condition (and (runtime-resource-type? (term τ_owned))
+                             (not (equal? (term c_body) (term x)))))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
         (where (v_stored Λtok_new)
-               ,(rehome-owned-root (term v_bound) (term Λtok)))
+               ,(let-owned-value (term v_bound) (term Λtok)
+                                 (term τ_owned)))
         (where H_new
                ,(record-declared-type
                  (table-set (term H) (term p_new) (term v_stored))
@@ -1070,10 +1082,16 @@
                       (Let (x bmode τ) v_bound c_body))
              H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
-        (side-condition (and (not (owned-type? (term τ)))
+        (side-condition (and (not (runtime-resource-type? (term τ)))
                              (not (eq? (term bmode) 'mut))))
         (where c_result (substitute c_body x v_bound))
         R-LetB)
+
+   (--> (cfg (in-hole E (Let (x bmode τ) v_bound x)) H Ω Λtok θ)
+        (cfg (in-hole E v_bound) H Ω Λtok θ)
+        (side-condition (and (runtime-resource-type? (term τ))
+                             (not (eq? (term bmode) 'mut))))
+        R-LetIdentityB)
 
    (--> (cfg (in-hole E_outer
                       (Scope (p_managed ...)
@@ -1086,11 +1104,14 @@
                       (Scope (p_managed ... p_new)
                              (in-hole G_inner c_result)))
              H_new Ω_new Λtok_new θ)
-        (side-condition (owned-type? (term τ_owned)))
+        (side-condition (and (runtime-resource-type? (term τ_owned))
+                             (not (eq? (term bmode) 'mut))
+                             (not (equal? (term c_body) (term x)))))
         (where p_new ,(fresh-place (term H) (term Ω)))
         (where c_result (substitute c_body x p_new))
         (where (v_stored Λtok_new)
-               ,(rehome-owned-root (term v_bound) (term Λtok)))
+               ,(let-owned-value (term v_bound) (term Λtok)
+                                 (term τ_owned)))
         (where H_new
                ,(record-declared-type
                  (table-set (term H) (term p_new) (term v_stored))

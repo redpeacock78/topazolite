@@ -124,14 +124,16 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 22 本である。
-源の `-->g2` の 59 本を基準に、`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let` と `R-LetB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` をそれぞれ 1 本へ畳んで 5 本減り、目標側に規則を持たない 32 本が対象外となって減る。
+源の `-->g2` の 61 本を基準にする。
+`R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
+目標側に規則を持たない 32 本が対象外となり、22 本が残る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
 | `R-Delta` | `R-PR-Prim` | 源の名前ではなく shim 名で `δpr` を引く（§10） |
 | `R-Beta` | `R-PR-App` | `penv` の束縛も代入する。arity 不一致は stuck |
 | `R-CurryVal`、`R-ApplyCurry` | `R-PR-Curry` | 2 本が 1 本になる。中間値を作らず `penv` を延ばす |
-| `R-Let`、`R-LetB` | `R-PR-Let` | 型の判定が消える。束縛様相も落ちる |
+| `R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB` | `R-PR-Let` | 型と直接受け渡しの判定が消える。束縛様相も落ちる |
 | `R-LetOwned`、`R-LetOwnedB` | `R-PR-LetOwned` | 型ではなく構成子で選ぶ |
 | `R-LetMutB` | なし | Portable Racket backend は可変 slot を未設計である |
 | `R-ReadMutSlot` | なし | 同上 |
@@ -208,7 +210,7 @@ metafunction では失敗を `undefined` 以上に表せず、診断値を返せ
 診断機構の検査には非対応を含む profile が要るので、表の注入は `lower/with-matrix` という別の入口に分ける。
 
 型に依存する規則の選択は写す時点で解く。
-源には `R-Let` と `R-LetOwned` が所有型かどうかで分かれる組が 1 つある。
+源の `Let` は有効型が資源型かどうかと、本体が束縛変数を直接返すかどうかで規則が分かれる。
 目標言語は型を持たないので、この判定は実行時に解けない。
 lowering が型を見て `PLet` と `PLetOwned` のどちらへ写すかを決め、目標項にはその結果だけが残る。
 これがホワイトペーパー §11 の「Portable Racket は意味論を決定しない」の具体形である。

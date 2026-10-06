@@ -7,7 +7,8 @@
          "../driver.rkt"
          "../diagnostic.rkt"
          "../erase.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../origins.rkt")
 
 (define (compile str) (compile-source/string 'src str))
 (define (compile-code str)
@@ -15,9 +16,13 @@
   (and (diagnostic? r) (diagnostic-id r)))
 (define (type-of str) (compiled-type (compile str)))
 (define (run-value str)
-  (match (run-g2 (inject-g2m (erase-core (compiled-core (compile str)))) 10000)
-    [`(cfg ,value () () () ()) value]
-    [other (fail-check (format "終端の値を期待したが ~s" other))]))
+  (define result (compile str))
+  (call-with-trait-ledger
+   (compiled-ledger result)
+   (lambda ()
+     (match (run-g2 (inject-g2m (erase-core (compiled-execution-core result))) 10000)
+       [`(cfg ,value () () () ()) value]
+       [other (fail-check (format "終端の値を期待したが ~s" other))]))))
 
 (define person-type "{ name: Int, age?: Int }")
 

@@ -23,6 +23,8 @@
     (R-ApplyCurry   . R-PR-Curry)
     (R-Let          . R-PR-Let)
     (R-LetB         . R-PR-Let)
+    (R-LetIdentity  . R-PR-Let)
+    (R-LetIdentityB . R-PR-Let)
     (R-LetOwned     . R-PR-LetOwned)
     (R-LetOwnedB    . R-PR-LetOwned)
     (R-LetMutB      . #f)
@@ -87,14 +89,15 @@
   (list->set (reduction-relation->rule-names -->g2/rules)))
 
 (test-case
- "-->g1/rules declares 25 rules"
- (check-equal? (set-count g1-rule-names) 25))
+ "-->g1/rules declares 26 rules"
+ (check-equal? (set-count g1-rule-names) 26))
 
 (test-case
- "-->g2/rules adds exactly thirty-four names to -->g1/rules"
- ;; 同名の上書きは名前集合を増やさない。G2m 固有の規則を含めて 34 本である。
+ "-->g2/rules adds exactly thirty-five names to -->g1/rules"
+ ;; R-LetIdentity は G1 と G2 の双方に属するため、差分には含めない。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
-               (set 'R-Proj 'R-ProjOpt 'R-Discharge 'R-LetB 'R-LetOwnedB
+               (set 'R-Proj 'R-ProjOpt 'R-Discharge 'R-LetB
+                    'R-LetIdentityB 'R-LetOwnedB
                     'R-LetMutB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
                     'R-BorrowMutError 'R-Reborrow
@@ -108,12 +111,12 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 59))
+ (check-equal? (set-count g2-rule-names) 61))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 59))
+ (check-equal? (length rule-correspondence) 61))
 
 (test-case
  "the target side has 22 rules"

@@ -206,7 +206,7 @@
  (define src "derive Sizable for Bool\n0")
  (define r (compile-source/string 'src src))
  (check-true (compiled? r) (format "compile failed: ~s" r))
- (define core (erase-core (compiled-core r)))
+ (define core (erase-core (compiled-execution-core r)))
  (call-with-trait-ledger
   (compiled-ledger r)
   (λ ()

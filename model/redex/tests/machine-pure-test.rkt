@@ -121,7 +121,7 @@
                         (RecurVal duplicate-recur-id f (f) f))
                  (Apply (PrimVal (Reserved o-add) add) 1)
                  (Curry 1 2)
-                 (Let (x (Owned Res)) (resource 1) x)
+                 (Let (x (Owned Res)) (Apply 1 2) x)
                  (Eliminate (Construct (List Int) nil)
                             ((cons (head tail) -> head)))
                  (Eliminate (Construct (List Int) cons 1

@@ -400,12 +400,16 @@
   ;; config-ok? before checking the row.
   (with-config-typing
    (lambda ()
-     (define places (derive-places (config-heap configuration) callables))
+     (define places
+       (derive-places (config-heap configuration)
+                      callables
+                      #:declared (config-declared-types configuration)))
      (and places
           (core-check-row (config-core configuration)
                           places
                           callables
-                          type)))))
+                          type
+                          #:declared (config-declared-types configuration))))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))

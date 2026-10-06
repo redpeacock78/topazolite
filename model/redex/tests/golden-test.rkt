@@ -7,7 +7,8 @@
          "../elaborate.rkt"
          "../erase.rkt"
          "../machine.rkt"
-         "../origins.rkt")
+         "../origins.rkt"
+         "../typing.rkt")
 
 (define fuel 10000)
 
@@ -31,7 +32,7 @@
            (fail "elaboration produced no Recur term")))
      (check-equal? (classify recur environment callables)
                    '(Finite structural))
-     (check-equal? (run (inject core) fuel)
+     (check-equal? (run (inject (execution-core core callables)) fuel)
                    `(cfg ,expected-value () () () ()))]
     [result (fail (format "elaboration failed: ~e" result))]))
 
@@ -95,10 +96,10 @@
                (Construct (List Int) cons 4
                           (Construct (List Int) nil))))
 
-  (match-define (list raw-curry-core _ _ _) (elab '(Curry mul 2)))
+  (match-define (list raw-curry-core _ _ curry-callables) (elab '(Curry mul 2)))
   (define curry-core (erase-core raw-curry-core))
   (match-define `(cfg ,curried () () () ())
-    (run (inject curry-core) fuel))
+    (run (inject (execution-core curry-core curry-callables)) fuel))
   (check-equal?
    (term (origin-of ,curried))
    '(Derived (Reserved o-mul) (Curry 2)))

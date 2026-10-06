@@ -21,8 +21,8 @@
   (intersect-derived-origin
    (intersect-row-by-name 'intersect-printable-sizable)))
 
-(define (run-g2-core core)
-  (match (run-g2 (inject-g2 core) 40)
+(define (run-g2-core core callables)
+  (match (run-g2 (inject-g2 (execution-core core callables)) 40)
     [`(cfg ,result () () () ()) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
@@ -35,7 +35,7 @@
      (check-equal? (term (verify-initial-origins ,R0 ,core)) 'ok)
      (check-equal? (core-type-of core empty callables)
                    (list expected-type empty))
-     (define result (run-g2-core core))
+     (define result (run-g2-core core callables))
      (check-equal? result expected-value)
      (check-equal? (term (verify-origins ,R0 ,result)) 'ok)]
     [other (fail-check (format "elaboration failed: ~s" other))]))

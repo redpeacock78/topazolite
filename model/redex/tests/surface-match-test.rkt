@@ -10,7 +10,8 @@
          "../traits.rkt"
          "../driver.rkt"
          "../erase.rkt"
-         "../machine.rkt")
+         "../machine.rkt"
+         "../origins.rkt")
 
 ;; P2m spec §6 と §7。data 型の match の名前解決、lowering、elaborate である。
 (define (lower str) (lower-surface (parse (lex/string 'src str)) canonical-trait-env))
@@ -121,6 +122,9 @@
                            "  match c { | red => 1 | green => 2 | leaf => 3 }\n"
                            "}\nf(green)")))
   (check-true (compiled? result))
-  (match (run-g2 (inject-g2m (erase-core (compiled-core result))) 10000)
-    [`(cfg ,value ,_ ,_ ,_ ,_) (check-equal? value 2)]
-    [other (fail-check (format "評価結果の config を期待したが ~s" other))]))
+  (call-with-trait-ledger
+   (compiled-ledger result)
+   (lambda ()
+     (match (run-g2 (inject-g2m (erase-core (compiled-execution-core result))) 10000)
+       [`(cfg ,value ,_ ,_ ,_ ,_) (check-equal? value 2)]
+       [other (fail-check (format "評価結果の config を期待したが ~s" other))]))))

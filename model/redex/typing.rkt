@@ -34,6 +34,7 @@
          type-of/raw*+borrows
          type-of/raw*+ptr
          annotate-mut-binding-types
+         execution-core
          typing-visited-points
          config-ok?
          with-config-typing
@@ -649,6 +650,41 @@
 (define lifetime-counter (make-parameter #f))
 (define alpha-table (make-parameter #f))
 (define mut-binding-types-table (make-parameter #f))
+(define resource-place-set (make-parameter (set)))
+(define resource-identity-transfers (make-parameter (set)))
+(define declared-place-types (make-parameter '()))
+
+(define (with-place-shadowing names thunk)
+  (define shadowed (list->set names))
+  (parameterize ([resource-place-set
+                  (set-subtract (resource-place-set) shadowed)]
+                 [resource-identity-transfers
+                  (set-subtract (resource-identity-transfers) shadowed)])
+    (thunk)))
+
+(define (with-let-place name type thunk)
+  (define outer (set-remove (resource-place-set) name))
+  (parameterize ([resource-place-set
+                  (if (resource-type? type) (set-add outer name) outer)]
+                 [resource-identity-transfers
+                  (set-remove (resource-identity-transfers) name)])
+    (thunk)))
+
+(define (with-identity-transfer name thunk)
+  (parameterize ([resource-identity-transfers
+                  (set-add (resource-identity-transfers) name)])
+    (thunk)))
+
+(define (record-effective-let-type! Λ type [force? #f])
+  (when (or force? (resource-type? type))
+    (define table (mut-binding-types-table))
+    (when table
+      (define point (region-ctx-point Λ))
+      (define prior (hash-ref (unbox table) point #f))
+      (when (and prior (not (equal? prior type)))
+        (error 'typing "同じ Let の位置へ異なる有効型を記録した: ~s: ~s / ~s"
+               point prior type))
+      (set-box! table (hash-set (unbox table) point type)))))
 
 ;; §5.4。alpha-table へ登録せずに寿命変数だけを採る。
 (define (fresh-local-lifetime!)
@@ -1044,7 +1080,8 @@
           (extend environment
                   binders
                   field-types)
-          (enter-child Λ_branch i))))
+          (enter-child Λ_branch i)
+          binders)))
 
 ;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
 ;; 各枝の束縛子へ payload path を引き継ぐ。
@@ -1092,7 +1129,8 @@
                             x token #f #f #f))
     (list body
           (extend environment (list x) (list binding-type))
-          (enter-child Λ_branch i))))
+          (enter-child Λ_branch i)
+          (list x))))
 
 (define (union-eliminate-branches scrutinee-type branches Λ environment
                                   node scrutinee fail)
@@ -1120,9 +1158,12 @@
                               node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (check-as/full (first context) expected (third context)
-                     (third scrutinee-result) (second context)
-                     places callables fail compatible?)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (check-as/full (first context) expected (third context)
+                        (third scrutinee-result) (second context)
+                        places callables fail compatible?)))))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
@@ -1149,8 +1190,11 @@
                               node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
-      (infer (first context) (third context) (third scrutinee-result)
-             (second context) places callables fail)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (infer (first context) (third context) (third scrutinee-result)
+                (second context) places callables fail)))))
   (define non-never
     (filter (lambda (result) (not (eq? (first result) 'Never))) attempts))
   (define types (map first non-never))
@@ -1160,9 +1204,12 @@
         (tagged-branch-upper-bound types Λ node fail)))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (check-as/full (first context) result-type (third context)
-                     (third scrutinee-result) (second context)
-                     places callables fail type-compatible?)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (check-as/full (first context) result-type (third context)
+                        (third scrutinee-result) (second context)
+                        places callables fail type-compatible?)))))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
@@ -1219,15 +1266,18 @@
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
-      (check-as/full (first context)
-                     expected
-                     (third context)
-                     (third scrutinee-result)
-                     (second context)
-                     places
-                     callables
-                     fail
-                     compatible?)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (check-as/full (first context)
+                        expected
+                        (third context)
+                        (third scrutinee-result)
+                        (second context)
+                        places
+                        callables
+                        fail
+                        compatible?)))))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-results)])
@@ -1526,13 +1576,16 @@
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
-      (infer (first context)
-             (third context)
-             (third scrutinee-result)
-             (second context)
-             places
-             callables
-             fail)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (infer (first context)
+                (third context)
+                (third scrutinee-result)
+                (second context)
+                places
+                callables
+                fail)))))
   (define non-never
     (filter (lambda (result)
               (not (eq? (first result) 'Never)))
@@ -1544,15 +1597,18 @@
         (tagged-branch-upper-bound types Λ node fail)))
   (define branch-rows
     (for/list ([context (in-list contexts)])
-      (check-as (first context)
-                result-type
-                (third context)
-                (third scrutinee-result)
-                (second context)
-                places
-                callables
-                fail
-                type-compatible?)))
+      (with-place-shadowing
+       (fourth context)
+       (lambda ()
+         (check-as (first context)
+                   result-type
+                   (third context)
+                   (third scrutinee-result)
+                   (second context)
+                   places
+                   callables
+                   fail
+                   type-compatible?)))))
   (define branch-psi
     (for/fold ([joined (third scrutinee-result)])
               ([result (in-list branch-rows)])
@@ -1666,8 +1722,11 @@
                       [bound-region-params signature-region-params]
                       [template-collectors
                        (cons frame (template-collectors))])
-         (check-as body return-type body-context Ψ body-environment
-                   places callables fail)))
+         (with-place-shadowing
+          parameters
+          (lambda ()
+            (check-as body return-type body-context Ψ body-environment
+                      places callables fail)))))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      ;; §5.4。出現局所の要約を登録する。Apply はこの要約を引いて実体化する。
@@ -1772,8 +1831,11 @@
                            (cons template (template-collectors))]
                           [recur-overlay
                            (cons tentative (recur-overlay))])
-             (check-as body return-type body-context Ψ_in body-environment
-                       places callables fail))
+             (with-place-shadowing
+              (cons function parameters)
+              (lambda ()
+                (check-as body return-type body-context Ψ_in body-environment
+                          places callables fail))))
       [(list body-row Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
@@ -1842,8 +1904,11 @@
                            (cons template (template-collectors))]
                           [recur-overlay
                            (cons tentative (recur-overlay))])
-            (check-as body return-type body-context Ψ_in body-environment
-                      places callables fail))
+            (with-place-shadowing
+             (cons function parameters)
+             (lambda ()
+               (check-as body return-type body-context Ψ_in body-environment
+                         places callables fail))))
       [(list body-row Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
@@ -2063,6 +2128,8 @@
                         [region-param-origins origins]
                         [region-binder-renamings '()]
                         [alpha-table (box (hash))]
+                        [resource-place-set (set)]
+                        [resource-identity-transfers (set)]
                         [merge-alpha-sources (make-hash)]
                         [callable-summaries (make-hash)]
                         [forwarding-summaries (make-hash)]
@@ -2710,13 +2777,25 @@
             (when (and (resource-type? tau)
                        (not (linear-hole? body binder)))
               (fail 'ill-typed core))
-            (when (core-contains-ownleaf? body)
+           (when (core-contains-ownleaf? body)
               (fail 'ill-typed core))
-            (match (check-as/full body output-type
-                                  (enter-child Λ (add1 index))
-                                  current-psi
-                                  (extend '() (list binder) (list tau))
-                                  places callables fail)
+           (match (with-place-shadowing
+                   (list binder)
+                   (lambda ()
+                     (if (resource-type? tau)
+                         (with-identity-transfer
+                          binder
+                          (lambda ()
+                            (check-as/full body output-type
+                                           (enter-child Λ (add1 index))
+                                           current-psi
+                                           (extend '() (list binder) (list tau))
+                                           places callables fail)))
+                         (check-as/full body output-type
+                                        (enter-child Λ (add1 index))
+                                        current-psi
+                                        (extend '() (list binder) (list tau))
+                                        places callables fail))))
               [(list body-row body-psi _)
                (unless (row=? body-row '())
                  (fail 'ill-typed core))
@@ -3224,15 +3303,6 @@
      (match (binding-context binding-mode (peel-ty type) bound Λ
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
-        ;; mut binding の有効型を Let 自身の位置へ記録する。
-        ;; infer-eliminate の attempts と check-as は失敗を局所回復せず
-        ;; with-typing 全体を脱出する。同じ節点の再走査は同じ
-        ;; binding-context を使うため、同じ位置へ同じ型を書き込む。
-        (when (eq? binding-mode 'mut)
-          (define table (mut-binding-types-table))
-          (when table
-            (define point (region-ctx-point Λ))
-            (set-box! table (hash-set (unbox table) point binding-type))))
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
@@ -3256,22 +3326,38 @@
                                 callable
                                 fields))
         (define Λ_body (enter-child Λ_token 1))
-        (match (infer body
-                      Λ_body
-                      bound-psi
-                      (extend environment (list x)
-                              (list binding-type)
-                              (and (eq? binding-mode 'mut) '(mut)))
-                      places
-                      callables
-                      fail)
+        (define identity? (eq? (peel-node body) x))
+        (define body-result
+          (with-let-place
+           x binding-type
+           (lambda ()
+             (if identity?
+                 (with-identity-transfer
+                  x
+                  (lambda ()
+                    (infer body
+                           Λ_body
+                           bound-psi
+                           (extend environment (list x)
+                                   (list binding-type)
+                                   (and (eq? binding-mode 'mut) '(mut)))
+                           places callables fail)))
+                 (infer body
+                        Λ_body
+                        bound-psi
+                        (extend environment (list x)
+                                (list binding-type)
+                                (and (eq? binding-mode 'mut) '(mut)))
+                        places callables fail)))))
+        (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
+        (match body-result
           [(list body-type body-row body-psi)
            (list body-type (row-union bound-row body-row) body-psi)])])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
-       (check-as bound (peel-ty type) (enter-child Λ 0)
-                 Ψ environment places callables fail))
+       (check-as/full bound (peel-ty type) (enter-child Λ 0)
+                      Ψ environment places callables fail))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type))
@@ -3296,15 +3382,23 @@
                              callable
                              fields))
      (define Λ_body (enter-child Λ_token 1))
-     (match (infer body
-                   Λ_body
-                   (second bound-result)
-                   (extend environment
-                           (list x)
-                           (list binding-type))
-                   places
-                   callables
-                   fail)
+     (define identity? (eq? (peel-node body) x))
+     (define body-result
+       (with-let-place
+        x binding-type
+        (lambda ()
+          (if (and identity? (resource-type? binding-type))
+              (with-identity-transfer
+               x
+               (lambda ()
+                 (infer body Λ_body (second bound-result)
+                        (extend environment (list x) (list binding-type))
+                        places callables fail)))
+              (infer body Λ_body (second bound-result)
+                     (extend environment (list x) (list binding-type))
+                     places callables fail)))))
+     (record-effective-let-type! Λ binding-type)
+     (match body-result
        [(list body-type body-row body-psi)
         (list body-type
               (row-union (first bound-result) body-row)
@@ -3349,14 +3443,17 @@
                                    (peel-bind name)))
           (fail 'owned-return-binder-misuse core)]
          [`(,name -> ,handler)
-          (check-as handler
-                    type*
-                    (enter-child Λ 0)
-                    (psi-join Ψ (second body-result))
-                    (extend environment (list (peel-bind name)) (list type*))
-                    places
-                    callables
-                    fail)]
+          (with-place-shadowing
+           (list (peel-bind name))
+           (lambda ()
+             (check-as handler
+                       type*
+                       (enter-child Λ 0)
+                       (psi-join Ψ (second body-result))
+                       (extend environment (list (peel-bind name)) (list type*))
+                       places
+                       callables
+                       fail)))]
          [_ (fail 'ill-typed core)]))
      (list type*
            (row-union
@@ -3385,10 +3482,13 @@
      (parameterize ([recur-overlay
                      (cons (third continuation-environment)
                            (recur-overlay))])
-       (infer continuation (enter-child Λ 1)
-             (second continuation-environment)
-             (first continuation-environment)
-             places callables fail))]
+       (with-place-shadowing
+        (list (peel-bind function))
+        (lambda ()
+          (infer continuation (enter-child Λ 1)
+                (second continuation-environment)
+                (first continuation-environment)
+                places callables fail))))]
 
     [`(Yield ,observed ,next)
       (define observed-result
@@ -3431,7 +3531,12 @@
      (define type (lookup places place))
      (unless type (fail 'unknown-place core))
      (emit-use-request! Λ place '() 'move (set) core 'move-borrowed)
-     (list `(Owned ,type) '(Own) Ψ)]
+     (define declared (assoc place (declared-place-types)))
+     (define moved-type
+       (if (and declared (not (owned-type? (second declared))))
+           (second declared)
+           `(Owned ,type)))
+     (list moved-type '(Own) Ψ)]
 
     [`(Move ,name)
      (define w (peel-node name))
@@ -3441,7 +3546,10 @@
      (when (borrow-typed? type) (fail 'move-borrowed core))
      (match type
        [`(Owned ,inner-type) (list `(Owned ,inner-type) '(Own) Ψ)]
-       [_ (fail 'move-non-owned core)])]
+       [_ (if (and (resource-type? type)
+                   (set-member? (resource-place-set) w))
+              (list type '(Own) Ψ)
+              (fail 'move-non-owned core))])]
 
     [`(Drop ,argument)
      (define dropped
@@ -3456,21 +3564,25 @@
      ;; ir が無いときは借用が無いので答えが段 1 で確定する。
      ;; そのとき渡してしまうと要求が記録されず、どちらも出ずに受理してしまう。
      (define dropped-type (and dropped (lookup environment dropped)))
-     (define bare-owned?
+     (define bare-resource?
        (and dropped
             (region-ctx-ir Λ)
             (symbol? (peel-node argument))
             dropped-type
-            (owned-type? dropped-type)))
+            (resource-type? dropped-type)
+            (or (owned-type? dropped-type)
+                (set-member? (resource-place-set) dropped))))
      (when dropped
        (emit-use-request! Λ dropped '() 'move (set) argument 'drop-borrowed
-                          (and bare-owned? 'owned-variable-requires-move)))
+                          (and (or (owned-type? (or dropped-type '()))
+                                   (set-member? (resource-place-set) dropped))
+                               'owned-variable-requires-move)))
      (when (and dropped
                 (borrow-typed? (or (lookup environment dropped) '())))
        (fail 'drop-borrowed argument))
      (define argument-Λ (enter-child Λ 0))
      (define argument-result
-       (if bare-owned?
+       (if bare-resource?
            (list dropped-type '() Ψ)
            (let/ec recover
              (infer argument argument-Λ Ψ environment places callables
@@ -3479,7 +3591,7 @@
                       (recover #f))))))
      (cond
        [(and argument-result
-             (owned-type? (first argument-result)))
+             (resource-type? (first argument-result)))
         (list 'Unit
               (row-union (second argument-result) '(Own))
               (third argument-result))]
@@ -3553,7 +3665,11 @@
     [(? symbol? name)
      (define type (lookup environment name))
      (unless type (fail 'unbound-variable core))
-     (when (owned-type? type) (fail 'owned-variable-requires-move core))
+     (when (and (resource-type? type)
+                (or (owned-type? type)
+                    (set-member? (resource-place-set) name))
+                (not (set-member? (resource-identity-transfers) name)))
+       (fail 'owned-variable-requires-move core))
      (list type '() Ψ)]
 
     [`(Borrow ,w)
@@ -3736,18 +3852,32 @@
                                 callable
                                 fields))
         (define Λ_body (enter-child Λ_token 1))
+        (define identity? (eq? (peel-node body) x))
         (define body-result
-          (check-as/full body
-                        expected
-                        Λ_body
-                        bound-psi
-                        (extend environment (list x)
-                                (list binding-type)
-                                (and (eq? binding-mode 'mut) '(mut)))
-                        places
-                        callables
-                        fail
-                        compatible?))
+          (with-let-place
+           x binding-type
+           (lambda ()
+             (if identity?
+                 (with-identity-transfer
+                  x
+                  (lambda ()
+                    (check-as/full body
+                                   expected
+                                   Λ_body
+                                   bound-psi
+                                   (extend environment (list x)
+                                           (list binding-type)
+                                           (and (eq? binding-mode 'mut) '(mut)))
+                                   places callables fail compatible?)))
+                 (check-as/full body
+                                expected
+                                Λ_body
+                                bound-psi
+                                (extend environment (list x)
+                                        (list binding-type)
+                                        (and (eq? binding-mode 'mut) '(mut)))
+                                places callables fail compatible?)))))
+        (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
         (list (row-union bound-row (first body-result))
               (second body-result)
               (third body-result))])]
@@ -3780,18 +3910,22 @@
                              callable
                              fields))
      (define Λ_body (enter-child Λ_token 1))
+     (define identity? (eq? (peel-node body) x))
      (define body-result
-       (check-as/full body
-                     expected
-                     Λ_body
-                     (second bound-result)
-                     (extend environment
-                             (list x)
-                             (list binding-type))
-                     places
-                     callables
-                     fail
-                     compatible?))
+       (with-let-place
+        x binding-type
+        (lambda ()
+          (if (and identity? (resource-type? binding-type))
+              (with-identity-transfer
+               x
+               (lambda ()
+                 (check-as/full body expected Λ_body (second bound-result)
+                                (extend environment (list x) (list binding-type))
+                                places callables fail compatible?)))
+              (check-as/full body expected Λ_body (second bound-result)
+                             (extend environment (list x) (list binding-type))
+                             places callables fail compatible?)))))
+     (record-effective-let-type! Λ binding-type)
      (list (row-union (first bound-result) (first body-result))
            (second body-result)
            (third body-result))]
@@ -3935,6 +4069,7 @@
       (raise-argument-error 'type-of/raw* "box?" mut-types-box))
     (set-box! mut-types-box (hash)))
   (define collected-mut-types (and mut-types-box (box (hash))))
+  (define resolved-mut-types (box (hash)))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -3952,6 +4087,8 @@
                    [region-binder-renamings '()]
                    [alpha-table tbl]
                    [mut-binding-types-table collected-mut-types]
+                   [resource-place-set (set)]
+                   [resource-identity-transfers (set)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
@@ -4008,6 +4145,21 @@
               (define normalized (normalize-type substituted))
               (unless normalized
                 (fail 'non-normalizable-result-type core-in substituted))
+              (define effective-mut-types
+                (if collected-mut-types
+                    (for/hash ([(point effective-type)
+                                (in-hash (unbox collected-mut-types))])
+                  (define substituted-effective
+                    (subst-type-regions effective-type σ ir))
+                  (define normalized-effective
+                    (normalize-type substituted-effective))
+                  (unless normalized-effective
+                    (error 'type-of/raw*
+                           "有効型の領域置換後の正規化に失敗した: ~s: ~s"
+                           point substituted-effective))
+                  (values point normalized-effective))
+                    (hash)))
+              (set-box! resolved-mut-types effective-mut-types)
               ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
               ;; Perform は (Return boundary τ) として row へ入れるため、
               ;; 借用をこれらで返すと row が α を運ぶ。
@@ -4022,7 +4174,7 @@
     (materialize-fail-result (region-ctx-ir Λ) (reverse (unbox cs)) result))
   (when (and mut-types-box
              (match completed [`(ok ,_) #t] [_ #f]))
-    (set-box! mut-types-box (unbox collected-mut-types)))
+    (set-box! mut-types-box (unbox resolved-mut-types)))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
@@ -4072,8 +4224,11 @@
   (define (walk node point)
     (define replaced
       (match node
-        [`(Let (,name mut ,declared) ,bound ,body)
-         `(Let (,name mut ,(hash-ref table point (lambda () declared)))
+        [`(Let (,name ,mode ,declared) ,bound ,body)
+         `(Let (,name ,mode ,(hash-ref table point (lambda () declared)))
+            ,bound ,body)]
+        [`(Let (,name ,declared) ,bound ,body)
+         `(Let (,name ,(hash-ref table point (lambda () declared)))
             ,bound ,body)]
         [_ node]))
     (define children (core-children replaced))
@@ -4084,6 +4239,15 @@
          (for/list ([child (in-list children)] [index (in-naturals)])
            (walk child (append point (list index)))))))
   (walk spanless '()))
+
+;; machine と lowering へ渡す Core は、型付け時に得た有効な束縛型を持つ。
+;; 型欄を置き換えた結果は再型検査しない。OWN-004 の判定には元の宣言型が要る。
+(define (execution-core core callables)
+  (define effective-types (box (hash)))
+  (match (type-of/raw core '() callables '() #:mut-types effective-types)
+    [(list 'ok _) (annotate-mut-binding-types core (unbox effective-types))]
+    [failure
+     (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
 (define (core-type-of/materialized core-in places callables
@@ -4212,13 +4376,15 @@
      (typing-diagnostic key node details expansion-context)]))
 
 (define (core-check-row core-in places callables expected [environment '()]
-                        [Λ (empty-region-ctx)])
+                        [Λ (empty-region-ctx)]
+                        #:declared [declared '()])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
   (require-expanded! 'core-check-row core-in)
   (define core (erase-core core-in))
   (and (not (entry-violation core places callables environment))
        (type? expected)
-       (check-as/boolean core-in expected environment places callables Λ)))
+       (parameterize ([declared-place-types declared])
+         (check-as/boolean core-in expected environment places callables Λ))))
 
 (define (core-check core places callables expected row [environment '()]
                     [Λ (empty-region-ctx)])
@@ -4487,29 +4653,35 @@
                             ;; Owned と借用を含まないことを検査する。したがって通常の
                             ;; mut slot を宣言型そのものへ照合しても token 条件は弱まらない。
                             (define value-row
-                              (if plain-mut-slot?
-                                  (check-as/boolean value declared '()
-                                                    places callables
-                                                    #:compatible? type-compatible?)
-                                  (check-as/boolean value
-                                                    (list 'Owned declared)
-                                                    '()
-                                                    places
-                                                    callables
-                                                    #:compatible?
-                                                    ;; Rec の leaf は payload の bare Record を
-                                                    ;; 推論するため、place の Owned 宣言へ持ち上げる。
-                                                    ;; Owned と OwnedLeaf を含む経路は厳密に保つ。
-                                                    (if (or (contains-owned-leaf? value)
-                                                            (match entry
-                                                              [`(,_ ,_ (declared ,_)) #t]
-                                                              [_ #f]))
-                                                        owned-lift-compatible?
-                                                        type-compatible?))))
+                              (parameterize
+                                  ([declared-place-types
+                                    (config-declared-types configuration)])
+                                (if plain-mut-slot?
+                                    (check-as/boolean value declared '()
+                                                      places callables
+                                                      #:compatible? type-compatible?)
+                                    (check-as/boolean value
+                                                      (list 'Owned declared)
+                                                      '()
+                                                      places
+                                                      callables
+                                                      #:compatible?
+                                                      ;; Rec の leaf は payload の bare Record を
+                                                      ;; 推論するため、place の Owned 宣言へ持ち上げる。
+                                                      ;; Owned と OwnedLeaf を含む経路は厳密に保つ。
+                                                      (if (or (contains-owned-leaf? value)
+                                                              (match entry
+                                                                [`(,_ ,_ (declared ,_)) #t]
+                                                                [_ #f]))
+                                                          owned-lift-compatible?
+                                                          type-compatible?)))))
                             (and value-row (null? value-row)))
                           (let ([actual-row
-                                 (check-as/boolean core expected '()
-                                                   places callables)])
+                                 (parameterize
+                                     ([declared-place-types
+                                       (config-declared-types configuration)])
+                                   (check-as/boolean core expected '()
+                                                     places callables))])
                             (and actual-row
                                  (row=? actual-row row)
                                  ;; 根の位置に leaf は置かない。

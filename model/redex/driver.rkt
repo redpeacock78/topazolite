@@ -4,6 +4,7 @@
          "parser.rkt"
          "surface-lower.rkt"
          "elaborate.rkt"
+         (only-in "typing.rkt" execution-core)
          "diagnostic.rkt"
          "data-env.rkt"
          (only-in redex/reduction-semantics caching-enabled?)
@@ -28,7 +29,7 @@
 ;; core は span を持つ Typed Core であり、erase-core は呼び手が必要に応じて
 ;; 掛ける。span を落としてから返すと、診断の primary span が指す位置を
 ;; 呼び手が復元できない。
-(struct compiled (core type row callables ledger) #:transparent)
+(struct compiled (core type row callables ledger execution-core) #:transparent)
 
 (define (compile-source/string source-id str #:expansion-context [ctx (hash)])
   (compile-source source-id (string->bytes/utf-8 str)
@@ -61,7 +62,8 @@
        (match (elab (lowered-term low) #:expansion-context ctx)
          [`(err ,d) d]
          [(list core type row callables)
-          (compiled core type row callables ledger)]))))
+          (define executable (execution-core core callables))
+          (compiled core type row callables ledger executable)]))))
   (cond
     [(diagnostic? low) low]
     [(and (null? (lowered-trait-rows low))

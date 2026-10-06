@@ -45,8 +45,8 @@
 (define (data-run source [fuel 400])
   (with-data
     (match (elab source)
-      [(list core _ _ _)
-       (match (run-g2 (inject-g2m (erase-core core)) fuel)
+      [(list core _ _ callables)
+       (match (run-g2 (inject-g2m (execution-core (erase-core core) callables)) fuel)
          [`(cfg ,result () () () ()) result]
          [other (error 'data-run "unexpected result: ~s" other)])]
       [`(err ,diagnostic) (error 'data-run "elaboration failed: ~s" diagnostic)])))

@@ -229,7 +229,7 @@
 (test-case
  "a declared impl yields an Implements proof under the returned ledger"
  (define r (compile-showable))
- (define core (erase-core (compiled-core r)))
+ (define core (erase-core (compiled-execution-core r)))
  (call-with-trait-ledger
   (compiled-ledger r)
   (λ ()
@@ -244,7 +244,7 @@
 (test-case
  "without the returned ledger the impl application is stuck"
  (define r (compile-showable))
- (define bound (bound-of (erase-core (compiled-core r))))
+ (define bound (bound-of (erase-core (compiled-execution-core r))))
  (define result (run-g2 (inject-g2 bound) 40))
  (check-false (match result [`(cfg (ProofRep ,_ ,_) ,_ ...) #t] [_ #f]))
  (check-true (stuck-at-impl? result 'impl-user-Showable-1)))
