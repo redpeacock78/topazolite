@@ -133,7 +133,7 @@
     '(Fn ((p (Record ((x (Owned Res) imm) (y Int imm)))))
          (Union (Record ((y Int imm))) (Record ((z Int imm))))
          ()
-         p))
+         (Move p)))
    "E-OWN-029"))
 
 (test-case "3 要素 binder は residual を束縛へ残す"
@@ -177,39 +177,39 @@
 (test-case "elaborate 側の拒否の code は E-OWN-029 である"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-actual)) ,nested-no-z () p))
+    `(Fn ((p ,nested-actual)) ,nested-no-z () (Move p)))
    "E-OWN-029"))
 
 (test-case "elaborate は最上位の余剰 Owned に E-OWN-031 を出す"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p (Record ((x ,owned imm) (y Int imm)))))
-         (Record ((y Int imm))) () p))
+         (Record ((y Int imm))) () (Move p)))
    "E-OWN-031"))
 
 (test-case "余剰 Owned を保つ形は elaborate を通る"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-actual)) ,nested-actual () p))
+    `(Fn ((p ,nested-actual)) ,nested-actual (Own) (Move p)))
    'ok))
 
 (test-case "let binder は最上位の Owned residual を保持する（elaborate）"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-with-residual)) Int ()
-         (Let (q let ,nested-actual) p 1)))
+    `(Fn ((p ,nested-with-residual)) Int (Own)
+         (Let (q let ,nested-actual) (Move p) 1)))
    'ok))
 
 (test-case "注釈付き Let の入れ子 narrowing は拒否する"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p ,nested-with-residual)) Int ()
-         (Let (q let ,nested-no-z) p 1)))
+         (Let (q let ,nested-no-z) (Move p) 1)))
    "E-OWN-029"))
 
 (test-case "const binder の入れ子 narrowing も拒否する（elaborate）"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p ,nested-actual)) Int ()
-         (Let (q const ,nested-no-z) p 1)))
+         (Let (q const ,nested-no-z) (Move p) 1)))
    "E-OWN-029"))

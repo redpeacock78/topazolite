@@ -122,7 +122,13 @@
    '(Rec ((n imm 7)
          (owned imm (OwnedLeaf (tok 13) (resource 13))))))
  (define function
-   '(Lam User aggregate-curry-lam (aggregate n) n))
+   `(Lam User aggregate-curry-lam (aggregate n)
+        (Handle (Return boundary Int)
+                (return-value -> return-value)
+                (Scope ()
+                  (Let (aggregate-transfer let ,aggregate-resource-type)
+                       aggregate
+                    n)))))
  (define callables
    `((aggregate-curry-lam
       (NFn (,aggregate-resource-type Int) Int () () () User))))
@@ -175,14 +181,14 @@
  (define source
    `(Fn ((x ,aggregate-resource-type))
         (Owned (NFn (Int) Int () ()))
-        ()
+        (Own)
       (Curry (Fn ((aggregate ,aggregate-resource-type) (n Int)) Int () n)
-             x)))
+             (Move x))))
  (match-define (list core type row callables) (elaboration-of source))
  (check-true
   (match type
     [`(NFn (,aggregate-resource-type)
-           (Owned (NFn (Int) Int () () () User)) () () () User)
+           (Owned (NFn (Int) Int () () () User)) () (Own) () User)
      #t]
     [_ #f]))
  (check-equal? (core-type-of core '() callables) (list type row)))

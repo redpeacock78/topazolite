@@ -133,30 +133,53 @@
 (define (record-parameter-type row)
   `(Record ,row))
 
+(define-metafunction G2
+  substitute-core : any x any -> any
+  [(substitute-core any_1 x any_2) (substitute any_1 x any_2)])
+
+(define (record-parameter-function-type input-row output-row)
+  (define input-type (record-parameter-type input-row))
+  `(NFn (,input-type) ,(record-parameter-type output-row)
+        () ,(if (resource-type? input-type) '(Own) '()) () User))
+
+(define (record-parameter-body body input-type output-type)
+  (if (resource-type? input-type)
+      (let ([transfer (gensym 'rec-rewrite-input)])
+        `(Handle (Return rec-rewrite-return ,output-type)
+                 (return-value -> return-value)
+                 (Scope ()
+                   (Let (,transfer let ,input-type)
+                        record-source
+                     ,(term (substitute-core ,body record-source
+                                             (Move ,transfer)))))))
+      body))
+
 (define (type-with-record-parameter body input-row output-row
                                     [extra-callables '()])
   (define input-type (record-parameter-type input-row))
   (define output-type (record-parameter-type output-row))
-  (type-of `(Lam User rec-rewrite-test (r) ,body)
+  (define signature (record-parameter-function-type input-row output-row))
+  (type-of `(Lam User rec-rewrite-test (record-source)
+              ,(record-parameter-body body input-type output-type))
            (append
-            `((rec-rewrite-test
-               (NFn (,input-type) ,output-type () () () User)))
+            `((rec-rewrite-test ,signature))
             extra-callables)))
 
 (define (key-with-record-parameter body input-row output-row
                                    [extra-callables '()])
   (define input-type (record-parameter-type input-row))
   (define output-type (record-parameter-type output-row))
-  (key-of `(Lam User rec-rewrite-test (r) ,body)
+  (define signature (record-parameter-function-type input-row output-row))
+  (key-of `(Lam User rec-rewrite-test (record-source)
+             ,(record-parameter-body body input-type output-type))
           (append
-           `((rec-rewrite-test
-              (NFn (,input-type) ,output-type () () () User)))
+           `((rec-rewrite-test ,signature))
            extra-callables)))
 
 (define (key-with-rewritten-field body input-type output-type
                                   [extra-callables '()])
   (key-with-record-parameter
-   `(RecRewrite r ((a x ,input-type imm ,output-type ,body)))
+   `(RecRewrite record-source ((a x ,input-type imm ,output-type ,body)))
    `((a ,input-type imm)) `((a ,output-type imm)) extra-callables))
 
 (define (test-fail reason kind key)
@@ -584,17 +607,17 @@
   (define output-row '((a (Owned Int) imm) (b Int imm)))
   (check-equal?
    (type-with-record-parameter
-    '(RecRewrite r ((a own (Owned Int) imm (Owned Int) own)))
+    '(RecRewrite record-source ((a own (Owned Int) imm (Owned Int) own)))
     input-row output-row)
-   `(NFn (,(record-parameter-type input-row))
-         ,(record-parameter-type output-row) () () () User)))
+   (record-parameter-function-type input-row output-row)))
 
 (test-case "Fn 型欄の Owned 仮引数は資源出現条件へ再帰しない"
   (define fn-type '(NFn ((Owned Int)) Int () () () User))
   (define row `((f ,fn-type imm)))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r ((f x ,fn-type imm ,fn-type (Let (y const ,fn-type) x x))))
+    `(RecRewrite record-source
+                 ((f x ,fn-type imm ,fn-type (Let (y const ,fn-type) x x))))
     row row)
    `(NFn (,(record-parameter-type row))
          ,(record-parameter-type row) () () () User)))
@@ -604,22 +627,22 @@
   (define outer-row `((box (Record ,owned-row) imm)))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r ((box x (Record ,owned-row) imm (Record ,owned-row)
+    `(RecRewrite record-source
+                 ((box x (Record ,owned-row) imm (Record ,owned-row)
                      (RecRewrite x
                                  ((a inner-own (Owned Int) imm
                                    (Owned Int) inner-own))))))
     outer-row outer-row)
-   `(NFn (,(record-parameter-type outer-row))
-         ,(record-parameter-type outer-row) () () () User))
+   (record-parameter-function-type outer-row outer-row))
   (define option-owned '(Option (Owned Int)))
   (define option-row `((a ,option-owned imm)))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r ((a x ,option-owned imm ,option-owned
+    `(RecRewrite record-source
+                 ((a x ,option-owned imm ,option-owned
                      (Let (alias let ,option-owned) x alias))))
     option-row option-row)
-   `(NFn (,(record-parameter-type option-row))
-         ,(record-parameter-type option-row) () () () User))
+   (record-parameter-function-type option-row option-row))
   (check-equal?
    (type-of
     `(RecRewrite (Rec ((a imm (Absent (Option (Owned Int))))))
@@ -654,18 +677,17 @@
         (,wide alias -> (Let (union_k let ,wide) alias union_k)))))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r ((a x ,resource-union imm ,base ,branch-term)))
+    `(RecRewrite record-source
+                 ((a x ,resource-union imm ,base ,branch-term)))
     input-row output-row)
-   `(NFn (,(record-parameter-type input-row))
-         ,(record-parameter-type output-row) () () () User))
+   (record-parameter-function-type input-row output-row))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r
+    `(RecRewrite record-source
        ((a x ,resource-union imm ,base
          (Let (rewritten const ,base) ,branch-term rewritten))))
     input-row output-row)
-   `(NFn (,(record-parameter-type input-row))
-         ,(record-parameter-type output-row) () () () User)))
+   (record-parameter-function-type input-row output-row)))
 
 (test-case "資源を持たない Union 枝の binder は複数回使える"
   (define resource-member (normalize-type '(Record ((o (Owned Int) imm)))))
@@ -684,10 +706,11 @@
               (tag imm (UnionInject ,input-type ,resource-member payload))))))))
   (check-equal?
    (type-with-record-parameter
-    `(RecRewrite r ((a x ,input-type imm ,output-type ,body)))
+    `(RecRewrite record-source
+                 ((a x ,input-type imm ,output-type ,body)))
     `((a ,input-type imm)) `((a ,output-type imm)))
-   `(NFn (,(record-parameter-type `((a ,input-type imm))))
-         ,(record-parameter-type `((a ,output-type imm))) () () () User)))
+   (record-parameter-function-type `((a ,input-type imm))
+                                   `((a ,output-type imm)))))
 
 (test-case "RecRewrite の入力が Record でない場合は拒否する"
   (check-equal?
@@ -735,13 +758,14 @@
 (test-case "root Owned entry は τ を変えず c が x の場合だけ許す"
   (check-equal?
    (key-with-record-parameter
-    '(RecRewrite r ((a x (Owned Int) imm (Owned Bool) x)))
+    '(RecRewrite record-source ((a x (Owned Int) imm (Owned Bool) x)))
     '((a (Owned Int) imm))
     '((a (Owned Int) imm)))
    'ill-typed)
   (check-equal?
    (key-with-record-parameter
-    '(RecRewrite r ((a x (Owned Int) imm (Owned Int) (Move x))))
+    '(RecRewrite record-source
+                 ((a x (Owned Int) imm (Owned Int) (Move x))))
     '((a (Owned Int) imm))
     '((a (Owned Int) imm)))
    'ill-typed))
@@ -775,7 +799,7 @@
    'ill-typed)
   (check-equal?
    (key-with-record-parameter
-    `(RecRewrite r ((a x ,option-owned imm ,nfn
+    `(RecRewrite record-source ((a x ,option-owned imm ,nfn
                      (Lam User rec-rewrite-inner () x))))
     row `((a ,nfn imm))
     `((rec-rewrite-inner (NFn () ,option-owned () () () User))))
@@ -819,7 +843,7 @@
   (check-true (resource-type? forall-resource))
   (check-equal?
    (key-with-record-parameter
-    `(RecRewrite r
+    `(RecRewrite record-source
        ((a x ,resource-union imm ,resource-pair
          (UnionEliminate x
            ((,union-base left -> (Rec ((p imm left) (q imm left))))

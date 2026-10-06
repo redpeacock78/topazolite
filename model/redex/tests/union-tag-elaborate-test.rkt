@@ -290,15 +290,15 @@
   (define owned-union `(Union ,owned-member ,owned-other))
   (void
    (accepted
-    `(Fn ((u ,owned-union)) ,owned-target ()
-         (Let (r let ,owned-target) u r)))))
+    `(Fn ((u ,owned-union)) ,owned-target (Own)
+         (Let (r let ,owned-target) (Move u) r)))))
 
 (test-case "Record expected は残余 Owned と合流不能な欄を拒否する"
   (check-equal?
    (rejected-code
     '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))
                     (Record ((a Int imm) (c String imm))))))
-         Int () (Let (r let (Record ((a Int imm)))) u 0)))
+         Int () (Let (r let (Record ((a Int imm)))) (Move u) 0)))
    (code 'type-mismatch))
   (check-equal?
    (rejected-code
