@@ -13,6 +13,7 @@
          "lang.rkt"
          "origins.rkt"
          "ownership.rkt"
+         "resource-type.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
@@ -202,18 +203,31 @@
     [(? list?) (ormap mentions-return? node)]
     [_ #f]))
 
-;; P1c2b。modes を渡すと 3 要素 entry を作る。typing.rkt の同名手続きと同じ
-;; 契約である。elaborate は typing を require しないため別に持つ。
-(define (extend environment names types [modes #f])
-  (append (if modes
-              (map list names types modes)
-              (map list names types))
-          environment))
+;; P1c2b。modes を渡すと 3 要素 entry を作る。
+;; place-flags の真の entry は c1c1 の P に属する Let 束縛である。
+;; 非 Let binder は place-flags を渡さず、同名の外側 entry を遮蔽する。
+(define (extend environment names types [modes #f] [place-flags #f])
+  (append
+   (for/list ([name (in-list names)]
+              [type (in-list types)]
+              [index (in-naturals)])
+     (define mode (and modes (list-ref modes index)))
+     (define place? (and place-flags (list-ref place-flags index)))
+     (cond
+       [place? (list name type mode #t)]
+       [modes (list name type mode)]
+       [else (list name type)]))
+   environment))
 
-;; P1c2b。3 要素 entry の mode を返す。typing.rkt の同名手続きと同じ契約である。
+;; P1c2b。mode を持つ entry から binding mode を返す。
 (define (binding-mode-of environment name)
   (match (assoc name environment)
-    [(list _ _ mode) mode]
+    [(list _ _ mode _ ...) mode]
+    [_ #f]))
+
+(define (place-binding? environment name)
+  (match (assoc name environment)
+    [(list _ _ _ #t) #t]
     [_ #f]))
 
 (define (owned-type? type)
@@ -1486,6 +1500,89 @@
                 normalized
                 (judgment-row result)))
 
+    (define (synth-let-body body name binding-type environment
+                            delta propositions boundaries)
+      (if (and (resource-type? binding-type)
+               (eq? (peel-node body) name))
+          ;; identity Let は place を介さず値をそのまま渡す。
+          (judgment `(#:var ,name ,(span-of body)) binding-type '())
+          (synth body environment delta propositions boundaries)))
+
+    (define (projection-chain expression environment)
+      (define (walk node)
+        (match (peel-node node)
+          [(? symbol? name) (list name node '())]
+          [`(Proj ,record ,raw-label)
+           (match (walk record)
+             [(list name root steps)
+              (list name root
+                    (append steps (list (list 'proj raw-label node))))]
+             [_ #f])]
+          [`(ProjOpt ,raw-type ,record ,raw-label)
+           (match (walk record)
+             [(list name root steps)
+              (list name root
+                    (append steps
+                            (list (list 'proj-opt raw-type raw-label node))))]
+             [_ #f])]
+          [_ #f]))
+      (match (walk expression)
+        [(list name root steps)
+         (and (place-binding? environment name)
+              (list name root steps))]
+        [_ #f]))
+
+    (define (elaborate-place-projection expression environment delta propositions)
+      (match (projection-chain expression environment)
+        [(list root root-node steps)
+         (define initial-type (normalize-type (lookup environment root)))
+         (define initial-core `(#:var ,root ,(span-of root-node)))
+         (define-values (projected-type projected-core _index)
+           (for/fold ([current-type initial-type]
+                      [current-core initial-core]
+                      [index 0])
+                     ([step (in-list steps)])
+             (define terminal? (= index (sub1 (length steps))))
+             (define-values (kind raw-type raw-label node)
+               (match step
+                 [(list 'proj label source-node)
+                  (values 'proj #f label source-node)]
+                 [(list 'proj-opt annotation label source-node)
+                  (values 'proj-opt annotation label source-node)]))
+             (define span (span-of node))
+             (define label (peel-lbl raw-label))
+             (match current-type
+               [`(Record ,row)
+                (define field (assoc label row))
+                (unless field (reject span 'unknown-record-label label))
+                (define field-type (second field))
+                (define optional? (field-optional? field))
+                (when (and optional? (not terminal?))
+                  (reject span 'project-non-record `(Option ,field-type)))
+                (when (and (eq? kind 'proj-opt) (not optional?))
+                  (reject span 'projopt-invalid-field label))
+                (define projected-type
+                  (if (eq? kind 'proj-opt)
+                      (resolve-annotation (peel-ty raw-type) delta span)
+                      field-type))
+                (when (and (eq? kind 'proj-opt)
+                           (not (type-compatible? field-type projected-type
+                                                  propositions)))
+                  (reject span 'projopt-invalid-field label))
+                (when (and terminal? (resource-type? field-type))
+                  (reject span 'owned-variable-requires-move label))
+                (if optional?
+                    (values `(Option ,projected-type)
+                            `(ProjOpt ,span (#:ty ,projected-type ,span)
+                                      ,current-core ,raw-label)
+                            (add1 index))
+                    (values projected-type
+                            `(Proj ,span ,current-core ,raw-label)
+                            (add1 index)))]
+               [_ (reject span 'project-non-record current-type)])))
+         (judgment projected-core projected-type '())]
+        [_ #f]))
+
     (define (synth/raw expression environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
@@ -1497,7 +1594,9 @@
          (define local-type (lookup environment name))
          (cond
            [local-type
-            (if (owned-type? local-type)
+            (if (or (owned-type? local-type)
+                    (and (place-binding? environment name)
+                         (resource-type? local-type)))
                 (reject s 'owned-variable-requires-move name)
                 (judgment `(#:var ,name ,s) local-type '()))]
            [else
@@ -1626,28 +1725,29 @@
              (judgment-row (third field)))))]
 
         [`(Proj ,record ,raw-label)
-         (define label (peel-lbl raw-label))
-         (define record-result
-           (synth record environment delta propositions boundaries))
-         (match (judgment-type record-result)
-           [`(Record ,row)
-            (define field (assoc label row))
-            (cond
-              [(not field) (reject s 'unknown-record-label label)]
-              [(field-optional? field)
-               (define field-type (second field))
-               (judgment `(ProjOpt ,s (#:ty ,field-type ,s)
-                                   ,(judgment-core record-result) ,raw-label)
-                         `(Option ,field-type)
-                         (judgment-row record-result))]
-              [else
-               (match (field-row-lookup row label)
-                 [(list field-type _)
-                  (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
-                            field-type
-                            (judgment-row record-result))]
-                 [_ (reject s 'unknown-record-label label)])])]
-           [_ (reject s 'project-non-record (judgment-type record-result))])]
+         (or (elaborate-place-projection expression environment delta propositions)
+             (let ([label (peel-lbl raw-label)])
+               (define record-result
+                 (synth record environment delta propositions boundaries))
+               (match (judgment-type record-result)
+                 [`(Record ,row)
+                  (define field (assoc label row))
+                  (cond
+                    [(not field) (reject s 'unknown-record-label label)]
+                    [(field-optional? field)
+                     (define field-type (second field))
+                     (judgment `(ProjOpt ,s (#:ty ,field-type ,s)
+                                         ,(judgment-core record-result) ,raw-label)
+                               `(Option ,field-type)
+                               (judgment-row record-result))]
+                    [else
+                     (match (field-row-lookup row label)
+                       [(list field-type _)
+                        (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
+                                  field-type
+                                  (judgment-row record-result))]
+                       [_ (reject s 'unknown-record-label label)])])]
+                 [_ (reject s 'project-non-record (judgment-type record-result))])))]
 
         ;; spec §8。注釈なしの const と let と let mut である。宣言型が
         ;; 無いので束縛式の型をそのまま宣言型とみなす。宣言型だけで分かる
@@ -1663,10 +1763,12 @@
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
          (define body-result
-           (synth body
-                  (extend environment (list name) (list binding-type)
-                          (and (eq? binding-mode 'mut) '(mut)))
-                  delta propositions boundaries))
+           (synth-let-body
+            body name binding-type
+            (extend environment (list name) (list binding-type)
+                    (and (eq? binding-mode 'mut) '(mut))
+                    (list (resource-type? binding-type)))
+            delta propositions boundaries))
          (judgment
           `(Let ,s (,raw-name ,binding-mode
                               (#:ty ,binding-type ,(span-of bound)))
@@ -1708,10 +1810,12 @@
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
          (define body-result
-           (synth body
-                  (extend environment (list name) (list binding-type)
-                          (and (eq? binding-mode 'mut) '(mut)))
-                  delta propositions boundaries))
+           (synth-let-body
+            body name binding-type
+            (extend environment (list name) (list binding-type)
+                    (and (eq? binding-mode 'mut) '(mut))
+                    (list (resource-type? binding-type)))
+            delta propositions boundaries))
          (judgment
           `(Let ,s (,raw-name ,binding-mode
                               (#:ty ,declared-type ,(wrapper-span raw-type)))
@@ -1725,11 +1829,13 @@
          (define name (peel-bind raw-name))
          (define bound-result
            (synth bound environment delta propositions boundaries))
+         (define binding-type (judgment-type bound-result))
          (define body-result
-           (synth body
-                  (extend environment (list name)
-                          (list (judgment-type bound-result)))
-                  delta propositions boundaries))
+           (synth-let-body
+            body name binding-type
+            (extend environment (list name) (list binding-type) #f
+                    (list (resource-type? binding-type)))
+            delta propositions boundaries))
          (judgment
           `(Let ,s (,raw-name (#:ty ,(judgment-type bound-result) ,s))
                 ,(judgment-core bound-result)
@@ -1894,10 +2000,15 @@
 
         [`(Move ,raw-name)
          (define name (peel-node raw-name))
-         (match (lookup environment name)
-           [`(Owned ,inner)
-            (judgment `(Move ,s ,raw-name) `(Owned ,inner) '(Own))]
-           [_ (reject s 'move-non-owned name)])]
+         (define binding-type (lookup environment name))
+         (cond
+           [(owned-type? binding-type)
+            (judgment `(Move ,s ,raw-name) binding-type '(Own))]
+           [(and binding-type
+                 (place-binding? environment name)
+                 (resource-type? binding-type))
+            (judgment `(Move ,s ,raw-name) binding-type '(Own))]
+           [else (reject s 'move-non-owned name)])]
 
         ;; spec §7.7。Reassign は elaborate を越える最初の記憶域書き換えの形で
         ;; ある。target は binder なので judgment を作らず、生の綴りのまま運ぶ。
@@ -1939,13 +2050,15 @@
         [`(Drop ,raw-name)
          #:when (let ([name (peel-node raw-name)])
                   (and (symbol? name)
-                       (owned-type? (lookup environment name))))
+                       (or (owned-type? (lookup environment name))
+                           (and (place-binding? environment name)
+                                (resource-type? (lookup environment name))))))
          (judgment `(Drop ,s (Move ,s ,raw-name)) 'Unit '(Own))]
 
         [`(Drop ,body)
          (define result
            (synth body environment delta propositions boundaries))
-         (unless (owned-type? (judgment-type result))
+         (unless (resource-type? (judgment-type result))
            (reject s 'drop-non-owned (judgment-type result)))
          (judgment `(Drop ,s ,(judgment-core result))
                    'Unit

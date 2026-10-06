@@ -6,6 +6,8 @@
          redex/reduction-semantics
          "../erase.rkt"
          "../driver.rkt"
+         "../diagnostic.rkt"
+         "../elaborate.rkt"
          "../gen.rkt"
          "../lang.rkt"
          "../lowering.rkt"
@@ -133,6 +135,80 @@
       [`(Let ,_ ,_ ,_) term]
       [(? list? terms) (for/or ([child (in-list terms)]) (walk child))]
       [_ #f])))
+
+(define aggregate-option-type
+  '(Record ((owner (Option (Owned Res)) imm)
+            (a Int imm))))
+(define aggregate-option-value
+  `(Rec ((owner imm
+                 (Construct some (Types (Owned Res))
+                            (Apply acquire 13)))
+         (a imm 41))))
+(define nested-aggregate-type
+  `(Record ((n ,aggregate-option-type imm))))
+(define nested-aggregate-value
+  `(Rec ((n imm ,aggregate-option-value))))
+
+(define optional-aggregate-type
+  '(Record ((owner (Option (Owned Res)) imm)
+            (maybe Int imm opt)
+            (a Int imm))))
+(define optional-aggregate-value
+  `(Rec ((owner imm
+                 (Construct some (Types (Owned Res))
+                            (Apply acquire 13)))
+         (a imm 41))))
+
+(define (elaborate-compiled expression)
+  (match (elab expression)
+    [`(err ,diagnostic) diagnostic]
+    [(list core type row callables)
+     (define ledger (current-trait-ledger))
+     (define executable
+       (call-with-trait-ledger
+        ledger
+        (lambda () (execution-core core callables))))
+     (compiled core type row callables ledger executable)]))
+
+(define (check-compiled-source-core artifact)
+  (call-with-trait-ledger
+   (compiled-ledger artifact)
+   (lambda ()
+     (check-equal?
+      (core-type-of (erase-core (compiled-core artifact)) '()
+                    (compiled-callables artifact))
+      (list (compiled-type artifact) (compiled-row artifact)))))
+  artifact)
+
+(define (run-compiled-execution-core artifact)
+  (call-with-trait-ledger
+   (compiled-ledger artifact)
+   (lambda ()
+     (define-values (configs rules)
+       (g2-trace
+        (initial (compiled-execution-core artifact) '())))
+     (check-config-trace configs (compiled-callables artifact)
+                         (compiled-type artifact))
+     (list (last configs) rules))))
+
+(define (apply-function input-type input-value body return-type row)
+  `(Apply
+    (Fn ((argument ,input-type)) ,return-type ,row ,body)
+    ,input-value))
+
+(define (contains-node? head tree)
+  (or (match tree
+        [(list (== head) _ ...) #t]
+        [_ #f])
+      (and (list? tree) (ormap (lambda (child) (contains-node? head child)) tree))))
+
+(define (contains-drop-move? tree)
+  (or (match tree [`(Drop (Move ,_)) #t] [_ #f])
+      (and (list? tree) (ormap contains-drop-move? tree))))
+
+(define (contains-nested-projection? tree)
+  (or (match tree [`(Proj (Proj ,_ n) a) #t] [_ #f])
+      (and (list? tree) (ormap contains-nested-projection? tree))))
 
 (test-case "未使用の集約資源型 Let は scope 終了時に leaf を drop する"
   (define machine-core `(Let (x ,resource-record-type) ,owned-record-value 0))
@@ -590,3 +666,157 @@
   (check-equal? pr-result lowered-value)
   (check-equal? (fin-events core-trace) '())
   (check-equal? (fin-events (pr-final-trace core)) '()))
+
+(test-case "Surface の資源型 let は裸の二度読みを E-OWN-010 で拒否する"
+  (define duplicate-type
+    `(Record ((left ,aggregate-option-type imm)
+              (right ,aggregate-option-type imm))))
+  (define source
+    `(Fn ((argument ,aggregate-option-type)) ,duplicate-type ()
+         (Let y argument
+           (Rec ((left imm y) (right imm y))))))
+  (match (elab source)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+    [other (fail-check (format "二度読みを拒否しなかった: ~s" other))]))
+
+(test-case "Surface の資源型 let は Move を二度通し、実行時に R-MoveError へ進む"
+  (define body
+    `(Let (y let ,aggregate-option-type) argument
+       (Let (z let ,aggregate-option-type) (Move y) (Move y))))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function aggregate-option-type aggregate-option-value
+                      body aggregate-option-type '(Own)))))
+  (check-true (compiled? artifact))
+  (define-values (configuration rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (check-not-false (member 'R-MoveError rules))
+  (check-true
+   (match configuration
+     [`(cfg (Error ,_) ,_heap ,_states ,_tokens ,_trace) #t]
+     [_ #f])))
+
+(test-case "Surface の Drop x は Drop (Move x) へ写り、leaf を Dropped にする"
+  (define body
+    `(Let (y let ,aggregate-option-type) argument (Drop y)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function aggregate-option-type aggregate-option-value
+                      body 'Unit '(Own)))))
+  (check-true (contains-drop-move? (erase-core (compiled-core artifact))))
+  (define-values (configuration _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (check-equal?
+   (match configuration
+     [`(cfg unit ,_heap ,_states ,tokens ,_trace) (map second tokens)]
+     [other (list 'unexpected other)])
+   '(Dropped)))
+
+(test-case "Surface の資源型と集約資源型 identity let は両 phase で受理される"
+  (define root
+    (elaborate-compiled
+     '(Let (x let (Owned Res))
+        (Apply acquire 13)
+        x)))
+  (define aggregate
+    (elaborate-compiled
+     `(Let (x let ,aggregate-option-type) ,aggregate-option-value x)))
+  (for ([artifact (in-list (list root aggregate))])
+    (check-true (compiled? (check-compiled-source-core artifact)))))
+
+(test-case "Surface の shadowing 後も外側の place 変数の P が復元される"
+  (define inner-let-shadow
+    `(Let (x let ,aggregate-option-type) ,aggregate-option-value
+       (Let z (Let x 1 x) (Move x))))
+  (define function-parameter-shadow
+    `(Let (x let ,aggregate-option-type) ,aggregate-option-value
+       (Let z (Apply (Fn ((x Int)) Int () x) 1) (Move x))))
+  (for ([source (in-list (list inner-let-shadow function-parameter-shadow))])
+    (check-true
+     (compiled?
+      (check-compiled-source-core (elaborate-compiled source))))))
+
+(test-case "c1c1 の経過措置では仮引数を裸で読める（c1c2 で期待を反転する）"
+  (define source
+    `(Fn ((x ,aggregate-option-type)) Int () (Proj x a)))
+  (define artifact
+    (check-compiled-source-core (elaborate-compiled source)))
+  (check-equal? (compiled-type artifact)
+                (normalize-type
+                 `(NFn (,aggregate-option-type) Int () () () User))))
+
+(test-case "Surface の place 射影は x.a、z.n.a、optional 末端を両 phase で扱う"
+  (define direct
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       aggregate-option-type aggregate-option-value
+       `(Let (x let ,aggregate-option-type) argument (Proj x a))
+       'Int '()))))
+  (define nested
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       nested-aggregate-type nested-aggregate-value
+       `(Let (z let ,nested-aggregate-type) argument
+          (Proj (Proj z n) a))
+       'Int '()))))
+  (define optional
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Let (x let ,optional-aggregate-type)
+         ,optional-aggregate-value
+         (Proj x maybe)))))
+  (check-equal? (compiled-type direct) 'Int)
+  (check-equal? (compiled-type nested) 'Int)
+  (check-equal? (compiled-type optional) '(Option Int))
+  (check-true
+   (contains-node? 'ProjOpt (erase-core (compiled-core optional))))
+  (check-true
+   (contains-nested-projection? (erase-core (compiled-core nested))))
+  (check-equal?
+   (match (first (run-compiled-execution-core direct))
+     [`(cfg ,value ,_heap ,_states ,_tokens ,_trace) value])
+   41)
+  (check-equal?
+   (match (first (run-compiled-execution-core nested))
+     [`(cfg ,value ,_heap ,_states ,_tokens ,_trace) value])
+   41)
+  (define-values (_nested-config nested-rules)
+    (apply values (run-compiled-execution-core nested)))
+  (check-equal? (count (lambda (rule) (eq? rule 'R-ProjPlace)) nested-rules) 1)
+  (check-equal?
+   (match (first (run-compiled-execution-core optional))
+     [`(cfg ,value ,_heap ,_states ,_tokens ,_trace) value])
+   '(Construct (Option Int) none)))
+
+(test-case "Surface と Core は資源型 place の資源欄射影を E-OWN-010 で拒否する"
+  (define source
+    (apply-function
+     aggregate-option-type aggregate-option-value
+     `(Let (x let ,aggregate-option-type) argument (Proj x owner))
+     '(Option (Owned Res)) '()))
+  (match (elab source)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+    [other (fail-check (format "資源欄射影を拒否しなかった: ~s" other))])
+  (check-equal?
+   (key-of `(Let (x ,(normalize-type aggregate-option-type)) y
+              (Proj x owner))
+           '() `((y ,(normalize-type aggregate-option-type))))
+   'owned-variable-requires-move)
+  (define nested-source
+    `(Let (z let ,nested-aggregate-type) ,nested-aggregate-value
+       (Proj (Proj z n) owner)))
+  (match (elab nested-source)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+    [other (fail-check (format "入れ子の資源欄射影を拒否しなかった: ~s" other))])
+  (check-equal?
+   (key-of `(Let (z ,(normalize-type nested-aggregate-type)) y
+              (Proj (Proj z n) owner))
+           '() `((y ,(normalize-type nested-aggregate-type))))
+   'owned-variable-requires-move))
