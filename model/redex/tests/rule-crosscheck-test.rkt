@@ -39,6 +39,8 @@
     (R-RecRewrite-Close . R-PR-RecRewrite)
     (R-Proj         . R-PR-Proj)
     (R-ProjOpt      . R-PR-ProjOpt)
+    (R-ProjPlace    . R-PR-ProjPlace)
+    (R-ProjOptPlace . R-PR-ProjOptPlace)
     (R-Discharge    . #f)
     (R-RegionApp    . #f)
     (R-Borrow       . #f)
@@ -93,10 +95,11 @@
  (check-equal? (set-count g1-rule-names) 26))
 
 (test-case
- "-->g2/rules adds exactly thirty-five names to -->g1/rules"
+ "-->g2/rules adds exactly thirty-seven names to -->g1/rules"
  ;; R-LetIdentity は G1 と G2 の双方に属するため、差分には含めない。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
-               (set 'R-Proj 'R-ProjOpt 'R-Discharge 'R-LetB
+               (set 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
+                    'R-Discharge 'R-LetB
                     'R-LetIdentityB 'R-LetOwnedB
                     'R-LetMutB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
@@ -111,13 +114,13 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 61))
+ (check-equal? (set-count g2-rule-names) 63))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 61))
+ (check-equal? (length rule-correspondence) 63))
 
 (test-case
- "the target side has 22 rules"
- (check-equal? (set-count target-rule-names) 22))
+ "the target side has 24 rules"
+ (check-equal? (set-count target-rule-names) 24))

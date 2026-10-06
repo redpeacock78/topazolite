@@ -1051,6 +1051,28 @@
                                label_target))
         R-ProjOpt)
 
+   ;; 資源型の Let が置いた Available place から、静的に許された欄を読む。
+   ;; 欄値の複製可否は型付けが資源型でないことを検査し、機械は H と Ω を保つ。
+   (--> (cfg (in-hole E (Proj p label_target)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Rec ((label_field m v_field) ...))
+               ,(table-ref (term H) (term p)))
+        (side-condition (term (unique-labels? (label_field ...))))
+        (where v_result
+               (proj-lookup ((label_field v_field) ...) label_target))
+        R-ProjPlace)
+
+   (--> (cfg (in-hole E (ProjOpt τ p label_target)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Rec ((label_field m v_field) ...))
+               ,(table-ref (term H) (term p)))
+        (side-condition (term (unique-labels? (label_field ...))))
+        (where v_result
+               (projopt-result τ ((label_field v_field) ...) label_target))
+        R-ProjOptPlace)
+
    ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では
    ;; ないため、包まれた c は Discharge が消えるまで還元されない。入れ子は外側から一段
    ;; ずつ消える。

@@ -222,21 +222,34 @@
    (check-true (redex-match? UCore+ e t) (format "~s の出力が UCore+ に合う" src))))
 
 (test-case
- "多 field 射影は受け側の束縛を 1 つ作り、順序を保った Rec へ落とす"
- ;; Let と Rec は SProjRec 全体、受け側の束縛は target の span を持つ。
+ "変数への多 field 射影は受け側を束縛せず、順序を保った Rec へ落とす"
+ ;; 資源型の変数も欄だけを読むため、receiver を裸で Let へ渡さない。
  (check-equal?
   (low "r.{b, a}")
-  '(Let (#:span src 0 8) ((#:bind %projrec (#:span src 0 1)) const)
-        (#:var r (#:span src 0 1))
-        (Rec (#:span src 0 8)
-             (((#:lbl b (#:span src 3 4)) imm
-               (Proj (#:span src 3 4)
-                     (#:var %projrec (#:span src 0 1))
-                     (#:lbl b (#:span src 3 4))))
-              ((#:lbl a (#:span src 6 7)) imm
-               (Proj (#:span src 6 7)
-                     (#:var %projrec (#:span src 0 1))
-                     (#:lbl a (#:span src 6 7)))))))))
+  '(Rec (#:span src 0 8)
+        (((#:lbl b (#:span src 3 4)) imm
+          (Proj (#:span src 3 4)
+                (#:var r (#:span src 0 1))
+                (#:lbl b (#:span src 3 4))))
+         ((#:lbl a (#:span src 6 7)) imm
+          (Proj (#:span src 6 7)
+                (#:var r (#:span src 0 1))
+                (#:lbl a (#:span src 6 7))))))))
+
+(test-case
+ "非変数への多 field 射影は受け側を一度だけ束縛する"
+ (check-true
+  (match (low "{ a: 1, b: 2 }.{b, a}")
+    [`(Let ,_ ((#:bind %projrec ,_) const) ,_
+          (Rec ,_ ,fields))
+     (and (= (length fields) 2)
+          (andmap
+           (lambda (field)
+             (match field
+               [`(,_ imm (Proj ,_ (#:var %projrec ,_) ,_)) #t]
+               [_ #f]))
+           fields))]
+    [_ #f])))
 
 (test-case
  "入れ子の射影は内側の %projrec を外側の束縛式の中だけで使う"

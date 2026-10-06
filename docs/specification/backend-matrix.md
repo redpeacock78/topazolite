@@ -123,10 +123,10 @@ pstate ::= Available | Moved | Dropped
 観測に基づく評価器は、重複除去後に 2 つ以上の後続 config が残ると error を投げる。
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
-規則は 22 本である。
-源の `-->g2` の 61 本を基準にする。
+規則は 24 本である。
+源の `-->g2` の 63 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 32 本が対象外となり、22 本が残る。
+目標側に規則を持たない 32 本が対象外となり、24 本が残る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -153,6 +153,9 @@ pstate ::= Available | Moved | Dropped
 | `R-RetireError` | なし | Portable Racket backend は Retire を持たない |
 | `R-RetirePerform` | なし | Portable Racket backend は Retire を持たない |
 | `R-Proj` | `R-PR-Proj` | 可変性が落ちているので label の一意性の側条件だけが残る |
+| `R-ProjOpt` | `R-PR-ProjOpt` | 欄があれば `some`、無ければ `none` を作る |
+| `R-ProjPlace` | `R-PR-ProjPlace` | Available place の record 欄を読み、heap と状態表は変えない |
+| `R-ProjOptPlace` | `R-PR-ProjOptPlace` | Available place の optional 欄を読み、heap と状態表は変えない |
 | `R-Discharge` | なし | Proof は実行時に意味を持たない |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |

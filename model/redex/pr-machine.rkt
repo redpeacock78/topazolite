@@ -260,6 +260,29 @@
                                 label_target))
         R-PR-ProjOpt)
 
+   (--> (pcfg (in-hole PE (PProj (PPlace pp) label_target)) PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (where Available ,(ptable-ref (term PΩ) (term pp)))
+        (where (PRec ((label_field pv_field) ...))
+               ,(ptable-ref (term PH) (term pp)))
+        (side-condition (term (punique-labels? (label_field ...))))
+        (where pv_result
+               (pproj-lookup ((label_field pv_field) ...) label_target))
+        R-PR-ProjPlace)
+
+   (--> (pcfg (in-hole PE
+                      (PProjOpt K_some K_none (PPlace pp) label_target))
+              PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ θ)
+        (where Available ,(ptable-ref (term PΩ) (term pp)))
+        (where (PRec ((label_field pv_field) ...))
+               ,(ptable-ref (term PH) (term pp)))
+        (side-condition (term (punique-labels? (label_field ...))))
+        (where pv_result
+               (pprojopt-result K_some K_none
+                                ((label_field pv_field) ...) label_target))
+        R-PR-ProjOptPlace)
+
    ;; 内側の文脈を PG にするのは、間に scope が挟まったときに内側の scope へ
    ;; 登録させるためである。源の R-LetOwned の G_inner に対応する。型ではなく
    ;; 構成子で選ぶので、源の R-LetOwned と R-LetOwnedB がここへ畳まれる。

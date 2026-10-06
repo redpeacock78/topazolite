@@ -2665,6 +2665,30 @@
     (fail 'rawptr-escapes-unsafe core))
   (list τ_body (row-difference ε_body '(Unsafe)) Ψ_1))
 
+;; 資源型の Let 変数から欄を読むときは、変数全体を裸で複製せず、
+;; 非資源型の欄だけを読む。使用要求には欄の label を capability path として
+;; 積むため、同じ欄への可変借用とだけ競合する。
+(define (infer-place-projection core name label optional-type
+                                Λ Ψ environment fail)
+  (define record-type (lookup environment name))
+  (match (and record-type (normalize-type record-type))
+    [`(Record ,row)
+     (define field (assoc label row))
+     (unless field (fail 'unknown-record-label core))
+     (define field-type (second field))
+     (when (resource-type? field-type)
+       (fail 'owned-variable-requires-move core))
+     (cond
+       [(and (not optional-type) (field-optional? field))
+        (fail 'project-optional-field core)]
+       [(and optional-type
+             (not (type-compatible? field-type optional-type)))
+        (fail 'projopt-invalid-field core)])
+     (emit-use-request! Λ name (list label) 'read (set) core
+                        'borrow-conflicting-use #f fail)
+     (list (if optional-type `(Option ,optional-type) field-type) '() Ψ)]
+    [_ (fail 'project-non-record name)]))
+
 (define (infer core Λ Ψ environment places callables fail)
   ((typing-point-probe) (region-ctx-point Λ))
   (define result
@@ -3054,31 +3078,41 @@
        [_ (fail 'ill-typed core)])]
 
     [`(Proj ,record ,label)
-     (match (infer record (enter-child Λ 0)
-                    Ψ environment places callables fail)
-       [(list `(Record ,row) record-row record-psi)
-        (define field (assoc (peel-lbl label) row))
-        (cond
-          [(not field) (fail 'unknown-record-label core)]
-          [(field-optional? field) (fail 'project-optional-field core)]
-          [else
-           (match (field-row-lookup row (peel-lbl label))
-             [(list field-type _) (list field-type record-row record-psi)]
-             [_ (fail 'unknown-record-label core)])])]
-       [_ (fail 'project-non-record record)])]
+     (define record-node (peel-node record))
+     (if (and (symbol? record-node)
+              (set-member? (resource-place-set) record-node))
+         (infer-place-projection core record-node (peel-lbl label) #f
+                                 Λ Ψ environment fail)
+         (match (infer record (enter-child Λ 0)
+                       Ψ environment places callables fail)
+           [(list `(Record ,row) record-row record-psi)
+            (define field (assoc (peel-lbl label) row))
+            (cond
+              [(not field) (fail 'unknown-record-label core)]
+              [(field-optional? field) (fail 'project-optional-field core)]
+              [else
+               (match (field-row-lookup row (peel-lbl label))
+                 [(list field-type _) (list field-type record-row record-psi)]
+                 [_ (fail 'unknown-record-label core)])])]
+           [_ (fail 'project-non-record record)]))]
 
     [`(ProjOpt ,τ ,record ,label)
-     (match (infer record (enter-child Λ 0)
-                   Ψ environment places callables fail)
-       [(list `(Record ,row) record-row record-psi)
-        (define field (assoc (peel-lbl label) row))
-        (define type (peel-ty τ))
-        (cond
-          [(not field) (fail 'unknown-record-label core)]
-          [(type-compatible? (second field) type)
-           (list `(Option ,type) record-row record-psi)]
-          [else (fail 'projopt-invalid-field core)])]
-       [_ (fail 'project-non-record record)])]
+     (define record-node (peel-node record))
+     (define type (peel-ty τ))
+     (if (and (symbol? record-node)
+              (set-member? (resource-place-set) record-node))
+         (infer-place-projection core record-node (peel-lbl label) type
+                                 Λ Ψ environment fail)
+         (match (infer record (enter-child Λ 0)
+                       Ψ environment places callables fail)
+           [(list `(Record ,row) record-row record-psi)
+            (define field (assoc (peel-lbl label) row))
+            (cond
+              [(not field) (fail 'unknown-record-label core)]
+              [(type-compatible? (second field) type)
+               (list `(Option ,type) record-row record-psi)]
+              [else (fail 'projopt-invalid-field core)])]
+           [_ (fail 'project-non-record record)]))]
 
     [`(RegionApp ,function (,rhos ...))
      (match-define (list function-type function-row function-psi)

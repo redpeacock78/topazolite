@@ -7,7 +7,7 @@
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
-;; [REQ: BAK-001] 目標機械 -->pr の 22 本の規則（backend-matrix.md §4）
+;; [REQ: BAK-001] 目標機械 -->pr の 24 本の規則（backend-matrix.md §4）
 
 (define fuel 10000)
 
@@ -176,6 +176,31 @@
   (term (PScopeExit () (PProjOpt some-tag none-tag (PRec ((f 1) (f 2))) f)))))
 
 (test-case
+ "R-PR-ProjPlace reads an available place without changing its state"
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r (PRec ((a 5)))
+           (PProj r a))))
+  5)
+ (check-equal?
+  (eval-pr
+   (term (PProj (PPlace 0) a)))
+  (term (PScopeExit () (PProj (PPlace 0) a)))))
+
+(test-case
+ "R-PR-ProjOptPlace reads present and absent fields"
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r (PRec ((a 5) (o 6)))
+           (PProjOpt some-tag none-tag r o))))
+  (term (PTagged some-tag 6)))
+ (check-equal?
+  (eval-pr
+   (term (PLetOwned r (PRec ((a 5)))
+           (PProjOpt some-tag none-tag r o))))
+  (term (PTagged none-tag))))
+
+(test-case
  "R-PR-LetOwned registers a fresh place and substitutes PPlace"
  (check-equal?
   (eval-pr/config (term (PLetOwned a 5 (PRuntime move a))))
@@ -283,7 +308,7 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
   (term (PError 0))))
 
-;; 22 本の規則それぞれを少なくとも 1 回通る fixture。
+;; 24 本の規則それぞれを少なくとも 1 回通る fixture。
 ;; backend-matrix.md §4 の決定性は obs-eval-pr が動く前提そのものなので、
 ;; 規則を足すたびにここで確かめる。
 (define determinism-fixtures
@@ -294,6 +319,9 @@
         (term (PLetrec f (PLam (a) a) (PApp f 9)))
         (term (PMatch (PTagged some 4) ((none () -> 0) (some (a) -> a))))
         (term (PProj (PRec ((f 1) (g 2))) g))
+        (term (PLetOwned r (PRec ((f 3))) (PProj r f)))
+        (term (PLetOwned r (PRec ((f (PTagged some 3))))
+                       (PProjOpt some none r f)))
         (term (PLetOwned a 5 (PRuntime move a)))
         (term (PLetOwned a 5 (PLet b (PRuntime move a) (PRuntime move a))))
         (term (PLetOwned a 5 (PLetOwned b 6 (PRuntime drop b))))
@@ -315,7 +343,7 @@
    (check-deterministic core)))
 
 (test-case
- "-->pr/rules declares exactly the 22 target rule names"
+ "-->pr/rules declares exactly the 24 target rule names"
  ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
  (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
                target-rule-names))
