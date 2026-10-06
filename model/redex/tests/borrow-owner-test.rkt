@@ -1,13 +1,17 @@
 #lang racket
 
 (require rackunit
+         racket/list
          racket/match
          racket/set
          redex/reduction-semantics
+         "../borrow.rkt"
          "../erase.rkt"
+         "../gen.rkt"
          "../lang.rkt"
          "../machine.rkt"
-         "../region.rkt")
+         "../region.rkt"
+         "../typing.rkt")
 
 ;; 手組みの ir。region.md §5 のとおり、手組みの ir は実装誤りを示す
 ;; fixture のためのものである。
@@ -139,3 +143,156 @@
               static-x-contains-y)
 (check-equal? (region-contains? reached-ir ρ-y-run ρ-x-run)
               static-y-contains-x)
+
+(define aggregate-owner-type
+  '(Record ((n Int imm) (owned (Owned Res) imm))))
+(define aggregate-owner-value
+  '(Rec ((n imm 41)
+         (owned imm (OwnedLeaf (tok 13) (resource 13))))))
+
+(define (typed-core core environment)
+  (define ir (build-region-ir core))
+  (values
+   (type-of/raw (annotate-regions core ir) '() '() environment
+                (region-ctx ir '() (hash) (hash)))
+   ir))
+
+(define (core-result-type result)
+  (match result
+    [`(ok (,type ,_row)) type]
+    [_ #f]))
+
+(define (core-result-key result)
+  (match result
+    [`(fail ,key ,_node ,_details ...) key]
+    [_ #f]))
+
+(test-case "集約資源型の Let は owner となり、Borrow の payload に型全体を使う"
+  (define core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y (Borrow x))))
+  (define-values (result _ir)
+    (typed-core core `((y ,aggregate-owner-type))))
+  (match result
+    [`(ok ((Borrowed ,payload ,_rho) ,_row))
+     (check-equal? payload aggregate-owner-type)]
+    [_ (fail (format "集約資源型の借用結果が合わない: ~s" result))]))
+
+(test-case "集約資源型の仮引数は c1c1 では Borrow の owner にならない"
+  (define core '(Scope () (Borrow y)))
+  (define-values (result _ir)
+    (typed-core core `((y ,aggregate-owner-type))))
+  (check-equal? (core-result-key result) 'borrow-non-owned))
+
+(test-case "集約資源型の Borrow は scalar 欄を読めるが Owned 欄を射影できない"
+  (define scalar-core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y
+         (Read (ProjBorrow (Borrow x) n)))))
+  (define-values (scalar-result _scalar-ir)
+    (typed-core scalar-core `((y ,aggregate-owner-type))))
+  (check-equal? (core-result-type scalar-result) 'Int)
+  (define owned-core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y
+         (ProjBorrow (Borrow x) owned))))
+  (define-values (owned-result _owned-ir)
+    (typed-core owned-core `((y ,aggregate-owner-type))))
+  (check-equal? (core-result-key owned-result) 'borrowed-owned-payload))
+
+(test-case "集約資源型の Borrow payload 全体の Read と Assign は拒否する"
+  (define read-core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y (Read (Borrow x)))))
+  (define-values (read-result _read-ir)
+    (typed-core read-core `((y ,aggregate-owner-type))))
+  (check-equal? (core-result-key read-result) 'read-uncopyable-payload)
+  (define assign-core
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y
+         (Assign (BorrowMut x) 0))))
+  (define-values (assign-result _assign-ir)
+    (typed-core assign-core `((y ,aggregate-owner-type))))
+  (check-equal? (core-result-key assign-result) 'assign-owned-payload))
+
+(define (g2-trace start)
+  (let loop ([current start] [configs (list start)] [rules '()] [fuel 80])
+    (when (zero? fuel)
+      (error 'g2-trace "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values configs rules)]
+      [(list (list rule next))
+       (loop next (append configs (list next)) (append rules (list rule))
+             (sub1 fuel))]
+      [steps (error 'g2-trace "一意な次状態を期待したが複数ある: ~s" steps)])))
+
+(define (check-config-trace configs expected #:row [fixed-row #f])
+  (define rows
+    (for/list ([config (in-list configs)] [index (in-naturals)])
+      ;; runtime-row は BorrowRef の実行時型を回復しない。
+      ;; 借用を含むこの fixture では、型付け済みの row を config-ok? へ渡す。
+      (define row (or fixed-row (runtime-row config '() expected)))
+      (check-not-false row
+                       (format "runtime row を得られない config ~a: ~s"
+                               index config))
+      (check-true (config-ok? config '() expected row)
+                  (format "不正な中間 config ~a: ~s" index config))
+      row))
+  (for ([before (in-list rows)] [after (in-list (cdr rows))]
+        [index (in-naturals)])
+    (check-true (row-subset? after before)
+                (format "config ~a から次の config で row が増えた: ~s -> ~s"
+                        index before after))))
+
+(define (contains-form? term head)
+  (match term
+    [(? list? terms)
+     (or (and (pair? terms) (eq? (first terms) head))
+         (ormap (lambda (child) (contains-form? child head)) terms))]
+    [_ #f]))
+
+(define (borrow-reference-active? config)
+  (or (contains-form? config 'BorrowRef)
+      (contains-form? config 'BorrowMutRef)))
+
+(test-case "借用して scalar 欄を読み、scope 終了時に Owned leaf を drop する"
+  (define skeleton
+    `(Scope ()
+       (Let (x let ,aggregate-owner-type) y
+         (Scope () (Read (ProjBorrow (Borrow x) n))))))
+  (define ir (build-region-ir skeleton))
+  (define typing-result
+    (type-of/raw (annotate-regions skeleton ir) '() '()
+                 `((y ,aggregate-owner-type))
+                 (region-ctx ir '() (hash) (hash))))
+  (check-equal? (core-result-type typing-result) 'Int)
+  (define static-row
+    (match typing-result
+      [(list 'ok (list _ row)) row]
+      [_ #f]))
+  (define machine-core
+    (annotate-regions
+     `(Scope ()
+        (Let (x let ,aggregate-owner-type) ,aggregate-owner-value
+          (Scope () (Read (ProjBorrow (Borrow x) n)))))
+     (build-region-ir skeleton)))
+  (define start
+    `(cfg (Scope () ,machine-core) () () (((tok 13) Available)) ()))
+  (define-values (configs rules) (g2-trace start))
+  (check-not-false (member 'R-LetOwnedB rules))
+  (check-not-false (member 'R-Borrow rules))
+  ;; BorrowAt の実行前は runtime-row に region IR を渡せないため、
+  ;; config-ok? が runtime BorrowRef を回復できる最初の状態から検査する。
+  (define first-live-borrow
+    (for/first ([config (in-list configs)] [index (in-naturals)]
+                #:when (borrow-reference-active? config))
+      index))
+  (check-not-false first-live-borrow)
+  (for ([config (in-list (take configs first-live-borrow))])
+    (check-true (contains-form? config 'BorrowAt))
+    (check-false (borrow-reference-active? config)))
+  (check-config-trace (drop configs first-live-borrow) 'Int #:row static-row)
+  (match (last configs)
+    [`(cfg 41 ,_heap ,_states ,tokens ,_events)
+     (check-equal? tokens '(((tok 13) Dropped)))]
+    [other (fail (format "借用後の終端 config が合わない: ~s" other))]))

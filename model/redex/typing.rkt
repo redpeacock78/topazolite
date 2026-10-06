@@ -2171,22 +2171,30 @@
     [(list 'ok row) row]
     [_ #f]))
 
-;; spec §3.1。所有値の束縛子だけを owners へ入れる。
+;; spec §3.7。root Owned の binder は従来どおり owner とする。
+;; 集約資源型は P に入る Let の変数だけを owner にする。
+;; data constructor の Eliminate 枝と UnionEliminate の枝、関数仮引数は
+;; c1c1 では P の外であり、c1c2 で仮引数を P へ入れる段階に借用の owner 登録も広げる。
+;; Let の各節点では本体の with-let-place より先に呼ぶため、P への所属は
+;; Let 専用の引数で渡す。branch の呼出しは既定値のままとする。
 ;; ρ は束縛子の節点で有効な region である。Λ.point がその節点を指すため、
 ;; enter-child を掛ける前の Λ をここへ渡す。
 ;; ir が無い Λ、すなわち公開入口の既定の空 Λ では何もしない。
-(define (register-owner Λ w binding-type)
+(define (register-owner Λ w binding-type #:let-place? [let-place? #f])
   (define ir (region-ctx-ir Λ))
+  (define normalized (normalize-type binding-type))
+  (define resource-let?
+    (and let-place?
+         (resource-type? normalized)))
   (cond
     [(not ir) Λ]
-    [(match (normalize-type binding-type)
-       [`(Owned ,_) #t]
-       [_ #f])
+    [(or (match normalized [`(Owned ,_) #t] [_ #f])
+         resource-let?)
      (region-ctx-add-owner Λ w (region-at ir (region-ctx-point Λ)))]
     [else Λ]))
 
 ;; 借用の対象の payload を引く。p は places が直接 τ を与え、
-;; x は environment が (Owned τ) を与える。
+;; root Owned の x は payload τ を、P の集約資源型の x は宣言型全体を与える。
 (define (borrow-target-payload w environment places node fail)
   (cond
     [(exact-nonnegative-integer? w)
@@ -2198,7 +2206,10 @@
      (unless type (fail 'unbound-variable node))
      (match type
        [`(Owned ,payload) payload]
-       [_ (fail 'borrow-non-owned node)])]))
+       [_ (if (and (set-member? (resource-place-set) (peel-node w))
+                   (resource-type? type))
+              type
+              (fail 'borrow-non-owned node))])]))
 
 ;; [REQ: BOR-001] 借用の region は owner の region に含まれていなければならない。
 ;; [REQ: BOR-002] 可変借用の有効期間中、競合する alias を作れない。
@@ -3391,7 +3402,7 @@
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
         (define x (peel-bind name))
-        (define Λ_owner (register-owner Λ x binding-type))
+        (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
         (define callable (lookup-callable-summary (enter-child Λ 0) bound))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
@@ -3447,7 +3458,7 @@
                       Ψ environment places callables fail))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
-     (define Λ_owner (register-owner Λ x binding-type))
+     (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
      (define callable (lookup-callable-summary (enter-child Λ 0) bound))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
@@ -3915,7 +3926,7 @@
                              Ψ environment places callables core fail)
        [(list bound-row binding-type bound-psi)
         (define x (peel-bind name))
-        (define Λ_owner (register-owner Λ x binding-type))
+        (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
         (define callable (lookup-callable-summary (enter-child Λ 0) bound))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
@@ -3973,7 +3984,7 @@
                       Ψ environment places callables fail compatible?))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
-     (define Λ_owner (register-owner Λ x binding-type))
+     (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
      (define callable (lookup-callable-summary (enter-child Λ 0) bound))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
