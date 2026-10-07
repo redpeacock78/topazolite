@@ -1630,14 +1630,18 @@
          (define local-type (lookup environment name))
          (cond
            [local-type
-            (if (or (owned-type? local-type)
-                    (and (place-binding? environment name)
-                         (resource-type? local-type)))
+            ;; UCore に Handle と RecRewrite は無い。encoding と handler の
+            ;; Core は直接組み立て、identity Let は synth-let-body が
+            ;; E-Var を通さずに値を渡す。
+            (if (resource-type? local-type)
                 (reject s 'owned-variable-requires-move name)
                 (judgment `(#:var ,name ,s) local-type '()))]
            [else
             (match (lookup (current-Γ0) name)
-              [(list type value) (judgment (attach-span value s) type '())]
+              [(list type value)
+               (when (resource-type? type)
+                 (reject s 'owned-variable-requires-move name))
+               (judgment (attach-span value s) type '())]
               [_ (reject s 'unbound-variable name)])])]
 
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)

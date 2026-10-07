@@ -168,6 +168,15 @@
                '()
                (region-ctx ir '() (hash) (hash))))
 
+(define (typed-owner-borrow [owner-type aggregate-owner-type])
+  (define core
+    `(Let (x let ,owner-type) (Apply borrow-owner-source unit) (Borrow x)))
+  (define ir (build-region-ir core))
+  (type-of/raw core '() '()
+               `((borrow-owner-source
+                  (NFn (Unit) ,owner-type () (Own) () User)))
+               (region-ctx ir '() (hash) (hash))))
+
 (define (core-result-type result)
   (match result
     [`(ok (,type ,_row)) type]
@@ -179,11 +188,10 @@
     [_ #f]))
 
 (test-case "仮引数の transfer encoding は Borrow の payload 全体を保持する"
-  (define result
-    (typed-owner-body '(Read (ProjBorrow (Borrow x) n)) 'Int))
+  (define result (core-result-type (typed-owner-borrow)))
   (check-true
-   (match (core-result-type result)
-     [`(NFn (,actual) Int () (Own) () User)
+   (match result
+     [`(Borrowed ,actual ,_region)
       (equal? actual aggregate-owner-type)]
      [_ #f]))
   (check-equal?

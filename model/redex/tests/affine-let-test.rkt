@@ -947,6 +947,24 @@
      (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
     [other (fail-check (format "仮引数の二度読みを拒否しなかった: ~s" other))]))
 
+(test-case "Γ0 の P 外の集約資源型の名前は E-OWN-010 になる"
+  (define base (current-trait-ledger))
+  (define ledger
+    (struct-copy trait-ledger base
+                 [gamma0
+                  (cons `(aggregate-source
+                          (,aggregate-option-type ,aggregate-option-value))
+                        (trait-ledger-gamma0 base))]))
+  (call-with-trait-ledger
+   ledger
+   (lambda ()
+     (match (elab 'aggregate-source)
+       [`(err ,diagnostic)
+        (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
+       [other
+        (fail-check
+         (format "P 外の資源型 global を拒否しなかった: ~s" other))]))))
+
 (test-case "集約資源型の仮引数を Move、Drop、未使用で処理できる"
   (define moved
     (check-compiled-source-core
