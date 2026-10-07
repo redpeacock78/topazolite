@@ -863,6 +863,10 @@
                             (reference name))
                         member expected s propositions))
              (resource-branch-body member name alias body)))
+         ;; c2 spec §3。Union の成分は root が Owned でないので、root Owned の
+         ;; expected への成分の convert は手前で落ち、ここへは届かない。
+         (when (owned-type? expected)
+           (reject s 'invalid-resolved-type expected))
          (values
           (wrap-reference 'const expected (eliminate bodies)
                           (resource-type? expected))

@@ -315,3 +315,35 @@
    (rejected-code
     '(Fn ((p (Union (Owned Int) (Owned String)))) (Owned Int) () (Move p)))
    (code 'invalid-resolved-type)))
+
+;; P2m2c2a Task 3。c2 spec §3 の場合分けを Surface の programme で固定する。
+(test-case "root Owned の expected への Union の分解は手前の type-mismatch で止まる"
+  ;; Never 以外の成分は root が Owned でないので、check の位置は compat? で落ちる。
+  (check-equal?
+   (rejected-code '(Fn ((p (Union Int Bool))) (Owned Int) () p))
+   (code 'type-mismatch))
+  ;; 束縛の位置は成分の convert で落ちる。
+  (check-equal?
+   (rejected-code
+    '(Fn ((p (Union Int Bool))) Int () (Let (q let (Owned Int)) p 0)))
+   (code 'type-mismatch)))
+
+(test-case "Never の値は root Owned の expected へ恒等で渡る"
+  (match-define (list core _ _)
+    (accepted
+     '(Fn ((p (NFn () Never (Partial) ()))) (Owned Int) (Partial) (Apply p))))
+  (check-equal? (count-nodes 'UnionEliminate core) 0))
+
+(test-case "注釈付き Let の右辺の分解は残余を束縛型へ残す"
+  (define r1 '(Record ((a Int imm) (b Int imm))))
+  (define r2 '(Record ((a Int imm) (b Int imm) (c String imm))))
+  (match-define (list _ type _)
+    (accepted
+     `(Let (u const (Union ,r1 ,r2)) (Rec ((a imm 1) (b imm 2)))
+           (Let (r let (Record ((a Int imm)))) u r))))
+  (check-equal? type '(Record ((a Int imm) (b Int imm))))
+  (check-equal?
+   (rejected-code
+    `(Let (u const (Union ,r1 ,r2)) (Rec ((a imm 1) (b imm 2)))
+          (Let (r const (Record ((a Int imm)))) u r)))
+   (code 'const-record-residual)))
