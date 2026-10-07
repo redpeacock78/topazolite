@@ -271,7 +271,7 @@ compat?((Record r_sub), (Record r_sup)) =
     m_sup = imm なら compat?(τ_sub, τ_sup)
     m_sup = mut なら m_sub = mut かつ type-equiv?(τ_sub, τ_sup)
 
-compat?(Owned<τ_sub>, Owned<τ_sup>) = type-equiv?(τ_sub, τ_sup)
+compat?(Owned<τ_sub>, Owned<τ_sup>) = tag-narrowing?(τ_sub, τ_sup)
 compat?(NFn_sub, NFn_sup) = §6.1 の関数互換性
 compat?(sub, sup) = type-equiv?(sub, sup)       上記以外
 ```
@@ -288,7 +288,10 @@ record の sub は、sup が要求する field をすべて満たす限り余剰
 `imm` を要求する位置には `mut` field を渡せる。 [REQ: ROW-005]
 書き込み能力を捨てる方向であり、その位置からは読み出しだけが可能なため、§3.5 の降格した field を構成できる。
 `Reassign` の slot も値を imm 欄へ渡す位置なので、実際の値に mut 欄があっても代入できるが、slot の宣言型と能力は変わらない。
-一方だけが `Owned` である field 型は互換でなく、双方が `Owned` の場合も内部型を不変に照合する。
+一方だけが `Owned` である field 型は互換でない。
+双方が `Owned` の場合は、内部型を `tag-narrowing?` で照合する。
+`Owned` は一意な所有者なので、Union の成分集合を広げても旧い型の view から値に触れる経路は残らない。
+tag の無い値へ新しい tag を置く widening は許さない。
 `NFn` field の照合は §6.3 が定める（`imm` は関数 variance、`mut` は不変一致）。
 
 予約基本型と予約 Narrative は record の分岐へ入らず、最後の `type-equiv?` 分岐だけで照合する。 [REQ: TYP-003]
@@ -350,6 +353,8 @@ Eliminate(c0, branches) : (Record r)
 `merge-row` は全ての行に存在する label の欄を残す。
 その欄の型は次の規則で合わせ、可変性は各枝の値に従って決める。
 型が `type-equiv?` で一致しない field は、可変性を保ったまま Union join する。 [REQ: ROW-005]
+双方が `Owned` の field 型は、内部型の上界候補へ双方が `tag-narrowing?` で狭められる場合に限り、`Owned` で包んだ候補へ合流する。
+候補が無い場合と片方だけが `Owned` の場合は合流しない。
 可変性が枝の間で食い違う field だけを `imm` へ降格する。
 一つ以上の枝で optional の欄は合流後も optional とし、全ての枝で required の欄は required とする。
 `(Presence label)` は合流後も required の欄にだけ発行する。

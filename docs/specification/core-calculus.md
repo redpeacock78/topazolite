@@ -2207,6 +2207,7 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   期待型が Union のとき、実際の型は `Never` か Union であり、実際の Union の各成分は期待型の成分と `type-equiv?` で等しくなければならない。
   Union 型の値を非 Union 型の位置へ渡すことはできない。
   record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
+  通常の `compat?` も `Owned` の payload には `tag-narrowing?` を使うため、両判定の照合は一致する。
 - record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
   `Reassign` は `reassign-narrowing?` を使い、slot の宣言型と欄の集合および optional の印を保ちながら、期待が `imm` の欄に限り実際の `mut` を許す。
   期待が `mut` の欄と `Owned` などの wrapper の内側は `tag-narrowing?` のままであり、余剰欄を落とす narrowing は許さない。
@@ -2218,6 +2219,7 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   一方が `Never` なら他方を返し、二つの Union なら成分の和を正規化する。
   片方だけが Union の場合は未定義とする。
   二つの Record は既存の row 合流を使い、共通欄の型へ再帰し、残余欄を落とす。
+  二つの `Owned` は payload の上界候補を求め、両方の payload がその候補へ `tag-narrowing?` で狭められる場合に限り、`Owned` で包んで返す。
   可変性は全ての枝で `mut` のときだけ `mut` を保つ。
   その他の型は `type-equiv?` で同値の場合だけ結果を返す。
 - `Borrowed`、`Untrusted`、`Refined` の payload では、tag の無い値を内側の Union へ変換しない。

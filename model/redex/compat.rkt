@@ -11,9 +11,9 @@
          check-compat-return)
 
 ;; 部分型の不変位置では NFn の O を比較しない。
-;; O 以外の型構造は type-equiv? のまま保ち、Owned / BorrowedMut / fallback
-;; の各不変位置で同じ規則を使う。NFn の引数・返り値・row・義務へ潜るため、
-;; ネストした関数型でも O だけが比較から外れる。
+;; O 以外の型構造は type-equiv? のまま保ち、record の mut field、BorrowedMut、
+;; fallback の不変位置で使う。Owned の payload は別の節で tag-narrowing? を使う。
+;; NFn の引数・返り値・row・義務へ潜るため、ネストした関数型でも O だけが外れる。
 (define (compat-erase-nfn-origins type)
   (match type
     [`(NFn ,parameters ,return-type ,in-row ,out-row ,obligations ,_origin)
@@ -96,8 +96,9 @@
     [(`(Record ,sub-row) `(Record ,sup-row))
      (record-compatible? sub-row sup-row gamma-pc region-relation recur invariant?)]
     [(`(Owned ,sub-type) `(Owned ,sup-type))
-     ;; Owned は tag 保存互換では tag の狭まりまで受け取る。
-     (invariant? sub-type sup-type)]
+     ;; 一意な所有者は旧い view を同時に保てないため、tag を保つ payload widening
+     ;; を通常の互換でも受理する。tag の無い値への新しい tag の追加は許さない。
+     (tag-narrowing? sub-type sup-type)]
     [(`(Untrusted ,sub-payload) `(Untrusted ,sup-payload))
      (recur sub-payload sup-payload gamma-pc region-relation)]
     ;; RFN-001: φ は命題同値を要求し、ペイロード型だけ compat? で再帰する。

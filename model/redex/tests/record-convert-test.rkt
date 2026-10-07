@@ -242,11 +242,12 @@
      (check-equal? body binder)]
     [other (fail-check (format "Owned の欄の identity entry が無い: ~s" other))]))
 
-(test-case "Owned 欄の payload widening は tag-compat? だけが受理する"
+(test-case "Owned 欄の payload widening は compat? と tag-compat? が受理する"
   (define source-payload int-or-bool)
   (define target-payload '(Union Int (Union Bool String)))
   (check-true (tag-compat? `(Owned ,source-payload) `(Owned ,target-payload)))
-  (check-false (compat? `(Owned ,source-payload) `(Owned ,target-payload)))
+  ;; c2b1 では Owned の唯一の所有者が旧い view を保てないため、通常の互換も受理する。
+  (check-true (compat? `(Owned ,source-payload) `(Owned ,target-payload)))
   ;; payload 型を変えず、別欄 a の変換がある場合に o を entry へ入れない。
   (define same-mark
     (owned-field-entries
@@ -265,22 +266,21 @@
      (check-equal? body binder)]
     [other (fail-check (format "Owned 欄の identity entry が想定と違う: ~s" other))]))
 
-(test-case "Owned 欄の payload widening は束縛と check の両位置で拒否する"
+(test-case "Owned 欄の payload widening は束縛と check の両位置で受理する"
   (define source-type
     `(Record ((o (Owned ,int-or-bool) imm) (a Int imm))))
   (define expected-type
     '(Record ((o (Owned (Union Int (Union Bool String))) imm)
               (a (Union Int Bool) imm))))
-  (check-equal?
-   (rejected-code
+  ;; tag を保つ Owned payload widening は束縛と check の両位置で受理する。
+  (void
+   (accepted
     `(Fn ((argument ,source-type)) Int (Own)
-         (Let (r let ,expected-type) (Move argument) 0)))
-   (code 'type-mismatch))
-  (check-equal?
-   (rejected-code
+         (Let (r let ,expected-type) (Move argument) 0))))
+  (void
+   (accepted
     `(Fn ((argument ,source-type)) ,expected-type (Own)
-         (Move argument)))
-   (code 'type-mismatch)))
+         (Move argument)))))
 
 (test-case "RecRewrite の entry binder は入力の symbol と衝突しない"
   (match-define (list core _ _)

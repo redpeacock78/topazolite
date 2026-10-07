@@ -25,7 +25,7 @@
 ; 予約型は type-equiv? 経路（構造化しない）
 (check-true  (compat? '(List Int) '(List Int)))
 (check-false (compat? '(List Int) '(List Bool)))
-; Owned は内部型不変
+; Owned は tag を保つ payload widening を許し、tag の無い値からの widening は拒否
 (check-true  (compat? '(Owned Int) '(Owned Int)))
 (check-false (compat? '(Owned Never) '(Owned Int)))
 

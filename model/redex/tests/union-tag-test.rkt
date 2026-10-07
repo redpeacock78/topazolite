@@ -238,6 +238,21 @@
            [(list next) (loop next (sub1 fuel))]
            [many (fail (format "nondeterministic machine step: ~s" many))])))))
 
+(define (check-runtime-row-config-run config expected [fuel-limit 100])
+  (tagged
+   (let loop ([current config] [fuel fuel-limit])
+     (define row (runtime-row current '() expected))
+     (check-not-false row
+                      (format "runtime row を得られない config: ~s" current))
+     (check-true (config-ok? current '() expected row)
+                 (format "不正な中間 config: ~s" current))
+     (if (zero? fuel)
+         (fail (format "machine did not finish: ~s" current))
+         (match (machine-steps current)
+           ['() current]
+           [(list next) (loop next (sub1 fuel))]
+           [many (fail (format "nondeterministic machine step: ~s" many))])))))
+
 ;; 既存の §2.8 machine fixture は実行時 BorrowMutRef を初期 Core に直接書く。
 ;; place が確保される前は config-ok? が拒否するため、最初に成立する config から
 ;; 終状態までを検査する。
@@ -1419,6 +1434,87 @@
     '((Record ((a Int imm) (b Int imm)))
       (Record ((a Int imm) (b String imm)))))
    (tag-bound-failure 'unmergeable-branch-records '())))
+
+(define owned-join-record-type '(Record ((owned (Owned Res) imm))))
+(define owned-join-u1
+  (normalize-type `(Union ,owned-join-record-type String)))
+(define owned-join-u2
+  (normalize-type `(Union ,owned-join-record-type Bool)))
+(define owned-join-wide
+  (normalize-type `(Union ,owned-join-record-type (Union String Bool))))
+(define owned-join-record-value
+  '(Rec ((owned imm (OwnedLeaf (tok 41) (resource 41))))))
+(define owned-join-value-u1
+  `(UnionVal ,owned-join-u1 ,owned-join-record-type
+             ,owned-join-record-value))
+(define owned-join-value-u2
+  `(UnionVal ,owned-join-u2 Bool (Construct Bool true)))
+
+(define (check-owned-root-join join)
+  (define joined-type `(Owned ,owned-join-wide))
+  (define places `((0 ,owned-join-u1) (1 ,owned-join-u2)))
+  (check-equal? (core-type-of join places '()) (list joined-type '(Own)))
+  ;; Move 後の runtime value は root の Owned wrapper を持たないため、
+  ;; join 結果を Drop で消費し、token を一度だけ Dropped にする。
+  (define core `(Scope (0 1) (Drop ,join)))
+  (define config
+    (machine-config
+     core
+     `((0 ,owned-join-value-u1 (declared (Owned ,owned-join-u1)))
+       (1 ,owned-join-value-u2 (declared (Owned ,owned-join-u2))))
+     '((0 Available) (1 Available))
+     '(((tok 41) Available))))
+  (define final (check-runtime-row-config-run config 'Unit))
+  (match final
+    [`(cfg unit ,_heap ,_states (((tok 41) Dropped)) ,_trace) (void)]
+    [other (fail (format "Owned root の join 後に token が 1 つ残らない: ~s"
+                         other))]))
+
+(test-case "Eliminate は Owned root の tag を保つ widening を合流する"
+  (check-owned-root-join
+   `(Eliminate (Construct Bool true)
+      ((true () -> (Move 0)) (false () -> (Move 1))))))
+
+(test-case "UnionEliminate は Owned root の tag を保つ widening を合流する"
+  (check-owned-root-join
+   `(UnionEliminate (UnionInject (Union Int String) Int 1)
+      ((Int i -> (Move 0)) (String s -> (Move 1))))))
+
+(test-case "Owned Record の widening 後は広い mut Union 欄へ書き込める"
+  (define narrow (normalize-type '(Union Int Bool)))
+  (define wide (normalize-type '(Union Int (Union Bool String))))
+  (define narrow-record `(Record ((a ,narrow mut))))
+  (define wide-record `(Record ((a ,wide mut))))
+  (define transfer
+    `(Scope (0)
+       (Let (wide-owner const (Owned ,wide-record)) (Move 0) unit)))
+  (match (type-of/in-regions transfer `((0 ,narrow-record)) (hash 0 '()))
+    [(list 'ok (list 'Unit row)) (check-not-false (member 'Own row))]
+    [other (fail (format "Owned Record の widening programme が型付けされない: ~s"
+                         other))])
+  ;; ここからは上の transfer 後の wide view を持つ place を初期 config にする。
+  ;; machine では BorrowMutRef が生じた状態から終了までを config-ok? で検査する。
+  (define core
+    `(Scope (1)
+       (Assign (BorrowMutRef 1 (a) 0)
+               (UnionInject ,wide String "written"))))
+  (define initial
+    (machine-config
+     core
+     `((1 (Rec ((a mut (UnionVal ,narrow Int 1))))
+          (declared (Owned ,wide-record))))
+     '((1 Available))))
+  (define final (check-config-run initial 'Unit '(Mutation) 100))
+  (match final
+    [`(cfg unit ,heap ,_states ,_tokens ,_trace)
+     (match (assoc 1 heap)
+       [(list 1 record-value (list 'declared `(Owned ,type)))
+        (check-equal? type wide-record)
+        (check-equal? record-value
+                      `(Rec ((a mut (UnionVal ,wide String "written")))))]
+       [other (fail (format "widened owner place が無い: ~s" other))])]
+    [other (fail (format "Owned Record の widening 後の書込み結果が違う: ~s"
+                         other))]))
 
 ;; P2m2b spec §4。elaborate が生成する形（全ての枝を同じ Union へ inject した形）で、
 ;; Core typing が枝の借用の寿命を合わせる。

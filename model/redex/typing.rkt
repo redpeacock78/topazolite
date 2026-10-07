@@ -1407,6 +1407,14 @@
          [(_ `(Union ,_ ,_)) #f]
          [(`(Record ,_) `(Record ,_))
           (tag-merge-record-types l r)]
+         [(`(Owned ,l-payload) `(Owned ,r-payload))
+          ;; c2b1 spec §4.2。payload の上界へ両方が tag-narrowing? で
+          ;; 狭められる場合だけ Owned で包む。幅を落とす Record の候補は拒否する。
+          (define candidate (tag-upper-bound l-payload r-payload))
+          (and candidate
+               (tag-narrowing? l-payload candidate)
+               (tag-narrowing? r-payload candidate)
+               `(Owned ,candidate))]
          [(_ _) (and (type-equiv? l r) l)])))
 
 (struct tag-bound-failure (reason details) #:transparent)
