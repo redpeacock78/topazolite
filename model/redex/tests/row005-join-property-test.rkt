@@ -30,7 +30,7 @@
   (check-not-false (member task8-three-way-types join-three-cases equal?))
   (check-equal? (row005-join task8-three-way-types) task8-a-bool-or-int)
   (match (run-join-conversion task8-three-way-types task8-a-bool-or-int)
-    [`(accepted ,result-type ,_core)
+    [`(accepted ,result-type ,_core ,_callables)
      (check-equal? result-type task8-a-bool-or-int)]
     [other
      (fail-check (format "Task 8 の 3 型合流が受理されない: ~s" other))]))

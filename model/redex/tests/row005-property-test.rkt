@@ -22,7 +22,7 @@
   ;; この programme は convert-union 群の一件として再実行される。
   (check-not-false (member task8-two-way-case convert-union-cases equal?))
   (match (run-conversion (first task8-two-way-case) (second task8-two-way-case))
-    [`(accepted ,result-type ,_core)
+    [`(accepted ,result-type ,_core ,_callables)
      (check-equal? result-type task8-a-bool-or-int)]
     [other
      (fail-check (format "Task 8 の 2 成分 decompose が受理されない: ~s" other))]))

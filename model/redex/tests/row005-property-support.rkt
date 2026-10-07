@@ -54,13 +54,16 @@
        [`(drop-obligation ,_ ,_) 'drop-obligation]
        [_ 'owned-narrowing-rejected])]))
 
-(define (conversion-program actual expected)
+(define (conversion-program actual expected #:check-result? [check-result? #f])
   (define effect-row
     (if (or (resource-type? actual) (resource-type? expected)) '(Own) '()))
-  `(Fn ((argument ,actual)) #:infer ,effect-row
-       (Let (converted let ,expected)
-            ,(if (resource-type? actual) '(Move argument) 'argument)
-            ,(if (resource-type? expected) '(Move converted) 'converted))))
+  (define body
+    `(Let (converted let ,expected)
+          ,(if (resource-type? actual) '(Move argument) 'argument)
+          ,(if (resource-type? expected) '(Move converted) 'converted)))
+  (if check-result?
+      `(Fn ((argument ,actual)) ,expected ,effect-row ,body)
+      `(Fn ((argument ,actual)) #:infer ,effect-row ,body)))
 
 (define (diagnostic-key diagnostic)
   (define row (diagnostic-code-row (diagnostic-id diagnostic)))
@@ -74,10 +77,46 @@
           (count-head head child)))]
     [else 0]))
 
-;; Fn の推論戻り型は、注釈付き open Let を通した変換結果の型である。
+(define (find-core-form head tree)
+  (cond
+    [(and (pair? tree) (eq? (car tree) head)) tree]
+    [(list? tree)
+     (for/or ([child (in-list tree)])
+       (find-core-form head child))]
+    [else #f]))
+
+;; let 注釈で隠れないよう、UnionEliminate を同型の値を返す producer から
+;; Let 束縛した Core の文脈で型付けし、Core の枝合流型を直接検査する。
+(define (check-core-branch-merge! core actual upper callables)
+  (define erased (erase-core core))
+  (define union-eliminate (find-core-form 'UnionEliminate erased))
+  (when union-eliminate
+    (define source-name
+      (match union-eliminate
+        [`(UnionEliminate (Move ,name) ,_branches) name]
+        [`(UnionEliminate ,(? symbol? name) ,_branches) name]
+        [_ #f]))
+    (check-not-false source-name "UnionEliminate の変換元 binder が見つからない")
+    (define source-signature
+      `(NFn (Unit) ,actual () ,(if (resource-type? actual) '(Own) '()) () User))
+    (define merge-core
+      `(Scope ()
+              (Let (,source-name let ,actual)
+                   (Apply row005-branch-source unit)
+                   ,union-eliminate)))
+    (match (core-type-of merge-core '() callables
+                         `((row005-branch-source ,source-signature)))
+      [(list core-type _row)
+       (check-equal? core-type upper)]
+      [other
+       (fail-check
+        (format "作り直した UnionEliminate の Core 型付けに失敗: ~s" other))])))
+
+;; 推論 mode は変換後の型を測り、check mode は指定型への検査を強制する。
 ;; Core 型付けとの一致も各 programme で検査し、失敗を捨てない。
-(define (run-conversion actual expected)
-  (match (elab (conversion-program actual expected))
+(define (run-conversion actual expected #:check-result? [check-result? #f])
+  (match (elab (conversion-program actual expected
+                                   #:check-result? check-result?))
     [`(err ,diagnostic)
      (list 'rejected (diagnostic-key diagnostic))]
     [(list core function-type row callables)
@@ -87,7 +126,7 @@
      (match function-type
        [`(NFn ,_ ,result-type ,_ ,_ ,_ ,_)
         (check-true (well-formed-generated-type? result-type))
-        (list 'accepted result-type core)]
+        (list 'accepted result-type core callables)]
        [_
         (fail-check (format "Fn の推論型が NFn でない: ~s" function-type))])]))
 
@@ -152,13 +191,23 @@
         (void)
         (match (case-class actual expected)
           ['not-compatible (increment! counts 'not-compatible)]
-          ['drop-obligation (increment! counts 'drop-obligation)]
-          ['owned-narrowing-rejected
-           (increment! counts 'owned-narrowing-rejected)]
+          [(or 'drop-obligation 'owned-narrowing-rejected)
+           (match (run-conversion actual expected #:check-result? #t)
+             [`(rejected ,key)
+              (check-not-false
+               (memq key '(owned-narrowing-needs-proof
+                           owned-narrowing-rejected))
+               (format "OWN-004 の拒否理由が予期しない: ~s => ~s: ~s"
+                       actual expected key))
+              (increment! counts (case-class actual expected))]
+             [other
+              (fail-check
+               (format "OWN-004 が拒否すべき convert が通った: ~s => ~s: ~s"
+                       actual expected other))])]
           ['invalid-type (increment! counts 'invalid-type)]
           ['ok
            (match (run-conversion actual expected)
-             [`(accepted ,_ ,_) (increment! counts 'accepted)]
+             [`(accepted ,_ ,_ ,_) (increment! counts 'accepted)]
              [`(rejected ambiguous-union-member)
               (increment! counts 'ambiguous-union-member)]
              [other
@@ -212,15 +261,14 @@
                        (format "OWN-004 が拒否すべき join が通った: ~s => ~s: ~s"
                                types upper other))]))
                  (match (run-join-conversion types upper)
-                   [(list 'accepted result-type core)
+                   [(list 'accepted result-type core callables)
                     (check-equal? result-type upper)
                     (when (> (length (remove-duplicates types equal?)) 1)
                       (check-true (positive? (count-head 'UnionEliminate core))
                                   (format "UnionEliminate を含まない join Core: ~s"
                                           types)))
-                    ;; Core の UnionEliminate が branch-types-upper-bound を使う。
-                    (check-equal? (branch-types-upper-bound (list result-type upper))
-                                  upper)
+                    (check-core-branch-merge! core (make-union types) upper
+                                              callables)
                     (increment! counts 'accepted)]
                    [`(rejected ambiguous-union-member)
                     (increment! counts 'ambiguous-union-member)]
