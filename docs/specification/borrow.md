@@ -349,7 +349,9 @@ place へ載せた後は借用の所有者を追う手立てが無く、所有�
 両立しない右辺は `E-BOR-022` で落とす。
 
 Union の slot の値は tag で成分を表すので、`τ_t` が Union なら、tag を持つ Union の値をそのまま格納してよい。
-tag を持たない値は、elaboration が `UnionInject` を挿入してから書き込む。
+tag を持たない値は `tag-compat?` を満たさないため、Union の slot へは書き込めない。
+書き込みには `UnionInject` で tag を付けた値を渡す必要がある。
+Surface に代入構文はなく、elaboration は `Assign` を生成しない。
 Core の合流は tag の無い欄の型から Union を作らないので、`{ f : mut (Union τ_1 τ_2) }` の欄の値は実行時にも Union の値であり、成分ごとの record に分かれていない。
 したがって、書き込む値を Union の各成分と照合する必要は無い。
 
