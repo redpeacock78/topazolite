@@ -1515,10 +1515,10 @@
                  return-type boundary body-result
                  signature callable reserved-with-formals))
 
-    ;; SUR-015（spec §6.2）。下見中に消費した連番と callable 表を必ず戻す。
+    ;; SUR-015（spec §6.2）。下見中に消費した各連番と callable 表を必ず戻す。
     (define (call-with-restored-state thunk)
       (define saved (list boundary-counter callable-counter owned-counter
-                          reversed-callables))
+                          union-counter reversed-callables))
       (dynamic-wind
        void
        thunk
@@ -1526,7 +1526,8 @@
          (set! boundary-counter (first saved))
          (set! callable-counter (second saved))
          (set! owned-counter (third saved))
-         (set! reversed-callables (fourth saved)))))
+         (set! union-counter (fourth saved))
+         (set! reversed-callables (fifth saved)))))
 
     ;; SUR-015（spec §6.1、§6.2）。通常の本体結果型を優先し、Never なら
     ;; 最初に合成できた Return payload の型を候補にする。
@@ -2410,6 +2411,93 @@
                  expected s propositions))
       (judgment core expected (judgment-row result) core-type))
 
+    ;; Rec の欄を Record 型へ直接 check できる形かを返す。
+    (define (record-literal-member? raw-fields expected)
+      (match expected
+        [`(Record ,expected-fields)
+         (define written
+           (map (λ (field) (peel-lbl (first field))) raw-fields))
+         (define omitted (omitted-optional-labels written expected-fields))
+         (or (and (= (length written) (length expected-fields))
+                  (equal? (sort written symbol<?)
+                          (sort (map first expected-fields) symbol<?)))
+             (and omitted (pair? omitted)))]
+        [_ #f]))
+
+    (define (check-rec-against-union expression raw-fields expected s
+                                     environment delta propositions boundaries)
+      (define members (union-members expected))
+      (define context (initial-candidate-context propositions))
+      (define (trial thunk)
+        (call-with-restored-state
+         (λ ()
+           (with-handlers ([exn:fail:elab? (λ (_) #f)])
+             (thunk)))))
+      (define synthesized-result
+        (trial (λ () (synth expression environment delta propositions
+                            boundaries))))
+      (define synthesized
+        (and synthesized-result (judgment-type synthesized-result)))
+      (define exact
+        (and synthesized
+             (for/first ([candidate (in-list members)]
+                         #:when (type-equiv? candidate synthesized))
+               candidate)))
+      (define first-stage
+        (if exact
+            (list exact)
+            (if synthesized
+                (filter (λ (candidate)
+                          (tag-compat? synthesized candidate context))
+                        members)
+                '())))
+      (define (normal-path)
+        (check-against-expected
+         (synth expression environment delta propositions boundaries)
+         expected s propositions))
+      (match first-stage
+        [(list _candidate) (normal-path)]
+        [(list _first _second ...)
+         (reject s 'ambiguous-union-member expected synthesized first-stage)]
+        [_
+         (define reachable
+           (if synthesized
+               (filter (λ (candidate)
+                         (rebuild-reachable? synthesized candidate s
+                                             propositions))
+                       members)
+               '()))
+         (define literal
+           (filter
+            (λ (candidate)
+              (and (record-literal-member? raw-fields candidate)
+                   (trial
+                    (λ ()
+                      (check expression candidate environment delta
+                             propositions boundaries)
+                      #t))))
+            members))
+         (define candidates
+           (remove-duplicates (append reachable literal) type-equiv?))
+         (match candidates
+           ['() (normal-path)]
+           [(list candidate)
+            (if (ormap (λ (literal-candidate)
+                         (type-equiv? candidate literal-candidate))
+                       literal)
+                (let ([result
+                       (check expression candidate environment delta
+                              propositions boundaries)])
+                  (judgment
+                   `(UnionInject ,s (#:ty ,expected ,s)
+                                 (#:ty ,candidate ,s)
+                                 ,(judgment-core result))
+                   expected (judgment-row result) expected))
+                (normal-path))]
+           [_
+            (reject s 'ambiguous-union-member expected
+                    (or synthesized expected) candidates)])]))
+
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
@@ -2460,17 +2548,7 @@
           (row-difference (judgment-row body-result) own-return))]
 
         [`(Rec (,raw-fields ...))
-         #:when (match expected
-                  [(list 'Record expected-fields)
-                   (define written
-                     (map (λ (field) (peel-lbl (first field))) raw-fields))
-                   (define omitted
-                     (omitted-optional-labels written expected-fields))
-                   (or (and (= (length written) (length expected-fields))
-                            (equal? (sort written symbol<?)
-                                    (sort (map first expected-fields) symbol<?)))
-                       (and omitted (pair? omitted)))]
-                  [_ #f])
+         #:when (record-literal-member? raw-fields expected)
          (define raw-labels (map first raw-fields))
          (define written-labels (map peel-lbl raw-labels))
          (match-define `(Record ,expected-fields) expected)
@@ -2528,6 +2606,11 @@
                            #:when (memq (first field) (or omitted '())))
                   `(,(first field) ,(second field) ,(third field) opt))))))
          (check-against-expected rec-result expected s propositions)]
+
+        [`(Rec (,raw-fields ...))
+         #:when (match expected [`(Union ,_ ,_) #t] [_ #f])
+         (check-rec-against-union expression raw-fields expected s
+                                  environment delta propositions boundaries)]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)

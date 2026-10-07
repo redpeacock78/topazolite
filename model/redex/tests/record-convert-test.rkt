@@ -139,6 +139,18 @@
         [(pair? tree) (apply + (map (lambda (t) (count-nodes head t)) tree))]
         [else 0]))
 
+(define (generated-union-indices tree)
+  (sort
+   (remove-duplicates
+    (filter values
+            (for/list ([atom (in-list (flatten tree))]
+                       #:when (symbol? atom))
+              (match (regexp-match #px"^union([0-9]+)(⟨[0-9]+⟩)?$"
+                                   (symbol->string atom))
+                [(list _ index _suffix) (string->number index)]
+                [_ #f]))))
+   <))
+
 ;; erase した Core の RecRewrite entry を外側から順に集める。
 (define (rec-rewrite-entries tree)
   (match tree
@@ -672,17 +684,8 @@
     (accepted
      `(Let (x const ,a-int) (Rec ((a imm 1)))
            (Let (u let (Union ,a-int-or-bool String)) x u))))
-  (define generated
-    (sort (remove-duplicates
-           (filter (lambda (atom)
-                     (and (symbol? atom)
-                          (regexp-match? #rx"^union[0-9]+$"
-                                         (symbol->string atom))))
-                   (flatten core)))
-          symbol<?))
-  (check-equal? generated
-                (for/list ([i (in-range (length generated))])
-                  (string->symbol (format "union~a" i)))))
+  (define generated (generated-union-indices core))
+  (check-equal? generated (range (length generated))))
 
 (define owned-a-b `(Record ((a Int imm) (o ,owned-leaf imm) (b Bool imm))))
 (define owned-a-c `(Record ((a Int imm) (o ,owned-leaf imm) (c String imm))))
@@ -743,3 +746,104 @@
        owned-a '(Own)))))
   (check-true
    (positive? (count-nodes 'Scope (erase-core (compiled-core artifact))))))
+
+(define (union-inject-members tree)
+  (cond
+    [(not (pair? tree)) '()]
+    [else
+     (append
+      (match tree
+        [`(UnionInject ,_ ,member ,_) (list member)]
+        [_ '()])
+      (append-map union-inject-members tree))]))
+
+(define optional-b-union
+  '(Union (Record ((a Int imm) (b Int imm)))
+          (Record ((a Int imm) (b Bool imm opt)))))
+
+(test-case "Union の expected の Rec リテラルは optional の成分へ Absent を補って入る"
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Apply (Fn ((argument ,optional-b-union)) Int () 0)
+              (Rec ((a imm 1)))))))
+  (check-equal?
+   (union-inject-members (erase-core (compiled-core artifact)))
+   (list '(Record ((a Int imm) (b Bool imm opt)))))
+  (void (run-compiled-execution-core artifact)))
+
+(test-case "Union の expected の Rec リテラルは optional の成分が 2 つあると曖昧で拒否する"
+  (check-equal?
+   (rejected-code
+    '(Apply (Fn ((argument (Union (Record ((a Int imm) (b Bool imm opt)))
+                                  (Record ((a Int imm) (c Int imm opt))))))
+                Int () 0)
+            (Rec ((a imm 1)))))
+   (code 'ambiguous-union-member)))
+
+(test-case "余剰の欄を持つ Rec リテラルは optional の成分を選ばず幅の成分へ入る"
+  (define width-member '(Record ((a Int imm))))
+  (define expected
+    `(Union (Record ((a Int imm) (b Bool imm opt))) ,width-member))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Apply (Fn ((argument ,expected)) Int () 0)
+              (Rec ((a imm 1) (c imm 2)))))))
+  (check-equal?
+   (union-inject-members (erase-core (compiled-core artifact)))
+   (list width-member)))
+
+(test-case "余剰の欄を持つ Rec リテラルは optional の成分しか無ければ拒否する"
+  (check-equal?
+   (rejected-code
+    '(Apply (Fn ((argument (Union (Record ((a Int imm) (b Bool imm opt)))
+                                  Int)))
+                       Int () 0)
+            (Rec ((a imm 1) (c imm 2)))))
+   (code 'type-mismatch)))
+
+(test-case "リテラル候補と作り直し候補の両方へ届く Rec は曖昧で拒否する"
+  (define rebuild-member '(Record ((a (Union Int Bool) imm))))
+  (define literal-member
+    '(Record ((a Int imm) (c Int imm) (d Bool imm opt))))
+  (define source-type '(Record ((a Int imm) (c Int imm))))
+  (check-equal? (owned-narrowing-kind source-type rebuild-member compat?) 'ok)
+  (check-false (tag-compat? source-type rebuild-member))
+  (check-false (tag-compat? source-type literal-member))
+  (check-equal?
+   (rejected-code
+    `(Apply (Fn ((argument (Union ,rebuild-member ,literal-member)))
+                Int () 0)
+            (Rec ((a imm 1) (c imm 2)))))
+   (code 'ambiguous-union-member)))
+
+(test-case "候補試行で合成に失敗する欄も expected に check できれば Union へ入る"
+  (define expected
+    '(Union (Record ((a Int imm) (option (Option Int) imm))) String))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Apply (Fn ((argument ,expected)) Int () 0)
+              (Rec ((a imm 1) (option imm (Construct some 1))))))))
+  (check-equal?
+   (union-inject-members (erase-core (compiled-core artifact)))
+   (list '(Record ((a Int imm) (option (Option Int) imm)))))
+  (void (run-compiled-execution-core artifact)))
+
+(test-case "リテラル候補の試行は union-counter を本番へ漏らさない"
+  (define source-union
+    '(Union (Record ((a Int imm) (b Bool imm)))
+            (Record ((a Int imm) (c Bool imm)))))
+  (define expected
+    '(Union (Record ((payload (Record ((a Int imm))) imm) (bad Bool imm)))
+            (Record ((payload (Record ((a Int imm))) imm) (bad Int imm)))))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Fn ((u ,source-union)) ,expected ()
+           (Rec ((payload imm u) (bad imm 1)))))))
+  (define generated
+    (generated-union-indices (erase-core (compiled-core artifact))))
+  (check-not-false (member 0 generated))
+  (check-equal? generated (range (length generated))))
