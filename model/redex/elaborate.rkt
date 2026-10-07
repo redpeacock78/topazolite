@@ -23,13 +23,18 @@
          "uniquify.rkt"
          "ucore.rkt"
          (only-in "typing.rkt"
+                  tag-upper-bound
                   tag-types-upper-bound
-                  tag-bound-failure?)
+                  tag-bound-failure?
+                  branch-types-upper-bound
+                  merge-record-types/impl)
          "validators.rkt")
 
 (provide UCore
          elab
-         mentions-return?)
+         mentions-return?
+         ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
+         row005-join)
 
 (struct judgment (core type row) #:transparent)
 (struct exn:fail:elab exn:fail (primary-span reason details) #:transparent)
@@ -50,6 +55,21 @@
     primary-span
     reason
     details)))
+
+;; c2b1 spec §4.1。欄の型を ROW-005 の規則で合流する。
+(define (row005-field-join left right)
+  (define bound (tag-upper-bound left right))
+  (cond
+    [bound bound]
+    [(or (owned-type? left) (owned-type? right)) #f]
+    [else
+     (define union (normalize-type `(Union ,left ,right)))
+     (and union (not (owned-union-member? union)) union)]))
+
+(define (row005-join types)
+  (define-values (merged _witnesses)
+    (merge-record-types/impl types row005-field-join))
+  merged)
 
 ;; §6: details を expected と found へ配る。既定は件数だけで決まり、意味を
 ;; 推測しない。producer は details の先頭へ expected、次へ actual を渡す
@@ -825,6 +845,72 @@
          (rebuild-record core (record-row-of actual*) (record-row-of expected*)
                          s propositions)]
         [else (reject s 'type-mismatch expected actual)]))
+
+    ;; c2b1 spec §5.1。枝を ROW-005 の上界へそろえ、実際に作り直した Core の型から
+    ;; Core の合流型を求める。Never の枝は Core と同じく上界から除く。
+    (define (merge-branches cores types s propositions)
+      (define live (filter (lambda (type) (not (eq? type 'Never))) types))
+      (define all-equivalent?
+        (and (pair? live)
+             (andmap (lambda (type) (type-equiv? type (first live))) live)))
+      (define record-join?
+        (and (pair? live)
+             (andmap (match-lambda [`(Record ,_) #t] [_ #f]) live)
+             (not all-equivalent?)))
+      (define target
+        (cond
+          [(null? live) 'Never]
+          [all-equivalent? (first live)]
+          [record-join?
+           (or (row005-join live)
+               (apply reject s 'type-mismatch (take live 2)))]
+          [else
+           (define union
+             (normalize-type
+              (foldr (lambda (type rest) `(Union ,type ,rest))
+                     (last live)
+                     (drop-right live 1))))
+           (when (owned-union-member? union)
+             (define first-type (first live))
+             (apply reject
+                    s 'type-mismatch
+                    (list first-type
+                          (or (findf (lambda (type)
+                                       (not (type-equiv? type first-type)))
+                                     live)
+                              first-type))))
+           union]))
+      (define rebuilt-pairs
+        (for/list ([core (in-list cores)] [type (in-list types)])
+          (cond
+            [(or (eq? type 'Never) (eq? target 'Never)) (cons core type)]
+            [else
+             (when record-join?
+               (match (narrowing-kind type target propositions)
+                 ['ok (void)]
+                 [`(drop-obligation ,_ ,_)
+                  (reject s 'owned-narrowing-needs-proof target type)]
+                 [_ (reject s 'owned-narrowing-rejected target type)]))
+             (let-values ([(core* type*)
+                           (convert core type target s propositions)])
+               (cons core* type*))])))
+      (define rebuilt-live-types
+        (filter (lambda (type) (not (eq? type 'Never)))
+                (map cdr rebuilt-pairs)))
+      (define upper
+        (if (null? rebuilt-live-types)
+            'Never
+            (branch-types-upper-bound rebuilt-live-types)))
+      (when (tag-bound-failure? upper)
+        (define first-type (first live))
+        (apply reject
+               s 'type-mismatch
+               (list first-type
+                     (or (findf (lambda (type)
+                                  (not (type-equiv? type first-type)))
+                                live)
+                         first-type))))
+      (values (map car rebuilt-pairs) upper))
 
     (define (decompose core actual expected s propositions #:entry? [entry? #f])
       (define context (initial-candidate-context propositions))
@@ -2025,45 +2111,10 @@
            (for/list ([clause (in-list clauses)])
              (match-define (list _ _ _ body branch-environment _ _ _) clause)
              (synth body branch-environment delta propositions boundaries)))
-         (define live-types
-           (filter (lambda (type) (not (eq? type 'Never)))
-                   (map judgment-type results)))
-         (define (first-mismatch)
-           (define first-type (first live-types))
-           (list first-type
-                 (or (findf (lambda (type) (not (type-equiv? type first-type)))
-                            live-types)
-                     first-type)))
-         (define candidate
-           (cond
-             [(null? live-types) 'Never]
-             [(andmap (lambda (type)
-                        (type-equiv? type (first live-types)))
-                      live-types)
-              (first live-types)]
-             [(andmap (match-lambda [`(Record ,_) #t] [_ #f]) live-types)
-              (define upper (tag-types-upper-bound live-types))
-              (when (tag-bound-failure? upper)
-                (apply reject s 'type-mismatch (first-mismatch)))
-              upper]
-             [else
-              (define union
-                (normalize-type
-                 (foldr (lambda (type rest) `(Union ,type ,rest))
-                        (last live-types)
-                        (drop-right live-types 1))))
-              (when (owned-union-member? union)
-                (apply reject s 'type-mismatch (first-mismatch)))
-              union]))
-         (define branch-cores
-           (for/list ([result (in-list results)])
-             (if (eq? candidate 'Never)
-                 (judgment-core result)
-                 (let-values ([(core _type)
-                               (convert (judgment-core result)
-                                        (judgment-type result)
-                                        candidate s propositions)])
-                   core))))
+         (define-values (branch-cores core-type)
+           (merge-branches (map judgment-core results)
+                           (map judgment-type results)
+                           s propositions))
          (judgment
           `(Eliminate ,s ,(judgment-core scrutinee-result)
                       ,(for/list ([clause (in-list clauses)]
@@ -2081,7 +2132,7 @@
                                core))
                          `(,(branch-span raw-branch) ,constructor ,core-parameters
                            -> ,wrapped-core)))
-          candidate
+          core-type
           (rows-union
            (cons (judgment-row scrutinee-result)
                  (map judgment-row results))))]

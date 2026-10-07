@@ -63,6 +63,7 @@
          config-declared-types
          tag-upper-bound
          tag-types-upper-bound
+         branch-types-upper-bound
          (struct-out tag-bound-failure)
          merge-field
          presence-binding-name
@@ -1437,18 +1438,25 @@
          [else (tag-bound-failure 'type-mismatch
                                   (list upper (first remaining)))]))]))
 
+(define (branch-types-upper-bound types)
+  (when (ormap contains-lifetime-var? types)
+    (error 'branch-types-upper-bound
+           "Λ なしの合流は寿命変数を含む型を受けない: ~s" types))
+  (branch-types-upper-bound/in-context types))
+
+(define (branch-types-upper-bound/in-context types)
+  (if (ormap record-type? types)
+      (tag-types-upper-bound types)
+      (with-lifetime-unify
+       (lambda () (tag-types-upper-bound (unify-borrow-lifetimes types))))))
+
 (define (tagged-branch-upper-bound types Λ node fail)
-  (define (bound types)
-    (match (tag-types-upper-bound types)
-      [(tag-bound-failure reason details)
-       (apply fail reason node details)]
-      [upper upper]))
   (parameterize ([merge-position
                   (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
-    (if (ormap record-type? types)
-        (bound types)
-        (with-lifetime-unify
-         (lambda () (bound (unify-borrow-lifetimes types)))))))
+    (match (branch-types-upper-bound/in-context types)
+      [(tag-bound-failure reason details)
+       (apply fail reason node details)]
+      [upper upper])))
 
 (define (tag-merge-record-types left right)
   (define-values (merged _witnesses)

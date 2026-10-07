@@ -219,13 +219,14 @@
           x)))
   (check-equal? type '(Record ((a Int imm)))))
 
-(test-case "合流できない Record の枝は type-mismatch で拒否する"
-  (check-equal?
-   (rejected-code
-    `(Let x
-         ,(if-source '(Rec ((a imm 1))) '(Rec ((a imm "s"))))
-         x))
-   (code 'type-mismatch)))
+(test-case "型の異なる欄を持つ Record の枝は Union 欄へ合流する"
+  (match-define (list _ type _)
+    (accepted
+     `(Let x
+          ,(if-source '(Rec ((a imm 1))) '(Rec ((a imm "s"))))
+          x)))
+  (check-equal? type
+                (normalize-type '(Record ((a (Union Int String) imm))))))
 
 (test-case "Owned の枝が 2 種類ある match は type-mismatch で拒否する"
   (check-equal?
