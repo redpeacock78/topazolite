@@ -109,9 +109,10 @@ Q ::= ⟨φ1, …, φn⟩                                Proof obligation の列
 t ::= τ | List | Option | Result                 型式（monotype と未適用 constructor）
 ```
 
-`Own` は、Move / Drop（§4.7）の出現を示すラベルであり、ホワイトペーパーの row にない G1 の追加である。
+`Own` は、Move / Drop（§4.7）と、`RemainderSafelyDropped` による affine leaf の cleanup の出現を示すラベルであり、ホワイトペーパーの row にない G1 の追加である。
 `Partial` と同じく Perform される op ではなく、静的な marker として働く。
 OwnershipError の源は R-Move / R-Drop に限られるため（§5.5）、row の `Own` は「その項の簡約が OwnershipError で終端しうる」ことの保守的な上界を与える。
+RSD の cleanup は `Own` を消費する項が構文上無い場合にも row へ記録する。
 C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
 
 `Mutation` は同じ記憶域を書き換える操作の出現を示す静的な marker である。
@@ -1052,9 +1053,13 @@ P にない集約資源型の名前の `move` は `move-non-owned` で拒否す�
 root `Owned` の変数と P にある集約資源型の変数は裸で参照できない（E-Var）ため、`drop x` は E-Drop からは導出できない。
 E-DropVar が Move を挿入し、place の消費を Move が担う。
 
-E-Move、E-Drop、E-DropVar は row に `Own` を記録する。
+E-Move、E-Drop、E-DropVar と、RSD の `Discharge` は row に `Own` を記録する。
 関数 body の `Own` は宣言 row の包含（E-Lambda、§4.3）を通じて NFn の潜在 row に残り、Handle が row から除くのは境界の `Return<b, τ>` だけなので、`Own` は一度入った row から消えない。
 このため、合成 row に `Own` を含まない項は、自身にも、そこから適用で到達する呼び先の body にも Move / Drop を含まない。
+RSD は内側の row が空でも除去欄の token を `Dropped` にするため、`Own` を独立に加える。
+RecRewrite の entry 本体の RSD は、本体の row に `Own` を出さず cleanup marker を記録する。
+entry 本体の row はそれ以外の effect と `Own` を含めず、cleanup marker は RecRewrite の row へ伝播する。
+entry 内の RecRewrite は同じ marker を外側へ伝え、最外の RecRewrite が入力 row に `Own` を加える。
 
 ### 4.8 TypeInfo の生成と束縛
 
@@ -1437,17 +1442,24 @@ elaboration は `Eliminate` と `UnionEliminate` の資源型の枝 binder に�
   Γ, xi : τi; Δ; Π; Ξ; Φ ⊢core ci : τ'i ! {}
   FV(ci) ⊆ {xi}                       ci に OwnedLeaf が無い
   resource-type?(τi) なら ci = Li[xi] （下記の線形条件）
+δi ∈ {quiet, rsd}（root Owned の identity entry は δi = quiet）
 ρ' は各 ℓi の欄だけを (τ'i, m'i, qi) に置き換えた行
 --------------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core RecRewrite(e, ((ℓi, xi, τi, m'i, τ'i, ci) ...))
-  : Record(ρ') ! ε
+  : Record(ρ') ! (ε ∪ (if any δi = rsd then {Own} else {}))
 ```
 
 `τi` は入力の `Record` の欄の型であり、`τ'i` は出力の欄の型である。
 型付けは entry の `τi` と入力の欄型 `σi` の一致を検査する。
 出力の行は指定した欄の型と可変性だけを置き換え、optional の印と残余の欄を保つ。
 root が `Owned` の欄は identity entry に限り、`ci` を合成も評価もせず、`xi` を束縛しない構文上の transfer とする。
-それ以外の entry は `xi : τi` の下で `ci` を `τ'i` に check し、effect row が空であることを要求する。
+この identity entry の cleanup marker は `δi = quiet` とする。
+それ以外の entry は `xi : τi` の下で `ci` を `τ'i` に check し、entry 本体の Effect row が空であることを要求する。
+型検査は本体の row と別に cleanup marker `δi` を追跡する。
+RSD が entry 本体にあるとき、その `Discharge` は内側の row を返し `δi = rsd` を記録する。
+RSD を含まない entry は `δi = quiet` である。
+このため RSD 以外の `Move`、`Drop`、または `Own` を持つ呼び先の `Apply` は entry 本体の row に残り、従来どおり拒否される。
+RSD を含む内側の RecRewrite は cleanup marker を外側の entry へ伝え、最外の RecRewrite が入力 row に `Own` を加える。
 `ci` の自由変数は `xi` だけであり、`ci` は `OwnedLeaf` を含まない。
 entry の出力 mode `m'i` は入力 mode `mi` と同じか `imm` でなければならない。
 `imm` の欄を `mut` にすることは書き込み能力を増やすため認めない。
@@ -1474,6 +1486,7 @@ entry の出力 mode `m'i` は入力 mode `mi` と同じか `imm` でなけれ�
 ```text
 L ::= □
     | (UnionInject τ τ L)
+    | (Discharge (ProofRep(O, RemainderSafelyDropped(τa, τe)), L))
     | (Rec (… (ℓ m L) …))
     | (Construct τ K c … L c …)
     | (RecRewrite L entries)
@@ -1484,6 +1497,8 @@ L ::= □
 `xi` は穴の位置にだけ現れ、`L` の兄弟の項、内側の `RecRewrite` の全 entry、`UnionEliminate` の全枝に自由に現れてはならない。
 判定では文法に従って穴を持つ子を一つ選び、それ以外の各子に `xi` が自由変数として現れないことを確かめる。
 `Let` の束縛 mode は `const` か `let` に限る。
+RSD の `Discharge` は proof の判定を変えず、線形の穴を内側へ委譲する。
+RSD は欄の値を作り直さず、除去する leaf の token を `Dropped` に移すため、token は一度だけ運ばれる。
 資源を持つ型の `UnionEliminate` の枝 binder `yj` も、それぞれの枝の `Lj` の穴にだけ現れなければならない。
 `L` の穴は選んだ経路に一つだけあり、`xi` はその穴に一度だけ現れる。
 この条件は別名による複製や、`Lam`、`RegionLam`、`Recur`、`Handle`、通常の `Eliminate`、`Apply`、`Drop`、`Proj` の内側での消失を防ぐ。

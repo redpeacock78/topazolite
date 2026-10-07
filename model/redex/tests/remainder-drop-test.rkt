@@ -231,6 +231,23 @@
                          narrowing-environment)
                 narrow))
 
+(test-case "RSD の row は内側が pure value でも Own を持つ"
+  (define source-type
+    '(Record ((kept Int imm) (owned (Option (Owned Res)) imm))))
+  (define target-type '(Record ((kept Int imm))))
+  (define source-proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,source-type ,target-type)))
+  ;; OwnLeaf は token を作るが Effect row は持たない。
+  (define source
+    `(Rec ((kept imm 7)
+          (owned imm
+                 (Construct ,option-owned some
+                            (OwnLeaf (resource 41)))))))
+  (define core `(Discharge ,source-proof ,source))
+  (check-equal? (core-type-of source '() '()) (list source-type '()))
+  (check-equal? (core-type-of core '() '()) (list target-type '(Own))))
+
 (test-case "'reject を返す narrowing は Discharge で包んでも通らない"
   (check-equal? (key-of `(Apply g (Discharge ,reject-proof
                                                ,reject-wide-value))
@@ -298,7 +315,7 @@
        (Discharge ,optional-proof
          (Rec ((owned imm (Absent ,option-owned)) (kept imm 9))))))
   (define-values (configs _rules) (trace-g2 `(cfg ,core () () () ())))
-  (check-equal? (core-type-of core '() '()) (list runtime-narrow '()))
+  (check-equal? (core-type-of core '() '()) (list runtime-narrow '(Own)))
   (check-config-trace configs '() runtime-narrow)
   (check-equal? (configuration-core (last configs))
                 '(Rec ((kept imm 9))))

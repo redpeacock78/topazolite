@@ -653,6 +653,9 @@
 (define mut-binding-types-table (make-parameter #f))
 (define resource-place-set (make-parameter (set)))
 (define resource-identity-transfers (make-parameter (set)))
+;; RecRewrite entry の内側では RSD cleanup の Own を row へ直接出さず、
+;; entry の row 制約を守ったまま RecRewrite の境界へ記録を渡す。
+(define current-entry-remainder-drop (make-parameter #f))
 (define declared-place-types (make-parameter '()))
 
 (define (with-place-shadowing names thunk)
@@ -1829,6 +1832,9 @@
      ;; region-free-params が署名の自由な RParam だけを返す。
      (define body-result
        (parameterize ([region-binder-context #f]
+                      ;; RecRewrite entry の cleanup marker はこの Lam の
+                      ;; 遅延 body には属さない。潜在 row に Own を残す。
+                      [current-entry-remainder-drop #f]
                       ;; formal の RParam はこの Lam の境界に属する。
                       ;; 内側の Lam が外側の RegionLam の束縛をそのまま
                       ;; 引き継ぐと、formal 借用の capture を見逃す。
@@ -1942,7 +1948,9 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
-    (match (parameterize ([region-binder-context #f]
+    (match (parameterize ([current-entry-remainder-drop #f]
+                          [region-binder-context #f]
+                          ;; RecurVal の本体も呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
                            (cons template (template-collectors))]
@@ -2018,7 +2026,9 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
-    (match (parameterize ([region-binder-context #f]
+    (match (parameterize ([current-entry-remainder-drop #f]
+                          [region-binder-context #f]
+                          ;; Recur の定義本体は呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
                            (cons template (template-collectors))]
@@ -2906,6 +2916,9 @@
     [(? symbol? variable)
      (and (eq? variable name) (redex-match? G2 x variable))]
     [`(UnionInject ,_ ,_ ,payload) (linear-hole? payload name)]
+    [`(Discharge ,(app peel-node
+                      `(ProofRep ,_ (RemainderSafelyDropped ,_ ,_))) ,inner)
+     (linear-hole? inner name)]
     [`(Rec ,_) (one-child-hole? (core-children term))]
     [`(Construct ,_ ,_ ,_ ...) (one-child-hole? (core-children term))]
     [`(RecRewrite ,input (,entries ...))
@@ -2936,6 +2949,31 @@
       [_ (for/or ([child (in-list (core-children term))])
            (walk child))])))
 
+(define (infer-remainder-discharge core phi base base-Λ Ψ
+                                  environment places callables fail)
+  (define origin
+    (match (peel-node core)
+      [`(Discharge ,proof-rep ,_)
+       (match (peel-node proof-rep)
+         [`(ProofRep ,o ,_) o])]))
+  (match phi
+    [`(RemainderSafelyDropped ,tau-actual ,tau-expected)
+     (unless (proof-issuer-ok? (current-R0) origin phi)
+       (fail 'discharge-proof-issuer core))
+     (match (owned-narrowing-kind tau-actual tau-expected type-compatible?)
+       ['reject
+        (fail 'owned-narrowing-rejected core tau-expected tau-actual)]
+       [_
+        (match (check-as/full base tau-actual base-Λ
+                              Ψ environment places callables fail)
+          [(list row result-psi _)
+           (define entry-drop? (current-entry-remainder-drop))
+           (if (box? entry-drop?)
+               (begin
+                 (set-box! entry-drop? #t)
+                 (list tau-expected row result-psi))
+               (list tau-expected (row-union row '(Own)) result-psi))])])]))
+
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
   (match (infer input (enter-child Λ 0) Ψ
                 environment places callables fail)
@@ -2950,6 +2988,7 @@
          (list (peel-lbl label) (peel-bind binder) (peel-ty tau)
                output-mode (peel-ty output-type) body)))
      (define replacements '())
+     (define entry-remainder-drop? #f)
      (define final-psi
        (for/fold ([current-psi input-psi])
                  ([entry (in-list normalized-entries)]
@@ -2972,45 +3011,61 @@
             (set! replacements
                   (append replacements
                           (list (list label output-type output-mode))))
-            current-psi]
+           current-psi]
            [else
             (when (and (resource-type? tau)
                        (not (linear-hole? body binder)))
               (fail 'ill-typed core))
-           (when (core-contains-ownleaf? body)
+            (when (core-contains-ownleaf? body)
               (fail 'ill-typed core))
-           (match (with-place-shadowing
-                   (list binder)
-                   (lambda ()
-                     (if (resource-type? tau)
-                         (with-identity-transfer
-                          binder
-                          (lambda ()
-                            (check-as/full body output-type
-                                           (enter-child Λ (add1 index))
-                                           current-psi
-                                           (extend '() (list binder) (list tau))
-                                           places callables fail)))
-                         (check-as/full body output-type
-                                        (enter-child Λ (add1 index))
-                                        current-psi
-                                        (extend '() (list binder) (list tau))
-                                        places callables fail))))
+            (define entry-drop? (box #f))
+            (define body-result
+              (parameterize ([current-entry-remainder-drop entry-drop?])
+                (with-place-shadowing
+                 (list binder)
+                 (lambda ()
+                   (if (resource-type? tau)
+                       (with-identity-transfer
+                        binder
+                        (lambda ()
+                          (check-as/full body output-type
+                                         (enter-child Λ (add1 index))
+                                         current-psi
+                                         (extend '() (list binder) (list tau))
+                                         places callables fail)))
+                       (check-as/full body output-type
+                                      (enter-child Λ (add1 index))
+                                      current-psi
+                                      (extend '() (list binder) (list tau))
+                                      places callables fail))))))
+            (match body-result
               [(list body-row body-psi _)
                (unless (row=? body-row '())
                  (fail 'ill-typed core))
+               (when (unbox entry-drop?)
+                 (set! entry-remainder-drop? #t))
                (set! replacements
                      (append replacements
                              (list (list label output-type output-mode))))
                body-psi])])))
-     (list `(Record
-             ,(for/list ([field (in-list row)])
-                (match (assoc (first field) replacements)
-                  [(list _ output-type output-mode)
-                   (append (list (first field) output-type output-mode)
-                           (drop field 3))]
-                  [_ field])))
-           input-row final-psi)]
+     (define result-type
+       `(Record
+         ,(for/list ([field (in-list row)])
+            (match (assoc (first field) replacements)
+              [(list _ output-type output-mode)
+               (append (list (first field) output-type output-mode)
+                       (drop field 3))]
+              [_ field]))))
+     (define outer-entry-drop? (current-entry-remainder-drop))
+     (define result-row
+       (if entry-remainder-drop?
+           (if (box? outer-entry-drop?)
+               (begin
+                 (set-box! outer-entry-drop? #t)
+                 input-row)
+               (row-union input-row '(Own)))
+           input-row))
+     (list result-type result-row final-psi)]
     [_ (fail 'ill-typed core)]))
 
 (define (infer-rec-rewrite-open core fields Λ Ψ environment places callables fail)
@@ -3053,7 +3108,9 @@
 
     [`(RegionLam (,rps ...) ,body)
      (match-define (list body-type body-row body-psi)
-       (parameterize ([region-binder-context rps]
+       (parameterize ([current-entry-remainder-drop #f]
+                      ;; RegionLam の本体は RegionApp まで遅延する。
+                      [region-binder-context rps]
                       [region-binder-renamings
                        (cons (for/hash ([fresh (in-list rps)])
                                (values (region-param-origin fresh) fresh))
@@ -3483,34 +3540,10 @@
           ;; 残余 drop は 1 段で完結する。2 段目の τ_actual は 1 段目の
           ;; τ_expected と等しく、同じ判定を繰り返すだけである。
           (fail 'discharge-remainder-chain core))
-        ;; peel-discharge は φ の列しか返さないため、origin をここで取り直す。
-        ;; propositions が空でない以上、最外の包みは ProofRep を持つ。
-        ;; peel-discharge は ProofRep に合わない包みでそこで剥がすのを止め、
-        ;; φ を積まないためである。よってこの match に既定の節は要らない。
-        (define origin
-          (match (peel-node core)
-            [`(Discharge ,proof-rep ,_)
-             (match (peel-node proof-rep)
-               [`(ProofRep ,o ,_) o])]))
-        ;; remainder-count が 1 で、かつ propositions の長さも 1 であるから、
-        ;; 第 1 要素は必ず RemainderSafelyDropped である。
-        (match (first propositions)
-          [`(RemainderSafelyDropped ,tau-actual ,tau-expected)
-           (unless (proof-issuer-ok? (current-R0) origin (first propositions))
-             (fail 'discharge-proof-issuer core))
-           (match (owned-narrowing-kind tau-actual tau-expected
-                                        type-compatible?)
-             ['reject
-              (fail 'owned-narrowing-rejected core tau-expected tau-actual)]
-             [_
-              ;; RemainderSafelyDropped の φ は、包みの内側の項を
-              ;; τ_actual として検査し、外側へは τ_expected を返す。
-              ;; Discharge 自身が narrowing を合成するため、判定点へ
-              ;; proof の状態を渡す必要はない。
-              (match (check-as/full base tau-actual base-Λ
-                                    Ψ environment places callables fail)
-                [(list row result-psi _)
-                 (list tau-expected row result-psi)])])])])]
+        ;; remainder-count が 1 で propositions も 1 要素なので、ここでは
+        ;; RemainderSafelyDropped の単一義務を処理する。
+        (infer-remainder-discharge core (first propositions) base base-Λ
+                                   Ψ environment places callables fail)])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound Λ

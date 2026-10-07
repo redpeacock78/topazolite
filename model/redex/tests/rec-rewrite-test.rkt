@@ -35,6 +35,12 @@
 (define (config-core config)
   (match config [`(cfg ,core ,_heap ,_states ,_tokens ,_trace) core]))
 
+(define (contains-rsd? core)
+  (match core
+    [`(Discharge (ProofRep ,_ (RemainderSafelyDropped ,_ ,_)) ,_) #t]
+    [(? list? parts) (ormap contains-rsd? parts)]
+    [_ #f]))
+
 (define (g2-trace initial)
   (let loop ([current initial] [configs (list initial)] [rules '()] [fuel 40])
     (when (zero? fuel)
@@ -77,8 +83,11 @@
      (append (collect-tokens core)
              (append-map (lambda (entry) (collect-tokens (second entry))) heap)
              (append-map (lambda (event)
-                           (match event [`(obs ,value) (collect-tokens value)] [_ '()]))
+                         (match event [`(obs ,value) (collect-tokens value)] [_ '()]))
                          trace))]))
+
+(define (config-token-states config)
+  (match config [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
 
 (define (machine-result core)
   (match (run-g2 (inject-g2m core) 100)
@@ -649,6 +658,162 @@
                  ((a x (Option (Owned Int)) imm (Option (Owned Int))
                    x))))
    '(Record ((a (Option (Owned Int)) imm opt)))))
+
+(test-case "RSD は資源型の entry の線形の穴を保ち RecRewrite の row に Own を出す"
+  (define option-owned '(Option (Owned Res)))
+  (define wide
+    (normalize-type `(Record ((kept Int imm) (owned ,option-owned imm)))))
+  (define narrow '(Record ((kept Int imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wide ,narrow)))
+  (define input-row `((box ,wide imm)))
+  (define output-row `((box ,narrow imm)))
+  (define direct-input
+    `(Rec ((box imm
+             (Rec ((kept imm 7)
+                   (owned imm
+                          (Construct (Option (Owned Res)) some
+                                     (OwnLeaf (resource 23))))))))))
+  (define direct-core
+    `(RecRewrite ,direct-input
+      ((box x ,wide imm ,narrow (Discharge ,proof x)))))
+  (define single-use-output
+    (normalize-type `(Record ((kept ,narrow imm) (again Unit imm)))))
+  (define single-use-core
+    `(RecRewrite ,direct-input
+      ((box x ,wide imm ,single-use-output
+        (Rec ((kept imm (Discharge ,proof x)) (again imm unit)))))))
+  (define duplicate-use-output
+    (normalize-type `(Record ((kept ,narrow imm) (again ,narrow imm)))))
+  (define duplicated-core
+    `(RecRewrite ,direct-input
+      ((box x ,wide imm ,duplicate-use-output
+        (Rec ((kept imm (Discharge ,proof x))
+              (again imm (Discharge ,proof x))))))))
+  (define direct-type (type-of direct-core))
+  (check-equal? direct-type (record-parameter-type output-row))
+  (check-equal? (row-of direct-core) '(Own))
+  (check-equal? (key-of single-use-core) 'ok
+                "Rec の同じ形で RSD を一度だけ使う entry は受理する")
+  (check-equal? (key-of duplicated-core) 'ill-typed
+                "型の合う RecRewrite でも RSD の内側で entry binder を二度使う形は拒否する")
+
+  (define-values (configs rules)
+    (apply values (g2-trace `(cfg ,direct-core () () () ()))))
+  (for ([config (in-list configs)] [index (in-naturals)])
+    (check-true
+     (config-ok? config '() direct-type
+                 (if (contains-rsd? (config-core config)) '(Own) '()))
+     (format "RSD entry intermediate config ~a is typed: ~s" index config)))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (define open-index (index-of rules 'R-RecRewrite-Open))
+  (check-not-false open-index)
+  (define input-tokens
+    (sort (map second (config-tokens (list-ref configs (add1 open-index)))) <))
+  (define output-tokens (sort (map second (config-tokens (last configs))) <))
+  (define dropped-tokens
+    (sort (for/list ([entry (in-list (config-token-states (last configs)))])
+            (second (first entry))) <))
+  (check-equal? input-tokens '(0))
+  (check-equal? output-tokens '())
+  (check-equal? dropped-tokens '(0))
+  (check-equal? input-tokens (append output-tokens dropped-tokens))
+
+  (define nested-wide (normalize-type `(Record ((nested ,wide imm)))))
+  (define nested-narrow (normalize-type `(Record ((nested ,narrow imm)))))
+  (define nested-input
+    `(Rec ((box imm
+             (Rec ((nested imm
+                     (Rec ((kept imm 7)
+                           (owned imm
+                                  (Construct (Option (Owned Res)) some
+                                             (OwnLeaf (resource 24)))))))))))))
+  (define nested-core
+    `(RecRewrite ,nested-input
+      ((box outer ,nested-wide imm ,nested-narrow
+        (RecRewrite outer
+          ((nested inner ,wide imm ,narrow
+            (Discharge ,proof inner))))))))
+  (check-equal? (row-of nested-core) '(Own)
+                "nested entry RSD propagates Own to the outermost RecRewrite"))
+
+(test-case "RSD の row 緩和は RSD の無い effectful entry に広がらない"
+  (define option-owned '(Option (Owned Res)))
+  (define wide
+    (normalize-type `(Record ((kept Int imm) (owned ,option-owned imm)))))
+  (define input
+    `(Rec ((a imm
+            (Rec ((kept imm 7)
+                  (owned imm
+                         (Construct ,option-owned some
+                                    (OwnLeaf (resource 1))))))))))
+  (define places '((0 Res)))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wide
+                 (Record ((kept Int imm))))))
+  (define with-rsd-move
+    `(RecRewrite
+      ,input
+      ((a x ,wide imm
+        (Record ((dropped Unit imm)
+                 (rewritten (Record ((kept Int imm))) imm)) )
+        (Rec ((dropped imm (Drop (Move 0)))
+              (rewritten imm (Discharge ,proof x))))))))
+  (define with-rsd-value
+    `(RecRewrite
+      ,input
+      ((a x ,wide imm
+        (Record ((dropped Unit imm)
+                 (rewritten (Record ((kept Int imm))) imm)))
+        (Rec ((dropped imm unit)
+              (rewritten imm (Discharge ,proof x))))))))
+  (define (row-rejection-at-rewrite? core)
+    (match (type-of/raw core places '() '())
+      [(list 'fail 'ill-typed node _details ...)
+       (equal? node core)]
+      [_ #f]))
+  (check-true (row-rejection-at-rewrite? with-rsd-move)
+              "RSD と sibling Move/Drop が row check で拒否される")
+  (check-equal? (key-of with-rsd-value) 'ok
+                "同じ entry 形で sibling が pure value なら受理する")
+  (define without-rsd
+    `(RecRewrite
+      ,input
+      ((a x ,wide imm (Record ((dropped Unit imm) (payload ,wide imm)))
+        (Rec ((dropped imm (Drop (Move 0))) (payload imm x)))))))
+  (check-true (row-rejection-at-rewrite? without-rsd)
+              "RSD を含まない entry の非空 row も row check で拒否される"))
+
+(test-case "entry marker は遅延される Lam body の RSD row を隠さない"
+  (define option-owned '(Option (Owned Res)))
+  (define wide
+    (normalize-type `(Record ((kept Int imm) (owned ,option-owned imm opt)))))
+  (define narrow '(Record ((kept Int imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wide ,narrow)))
+  (define function-type `(NFn () ,narrow () () () User))
+  (define function-body
+    `(Discharge ,proof
+       (Rec ((kept imm 7)
+             (owned imm (Absent ,option-owned))))))
+  (define input
+    `(Rec ((box imm
+             (Rec ((kept imm 7)
+                   (owned imm (Absent ,option-owned))))))))
+  (define entry-output
+    `(Record ((converted ,narrow imm) (delayed ,function-type imm))))
+  (define entry-body
+    `(Rec ((converted imm (Discharge ,proof x))
+           (delayed imm (Lam User delayed-rsd () ,function-body)))))
+  (define core
+    `(RecRewrite ,input
+      ((box x ,wide imm ,entry-output ,entry-body))))
+  (define callables `((delayed-rsd ,function-type)))
+  (check-equal? (key-of core callables) 'undeclared-function-effect
+                "Lam body の RSD は callable の latent row に Own を要求する"))
 
 (test-case "資源型の判定は ForallRegion と data schema を辿り、NFn を除く"
   (check-true (resource-type? '(ForallRegion (r) (Option (Owned Int)))))
