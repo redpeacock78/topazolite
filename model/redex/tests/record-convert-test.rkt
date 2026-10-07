@@ -13,6 +13,7 @@
          "../lowering.rkt"
          "../machine.rkt"
          "../origins.rkt"
+         "../ownership.rkt"
          "../pr-machine.rkt"
          "../borrow.rkt"
          "../compat.rkt"
@@ -151,6 +152,11 @@
 
 (define int-or-bool (normalize-type '(Union Int Bool)))
 
+;; 実行する作り直し試験の Owned leaf は Option の中に置く。
+(define owned-leaf '(Option (Owned Res)))
+(define owned-leaf-value
+  '(Construct some (Types (Owned Res)) (Apply acquire 13)))
+
 (test-case "check の位置で Record の欄を inject で作り直す"
   (match-define (list core _ _)
     (accepted
@@ -277,3 +283,77 @@
           (Apply (Fn ((r (Record ((a ,int-or-bool imm))))) Int () 0) union0))))
   (for ([entry (in-list (rec-rewrite-entries core))])
     (check-not-equal? (second entry) 'union0)))
+
+(define a-int '(Record ((a Int imm))))
+(define a-int-or-bool `(Record ((a ,int-or-bool imm))))
+(define a-int-or-string '(Record ((a (Union Int String) imm))))
+
+(test-case "tag-compat? の候補が無いとき作り直しで届く成分へ inject する"
+  (define target `(Union ,a-int-or-bool String))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Let (x const ,a-int) (Rec ((a imm 1)))
+            (Let (u let ,target) x u)))))
+  (check-equal? (compiled-type artifact) (normalize-type target))
+  (check-equal? (count-nodes 'RecRewrite (erase-core (compiled-core artifact))) 1)
+  (void (run-compiled-execution-core artifact)))
+
+(test-case "作り直しで届く成分が 2 つなら ambiguous-union-member"
+  (check-equal?
+   (rejected-code
+    `(Let (x const ,a-int) (Rec ((a imm 1)))
+          (Let (u let (Union ,a-int-or-bool ,a-int-or-string)) x u)))
+   (code 'ambiguous-union-member)))
+
+(test-case "tag-compat? で受理される成分を作り直しの成分より先に選ぶ"
+  (define wide '(Record ((a Int imm) (b Int imm))))
+  (define rebuild-only
+    `(Record ((a ,int-or-bool imm) (b Int imm))))
+  ;; 第一段の候補集合が a-int だけであることを固定する。
+  (check-true (tag-compat? wide a-int))
+  (check-false (tag-compat? wide rebuild-only))
+  (match-define (list core _ _)
+    (accepted
+     `(Let (x const ,wide) (Rec ((a imm 1) (b imm 2)))
+           (Let (u let (Union ,a-int ,rebuild-only)) x u))))
+  (check-equal? (count-nodes 'RecRewrite core) 0))
+
+(test-case "OWN-004 で拒否される成分は作り直しの候補に数えない"
+  (define source `(Record ((a Int imm) (o ,owned-leaf imm))))
+  (define keeps-owned
+    `(Record ((a (Union Int String) imm) (o ,owned-leaf imm))))
+  (define target `(Union ,a-int-or-bool ,keeps-owned))
+  (check-equal? (owned-narrowing-kind source a-int-or-bool compat?)
+                `(drop-obligation ,source ,a-int-or-bool))
+  (check-equal? (owned-narrowing-kind source keeps-owned compat?) 'ok)
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function source
+                      `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+                      `(Let (u let ,target) (Move argument) u)
+                      (normalize-type target) '(Own)))))
+  (check-true
+   (for/or ([entry (in-list (rec-rewrite-entries
+                             (erase-core (compiled-core artifact))))])
+     (equal? (fifth entry) '(Union Int String))))
+  (void (run-compiled-execution-core artifact)))
+
+(test-case "作り直しの試行は生名の counter を進めない"
+  ;; 試行が counter を戻さないと、同じ変換を本番で行うとき欠番が出る。
+  (match-define (list core _ _)
+    (accepted
+     `(Let (x const ,a-int) (Rec ((a imm 1)))
+           (Let (u let (Union ,a-int-or-bool String)) x u))))
+  (define generated
+    (sort (remove-duplicates
+           (filter (lambda (atom)
+                     (and (symbol? atom)
+                          (regexp-match? #rx"^union[0-9]+$"
+                                         (symbol->string atom))))
+                   (flatten core)))
+          symbol<?))
+  (check-equal? generated
+                (for/list ([i (in-range (length generated))])
+                  (string->symbol (format "union~a" i)))))

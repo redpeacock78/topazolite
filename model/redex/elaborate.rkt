@@ -738,7 +738,26 @@
         (set! union-counter (add1 union-counter))
         (if (set-member? union-reserved candidate) (next) candidate)))
 
-    ;; P2m2b spec §3.2。完全一致を優先し、無ければ tag-compat? で一意に選ぶ。
+    ;; 候補への再構築を試す間に生名を消費しても、本番の変換名へ影響
+    ;; させない。試行で使う項は破棄するため、変換が参照を埋め込める
+    ;; span 付き Core 変数を渡す。
+    (define (rebuild-reachable? actual member s propositions)
+      (define saved-union union-counter)
+      (define saved-owned owned-counter)
+      (dynamic-wind
+       void
+       (lambda ()
+         (and (eq? (narrowing-kind actual member propositions) 'ok)
+              (with-handlers ([exn:fail:elab? (lambda (_) #f)])
+                (define-values (_probe-core _probe-type)
+                  (convert `(#:var rebuild-probe ,s) actual member s
+                           propositions))
+                #t)))
+       (lambda ()
+         (set! union-counter saved-union)
+         (set! owned-counter saved-owned))))
+
+    ;; P2m2b spec §3.2。完全一致、tag-compat?、作り直し可能性の順で候補を選ぶ。
     (define (choose-union-member actual expected s propositions
                                  #:no-member-key [no-member-key 'type-mismatch])
       (define members (union-members expected))
@@ -755,7 +774,17 @@
                    members))
          (match candidates
            [(list member) member]
-           ['() (reject s no-member-key expected actual)]
+           ['()
+            ;; P2m2c spec §5.1 の第 2 段。OWN-004 の narrowing が許し、
+            ;; convert が成功する成分だけを候補にする。
+            (define reachable
+              (filter (lambda (member)
+                        (rebuild-reachable? actual member s propositions))
+                      members))
+            (match reachable
+              [(list member) member]
+              ['() (reject s no-member-key expected actual)]
+              [_ (reject s 'ambiguous-union-member expected actual reachable)])]
            [_ (reject s 'ambiguous-union-member expected actual candidates)])]))
 
     (define (union-inject core actual expected s propositions
@@ -763,7 +792,14 @@
       (define member
         (choose-union-member actual expected s propositions
                              #:no-member-key no-member-key))
-      `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,core))
+      (define context (initial-candidate-context propositions))
+      (define payload
+        (if (tag-compat? actual member context)
+            core
+            (let-values ([(converted _type)
+                          (convert core actual member s propositions)])
+              converted)))
+      `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
     (define (record-row-of type)
       (match type [`(Record ,row) row] [_ #f]))
