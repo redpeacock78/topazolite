@@ -185,7 +185,7 @@
 
 ;; spec §4.6。置換を行わない規則。名前が増えたときに黙って取りこぼさないよう
 ;; 明示的に挙げ、どちらにも無い名前は unknown として検査を失敗させる。
-;; 二つの集合の和は -->g2/rules の 63 名と一致する。Step の回帰がこれを検査する。
+;; 二つの集合の和は -->g2/rules の 64 名と一致する。Step の回帰がこれを検査する。
 (define non-substituting-rule-names
   (seteq 'R-Delta 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
          'R-Drop 'R-Borrow 'R-BorrowError
@@ -196,7 +196,8 @@
          'R-AddressOf 'R-PtrOffset 'R-RawLoad 'R-RawStore
          'R-FromRawPtrConst 'R-FromRawPtrMut 'R-UnsafeExit
          'R-Move 'R-MoveError 'R-ScopeValue 'R-ScopeError 'R-ScopeAbort
-         'R-RecurBind 'R-RegionApp 'R-Yield 'R-Suspend 'R-Discharge 'R-OwnLeaf
+         'R-RecurBind 'R-RegionApp 'R-Yield 'R-Suspend 'R-Discharge
+         'R-DischargeRemainder 'R-OwnLeaf
          'R-CurryVal 'R-ApplyCurry
          'R-HandleValue 'R-HandleSkip 'R-HandleError
          'R-RetireValue 'R-RetireError 'R-RetirePerform))

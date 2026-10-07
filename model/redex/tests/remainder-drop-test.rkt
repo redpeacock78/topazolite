@@ -411,8 +411,7 @@
   (define start
     `(cfg (Discharge ,runtime-proof ,(runtime-source 35)) () () () ()))
   (define names (map first (raw-steps-g2/named start)))
-  (check-not-false names)
-  (check-false (member 'R-Discharge names)))
+  (check-equal? names '(R-Delta)))
 
 (test-case "RSD の内側の資源型 Let は値を作ってから RSD で drop する"
   (define inner
