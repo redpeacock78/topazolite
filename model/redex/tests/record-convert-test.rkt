@@ -163,6 +163,261 @@
 (define owned-leaf-value
   '(Construct some (Types (Owned Res)) (Apply acquire 13)))
 
+(define (bool-eliminate then-branch else-branch)
+  `(Eliminate (Construct true (Types))
+              ((true () -> ,then-branch)
+               (false () -> ,else-branch))))
+
+(define (apply-no-args return-type body)
+  `(Apply (Fn () ,return-type () ,body)))
+
+(define (union-record-source type value body return-type row)
+  (apply-function type value body return-type row))
+
+(define record-a-int '(Record ((a Int imm))))
+(define record-a-wide
+  '(Record ((a (Union Int (Union String Bool)) imm))))
+
+(define (record-with-a-b b-type)
+  `(Record ((a Int imm) (b ,b-type imm))))
+
+(define residual-diff-eliminate
+  (bool-eliminate
+   '(Rec ((a imm 1) (b imm 2)))
+   '(Rec ((a imm 1) (b imm (Construct true (Types)))))))
+
+(define (record-from-eliminate expression)
+  `(Rec ((boxed imm ,expression))))
+
+(define (decompose-record-function member-types expected result-type)
+  (define source-type (normalize-type `(Union ,@member-types)))
+  (define source-resource? (resource-type? source-type))
+  (define result-resource? (resource-type? result-type))
+  `(Fn ((argument ,source-type)) ,result-type
+       ,(if result-resource? '(Own) '())
+       (Let (r let ,expected)
+            ,(if source-resource? '(Move argument) 'argument)
+            ,(if result-resource? '(Move r) 'r))))
+
+(test-case "check の Eliminate は枝の残余を const の拒否へ伝える"
+  (check-equal?
+   (rejected-code
+    `(Let (r const ,record-a-int) ,residual-diff-eliminate 0))
+   (code 'const-record-residual)))
+
+(test-case "check の Eliminate は残余を join し let から読める"
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Let (r let ,record-a-int) ,residual-diff-eliminate (Proj r b)))))
+  (check-equal? (compiled-type artifact) (normalize-type '(Union Int Bool))))
+
+(test-case "Record 欄内の check Eliminate は異なる残余を ROW-005 で join する"
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     `(Let (r const (Record ((boxed ,record-a-int imm))))
+        ,(record-from-eliminate residual-diff-eliminate)
+        0)))))
+
+(test-case "注釈付き Let の check Eliminate は異なる残余を ROW-005 で join する"
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     `(Let (r let ,record-a-int) ,residual-diff-eliminate 0)))))
+
+(test-case "Record 欄内の Union-valued Eliminate は各段の残余を join する"
+  (define left-c '(Record ((a Int imm) (b Int imm) (c Bool imm))))
+  (define left-d '(Record ((a Int imm) (b Int imm) (d Bool imm))))
+  (define right-c '(Record ((a Int imm) (b String imm) (c Bool imm))))
+  (define right-d '(Record ((a Int imm) (b String imm) (d Bool imm))))
+  (define left-union (normalize-type `(Union ,left-c ,left-d)))
+  (define right-union (normalize-type `(Union ,right-c ,right-d)))
+  (define (union-value union-type record-type)
+    (apply-no-args union-type
+                   (match record-type
+                     [`(Record ,row)
+                      `(Rec ,(for/list ([field (in-list row)])
+                               (match field
+                                 [`(a Int imm) '(a imm 1)]
+                                 [`(b Int imm) '(b imm 2)]
+                                 [`(b String imm) '(b imm "s")]
+                                 [`(c Bool imm) '(c imm (Construct true (Types)))]
+                                 [`(d Bool imm) '(d imm (Construct false (Types)))])))])))
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     `(Let (r const (Record ((boxed ,record-a-int imm))))
+        (Rec ((boxed imm
+               ,(bool-eliminate
+                 (union-value left-union left-c)
+                 (union-value right-union right-c)))))
+        0)))))
+
+(test-case "UnionEliminate は異なる残余を join して let へ渡す"
+  (define left (record-with-a-b 'Int))
+  (define right (record-with-a-b 'String))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (define result-type
+    (row005-join
+     (list left right)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (union-record-source
+       source-type
+       '(Rec ((a imm 1) (b imm 2)))
+       `(Let (r let ,record-a-int) argument (Proj r b))
+       '(Union Int String) '()))))
+  (check-equal? result-type
+                '(Record ((a Int imm) (b (Union Int String) imm))))
+  (check-equal? (compiled-type artifact) '(Union Int String)))
+
+(test-case "check Eliminate は tag 互換な狭い Union の Core 型を保つ"
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      `(Apply
+        (Fn ((flag Bool) (left (Union Int String))
+             (right (Union Int String)))
+            ,record-a-wide ()
+            (Rec ((a imm
+                   ,(bool-eliminate 'left 'right)))))
+        (Construct true (Types)) 1 "s"))))
+  (define core (erase-core (compiled-core artifact)))
+  (define (find-eliminate term)
+    (cond
+      [(and (pair? term) (eq? (car term) 'Eliminate)) term]
+      [(pair? term)
+       (for/or ([child (in-list term)]) (find-eliminate child))]
+      [else #f]))
+  (define (find-lam term)
+    (match term
+      [`(Lam ,_ ,_ (,parameters ...) ,body)
+       (define eliminate (find-eliminate body))
+       (and eliminate (list parameters eliminate))]
+      [(? pair?)
+       (for/or ([child (in-list term)]) (find-lam child))]
+      [_ #f]))
+  (match (find-lam core)
+    [(list parameters eliminate)
+     (define names
+       (for/list ([parameter (in-list parameters)])
+         (match parameter
+           [`(#:bind ,name ,_) name]
+           [(? symbol? name) name])))
+     (check-equal?
+      (type-of
+       eliminate '()
+       (map list names '(Bool (Union Int String) (Union Int String))))
+      '(Union Int String))]
+    [_ (fail-check (format "Eliminate を持つ Lam が無い: ~s" core))]))
+
+(define (owned-residual-record extra-type)
+  `(Record ((a Int imm) (o ,owned-leaf imm) (b ,extra-type imm))))
+
+(define (owned-residual-value extra-type extra-value)
+  `(Rec ((a imm 1) (o imm ,owned-leaf-value) (b imm ,extra-value))))
+
+(define (owned-residual-program binding-mode source-type source-value result-type)
+  (union-record-source
+   source-type source-value
+   `(Let (r ,binding-mode ,record-a-int) (Move argument)
+      ,(if (eq? binding-mode 'let) '(Move r) 0))
+   result-type '(Own)))
+
+(test-case "共有 Owned 残余の Union 分解を let で保持して実行する"
+  (define left (owned-residual-record 'Int))
+  (define right (owned-residual-record 'Bool))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (define result-type (row005-join (list left right)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (owned-residual-program
+       'let source-type (owned-residual-value 'Int 2) result-type))))
+  (define-values (final-config _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (match final-config
+    [`(cfg ,value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (length (collect-tokens value)) 1)
+     (check-equal? (length tokens) 1)
+     (check-equal? (map second tokens) '(Available))]))
+
+(test-case "同名 Owned 残余の payload を両方向から join する"
+  (define left
+    '(Record ((a Int imm) (o (Owned (Union Int String)) imm))))
+  (define right
+    '(Record ((a Int imm) (o (Owned (Union Bool String)) imm))))
+  (define expected '(Record ((a Int imm))))
+  (define upper
+    (normalize-type
+     '(Record ((a Int imm)
+               (o (Owned (Union Int (Union Bool String))) imm)))))
+  (for ([members (in-list (list (list left right) (list right left)))])
+    (check-equal? (row005-join members) upper)
+    (void
+     (check-compiled-source-core
+      (elaborate-compiled
+       (decompose-record-function members expected upper))))))
+
+(test-case "同名 Owned 残余と非資源の残余は join できない"
+  (define left
+    '(Record ((a Int imm) (o (Owned Res) imm))))
+  (define right '(Record ((a Int imm) (o Int imm))))
+  (check-equal?
+   (rejected-code
+    `(Fn ((argument ,(normalize-type `(Union ,left ,right)))) Int (Own)
+         (Let (r let ,record-a-int) (Move argument) 0)))
+   (code 'type-mismatch)))
+
+(test-case "必須欄と optional 欄の分解は optional を保つ"
+  (define required '(Record ((a Int imm) (b Int imm))))
+  (define optional '(Record ((a Int imm) (b Bool imm opt))))
+  (define expected '(Record ((a Int imm))))
+  (define upper
+    (normalize-type
+     '(Record ((a Int imm) (b (Union Int Bool) imm opt)))))
+  (check-equal? (row005-join (list required optional)) upper)
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     (decompose-record-function (list required optional) expected upper)))))
+
+(test-case "mut と imm の同名欄は imm へ join して作り直せる"
+  (define mutable '(Record ((a Int imm) (b Int mut))))
+  (define immutable '(Record ((a Int imm) (b Bool imm))))
+  (define expected '(Record ((a Int imm))))
+  (define upper
+    (normalize-type '(Record ((a Int imm) (b (Union Int Bool) imm)))))
+  (check-equal? (row005-join (list mutable immutable)) upper)
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     (decompose-record-function (list mutable immutable) expected upper)))))
+
+(test-case "片方の成分だけにある Owned 残余は needs-proof で拒否する"
+  (define left (owned-residual-record 'Int))
+  (define right '(Record ((a Int imm) (b Bool imm))))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (check-equal?
+   (rejected-code
+    (owned-residual-program
+     'let source-type (owned-residual-value 'Int 2)
+     (row005-join (list left right))))
+   (code 'owned-narrowing-needs-proof)))
+
+(test-case "共有 Owned 残余を const で束縛すると残余で拒否する"
+  (define left (owned-residual-record 'Int))
+  (define right (owned-residual-record 'Bool))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (check-equal?
+   (rejected-code
+    (owned-residual-program
+     'const source-type (owned-residual-value 'Int 2)
+     (row005-join (list left right))))
+   (code 'const-record-residual)))
+
 (test-case "check の位置の Record リテラルを const で受けると残余で拒否する"
   ;; 余剰欄があるため既存の record-literal-checkable? は合成経路へ進み、
   ;; この const-record-residual の拒否は Task 4 より前から成立している。
@@ -175,11 +430,12 @@
 
 (test-case "check の位置の Record リテラルを let で受けると残余を読める"
   ;; 本体で残余の欄 b を読めることで、束縛型が残余を含むことを確かめる。
-  (check-compiled-source-core
-   (elaborate-compiled
-    '(Let (r let (Record ((a Int imm))))
-       (Rec ((a imm 1) (b imm 2)))
-       (Proj r b)))))
+  (void
+   (check-compiled-source-core
+    (elaborate-compiled
+     '(Let (r let (Record ((a Int imm))))
+        (Rec ((a imm 1) (b imm 2)))
+        (Proj r b))))))
 
 (test-case "束縛の位置の inject は Owned の残余の損失を拒否する"
   (define source `(Record ((a Int imm) (o ,owned-leaf imm))))

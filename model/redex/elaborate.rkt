@@ -957,43 +957,60 @@
               ,(if move? `(Move ,s ,ref) ref)))
       (match expected
         [`(Record ,expected-row)
-         ;; Record は branch ごとの let で残余を保ち、型の上界で合流する。
-         (define record-members
-           (filter (lambda (member) (not (eq? member 'Never)))
-                   (union-members actual)))
+         ;; 各枝を expected の欄型を持つ W_k に揃えてから上界を取る。
+         ;; 成分の元の型ではなく W_k の型を合流するため、ここで同じ OWN-004 と convert の順序を行う。
+         (define (record-wrapped-type member)
+           (unless (tag-compat? member expected context)
+             (reject s 'type-mismatch expected actual))
+           (define member-row
+             (match member
+               [`(Record ,row) row]
+               [_ (reject s 'type-mismatch expected actual)]))
+           (define residual (field-row-residual member-row expected-row))
+           `(Record ,(append expected-row residual)))
+         (define branch-types
+           (for/list ([branch (in-list branches)])
+             (match-define (list member _name _alias) branch)
+             (if (eq? member 'Never)
+                 'Never
+                 (record-wrapped-type member))))
          (define wrapped-types
-           (for/list ([member (in-list record-members)])
-             (unless (tag-compat? member expected context)
-               (reject s 'type-mismatch expected actual))
-             (define member-row
-               (match member
-                 [`(Record ,row) row]
-                 [_ (reject s 'type-mismatch expected actual)]))
-             (define residual (field-row-residual member-row expected-row))
-             (unless (owned-free? `(Record ,residual))
-               (reject s 'type-mismatch expected actual))
-             `(Record ,(append expected-row residual))))
+           (filter (lambda (type) (not (eq? type 'Never))) branch-types))
          (define upper
            (if (null? wrapped-types)
                'Never
-               (let ([upper (tag-types-upper-bound wrapped-types)])
-                 (when (tag-bound-failure? upper)
-                   (reject s 'type-mismatch expected actual))
-                 upper)))
+               (or (row005-join wrapped-types)
+                   (reject s 'type-mismatch expected actual))))
          (values
           (eliminate
-           (for/list ([branch (in-list branches)])
+           (for/list ([branch (in-list branches)]
+                      [wrapped-type (in-list branch-types)])
              (match-define (list member name alias) branch)
              (define ref (reference (or alias name)))
              (define consumed-ref
                (if (and alias (not entry?)) `(Move ,s ,ref) (reference name)))
              (define converted
-               (if (or (eq? member 'Never)
-                       (type-equiv? member expected))
+               (if (eq? member 'Never)
                    consumed-ref
-                   (wrap-reference 'let expected consumed-ref
-                                   (and (not entry?)
-                                        (resource-type? expected)))))
+                   (let* ([_narrowing-check
+                           (match (narrowing-kind wrapped-type upper propositions)
+                             ['ok (void)]
+                             [`(drop-obligation ,_ ,_)
+                              (reject s 'owned-narrowing-needs-proof upper
+                                      wrapped-type)]
+                             [_ (reject s 'owned-narrowing-rejected upper
+                                        wrapped-type)])]
+                          [wrapped
+                           (wrap-reference
+                            'let expected consumed-ref
+                            (and (not entry?)
+                                 (resource-type? wrapped-type)))])
+                     (if (type-equiv? wrapped-type upper)
+                         wrapped
+                         (let-values ([(rebuilt _type)
+                                       (convert wrapped wrapped-type upper s
+                                                propositions #:entry? entry?)])
+                           rebuilt)))))
              (resource-branch-body member name alias converted)))
           upper)]
         [_
@@ -1322,14 +1339,21 @@
              (check body expected branch-environment
                     delta propositions boundaries))
            (set! reversed-branch-results
-                 (cons (list (judgment-core result) (judgment-row result))
+                 (cons (list (judgment-core result)
+                             (judgment-row result)
+                             (judgment-core-type result))
                        reversed-branch-results)))))
       (define branch-results (reverse reversed-branch-results))
+      (define-values (rebuilt-branch-cores core-type)
+        (merge-branches (map first branch-results)
+                        (map third branch-results)
+                        eliminate-span propositions))
       (judgment
        `(Eliminate ,eliminate-span
                    ,(judgment-core scrutinee-result)
                    ,(for/list ([clause (in-list clauses)]
-                               [result (in-list branch-results)])
+                               [result (in-list branch-results)]
+                               [branch-core (in-list rebuilt-branch-cores)])
                       (match-define
                         (list raw-branch constructor raw-parameters _ _ field-types
                               resource-names core-parameters)
@@ -1339,14 +1363,15 @@
                             `(Scope ,eliminate-span ()
                                     ,(wrap-resource-lets
                                       raw-parameters field-types resource-names
-                                      (first result)))
-                            (first result)))
+                                      branch-core))
+                            branch-core))
                       `(,(branch-span raw-branch) ,constructor ,core-parameters
                         -> ,core)))
        expected
        (rows-union
         (cons (judgment-row scrutinee-result)
-              (map second branch-results)))))
+              (map second branch-results)))
+       core-type))
 
     ;; SUR-012。UCore+ の型欄が省略の標識かを返す。
     (define (inferred? type)

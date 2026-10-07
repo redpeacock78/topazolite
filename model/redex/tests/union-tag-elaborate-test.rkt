@@ -104,14 +104,15 @@
   (check-equal? type '(Record ((a Int imm) (b Int imm))))
   (check-equal? (count-nodes 'UnionEliminate core) 1))
 
-(test-case "共通の残余が上界で合流できない Union は type-mismatch で拒否する"
-  (check-equal?
-   (rejected-code
-    '(Let (u const (Union (Record ((a Int imm) (b Int imm)))
-                          (Record ((a Int imm) (b String imm)))))
-          (Rec ((a imm 1) (b imm 2)))
-          (Let (r let (Record ((a Int imm)))) u r)))
-   (code 'type-mismatch)))
+(test-case "異なる共通残余を持つ Union は ROW-005 の上界へ合流する"
+  (match-define (list _ type _)
+    (accepted
+     '(Let (u const (Union (Record ((a Int imm) (b Int imm)))
+                           (Record ((a Int imm) (b String imm)))))
+           (Rec ((a imm 1) (b imm 2)))
+           (Let (r let (Record ((a Int imm)))) u r))))
+  (check-equal? type
+                '(Record ((a Int imm) (b (Union Int String) imm)))))
 
 (test-case "Apply の引数と Rec の欄でも inject する"
   (match-define (list core _ _)
@@ -294,19 +295,21 @@
     `(Fn ((u ,owned-union)) ,owned-target (Own)
          (Let (r let ,owned-target) (Move u) r)))))
 
-(test-case "Record expected は残余 Owned と合流不能な欄を拒否する"
+(test-case "片方だけにある Owned 残余は証明なしでは拒否する"
   (check-equal?
    (rejected-code
     '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))
                     (Record ((a Int imm) (c String imm))))))
          Int () (Let (r let (Record ((a Int imm)))) (Move u) 0)))
-   (code 'type-mismatch))
-  (check-equal?
-   (rejected-code
-    '(Fn ((u (Union (Record ((a Int imm) (b Int imm)))
-                    (Record ((a Int imm) (b String imm))))))
-         Int () (Let (r let (Record ((a Int imm)))) u 0)))
-   (code 'type-mismatch)))
+   (code 'owned-narrowing-needs-proof)))
+
+(test-case "Owned を含まない異なる共通残余は ROW-005 で合流する"
+  (match-define (list _ type _)
+    (accepted
+     '(Fn ((u (Union (Record ((a Int imm) (b Int imm)))
+                     (Record ((a Int imm) (b String imm))))))
+          Int () (Let (r let (Record ((a Int imm)))) u 0))))
+  (check-equal? (third type) 'Int))
 
 (test-case "Owned expected への Union 分解は型付け可能な成分である必要がある"
   ;; P2m2a の owned-union-member 制約により、実行可能な Union が Owned を
