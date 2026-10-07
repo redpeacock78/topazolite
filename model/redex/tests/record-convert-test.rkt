@@ -847,3 +847,118 @@
     (generated-union-indices (erase-core (compiled-core artifact))))
   (check-not-false (member 0 generated))
   (check-equal? generated (range (length generated))))
+
+(define decompose-a-bool '(Record ((a Bool imm))))
+(define decompose-a-int '(Record ((a Int imm))))
+(define decompose-a-bool-or-int '(Record ((a (Union Bool Int) imm))))
+
+(test-case "tag-compat? でない Record の成分を持つ Union を Record へ分解する"
+  (void
+   (accepted
+    (apply-function
+     (normalize-type `(Union ,decompose-a-bool ,decompose-a-int))
+     '(Rec ((a imm 1)))
+     `(Let (r let ,decompose-a-bool-or-int) argument 0)
+     'Int '()))))
+
+(test-case "tag-compat? でない枝を含む 3 つの型の合流を作り直す"
+  (void
+   (accepted
+    (apply-function
+     (normalize-type
+      `(Union ,decompose-a-bool (Union ,decompose-a-int
+                                       ,decompose-a-bool-or-int)))
+     '(Rec ((a imm 1)))
+     `(Let (r let ,decompose-a-bool-or-int) argument 0)
+     'Int '()))))
+
+(test-case "tag-compat? でない成分の残余を W_k に保つ"
+  (define left
+    '(Record ((a Bool imm) (tail Int imm))))
+  (define right
+    '(Record ((a Int imm) (tail Int imm))))
+  (void
+   (accepted
+    (apply-function
+     (normalize-type `(Union ,left ,right))
+     '(Rec ((a imm 1) (tail imm 2)))
+     `(Let (r let ,decompose-a-bool-or-int)
+           argument
+           (Proj r tail))
+     'Int '()))))
+
+(test-case "entry の文脈で tag-compat? でない成分を作り直す"
+  (define source
+    `(Record ((p ,(normalize-type
+                   `(Union ,decompose-a-bool ,decompose-a-int)) imm))))
+  (define target `(Record ((p ,decompose-a-bool-or-int imm))))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function source
+                      '(Rec ((p imm (Rec ((a imm 1))))))
+                      `(Let (r let ,target) argument 0)
+                      'Int '()))))
+  (define core (erase-core (compiled-core artifact)))
+  (check-true (positive? (count-nodes 'RecRewrite core)))
+  (check-true (entry-bodies-in-L? core)
+              (format "RecRewrite entry が L の形ではない: ~s" core)))
+
+(test-case "tag-compat? でない成分の共有 Owned 残余を実行で保持する"
+  (define left
+    `(Record ((a Bool imm) (o ,owned-leaf imm))))
+  (define right
+    `(Record ((a Int imm) (o ,owned-leaf imm))))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (define upper (row005-join (list left right)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       source-type
+       `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+       `(Let (r let ,decompose-a-bool-or-int) (Move argument) (Move r))
+       upper '(Own)))))
+  (define-values (final-config _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (match final-config
+    [`(cfg ,value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (length (collect-tokens value)) 1)
+     (check-equal? (length tokens) 1)
+     (check-equal? (map second tokens) '(Available))]))
+
+(test-case "tag-compat? でない成分の片方だけにある Owned 残余は証明を要求する"
+  (define left
+    `(Record ((a Bool imm) (o ,owned-leaf imm))))
+  (define right '(Record ((a Int imm))))
+  (define source-type (normalize-type `(Union ,left ,right)))
+  (check-equal?
+   (rejected-code
+    (apply-function
+     source-type
+     `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+     `(Let (r let ,decompose-a-bool-or-int) (Move argument) 0)
+     'Int '(Own)))
+   (code 'owned-narrowing-needs-proof)))
+
+(test-case "成分から W_k への OWN-004 が入れ子の Owned 残余を拒否する"
+  (define nested-owned
+    `(Record ((x Int imm) (o ,owned-leaf imm))))
+  (define nested-plain '(Record ((x Int imm))))
+  (define member `(Record ((a ,nested-owned imm))))
+  (define wrapped `(Record ((a ,nested-plain imm))))
+  (define other '(Record ((a (Record ((x Int imm) (b Bool imm))) imm))))
+  ;; narrowing-kind の対そのものを固定し、生成された Core の診断も確認する。
+  (check-true (compat? member wrapped))
+  (check-true (tag-compat? member wrapped))
+  (check-equal? (owned-narrowing-kind member wrapped compat?) 'reject)
+  ;; 両成分の W_k は wrapped そのものなので W_k から上界への narrowing は無い。
+  (check-equal? (row005-join (list wrapped wrapped)) wrapped)
+  (check-equal?
+   (rejected-code
+    (apply-function
+     (normalize-type `(Union ,member ,other))
+     `(Rec ((a imm (Rec ((x imm 1) (o imm ,owned-leaf-value))))))
+     `(Let (r let ,wrapped) (Move argument) 0)
+     'Int '(Own)))
+   (code 'owned-narrowing-rejected)))

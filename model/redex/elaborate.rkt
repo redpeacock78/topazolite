@@ -960,8 +960,6 @@
          ;; 各枝を expected の欄型を持つ W_k に揃えてから上界を取る。
          ;; 成分の元の型ではなく W_k の型を合流するため、ここで同じ OWN-004 と convert の順序を行う。
          (define (record-wrapped-type member)
-           (unless (tag-compat? member expected context)
-             (reject s 'type-mismatch expected actual))
            (define member-row
              (match member
                [`(Record ,row) row]
@@ -992,7 +990,17 @@
              (define converted
                (if (eq? member 'Never)
                    consumed-ref
-                   (let* ([_narrowing-check
+                   (let* ([_member-narrowing
+                           ;; expected 欄の内側にある Owned の残余も失わないよう、
+                           ;; member から W_k への OWN-004 を変換より先に検査する。
+                           (match (narrowing-kind member wrapped-type propositions)
+                             ['ok (void)]
+                             [`(drop-obligation ,_ ,_)
+                              (reject s 'owned-narrowing-needs-proof wrapped-type
+                                      member)]
+                             [_ (reject s 'owned-narrowing-rejected wrapped-type
+                                        member)])]
+                          [_narrowing-check
                            (match (narrowing-kind wrapped-type upper propositions)
                              ['ok (void)]
                              [`(drop-obligation ,_ ,_)
@@ -1000,9 +1008,17 @@
                                       wrapped-type)]
                              [_ (reject s 'owned-narrowing-rejected upper
                                         wrapped-type)])]
+                          [source
+                           (if (tag-compat? member expected context)
+                               consumed-ref
+                               (let-values ([(rebuilt _type)
+                                             (convert consumed-ref member expected s
+                                                      propositions
+                                                      #:entry? entry?)])
+                                 rebuilt))]
                           [wrapped
                            (wrap-reference
-                            'let expected consumed-ref
+                            'let expected source
                             (and (not entry?)
                                  (resource-type? wrapped-type)))])
                      (if (type-equiv? wrapped-type upper)
