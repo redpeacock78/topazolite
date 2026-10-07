@@ -648,7 +648,7 @@ field 型への `Owned<_>` の禁止は G1 の制限である。
 資源型の field binder について、elaboration は各枝の本体を `Scope(∅, Let(x' : σ, x, c))` の encoding で包む。
 `σ` は constructor 宣言から得る binder の宣言型であり、root `Owned` の binder も例外ではない。
 これにより、値を枝 binder `x` へ置換した直後に `R-LetOwned` 系が place を確保し、以後の消費と未使用値の finalization を管理する。
-elaboration は線形の穴の方式を生成せず、これは Typed Core の手書き項と `UnionEliminate` の枝だけが使える規則である。
+elaboration は線形の穴の方式を生成せず、これは Typed Core の手書き項にある `Eliminate` と `UnionEliminate` の枝だけが使える規則である。
 
 `eliminate` は文 Narrative に相当し、boundary を push しない。
 各枝の elaboration は B をそのまま受け取るため、枝の中の `return` は外側の最寄りの境界へ解決される。
@@ -1150,12 +1150,14 @@ Typed Core の型付けも P を Γ と並行して追跡し、その lexical �
 資源型の変数は、identity transfer の補助集合 I に含まれない限り E-OWN-019 `owned-variable-requires-move` で拒否する。
 I は P と別の集合であり、資源型の値を binder から binder へ一度だけ受け渡す位置を表す。
 I が許す位置は次の三種類である。
+
 - 関数と `Recur` の仮引数、encoding 方式の枝 binder、handler の Return binder の transfer encoding における初期化子の生名。
   実装は検査中に許可を本体へ渡すが、encoding の検査が初期化子以外の生名を拒否するため、実効上は初期化子だけで参照できる。
 - identity `Let` と identity handler の本体で、束縛名をそのまま返す値の受け渡し。
   これらは専用の型検査経路であり、通常の変数規則を通さない。
 - 線形の穴の方式で受理した `Eliminate` と `UnionEliminate` の枝 binder、および `RecRewrite` entry binder の線形の穴。
   これは Typed Core だけの例外であり、elaboration の E-Var は枝の線形の穴を許さない。
+
 この三種類以外では、root `Owned` と集約資源型のどちらも裸で参照できない。
 `payload-view(Owned<τ>) = τ` とし、root `Owned` 以外では `payload-view(τ) = τ` とする。
 
