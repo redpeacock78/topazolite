@@ -832,7 +832,8 @@
         (for/list ([member (in-list (union-members actual))])
           (define name (fresh-union-name))
           (define alias
-            (and (resource-type? member)
+            (and (not entry?)
+                 (resource-type? member)
                  (fresh-owned-name (set-add union-reserved name))))
           (list member name alias)))
       (define (reference name) `(#:var ,name ,s))
@@ -843,12 +844,14 @@
               (match-define (list member name _alias) branch)
               `(,s (#:ty ,member ,s) (#:bind ,name ,s) -> ,body))))
       (define (resource-branch-body member name alias body)
-        (if alias
-            `(Scope ,s ()
-                    (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
-                         ,(reference name)
-                         ,body))
-            body))
+        (if entry?
+            body
+            (if alias
+                `(Scope ,s ()
+                        (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
+                             ,(reference name)
+                             ,body))
+                body)))
       (define (wrap-reference mode type bound [move? #f])
         (define name (fresh-union-name))
         (define ref (reference name))
@@ -886,13 +889,14 @@
              (match-define (list member name alias) branch)
              (define ref (reference (or alias name)))
              (define consumed-ref
-               (if alias `(Move ,s ,ref) ref))
+               (if (and alias (not entry?)) `(Move ,s ,ref) (reference name)))
              (define converted
                (if (or (eq? member 'Never)
                        (type-equiv? member expected))
                    consumed-ref
                    (wrap-reference 'let expected consumed-ref
-                                   (resource-type? expected))))
+                                   (and (not entry?)
+                                        (resource-type? expected)))))
              (resource-branch-body member name alias converted)))
           upper)]
         [_
@@ -911,7 +915,7 @@
            (reject s 'invalid-resolved-type expected))
          (values
           (wrap-reference 'const expected (eliminate bodies)
-                          (resource-type? expected))
+                          (and (not entry?) (resource-type? expected)))
           expected)]))
 
     ;; P2m2c spec §5.1。expected の欄ごとに作り直し、変換か印の変更が要る欄だけを

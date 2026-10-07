@@ -150,6 +150,12 @@
     [(? pair?) (append-map rec-rewrite-entries tree)]
     [_ '()]))
 
+(define (entry-bodies-in-L? core)
+  (for/and ([entry (in-list (rec-rewrite-entries core))])
+    (define body (last entry))
+    (and (zero? (count-nodes 'Scope body))
+         (zero? (count-nodes 'Move body)))))
+
 (define int-or-bool (normalize-type '(Union Int Bool)))
 
 ;; 実行する作り直し試験の Owned leaf は Option の中に置く。
@@ -357,3 +363,63 @@
   (check-equal? generated
                 (for/list ([i (in-range (length generated))])
                   (string->symbol (format "union~a" i)))))
+
+(define owned-a-b `(Record ((a Int imm) (o ,owned-leaf imm) (b Bool imm))))
+(define owned-a-c `(Record ((a Int imm) (o ,owned-leaf imm) (c String imm))))
+(define owned-a `(Record ((a Int imm) (o ,owned-leaf imm))))
+
+(test-case "entry の本体の Union から Record への分解は L の形になる"
+  (define source `(Record ((p (Union ,owned-a-b ,owned-a-c) imm) (n Int imm))))
+  (define target `(Record ((p ,owned-a imm) (n ,int-or-bool imm))))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       source
+       `(Rec ((p imm (Rec ((a imm 1) (o imm ,owned-leaf-value)
+                           (b imm (Construct true (Types))))))
+              (n imm 2)))
+       `(Let (r let ,target) (Move argument) r)
+       target '(Own)))))
+  (define core (erase-core (compiled-core artifact)))
+  (check-true (entry-bodies-in-L? core) (format "L の外の形: ~s" core))
+  (check-equal? (count-nodes 'UnionEliminate core) 1)
+  (void (run-compiled-execution-core artifact)))
+
+(test-case "entry の本体の Union 分解の中で作り直してから inject する"
+  ;; decompose（Record でない分岐）→ 成分の inject の 2 の段 → 内側の RecRewrite。
+  (define member-source `(Record ((a Int imm) (o ,owned-leaf imm))))
+  (define member-target
+    `(Record ((a ,int-or-bool imm) (o ,owned-leaf imm))))
+  (define source `(Record ((p (Union ,member-source Bool) imm))))
+  (define target `(Record ((p (Union ,member-target Bool) imm))))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       source
+       `(Rec ((p imm (Rec ((a imm 1) (o imm ,owned-leaf-value))))))
+       `(Let (r let ,target) (Move argument) r)
+       target '(Own)))))
+  (define core (erase-core (compiled-core artifact)))
+  (check-true (entry-bodies-in-L? core) (format "L の外の形: ~s" core))
+  (check-equal? (count-nodes 'RecRewrite core) 2)
+  (define-values (final-config _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (match final-config
+    [`(cfg ,value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (length (collect-tokens value)) 1)
+     (check-equal? (length tokens) 1)]))
+
+(test-case "外の文脈の資源型の成分の枝は従来どおり encoding を作る"
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       `(Union ,owned-a-b ,owned-a-c)
+       `(Rec ((a imm 1) (o imm ,owned-leaf-value)
+              (b imm (Construct true (Types)))))
+       `(Let (r let ,owned-a) (Move argument) r)
+       owned-a '(Own)))))
+  (check-true
+   (positive? (count-nodes 'Scope (erase-core (compiled-core artifact))))))
