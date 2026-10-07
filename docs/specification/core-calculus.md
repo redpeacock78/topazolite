@@ -1897,6 +1897,12 @@ Drop の引数は Move を経て取り出された値であり、place の状態
 
 ### 5.6 scope exit と finalization
 
+中断で捨てる評価 frame が内部の `OwnedLeaf` を含む場合は、その token を `Dropped` にしてから frame を捨てる。
+`F_inner[unit]` に構文上現れる token が重複するか、`Available` でない token を含むとき、`dropFrame` は未定義である。
+それ以外では、各 token の状態を `Dropped` にした `Λtok` を返す。
+`F_inner[unit]` は評価枠の穴を `unit` で置き換えた項であり、外へ渡す `Perform` の引数は含まない。
+この回収は `θ` に event を追加しない。
+
 `finalize(π, H, Ω, Λtok, θ)` を次で定める。
 
 ```text
@@ -1918,22 +1924,24 @@ finalize 全体を失敗させ、scope exit 規則を発火させない。
 scope の正常終了は、その scope が管理する未消費の affine resource を逆順で drop する。
 finalize は Available の place だけを Dropped へ遷移させるため、drop は place ごとに高々一度である（OWN-002）。
 
-**(R-ScopeAbort)** [REQ: OWN-003]
+**(R-ScopeAbort)** [REQ: OWN-003] [REQ: OWN-011]
 
 ```text
 ⟨E[Scope(π, F[Perform(op, v)])], H, Ω, Λtok, θ⟩ → ⟨E[Perform(op, v)], H, Ω', Λtok', θ'⟩
-  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok, θ)
+  Λtok₀ = dropFrame(F[unit], Λtok)
+  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok₀, θ)
 ```
 
 Perform が scope を越えて外側の handler へ向かうとき、越えられる scope は自身の finalization を実行してから消える。
 非局所 return を含むすべての scope exit path が cleanup を実行する（OWN-003）。
 F は純粋文脈なので、内側の scope から順に finalization が走る。
 
-**(R-ScopeError)** [REQ: OWN-003]
+**(R-ScopeError)** [REQ: OWN-003] [REQ: OWN-011]
 
 ```text
 ⟨E[Scope(π, F[Error(p)])], H, Ω, Λtok, θ⟩ → ⟨E[Error(p)], H, Ω', Λtok', θ'⟩
-  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok, θ)
+  Λtok₀ = dropFrame(F[unit], Λtok)
+  （Ω', Λtok', θ'）= finalize(π, H, Ω, Λtok₀, θ)
 ```
 
 ownership error の伝播も scope exit path であり、越えられる scope は finalization を実行してから消える。
@@ -1954,24 +1962,29 @@ retire について本サイクルで持たない形が二つある。
 E[Handle(op, x -> ch, v)] → E[v]
 ```
 
-**(R-HandleReturn)** [REQ: RET-002]
+**(R-HandleReturn)** [REQ: RET-002] [REQ: OWN-011]
 
 ```text
-E[Handle(Return<b, τ>, x -> ch, F[Perform(Return<b, τ>, v)])] → E[ch[v/x]]
+⟨E[Handle(Return<b, τ>, x -> ch, F[Perform(Return<b, τ>, v)])], H, Ω, Λtok, θ⟩
+  → ⟨E[ch[v/x]], H, Ω, Λtok₀, θ⟩
+  Λtok₀ = dropFrame(F[unit], Λtok)
 ```
 
-**(R-HandleSkip)**
+**(R-HandleSkip)** [REQ: OWN-011]
 
 ```text
 op ≠ op'
---------------------------------
-E[Handle(op', x -> ch, F[Perform(op, v)])] → E[Perform(op, v)]
+⟨E[Handle(op', x -> ch, F[Perform(op, v)])], H, Ω, Λtok, θ⟩
+  → ⟨E[Perform(op, v)], H, Ω, Λtok₀, θ⟩
+  Λtok₀ = dropFrame(F[unit], Λtok)
 ```
 
-**(R-HandleError)**
+**(R-HandleError)** [REQ: OWN-011]
 
 ```text
-E[Handle(op, x -> ch, F[Error(p)])] → E[Error(p)]
+⟨E[Handle(op, x -> ch, F[Error(p)])], H, Ω, Λtok, θ⟩
+  → ⟨E[Error(p)], H, Ω, Λtok₀, θ⟩
+  Λtok₀ = dropFrame(F[unit], Λtok)
 ```
 
 handler は自身の op に一致する Perform だけを処理し、一致しない Perform は handler ごと文脈を捨てて外へ伝播する（abortive）。
@@ -2251,7 +2264,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
-7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
+7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される、(f) `F_inner` を捨てる 5 規則（R-ScopeAbort、R-ScopeError、R-HandleReturn、R-HandleSkip、R-HandleError）は frame に現れる leaf token をすべて `Dropped` にし、`θ` に event を足さない。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-011] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
 8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move も Drop もせず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
 9. **Unsafe containment**：型検査を通った項の任意の有限実行 trace において、(a) `R-RawLoad`、`R-RawStore`、`R-PtrOffset`、`R-FromRawPtrConst`、`R-FromRawPtrMut` が発火する構成では評価文脈に `Unsafe` の枠があり、(b) その操作が要求する `PtrProp` の集合は静的側が求めた obligation の集合と一致し、(c) `R-UnsafeExit` が返す値は `PtrVal` を leaf に持たず、(d) `Unsafe` の内側の `R-Yield` が event trace へ足す観測値も `PtrVal` を leaf に持たず、(e) どの規則も発火せず終端でもない構成の redex は、`Unsafe` の内側の raw 操作であってその実行時側条件を満たさないものに限る。判定の詳細は `unsafe.md` §5 に置く。 [REQ: PTR-001] [REQ: PTR-002]
 
@@ -2396,6 +2409,7 @@ G5 はその記録を Ψ として置いた。
 | OWN-008 | `borrow.md` §8 の固定引数、R-ApplyCurry（§5.3）、性質 7 |
 | OWN-009 | T-OwnedLeaf、`Λtok` の token 条件、性質 7 |
 | OWN-010 | R-Drop、finalize、R-ScopeValue、性質 7 |
+| OWN-011 | R-ScopeAbort、R-ScopeError（§5.6）、R-HandleReturn、R-HandleSkip、R-HandleError（§5.7）、性質 7（f） |
 | BOR-001 | `borrow.md` §4 の許可条件、R-Borrow、R-BorrowError、性質 8 |
 | BOR-002 | `borrow.md` §4 の排他条件、R-BorrowMut、R-BorrowMutError、性質 8 |
 | BOR-004 | `borrow.md` §12 の読み書き、R-Read、R-ReadMut、R-Assign、性質 8 |

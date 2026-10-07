@@ -458,6 +458,17 @@
     (define entry (assoc (first leaf) tokens))
     (and entry (eq? (second entry) 'Available))))
 
+;; 中断で捨てる frame に構文上現れる leaf token を Dropped にする。
+;; 重複か Available でない token があれば #f を返し、規則を発火させない。
+(define (drop-frame-tokens frame tokens)
+  (define ids (collect-tokens frame))
+  (and (not (check-duplicates ids))
+       (for/and ([id (in-list ids)])
+         (define entry (assoc id tokens))
+         (and entry (eq? (second entry) 'Available)))
+       (for/fold ([updated tokens]) ([id (in-list ids)])
+         (table-set updated id 'Dropped))))
+
 ;; π の Available な root と、その値の内部の leaf を一緒に回収する。
 ;; H は不変。失敗時は #f を返し、呼び出し側の where を不成立にする。
 (define (finalize/proc places heap states tokens trace)
@@ -769,8 +780,11 @@
                              (in-hole F_inner (Perform op v_arg))))
              H Ω Λtok θ)
         (cfg (in-hole E_outer (Perform op v_arg)) H Ω_final Λtok_final θ_final)
+        (where Λtok_frame
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (where (Ω_final Λtok_final θ_final)
-               (finalize π_managed H Ω Λtok θ))
+               (finalize π_managed H Ω Λtok_frame θ))
         R-ScopeAbort)
 
    (--> (cfg (in-hole E_outer
@@ -778,8 +792,11 @@
                              (in-hole F_inner (Error p_error))))
              H Ω Λtok θ)
         (cfg (in-hole E_outer (Error p_error)) H Ω_final Λtok_final θ_final)
+        (where Λtok_frame
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (where (Ω_final Λtok_final θ_final)
-               (finalize π_managed H Ω Λtok θ))
+               (finalize π_managed H Ω Λtok_frame θ))
         R-ScopeError)
 
    (--> (cfg (in-hole E_outer
@@ -794,9 +811,12 @@
                       (Handle (Return b τ)
                               (x -> c_handler)
                               (in-hole F_inner
-                                       (Perform (Return b τ) v_arg))))
+                                      (Perform (Return b τ) v_arg))))
              H Ω Λtok θ)
-        (cfg (in-hole E_outer c_result) H Ω Λtok θ)
+        (cfg (in-hole E_outer c_result) H Ω Λtok_final θ)
+        (where Λtok_final
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (where c_result (substitute c_handler x v_arg))
         R-HandleReturn)
 
@@ -806,7 +826,11 @@
                               (in-hole F_inner
                                        (Perform op_performed v_arg))))
              H Ω Λtok θ)
-        (cfg (in-hole E_outer (Perform op_performed v_arg)) H Ω Λtok θ)
+        (cfg (in-hole E_outer (Perform op_performed v_arg))
+             H Ω Λtok_final θ)
+        (where Λtok_final
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (side-condition
          (not (equal? (term op_handler) (term op_performed))))
         R-HandleSkip)
@@ -816,7 +840,10 @@
                               (x -> c_handler)
                               (in-hole F_inner (Error p_error))))
              H Ω Λtok θ)
-        (cfg (in-hole E_outer (Error p_error)) H Ω Λtok θ)
+        (cfg (in-hole E_outer (Error p_error)) H Ω Λtok_final θ)
+        (where Λtok_final
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         R-HandleError)))
 
 (define -->g2/rules
@@ -1284,8 +1311,11 @@
              H Ω Λtok θ)
         (cfg (in-hole E_outer (Perform op v_arg))
              H Ω_final Λtok_final θ_final)
+        (where Λtok_frame
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (where (Ω_final Λtok_final θ_final)
-               (finalize/g2 π_managed H Ω Λtok θ))
+               (finalize/g2 π_managed H Ω Λtok_frame θ))
         R-ScopeAbort)
 
    (--> (cfg (in-hole E_outer
@@ -1294,8 +1324,11 @@
              H Ω Λtok θ)
         (cfg (in-hole E_outer (Error p_error))
              H Ω_final Λtok_final θ_final)
+        (where Λtok_frame
+               ,(drop-frame-tokens (term (in-hole F_inner unit))
+                                   (term Λtok)))
         (where (Ω_final Λtok_final θ_final)
-               (finalize/g2 π_managed H Ω Λtok θ))
+               (finalize/g2 π_managed H Ω Λtok_frame θ))
         R-ScopeError)))
 
 ;; Binding-aware matching freshens binders before destructuring.  Check the raw

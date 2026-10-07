@@ -183,6 +183,9 @@ pstate ::= Available | Moved | Dropped
 | `R-HandleSkip` | `R-PR-InstallSkip` | 同上 |
 | `R-HandleError` | `R-PR-InstallError` | なし |
 
+Source machine の中断時の frame cleanup は `Λtok` の状態だけを更新し、`θ` に event を足さない。
+PR は leaf token と `Λtok` を持たないため、対応する PR 規則に変更はない。
+
 `finalize-pr` は源の `finalize` と同じ働きをする。
 管理下の場所を `Dropped` にし、`(fin pp)` を trace へ足す。
 足す順序も源と揃える。

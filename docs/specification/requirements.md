@@ -573,6 +573,13 @@ record の field への借用を親の借用から作れる。
 - **正典**：`docs/specification/core-calculus.md` §5.5、§5.6、§7
 - **内容**：scope 終了と明示 drop は値の内部の Owned leaf を一つの走査で回収し、Available な leaf を高々一度だけ Dropped にする。scope 終了で回収した leaf は `finLeaf` として root の `fin` より先に観測する。
 
+### OWN-011 中断で捨てる評価途中の frame の `Owned` 資源の回収
+
+- **状態**：P2
+- **由来**：ホワイトペーパー §4.9
+- **正典**：`docs/specification/core-calculus.md` §5.6、§5.7、§7
+- **内容**：Effect propagation、handler escape、panic 相当の制御移動で評価途中の frame を捨てるとき、frame に現れる値の内部の Owned leaf をすべて Dropped にする。外へ渡す `Perform` の引数と handler へ渡す値は回収しない。
+
 ### PTR-001
 
 - **状態**：G5
