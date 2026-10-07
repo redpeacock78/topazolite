@@ -488,8 +488,8 @@ P は移動済みかどうかを追跡する集合ではなく、move の成否�
 `Let` の初期化子は外側の P で検査し、本体では有効型が資源型なら束縛名を P に加え、そうでなければ同名の外側の所属を隠す。
 本体が束縛名そのものである資源型の identity `Let` は値の受け渡しであり、束縛名を P に加えずにそのまま返す。
 内側の binder が同名を隠した場合はその binder の本体だけで P から除き、そこを抜けた時点で外側の所属へ戻す。
-c1c1 では `Let` 以外の binder は P に資源型の名前を加えない。
-関数の仮引数、`Eliminate` と `UnionEliminate` の枝 binder による値の移送は c1c2 で扱う。
+`Let` 以外の binder は P に名前を加えず、資源型の値は transfer encoding または枝 binder の線形の穴を介して移送する。
+この規則は仮引数、`Recur` の引数、`Eliminate` と `UnionEliminate` の枝 binder、および handler の Return binder に適用する。
 
 ### 4.2 基本規則
 
@@ -504,22 +504,22 @@ typeof(l) = τ
 **(E-Var)**
 
 ```text
-Γ(x) = τ        τ は root Owned でない
-                x ∉ P または resource-type?(τ) が偽
+Γ(x) = τ        resource-type?(τ) が偽
 --------------------------------
 Γ; Δ; Π; B ⊢ x ⇒ τ ! {} ⟹ x
 ```
 
-root が `Owned` の変数は従来どおり裸で参照できない。
-有効型が資源型である `Let` が束縛した変数も、通常の裸の参照を拒否する。
-identity `Let` の本体で束縛名をそのまま返す場合は値の受け渡しとして受理し、E-Var を経由しない。
-`Let` 以外の binder が束縛した集約資源型の変数は c1c1 では P に入らず、c1c2 の transfer encoding が入るまで裸で参照できる。
+`resource-type?` が真になる局所変数と `Γ0` の変数は、root `Owned` か集約資源型かを問わず E-OWN-010 `owned-variable-requires-move` で拒否する。
+このため、以前は資源型検査を通っていた `Γ0` の root `Owned` の値も裸では参照できない。
+identity `Let` の本体で束縛名をそのまま返す場合は値の受け渡しとして受理し、`synth-let-body` が E-Var を経由せずに処理する。
+枝 binder の線形の穴は Typed Core の型付けだけにある例外であり、elaboration の E-Var には適用しない。
 place にある資源型の値を消費するときは `move x`（E-Move）を経由する。
 
 **(E-Prim)**
 
 ```text
-x ∉ dom(Γ)        Γ0(x) = τ        Γ0 の x の値が PrimVal(Reserved(o), x)
+x ∉ dom(Γ)        Γ0(x) = τ        resource-type?(τ) が偽
+                  Γ0 の x の値が PrimVal(Reserved(o), x)
 --------------------------------
 Γ; Δ; Π; B ⊢ x ⇒ τ ! {} ⟹ PrimVal(Reserved(o), x)
 ```
@@ -628,9 +628,10 @@ label の集合が一致しない場合、期待型が `Owned<Record …>` の�
 
 field 型への `Owned<_>` の禁止は G1 の制限である。
 構成済みデータは通常の値として複製されうる（R-Let の置換など）ため、affine 資源を field に入れると place を経由しない複製経路が生まれる。
-コンテナ内の affine 資源を含む値は、c1c1 で有効型に基づいて `Let` の place へ載せ、未使用時には scope の finalization で内部 leaf を破棄する。
-関数の仮引数、`Eliminate` と `UnionEliminate` の枝 binder など、`Let` 以外の置換で生じる同じ穴は c1c2 で回収する。
-c1c2 が完了するまでは c1b の保存の主張を `config-ok?` から始まる `RecRewrite` の局所的な遷移に限る。
+コンテナ内の affine 資源を含む値は、有効型に基づく `Let` の place へ載せ、未使用時には scope の finalization で内部 leaf を破棄する。
+関数の仮引数、`Recur` の引数、`Eliminate` と `UnionEliminate` の枝 binder、および handler の Return binder からの値の移送にも transfer encoding を使う。
+枝 binder は encoding を持つか、Typed Core の線形の穴で値を一度だけ移送する。
+これらの規則により、binder の置換を経た値も place または一度だけの線形な値の位置を通り、未使用資源の消失と資源値の複製を防ぐ。
 
 **(E-Eliminate)** [REQ: RET-003]
 
@@ -644,6 +645,11 @@ c1c2 が完了するまでは c1b の保存の主張を `config-ok?` から始�
   ⟹ Eliminate(c0, …)
 ```
 
+資源型の field binder について、elaboration は各枝の本体を `Scope(∅, Let(x' : σ, x, c))` の encoding で包む。
+`σ` は constructor 宣言から得る binder の宣言型であり、root `Owned` の binder も例外ではない。
+これにより、値を枝 binder `x` へ置換した直後に `R-LetOwned` 系が place を確保し、以後の消費と未使用値の finalization を管理する。
+elaboration は線形の穴の方式を生成せず、これは Typed Core の手書き項と `UnionEliminate` の枝だけが使える規則である。
+
 `eliminate` は文 Narrative に相当し、boundary を push しない。
 各枝の elaboration は B をそのまま受け取るため、枝の中の `return` は外側の最寄りの境界へ解決される。
 これが RET-003（文 Narrative は明示的に指定されない限りローカル return boundary を作らない）の calculus 上の表現である。
@@ -651,10 +657,9 @@ c1c2 が完了するまでは c1b の保存の主張を `config-ok?` から始�
 ### 4.3 関数と Narrative 適用
 
 関数引数の署名は資源型を含みうる。
-E-Lambda は root `Owned` の仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
-β 簡約（§5.3 R-Beta）は実引数の値を生名の位置へ置換する。
-置換の結果として `Let` の右辺に来た root `Owned` 値は R-LetOwned が place へ移すため、引数値は place を経由して管理される。
-c1c1 では集約資源型の仮引数に transfer encoding を生成しないため、その値の置換に関する穴は c1c2 で回収する。
+E-Lambda は資源型の全ての仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
+β 簡約（§5.3 R-Beta）は実引数の値を仮引数の生名へ置換する。
+置換の結果として `Let` の右辺に来た資源型の値は `R-LetOwned` 系が place へ移すため、引数値は place を経由して管理される。
 
 関数は、外側の place にある資源型の束縛を closure の捕捉へ変換できる。
 E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ渡し、closure の型を `Owned<NFn …>` とする。
@@ -666,7 +671,9 @@ E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ
 
 ```text
 C = ((u1, κ1), …, (un, κn)) = owned-captures(e, (a1, …, ak), Γ)
+J = {i | resource-type?(τi)}
 b fresh
+z_i fresh                                      （i ∈ J）
 ℓ fresh                                            （CallableId、§3.3）
 εdecl' = resolveReturn(B, εdecl)                  （§4.5 の Return ラベル解決）
 B' = push(B, FunctionBoundary(b, τ))
@@ -674,9 +681,9 @@ B' = push(B, FunctionBoundary(b, τ))
 εbody \ {Return<b, τ>} ⊆ εdecl'
 bodyC = Let(u1 : κ1, c1,
              … Let(un : κn, cn,
-                   Let(ai1 : Owned<τi1>, yi1,
-                     … Let(aim : Owned<τim>, yim, c) …)))
-LC = Lam(User, ℓ, (c1, …, cn, y1, …, yk),
+                   Let(ai1 : τi1, zi1,
+                     … Let(aim : τim, zim, c) …)))    （i1, …, im は J の昇順）
+LC = Lam(User, ℓ, (c1, …, cn, a1*, …, ak*),
          Handle(Return<b, τ>, x -> x, Scope(∅, bodyC)))
 Ti = Owned<NFn<(κi+1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>>
 
@@ -694,26 +701,31 @@ n > 0 のとき
 Φ(ℓ) = NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>  （両方の枝に共通）
 ```
 
+各 `a_i*` は、`i ∈ J` なら fresh な生名 `z_i`、それ以外なら表層仮引数 `a_i` である。
+仮引数の encoding は `Let(a_i : τ_i, z_i, …)` の形であり、Let の型欄には root `Owned` を含む宣言型を記録する。
+Core の本体環境では、生名 `z_i` を payload view で束縛する。
+すなわち、宣言型が root `Owned<τ>` なら生名の型は `τ`、集約資源型なら宣言型そのものとする。
+非資源型の仮引数には encoding を置かず、従来どおり表層名を Lam の仮引数にする。
+
 ここで `owned-captures` は、Γ の現在の可視項目から資源型 κ を持つ名前を取り、`free-vars(e)` から `(a1, …, ak)` を除いた集合との共通部分を対象にする。
 Γ に同名項目が複数あるときは、内側の項目だけを可視とする。
 対象の名前は `symbol<?` の昇順に並べ、これを `u1, …, un` とする。
 `ui` は捕捉元の surface 名であり、`ci` は捕捉 formal の生名である。
-`yi` は、元の位置 i が `Owned` のときは生名、そうでないときは surface が書いた名前そのものである。
+`a_i*` は資源型の位置なら fresh な生名 `z_i`、それ以外なら表層仮引数の名前 `a_i` である。
 `ai` は元の仮引数の surface 名である。
 `ti` は外側の `Let` が管理する place の生名であり、`t1, …, tn` は fresh である。
 捕捉の `Let` の入れ子は `u1, …, un` の辞書順に並ぶ。
 元の仮引数に対応する `Let` の入れ子は仮引数の位置の順序に一致する。
 生名は対応する `Let` の右辺にちょうど 1 回だけ現れ、それ以外の位置には現れない。
 `Let` の binder は surface が書いた仮引数の名前であり、束縛の様式は `let` である。
-Φ に登録する署名は、捕捉位置の型を `κi`、元の root `Owned` 位置の型を `Owned<τi>` のまま持つ。
-生名への読み替えは Core の項の側だけに起こる。
+Φ に登録する署名は、捕捉位置の型を `κi`、仮引数位置の型を宣言型 `τi` のまま持つ。
+生名への読み替えは Core の項の側だけに起こり、生名の型は payload view になる。
 呼出し側は捕捉引数をその資源型 `κi` として検査され、`move p` の形を要求される。
 集約資源型の捕捉では p が P に入っていなければならない。
 `n = 0` のときは `bodyC` の捕捉 `Let` 連鎖も省く。
 
 関数抽象は自身の FunctionBoundary を push し、body を Return handler と Scope で包む。
-`Owned` の仮引数に対応する `Let` はこの Scope の直下に置かれ、R-LetOwned が呼出しごとに place を確保する。
-この仮引数の transfer encoding は c1c1 では root `Owned` に限り、集約資源型への拡張は c1c2 で行う。
+資源型の仮引数に対応する `Let` はこの Scope の直下に置かれ、`R-LetOwned` 系が呼出しごとに place を確保する。
 body が合成する Effect row から自身の境界への Return を除いた残りは、宣言 row の部分集合でなければならない。
 これが EFF-001（展開後 Core の Effect row は展開前に宣言された Effect の部分集合）の calculus 上の表現である。
 ℓ は fresh な CallableId であり、この導出が組み立てる `(ℓ, NFn<(κ1, …, κn, τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる（§3.3）。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
@@ -873,6 +885,8 @@ B' = push(B, ExpressionBoundary(b, τ))
 e1 の自由変数のうち f と x1, …, xk 以外のものは、Γ で資源型を持たない
 r fresh                                            （CallableId、§3.3。表層名 f とは別に割り当てる）
 ε' = resolveReturn(B, εdecl)
+J = {i | resource-type?(τi)}
+z_i fresh                                      （i ∈ J）
 Γf = Γ, f : NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 Γf, x1 : τ1, …, xk : τk; Δ; Π; B ⊢ e1 ⇐ τ ! εbody ⟹ c1
 εbody ⊆ ε'
@@ -881,14 +895,17 @@ f; (x1, …, xk); c1 ⇓body κbody      （§6.2）
 κbody = Unknown ならば Partial ∈ ε'
 --------------------------------
 Γ; Δ; Π; B ⊢ recur f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
-  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk),
-                     Scope(∅, Let(xi1 : Owned<τi1>, yi1,
-                               … Let(xim : Owned<τim>, yim, c1) …)),
-                     c2)
+  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk), ResourceScope(c1), c2)
   かつ Φ(r) = NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 ```
 
-`Recur` と `RecurVal` の資源型捕捉は c1c1 で `owned-recur-capture`（E-OWN-008）により拒否する。
+`J = {i | resource-type?(τ_i)}` とし、`i ∈ J` では `y_i = z_i` とする。
+`z_i` は fresh な生名であり、他の位置は `y_i = x_i` とする。
+`ResourceScope(c)` は、`J` が空なら `c`、それ以外なら `Scope(∅, Let(x_i1 : τ_i1, z_i1, … Let(x_im : τ_im, z_im, c) …))` である。
+生成する `Let` の型欄は宣言型 `τ_i` のままであり、Core の本体環境では生名 `z_i` を payload view で束縛する。
+root `Owned<τ>` の生名の型は `τ`、集約資源型の生名の型は宣言型 `τ_i` である。
+`RecurVal` の本体も同じ `ResourceScope` の encoding を持つ。
+`Recur` と `RecurVal` の資源型捕捉は `owned-recur-capture`（E-OWN-008）により拒否する。
 R-RecurUnfold（§5.4）は再帰本体を呼出しごとに複製するため、`RecurVal` の型を `Owned` にしても捕捉した値の使用回数を上限づけられない。
 資源型捕捉を許す拡張は、従来どおり Phase 4 以降へ送る。
 `Lam` と `RegionLam` の本体も資源型の外側の束縛を直接捕捉できない。
@@ -898,14 +915,14 @@ R-RecurBind（§5.4）が生成する `RecurVal` は次の形を持つ。
 
 ```text
 RecurVal(r, f, (y1, …, yk),
-         Scope(∅, Let(xi1 : Owned<τi1>, yi1,
-                   … Let(xim : Owned<τim>, yim, c1) …)))
+         Scope(∅, Let(xi1 : τi1, zi1,
+                   … Let(xim : τim, zim, c1) …)))
 ```
 
 ここで `Scope` は `Let` の連なりの外側にあり、連なりの直後に元の本体 c1 が来る。
 継続 c2 は `Scope` の外にあり、包みの影響を受けない。
 再帰の関数名 f は `Scope` の外で束縛され、位置は変わらない。
-m が 0 のとき、つまり `Owned` の仮引数が無いとき、`Scope` も `Let` も入らない。節の形はこれまでと同一である。
+m が 0 のとき、つまり資源型の仮引数が無いとき、`Scope` も `Let` も入らない。節の形はこれまでと同一である。
 recur は関数境界を押さないため、包まないと呼出し側の `Scope` へ place が積み上がる。
 R-RecurUnfold（§5.4）は本体を複製するが、各呼出しの引数の place はその呼出しの `Scope` が管理する。
 gate は本体 c1 だけを `⇓body` で分類する。
@@ -930,7 +947,7 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 本体の構文に `Return` 式または宣言 row の `Return` label があるときだけ fresh な境界 b を積む。
 その場合、本体を `FunctionBoundary(b, τ)` の下で検査し、自身の `Return<b, τ>` を宣言 row の包含検査から除く。
 本体の合成 row に自身の `Return<b, τ>` がある場合だけ、Typed Core の本体を `Handle` で包む。
-`Handle` は Owned 仮引数の `Scope` と `Let` の内側に置き、分類 gate には Handle で包む前の本体を渡す。
+`Handle` は資源型の仮引数の `Scope` と `Let` の内側に置き、分類 gate には Handle で包む前の本体を渡す。
 
 ```text
 ε' = resolveReturn(B, εdecl)
@@ -948,11 +965,11 @@ c1' = Handle(Return<b, τ>, x -> x, Scope(∅, c1))
        iff b is fresh and Return<b, _> ∈ εbody; otherwise c1' = c1
 --------------------------------
 Γ; Δ; Π; B ⊢ fnDecl f(x1 : τ1, …, xk : τk) -> τ ! εdecl = e1 in e2
-  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk), OwnedScope(c1'), c2)
+  ⇒ τ2 ! ε2 ⟹ Recur(r, f, (y1, …, yk), ResourceScope(c1'), c2)
 Φ(r) = NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>
 ```
 
-`OwnedScope(c1')` は E-Recur と同じく、Owned 仮引数があるときだけ `Scope` と `Let` で包む。
+`ResourceScope(c1')` は E-Recur と同じく、資源型の仮引数があるときだけ `Scope` と `Let` で包む。
 条件を満たさないときは境界を消費せず、Typed Core の本体に `Handle` を加えない。
 
 **(E-Recur-Infer)** [REQ: SUR-008]
@@ -1130,8 +1147,17 @@ elaboration 規則と重複しない規則だけを挙げる。
 
 Typed Core の型付けも P を Γ と並行して追跡し、その lexical 更新は §4.2 と同じである。
 この節の judgment 表記では P を省略する。
-通常の変数規則は root `Owned` の参照と、P にある資源型変数の裸の参照を拒否する。
-identity `Let` の本体が束縛名そのものである場合だけは、値をそのまま返す transfer として変数規則を通さない。
+資源型の変数は、identity transfer の補助集合 I に含まれない限り E-OWN-019 `owned-variable-requires-move` で拒否する。
+I は P と別の集合であり、資源型の値を binder から binder へ一度だけ受け渡す位置を表す。
+I が許す位置は次の三種類である。
+- 関数と `Recur` の仮引数、encoding 方式の枝 binder、handler の Return binder の transfer encoding における初期化子の生名。
+  実装は検査中に許可を本体へ渡すが、encoding の検査が初期化子以外の生名を拒否するため、実効上は初期化子だけで参照できる。
+- identity `Let` と identity handler の本体で、束縛名をそのまま返す値の受け渡し。
+  これらは専用の型検査経路であり、通常の変数規則を通さない。
+- 線形の穴の方式で受理した `Eliminate` と `UnionEliminate` の枝 binder、および `RecRewrite` entry binder の線形の穴。
+  これは Typed Core だけの例外であり、elaboration の E-Var は枝の線形の穴を許さない。
+この三種類以外では、root `Owned` と集約資源型のどちらも裸で参照できない。
+`payload-view(Owned<τ>) = τ` とし、root `Owned` 以外では `payload-view(τ) = τ` とする。
 
 実行時の資源型判定には型付け用の `resource-type?` でなく `runtime-resource-type?` を使う。
 machine と lowering は型付けに使ったものと同じ trait 台帳の下で呼び、custom の `Data` を含む項でもその台帳を維持する。
@@ -1153,17 +1179,35 @@ Surface の入口は source の `compiled-core` と実行用の `compiled-execut
 
 ```text
 Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε
+resource-type?(τ) が偽
 Γ, x : τ; Δ; Π; Ξ; Φ ⊢core ch : τ ! εh
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
 ```
 
 `τ` が資源型のとき、handler の束縛子 `x` は R-HandleReturn が値そのものへ置換する名前であり、place ではない。
-そのため `ch` が `x` そのものである場合に限り、T-Var を通さず `Γ, x : τ ⊢core x : τ ! {}` として型付けする。
-この identity handler は root `Owned` と集約資源型の両方で許す。
-`ch` が `x` そのものでなく `x` を自由に含む場合は `E-OWN-032 owned-return-binder-misuse` で拒否する。
-identity でない handler は c1c2 で transfer encoding を要求する。
-それ以外の handler は上の通常の T-Handle 前提で検査する。
+identity と encoding の形は以下の二つの規則で定める。
+root `Owned` の encoding 欠落、条件を満たさない encoding、または encoding 後の生名の漏出は E-OWN-032 `owned-return-binder-misuse` で拒否する。
+集約資源型の encoding 欠落と条件違反は E-OWN-034 `resource-binder-missing-binding`、認識済み encoding の後に生名が残る場合は E-OWN-035 `resource-binder-raw-misuse` で拒否する。
+資源型でない Return binder は上の通常の T-Handle 前提で検査する。
+
+資源型 Return binder の identity handler は、束縛名をそのまま返す次の規則で型付けする。
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε        resource-type?(τ)        ch = x
+------------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> x, c) : τ ! (ε \ {Return<b, τ>})
+```
+
+identity でない資源型 Return binder は、次の transfer encoding を要求する。
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c : τ ! ε        resource-type?(τ)
+Γ, x : payload-view(τ); Δ; Π; Ξ; Φ ⊢core ch : τ ! εh
+ch = Scope(∅, Let(x' : τ, x, ch'))
+---------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Handle(Return<b, τ>, x -> ch, c) : τ ! (ε \ {Return<b, τ>}) ∪ εh
+```
 
 **(T-Perform)** [REQ: RET-002]
 
@@ -1254,7 +1298,7 @@ p ∈ dom(Ξ)
 
 ```text
 Φ(r) = NFn(τ1, ..., τk, τ, ε', Q)
-Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c1 : τ ! εbody
+Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : payload-view(τ1), ..., xk : payload-view(τk); Δ; Π; Ξ; Φ ⊢core c1 : τ ! εbody
 εbody ⊆ ε'
 Γ, f : NFn(τ1, ..., τk, τ, ε', Q); Δ; Π; Ξ; Φ ⊢core c2 : τ2 ! ε2
 --------------------------------
@@ -1268,25 +1312,35 @@ f の署名は項から消去されているため、この規則は CallableId 
 
 ```text
 Φ(r) = NFn(τ1, ..., τk, τ, ε', Q)
-Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
+Γ, f : NFn(τ1, ..., τk, τ, ε', Q), x1 : payload-view(τ1), ..., xk : payload-view(τk); Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
 εbody ⊆ ε'
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core RecurVal(r, f, (x1, ..., xk), c) : NFn(τ1, ..., τk, τ, ε', Q) ! {}
 ```
 
 RecurVal は R-RecurBind（§5.4）が Recur から作る値であり、その型付けは対応する T-Recur の body 側 premise と同じ形をとる。r は Recur から引き継がれる（§5.4）。
+`Recur` と `RecurVal` の資源型仮引数も、`Lam` と同じ transfer encoding を持つ。
+root `Owned` 仮引数の encoding 欠落と不正は E-OWN-023 `owned-parameter-missing-binding` と E-OWN-024 `owned-raw-parameter-misuse` で拒否する。
+集約資源型仮引数では同じ違反を E-OWN-034 `resource-binder-missing-binding` と E-OWN-035 `resource-binder-raw-misuse` で拒否する。
+`fnDecl` と推論付き `Recur` も同じ規則を使う。
 
 **(T-Lam)**
 
 ```text
 Φ(ℓ) = NFn(τ1, ..., τk, τ, ε', Q)
-Γ, x1 : τ1, ..., xk : τk; Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
+Γ, x1 : payload-view(τ1), ..., xk : payload-view(τk); Δ; Π; Ξ; Φ ⊢core c : τ ! εbody
 εbody ⊆ ε'
 --------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core Lam(O, ℓ, (x1, ..., xk), c) : NFn(τ1, ..., τk, τ, ε', Q) ! {}
 ```
 
 Lam のパラメータ・返り値型・宣言 row は項から消去されているため、この規則は CallableId `ℓ` を鍵に Φ から読み出す（§3.3、§4.3 E-Lambda）。T-RecurVal と同様、body を Φ 由来の署名で検査することで、手書きの Typed Core が signature と body の食い違う `Lam` を偽造できないようにする。O には制約を課さない（§3.4 の verify-origins が別途 O = User を要求する）。
+資源型の仮引数は `Scope(∅, Let(x'_1 : τ_1, x_1, … Let(x'_m : τ_m, x_m, c) …))` の encoding を持ち、Let の型欄は宣言型、仮引数の生名の環境型は `payload-view(τ_i)` である。
+encoding の `Let` は `let` mode であり、対応する binder 名と異なる fresh な名前を束縛する。
+各生名は対応する Let の右辺に一度だけ現れ、encoding の Let 連鎖を除いた本体には現れない。
+root `Owned` 仮引数の encoding 欠落と不正は E-OWN-023 `owned-parameter-missing-binding` と E-OWN-024 `owned-raw-parameter-misuse` で拒否する。
+集約資源型仮引数では同じ違反を E-OWN-034 `resource-binder-missing-binding` と E-OWN-035 `resource-binder-raw-misuse` で拒否する。
+この検査は `RegionLam` の内側にある `Lam` にも適用する。
 
 **(T-CurryVal)** [REQ: CUR-002]
 
@@ -1333,13 +1387,14 @@ payload はその成分型へ check し、値の型に tag を付けた後も pa
 
 `⊔tag` は §6.3 の tag 保存の上界を列へ畳み込む。
 入力が空なら結果は `Never` であり、畳み込みが定義されない場合は型検査に失敗する。
+`branch-view(σ, c)` は、`σ` が資源型で `c` の head が `Scope` の場合に `payload-view(σ)`、それ以外に `σ` とする。
 
 ```text
 Γ; Δ; Π; Ξ; Φ ⊢core c0 : Union(τ1, …, τn) ! ε0
 ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 各 τi に対して type-equiv?(σk, τi) で一致する枝 k がちょうど一つある
 σ1, …, σm は重複しない。余った枝の本体も型付けする
-Γ, xk : σk; Δ; Π; Ξ; Φ ⊢core ck : ρk ! εk       （k = 1 … m）
+Γ, xk : branch-view(σk, ck); Δ; Π; Ξ; Φ ⊢core ck : ρk ! εk       （k = 1 … m）
 τ = ⊔tag {ρk | ρk ≠ Never}
 ----------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core UnionEliminate(c0, ubr̄) : τ ! (ε0 ∪ ε1 ∪ … ∪ εm)
@@ -1355,6 +1410,19 @@ ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 この統合は全枝を一度に行い、各枝の寿命から合流した寿命への制約と、合流した寿命から合流位置への制約を立てる。
 Record の枝も全枝を一度の row 合流へ渡し、共通欄の借用寿命を同じ合流位置で統合する。
 期待型がある位置では、全ての枝の本体をその型へ check する。
+
+資源型の枝 binder は、枝本体の head が `Scope` である encoding 方式か、linear-hole? を満たす線形の穴の方式のいずれかで型付けする。
+encoding 方式では資源型 binder ごとの `Let(x'_i : σ_i, x_i, …)` を宣言順に連ね、全体を `Scope(∅, …)` で包む。
+各 `σ_i` は Union 成分または data field の宣言型であり、root `Owned` の binder もその宣言型を使う。
+encoding の生名 `x` の環境型は payload view であり、root `Owned<τ>` なら `τ`、集約資源型なら `σ` である。
+head の `Scope` の π が空でない場合、または encoding が欠落する場合は E-OWN-034 `resource-binder-missing-binding` で拒否する。
+認識済み encoding の後に生名が残る場合は E-OWN-035 `resource-binder-raw-misuse` で拒否する。
+head が `Scope` でない場合は、各資源型 binder `x` に `linear-hole? c x` を要求し、枝本体の環境型には宣言型 `σ` を使う。
+線形の穴の条件を満たさない場合も E-OWN-034 で拒否する。
+枝本体の head が `Scope` なら encoding 方式を選び、encoding の一部だけを満たさない本体を線形の穴の方式へ読み替えない。
+同じ方式の判定と診断は `Eliminate` の data field binder にも適用する。
+borrowed scrutinee から得る `Borrowed` または `BorrowedMut` の枝 binder は資源型でないため、encoding を要求しない。
+elaboration は `Eliminate` と `UnionEliminate` の資源型の枝 binder に常に encoding を生成し、線形の穴の方式は Typed Core にだけ存在する。
 
 **(T-RecRewrite)**
 
@@ -1474,11 +1542,12 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 機械は同じ path が heap の Record 値にも存在することを確かめ、最終欄の値が `Absent` なら簡約しない。
 metadata が無い place、型または値から辿れない path、空 path では規則は発火しない。
 
-P にある集約資源型の `Let` 変数は借用の owner として登録され、借用 payload はその有効型全体である。
-root `Owned<τ>` の束縛だけは、従来どおり外側の `Owned` を除いた `τ` を借用 payload とする。
+P にある資源型の `Let` 変数は借用の owner として登録される。
+集約資源型の借用 payload は有効型全体であり、root `Owned<τ>` の束縛だけは従来どおり外側の `Owned` を除いた `τ` である。
 `R-LetOwned` 系が変数を数値 place へ置換した後の Borrow は、その place metadata から同じ payload を回復する。
-c1c1 では関数仮引数と `Eliminate`、`UnionEliminate` の枝 binder は P に入らず、集約資源型の仮引数への Borrow は `borrow-non-owned` で拒否する。
-これらの binder を owner として扱う変更は c1c2 で行う。
+関数と `Recur` の仮引数、encoding 方式の枝 binder、および Return binder は、transfer encoding が作る `Let` を通じて P に入り、そこから借用できる。
+枝 binder の線形の穴の方式は place を作らないため、名前つきの借用 target にはならない。
+借用した scrutinee から渡される枝 binder は `Borrowed` または `BorrowedMut` の payload view を保ち、資源型の owner として重ねて登録しない。
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
@@ -1710,8 +1779,8 @@ Tok(input) = Tok(output)
 `input` は R-RecRewrite-Open が消費する `Rec` 値であり、`output` は R-RecRewrite-Close が生成する `Rec` 値である。
 この過程では、各 token は置換した変換本体、identity entry の欄、または列挙しない欄のいずれか一箇所だけに現れる。
 この保存条件は開始時に `config-ok?` を満たす `RecRewrite` の遷移に限る。
-Let 束縛の OWN-009 の穴は c1c1 で回収するが、関数仮引数と `Eliminate`、`UnionEliminate` の枝 binder など Let 以外の置換には穴が残り、c1c2 で回収する。
-従って c1c2 が完了するまでは、この `RecRewrite` の局所的な保存条件を全ての well-typed Core の Preservation へ一般化しない。
+OWN-009 の保存の主張は `RecRewrite` に限らず、`config-ok?` を満たす任意の構成から一 step 遷移した後続構成も `config-ok?` を満たすことである。
+この性質の探索では、`Option` と `Record` の内側にある `OwnedLeaf` を、`Lam` の `Option` 型と `Record` 型の仮引数、`UnionEliminate` と `Eliminate` の枝 binder、handler の Return binder から受け渡す形を検査する。
 `RecRewrite` は record の値を再構成する演算であり、元の place との alias を保つことも切ることもしない。
 その関係は入力 `e` の評価が決める。
 `BorrowMutRef` を経由する `Read` は copy-out の時点で値を元の place から分けるため、Core の machine 試験では copy-out した後に元の place を更新しても、再構成した値がその更新を受けないことを確かめる。
