@@ -5,6 +5,7 @@
          racket/set
          rackunit
          redex/reduction-semantics
+         "../borrow.rkt"
          "../classify.rkt"
          "../compat.rkt"
          "../diagnostic.rkt"
@@ -722,6 +723,88 @@
     (printf "Union: attempted=~a typed=~a ill-typed=~a discarded=~a UnionEliminate=~a embedded=~a literal=~a seed=~a elapsed-ms=~a\n"
             attempted typed ill-typed discarded reached
             (unbox embedded) (unbox literal) (bounds-seed limits)
+            (inexact->exact
+             (round (- (current-inexact-milliseconds) started)))))
+
+  (test-case "Option と Record の中の Owned leaf は binder 間で affine に運ばれる"
+    (define started (current-inexact-milliseconds))
+    (define attempts 160)
+    (define typed 0)
+    (define config-count 0)
+    (define kinds (make-hash))
+    (define actions (make-hash))
+    (call-with-search-seed
+     limits
+     (lambda ()
+       (for ([_attempt (in-range attempts)])
+         (define candidate (generate-owned-leaf-case))
+         (define initial (owned-leaf-case-initial candidate))
+         (define callables (owned-leaf-case-callables candidate))
+         (define expected (owned-leaf-case-expected candidate))
+         (define kind (owned-leaf-case-kind candidate))
+         (define action (owned-leaf-case-action candidate))
+         (hash-update! kinds kind add1 0)
+         (hash-update! actions action add1 0)
+         ;; runtime-row は initial の宣言 metadata と同じ条件で Core 全体を
+         ;; 型検査する。失敗項を破棄せず、生成器の契約違反として試験を落とす。
+         (define initial-row (runtime-row initial callables expected))
+         (check-not-false initial-row
+                          (format "生成 Core が型付けされない: ~s"
+                                  (config-core initial)))
+         (when initial-row
+           (set! typed (add1 typed))
+           (check-true (config-ok? initial callables expected initial-row)
+                       (format "初期 config が不正: ~s" initial))
+           (define run (bounded-trace-g2 initial (bounds-fuel limits)))
+           (check-eq? (execution-outcome run) 'terminal)
+           (define configs (execution-configs run))
+           (define rows
+             (for/list ([configuration (in-list configs)]
+                        [index (in-naturals)])
+               (set! config-count (add1 config-count))
+               (define row (runtime-row configuration callables expected))
+               (check-not-false
+                row
+                (format "runtime row を得られない config ~a: ~s"
+                        index configuration))
+               (when row
+                 (check-true
+                  (config-ok? configuration callables expected row)
+                  (format "不正な中間 config ~a: ~s" index configuration)))
+               row))
+           (for ([before (in-list rows)] [after (in-list (cdr rows))]
+                 [index (in-naturals)])
+             (when (and before after)
+               (check-true
+                (row-subset? after before)
+                (format "config ~a から row が増えた: ~s -> ~s"
+                        index before after))))
+           (define final-config (last configs))
+           (define final-token-table (config-tokens final-config))
+           (define final-value-tokens
+             (collect-tokens (config-core final-config)))
+           (define available-tokens
+             (for/list ([entry (in-list final-token-table)]
+                        #:when (eq? (second entry) 'Available))
+               (first entry)))
+           (check-equal? (length final-token-table) 1)
+           (check-true
+            (for/and ([entry (in-list final-token-table)])
+              (and (memq (second entry) '(Available Dropped)) #t))
+            (format "leaf が未回収の状態で終端した: ~s" final-token-table))
+           (check-equal?
+            final-value-tokens available-tokens
+            "Available leaf は結果に一度だけあり、Dropped leaf は結果に残らない")))))
+    (check-equal? typed attempts "型付け失敗の候補を破棄しない")
+    (for ([kind (in-list '(lambda-option lambda-record union-eliminate
+                           eliminate return-handler))])
+      (check-true (>= (hash-ref kinds kind 0) 8)
+                  (format "生成器が ~a を十分に生成しない: ~s" kind kinds)))
+    (for ([action (in-list '(move drop unused))])
+      (check-true (>= (hash-ref actions action 0) 10)
+                  (format "生成器が ~a を十分に生成しない: ~s" action actions)))
+    (printf "Nested Owned leaf: attempted=~a typed=~a discarded=0 configs=~a kinds=~s actions=~s seed=~a elapsed-ms=~a\n"
+            attempts typed config-count kinds actions (bounds-seed limits)
             (inexact->exact
              (round (- (current-inexact-milliseconds) started)))))
 )

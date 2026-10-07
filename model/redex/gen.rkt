@@ -18,6 +18,7 @@
          (struct-out bounds)
          (struct-out execution)
          (struct-out search-counts)
+         (struct-out owned-leaf-case)
          read-bounds
          call-with-search-seed
          make-search-counts
@@ -44,7 +45,10 @@
          narrow-variance-type
          widen-variance-type
          permute-variance-type
-         generate-union-core)
+         generate-union-core
+         generate-owned-leaf-case)
+
+(struct owned-leaf-case (kind action initial callables expected) #:transparent)
 
 ;; Every generated form is a closed UCore term.  Separate nonterminals make the
 ;; seven searches hit the rules they are intended to check instead of spending
@@ -339,6 +343,138 @@
                       ,selected-arms)
            (UnionEliminate union-value
                            ,(elimination-arms result-type)))]))
+
+;; P2m2c1c2 Task 6。通常の生成文法は変えず、資源を内側に持つ値を
+;; 有効な runtime config として作り、transfer encoding を通る Core を個別に組む。
+;; 直接 Owned 欄の Rec リテラルは型付けが拒否するため、Record の値だけは
+;; token と宣言型を持つ初期 heap から資源型仮引数へ渡す。
+(define option-owned-leaf-type '(Option (Owned Res)))
+(define record-owned-leaf-type
+  '(Record ((n Int imm) (owned (Owned Res) imm))))
+(define union-owned-leaf-type
+  (normalize-type `(Union Int ,option-owned-leaf-type)))
+
+(define (generate-owned-leaf-case)
+  (define kind
+    (pick-one '(lambda-option lambda-record union-eliminate eliminate return-handler)))
+  (define action (pick-one '(move drop unused)))
+  (define token-number (random 100000))
+  (define token `(tok ,token-number))
+  (define payload `(resource ,token-number))
+  (define option-value
+    `(Construct ,option-owned-leaf-type some
+                (OwnedLeaf ,token ,payload)))
+  (define-values (resource-type runtime-value)
+    (case kind
+      [(lambda-record)
+       (values record-owned-leaf-type
+               `(Rec ((n imm ,(random 100000))
+                     (owned imm (OwnedLeaf ,token ,payload)))))]
+      [(union-eliminate)
+       (values union-owned-leaf-type
+               `(UnionVal ,union-owned-leaf-type ,option-owned-leaf-type
+                          ,option-value))]
+      [else (values option-owned-leaf-type option-value)]))
+  (define (encoded-binding name type raw body)
+    `(Scope () (Let (,name let ,type) ,raw ,body)))
+  (define (action-body name)
+    (case action
+      [(move) `(Move ,name)]
+      [(drop) `(Drop (Move ,name))]
+      [else 'unit]))
+  (define (result-for-action type)
+    (if (eq? action 'move) type 'Unit))
+  (define (producer-lambda)
+    `(Lam User nested-owned-producer (raw-producer)
+       (Handle (Return producer-boundary ,resource-type)
+               (producer-return -> producer-return)
+               ,(encoded-binding 'producer-place resource-type 'raw-producer
+                                 '(Move producer-place)))))
+  (define (lambda-consumer)
+    (define result-type (result-for-action resource-type))
+    (define body (action-body 'consumer-place))
+    `(Apply
+      (Lam User nested-owned-consumer (raw-consumer)
+        (Handle (Return consumer-boundary ,result-type)
+                (consumer-return -> consumer-return)
+                ,(encoded-binding 'consumer-place resource-type
+                                  'raw-consumer body)))
+      (Move produced)))
+  (define (option-eliminate)
+    (define some-body
+      (encoded-binding 'option-leaf '(Owned Res) 'raw-option
+                       (action-body 'option-leaf)))
+    (define none-body
+      (if (eq? action 'move) '(resource 0) 'unit))
+    (define elimination
+      `(Eliminate
+        (Move produced)
+        ((some (raw-option) -> ,some-body)
+         (none () -> ,none-body))))
+    (if (eq? action 'move) `(Drop ,elimination) elimination))
+  (define (union-eliminate)
+    (define option-body
+      (encoded-binding 'union-leaf option-owned-leaf-type 'raw-union
+                       (action-body 'union-leaf)))
+    (define int-body
+      (if (eq? action 'move)
+          `(Construct ,option-owned-leaf-type none)
+          'unit))
+    `(UnionEliminate
+      (Move produced)
+      ((Int ignored-int -> ,int-body)
+       (,option-owned-leaf-type raw-union -> ,option-body))))
+  (define (return-handler)
+    (define body
+      (case action
+        [(move) '(Move return-place)]
+        [(drop)
+         `(Let (ignored-drop let Unit)
+               (Drop (Move return-place))
+               (Construct ,option-owned-leaf-type none))]
+        [else `(Construct ,option-owned-leaf-type none)]))
+    `(Handle (Return nested-return-boundary ,option-owned-leaf-type)
+             (raw-return ->
+               ,(encoded-binding 'return-place option-owned-leaf-type
+                                 'raw-return body))
+             (Perform (Return nested-return-boundary ,option-owned-leaf-type)
+                      (Move produced))))
+  (define consumer
+    (case kind
+      [(lambda-option lambda-record) (lambda-consumer)]
+      [(union-eliminate) (union-eliminate)]
+      [(eliminate) (option-eliminate)]
+      [else (return-handler)]))
+  (define expected
+    (case kind
+      [(lambda-option lambda-record)
+       (result-for-action resource-type)]
+      [(union-eliminate)
+       (result-for-action option-owned-leaf-type)]
+      [(eliminate) 'Unit]
+      [else option-owned-leaf-type]))
+  (define source-signature
+    `(NFn (,resource-type) ,resource-type () (Own) () User))
+  (define consumer-signature
+    (and (memq kind '(lambda-option lambda-record))
+         `(NFn (,resource-type) ,expected () (Own) () User)))
+  (define callables
+    (if consumer-signature
+        `((nested-owned-producer ,source-signature)
+          (nested-owned-consumer ,consumer-signature))
+        `((nested-owned-producer ,source-signature))))
+  (define core
+    `(Scope (0)
+       (Let (produced let ,resource-type)
+            (Apply ,(producer-lambda) (Move 0))
+            ,consumer)))
+  (define initial
+    `(cfg ,core
+          ((0 ,runtime-value (declared ,resource-type)))
+          ((0 Available))
+          ((,token Available))
+          ()))
+  (owned-leaf-case kind action initial callables expected))
 
 (define (make-search-counts limits)
   (search-counts 0 0 (bounds-discard-limit limits)))
