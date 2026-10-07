@@ -8,6 +8,7 @@
          "region-param.rkt"
          "resource-type.rkt"
          "rows.rkt"
+         "ownership.rkt"
          "traits.rkt"
          "type-equiv.rkt"
          "validators.rkt")
@@ -508,6 +509,104 @@
 
 (define (leaves-droppable?/proc value tokens)
   (leaves-available? (walk-owned-leaves-for-drop value) tokens))
+
+;; τa と τe から決めた除去欄を値から取り除く。
+;; 型と値が一致しない形は #f を返して fail-closed にする。
+(define (strip-remainder actual-type expected-type value)
+  (define shape (remainder-removal-shape actual-type expected-type))
+  (and shape
+       (let/ec fail
+         (define (absent? v)
+           (match v [`(Absent ,_) #t] [_ #f]))
+         (define (strip actual expected current entries)
+           (if (null? entries)
+               (list current '())
+               (match actual
+                 [`(Record ,actual-row)
+                  (match expected
+                    [`(Record ,expected-row)
+                     (match current
+                       [`(Rec ,value-fields)
+                        (define value-labels (map first value-fields))
+                        (unless (and (field-row-unique? actual-row)
+                                     (field-row-unique? expected-row)
+                                     (not (check-duplicates value-labels))
+                                     (for/and ([field (in-list value-fields)])
+                                       (match (assoc (first field) actual-row)
+                                         [(list _ _ mode _ ...)
+                                          (eq? mode (second field))]
+                                         [_ #f]))
+                                     (for/and ([field (in-list actual-row)])
+                                       (or (field-optional? field)
+                                           (assoc (first field) value-fields))))
+                          (fail #f))
+                        (define-values (output removed)
+                          (for/fold ([output '()] [removed '()])
+                                    ([field (in-list value-fields)])
+                            (define label (first field))
+                            (define mode (second field))
+                            (define field-value (third field))
+                            (define entry (assoc label entries))
+                            (define actual-field (assoc label actual-row))
+                            (define expected-field (assoc label expected-row))
+                            (match entry
+                              [(list _ 'drop optional?)
+                               (if (absent? field-value)
+                                   (if optional?
+                                       (values output removed)
+                                       (fail #f))
+                                   (values output
+                                           (append removed (list field-value))))]
+                              [(list _ 'nested child-shape)
+                               (unless (and actual-field expected-field
+                                            (eq? (third actual-field) 'imm)
+                                            (eq? (third expected-field) 'imm)
+                                            (eq? (field-presence actual-field)
+                                                 (field-presence expected-field)))
+                                 (fail #f))
+                               (match* ((second actual-field)
+                                        (second expected-field)
+                                        field-value)
+                                 [(`(Record ,_) `(Record ,_)
+                                   `(Absent ,_))
+                                  (unless (and (field-optional? actual-field)
+                                               (field-optional? expected-field))
+                                    (fail #f))
+                                  (values (append output
+                                                  (list (list label mode
+                                                              `(Absent ,(second expected-field)))))
+                                          removed)]
+                                 [(`(Record ,_) `(Record ,_) _)
+                                  (match (strip (second actual-field)
+                                                (second expected-field)
+                                                field-value child-shape)
+                                    [(list nested-value nested-removed)
+                                     (values (append output
+                                                     (list (list label mode nested-value)))
+                                             (append removed nested-removed))]
+                                    [_ (fail #f)])]
+                                 [(_ _ _) (fail #f)])]
+                              [_ (values (append output (list field)) removed)])))
+                        (list `(Rec ,output) removed)]
+                       [_ (fail #f)])]
+                    [_ (fail #f)])]
+                 [_ (fail #f)])))
+         (strip actual-type expected-type value shape))))
+
+(define (removed-droppable? values tokens)
+  (define token-ids (append-map collect-tokens values))
+  (and (not (check-duplicates token-ids))
+       (let loop ([remaining values] [current tokens])
+         (cond
+           [(null? remaining) #t]
+           [(term (leaves-droppable?/g2 ,(car remaining) ,current))
+            (loop (cdr remaining)
+                  (term (drop-leaves/g2 ,(car remaining) ,current)))]
+           [else #f]))))
+
+(define (drop-removed values tokens)
+  (for/fold ([current tokens]) ([value (in-list values)])
+    (term (drop-leaves/g2 ,value ,current))))
 
 ;; Yield は payload の leaf token を一括で Observed へ移す。root 位置の leaf も
 ;; 観測されるため、Drop と同じく root を含めて列挙する。
@@ -1172,11 +1271,33 @@
         R-ProjOptPlace)
 
    ;; PRF-004: 搬送された ProofRep を一段で剥がす。Discharge は評価文脈では
-   ;; ないため、包まれた c は Discharge が消えるまで還元されない。入れ子は外側から一段
-   ;; ずつ消える。
+   ;; ないため、包まれた c は Discharge が消えるまで還元されない。RSD は
+   ;; 専用規則が除去欄を処理する。
    (--> (cfg (in-hole E (Discharge (ProofRep O φ) c_inner)) H Ω Λtok θ)
         (cfg (in-hole E c_inner) H Ω Λtok θ)
+        (side-condition
+         (not (redex-match? G2m
+                            (RemainderSafelyDropped τ_actual τ_expected)
+                            (term φ))))
         R-Discharge)
+
+   ;; RSD は値になった後で除去欄を取り除き、欄値の token を drop する。
+   (--> (cfg (in-hole E
+                      (Discharge
+                       (ProofRep O
+                                 (RemainderSafelyDropped τ_actual τ_expected))
+                       v_inner))
+             H Ω Λtok θ)
+        (cfg (in-hole E v_output) H Ω Λtok_final θ)
+        (where (v_output (v_removed ...))
+               ,(strip-remainder (term τ_actual)
+                                 (term τ_expected)
+                                 (term v_inner)))
+        (side-condition
+         (removed-droppable? (term (v_removed ...)) (term Λtok)))
+        (where Λtok_final
+               ,(drop-removed (term (v_removed ...)) (term Λtok)))
+        R-DischargeRemainder)
 
    ;; RegionApp は静的な包みを剥がし、rp へ ρ を代入する。
    ;; 還元そのものは RParam を読まないが、剥がした本体は型注釈を運ぶ。

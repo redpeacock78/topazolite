@@ -1601,15 +1601,18 @@ F ::= []                                          純粋文脈（Scope と Handl
     | RecRewrite(F, entries)
     | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, F), (ℓk+1, mk+1, ck+1), …)
     | Perform(op, F) | Drop(F) | Yield(F, c)
+    | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), F)
     | Curry(F, c) | Curry(v, F)
 
 E ::= F | E[Scope(π, F)] | E[Handle(op, h, F)]    一般文脈
     | RecRewrite(E, entries)
     | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, E), (ℓk+1, mk+1, ck+1), …)
+    | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), E)
 
 G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文脈
     | RecRewrite(G, entries)
     | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, G), (ℓk+1, mk+1, ck+1), …)
+    | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), G)
 ```
 
 以降の規則は、明示しない限り一般文脈 E の下で適用される。
@@ -1617,6 +1620,38 @@ G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文
 Perform の伝播規則（R-ScopeAbort、R-HandleSkip、R-HandleReturn）は F の純粋性を条件に使い、内側の frame から順に一段ずつ処理する。
 G は R-LetOwned（§5.3）が最寄りの Scope を特定するために使う。
 初期構成が最外に Scope を持ち、簡約が Scope を項の外へ運び出さないため、redex を囲む Scope は常に存在する。
+
+通常の `R-Discharge` は `RemainderSafelyDropped` 以外の命題を持つ `Discharge` から Proof を取り除く。
+`RemainderSafelyDropped` の `Discharge` は内側の項が値になるまで評価し、残余のうち `Owned` を含む除去欄を値から取り除く。
+除去欄は最上位の残余欄と、共通する `imm` の `Record` 欄の内側にある残余欄から型対に基づいて決める。
+除去欄の値に含まれる leaf token は、全て `Available` で重複がない場合に `Dropped` へ移す。
+optional の除去欄が `Absent` なら token を動かさず、欄だけを取り除く。
+除去しない残余欄は値に残す。
+形が型対と一致しない場合、token が存在しない場合、重複する場合、または `Available` でない場合は規則を適用しない。
+この drop は `θ` に event を追加せず、`H` と `Ω` も変えない。
+
+**(R-Discharge)**
+
+```text
+φ ≠ RemainderSafelyDropped(τa, τe)
+-----------------------------------------
+⟨E[Discharge(ProofRep(O, φ), c)], H, Ω, Λtok, θ⟩
+  → ⟨E[c], H, Ω, Λtok, θ⟩
+```
+
+**(R-DischargeRemainder)**
+
+```text
+(v', v̄removed) = stripRemainder(τa, τe, v)
+Λtok' = dropLeaves(v̄removed, Λtok)
+-----------------------------------------
+⟨E[Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), v)], H, Ω, Λtok, θ⟩
+  → ⟨E[v'], H, Ω, Λtok', θ⟩
+```
+
+`stripRemainder` は型対から得た除去欄に従って値を再帰的に作り直し、除去した値を順に返す。
+`dropLeaves` は返された各値の leaf token を左から `Dropped` にする。
+いずれかの前提を満たせないとき、`R-DischargeRemainder` は発火しない。
 
 ### 5.3 関数適用と curry
 

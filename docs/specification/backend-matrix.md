@@ -124,9 +124,9 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 24 本である。
-源の `-->g2` の 63 本を基準にする。
+源の `-->g2` の 64 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 32 本が対象外となり、24 本が残る。
+目標側に規則を持たない 33 本が対象外となり、24 本が残る。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -156,7 +156,8 @@ pstate ::= Available | Moved | Dropped
 | `R-ProjOpt` | `R-PR-ProjOpt` | 欄があれば `some`、無ければ `none` を作る |
 | `R-ProjPlace` | `R-PR-ProjPlace` | Available place の record 欄を読み、heap と状態表は変えない |
 | `R-ProjOptPlace` | `R-PR-ProjOptPlace` | Available place の optional 欄を読み、heap と状態表は変えない |
-| `R-Discharge` | なし | Proof は実行時に意味を持たない |
+| `R-Discharge` | なし | `RemainderSafelyDropped` 以外の Proof は実行時に意味を持たない |
+| `R-DischargeRemainder` | なし | 残余欄を drop する複合 lowering は `PRecRemove` と `PRuntime drop` を使う |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowError` | なし | Portable Racket backend は借用を未設計である |

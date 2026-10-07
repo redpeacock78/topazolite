@@ -22,7 +22,7 @@
          "type-equiv.rkt"
          "validators.rkt")
 
-(provide owned-narrowing-kind check-narrowing-return)
+(provide owned-narrowing-kind check-narrowing-return remainder-removal-shape)
 
 (define (union-type? type)
   (and (pair? type) (eq? (car type) 'Union)))
@@ -106,6 +106,57 @@
            (owned-narrowing-kind/impl actual-type expected-type compatible? #f)]
           [_ 'ok])]
        [_ 'ok]))))
+
+;; RemainderSafelyDropped が実行時に除去する欄を型対から得る。
+;; `drop` はこの欄を値ごと取り除き、`nested` は共通する imm Record 欄へ潜る。
+;; `#f` は対応する型構造でない場合、空リストは除去欄が無い場合である。
+(define (remainder-removal-shape actual expected)
+  (define (shape-for-type actual-type expected-type)
+    (cond
+      [(type-equiv? actual-type expected-type) '()]
+      [else
+       (match* (actual-type expected-type)
+         [(`(Record ,actual-row) `(Record ,expected-row))
+          (and (field-row-unique? actual-row)
+               (field-row-unique? expected-row)
+               (let ([removed
+                      (for/list ([field
+                                  (in-list
+                                   (field-row-residual actual-row expected-row))]
+                                 #:unless (owned-free? (second field)))
+                        (list (first field) 'drop (field-optional? field)))])
+                 (let loop ([remaining expected-row] [nested '()])
+                   (cond
+                     [(null? remaining) (append removed (reverse nested))]
+                     [else
+                      (define expected-field (car remaining))
+                      (define actual-field
+                        (assoc (first expected-field) actual-row))
+                      (define recurse?
+                        (and actual-field
+                             (eq? (third actual-field) 'imm)
+                             (eq? (third expected-field) 'imm)
+                             (eq? (field-presence actual-field)
+                                  (field-presence expected-field))
+                             (match* ((second actual-field)
+                                      (second expected-field))
+                               [(`(Record ,_) `(Record ,_)) #t]
+                               [(_ _) #f])))
+                      (if recurse?
+                          (let ([child-shape
+                                 (shape-for-type (second actual-field)
+                                                 (second expected-field))])
+                            (and child-shape
+                                 (loop
+                                  (cdr remaining)
+                                  (if (null? child-shape)
+                                      nested
+                                      (cons (list (first expected-field)
+                                                  'nested child-shape)
+                                            nested)))))
+                          (loop (cdr remaining) nested))]))))]
+         [(_ _) #f])]))
+  (shape-for-type actual expected))
 
 (define (type-value? v)
   (redex-match? G2m τ v))

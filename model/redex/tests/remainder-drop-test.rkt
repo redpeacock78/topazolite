@@ -13,6 +13,8 @@
          "../origins.rkt"
          "../search.rkt"
          "../region.rkt"
+         "../machine.rkt"
+         "../gen.rkt"
          "../typing.rkt")
 
 (define owned '(Owned Res))
@@ -50,6 +52,93 @@
 ;; 残余 drop 以外の義務。混在の検査に使う。
 (define cap-proof '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
 
+(define acquire '(PrimVal (Reserved o-acquire) acquire))
+(define option-owned '(Option (Owned Res)))
+(define runtime-wide
+  '(Record ((kept Int imm) (owned (Option (Owned Res)) imm))))
+(define runtime-narrow '(Record ((kept Int imm))))
+(define runtime-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,runtime-wide ,runtime-narrow)))
+
+(define runtime-source-callables
+  `((rsd-record-source
+     (NFn (,option-owned) ,runtime-wide () (Own) () User))))
+
+(define (runtime-source number)
+  `(Apply
+    (Lam User rsd-record-source (raw-owned)
+      (Handle (Return rsd-source-boundary ,runtime-wide)
+              (return-value -> return-value)
+              (Scope ()
+                (Let (stored let ,option-owned) raw-owned
+                  (Let (record let ,runtime-wide)
+                    (Rec ((owned imm (Move stored)) (kept imm 7)))
+                    (Move record))))))
+    (Construct ,option-owned some ,(owned-leaf number))))
+
+(define (owned-leaf number)
+  `(OwnLeaf (Apply ,acquire ,number)))
+
+(define (trace-g2 start)
+  (let loop ([current start] [configs (list start)] [rules '()] [fuel 80])
+    (when (zero? fuel)
+      (error 'trace-g2 "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values configs rules)]
+      [(list (list rule next))
+       (loop next (append configs (list next))
+             (append rules (list rule)) (sub1 fuel))]
+      [steps (error 'trace-g2 "一意な次状態を期待したが複数ある: ~s" steps)])))
+
+(define (configuration-core configuration)
+  (match configuration [`(cfg ,core ,_ ,_ ,_ ,_) core]))
+
+(define (configuration-tokens configuration)
+  (match configuration [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
+
+(define (configuration-events configuration)
+  (match configuration [`(cfg ,_ ,_ ,_ ,_ ,events) events]))
+
+(define (contains-rsd? value)
+  (match value
+    [`(Discharge (ProofRep ,_ (RemainderSafelyDropped ,_ ,_)) ,_) #t]
+    [(? list?) (ormap contains-rsd? value)]
+    [_ #f]))
+
+(define (check-config-trace configs callables expected-type)
+  (define rows
+    (for/list ([configuration (in-list configs)] [index (in-naturals)])
+      (define row (runtime-row configuration callables expected-type))
+      (check-not-false row
+                       (format "runtime row を得られない config ~a: ~s"
+                               index configuration))
+      (check-true (config-ok? configuration callables expected-type row)
+                  (format "不正な中間 config ~a: ~s" index configuration))
+      row))
+  (for ([before (in-list rows)] [after (in-list (cdr rows))]
+        [index (in-naturals)])
+    (check-true (row-subset? after before)
+                (format "config ~a から次の config で row が増えた: ~s -> ~s"
+                        index before after))))
+
+(define (manual-rsd-rules proof value tokens)
+  (map first
+       (raw-steps-g2/named
+        `(cfg (Discharge ,proof ,value) () () ,tokens ()))))
+
+(define (manual-runtime-wide-value token)
+  `(Rec ((kept imm 7)
+         (owned imm
+                (Construct ,option-owned some
+                           (OwnedLeaf (tok ,token) (resource 1)))))))
+
+(define (run-rsd inner [wrapper values])
+  (define core (wrapper `(Discharge ,runtime-proof ,inner)))
+  (define-values (configs rules)
+    (trace-g2 `(cfg ,core () () () ())))
+  (values core configs rules))
+
 (define narrowing-environment
   `((f (NFn (,narrow) ,narrow () () () User))
     (g (NFn (,reject-narrow) ,reject-narrow () () () User))
@@ -66,6 +155,11 @@
 
 (define (key-of core [environment '()])
   (match (type-of/raw core '() '() environment (empty-region-ctx))
+    [(list 'fail key _node _details ...) key]
+    [(list 'ok _) 'ok]))
+
+(define (key-of-with-callables core callables [places '()])
+  (match (type-of/raw core places callables '() (empty-region-ctx))
     [(list 'fail key _node _details ...) key]
     [(list 'ok _) 'ok]))
 
@@ -177,3 +271,247 @@
                                ,wide-value))
             narrowing-environment)
    'discharge-proof-issuer))
+
+(test-case "RSD の除去欄の token は Dropped になり、値から欄が消える"
+  (define inner (runtime-source 31))
+  (define-values (core configs rules)
+    (run-rsd inner (lambda (term) `(Scope () ,term))))
+  (check-equal? (key-of-with-callables core runtime-source-callables) 'ok)
+  (check-equal? (core-type-of core '() runtime-source-callables)
+                (list runtime-narrow '(Own)))
+  (check-config-trace configs runtime-source-callables runtime-narrow)
+  (check-equal? (configuration-core (last configs))
+                '(Rec ((kept imm 7))))
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped)))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-false (member 'R-Discharge rules)))
+
+(test-case "Absent の除去欄は token 無しで欄だけを取り除く"
+  (define optional-wide
+    `(Record ((kept Int imm) (owned ,option-owned imm opt))))
+  (define optional-proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,optional-wide ,runtime-narrow)))
+  (define core
+    `(Scope ()
+       (Discharge ,optional-proof
+         (Rec ((owned imm (Absent ,option-owned)) (kept imm 9))))))
+  (define-values (configs _rules) (trace-g2 `(cfg ,core () () () ())))
+  (check-equal? (core-type-of core '() '()) (list runtime-narrow '()))
+  (check-config-trace configs '() runtime-narrow)
+  (check-equal? (configuration-core (last configs))
+                '(Rec ((kept imm 9))))
+  (check-equal? (configuration-tokens (last configs)) '()))
+
+(test-case "RSD の内側で Yield した保持値と除去欄は重ならず trace が型付けできる"
+  (define core
+    `(Scope ()
+       (Discharge ,runtime-proof
+         (Yield 5 ,(runtime-source 34)))))
+  (check-equal? (key-of-with-callables core runtime-source-callables) 'ok)
+  (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
+  (check-config-trace configs runtime-source-callables runtime-narrow)
+  (define yield-index (index-of rules 'R-Yield))
+  (check-not-false yield-index)
+  (check-not-false
+   (member '(obs 5)
+           (configuration-events (list-ref configs (add1 yield-index)))))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped))))
+
+(test-case "R-DischargeRemainder は値の形が型と合わなければ発火しない"
+  (define malformed
+    `(Rec ((kept imm 7)
+          (owned imm
+                 (Construct ,option-owned some
+                            (OwnedLeaf (tok 81) (resource 1))))
+          (extra imm 9))))
+  (check-false
+   (member 'R-DischargeRemainder
+           (manual-rsd-rules runtime-proof malformed
+                             '(((tok 81) Available)))))
+  (check-equal?
+   (manual-rsd-rules runtime-proof (manual-runtime-wide-value 81)
+                     '(((tok 81) Available)))
+   '(R-DischargeRemainder)))
+
+(test-case "R-DischargeRemainder は Available でない除去 token を拒む"
+  (define value (manual-runtime-wide-value 82))
+  (check-false
+   (member 'R-DischargeRemainder
+           (manual-rsd-rules runtime-proof value '(((tok 82) Dropped)))))
+  (check-equal?
+   (manual-rsd-rules runtime-proof value '(((tok 82) Available)))
+   '(R-DischargeRemainder)))
+
+(test-case "R-DischargeRemainder は除去欄間で重複する token を拒む"
+  (define two-owned-wide
+    `(Record ((kept Int imm)
+              (left ,option-owned imm)
+              (right ,option-owned imm))))
+  (define two-owned-proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,two-owned-wide ,runtime-narrow)))
+  (define (two-owned-value left-token right-token)
+    `(Rec ((kept imm 7)
+           (left imm
+                 (Construct ,option-owned some
+                            (OwnedLeaf (tok ,left-token) (resource 1))))
+           (right imm
+                  (Construct ,option-owned some
+                             (OwnedLeaf (tok ,right-token) (resource 2)))))))
+  (check-false
+   (member 'R-DischargeRemainder
+           (manual-rsd-rules two-owned-proof (two-owned-value 83 83)
+                             '(((tok 83) Available)))))
+  (check-equal?
+   (manual-rsd-rules two-owned-proof (two-owned-value 83 84)
+                     '(((tok 83) Available) ((tok 84) Available)))
+   '(R-DischargeRemainder)))
+
+(test-case "Owned を含まない残余の欄は値に残る"
+  (define wider-type
+    `(Record ((extra Int imm) (kept Int imm) (owned ,option-owned imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wider-type ,runtime-narrow)))
+  (define inner
+    `(Apply
+      (Lam User rsd-record-source-extra (raw-owned)
+        (Handle (Return rsd-extra-boundary ,wider-type)
+                (return-value -> return-value)
+                (Scope ()
+                  (Let (stored let ,option-owned) raw-owned
+                    (Let (record let ,wider-type)
+                      (Rec ((owned imm (Move stored)) (kept imm 7) (extra imm 9)))
+                      (Move record))))))
+      (Construct ,option-owned some ,(owned-leaf 32))))
+  (define callables
+    `((rsd-record-source-extra
+       (NFn (,option-owned) ,wider-type () (Own) () User))))
+  (define core `(Scope () (Discharge ,proof ,inner)))
+  (define-values (configs _rules) (trace-g2 `(cfg ,core () () () ())))
+  (check-equal? (core-type-of core '() callables)
+                (list runtime-narrow '(Own)))
+  (check-config-trace configs callables runtime-narrow)
+  (check-equal? (configuration-core (last configs))
+                '(Rec ((kept imm 7) (extra imm 9))))
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped))))
+
+(test-case "RSD の内側が値でない間は R-Discharge が発火しない"
+  (define start `(cfg (Discharge ,runtime-proof (Error 0)) () () () ()))
+  (define names (map first (raw-steps-g2/named start)))
+  (check-false (member 'R-Discharge names))
+  (check-equal? names '()))
+
+(test-case "RSD の内側が還元可能な非値の間は R-Discharge で剥がさない"
+  (define start
+    `(cfg (Discharge ,runtime-proof ,(runtime-source 35)) () () () ()))
+  (define names (map first (raw-steps-g2/named start)))
+  (check-not-false names)
+  (check-false (member 'R-Discharge names)))
+
+(test-case "RSD の内側の資源型 Let は値を作ってから RSD で drop する"
+  (define inner
+    `(Let (stored let ,runtime-wide)
+          ,(runtime-source 33)
+          (Move stored)))
+  (define core `(Scope (0) (Discharge ,runtime-proof ,inner)))
+  (define places '((0 Res)))
+  (define start `(cfg ,core ((0 (resource 1))) ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-equal? (core-type-of core places runtime-source-callables)
+                (list runtime-narrow '(Own)))
+  (check-config-trace configs runtime-source-callables runtime-narrow)
+  (check-not-false (member 'R-LetOwnedB rules))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (configuration-core (last configs))
+                '(Rec ((kept imm 7))))
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped))))
+
+(test-case "RSD 以外の φ の Discharge は R-Discharge で剥がれる"
+  (define start `(cfg (Discharge ,cap-proof unit) () () () ()))
+  (check-equal? (map first (raw-steps-g2/named start)) '(R-Discharge)))
+
+(define interrupt-wide
+  `(Record ((owned ,option-owned imm) (signal Unit imm))))
+(define interrupt-narrow '(Record ((signal Unit imm))))
+(define interrupt-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,interrupt-wide ,interrupt-narrow)))
+(define interrupt-worker
+  `(Lam User interrupt-worker (raw-owned raw-unit)
+     (Handle (Return interrupt-worker-boundary ,interrupt-wide)
+             (return-record -> return-record)
+             (Scope ()
+               (Let (stored let ,option-owned) raw-owned
+                 (Let (record let ,interrupt-wide)
+                   (Rec ((owned imm (Move stored)) (signal imm raw-unit)))
+                   (Move record)))))))
+(define interrupt-consumer
+  '(Lam User interrupt-consumer (raw-owned raw-record)
+     (Handle (Return interrupt-consumer-boundary Unit)
+             (return-value -> return-value)
+             (Scope ()
+               (Let (transferred let (Option (Owned Res))) raw-owned unit)))))
+(define interrupt-callables
+  `((interrupt-consumer
+     (NFn ((Option (Owned Res)) ,interrupt-narrow) Unit () () () User))
+    (interrupt-worker
+     (NFn ((Option (Owned Res)) Unit) ,interrupt-wide () (Own) () User))))
+(define interrupt-outer-leaf
+  `(Construct ,option-owned some ,(owned-leaf 41)))
+
+(define (interrupted-rsd-core mode)
+  (define interrupt
+    (if (eq? mode 'error)
+        '(Error 0)
+        '(Perform (Return rsd-interrupt Unit) unit)))
+  (define rsd-inner
+    `(Apply ,interrupt-worker
+            (Construct ,option-owned some ,(owned-leaf 42))
+            ,interrupt))
+  (define computation
+    `(Apply ,interrupt-consumer
+            ,interrupt-outer-leaf
+            (Discharge ,interrupt-proof ,rsd-inner)))
+  (case mode
+    [(error) `(Scope () ,computation)]
+    [(perform)
+     `(Handle (Return rsd-interrupt Unit) (answer -> answer)
+        (Scope () ,computation))]))
+
+(define (check-rsd-interruption mode expected-rule expected-core)
+  (define core (interrupted-rsd-core mode))
+  (define places (if (eq? mode 'error) '((0 Res)) '()))
+  (define heap (if (eq? mode 'error) '((0 (resource 99))) '()))
+  (define states (if (eq? mode 'error) '((0 Available)) '()))
+  (define expected-row '(Own))
+  (define start `(cfg ,core ,heap ,states () ()))
+  (check-equal? (key-of-with-callables core interrupt-callables places) 'ok)
+  (check-equal? (core-type-of core places interrupt-callables)
+                (list 'Unit expected-row))
+  (define-values (configs rules) (trace-g2 start))
+  (check-config-trace configs interrupt-callables 'Unit)
+  (check-not-false (member expected-rule rules))
+  (define index (index-of rules expected-rule))
+  (define before (list-ref configs index))
+  (define after (list-ref configs (add1 index)))
+  (check-true (contains-rsd? (configuration-core before))
+              "中断直前の捨てる frame に RSD が残る")
+  (check-equal? (configuration-events before)
+                (configuration-events after)
+                "中断規則は θ を変えない")
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped) ((tok 1) Dropped)))
+  (check-equal? (configuration-core (last configs)) expected-core))
+
+(test-case "RSD を含む Error frame と外側の Apply frame は共に回収される"
+  (check-rsd-interruption 'error 'R-ScopeError '(Error 0)))
+
+(test-case "RSD を含む Perform frame は ScopeAbort で回収され handler へ届く"
+  (check-rsd-interruption 'perform 'R-ScopeAbort 'unit))

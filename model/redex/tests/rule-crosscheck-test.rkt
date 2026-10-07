@@ -13,7 +13,7 @@
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
 ;; Curry、Recur、Let、LetOwned、RecRewrite の 5 組は目標側でそれぞれ 1 本へ畳む。
-;; R-Discharge、R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、
+;; R-Discharge、R-DischargeRemainder、R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、
 ;; R-RetirePerform と G2m 固有規則は目標側に無く、raw pointer の 7 規則も対象外である。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
@@ -42,6 +42,7 @@
     (R-ProjPlace    . R-PR-ProjPlace)
     (R-ProjOptPlace . R-PR-ProjOptPlace)
     (R-Discharge    . #f)
+    (R-DischargeRemainder . #f)
     (R-RegionApp    . #f)
     (R-Borrow       . #f)
     (R-BorrowError  . #f)
@@ -95,11 +96,11 @@
  (check-equal? (set-count g1-rule-names) 26))
 
 (test-case
- "-->g2/rules adds exactly thirty-seven names to -->g1/rules"
+ "-->g2/rules adds exactly thirty-eight names to -->g1/rules"
  ;; R-LetIdentity は G1 と G2 の双方に属するため、差分には含めない。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
-                    'R-Discharge 'R-LetB
+                    'R-Discharge 'R-DischargeRemainder 'R-LetB
                     'R-LetIdentityB 'R-LetOwnedB
                     'R-LetMutB
                     'R-Borrow 'R-BorrowError 'R-BorrowMut
@@ -114,12 +115,12 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 63))
+ (check-equal? (set-count g2-rule-names) 64))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 63))
+ (check-equal? (length rule-correspondence) 64))
 
 (test-case
  "the target side has 24 rules"

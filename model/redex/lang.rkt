@@ -319,6 +319,7 @@
 
   (F ::= ....
          (Rec ((label m v) ... (label m F) (label m c) ...))
+         (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) F)
          (UnionInject τ τ F)
          (UnionEliminate F (ubr ...))
          (RecRewrite F ((label x τ m τ c) ...))
@@ -343,6 +344,7 @@
          (Unsafe F))
   (E ::= ....
          (Rec ((label m v) ... (label m E) (label m c) ...))
+         (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) E)
          (UnionInject τ τ E)
          (UnionEliminate E (ubr ...))
          (RecRewrite E ((label x τ m τ c) ...))
@@ -367,6 +369,7 @@
          (Unsafe E))
   (G ::= ....
          (Rec ((label m v) ... (label m G) (label m c) ...))
+         (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) G)
          (UnionInject τ τ G)
          (UnionEliminate G (ubr ...))
          (RecRewrite G ((label x τ m τ c) ...))
