@@ -360,6 +360,10 @@ Eliminate(c0, branches) : (Record r)
 `(Presence label)` は合流後も required の欄にだけ発行する。
 `compat?` は方向付きであり、どの枝の field 型を結果へ残すかを一意に決めないため、merge には使わない。
 
+Core の `Eliminate` は、枝の型からこの合流型を推論する。
+elaborate は ROW-005 の join 上界を求め、各枝をその上界へ作り直してから Core の合流へ渡す。
+そのため Core の合流も同じ上界を返す。
+
 非 `Never` 枝が一つもなければ結果型は `Never` である。
 非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
@@ -392,6 +396,9 @@ G2a の elaboration は未型付き縮小 Core の record 構文を §2.4 の Ty
 `Rec` は各 field を synthesis し、ラベル一意性と `Owned` field の禁止を検査して、field 型と Effect row を合成する。
 `Proj` は scrutinee を synthesis し、field row の参照から結果型を得る。
 binding mode 付き `Let` は注釈を T へ解決し、bound を synthesis して §3.2 の policy を適用する。
+
+Union を Record へ分解するとき、elaborate は ROW-005 の join で各成分の expected 欄と残余欄を合わせ、その型へ成分の値を作り直してから Core の分岐を生成する。
+Union を expected とする `Rec` の check では、elaborate が候補成分を選び、選んだ Record 型でリテラルを check して `UnionInject` に包む。
 
 Typed Core の binding mode 付き `Let` が保持する注釈は宣言型 T である。
 `let` の残余 row は body を型付けする Γ の x にだけ保持し、Typed Core の注釈へ書き戻さない。
