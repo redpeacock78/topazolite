@@ -765,8 +765,11 @@
                              #:no-member-key no-member-key))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,core))
 
+    (define (record-row-of type)
+      (match type [`(Record ,row) row] [_ #f]))
+
     ;; P2m2b spec §3.1。(values Core 変換後の型) を返すか、その位置で拒否する。
-    (define (convert core actual expected s propositions)
+    (define (convert core actual expected s propositions #:entry? [entry? #f])
       (define actual* (normalize-type actual))
       (define expected* (normalize-type expected))
       (define context (initial-candidate-context propositions))
@@ -781,10 +784,13 @@
          (values (union-inject core actual* expected* s propositions)
                  expected*)]
         [actual-union?
-         (decompose core actual* expected* s propositions)]
+         (decompose core actual* expected* s propositions #:entry? entry?)]
+        [(and (record-row-of actual*) (record-row-of expected*))
+         (rebuild-record core (record-row-of actual*) (record-row-of expected*)
+                         s propositions)]
         [else (reject s 'type-mismatch expected actual)]))
 
-    (define (decompose core actual expected s propositions)
+    (define (decompose core actual expected s propositions #:entry? [entry? #f])
       (define context (initial-candidate-context propositions))
       (define branches
         (for/list ([member (in-list (union-members actual))])
@@ -861,7 +867,7 @@
                (convert (if alias
                             `(Move ,s ,(reference alias))
                             (reference name))
-                        member expected s propositions))
+                        member expected s propositions #:entry? entry?))
              (resource-branch-body member name alias body)))
          ;; c2 spec §3。Union の成分は root が Owned でないので、root Owned の
          ;; expected への成分の convert は手前で落ち、ここへは届かない。
@@ -871,6 +877,68 @@
           (wrap-reference 'const expected (eliminate bodies)
                           (resource-type? expected))
           expected)]))
+
+    ;; P2m2c spec §5.1。expected の欄ごとに作り直し、変換か印の変更が要る欄だけを
+    ;; RecRewrite の entry にする。欄を物理的に落とさないので、出力の型は残余を保つ。
+    (define (rebuild-record core actual-row expected-row s propositions)
+      (define context (initial-candidate-context propositions))
+      (define (mismatch)
+        (reject s 'type-mismatch `(Record ,expected-row) `(Record ,actual-row)))
+      (define entries+types
+        (for/list ([expected-field (in-list expected-row)])
+          (match-define (list label expected-type expected-mark _ ...)
+            expected-field)
+          (define actual-field (assq label actual-row))
+          (cond
+            [(not actual-field)
+             ;; expected だけの欄は optional のときに限り最後の tag-compat? が通す。
+             #f]
+            [else
+             (match-define (list _ actual-type actual-mark actual-tail ...)
+               actual-field)
+             (when (and (eq? actual-mark 'imm) (eq? expected-mark 'mut))
+               (mismatch))
+             (define mark-changed? (not (eq? actual-mark expected-mark)))
+             ;; entry を作る欄でだけ生名を取り、恒等の欄で counter を進めない。
+             (define (identity-entry)
+               (define binder (fresh-union-name))
+               (list (list label binder actual-type expected-mark
+                           actual-type `(#:var ,binder ,s))
+                     (list* label actual-type expected-mark actual-tail)))
+             (cond
+               [(owned-type? actual-type)
+                ;; T-RecRewrite は root Owned の欄を identity entry に限る。
+                (unless (tag-compat? actual-type expected-type context)
+                  (mismatch))
+                (and mark-changed? (identity-entry))]
+               [(tag-compat? actual-type expected-type context)
+                (and mark-changed? (identity-entry))]
+               [else
+                (define binder (fresh-union-name))
+                (define-values (body converted-type)
+                  (convert `(#:var ,binder ,s) actual-type expected-type s
+                           propositions #:entry? #t))
+                (list (list label binder actual-type expected-mark
+                            converted-type body)
+                      (list* label converted-type expected-mark
+                             actual-tail))])])))
+      (define rewritten (filter values entries+types))
+      (when (null? rewritten) (mismatch))
+      (define output-row
+        (for/list ([field (in-list actual-row)])
+          (define hit (assq (first field) (map second rewritten)))
+          (or hit field)))
+      (define output-type (normalize-type `(Record ,output-row)))
+      (unless (tag-compat? output-type `(Record ,expected-row) context)
+        (mismatch))
+      (values
+       `(RecRewrite ,s ,core
+          ,(for/list ([item (in-list rewritten)])
+             (match-define (list label binder input-type mark output-type body)
+               (first item))
+             `((#:lbl ,label ,s) (#:bind ,binder ,s) (#:ty ,input-type ,s)
+               ,mark (#:ty ,output-type ,s) ,body)))
+       output-type))
 
     (define (fresh-names/all parameter-types reserved predicate)
       (let loop ([types parameter-types] [taken reserved] [acc '()])

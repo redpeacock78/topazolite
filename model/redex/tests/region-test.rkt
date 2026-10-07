@@ -105,6 +105,16 @@
   (check-equal? (core-points value) '(() (0)))
   (check-equal? (core-free-vars value) (set 'x)))
 
+(test-case "RecRewriteOpen は欄の作業項だけを順に歩く"
+  (define core
+    '(RecRewriteOpen ((a imm (Apply f 1)) (b mut (Scope () x)))))
+  (check-equal? (core-children core) '((Apply f 1) (Scope () x)))
+  (check-equal? (core-with-children core '(g (Scope () y)))
+                '(RecRewriteOpen ((a imm g) (b mut (Scope () y)))))
+  (check-equal? (core-points core)
+                '(() (0) (0 0) (0 1) (1) (1 0)))
+  (check-equal? (core-free-vars core) (set 'f 'x)))
+
 (test-case "Absent は Rec の欄の子であり、自身は葉である"
   (define core '(Rec ((a imm 1) (o imm (Absent Int)))))
   (define children (core-children core))
