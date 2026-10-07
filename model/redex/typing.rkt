@@ -670,10 +670,14 @@
                   (set-remove (resource-identity-transfers) name)])
     (thunk)))
 
-(define (with-identity-transfer name thunk)
+(define (with-resource-identity-transfers names thunk)
   (parameterize ([resource-identity-transfers
-                  (set-add (resource-identity-transfers) name)])
+                  (set-union (resource-identity-transfers)
+                             (list->set names))])
     (thunk)))
+
+(define (with-identity-transfer name thunk)
+  (with-resource-identity-transfers (list name) thunk))
 
 (define (record-effective-let-type! Λ type [force? #f])
   (when (or force? (resource-type? type))
@@ -963,6 +967,12 @@
       (fail (raw-key (second entry)) node)))
   body)
 
+(define (resource-binder-names binders types)
+  (for/list ([binder (in-list binders)]
+             [type (in-list types)]
+             #:when (resource-type? type))
+    (peel-bind binder)))
+
 (define (resource-branch-binding-type type)
   (match type
     [`(Owned ,payload) payload]
@@ -985,7 +995,7 @@
          binders declared-types inner node fail
          #:missing-key (lambda (_) 'resource-binder-missing-binding)
          #:raw-key (lambda (_) 'resource-binder-raw-misuse))
-        (values body #t '())]
+        (values body #t resource-binders)]
        [_
         (for ([binder (in-list resource-binders)])
           (unless (linear-hole? body binder)
@@ -1812,8 +1822,11 @@
          (with-place-shadowing
           parameters
           (lambda ()
-            (check-as body return-type body-context Ψ body-environment
-                      places callables fail)))))
+            (with-resource-identity-transfers
+             (resource-binder-names parameters parameter-types)
+             (lambda ()
+               (check-as body return-type body-context Ψ body-environment
+                         places callables fail)))))))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      ;; §5.4。出現局所の要約を登録する。Apply はこの要約を引いて実体化する。
@@ -1919,11 +1932,14 @@
                            (cons template (template-collectors))]
                           [recur-overlay
                            (cons tentative (recur-overlay))])
-             (with-place-shadowing
+              (with-place-shadowing
               (cons function parameters)
               (lambda ()
-                (check-as body return-type body-context Ψ_in body-environment
-                          places callables fail))))
+                (with-resource-identity-transfers
+                 (resource-binder-names parameters parameter-types)
+                 (lambda ()
+                   (check-as body return-type body-context Ψ_in body-environment
+                             places callables fail))))))
       [(list body-row Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
@@ -1995,8 +2011,11 @@
             (with-place-shadowing
              (cons function parameters)
              (lambda ()
-               (check-as body return-type body-context Ψ_in body-environment
-                         places callables fail))))
+               (with-resource-identity-transfers
+                (resource-binder-names parameters parameter-types)
+                (lambda ()
+                  (check-as body return-type body-context Ψ_in body-environment
+                            places callables fail))))))
       [(list body-row Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
@@ -3638,16 +3657,19 @@
           (with-place-shadowing
            (list binder)
            (lambda ()
-             (check-as handler
-                       type*
-                       (enter-child Λ 0)
-                       (psi-join Ψ (second body-result))
-                       (extend environment
-                               (list binder)
-                               (list (resource-branch-binding-type type*)))
-                       places
-                       callables
-                       fail)))]
+             (with-identity-transfer
+              binder
+              (lambda ()
+                (check-as handler
+                          type*
+                          (enter-child Λ 0)
+                          (psi-join Ψ (second body-result))
+                          (extend environment
+                                  (list binder)
+                                  (list (resource-branch-binding-type type*)))
+                          places
+                          callables
+                          fail)))))]
          [`(,name -> ,handler)
           (with-place-shadowing
            (list (peel-bind name))
@@ -3870,8 +3892,6 @@
      (define type (lookup environment name))
      (unless type (fail 'unbound-variable core))
      (when (and (resource-type? type)
-                (or (owned-type? type)
-                    (set-member? (resource-place-set) name))
                 (not (set-member? (resource-identity-transfers) name)))
        (fail 'owned-variable-requires-move core))
      (list type '() Ψ)]

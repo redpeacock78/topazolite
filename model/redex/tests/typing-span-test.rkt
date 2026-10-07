@@ -107,6 +107,10 @@
   (list '#:lit value (reach-span start end)))
 (define (reach-var name start end)
   (list '#:var name (reach-span start end)))
+(define (reach-source name start end)
+  (reach-node 'Apply start end
+              (reach-var name start end)
+              (reach-lit 'unit start end)))
 (define (reach-ty type start end)
   (list '#:ty type (reach-span start end)))
 (define (reach-bind name start end)
@@ -162,10 +166,13 @@
 (define reach-int-environment '((x Int)))
 (define reach-narrowing-environment
   '((f (NFn ((Record ((y Int imm)))) Unit () () () User))
-    (s (Record ((x (Owned Res) imm) (y Int imm))))))
+    (s (NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm)))
+            () (Own) () User))))
 (define reach-nested-narrowing-environment
   '((g (NFn ((Record ((r (Record ((y Int imm))) imm)))) Unit () () () User))
-    (t (Record ((r (Record ((x (Owned Res) imm) (y Int imm))) imm))))))
+    (t (NFn (Unit)
+            (Record ((r (Record ((x (Owned Res) imm) (y Int imm))) imm)))
+            () (Own) () User))))
 (define reach-remainder-actual
   '(Record ((x (Owned Res) imm) (y Int imm))))
 (define reach-remainder-expected
@@ -939,7 +946,7 @@
    (reach-row 'owned-narrowing-needs-proof
               (reach-node 'Apply 1521 1540
                           (reach-var 'f 1522 1523)
-                          (reach-var 's 1524 1525))
+                          (reach-source 's 1524 1525))
               '() '() reach-narrowing-environment
               (reach-span 1524 1525))
    (reach-row 'missing-ownleaf-root
@@ -970,7 +977,7 @@
    (reach-row 'owned-narrowing-rejected
               (reach-node 'Apply 1616 1640
                           (reach-var 'g 1617 1618)
-                          (reach-var 't 1619 1620))
+                          (reach-source 't 1619 1620))
               '() '() reach-nested-narrowing-environment
               (reach-span 1619 1620))
    ;; 残余 drop の義務と TypeNarrativeCap を混ぜた包み。
@@ -981,7 +988,7 @@
                           (reach-node 'Discharge 1646 1669
                                       (reach-node 'ProofRep 1647 1650 'User
                                                   'TypeNarrativeCap)
-                                      (reach-var 's 1660 1661)))
+                                      (reach-source 's 1660 1661)))
               '() '() reach-narrowing-environment
               (reach-span 1641 1670))
    ;; 残余 drop を 2 段重ねた包み。
@@ -992,7 +999,7 @@
                           (reach-node 'Discharge 1676 1699
                                       (reach-node 'ProofRep 1677 1680 'User
                                                   reach-remainder-phi)
-                                      (reach-var 's 1690 1691)))
+                                      (reach-source 's 1690 1691)))
               '() '() reach-narrowing-environment
               (reach-span 1671 1700))
    ;; 発行者が o-narrow でない Proof。
@@ -1000,7 +1007,7 @@
               (reach-node 'Discharge 1701 1725
                           (reach-node 'ProofRep 1702 1705 'User
                                       reach-remainder-phi)
-                          (reach-var 's 1715 1716))
+                          (reach-source 's 1715 1716))
               '() '() reach-narrowing-environment
               (reach-span 1701 1725))
    (reach-row 'mutable-callable-storage-requires-partial

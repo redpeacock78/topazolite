@@ -26,8 +26,7 @@
 
 (define resource-record-type
   '(Record ((owned (Owned Res) imm))))
-(define owned-record-value
-  '(Rec ((owned imm (OwnedLeaf (tok 13) (resource 13))))))
+(define owned-record-value '(Rec ((owned imm (OwnedLeaf (tok 13) (resource 13))))))
 
 (define (type-of core [callables '()] [environment '()])
   (match (type-of/raw core '() callables environment)
@@ -54,8 +53,14 @@
     [(list 'ok _) 'ok]
     [(list 'fail key _node _details ...) key]))
 
-(define resource-environment `((y ,resource-record-type)))
-(define (typed-let body) `(Let (x ,resource-record-type) y ,body))
+(define resource-source-expression
+  '(Apply resource-source unit))
+(define resource-environment
+  `((resource-source
+     (NFn (Unit) ,resource-record-type () (Own) () User))
+    (y ,resource-record-type)))
+(define (typed-let body)
+  `(Let (x ,resource-record-type) ,resource-source-expression ,body))
 
 (define (test-ledger-fail reason kind key)
   (error 'test-ledger-fail "~s ~s ~s" reason kind key))
@@ -290,7 +295,8 @@
 
 (test-case "G2m の const identity Let は R-LetIdentityB を使う"
   (define core `(Let (x const ,resource-record-type) ,owned-record-value x))
-  (define typed `(Let (x const ,resource-record-type) y x))
+  (define typed
+    `(Let (x const ,resource-record-type) ,resource-source-expression x))
   (define-values (configs rules) (g2-trace (initial core)))
   (check-equal? (type-of typed '() resource-environment) resource-record-type)
   (check-not-false (member 'R-LetIdentityB rules))
@@ -331,10 +337,12 @@
 (test-case "mut Let の residual 型は machine へ注釈される"
   (define declared '(Record ()))
   (define actual '(Record ((owned (Owned Res) imm))))
-  (define typing-core '(Let (x let (Record ())) y 0))
+  (define typing-core
+    `(Let (x let (Record ())) ,resource-source-expression 0))
   (define effective (box (hash)))
   (define result
-    (type-of/raw typing-core '() '() `((y ,actual)) #:mut-types effective))
+    (type-of/raw typing-core '() '() resource-environment
+                 #:mut-types effective))
   (check-equal? (first result) 'ok)
   (check-equal? (unbox effective) (hash '() actual))
   (define machine-core
@@ -448,14 +456,15 @@
   (define span '(#:span synthetic 0 1))
   (define core
     `(Let ,span ((#:bind x ,span) ,resource-record-type)
-       y (#:lit 0 ,span)))
+       ,resource-source-expression (#:lit 0 ,span)))
   (define effective (box (hash)))
   (check-equal? (first (type-of/raw core '() '() resource-environment
                                      #:mut-types effective))
                 'ok)
   (check-equal? (hash-values (unbox effective)) (list resource-record-type))
   (check-equal? (annotate-mut-binding-types core (unbox effective))
-                `(Let (x ,resource-record-type) y 0)))
+                `(Let (x ,resource-record-type)
+                   ,resource-source-expression 0)))
 
 (test-case "resource でない Data は台帳下で通常の Let と PLet を使う"
   (define type '(Data Plain ()))
@@ -515,15 +524,16 @@
 
 (test-case "P は Let と Lam の同名 binder を正しく遮蔽する"
   (define shadowed
-    `(Let (x ,resource-record-type) y (Let (x Int) 1 x)))
+    `(Let (x ,resource-record-type) ,resource-source-expression
+       (Let (x Int) 1 x)))
   (check-equal? (type-of shadowed '() resource-environment) 'Int)
   (define restored
-    `(Let (x ,resource-record-type) y
+    `(Let (x ,resource-record-type) ,resource-source-expression
        (Let (z Int) (Let (x Int) 1 x) x)))
   (check-equal? (key-of restored '() resource-environment)
                 'owned-variable-requires-move)
   (define initialized-from-outer
-    `(Let (x ,resource-record-type) y
+    `(Let (x ,resource-record-type) ,resource-source-expression
        (Let (z ,resource-record-type) (Move x) (Move z))))
   (check-equal? (type-of initialized-from-outer '() resource-environment)
                 resource-record-type)
@@ -531,7 +541,7 @@
     `(NFn (Int ,resource-record-type) ,resource-record-type () (Own) () User))
   (define callables `((f ,function-type)))
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Lam User f (n x)
                  (Handle (Return boundary ,resource-record-type)
                    (return-value -> return-value)
@@ -547,54 +557,53 @@
 
 (test-case "Eliminate と UnionEliminate の branch binder は P から除かれる"
   (define option-type `(Option ,resource-record-type))
-  (define environment
-    `((option ,option-type) (fallback ,resource-record-type)
-      (y ,resource-record-type)))
+  (define environment resource-environment)
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Let (z ,resource-record-type)
-                 (Eliminate option ((some (raw-x) ->
+                 (Eliminate (Construct ,option-type none)
+                   ((some (raw-x) ->
                                      (Scope ()
                                        (Let (x let ,resource-record-type)
                                             raw-x (Move x))))
-                                    (none () -> fallback)))
+                    (none () -> ,resource-source-expression)))
                  (Move x)))
             '() environment)
    resource-record-type)
   (define union-type
     (normalize-type `(Union ,resource-record-type Bool)))
-  (define union-environment
-    `((union ,union-type) (fallback ,resource-record-type) (y ,resource-record-type)))
+  (define union-environment resource-environment)
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Let (z ,resource-record-type)
-                 (UnionEliminate union
+                 (UnionEliminate
+                   (UnionInject ,union-type Bool (Construct Bool true))
                    ((,resource-record-type raw-x ->
                      (Scope ()
                        (Let (x let ,resource-record-type) raw-x (Move x))))
-                    (Bool b -> fallback)))
+                    (Bool b -> ,resource-source-expression)))
                  (Move x)))
             '() union-environment)
    resource-record-type))
 
 (test-case "P は Recur、RecurVal、Handle の binder も遮蔽する"
-  (define environment `((y ,resource-record-type)))
+  (define environment resource-environment)
   (define recur-signature `(NFn () Int () () () User))
   (define recur-callables `((recur-id ,recur-signature)))
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Recur recur-id x () 0 (Apply x)))
             recur-callables environment)
    'Int)
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (RecurVal recur-id x () (Apply x)))
             recur-callables environment)
    recur-signature)
   (define parameter-signature
     `(NFn (,resource-record-type) ,resource-record-type () (Own) () User))
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (RecurVal f f (x)
                  (Scope ()
                    (Let (formal let ,resource-record-type) x
@@ -602,24 +611,25 @@
             `((f ,parameter-signature)) environment)
    parameter-signature)
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Handle (Return boundary ,resource-record-type)
                  (x -> (Scope ()
                         (Let (z let ,resource-record-type) x (Move z))))
-                 (Perform (Return boundary ,resource-record-type) y)))
+                 (Perform (Return boundary ,resource-record-type)
+                          ,resource-source-expression)))
             '() environment)
    resource-record-type))
 
 (test-case "複数 field binder の Eliminate も P の同名変数を遮蔽する"
   (define list-type `(List ,resource-record-type))
   (define environment
-    `((y ,resource-record-type) (items ,list-type)
-      (fallback ,resource-record-type)))
+    `((resource-source (NFn (Unit) ,resource-record-type () () () User))
+      (list-source (NFn (Unit) ,list-type () () () User))))
   (check-equal?
-   (type-of `(Let (x ,resource-record-type) y
+   (type-of `(Let (x ,resource-record-type) ,resource-source-expression
                (Let (z ,resource-record-type)
-                 (Eliminate items
-                   ((nil () -> fallback)
+                 (Eliminate (Apply list-source unit)
+                   ((nil () -> ,resource-source-expression)
                     (cons (raw-x raw-tail) ->
                       (Scope ()
                         (Let (x let ,resource-record-type)
@@ -690,10 +700,13 @@
     '(Record ((n Int imm) (owned (Owned Res) imm))))
   (define input-union (normalize-type `(Union Int ,aggregate)))
   (define output-type `(Record ((saved ,aggregate imm))))
+  (define source-environment
+    `((union-source (NFn (Unit) ,input-union () (Own) () User))
+      (fallback-source (NFn (Unit) ,aggregate () (Own) () User))))
   (define typing-core
-    `(UnionEliminate source
+    `(UnionEliminate (Apply union-source unit)
        ((Int number ->
-         (Rec ((saved imm fallback))))
+         (Rec ((saved imm (Apply fallback-source unit)))))
         (,aggregate payload ->
          (Rec ((saved imm payload)))))))
   (define machine-core
@@ -703,14 +716,13 @@
        (UnionEliminate
         (UnionInject ,input-union ,aggregate
                      (Rec ((n imm 1)
-                          (owned imm (OwnedLeaf (tok 14) (resource 14))))))
+                           (owned imm (OwnedLeaf (tok 14) (resource 14))))))
         ((Int number ->
           (Rec ((saved imm (Move fallback)))))
          (,aggregate payload ->
           (Rec ((saved imm payload))))))))
   (with-data
-    (check-equal? (type-of typing-core '()
-                            `((source ,input-union) (fallback ,aggregate)))
+    (check-equal? (type-of typing-core '() source-environment)
                   output-type)
     (define-values (configs _rules)
       (g2-trace (initial machine-core
@@ -815,10 +827,11 @@
     `(Let (x ,resource-record-type) ,owned-record-value
        (Let (z ,resource-record-type) ,owned-record-value-2 0)))
   (define typed
-    `(Let (x ,resource-record-type) y
-       (Let (z ,resource-record-type) y2 0)))
+    `(Let (x ,resource-record-type) ,resource-source-expression
+       (Let (z ,resource-record-type) ,resource-source-expression 0)))
   (define environment
-    `((y ,resource-record-type) (y2 ,resource-record-type)))
+    `((resource-source
+       (NFn (Unit) ,resource-record-type () (Own) () User))))
   (define expected (type-of typed '() environment))
   (define core-trace (core-final-trace core two-token-table expected))
   (check-equal? (fin-events (pr-final-trace core)) (fin-events core-trace))

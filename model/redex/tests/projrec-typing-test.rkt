@@ -14,54 +14,89 @@
          "../lang.rkt"
          "../machine.rkt"
          "../region.rkt"
+         "../type-shape.rkt"
+         "../type-equiv.rkt"
          "../typing.rkt")
 
 ;; 余剰の Owned 欄と、mut の欄を持つ record である。
 (define r-type '(Record ((x (Owned Res) imm) (y Int imm) (z Int mut))))
-(define environment `((r ,r-type)))
+
+(define (projected-result-type labels)
+  (normalize-type
+   `(Record
+     ,(for/list ([label (in-list labels)])
+        (match label
+          ['x `(x (Owned Res) imm)]
+          ['y '(y Int imm)]
+          ['z '(z Int imm)])))))
 
 ;; lowering の出力に elaborate が型注釈を付けたあとの形である。
-;; 受け側の束縛は const、結果の欄はすべて imm である。
-(define (projrec labels)
-  `(Let (%projrec const ,r-type)
-        r
-        (Rec ,(for/list ([l (in-list labels)])
-                `(,l imm (Proj %projrec ,l))))))
+;; 受け側の place は消費せず、結果の欄はすべて imm である。
+(define (projrec labels receiver)
+  `(Rec ,(for/list ([l (in-list labels)])
+           `(,l imm (Proj ,receiver ,l)))))
 
-(define (result-of core [env environment])
-  (match (type-of/raw core '() '() env (empty-region-ctx))
+(define (with-record body result-type)
+  `(Lam User projection-check (raw)
+     (Handle (Return boundary ,result-type)
+             (return-value -> return-value)
+             (Scope ()
+               (Let (r let ,r-type) raw ,body)))))
+
+(define (projected labels)
+  (with-record (projrec labels 'r) (projected-result-type labels)))
+
+(define (result-of core [environment '()])
+  (define callables
+    (match core
+      [`(Lam User projection-check (raw)
+          (Handle (Return boundary ,return-type) ,_handler (Scope () ,_body)))
+       `((projection-check (NFn (,r-type) ,return-type () (Own) () User)))]
+      [_ '()]))
+  (match (type-of/raw core '() callables environment
+                      (empty-region-ctx))
+    [(list 'ok
+           (list `(NFn ,_parameters ,result-type ,_latent-in ,_latent-row
+                       ,_obligations ,_origin)
+                 _row))
+     result-type]
     [(list 'ok (list type _row)) type]
     [(list 'fail key _node _details ...) key]))
 
 ;; spec §6.4。選んだ欄だけを持つ record になり、型の row は正規形になる。
 (test-case "選んだ欄だけの record になる"
-  (check-equal? (result-of (projrec '(y)))
+  (check-equal? (result-of (projected '(y)))
                 '(Record ((y Int imm)))))
 
 (test-case "欄の型は row の正規形になる"
-  (check-equal? (result-of (projrec '(z y)))
+  (check-equal? (result-of (projected '(z y)))
                 '(Record ((y Int imm) (z Int imm)))))
 
 ;; spec §6.4。元が mut でも結果は imm である。
 (test-case "mut の欄も結果では imm になる"
-  (check-equal? (result-of (projrec '(z)))
+  (check-equal? (result-of (projected '(z)))
                 '(Record ((z Int imm)))))
 
 ;; spec §6.5。残す label に Owned があると T-Rec が拒否する。
 (test-case "Owned の欄を射影すると移動必須で拒否する"
-  (check-equal? (result-of (projrec '(x y)))
+  (check-equal? (result-of (projected '(x y)))
                 'owned-variable-requires-move))
 
 ;; spec §6.6。余剰の Owned 欄を残さない射影は、narrowing ではないので
 ;; Proof を要求しない。r は const で束縛するだけで move されない。
 (test-case "余剰の Owned 欄を落とす射影は Proof を要求しない"
-  (check-equal? (result-of (projrec '(y z)))
+  (check-equal? (result-of (projected '(y z)))
                 '(Record ((y Int imm) (z Int imm)))))
 
 ;; 射影のあとも r をそのまま使える。
 (test-case "射影は受け側を消費しない"
   (check-equal?
-   (result-of `(Let (q const (Record ((y Int imm)))) ,(projrec '(y)) (Proj r y)))
+   (result-of
+    (with-record
+     `(Let (q const (Record ((y Int imm))))
+          ,(projrec '(y) 'r)
+        (Proj r y))
+     'Int))
    'Int))
 
 (define resource-record-type
@@ -233,8 +268,9 @@
   (check-equal? (count (lambda (rule) (eq? rule 'R-Proj)) rules) 2)
   (check-false (member 'R-ProjPlace rules))
   (check-equal?
-   (result-of '(Proj (Proj y n) a)
-              `((y ,nested-resource-record-type)))
+   (result-of `(Proj (Proj (Apply nested-source unit) n) a)
+              `((nested-source
+                 (NFn (Unit) ,nested-resource-record-type () (Own) () User))))
    'Int))
 
 (test-case "入れ子の射影 path は重なる可変借用とだけ競合する"

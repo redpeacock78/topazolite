@@ -726,10 +726,15 @@
           (Reassign x (UnionInject ,U1 Int 2))))
   (define owned-loss-environment
     '((slot (Record ((y Int imm))) mut)
-      (source (Record ((x (Owned Res) imm) (y Int imm))) const)))
+      (source (NFn (Unit)
+                   (Record ((x (Owned Res) imm) (y Int imm)))
+                   () (Own) () User))))
+  (define owned-loss-value
+    '(Apply source unit))
   (tagged
    (check-equal? (key-of narrow-reassign) 'ok)
-   (check-equal? (key-of '(Reassign slot source) owned-loss-environment)
+   (check-equal?
+    (key-of `(Reassign slot ,owned-loss-value) owned-loss-environment)
                  'reassign-type-mismatch)))
 
 (define borrowed-union-core

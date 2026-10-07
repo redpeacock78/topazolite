@@ -17,9 +17,14 @@
 (define option-owned-type '(Option (Owned Res)))
 (define record-owned-type
   '(Record ((n Int imm) (owned (Owned Res) imm))))
-(define handler-record-type '(Record ((owned (Owned Res) imm))))
+(define handler-record-type
+  '(Record ((owned (Owned Res) imm))))
 (define handler-record-value
   '(Rec ((owned imm (OwnedLeaf (tok 31) (resource 31))))))
+(define handler-source-expression
+  '(Apply handler-source unit))
+(define handler-source-environment
+  `((handler-source (NFn (Unit) ,handler-record-type () (Own) () User))))
 
 (define (function-signature parameter-type)
   `(NFn (,parameter-type) Int () (Own) () User))
@@ -41,6 +46,11 @@
   (function-core
    parameter-type
    `(Let (value let ,parameter-type) raw 1)))
+
+(test-case "環境の集約資源型の自由変数は裸で読めない"
+  (check-equal?
+   (key-of 'source '() `((source ,record-owned-type)))
+   "E-OWN-019"))
 
 (define (handler-core return-type handler argument)
   `(Handle (Return boundary ,return-type)
@@ -159,25 +169,26 @@
 
 (test-case "Return binder の identity は集約資源型と root Owned で受理される"
   (define aggregate
-    (handler-core record-owned-type 'raw '(Move source)))
+    (handler-core handler-record-type 'raw '(Move source)))
   (check-equal?
-   (core-type-of `(Let (source let ,record-owned-type) input ,aggregate)
-                 '() '() `((input ,record-owned-type)))
-   (list record-owned-type '(Own)))
+   (core-type-of `(Let (source let ,handler-record-type)
+                       ,handler-source-expression ,aggregate)
+                 '() '() handler-source-environment)
+   (list handler-record-type '(Own)))
   (define owned
     (handler-core '(Owned Res) 'raw '(resource 31)))
   (check-equal? (core-type-of owned '() '()) '((Owned Res) ())))
 
 (test-case "Return binder の encoding は宣言型の payload view で受理される"
   (define aggregate-handler
-    '(Scope ()
-       (Let (place let (Record ((owned (Owned Res) imm))))
-            raw (Move place))))
+    `(Scope ()
+       (Let (place let ,handler-record-type) raw (Move place))))
   (check-equal?
-   (core-type-of `(Let (source let ,handler-record-type) input
+   (core-type-of `(Let (source let ,handler-record-type)
+                       ,handler-source-expression
                    ,(handler-core handler-record-type aggregate-handler
                                   '(Move source)))
-                 '() '() `((input ,handler-record-type)))
+                 '() '() handler-source-environment)
    (list handler-record-type '(Own)))
   (define owned-handler
     '(Scope () (Let (place let (Owned Res)) raw (Move place))))
@@ -218,25 +229,24 @@
 (test-case "Return binder の encoding 欠落と生名の漏出は binder ごとの key で拒否する"
   (define record-handler
     (lambda (body)
-      `(Let (source let ,handler-record-type) input
+      `(Let (source let ,handler-record-type) ,handler-source-expression
          ,(handler-core handler-record-type body '(Move source)))))
   (define owned-handler
     (lambda (body)
       (handler-core '(Owned Res) body '(resource 31))))
   (check-equal? (key-of (record-handler 'unit) '()
-                        `((input ,handler-record-type)))
+                        handler-source-environment)
                 "E-OWN-034")
   (check-equal?
    (key-of (record-handler
             '(Scope () (Let (place let Int) raw unit)))
-           '() `((input ,handler-record-type)))
+           '() handler-source-environment)
    "E-OWN-034")
   (check-equal?
     (key-of
      (record-handler
-     '(Scope ()
-        (Let (place let (Record ((owned (Owned Res) imm)))) raw raw)))
-    '() `((input ,handler-record-type)))
+      `(Scope () (Let (place let ,handler-record-type) raw raw)))
+    '() handler-source-environment)
    "E-OWN-035")
   (check-equal? (key-of (owned-handler 'unit) '()) "E-OWN-032")
   (check-equal?
@@ -297,7 +307,8 @@
   (define mixed-type '(Data Mixed ()))
   (define middle-type '(Option (Owned Res)))
   (define valid
-    `(Eliminate source
+    `(Eliminate
+       (Construct ,mixed-type pack 1 (Construct ,middle-type none) 2)
        ((pack (left raw-middle right) ->
           (Scope ()
             (Let (middle let ,middle-type) raw-middle
@@ -306,73 +317,79 @@
                       1)))))))
   (define result
     (with-branch-data
-      (core-type-of valid '() '() `((source ,mixed-type)))))
+      (core-type-of valid '() '())))
   (check-equal? result '(Int (Own)))
   (define missing
-    '(Eliminate source ((pack (left raw-middle right) -> 1))))
+    `(Eliminate
+       (Construct ,mixed-type pack 1 (Construct ,middle-type none) 2)
+       ((pack (left raw-middle right) -> 1))))
   (check-equal?
-   (with-branch-data
-     (key-of missing '() '((source (Data Mixed ())))))
+   (with-branch-data (key-of missing '() '()))
    "E-OWN-034"))
 
 (test-case "UnionEliminate の集約資源型の枝は encoding を要求する"
   (define member '(Option (Owned Res)))
   (define union-type (normalize-type `(Union Bool ,member)))
   (define valid
-    `(UnionEliminate source
+    `(UnionEliminate
+       (UnionInject ,union-type Bool (Construct Bool true))
        ((Bool flag -> 0)
         (,member raw ->
          (Scope ()
            (Let (option let ,member) raw
                 (Let (drop Unit) (Drop (Move option)) 1)))))))
   (check-equal?
-   (core-type-of valid '() '() `((source ,union-type)))
+   (core-type-of valid '() '())
    '(Int (Own)))
   (define missing
-    `(UnionEliminate source
+    `(UnionEliminate
+       (UnionInject ,union-type Bool (Construct Bool true))
        ((Bool flag -> 0)
         (,member raw -> 1))))
   (check-equal?
-   (key-of missing '() `((source ,union-type)))
+   (key-of missing '())
    "E-OWN-034"))
 
 (test-case "線形の穴の枝は root Owned と集約資源型を一度だけ運ぶ"
   (define owned-box '(Data OwnedBox ()))
   (define owned-source
-    `(Eliminate source ((box (raw) -> raw))))
+    `(Eliminate
+       (Construct ,owned-box box (OwnLeaf (resource 1)))
+       ((box (raw) -> raw))))
   (check-equal?
-   (with-branch-data
-     (core-type-of owned-source '() '()
-                   `((source ,owned-box))))
+   (with-branch-data (core-type-of owned-source '() '()))
    '((Owned Res) ()))
 
   (define aggregate '(Option (Owned Res)))
   (define mixed '(Data Mixed ()))
   (define mixed-source
-    '(Eliminate source
+    `(Eliminate
+       (Construct ,mixed pack 1 (Construct ,aggregate none) 2)
        ((pack (left payload right) ->
           (Rec ((saved imm payload)))))))
   (check-equal?
-   (with-branch-data
-     (core-type-of mixed-source '() '() `((source ,mixed))))
+   (with-branch-data (core-type-of mixed-source '() '()))
    `((Record ((saved ,aggregate imm))) ()))
 
   (define union-type (normalize-type `(Union Int ,aggregate)))
   (define union-result `(Record ((saved ,aggregate imm))))
   (define union-source
-    `(UnionEliminate source
+    `(UnionEliminate
+       (UnionInject ,union-type Int 1)
        ((Int number ->
          (Rec ((saved imm (Construct ,aggregate none)))))
         (,aggregate payload ->
          (Rec ((saved imm payload)))))))
   (check-equal?
-   (core-type-of union-source '() '() `((source ,union-type)))
+   (core-type-of union-source '() '())
    (list union-result '())))
 
 (test-case "線形の穴の方式では複製と L の外の使用を拒否する"
   (define owned-box '(Data OwnedBox ()))
   (define (eliminate body)
-    `(Eliminate source ((box (raw) -> ,body))))
+    `(Eliminate
+       (Construct ,owned-box box (OwnLeaf (resource 1)))
+       ((box (raw) -> ,body))))
   (for ([body (in-list
                (list '(Rec ((left imm raw) (right imm raw)))
                      '(Drop raw)
@@ -381,7 +398,7 @@
                          (false () -> raw)))))])
     (check-equal?
      (with-branch-data
-       (key-of (eliminate body) '() `((source ,owned-box))))
+       (key-of (eliminate body) '()))
      "E-OWN-034")))
 
 (test-case "借用 scrutinee の資源型枝 binder は encoding なしで受理する"
@@ -389,23 +406,24 @@
   (define union-type (normalize-type `(Union Int ,member)))
   (define borrowed-union
     `(Scope ()
-       (Let (owner let ,union-type) source
+       (Let (owner let ,union-type)
+         (UnionInject ,union-type ,member (Construct ,member none))
          (UnionEliminate (Borrow owner)
            ((Int number -> 0)
             (,member payload -> 0))))))
-  (define union-result
-    (type-borrowed-local borrowed-union `((source ,union-type))))
+  (define union-result (type-borrowed-local borrowed-union '()))
   (check-equal? (first union-result) 'ok (format "結果: ~s" union-result))
 
   (define owned-box '(Data OwnedBox ()))
   (define borrowed-data
     '(Scope ()
-       (Let (owner let (Data OwnedBox ())) source
+       (Let (owner let (Data OwnedBox ()))
+         (Construct (Data OwnedBox ()) box (OwnLeaf (resource 1)))
          (Eliminate (Borrow owner)
            ((box (payload) -> 0))))))
   (check-equal?
    (with-branch-data
-     (first (type-borrowed-local borrowed-data `((source ,owned-box)))))
+     (first (type-borrowed-local borrowed-data '())))
    'ok))
 
 (test-case "複数の線形穴 binder は同じ Rec の別欄へ一度ずつ運べる"
@@ -414,50 +432,56 @@
   (define output
     `(Record ((first ,member imm) (second ,member imm))))
   (define linear
-    '(Eliminate source
+    `(Eliminate
+       (Construct ,duo pair
+         (Construct (Option (Owned Res)) none)
+         (Construct (Option (Owned Res)) none))
        ((pair (first second) ->
          (Rec ((first imm first) (second imm second)))))))
   (check-equal?
-   (with-branch-data (core-type-of linear '() '() `((source ,duo))))
+   (with-branch-data (core-type-of linear '() '()))
    (list output '()))
 
   (define mixed
-    `(Eliminate source
+    `(Eliminate
+       (Construct ,duo pair
+         (Construct ,member none)
+         (Construct ,member none))
        ((pair (first second) ->
          (Scope ()
            (Let (first-place let ,member) first
                 (Rec ((first imm (Move first-place))
                       (second imm second)))))))))
   (check-equal?
-   (with-branch-data
-     (key-of mixed '() `((source ,duo))))
+   (with-branch-data (key-of mixed '()))
    "E-OWN-034"))
 
 (test-case "線形の穴の許可は兄弟の枝へ漏れず内側 Let の shadowing を守る"
   (define leaked
-    '(Eliminate source
+    '(Eliminate
+       (Construct (Data OwnedOrInt ()) plain 0)
        ((boxed (raw) -> raw)
         (plain (number) -> raw))))
   (check-equal?
-   (with-branch-data
-     (key-of leaked '() '((source (Data OwnedOrInt ())) (raw (Owned Res)))))
+   (with-branch-data (key-of leaked '() '((raw (Owned Res)))))
    "E-OWN-019")
 
   (define mixed '(Data Mixed ()))
   (define shadowed
     '(Eliminate
-      source
+      (Construct (Data Mixed ()) pack 1
+                 (Construct (Option (Owned Res)) none) 2)
       ((pack (left raw right) ->
         (Rec ((payload imm raw)
               (shadow imm (Let (raw let Int) 1 raw))))))))
   (check-equal?
-   (with-branch-data
-     (key-of shadowed '() `((source ,mixed))))
+   (with-branch-data (key-of shadowed '()))
    'ok)
 
   (define member '(Option (Owned Res)))
   (define shadowed-resource
-    `(Eliminate source
+    `(Eliminate
+       (Construct ,mixed pack 1 (Construct ,member none) 2)
        ((pack (left raw right) ->
          (Rec ((outer imm raw)
                (shadow imm
@@ -465,16 +489,15 @@
                      (Construct ,member none)
                      (Rec ((inner imm raw)))))))))))
   (check-equal?
-   (with-branch-data
-     (key-of shadowed-resource '() `((source ,mixed))))
+   (with-branch-data (key-of shadowed-resource '()))
    "E-OWN-019"))
 
 (test-case "非空 Scope を先頭に持つ枝は encoding と判定して拒否する"
   (define owned-box '(Data OwnedBox ()))
   (define malformed
-    '(Eliminate source
+    '(Eliminate
+       (Construct (Data OwnedBox ()) box (OwnLeaf (resource 1)))
        ((box (raw) -> (Scope (13) raw)))))
   (check-equal?
-   (with-branch-data
-     (key-of malformed '() `((source ,owned-box))))
+   (with-branch-data (key-of malformed '()))
    "E-OWN-034"))

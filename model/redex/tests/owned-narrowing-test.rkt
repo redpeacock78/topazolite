@@ -9,16 +9,10 @@
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../region.rkt"
+         "../resource-type.rkt"
          "../typing.rkt")
 
 ;; 関数引数の実型が余剰 Owned 欄を持つ Record になる環境。
-(define narrowing-environment
-  (list (list 'f '(NFn ((Record ((y Int imm)))) Unit () () () User))
-        (list 's '(Record ((x (Owned Res) imm) (y Int imm))))))
-(define let-residual-environment
-  '((s (Record ((x (Owned Res) imm) (y Int imm))))))
-(define let-nested-environment
-  '((s (Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm))))))
 (define owned '(Owned Res))
 
 (define (elaborate-code-of source)
@@ -27,22 +21,51 @@
     [_ 'ok]))
 
 (define nested-actual
-  '(Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm))))
+  `(Record ((a (Record ((y Int imm) (z ,owned imm))) imm))))
 (define nested-no-z
   '(Record ((a (Record ((y Int imm))) imm))))
 (define nested-with-residual
-  '(Record ((a (Record ((y Int imm) (z (Owned Res) imm))) imm)
-            (x (Owned Res) imm))))
+  `(Record ((a (Record ((y Int imm) (z ,owned imm))) imm)
+            (x ,owned imm))))
+
+(define (fixture-value type)
+  (if (resource-type? type)
+      '(Apply fixture-source unit)
+      (match type
+        [`Int 1]
+        [`Bool '(Construct Bool true)]
+        [`(Record ,fields)
+         `(Rec ,(for/list ([field (in-list fields)])
+                  `(,(first field) imm ,(fixture-value (second field)))))]
+        [`(Union ,members ...)
+         (define member (first members))
+         `(UnionInject ,type ,member ,(fixture-value member))]
+        [`(NFn . ,_rest) 'source]
+        [_ (error 'fixture-value "試験用の値を構成できない型: ~s" type)])))
+
+(define (fixture-environment type)
+  (cond
+    [(resource-type? type)
+     `((fixture-source (NFn (Unit) ,type () (Own) () User)))]
+    [(match type [`(NFn . ,_rest) #t] [_ #f]) `((source ,type))]
+    [else '()]))
+
+(define simple-actual-type `(Record ((x ,owned imm) (y Int imm))))
+(define simple-actual-value (fixture-value simple-actual-type))
+(define narrowing-environment
+  (append
+   '((f (NFn ((Record ((y Int imm)))) Unit () () () User)))
+   (fixture-environment simple-actual-type)))
 
 (define (apply-key actual expected)
-  (key-of '(Apply f s)
-          `((f (NFn (,expected) Unit () () () User))
-            (s ,actual))))
+  (key-of `(Apply f ,(fixture-value actual))
+          (append `((f (NFn (,expected) Unit () () () User)))
+                  (fixture-environment actual))))
 
 (define (apply-union-key actual expected member)
-  (key-of `(Apply f (UnionInject ,expected ,member s))
-          `((f (NFn (,expected) Unit () () () User))
-            (s ,actual))))
+  (key-of `(Apply f (UnionInject ,expected ,member ,(fixture-value actual)))
+          (append `((f (NFn (,expected) Unit () () () User)))
+                  (fixture-environment actual))))
 
 (define (key-of core [environment '()])
   (match (type-of/raw core '() '() environment (empty-region-ctx))
@@ -64,23 +87,23 @@
 ;; 余剰欄が Owned を含むと Proof を求める。通常の Rec は Owned 欄を拒否するため、
 ;; 関数引数の照合で Record 型の narrowing を直接通す。
 (test-case "余剰 Owned 欄を落とす narrowing は Proof を求める"
-  (define core '(Apply f s))
+  (define core `(Apply f ,simple-actual-value))
   (check-equal? (key-of core narrowing-environment) 'owned-narrowing-needs-proof)
   (check-equal? (code-of core narrowing-environment) "E-OWN-030"))
 
 (test-case "余剰 Owned 欄を落とす narrowing は既定で Proof を求める"
-  (check-equal? (key-of '(Apply f s) narrowing-environment)
+  (check-equal? (key-of `(Apply f ,simple-actual-value) narrowing-environment)
                 'owned-narrowing-needs-proof))
 
 (test-case "Proof を求める診断は expected と found を分けて持つ"
   (define diagnostic
-    (core-type-of/diagnostic '(Apply f s) '() '()
+    (core-type-of/diagnostic `(Apply f ,simple-actual-value) '() '()
                              narrowing-environment
                              (empty-region-ctx)))
   (check-equal? (diagnostic-expected diagnostic)
                 '(Record ((y Int imm))))
   (check-equal? (diagnostic-found diagnostic)
-                '(Record ((x (Owned Res) imm) (y Int imm)))))
+                `(Record ((x ,owned imm) (y Int imm)))))
 
 (test-case "入れ子の record の narrowing も拒否する"
   (check-equal?
@@ -145,20 +168,22 @@
 
 (test-case "let binder は最上位の Owned residual を保持する"
   (check-equal?
-   (key-of '(Let (r let (Record ((y Int imm)))) s 1)
-           let-residual-environment)
+   (key-of `(Let (r let (Record ((y Int imm)))) ,simple-actual-value 1)
+           narrowing-environment)
    'ok))
 
 (test-case "binding-context の入れ子 narrowing は拒否する"
   (check-equal?
-   (key-of '(Let (r let (Record ((a (Record ((y Int imm))) imm)))) s 1)
-           let-nested-environment)
+   (key-of `(Let (r let (Record ((a (Record ((y Int imm))) imm))))
+                 ,(fixture-value nested-actual) 1)
+           (fixture-environment nested-actual))
    'owned-narrowing-rejected))
 
 (test-case "const binder の入れ子 narrowing も拒否する"
   (check-equal?
-   (key-of '(Let (r const (Record ((a (Record ((y Int imm))) imm)))) s 1)
-           let-nested-environment)
+   (key-of `(Let (r const (Record ((a (Record ((y Int imm))) imm))))
+                 ,(fixture-value nested-actual) 1)
+           (fixture-environment nested-actual))
    'owned-narrowing-rejected))
 
 (test-case "互換でない型は narrowing 拒否ではなく type-mismatch になる"

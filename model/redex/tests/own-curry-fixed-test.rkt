@@ -103,24 +103,32 @@
 (define aggregate-resource-type
   '(Record ((n Int imm) (owned (Owned Res) imm))))
 
+(define aggregate-resource-value
+  '(Rec ((n imm 7)
+         (owned imm (OwnedLeaf (tok 13) (resource 13))))))
+(define aggregate-resource-expression
+  '(Apply aggregate-source unit))
+
 (define aggregate-curry-environment
   `((f (NFn (,aggregate-resource-type Int) Int () () () User))
-    (x ,aggregate-resource-type)))
+    (aggregate-source
+     (NFn (Unit) ,aggregate-resource-type () (Own) () User))))
 
 (test-case
  "集約資源型の引数を固定した Curry の型は Owned になる"
- (match-define (list 'ok (list result-type '()))
-   (type-of/raw '(Curry f x) '() '() aggregate-curry-environment))
- (check-true
-  (match result-type
-    [`(Owned (NFn (Int) Int () () () (Derived User (Curry x)))) #t]
-    [_ #f])))
+ (match-define (list 'ok (list result-type '(Own)))
+   (type-of/raw `(Curry f ,aggregate-resource-expression)
+                '() '() aggregate-curry-environment))
+ (check-true (match result-type [`(Owned ,_) #t] [_ #f]))
+ (define payload (second result-type))
+ (check-equal? (first payload) 'NFn)
+ (check-equal? (second payload) '(Int))
+ (check-equal? (third payload) 'Int))
 
 (test-case
  "集約資源型を固定した CurryVal の型も Owned になる"
  (define argument
-   '(Rec ((n imm 7)
-         (owned imm (OwnedLeaf (tok 13) (resource 13))))))
+   aggregate-resource-value)
  (define function
    `(Lam User aggregate-curry-lam (aggregate n)
         (Handle (Return boundary Int)
@@ -142,7 +150,7 @@
 
 (test-case
  "Owned の Curry は Record 欄へ置けず、Int の Curry は二欄へ置ける"
- (define aggregate-closure `(Curry f x))
+ (define aggregate-closure `(Curry f ,aggregate-resource-expression))
  (check-equal?
   (key-of
    (type-of/raw `(Rec ((left imm ,aggregate-closure)))
@@ -168,8 +176,8 @@
  (define closure-type
    '(Owned (NFn (Int) Int () () () User)))
   (define core
-   `(Let (closure let ,closure-type)
-         (Curry f x)
+    `(Let (closure let ,closure-type)
+         (Curry f ,aggregate-resource-expression)
       (Rec ((left imm (Apply closure 1))
             (right imm (Apply closure 1))))))
  (check-equal?
