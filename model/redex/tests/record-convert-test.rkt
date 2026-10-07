@@ -163,6 +163,70 @@
 (define owned-leaf-value
   '(Construct some (Types (Owned Res)) (Apply acquire 13)))
 
+(test-case "check の位置の Record リテラルを const で受けると残余で拒否する"
+  ;; 余剰欄があるため既存の record-literal-checkable? は合成経路へ進み、
+  ;; この const-record-residual の拒否は Task 4 より前から成立している。
+  (check-equal?
+   (rejected-code
+    '(Let (r const (Record ((a Int imm))))
+       (Rec ((a imm 1) (b imm 2)))
+       0))
+   (code 'const-record-residual)))
+
+(test-case "check の位置の Record リテラルを let で受けると残余を読める"
+  ;; 本体で残余の欄 b を読めることで、束縛型が残余を含むことを確かめる。
+  (check-compiled-source-core
+   (elaborate-compiled
+    '(Let (r let (Record ((a Int imm))))
+       (Rec ((a imm 1) (b imm 2)))
+       (Proj r b)))))
+
+(test-case "束縛の位置の inject は Owned の残余の損失を拒否する"
+  (define source `(Record ((a Int imm) (o ,owned-leaf imm))))
+  (define target (normalize-type '(Union (Record ((a Int imm))) Int)))
+  (check-equal?
+   (rejected-code
+    (apply-function source
+                    `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+                    `(Let (u let ,target) (Move argument) 0)
+                    'Int '(Own)))
+   (code 'owned-narrowing-rejected)))
+
+(test-case "束縛の位置の decompose の非 Record 分岐は Owned の残余の損失を拒否する"
+  (define source `(Record ((a Int imm) (o ,owned-leaf imm))))
+  (define usrc (normalize-type `(Union ,source Int)))
+  (define target (normalize-type '(Union (Record ((a Int imm))) Int)))
+  (check-equal?
+   (rejected-code
+    (apply-function usrc
+                    `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+                    `(Let (u let ,target) (Move argument) 0)
+                    'Int '(Own)))
+   (code 'owned-narrowing-rejected)))
+
+(test-case "check の位置の恒等は狭い Union を Core の型に保つ"
+  ;; Record の欄 a は check の位置であり、狭い型から広い Union への
+  ;; convert は tag-compat? の恒等になる。
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function '(Union Int String) 1
+                      '(Let (r let
+                               (Record ((a (Union Int (Union String Bool)) imm))))
+                            (Rec ((a imm argument)))
+                            0)
+                      'Int '()))))
+  (define erased (erase-core (compiled-core artifact)))
+  (match erased
+    [`(Apply (Lam ,_ ,_ (,parameter)
+                  (Handle ,_ ,_ (Scope ()
+                                       (Let (,name let ,_) ,record ,_)))) ,_)
+     (check-equal?
+      (type-of record '() `((,parameter (Union Int String))))
+      '(Record ((a (Union Int String) imm))))]
+    [other (fail-check (format "check した Record の Core を見つけられない: ~s"
+                               other))]))
+
 (test-case "check の位置で Record の欄を inject で作り直す"
   (match-define (list core _ _)
     (accepted

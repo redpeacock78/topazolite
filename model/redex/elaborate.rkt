@@ -36,7 +36,18 @@
          ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
          row005-join)
 
-(struct judgment (core type row) #:transparent)
+(struct judgment (core type row core-type)
+  #:transparent
+  #:constructor-name make-judgment/raw
+  #:omit-define-syntaxes)
+
+;; 既存の三引数の構築は judgment の型を Core の型として使う。
+;; check の一部だけ、実際に生成した Core の型を明示する。
+(define judgment
+  (case-lambda
+    [(core type row) (make-judgment/raw core type row type)]
+    [(core type row core-type)
+     (make-judgment/raw core type row core-type)]))
 (struct exn:fail:elab exn:fail (primary-span reason details) #:transparent)
 
 ;; primary-span は第 1 引数であり既定値を持たない。既定値を持たせると渡し忘れ
@@ -2042,8 +2053,17 @@
                (synth bound environment delta propositions boundaries)))
          (define-values (bound-core actual-type)
            (convert (judgment-core bound-result)
-                    (judgment-type bound-result)
+                    (judgment-core-type bound-result)
                     declared-type s propositions))
+         ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
+         (match (narrowing-kind (judgment-core-type bound-result) actual-type
+                                propositions)
+           ['ok (void)]
+           [`(drop-obligation ,_ ,_)
+            (reject s 'owned-narrowing-needs-proof actual-type
+                    (judgment-core-type bound-result))]
+           [_ (reject s 'owned-narrowing-rejected actual-type
+                      (judgment-core-type bound-result))])
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
@@ -2360,10 +2380,10 @@
                  (judgment-type result))]
         [_ (reject s 'owned-narrowing-rejected expected
                    (judgment-type result))])
-      (define-values (core _type)
-        (convert (judgment-core result) (judgment-type result)
+      (define-values (core core-type)
+        (convert (judgment-core result) (judgment-core-type result)
                  expected s propositions))
-      (judgment core expected (judgment-row result)))
+      (judgment core expected (judgment-row result) core-type))
 
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
@@ -2384,10 +2404,10 @@
                     (judgment-type result))]
            [_ (reject s 'owned-narrowing-rejected expected
                       (judgment-type result))])
-         (define-values (core _type)
-           (convert (judgment-core result) (judgment-type result)
+         (define-values (core core-type)
+           (convert (judgment-core result) (judgment-core-type result)
                     expected s propositions))
-         (judgment core expected (judgment-row result))]
+         (judgment core expected (judgment-row result) core-type)]
 
         [`(Construct ,constructor ,fields ...)
          (elaborate-constructor constructor fields expected
@@ -2473,7 +2493,15 @@
                   `(,(first field) ,(second field) ,(third field) opt))))
             (rows-union
              (for/list ([field (in-list field-results)])
-               (judgment-row (third field))))))
+               (judgment-row (third field))))
+            `(Record
+              ,(append
+                (for/list ([field (in-list field-results)])
+                  (match-define (list label mutability result) field)
+                  `(,label ,(judgment-core-type result) ,mutability))
+                (for/list ([field (in-list expected-fields)]
+                           #:when (memq (first field) (or omitted '())))
+                  `(,(first field) ,(second field) ,(third field) opt))))))
          (check-against-expected rec-result expected s propositions)]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
