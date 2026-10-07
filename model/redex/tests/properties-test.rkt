@@ -728,23 +728,22 @@
 
   (test-case "Option と Record の中の Owned leaf は binder 間で affine に運ばれる"
     (define started (current-inexact-milliseconds))
-    (define attempts 160)
+    (define kinds '(lambda-option lambda-record union-eliminate eliminate
+                    return-handler))
+    (define actions '(move drop unused))
+    (define attempts (* (length kinds) (length actions)))
     (define typed 0)
     (define config-count 0)
-    (define kinds (make-hash))
-    (define actions (make-hash))
     (call-with-search-seed
      limits
      (lambda ()
-       (for ([_attempt (in-range attempts)])
-         (define candidate (generate-owned-leaf-case))
+       (for* ([kind (in-list kinds)] [action (in-list actions)])
+         (define candidate (generate-owned-leaf-case kind action))
+         (check-eq? (owned-leaf-case-kind candidate) kind)
+         (check-eq? (owned-leaf-case-action candidate) action)
          (define initial (owned-leaf-case-initial candidate))
          (define callables (owned-leaf-case-callables candidate))
          (define expected (owned-leaf-case-expected candidate))
-         (define kind (owned-leaf-case-kind candidate))
-         (define action (owned-leaf-case-action candidate))
-         (hash-update! kinds kind add1 0)
-         (hash-update! actions action add1 0)
          ;; runtime-row は initial の宣言 metadata と同じ条件で Core 全体を
          ;; 型検査する。失敗項を破棄せず、生成器の契約違反として試験を落とす。
          (define initial-row (runtime-row initial callables expected))
@@ -796,15 +795,8 @@
             final-value-tokens available-tokens
             "Available leaf は結果に一度だけあり、Dropped leaf は結果に残らない")))))
     (check-equal? typed attempts "型付け失敗の候補を破棄しない")
-    (for ([kind (in-list '(lambda-option lambda-record union-eliminate
-                           eliminate return-handler))])
-      (check-true (>= (hash-ref kinds kind 0) 8)
-                  (format "生成器が ~a を十分に生成しない: ~s" kind kinds)))
-    (for ([action (in-list '(move drop unused))])
-      (check-true (>= (hash-ref actions action 0) 10)
-                  (format "生成器が ~a を十分に生成しない: ~s" action actions)))
-    (printf "Nested Owned leaf: attempted=~a typed=~a discarded=0 configs=~a kinds=~s actions=~s seed=~a elapsed-ms=~a\n"
-            attempts typed config-count kinds actions (bounds-seed limits)
+    (printf "Nested Owned leaf: attempted=~a typed=~a discarded=0 configs=~a cases=~a seed=~a elapsed-ms=~a\n"
+            attempts typed config-count attempts (bounds-seed limits)
             (inexact->exact
              (round (- (current-inexact-milliseconds) started)))))
 )

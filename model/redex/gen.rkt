@@ -354,10 +354,14 @@
 (define union-owned-leaf-type
   (normalize-type `(Union Int ,option-owned-leaf-type)))
 
-(define (generate-owned-leaf-case)
-  (define kind
-    (pick-one '(lambda-option lambda-record union-eliminate eliminate return-handler)))
-  (define action (pick-one '(move drop unused)))
+(define (generate-owned-leaf-case kind action)
+  (unless (memq kind '(lambda-option lambda-record union-eliminate eliminate
+                       return-handler))
+    (raise-argument-error 'generate-owned-leaf-case
+                          "owned-leaf-case-kind" kind))
+  (unless (memq action '(move drop unused))
+    (raise-argument-error 'generate-owned-leaf-case
+                          "owned-leaf-case-action" action))
   (define token-number (random 100000))
   (define token `(tok ,token-number))
   (define payload `(resource ,token-number))
