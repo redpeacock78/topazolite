@@ -8,6 +8,7 @@
          "../policy-check.rkt"
          "../type-equiv.rkt"
          "../compat.rkt"
+         "../ownership.rkt"
          "../typing.rkt")
 
 ;; 予約 Narrative を正しく束縛した R0 の最小 fixture。
@@ -254,6 +255,17 @@
      "TraitResolution.project-goal"
      "TraitResolution.resolve-candidates"
      "VariancePolicy.compat?")))
+
+(test-case "elaboration 用 narrowing も既存の OwnershipPolicy 契約を保つ"
+  (define actual '(Record ((x (Owned Res) imm) (y Int imm))))
+  (define expected '(Union (Record ((y Int imm))) String))
+  (define before (registered-policy-operations))
+  (define result (owned-narrowing-kind/for-elaboration actual expected compat?))
+  (check-equal? result 'ok)
+  (check-true
+   (check-narrowing-return (list actual expected compat?) (list result)))
+  (check-equal? (registered-policy-operations) before)
+  (check-true (policy-wrap-complete?)))
 
 (test-case "POL-002: 宣言した操作を包み忘れた行は policy-wrap-complete? が捉える"
   (define rows-with-extra

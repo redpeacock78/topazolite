@@ -22,7 +22,8 @@
          "type-equiv.rkt"
          "validators.rkt")
 
-(provide owned-narrowing-kind check-narrowing-return
+(provide owned-narrowing-kind owned-narrowing-kind/for-elaboration
+         check-narrowing-return
          remainder-removal-shape remainder-target-type)
 
 (define (union-type? type)
@@ -55,6 +56,9 @@
 (define (kind-all kinds)
   (for/fold ([acc 'ok]) ([k (in-list kinds)]) (kind-max acc k)))
 
+;; Core の判定を変えず、elaboration が Union の成分ごとの判定へ委ねる。
+(define elaboration-union-mode (make-parameter #f))
+
 ;; compat?/impl と同型の再帰。Union の分岐位置も compat?/impl に合わせる。
 (define (owned-narrowing-kind/impl actual expected compatible? [ctx 'top])
   (cond
@@ -64,6 +68,20 @@
           (match expected [`(Owned ,_) #t] [_ #f])
           (compatible? actual expected))
      'ok]
+    [(and (elaboration-union-mode)
+          (memq ctx '(top chain))
+          (not (union-type? actual))
+          (union-type? expected))
+     (if (for/or ([expected-member (in-list (union-members expected))])
+           (and (compatible? actual expected-member)
+                (let ([kind
+                       (owned-narrowing-kind/impl actual expected-member
+                                                  compatible? 'top)])
+                  (or (eq? kind 'ok)
+                      (eq? kind 'nested-drop)
+                      (drop-obligation? kind)))))
+         'ok
+         'reject)]
     [(or (union-type? actual) (union-type? expected))
      (if (for/and ([actual-member (in-list (union-members actual))])
            (for/or ([expected-member (in-list (union-members expected))])
@@ -245,3 +263,7 @@
   (policy-wrap 'OwnershipPolicy 'owned-narrowing-kind
                owned-narrowing-kind/adapter
                check-narrowing-return))
+
+(define (owned-narrowing-kind/for-elaboration actual expected compatible?)
+  (parameterize ([elaboration-union-mode #t])
+    (owned-narrowing-kind actual expected compatible?)))

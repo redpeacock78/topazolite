@@ -8,12 +8,15 @@
          "../borrow.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
+         "../compat.rkt"
+         "../ownership.rkt"
          "../region.rkt"
          "../resource-type.rkt"
          "../typing.rkt")
 
 ;; 関数引数の実型が余剰 Owned 欄を持つ Record になる環境。
 (define owned '(Owned Res))
+(define (always-compatible _actual _expected) #t)
 
 (define (elaborate-code-of source)
   (match (elab source)
@@ -161,6 +164,77 @@
     '(Union (Record ((y Int imm))) (Record ((z Int imm))))
     '(Record ((y Int imm))))
    'owned-narrowing-needs-proof))
+
+(test-case "elaboration 用の Union 判定は成分の最上位で残余損失を認める"
+  (define actual
+    `(Record ((a Int imm) (o ,owned imm))))
+  (define expected
+    '(Union (Record ((a (Union Int String) imm))) String))
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject)
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?)
+   'ok)
+  ;; mode は呼び出しの動的範囲だけに限る。
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject))
+
+(test-case "elaboration 用の Union 判定は安全な別成分を維持する"
+  (define actual
+    `(Record ((a Int imm) (o ,owned imm))))
+  (define expected
+    `(Union (Record ((a Int imm)))
+            (Record ((a (Union Int Bool) imm) (o ,owned imm)))))
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'ok)
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?)
+   'ok))
+
+(test-case "elaboration 用の Union 判定は NFn 内側の損失を拒否する"
+  (define actual
+    `(NFn (Unit) ,nested-actual () () () User))
+  (define expected
+    `(Union (NFn (Unit) ,nested-no-z () () () User) String))
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?)
+   'reject))
+
+(test-case "elaboration 用の Union 判定は imm 鎖の nested-drop を認める"
+  (define actual
+    `(Record ((a (Record ((o ,owned imm) (tag Int imm))) imm))))
+  (define expected-member
+    '(Record ((a (Record ((tag (Union Int Bool) imm))) imm))))
+  (define expected `(Union ,expected-member String))
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject)
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?)
+   'ok))
+
+(test-case "Union 欄と imm 鎖の残余損失は呼び出し全体の鍵を返す"
+  (define actual
+    `(Record ((a (Record ((o ,owned imm) (tag Int imm))) imm))))
+  (define expected
+    '(Record ((a (Record ((tag (Union Int Bool) imm))) imm))))
+  (define result
+    (owned-narrowing-kind/for-elaboration actual expected compat?))
+  (check-equal? result `(drop-obligation ,actual ,expected))
+  (check-true
+   (check-narrowing-return (list actual expected compat?) (list result))))
+
+(test-case "actual Union から root Owned への特例は elaboration mode でも通る"
+  (define actual '(Union Int Bool))
+  (define expected '(Owned (Union Int Bool)))
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected always-compatible)
+   'ok))
+
+(test-case "actual が Union の対は elaboration mode でも既定の判定を保つ"
+  (define actual
+    `(Union (Record ((x ,owned imm) (y Int imm))) Bool))
+  (define expected
+    '(Union (Record ((y Int imm))) Bool))
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?)
+   (owned-narrowing-kind actual expected compat?))
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject))
 
 (test-case "Union に安全な候補が無い場合の elaboration は拒否する"
   (check-equal?
