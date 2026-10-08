@@ -173,24 +173,6 @@
   (check-not-false (member 'R-DischargeRemainder rules))
   (check-equal? (map second (configuration-tokens final)) '(Dropped)))
 
-(test-case "Record decompose の一つ目の対で入れ子 Owned 残余を落とす"
-  (define member-wide
-    '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm)
-              (extra (Option (Owned Res)) imm))))
-  (define member-plain
-    '(Record ((p (Record ((x Int imm))) imm))))
-  (define actual (normalize-type `(Union ,member-wide ,member-plain)))
-  (define expected (nested-owned-record nested-owned-narrow))
-  (define wide-value
-    `(Rec ((p imm (Rec ((x imm 1) (o imm ,(owned-option-value 130)))))
-           (extra imm ,(owned-option-value 131)))))
-  (define source
-    (make-application actual
-                      (make-union-value actual member-wide wide-value)
-                      expected))
-  (check-rsd-and-dropped source 2)
-  (void))
-
 (test-case "Record decompose の一つ目の対で外側残余を保持する"
   (define member-wide
     '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm))))
@@ -242,6 +224,20 @@
        [_ #f])))
   (void))
 
+(test-case "imm Record の鎖にある Union 欄の入れ子 Owned 損失を RSD で回収する"
+  (define actual `(Record ((p ,nested-owned-wide imm))))
+  (define field-union (normalize-type `(Union ,nested-owned-narrow String)))
+  (define expected `(Record ((p ,field-union imm))))
+  (define value `(Rec ((p imm ,(nested-wide-value 145)))))
+  (define source (make-application actual value expected))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core))
+  (check-true (type-equiv? (union-inject-member core field-union)
+                           nested-owned-narrow))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
 (test-case "Record decompose は二つの対の Owned 残余を両方落とす"
   (define member-wide
     '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm)
@@ -274,12 +270,9 @@
                   (list (list expected-left expected-right)
                         (list expected-right expected-left)))])
     (define expected (normalize-type `(Union ,@members)))
-    (define source
-      (make-application actual
-                        (make-union-value actual actual-left
-                                          '(Rec ((o imm source))))
-                        expected))
-    (check-equal? (rejected-id source)
+    (check-equal? (rejected-id
+                   `(Fn ((argument ,actual)) ,expected (Own)
+                        (Move argument)))
                   (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
 
 (test-case "損失のある tag-compat? 候補より、損失の無い作り直し候補を選ぶ"
@@ -420,6 +413,29 @@
   (check-equal?
    (rejected-id `(Fn ((value ,wide)) ,expected () value))
    (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+
+(test-case "Owned payload の内側の損失は互換性 gate で拒否する"
+  (define actual `(Owned ,nested-owned-wide))
+  (define expected `(Owned ,nested-owned-narrow))
+  (check-false (compat? actual expected))
+  (check-equal? (owned-narrowing-kind/for-elaboration actual expected compat?)
+                'reject)
+  (check-equal?
+   (rejected-id `(Fn ((value ,actual)) ,expected (Own) (Move value)))
+   (diagnostic-code-of 'elaborate 'type-mismatch)))
+
+(test-case "mut 欄の内側の Union の損失は互換性 gate で拒否する"
+  (define actual
+    '(Record ((p (Union (Record ((x Int imm)
+                                 (o (Option (Owned Res)) imm))) Bool) mut))))
+  (define expected
+    '(Record ((p (Union (Record ((x Int imm))) Bool) mut))))
+  (check-false (compat? actual expected))
+  (check-equal? (owned-narrowing-kind/for-elaboration actual expected compat?)
+                'ok)
+  (check-equal?
+   (rejected-id `(Fn ((value ,actual)) ,expected (Own) (Move value)))
+   (diagnostic-code-of 'elaborate 'type-mismatch)))
 
 (test-case "最上位 Owned 残余の後に convert できない NFn 差は E-OWN-029 になる"
   (define actual-fn '(NFn ((Union Int Bool)) Unit () ()))

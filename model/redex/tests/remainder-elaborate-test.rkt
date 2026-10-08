@@ -125,14 +125,17 @@
   (match configuration
     [`(cfg ,core ,_ ,_ ,_ ,_) core]))
 
-(define (entry-body-has-rsd? core)
+(define (rsd-inside-recrewrite-entry? core)
   (match core
-    [`(RecRewrite ,_input (,entries ...))
-     (ormap (lambda (entry)
-              (or (find-rsd (last entry))
-                  (entry-body-has-rsd? (last entry))))
-            entries)]
-    [(? pair?) (ormap entry-body-has-rsd? core)]
+    [`(RecRewrite ,input (,entries ...))
+     (or (ormap (lambda (entry)
+                  (match entry
+                    [`(,_label ,_binder ,_input-type ,_mode ,_output-type ,body)
+                     (and (find-rsd body) #t)]
+                    [_ #f]))
+                entries)
+         (rsd-inside-recrewrite-entry? input))]
+    [(? pair?) (ormap rsd-inside-recrewrite-entry? core)]
     [_ #f]))
 
 (define join-record-narrow '(Record ((a (Union Bool Int) imm))))
@@ -269,7 +272,7 @@
      (check-not-false (find-rsd erased))
      (check-true (core-has-head? 'RecRewrite erased)
                  (format "RSD 後の Record 作り直しが無い: ~s" erased))
-     (check-false (entry-body-has-rsd? erased)
+     (check-false (rsd-inside-recrewrite-entry? erased)
                   (format "RSD が RecRewrite entry に残った: ~s" erased))
      (check-equal? (core-type-of erased '() callables)
                    (list result-type row))
@@ -287,7 +290,7 @@
      (fail-check (format "merge-branches の RSD programme が拒否された: ~s"
                          diagnostic))]))
 
-(test-case "Union expected の entry fixture は Union 分解の RSD で型付けできる"
+(test-case "Union expected の entry fixture は entry 本体の RSD で実行できる"
   (define wide-member
     `(Record ((a Bool imm) (owned ,option-owned imm))))
   (define narrow-member '(Record ((a Int imm))))
@@ -299,11 +302,26 @@
     (normalize-type `(Union ,common-member String)))
   (define source-type `(Record ((p ,actual-union imm))))
   (define expected-type `(Record ((p ,expected-union imm))))
-  (match (elab `(Fn ((source ,source-type)) ,expected-type (Own) (Move source)))
+  (define source-value
+    `(Rec ((p imm
+            (Rec ((a imm (Construct false (Types)))
+                  (owned imm ,(owned-option-value 72))))))))
+  (define source
+    `(Apply (Fn ((source ,source-type)) ,expected-type (Own) (Move source))
+            ,source-value))
+  (match (elab source)
     [(list core type row callables)
      (define erased (erase-core core))
-     (check-not-false (find-rsd erased))
-     (check-equal? (core-type-of erased '() callables) (list type row))]
+     (check-true (core-has-head? 'RecRewrite erased))
+     (check-true (rsd-inside-recrewrite-entry? erased))
+     (check-equal? (core-type-of erased '() callables) (list type row))
+     (define executable (execution-core core callables))
+     (define-values (configs rules)
+       (trace-g2 `(cfg (Scope () ,executable) () () () ())))
+     (check-not-false (member 'R-DischargeRemainder rules))
+     (check-config-trace configs callables type)
+     (check-equal? (map second (configuration-tokens (last configs)))
+                   '(Dropped))]
     [`(err ,diagnostic)
      (fail-check (format "Union entry の RSD programme が拒否された: ~s"
                          diagnostic))]))
