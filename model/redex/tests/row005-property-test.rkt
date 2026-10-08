@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         "../compat.rkt"
          "../ownership.rkt"
          "row005-property-support.rkt")
 
@@ -42,3 +43,41 @@
     (check-true (and shape (pair? shape))
                 (format "drop-obligation に対応する runtime removal shape が無い: ~s => ~s"
                         actual expected))))
+
+(test-case "2 段 Record の有限対で nested drop の shape を網羅する"
+  (define (field label type mode optional?)
+    (if optional?
+        (list label type mode 'opt)
+        (list label type mode)))
+  (define cases
+    (for*/list ([inner-optional? (in-list '(#f #t))]
+                [outer-optional? (in-list '(#f #t))]
+                [owned-mode (in-list '(imm mut))])
+      (define actual-inner
+        `(Record ((kept Int imm)
+                  ,(field 'x '(Option (Owned Res)) owned-mode
+                          inner-optional?))))
+      (define expected-inner '(Record ((kept Int imm))))
+      (define actual
+        `(Record (,(field 'a actual-inner 'imm outer-optional?))))
+      ;; Expected の外側欄は opt。required actual でも値の存在は保証される。
+      (define expected
+        `(Record (,(field 'a expected-inner 'imm #t))))
+      (list actual expected)))
+  (check-equal? (length cases) 8)
+  (define drop-count 0)
+  (for ([pair (in-list cases)])
+    (match-define (list actual expected) pair)
+    (check-true (compat? actual expected)
+                (format "有限対が互換でない: ~s => ~s" actual expected))
+    (define kind (narrowing-kind actual expected))
+    (define shape (remainder-removal-shape actual expected))
+    (check-not-false shape
+                     (format "有限対に runtime shape が無い: ~s => ~s"
+                             actual expected))
+    (when (match kind [`(drop-obligation ,_ ,_) #t] [_ #f])
+      (set! drop-count (add1 drop-count))
+      (check-true (pair? shape)
+                  (format "drop-obligation の shape が空: ~s => ~s"
+                          actual expected))))
+  (check-equal? drop-count 8))

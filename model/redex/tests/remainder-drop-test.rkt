@@ -7,9 +7,11 @@
          racket/match
          redex/reduction-semantics
          "../borrow.rkt"
+         "../compat.rkt"
          "../diagnostic.rkt"
          "../lang.rkt"
          "../type-equiv.rkt"
+         "../ownership.rkt"
          "../origins.rkt"
          "../search.rkt"
          "../region.rkt"
@@ -30,12 +32,21 @@
 (define wider
   `(Record ((a ,owned imm) (b Int imm) (c ,owned imm))))
 
-;; 入れ子の欄で Owned を失う対。kind は 'reject である。
-(define reject-wide `(Record ((a (Record ((p ,owned imm))) imm))))
-(define reject-narrow '(Record ((a (Record ()) imm))))
+;; Union の内側の Owned 損失は、imm Record の鎖として扱わず reject する。
+(define reject-wide
+  `(Record ((a (Union (Record ((p ,owned imm))) Bool) imm))))
+(define reject-narrow
+  '(Record ((a (Union (Record ()) Bool) imm))))
 (define reject-proof
   `(ProofRep (Reserved o-narrow)
              (RemainderSafelyDropped ,reject-wide ,reject-narrow)))
+
+;; imm Record の鎖にある nested drop obligation は受理される。
+(define nested-wide `(Record ((a (Record ((p ,owned imm))) imm))))
+(define nested-narrow '(Record ((a (Record ()) imm))))
+(define nested-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,nested-wide ,nested-narrow)))
 
 ;; 余剰が Int だけの width narrowing。kind は 'ok である。
 (define ok-wide '(Record ((a Int imm) (b Int imm))))
@@ -146,11 +157,13 @@
     (k (NFn (,ok-narrow) ,ok-narrow () () (TypeNarrativeCap) User))
     (wide-source (NFn (Unit) ,wide () (Own) () User))
     (wider-source (NFn (Unit) ,wider () (Own) () User))
-    (reject-wide-source (NFn (Unit) ,reject-wide () (Own) () User))))
+    (reject-wide-source (NFn (Unit) ,reject-wide () (Own) () User))
+    (nested-wide-source (NFn (Unit) ,nested-wide () (Own) () User))))
 
 (define wide-value '(Apply wide-source unit))
 (define wider-value '(Apply wider-source unit))
 (define reject-wide-value '(Apply reject-wide-source unit))
+(define nested-wide-value '(Apply nested-wide-source unit))
 (define ok-wide-value '(Rec ((a imm 1) (b imm 2))))
 
 (define (key-of core [environment '()])
@@ -248,11 +261,16 @@
   (check-equal? (core-type-of source '() '()) (list source-type '()))
   (check-equal? (core-type-of core '() '()) (list target-type '(Own))))
 
-(test-case "nested drop obligation は Discharge で包むと受理される"
+(test-case "入れ子の drop obligation は Discharge で包むと受理される"
+  (check-equal? (type-of `(Discharge ,nested-proof ,nested-wide-value)
+                         narrowing-environment)
+                nested-narrow))
+
+(test-case "reject の narrowing は Discharge で包んでも拒否される"
   (check-equal? (key-of `(Apply g (Discharge ,reject-proof
                                                ,reject-wide-value))
                         narrowing-environment)
-                'ok))
+                'owned-narrowing-rejected))
 
 (test-case "'ok を返す narrowing を包んでも通る"
   (check-equal? (type-of `(Apply h (Discharge ,ok-proof
@@ -333,6 +351,92 @@
                       (outer-kept imm 9))))
   (check-equal? (configuration-tokens (last configs))
                 '(((tok 0) Dropped))))
+
+(test-case "入れ子の optional 欄が Absent なら expected 型の Absent に保つ"
+  (define inner-wide
+    `(Record ((kept Int imm) (owned ,option-owned imm))))
+  (define inner-narrow '(Record ((kept Int imm))))
+  (define actual
+    `(Record ((inside ,inner-wide imm opt) (outer-kept Int imm))))
+  (define expected
+    `(Record ((inside ,inner-narrow imm opt) (outer-kept Int imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,actual ,expected)))
+  (define core
+    `(Scope ()
+       (Discharge ,proof
+         (Rec ((inside imm (Absent ,inner-wide))
+               (outer-kept imm 9))))))
+  (check-equal? (core-type-of core '() '()) (list expected '(Own)))
+  (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-config-trace configs '() expected)
+  (check-equal? (configuration-core (last configs))
+                `(Rec ((inside imm (Absent ,inner-narrow))
+                      (outer-kept imm 9))))
+  (check-equal? (configuration-tokens (last configs)) '()))
+
+(test-case "2 段 Record の presence と mode の有限対は runtime cleanup と一致する"
+  (define (field label type mode optional?)
+    (if optional?
+        (list label type mode 'opt)
+        (list label type mode)))
+  (define cases
+    (for*/list ([inner-optional? (in-list '(#f #t))]
+                [outer-optional? (in-list '(#f #t))]
+                [owned-mode (in-list '(imm mut))])
+      (define actual-inner
+        `(Record ((kept Int imm)
+                  ,(field 'x option-owned owned-mode inner-optional?))))
+      (define expected-inner '(Record ((kept Int imm))))
+      (define actual
+        (normalize-type
+         `(Record (,(field 'a actual-inner 'imm outer-optional?)))))
+      ;; Expected の外側欄は opt。actual が req のときも present は保証される。
+      (define expected
+        (normalize-type
+         `(Record (,(field 'a expected-inner 'imm #t)))))
+      (list inner-optional? outer-optional? owned-mode actual expected)))
+  (check-equal? (length cases) 8)
+  (define obligation-count 0)
+  (for ([case (in-list cases)] [token (in-naturals 120)])
+    (match-define (list inner-optional? _outer-optional? owned-mode
+                        actual expected)
+      case)
+    (check-true (compat? actual expected)
+                (format "有限対が互換でない: ~s => ~s" actual expected))
+    (define kind (owned-narrowing-kind actual expected compat?))
+    (define shape (remainder-removal-shape actual expected))
+    (check-not-false shape
+                     (format "runtime shape が無い: ~s => ~s" actual expected))
+    (when (match kind [`(drop-obligation ,_ ,_) #t] [_ #f])
+      (set! obligation-count (add1 obligation-count))
+      (check-true (pair? shape)
+                  (format "drop-obligation に空 shape: ~s => ~s" actual expected)))
+    (define inner-value
+      `(Rec ((x ,owned-mode
+                (Construct ,option-owned some
+                           (OwnLeaf (resource ,token))))
+             (kept imm 7))))
+    (define source `(Rec ((a imm ,inner-value))))
+    (define proof
+      `(ProofRep (Reserved o-narrow)
+                 (RemainderSafelyDropped ,actual ,expected)))
+    (define core `(Discharge ,proof ,source))
+    (check-equal? (key-of core) 'ok
+                  (format "RSD core が受理されない: ~s => ~s; source=~s"
+                          actual expected source))
+    (check-equal? (core-type-of core '() '())
+                  (list expected '(Own)))
+    (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
+    (check-not-false (member 'R-DischargeRemainder rules)
+                     (format "RSD が strip を完了しない: ~s => ~s" actual expected))
+    ;; 各段の config-ok? は最終値を expected に照合し、OwnedLeaf の残存／除去も検査する。
+    (check-config-trace configs '() expected)
+    (check-equal? (configuration-tokens (last configs))
+                  '(((tok 0) Dropped))))
+  (check-equal? obligation-count 8))
 
 (test-case "Absent の除去欄は token 無しで欄だけを取り除く"
   (define optional-wide

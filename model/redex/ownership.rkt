@@ -161,8 +161,10 @@
                         (and actual-field
                              (eq? (third actual-field) 'imm)
                              (eq? (third expected-field) 'imm)
-                             (eq? (field-presence actual-field)
-                                  (field-presence expected-field))
+                             ;; actual の必須欄は expected の optional 欄として扱える。
+                             ;; 値は存在するため、その値の入れ子へ安全に降りられる。
+                             (or (not (field-optional? actual-field))
+                                 (field-optional? expected-field))
                              (match* ((second actual-field)
                                       (second expected-field))
                                [(`(Record ,_) `(Record ,_)) #t]

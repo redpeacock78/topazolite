@@ -19,6 +19,10 @@
 (define nested-three-narrow
   '(Record ((a (Record ((b (Record ((y Int imm))) imm)
                        (z Int imm))) imm))))
+(define nested-required-optional-wide
+  `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm))))
+(define nested-required-optional-narrow
+  '(Record ((a (Record ((y Int imm))) imm opt))))
 
 (test-case "最上位の record で余剰 Owned 欄が落ちると義務を返す"
   (check-equal?
@@ -95,7 +99,17 @@
   (check-equal? (remainder-removal-shape nested-two-wide nested-two-narrow)
                 '((a nested ((x drop #f)))))
   (check-equal? (remainder-removal-shape nested-three-wide nested-three-narrow)
-                '((a nested ((b nested ((x drop #f))))))))
+                '((a nested ((b nested ((x drop #f)))))))
+  (check-equal?
+   (owned-narrowing-kind nested-required-optional-wide
+                         nested-required-optional-narrow
+                         always-compatible)
+   `(drop-obligation ,nested-required-optional-wide
+                     ,nested-required-optional-narrow))
+  (check-equal?
+   (remainder-removal-shape nested-required-optional-wide
+                            nested-required-optional-narrow)
+   '((a nested ((x drop #f))))))
 
 (test-case "Borrowed の payload では打ち切る"
   (check-equal?

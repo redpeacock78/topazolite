@@ -561,8 +561,10 @@
                                (unless (and actual-field expected-field
                                             (eq? (third actual-field) 'imm)
                                             (eq? (third expected-field) 'imm)
-                                            (eq? (field-presence actual-field)
-                                                 (field-presence expected-field)))
+                                            ;; 必須欄から optional 欄への widening でも値は存在する。
+                                            ;; 値がある場合に限り、その入れ子へ降りる。
+                                            (or (not (field-optional? actual-field))
+                                                (field-optional? expected-field)))
                                  (fail #f))
                                (match* ((second actual-field)
                                         (second expected-field)
