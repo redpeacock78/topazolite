@@ -2110,19 +2110,30 @@
            (if (or (needs-expected-type? bound) record-literal-checkable?)
                (check bound declared-type environment delta propositions boundaries)
                (synth bound environment delta propositions boundaries)))
+         (define source-core-type (judgment-core-type bound-result))
+         ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
+         ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
+         (define remainder-target
+           (match* (binding-mode source-core-type declared-type)
+             [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+              `(Record ,(append declared-row
+                                (field-row-residual actual-row declared-row)))]
+             [(_ _ _) declared-type]))
+         (define-values (discharged-core discharged-type)
+           (discharge-remainder (judgment-core bound-result)
+                                source-core-type remainder-target s
+                                propositions))
          (define-values (bound-core actual-type)
-           (convert (judgment-core bound-result)
-                    (judgment-core-type bound-result)
-                    declared-type s propositions))
+           (convert discharged-core discharged-type declared-type s
+                    propositions))
          ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
-         (match (narrowing-kind (judgment-core-type bound-result) actual-type
-                                propositions)
+         (match (narrowing-kind discharged-type actual-type propositions)
            ['ok (void)]
            [`(drop-obligation ,_ ,_)
             (reject s 'owned-narrowing-needs-proof actual-type
-                    (judgment-core-type bound-result))]
+                    discharged-type)]
            [_ (reject s 'owned-narrowing-rejected actual-type
-                      (judgment-core-type bound-result))])
+                      discharged-type)])
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))

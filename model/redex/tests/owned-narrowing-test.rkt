@@ -301,16 +301,16 @@
          (Let (q let ,nested-actual) (Move p) 1)))
    'ok))
 
-(test-case "注釈付き Let の入れ子 Record narrowing は E-OWN-031 を出す"
+(test-case "注釈付き Let の入れ子 Record narrowing は RSD で受理する"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-with-residual)) Int ()
+    `(Fn ((p ,nested-with-residual)) Int (Own)
          (Let (q let ,nested-no-z) (Move p) 1)))
-   "E-OWN-031"))
+   'ok))
 
-(test-case "const binder の入れ子 Record narrowing は E-OWN-031 を出す"
+(test-case "const binder の入れ子 Record narrowing は RSD で受理する"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-actual)) Int ()
+    `(Fn ((p ,nested-actual)) Int (Own)
          (Let (q const ,nested-no-z) (Move p) 1)))
-   "E-OWN-031"))
+   'ok))

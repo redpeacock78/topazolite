@@ -81,6 +81,44 @@
   (match configuration
     [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
 
+(define let-top-wide
+  `(Record ((owned ,option-owned imm) (kept Int imm))))
+(define let-top-narrow '(Record ((kept Int imm))))
+(define const-mixed-wide
+  `(Record ((owned ,option-owned imm) (kept Int imm) (extra Bool imm))))
+(define const-mixed-narrow '(Record ((kept Int imm))))
+
+(define (owned-option-value number)
+  `(Construct some (Types (Owned Res)) (Apply acquire ,number)))
+
+(define (owned-record-source type fields)
+  `(Apply (Fn () ,type (Own) (Rec ,fields))))
+
+(define (run-owned-let source token-count has-rsd?)
+  (define result (elab source))
+  (match result
+    [`(err ,diagnostic)
+     (fail-check (format "let の RSD programme が elaborate で拒否された: ~s"
+                         diagnostic))]
+    [(list core result-type row callables)
+     (define erased (erase-core core))
+     (check-equal? (core-type-of erased '() callables)
+                   (list result-type row))
+     (check-equal? (and (find-rsd erased) #t) has-rsd?)
+     (define executable (execution-core core callables))
+     (define-values (configs rules)
+       (trace-g2 `(cfg (Scope () ,executable) () () () ())))
+     (check-equal? (and (member 'R-DischargeRemainder rules) #t)
+                   has-rsd?)
+     (check-config-trace configs callables result-type)
+     (check-equal? (configuration-core (last configs)) 1)
+     (check-equal? (map second (configuration-tokens (last configs)))
+                   (make-list token-count 'Dropped))]))
+
+(define (configuration-core configuration)
+  (match configuration
+    [`(cfg ,core ,_ ,_ ,_ ,_) core]))
+
 (test-case "check の narrowing は Reserved o-narrow の RSD を挿入する"
   (define result
     (elab `(Fn ((p ,direct-actual)) ,direct-target (Own) (Move p))))
@@ -130,3 +168,58 @@
   (check-not-false (member 'R-DischargeRemainder rules))
   (check-equal? (configuration-tokens (last configs))
                 '(((tok 0) Dropped))))
+
+(test-case "let の最上位 Owned 残余は束縛型に残し RSD を挿入しない"
+  (run-owned-let
+   `(Let (record let ,let-top-narrow)
+         ,(owned-record-source
+           let-top-wide
+           `((owned imm ,(owned-option-value 61)) (kept imm 7)))
+         (Let (discard const Unit) (Drop (Move record)) 1))
+   1 #f))
+
+(test-case "let の入れ子 Owned 損失は RSD で回収する"
+  (run-owned-let
+   `(Let (record let ,runtime-narrow)
+         ,(owned-record-source
+           runtime-wide
+           `((a imm (Rec ((kept imm 7)
+                          (owned imm ,(owned-option-value 62)))))))
+         1)
+   1 #t))
+
+(test-case "const の最上位 Owned 残余は RSD で回収する"
+  (run-owned-let
+   `(Let (record const ,let-top-narrow)
+         ,(owned-record-source
+           let-top-wide
+           `((owned imm ,(owned-option-value 63)) (kept imm 7)))
+         1)
+   1 #t))
+
+(test-case "const は RSD 後にも残る非 Owned 残余を拒否する"
+  (define source
+    `(Let (record const ,const-mixed-narrow)
+          ,(owned-record-source
+            const-mixed-wide
+            `((owned imm ,(owned-option-value 64))
+              (kept imm 7)
+              (extra imm (Construct true (Types)))))
+          1))
+  (check-equal? (diagnostic-id-of (elab source)) "E-RCD-001"))
+
+(test-case "mut は入れ子 Owned 損失を除いた後に束縛できる"
+  (run-owned-let
+   `(Let (record mut ,runtime-narrow)
+         ,(owned-record-source
+           runtime-wide
+           `((a imm (Rec ((kept imm 7)
+                          (owned imm ,(owned-option-value 65)))))))
+         1)
+   1 #t))
+
+(test-case "型の合わない注釈付き Let は type-mismatch を先に出す"
+  (check-equal?
+   (diagnostic-id-of
+    (elab '(Fn ((source Int)) Int () (Let (bound let Bool) source 0))))
+   "E-TYP-012"))
