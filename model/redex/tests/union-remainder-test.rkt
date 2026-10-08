@@ -383,3 +383,149 @@
      (check-true (match type [`(Union ,_ ,_) #t] [_ #f]))]
     [`(err ,diagnostic)
      (fail-check (format "Surface Union programme が拒否された: ~s" diagnostic))]))
+
+(test-case "Rec の直接 check は合成失敗時も RSD の無い成分を先に選ぶ"
+  (define wide '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+  (define narrow '(Record ((x Int imm))))
+  (define safe-member
+    `(Record ((value (Union ,wide Bool) imm) (bad (Option Int) imm))))
+  (define lossy-member
+    `(Record ((value (Union ,narrow Bool) imm) (bad (Option Int) imm))))
+  (define expected (normalize-type `(Union ,lossy-member ,safe-member)))
+  (define wide-value
+    `(Rec ((x imm 7)
+           (o imm (Construct some (Types (Owned Res))
+                             (Apply acquire 13))))))
+  (define literal
+    '(Rec ((value imm (Move argument)) (bad imm (Construct some 1)))))
+  (define source
+    (apply-function
+     wide wide-value
+     (apply-function expected literal 'unit 'Unit '())
+     'Unit '(Own)))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-false (contains-rsd? core))
+  (check-true (type-equiv? (union-inject-member core expected) safe-member))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "Rec の直接 check は内側の未選択試行の RSD で外側を損失層へ移さない"
+  (define wide '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+  (define narrow '(Record ((x Int imm))))
+  (define (member-with-value value-type)
+    `(Record ((value ,value-type imm) (bad (Option Int) imm))))
+  (define inner-safe
+    `(Union ,(member-with-value `(Union ,wide Bool))
+            ,(member-with-value `(Union ,narrow Bool))))
+  (define inner-lossy
+    `(Union ,(member-with-value `(Union ,narrow Bool)) String))
+  (define safe-outer
+    `(Record ((payload ,inner-safe imm) (bad (Option Int) imm))))
+  (define lossy-outer
+    `(Record ((payload ,inner-lossy imm) (bad (Option Int) imm))))
+  (define expected (normalize-type `(Union ,safe-outer ,lossy-outer)))
+  (define wide-value
+    `(Rec ((x imm 7)
+           (o imm (Construct some (Types (Owned Res))
+                             (Apply acquire 13))))))
+  (define inner-literal
+    '(Rec ((value imm (Move argument)) (bad imm (Construct some 1)))))
+  (define inner-loss-literal
+    '(Rec ((value imm (Move p)) (bad imm (Construct some 1)))))
+  (define outer-literal
+    `(Rec ((payload imm ,inner-literal)
+          (bad imm (Construct some 1)))))
+  (define source
+    (apply-function
+     wide wide-value
+     (apply-function expected outer-literal 'unit 'Unit '())
+     'Unit '(Own)))
+  (define inner-loss-source
+    `(Apply (Fn ((p ,wide)) ,inner-lossy (Own) ,inner-loss-literal)
+            ,wide-value))
+  (match-define (list inner-core _inner-type _inner-row _inner-callables)
+    (checked inner-loss-source))
+  (check-true (contains-rsd? inner-core)
+              "損失のある内側の成分を試行の陽性対照にする")
+  (match-define (list core _type _row _callables) (checked source))
+  (check-false (contains-rsd? core))
+  (check-true (type-equiv? (union-inject-member core expected) safe-outer))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "リテラルの RSD 候補 4a は rebuild 候補 4b より先に選ぶ"
+  (define payload '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+  (define m1 '(Record ((a (Union Int Bool) imm))))
+  (define m2 `(Record ((a (Union Int Bool) imm)
+                       (o (Record ((x Int imm))) imm))))
+  (define expected (normalize-type `(Union ,m1 ,m2)))
+  (define payload-value
+    `(Rec ((x imm 7)
+           (o imm (Construct some (Types (Owned Res))
+                             (Apply acquire 13))))))
+  (define source
+    (apply-function
+     payload payload-value
+     (apply-function expected '(Rec ((a imm 1) (o imm (Move argument))))
+                      'unit 'Unit '())
+     'Unit '(Own)))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) m2))
+  (check-true (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "同じリテラル成分が 4a と 4b の両方に届いても一度だけ選ぶ"
+  (define payload '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+  (define selected-member
+    `(Record ((a (Union Int Bool) imm) (o (Record ((x Int imm))) imm))))
+  (define expected (normalize-type `(Union ,selected-member String)))
+  (define payload-value
+    `(Rec ((x imm 7)
+           (o imm (Construct some (Types (Owned Res))
+                             (Apply acquire 13))))))
+  (define source
+    (apply-function
+     payload payload-value
+     (apply-function expected '(Rec ((a imm 1) (o imm (Move argument))))
+                      'unit 'Unit '())
+     'Unit '(Own)))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) selected-member))
+  (check-true (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "合成できる Rec の完全一致、層 1、層 2 は check-against-expected と同じ成分を選ぶ"
+  (define cases
+    (list
+     (list '(Record ((a Int imm))) '(Rec ((a imm 1)))
+           '(Union (Record ((a Int imm))) String)
+           '(Record ((a Int imm))))
+     (list '(Record ((a Int imm) (b Int imm)))
+           '(Rec ((a imm 1) (b imm 2)))
+           '(Union (Record ((a Int imm) (b Int imm opt))) String)
+           '(Record ((a Int imm) (b Int imm opt))))
+     (list '(Record ((a Int imm))) '(Rec ((a imm 1)))
+           '(Union (Record ((a (Union Int Bool) imm))) String)
+           '(Record ((a (Union Int Bool) imm))))))
+  (for ([case (in-list cases)])
+    (match-define (list actual value expected selected) case)
+    (define direct-literal
+      `(Apply (Fn ((argument ,expected)) Unit () unit) ,value))
+    (define synthesized-value
+      `(Apply (Fn ((record ,actual)) Unit ()
+                  (Apply (Fn ((argument ,expected)) Unit () unit)
+                         record))
+              ,value))
+    (match-define (list direct-core _direct-type _direct-row _direct-callables)
+      (checked direct-literal))
+    (match-define (list synthesized-core _type _row _callables)
+      (checked synthesized-value))
+    (check-true (type-equiv? (union-inject-member direct-core expected)
+                             selected))
+    (check-true (type-equiv?
+                 (union-inject-member synthesized-core expected)
+                 selected))))

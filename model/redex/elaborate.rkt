@@ -891,26 +891,15 @@
             (define owned-rejection?
               (for/or ([member (in-list members)])
                 (define kind (narrowing-kind actual member propositions))
-                (define target
-                  (match kind
-                    [`(drop-obligation ,_ ,_)
-                     (remainder-target-type actual member)]
-                    [_ #f]))
                 (and (type-compatible? actual member propositions)
                      (or (eq? kind 'reject)
-                         (and (match kind
-                                [`(drop-obligation ,_ ,_) #t]
-                                [_ #f])
-                              (or (not target)
-                                  (and (not (tier-has-type? member tier3))
-                                       (not (tier-has-type? member tier4)))))))))
+                        (match kind
+                           [`(drop-obligation ,_ ,_) #t]
+                           [_ #f])))))
             (reject s (if owned-rejection?
                           'owned-narrowing-rejected
                           no-member-key)
                     expected actual)])]))
-
-    (define (tier-has-type? candidate members)
-      (ormap (lambda (member) (type-equiv? candidate member)) members))
 
     (define (union-inject core actual expected s propositions
                           #:no-member-key [no-member-key 'type-mismatch])
@@ -2557,6 +2546,18 @@
              (and omitted (pair? omitted)))]
         [_ #f]))
 
+    (define (core-has-remainder-drop? core)
+      (or (match core
+            [`(Discharge ,_ (ProofRep (Reserved o-narrow)
+                                      (RemainderSafelyDropped ,_ ,_)) ,_)
+             #t]
+            [`(Discharge (ProofRep (Reserved o-narrow)
+                                  (RemainderSafelyDropped ,_ ,_)) ,_)
+             #t]
+            [_ #f])
+          (and (pair? core)
+               (ormap core-has-remainder-drop? core))))
+
     (define (check-rec-against-union expression raw-fields expected s
                                      environment delta propositions boundaries)
       (define members (union-members expected))
@@ -2593,31 +2594,61 @@
         [(list _first _second ...)
          (reject s 'ambiguous-union-member expected synthesized first-stage)]
         [_
-         (define reachable
+         (define-values (tier1 tier2 tier3 tier4b)
            (if synthesized
-               (filter (λ (candidate)
-                         (rebuild-reachable? synthesized candidate 'ok s
-                                             propositions))
-                       members)
-               '()))
-         (define literal
+               (union-member-tiers synthesized members s propositions)
+               (values '() '() '() '())))
+         (define literal-results
            (filter
-            (λ (candidate)
-              (and (record-literal-member? raw-fields candidate)
-                   (trial
-                    (λ ()
-                      (check expression candidate environment delta
-                             propositions boundaries)
-                      #t))))
-            members))
-         (define candidates
-           (remove-duplicates (append reachable literal) type-equiv?))
-         (match candidates
-           ['() (normal-path)]
+            values
+            (for/list ([candidate (in-list members)]
+                       #:when (record-literal-member? raw-fields candidate))
+              (define result
+                (trial
+                 (λ ()
+                   (check expression candidate environment delta
+                          propositions boundaries))))
+              (and result (list candidate result)))))
+         (define literal-safe
+           (for/list ([entry (in-list literal-results)]
+                      #:unless (core-has-remainder-drop?
+                                (judgment-core (second entry))))
+             (first entry)))
+         (define literal-lossy
+           (for/list ([entry (in-list literal-results)]
+                      #:when (core-has-remainder-drop?
+                              (judgment-core (second entry))))
+             (first entry)))
+         (define (without-earlier candidates earlier)
+           (remove-duplicates
+            (filter (λ (candidate)
+                      (not (ormap (λ (prior)
+                                    (type-equiv? candidate prior))
+                                  earlier)))
+                    candidates)
+            type-equiv?))
+         (define-values (tier1* tier2* tier3* tier4a* tier4b*)
+           (let* ([tier1* (remove-duplicates tier1 type-equiv?)]
+                  [tier2* (without-earlier
+                           (append tier2 literal-safe) tier1*)]
+                  [prior2 (append tier1* tier2*)]
+                  [tier3* (without-earlier tier3 prior2)]
+                  [prior3 (append prior2 tier3*)]
+                  [tier4a* (without-earlier literal-lossy prior3)]
+                  [prior4a (append prior3 tier4a*)]
+                  [tier4b* (without-earlier tier4b prior4a)])
+             (values tier1* tier2* tier3* tier4a* tier4b*)))
+         (define selected-tier
+           (for/first ([tier (in-list
+                              (list tier1* tier2* tier3* tier4a* tier4b*))]
+                       #:when (pair? tier))
+             tier))
+         (match selected-tier
+           [#f (normal-path)]
            [(list candidate)
-            (if (ormap (λ (literal-candidate)
-                         (type-equiv? candidate literal-candidate))
-                       literal)
+            (if (ormap (λ (entry)
+                         (type-equiv? candidate (first entry)))
+                       literal-results)
                 (let ([result
                        (check expression candidate environment delta
                               propositions boundaries)])
@@ -2627,7 +2658,7 @@
                                  ,(judgment-core result))
                    expected (judgment-row result) expected))
                 (normal-path))]
-           [_
+           [candidates
             (reject s 'ambiguous-union-member expected
                     (or synthesized expected) candidates)])]))
 
