@@ -415,8 +415,10 @@
    (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
 
 (test-case "Owned payload の内側の損失は互換性 gate で拒否する"
-  (define actual `(Owned ,nested-owned-wide))
-  (define expected `(Owned ,nested-owned-narrow))
+  (define actual
+    (normalize-type `(Owned (Union ,nested-owned-wide Bool))))
+  (define expected
+    (normalize-type `(Owned (Union ,nested-owned-narrow Bool))))
   (check-false (compat? actual expected))
   (check-equal? (owned-narrowing-kind/for-elaboration actual expected compat?)
                 'reject)
