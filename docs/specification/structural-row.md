@@ -324,7 +324,16 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 `check-as/full` の 2 箇所は宣言された `expected` をそのまま載せ、`binding-context` は残余を反映した後の束縛型を載せる。
 後者は実際に比較した型を示し、前者は寿命の推論を反映する前の型であり、兄弟の `type-mismatch` と揃える判断である。
 余剰欄に `Owned` が含まれる最上位の narrowing は `drop-obligation` を返し、`Discharge` の T-Drop-Remainder で Proof を消費する。
-`Union` の候補選別では `'ok` だけを安全な候補と見なす。
+`Union` の候補選別は、完全一致の後に次の四つの層を順に調べる。
+第 1 層は `tag-compat?` を満たし、判定が `ok` の成分である。
+第 2 層は `tag-compat?` を満たさず、判定が `ok` で、通常の `convert` が成功する成分である。
+第 3 層は判定が `drop-obligation` で、RSD 後の型が `tag-compat?` を満たす成分である。
+第 4 層は判定が `drop-obligation` で、RSD 後の型から通常の `convert` が成功する成分である。
+最初に候補が見つかった層だけを使い、同じ層に複数の成分があれば `ambiguous-union-member` で拒否する。
+この順位は損失の無い成分を先に選ぶためのものであり、成分の並び順では結果を変えない。
+`check-rec-against-union` では、第 4 層をリテラルの直接 check が RSD を含む候補（4a）と `rebuild` だけで到達する候補（4b）に分け、4a を先に調べる。
+RSD を含まないリテラルの直接 check 候補は第 2 層に含める。
+ただし現在の層分けは imm の `Record` 欄の鎖にある `Union` 欄の損失を区別せず、損失の無い成分と損失のある成分が同じ層に並ぶと `ambiguous-union-member`（`E-TYP-031`）になるため、この縮約は c2b2b2b で候補ごとの最終 Core が RSD を含むかによって分類して回収する。
 borrowed view は `SUR-004`、明示 projection は `SUR-006` の担当であり、後続 Phase へ送る。
 
 elaborate は、expected が `Union` でない次の三つの判定点で `drop-obligation` を RSD によって解消する。
@@ -333,8 +342,9 @@ elaborate は、expected が `Union` でない次の三つの判定点で `drop-
 elaborate は `(Discharge (ProofRep (Reserved o-narrow) (RemainderSafelyDropped τa τa')) core)` で Core を包み、その後に通常の `convert` を適用する。
 三要素の `Let` では `let` と `mut` の束縛型が最上位の `Owned` 残余を保持するため、その最上位の損失には RSD を挿入せず、入れ子の損失だけを回収する。
 `const` では `Owned` 残余を RSD で除き、closed-binding の条件は RSD 適用後の残余に課すため、残る非 `Owned` 残余は従来どおり拒否する。
-`Union` への narrowing と `decompose` による `Union` 分解には RSD を挿入せず、現行の拒否を保つ。
-これらの経路の扱いは c2b2b2 で決める。
+`Union` への narrowing では、選んだ成分との対が `drop-obligation` なら RSD を挿入し、RSD 後の型から通常の `convert` を続ける。
+`decompose` による `Union` 分解では RSD を挿入せず、現行の拒否を保つ。
+この経路の扱いは c2b2b2b で決める。
 
 ### 3.4 型同値との分離
 
