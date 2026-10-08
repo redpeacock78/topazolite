@@ -169,10 +169,16 @@
     (s (NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm)))
             () (Own) () User))))
 (define reach-nested-narrowing-environment
-  '((g (NFn ((Record ((r (Record ((y Int imm))) imm)))) Unit () () () User))
+  '((g (NFn ((NFn (Unit)
+                  (Record ((r (Record ((y Int imm))) imm)))
+                  () () () User))
+            Unit () () () User))
     (t (NFn (Unit)
-            (Record ((r (Record ((x (Owned Res) imm) (y Int imm))) imm)))
-            () (Own) () User))))
+            (NFn (Unit)
+                 (Record ((r (Record ((x (Owned Res) imm)
+                                      (y Int imm))) imm)))
+                 () () () User)
+            () () () User))))
 (define reach-remainder-actual
   '(Record ((x (Owned Res) imm) (y Int imm))))
 (define reach-remainder-expected

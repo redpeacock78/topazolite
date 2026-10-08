@@ -27,6 +27,18 @@
 (define nested-with-residual
   `(Record ((a (Record ((y Int imm) (z ,owned imm))) imm)
             (x ,owned imm))))
+(define union-nested-actual
+  `(Record ((a (Union (Record ((x ,owned imm) (y Int imm))) Bool) imm))))
+(define union-nested-expected
+  '(Record ((a (Union (Record ((y Int imm))) Bool) imm))))
+(define rejected-nfn-actual
+  `(NFn (Unit) ,nested-actual () () () User))
+(define rejected-nfn-expected
+  `(NFn (Unit) ,nested-no-z () () () User))
+(define surface-rejected-nfn-actual
+  `(NFn (Unit) ,nested-actual () ()))
+(define surface-rejected-nfn-expected
+  `(NFn (Unit) ,nested-no-z () ()))
 
 (define (fixture-value type)
   (if (resource-type? type)
@@ -105,19 +117,19 @@
   (check-equal? (diagnostic-found diagnostic)
                 `(Record ((x ,owned imm) (y Int imm)))))
 
-(test-case "入れ子の record の narrowing も拒否する"
+(test-case "入れ子の record の narrowing は Proof を要求する"
   (check-equal?
    (apply-key
     `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm)))
     '(Record ((a (Record ((y Int imm))) imm))))
-   'owned-narrowing-rejected))
+   'owned-narrowing-needs-proof))
 
-(test-case "optional の imm 欄の内側の narrowing も拒否する"
+(test-case "optional 欄の内側の narrowing は Proof を要求する"
   (check-equal?
    (apply-key
     `(Record ((a (Record ((payload ,owned imm))) imm)))
     '(Record ((a (Record ()) imm opt))))
-   'owned-narrowing-rejected))
+   'owned-narrowing-needs-proof))
 
 (test-case "NFn の返り値の narrowing を拒否する"
   (check-equal?
@@ -172,18 +184,60 @@
            narrowing-environment)
    'ok))
 
-(test-case "binding-context の入れ子 narrowing は拒否する"
+(test-case "binding-context の入れ子 narrowing は Proof を要求する"
   (check-equal?
    (key-of `(Let (r let (Record ((a (Record ((y Int imm))) imm))))
                  ,(fixture-value nested-actual) 1)
            (fixture-environment nested-actual))
-   'owned-narrowing-rejected))
+   'owned-narrowing-needs-proof))
 
-(test-case "const binder の入れ子 narrowing も拒否する"
+(test-case "const binder の入れ子 narrowing は Proof を要求する"
   (check-equal?
    (key-of `(Let (r const (Record ((a (Record ((y Int imm))) imm))))
                  ,(fixture-value nested-actual) 1)
            (fixture-environment nested-actual))
+   'owned-narrowing-needs-proof))
+
+(test-case "Union 成分内の損失は ownership より前の Apply tag gate で type-mismatch になる"
+  (check-equal?
+   (apply-key union-nested-actual union-nested-expected)
+   'type-mismatch))
+
+(test-case "Union 成分内の損失は ownership より前の let binder tag gate で拒否される"
+  (check-equal?
+   (key-of `(Let (r let ,union-nested-expected)
+                 ,(fixture-value union-nested-actual)
+                 1)
+           (fixture-environment union-nested-actual))
+   'record-binding-incompatible))
+
+(test-case "Union 成分内の損失は ownership より前の const binder tag gate で拒否される"
+  (check-equal?
+   (key-of `(Let (r const ,union-nested-expected)
+                 ,(fixture-value union-nested-actual)
+                 1)
+           (fixture-environment union-nested-actual))
+   'record-binding-incompatible))
+
+(test-case "NFn の返り値内の残余損失は Apply 引数で reject する"
+  (check-equal?
+   (apply-key rejected-nfn-actual rejected-nfn-expected)
+   'owned-narrowing-rejected))
+
+(test-case "NFn の返り値内の残余損失は let binder で reject する"
+  (check-equal?
+   (key-of `(Let (r let ,rejected-nfn-expected)
+                 ,(fixture-value rejected-nfn-actual)
+                 1)
+           (fixture-environment rejected-nfn-actual))
+   'owned-narrowing-rejected))
+
+(test-case "NFn の返り値内の残余損失は const binder で reject する"
+  (check-equal?
+   (key-of `(Let (r const ,rejected-nfn-expected)
+                 ,(fixture-value rejected-nfn-actual)
+                 1)
+           (fixture-environment rejected-nfn-actual))
    'owned-narrowing-rejected))
 
 (test-case "互換でない型は narrowing 拒否ではなく type-mismatch になる"
@@ -199,10 +253,32 @@
              (s Never)))
    'ok))
 
-(test-case "elaborate 側の拒否の code は E-OWN-029 である"
+(test-case "elaborate の入れ子 Record narrowing は E-OWN-031 を出す"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p ,nested-actual)) ,nested-no-z () (Move p)))
+   "E-OWN-031"))
+
+(test-case "elaborate の Apply 引数で NFn 内の残余損失を E-OWN-029 にする"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+         (Apply (Fn ((p ,surface-rejected-nfn-expected)) Int () 1)
+                source)))
+   "E-OWN-029"))
+
+(test-case "elaborate の注釈付き Let で NFn 内の残余損失を E-OWN-029 にする"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+         (Let (r let ,surface-rejected-nfn-expected) source 1)))
+   "E-OWN-029"))
+
+(test-case "elaborate の const binder で NFn 内の残余損失を E-OWN-029 にする"
+  (check-equal?
+   (elaborate-code-of
+    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+         (Let (r const ,surface-rejected-nfn-expected) source 1)))
    "E-OWN-029"))
 
 (test-case "elaborate は最上位の余剰 Owned に E-OWN-031 を出す"
@@ -225,16 +301,16 @@
          (Let (q let ,nested-actual) (Move p) 1)))
    'ok))
 
-(test-case "注釈付き Let の入れ子 narrowing は拒否する"
+(test-case "注釈付き Let の入れ子 Record narrowing は E-OWN-031 を出す"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p ,nested-with-residual)) Int ()
          (Let (q let ,nested-no-z) (Move p) 1)))
-   "E-OWN-029"))
+   "E-OWN-031"))
 
-(test-case "const binder の入れ子 narrowing も拒否する（elaborate）"
+(test-case "const binder の入れ子 Record narrowing は E-OWN-031 を出す"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p ,nested-actual)) Int ()
          (Let (q const ,nested-no-z) (Move p) 1)))
-   "E-OWN-029"))
+   "E-OWN-031"))
