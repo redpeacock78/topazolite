@@ -196,9 +196,10 @@
              [`(accepted ,result-type ,core ,_callables)
               (check-equal? (case-class actual expected) 'drop-obligation)
               (check-equal? result-type expected)
-              (check-true (positive? (count-head 'RemainderSafelyDropped core))
-                          (format "drop-obligation の check に RSD が無い: ~s => ~s"
-                                  actual expected))
+              (check-not-false
+               (find-core-form 'RemainderSafelyDropped core)
+               (format "drop-obligation の check に RSD が無い: ~s => ~s"
+                       actual expected))
               (increment! counts 'drop-obligation)]
              [`(rejected ,key)
               (check-equal? (case-class actual expected)
@@ -226,9 +227,45 @@
   (check-equal? (apply + (hash-values counts)) expected-total)
   counts)
 
+(define (branch-join-program types)
+  (define names
+    (for/list ([index (in-range (length types))])
+      (string->symbol (format "branch~a" index))))
+  (define (branch-body selected)
+    (define selected-name (list-ref names selected))
+    (define selected-type (list-ref types selected))
+    (define result
+      (if (resource-type? selected-type)
+          `(Move ,selected-name)
+          selected-name))
+    (for/fold ([body result])
+              ([name (in-list names)] [type (in-list types)] [index (in-naturals)]
+               #:when (and (not (= index selected)) (resource-type? type)))
+      `(Let (discard const Unit) (Drop (Move ,name)) ,body)))
+  `(Fn ,(append (map list names types) '((flag Bool)))
+       #:infer (Own)
+       (Eliminate flag
+         ((true () -> ,(branch-body 0))
+          (false () -> ,(branch-body 1))))))
+
+(define (run-branch-join types upper)
+  (match (elab (branch-join-program types))
+    [`(err ,diagnostic) (list 'rejected (diagnostic-key diagnostic))]
+    [(list core function-type row callables)
+     (define core-type (core-type-of (erase-core core) '() callables))
+     (check-equal? core-type (list function-type row))
+     (match function-type
+       [`(NFn ,_ ,result-type ,_ ,_ ,_ ,_)
+        (check-true (well-formed-generated-type? result-type))
+        (check-equal? result-type upper)
+        (list 'accepted result-type core callables)]
+       [_ (fail-check (format "branch join の Fn 型が NFn でない: ~s"
+                              function-type))])]))
+
 (define (run-join-conversion types upper)
-  (define actual (make-union types))
-  (run-conversion actual upper))
+  (if (= (length types) 2)
+      (run-branch-join types upper)
+      (run-conversion (make-union types) upper)))
 
 (define (join-group cases expected-total)
   (define counts (make-hash))
@@ -252,30 +289,50 @@
                  (narrowing-kind type upper)))
              (define rejected-kind (findf (lambda (kind) (not (eq? kind 'ok))) kinds))
              (if rejected-kind
-                 (begin
-                   (increment! counts
-                                (if (match rejected-kind
-                                      [`(drop-obligation ,_ ,_) #t]
-                                      [_ #f])
-                                    'drop-obligation
-                                    'owned-narrowing-rejected))
-                   (match (run-join-conversion types upper)
-                     [`(rejected ,key)
-                      (check-not-false
-                       (memq key '(owned-narrowing-needs-proof
-                                   owned-narrowing-rejected))
-                       (format "OWN-004 の拒否理由が予期しない: ~s" key))]
-                     [other
-                      (fail-check
-                       (format "OWN-004 が拒否すべき join が通った: ~s => ~s: ~s"
-                               types upper other))]))
+                 (if (match rejected-kind
+                       [`(drop-obligation ,_ ,_) #t]
+                       [_ #f])
+                     (match (run-join-conversion types upper)
+                       [(list 'accepted result-type core callables)
+                        (check-equal? result-type upper)
+                        (check-not-false
+                         (find-core-form 'RemainderSafelyDropped core)
+                         (format "drop-obligation の join に RSD が無い: ~s => ~s"
+                                 types upper))
+                        (when (> (length (remove-duplicates types equal?)) 1)
+                          (check-not-false
+                           (or (find-core-form 'Eliminate core)
+                               (find-core-form 'UnionEliminate core))
+                                      (format "枝合流の Core を含まない join Core: ~s"
+                                              types)))
+                        (check-core-branch-merge! core (make-union types) upper
+                                                  callables)
+                        (increment! counts 'accepted-with-rsd)]
+                       [other
+                        (fail-check
+                         (format "drop-obligation の join が RSD で受理されない: ~s => ~s: ~s"
+                                 types upper other))])
+                     (begin
+                       (increment! counts 'owned-narrowing-rejected)
+                       (match (run-join-conversion types upper)
+                         [`(rejected ,key)
+                          (check-not-false
+                           (memq key '(owned-narrowing-needs-proof
+                                       owned-narrowing-rejected))
+                           (format "OWN-004 の拒否理由が予期しない: ~s" key))]
+                         [other
+                          (fail-check
+                           (format "OWN-004 が拒否すべき join が通った: ~s => ~s: ~s"
+                                   types upper other))])))
                  (match (run-join-conversion types upper)
                    [(list 'accepted result-type core callables)
                     (check-equal? result-type upper)
                     (when (> (length (remove-duplicates types equal?)) 1)
-                      (check-true (positive? (count-head 'UnionEliminate core))
-                                  (format "UnionEliminate を含まない join Core: ~s"
-                                          types)))
+                      (check-not-false
+                       (or (find-core-form 'Eliminate core)
+                           (find-core-form 'UnionEliminate core))
+                       (format "枝合流の Core を含まない join Core: ~s"
+                               types)))
                     (check-core-branch-merge! core (make-union types) upper
                                               callables)
                     (increment! counts 'accepted)]

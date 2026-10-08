@@ -9,7 +9,8 @@
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         "../type-equiv.rkt")
 
 (define owned '(Owned Res))
 (define nested-actual
@@ -37,6 +38,11 @@
     [(? list?)
      (for/or ([child (in-list value)]) (find-rsd child))]
     [_ #f]))
+
+(define (core-has-head? head value)
+  (or (and (pair? value) (eq? (car value) head))
+      (and (list? value)
+           (ormap (lambda (child) (core-has-head? head child)) value))))
 
 (define option-owned '(Option (Owned Res)))
 (define runtime-inner-wide
@@ -118,6 +124,36 @@
 (define (configuration-core configuration)
   (match configuration
     [`(cfg ,core ,_ ,_ ,_ ,_) core]))
+
+(define (entry-body-has-rsd? core)
+  (match core
+    [`(RecRewrite ,_input (,entries ...))
+     (ormap (lambda (entry)
+              (or (find-rsd (last entry))
+                  (entry-body-has-rsd? (last entry))))
+            entries)]
+    [(? pair?) (ormap entry-body-has-rsd? core)]
+    [_ #f]))
+
+(define join-record-narrow '(Record ((a (Union Bool Int) imm))))
+
+(define join-branch-true
+  '(Let (discard const Unit)
+        (Drop (Move source))
+        (Rec ((a imm 7)))))
+(define join-branch-false
+  '(Rec ((a imm (Construct true (Types)))
+        (b imm (Rec ((owned imm (Move source))))))))
+(define join-elimination
+  `(Eliminate flag ((true () -> ,join-branch-true)
+                    (false () -> ,join-branch-false))))
+
+(define (join-runtime-source number)
+  `(Apply
+    (Fn ((source ,option-owned) (flag Bool)) #:infer (Own)
+      ,join-elimination)
+    ,(owned-option-value number)
+    (Construct false (Types))))
 
 (test-case "check の narrowing は Reserved o-narrow の RSD を挿入する"
   (define result
@@ -223,3 +259,72 @@
    (diagnostic-id-of
     (elab '(Fn ((source Int)) Int () (Let (bound let Bool) source 0))))
    "E-TYP-012"))
+
+(test-case "merge-branches の Record 合流は nested Owned を RSD で回収する"
+  (define result (elab (join-runtime-source 71)))
+  (match result
+    [(list core result-type row callables)
+     (define erased (erase-core core))
+     (check-equal? result-type join-record-narrow)
+     (check-not-false (find-rsd erased))
+     (check-true (core-has-head? 'RecRewrite erased)
+                 (format "RSD 後の Record 作り直しが無い: ~s" erased))
+     (check-false (entry-body-has-rsd? erased)
+                  (format "RSD が RecRewrite entry に残った: ~s" erased))
+     (check-equal? (core-type-of erased '() callables)
+                   (list result-type row))
+     (define executable (execution-core core callables))
+     (define-values (configs rules)
+       (trace-g2 `(cfg (Scope () ,executable) () () () ())))
+     (check-not-false (member 'R-DischargeRemainder rules))
+     (check-config-trace configs callables result-type)
+     (check-true (match (configuration-core (last configs))
+                   [`(Rec ,_) #t]
+                   [_ #f]))
+     (check-equal? (configuration-tokens (last configs))
+                   '(((tok 0) Dropped)))]
+    [`(err ,diagnostic)
+     (fail-check (format "merge-branches の RSD programme が拒否された: ~s"
+                         diagnostic))]))
+
+(test-case "Union expected の entry fixture は b1 では OWN-004 で拒否する"
+  (define wide-member
+    `(Record ((a Bool imm) (owned ,option-owned imm))))
+  (define narrow-member '(Record ((a Int imm))))
+  (define actual-union
+    (normalize-type `(Union ,wide-member ,narrow-member)))
+  (define common-member
+    '(Record ((a (Union Bool Int) imm))))
+  (define expected-union
+    (normalize-type `(Union ,common-member String)))
+  (define source-type `(Record ((p ,actual-union imm))))
+  (define expected-type `(Record ((p ,expected-union imm))))
+  (check-equal?
+   (diagnostic-id-of
+    (elab `(Fn ((source ,source-type)) ,expected-type (Own) (Move source))))
+   "E-OWN-029"))
+
+(test-case "Eliminate の枝 check で NFn の内側の損失は RSD にしない"
+  (define source
+    `(Fn ((flag Bool) (value (NFn (Unit) ,nested-actual () ())))
+         (NFn (Unit) ,nested-target () ()) ()
+         (Eliminate flag
+           ((true () -> value)
+            (false () -> value)))))
+  (check-equal? (diagnostic-id-of (elab source)) "E-OWN-029"))
+
+(test-case "decompose の branch narrowing で NFn の内側の損失は拒否する"
+  (define actual-nfn `(NFn (Unit) ,nested-actual () ()))
+  (define expected-nfn `(NFn (Unit) ,nested-target () ()))
+  (define actual-left `(Record ((a Bool imm) (f ,actual-nfn imm))))
+  (define actual-right `(Record ((a Int imm) (f ,expected-nfn imm))))
+  (define actual-union
+    (normalize-type `(Union ,actual-left ,actual-right)))
+  (define expected
+    `(Record ((a (Union Bool Int) imm) (f ,expected-nfn imm))))
+  (define source-type `(Record ((p ,actual-union imm))))
+  (define expected-type `(Record ((p ,expected imm))))
+  (check-equal?
+   (diagnostic-id-of
+    (elab `(Fn ((source ,source-type)) ,expected-type (Own) source)))
+   "E-OWN-029"))

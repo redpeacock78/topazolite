@@ -913,14 +913,21 @@
           (cond
             [(or (eq? type 'Never) (eq? target 'Never)) (cons core type)]
             [else
+             (define-values (core-after-discharge type-after-discharge)
+               (if record-join?
+                   (discharge-remainder core type target s propositions)
+                   (values core type)))
              (when record-join?
-               (match (narrowing-kind type target propositions)
+               (match (narrowing-kind type-after-discharge target propositions)
                  ['ok (void)]
                  [`(drop-obligation ,_ ,_)
-                  (reject s 'owned-narrowing-needs-proof target type)]
-                 [_ (reject s 'owned-narrowing-rejected target type)]))
+                  (reject s 'owned-narrowing-needs-proof target
+                          type-after-discharge)]
+                 [_ (reject s 'owned-narrowing-rejected target
+                            type-after-discharge)]))
              (let-values ([(core* type*)
-                           (convert core type target s propositions)])
+                           (convert core-after-discharge
+                                    type-after-discharge target s propositions)])
                (cons core* type*))])))
       (define rebuilt-live-types
         (filter (lambda (type) (not (eq? type 'Never)))
@@ -2203,7 +2210,7 @@
              (synth body branch-environment delta propositions boundaries)))
          (define-values (branch-cores core-type)
            (merge-branches (map judgment-core results)
-                           (map judgment-type results)
+                           (map judgment-core-type results)
                            s propositions))
          (judgment
           `(Eliminate ,s ,(judgment-core scrutinee-result)

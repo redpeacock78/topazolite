@@ -10,7 +10,7 @@
   (define counts (join-group join-record-cases 820))
   (check-equal? (sorted-counts counts)
                 '((accepted . 365)
-                  (drop-obligation . 30)
+                  (accepted-with-rsd . 30)
                   (one-owned-one-unowned . 375)
                   (owned-owned-without-upper-bound . 50)))
   (displayln `(join-record ,(hash->list counts))))
