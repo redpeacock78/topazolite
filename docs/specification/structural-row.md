@@ -310,7 +310,7 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 `Union` は互換かつ安全な候補が一つ以上あることを要求し、候補の順序で判定が変わってはならない。
 余剰欄の判定には `owned-free?` を使う。
 `copy-out-ok?` は copy 可能性の判定であり、`Owned` の有無とは別の問いである。
-共通する `imm` の `Record` 欄の鎖にある残余の損失は、鎖全体を包む最上位の型対に対して判定し、typing は `E-OWN-030`、elaborate は `E-OWN-031` を出す。
+共通する `imm` の `Record` 欄の鎖にある残余の損失は、鎖全体を包む最上位の型対に対して判定し、typing は `E-OWN-030` を出す。
 `E-OWN-028` と `E-OWN-029` は、`Union`、`Owned` の payload、`Untrusted` と `Refined` の payload、`NFn` の内側で残余を失う対を拒否するときに使う。
 統合経路の例は `NFn` の返り値内にある `Record` の損失である。
 `Union` の成分内で型が異なる対は、`tag-compat?` が ownership 判定より先に拒否する。
@@ -326,6 +326,15 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 余剰欄に `Owned` が含まれる最上位の narrowing は `drop-obligation` を返し、`Discharge` の T-Drop-Remainder で Proof を消費する。
 `Union` の候補選別では `'ok` だけを安全な候補と見なす。
 borrowed view は `SUR-004`、明示 projection は `SUR-006` の担当であり、後続 Phase へ送る。
+
+elaborate は、expected が `Union` でない次の三つの判定点で `drop-obligation` を RSD によって解消する。
+判定点は `check-against-expected`、三要素の `Let`、および `merge-branches` の `Record` 合流である。
+各判定点で包む Core の実型を `τa` とし、`remainder-target-type(τa, expected)` が返す型を `τa'` とする。
+elaborate は `(Discharge (ProofRep (Reserved o-narrow) (RemainderSafelyDropped τa τa')) core)` で Core を包み、その後に通常の `convert` を適用する。
+三要素の `Let` では `let` と `mut` の束縛型が最上位の `Owned` 残余を保持するため、その最上位の損失には RSD を挿入せず、入れ子の損失だけを回収する。
+`const` では `Owned` 残余を RSD で除き、closed-binding の条件は RSD 適用後の残余に課すため、残る非 `Owned` 残余は従来どおり拒否する。
+`Union` への narrowing と `decompose` による `Union` 分解には RSD を挿入せず、現行の拒否を保つ。
+これらの経路の扱いは c2b2b2 で決める。
 
 ### 3.4 型同値との分離
 

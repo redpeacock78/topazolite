@@ -345,6 +345,10 @@ v16 は typing へ `E-OWN-030` と `E-PRF-009` から `E-PRF-011` までの 4 �
 
 廃止した行は無いため、組は 180 に 5 を足した 185 になる。
 
+`owned-narrowing-needs-proof` は、Core の型付けでは RSD で包まれていない narrowing の判定で発行される。
+elaborate では `Union` 以外の判定点にある `drop-obligation` を RSD で解消するため、この key は出ない。
+`Union` を含む判定点で elaborate がこの key を発行するかは未確定であり、c2b2b2 で結論する。
+
 v17 は surface へ `E-SUR-012` の 1 行を足した。
 
 廃止した行は無いため、組は 185 に 1 を足した 186 になる。
