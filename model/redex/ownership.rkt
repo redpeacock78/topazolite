@@ -34,11 +34,28 @@
     [(eq? b 'ok) a]
     [else 'reject]))
 
+(define (drop-obligation? kind)
+  (match kind [`(drop-obligation ,_ ,_) #t] [_ #f]))
+
+(define (kind-max/nested a b)
+  (cond
+    [(or (eq? a 'reject) (eq? b 'reject)) 'reject]
+    [(eq? a 'ok) b]
+    [(eq? b 'ok) a]
+    [(and (eq? a 'nested-drop) (eq? b 'nested-drop)) 'nested-drop]
+    [(and (drop-obligation? a) (eq? b 'nested-drop)) a]
+    [(and (eq? a 'nested-drop) (drop-obligation? b)) b]
+    [else 'reject]))
+
+(define (kind-all/nested kinds)
+  (for/fold ([acc 'ok]) ([kind (in-list kinds)])
+    (kind-max/nested acc kind)))
+
 (define (kind-all kinds)
   (for/fold ([acc 'ok]) ([k (in-list kinds)]) (kind-max acc k)))
 
 ;; compat?/impl と同型の再帰。Union の分岐位置も compat?/impl に合わせる。
-(define (owned-narrowing-kind/impl actual expected compatible? [top? #t])
+(define (owned-narrowing-kind/impl actual expected compatible? [ctx 'top])
   (cond
     ;; Heap root の Owned へ Union 値を持ち上げる比較は tag を狭めない。
     ;; compatible? が持ち上げを認めた組だけ OWN-004 の追加検査を通す。
@@ -51,32 +68,38 @@
            (for/or ([expected-member (in-list (union-members expected))])
              (and (compatible? actual-member expected-member)
                   (eq? (owned-narrowing-kind/impl actual-member expected-member
-                                                  compatible? #f)
+                                                  compatible? 'inner)
                        'ok))))
          'ok
          'reject)]
-    [else (narrowing-kind/non-union actual expected compatible? top?)]))
+    [else (narrowing-kind/non-union actual expected compatible? ctx)]))
 
-(define (narrowing-kind/non-union actual expected compatible? top?)
+(define (narrowing-kind/non-union actual expected compatible? ctx)
   (match* (actual expected)
     [(`(Record ,actual-row) `(Record ,expected-row))
-     (kind-max (residual-kind actual-row expected-row actual expected top?)
-               (common-imm-fields-kind actual-row expected-row compatible?))]
+     (kind-max/nested
+      (residual-kind actual-row expected-row actual expected ctx)
+      (common-imm-fields-kind actual-row expected-row compatible? ctx))]
+    [(`(Owned ,actual-payload) `(Owned ,expected-payload))
+     (owned-narrowing-kind/impl actual-payload expected-payload
+                                compatible? 'inner)]
     [(`(Untrusted ,actual-payload) `(Untrusted ,expected-payload))
-     (owned-narrowing-kind/impl actual-payload expected-payload compatible? #f)]
+     (owned-narrowing-kind/impl actual-payload expected-payload
+                                compatible? 'inner)]
     [(`(Refined ,actual-payload ,_) `(Refined ,expected-payload ,_))
-     (owned-narrowing-kind/impl actual-payload expected-payload compatible? #f)]
+     (owned-narrowing-kind/impl actual-payload expected-payload
+                                compatible? 'inner)]
     [(`(NFn ,actual-parameters ,actual-return ,_ ,_ ,_ ,_)
       `(NFn ,expected-parameters ,expected-return ,_ ,_ ,_ ,_))
      (if (= (length actual-parameters) (length expected-parameters))
          (kind-all
           (cons (owned-narrowing-kind/impl actual-return expected-return
-                                           compatible? #f)
+                                           compatible? 'inner)
                 ;; 引数は反変。expected の引数型が actual の引数型へ narrowing
                 (for/list ([actual-parameter (in-list actual-parameters)]
                            [expected-parameter (in-list expected-parameters)])
                   (owned-narrowing-kind/impl expected-parameter actual-parameter
-                                             compatible? #f))))
+                                             compatible? 'inner))))
          'reject)]
     ;; 借用した view は正典が挙げる救済策そのものであり、所有者は動かない。
     [(`(Borrowed ,_ ,_) `(Borrowed ,_ ,_)) 'ok]
@@ -84,26 +107,28 @@
     ;; narrowing が起きない。既定節は検査対象なしとして通す。
     [(_ _) 'ok]))
 
-;; 残余に Owned があるとき、最上位なら義務を、内側なら拒否を返す。
-;; 内側で拒否するのは、Proof が型の対で鍵付くためである。内側の対を
-;; 外へ出すと、包んだ項の型と鍵が合わない。
-(define (residual-kind actual-row expected-row actual expected top?)
+;; 残余に Owned があるとき、最上位なら義務を返す。
+;; imm Record の共通欄の鎖では内部印を返し、最上位で呼び出し全体の対へ戻す。
+(define (residual-kind actual-row expected-row actual expected ctx)
   (cond
     [(for/and ([field (in-list (field-row-residual actual-row expected-row))])
        (owned-free? (second field)))
      'ok]
-    [top? `(drop-obligation ,actual ,expected)]
+    [(eq? ctx 'top) `(drop-obligation ,actual ,expected)]
+    [(eq? ctx 'chain) 'nested-drop]
     [else 'reject]))
 
 ;; compat? が共変に再帰する欄と同じ組を辿る。mut 欄は type-equiv? で閉じる。
-(define (common-imm-fields-kind actual-row expected-row compatible?)
-  (kind-all
+(define (common-imm-fields-kind actual-row expected-row compatible? ctx)
+  (define child-ctx (if (memq ctx '(top chain)) 'chain 'inner))
+  (kind-all/nested
    (for/list ([field (in-list expected-row)])
      (match field
        [(list label expected-type 'imm _ ...)
         (match (field-row-lookup actual-row label)
           [(list actual-type _)
-           (owned-narrowing-kind/impl actual-type expected-type compatible? #f)]
+           (owned-narrowing-kind/impl actual-type expected-type
+                                      compatible? child-ctx)]
           [_ 'ok])]
        [_ 'ok]))))
 
@@ -175,7 +200,13 @@
        [_ #f])]
     [(_ _) #f]))
 
+(define (owned-narrowing-kind/adapter actual expected compatible?)
+  (define kind (owned-narrowing-kind/impl actual expected compatible? 'top))
+  (if (eq? kind 'nested-drop)
+      `(drop-obligation ,actual ,expected)
+      kind))
+
 (define owned-narrowing-kind
   (policy-wrap 'OwnershipPolicy 'owned-narrowing-kind
-               owned-narrowing-kind/impl
+               owned-narrowing-kind/adapter
                check-narrowing-return))

@@ -941,7 +941,7 @@
      'Int '(Own)))
    (code 'owned-narrowing-needs-proof)))
 
-(test-case "成分から W_k への OWN-004 が入れ子の Owned 残余を拒否する"
+(test-case "成分から W_k への入れ子の Owned 残余も証明を要求する"
   (define nested-owned
     `(Record ((x Int imm) (o ,owned-leaf imm))))
   (define nested-plain '(Record ((x Int imm))))
@@ -951,7 +951,8 @@
   ;; narrowing-kind の対そのものを固定し、生成された Core の診断も確認する。
   (check-true (compat? member wrapped))
   (check-true (tag-compat? member wrapped))
-  (check-equal? (owned-narrowing-kind member wrapped compat?) 'reject)
+  (check-equal? (owned-narrowing-kind member wrapped compat?)
+                `(drop-obligation ,member ,wrapped))
   ;; 両成分の W_k は wrapped そのものなので W_k から上界への narrowing は無い。
   (check-equal? (row005-join (list wrapped wrapped)) wrapped)
   (check-equal?
@@ -961,4 +962,4 @@
      `(Rec ((a imm (Rec ((x imm 1) (o imm ,owned-leaf-value))))))
      `(Let (r let ,wrapped) (Move argument) 0)
      'Int '(Own)))
-   (code 'owned-narrowing-rejected)))
+   (code 'owned-narrowing-needs-proof)))

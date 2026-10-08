@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         "../ownership.rkt"
          "row005-property-support.rkt")
 
 (test-case "ROW-005 convert の有限な Record 対"
@@ -26,3 +27,18 @@
      (check-equal? result-type task8-a-bool-or-int)]
     [other
      (fail-check (format "Task 8 の 2 成分 decompose が受理されない: ~s" other))]))
+
+(test-case "drop-obligation の有限な Record 対は全て runtime shape を持つ"
+  (define obligation-pairs
+    (for*/list ([actual (in-list R)]
+                [expected (in-list R)]
+                #:when (eq? (case-class actual expected) 'drop-obligation))
+      (list actual expected)))
+  (check-equal? (length obligation-pairs) 11)
+  (for ([pair (in-list obligation-pairs)])
+    (define actual (first pair))
+    (define expected (second pair))
+    (define shape (remainder-removal-shape actual expected))
+    (check-true (and shape (pair? shape))
+                (format "drop-obligation に対応する runtime removal shape が無い: ~s => ~s"
+                        actual expected))))

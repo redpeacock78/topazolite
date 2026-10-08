@@ -248,11 +248,11 @@
   (check-equal? (core-type-of source '() '()) (list source-type '()))
   (check-equal? (core-type-of core '() '()) (list target-type '(Own))))
 
-(test-case "'reject を返す narrowing は Discharge で包んでも通らない"
+(test-case "nested drop obligation は Discharge で包むと受理される"
   (check-equal? (key-of `(Apply g (Discharge ,reject-proof
                                                ,reject-wide-value))
                         narrowing-environment)
-                'owned-narrowing-rejected))
+                'ok))
 
 (test-case "'ok を返す narrowing を包んでも通る"
   (check-equal? (type-of `(Apply h (Discharge ,ok-proof
@@ -303,6 +303,36 @@
                 '(((tok 0) Dropped)))
   (check-not-false (member 'R-DischargeRemainder rules))
   (check-false (member 'R-Discharge rules)))
+
+(test-case "入れ子の除去欄を RSD で drop し、保持欄を残す"
+  (define nested-wide
+    `(Record ((inside (Record ((kept Int imm)
+                               (owned ,option-owned imm))) imm)
+              (outer-kept Int imm))))
+  (define nested-narrow
+    '(Record ((inside (Record ((kept Int imm))) imm)
+              (outer-kept Int imm))))
+  (define nested-proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,nested-wide ,nested-narrow)))
+  (define source
+    `(Rec ((inside imm
+                   (Rec ((owned imm
+                                (Construct ,option-owned some
+                                           (OwnLeaf (resource 51))))
+                         (kept imm 7))))
+          (outer-kept imm 9))))
+  (define core `(Scope () (Discharge ,nested-proof ,source)))
+  (check-equal? (core-type-of source '() '()) (list nested-wide '()))
+  (check-equal? (core-type-of core '() '()) (list nested-narrow '(Own)))
+  (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
+  (check-config-trace configs '() nested-narrow)
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (configuration-core (last configs))
+                '(Rec ((inside imm (Rec ((kept imm 7))))
+                      (outer-kept imm 9))))
+  (check-equal? (configuration-tokens (last configs))
+                '(((tok 0) Dropped))))
 
 (test-case "Absent の除去欄は token 無しで欄だけを取り除く"
   (define optional-wide

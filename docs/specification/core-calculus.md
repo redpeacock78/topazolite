@@ -576,6 +576,9 @@ E-Let-Fn-Check は、E-Let-Annot の右辺の合成を宣言型 `τ` での検�
 `bind(bmode, τdecl, τact)` は、elaborate の `bind-with-mode` が束縛型を決める手続きである。
 この手続きは、型の互換、`const` の record 残余の拒否、`let` と `mut` の record 残余の復元、`mut` の affine と借用の拒否、OWN-004 の narrowing の順に検査する。
 ただし `τact` が `Never` のときは `τb = τdecl` とし、互換と record 残余の検査を省き、`mut` の検査と OWN-004 の narrowing の検査だけを行う。
+OWN-004 は最上位の型対に加え、共通する `imm` の `Record` 欄だけを辿った入れ子の型対も調べる。
+その経路で `Owned` を含む残余を失う場合も、Proof の鍵には内側の型対ではなく呼び出し全体の型対を使う。
+`mut` 欄や `Union`、`Owned`、`Untrusted`、`Refined`、`NFn` の内側へはこの入れ子の判定を伝えない。
 E-Let-Fn-Check では `τact = τdecl = τ` であり、`τ` は `NFn` か `Owned<NFn …>` なので record 残余の節に入らず、`τb = τ` になる。
 `Γ, x :bmode τb` は、`bmode` が `mut` のとき `x` を可変の束縛として加える。
 型注釈付き `Let` の右辺が仮引数型または Effect row を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。

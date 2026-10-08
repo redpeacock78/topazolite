@@ -9,6 +9,17 @@
 
 (define owned '(Owned Res))
 
+(define nested-two-wide
+  `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm))))
+(define nested-two-narrow
+  '(Record ((a (Record ((y Int imm))) imm))))
+(define nested-three-wide
+  `(Record ((a (Record ((b (Record ((x ,owned imm) (y Int imm))) imm)
+                       (z Int imm))) imm))))
+(define nested-three-narrow
+  '(Record ((a (Record ((b (Record ((y Int imm))) imm)
+                       (z Int imm))) imm))))
+
 (test-case "最上位の record で余剰 Owned 欄が落ちると義務を返す"
   (check-equal?
    (owned-narrowing-kind `(Record ((x ,owned imm) (y Int imm)))
@@ -24,13 +35,67 @@
                          always-compatible)
    'ok))
 
-(test-case "入れ子の record の内側で落ちると拒否する"
+(test-case "imm Record の共通欄の 2 段と 3 段の Owned 損失は最上位の義務になる"
   (check-equal?
-   (owned-narrowing-kind
-    `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm)))
-    '(Record ((a (Record ((y Int imm))) imm)))
-    always-compatible)
-   'reject))
+   (owned-narrowing-kind nested-two-wide nested-two-narrow
+                         always-compatible)
+   `(drop-obligation ,nested-two-wide ,nested-two-narrow))
+  (check-equal?
+   (owned-narrowing-kind nested-three-wide nested-three-narrow
+                         always-compatible)
+   `(drop-obligation ,nested-three-wide ,nested-three-narrow)))
+
+(test-case "最上位と入れ子の Owned 損失は一つの最上位義務になる"
+  (define actual
+    `(Record ((outer ,owned imm)
+              (a (Record ((x ,owned imm) (y Int imm))) imm))))
+  (define expected
+    '(Record ((a (Record ((y Int imm))) imm))))
+  (check-equal?
+   (owned-narrowing-kind actual expected
+                         always-compatible)
+   `(drop-obligation ,actual ,expected)))
+
+(test-case "入れ子義務は imm Record の共通欄の鎖だけを通る"
+  (define (nested-union-compatible? actual expected)
+    (or (equal? actual expected)
+        (and (equal? actual `(Record ((x ,owned imm) (y Int imm))))
+             (equal? expected '(Record ((y Int imm)))))))
+  (define union-wide
+    `(Record ((f (Union (Record ((x ,owned imm) (y Int imm))) Bool) imm))))
+  (define union-narrow
+    '(Record ((f (Union (Record ((y Int imm))) Bool) imm))))
+  (define owned-wide
+    `(Record ((f (Owned (Record ((x ,owned imm) (y Int imm)))) imm))))
+  (define owned-narrow
+    `(Record ((f (Owned (Record ((y Int imm)))) imm))))
+  (define untrusted-wide
+    `(Record ((f (Untrusted (Record ((x ,owned imm) (y Int imm)))) imm))))
+  (define untrusted-narrow
+    '(Record ((f (Untrusted (Record ((y Int imm)))) imm))))
+  (define refined-wide
+    `(Record ((f (Refined (Record ((x ,owned imm) (y Int imm)))
+                         (Prop p)) imm))))
+  (define refined-narrow
+    '(Record ((f (Refined (Record ((y Int imm))) (Prop p)) imm))))
+  (check-equal? (owned-narrowing-kind union-wide union-narrow
+                                      nested-union-compatible?)
+                'reject)
+  (check-equal? (owned-narrowing-kind owned-wide owned-narrow
+                                      always-compatible)
+                'reject)
+  (check-equal? (owned-narrowing-kind untrusted-wide untrusted-narrow
+                                      always-compatible)
+                'reject)
+  (check-equal? (owned-narrowing-kind refined-wide refined-narrow
+                                      always-compatible)
+                'reject))
+
+(test-case "入れ子義務の shape は型対を保ち、除去欄を列挙する"
+  (check-equal? (remainder-removal-shape nested-two-wide nested-two-narrow)
+                '((a nested ((x drop #f)))))
+  (check-equal? (remainder-removal-shape nested-three-wide nested-three-narrow)
+                '((a nested ((b nested ((x drop #f))))))))
 
 (test-case "Borrowed の payload では打ち切る"
   (check-equal?
