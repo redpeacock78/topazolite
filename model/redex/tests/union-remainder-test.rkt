@@ -1,0 +1,385 @@
+#lang racket
+
+;; [REQ: OWN-004] Union の成分選択で損失の無い型を優先し、選んだ成分だけを RSD で包む。
+
+(require rackunit
+         racket/list
+         racket/match
+         "../compat.rkt"
+         "../borrow.rkt"
+         "../diagnostic.rkt"
+         "../driver.rkt"
+         "../elaborate.rkt"
+         "../erase.rkt"
+         "../gen.rkt"
+         "../lexer.rkt"
+         "../machine.rkt"
+         "../ownership.rkt"
+         "../parser.rkt"
+         "../surface-lower.rkt"
+         "../traits.rkt"
+         "../type-equiv.rkt"
+         "../typing.rkt")
+
+(define option-owned '(Option (Owned Res)))
+(define source-type
+  `(Record ((a Int imm) (o ,option-owned imm))))
+(define source-value
+  `(Rec ((a imm 7)
+         (o imm (Construct some (Types (Owned Res))
+                           (Apply acquire 13))))))
+(define drop-member '(Record ((a (Union Int String) imm))))
+(define keep-member
+  `(Record ((a (Union Int Bool) imm) (o ,option-owned imm))))
+(define drop-union `(Union ,drop-member String))
+
+(define (apply-function argument-type argument body result-type [row '(Own)])
+  `(Apply (Fn ((argument ,argument-type)) ,result-type ,row ,body) ,argument))
+
+(define (contains? predicate tree)
+  (or (predicate tree)
+      (and (pair? tree) (ormap (lambda (child) (contains? predicate child)) tree))))
+
+(define (count-head head tree)
+  (if (pair? tree)
+      (+ (if (eq? (car tree) head) 1 0)
+         (for/sum ([child (in-list tree)]) (count-head head child)))
+      0))
+
+(define (contains-rsd? tree)
+  (contains? (lambda (node)
+               (and (pair? node)
+                    (eq? (car node) 'Discharge)
+                    (regexp-match? #rx"RemainderSafelyDropped"
+                                   (format "~s" node))))
+             tree))
+
+(define (nodes-with-head head tree)
+  (append (if (and (pair? tree) (eq? (car tree) head)) (list tree) '())
+          (if (pair? tree)
+              (append-map (lambda (child) (nodes-with-head head child)) tree)
+              '())))
+
+(define (symbols-in tree)
+  (cond [(symbol? tree) (list tree)]
+        [(pair? tree) (append-map symbols-in tree)]
+        [else '()]))
+
+(define (union-inject-member core expected-union)
+  (for/or ([node (in-list (reverse (nodes-with-head 'UnionInject core)))])
+    (match node
+      [`(UnionInject ,union-type ,member ,_)
+       (and (type-equiv? union-type expected-union) member)]
+      [_ #f])))
+
+(define (checked source)
+  (match (elab source)
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-equal? (core-type-of erased '() callables) (list type row)
+                   (format "Core type mismatch for ~s" source))
+     (list erased type row callables)]
+    [`(err ,diagnostic)
+     (fail-check (format "elaborate が拒否した: ~s" diagnostic))]))
+
+(define (rejected-id source)
+  (match (elab source)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [other (fail-check (format "elaborate が受理した: ~s" other))]))
+
+(define (trace-g2 start)
+  (let loop ([current start] [configs (list start)] [rules '()] [fuel 160])
+    (when (zero? fuel)
+      (error 'trace-g2 "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values configs rules)]
+      [(list (list rule next))
+       (loop next (append configs (list next)) (append rules (list rule))
+             (sub1 fuel))]
+      [steps
+       (error 'trace-g2 "一意な次状態を期待したが複数ある: ~s" steps)])))
+
+(define (run-checked source)
+  (match-define (list core type _row callables) (checked source))
+  (define executable (execution-core core callables))
+  (define-values (configs rules)
+    (trace-g2 `(cfg (Scope () ,executable) () () () ())))
+  (for ([configuration (in-list configs)])
+    (define row (runtime-row configuration callables type))
+    (check-not-false row)
+    (check-true (config-ok? configuration callables type row)))
+  (values (last configs) rules))
+
+(define (configuration-tokens configuration)
+  (match configuration [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
+
+(define (make-application argument-type argument union-type)
+  (apply-function argument-type argument `(Move argument) union-type))
+
+(define (make-plain-application argument-type argument result-type)
+  `(Apply (Fn ((argument ,argument-type)) ,result-type () argument) ,argument))
+
+(test-case "層 4 は payload に RSD を挿入し、選んだ Union member の型で実行する"
+  (define source (make-application source-type source-value drop-union))
+  (define-values (core _type _row _callables) (apply values (checked source)))
+  (define selected-member (union-inject-member core drop-union))
+  (check-true (type-equiv? selected-member drop-member))
+  (check-equal? (count-head 'Discharge core) 1)
+  (check-true (contains-rsd? core))
+  (match (findf (lambda (node)
+                  (and (pair? node) (eq? (car node) 'Discharge)
+                       (contains? (lambda (part)
+                                    (and (pair? part)
+                                         (eq? (car part) 'RemainderSafelyDropped)))
+                                  node)))
+                (nodes-with-head 'Discharge core))
+    [`(Discharge (ProofRep (Reserved o-narrow)
+                           (RemainderSafelyDropped ,actual ,target)) ,_)
+     (check-equal? actual source-type)
+     (check-equal? target '(Record ((a Int imm))))]
+    [other (fail-check (format "RSD の鍵が成分の対でない: ~s" other))])
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "損失のある tag-compat? 候補より、損失の無い作り直し候補を選ぶ"
+  (define expected (normalize-type `(Union (Record ((a Int imm))) ,keep-member)))
+  (define source (make-application source-type source-value expected))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) keep-member))
+  (check-false (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Available)))
+
+(test-case "M1 の作り直し候補を M2 の損失候補より選ぶ"
+  (define m1
+    `(Record ((a (Union Int Bool) imm) (o ,option-owned imm))))
+  (define m2 '(Record ((a (Union Int String) imm))))
+  (define expected (normalize-type `(Union ,m1 ,m2)))
+  (define-values (core _type _row _callables)
+    (apply values (checked (make-application source-type source-value expected))))
+  (check-true (type-equiv? (union-inject-member core expected) m1))
+  (check-false (contains-rsd? core))
+  (define-values (final _rules)
+    (run-checked (make-application source-type source-value expected)))
+  (check-equal? (map second (configuration-tokens final)) '(Available)))
+
+(test-case "D/K では tag-compat? の損失候補 D より K を選ぶ"
+  (define d '(Record ((a Int imm))))
+  (define k keep-member)
+  (define expected (normalize-type `(Union ,d ,k)))
+  (check-true (tag-compat? source-type d))
+  (check-false (tag-compat? source-type k))
+  (check-equal? (owned-narrowing-kind source-type d compat?)
+                `(drop-obligation ,source-type ,d))
+  (check-equal? (owned-narrowing-kind source-type k compat?) 'ok)
+  (define source (make-application source-type source-value expected))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) k))
+  (check-false (contains-rsd? core))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Available)))
+
+(test-case "tag-compat? の層でも ok の成分を drop-obligation より先に選ぶ"
+  (define actual
+    `(Record ((a Int imm) (b Int imm) (o ,option-owned imm))))
+  (define value
+    '(Rec ((a imm 1)
+           (b imm 2)
+           (o imm (Construct some (Types (Owned Res)) (Apply acquire 13))))))
+  (define safe `(Record ((a Int imm) (o ,option-owned imm))))
+  (define lossy '(Record ((a Int imm))))
+  (define expected (normalize-type `(Union ,safe ,lossy)))
+  (check-true (tag-compat? actual safe))
+  (check-true (tag-compat? actual lossy))
+  (check-equal? (owned-narrowing-kind actual safe compat?) 'ok)
+  (check-equal? (owned-narrowing-kind actual lossy compat?)
+                `(drop-obligation ,actual ,lossy))
+  (define-values (core _type _row _callables)
+    (apply values (checked (make-application actual value expected))))
+  (check-true (type-equiv? (union-inject-member core expected) safe))
+  (check-false (contains-rsd? core)))
+
+(test-case "同じ層 2 の候補は順序によらず ambiguous になる"
+  (define actual '(Record ((a Int imm))))
+  (define value '(Rec ((a imm 1))))
+  (define left '(Record ((a (Union Int Bool) imm))))
+  (define right '(Record ((a (Union Int String) imm))))
+  (for ([members (in-list (list (list left right) (list right left)))])
+    (check-equal?
+     (rejected-id
+      (make-plain-application actual value (normalize-type `(Union ,@members))))
+     (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
+
+(test-case "同じ層 4 の候補は順序によらず ambiguous になる"
+  (define actual source-type)
+  (define left '(Record ((a (Union Int Bool) imm))))
+  (define right '(Record ((a (Union Int String) imm))))
+  (for ([members (in-list (list (list left right) (list right left)))])
+    (check-equal?
+     (rejected-id
+      (make-application actual source-value
+                        (normalize-type `(Union ,@members))))
+     (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
+
+(test-case "NFn の返り値の内側の損失しか無い Union は E-OWN-029 を保つ"
+  (define wide
+    '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) () ()))
+  (define narrow
+    '(NFn (Unit) (Record ((y Int imm))) () ()))
+  (define expected `(Union ,narrow String))
+  (check-equal?
+   (rejected-id `(Fn ((value ,wide)) ,expected () value))
+   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+
+(test-case "最上位 Owned 残余の後に convert できない NFn 差は E-OWN-029 になる"
+  (define actual-fn '(NFn ((Union Int Bool)) Unit () ()))
+  (define expected-fn '(NFn (Int) Unit () ()))
+  (define actual
+    `(Record ((f ,actual-fn imm) (o (Owned Res) imm))))
+  (define member `(Record ((f ,expected-fn imm))))
+  (define expected `(Union ,member String))
+  (check-equal?
+   (rejected-id `(Fn ((value ,actual)) ,expected (Own) (Move value)))
+   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+
+(test-case "3 要素 Let は Union 注釈へ RSD を挿入する"
+  (define expected drop-union)
+  (define source
+    (apply-function source-type source-value
+                    `(Let (result let ,expected) (Move argument) result)
+                    expected))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "check Eliminate は枝を Union へ inject する"
+  (define expected '(Union Int String))
+  (define source
+    `(Apply (Fn ((value ,expected)) Unit () unit)
+            (Eliminate (Construct true (Types))
+              ((true () -> 1)
+               (false () -> "s")))))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-equal? (count-head 'UnionInject core) 2))
+
+(test-case "synth Eliminate の Union 上界は Core の型付けと一致する"
+  (define source
+    '(Eliminate (Construct true (Types))
+       ((true () -> 1)
+        (false () -> "s"))))
+  (match-define (list core type _row _callables) (checked source))
+  (check-true (match type [`(Union ,_ ,_) #t] [_ #f]))
+  (check-equal? (count-head 'UnionInject core) 2))
+
+(test-case "明示型引数の Construct は Union expected の check を通る"
+  (define source
+    '(Apply (Fn ((value (Union Bool Int))) Unit () unit)
+            (Construct true (Types))))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-equal? (count-head 'UnionInject core) 1))
+
+(test-case "Reassign は層 4 の成分へ RSD を挿入する"
+  (define target (normalize-type `(Union ,drop-member String)))
+  (define source
+    `(Let (slot mut ,target)
+          (Rec ((a imm 1)))
+          (Let (argument let ,source-type)
+               ,source-value
+               (Reassign slot (Move argument)))))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core))
+  (check-true (type-equiv? (union-inject-member core target) drop-member))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "Reassign は層 3 の成分へ RSD を挿入する"
+  (define source-member
+    `(Record ((a (Union Int Bool) imm) (o ,option-owned imm))))
+  (define target-member '(Record ((a (Union Int Bool) imm))))
+  (define target `(Union ,target-member String))
+  (define value
+    `(Rec ((a imm 1)
+          (o imm (Construct some (Types (Owned Res))
+                            (Apply acquire 13))))))
+  (define source
+    (apply-function source-member value
+                    `(Let (slot mut ,target) "s"
+                         (Reassign slot (Move argument)))
+                    'Unit '(Own Mutation)))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core))
+  (check-true (type-equiv? (union-inject-member core target) target-member)
+              (format "selected ~s in ~s" (union-inject-member core target) core))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "Reassign に compatible な member が無ければ従来の key を保つ"
+  (check-equal?
+   (rejected-id
+    '(Let (slot mut (Union Int String))
+          1
+          (Reassign slot (Construct true (Types)))))
+   (diagnostic-code-of 'elaborate 'reassign-type-mismatch)))
+
+(test-case "Reassign の compatible な reject member は E-OWN-029 になる"
+  (define wide
+    '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) () ()))
+  (define narrow
+    '(NFn (Unit) (Record ((y Int imm))) () ()))
+  (define source
+    `(Fn ((value ,wide)) Unit (Mutation)
+         (Let (slot mut (Union ,narrow String))
+              "s"
+              (Reassign slot value))))
+  (check-equal?
+   (rejected-id source)
+   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+
+(test-case "成分試行の union 名と後続 owned binder の連番を保つ"
+  (define nested-source-type
+    `(Record ((a (Record ((x Int imm) (y Int imm))) imm)
+              (o ,option-owned imm))))
+  (define member
+    '(Record ((a (Record ((x (Union Int Bool) imm)
+                          (y Int imm))) imm))))
+  (define expected `(Union ,member String))
+  (define source
+    `(Fn ((argument ,nested-source-type))
+         (NFn ((Owned Res)) Unit (Own) ()) (Own)
+         (Let (chosen const ,expected)
+              (Move argument)
+              (Fn ((p (Owned Res))) Unit (Own) (Drop p)))))
+  (match-define (list core _type _row _callables) (checked source))
+  (define (generated-indices prefix)
+    (sort
+     (remove-duplicates
+      (filter values
+              (for/list ([name (in-list (symbols-in core))])
+                (define matched
+                  (regexp-match
+                   (pregexp (format "^~a([0-9]+)(?:⟨[0-9]+⟩)?$" prefix))
+                   (symbol->string name)))
+                (and matched (string->number (second matched))))))
+     <))
+  (check-equal? (generated-indices "union") '(0 1))
+  (check-equal? (generated-indices "owned") '(0 1)))
+
+(test-case "Surface lowering 後の Union programme も Core で型付けできる"
+  (define low
+    (lower-surface
+     (parse (lex/string 'src "fn widen(x: Int) -> Int | String { x }\nwiden(1)"))
+     canonical-trait-env))
+  (check-true (lowered? low))
+  (define result (elab (lowered-term low)))
+  (match result
+    [(list core type row callables)
+     (define-values (_final _rules) (run-checked (lowered-term low)))
+     (check-equal? (core-type-of (erase-core core) '() callables)
+                   (list type row))
+     (check-true (match type [`(Union ,_ ,_) #t] [_ #f]))]
+    [`(err ,diagnostic)
+     (fail-check (format "Surface Union programme が拒否された: ~s" diagnostic))]))

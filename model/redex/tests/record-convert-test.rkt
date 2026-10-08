@@ -449,16 +449,24 @@
         (Rec ((a imm 1) (b imm 2)))
         (Proj r b))))))
 
-(test-case "束縛の位置の inject は Owned の残余の損失を拒否する"
+(test-case "束縛の位置の Union inject は RSD で Owned 残余を回収する"
   (define source `(Record ((a Int imm) (o ,owned-leaf imm))))
   (define target (normalize-type '(Union (Record ((a Int imm))) Int)))
-  (check-equal?
-   (rejected-code
-    (apply-function source
-                    `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
-                    `(Let (u let ,target) (Move argument) 0)
-                    'Int '(Own)))
-   (code 'owned-narrowing-rejected)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function source
+                      `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+                      `(Let (u let ,target) (Move argument) 0)
+                      'Int '(Own)))))
+  (check-true
+   (regexp-match? #rx"RemainderSafelyDropped"
+                  (format "~s" (erase-core (compiled-core artifact)))))
+  (define-values (final _rules)
+    (apply values (run-compiled-execution-core artifact)))
+  (match final
+    [`(cfg ,_value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (map second tokens) '(Dropped))]))
 
 (test-case "束縛の位置の decompose の非 Record 分岐は Owned の残余の損失を拒否する"
   (define source `(Record ((a Int imm) (o ,owned-leaf imm))))

@@ -334,8 +334,9 @@
 ;; type-compatible? は命題文脈を第 3 引数に取るため、その位置の文脈を
 ;; 捕らえた閉包を渡す。互換性の判定と Union の候補選択が同じ述語で行われる。
 (define (narrowing-kind actual expected propositions)
-  (owned-narrowing-kind actual expected
-                        (lambda (a e) (type-compatible? a e propositions))))
+  (owned-narrowing-kind/for-elaboration
+   actual expected
+   (lambda (a e) (type-compatible? a e propositions))))
 
 ;; OWN-004。残余の drop が要る場合だけ Proof を挿入し、先に Owned 残余を
 ;; 取り除いた型を後続の通常の convert へ渡す。reject は呼び出し側の既存の
@@ -789,27 +790,83 @@
     ;; 候補への再構築を試す間に生名を消費しても、本番の変換名へ影響
     ;; させない。試行で使う項は破棄するため、変換が参照を埋め込める
     ;; span 付き Core 変数を渡す。
-    (define (rebuild-reachable? actual member s propositions)
+    (define (rebuild-reachable? actual member kind s propositions)
       (define saved-union union-counter)
       (define saved-owned owned-counter)
       (dynamic-wind
        void
        (lambda ()
-         (and (eq? (narrowing-kind actual member propositions) 'ok)
+         (define actual-kind (narrowing-kind actual member propositions))
+         (and (case kind
+                [(ok) (eq? actual-kind 'ok)]
+                [(drop-obligation)
+                 (match actual-kind [`(drop-obligation ,_ ,_) #t] [_ #f])]
+                [else #f])
               (with-handlers ([exn:fail:elab? (lambda (_) #f)])
+                (define-values (probe-core probe-type)
+                  (if (eq? kind 'drop-obligation)
+                      (discharge-remainder `(#:var rebuild-probe ,s)
+                                           actual member s propositions)
+                      (values `(#:var rebuild-probe ,s) actual)))
                 (define-values (_probe-core _probe-type)
-                  (convert `(#:var rebuild-probe ,s) actual member s
-                           propositions))
+                  (convert probe-core probe-type member s propositions))
                 #t)))
        (lambda ()
          (set! union-counter saved-union)
          (set! owned-counter saved-owned))))
 
-    ;; P2m2b spec §3.2。完全一致、tag-compat?、作り直し可能性の順で候補を選ぶ。
+    ;; 成分の位置でなく損失の種類で優先順位を決める。試行による生名の消費は
+    ;; rebuild-reachable? が復元する。
+    (define (union-member-tiers actual members s propositions)
+      (define context (initial-candidate-context propositions))
+      (define analyses
+        (for/list ([member (in-list members)])
+          (define kind (narrowing-kind actual member propositions))
+          (define target
+            (match kind
+              [`(drop-obligation ,_ ,_)
+               (remainder-target-type actual member)]
+              [_ #f]))
+          (list member kind (tag-compat? actual member context) target)))
+      (define tier1
+        (for/list ([analysis (in-list analyses)]
+                   #:when (and (third analysis)
+                               (eq? (second analysis) 'ok)))
+          (first analysis)))
+      (define tier2
+        (for/list ([analysis (in-list analyses)]
+                   #:when (and (not (third analysis))
+                               (eq? (second analysis) 'ok)
+                               (rebuild-reachable? actual (first analysis) 'ok
+                                                   s propositions)))
+          (first analysis)))
+      (define tier3
+        (for/list ([analysis (in-list analyses)]
+                   #:when (and (match (second analysis)
+                                  [`(drop-obligation ,_ ,_) #t]
+                                  [_ #f])
+                               (fourth analysis)
+                               (tag-compat? (fourth analysis) (first analysis)
+                                            context)))
+          (first analysis)))
+      (define tier4
+        (for/list ([analysis (in-list analyses)]
+                   #:when (and (match (second analysis)
+                                  [`(drop-obligation ,_ ,_) #t]
+                                  [_ #f])
+                               (fourth analysis)
+                               (not (tag-compat? (fourth analysis)
+                                                 (first analysis) context))
+                               (rebuild-reachable? actual (first analysis)
+                                                   'drop-obligation s
+                                                   propositions)))
+          (first analysis)))
+      (values tier1 tier2 tier3 tier4))
+
+    ;; 完全一致の後、損失のない成分を優先する。
     (define (choose-union-member actual expected s propositions
                                  #:no-member-key [no-member-key 'type-mismatch])
       (define members (union-members expected))
-      (define context (initial-candidate-context propositions))
       (define exact
         (for/first ([member (in-list members)]
                     #:when (type-equiv? member actual))
@@ -817,23 +874,43 @@
       (cond
         [exact exact]
         [else
-         (define candidates
-           (filter (lambda (member) (tag-compat? actual member context))
-                   members))
-         (match candidates
-           [(list member) member]
-           ['()
-            ;; P2m2c spec §5.1 の第 2 段。OWN-004 の narrowing が許し、
-            ;; convert が成功する成分だけを候補にする。
-            (define reachable
-              (filter (lambda (member)
-                        (rebuild-reachable? actual member s propositions))
-                      members))
-            (match reachable
+         (define-values (tier1 tier2 tier3 tier4)
+           (union-member-tiers actual members s propositions))
+         (define selected-tier
+           (or (and (pair? tier1) tier1)
+               (and (pair? tier2) tier2)
+               (and (pair? tier3) tier3)
+               (and (pair? tier4) tier4)))
+         (cond
+           [selected-tier
+            (match selected-tier
               [(list member) member]
-              ['() (reject s no-member-key expected actual)]
-              [_ (reject s 'ambiguous-union-member expected actual reachable)])]
-           [_ (reject s 'ambiguous-union-member expected actual candidates)])]))
+              [_ (reject s 'ambiguous-union-member expected actual
+                         selected-tier)])]
+           [else
+            (define owned-rejection?
+              (for/or ([member (in-list members)])
+                (define kind (narrowing-kind actual member propositions))
+                (define target
+                  (match kind
+                    [`(drop-obligation ,_ ,_)
+                     (remainder-target-type actual member)]
+                    [_ #f]))
+                (and (type-compatible? actual member propositions)
+                     (or (eq? kind 'reject)
+                         (and (match kind
+                                [`(drop-obligation ,_ ,_) #t]
+                                [_ #f])
+                              (or (not target)
+                                  (and (not (tier-has-type? member tier3))
+                                       (not (tier-has-type? member tier4)))))))))
+            (reject s (if owned-rejection?
+                          'owned-narrowing-rejected
+                          no-member-key)
+                    expected actual)])]))
+
+    (define (tier-has-type? candidate members)
+      (ormap (lambda (member) (type-equiv? candidate member)) members))
 
     (define (union-inject core actual expected s propositions
                           #:no-member-key [no-member-key 'type-mismatch])
@@ -841,11 +918,13 @@
         (choose-union-member actual expected s propositions
                              #:no-member-key no-member-key))
       (define context (initial-candidate-context propositions))
+      (define-values (discharged actual*)
+        (discharge-remainder core actual member s propositions))
       (define payload
-        (if (tag-compat? actual member context)
-            core
+        (if (tag-compat? actual* member context)
+            discharged
             (let-values ([(converted _type)
-                          (convert core actual member s propositions)])
+                          (convert discharged actual* member s propositions)])
               converted)))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
@@ -2329,7 +2408,7 @@
            (reject s 'immutable-binding name))
          (define result
            (synth value environment delta propositions boundaries))
-         (define value-type (judgment-type result))
+         (define value-type (judgment-core-type result))
          (define slot-union?
            (match (normalize-type slot-type)
              [`(Union ,_ ,_) #t]
@@ -2517,7 +2596,7 @@
          (define reachable
            (if synthesized
                (filter (λ (candidate)
-                         (rebuild-reachable? synthesized candidate s
+                         (rebuild-reachable? synthesized candidate 'ok s
                                              propositions))
                        members)
                '()))
@@ -2561,18 +2640,10 @@
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
            (reject s 'type-mismatch expected (judgment-type result)))
-         ;; Construct (Types ...) は Union expected に到達しうる。
-         ;; 非 Union expected では constructor-result の nominal 型から
-         ;; Record width の drop-obligation は生じない。Union の候補選択と変換は
-         ;; c2b2b2 の対象なので、ここでは従来どおりに保つ。
          (define actual-core-type (judgment-core-type result))
-         (define union-expected?
-           (match expected [`(Union ,_ ,_) #t] [_ #f]))
          (define-values (core actual-type)
-           (if union-expected?
-               (values (judgment-core result) actual-core-type)
-               (discharge-remainder (judgment-core result)
-                                    actual-core-type expected s propositions)))
+           (discharge-remainder (judgment-core result)
+                                actual-core-type expected s propositions))
          (match (narrowing-kind actual-type expected propositions)
            ['ok (void)]
            [`(drop-obligation ,_ ,_)

@@ -8,6 +8,7 @@
          "../borrow.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
+         "../erase.rkt"
          "../compat.rkt"
          "../ownership.rkt"
          "../region.rkt"
@@ -90,6 +91,12 @@
 (define (code-of core [environment '()])
   (diagnostic-id
    (core-type-of/diagnostic core '() '() environment (empty-region-ctx))))
+
+(define (contains-rsd? tree)
+  (or (and (pair? tree)
+           (eq? (car tree) 'Discharge)
+           (regexp-match? #rx"RemainderSafelyDropped" (format "~s" tree)))
+      (and (pair? tree) (ormap contains-rsd? tree))))
 
 ;; 余剰欄が Int だけの width narrowing は従来どおり通る。
 (test-case "余剰欄が Int だけの narrowing は受理する"
@@ -236,14 +243,19 @@
    (owned-narrowing-kind actual expected compat?))
   (check-equal? (owned-narrowing-kind actual expected compat?) 'reject))
 
-(test-case "Union に安全な候補が無い場合の elaboration は拒否する"
-  (check-equal?
-   (elaborate-code-of
-    '(Fn ((p (Record ((x (Owned Res) imm) (y Int imm)))))
-         (Union (Record ((y Int imm))) (Record ((z Int imm))))
-         ()
-         (Move p)))
-   "E-OWN-029"))
+(test-case "Union の唯一の compatible member は RSD を挿入して受理する"
+  (match (elab
+          '(Fn ((p (Record ((x (Owned Res) imm) (y Int imm)))))
+               (Union (Record ((y Int imm))) (Record ((z Int imm))))
+               (Own)
+               (Move p)))
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-true (contains-rsd? erased))
+     (check-equal? (core-type-of erased '() callables) (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "RSD を挿入する Union member が拒否された: ~s"
+                         diagnostic))]))
 
 (test-case "3 要素 binder は residual を束縛へ残す"
   (check-equal?
