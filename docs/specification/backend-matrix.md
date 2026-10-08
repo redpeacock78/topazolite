@@ -19,7 +19,7 @@ Typed Core verifier を通過した意味論を実行形式へ写像するだけ
 |---|---|
 | lambda / application | `PLam`、`PClosure`、`PApp` |
 | let / letrec | `PLet`、`PLetOwned`、`PLetrec` |
-| immutable record | `PRec`、`PRecRewrite`、`PProj` |
+| immutable record | `PRec`、`PRecRewrite`、`PRecRemove`、`PProj` |
 | explicit tagged ADT | `PTagged`、`PMatch` |
 | primitive arithmetic and comparison | `PPrim` |
 | explicit closure environment | `PClosure` の `penv` |
@@ -81,6 +81,7 @@ pc   ::= pv | px
        | (PTagged K pc ...)
        | (PRec ((label pc) ...))
        | (PRecRewrite pc ((label px pc) ...))
+       | (PRecRemove pc (label ...))
        | (PProj pc label)
        | (PMatch pc (pbr ...))
        | (PPrim pnm pc ...)
@@ -123,10 +124,11 @@ pstate ::= Available | Moved | Dropped
 観測に基づく評価器は、重複除去後に 2 つ以上の後続 config が残ると error を投げる。
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
-規則は 24 本である。
+規則は 25 本である。
 源の `-->g2` の 64 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
 目標側に規則を持たない 33 本が対象外となり、24 本が残る。
+RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 25 本になる。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -158,6 +160,7 @@ pstate ::= Available | Moved | Dropped
 | `R-ProjOptPlace` | `R-PR-ProjOptPlace` | Available place の optional 欄を読み、heap と状態表は変えない |
 | `R-Discharge` | なし | `RemainderSafelyDropped` 以外の Proof は実行時に意味を持たない |
 | `R-DischargeRemainder` | なし | 残余欄を drop する複合 lowering は `PRecRemove` と `PRuntime drop` を使う |
+| なし | `R-PR-RecRemove` | target-only の補助規則。RSD の複合 lowering で欄を取り除く |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowError` | なし | Portable Racket backend は借用を未設計である |

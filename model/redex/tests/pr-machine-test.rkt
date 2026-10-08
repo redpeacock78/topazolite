@@ -7,7 +7,7 @@
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
-;; [REQ: BAK-001] 目標機械 -->pr の 24 本の規則（backend-matrix.md §4）
+;; [REQ: BAK-001] 目標機械 -->pr の 25 本の規則（backend-matrix.md §4）
 
 (define fuel 10000)
 
@@ -162,6 +162,41 @@
                       ((f:a x (PPrim tz:add x 1))
                        (f:absent y y)))))
   (term (PRec ((f:a 3) (f:b 7))))))
+
+(test-case "R-PR-RecRemove は欄を取り除き、順序を保ち、無い欄を無視する"
+  (check-equal?
+   (eval-pr (term (PRecRemove (PRec ((a 1) (b 2) (c 3))) (b a))))
+   (term (PRec ((c 3)))))
+  (check-equal?
+   (eval-pr (term (PRecRemove (PRec ((a 1) (c 3))) (b))))
+   (term (PRec ((a 1) (c 3)))))
+  (check-equal?
+   (eval-pr (term (PRecRemove (PRec ((c 3) (a 1) (b 2))) (b))))
+   (term (PRec ((c 3) (a 1))))))
+
+(test-case "R-PR-RecRemove は非 record と重複 label で詰まる"
+  (check-equal?
+   (eval-pr (term (PRecRemove 1 (a))))
+   (term (PScopeExit () (PRecRemove 1 (a)))))
+  (check-equal?
+   (eval-pr (term (PRecRemove (PRec ((a 1) (a 2))) (a))))
+   (term (PScopeExit () (PRecRemove (PRec ((a 1) (a 2))) (a)))))
+  (check-equal?
+   (eval-pr (term (PRecRemove (PRec ((a 1))) (a a))))
+   (term (PScopeExit () (PRecRemove (PRec ((a 1))) (a a))))))
+
+(test-case "R-PR-RecRemove は PF、PG、PE の内側で入力を評価する"
+  (define source (term (PRec ((a 1) (b 2)))))
+  (define remove-a (term (PRecRemove ,source (a))))
+  (check-equal?
+   (eval-pr (term (PApp (PClosure () (x) x) ,remove-a)))
+   (term (PRec ((b 2)))))
+  (check-equal?
+   (eval-pr (term (PInstall ,pop-a (PLam (x) x) ,remove-a)))
+   (term (PRec ((b 2)))))
+  (check-equal?
+   (eval-pr (term (PScopeExit () ,remove-a)))
+   (term (PRec ((b 2))))))
 
 (test-case
  "R-PR-ProjOpt returns some or none and requires unique labels"
@@ -330,7 +365,7 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
   (term (PError 0))))
 
-;; 24 本の規則それぞれを少なくとも 1 回通る fixture。
+;; 25 本の規則それぞれを少なくとも 1 回通る fixture。
 ;; backend-matrix.md §4 の決定性は obs-eval-pr が動く前提そのものなので、
 ;; 規則を足すたびにここで確かめる。
 (define determinism-fixtures
@@ -341,6 +376,7 @@
         (term (PLetrec f (PLam (a) a) (PApp f 9)))
         (term (PMatch (PTagged some 4) ((none () -> 0) (some (a) -> a))))
         (term (PProj (PRec ((f 1) (g 2))) g))
+        (term (PRecRemove (PRec ((f 1) (g 2))) (f)))
         (term (PLetOwned r (PRec ((f 3))) (PProj r f)))
         (term (PLetOwned r (PRec ((f (PTagged some 3))))
                        (PProjOpt some none r f)))
@@ -365,7 +401,7 @@
    (check-deterministic core)))
 
 (test-case
- "-->pr/rules declares exactly the 24 target rule names"
+ "-->pr/rules declares exactly the 25 target rule names"
  ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
  (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
                target-rule-names))

@@ -179,7 +179,9 @@
                                   (if (null? child-shape)
                                       nested
                                       (cons (list (first expected-field)
-                                                  'nested child-shape)
+                                                  'nested
+                                                  (field-optional? actual-field)
+                                                  child-shape)
                                             nested)))))
                           (loop (cdr remaining) nested))]))))]
          [(_ _) #f])]))

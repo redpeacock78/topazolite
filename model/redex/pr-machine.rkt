@@ -113,6 +113,10 @@
           (list label (term (substitute ,body ,px ,value)))]
          [_ field])])))
 
+;; 入力順を保ち、指定された欄だけを取り除く。
+(define (premove-labels fields labels)
+  (filter (lambda (field) (not (member (first field) labels))) fields))
+
 ;; machine.rkt:157 から 184 の table-ref / table-set / fresh-place /
 ;; finalize/proc と同じ実装である。machine.rkt はこれらを provide しておらず、
 ;; provide を広げるより写すほうが公開面を増やさない。θ へ足す順序も揃える。
@@ -300,6 +304,20 @@
                  (term ((label_field pv_field) ...))
                  (term ((label_entry px_body pc_body) ...))))
         R-PR-RecRewrite)
+
+   (--> (pcfg (in-hole PE
+                      (PRecRemove (PRec ((label_field pv_field) ...))
+                                  (label_remove ...)))
+              PH PΩ θ)
+        (pcfg (in-hole PE (PRec ((label_output pv_output) ...))) PH PΩ θ)
+        (side-condition
+         (and (term (punique-labels? (label_field ...)))
+              (term (punique-labels? (label_remove ...)))))
+        (where ((label_output pv_output) ...)
+               ,(premove-labels
+                 (term ((label_field pv_field) ...))
+                 (term (label_remove ...))))
+        R-PR-RecRemove)
 
    (--> (pcfg (in-hole PE
                       (PProjOpt K_some K_none

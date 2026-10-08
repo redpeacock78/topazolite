@@ -97,9 +97,9 @@
 
 (test-case "入れ子義務の shape は型対を保ち、除去欄を列挙する"
   (check-equal? (remainder-removal-shape nested-two-wide nested-two-narrow)
-                '((a nested ((x drop #f)))))
+                '((a nested #f ((x drop #f)))))
   (check-equal? (remainder-removal-shape nested-three-wide nested-three-narrow)
-                '((a nested ((b nested ((x drop #f)))))))
+                '((a nested #f ((b nested #f ((x drop #f)))))))
   (check-equal?
    (owned-narrowing-kind nested-required-optional-wide
                          nested-required-optional-narrow
@@ -109,7 +109,19 @@
   (check-equal?
    (remainder-removal-shape nested-required-optional-wide
                             nested-required-optional-narrow)
-   '((a nested ((x drop #f))))))
+   '((a nested #f ((x drop #f))))))
+
+(test-case "optional な入れ子欄の shape は実際の optional 属性を保持する"
+  (define actual
+    `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm opt))))
+  (define expected
+    '(Record ((a (Record ((y Int imm))) imm opt))))
+  (check-equal?
+   (remainder-removal-shape actual expected)
+   '((a nested #t ((x drop #f)))))
+  (check-equal?
+   (owned-narrowing-kind actual expected always-compatible)
+   `(drop-obligation ,actual ,expected)))
 
 (test-case "Borrowed の payload では打ち切る"
   (check-equal?

@@ -7,6 +7,7 @@
          "diagnostic.rkt"
          "erase.rkt"
          "lang.rkt"
+         "ownership.rkt"
          "origins.rkt"
          "pr-lang.rkt"
          "resource-type.rkt"
@@ -118,6 +119,13 @@
 
 ;; backend / matrix / fail を閉じ込めて、写しの各行を 1 引数の関数として書く。
 (define (make-lowering backend matrix fail)
+  (define next-rsd-name 0)
+
+  (define (fresh-rsd-name)
+    (define name (string->symbol (format "rsd:~a" next-rsd-name)))
+    (set! next-rsd-name (add1 next-rsd-name))
+    name)
+
   (define (absent-field? field)
     (match (peel-node field)
       [`(Absent ,_) #t]
@@ -198,6 +206,73 @@
     (if (and (runtime-resource-type? type) (not (equal? body px)))
         `(PLetOwned ,px ,bound ,body)
         `(PLet ,px ,bound ,body)))
+
+  ;; shape だけを読み、RSD の drop と欄の再構成を PR へ写す。
+  (define (lower-remainder-shape node record entries)
+    (define (invalid-entry entry)
+      (fail 'unknown-core-form node
+            (format "RSD の除去 shape が不正である: ~s" entry)))
+    (define drop-labels
+      (for/list ([entry (in-list entries)]
+                 #:when (match entry [`(,_ drop ,_) #t] [_ #f]))
+        (label-code (first entry))))
+    (define (drop-expression current label optional?)
+      (define target-label (label-code label))
+      (if optional?
+          (let ([field (fresh-rsd-name)])
+            `(PMatch
+              (PProjOpt ,(tag-code 'some) ,(tag-code 'none)
+                        ,current ,target-label)
+              ((,(tag-code 'some) (,field) -> (PRuntime drop ,field))
+               (,(tag-code 'none) () -> unit))))
+          `(PRuntime drop (PProj ,current ,target-label))))
+    (define (transform current remaining)
+      (match remaining
+        ['()
+         (if (null? drop-labels)
+             current
+             `(PRecRemove ,current ,drop-labels))]
+        [(cons entry rest)
+         (match entry
+           [`(,label drop ,optional?)
+            (if (boolean? optional?)
+                (let ([ignored (fresh-rsd-name)])
+                  `(PLet ,ignored ,(drop-expression current label optional?)
+                         ,(transform current rest)))
+                (invalid-entry entry))]
+           [`(,label nested ,optional? ,child-shape)
+            (if (and (boolean? optional?) (list? child-shape))
+                (let* ([updated (fresh-rsd-name)]
+                       [present-value (fresh-rsd-name)]
+                       [nested-value (fresh-rsd-name)]
+                       [nested-body
+                        (lower-remainder-shape node nested-value child-shape)]
+                       [rewrite
+                        `(PRecRewrite ,current
+                                      ((,(label-code label) ,nested-value
+                                        ,nested-body)))])
+                  `(PLet ,updated
+                         ,(if optional?
+                              `(PMatch
+                                (PProjOpt ,(tag-code 'some) ,(tag-code 'none)
+                                          ,current ,(label-code label))
+                                ((,(tag-code 'some) (,present-value) -> ,rewrite)
+                                 (,(tag-code 'none) () -> ,current)))
+                              rewrite)
+                         ,(transform updated rest)))
+                (invalid-entry entry))]
+           [_ (invalid-entry entry)])]))
+    (transform record entries))
+
+  (define (lower-remainder node body actual expected)
+    (define shape (remainder-removal-shape actual expected))
+    (unless shape
+      (fail 'unknown-core-form node
+            (format "RSD の型対から除去 shape を作れない: ~s => ~s"
+                    actual expected)))
+    (define record (fresh-rsd-name))
+    `(PLet ,record ,(lower-core body)
+           ,(lower-remainder-shape node record shape)))
 
   ;; spec §21: br は span を先頭へ持つため peel-branch で剥がす。formals は
   ;; (#:bind x s) の包みなので peel-bind を通してから符号化する。
@@ -349,8 +424,13 @@
          [`(ProjOpt ,τ ,record ,label)
           `(PProjOpt ,(tag-code 'some) ,(tag-code 'none)
                      ,(lower-core record) ,(label-code (peel-lbl label)))]
-         ;; Proof は実行時に意味を持たない。内側の写しをそのまま返す。
-         [`(Discharge ,_ ,body) (lower-core body)]
+         ;; RSD は drop と欄除去を挿入し、他の Proof は消去する。
+         [`(Discharge ,proof ,body)
+          (match (peel-node proof)
+            [`(ProofRep (Reserved o-narrow)
+                        (RemainderSafelyDropped ,actual ,expected))
+             (lower-remainder core body (peel-ty actual) (peel-ty expected))]
+            [_ (lower-core body)])]
          ;; 所有 token の導入も実行時表現を持たない。payload の評価は残す。
          [`(OwnLeaf ,payload) (lower-core payload)]
          ;; spec §21: Error は G2m だけの形であり spanful な項に現れない。
@@ -550,6 +630,7 @@
     [`(PLetrec ,_ ,bound ,body) (kinds-of-all (list bound body))]
     [`(PTagged ,_ ,arguments ...) (kinds-of-all arguments)]
     [`(PRec ((,_ ,fields) ...)) (kinds-of-all fields)]
+    [`(PRecRemove ,record ,_) (effect-kinds-of record)]
     ;; Proj は row を足さない。
     [`(PProj ,record ,_) (effect-kinds-of record)]
     [`(PProjOpt ,_ ,_ ,record ,_) (effect-kinds-of record)]

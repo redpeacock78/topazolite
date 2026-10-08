@@ -557,10 +557,12 @@
                                        (fail #f))
                                    (values output
                                            (append removed (list field-value))))]
-                              [(list _ 'nested child-shape)
+                              [(list _ 'nested actual-optional? child-shape)
                                (unless (and actual-field expected-field
                                             (eq? (third actual-field) 'imm)
                                             (eq? (third expected-field) 'imm)
+                                            (eq? actual-optional?
+                                                 (field-optional? actual-field))
                                             ;; 必須欄から optional 欄への widening でも値は存在する。
                                             ;; 値がある場合に限り、その入れ子へ降りる。
                                             (or (not (field-optional? actual-field))

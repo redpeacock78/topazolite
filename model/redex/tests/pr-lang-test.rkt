@@ -30,6 +30,7 @@
  (check-true (redex-match? PR pv (term (PResource 3))))
  (check-true (redex-match? PR pv (term (PPlace 0))))
  (check-true (redex-match? PR pc (term (PLam (a) a))))
+ (check-true (redex-match? PR pc (term (PRecRemove (PRec ((f 1))) (f)))))
  ;; PLam は計算側にしか無い。
  (check-false (redex-match? PR pv (term (PLam (a) a)))))
 
@@ -40,6 +41,7 @@
         (term (PLetOwned a hole 1))
         (term (PTagged some hole))
         (term (PRec ((f hole))))
+        (term (PRecRemove hole (f)))
         (term (PProj hole f))
         (term (PMatch hole ((some (a) -> a))))
         (term (PPrim tz:add hole 1))

@@ -130,6 +130,9 @@
          (set))
    (list 'PTagged (term (PTagged k:Some ,effectful)) (set sample-op))
    (list 'PRec (term (PRec ((f:a ,effectful)))) (set sample-op))
+   (list 'PRecRemove
+         (term (PRecRemove (PRec ((f:a ,effectful))) (f:a)))
+         (set sample-op))
    (list 'PProj (term (PProj (PRec ((f:a ,effectful))) f:a)) (set sample-op))
    (list 'PMatch
          (term (PMatch ,effectful ((k:Some (v:y) -> (PEffect ,sample-op2 1)))))

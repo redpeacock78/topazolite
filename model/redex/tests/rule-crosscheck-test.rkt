@@ -8,13 +8,15 @@
 ;; [REQ: BAK-001] 源と目標の規則名の対応（backend-matrix.md §4）
 
 (provide rule-correspondence
+         target-support-rule-names
          target-rule-names)
 
 ;; backend-matrix.md §4 の対応表の源側。値は写し先の規則名で、
 ;; #f は目標側に規則を持たないことを表す。
 ;; Curry、Recur、Let、LetOwned、RecRewrite の 5 組は目標側でそれぞれ 1 本へ畳む。
-;; R-Discharge、R-DischargeRemainder、R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、
-;; R-RetirePerform と G2m 固有規則は目標側に無く、raw pointer の 7 規則も対象外である。
+;; R-Discharge と R-DischargeRemainder には一対一の写し先がない。
+;; R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、R-RetirePerform、
+;; G2m 固有規則は目標側になく、raw pointer の 7 規則も対象外である。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
   '((R-Delta        . R-PR-Prim)
@@ -82,8 +84,11 @@
     (R-HandleSkip   . R-PR-InstallSkip)
     (R-HandleError  . R-PR-InstallError)))
 
+(define target-support-rule-names (set 'R-PR-RecRemove))
+
 (define target-rule-names
-  (list->set (filter values (map cdr rule-correspondence))))
+  (set-union (list->set (filter values (map cdr rule-correspondence)))
+             target-support-rule-names))
 
 (define g1-rule-names
   (list->set (reduction-relation->rule-names -->g1/rules)))
@@ -123,5 +128,6 @@
  (check-equal? (length rule-correspondence) 64))
 
 (test-case
- "the target side has 24 rules"
- (check-equal? (set-count target-rule-names) 24))
+ "the target side has 25 rules, including one support rule"
+ (check-equal? target-support-rule-names (set 'R-PR-RecRemove))
+ (check-equal? (set-count target-rule-names) 25))

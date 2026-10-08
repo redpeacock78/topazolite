@@ -8,6 +8,7 @@
          "../erase.rkt"
          "../lang.rkt"
          "../lowering.rkt"
+         "../machine.rkt"
          "../obs.rkt"
          "../origins.rkt"
          "../pr-lang.rkt"
@@ -21,6 +22,37 @@
 
 (define depth 5)
 (define fuel 10000)
+
+(define (trace-core core)
+  (let loop ([current (inject-g2 core)] [rules '()] [remaining fuel])
+    (when (zero? remaining)
+      (error 'trace-core "Core の評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values current rules)]
+      [(list (list rule next))
+       (loop next (append rules (list rule)) (sub1 remaining))]
+      [steps (error 'trace-core "Core の次状態が一意でない: ~s" steps)])))
+
+(define (trace-target core)
+  (let loop ([current (inject-pr core)] [rules '()] [remaining fuel])
+    (when (zero? remaining)
+      (error 'trace-target "PR の評価 fuel を使い切った: ~s" current))
+    (match (apply-reduction-relation/tag-with-names -->pr/rules current)
+      ['() (values current rules)]
+      [(list (list rule next))
+       (loop next (append rules (list (string->symbol rule))) (sub1 remaining))]
+      [steps (error 'trace-target "PR の次状態が一意でない: ~s" steps)])))
+
+(define (core-dropped-token-count configuration)
+  (match configuration
+    [`(cfg ,_ ,_ ,_ ,tokens ,_)
+     (for/sum ([entry (in-list tokens)]
+               #:when (eq? (second entry) 'Dropped))
+       1)]))
+
+(define (config-tokens configuration)
+  (match configuration
+    [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
 
 ;; lower の 2 値を 1 つへ畳む。status を確かめてから写しを返す。
 (define (lower-ok core)
@@ -250,8 +282,135 @@
                 (Record ((x (Owned Res) imm) (y Int imm)))
                 (Record ((y Int imm)))))
      x))
-  (var-code 'x))
+  '(PLet rsd:0 v:x
+         (PLet rsd:1 (PRuntime drop (PProj rsd:0 f:x))
+                (PRecRemove rsd:0 (f:x)))))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
+
+(test-case "RSD の lowering は optional と入れ子の欄を処理する"
+  (define optional-proof
+    '(Discharge
+      (ProofRep (Reserved o-narrow)
+                (RemainderSafelyDropped
+                 (Record ((owned (Owned Res) imm opt) (kept Int imm)))
+                 (Record ((kept Int imm)))))
+      x))
+  (check-equal?
+   (lower-ok optional-proof)
+   '(PLet rsd:0 v:x
+          (PLet rsd:1
+                (PMatch (PProjOpt k:some k:none rsd:0 f:owned)
+                        ((k:some (rsd:2) -> (PRuntime drop rsd:2))
+                         (k:none () -> unit)))
+                (PRecRemove rsd:0 (f:owned)))))
+  (define nested-proof
+    '(Discharge
+      (ProofRep (Reserved o-narrow)
+                (RemainderSafelyDropped
+                 (Record ((a (Record ((owned (Owned Res) imm)
+                                      (kept Int imm))) imm opt)))
+                 (Record ((a (Record ((kept Int imm))) imm opt)))))
+      x))
+  (check-equal?
+   (lower-ok nested-proof)
+   '(PLet rsd:0 v:x
+          (PLet rsd:1
+                (PMatch (PProjOpt k:some k:none rsd:0 f:a)
+                        ((k:some (rsd:2) ->
+                          (PRecRewrite rsd:0
+                                       ((f:a rsd:3
+                                         (PLet rsd:4
+                                               (PRuntime drop
+                                                         (PProj rsd:3 f:owned))
+                                               (PRecRemove rsd:3 (f:owned)))))))
+                         (k:none () -> rsd:0)))
+                rsd:1)))
+  (check-equal? (effect-kinds-of (lower-ok optional-proof)) (set 'own))
+  (check-equal? (effect-kinds-of (lower-ok nested-proof)) (set 'own)))
+
+(test-case "RSD の Core と PR の観測値と drop 数が 8 対で一致する"
+  (define option-owned '(Option (Owned Res)))
+  (define (field label type mode optional?)
+    (if optional?
+        (list label type mode 'opt)
+        (list label type mode)))
+  (define cases
+    (for*/list ([inner-optional? (in-list '(#f #t))]
+                [outer-optional? (in-list '(#f #t))]
+                [owned-mode (in-list '(imm mut))])
+      (define actual-inner
+        `(Record ((kept Int imm)
+                  ,(field 'owned option-owned owned-mode inner-optional?))))
+      (define expected-inner '(Record ((kept Int imm))))
+      (define actual
+        `(Record (,(field 'a actual-inner 'imm outer-optional?))))
+      (define expected
+        `(Record (,(field 'a expected-inner 'imm #t))))
+      (list actual expected inner-optional? outer-optional? owned-mode)))
+  (check-equal? (length cases) 8)
+  (for ([case (in-list cases)] [token (in-naturals 400)])
+    (match-define (list actual expected inner-optional? _outer-optional? owned-mode)
+      case)
+    (define proof
+      `(ProofRep (Reserved o-narrow)
+                 (RemainderSafelyDropped ,actual ,expected)))
+    (define inner-value
+      `(Rec ((owned ,owned-mode
+                    (Construct ,option-owned some (OwnLeaf (resource ,token))))
+             (kept imm 7))))
+    (define source `(Rec ((a imm ,inner-value))))
+    (define core
+      `(Scope ()
+         (Let (output let ,expected)
+           (Discharge ,proof ,source)
+           (Yield output unit))))
+    (define target (lower-ok core))
+    (define source-observation (obs-eval-g2 core 1 fuel))
+    (define target-observation (obs-eval-pr target 1 fuel))
+    (check-equal? (second source-observation) 'observed)
+    (check-equal?
+     target-observation
+     (list (map lower-value-ok (first source-observation))
+           (second source-observation)))
+    (define-values (core-final _core-rules) (trace-core core))
+    (define-values (_target-final target-rules) (trace-target target))
+    (check-equal? (core-dropped-token-count core-final) 1)
+    (check-equal? (length (filter (lambda (rule) (eq? rule 'R-PR-Drop))
+                                  target-rules))
+                  (core-dropped-token-count core-final)))
+  (define inner-wide
+    `(Record ((owned ,option-owned imm) (kept Int imm))))
+  (define inner-narrow '(Record ((kept Int imm))))
+  (define absent-actual `(Record ((a ,inner-wide imm opt))))
+  (define absent-expected `(Record ((a ,inner-narrow imm opt))))
+  (define absent-proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,absent-actual ,absent-expected)))
+  (define absent-core
+    `(Scope ()
+       (Let (output let ,absent-expected)
+         (Discharge ,absent-proof
+                    (Rec ((a imm (Absent ,inner-wide)))))
+         (Yield output unit))))
+  (define absent-target (lower-ok absent-core))
+  (define absent-source-observation (obs-eval-g2 absent-core 1 fuel))
+  (define absent-target-observation (obs-eval-pr absent-target 1 fuel))
+  (check-equal? (second absent-source-observation) 'observed)
+  (check-equal?
+   (first absent-source-observation)
+   (list `(Rec ((a imm (Absent ,inner-narrow))))))
+  (check-equal?
+   absent-target-observation
+   (list (map lower-value-ok (first absent-source-observation))
+         (second absent-source-observation)))
+  (define-values (absent-core-final _absent-core-rules) (trace-core absent-core))
+  (define-values (_absent-target-final absent-target-rules)
+    (trace-target absent-target))
+  (check-equal? (config-tokens absent-core-final) '())
+  (check-equal? (core-dropped-token-count absent-core-final) 0)
+  (check-equal? (length (filter (lambda (rule) (eq? rule 'R-PR-Drop))
+                                absent-target-rules))
+                0))
 
 ;;; backend-matrix.md §7 の feature 対応に使う形の突合と、形ごとの fixture
 
