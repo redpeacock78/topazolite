@@ -313,6 +313,50 @@
             (false () -> value)))))
   (check-equal? (diagnostic-id-of (elab source)) "E-OWN-029"))
 
+;; merge-branches の record-join の拒否分岐は、row005-join が NFn を Union に残すため Surface からは到達しない（join-record 820 件の内訳にも owned-narrowing-rejected は無い）。
+(test-case "synth Eliminate の合流は NFn の署名を Union に残し、損失を生じない"
+  (define actual-nfn `(NFn (Unit) ,nested-actual () ()))
+  (define expected-nfn `(NFn (Unit) ,nested-target () ()))
+  (define left-type `(Record ((f ,actual-nfn imm) (tag Int imm))))
+  (define right-type `(Record ((f ,expected-nfn imm) (tag Bool imm))))
+  (define source
+    `(Fn ((flag Bool) (left ,left-type) (right ,right-type)) #:infer ()
+         (Eliminate flag
+           ((true () -> left)
+            (false () -> right)))))
+  (match (elab source)
+    [`(err ,diagnostic)
+     (fail-check (format "NFn の署名を Union に残す合流が拒否された: ~s"
+                         diagnostic))]
+    [(list core function-type row callables)
+     (define erased (erase-core core))
+     (check-false (find-rsd erased))
+     (match function-type
+       [(list 'NFn parameter-types result-type _ ...)
+        (define upper
+          (row005-join (list (second parameter-types)
+                             (third parameter-types))))
+        (check-not-false upper)
+        (check-true (type-equiv? result-type upper))
+        (check-equal? (core-type-of erased '() callables)
+                      (list function-type row))
+        (define field-type (second (assoc 'f (second result-type))))
+        (define members (union-members field-type))
+        (check-equal? (length members) 2)
+        (define (returns? member expected)
+          (match member
+            [(list 'NFn _ return-type _ ...)
+             (type-equiv? return-type expected)]
+            [_ #f]))
+        (check-not-false (findf (lambda (member)
+                                  (returns? member nested-actual))
+                                members))
+        (check-not-false (findf (lambda (member)
+                                  (returns? member nested-target))
+                                members))]
+       [_ (fail-check (format "推論された Fn 型が NFn でない: ~s"
+                              function-type))])]))
+
 (test-case "decompose の branch narrowing で NFn の内側の損失は拒否する"
   (define actual-nfn `(NFn (Unit) ,nested-actual () ()))
   (define expected-nfn `(NFn (Unit) ,nested-target () ()))

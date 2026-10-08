@@ -345,6 +345,54 @@
   (check-equal? (apply + (hash-values counts)) expected-total)
   counts)
 
+;; 2 型の join では branch join と並行して旧来の Union → 上界 convert も検査する。
+;; c2b2b2 で decompose の判定が変わるとき、この経路の差分を追えるようにする。
+(define (join-record-convert-group cases)
+  (define counts (make-hash))
+  (for ([types (in-list cases)])
+    (if (not (count-normalization-and-shape! counts types))
+        (void)
+        (let ([upper (row005-join types)])
+          (cond
+            [(not upper) (increment! counts 'no-row005-upper)]
+            [else
+             (check-true (well-formed-generated-type? upper))
+             (define kinds
+               (for/list ([type (in-list types)])
+                 (check-true (compat? type upper))
+                 (narrowing-kind type upper)))
+             (define rejected-kind
+               (findf (lambda (kind) (not (eq? kind 'ok))) kinds))
+             (cond
+               [(not rejected-kind)
+                (match (run-conversion (make-union types) upper)
+                  [`(accepted ,result-type ,_core ,_callables)
+                   (check-equal? result-type upper)
+                   (increment! counts 'convert-accepted)]
+                  [other
+                   (fail-check
+                    (format "ok の join が Union → 上界 convert で失敗した: ~s => ~s: ~s"
+                            types upper other))])]
+               [(match rejected-kind [`(drop-obligation ,_ ,_) #t] [_ #f])
+                (match (run-conversion (make-union types) upper)
+                  [`(rejected ,key)
+                   (check-not-false
+                    (memq key '(owned-narrowing-needs-proof
+                                owned-narrowing-rejected))
+                    (format "drop-obligation の Union convert が予期しない key: ~s"
+                            key))
+                   (increment! counts 'convert-drop-rejected)]
+                  [other
+                   (fail-check
+                    (format "drop-obligation の Union → 上界 convert が拒否されない: ~s => ~s: ~s"
+                            types upper other))])]
+               [else
+                (fail-check
+                 (format "join-record の上界に drop-obligation 以外の narrowing がある: ~s => ~s: ~s"
+                         types upper rejected-kind))])]))))
+  (check-equal? (apply + (hash-values counts)) (length cases))
+  counts)
+
 (define convert-record-cases
   (for*/list ([actual (in-list R)] [expected (in-list R)])
     (list actual expected)))

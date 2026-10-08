@@ -13,6 +13,12 @@
                   (accepted-with-rsd . 30)
                   (one-owned-one-unowned . 375)
                   (owned-owned-without-upper-bound . 50)))
+  (define convert-counts (join-record-convert-group join-record-cases))
+  (check-equal? (sorted-counts convert-counts)
+                '((convert-accepted . 365)
+                  (convert-drop-rejected . 30)
+                  (no-row005-upper . 425)))
+  (displayln `(join-record-convert ,(hash->list convert-counts)))
   (displayln `(join-record ,(hash->list counts))))
 
 (test-case "ROW-005 join の有限な異なる Record 三組"
