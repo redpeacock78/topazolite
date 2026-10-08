@@ -787,10 +787,23 @@
         (set! union-counter (add1 union-counter))
         (if (set-member? union-reserved candidate) (next) candidate)))
 
+    ;; 試行 Core に残余の discharge が含まれるかを調べる。
+    (define (core-has-remainder-drop? core)
+      (or (match core
+            [`(Discharge ,_ (ProofRep (Reserved o-narrow)
+                                      (RemainderSafelyDropped ,_ ,_)) ,_)
+             #t]
+            [`(Discharge (ProofRep (Reserved o-narrow)
+                                  (RemainderSafelyDropped ,_ ,_)) ,_)
+             #t]
+            [_ #f])
+          (and (pair? core)
+               (ormap core-has-remainder-drop? core))))
+
     ;; 候補への再構築を試す間に生名を消費しても、本番の変換名へ影響
     ;; させない。試行で使う項は破棄するため、変換が参照を埋め込める
     ;; span 付き Core 変数を渡す。
-    (define (rebuild-reachable? actual member kind s propositions)
+    (define (rebuild-probe-core actual member kind s propositions)
       (define saved-union union-counter)
       (define saved-owned owned-counter)
       (dynamic-wind
@@ -807,13 +820,16 @@
                   (if (eq? kind 'drop-obligation)
                       (discharge-remainder `(#:var rebuild-probe ,s)
                                            actual member s propositions)
-                      (values `(#:var rebuild-probe ,s) actual)))
-                (define-values (_probe-core _probe-type)
+                  (values `(#:var rebuild-probe ,s) actual)))
+                (define-values (converted _type)
                   (convert probe-core probe-type member s propositions))
-                #t)))
+                converted)))
        (lambda ()
          (set! union-counter saved-union)
          (set! owned-counter saved-owned))))
+
+    (define (rebuild-reachable? actual member kind s propositions)
+      (and (rebuild-probe-core actual member kind s propositions) #t))
 
     ;; 成分の位置でなく損失の種類で優先順位を決める。試行による生名の消費は
     ;; rebuild-reachable? が復元する。
@@ -833,13 +849,22 @@
                    #:when (and (third analysis)
                                (eq? (second analysis) 'ok)))
           (first analysis)))
-      (define tier2
+      (define tier2-probes
         (for/list ([analysis (in-list analyses)]
                    #:when (and (not (third analysis))
-                               (eq? (second analysis) 'ok)
-                               (rebuild-reachable? actual (first analysis) 'ok
-                                                   s propositions)))
-          (first analysis)))
+                               (eq? (second analysis) 'ok)))
+          (cons (first analysis)
+                (rebuild-probe-core actual (first analysis) 'ok s propositions))))
+      (define tier2
+        (for/list ([probe (in-list tier2-probes)]
+                   #:when (and (cdr probe)
+                               (not (core-has-remainder-drop? (cdr probe)))))
+          (car probe)))
+      (define tier2-lossy
+        (for/list ([probe (in-list tier2-probes)]
+                   #:when (and (cdr probe)
+                               (core-has-remainder-drop? (cdr probe))))
+          (car probe)))
       (define tier3
         (for/list ([analysis (in-list analyses)]
                    #:when (and (match (second analysis)
@@ -849,7 +874,7 @@
                                (tag-compat? (fourth analysis) (first analysis)
                                             context)))
           (first analysis)))
-      (define tier4
+      (define tier4-rebuild
         (for/list ([analysis (in-list analyses)]
                    #:when (and (match (second analysis)
                                   [`(drop-obligation ,_ ,_) #t]
@@ -861,6 +886,8 @@
                                                    'drop-obligation s
                                                    propositions)))
           (first analysis)))
+      (define tier4
+        (remove-duplicates (append tier4-rebuild tier2-lossy) type-equiv?))
       (values tier1 tier2 tier3 tier4))
 
     ;; 完全一致の後、損失のない成分を優先する。
@@ -2545,18 +2572,6 @@
                           (sort (map first expected-fields) symbol<?)))
              (and omitted (pair? omitted)))]
         [_ #f]))
-
-    (define (core-has-remainder-drop? core)
-      (or (match core
-            [`(Discharge ,_ (ProofRep (Reserved o-narrow)
-                                      (RemainderSafelyDropped ,_ ,_)) ,_)
-             #t]
-            [`(Discharge (ProofRep (Reserved o-narrow)
-                                  (RemainderSafelyDropped ,_ ,_)) ,_)
-             #t]
-            [_ #f])
-          (and (pair? core)
-               (ormap core-has-remainder-drop? core))))
 
     (define (check-rec-against-union expression raw-fields expected s
                                      environment delta propositions boundaries)

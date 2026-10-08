@@ -32,6 +32,17 @@
 (define keep-member
   `(Record ((a (Union Int Bool) imm) (o ,option-owned imm))))
 (define drop-union `(Union ,drop-member String))
+(define nested-wide
+  '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+(define nested-narrow '(Record ((x Int imm))))
+(define (nested-member value-type)
+  `(Record ((value ,value-type imm) (bad (Option Int) imm))))
+(define nested-free (nested-member `(Union ,nested-wide Bool)))
+(define nested-lossy (nested-member `(Union ,nested-narrow Bool)))
+(define nested-actual (nested-member nested-wide))
+(define (nested-wide-value n)
+  `(Rec ((x imm 7)
+         (o imm (Construct some (Types (Owned Res)) (Apply acquire ,n))))))
 
 (define (apply-function argument-type argument body result-type [row '(Own)])
   `(Apply (Fn ((argument ,argument-type)) ,result-type ,row ,body) ,argument))
@@ -200,6 +211,54 @@
     (apply values (checked (make-application actual value expected))))
   (check-true (type-equiv? (union-inject-member core expected) safe))
   (check-false (contains-rsd? core)))
+
+(test-case "入れ子の Union 欄では損失の無い成分を先に選ぶ"
+  (define actual-value
+    `(Rec ((value imm ,(nested-wide-value 13))
+          (bad imm (Construct some (Types Int) 1)))))
+  (for ([expected
+         (in-list
+          (list (normalize-type `(Union ,nested-lossy ,nested-free))
+                (normalize-type `(Union ,nested-free ,nested-lossy))))])
+    (define source (make-application nested-actual actual-value expected))
+    (match-define (list core _type _row _callables) (checked source))
+    (check-true (type-equiv? (union-inject-member core expected) nested-free))
+    (check-false (contains-rsd? core))
+    (define-values (final _rules) (run-checked source))
+    (check-equal? (map second (configuration-tokens final)) '(Available))))
+
+(test-case "入れ子の Union 欄で唯一の損失候補を RSD 付きで選ぶ"
+  (define expected (normalize-type `(Union ,nested-lossy String)))
+  (define source
+    (make-application
+     nested-actual
+     `(Rec ((value imm ,(nested-wide-value 13))
+           (bad imm (Construct some (Types Int) 1))))
+     expected))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) nested-lossy))
+  (check-true (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "層 2 の入れ子損失候補と層 4 の root 損失候補は曖昧になる"
+  (define actual
+    '(Record ((value (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm)
+              (root (Option (Owned Res)) imm))))
+  (define tier2-inner-loss
+    '(Record ((value (Union (Record ((x Int imm))) Bool) imm)
+              (root (Option (Owned Res)) imm))))
+  (define tier4-root-loss
+    '(Record ((value (Union (Record ((x Int imm)
+                                     (o (Option (Owned Res)) imm))) Bool) imm))))
+  (for ([members (in-list
+                  (list (list tier2-inner-loss tier4-root-loss)
+                        (list tier4-root-loss tier2-inner-loss)))])
+    (define expected (normalize-type `(Union ,@members)))
+    (check-equal?
+     (rejected-id `(Fn ((argument ,actual)) ,expected (Own) (Move argument)))
+     (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
 
 (test-case "同じ層 2 の候補は順序によらず ambiguous になる"
   (define actual '(Record ((a Int imm))))
@@ -406,6 +465,22 @@
   (match-define (list core _type _row _callables) (checked source))
   (check-false (contains-rsd? core))
   (check-true (type-equiv? (union-inject-member core expected) safe-member))
+  (define-values (final _rules) (run-checked source))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "Rec の直接 check は合成可能でも入れ子の損失が無い成分を選ぶ"
+  (define expected (normalize-type `(Union ,nested-lossy ,nested-free)))
+  (define literal
+    '(Rec ((value imm (Move argument))
+           (bad imm (Construct some (Types Int) 1)))))
+  (define source
+    (apply-function
+     nested-wide (nested-wide-value 13)
+     (apply-function expected literal 'unit 'Unit '())
+     'Unit '(Own)))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (type-equiv? (union-inject-member core expected) nested-free))
+  (check-false (contains-rsd? core))
   (define-values (final _rules) (run-checked source))
   (check-equal? (map second (configuration-tokens final)) '(Dropped)))
 
