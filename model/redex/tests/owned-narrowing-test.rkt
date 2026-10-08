@@ -253,11 +253,11 @@
              (s Never)))
    'ok))
 
-(test-case "elaborate の入れ子 Record narrowing は E-OWN-031 を出す"
+(test-case "elaborate は入れ子 Record narrowing の Owned 残余を回収する"
   (check-equal?
    (elaborate-code-of
-    `(Fn ((p ,nested-actual)) ,nested-no-z () (Move p)))
-   "E-OWN-031"))
+    `(Fn ((p ,nested-actual)) ,nested-no-z (Own) (Move p)))
+   'ok))
 
 (test-case "elaborate の Apply 引数で NFn 内の残余損失を E-OWN-029 にする"
   (check-equal?
@@ -281,12 +281,12 @@
          (Let (r const ,surface-rejected-nfn-expected) source 1)))
    "E-OWN-029"))
 
-(test-case "elaborate は最上位の余剰 Owned に E-OWN-031 を出す"
+(test-case "elaborate は最上位の余剰 Owned を RSD で回収する"
   (check-equal?
    (elaborate-code-of
     `(Fn ((p (Record ((x ,owned imm) (y Int imm)))))
-         (Record ((y Int imm))) () (Move p)))
-   "E-OWN-031"))
+         (Record ((y Int imm))) (Own) (Move p)))
+   'ok))
 
 (test-case "余剰 Owned を保つ形は elaborate を通る"
   (check-equal?

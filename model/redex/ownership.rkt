@@ -22,7 +22,8 @@
          "type-equiv.rkt"
          "validators.rkt")
 
-(provide owned-narrowing-kind check-narrowing-return remainder-removal-shape)
+(provide owned-narrowing-kind check-narrowing-return
+         remainder-removal-shape remainder-target-type)
 
 (define (union-type? type)
   (and (pair? type) (eq? (car type) 'Union)))
@@ -186,6 +187,36 @@
                           (loop (cdr remaining) nested))]))))]
          [(_ _) #f])]))
   (shape-for-type actual expected))
+
+;; remainder-removal-shape が示す Owned 欄を actual から除いた型を返す。
+;; nested はその欄の型へ再帰的に適用し、残す欄の順序と印は actual のまま保つ。
+(define (remainder-target-type actual expected)
+  (define shape (remainder-removal-shape actual expected))
+  (define (apply-shape type shape)
+    (if (null? shape)
+        type
+        (match type
+          [`(Record ,row)
+           (let loop ([fields row] [result '()])
+             (cond
+               [(null? fields) `(Record ,(reverse result))]
+               [else
+                (define field (car fields))
+                (define entry (assoc (first field) shape))
+                (match entry
+                  [(list _ 'drop _)
+                   (loop (cdr fields) result)]
+                  [(list _ 'nested _ child-shape)
+                   (define child-type
+                     (apply-shape (second field) child-shape))
+                   (and child-type
+                        (loop (cdr fields)
+                              (cons (list* (first field) child-type
+                                           (cddr field))
+                                    result)))]
+                  [_ (loop (cdr fields) (cons field result))])]))]
+          [_ #f])))
+  (and shape (apply-shape actual shape)))
 
 (define (type-value? v)
   (redex-match? G2m τ v))

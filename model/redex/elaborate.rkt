@@ -337,6 +337,23 @@
   (owned-narrowing-kind actual expected
                         (lambda (a e) (type-compatible? a e propositions))))
 
+;; OWN-004。残余の drop が要る場合だけ Proof を挿入し、先に Owned 残余を
+;; 取り除いた型を後続の通常の convert へ渡す。reject は呼び出し側の既存の
+;; 判定順序に委ねる。
+(define (discharge-remainder core actual expected s propositions)
+  (match (narrowing-kind actual expected propositions)
+    [`(drop-obligation ,_ ,_)
+     (define target (remainder-target-type actual expected))
+     (unless target
+       (error 'discharge-remainder
+              "drop-obligation に runtime removal shape がない: ~s => ~s"
+              actual expected))
+     (define proof
+       `(ProofRep (Reserved o-narrow)
+                  (RemainderSafelyDropped ,actual ,target)))
+     (values `(Discharge ,s ,proof ,core) target)]
+    [_ (values core actual)]))
+
 ;; RFN-001/002: 表層注釈に書いてよい命題。判定表の (Prop id) と G1 の 2 命題を
 ;; 許し、(Presence label) は許さない。文法でも外しているが、注釈は Redex の
 ;; パターンを経ずに渡る経路があるため、解決時にも同じ線引きを課す。
@@ -2415,17 +2432,20 @@
     (define (check-against-expected result expected s propositions)
       (unless (type-compatible? (judgment-type result) expected propositions)
         (reject s 'type-mismatch expected (judgment-type result)))
-      (match (narrowing-kind (judgment-type result) expected propositions)
+      (define-values (core actual-type)
+        (discharge-remainder (judgment-core result)
+                             (judgment-core-type result)
+                             expected s propositions))
+      (match (narrowing-kind actual-type expected propositions)
         ['ok (void)]
         [`(drop-obligation ,_ ,_)
          (reject s 'owned-narrowing-needs-proof expected
-                 (judgment-type result))]
+                 actual-type)]
         [_ (reject s 'owned-narrowing-rejected expected
-                   (judgment-type result))])
-      (define-values (core core-type)
-        (convert (judgment-core result) (judgment-core-type result)
-                 expected s propositions))
-      (judgment core expected (judgment-row result) core-type))
+                   actual-type)])
+      (define-values (converted core-type)
+        (convert core actual-type expected s propositions))
+      (judgment converted expected (judgment-row result) core-type))
 
     ;; Rec の欄を Record 型へ直接 check できる形かを返す。
     (define (record-literal-member? raw-fields expected)
@@ -2523,20 +2543,28 @@
          (unless (type-compatible? (judgment-type result) expected
                                    propositions)
            (reject s 'type-mismatch expected (judgment-type result)))
-         ;; 現行の Bool/List/Option/Result schema は type-compatible? が
-         ;; type-equiv? へ委譲するため narrowing はここへ届かない。
-         ;; Record を持つ nominal data type の追加時にこの位置が生きる。
-         (match (narrowing-kind (judgment-type result) expected propositions)
+         ;; Construct (Types ...) は Union expected に到達しうる。
+         ;; 非 Union expected では constructor-result の nominal 型から
+         ;; Record width の drop-obligation は生じない。Union の候補選択と変換は
+         ;; c2b2b2 の対象なので、ここでは従来どおりに保つ。
+         (define actual-core-type (judgment-core-type result))
+         (define union-expected?
+           (match expected [`(Union ,_ ,_) #t] [_ #f]))
+         (define-values (core actual-type)
+           (if union-expected?
+               (values (judgment-core result) actual-core-type)
+               (discharge-remainder (judgment-core result)
+                                    actual-core-type expected s propositions)))
+         (match (narrowing-kind actual-type expected propositions)
            ['ok (void)]
            [`(drop-obligation ,_ ,_)
             (reject s 'owned-narrowing-needs-proof expected
-                    (judgment-type result))]
+                    actual-type)]
            [_ (reject s 'owned-narrowing-rejected expected
-                      (judgment-type result))])
-         (define-values (core core-type)
-           (convert (judgment-core result) (judgment-core-type result)
-                    expected s propositions))
-         (judgment core expected (judgment-row result) core-type)]
+                      actual-type)])
+         (define-values (converted core-type)
+           (convert core actual-type expected s propositions))
+         (judgment converted expected (judgment-row result) core-type)]
 
         [`(Construct ,constructor ,fields ...)
          (elaborate-constructor constructor fields expected

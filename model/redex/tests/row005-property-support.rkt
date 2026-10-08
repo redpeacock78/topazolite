@@ -193,16 +193,25 @@
           ['not-compatible (increment! counts 'not-compatible)]
           [(or 'drop-obligation 'owned-narrowing-rejected)
            (match (run-conversion actual expected #:check-result? #t)
+             [`(accepted ,result-type ,core ,_callables)
+              (check-equal? (case-class actual expected) 'drop-obligation)
+              (check-equal? result-type expected)
+              (check-true (positive? (count-head 'RemainderSafelyDropped core))
+                          (format "drop-obligation の check に RSD が無い: ~s => ~s"
+                                  actual expected))
+              (increment! counts 'drop-obligation)]
              [`(rejected ,key)
+              (check-equal? (case-class actual expected)
+                            'owned-narrowing-rejected)
               (check-not-false
                (memq key '(owned-narrowing-needs-proof
                            owned-narrowing-rejected))
                (format "OWN-004 の拒否理由が予期しない: ~s => ~s: ~s"
                        actual expected key))
-              (increment! counts (case-class actual expected))]
+              (increment! counts 'owned-narrowing-rejected)]
              [other
               (fail-check
-               (format "OWN-004 が拒否すべき convert が通った: ~s => ~s: ~s"
+               (format "OWN-004 の check が予期せぬ結果: ~s => ~s: ~s"
                        actual expected other))])]
           ['invalid-type (increment! counts 'invalid-type)]
           ['ok

@@ -1,7 +1,11 @@
 #lang racket/base
 
 (require rackunit
-         "../ownership.rkt")
+         racket/list
+         racket/match
+         "../compat.rkt"
+         "../ownership.rkt"
+         "row005-property-support.rkt")
 
 ;; 互換性述語の身代わり。ownership.rkt は候補選択にしか使わないため、
 ;; 単体テストでは「常に互換」と「型が完全一致するときだけ互換」の 2 種で足りる。
@@ -23,6 +27,42 @@
   `(Record ((a (Record ((x ,owned imm) (y Int imm))) imm))))
 (define nested-required-optional-narrow
   '(Record ((a (Record ((y Int imm))) imm opt))))
+
+(define (shape-by-label shape)
+  (and shape
+       (sort
+        (for/list ([entry (in-list shape)])
+          (match entry
+            [(list label 'drop optional?) (list label 'drop optional?)]
+            [(list label 'nested optional? child)
+             (list label 'nested optional? (shape-by-label child))]))
+        symbol<? #:key first)))
+
+(define (check-target-layout actual target shape)
+  (match* (actual target)
+    [(`(Record ,actual-row) `(Record ,target-row))
+     (define dropped
+       (for/list ([entry (in-list shape)]
+                  #:when (eq? (second entry) 'drop))
+         (first entry)))
+     (define retained
+       (filter (lambda (field) (not (memq (first field) dropped))) actual-row))
+     (check-equal? (map first target-row) (map first retained))
+     (for ([target-field (in-list target-row)]
+           [actual-field (in-list retained)])
+       (check-equal? (third target-field) (third actual-field))
+       (check-equal? (length target-field) (length actual-field))
+       (check-equal? (if (= (length target-field) 4) (fourth target-field) #f)
+                     (if (= (length actual-field) 4) (fourth actual-field) #f))
+       (define nested
+         (for/first ([entry (in-list shape)]
+                     #:when (and (eq? (first entry) (first target-field))
+                                 (eq? (second entry) 'nested)))
+           entry))
+       (when nested
+         (check-target-layout (second actual-field) (second target-field)
+                              (fourth nested))))]
+    [(_ _) (void)]))
 
 (test-case "最上位の record で余剰 Owned 欄が落ちると義務を返す"
   (check-equal?
@@ -122,6 +162,67 @@
   (check-equal?
    (owned-narrowing-kind actual expected always-compatible)
    `(drop-obligation ,actual ,expected)))
+
+(test-case "remainder-target-type は shape の欄だけを actual から取り除く"
+  (define actual
+    `(Record ((outer ,owned imm)
+              (a (Record ((x ,owned imm opt)
+                          (kept Int imm)
+                          (tail Int imm opt))) imm opt)
+              (tail Int imm))))
+  (define expected
+    '(Record ((a (Record ((kept Int imm))) imm opt)
+              (tail Int imm))))
+  (check-equal?
+   (remainder-target-type actual expected)
+   '(Record ((a (Record ((kept Int imm) (tail Int imm opt))) imm opt)
+             (tail Int imm))))
+  (define optional-removal-actual
+    `(Record ((kept Int imm) (drop ,owned imm opt))))
+  (define optional-removal-expected '(Record ((kept Int imm))))
+  (check-equal?
+   (remainder-target-type optional-removal-actual optional-removal-expected)
+   '(Record ((kept Int imm))))
+  (define owned-free-actual '(Record ((extra Int imm) (kept Int imm))))
+  (check-equal?
+   (remainder-target-type owned-free-actual '(Record ((kept Int imm))))
+   owned-free-actual)
+  (check-false (remainder-target-type actual 'Int)))
+
+(test-case "有限な全 drop-obligation 対で target は互換かつ shape と layout を保つ"
+  (define obligation-pairs
+    (for*/list ([actual (in-list R)]
+                [expected (in-list R)]
+                #:when (eq? (case-class actual expected) 'drop-obligation))
+      (list actual expected)))
+  (check-equal? (length obligation-pairs) 11)
+  (for ([pair (in-list obligation-pairs)])
+    (define actual (first pair))
+    (define expected (second pair))
+    (define target (remainder-target-type actual expected))
+    (check-not-false target)
+    (check-equal? (owned-narrowing-kind target expected compat?) 'ok)
+    (check-true (compat? target expected))
+    (check-equal? (shape-by-label (remainder-removal-shape actual target))
+                  (shape-by-label (remainder-removal-shape actual expected)))
+    (check-target-layout actual target
+                         (remainder-removal-shape actual expected))))
+
+(test-case "必須 actual 欄を optional expected 欄へ対応させても必須を保つ"
+  (define top-actual `(Record ((drop ,owned imm) (kept Int imm))))
+  (define top-expected '(Record ((kept Int imm opt))))
+  (define top-target (remainder-target-type top-actual top-expected))
+  (check-equal? top-target '(Record ((kept Int imm))))
+  (check-true (compat? top-target top-expected))
+  (define nested-actual
+    `(Record ((box (Record ((drop ,owned imm) (kept Int imm))) imm))))
+  (define nested-expected
+    '(Record ((box (Record ((kept Int imm opt))) imm))))
+  (define nested-target
+    (remainder-target-type nested-actual nested-expected))
+  (check-equal? nested-target
+                '(Record ((box (Record ((kept Int imm))) imm))))
+  (check-true (compat? nested-target nested-expected)))
 
 (test-case "Borrowed の payload では打ち切る"
   (check-equal?
