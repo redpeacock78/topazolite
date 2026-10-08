@@ -832,7 +832,7 @@
       (and (rebuild-probe-core actual member kind s propositions) #t))
 
     ;; 成分の位置でなく損失の種類で優先順位を決める。試行による生名の消費は
-    ;; rebuild-reachable? が復元する。
+    ;; rebuild-probe-core が復元する。
     (define (union-member-tiers actual members s propositions)
       (define context (initial-candidate-context propositions))
       (define analyses
@@ -1084,7 +1084,9 @@
                [`(Record ,row) row]
                [_ (reject s 'type-mismatch expected actual)]))
            (define residual (field-row-residual member-row expected-row))
-           `(Record ,(append expected-row residual)))
+           ;; Proof の型対に入れる W_k を Core の正規形へそろえる。
+           (or (normalize-type `(Record ,(append expected-row residual)))
+               (reject s 'type-mismatch expected actual)))
          (define branch-types
            (for/list ([branch (in-list branches)])
              (match-define (list member _name _alias) branch)
@@ -1109,43 +1111,49 @@
              (define converted
                (if (eq? member 'Never)
                    consumed-ref
-                   (let* ([_member-narrowing
-                           ;; expected 欄の内側にある Owned の残余も失わないよう、
-                           ;; member から W_k への OWN-004 を変換より先に検査する。
-                           (match (narrowing-kind member wrapped-type propositions)
-                             ['ok (void)]
-                             [`(drop-obligation ,_ ,_)
-                              (reject s 'owned-narrowing-needs-proof wrapped-type
-                                      member)]
-                             [_ (reject s 'owned-narrowing-rejected wrapped-type
-                                        member)])]
-                          [_narrowing-check
-                           (match (narrowing-kind wrapped-type upper propositions)
-                             ['ok (void)]
-                             [`(drop-obligation ,_ ,_)
-                              (reject s 'owned-narrowing-needs-proof upper
-                                      wrapped-type)]
-                             [_ (reject s 'owned-narrowing-rejected upper
-                                        wrapped-type)])]
-                          [source
-                           (if (tag-compat? member expected context)
-                               consumed-ref
-                               (let-values ([(rebuilt _type)
-                                             (convert consumed-ref member expected s
-                                                      propositions
-                                                      #:entry? entry?)])
-                                 rebuilt))]
-                          [wrapped
-                           (wrap-reference
-                            'let expected source
-                            (and (not entry?)
-                                 (resource-type? wrapped-type)))])
-                     (if (type-equiv? wrapped-type upper)
-                         wrapped
-                         (let-values ([(rebuilt _type)
-                                       (convert wrapped wrapped-type upper s
-                                                propositions #:entry? entry?)])
-                           rebuilt)))))
+                   (let-values ([(member-core member-type)
+                                 (discharge-remainder consumed-ref member
+                                                     wrapped-type s
+                                                     propositions)])
+                     ;; OWN-004 は残余を除いた実型で再確認する。
+                     (match (narrowing-kind member-type wrapped-type propositions)
+                       ['ok (void)]
+                       [`(drop-obligation ,_ ,_)
+                        (reject s 'owned-narrowing-needs-proof wrapped-type
+                                member-type)]
+                       [_ (reject s 'owned-narrowing-rejected wrapped-type
+                                  member-type)])
+                     (let* ([source
+                             (if (tag-compat? member-type expected context)
+                                 member-core
+                                 (let-values ([(rebuilt _type)
+                                               (convert member-core member-type
+                                                        expected s propositions
+                                                        #:entry? entry?)])
+                                   rebuilt))]
+                            [wrapped
+                             (wrap-reference
+                              'let expected source
+                              (and (not entry?)
+                                   (resource-type? wrapped-type)))])
+                       (let-values ([(wrapped-core wrapped-type-after)
+                                     (discharge-remainder wrapped wrapped-type
+                                                          upper s propositions)])
+                         (match (narrowing-kind wrapped-type-after upper
+                                                propositions)
+                           ['ok (void)]
+                           [`(drop-obligation ,_ ,_)
+                            (reject s 'owned-narrowing-needs-proof upper
+                                    wrapped-type-after)]
+                           [_ (reject s 'owned-narrowing-rejected upper
+                                      wrapped-type-after)])
+                         (if (type-equiv? wrapped-type-after upper)
+                             wrapped-core
+                             (let-values ([(rebuilt _type)
+                                           (convert wrapped-core
+                                                    wrapped-type-after upper s
+                                                    propositions #:entry? entry?)])
+                               rebuilt)))))))
              (resource-branch-body member name alias converted)))
           upper)]
         [_

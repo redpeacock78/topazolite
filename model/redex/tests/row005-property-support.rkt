@@ -375,16 +375,25 @@
                             types upper other))])]
                [(match rejected-kind [`(drop-obligation ,_ ,_) #t] [_ #f])
                 (match (run-conversion (make-union types) upper)
+                  [`(accepted ,result-type ,core ,_callables)
+                   (check-equal? result-type upper)
+                   (check-not-false
+                    (find-core-form 'RemainderSafelyDropped core)
+                    (format "drop-obligation の Union convert に RSD が無い: ~s => ~s"
+                            types upper))
+                   (increment! counts 'convert-accepted)]
                   [`(rejected ,key)
                    (check-not-false
                     (memq key '(owned-narrowing-needs-proof
                                 owned-narrowing-rejected))
                     (format "drop-obligation の Union convert が予期しない key: ~s"
                             key))
-                   (increment! counts 'convert-drop-rejected)]
+                   (fail-check
+                    (format "drop-obligation の Union convert が拒否された: ~s => ~s: ~s"
+                            types upper key))]
                   [other
                    (fail-check
-                    (format "drop-obligation の Union → 上界 convert が拒否されない: ~s => ~s: ~s"
+                    (format "drop-obligation の Union → 上界 convert が失敗した: ~s => ~s: ~s"
                             types upper other))])]
                [else
                 (fail-check

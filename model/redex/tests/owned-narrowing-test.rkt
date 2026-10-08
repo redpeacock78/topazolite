@@ -233,15 +233,23 @@
    (owned-narrowing-kind/for-elaboration actual expected always-compatible)
    'ok))
 
-(test-case "actual が Union の対は elaboration mode でも既定の判定を保つ"
+(test-case "elaboration 用の actual Union 判定は各成分の drop-obligation を認める"
   (define actual
     `(Union (Record ((x ,owned imm) (y Int imm))) Bool))
   (define expected
     '(Union (Record ((y Int imm))) Bool))
+  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject)
+  (check-equal?
+   (owned-narrowing-kind/for-elaboration actual expected compat?) 'ok))
+
+(test-case "elaboration 用の actual Union 判定は内側の reject を保つ"
+  (define actual
+    `(Union (NFn (Unit) ,nested-actual () () () User) Bool))
+  (define expected
+    `(Union (NFn (Unit) ,nested-no-z () () () User) Bool))
   (check-equal?
    (owned-narrowing-kind/for-elaboration actual expected compat?)
-   (owned-narrowing-kind actual expected compat?))
-  (check-equal? (owned-narrowing-kind actual expected compat?) 'reject))
+   'reject))
 
 (test-case "Union の唯一の compatible member は RSD を挿入して受理する"
   (match (elab

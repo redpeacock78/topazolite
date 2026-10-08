@@ -130,6 +130,26 @@
 (define (make-plain-application argument-type argument result-type)
   `(Apply (Fn ((argument ,argument-type)) ,result-type () argument) ,argument))
 
+(define (make-union-value union-type member value)
+  (apply-function member value '(Move argument) union-type))
+
+(define (check-rsd-and-dropped source token-count)
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final))
+                (make-list token-count 'Dropped))
+  core)
+
+(define nested-owned-wide
+  '(Record ((x Int imm) (o (Option (Owned Res)) imm))))
+(define nested-owned-narrow '(Record ((x Int imm))))
+(define (nested-owned-record type)
+  `(Record ((p ,type imm))))
+(define (owned-option-value n)
+  `(Construct some (Types (Owned Res)) (Apply acquire ,n)))
+
 (test-case "層 4 は payload に RSD を挿入し、選んだ Union member の型で実行する"
   (define source (make-application source-type source-value drop-union))
   (define-values (core _type _row _callables) (apply values (checked source)))
@@ -152,6 +172,115 @@
   (define-values (final rules) (run-checked source))
   (check-not-false (member 'R-DischargeRemainder rules))
   (check-equal? (map second (configuration-tokens final)) '(Dropped)))
+
+(test-case "Record decompose の一つ目の対で入れ子 Owned 残余を落とす"
+  (define member-wide
+    '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm)
+              (extra (Option (Owned Res)) imm))))
+  (define member-plain
+    '(Record ((p (Record ((x Int imm))) imm))))
+  (define actual (normalize-type `(Union ,member-wide ,member-plain)))
+  (define expected (nested-owned-record nested-owned-narrow))
+  (define wide-value
+    `(Rec ((p imm (Rec ((x imm 1) (o imm ,(owned-option-value 130)))))
+           (extra imm ,(owned-option-value 131)))))
+  (define source
+    (make-application actual
+                      (make-union-value actual member-wide wide-value)
+                      expected))
+  (check-rsd-and-dropped source 2)
+  (void))
+
+(test-case "Record decompose の一つ目の対で外側残余を保持する"
+  (define member-wide
+    '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm))))
+  (define member-plain
+    '(Record ((p (Record ((x Int imm))) imm))))
+  (define actual (normalize-type `(Union ,member-wide ,member-plain)))
+  (define expected (nested-owned-record nested-owned-narrow))
+  (define wide-value
+    `(Rec ((p imm (Rec ((x imm 1) (o imm ,(owned-option-value 132))))))))
+  (define source
+    (make-application actual
+                      (make-union-value actual member-wide wide-value)
+                      expected))
+  (check-rsd-and-dropped source 1)
+  (void))
+
+(test-case "Record decompose の二つ目の対で枝だけの Owned 残余を落とす"
+  (define member-owned '(Record ((a Int imm) (extra (Option (Owned Res)) imm))))
+  (define member-plain '(Record ((a Int imm))))
+  (define actual (normalize-type `(Union ,member-owned ,member-plain)))
+  (define expected '(Record ((a Int imm))))
+  (define owned-value
+    `(Rec ((a imm 1) (extra imm ,(owned-option-value 133)))))
+  (define source
+    (make-application actual
+                      (make-union-value actual member-owned owned-value)
+                      expected))
+  (check-rsd-and-dropped source 1)
+  (void))
+
+(test-case "Union decompose は選んだ Union member へ RSD を挿入する"
+  (define member-wide '(Record ((a Int imm) (extra (Option (Owned Res)) imm))))
+  (define member-narrow '(Record ((a Int imm))))
+  (define actual (normalize-type `(Union ,member-wide String)))
+  (define expected (normalize-type `(Union ,member-narrow String)))
+  (define wide-value
+    `(Rec ((a imm 1) (extra imm ,(owned-option-value 134)))))
+  (define source
+    (make-application actual
+                      (make-union-value actual member-wide wide-value)
+                      expected))
+  (define core (check-rsd-and-dropped source 1))
+  (check-not-false
+   (for/or ([node (in-list (nodes-with-head 'UnionInject core))])
+     (match node
+       [`(UnionInject ,union-type ,member ,_)
+        (and (type-equiv? union-type expected)
+             (type-equiv? member member-narrow))]
+       [_ #f])))
+  (void))
+
+(test-case "Record decompose は二つの対の Owned 残余を両方落とす"
+  (define member-wide
+    '(Record ((p (Record ((x Int imm) (o (Option (Owned Res)) imm))) imm)
+              (extra (Option (Owned Res)) imm))))
+  (define member-plain
+    '(Record ((p (Record ((x Int imm))) imm))))
+  (define actual (normalize-type `(Union ,member-wide ,member-plain)))
+  (define expected (nested-owned-record nested-owned-narrow))
+  (define wide-value
+    `(Rec ((p imm (Rec ((x imm 1) (o imm ,(owned-option-value 135)))))
+           (extra imm ,(owned-option-value 136)))))
+  (define source
+    (make-application actual
+                      (make-union-value actual member-wide wide-value)
+                      expected))
+  (check-rsd-and-dropped source 2)
+  (void))
+
+(test-case "actual Union の Owned payload の曖昧な候補は順序によらず E-TYP-031"
+  (define actual-left
+    '(Record ((o (Owned (Union Int Bool)) imm))))
+  (define actual-right
+    '(Record ((o (Owned (Union Bool String)) imm))))
+  (define expected-left
+    '(Record ((o (Owned (Union Int (Union Bool String))) imm))))
+  (define expected-right
+    '(Record ((o (Owned (Union Int (Union Bool (Union String Unit)))) imm))))
+  (define actual (normalize-type `(Union ,actual-left ,actual-right)))
+  (for ([members (in-list
+                  (list (list expected-left expected-right)
+                        (list expected-right expected-left)))])
+    (define expected (normalize-type `(Union ,@members)))
+    (define source
+      (make-application actual
+                        (make-union-value actual actual-left
+                                          '(Rec ((o imm source))))
+                        expected))
+    (check-equal? (rejected-id source)
+                  (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
 
 (test-case "損失のある tag-compat? 候補より、損失の無い作り直し候補を選ぶ"
   (define expected (normalize-type `(Union (Record ((a Int imm))) ,keep-member)))

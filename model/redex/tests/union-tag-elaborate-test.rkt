@@ -295,13 +295,13 @@
     `(Fn ((u ,owned-union)) ,owned-target (Own)
          (Let (r let ,owned-target) (Move u) r)))))
 
-(test-case "片方だけにある Owned 残余は証明なしでは拒否する"
-  (check-equal?
-   (rejected-code
-    '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))
-                    (Record ((a Int imm) (c String imm))))))
-         Int () (Let (r let (Record ((a Int imm)))) (Move u) 0)))
-   (code 'owned-narrowing-needs-proof)))
+(test-case "片方だけにある Owned 残余は Union 分解の RSD で回収する"
+  (match-define (list core _type _row)
+    (accepted
+     '(Fn ((u (Union (Record ((a Int imm) (o (Owned Int) imm)))
+                     (Record ((a Int imm) (c String imm))))))
+          Int (Own) (Let (r let (Record ((a Int imm)))) (Move u) 0))))
+  (check-true (regexp-match? #rx"RemainderSafelyDropped" (format "~s" core))))
 
 (test-case "Owned を含まない異なる共通残余は ROW-005 で合流する"
   (match-define (list _ type _)

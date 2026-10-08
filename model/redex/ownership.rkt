@@ -70,16 +70,24 @@
      'ok]
     [(and (elaboration-union-mode)
           (memq ctx '(top chain))
-          (not (union-type? actual))
-          (union-type? expected))
-     (if (for/or ([expected-member (in-list (union-members expected))])
-           (and (compatible? actual expected-member)
-                (let ([kind
-                       (owned-narrowing-kind/impl actual expected-member
-                                                  compatible? 'top)])
-                  (or (eq? kind 'ok)
-                      (eq? kind 'nested-drop)
-                      (drop-obligation? kind)))))
+          (or (union-type? actual) (union-type? expected)))
+     (define (member-kind-ok? kind)
+       (or (eq? kind 'ok)
+           (eq? kind 'nested-drop)
+           (drop-obligation? kind)))
+     (define (accepts-actual-member? actual-member)
+       (if (union-type? expected)
+           (for/or ([expected-member (in-list (union-members expected))])
+             (and (compatible? actual-member expected-member)
+                  (member-kind-ok?
+                   (owned-narrowing-kind/impl actual-member expected-member
+                                              compatible? 'top))))
+           (and (compatible? actual-member expected)
+                (member-kind-ok?
+                 (owned-narrowing-kind/impl actual-member expected
+                                            compatible? 'top)))))
+     (if (for/and ([actual-member (in-list (union-members actual))])
+           (accepts-actual-member? actual-member))
          'ok
          'reject)]
     [(or (union-type? actual) (union-type? expected))

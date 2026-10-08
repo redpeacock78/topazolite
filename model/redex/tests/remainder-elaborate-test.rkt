@@ -287,7 +287,7 @@
      (fail-check (format "merge-branches の RSD programme が拒否された: ~s"
                          diagnostic))]))
 
-(test-case "Union expected の entry fixture は b1 では OWN-004 で拒否する"
+(test-case "Union expected の entry fixture は Union 分解の RSD で型付けできる"
   (define wide-member
     `(Record ((a Bool imm) (owned ,option-owned imm))))
   (define narrow-member '(Record ((a Int imm))))
@@ -299,10 +299,14 @@
     (normalize-type `(Union ,common-member String)))
   (define source-type `(Record ((p ,actual-union imm))))
   (define expected-type `(Record ((p ,expected-union imm))))
-  (check-equal?
-   (diagnostic-id-of
-    (elab `(Fn ((source ,source-type)) ,expected-type (Own) (Move source))))
-   "E-OWN-029"))
+  (match (elab `(Fn ((source ,source-type)) ,expected-type (Own) (Move source)))
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-not-false (find-rsd erased))
+     (check-equal? (core-type-of erased '() callables) (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "Union entry の RSD programme が拒否された: ~s"
+                         diagnostic))]))
 
 (test-case "Eliminate の枝 check で NFn の内側の損失は RSD にしない"
   (define source

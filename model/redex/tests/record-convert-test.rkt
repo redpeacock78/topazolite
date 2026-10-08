@@ -115,6 +115,16 @@
                          (compiled-type artifact))
      (list (last configs) rules))))
 
+(define (check-rsd-drops artifact token-count)
+  (check-true
+   (regexp-match? #rx"RemainderSafelyDropped"
+                  (format "~s" (erase-core (compiled-core artifact)))))
+  (define-values (final rules) (apply values (run-compiled-execution-core artifact)))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (match final
+    [`(cfg ,_value ,_heap ,_states ,tokens ,_trace)
+     (check-equal? (map second tokens) (make-list token-count 'Dropped))]))
+
 (define (apply-function input-type input-value body return-type row)
   `(Apply
     (Fn ((argument ,input-type)) ,return-type ,row ,body)
@@ -408,16 +418,18 @@
     (elaborate-compiled
      (decompose-record-function (list mutable immutable) expected upper)))))
 
-(test-case "片方の成分だけにある Owned 残余は needs-proof で拒否する"
+(test-case "片方の成分だけにある Owned 残余は分解時に RSD で回収する"
   (define left (owned-residual-record 'Int))
   (define right '(Record ((a Int imm) (b Bool imm))))
   (define source-type (normalize-type `(Union ,left ,right)))
-  (check-equal?
-   (rejected-code
-    (owned-residual-program
-     'let source-type (owned-residual-value 'Int 2)
-     (row005-join (list left right))))
-   (code 'owned-narrowing-needs-proof)))
+  (define upper (row005-join (list left right)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       source-type (owned-residual-value 'Int 2)
+       `(Let (r let ,upper) (Move argument) 0) 'Int '(Own)))))
+  (check-rsd-drops artifact 1))
 
 (test-case "共有 Owned 残余を const で束縛すると残余で拒否する"
   (define left (owned-residual-record 'Int))
@@ -468,17 +480,18 @@
     [`(cfg ,_value ,_heap ,_states ,tokens ,_trace)
      (check-equal? (map second tokens) '(Dropped))]))
 
-(test-case "束縛の位置の decompose の非 Record 分岐は Owned の残余の損失を拒否する"
+(test-case "束縛の位置の decompose の非 Record 分岐は RSD で Owned 残余を回収する"
   (define source `(Record ((a Int imm) (o ,owned-leaf imm))))
   (define usrc (normalize-type `(Union ,source Int)))
   (define target (normalize-type '(Union (Record ((a Int imm))) Int)))
-  (check-equal?
-   (rejected-code
-    (apply-function usrc
-                    `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
-                    `(Let (u let ,target) (Move argument) 0)
-                    'Int '(Own)))
-   (code 'owned-narrowing-rejected)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function usrc
+                      `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+                      `(Let (u let ,target) (Move argument) 0)
+                      'Int '(Own)))))
+  (check-rsd-drops artifact 1))
 
 (test-case "check の位置の恒等は狭い Union を Core の型に保つ"
   ;; Record の欄 a は check の位置であり、狭い型から広い Union への
@@ -935,21 +948,22 @@
      (check-equal? (length tokens) 1)
      (check-equal? (map second tokens) '(Available))]))
 
-(test-case "tag-compat? でない成分の片方だけにある Owned 残余は証明を要求する"
+(test-case "tag-compat? でない成分の片方だけにある Owned 残余を RSD で回収する"
   (define left
     `(Record ((a Bool imm) (o ,owned-leaf imm))))
   (define right '(Record ((a Int imm))))
   (define source-type (normalize-type `(Union ,left ,right)))
-  (check-equal?
-   (rejected-code
-    (apply-function
-     source-type
-     `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
-     `(Let (r let ,decompose-a-bool-or-int) (Move argument) 0)
-     'Int '(Own)))
-   (code 'owned-narrowing-needs-proof)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       source-type
+       `(Rec ((a imm 1) (o imm ,owned-leaf-value)))
+       `(Let (r let ,decompose-a-bool-or-int) (Move argument) 0)
+       'Int '(Own)))))
+  (check-rsd-drops artifact 1))
 
-(test-case "成分から W_k への入れ子の Owned 残余も証明を要求する"
+(test-case "成分から W_k への入れ子の Owned 残余を RSD で回収する"
   (define nested-owned
     `(Record ((x Int imm) (o ,owned-leaf imm))))
   (define nested-plain '(Record ((x Int imm))))
@@ -963,11 +977,12 @@
                 `(drop-obligation ,member ,wrapped))
   ;; 両成分の W_k は wrapped そのものなので W_k から上界への narrowing は無い。
   (check-equal? (row005-join (list wrapped wrapped)) wrapped)
-  (check-equal?
-   (rejected-code
-    (apply-function
-     (normalize-type `(Union ,member ,other))
-     `(Rec ((a imm (Rec ((x imm 1) (o imm ,owned-leaf-value))))))
-     `(Let (r let ,wrapped) (Move argument) 0)
-     'Int '(Own)))
-   (code 'owned-narrowing-needs-proof)))
+  (define artifact
+    (check-compiled-source-core
+     (elaborate-compiled
+      (apply-function
+       (normalize-type `(Union ,member ,other))
+       `(Rec ((a imm (Rec ((x imm 1) (o imm ,owned-leaf-value))))))
+       `(Let (r let ,wrapped) (Move argument) 0)
+       'Int '(Own)))))
+  (check-rsd-drops artifact 1))
