@@ -28,7 +28,8 @@
                   tag-bound-failure?
                   branch-types-upper-bound
                   merge-record-types/impl
-                  core-type-of)
+                  core-type-of
+                  core-type-of/diagnostic)
          "validators.rkt")
 
 (provide UCore
@@ -804,7 +805,8 @@
     ;; 候補への再構築を試す間に生名を消費しても、本番の変換名へ影響
     ;; させない。試行で使う項は破棄するため、変換が参照を埋め込める
     ;; span 付き Core 変数を渡す。
-    (define (rebuild-probe-core actual member kind s propositions)
+    (define (rebuild-probe-core actual member kind s propositions
+                                #:transfer [transfer 'move])
       (call-with-restored-state
        (lambda ()
          (define actual-kind (narrowing-kind actual member propositions))
@@ -820,15 +822,20 @@
                                            actual member s propositions)
                   (values `(#:var rebuild-probe ,s) actual)))
                 (define-values (converted _type)
-                  (convert probe-core probe-type member s propositions))
+                  (convert probe-core probe-type member s propositions
+                           #:transfer transfer))
                 converted)))))
 
-    (define (rebuild-reachable? actual member kind s propositions)
-      (and (rebuild-probe-core actual member kind s propositions) #t))
+    (define (rebuild-reachable? actual member kind s propositions
+                                #:transfer [transfer 'move])
+      (and (rebuild-probe-core actual member kind s propositions
+                               #:transfer transfer)
+           #t))
 
     ;; 成分の位置でなく損失の種類で優先順位を決める。試行による生名の消費は
     ;; rebuild-probe-core が復元する。
-    (define (union-member-tiers actual members s propositions)
+    (define (union-member-tiers actual members s propositions
+                                #:transfer [transfer 'move])
       (define context (initial-candidate-context propositions))
       (define analyses
         (for/list ([member (in-list members)])
@@ -849,7 +856,8 @@
                    #:when (and (not (third analysis))
                                (eq? (second analysis) 'ok)))
           (cons (first analysis)
-                (rebuild-probe-core actual (first analysis) 'ok s propositions))))
+                (rebuild-probe-core actual (first analysis) 'ok s propositions
+                                    #:transfer transfer))))
       (define tier2
         (for/list ([probe (in-list tier2-probes)]
                    #:when (and (cdr probe)
@@ -879,7 +887,8 @@
                                                  (first analysis) context))
                                (rebuild-reachable? actual (first analysis)
                                                    'drop-obligation s
-                                                   propositions)))
+                                                   propositions
+                                                   #:transfer transfer)))
           (first analysis)))
       (define tier4
         (remove-duplicates (append tier4-rebuild tier2-lossy) type-equiv?))
@@ -887,7 +896,8 @@
 
     ;; 完全一致の後、損失のない成分を優先する。
     (define (choose-union-member actual expected s propositions
-                                 #:no-member-key [no-member-key 'type-mismatch])
+                                 #:no-member-key [no-member-key 'type-mismatch]
+                                 #:transfer [transfer 'move])
       (define members (union-members expected))
       (define exact
         (for/first ([member (in-list members)]
@@ -897,7 +907,8 @@
         [exact exact]
         [else
          (define-values (tier1 tier2 tier3 tier4)
-           (union-member-tiers actual members s propositions))
+           (union-member-tiers actual members s propositions
+                               #:transfer transfer))
          (define selected-tier
            (or (and (pair? tier1) tier1)
                (and (pair? tier2) tier2)
@@ -924,10 +935,12 @@
                     expected actual)])]))
 
     (define (union-inject core actual expected s propositions
-                          #:no-member-key [no-member-key 'type-mismatch])
+                          #:no-member-key [no-member-key 'type-mismatch]
+                          #:transfer [transfer 'move])
       (define member
         (choose-union-member actual expected s propositions
-                             #:no-member-key no-member-key))
+                             #:no-member-key no-member-key
+                             #:transfer transfer))
       (define context (initial-candidate-context propositions))
       (define-values (discharged actual*)
         (discharge-remainder core actual member s propositions))
@@ -935,13 +948,15 @@
         (if (tag-compat? actual* member context)
             discharged
             (let-values ([(converted _type)
-                          (convert discharged actual* member s propositions)])
+                          (convert discharged actual* member s propositions
+                                   #:transfer transfer)])
               converted)))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
     ;; 関数値の引数と結果は、同じ OWN-004 の順で変換してから通常の convert
     ;; へ渡す。c3a2 では RSD を含む adapter をまだ生成しない。
-    (define (convert-adapter-value core actual expected s propositions)
+    (define (convert-adapter-value core actual expected s propositions
+                                   #:transfer [transfer 'move])
       (unless (type-compatible? actual expected propositions)
         (reject s 'type-mismatch expected actual))
       (define-values (discharged actual*)
@@ -954,7 +969,8 @@
          (reject s 'type-mismatch expected actual)]
         [_ (reject s 'owned-narrowing-rejected expected actual*)])
       (define-values (converted converted-type)
-        (convert discharged actual* expected s propositions))
+        (convert discharged actual* expected s propositions
+                 #:transfer transfer))
       ;; c3b で adapter 内の RSD を許す際にも、変換後 Core の検査を fail-closed に保つ。
       ;; c3a2 では上の NFn 内部判定が先に reject するため、公開入力からは到達しない。
       (when (core-has-remainder-drop? converted)
@@ -968,9 +984,6 @@
           `(NFn (,expected-parameters ...) ,expected-return ,expected-in
                 ,expected-out ,expected-obligations ,_expected-origin))
          (unless (= (length actual-parameters) (length expected-parameters))
-           (reject s 'type-mismatch expected actual))
-         (when (or (ormap resource-type? actual-parameters)
-                   (ormap resource-type? expected-parameters))
            (reject s 'type-mismatch expected actual))
          (unless (type-compatible? actual expected propositions)
            (reject s 'type-mismatch expected actual))
@@ -990,15 +1003,23 @@
            (for/list ([name (in-list parameter-names)]
                       [source-type (in-list expected-parameters)]
                       [target-type (in-list actual-parameters)])
+             (define resource-argument? (resource-type? source-type))
              (define-values (converted _type)
-               (convert-adapter-value `(#:var ,name ,s)
-                                      source-type target-type s propositions))
-             (define local-name (fresh-union-name))
-             (list local-name target-type converted)))
+               (convert-adapter-value
+                (if resource-argument?
+                    `(Forward ,s (#:var ,name ,s))
+                    `(#:var ,name ,s))
+                source-type target-type s propositions
+                #:transfer (if resource-argument? 'forward 'move)))
+             (define local-name
+               (and (not resource-argument?) (fresh-union-name)))
+             (list local-name target-type converted resource-argument?)))
          (define applied
            `(Apply ,s (#:var ,function-name ,s)
                    ,@(for/list ([argument (in-list converted-arguments)])
-                       `(#:var ,(first argument) ,s))))
+                       (if (fourth argument)
+                           (third argument)
+                           `(#:var ,(first argument) ,s)))))
          (define applied-with-proofs
            (for/fold ([body applied]) ([proof (in-list (reverse proofs))])
              `(Discharge ,s ,proof ,body)))
@@ -1007,7 +1028,8 @@
                                   actual-return expected-return s propositions))
          (define body-core
            (for/fold ([body converted-return])
-                     ([argument (in-list (reverse converted-arguments))])
+                     ([argument (in-list (reverse converted-arguments))]
+                      #:unless (fourth argument))
              `(Let ,s ((#:bind ,(first argument) ,s) let
                        (#:ty ,(second argument) ,s))
                    ,(third argument)
@@ -1016,25 +1038,9 @@
            (cons `(#:bind ,function-name ,s)
                  (for/list ([name (in-list parameter-names)])
                    `(#:bind ,name ,s))))
-         (define adapter-environment
-           (append (list (list function-name actual))
-                   (for/list ([name (in-list parameter-names)]
-                              [type (in-list expected-parameters)])
-                     (list name type))))
-         (define body-result
-           (match (core-type-of `(Scope ,s () ,body-core)
-                                '() (reverse reversed-callables)
-                                adapter-environment)
-             [(list body-type body-row)
-              (unless (or (eq? body-type 'Never)
-                          (type-compatible? body-type expected-return
-                                            propositions))
-                (reject s 'type-mismatch expected-return body-type))
-              (judgment body-core expected-return body-row)]
-             [_ (reject s 'type-mismatch expected actual)]))
+         (define has-resource-arguments?
+           (ormap resource-type? expected-parameters))
          (define boundary (fresh-boundary))
-         (check-function-body-row s body-result expected-return boundary
-                                  expected-out)
          (define signature
            `(NFn ,(cons actual expected-parameters) ,expected-return
                 ,expected-in ,expected-out ,expected-obligations User))
@@ -1045,12 +1051,52 @@
                                (cons function-name parameter-names)
                                (cons actual expected-parameters)
                                '() '() body-core '()))
+         (define adapter-environment
+           (append (list (list function-name actual))
+                   (for/list ([name (in-list parameter-names)]
+                              [type (in-list expected-parameters)])
+                     (list name type))))
+         (define body-result
+           (if has-resource-arguments?
+               ;; Forward の gate は所有する Lam の下で binder を特定する。
+               ;; 完成した Lam を後で型付けし、ここではその本体を組み立てる。
+               (judgment body-core expected-return
+                         (cons `(Return ,boundary ,expected-return)
+                               expected-out))
+               (match (core-type-of `(Scope ,s () ,body-core)
+                                    '() (reverse reversed-callables)
+                                    adapter-environment)
+                 [(list body-type body-row)
+                  (unless (or (eq? body-type 'Never)
+                              (type-compatible? body-type expected-return
+                                                propositions))
+                    (reject s 'type-mismatch expected-return body-type))
+                  (judgment body-core expected-return body-row)]
+                 [_ (reject s 'type-mismatch expected actual)])))
+         (check-function-body-row s body-result expected-return boundary
+                                  expected-out)
          (define adapter-lambda
            (finish-fn s parameter-binders
                       (cons actual expected-parameters)
                       '() '() capture-raw-names raw-names capture-binders
                       core-binders expected-return boundary body-result
                       signature callable reserved-with-formals))
+         (when has-resource-arguments?
+           (match (core-type-of/diagnostic
+                   (judgment-core adapter-lambda) '()
+                   (reverse reversed-callables))
+             [(list adapter-type _row)
+              (unless (type-equiv? adapter-type signature)
+                (reject s 'type-mismatch signature adapter-type))]
+             [diagnostic
+              (case (diagnostic-id diagnostic)
+                [("E-EFF-002")
+                 (reject s 'undeclared-function-effect
+                         (diagnostic-expected diagnostic)
+                         (diagnostic-found diagnostic))]
+                [("E-OWN-036")
+                 (reject s 'forward-invalid-context)]
+                [else (reject s 'type-mismatch expected actual)])]))
          (values
           `(Let ,s ((#:bind ,source-name ,s) let (#:ty ,actual ,s))
                 ,core
@@ -1063,7 +1109,8 @@
       (match type [`(Record ,row) row] [_ #f]))
 
     ;; P2m2b spec §3.1。(values Core 変換後の型) を返すか、その位置で拒否する。
-    (define (convert core actual expected s propositions #:entry? [entry? #f])
+    (define (convert core actual expected s propositions #:entry? [entry? #f]
+                     #:transfer [transfer 'move])
       (define actual* (normalize-type actual))
       (define expected* (normalize-type expected))
       (define context (initial-candidate-context propositions))
@@ -1075,13 +1122,15 @@
         [(tag-compat? actual* expected* context)
          (values core actual*)]
         [(and expected-union? (not actual-union?))
-         (values (union-inject core actual* expected* s propositions)
+         (values (union-inject core actual* expected* s propositions
+                               #:transfer transfer)
                  expected*)]
         [actual-union?
-         (decompose core actual* expected* s propositions #:entry? entry?)]
+         (decompose core actual* expected* s propositions
+                    #:entry? entry? #:transfer transfer)]
         [(and (record-row-of actual*) (record-row-of expected*))
          (rebuild-record core (record-row-of actual*) (record-row-of expected*)
-                         s propositions)]
+                         s propositions #:transfer transfer)]
         [(and (match actual* [`(NFn ,_ ...) #t] [_ #f])
               (match expected* [`(NFn ,_ ...) #t] [_ #f])
               (not (type-compatible? actual* expected* propositions)))
@@ -1164,7 +1213,8 @@
                          first-type))))
       (values (map car rebuilt-pairs) upper))
 
-    (define (decompose core actual expected s propositions #:entry? [entry? #f])
+    (define (decompose core actual expected s propositions #:entry? [entry? #f]
+                       #:transfer [transfer 'move])
       (define context (initial-candidate-context propositions))
       (define branches
         (for/list ([member (in-list (union-members actual))])
@@ -1175,6 +1225,10 @@
                  (fresh-owned-name (set-add union-reserved name))))
           (list member name alias)))
       (define (reference name) `(#:var ,name ,s))
+      (define (consume-reference ref)
+        (if (eq? transfer 'forward)
+            `(Forward ,s ,ref)
+            `(Move ,s ,ref)))
       (define (eliminate bodies)
         `(UnionEliminate ,s ,core
            ,(for/list ([branch (in-list branches)]
@@ -1193,9 +1247,13 @@
       (define (wrap-reference mode type bound [move? #f])
         (define name (fresh-union-name))
         (define ref (reference name))
-        `(Let ,s ((#:bind ,name ,s) ,mode (#:ty ,type ,s))
+        `(Let ,s ((#:bind ,name ,s)
+                  ,(if (and move? (eq? transfer 'forward) (eq? mode 'const))
+                       'let
+                       mode)
+                  (#:ty ,type ,s))
               ,bound
-              ,(if move? `(Move ,s ,ref) ref)))
+              ,(if move? (consume-reference ref) ref)))
       (match expected
         [`(Record ,expected-row)
          ;; 各枝を expected の欄型を持つ W_k に揃えてから上界を取る。
@@ -1229,7 +1287,9 @@
              (match-define (list member name alias) branch)
              (define ref (reference (or alias name)))
              (define consumed-ref
-               (if (and alias (not entry?)) `(Move ,s ,ref) (reference name)))
+               (if (and alias (not entry?))
+                   (consume-reference ref)
+                   (reference name)))
              (define converted
                (if (eq? member 'Never)
                    consumed-ref
@@ -1251,7 +1311,8 @@
                                  (let-values ([(rebuilt _type)
                                                (convert member-core member-type
                                                         expected s propositions
-                                                        #:entry? entry?)])
+                                                        #:entry? entry?
+                                                        #:transfer transfer)])
                                    rebuilt))]
                             [wrapped
                              (wrap-reference
@@ -1273,8 +1334,9 @@
                              wrapped-core
                              (let-values ([(rebuilt _type)
                                            (convert wrapped-core
-                                                    wrapped-type-after upper s
-                                                    propositions #:entry? entry?)])
+                                            wrapped-type-after upper s
+                                                    propositions #:entry? entry?
+                                                    #:transfer transfer)])
                                rebuilt)))))))
              (resource-branch-body member name alias converted)))
           upper)]
@@ -1284,9 +1346,10 @@
              (match-define (list member name alias) branch)
              (define-values (body _type)
                (convert (if alias
-                            `(Move ,s ,(reference alias))
+                            (consume-reference (reference alias))
                             (reference name))
-                        member expected s propositions #:entry? entry?))
+                        member expected s propositions #:entry? entry?
+                        #:transfer transfer))
              (resource-branch-body member name alias body)))
          ;; c2 spec §3。Union の成分は root が Owned でないので、root Owned の
          ;; expected への成分の convert は手前で落ち、ここへは届かない。
@@ -1299,7 +1362,8 @@
 
     ;; P2m2c spec §5.1。expected の欄ごとに作り直し、変換か印の変更が要る欄だけを
     ;; RecRewrite の entry にする。欄を物理的に落とさないので、出力の型は残余を保つ。
-    (define (rebuild-record core actual-row expected-row s propositions)
+    (define (rebuild-record core actual-row expected-row s propositions
+                            #:transfer [transfer 'move])
       (define context (initial-candidate-context propositions))
       (define (mismatch)
         (reject s 'type-mismatch `(Record ,expected-row) `(Record ,actual-row)))
@@ -1336,7 +1400,7 @@
                 (define binder (fresh-union-name))
                 (define-values (body converted-type)
                   (convert `(#:var ,binder ,s) actual-type expected-type s
-                           propositions #:entry? #t))
+                           propositions #:entry? #t #:transfer transfer))
                 (list (list label binder actual-type expected-mark
                             converted-type body)
                       (list* label converted-type expected-mark

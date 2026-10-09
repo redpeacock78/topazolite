@@ -127,6 +127,100 @@
     (check-true (config-ok? configuration callables expected row)
                 (format "config ~a が不正: ~s" index configuration))))
 
+(define (configuration-states configuration)
+  (match configuration [`(cfg ,_ ,_ ,states ,_ ...) states]))
+
+(define (state-transition-count configs rules from to [rule-filter #f])
+  (for/sum ([before (in-list configs)]
+            [rule (in-list rules)]
+            [after (in-list (cdr configs))]
+            #:when (or (not rule-filter) (eq? rule rule-filter)))
+    (for/sum ([entry (in-list (configuration-states before))])
+      (define following (assoc (first entry) (configuration-states after)))
+      (if (and (eq? (second entry) from)
+               following
+               (eq? (second following) to))
+          1
+          0))))
+
+(define (state-transition-place-ids configs rules from to rule-filter)
+  (for/fold ([ids '()])
+            ([before (in-list configs)]
+             [rule (in-list rules)]
+             [after (in-list (cdr configs))])
+    (if (eq? rule rule-filter)
+        (append
+         ids
+         (for/list ([entry (in-list (configuration-states before))]
+                    #:when (let ([following
+                                  (assoc (first entry)
+                                         (configuration-states after))])
+                             (and (eq? (second entry) from)
+                                  following
+                                  (eq? (second following) to))))
+           (first entry)))
+        ids)))
+
+(define (resource-adapter-program source-parameter target-parameter argument
+                                  [actual-result 'Unit]
+                                  [expected-result actual-result]
+                                  [actual-body '(Drop argument)])
+  (define actual
+    `(NFn (,target-parameter) ,actual-result (Own) ()))
+  (define expected
+    `(NFn (,source-parameter) ,expected-result (Own) ()))
+  `(Apply
+    (Fn ((f ,actual)) ,expected-result (Own)
+      (Let (adapted const ,expected) f (Apply adapted ,argument)))
+    (Fn ((argument ,target-parameter)) ,actual-result (Own) ,actual-body)))
+
+(define (owned-option-value token)
+  `(Construct some (Types (Owned Res)) (Apply acquire ,token)))
+
+(define (resource-record-value label value token)
+  `(Rec ((,label imm ,value) (owned imm ,(owned-option-value token)))))
+
+(define (make-union-value member value union-type)
+  `(Apply (Fn ((argument ,member)) ,union-type (Own) (Move argument)) ,value))
+
+(define (check-resource-adapter-run source expected-forward-count)
+  (match-define (list core type row callables)
+    (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (define adapter (find-adapter (erase-core core)))
+  (check-not-false adapter)
+  (match-define (list _name _actual _callable _binders body _curry) adapter)
+  (check-true (tree-contains? body
+                              (lambda (node)
+                                (match node [`(Forward ,_) #t] [_ #f]))))
+  (check-false (tree-contains? body
+                               (lambda (node)
+                                 (match node [`(Move ,_) #t] [_ #f]))))
+  (define execution (execution-core core callables))
+  (define-values (status target) (lower (erase-core execution) 'racket-cs))
+  (check-eq? status 'ok)
+  (check-eq? (compare-observations execution target 1) 'match)
+  (define-values (configs rules)
+    (trace-g2 `(cfg (Scope () ,execution) () () () ())))
+  (check-config-trace configs callables type)
+  (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules)
+                expected-forward-count)
+  (check-equal? (state-transition-count configs rules 'Available 'Moved
+                                        'R-Forward)
+                expected-forward-count)
+  (define forwarded-place-ids
+    (state-transition-place-ids configs rules 'Available 'Moved 'R-Forward))
+  (check-equal? (length forwarded-place-ids) expected-forward-count)
+  (check-equal? (length forwarded-place-ids)
+                (length (remove-duplicates forwarded-place-ids)))
+  (for ([rule (in-list rules)]
+        [before (in-list configs)]
+        [after (in-list (cdr configs))]
+        #:when (eq? rule 'R-ScopeValue))
+    (check-equal? (state-transition-count (list before after) (list rule)
+                                          'Available 'Dropped)
+                  0)))
+
 (define adapter-source
   '(Let (adapted const (NFn (Int) (Union Int String) () ()))
         (Fn ((x (Union Int String))) Int () 7)
@@ -338,16 +432,103 @@
            (Let (adapted const ,expected) (Move f) unit)))
      e-type-mismatch)))
 
-(test-case "資源仮引数を持つ内側 adapter は E-TYP-012 で拒否する"
-  (define inner-actual '(NFn ((Owned Res)) (Union Int String) () ()))
-  (define inner-expected '(NFn ((Owned Res)) Int () ()))
-  (define actual `(NFn (,inner-actual) Int () ()))
-  (define expected `(NFn (,inner-expected) Int () ()))
-  (check-equal?
-   (diagnostic-id-of
-    `(Fn ((f ,actual)) ,expected ()
-         (Let (adapted const ,expected) f adapted)))
-   e-type-mismatch))
+(test-case "Owned の関数引数を変換する内側 adapter も Forward で実行する"
+  (define inner-actual '(NFn ((Owned Res)) (Union Int String) (Own) ()))
+  (define inner-expected '(NFn ((Owned Res)) Int (Own) ()))
+  (define actual `(NFn (,inner-actual) (Union Int String) (Own) ()))
+  (define expected `(NFn (,inner-expected) (Union Int String) (Own) ()))
+  (define source
+    `(Apply
+      (Fn ((f ,actual)) (Union Int String) (Own)
+        (Let (adapted const ,expected) f
+          (Apply adapted
+                 (Fn ((argument (Owned Res))) Int (Own)
+                   (Let (dropped let Unit) (Drop argument) 9)))))
+      (Fn ((inner ,inner-actual)) (Union Int String) (Own)
+        (Apply inner (Apply acquire 901)))))
+  (check-resource-adapter-run source 1))
+
+(test-case "Owned 引数と返り値の変換を持つ adapter は binder を Forward する"
+  (check-resource-adapter-run
+   (resource-adapter-program
+    '(Owned Res) '(Owned Res) '(Apply acquire 902)
+    'Int '(Union Int String)
+    '(Let (dropped let Unit) (Drop argument) 7))
+   1))
+
+(test-case "Record から Record への資源引数変換は Forward する"
+  (define option-owned '(Option (Owned Res)))
+  (define source-type
+    `(Record ((a Int imm) (owned ,option-owned imm))))
+  (define target-type
+    `(Record ((a (Union Int Bool) imm) (owned ,option-owned imm))))
+  (check-resource-adapter-run
+   (resource-adapter-program
+    source-type target-type
+    (resource-record-value 'a 7 903))
+   1))
+
+(test-case "Union から Record への資源引数変換は alias と一時 place を Forward する"
+  (define option-owned '(Option (Owned Res)))
+  (define member-int
+    `(Record ((a Int imm) (owned ,option-owned imm))))
+  (define member-bool
+    `(Record ((a Bool imm) (owned ,option-owned imm))))
+  (define source-type `(Union ,member-int ,member-bool))
+  (define target-type
+    `(Record ((a (Union Int Bool) imm) (owned ,option-owned imm))))
+  (for ([member (in-list (list member-int member-bool))]
+        [value (in-list (list 11 '(Construct true (Types))))]
+        [token (in-list '(904 905))])
+    (check-resource-adapter-run
+     (resource-adapter-program
+      source-type target-type
+      (make-union-value
+       member (resource-record-value 'a value token) source-type))
+     3)))
+
+(test-case "Record から Union への資源引数変換は RecRewrite 内で Forward する"
+  (define option-owned '(Option (Owned Res)))
+  (define source-type
+    `(Record ((a Int imm) (owned ,option-owned imm))))
+  (define member
+    `(Record ((a (Union Int Bool) imm) (owned ,option-owned imm))))
+  (define target-type `(Union ,member String))
+  (check-resource-adapter-run
+   (resource-adapter-program
+    source-type target-type
+    (resource-record-value 'a 12 906))
+   1))
+
+(test-case "Union 資源引数の非 Record 分岐は転送 mode だけ let を使う"
+  (define option-owned '(Option (Owned Res)))
+  (define source-member
+    `(Record ((a Int imm) (owned ,option-owned imm))))
+  (define target-member
+    `(Record ((a (Union Int Bool) imm) (owned ,option-owned imm))))
+  (define source-type `(Union ,source-member String))
+  (define target-type `(Union ,target-member String))
+  (check-resource-adapter-run
+   (resource-adapter-program
+    source-type target-type
+    (make-union-value source-member
+                      (resource-record-value 'a 907 907)
+                      source-type))
+   3)
+  (define default-source
+    `(Apply
+      (Fn ((argument ,source-type)) ,target-type (Own) (Move argument))
+      ,(make-union-value source-member
+                         (resource-record-value 'a 908 908)
+                         source-type)))
+  (match-define (list default-core default-type default-row default-callables)
+    (elaborate-ok default-source))
+  (check-equal? (core-type-of default-core '() default-callables)
+                (list default-type default-row))
+  (check-true
+   (tree-contains? (erase-core default-core)
+                   (lambda (node)
+                     (match node [`(Let (,_ const ,_) ,_ ,_) #t] [_ #f])))))
 
 (test-case "返り値の変換が Own を作る adapter は E-EFF-002"
   (define owned-option '(Option (Owned Res)))
