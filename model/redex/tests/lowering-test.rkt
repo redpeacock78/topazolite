@@ -290,10 +290,12 @@
                 (PRecRemove rsd:0 (f:x)))))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
 
-(test-case "Forward の lowering は Core の型付けと同じ effect row を保つ"
+(test-case "Forward の lowering は latent row を保ち Move の own も残す"
   (define sink-type '(NFn ((Owned Res)) Int () () () User))
   (define owner-type `(NFn (,sink-type (Owned Res)) Int () () () User))
   (define callables `((owner ,owner-type) (sink ,sink-type)))
+  (define (check-lowered-row core row label)
+    (check-equal? (effect-kinds-of (lower-ok core)) (row-kinds row) label))
   (for ([body (in-list
                (list '(Apply h (Forward x))
                      '(Apply h
@@ -304,11 +306,21 @@
       `(Lam User owner (h p)
          (Handle (Return owner Int) (answer -> answer)
            (Scope () (Let (x let (Owned Res)) p ,body)))))
-    (match (core-type-of core '() callables)
-      [(list _ row)
-       (check-equal? (effect-kinds-of (lower-ok core)) (row-kinds row)
-                     (format "body ~s" body))]
-      [other (fail (format "型付け可能な Forward fixture を期待した: ~s" other))])))
+    (check-equal? (core-type-of core '() callables)
+                  (list owner-type '())
+                  (format "Core の型付け body ~s" body))
+    (match (lower-ok core)
+      [`(PClosure ,_ ,_ ,lowered-body)
+       (check-equal? (effect-kinds-of lowered-body) (row-kinds '())
+                     (format "latent row / body ~s" body))]
+      [other (fail (format "lowered Lam の PClosure を期待した: ~s" other))]))
+  (define move-core
+    '(Let (x let (Owned Res)) (resource 0) (Apply h (Move x))))
+  (match (core-type-of move-core '() '() `((h ,sink-type)))
+    [(list 'Int row)
+     (check-equal? (row-kinds row) (set 'own))
+     (check-lowered-row move-core row "Move の own")]
+    [other (fail (format "Move の対照が own row で型付けされる: ~s" other))]))
 
 (test-case "RSD の lowering は optional と入れ子の欄を処理する"
   (define optional-proof
