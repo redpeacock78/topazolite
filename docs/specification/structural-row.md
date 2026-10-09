@@ -333,7 +333,9 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 この順位は損失の無い成分を先に選ぶためのものであり、成分の並び順では結果を変えない。
 `check-rec-against-union` では、第 4 層をリテラルの直接 check が RSD を含む候補（4a）と `rebuild` だけで到達する候補（4b）に分け、4a を先に調べる。
 RSD を含まないリテラルの直接 check 候補は第 2 層に含める。
-ただし現在の層分けは imm の `Record` 欄の鎖にある `Union` 欄の損失を区別せず、損失の無い成分と損失のある成分が同じ層に並ぶと `ambiguous-union-member`（`E-TYP-031`）になるため、この縮約は c2b2b2b で候補ごとの最終 Core が RSD を含むかによって分類して回収する。
+候補ごとの試行で得た Core に RSD が含まれるかを調べ、含まない第 2 層の候補はそこに残し、含む候補は第 4 層へ移す。
+`check-rec-against-union` では、RSD を含むリテラルの直接 check 候補を 4a、rebuild だけで到達する候補を 4b とし、RSD を含まないリテラル候補は第 2 層に置く。
+これにより、損失の無い成分と損失のある成分が同じ層に並んで `ambiguous-union-member`（`E-TYP-031`）になる縮約を解消する。
 borrowed view は `SUR-004`、明示 projection は `SUR-006` の担当であり、後続 Phase へ送る。
 
 elaborate は、expected が `Union` でない次の三つの判定点で `drop-obligation` を RSD によって解消する。
@@ -343,8 +345,9 @@ elaborate は `(Discharge (ProofRep (Reserved o-narrow) (RemainderSafelyDropped 
 三要素の `Let` では `let` と `mut` の束縛型が最上位の `Owned` 残余を保持するため、その最上位の損失には RSD を挿入せず、入れ子の損失だけを回収する。
 `const` では `Owned` 残余を RSD で除き、closed-binding の条件は RSD 適用後の残余に課すため、残る非 `Owned` 残余は従来どおり拒否する。
 `Union` への narrowing では、選んだ成分との対が `drop-obligation` なら RSD を挿入し、RSD 後の型から通常の `convert` を続ける。
-`decompose` による `Union` 分解では RSD を挿入せず、現行の拒否を保つ。
-この経路の扱いは c2b2b2b で決める。
+`decompose` による `Union` 分解では、`Record` 分岐の成分から W_k への変換と W_k から上界への変換、および `_` 分岐の成分選択で RSD を挿入する。
+この変更により、共通する `imm` の `Record` 欄の鎖にある `Union` 欄の損失は回収する。
+`NFn`、`Owned`、`Untrusted`、`Refined` の payload と mut 欄の内側にある `Union` の損失は引き続き拒否する。
 
 ### 3.4 型同値との分離
 

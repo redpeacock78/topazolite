@@ -346,8 +346,16 @@ v16 は typing へ `E-OWN-030` と `E-PRF-009` から `E-PRF-011` までの 4 �
 廃止した行は無いため、組は 180 に 5 を足した 185 になる。
 
 `owned-narrowing-needs-proof` は、Core の型付けでは RSD で包まれていない narrowing の判定で発行される。
-elaborate では `Union` 以外の判定点にある `drop-obligation` を RSD で解消するため、この key は出ない。
-`Union` を含む判定点で elaborate がこの key を発行するかは未確定であり、c2b2b2 で結論する。
+elaborate では `bind-with-mode`、`merge-branches` の `Record` 合流、注釈付き `Let` の変換後検査、`check-against-expected`、`Construct (Types ...)` の check にこの key へ進む防御分岐が残る。
+注釈の無い `Let` では `bind-with-mode` が同じ型を比べ、注釈付き `Let` では先行する RSD と `convert` の後に呼ばれる。
+注釈付き `Let` の `let` と `mut` は束縛型へ最上位の残余を戻し、`const` はその残余を RSD で除く。
+`merge-branches` は枝ごとに `discharge-remainder` を適用してから narrowing を再確認する。
+`check-against-expected` と `Construct (Types ...)` の check も、互換性を確認し `discharge-remainder` を適用した後に再判定する。
+このため、公開 `elab` 入力からこれらの分岐へ `drop-obligation` が残った状態では到達しない。
+`decompose` の二つの `Record` 分岐にも同じ防御分岐があるが、各対の確認前に `discharge-remainder` が残余を除くため到達しない。
+Union の候補選択では `drop-obligation` の成分を選べる層に入れる前に RSD を適用し、候補が残らない場合は `owned-narrowing-rejected` を返す。
+したがって現行の elaborate は公開 `elab` 入力からこの key を発行しない。
+Core の型付けは、RSD で包まれていない narrowing に対して引き続きこの key を発行する。
 
 v17 は surface へ `E-SUR-012` の 1 行を足した。
 
