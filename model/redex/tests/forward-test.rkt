@@ -721,3 +721,153 @@
      '(Apply h (Let (y let (Owned Res)) (Forward x) y))))
   (check-equal? (diagnostic-code-of-core core '() callables)
                 "E-OWN-036"))
+
+(define (replace-place-state configuration place new-state)
+  (match configuration
+    [`(cfg ,core ,heap ,states ,tokens ,events)
+     `(cfg ,core ,heap
+           ,(for/list ([entry (in-list states)])
+              (if (equal? (first entry) place)
+                  (list place new-state)
+                  entry))
+           ,tokens ,events)]))
+
+(define (replace-forward-with-move term place)
+  (match term
+    [`(Forward ,(? exact-nonnegative-integer? candidate))
+     (if (= candidate place) `(Move ,place) term)]
+    [(? pair?)
+     (cons (replace-forward-with-move (car term) place)
+           (replace-forward-with-move (cdr term) place))]
+    [_ term]))
+
+(define (new-place-between before after)
+  (for/first ([entry (in-list (config-states after))]
+              #:unless (assoc (first entry) (config-states before)))
+    (first entry)))
+
+(test-case "所有する Lam の Forward は一度だけ place を移す"
+  (define-values (owner callables)
+    (owner-lambda '(Apply h (Forward x)) sink-type '(Own)))
+  (define sink
+    '(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope () (Let (owned let (Owned Res)) argument 0)))))
+  (define core `(Apply ,owner ,sink (Move 0)))
+  (define expected-type
+    (match (core-type-of core '((0 Res)) callables)
+      [(list type _row) type]
+      [other (fail (format "Apply の型を得られない: ~s" other))]))
+  (define start
+    `(cfg (Scope (0) ,core) ((0 (resource 0))) ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-config-trace configs callables expected-type)
+  (check-equal? (count (λ (rule) (eq? rule 'R-Forward)) rules) 1)
+  (define transition
+    (for/first ([before (in-list configs)]
+                [rule (in-list rules)]
+                [after (in-list (cdr configs))]
+                #:when (eq? rule 'R-Forward))
+      (list before after)))
+  (check-not-false transition)
+  (define before-forward (first transition))
+  (define after-forward (second transition))
+  (define place (forward-place before-forward))
+  (check-not-false place)
+  (check-eq? (state-of before-forward place) 'Available)
+  (check-eq? (state-of after-forward place) 'Moved)
+  (check-equal? (available-to-moved-count configs place) 1)
+  (define row (runtime-row before-forward callables expected-type))
+  (check-false
+   (config-ok? (replace-place-state before-forward place 'Moved)
+               callables expected-type row))
+  (define moved-config (replace-place-state before-forward place 'Moved))
+  (define move-config
+    (match moved-config
+      [`(cfg ,control ,heap ,states ,tokens ,events)
+       `(cfg ,(replace-forward-with-move control place)
+             ,heap ,states ,tokens ,events)]))
+  (define move-row (runtime-row move-config callables expected-type))
+  (check-not-false move-row)
+  (check-true (config-ok? move-config callables expected-type move-row)))
+
+(test-case "Forward より先の Return は転送 place を cleanup する"
+  (define return-sink-type '(NFn ((Owned Res)) Unit () () () User))
+  (define owner-type
+    `(NFn (,return-sink-type (Owned Res)) Unit () ((Return b Unit)) () User))
+  (define sink
+    '(Lam User sink (argument)
+       (Handle (Return sink Unit) (answer -> answer)
+         (Scope () (Let (owned let (Owned Res)) argument unit)))))
+  (define owner
+    '(Lam User owner (h p)
+       (Handle (Return owner Unit) (answer -> answer)
+         (Scope ()
+           (Let (x let (Owned Res)) p
+             (Let (u let Unit) (Perform (Return b Unit) unit)
+               (Apply h (Forward x))))))))
+  (define callables `((owner ,owner-type) (sink ,return-sink-type)))
+  (define core
+    `(Handle (Return b Unit) (answer -> answer)
+       (Scope (0) (Let (h0 let ,return-sink-type) ,sink
+                    (Apply ,owner h0 (Move 0))))))
+  (define expected-type
+    (match (core-type-of core '((0 Res)) callables)
+      [(list type _row) type]
+      [other (fail (format "Return cleanup の型を得られない: ~s" other))]))
+  (define start
+    `(cfg ,core ((0 (resource 0))) ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-config-trace configs callables expected-type)
+  (define owned-transition
+    (for/first ([before (in-list configs)]
+                [rule (in-list rules)]
+                [after (in-list (cdr configs))]
+                #:when (eq? rule 'R-LetOwnedB))
+      (list before after)))
+  (check-not-false owned-transition)
+  (define place (new-place-between (first owned-transition)
+                                   (second owned-transition)))
+  (check-not-false place)
+  (define owner-scope-has-place?
+    (let walk ([term (config-core (second owned-transition))])
+      (match term
+        [`(Handle (Return owner Unit) ,_ (Scope (,places ...) ,_))
+         (and (member place places) #t)]
+        [(? pair?) (or (walk (car term)) (walk (cdr term)))]
+        [_ #f])))
+  (check-true owner-scope-has-place?)
+  (define scope-abort-position (index-of rules 'R-ScopeAbort))
+  (define handle-skip-position (index-of rules 'R-HandleSkip))
+  (check-not-false scope-abort-position)
+  (check-not-false handle-skip-position)
+  (check-true (< scope-abort-position handle-skip-position))
+  (check-false (memq 'R-Forward rules))
+  (check-equal?
+   (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+     (if (and (eq? (state-of before place) 'Available)
+              (eq? (state-of after place) 'Dropped))
+         1
+         0))
+   1)
+  (check-eq? (state-of (last configs) place) 'Dropped)
+  (check-equal? (config-core (last configs)) 'unit))
+
+(test-case "Forward と T の Let の観測は PR と一致する"
+  (define sink
+    '(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope () (Let (owned let (Owned Res)) argument 0)))))
+  (for ([body (in-list
+               (list '(Apply h (Forward x))
+                     '(Apply h
+                             (Let (y let (Owned Res))
+                               (Forward x)
+                               (Forward y)))))]
+        [label (in-list '("Forward" "Forward と T の Let"))])
+    (define-values (owner callables) (owner-lambda body))
+    (define core `(Apply ,owner ,sink (resource 23)))
+    (define-values (status target) (lower core 'racket-cs))
+    (check-eq? status 'ok label)
+    (check-eq? (compare-observations core target observation-depth) 'match
+               label)))
