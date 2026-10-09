@@ -401,6 +401,11 @@
           `(PRuntime move ,(if (exact-nonnegative-integer? pw)
                                `(PPlace ,pw)
                                (var-code pw)))]
+         [`(Forward ,w)
+          (define pw (peel-node w))
+          `(PRuntime forward ,(if (exact-nonnegative-integer? pw)
+                                  `(PPlace ,pw)
+                                  (var-code pw)))]
          [`(Drop ,body) `(PRuntime drop ,(lower-core body))]
          [`(Curry ,function ,argument)
           `(PRuntime curry ,(lower-core function) ,(lower-core argument))]
@@ -651,6 +656,8 @@
      (set-union (latent-kinds handler)
                 (set-remove (effect-kinds-of body) pop))]
     [`(PRuntime move ,argument) (set-add (effect-kinds-of argument) 'own)]
+    ;; Forward は OwnershipError を生じないので own を足さない。
+    [`(PRuntime forward ,argument) (effect-kinds-of argument)]
     [`(PRuntime drop ,argument) (set-add (effect-kinds-of argument) 'own)]
     [`(PRuntime yield ,observed ,next)
      (set-add (kinds-of-all (list observed next)) 'yield)]

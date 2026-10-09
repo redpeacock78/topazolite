@@ -145,6 +145,7 @@
                          ,effectful))
          (set sample-op2))
    (list 'PRuntime-move (term (PRuntime move (PPlace 0))) (set 'own))
+   (list 'PRuntime-forward (term (PRuntime forward (PPlace 0))) (set))
    (list 'PRuntime-drop (term (PRuntime drop ,effectful)) (set 'own sample-op))
    (list 'PRuntime-yield
          (term (PRuntime yield 1 ,effectful))
