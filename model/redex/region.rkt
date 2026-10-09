@@ -90,6 +90,7 @@
     [`(BorrowMutRef ,_ ,_ ,_) '()]
     [`(Error ,_) '()]
     [`(Move ,_) '()]
+    [`(Forward ,_) '()]
     [`(PrimVal ,_ ,_) '()]
     [`(TypeRep ,_ ,_ ,_) '()]
     [`(ProofRep ,_ ,_) '()]
@@ -248,6 +249,7 @@
        (set-union (walk c)
                   (if (symbol? w-own) (set w-own) (set)))]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
+      [`(Forward ,w) (if (symbol? w) (set w) (set))]
       [`(Reassign ,target ,value)
        (set-union (if (symbol? target) (set target) (set))
                   (walk value))]

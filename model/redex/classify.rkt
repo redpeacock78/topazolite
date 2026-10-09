@@ -329,6 +329,7 @@
             (walk next environment target-visible?))]
       [`(Suspend ,body) (walk body environment target-visible?)]
       [`(Move ,_) #t]
+      [`(Forward ,_) #t]
       [`(Borrow ,_) #t]
       [`(BorrowMut ,_) #t]
       [`(BorrowAt ,_ ,_ ,_) #t]
@@ -503,6 +504,7 @@
                            (walk next target-visible?)))]
       [`(Suspend ,body) (walk body target-visible?)]
       [`(Move ,name) (walk name target-visible?)]
+      [`(Forward ,name) (walk name target-visible?)]
       [`(Borrow ,place) (walk place target-visible?)]
       [`(BorrowMut ,place) (walk place target-visible?)]
       [`(BorrowAt ,_ ,_ ,place) (walk place target-visible?)]
@@ -547,11 +549,12 @@
     (for/fold ([remaining variables])
               ([name (in-list names)])
       (set-remove remaining name)))
-  ;; 走査対象の位置にある Move は構造を保つ透過操作であり、根を辿る。
-  ;; これは束縛別名の規則とは別で、Move を bound にした名前は rebind で継承しない。
+  ;; 走査対象の位置にある Move と Forward は構造を保つ透過操作であり、根を辿る。
+  ;; これは束縛別名の規則とは別で、どちらを bound にした名前も rebind で継承しない。
   (define (transparent-root core)
     (match core
       [`(Move ,inner) (transparent-root inner)]
+      [`(Forward ,inner) (transparent-root inner)]
       [`(UnionInject ,_ ,_ ,inner) (transparent-root inner)]
       [_ core]))
   ;; Let の binder は外側の名前を落とすが、束縛する項がその名前そのものなら
@@ -707,6 +710,7 @@
       [`(Suspend ,suspended)
        (walk suspended decomposable strict target-visible?)]
       [`(Move ,_) #t]
+      [`(Forward ,_) #t]
       [`(Drop ,argument)
        (walk argument decomposable strict target-visible?)]
       [`(Curry ,function ,argument)

@@ -395,6 +395,13 @@
         (where PΩ_new ,(ptable-set (term PΩ) (term pp) 'Moved))
         R-PR-Move)
 
+   (--> (pcfg (in-hole PE (PRuntime forward (PPlace pp))) PH PΩ θ)
+        (pcfg (in-hole PE pv_result) PH PΩ_new θ)
+        (where Available ,(ptable-ref (term PΩ) (term pp)))
+        (where pv_result ,(ptable-ref (term PH) (term pp)))
+        (where PΩ_new ,(ptable-set (term PΩ) (term pp) 'Moved))
+        R-PR-Forward)
+
    (--> (pcfg (in-hole PE (PRuntime move (PPlace pp))) PH PΩ θ)
         (pcfg (in-hole PE (PError pp)) PH PΩ θ)
         (where pstate_old ,(ptable-ref (term PΩ) (term pp)))

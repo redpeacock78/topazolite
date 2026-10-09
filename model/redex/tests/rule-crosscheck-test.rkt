@@ -68,6 +68,7 @@
     (R-RecurBind    . R-PR-Letrec)
     (R-RecurUnfold  . R-PR-Letrec)
     (R-Move         . R-PR-Move)
+    (R-Forward      . R-PR-Forward)
     (R-MoveError    . R-PR-MoveError)
     (R-OwnLeaf      . #f)
     (R-Drop         . R-PR-Drop)
@@ -97,8 +98,8 @@
   (list->set (reduction-relation->rule-names -->g2/rules)))
 
 (test-case
- "-->g1/rules declares 26 rules"
- (check-equal? (set-count g1-rule-names) 26))
+ "-->g1/rules は 27 規則を宣言する"
+ (check-equal? (set-count g1-rule-names) 27))
 
 (test-case
  "-->g2/rules adds exactly thirty-eight names to -->g1/rules"
@@ -120,14 +121,14 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 64))
+ (check-equal? (set-count g2-rule-names) 65))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 64))
+ (check-equal? (length rule-correspondence) 65))
 
 (test-case
- "the target side has 25 rules, including one support rule"
+ "目標側は支援規則を含む 26 規則を持つ"
  (check-equal? target-support-rule-names (set 'R-PR-RecRemove))
- (check-equal? (set-count target-rule-names) 25))
+ (check-equal? (set-count target-rule-names) 26))

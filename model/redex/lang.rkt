@@ -93,6 +93,7 @@
          (Yield c c)
          (Suspend c)
          (Move w)
+         (Forward w)
          (Drop c)
          (Curry c c)
          (OwnLeaf c))

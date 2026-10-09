@@ -334,6 +334,7 @@
          [`(FromRawPtr ,operand ,_) (walk operand)]
          [`(PtrVal ,_ ,_ ,_ ,_) #t]
          [`(Move ,_) #t]
+         [`(Forward ,_) #t]
          [`(MutSlot ,_) #t]
          [`(Absent ,type) (type-normal? type)]
          [`(Drop ,argument) (walk argument)]

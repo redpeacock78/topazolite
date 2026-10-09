@@ -122,6 +122,7 @@
     (Yield      runtime-call)
     (Suspend    runtime-call)
     (Move       runtime-call)
+    (Forward    runtime-call)
     (Drop       runtime-call)
     (Curry      runtime-call)
     (Error      resource-runtime)

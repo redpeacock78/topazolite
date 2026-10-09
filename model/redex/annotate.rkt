@@ -47,6 +47,7 @@
       [(list 'Yield c_1 c_2) (list 'Yield (next) (ann c_1) (ann c_2))]
       [(list 'Suspend c) (list 'Suspend (next) (ann c))]
       [(list 'Move w) (list 'Move (next) (ann w))]
+      [(list 'Forward w) (list 'Forward (next) (ann w))]
       [(list 'Reassign target value)
        (list 'Reassign (next) (ann target) (ann value))]
       [(list 'Drop c) (list 'Drop (next) (ann c))]

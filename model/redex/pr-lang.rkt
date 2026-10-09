@@ -10,7 +10,7 @@
 (define-language PR
   (px   ::= variable-not-otherwise-mentioned)    ; 変数
   (pnm  ::= variable-not-otherwise-mentioned)    ; shim / Effect 境界の名前
-  (prt  ::= move drop yield suspend curry)       ; runtime 呼び出しの名前
+  (prt  ::= move forward drop yield suspend curry) ; runtime 呼び出しの名前
   (ptycode ::= variable-not-otherwise-mentioned) ; 型に由来する dispatch tag
   (K    ::= variable-not-otherwise-mentioned)    ; ADT tag
   (label ::= variable-not-otherwise-mentioned)   ; record の field 名

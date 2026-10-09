@@ -814,6 +814,13 @@
         (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
         R-Move)
 
+   (--> (cfg (in-hole E (Forward p)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_result ,(table-ref (term H) (term p)))
+        (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
+        R-Forward)
+
    (--> (cfg (in-hole E (Move p)) H Ω Λtok θ)
         (cfg (in-hole E (Error p)) H Ω Λtok θ)
         (where state_old ,(table-ref (term Ω) (term p)))

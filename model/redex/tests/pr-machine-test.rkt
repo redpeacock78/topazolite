@@ -7,7 +7,7 @@
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
-;; [REQ: BAK-001] 目標機械 -->pr の 25 本の規則（backend-matrix.md §4）
+;; [REQ: BAK-001] 目標機械 -->pr の 26 本の規則（backend-matrix.md §4）
 
 (define fuel 10000)
 
@@ -292,6 +292,15 @@
                     (PLet b (PRuntime move a) (PRuntime move a)))))
   (term (pcfg (PError 0) ((0 5)) ((0 Moved)) ()))))
 
+(test-case "R-PR-Forward は place を Moved にし二度目は停止する"
+  (check-equal?
+   (eval-pr/config (term (PLetOwned a 5 (PRuntime forward a))))
+   (term (pcfg 5 ((0 5)) ((0 Moved)) ())))
+  (check-equal?
+   (apply-reduction-relation -->pr
+     (term (pcfg (PRuntime forward (PPlace 0)) ((0 5)) ((0 Moved)) ())))
+   '()))
+
 (test-case
  "R-PR-ScopeError finalizes the places that are still available"
  (check-equal?
@@ -365,7 +374,7 @@
   (eval-pr (term (PInstall ,pop-a (PLam (x) 0) (PError 0))))
   (term (PError 0))))
 
-;; 25 本の規則それぞれを少なくとも 1 回通る fixture。
+;; 26 本の規則それぞれを少なくとも 1 回通る fixture。
 ;; backend-matrix.md §4 の決定性は obs-eval-pr が動く前提そのものなので、
 ;; 規則を足すたびにここで確かめる。
 (define determinism-fixtures
@@ -381,6 +390,7 @@
         (term (PLetOwned r (PRec ((f (PTagged some 3))))
                        (PProjOpt some none r f)))
         (term (PLetOwned a 5 (PRuntime move a)))
+        (term (PLetOwned a 5 (PRuntime forward a)))
         (term (PLetOwned a 5 (PLet b (PRuntime move a) (PRuntime move a))))
         (term (PLetOwned a 5 (PLetOwned b 6 (PRuntime drop b))))
         (term (PRuntime yield 3 (PPrim tz:add 1 2)))
@@ -401,7 +411,7 @@
    (check-deterministic core)))
 
 (test-case
- "-->pr/rules declares exactly the 25 target rule names"
+ "-->pr/rules は目標側の 26 規則名を持つ"
  ;; 期待値は Task 6 の対応表から導いた集合であり、ここで手写ししない。
  (check-equal? (list->set (reduction-relation->rule-names -->pr/rules))
                target-rule-names))

@@ -31,6 +31,7 @@
  (check-true (redex-match? PR pv (term (PPlace 0))))
  (check-true (redex-match? PR pc (term (PLam (a) a))))
  (check-true (redex-match? PR pc (term (PRecRemove (PRec ((f 1))) (f)))))
+ (check-true (redex-match? PR pc (term (PRuntime forward (PPlace 0)))))
  ;; PLam は計算側にしか無い。
  (check-false (redex-match? PR pv (term (PLam (a) a)))))
 
@@ -90,15 +91,19 @@
 (test-case
  "PRuntime evaluation positions match lang.rkt's F, not a generic rule"
  ;; 源の F は (Drop F) (Yield F c) (Curry F c) (Curry v F) の 4 本だけを持つ。
- ;; yield の継続、suspend の本体、move の引数は評価位置にない。総称の句を置くと
- ;; 後続が 2 つ残り、backend-matrix.md §4 の決定性が壊れる。
+ ;; yield の継続、suspend の本体、move と forward の引数は評価位置にない。
+ ;; 総称の句を置くと後続が 2 つ残り、backend-matrix.md §4 の決定性が壊れる。
  (check-false (redex-match? PR PE (term (PRuntime yield 1 hole))))
  (check-false (redex-match? PR PE (term (PRuntime suspend hole))))
+ (check-false (redex-match? PR PF (term (PRuntime forward hole))))
+ (check-false (redex-match? PR PG (term (PRuntime forward hole))))
+ (check-false (redex-match? PR PE (term (PRuntime forward hole))))
  (check-false (redex-match? PR PE (term (PRuntime move hole)))))
 
 (test-case
  "runtime names are literals, separate from shim names"
  (check-true (redex-match? PR prt (term yield)))
+ (check-true (redex-match? PR prt (term forward)))
  (check-true (redex-match? PR pnm (term tz:add)))
  ;; prt を独立の非終端にするのは、literal を pnm の除外集合へ入れないためである。
  (check-false (redex-match? PR pnm (term yield)))
