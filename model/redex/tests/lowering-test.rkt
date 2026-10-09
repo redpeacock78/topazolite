@@ -14,7 +14,8 @@
          "../pr-lang.rkt"
          "../pr-machine.rkt"
          "../pr-obs.rkt"
-         "../span-core.rkt")
+         "../span-core.rkt"
+         "../typing.rkt")
 
 ;; [REQ: BAK-001] lowering 関係と符号化（backend-matrix.md §5）
 ;; [REQ: DIA-001] lowering の Diagnostic 生成（diagnostic.md §8、§13）
@@ -288,6 +289,26 @@
          (PLet rsd:1 (PRuntime drop (PProj rsd:0 f:x))
                 (PRecRemove rsd:0 (f:x)))))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
+
+(test-case "Forward の lowering は Core の型付けと同じ effect row を保つ"
+  (define sink-type '(NFn ((Owned Res)) Int () () () User))
+  (define owner-type `(NFn (,sink-type (Owned Res)) Int () () () User))
+  (define callables `((owner ,owner-type) (sink ,sink-type)))
+  (for ([body (in-list
+               (list '(Apply h (Forward x))
+                     '(Apply h
+                             (Let (y let (Owned Res))
+                               (Forward x)
+                               (Forward y)))))])
+    (define core
+      `(Lam User owner (h p)
+         (Handle (Return owner Int) (answer -> answer)
+           (Scope () (Let (x let (Owned Res)) p ,body)))))
+    (match (core-type-of core '() callables)
+      [(list _ row)
+       (check-equal? (effect-kinds-of (lower-ok core)) (row-kinds row)
+                     (format "body ~s" body))]
+      [other (fail (format "型付け可能な Forward fixture を期待した: ~s" other))])))
 
 (test-case "RSD の lowering は optional と入れ子の欄を処理する"
   (define optional-proof
