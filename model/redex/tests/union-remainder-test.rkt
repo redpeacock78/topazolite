@@ -404,7 +404,8 @@
                         (normalize-type `(Union ,@members))))
      (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
 
-(test-case "NFn の返り値の内側の損失しか無い Union は E-OWN-029 を保つ"
+;; c3b で NFn 内側の残余損失を RSD にした後、この拒否は受理へ反転する。
+(test-case "NFn の返り値の内側だけの損失は c3b まで E-OWN-029 で拒否する"
   (define wide
     '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) () ()))
   (define narrow
@@ -439,16 +440,37 @@
    (rejected-id `(Fn ((value ,actual)) ,expected (Own) (Move value)))
    (diagnostic-code-of 'elaborate 'type-mismatch)))
 
-(test-case "最上位 Owned 残余の後に convert できない NFn 差は E-OWN-029 になる"
+(test-case "Owned 残余と NFn adapter を Union 変換で回収する"
   (define actual-fn '(NFn ((Union Int Bool)) Unit () ()))
   (define expected-fn '(NFn (Int) Unit () ()))
   (define actual
-    `(Record ((f ,actual-fn imm) (o (Owned Res) imm))))
-  (define member `(Record ((f ,expected-fn imm))))
-  (define expected `(Union ,member String))
-  (check-equal?
-   (rejected-id `(Fn ((value ,actual)) ,expected (Own) (Move value)))
-   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+    `(Record ((f ,actual-fn imm) (o ,option-owned imm))))
+  (define target-member `(Record ((f ,expected-fn imm))))
+  (define expected `(Union ,target-member String))
+  (define expected-core
+    '(Union (Record ((f (NFn (Int) Unit () () () User) imm))) String))
+  (define value
+    `(Rec ((f imm (Fn ((argument (Union Int Bool))) Unit () unit))
+          (o imm (Construct some (Types (Owned Res))
+                            (Apply acquire 59))))))
+  (define source (make-application actual value expected))
+  (match-define (list core result-type _row _callables) (checked source))
+  (check-true (type-equiv? result-type expected-core)
+              (format "結果型が期待 Union と一致しない: ~s / ~s"
+                      result-type expected-core))
+  (check-true (contains-rsd? core))
+  (check-true
+   (contains?
+    (lambda (node)
+      (match node
+        [`(Let (,name let ,_) ,_
+               (Curry (Lam User ,_ ,_ ,_) ,argument))
+         (equal? name argument)]
+        [_ #f]))
+    core))
+  (define-values (final rules) (run-checked source))
+  (check-not-false (member 'R-DischargeRemainder rules))
+  (check-equal? (map second (configuration-tokens final)) '(Dropped)))
 
 (test-case "3 要素 Let は Union 注釈へ RSD を挿入する"
   (define expected drop-union)
