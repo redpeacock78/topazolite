@@ -949,10 +949,14 @@
       (match (narrowing-kind actual* expected propositions)
         ['ok (void)]
         [`(drop-obligation ,_ ,_)
+         ;; c3b で adapter 内の RSD を扱うまでの防御。現行の NFn 内部判定は
+         ;; Owned 損失を reject に畳むため、この枝は公開入力から到達しない。
          (reject s 'type-mismatch expected actual)]
         [_ (reject s 'owned-narrowing-rejected expected actual*)])
       (define-values (converted converted-type)
         (convert discharged actual* expected s propositions))
+      ;; c3b で adapter 内の RSD を許す際にも、変換後 Core の検査を fail-closed に保つ。
+      ;; c3a2 では上の NFn 内部判定が先に reject するため、公開入力からは到達しない。
       (when (core-has-remainder-drop? converted)
         (reject s 'type-mismatch expected actual))
       (values converted converted-type))

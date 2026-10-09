@@ -14,6 +14,7 @@
          "../origins.rkt"
          "../pr-obs.rkt"
          "../compat.rkt"
+         "../search.rkt"
          "../ucore.rkt"
          "../typing.rkt")
 
@@ -46,6 +47,34 @@
     [(? pair?)
      (or (find-adapter (car node)) (find-adapter (cdr node)))]
     [_ #f]))
+
+(define (find-adapter-source node)
+  (match node
+    [`(Let (,name let ,_actual) ,bound
+           (Curry (Lam User ,_callable ,_binders ,_body) ,argument))
+     #:when (equal? name argument)
+     bound]
+    [(? pair?)
+     (or (find-adapter-source (car node))
+         (find-adapter-source (cdr node)))]
+    [_ #f]))
+
+(define (tree-count tree predicate)
+  (+ (if (predicate tree) 1 0)
+     (if (pair? tree)
+         (+ (tree-count (car tree) predicate)
+            (tree-count (cdr tree) predicate))
+         0)))
+
+(define (type-narrative-proofs tree)
+  (match tree
+    [`(Discharge (ProofRep (Reserved o-type-narrative) TypeNarrativeCap) ,inner)
+     (cons '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+           (type-narrative-proofs inner))]
+    [(? pair?)
+     (append (type-narrative-proofs (car tree))
+             (type-narrative-proofs (cdr tree)))]
+    [_ '()]))
 
 ;; properties-lowering-test.rkt の compare-observations を公開面を増やさずに写す。
 (define limits (read-bounds))
@@ -152,6 +181,40 @@
   (check-equal? (list type row curry-row)
                 (list '(Union Int String) '() '())))
 
+(test-case "effectful な変換元は一度だけ Let で評価する"
+  (define actual '(NFn ((Union Int String)) Int () ()))
+  (define expected '(NFn (Int) (Union Int String) () ()))
+  (define source
+    `(Fn () ,expected ((Yield Int))
+         (Let (adapted const ,expected)
+              (Apply
+               (Fn () ,actual ((Yield Int))
+                   (Yield 9 (Fn ((x (Union Int String))) Int () 7))))
+              adapted)))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (check-equal?
+   (core-type-of `(Apply ,core) '() callables)
+   (list '(NFn (Int) (Union Int String) () () () User)
+         '((Yield Int))))
+  (define erased (erase-core core))
+  (define adapter-source (find-adapter-source erased))
+  (check-true (match adapter-source [`(Apply (Lam ,_ ,_ () ,_)) #t] [_ #f]))
+  (check-equal?
+   (tree-count erased
+               (lambda (node)
+                 (match node [`(Apply (Lam ,_ ,_ () ,_)) #t] [_ #f])))
+   1)
+  (match-define (list name _actual _callable _binders _body curry)
+    (find-adapter erased))
+  (match curry
+    [`(Curry (Lam User ,_ ,_ ,_) ,fixed-argument)
+     (check-equal? fixed-argument name)]
+    [other (fail-check (format "Curry の固定引数が値でない: ~s" other))])
+  (define-values (_configs rules)
+    (trace-g2 (inject-g2m (execution-core `(Apply ,core) callables))))
+  (check-equal? (count (lambda (rule) (eq? rule 'R-Yield)) rules) 1))
+
 (test-case "Apply 前の引数変換と返り値変換は row を増やさない"
   (define actual '(NFn ((Union Int String)) Int ((Yield Int)) ()))
   (define expected '(NFn (Int) (Union Int String) ((Yield Int)) ()))
@@ -186,22 +249,41 @@
           f))
    e-type-mismatch))
 
-(test-case "TypeNarrativeCap の proof を adapter 内の Apply へ渡す"
+(test-case "TypeNarrativeCap の認可と ProofRep を adapter が増やさない"
+  ;; elab と core-type-of は固定の Π0 で始まるため、authorization で拒否される
+  ;; 文脈は公開入口から作れない。obligation の判定と ProofRep の搬送の一致で固定する。
+  (define without-cap (initial-candidate-context '()))
+  (check-equal? (obligation-proofs '(TypeNarrativeCap) without-cap) '(#f))
+  (check-false (obligations-dischargeable? '(TypeNarrativeCap) without-cap))
   (define actual '(NFn ((Union Int String)) Int () (TypeNarrativeCap)))
   (define expected '(NFn (Int) Int () (TypeNarrativeCap)))
+  (define direct-source
+    `(Fn ((f ,actual)) Int () (Apply f 1)))
+  (match-define (list direct-core direct-type direct-row direct-callables)
+    (elaborate-ok direct-source))
+  (check-equal? (core-type-of direct-core '() direct-callables)
+                (list direct-type direct-row))
+  (define proof '(ProofRep (Reserved o-type-narrative) TypeNarrativeCap))
+  (check-equal? (type-narrative-proofs (erase-core direct-core)) (list proof))
+
   (match-define (list core type row callables)
     (elaborate-ok
      `(Fn ((f ,actual)) ,expected ()
           (Let (adapted const ,expected) f adapted))))
   (check-equal? (core-type-of core '() callables) (list type row))
-  (check-true
-   (tree-contains?
-    (erase-core core)
-    (lambda (node)
-      (match node
-        [`(Discharge (ProofRep (Reserved o-type-narrative) TypeNarrativeCap) ,_)
-         #t]
-        [_ #f]))))
+  (define adapter (find-adapter (erase-core core)))
+  (check-not-false adapter)
+  (match-define (list _name _actual _callable _binders body _curry) adapter)
+  (check-equal? (type-narrative-proofs body) (list proof))
+  (define through-source `(Fn ((f ,actual)) Int ()
+                             (Let (adapted const ,expected) f
+                               (Apply adapted 1))))
+  (match-define (list through-core through-type through-row through-callables)
+    (elaborate-ok through-source))
+  (check-equal? (core-type-of through-core '() through-callables)
+                (list through-type through-row))
+  (check-equal? (type-narrative-proofs (erase-core through-core))
+                (list proof proof))
   (check-equal? (term (verify-origins ,R0 ,(erase-core core))) 'ok))
 
 (test-case "未供給の Q を要求する元の関数も adapter も capability を増やさない"
@@ -288,7 +370,7 @@
     [other (fail-check (format "Own を持つ返り値 adapter を拒否しない: ~s"
                                other))]))
 
-(test-case "引数か返り値に RSD を要する adapter は E-TYP-012"
+(test-case "引数か返り値に RSD を要する adapter は owned-narrowing-rejected で拒否する"
   (define wide '(Record ((owned (Owned Res) imm) (value Int imm))))
   (define narrow '(Record ((value Int imm))))
   (define cases
@@ -307,13 +389,16 @@
 (test-case "未選択の adapter 候補は callable と連番を消費しない"
   (define actual '(NFn (Int) Int () ()))
   (define widened '(NFn (Int) (Union Int String) () ()))
+  (define tag-compatible '(NFn (Int) Int ((Yield Int)) ()))
   (define (source members)
     `(Fn ((f ,actual) (g ,actual)) ,widened ()
          (Let (selected const (Union ,(first members) ,(second members)))
               f
               (Let (next const ,widened) g next))))
-  (define first-result (elaborate-ok (source (list actual widened))))
-  (define second-result (elaborate-ok (source (list widened actual))))
+  (define first-result
+    (elaborate-ok (source (list tag-compatible widened))))
+  (define second-result
+    (elaborate-ok (source (list widened tag-compatible))))
   (for ([result (in-list (list first-result second-result))])
     (define callables (fourth result))
     (check-equal? (map first callables) '(callable0 callable1))
