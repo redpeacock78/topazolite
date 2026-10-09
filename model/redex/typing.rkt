@@ -985,6 +985,8 @@
           (andmap (lambda (entry)
                     (forward-transfer-form? (last entry) mode))
                   entries))]
+    [`(RecRewriteOpen ,_)
+     (eq? mode 'config)]
     [`(UnionEliminate ,scrutinee (,branches ...))
      (and (forward-transfer-form? scrutinee mode)
           (andmap (lambda (branch)
@@ -1250,6 +1252,13 @@
            (usage-add usage next term)))
        (usage-add (scan input env allowed in-transfer? local-lets? '() mode)
                   entry-usage term)]
+      [`(RecRewriteOpen ((,_label ,_mode ,field-core) ...))
+       ;; Open の欄は閉じた RecRewrite entry から作られるため、外側の Forward
+       ;; binder 文脈を引き継がず、欄ごとに独立して走査する。
+       (for/fold ([usage (hash)]) ([field (in-list field-core)])
+         (usage-add usage
+                    (scan field '() (set) in-transfer? local-lets? '() mode)
+                    term))]
       [`(Handle ,_op ,handler ,body)
        (define handler-body
          (match (peel-branch handler)

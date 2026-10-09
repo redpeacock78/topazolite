@@ -12,6 +12,8 @@
          "../gen.rkt"
          "../lowering.rkt"
          "../machine.rkt"
+         "../obs.rkt"
+         "../pr-obs.rkt"
          "../region.rkt"
          "../type-shape.rkt"
          "../type-equiv.rkt"
@@ -61,6 +63,82 @@
                                  [environment '()])
   (diagnostic-id
    (core-type-of/diagnostic core places callables environment)))
+
+(define (trace-g2 start)
+  (let loop ([current start] [configs (list start)] [rules '()] [fuel 120])
+    (when (zero? fuel)
+      (error 'trace-g2 "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() (values configs rules)]
+      [(list (list rule following))
+       (loop following (append configs (list following))
+             (append rules (list rule)) (sub1 fuel))]
+      [steps (error 'trace-g2 "一意な次状態を期待した: ~s" steps)])))
+
+(define (check-config-trace configs callables expected-type)
+  (for ([configuration (in-list configs)] [index (in-naturals)])
+    (define row (runtime-row configuration callables expected-type))
+    (check-not-false row
+                     (format "config ~a の runtime row が無い: ~s"
+                             index configuration))
+    (check-true (config-ok? configuration callables expected-type row)
+                (format "config ~a が不正: ~s" index configuration))))
+
+(define (config-core configuration)
+  (match configuration [`(cfg ,core ,_ ...) core]))
+
+(define (config-states configuration)
+  (match configuration [`(cfg ,_ ,_ ,states ,_ ...) states]))
+
+(define (state-of configuration place)
+  (define entry (assoc place (config-states configuration)))
+  (and entry (second entry)))
+
+(define (forward-place configuration)
+  (let walk ([term (config-core configuration)])
+    (match term
+      [`(Forward ,(? exact-nonnegative-integer? place)) place]
+      [(? pair?) (or (walk (car term)) (walk (cdr term)))]
+      [_ #f])))
+
+(define (available-to-moved-count configs place)
+  (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+    (if (and (eq? (state-of before place) 'Available)
+             (eq? (state-of after place) 'Moved))
+        1
+        0)))
+
+(define limits (read-bounds))
+(define observation-depth (bounds-observation-depth limits))
+(define source-fuel (bounds-fuel limits))
+(define fuel-attempts 4)
+
+(define (obs-eval-pr/adaptive target depth start-fuel)
+  (let loop ([fuel start-fuel] [remaining fuel-attempts])
+    (define result (obs-eval-pr target depth fuel))
+    (cond
+      [(not (eq? (second result) 'timeout)) result]
+      [(<= remaining 1) #f]
+      [else (loop (* 2 fuel) (sub1 remaining))])))
+
+(define (lowered-value value)
+  (define-values (status result) (lower-value value 'racket-cs))
+  (and (eq? status 'ok) result))
+
+;; properties-lowering-test.rkt の compare-observations を公開面を増やさずに写す。
+(define (compare-observations core target depth)
+  (define source (obs-eval-g2 core depth source-fuel))
+  (cond
+    [(eq? (second source) 'timeout) 'discard]
+    [else
+     (define target-result (obs-eval-pr/adaptive target depth source-fuel))
+     (cond
+       [(not target-result) 'discard]
+       [(and (equal? (map lowered-value (first source))
+                   (first target-result))
+             (eq? (second source) (second target-result)))
+        'match]
+       [else 'mismatch])]))
 
 (test-case "R-Forward は Available の place を Moved にする"
   (check-equal?
@@ -350,6 +428,132 @@
               () ()))
       (check-equal? (config-ok? configuration callables 'Int '())
                     (eq? state 'Available)))))
+
+(test-case "RecRewriteOpen の欄は外側の Forward binder を捕捉しない"
+  (define option-owned '(Option (Owned Res)))
+  (define target `(Record ((owned ,option-owned imm))))
+  (define sink-type `(NFn (,target) Int () (Own) () User))
+  (define sink
+    `(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope ()
+           (Let (owned let ,target) argument
+             (Let (dropped let Unit) (Drop (Move owned)) 0))))))
+  (define callables `((sink ,sink-type)))
+  (define core
+    `(Scope (0)
+       (Let (outer let (Owned Res)) (Move 0)
+         (Apply ,sink
+           (RecRewriteOpen
+            ((owned imm
+                    (Construct ,option-owned some (Forward outer)))))))))
+  (define configuration
+    `(cfg ,core ((0 (resource 7))) ((0 Available)) () ()))
+  (define safe-core
+    `(Scope (0)
+       (Let (outer let (Owned Res)) (Move 0)
+         (Apply ,sink
+           (RecRewriteOpen
+            ((owned imm (Construct ,option-owned none))))))))
+  (define safe-configuration
+    `(cfg ,safe-core ((0 (resource 7))) ((0 Available)) () ()))
+  (check-true (config-ok? safe-configuration callables 'Int '(Own)))
+  (check-false (config-ok? configuration callables 'Int '(Own))))
+
+(test-case "Union から Record への変換は枝 alias と一時 place を転送する"
+  (define field-union (normalize-type '(Union Int Bool)))
+  (define owned-field '(Option (Owned Res)))
+  (define member-bool
+    `(Record ((a Bool imm) (owned ,owned-field imm))))
+  (define member-int
+    `(Record ((a Int imm) (owned ,owned-field imm))))
+  (define input-union (normalize-type `(Union ,member-bool ,member-int)))
+  (define target
+    `(Record ((a ,field-union imm) (owned ,owned-field imm))))
+  (define sink-type `(NFn (,target) Int () (Own) () User))
+  (define sink
+    `(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope ()
+           (Let (owned let ,target) argument
+             (Let (dropped let Unit) (Drop (Move owned)) 0))))))
+  (define (branch member binder old-field-type)
+    `(Scope ()
+       (Let (alias let ,member) ,binder
+         (Let (temporary let ,target)
+           (RecRewrite (Forward alias)
+             ((a old-a ,old-field-type imm ,field-union
+               (UnionInject ,field-union ,old-field-type old-a))))
+           (Forward temporary)))))
+  (define body
+    `(Apply h
+            (UnionEliminate (Forward x)
+              ((,member-bool bool-value -> ,(branch member-bool 'bool-value 'Bool))
+               (,member-int int-value -> ,(branch member-int 'int-value 'Int))))))
+  (define owner-type
+    `(NFn (,sink-type ,input-union) Int () (Own) () User))
+  (define owner
+    `(Lam User owner (h p)
+       (Handle (Return owner Int) (answer -> answer)
+         (Scope () (Let (x let ,input-union) p ,body)))))
+  (define callables `((owner ,owner-type) (sink ,sink-type)))
+  (for ([member (in-list (list member-bool member-int))]
+        [field-value (in-list (list '(Construct Bool true) 42))]
+        [token (in-list '(51 52))])
+    (define input
+      `(UnionInject ,input-union ,member
+                    (Rec ((a imm ,field-value)
+                          (owned imm
+                                 (Construct (Option (Owned Res)) some
+                                   (OwnLeaf (resource ,token))))))))
+    (define core `(Apply ,owner ,sink ,input))
+    (define expected-type
+      (match (core-type-of core '() callables)
+        [(list type _row) type]
+        [other (fail (format "Union→Record fixture の型を得られない: ~s; key=~s"
+                             other (type-of/raw core '() callables)))]))
+    (define-values (status target-pr) (lower core 'racket-cs))
+    (check-eq? status 'ok)
+    (check-eq? (compare-observations core target-pr observation-depth) 'match)
+    (define-values (configs rules)
+      (trace-g2 `(cfg (Scope () ,core) () () () ())))
+    (check-config-trace configs callables expected-type)
+    (define forward-transitions
+      (for/list ([before (in-list configs)]
+                 [rule (in-list rules)]
+                 [after (in-list (cdr configs))]
+                 #:when (eq? rule 'R-Forward))
+        (list before after)))
+    (check-equal? (length forward-transitions) 3)
+    (define moved-places
+      (map (λ (transition) (forward-place (first transition)))
+           forward-transitions))
+    (check-equal? (length (remove-duplicates moved-places)) 3)
+    (for ([place (in-list moved-places)])
+      (check-equal? (available-to-moved-count configs place) 1))
+    (define (contains-rewrite-forward? term)
+      (match term
+        [`(RecRewrite (Forward ,(? exact-nonnegative-integer?)) ,_) #t]
+        [(? pair?) (or (contains-rewrite-forward? (car term))
+                       (contains-rewrite-forward? (cdr term)))]
+        [_ #f]))
+    (check-equal?
+     (count (λ (transition)
+              (contains-rewrite-forward? (config-core (first transition))))
+            forward-transitions)
+     1)
+    (for ([before (in-list configs)]
+          [rule (in-list rules)]
+          [after (in-list (cdr configs))]
+          #:when (eq? rule 'R-ScopeValue))
+      (check-equal?
+       (for/sum ([old (in-list (config-states before))]
+                 [new (in-list (config-states after))])
+         (if (and (eq? (second old) 'Available)
+                  (eq? (second new) 'Dropped))
+             1
+             0))
+       0))))
 
 (test-case "R-Beta 後の転送 Let も R-LetOwned まで構成検査を通る"
   (define-values (owner callables)
