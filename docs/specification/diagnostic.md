@@ -353,7 +353,9 @@ elaborate では `bind-with-mode`、`merge-branches` の `Record` 合流、注�
 `check-against-expected` と `Construct (Types ...)` の check も、互換性を確認し `discharge-remainder` を適用した後に再判定する。
 このため、公開 `elab` 入力からこれらの分岐へ `drop-obligation` が残った状態では到達しない。
 `decompose` の二つの `Record` 分岐にも同じ防御分岐があるが、各対の確認前に `discharge-remainder` が残余を除くため到達しない。
-Union の候補選択では `drop-obligation` の成分を選べる層に入れる前に RSD を適用し、候補が残らない場合は `owned-narrowing-rejected` を返す。
+Union の候補選択では `drop-obligation` の成分を選べる層に入れる前に RSD を適用する。
+層の候補が空なら、互換な成分との対の判定が `reject` または `drop-obligation` のとき `owned-narrowing-rejected` を返し、それ以外は指定された `no-member-key`（既定は `type-mismatch`）を返す。
+同じ最初の非空層に複数の候補があれば `ambiguous-union-member` を返す。
 したがって現行の elaborate は公開 `elab` 入力からこの key を発行しない。
 Core の型付けは、RSD で包まれていない narrowing に対して引き続きこの key を発行する。
 

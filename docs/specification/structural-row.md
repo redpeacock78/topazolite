@@ -334,7 +334,6 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 `check-rec-against-union` では、第 4 層をリテラルの直接 check が RSD を含む候補（4a）と `rebuild` だけで到達する候補（4b）に分け、4a を先に調べる。
 RSD を含まないリテラルの直接 check 候補は第 2 層に含める。
 候補ごとの試行で得た Core に RSD が含まれるかを調べ、含まない第 2 層の候補はそこに残し、含む候補は第 4 層へ移す。
-`check-rec-against-union` では、RSD を含むリテラルの直接 check 候補を 4a、rebuild だけで到達する候補を 4b とし、RSD を含まないリテラル候補は第 2 層に置く。
 これにより、損失の無い成分と損失のある成分が同じ層に並んで `ambiguous-union-member`（`E-TYP-031`）になる縮約を解消する。
 borrowed view は `SUR-004`、明示 projection は `SUR-006` の担当であり、後続 Phase へ送る。
 
