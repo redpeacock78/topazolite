@@ -16,6 +16,7 @@
          "../compat.rkt"
          (only-in "../resource-type.rkt" resource-type?)
          "../search.rkt"
+         "../type-equiv.rkt"
          "../ucore.rkt"
          "../typing.rkt")
 
@@ -299,6 +300,109 @@
                                           'Available 'Dropped)
                   0))
   (void))
+
+(define (check-owned-return-adapter-run field-type token member-tag)
+  (define wide-int
+    (normalize-type `(Record ((a Int imm) (o ,field-type imm)))))
+  (define wide-bool
+    (normalize-type `(Record ((a Bool imm) (o ,field-type imm)))))
+  (define actual-return (normalize-type `(Union ,wide-int ,wide-bool)))
+  (define expected-return `(Record ((o ,field-type imm))))
+  (define actual `(NFn (Unit) ,actual-return () ()))
+  (define expected `(NFn (Unit) ,expected-return () ()))
+  (define source
+    `(Fn ((f ,actual)) Unit ()
+         (Let (adapted const ,expected) f unit)))
+  (match-define (list core _type _row callables) (elaborate-ok source))
+  (define adapter (find-adapter (erase-core core)))
+  (check-not-false adapter)
+  (match-define (list _name _actual callable binders body _curry) adapter)
+  (define adapter-lambda `(Lam User ,callable ,binders ,body))
+  (define adapter-type (second (assoc callable callables)))
+  (check-equal?
+   (core-type-of adapter-lambda '() callables)
+   (list adapter-type '()))
+  (check-true (tree-contains? body (lambda (node)
+                                     (match node [`(Forward ,_) #t] [_ #f]))))
+  (check-false (tree-contains? body (lambda (node)
+                                      (match node [`(Move ,_) #t] [_ #f]))))
+  (define worker-callable (string->symbol (format "return-worker-~a" token)))
+  (define union-member (if (eq? member-tag 'int) wide-int wide-bool))
+  (define discriminator (if (eq? member-tag 'int) 1 '(Construct Bool true)))
+  (define worker-type `(NFn (Unit) ,actual-return () () () User))
+  (define worker
+    `(Lam User ,worker-callable (ignored)
+       (Handle (Return return-boundary ,actual-return)
+               (answer -> answer)
+         (Scope ()
+           (UnionInject ,actual-return ,union-member
+             (Rec ((a imm ,discriminator)
+                   (o imm
+                      (Construct ,field-type some
+                                 (OwnLeaf (resource ,token)))))))))))
+  (define extended-callables
+    (cons (list worker-callable worker-type) callables))
+  (check-equal? (core-type-of worker '() extended-callables)
+                (list worker-type '()))
+  (define adapter-value `(Curry (Lam User ,callable ,binders ,body) ,worker))
+  (define application `(Apply ,adapter-value unit))
+  (check-equal? (core-type-of application '() extended-callables)
+                (list expected-return '()))
+  (define program `(Drop ,application))
+  (check-equal? (core-type-of program '() extended-callables)
+                (list 'Unit '(Own)))
+  (define execution (execution-core program extended-callables))
+  (define-values (status target) (lower (erase-core execution) 'racket-cs))
+  (check-eq? status 'ok)
+  (check-eq? (compare-observations execution target 1) 'match)
+  (define-values (configs rules)
+    (trace-g2 `(cfg (Scope () ,execution) () () () ())))
+  (check-config-trace configs extended-callables 'Unit)
+  (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules) 3)
+  (define forwarded-place-ids
+    (state-transition-place-ids configs rules 'Available 'Moved 'R-Forward))
+  (check-equal? (length forwarded-place-ids) 3)
+  (check-equal? (length (remove-duplicates forwarded-place-ids)) 3)
+  (match (last configs)
+    [`(cfg ,_ ,_ ,_ ,tokens ,_)
+     (check-equal? (map second tokens) '(Dropped))
+     (check-equal? (length tokens) 1)]
+    [other (fail-check (format "最終 config の形が不正: ~s" other))])
+  (for ([rule (in-list rules)]
+        [before (in-list configs)]
+        [after (in-list (cdr configs))]
+        #:when (eq? rule 'R-ScopeValue))
+      (check-equal? (state-transition-count (list before after) (list rule)
+                                            'Available 'Dropped)
+                    0)))
+
+(define (check-owned-return-adapter-static field-type)
+  (define wide-int
+    (normalize-type `(Record ((a Int imm) (o ,field-type imm)))))
+  (define wide-bool
+    (normalize-type `(Record ((a Bool imm) (o ,field-type imm)))))
+  (define actual-return (normalize-type `(Union ,wide-int ,wide-bool)))
+  (define expected-return `(Record ((o ,field-type imm))))
+  (define actual `(NFn (,actual-return) ,actual-return () ()))
+  (define expected `(NFn (,actual-return) ,expected-return () ()))
+  (define source
+    `(Fn ((f ,actual) (value ,actual-return)) ,expected-return (Own)
+         (Let (adapted const ,expected) f
+           (Apply adapted (Move value)))))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (define adapter (find-adapter (erase-core core)))
+  (check-not-false adapter)
+  (match-define (list _name _actual callable binders body _curry) adapter)
+  (check-equal?
+   (core-type-of `(Lam User ,callable ,binders ,body) '() callables)
+   (list (second (assoc callable callables)) '()))
+  (check-false (tree-contains? body
+                               (lambda (node)
+                                 (match node [`(Move ,_) #t] [_ #f]))))
+  (check-true (tree-contains? body
+                              (lambda (node)
+                                (match node [`(Forward ,_) #t] [_ #f])))))
 
 (define adapter-source
   '(Let (adapted const (NFn (Int) (Union Int String) () ()))
@@ -616,40 +720,110 @@
                                        'const 'Move)
                 1))
 
-(test-case "返り値の変換が Own を作る adapter は E-EFF-002"
-  (define owned-option '(Option (Owned Res)))
-  (define wide-int `(Record ((o ,owned-option imm) (a Int imm))))
-  (define wide-bool `(Record ((o ,owned-option imm) (a Bool imm))))
-  (define actual
-    `(NFn (Int) (Union ,wide-int ,wide-bool) () ()))
-  (define expected
-    `(NFn (Int) (Record ((o ,owned-option imm))) () ()))
-  (define result
-    (elab
-     `(Fn ((f ,actual)) Int ()
-          (Let (adapted const ,expected) f
-            (Apply adapted 1)))))
-  (match result
-    [`(err ,diagnostic)
-     (check-equal?
-      (diagnostic-id diagnostic)
-      (diagnostic-code-of 'elaborate 'undeclared-function-effect))]
-    [other (fail-check (format "Own を持つ返り値 adapter を拒否しない: ~s"
-                               other))]))
+(test-case "c3a2: Owned 欄の返り値変換は空 row の Forward で受理する"
+  ;; 通常の Rec は Owned 欄を生成できないため、この形は静的に検査する。
+  (check-owned-return-adapter-static '(Owned Res)))
 
-(test-case "資源引数 adapter の返り値 Own は Task 4 まで E-EFF-002 で拒否する"
-  (define owned-option '(Option (Owned Res)))
-  (define wide-int `(Record ((o ,owned-option imm) (a Int imm))))
-  (define wide-bool `(Record ((o ,owned-option imm) (a Bool imm))))
-  (define actual
-    `(NFn ((Owned Res)) (Union ,wide-int ,wide-bool) () ()))
-  (define expected
-    `(NFn ((Owned Res)) (Record ((o ,owned-option imm))) () ()))
-  (check-equal?
-   (diagnostic-id-of
-    `(Fn ((f ,actual)) Unit ()
-         (Let (adapted const ,expected) f unit)))
-   (diagnostic-code-of 'elaborate 'undeclared-function-effect)))
+(test-case "c3a2: Option Record Owned 欄の返り値変換は空 row の Forward で受理する"
+  (for ([tag '(int bool)] [token '(420 421)])
+    (check-owned-return-adapter-run
+     '(Option (Owned Res)) token tag)))
+
+(test-case "c3a2: 資源引数と返り値の変換をともに Forward で実行する"
+  (for ([tag '(int bool)] [token '(430 431)])
+    (define owned '(Option (Owned Res)))
+    (define wide-int
+      (normalize-type `(Record ((a Int imm) (o ,owned imm)))))
+    (define wide-bool
+      (normalize-type `(Record ((a Bool imm) (o ,owned imm)))))
+    (define actual-return (normalize-type `(Union ,wide-int ,wide-bool)))
+    (define expected-return `(Record ((o ,owned imm))))
+    (define tag-union (normalize-type '(Union Int Bool)))
+    (define source-tag (if (eq? tag 'int) 'Int 'Bool))
+    (define source-argument
+      (if (eq? tag 'int)
+          1
+          '(Construct true (Types))))
+    (define actual
+      `(NFn ((Owned Res) ,tag-union) ,actual-return (Own) ()))
+    (define expected
+      `(NFn ((Owned Res) ,source-tag) ,expected-return (Own) ()))
+    (define source
+      `(Fn ((f ,actual)) Unit (Own)
+           (Let (adapted const ,expected) f
+             (Drop (Apply adapted (Apply acquire ,token) ,source-argument)))))
+    (match-define (list core _type _row callables) (elaborate-ok source))
+    (check-adapter-resource-forwards core 1)
+    (define adapter (find-adapter (erase-core core)))
+    (check-not-false adapter)
+    (match-define (list _name _actual callable binders body _curry) adapter)
+    (check-equal? (core-type-of `(Lam User ,callable ,binders ,body)
+                                '() callables)
+                  (list (second (assoc callable callables)) '()))
+    (check-false (tree-contains? body
+                                 (lambda (node)
+                                   (match node [`(Move ,_) #t] [_ #f]))))
+    (define worker-type
+      `(NFn ((Owned Res) ,tag-union) ,actual-return () (Own) () User))
+    (define worker
+      `(Lam User ,(string->symbol (format "return-worker-~a" token))
+            (owned-argument tag-value)
+         (Handle (Return return-boundary ,actual-return)
+                 (answer -> answer)
+           (Scope ()
+             (Let (forwarded let (Owned Res)) owned-argument
+               (Let (discarded let Unit) (Drop (Move forwarded))
+                 (UnionEliminate tag-value
+                   ((Bool boolean ->
+                      (UnionInject ,actual-return ,wide-bool
+                        (Rec ((a imm boolean)
+                              (o imm
+                                 (Construct ,owned some
+                                   (OwnLeaf (resource ,(+ token 1000)))))))))
+                    (Int integer ->
+                      (UnionInject ,actual-return ,wide-int
+                        (Rec ((a imm integer)
+                              (o imm
+                                 (Construct ,owned some
+                                   (OwnLeaf (resource ,(+ token 1000)))))))))))))))))
+    (define worker-callables
+      (cons (list (string->symbol (format "return-worker-~a" token))
+                  worker-type)
+            callables))
+    (define worker-type-check
+      (core-type-of/diagnostic worker '() worker-callables))
+    (check-equal? worker-type-check (list worker-type '())
+                  (format "worker の型検査に失敗: ~s" worker-type-check))
+    (define application `(Apply ,core ,worker))
+    (check-equal? (core-type-of application '() worker-callables)
+                  (list 'Unit '(Own)))
+    (define execution (execution-core application worker-callables))
+    (define-values (status target) (lower (erase-core execution) 'racket-cs))
+    (check-eq? status 'ok)
+    (check-eq? (compare-observations execution target 1) 'match)
+    (define-values (configs rules)
+      (trace-g2 `(cfg (Scope () ,execution) () () () ())))
+    (check-config-trace configs worker-callables 'Unit)
+    (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules) 4)
+    (define forwarded-place-ids
+      (state-transition-place-ids configs rules 'Available 'Moved 'R-Forward))
+    (check-equal? (length forwarded-place-ids) 4)
+    (check-equal? (length (remove-duplicates forwarded-place-ids)) 4)
+    (check-equal? (count (lambda (rule) (eq? rule 'R-OwnLeaf)) rules) 1)
+    (check-equal? (count (lambda (rule) (eq? rule 'R-Drop)) rules) 2)
+    (match (last configs)
+      [`(cfg ,_ ,_ ,_ ,tokens ,_)
+       ;; acquire の値は raw resource なので、追跡 token は返り値の OwnLeaf 分だけ作られる。
+       (check-equal? (map second tokens) '(Dropped))
+       (check-equal? (length tokens) 1)]
+      [other (fail-check (format "出力資源の token が残る: ~s" other))])
+    (for ([rule (in-list rules)]
+          [before (in-list configs)]
+          [after (in-list (cdr configs))]
+          #:when (eq? rule 'R-ScopeValue))
+      (check-equal? (state-transition-count (list before after) (list rule)
+                                            'Available 'Dropped)
+                    0))))
 
 (test-case "引数か返り値に RSD を要する adapter は owned-narrowing-rejected で拒否する"
   (define wide '(Record ((owned (Owned Res) imm) (value Int imm))))

@@ -1054,6 +1054,12 @@
            [_ '()])]
         [_ '()])))
 
+(define (identity-forward-handler? handler)
+  (match (peel-branch handler)
+    [`(,binder -> ,body)
+     (equal? (peel-node body) (peel-bind binder))]
+    [_ #f]))
+
 ;; Forward の局所的な条件は、型付けが通った項を一度走査して検査する。
 ;; usage は binder identity ごとの、その経路での最大 Forward 回数である。
 (define (forward-invalid-node core callables [mode 'static] [states '()])
@@ -1085,7 +1091,77 @@
                  (scan term env allowed in-transfer? local-lets?
                        pending mode)
                  node)))
-  (define (scan term env allowed in-transfer? local-lets? pending mode)
+  (define (scan-result-tail term env allowed pending mode)
+    (define node (peel-node term))
+    ;; 式全体が T なら、E_tail より先に一つの転送形として検査する。
+    (if (and (forward-containing-now? node)
+             (forward-transfer-form? node mode))
+        (scan term env allowed #t #t pending mode)
+        (match node
+      [`(Handle ,_op ,handler ,body)
+       (if (identity-forward-handler? handler)
+           (usage-add
+            (match (peel-branch handler)
+              [`(,binder -> ,handler-body)
+               (scan handler-body (bind env (peel-bind binder) #f)
+                     allowed #f #t '() mode)]
+              [_ (hash)])
+            (scan-result-tail body env allowed pending mode)
+            term)
+           (scan term env allowed #f #f '() mode))]
+      [`(Scope ,managed ,body)
+       (if (and (list? managed)
+                (or (eq? mode 'config) (null? managed)))
+           (scan-result-tail body env allowed pending mode)
+           (scan term env allowed #f #f '() mode))]
+      [`(Let (,binder ,binding-mode ,type) ,bound ,body)
+       (define name (peel-bind binder))
+       (define declared (peel-ty type))
+       (define transfer-binding?
+         (and (pair? pending) (eq? name (first (first pending)))))
+       (when (and (pair? pending) (not transfer-binding?))
+         (reject! term))
+       (define local-binding?
+         (and (not transfer-binding?)
+              (eq? binding-mode 'let)
+              (resource-type? declared)))
+       (define identity
+         (cond
+           [transfer-binding? (second (first pending))]
+           [local-binding? (gensym 'forward-result)]
+           [else #f]))
+      (usage-add
+        (scan bound env allowed #f #t '() mode)
+        (scan-result-tail
+         body (bind env name identity)
+         (if identity (set-add allowed identity) allowed)
+         (if transfer-binding? (cdr pending) '()) mode)
+        term)]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (define branch-children (rest (core-children node)))
+       (define branch-usages
+         (for/list ([branch (in-list branches)]
+                    [child (in-list branch-children)])
+           (match (peel-forward-union-branch branch)
+             [`(,_member ,binder -> ,body)
+              (scan-result-tail body (bind env (peel-bind binder) #f)
+                                allowed pending mode)]
+             [_ (scan child env (set) #f #f '() mode)])))
+       (usage-add
+        (scan scrutinee env allowed #f #t '() mode)
+        (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
+          (usage-max usage branch))
+        term)]
+      [`(Apply ,_function ,_arguments ...)
+       ;; Apply 自体が結果でも、Forward はその引数位置の条件で検査する。
+       (scan term env allowed #f #t '() mode)]
+       [_
+        ;; 許可された E_tail から外れた式は通常走査へ戻す。
+        ;; config では、その部分式の内側に別の関数境界が残ることがある。
+        (when (pair? pending) (reject! term))
+        (scan term env allowed #f #f '() mode)])))
+  (define (scan term env allowed in-transfer? local-lets? pending mode
+                [result-root? #f])
     (define node (peel-node term))
     (match node
       [`(Forward ,target)
@@ -1183,7 +1259,7 @@
        (scan body
              body-env
              (list->set (map second transfer-bindings))
-             #f owner? transfer-bindings mode)
+             #f owner? transfer-bindings mode #t)
        (hash)]
       [`(RecurVal ,_ ,function (,parameters ...) ,body)
        (define body-env
@@ -1267,7 +1343,12 @@
                   allowed in-transfer? local-lets? '() mode)]
            [_ (scan (first (core-children node)) env (set)
                     in-transfer? local-lets? '() mode)]))
-       (usage-add (scan body env allowed in-transfer? local-lets? pending mode)
+       (define body-usage
+         (if (and (identity-forward-handler? handler)
+                  (or result-root? (eq? mode 'config)))
+             (scan-result-tail body env allowed pending mode)
+             (scan body env allowed in-transfer? local-lets? pending mode)))
+       (usage-add body-usage
                   handler-body term)]
       [`(Scope ,_ ,body)
        (scan body env allowed in-transfer? local-lets? pending mode)]

@@ -1280,13 +1280,14 @@ config mode は `with-config-typing` の下で `check-as/boolean` を呼ぶ `con
 
 gate は次の条件を検査する。
 
-- **条件 1**：`Forward` の対象は、資源型仮引数を持つ `Lam` の転送 `Let` の binder、または転送形 `T` の中の資源型 `Let` の binder である。
+- **条件 1**：`Forward` の対象は、資源型仮引数を持つ `Lam` の転送 `Let` の binder、または結果位置の `E_tail` 上か `T` の中にある資源型 `let` の binder である。
 - **条件 2**：実行経路ごとの各 binder の `Forward` は高々一度である。
    `UnionEliminate` の枝は排他的なので枝ごとの最大を取り、`RecRewrite` の欄は合算する。
 - **条件 3**：外側の `Forward` 文脈を `Lam`、`Recur`、`RecurVal`、`RegionLam` の遅延する本体へ持ち込まない。
    資源型仮引数を持つ内側の `Lam` は自分の転送 `Let` の binder だけを新たな文脈にする。
-- **条件 5**：`Forward` を含む引数は中断しない転送形 `T` であり、その `Apply` の全引数も `T` である。
-   static mode では関数位置は変数であり、config mode では変数または値である。
+- **条件 5**：`Forward` を含む `T` は、引数の位置か結果の位置にだけ現れる。
+   引数の位置では、その `Apply` の全ての引数が `T` であり、static mode の関数位置は変数、config mode の関数位置は変数または値である。
+   結果の位置では、直近の `Lam` の本体の最も外にある恒等 `Handle` の本体から `E_tail` だけを通って届く項を検査する。
 
 ```text
 T ::= x | v | Forward(x)
@@ -1303,6 +1304,19 @@ T ::= x | v | Forward(x)
 static mode の `Scope` は空の管理欄を持ち、config mode では管理欄が空でなくてもよい。
 config mode では簡約途中の `RecRewriteOpen` も `T` とし、各欄を空の転送文脈で走査する。
 各欄は閉じた `RecRewrite` entry から作られ、static mode では外側 binder の参照が gate より先に `unbound-variable` で拒否されるため、この扱いは受理範囲を広げない。
+
+結果の位置では、候補全体が `T` かを先に判定し、`T` なら式全体を転送形として走査する。
+候補全体が `T` でない場合だけ、次の `E_tail` に沿って走査する。
+
+```text
+E_tail ::= [] | Handle(h, (r -> r), E_tail) | Scope(π, E_tail)
+         | Let((y, m, τ), e, E_tail) | UnionEliminate(e, (... -> E_tail) ...)
+```
+
+`E_tail` の `Handle` は handler が恒等である場合に限る。
+`E_tail` の `Let` の束縛式と `UnionEliminate` の scrutinee は通常の文脈で独立に走査する。
+そのため、`UnionEliminate` の scrutinee に `Forward` があっても、全体が `T` でない場合はその `Forward` を許さない。
+config mode では `E_tail` の `Scope` の管理欄が空でなくてもよい。
 
 config mode はさらに、Ω で `Available` の place を根の転送文脈へ加え、`R-Beta` または `R-RecurUnfold` の直後から `R-LetOwned` までの資源型 `Let` の binder を一時的に許す。
 これは次の `R-LetOwned` で `Available` な place に置き換わる。

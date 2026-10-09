@@ -352,6 +352,83 @@
     (typed-owner-lambda source-union body sink))
   (check-equal? (typing-key core '() callables) 'ok))
 
+(test-case "結果位置では UnionEliminate 全体の T を先に判定する"
+  (define option-owned '(Option (Owned Res)))
+  (define source-union (normalize-type `(Union ,option-owned Int)))
+  (define getter-type `(NFn (Unit) ,source-union () () () User))
+  (define mapper-type `(NFn (,option-owned) ,option-owned (Suspend) () () User))
+  (define result-type option-owned)
+  (define owner-type `(NFn (,getter-type Unit) ,result-type () () () User))
+  (define branches
+    `((,option-owned option ->
+       (Scope ()
+         (Let (payload let ,option-owned) option (Forward payload))))
+      (Int number -> (Construct ,option-owned none))))
+  (define owner
+    `(Lam User result-owner (get u)
+       (Handle (Return result-owner ,result-type) (answer -> answer)
+         (Scope ()
+           (Let (result let ,source-union) (Apply get unit)
+             (UnionEliminate (Forward result) ,branches))))))
+  (define getter
+    `(Lam User result-getter (argument)
+       (Handle (Return result-getter ,source-union) (answer -> answer)
+         (Scope () (UnionInject ,source-union Int 7)))))
+  (define callables
+    `((result-owner ,owner-type) (result-getter ,getter-type)))
+  (check-equal? (core-type-of owner '() callables) (list owner-type '()))
+  (define program `(Apply ,owner ,getter unit))
+  (check-equal? (core-type-of program '() callables) (list result-type '()))
+  (define-values (configs rules)
+    (trace-g2 `(cfg (Scope () ,program) () () () ())))
+  (check-config-trace configs callables result-type)
+  (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules) 1)
+
+  ;; 枝の E_tail Let が Apply を評価した後に転送する形は全体として T でない。
+  (define bad-branches
+    `((,option-owned option ->
+       (Scope ()
+         (Let (alias let ,option-owned) option
+           (Let (mapped let ,option-owned) (Apply mapper (Forward alias))
+             (Forward mapped)))))
+      (Int number -> (Construct ,option-owned none))))
+  (define bad-owner-type
+    `(NFn (,getter-type ,mapper-type Unit) ,result-type (Suspend) () () User))
+  (define bad-owner
+    `(Lam User bad-result-owner (get mapper u)
+       (Handle (Return bad-result-owner ,result-type) (answer -> answer)
+         (Scope ()
+           (Let (result let ,source-union) (Apply get unit)
+             (UnionEliminate (Forward result) ,bad-branches))))))
+  (define bad-callables
+    `((bad-result-owner ,bad-owner-type)
+      (result-getter ,getter-type)))
+  (check-equal? (diagnostic-code-of-core bad-owner '() bad-callables)
+                "E-OWN-036"))
+
+(test-case "結果位置の Let の束縛式は通常の Forward 文脈で走査する"
+  (define option-owned '(Option (Owned Res)))
+  (define source-union (normalize-type `(Union ,option-owned Int)))
+  (define getter-type `(NFn (Unit) ,source-union () () () User))
+  (define result-type 'Unit)
+  (define owner-type `(NFn (,getter-type Unit) ,result-type () (Own) () User))
+  (define branches
+    `((,option-owned option ->
+       (Scope ()
+         (Let (payload let ,option-owned) option (Forward payload))))
+      (Int number -> (Construct ,option-owned none))))
+  (define owner
+    `(Lam User result-bound-owner (get u)
+       (Handle (Return result-bound-owner ,result-type) (answer -> answer)
+         (Scope ()
+           (Let (result let ,source-union) (Apply get unit)
+             (Let (mapped let ,option-owned)
+               (UnionEliminate (Forward result) ,branches)
+               (Drop (Move mapped))))))))
+  (define callables `((result-bound-owner ,owner-type)
+                      (result-getter ,getter-type)))
+  (check-equal? (diagnostic-code-of-core owner '() callables) "E-OWN-036"))
+
 (test-case "UnionEliminate の排他的な各枝で同じ binder を一度ずつ転送できる"
   (define input-union (normalize-type '(Union Int Bool)))
   (define sink sink-type)

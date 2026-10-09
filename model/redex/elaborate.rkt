@@ -1023,11 +1023,23 @@
          (define applied-with-proofs
            (for/fold ([body applied]) ([proof (in-list (reverse proofs))])
              `(Discharge ,s ,proof ,body)))
+         ;; 呼び出しを E_tail の束縛式に置き、返り値の転送はその後で行う。
+         (define return-name (fresh-union-name))
          (define-values (converted-return _converted-return-type)
-           (convert-adapter-value applied-with-proofs
-                                  actual-return expected-return s propositions))
+           (convert-adapter-value
+                                  (if (resource-type? actual-return)
+                                      `(Forward ,s (#:var ,return-name ,s))
+                                      `(#:var ,return-name ,s))
+                                  actual-return expected-return s propositions
+                                  #:transfer 'forward))
+         (define converted-return-let
+           `(Let ,s ((#:bind ,return-name ,s)
+                     ,(if (resource-type? actual-return) 'let 'const)
+                     (#:ty ,actual-return ,s))
+                 ,applied-with-proofs
+                 ,converted-return))
          (define body-core
-           (for/fold ([body converted-return])
+           (for/fold ([body converted-return-let])
                      ([argument (in-list (reverse converted-arguments))]
                       #:unless (fourth argument))
              `(Let ,s ((#:bind ,(first argument) ,s) let
@@ -1038,8 +1050,6 @@
            (cons `(#:bind ,function-name ,s)
                  (for/list ([name (in-list parameter-names)])
                    `(#:bind ,name ,s))))
-         (define has-resource-arguments?
-           (ormap resource-type? expected-parameters))
          (define boundary (fresh-boundary))
          (define signature
            `(NFn ,(cons actual expected-parameters) ,expected-return
@@ -1051,52 +1061,31 @@
                                (cons function-name parameter-names)
                                (cons actual expected-parameters)
                                '() '() body-core '()))
-         (define adapter-environment
-           (append (list (list function-name actual))
-                   (for/list ([name (in-list parameter-names)]
-                              [type (in-list expected-parameters)])
-                     (list name type))))
-         (define body-result
-           (if has-resource-arguments?
-               ;; Forward の gate には所有する Lam が必要なので、完成形を後で型付けする。
-               ;; この仮の row は finish-fn の組み立て用で、完成した Lam の Core 型検査が本体と row を検査する。
-               (judgment body-core expected-return '())
-               (match (core-type-of `(Scope ,s () ,body-core)
-                                    '() (reverse reversed-callables)
-                                    adapter-environment)
-                 [(list body-type body-row)
-                  (unless (or (eq? body-type 'Never)
-                              (type-compatible? body-type expected-return
-                                                propositions))
-                    (reject s 'type-mismatch expected-return body-type))
-                  (judgment body-core expected-return body-row)]
-                 [_ (reject s 'type-mismatch expected actual)])))
-         (unless has-resource-arguments?
-           (check-function-body-row s body-result expected-return boundary
-                                    expected-out))
+         ;; 結果位置の Forward gate は所有する Lam の本体を検査するため、
+         ;; 資源引数の有無にかかわらず完成形を型付けする。
+         (define body-result (judgment body-core expected-return '()))
          (define adapter-lambda
            (finish-fn s parameter-binders
                       (cons actual expected-parameters)
                       '() '() capture-raw-names raw-names capture-binders
                       core-binders expected-return boundary body-result
                       signature callable reserved-with-formals))
-         (when has-resource-arguments?
-           (match (core-type-of/diagnostic
-                   (judgment-core adapter-lambda) '()
-                   (reverse reversed-callables))
-             [(list adapter-type _row)
-              (unless (type-equiv? adapter-type signature)
-                (reject s 'type-mismatch signature adapter-type))]
-             [diagnostic
-              (case (diagnostic-id diagnostic)
-                [("E-EFF-002" "E-EFF-005")
-                 (reject s 'undeclared-function-effect
-                         (diagnostic-expected diagnostic)
-                         (diagnostic-found diagnostic))]
-                [("E-OWN-036")
-                 ;; 生成形からは届かず、elaborate には Forward 専用の診断 key が無い。
-                 (reject s 'type-mismatch expected actual)]
-                [else (reject s 'type-mismatch expected actual)])]))
+         (match (core-type-of/diagnostic
+                 (judgment-core adapter-lambda) '()
+                 (reverse reversed-callables))
+           [(list adapter-type _row)
+            (unless (type-equiv? adapter-type signature)
+              (reject s 'type-mismatch signature adapter-type))]
+           [diagnostic
+            (case (diagnostic-id diagnostic)
+              [("E-EFF-002" "E-EFF-005")
+               (reject s 'undeclared-function-effect
+                       (diagnostic-expected diagnostic)
+                       (diagnostic-found diagnostic))]
+              [("E-OWN-036")
+               ;; 生成形からは届かず、elaborate には Forward 専用の診断 key が無い。
+               (reject s 'type-mismatch expected actual)]
+              [else (reject s 'type-mismatch expected actual)])])
          (values
           `(Let ,s ((#:bind ,source-name ,s) let (#:ty ,actual ,s))
                 ,core
