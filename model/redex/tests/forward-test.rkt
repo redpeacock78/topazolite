@@ -349,6 +349,42 @@
       (check-equal? (config-ok? configuration callables 'Int '())
                     (eq? state 'Available)))))
 
+(test-case "R-Beta 後の転送 Let も R-LetOwned まで構成検査を通る"
+  (define-values (owner callables)
+    (owner-lambda '(Apply h (Forward x))))
+  (define sink
+    '(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope () (Let (owned let (Owned Res)) argument 0)))))
+  (define program
+    `(Apply ,owner ,sink (Apply (PrimVal (Reserved o-acquire) acquire) 0)))
+  (check-equal? (core-type-of program '() callables) (list 'Int '()))
+  (define start `(cfg (Scope () ,program) () () () ()))
+  (define-values (configs rules)
+    (let loop ([current start] [configs '()] [rules '()] [fuel 80])
+      (when (zero? fuel)
+        (error 'forward-config-trace "評価 fuel を使い切った: ~s" current))
+      (define next (raw-steps-g2/named current))
+      (match next
+        ['() (values (append configs (list current)) rules)]
+        [(list (list rule following))
+         (loop following
+               (append configs (list current))
+               (append rules (list rule))
+               (sub1 fuel))]
+        [_ (error 'forward-config-trace "一意な次状態を期待した: ~s" next)])))
+  (check-not-false (memq 'R-Beta rules))
+  (check-not-false (memq 'R-LetOwnedB rules))
+  (check-not-false
+   (for/or ([before (in-list rules)] [after (in-list (cdr rules))])
+     (equal? (list before after) '(R-Beta R-LetOwnedB))))
+  (check-equal? (match (car (reverse configs))
+                  [`(cfg ,value ,_heap ,_states ,_tokens ,_events) value])
+                0)
+  (for ([configuration (in-list configs)] [index (in-naturals)])
+    (check-true (config-ok? configuration callables 'Int '())
+                (format "不正な中間 config ~a: ~s" index configuration))))
+
 (test-case "Forward の失敗より資源仮引数の符号化を先に診断する"
   (define malformed
     `(Lam User owner (p)

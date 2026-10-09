@@ -1005,7 +1005,12 @@
 (define (peel-forward-union-branch branch)
   (match branch
     [`(,_ ,_ -> ,_) branch]
-    [_ (peel-ubr branch)]))
+    [(list (list '#:span _ _ _)
+           (list '#:ty member _)
+           (list '#:bind binder _)
+           '-> body)
+     (list member binder '-> body)]
+    [_ #f]))
 
 (define (forward-containing-now? core)
   (match (peel-node core)
@@ -1137,10 +1142,20 @@
               local-lets?
               (eq? binding-mode 'let)
               (resource-type? declared)))
+       ;; R-Beta の直後から R-LetOwnedB までは、転送 Let の binder が
+       ;; 一時的に変数として残る。値から新しい identity を作って検査する。
+       (define runtime-transfer-binding?
+         (and (eq? mode 'config)
+              (not in-transfer?)
+              (eq? binding-mode 'let)
+              (resource-type? declared)
+              (forward-containing-now? body)
+              (redex-match? G2m v (erase-core bound))))
        (define identity
          (cond
            [transfer-binding? (second (first pending))]
            [local-binding? (gensym 'forward-local)]
+           [runtime-transfer-binding? (gensym 'forward-runtime)]
            [else #f]))
        (define body-env (bind env name identity))
        (define body-allowed
@@ -1189,40 +1204,49 @@
        (scan body body-env (set) #f #f '() mode)
        (scan continuation continuation-env (set) #f #f '() mode)]
       [`(UnionEliminate ,scrutinee (,branches ...))
+       (define branch-children (rest (core-children node)))
        (define branch-usages
-         (for/list ([branch (in-list branches)])
+         (for/list ([branch (in-list branches)]
+                    [child (in-list branch-children)])
            (match (peel-forward-union-branch branch)
              [`(,_member ,binder -> ,body)
               (scan body (bind env (peel-bind binder) #f)
                     allowed in-transfer? local-lets? '() mode)]
-             [_ (reject! term) (hash)])))
+             [_
+              ;; 枝の形を解釈できない場合も core-children の本文を走査する。
+              (scan child env (set) in-transfer? local-lets? '() mode)])))
        (usage-add (scan scrutinee env allowed in-transfer? local-lets? '() mode)
                   (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
                     (usage-max usage branch))
                   term)]
       [`(Eliminate ,scrutinee (,branches ...))
+       (define branch-children (rest (core-children node)))
        (define branch-usages
-         (for/list ([branch (in-list branches)])
+         (for/list ([branch (in-list branches)]
+                    [child (in-list branch-children)])
            (match (peel-branch branch)
              [`(,_constructor (,binders ...) -> ,body)
               (define branch-env
                 (for/fold ([result env]) ([binder (in-list binders)])
                   (bind result (peel-bind binder) #f)))
               (scan body branch-env allowed in-transfer? local-lets? '() mode)]
-             [_ (reject! term) (hash)])))
+             [_ (scan child env (set) in-transfer? local-lets? '() mode)])))
        (usage-add (scan scrutinee env allowed in-transfer? local-lets? '() mode)
                   (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
                     (usage-max usage branch))
                   term)]
       [`(RecRewrite ,input (,entries ...))
+       (define entry-children (rest (core-children node)))
        (define entry-usage
-         (for/fold ([usage (hash)]) ([entry (in-list entries)])
+         (for/fold ([usage (hash)])
+                   ([entry (in-list entries)]
+                    [child (in-list entry-children)])
            (define next
-             (match entry
+             (match (peel-node entry)
                [`(,_label ,binder ,_input-type ,_mode ,_output-type ,body)
                 (scan body (bind env (peel-bind binder) #f)
                       allowed in-transfer? local-lets? '() mode)]
-               [_ (reject! term) (hash)]))
+               [_ (scan child env (set) in-transfer? local-lets? '() mode)]))
            (usage-add usage next term)))
        (usage-add (scan input env allowed in-transfer? local-lets? '() mode)
                   entry-usage term)]
@@ -1232,7 +1256,8 @@
            [`(,binder -> ,handler-core)
             (scan handler-core (bind env (peel-bind binder) #f)
                   allowed in-transfer? local-lets? '() mode)]
-           [_ (reject! term) (hash)]))
+           [_ (scan (first (core-children node)) env (set)
+                    in-transfer? local-lets? '() mode)]))
        (usage-add (scan body env allowed in-transfer? local-lets? pending mode)
                   handler-body term)]
       [`(Scope ,_ ,body)
