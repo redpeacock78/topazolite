@@ -245,6 +245,7 @@
     owned-function-requires-move
     owned-narrowing-needs-proof
     owned-narrowing-rejected
+    forward-invalid-context
     owned-union-member
     owned-parameter-missing-binding owned-raw-parameter-misuse
     resource-binder-missing-binding resource-binder-raw-misuse
@@ -307,6 +308,9 @@
    (reach-row 'error-needs-expected-type
               (reach-node 'Error 4 5 0)
               '() '() '() (reach-span 4 5))
+   (reach-row 'forward-invalid-context
+              (reach-node 'Forward 6 16 (reach-lit 0 14 15))
+              '((0 Res)) '() '() (reach-span 6 16))
    (reach-row 'invalid-callables (reach-lit 1 10 11)
               '() 'not-a-table '() (reach-span 10 11))
    (reach-row 'invalid-environment (reach-lit 1 12 13)
@@ -1025,13 +1029,13 @@
                 (g (NFn (Int) Int () () () User) let))
               (reach-span 1726 1740))))
 
-(test-case "typing の producer key 集合が registry v34 と一致する"
+(test-case "typing の producer key 集合が registry v35 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 112)
+  (check-equal? (length producer-keys) 113)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 

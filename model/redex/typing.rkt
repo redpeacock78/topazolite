@@ -971,6 +971,285 @@
       (fail (raw-key (second entry)) node)))
   body)
 
+(define (forward-transfer-form? core mode)
+  (match (peel-node core)
+    [(? symbol?) #t]
+    [`(Forward ,_) #t]
+    [`(UnionInject ,_ ,_ ,inner) (forward-transfer-form? inner mode)]
+    [`(Rec ((,_ ,_ ,fields) ...))
+     (andmap (lambda (field) (forward-transfer-form? field mode)) fields)]
+    [`(Construct ,_ ,_ ,fields ...)
+     (andmap (lambda (field) (forward-transfer-form? field mode)) fields)]
+    [`(RecRewrite ,target (,entries ...))
+     (and (forward-transfer-form? target mode)
+          (andmap (lambda (entry)
+                    (forward-transfer-form? (last entry) mode))
+                  entries))]
+    [`(UnionEliminate ,scrutinee (,branches ...))
+     (and (forward-transfer-form? scrutinee mode)
+          (andmap (lambda (branch)
+                    (match (peel-forward-union-branch branch)
+                      [`(,_ ,_ -> ,body)
+                       (forward-transfer-form? body mode)]
+                      [_ #f]))
+                  branches))]
+    [`(Let (,_ let ,_) ,bound ,body)
+     (and (forward-transfer-form? bound mode)
+          (forward-transfer-form? body mode))]
+    [`(Scope ,managed ,body)
+     (and (list? managed)
+          (or (eq? mode 'config) (null? managed))
+          (forward-transfer-form? body mode))]
+    [_ (redex-match? G2m v (erase-core core))]))
+
+(define (peel-forward-union-branch branch)
+  (match branch
+    [`(,_ ,_ -> ,_) branch]
+    [_ (peel-ubr branch)]))
+
+(define (forward-containing-now? core)
+  (match (peel-node core)
+    [`(Forward ,_) #t]
+    [`(Lam ,_ ,_ ,_ ,_) #f]
+    [`(RecurVal ,_ ,_ ,_ ,_) #f]
+    [`(RegionLam ,_ ,_) #f]
+    [_ (for/or ([child (in-list (core-children (peel-node core)))])
+         (forward-containing-now? child))]))
+
+(define (callable-parameter-types callables callable)
+  (let loop ([signature (lookup callables callable)])
+    (match signature
+      [`(ForallRegion (,_ ...) ,body) (loop body)]
+      [`(NFn (,parameters ...) ,_ ,_ ,_ ,_ ,_) parameters]
+      [_ '()])))
+
+(define (forward-transfer-binders parameters parameter-types body)
+  (define pending
+    (for/list ([parameter (in-list parameters)]
+               [type (in-list parameter-types)]
+               #:when (resource-type? type))
+      parameter))
+  (if (null? pending)
+      '()
+      (match (peel-node body)
+        [`(Handle ,_ ,_ ,scope)
+         (match (peel-node scope)
+           [`(Scope () ,inner)
+            (let loop ([names pending] [term inner])
+              (cond
+                [(null? names) '()]
+                [else
+                 (match (peel-node term)
+                   [`(Let (,binder let ,_) ,_ ,next)
+                    (cons (peel-bind binder)
+                          (loop (cdr names) next))]
+                   [_ '()])]))]
+           [_ '()])]
+        [_ '()])))
+
+;; Forward の局所的な条件は、型付けが通った項を一度走査して検査する。
+;; usage は binder identity ごとの、その経路での最大 Forward 回数である。
+(define (forward-invalid-node core callables [mode 'static] [states '()])
+  (define invalid #f)
+  (define (reject! node)
+    (unless invalid (set! invalid node)))
+  (define (bind env name identity)
+    (cons (cons name identity)
+          (filter (lambda (entry) (not (equal? name (car entry)))) env)))
+  (define (usage-add left right node)
+    (for/fold ([result left]) ([identity (in-list (hash-keys right))])
+      (define previous (hash-ref result identity '(0 #f)))
+      (define next (hash-ref right identity))
+      (define count (+ (first previous) (first next)))
+      (when (> count 1) (reject! node))
+      (hash-set result identity
+                (list count (or (second previous) (second next))))))
+  (define (usage-max left right)
+    (for/fold ([result left]) ([identity (in-list (hash-keys right))])
+      (define previous (hash-ref result identity '(0 #f)))
+      (define next (hash-ref right identity))
+      (if (> (first next) (first previous))
+          (hash-set result identity next)
+          result)))
+  (define (scan-sequential terms env allowed in-transfer?
+                           local-lets? pending mode node)
+    (for/fold ([usage (hash)]) ([term (in-list terms)])
+      (usage-add usage
+                 (scan term env allowed in-transfer? local-lets?
+                       pending mode)
+                 node)))
+  (define (scan term env allowed in-transfer? local-lets? pending mode)
+    (define node (peel-node term))
+    (match node
+      [`(Forward ,target)
+       (cond
+         [(not in-transfer?) (reject! term) (hash)]
+         [(symbol? (peel-node target))
+          (define identity (cdr (or (assoc (peel-node target) env)
+                                    (cons #f #f))))
+          (if (and identity (set-member? allowed identity))
+              (hash identity (list 1 term))
+              (begin (reject! term) (hash)))]
+         [(and (eq? mode 'config)
+               (exact-nonnegative-integer? (peel-node target))
+               (eq? (second (or (assoc (peel-node target) states)
+                                (list #f #f)))
+                    'Available))
+          (define identity
+            (cdr (or (assoc (peel-node target) env) (cons #f #f))))
+          (if (and identity (set-member? allowed identity))
+              (hash identity (list 1 term))
+              (begin (reject! term) (hash)))]
+         [else (reject! term) (hash)])]
+      [(? symbol? name)
+       (define identity (cdr (or (assoc name env) (cons #f #f))))
+       ;; T の外にある通常の資源読み取りは Forward の gate で制限しない。
+       (when (and in-transfer? identity (set-member? allowed identity))
+         (reject! term))
+       (hash)]
+      [`(Apply ,function ,arguments ...)
+       (define has-forward?
+         (ormap forward-containing-now? (cons function arguments)))
+       (when (and has-forward?
+                  (not (and (or (redex-match? G2 x (peel-node function))
+                                (and (eq? mode 'config)
+                                     (redex-match? G2m v
+                                                   (erase-core function))))
+                            (andmap (lambda (argument)
+                                      (forward-transfer-form? argument mode))
+                                    arguments))))
+         (reject! term))
+       (usage-add
+        (scan function env allowed #f local-lets? '() mode)
+        (scan-sequential arguments env allowed has-forward?
+                         local-lets? '() mode term)
+        term)]
+      [`(Let (,binder ,binding-mode ,type) ,bound ,body)
+       (define name (peel-bind binder))
+       (define declared (peel-ty type))
+       (define transfer-binding?
+         (and (pair? pending) (eq? name (first (first pending)))))
+       (when (and (pair? pending) (not transfer-binding?))
+         (reject! term))
+       (define local-binding?
+         (and (not transfer-binding?)
+              in-transfer?
+              local-lets?
+              (eq? binding-mode 'let)
+              (resource-type? declared)))
+       (define identity
+         (cond
+           [transfer-binding? (second (first pending))]
+           [local-binding? (gensym 'forward-local)]
+           [else #f]))
+       (define body-env (bind env name identity))
+       (define body-allowed
+         (if identity (set-add allowed identity) allowed))
+       (usage-add
+        (scan bound env allowed in-transfer? local-lets? '() mode)
+        (scan body body-env body-allowed in-transfer? local-lets?
+              (if transfer-binding? (cdr pending) '()) mode)
+        term)]
+      [`(Lam ,_ ,callable (,parameters ...) ,body)
+       (define names (map peel-bind parameters))
+       (define parameter-types (callable-parameter-types callables callable))
+       (define owner? (ormap resource-type? parameter-types))
+       (define transfer-names
+         (forward-transfer-binders names parameter-types body))
+       (define transfer-bindings
+         (for/list ([name (in-list transfer-names)])
+           (list name (gensym 'forward-owner))))
+       (define body-env
+         (for/fold ([result env]) ([name (in-list names)])
+           (bind result name #f)))
+       ;; 入れ子の Lam は外側の Forward 文脈を継承しない。
+       (scan body
+             body-env
+             (list->set (map second transfer-bindings))
+             #f owner? transfer-bindings mode)
+       (hash)]
+      [`(RecurVal ,_ ,function (,parameters ...) ,body)
+       (define body-env
+         (for/fold ([result env])
+                   ([name (in-list (cons (peel-bind function)
+                                         (map peel-bind parameters)))])
+           (bind result name #f)))
+       (scan body body-env (set) #f #f '() mode)
+       (hash)]
+      [`(RegionLam (,_ ...) ,body)
+       (scan body env (set) #f #f '() mode)
+       (hash)]
+      [`(Recur ,_ ,function (,parameters ...) ,body ,continuation)
+       (define body-env
+         (for/fold ([result env])
+                   ([name (in-list (cons (peel-bind function)
+                                         (map peel-bind parameters)))])
+           (bind result name #f)))
+       (define continuation-env (bind env (peel-bind function) #f))
+       (scan body body-env (set) #f #f '() mode)
+       (scan continuation continuation-env (set) #f #f '() mode)]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (define branch-usages
+         (for/list ([branch (in-list branches)])
+           (match (peel-forward-union-branch branch)
+             [`(,_member ,binder -> ,body)
+              (scan body (bind env (peel-bind binder) #f)
+                    allowed in-transfer? local-lets? '() mode)]
+             [_ (reject! term) (hash)])))
+       (usage-add (scan scrutinee env allowed in-transfer? local-lets? '() mode)
+                  (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
+                    (usage-max usage branch))
+                  term)]
+      [`(Eliminate ,scrutinee (,branches ...))
+       (define branch-usages
+         (for/list ([branch (in-list branches)])
+           (match (peel-branch branch)
+             [`(,_constructor (,binders ...) -> ,body)
+              (define branch-env
+                (for/fold ([result env]) ([binder (in-list binders)])
+                  (bind result (peel-bind binder) #f)))
+              (scan body branch-env allowed in-transfer? local-lets? '() mode)]
+             [_ (reject! term) (hash)])))
+       (usage-add (scan scrutinee env allowed in-transfer? local-lets? '() mode)
+                  (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
+                    (usage-max usage branch))
+                  term)]
+      [`(RecRewrite ,input (,entries ...))
+       (define entry-usage
+         (for/fold ([usage (hash)]) ([entry (in-list entries)])
+           (define next
+             (match entry
+               [`(,_label ,binder ,_input-type ,_mode ,_output-type ,body)
+                (scan body (bind env (peel-bind binder) #f)
+                      allowed in-transfer? local-lets? '() mode)]
+               [_ (reject! term) (hash)]))
+           (usage-add usage next term)))
+       (usage-add (scan input env allowed in-transfer? local-lets? '() mode)
+                  entry-usage term)]
+      [`(Handle ,_op ,handler ,body)
+       (define handler-body
+         (match (peel-branch handler)
+           [`(,binder -> ,handler-core)
+            (scan handler-core (bind env (peel-bind binder) #f)
+                  allowed in-transfer? local-lets? '() mode)]
+           [_ (reject! term) (hash)]))
+       (usage-add (scan body env allowed in-transfer? local-lets? pending mode)
+                  handler-body term)]
+      [`(Scope ,_ ,body)
+       (scan body env allowed in-transfer? local-lets? pending mode)]
+      [_
+       (scan-sequential (core-children node) env allowed in-transfer?
+                        local-lets? '() mode term)]))
+  (define initial-env '())
+  (define initial-allowed (set))
+  (when (eq? mode 'config)
+    (for ([entry (in-list states)] #:when (eq? (second entry) 'Available))
+      (define identity (gensym 'forward-place))
+      (set! initial-env (bind initial-env (first entry) identity))
+      (set! initial-allowed (set-add initial-allowed identity))))
+  (scan core initial-env initial-allowed #f (eq? mode 'config) '() mode)
+  invalid)
+
 (define (resource-binder-names binders types)
   (for/list ([binder (in-list binders)]
              [type (in-list types)]
@@ -3828,6 +4107,31 @@
               (list type '(Own) Ψ)
               (fail 'move-non-owned core))])]
 
+    [`(Forward ,target)
+     (define w (peel-node target))
+     (cond
+       [(exact-nonnegative-integer? w)
+        (define type (lookup places w))
+        (unless type (fail 'unknown-place core))
+        (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
+        (define declared (assoc w (declared-place-types)))
+        (define moved-type
+          (if (and declared (not (owned-type? (second declared))))
+              (second declared)
+              `(Owned ,type)))
+        (list moved-type '() Ψ)]
+       [else
+        (define type (lookup environment w))
+        (unless type (fail 'unbound-variable core))
+        (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
+        (when (borrow-typed? type) (fail 'move-borrowed core))
+        (match type
+          [`(Owned ,inner-type) (list `(Owned ,inner-type) '() Ψ)]
+          [_ (if (and (resource-type? type)
+                      (set-member? (resource-place-set) w))
+                 (list type '() Ψ)
+                 (fail 'move-non-owned core))])])]
+
     [`(Drop ,argument)
      (define dropped
        (match (peel-node argument)
@@ -4418,6 +4722,10 @@
               (define normalized (normalize-type substituted))
               (unless normalized
                 (fail 'non-normalizable-result-type core-in substituted))
+              (define invalid-forward
+                (forward-invalid-node renamed callables 'static))
+              (when invalid-forward
+                (fail 'forward-invalid-context invalid-forward))
               (define effective-mut-types
                 (if collected-mut-types
                     (for/hash ([(point effective-type)
@@ -4613,6 +4921,7 @@
 ;; expected と actual の対ではない。
 (define (typing-expected/found key details)
   (match* (key details)
+    [('forward-invalid-context '()) (values #f #f)]
     [((or 'type-mismatch
           'arity-mismatch
           'parameter-arity-mismatch
@@ -4656,8 +4965,12 @@
   (define core (erase-core core-in))
   (and (not (entry-violation core places callables environment))
        (type? expected)
-       (parameterize ([declared-place-types declared])
-         (check-as/boolean core-in expected environment places callables Λ))))
+       (let ([row
+              (parameterize ([declared-place-types declared])
+                (check-as/boolean core-in expected environment places callables Λ))])
+         (and row
+              (not (forward-invalid-node core-in callables 'static))
+              row))))
 
 (define (core-check core places callables expected row [environment '()]
                     [Λ (empty-region-ctx)])
@@ -4955,6 +5268,8 @@
                                                      places callables))])
                             (and actual-row
                                  (row=? actual-row row)
+                                 (not (forward-invalid-node core callables
+                                                            'config states))
                                  ;; 根の位置に leaf は置かない。
                                  (not (owned-leaf? core))
                                  ;; H の leaf は走査で辿れる位置に限る。

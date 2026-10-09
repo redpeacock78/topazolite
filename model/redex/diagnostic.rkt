@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 34)
+(define diagnostic-registry-version 35)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -346,6 +346,10 @@
     ("E-OWN-035" resource-binder-raw-misuse
                  "Let の符号化後に資源型の束縛子の生名が現れる")))
 
+(define typing-entries-v35
+  '(("E-OWN-036" forward-invalid-context
+                 "Forward の配置、回数、転送形が不正である")))
+
 (define borrow-entries-v30
   '(("E-BOR-026" projborrow-optional-field
                  "optional の欄は借用で射影できない")))
@@ -506,6 +510,7 @@
           (rows 'typing 31 typing-entries-v31)
           (rows 'typing 32 typing-entries-v32)
           (rows 'typing 34 typing-entries-v34)
+          (rows 'typing 35 typing-entries-v35)
           (rows 'typing 30 borrow-entries-v30)
           deprecated-typing-entries
           (rows 'origins 1 origins-entries)
