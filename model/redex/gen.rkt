@@ -549,7 +549,8 @@
                           places
                           callables
                           type
-                          #:declared (config-declared-types configuration))))))
+                          #:declared (config-declared-types configuration)
+                          #:states (config-states configuration))))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))

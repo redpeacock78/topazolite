@@ -9,6 +9,8 @@
          "../classify.rkt"
          "../diagnostic.rkt"
          "../erase.rkt"
+         "../gen.rkt"
+         "../lowering.rkt"
          "../machine.rkt"
          "../region.rkt"
          "../type-shape.rkt"
@@ -382,8 +384,61 @@
                   [`(cfg ,value ,_heap ,_states ,_tokens ,_events) value])
                 0)
   (for ([configuration (in-list configs)] [index (in-naturals)])
-    (check-true (config-ok? configuration callables 'Int '())
+    (define row (runtime-row configuration callables 'Int))
+    (check-not-false row
+                     (format "runtime row を得られない中間 config ~a: ~s"
+                             index configuration))
+    (check-true (config-ok? configuration callables 'Int row)
                 (format "不正な中間 config ~a: ~s" index configuration))))
+
+(test-case "UnionEliminate を含む trace の runtime-row は config gate を使う"
+  (define option-owned '(Option (Owned Res)))
+  (define input-union (normalize-type `(Union ,option-owned Int)))
+  (define sink-type `(NFn (,option-owned) Int () () () User))
+  (define sink
+    '(Lam User sink (argument)
+       (Handle (Return sink Int) (answer -> answer)
+         (Scope () (Let (owned let (Option (Owned Res))) argument 0)))))
+  (define body
+    `(Apply h
+            (UnionEliminate (Forward x)
+              ((,option-owned option ->
+                (Scope ()
+                  (Let (payload let ,option-owned) option (Forward payload))))
+               (Int number -> (Construct ,option-owned none))))))
+  (define-values (owner callables)
+    (typed-owner-lambda input-union body sink-type))
+  (for ([argument (in-list
+                   (list
+                    `(UnionInject ,input-union ,option-owned
+                                  (Construct ,option-owned some
+                                             (OwnLeaf (resource 41))))
+                    `(UnionInject ,input-union Int 42)))])
+    (define program `(Apply ,owner ,sink ,argument))
+    (define expected-type
+      (match (core-type-of program '() callables)
+        [(list type _row) type]
+        [other (fail (format "Union fixture の型を得られない: ~s; key=~s"
+                             other (typing-key program '() callables)))]))
+    (define start `(cfg (Scope () ,program) () () () ()))
+    (define-values (configs _rules)
+      (let loop ([current start] [reversed-configs '()] [rules '()] [fuel 120])
+        (when (zero? fuel)
+          (error 'union-forward-trace "評価 fuel を使い切った: ~s" current))
+        (define next (raw-steps-g2/named current))
+        (match next
+          ['() (values (reverse (cons current reversed-configs)) rules)]
+          [(list (list rule following))
+           (loop following (cons current reversed-configs)
+                 (append rules (list rule)) (sub1 fuel))]
+          [_ (error 'union-forward-trace "一意な次状態を期待した: ~s" next)])))
+    (for ([configuration (in-list configs)] [index (in-naturals)])
+      (define row (runtime-row configuration callables expected-type))
+      (check-not-false row
+                       (format "Union config ~a の runtime row が無い: ~s"
+                               index configuration))
+      (check-true (config-ok? configuration callables expected-type row)
+                  (format "Union config ~a が不正: ~s" index configuration)))))
 
 (test-case "Forward の失敗より資源仮引数の符号化を先に診断する"
   (define malformed

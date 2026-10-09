@@ -4984,7 +4984,8 @@
 
 (define (core-check-row core-in places callables expected [environment '()]
                         [Λ (empty-region-ctx)]
-                        #:declared [declared '()])
+                        #:declared [declared '()]
+                        #:states [states #f])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
   (require-expanded! 'core-check-row core-in)
   (define core (erase-core core-in))
@@ -4994,7 +4995,10 @@
               (parameterize ([declared-place-types declared])
                 (check-as/boolean core-in expected environment places callables Λ))])
          (and row
-              (not (forward-invalid-node core-in callables 'static))
+              (not (forward-invalid-node
+                    core-in callables
+                    (if states 'config 'static)
+                    (or states '())))
               row))))
 
 (define (core-check core places callables expected row [environment '()]
