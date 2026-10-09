@@ -88,6 +88,8 @@
     [`(BorrowMutAt ,_ ,_ ,_) '()]
     [`(BorrowRef ,_ ,_ ,_) '()]
     [`(BorrowMutRef ,_ ,_ ,_) '()]
+    ;; G1m の実行時専用の mut slot は値を持たない葉である。
+    [`(MutSlot ,_) '()]
     [`(Error ,_) '()]
     [`(Move ,_) '()]
     [`(Forward ,_) '()]

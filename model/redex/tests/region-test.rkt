@@ -129,11 +129,13 @@
 
 (test-case "子を持たない形は空を返す"
   (for ([t (in-list (list 3 "s" 'unit 'x '(Move y)
+                          '(MutSlot 0)
                           '(PrimVal User add)
                           '(TypeRep User Int Type)
                           '(ProofRep User ValidNarrativeTrait)
                           '(resource 0)))])
-    (check-equal? (core-children t) '() (format "~s" t))))
+    (check-equal? (core-children t) '() (format "~s" t))
+    (check-equal? (core-with-children t '()) t (format "~s round-trip" t))))
 
 ;; 既定を空にすると、c の production が増えたときに走査が黙って内側を飛ばし、
 ;; 内部の Scope を落とした IR が試験を通ってしまう。
