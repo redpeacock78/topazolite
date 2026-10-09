@@ -27,7 +27,8 @@
                   tag-types-upper-bound
                   tag-bound-failure?
                   branch-types-upper-bound
-                  merge-record-types/impl)
+                  merge-record-types/impl
+                  core-type-of)
          "validators.rkt")
 
 (provide UCore
@@ -804,10 +805,7 @@
     ;; させない。試行で使う項は破棄するため、変換が参照を埋め込める
     ;; span 付き Core 変数を渡す。
     (define (rebuild-probe-core actual member kind s propositions)
-      (define saved-union union-counter)
-      (define saved-owned owned-counter)
-      (dynamic-wind
-       void
+      (call-with-restored-state
        (lambda ()
          (define actual-kind (narrowing-kind actual member propositions))
          (and (case kind
@@ -823,10 +821,7 @@
                   (values `(#:var rebuild-probe ,s) actual)))
                 (define-values (converted _type)
                   (convert probe-core probe-type member s propositions))
-                converted)))
-       (lambda ()
-         (set! union-counter saved-union)
-         (set! owned-counter saved-owned))))
+                converted)))))
 
     (define (rebuild-reachable? actual member kind s propositions)
       (and (rebuild-probe-core actual member kind s propositions) #t))
@@ -944,6 +939,122 @@
               converted)))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
+    ;; 関数値の引数と結果は、同じ OWN-004 の順で変換してから通常の convert
+    ;; へ渡す。c3a2 では RSD を含む adapter をまだ生成しない。
+    (define (convert-adapter-value core actual expected s propositions)
+      (unless (type-compatible? actual expected propositions)
+        (reject s 'type-mismatch expected actual))
+      (define-values (discharged actual*)
+        (discharge-remainder core actual expected s propositions))
+      (match (narrowing-kind actual* expected propositions)
+        ['ok (void)]
+        [`(drop-obligation ,_ ,_)
+         (reject s 'type-mismatch expected actual)]
+        [_ (reject s 'owned-narrowing-rejected expected actual*)])
+      (define-values (converted converted-type)
+        (convert discharged actual* expected s propositions))
+      (when (core-has-remainder-drop? converted)
+        (reject s 'type-mismatch expected actual))
+      (values converted converted-type))
+
+    (define (function-adapter core actual expected s propositions)
+      (match* (actual expected)
+        [(`(NFn (,actual-parameters ...) ,actual-return ,_actual-in
+                ,_actual-out ,actual-obligations ,_actual-origin)
+          `(NFn (,expected-parameters ...) ,expected-return ,expected-in
+                ,expected-out ,expected-obligations ,_expected-origin))
+         (unless (= (length actual-parameters) (length expected-parameters))
+           (reject s 'type-mismatch expected actual))
+         (when (or (ormap resource-type? actual-parameters)
+                   (ormap resource-type? expected-parameters))
+           (reject s 'type-mismatch expected actual))
+         (unless (type-compatible? actual expected propositions)
+           (reject s 'type-mismatch expected actual))
+         (define proofs
+           (obligation-proofs
+            actual-obligations (initial-candidate-context propositions)))
+         (when (memq #f proofs)
+           ;; adapter の定義位置で元の callable の Q を搬送できない。
+           (reject s 'type-mismatch expected actual))
+
+         (define source-name (fresh-union-name))
+         (define function-name (fresh-union-name))
+         (define parameter-names
+           (for/list ([_ (in-list expected-parameters)])
+             (fresh-union-name)))
+         (define converted-arguments
+           (for/list ([name (in-list parameter-names)]
+                      [source-type (in-list expected-parameters)]
+                      [target-type (in-list actual-parameters)])
+             (define-values (converted _type)
+               (convert-adapter-value `(#:var ,name ,s)
+                                      source-type target-type s propositions))
+             (define local-name (fresh-union-name))
+             (list local-name target-type converted)))
+         (define applied
+           `(Apply ,s (#:var ,function-name ,s)
+                   ,@(for/list ([argument (in-list converted-arguments)])
+                       `(#:var ,(first argument) ,s))))
+         (define applied-with-proofs
+           (for/fold ([body applied]) ([proof (in-list (reverse proofs))])
+             `(Discharge ,s ,proof ,body)))
+         (define-values (converted-return _converted-return-type)
+           (convert-adapter-value applied-with-proofs
+                                  actual-return expected-return s propositions))
+         (define body-core
+           (for/fold ([body converted-return])
+                     ([argument (in-list (reverse converted-arguments))])
+             `(Let ,s ((#:bind ,(first argument) ,s) let
+                       (#:ty ,(second argument) ,s))
+                   ,(third argument)
+                   ,body)))
+         (define parameter-binders
+           (cons `(#:bind ,function-name ,s)
+                 (for/list ([name (in-list parameter-names)])
+                   `(#:bind ,name ,s))))
+         (define adapter-environment
+           (append (list (list function-name actual))
+                   (for/list ([name (in-list parameter-names)]
+                              [type (in-list expected-parameters)])
+                     (list name type))))
+         (define body-result
+           (match (core-type-of `(Scope ,s () ,body-core)
+                                '() (reverse reversed-callables)
+                                adapter-environment)
+             [(list body-type body-row)
+              (unless (or (eq? body-type 'Never)
+                          (type-compatible? body-type expected-return
+                                            propositions))
+                (reject s 'type-mismatch expected-return body-type))
+              (judgment body-core expected-return body-row)]
+             [_ (reject s 'type-mismatch expected actual)]))
+         (define boundary (fresh-boundary))
+         (check-function-body-row s body-result expected-return boundary
+                                  expected-out)
+         (define signature
+           `(NFn ,(cons actual expected-parameters) ,expected-return
+                ,expected-in ,expected-out ,expected-obligations User))
+         (define callable (fresh-callable signature))
+         (define-values (capture-raw-names raw-names capture-binders
+                                           core-binders reserved-with-formals)
+           (prepare-fn-binders s parameter-binders
+                               (cons function-name parameter-names)
+                               (cons actual expected-parameters)
+                               '() '() body-core '()))
+         (define adapter-lambda
+           (finish-fn s parameter-binders
+                      (cons actual expected-parameters)
+                      '() '() capture-raw-names raw-names capture-binders
+                      core-binders expected-return boundary body-result
+                      signature callable reserved-with-formals))
+         (values
+          `(Let ,s ((#:bind ,source-name ,s) let (#:ty ,actual ,s))
+                ,core
+                (Curry ,s ,(judgment-core adapter-lambda)
+                       (#:var ,source-name ,s)))
+          expected)]
+        [(_ _) (reject s 'type-mismatch expected actual)]))
+
     (define (record-row-of type)
       (match type [`(Record ,row) row] [_ #f]))
 
@@ -967,6 +1078,13 @@
         [(and (record-row-of actual*) (record-row-of expected*))
          (rebuild-record core (record-row-of actual*) (record-row-of expected*)
                          s propositions)]
+        [(and (match actual* [`(NFn ,_ ...) #t] [_ #f])
+              (match expected* [`(NFn ,_ ...) #t] [_ #f])
+              (not (type-compatible? actual* expected* propositions)))
+         (reject s 'type-mismatch expected* actual*)]
+        [(and (match actual* [`(NFn ,_ ...) #t] [_ #f])
+              (match expected* [`(NFn ,_ ...) #t] [_ #f]))
+         (function-adapter core actual* expected* s propositions)]
         [else (reject s 'type-mismatch expected actual)]))
 
     ;; c2b1 spec §5.1。枝を ROW-005 の上界へそろえ、実際に作り直した Core の型から

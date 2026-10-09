@@ -60,7 +60,15 @@
   (check-equal? (core-children '(Drop 1)) '(1))
   (check-equal? (core-children '(Curry 1 2)) '(1 2))
   (check-equal? (core-children '(Discharge (ProofRep User ValidNarrativeTrait) 1))
-                '(1)))
+                '(1))
+  (check-equal?
+   (core-children
+    '(Discharge
+      (ProofRep (#:span #:synthetic 0 0)
+                (Reserved o-type-narrative)
+                TypeNarrativeCap)
+      (Apply f 1)))
+   '((Apply f 1))))
 
 ;; Construct と Rec は c 側と v 側で同じ形を持つ。
 ;; 1 つの節が両方を受けることを、値だけを子に持つ実データで確かめる。

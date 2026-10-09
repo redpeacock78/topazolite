@@ -56,6 +56,7 @@
     [`(Proj ,c ,_) (list c)]
     [`(ProjOpt ,_ ,c ,_) (list c)]
     [`(Discharge (ProofRep ,_ ,_) ,c) (list c)]
+    [`(Discharge (ProofRep ,_ ,_ ,_) ,c) (list c)]
     [`(Lam ,_ ,_ ,_ ,c) (list c)]
     [`(RecurVal ,_ ,_ ,_ ,c) (list c)]
     [`(UVal ,v) (list v)]

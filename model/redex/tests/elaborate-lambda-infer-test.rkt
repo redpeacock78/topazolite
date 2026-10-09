@@ -77,12 +77,12 @@
                  (Fn ((x #:infer)) Int () x)))
    'ok))
 
-;; P2m2c で function value の再構成を入れたら正例へ戻す（spec §5.1 (c)）。
-(test-case "P2m2c: 関数値の Union 引数を反変に再構成する"
+;; c3a2 で関数値の反変変換を adapter で受理する（spec §5.1 (c)）。
+(test-case "c3a2: 関数値の Union 引数を反変に再構成する"
   (check-equal?
    (code-of '(Fn () (NFn (Int Bool) Int () ()) ()
                  (Fn ((x (Union Int String)) (b #:infer)) #:infer () 1)))
-   e-type-mismatch))
+   'ok))
 
 (test-case "SUR-012: 期待型が Owned 関数型でも仮引数型を補う"
   (check-equal?
@@ -154,13 +154,13 @@
   (check-equal? (code-of t) e-typ-025)
   (check-equal? (found-of t) 'no-expected-function))
 
-;; P2m2c で function return の再構成を入れたら正例へ戻す（spec §5.1 (c)）。
-(test-case "P2m2c: 関数値の戻り値へ Union injection を再構成する"
+;; c3a2 で関数値の共変変換を adapter で受理する（spec §5.1 (c)）。
+(test-case "c3a2: 関数値の戻り値へ Union injection を再構成する"
   (check-equal?
    (code-of '(Let (f const (NFn (Int) (Union Int String) () ()))
                   (Fn ((x Int)) #:infer () 1)
                   (Apply f 1)))
-   e-type-mismatch))
+   'ok))
 
 (test-case "SUR-012: E-Rec-Check は欄の期待型で仮引数型を補う"
   (check-equal?
