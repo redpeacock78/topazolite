@@ -14,6 +14,7 @@
          "../origins.rkt"
          "../pr-obs.rkt"
          "../compat.rkt"
+         (only-in "../resource-type.rkt" resource-type?)
          "../search.rkt"
          "../ucore.rkt"
          "../typing.rkt")
@@ -48,6 +49,18 @@
      (or (find-adapter (car node)) (find-adapter (cdr node)))]
     [_ #f]))
 
+(define (find-adapters node)
+  (match node
+    [`(Let (,name let ,actual) ,bound
+           (Curry (Lam User ,callable ,binders ,body) ,argument))
+     #:when (equal? name argument)
+     (append (list (list name actual callable binders body))
+             (find-adapters bound)
+             (find-adapters body))]
+    [(? pair?)
+     (append (find-adapters (car node)) (find-adapters (cdr node)))]
+    [_ '()]))
+
 (define (find-adapter-source node)
   (match node
     [`(Let (,name let ,_actual) ,bound
@@ -65,6 +78,69 @@
          (+ (tree-count (car tree) predicate)
             (tree-count (cdr tree) predicate))
          0)))
+
+(define (decompose-alias-count tree mode operation)
+  (tree-count
+   tree
+   (lambda (node)
+     (match node
+       [`(Let (,name ,found-mode ,_)
+              (UnionEliminate ,_scrutinee ,_branches)
+              (,found-operation ,place))
+        (and (eq? found-mode mode)
+             (eq? found-operation operation)
+             (equal? name place))]
+       [_ #f]))))
+
+(define (adapter-resource-transfer-binders body formal-binders)
+  (define (walk node)
+    (match node
+      [`(Let (,name let ,type) ,bound ,inner)
+       (append (if (and (resource-type? type)
+                        (member bound formal-binders))
+                   (list name)
+                   '())
+               (walk bound)
+               (walk inner))]
+      [(? pair?) (append (walk (car node)) (walk (cdr node)))]
+      [_ '()]))
+  (walk body))
+
+(define (forward-count-range node binder)
+  (match node
+    [`(Forward ,name)
+     (if (equal? name binder) (cons 1 1) (cons 0 0))]
+    [`(UnionEliminate ,scrutinee ,branches)
+     (define scrutinee-range (forward-count-range scrutinee binder))
+     (define branch-ranges
+       (map (lambda (branch) (forward-count-range branch binder)) branches))
+     (if (null? branch-ranges)
+         scrutinee-range
+         (cons (+ (car scrutinee-range)
+                  (apply min (map car branch-ranges)))
+               (+ (cdr scrutinee-range)
+                  (apply max (map cdr branch-ranges)))))]
+    [(? pair?)
+     (define ranges
+       (list (forward-count-range (car node) binder)
+             (forward-count-range (cdr node) binder)))
+     (cons (apply + (map car ranges)) (apply + (map cdr ranges)))]
+    [_ (cons 0 0)]))
+
+(define (check-adapter-resource-forwards core expected-transfer-count)
+  (define erased (erase-core core))
+  (define uses
+    (append*
+     (for/list ([adapter (in-list (find-adapters erased))])
+       (match-define (list _name _actual _callable binders body) adapter)
+       (for/list ([binder (in-list
+                           (adapter-resource-transfer-binders body binders))])
+         (list binder body)))))
+  (check-equal? (length uses) expected-transfer-count)
+  (for ([use (in-list uses)])
+    (match-define (list binder body) use)
+    (check-equal? (forward-count-range body binder) '(1 . 1)
+                  (format "仮引数 ~s の全経路で Forward は一度だけ" binder))))
 
 (define (type-narrative-proofs tree)
   (match tree
@@ -183,13 +259,15 @@
 (define (make-union-value member value union-type)
   `(Apply (Fn ((argument ,member)) ,union-type (Own) (Move argument)) ,value))
 
-(define (check-resource-adapter-run source expected-forward-count)
+(define (check-resource-adapter-run source expected-forward-count
+                                    [expected-transfer-count 1])
   (match-define (list core type row callables)
     (elaborate-ok source))
   (check-equal? (core-type-of core '() callables) (list type row))
   (define adapter (find-adapter (erase-core core)))
   (check-not-false adapter)
   (match-define (list _name _actual _callable _binders body _curry) adapter)
+  (check-adapter-resource-forwards core expected-transfer-count)
   (check-true (tree-contains? body
                               (lambda (node)
                                 (match node [`(Forward ,_) #t] [_ #f]))))
@@ -219,7 +297,8 @@
         #:when (eq? rule 'R-ScopeValue))
     (check-equal? (state-transition-count (list before after) (list rule)
                                           'Available 'Dropped)
-                  0)))
+                  0))
+  (void))
 
 (define adapter-source
   '(Let (adapted const (NFn (Int) (Union Int String) () ()))
@@ -508,13 +587,21 @@
     `(Record ((a (Union Int Bool) imm) (owned ,option-owned imm))))
   (define source-type `(Union ,source-member String))
   (define target-type `(Union ,target-member String))
-  (check-resource-adapter-run
-   (resource-adapter-program
-    source-type target-type
-    (make-union-value source-member
-                      (resource-record-value 'a 907 907)
-                      source-type))
-   3)
+  (define record-source
+    (resource-adapter-program
+     source-type target-type
+     (make-union-value source-member
+                       (resource-record-value 'a 907 907)
+                       source-type)))
+  (define record-core (first (elaborate-ok record-source)))
+  (check-resource-adapter-run record-source 3)
+  (define record-adapter (find-adapter (erase-core record-core)))
+  (check-equal? (decompose-alias-count (fifth record-adapter) 'let 'Forward) 1)
+  (define string-source
+    (resource-adapter-program
+     source-type target-type
+     `(Apply (Fn ((argument String)) ,source-type (Own) argument) "other")))
+  (check-resource-adapter-run string-source 2)
   (define default-source
     `(Apply
       (Fn ((argument ,source-type)) ,target-type (Own) (Move argument))
@@ -525,10 +612,9 @@
     (elaborate-ok default-source))
   (check-equal? (core-type-of default-core '() default-callables)
                 (list default-type default-row))
-  (check-true
-   (tree-contains? (erase-core default-core)
-                   (lambda (node)
-                     (match node [`(Let (,_ const ,_) ,_ ,_) #t] [_ #f])))))
+  (check-equal? (decompose-alias-count (erase-core default-core)
+                                       'const 'Move)
+                1))
 
 (test-case "返り値の変換が Own を作る adapter は E-EFF-002"
   (define owned-option '(Option (Owned Res)))
@@ -551,6 +637,20 @@
     [other (fail-check (format "Own を持つ返り値 adapter を拒否しない: ~s"
                                other))]))
 
+(test-case "資源引数 adapter の返り値 Own は Task 4 まで E-EFF-002 で拒否する"
+  (define owned-option '(Option (Owned Res)))
+  (define wide-int `(Record ((o ,owned-option imm) (a Int imm))))
+  (define wide-bool `(Record ((o ,owned-option imm) (a Bool imm))))
+  (define actual
+    `(NFn ((Owned Res)) (Union ,wide-int ,wide-bool) () ()))
+  (define expected
+    `(NFn ((Owned Res)) (Record ((o ,owned-option imm))) () ()))
+  (check-equal?
+   (diagnostic-id-of
+    `(Fn ((f ,actual)) Unit ()
+         (Let (adapted const ,expected) f unit)))
+   (diagnostic-code-of 'elaborate 'undeclared-function-effect)))
+
 (test-case "引数か返り値に RSD を要する adapter は owned-narrowing-rejected で拒否する"
   (define wide '(Record ((owned (Owned Res) imm) (value Int imm))))
   (define narrow '(Record ((value Int imm))))
@@ -566,6 +666,25 @@
       `(Fn ((f ,actual)) Int ()
            (Let (adapted const ,expected) f adapted)))
      (diagnostic-code-of 'elaborate 'owned-narrowing-rejected))))
+
+(test-case "資源引数の NFn 欄にある Union 損失は c3b まで E-OWN-029 で拒否する"
+  ;; c3b で、資源引数内の NFn の返り値にある Union の Owned 損失を RSD で回収する。
+  (define option-owned '(Option (Owned Res)))
+  (define wide '(Record ((x (Owned Res) imm) (y Int imm))))
+  (define narrow '(Record ((y Int imm))))
+  (define source-function `(NFn (Unit) (Union ,wide Bool) (Own) ()))
+  (define target-function `(NFn (Unit) (Union ,narrow Bool) (Own) ()))
+  (define source-parameter
+    `(Record ((value ,source-function imm) (owned ,option-owned imm))))
+  (define target-parameter
+    `(Record ((value ,target-function imm) (owned ,option-owned imm))))
+  (define actual `(NFn (,target-parameter) Unit (Own) ()))
+  (define expected `(NFn (,source-parameter) Unit (Own) ()))
+  (check-equal?
+   (diagnostic-id-of
+    `(Fn ((f ,actual)) Unit ()
+         (Let (adapted const ,expected) f unit)))
+   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
 
 (test-case "未選択の adapter 候補は callable と連番を消費しない"
   (define actual '(NFn (Int) Int () ()))

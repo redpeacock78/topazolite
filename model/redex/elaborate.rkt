@@ -1058,11 +1058,9 @@
                      (list name type))))
          (define body-result
            (if has-resource-arguments?
-               ;; Forward の gate は所有する Lam の下で binder を特定する。
-               ;; 完成した Lam を後で型付けし、ここではその本体を組み立てる。
-               (judgment body-core expected-return
-                         (cons `(Return ,boundary ,expected-return)
-                               expected-out))
+               ;; Forward の gate には所有する Lam が必要なので、完成形を後で型付けする。
+               ;; この仮の row は finish-fn の組み立て用で、完成した Lam の Core 型検査が本体と row を検査する。
+               (judgment body-core expected-return '())
                (match (core-type-of `(Scope ,s () ,body-core)
                                     '() (reverse reversed-callables)
                                     adapter-environment)
@@ -1073,8 +1071,9 @@
                     (reject s 'type-mismatch expected-return body-type))
                   (judgment body-core expected-return body-row)]
                  [_ (reject s 'type-mismatch expected actual)])))
-         (check-function-body-row s body-result expected-return boundary
-                                  expected-out)
+         (unless has-resource-arguments?
+           (check-function-body-row s body-result expected-return boundary
+                                    expected-out))
          (define adapter-lambda
            (finish-fn s parameter-binders
                       (cons actual expected-parameters)
@@ -1090,11 +1089,12 @@
                 (reject s 'type-mismatch signature adapter-type))]
              [diagnostic
               (case (diagnostic-id diagnostic)
-                [("E-EFF-002")
+                [("E-EFF-002" "E-EFF-005")
                  (reject s 'undeclared-function-effect
                          (diagnostic-expected diagnostic)
                          (diagnostic-found diagnostic))]
                 [("E-OWN-036")
+                 ;; 生成形からは届かない防御節だが、Core gate の拒否 key は保つ。
                  (reject s 'forward-invalid-context)]
                 [else (reject s 'type-mismatch expected actual)])]))
          (values
