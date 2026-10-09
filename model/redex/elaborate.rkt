@@ -1094,8 +1094,8 @@
                          (diagnostic-expected diagnostic)
                          (diagnostic-found diagnostic))]
                 [("E-OWN-036")
-                 ;; 生成形からは届かない防御節だが、Core gate の拒否 key は保つ。
-                 (reject s 'forward-invalid-context)]
+                 ;; 生成形からは届かず、elaborate には Forward 専用の診断 key が無い。
+                 (reject s 'type-mismatch expected actual)]
                 [else (reject s 'type-mismatch expected actual)])]))
          (values
           `(Let ,s ((#:bind ,source-name ,s) let (#:ty ,actual ,s))

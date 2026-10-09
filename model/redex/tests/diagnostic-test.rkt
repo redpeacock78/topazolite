@@ -862,6 +862,7 @@
  ;; P2i3a では mutable-callable-storage-requires-partial を追加した。
  ;; P2l3a Task 6 では optional 欄の射影を拒否する reason を加えた。
  ;; P2l3b では UCore Proj を ProjOpt へ振り分け、その reason が到達しなくなる。
+ ;; P2m2c3 Task 3 では typing の防御的な拒否を elaborate の type-mismatch へ写す。
  (check-equal? (length reasons) 56)
  ;; P2m2b1 Task 3 で先行登録し、Task 4 で曖昧性の producer を加えた。
  (check-not-false (diagnostic-code-of 'elaborate 'ambiguous-union-member))
