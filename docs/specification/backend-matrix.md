@@ -25,7 +25,8 @@ Typed Core verifier を通過した意味論を実行形式へ写像するだけ
 | explicit closure environment | `PClosure` の `penv` |
 | explicit Effect dispatcher | `PEffect`、`PInstall`、`pop` |
 | explicit recur / suspend / yield runtime calls | `PRuntime` |
-| explicit scope-exit / finalizer runtime calls | `PScopeExit`、`PRuntime drop`、`PRuntime move` |
+| explicit scope-exit / finalizer runtime calls | `PScopeExit`、`PRuntime drop` |
+| explicit affine transfer runtime calls | `PRuntime move`、`PRuntime forward` |
 | fixed-width integer / bit-operation runtime shims | `PPrim` の shim 名（§10） |
 
 除外する項目は 3 つである。
@@ -56,7 +57,7 @@ profile の行に対応が無いのは、ホワイトペーパー §13.3.1 が�
 ```
 px   ::= 変数
 pnm  ::= shim / Effect 境界の名前
-prt  ::= move | drop | yield | suspend | curry
+prt  ::= move | forward | drop | yield | suspend | curry
 ptycode ::= 型に由来する dispatch tag
 pp   ::= 場所（自然数）        pn ::= 資源識別子（整数）
 pl   ::= 整数 | unit | 文字列
@@ -93,7 +94,9 @@ pc   ::= pv | px
 ```
 
 `pc` の形の数は源の `c` より少ない。
-`Perform` と `Handle` が `PEffect` と `PInstall` へ、`Yield` と `Suspend` と `Move` と `Drop` と `Curry` が `PRuntime` へ潰れる。
+`Perform` と `Handle` が `PEffect` と `PInstall` へ、`Yield`、`Suspend`、`Move`、`Forward`、`Drop`、`Curry` が `PRuntime` へ潰れる。
+`Forward` は `(PRuntime forward ...)` へ写し、`PRuntime move` へは潰さない。
+`Forward` は非 `Available` の place で誤りへ進む規則を持たず、`move` とは実行時の意味が異なる。
 
 `ptycode` は `pop` の中にだけ現れる。
 型そのものではなく型から作った記号であり、目標側は等号でしか使わない。
@@ -124,11 +127,11 @@ pstate ::= Available | Moved | Dropped
 観測に基づく評価器は、重複除去後に 2 つ以上の後続 config が残ると error を投げる。
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
-規則は 25 本である。
-源の `-->g2` の 64 本を基準にする。
+規則は 26 本である。
+源の `-->g2` の 65 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 33 本が対象外となり、24 本が残る。
-RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 25 本になる。
+目標側に規則を持たない 33 本が対象外となり、25 本が残る。
+RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 26 本になる。
 
 | 源の規則 | 目標の規則 | 差分 |
 |---|---|---|
@@ -174,6 +177,7 @@ RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え
 | `R-Assign` | なし | Portable Racket backend は借用代入を未設計である |
 | `R-RecurBind`、`R-RecurUnfold` | `R-PR-Letrec` | 2 本が 1 本になる。展開は `R-PR-App` との合成になり、呼び出しごとに 1 段増える |
 | `R-Move` | `R-PR-Move` | なし |
+| `R-Forward` | `R-PR-Forward` | 非 `Available` の place で誤りへ進まない専用の転送 |
 | `R-MoveError` | `R-PR-MoveError` | なし |
 | `R-OwnLeaf` | なし | token は消去し、payload の評価だけを残す |
 | `R-Drop` | `R-PR-Drop` | なし。状態表は触らない |
@@ -336,6 +340,7 @@ BAK-001 は「Typed Core の型と Effect と評価順を保存する」と定�
 これは Phase 0 で狭めた範囲であり、§12 に記録する。
 
 目標項に残る Effect の種別は、構文から抽出する。
+`(PRuntime forward argument)` は引数の Effect 種別を保ち、新たな `own` は加えない。
 値の形と `PLam` の寄与は空である。
 関数の本体の Effect は潜在行に属し、現在行には立たない。
 本体を和に含めると、関数を作っただけで Effect が立つ。

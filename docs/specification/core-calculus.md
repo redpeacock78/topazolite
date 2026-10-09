@@ -182,6 +182,7 @@ c ::= v                                          値
     | Yield(c1, c2)                              観測値の生成
     | Suspend(c)                                 生産性の区切り
     | Move(w)                                    affine 資源の消費（w は変数または place）
+    | Forward(w)                                 row に Own を加えない affine 資源の転送
     | Reassign(mw, c)                            binder が指す slot の更新
     | Drop(c)                                    明示 drop
     | Curry(c1, c2)                              部分適用
@@ -211,6 +212,8 @@ Surface の Union pattern を `UnionEliminate` へ写すのは P2m3 とする。
 Surface と UCore には現れず、c1b の生成器も作らない。
 各 entry の `x` は対応する `c` の中だけで束縛される。
 `RecRewriteOpen` は簡約が生成する machine 専用の中間形であり、初期の Typed Core には書けない。
+`Forward` は elaboration だけが生成する Typed Core 専用形であり、Surface と UCore には現れない。
+これは adapter の資源型仮引数と、その変換が転送形 `T` の中で作る資源型 `Let` の binder を一度だけ転送する形であり、通常の `Move` と異なり OwnershipError を生成しない。
 
 #### 3.3.1 binding mode
 
@@ -1264,6 +1267,57 @@ metadata のない place は従来どおり `Owned<Ξ(p)>` を返す。
 metadata の宣言型が root `Owned<τ>` なら `Move` は `Owned<τ>` を返す。
 Move の Effect は全ての場合で `{Own}` である。
 
+**(T-Forward)**
+
+`Forward(w)` の型条件と結果型は `Move(w)` と同じであり、Effect row だけを `∅` とする。
+資源型 place の宣言 metadata、集約資源型変数の所有判定、借用との衝突も `Move` と同じ条件で検査する。
+
+`Forward` の利用には通常の型付けに加えて、項全体を対象とする転送 gate がある。
+gate は通常の型付けが成功した後に入力全体を一度走査するため、型付けの診断が gate の診断より先に返る。
+static mode は `type-of` と `raw*` の入口、および Ω を渡さない `core-check-row` で使い、根の転送文脈を空にする。
+config mode は `with-config-typing` の下で `check-as/boolean` を呼ぶ `config-ok?` の再型付けと、`gen.rkt` の `runtime-row` が使い、どちらも構成の Ω を gate に渡す。
+`core-check-row` は Ω を省略すると static mode、`#:states` で Ω を受けると config mode になる。
+
+gate は次の条件を検査する。
+
+- **条件 1**：`Forward` の対象は、資源型仮引数を持つ `Lam` の転送 `Let` の binder、または転送形 `T` の中の資源型 `Let` の binder である。
+- **条件 2**：実行経路ごとの各 binder の `Forward` は高々一度である。
+   `UnionEliminate` の枝は排他的なので枝ごとの最大を取り、`RecRewrite` の欄は合算する。
+- **条件 3**：外側の `Forward` 文脈を `Lam`、`Recur`、`RecurVal`、`RegionLam` の遅延する本体へ持ち込まない。
+   資源型仮引数を持つ内側の `Lam` は自分の転送 `Let` の binder だけを新たな文脈にする。
+- **条件 5**：`Forward` を含む引数は中断しない転送形 `T` であり、その `Apply` の全引数も `T` である。
+   static mode では関数位置は変数であり、config mode では変数または値である。
+
+```text
+T ::= x | v | Forward(x)
+    | UnionInject(τU, τm, T)
+    | Rec((ℓ, m, T) ...)
+    | Construct(D, K, T ...)
+    | RecRewrite(T, ((ℓ, x, τ, m', τ', T) ...))
+    | UnionEliminate(T, (τm x -> T) ...)
+    | (Let (x let τ) T T)
+    | Scope(π, T)
+```
+
+`T` の `Forward` の対象は static mode では変数、config mode では変数または `Available` な place である。
+static mode の `Scope` は空の管理欄を持ち、config mode では管理欄が空でなくてもよい。
+config mode では簡約途中の `RecRewriteOpen` も `T` とし、各欄を空の転送文脈で走査する。
+各欄は閉じた `RecRewrite` entry から作られ、static mode では外側 binder の参照が gate より先に `unbound-variable` で拒否されるため、この扱いは受理範囲を広げない。
+
+config mode はさらに、Ω で `Available` の place を根の転送文脈へ加え、`R-Beta` または `R-RecurUnfold` の直後から `R-LetOwned` までの資源型 `Let` の binder を一時的に許す。
+これは次の `R-LetOwned` で `Available` な place に置き換わる。
+config mode では `T` の `Apply` の関数位置に値を許し、`T` の `Scope` は非空の管理欄を許す。
+条件 4 の各経路でちょうど一度という性質は elaborate が生成する adapter の不変条件であり、gate は条件 1、2、3、5 だけを検査する。
+
+`Rec` と `Construct` は全ての欄が値になると値であり、`R-UnionInject` は `UnionVal` を作る。
+`R-UnionEliminate`、`R-Let`、`R-LetIdentity`、`R-LetOwned`、`R-LetB`、`R-LetIdentityB`、`R-LetOwnedB` は値または束縛の代入を作り、`R-ScopeValue` は値を外へ返す。
+`RecRewriteOpen` 以外の `T` の簡約は制御項として値または束縛の代入を作るだけで、新しい中間形を作らない。
+`R-RecRewrite-Open` が作る `RecRewriteOpen` は config mode で個別に gate を検査し、`R-RecRewrite-Close` が通常の `Rec` へ戻す。
+
+`Forward` は `Own` を row から除去しない。
+`Forward` 自身は OwnershipError へ進む規則を持たないため `Own` を加えず、他の項から row に入った `Own` は既存の和集合に残る。
+これは「`Own` は一度入った row から消えない」という §4.7 の規則と矛盾しない。
+
 **(T-Drop)** [REQ: OWN-002]
 
 ```text
@@ -1273,7 +1327,7 @@ Move の Effect は全ての場合で `{Own}` である。
 ```
 
 `T-Drop` は root `Owned` と集約資源型の値を受け付ける。
-place にある値の消費は `Move` が行い、Drop は取り出した値の内部 leaf を破棄する（§5.5）。
+place にある値の消費は `Move` または `Forward` が行い、Drop は取り出した値の内部 leaf を破棄する（§5.5）。
 
 **(T-Resource)**
 
@@ -1925,6 +1979,17 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 ⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], Λtok, θ⟩
 ```
 
+**(R-Forward)** [REQ: OWN-001]
+
+```text
+Ω(p) = Available
+--------------------------------
+⟨E[Forward(p)], H, Ω, Λtok, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], Λtok, θ⟩
+```
+
+`R-Forward` は `Available` な place だけを消費し、`Moved` または `Dropped` の place に対する誤り規則を持たない。
+その場合は規則が発火せず、config mode の gate がその構成を拒否する。
+
 **(R-MoveError)** [REQ: OWN-001]
 
 ```text
@@ -1945,7 +2010,7 @@ Redex model の負例テストはこの遷移を確認する。
   Λtok' = drop-leaves(v, Λtok)
 ```
 
-Drop の引数は Move を経て取り出された値であり、place の状態遷移は Move 側で済んでいる。
+Drop の引数は `Move` または `Forward` を経て取り出された値であり、place の状態遷移は値を取り出した側で済んでいる。
 値の内部の leaf は同じ走査で `Available` から `Dropped` へ遷移するが、`R-Drop` は `fin`/`finLeaf` イベントを記録しない。leaf の token が無い、または `Moved`/`Dropped` のときは規則を適用しない。
 
 ### 5.6 scope exit と finalization
@@ -2317,8 +2382,8 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
-7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の Move 成功（R-Move）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される、(f) `F_inner` を捨てる 5 規則（R-ScopeAbort、R-ScopeError、R-HandleReturn、R-HandleSkip、R-HandleError）は frame に現れる leaf token をすべて `Dropped` にし、`θ` に event を足さない。明示 drop は Move を経た値の消費であり、place の状態遷移としては (a) の Move 側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-011] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
-8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move も Drop もせず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
+7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の成功した消費（R-Move または R-Forward）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、Forward はその状態で遷移しない、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される、(f) `F_inner` を捨てる 5 規則（R-ScopeAbort、R-ScopeError、R-HandleReturn、R-HandleSkip、R-HandleError）は frame に現れる leaf token をすべて `Dropped` にし、`θ` に event を足さない。明示 drop は Move または Forward を経た値の消費であり、place の状態遷移としては (a) の消費側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-011] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
+8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move、Forward、Drop せず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
 9. **Unsafe containment**：型検査を通った項の任意の有限実行 trace において、(a) `R-RawLoad`、`R-RawStore`、`R-PtrOffset`、`R-FromRawPtrConst`、`R-FromRawPtrMut` が発火する構成では評価文脈に `Unsafe` の枠があり、(b) その操作が要求する `PtrProp` の集合は静的側が求めた obligation の集合と一致し、(c) `R-UnsafeExit` が返す値は `PtrVal` を leaf に持たず、(d) `Unsafe` の内側の `R-Yield` が event trace へ足す観測値も `PtrVal` を leaf に持たず、(e) どの規則も発火せず終端でもない構成の redex は、`Unsafe` の内側の raw 操作であってその実行時側条件を満たさないものに限る。判定の詳細は `unsafe.md` §5 に置く。 [REQ: PTR-001] [REQ: PTR-002]
 
 ## 8. golden program
@@ -2453,7 +2518,7 @@ G5 はその記録を Ψ として置いた。
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |
 | REC-001 | C-NoSelf、C-Structural、C-Unknown、B-NoSelf、B-Structural（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
 | REC-002 | 観測関係（§6.1）、C-Guarded、B-Guarded（§6.2）、性質 6 |
-| OWN-001 | E-Move（§4.7）、T-MovePlace（§5.1）、R-Move、R-MoveError（§5.5）、性質 7 |
+| OWN-001 | E-Move（§4.7）、T-MovePlace と T-Forward（§5.1）、R-Move、R-Forward、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |
 | OWN-003 | R-ScopeAbort、R-ScopeError（§5.6）、性質 7 |
 | OWN-005 | `borrow.md` §12 の `Let` の `Owned` 規則、性質 7 |
