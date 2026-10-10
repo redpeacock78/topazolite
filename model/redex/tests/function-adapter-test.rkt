@@ -257,11 +257,30 @@
 (define (resource-record-value label value token)
   `(Rec ((,label imm ,value) (owned imm ,(owned-option-value token)))))
 
+(define adapter-site-owned-field '(Option (Owned Res)))
+(define adapter-site-source-record
+  `(Record ((a Int imm) (owned ,adapter-site-owned-field imm))))
+(define adapter-site-target-record
+  `(Record ((a (Union Int Bool) imm)
+            (owned ,adapter-site-owned-field imm))))
+(define adapter-site-actual-function
+  `(NFn (,adapter-site-target-record) Unit (Own) ()))
+(define adapter-site-expected-function
+  `(NFn (,adapter-site-source-record) Unit (Own) ()))
+
+(define (adapter-site-worker)
+  `(Fn ((argument ,adapter-site-target-record)) Unit (Own)
+       (Drop argument)))
+
+(define (adapter-site-argument token)
+  (resource-record-value 'a 7 token))
+
 (define (make-union-value member value union-type)
   `(Apply (Fn ((argument ,member)) ,union-type (Own) (Move argument)) ,value))
 
 (define (check-resource-adapter-run source expected-forward-count
-                                    [expected-transfer-count 1])
+                                    [expected-transfer-count 1]
+                                    [expected-final #f])
   (match-define (list core type row callables)
     (elaborate-ok source))
   (check-equal? (core-type-of core '() callables) (list type row))
@@ -299,6 +318,11 @@
     (check-equal? (state-transition-count (list before after) (list rule)
                                           'Available 'Dropped)
                   0))
+  (when expected-final
+    (match (last configs)
+      [`(cfg ,value ,_heap ,_states ,_tokens ,_trace)
+       (check-equal? value expected-final)]
+      [other (fail-check (format "最終 config の形が不正: ~s" other))]))
   (void))
 
 (define (check-owned-return-adapter-run field-type token member-tag)
@@ -637,7 +661,164 @@
     '(Owned Res) '(Owned Res) '(Apply acquire 902)
     'Int '(Union Int String)
     '(Let (dropped let Unit) (Drop argument) 7))
-   1))
+   1 1 '(UnionVal (Union Int String) Int 7)))
+
+(test-case "Apply の引数 check-many は資源型関数を adapter に変換する"
+  (check-resource-adapter-run
+   `(Apply
+     (Fn ((callback ,adapter-site-expected-function)) Unit (Own)
+       (Apply callback ,(adapter-site-argument 952)))
+     ,(adapter-site-worker))
+   1 1 'unit))
+
+(test-case "Construct の欄 check-many は資源型関数を adapter に変換する"
+  (check-resource-adapter-run
+   `(Apply
+     (Fn () Unit (Own)
+       (Eliminate
+        (Construct some (Types ,adapter-site-expected-function)
+                   ,(adapter-site-worker))
+        ((some (callback) ->
+         (Apply callback ,(adapter-site-argument 953)))
+         (none () -> unit)))))
+   1 1 'unit))
+
+(test-case "rebuild-record は imm 欄の資源型関数を adapter に変換する"
+  (define actual-record
+    `(Record ((callback ,adapter-site-actual-function imm) (marker Int imm))))
+  (define expected-record
+    `(Record ((callback ,adapter-site-expected-function imm)
+              (marker (Union Int Bool) imm))))
+  (check-resource-adapter-run
+   `(Apply
+     (Fn ((callbacks ,actual-record)) Unit (Own)
+       (Let (adapted const ,expected-record) callbacks
+         (Apply (Proj adapted callback) ,(adapter-site-argument 954))))
+     (Rec ((callback imm ,(adapter-site-worker)) (marker imm 1))))
+   1 1 'unit))
+
+(test-case "check-rec-against-union は Rec の imm 欄に adapter を作る"
+  ;; Union payload は Surface Eliminate で開けないため、ここでは閉包と Union 値を実行する。
+  (define actual-record
+    `(Record ((callback ,adapter-site-actual-function imm) (marker Int imm))))
+  (define expected-record
+    `(Record ((callback ,adapter-site-expected-function imm)
+              (marker (Union Int Bool) imm))))
+  (define expected-union `(Union ,expected-record Bool))
+  (define source
+    `(Apply
+      (Fn ((callbacks ,actual-record)) Unit ()
+        (Let (wrapped const ,expected-union)
+             (Rec ((callback imm (Proj callbacks callback)) (marker imm 1)))
+          unit))
+      (Rec ((callback imm ,(adapter-site-worker)) (marker imm 1)))))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (check-adapter-resource-forwards core 1)
+  (check-not-false (find-adapter (erase-core core)))
+  (define execution (execution-core core callables))
+  (define-values (status target) (lower (erase-core execution) 'racket-cs))
+  (check-eq? status 'ok)
+  (check-eq? (compare-observations execution target 1) 'match)
+  (define-values (configs _rules)
+    (trace-g2 `(cfg (Scope () ,execution) () () () ())))
+  (check-config-trace configs callables type)
+  (match (last configs)
+    [`(cfg unit ,_heap ,_states ,_tokens ,_trace) (void)]
+    [other (fail-check (format "Union の Rec 構築結果が不正: ~s" other))]))
+
+(test-case "関数の結果 check は資源型関数を adapter に変換する"
+  (check-resource-adapter-run
+   `(Apply
+     (Apply (Fn ((callback ,adapter-site-actual-function))
+                ,adapter-site-expected-function () callback)
+            ,(adapter-site-worker))
+     ,(adapter-site-argument 955))
+   1 1 'unit))
+
+(test-case "check-eliminate の枝は資源型関数を adapter に変換する"
+  (check-resource-adapter-run
+   `(Apply
+     (Apply
+      (Fn ((tag (Option Int)))
+          ,adapter-site-expected-function ()
+        (Eliminate tag
+          ((some (ignored) -> ,(adapter-site-worker))
+           (none () -> ,(adapter-site-worker)))))
+      (Construct some (Types Int) 1))
+     ,(adapter-site-argument 956))
+   1 2 'unit))
+
+(test-case "Return の payload check は資源型関数を adapter に変換する"
+  (check-resource-adapter-run
+   `(Apply
+     (Apply
+      (Fn ((callback ,adapter-site-actual-function))
+          ,adapter-site-expected-function ()
+        (Return callback))
+      ,(adapter-site-worker))
+     ,(adapter-site-argument 957))
+   1 1 'unit))
+
+(test-case "mut 欄の関数型は adapter を作らず E-TYP-012 で拒否する"
+  (define actual
+    `(Record ((callback ,adapter-site-actual-function mut))))
+  (define expected
+    `(Record ((callback ,adapter-site-expected-function mut))))
+  (check-false (compat? (normalize-type actual) (normalize-type expected)))
+  (check-equal?
+   (diagnostic-id-of
+    `(Fn ((record ,actual)) Unit ()
+         (Let (converted const ,expected) record unit)))
+   e-type-mismatch))
+
+(test-case "synth Eliminate は異なる NFn を明示の Union に残す"
+  (define source
+    '(Eliminate (Construct some (Types Bool) (Construct true (Types)))
+       ((some (ignored) -> (Fn ((number Int)) Int () 7))
+        (none () -> (Fn ((truth Bool)) Bool () (Construct false (Types)))))))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (match type
+    [`(Union ,_ ,_) (void)]
+    [other (fail-check (format "NFn の synth 合流が Union でない: ~s" other))])
+  (define members (union-members type))
+  (check-equal? (length members) 2)
+  (check-true
+   (ormap (lambda (member)
+            (type-equiv? member '(NFn (Int) Int () () () User)))
+          members))
+  (check-true
+   (ormap (lambda (member)
+            (type-equiv? member '(NFn (Bool) Bool () () () User)))
+          members))
+  (check-false (find-adapter (erase-core core)))
+  (check-equal? (core-type-of core '() callables) (list type row)))
+
+(test-case "judgment-type と Core 型が異なる checked Curry の adapter も型付けされる"
+  (define actual-g
+    `(NFn (Int ,adapter-site-target-record) Unit (Own) ()))
+  (define actual-g-core
+    (normalize-type
+     `(NFn (Int ,adapter-site-target-record) Unit (Own) () () User)))
+  (define checked-function adapter-site-expected-function)
+  (define checked-function-core
+    (normalize-type
+     `(NFn (,adapter-site-source-record) Unit (Own) () () User)))
+  (define-values (curry-type _curry-row)
+    (apply values
+           (core-type-of '(Curry g 0) '() '()
+                         (list (list 'g actual-g-core)))))
+  ;; Curry の Core 型は Union 欄を受け、注釈の judgment-type は Int 欄を受ける。
+  (check-false (type-equiv? curry-type checked-function-core))
+  (check-true (compat? curry-type checked-function-core))
+  (check-resource-adapter-run
+   `(Apply
+     (Fn ((g ,actual-g)) Unit (Own)
+       (Let (checked const ,checked-function) (Curry g 0)
+         (Apply checked ,(adapter-site-argument 958))))
+     (Fn ((seed Int) (argument ,adapter-site-target-record)) Unit (Own)
+       (Drop argument)))
+   1 1 'unit))
 
 (test-case "Record から Record への資源引数変換は Forward する"
   (define option-owned '(Option (Owned Res)))

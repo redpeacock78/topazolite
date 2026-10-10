@@ -1370,6 +1370,13 @@
                actual-field)
              (when (and (eq? actual-mark 'imm) (eq? expected-mark 'mut))
                (mismatch))
+             ;; VAR-003 の mut 欄の NFn 不変性を RecRewrite の entry でも保つ。
+             (when (and (eq? actual-mark 'mut)
+                        (eq? expected-mark 'mut)
+                        (match actual-type [`(NFn ,_ ...) #t] [_ #f])
+                        (match expected-type [`(NFn ,_ ...) #t] [_ #f])
+                        (not (type-equiv? actual-type expected-type)))
+               (mismatch))
              (define mark-changed? (not (eq? actual-mark expected-mark)))
              ;; entry を作る欄でだけ生名を取り、恒等の欄で counter を進めない。
              (define (identity-entry)
