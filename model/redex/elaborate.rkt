@@ -784,6 +784,49 @@
     (define union-reserved (form-symbols raw-expression))
     ;; mut 欄の再構築中は、その内側でも関数 adapter を作らない。
     (define mut-field-adapter-forbidden? (make-parameter #f))
+    (define (contains-nfn? type)
+      (or (match type [`(NFn ,_ ...) #t] [_ #f])
+          (and (pair? type) (ormap contains-nfn? type))))
+    ;; VAR-003 は mut 欄の Union 選択にも及ぶ。実行時の各 Union 枝と
+    ;; Record の共通欄を対応させ、対応する NFn は型同値の場合だけ残す。
+    (define (mut-field-functions-invariant? actual expected propositions)
+      (let walk ([actual (normalize-type actual)]
+                 [expected (normalize-type expected)])
+        (match actual
+          ['Never #t]
+          [`(Union ,_ ,_)
+           (for/and ([member (in-list (union-members actual))])
+             (walk member expected))]
+          [_
+           (match expected
+             [`(Union ,_ ,_)
+              (for/or ([member (in-list (union-members expected))])
+                (and (type-compatible? actual member propositions)
+                     (walk actual member)))]
+             [`(NFn ,_ ...)
+              (and (match actual [`(NFn ,_ ...) #t] [_ #f])
+                   (type-equiv? actual expected))]
+             [`(Record ,expected-row)
+              (match actual
+                [`(Record ,actual-row)
+                 (for/and ([field (in-list actual-row)])
+                   (define corresponding
+                     (assq (first field) expected-row))
+                   (or (not corresponding)
+                       (not (contains-nfn? (second field)))
+                       (walk (second field) (second corresponding))))]
+                [_ (not (contains-nfn? actual))])]
+             [_
+              (cond
+                [(not (contains-nfn? actual)) #t]
+                [(and (list? actual) (list? expected)
+                      (= (length actual) (length expected))
+                      (equal? (car actual) (car expected)))
+                 (andmap walk (cdr actual) (cdr expected))]
+                [else #f])])])))
+    (define (mut-field-candidate? actual member propositions)
+      (or (not (mut-field-adapter-forbidden?))
+          (mut-field-functions-invariant? actual member propositions)))
     (define (fresh-union-name)
       (let next ()
         (define candidate
@@ -839,8 +882,12 @@
     (define (union-member-tiers actual members s propositions
                                 #:transfer [transfer 'move])
       (define context (initial-candidate-context propositions))
+      (define eligible-members
+        (filter (lambda (member)
+                  (mut-field-candidate? actual member propositions))
+                members))
       (define analyses
-        (for/list ([member (in-list members)])
+        (for/list ([member (in-list eligible-members)])
           (define kind (narrowing-kind actual member propositions))
           (define target
             (match kind
@@ -900,7 +947,10 @@
     (define (choose-union-member actual expected s propositions
                                  #:no-member-key [no-member-key 'type-mismatch]
                                  #:transfer [transfer 'move])
-      (define members (union-members expected))
+      (define members
+        (filter (lambda (member)
+                  (mut-field-candidate? actual member propositions))
+                (union-members expected)))
       (define exact
         (for/first ([member (in-list members)]
                     #:when (type-equiv? member actual))
@@ -1107,6 +1157,11 @@
       (define actual* (normalize-type actual))
       (define expected* (normalize-type expected))
       (define context (initial-candidate-context propositions))
+      ;; tag-compatible な短絡と decompose の枝対応より先に不変性を確認する。
+      (when (and (mut-field-adapter-forbidden?)
+                 (not (mut-field-functions-invariant?
+                       actual* expected* propositions)))
+        (reject s 'type-mismatch expected* actual*))
       (define actual-union?
         (match actual* [`(Union ,_ ,_) #t] [_ #f]))
       (define expected-union?
@@ -2786,9 +2841,15 @@
                             boundaries))))
       (define synthesized
         (and synthesized-result (judgment-type synthesized-result)))
+      (define candidate-members
+        (if synthesized
+            (filter (lambda (candidate)
+                      (mut-field-candidate? synthesized candidate propositions))
+                    members)
+            members))
       (define exact
         (and synthesized
-             (for/first ([candidate (in-list members)]
+             (for/first ([candidate (in-list candidate-members)]
                          #:when (type-equiv? candidate synthesized))
                candidate)))
       (define first-stage
@@ -2797,7 +2858,7 @@
             (if synthesized
                 (filter (λ (candidate)
                           (tag-compat? synthesized candidate context))
-                        members)
+                        candidate-members)
                 '())))
       (define (normal-path)
         (check-against-expected
@@ -2810,12 +2871,12 @@
         [_
          (define-values (tier1 tier2 tier3 tier4b)
            (if synthesized
-               (union-member-tiers synthesized members s propositions)
+               (union-member-tiers synthesized candidate-members s propositions)
                (values '() '() '() '())))
          (define literal-results
            (filter
             values
-            (for/list ([candidate (in-list members)]
+            (for/list ([candidate (in-list candidate-members)]
                        #:when (record-literal-member? raw-fields candidate))
               (define result
                 (trial

@@ -1377,10 +1377,9 @@
   (check-equal? (first (first results)) (first (second results)))
   (check-equal? (fourth (first results)) (fourth (second results))))
 
-(test-case "mut 欄の候補試行は拒否されても後続 adapter の生名を消費しない"
+(test-case "mut 欄の Union は型同値な exact 成分を選び生名を保つ"
   (define adapter-member adapter-site-expected-function)
-  (define tag-compatible-member
-    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define exact-member adapter-site-actual-function)
   (define actual-record
     `(Record ((guard ,adapter-site-actual-function mut)
               (callback ,adapter-site-actual-function imm))))
@@ -1392,8 +1391,8 @@
                 (callback ,adapter-member imm))))
     (mut-field-conversion-source actual-record expected-record))
   (define results
-    (list (elaborate-ok (source (list adapter-member tag-compatible-member)))
-          (elaborate-ok (source (list tag-compatible-member adapter-member)))))
+    (list (elaborate-ok (source (list adapter-member exact-member)))
+          (elaborate-ok (source (list exact-member adapter-member)))))
   (for ([result (in-list results)])
     (define core (first result))
     (define callables (fourth result))
@@ -1401,15 +1400,85 @@
     (check-equal? (map first callables) '(callable0 callable1))
     (match-define (list name _actual callable _binders body _curry)
       (find-adapter (erase-core core)))
-    ;; union0 は guard 欄の RecRewrite binder。候補試行が連番を残すと次は union2 になる。
+    ;; union0 は guard 欄の RecRewrite binder で、後続 adapter は union1 から始まる。
     (check-true (regexp-match? #px"^union1" (symbol->string name)))
     (check-true
      (contains-union-injection?
       core
-      (normalize-type `(Union ,adapter-member ,tag-compatible-member))
-      tag-compatible-member)))
+      (normalize-type `(Union ,adapter-member ,exact-member))
+      exact-member)))
   (check-equal? (first (first results)) (first (second results)))
   (check-equal? (fourth (first results)) (fourth (second results))))
+
+(test-case "mut 欄の NFn と非同値な Union 成分は E-TYP-012 で拒否する"
+  (define widened-function
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define actual
+    `(Record ((callback ,adapter-site-actual-function mut))))
+  (define expected
+    `(Record ((callback (Union ,widened-function Int) mut))))
+  (define normalized-actual (normalize-test-type adapter-site-actual-function))
+  (define normalized-widened (normalize-test-type widened-function))
+  (check-true (tag-compat? normalized-actual normalized-widened))
+  (check-false (type-equiv? normalized-actual normalized-widened))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄内 Record の NFn と非同値な Union 成分は E-TYP-012 で拒否する"
+  (define widened-function
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define actual-nested `(Record ((f ,adapter-site-actual-function imm))))
+  (define expected-nested `(Record ((f ,widened-function imm))))
+  (define actual `(Record ((callback ,actual-nested mut))))
+  (define expected
+    `(Record ((callback (Union ,expected-nested Int) mut))))
+  (define normalized-actual (normalize-test-type adapter-site-actual-function))
+  (define normalized-widened (normalize-test-type widened-function))
+  (check-true (tag-compat? normalized-actual normalized-widened))
+  (check-false (type-equiv? normalized-actual normalized-widened))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄の Union decompose は非同値な NFn 成分を E-TYP-012 で拒否する"
+  (define widened-function
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define actual
+    `(Record ((callback (Union ,adapter-site-actual-function Int) mut))))
+  (define expected
+    `(Record ((callback (Union ,widened-function Int) mut))))
+  (define normalized-actual (normalize-test-type adapter-site-actual-function))
+  (define normalized-widened (normalize-test-type widened-function))
+  (check-true (tag-compat? normalized-actual normalized-widened))
+  (check-false (type-equiv? normalized-actual normalized-widened))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄の入れ子 Union は非同値な NFn 成分を E-TYP-012 で拒否する"
+  (define widened-function
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define actual
+    `(Record ((callback (Union ,adapter-site-actual-function Bool) mut))))
+  (define expected
+    `(Record ((callback (Union ,widened-function (Union Bool Int)) mut))))
+  (define normalized-actual (normalize-test-type adapter-site-actual-function))
+  (define normalized-widened (normalize-test-type widened-function))
+  (check-true (tag-compat? normalized-actual normalized-widened))
+  (check-false (type-equiv? normalized-actual normalized-widened))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄の非関数値を Union へ注入する変換は保つ"
+  (define actual `(Record ((callback Int mut))))
+  (define expected `(Record ((callback (Union Int Bool) mut))))
+  (match-define (list core type row callables)
+    (elaborate-ok (mut-field-conversion-source actual expected)))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (check-true
+   (contains-union-injection? core '(Union Int Bool) 'Int)))
 
 (test-case "mut 欄の Union は型同値な成分を選び adapter を作らない"
   ;; この exact 候補は型同値の成分を選び、adapter を作らない。
