@@ -5,6 +5,7 @@
          racket/set
          redex/reduction-semantics
          "../borrow.rkt"
+         "../gen.rkt"
          "../lang.rkt"
          "../lowering.rkt"
          "../machine.rkt"
@@ -34,12 +35,6 @@
 
 (define (config-core config)
   (match config [`(cfg ,core ,_heap ,_states ,_tokens ,_trace) core]))
-
-(define (contains-rsd? core)
-  (match core
-    [`(Discharge (ProofRep ,_ (RemainderSafelyDropped ,_ ,_)) ,_) #t]
-    [(? list? parts) (ormap contains-rsd? parts)]
-    [_ #f]))
 
 (define (g2-trace initial)
   (let loop ([current initial] [configs (list initial)] [rules '()] [fuel 40])
@@ -659,7 +654,7 @@
                    x))))
    '(Record ((a (Option (Owned Int)) imm opt)))))
 
-(test-case "RSD は資源型の entry の線形の穴を保ち RecRewrite の row に Own を出す"
+(test-case "RSD は資源型の entry の線形の穴を保ち RecRewrite の row を保つ"
   (define option-owned '(Option (Owned Res)))
   (define wide
     (normalize-type `(Record ((kept Int imm) (owned ,option-owned imm)))))
@@ -693,7 +688,8 @@
               (again imm (Discharge ,proof x))))))))
   (define direct-type (type-of direct-core))
   (check-equal? direct-type (record-parameter-type output-row))
-  (check-equal? (row-of direct-core) '(Own))
+  ;; RSD は内側の row を保つため、entry 本体と RecRewrite の row は空である。
+  (check-equal? (row-of direct-core) '())
   (check-equal? (key-of single-use-core) 'ok
                 "Rec の同じ形で RSD を一度だけ使う entry は受理する")
   (check-equal? (key-of duplicated-core) 'ill-typed
@@ -704,8 +700,10 @@
   (for ([config (in-list configs)] [index (in-naturals)])
     (check-true
      (config-ok? config '() direct-type
-                 (if (contains-rsd? (config-core config)) '(Own) '()))
-     (format "RSD entry intermediate config ~a is typed: ~s" index config)))
+                 '())
+     (format "RSD entry intermediate config ~a is typed: ~s" index config))
+    (check-equal? (runtime-row config '() direct-type) '()
+                  (format "RSD entry runtime row ~a: ~s" index config)))
   (check-not-false (member 'R-DischargeRemainder rules))
   (define open-index (index-of rules 'R-RecRewrite-Open))
   (check-not-false open-index)
@@ -735,8 +733,8 @@
         (RecRewrite outer
           ((nested inner ,wide imm ,narrow
             (Discharge ,proof inner))))))))
-  (check-equal? (row-of nested-core) '(Own)
-                "nested entry RSD propagates Own to the outermost RecRewrite"))
+  ;; 入れ子の entry も RSD 自身の Own を外側へ伝播しない。
+  (check-equal? (row-of nested-core) '()))
 
 (test-case "RSD の row 緩和は RSD の無い effectful entry に広がらない"
   (define option-owned '(Option (Owned Res)))
@@ -786,7 +784,7 @@
   (check-true (row-rejection-at-rewrite? without-rsd)
               "RSD を含まない entry の非空 row も row check で拒否される"))
 
-(test-case "entry marker は遅延される Lam body の RSD row を隠さない"
+(test-case "遅延 Lam の純粋な RSD は空の latent row を保つ"
   (define option-owned '(Option (Owned Res)))
   (define wide
     (normalize-type `(Record ((kept Int imm) (owned ,option-owned imm opt)))))
@@ -812,8 +810,8 @@
     `(RecRewrite ,input
       ((box x ,wide imm ,entry-output ,entry-body))))
   (define callables `((delayed-rsd ,function-type)))
-  (check-equal? (key-of core callables) 'undeclared-function-effect
-                "Lam body の RSD は callable の latent row に Own を要求する"))
+  ;; cleanup marker を除いた RSD は内側の純粋な row をそのまま使う。
+  (check-equal? (key-of core callables) 'ok))
 
 (test-case "資源型の判定は ForallRegion と data schema を辿り、NFn を除く"
   (check-true (resource-type? '(ForallRegion (r) (Option (Owned Int)))))

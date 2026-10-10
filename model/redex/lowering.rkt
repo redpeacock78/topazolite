@@ -207,7 +207,7 @@
         `(PLetOwned ,px ,bound ,body)
         `(PLet ,px ,bound ,body)))
 
-  ;; shape だけを読み、RSD の drop と欄の再構成を PR へ写す。
+  ;; shape だけを読み、RSD の欄除去と再構成を PR へ写す。
   (define (lower-remainder-shape node record entries)
     (define (invalid-entry entry)
       (fail 'unknown-core-form node
@@ -216,16 +216,6 @@
       (for/list ([entry (in-list entries)]
                  #:when (match entry [`(,_ drop ,_) #t] [_ #f]))
         (label-code (first entry))))
-    (define (drop-expression current label optional?)
-      (define target-label (label-code label))
-      (if optional?
-          (let ([field (fresh-rsd-name)])
-            `(PMatch
-              (PProjOpt ,(tag-code 'some) ,(tag-code 'none)
-                        ,current ,target-label)
-              ((,(tag-code 'some) (,field) -> (PRuntime drop ,field))
-               (,(tag-code 'none) () -> unit))))
-          `(PRuntime drop (PProj ,current ,target-label))))
     (define (transform current remaining)
       (match remaining
         ['()
@@ -236,9 +226,7 @@
          (match entry
            [`(,label drop ,optional?)
             (if (boolean? optional?)
-                (let ([ignored (fresh-rsd-name)])
-                  `(PLet ,ignored ,(drop-expression current label optional?)
-                         ,(transform current rest)))
+                (transform current rest)
                 (invalid-entry entry))]
            [`(,label nested ,optional? ,child-shape)
             (if (and (boolean? optional?) (list? child-shape))

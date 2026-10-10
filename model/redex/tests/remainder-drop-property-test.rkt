@@ -392,15 +392,18 @@
              label core typed
              (type-of/raw core '() callables '() (empty-region-ctx))))
     (define target (lower-ok core))
-    (check-true (set-member? (effect-kinds-of target) 'own) label)
+    ;; PR の cleanup Effect は足さず、残る Effect を source row 内に保つ。
+    (check-true (subset? (effect-kinds-of target)
+                         (row-kinds (second typed)))
+                label)
 
     (define-values (core-configs core-rules) (trace-core core))
     (check-core-trace core-configs callables)
     (check-true (redex-match? G2m v (configuration-core (last core-configs)))
                 label)
     (check-not-false (member 'R-DischargeRemainder core-rules) label)
-    (check-equal? (dropped-at-rsd core-configs core-rules)
-                  (length (hash-ref case 'removed-token-ids))
+    (define rsd-drops (dropped-at-rsd core-configs core-rules))
+    (check-equal? rsd-drops (length (hash-ref case 'removed-token-ids))
                   label)
 
     (define token-ids (hash-ref case 'token-ids))
@@ -422,10 +425,10 @@
 
     (define-values (target-configs target-rules) (trace-target target))
     (check-true (redex-match? PR pv (target-core (last target-configs))) label)
-    (define core-drops
-      (length (filter (lambda (entry) (eq? (second entry) 'Dropped))
-                      final-tokens)))
-    (check-equal? core-drops (pr-drop-count target-rules) label)
+    ;; PR の drop は Scope cleanup だけに残り、RSD の除去分とは対応しない。
+    (check-equal? (pr-drop-count target-rules)
+                  (- (length token-ids) rsd-drops)
+                  label)
     (define core-observation (obs-eval-g2 core 1 fuel))
     (define target-observation (obs-eval-pr target 1 fuel))
     (check-equal? (second core-observation) 'observed label)
@@ -440,8 +443,7 @@
                (eq? (hash-ref case 'outer-state) 'present)
                (equal? (hash-ref case 'inner-optional) '(#t))
                (equal? (hash-ref case 'inner-present) '(#f)))
-      ;; Present な外側欄の内側で optional Owned 欄が Absent。
-      ;; PR は PMatch の none 枝を通り、Core と PR の実 drop 数はともに 0。
+      ;; Present な外側欄の内側で optional Owned 欄が Absent なら token は無い。
       (check-equal? token-ids '() label)
-      (check-equal? core-drops 0 label)
+      (check-equal? final-tokens '() label)
       (check-equal? (pr-drop-count target-rules) 0 label))))

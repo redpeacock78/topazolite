@@ -656,9 +656,6 @@
 (define mut-binding-types-table (make-parameter #f))
 (define resource-place-set (make-parameter (set)))
 (define resource-identity-transfers (make-parameter (set)))
-;; RecRewrite entry の内側では RSD cleanup の Own を row へ直接出さず、
-;; entry の row 制約を守ったまま RecRewrite の境界へ記録を渡す。
-(define current-entry-remainder-drop (make-parameter #f))
 (define declared-place-types (make-parameter '()))
 
 (define (with-place-shadowing names thunk)
@@ -2248,9 +2245,6 @@
      ;; region-free-params が署名の自由な RParam だけを返す。
      (define body-result
        (parameterize ([region-binder-context #f]
-                      ;; RecRewrite entry の cleanup marker はこの Lam の
-                      ;; 遅延 body には属さない。潜在 row に Own を残す。
-                      [current-entry-remainder-drop #f]
                       ;; formal の RParam はこの Lam の境界に属する。
                       ;; 内側の Lam が外側の RegionLam の束縛をそのまま
                       ;; 引き継ぐと、formal 借用の capture を見逃す。
@@ -2364,8 +2358,7 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
-    (match (parameterize ([current-entry-remainder-drop #f]
-                          [region-binder-context #f]
+    (match (parameterize ([region-binder-context #f]
                           ;; RecurVal の本体も呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
@@ -2442,8 +2435,7 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
-    (match (parameterize ([current-entry-remainder-drop #f]
-                          [region-binder-context #f]
+    (match (parameterize ([region-binder-context #f]
                           ;; Recur の定義本体は呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
@@ -3383,12 +3375,7 @@
         (match (check-as/full base tau-actual base-Λ
                               Ψ environment places callables fail)
           [(list row result-psi _)
-           (define entry-drop? (current-entry-remainder-drop))
-           (if (box? entry-drop?)
-               (begin
-                 (set-box! entry-drop? #t)
-                 (list tau-expected row result-psi))
-               (list tau-expected (row-union row '(Own)) result-psi))])])]))
+           (list tau-expected row result-psi)])])]))
 
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
   (match (infer input (enter-child Λ 0) Ψ
@@ -3404,7 +3391,6 @@
          (list (peel-lbl label) (peel-bind binder) (peel-ty tau)
                output-mode (peel-ty output-type) body)))
      (define replacements '())
-     (define entry-remainder-drop? #f)
      (define final-psi
        (for/fold ([current-psi input-psi])
                  ([entry (in-list normalized-entries)]
@@ -3434,32 +3420,28 @@
               (fail 'ill-typed core))
             (when (core-contains-ownleaf? body)
               (fail 'ill-typed core))
-            (define entry-drop? (box #f))
             (define body-result
-              (parameterize ([current-entry-remainder-drop entry-drop?])
-                (with-place-shadowing
-                 (list binder)
-                 (lambda ()
-                   (if (resource-type? tau)
-                       (with-identity-transfer
-                        binder
-                        (lambda ()
-                          (check-as/full body output-type
-                                         (enter-child Λ (add1 index))
-                                         current-psi
-                                         (extend '() (list binder) (list tau))
-                                         places callables fail)))
-                       (check-as/full body output-type
-                                      (enter-child Λ (add1 index))
-                                      current-psi
-                                      (extend '() (list binder) (list tau))
-                                      places callables fail))))))
+              (with-place-shadowing
+               (list binder)
+               (lambda ()
+                 (if (resource-type? tau)
+                     (with-identity-transfer
+                      binder
+                      (lambda ()
+                        (check-as/full body output-type
+                                       (enter-child Λ (add1 index))
+                                       current-psi
+                                       (extend '() (list binder) (list tau))
+                                       places callables fail)))
+                     (check-as/full body output-type
+                                    (enter-child Λ (add1 index))
+                                    current-psi
+                                    (extend '() (list binder) (list tau))
+                                    places callables fail)))))
             (match body-result
               [(list body-row body-psi _)
                (unless (row=? body-row '())
                  (fail 'ill-typed core))
-               (when (unbox entry-drop?)
-                 (set! entry-remainder-drop? #t))
                (set! replacements
                      (append replacements
                              (list (list label output-type output-mode))))
@@ -3472,16 +3454,7 @@
                (append (list (first field) output-type output-mode)
                        (drop field 3))]
               [_ field]))))
-     (define outer-entry-drop? (current-entry-remainder-drop))
-     (define result-row
-       (if entry-remainder-drop?
-           (if (box? outer-entry-drop?)
-               (begin
-                 (set-box! outer-entry-drop? #t)
-                 input-row)
-               (row-union input-row '(Own)))
-           input-row))
-     (list result-type result-row final-psi)]
+     (list result-type input-row final-psi)]
     [_ (fail 'ill-typed core)]))
 
 (define (infer-rec-rewrite-open core fields Λ Ψ environment places callables fail)
@@ -3524,8 +3497,7 @@
 
     [`(RegionLam (,rps ...) ,body)
      (match-define (list body-type body-row body-psi)
-       (parameterize ([current-entry-remainder-drop #f]
-                      ;; RegionLam の本体は RegionApp まで遅延する。
+       (parameterize (;; RegionLam の本体は RegionApp まで遅延する。
                       [region-binder-context rps]
                       [region-binder-renamings
                        (cons (for/hash ([fresh (in-list rps)])

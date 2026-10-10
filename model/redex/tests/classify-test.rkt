@@ -5,7 +5,8 @@
          "../classify.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
-         "../erase.rkt")
+         "../erase.rkt"
+         "../typing.rkt")
 
 (define (classify-ucore source)
   (match (elab source)
@@ -330,6 +331,63 @@
 (test-case "REC-002: Yield followed by a tail call is Productive"
   (check-equal? (classify guarded-loop '() guarded-callables)
                 '(Productive guarded)))
+
+(test-case "REC-002: 純粋な RSD は guard の成分として Productive である"
+  (define option-owned '(Option (Owned Res)))
+  (define wide
+    '(Record ((kept Int imm) (owned (Option (Owned Res)) imm))))
+  (define narrow '(Record ((kept Int imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wide ,narrow)))
+  (define value
+    `(Discharge ,proof
+       (Rec ((kept imm 7)
+             (owned imm (Construct ,option-owned some
+                                   (OwnLeaf (resource 16))))))))
+  (define loop-type
+    `(NFn (,narrow) Unit () ((Yield ,narrow)) () User))
+  (define loop
+    `(Recur rsd-loop-id recur (item)
+       (Yield ,value (Apply recur item))
+       (Apply recur (Rec ((kept imm 7))))))
+  (check-equal? (core-type-of value '() '()) (list narrow '()))
+  (check-equal? (classify loop '() `((rsd-loop-id ,loop-type)))
+                '(Productive guarded)))
+
+(test-case "REC-002: RSD 内側の Move は guard の Own を残す"
+  (define option-owned '(Option (Owned Res)))
+  (define wide
+    '(Record ((kept Int imm) (owned (Option (Owned Res)) imm))))
+  (define narrow '(Record ((kept Int imm))))
+  (define proof
+    `(ProofRep (Reserved o-narrow)
+               (RemainderSafelyDropped ,wide ,narrow)))
+  (define source-type
+    `(NFn (,option-owned) ,wide () (Own) () User))
+  (define source
+    `(Lam User moved-source (raw-owned)
+       (Handle (Return source-boundary ,wide) (answer -> answer)
+         (Scope ()
+           (Let (stored let ,option-owned) raw-owned
+               (Let (record let ,wide)
+               (Rec ((kept imm 8) (owned imm (Move stored))))
+               (Move record)))))))
+  (define value
+    `(Discharge ,proof
+       (Apply ,source
+              (Construct ,option-owned some
+                         (OwnLeaf (resource 17))))))
+  (define loop-type
+    `(NFn (,narrow) Unit () ((Yield ,narrow)) () User))
+  (define loop
+    `(Recur rsd-loop-id recur (item)
+       (Yield ,value (Apply recur item))
+       (Apply recur (Rec ((kept imm 7))))))
+  (define callables
+    `((rsd-loop-id ,loop-type) (moved-source ,source-type)))
+  ;; RSD は内側の Move が生む Own を消さないため guard には使えない。
+  (check-equal? (classify loop '() callables) 'Unknown))
 
 (test-case "REC-002: f-free な本体は C-NoSelf、Suspend の本体は guard にならない"
   (define callables '((loop-id (NFn () Unit () (Partial) () User))))

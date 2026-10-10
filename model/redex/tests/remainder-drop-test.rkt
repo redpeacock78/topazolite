@@ -244,7 +244,7 @@
                          narrowing-environment)
                 narrow))
 
-(test-case "RSD の row は内側が pure value でも Own を持つ"
+(test-case "RSD の row は内側の pure value の row を保つ"
   (define source-type
     '(Record ((kept Int imm) (owned (Option (Owned Res)) imm))))
   (define target-type '(Record ((kept Int imm))))
@@ -258,8 +258,9 @@
                  (Construct ,option-owned some
                             (OwnLeaf (resource 41)))))))
   (define core `(Discharge ,source-proof ,source))
+  ;; 以前の RSD 自身による Own 加算を除き、内側の空 row を保つ。
   (check-equal? (core-type-of source '() '()) (list source-type '()))
-  (check-equal? (core-type-of core '() '()) (list target-type '(Own))))
+  (check-equal? (core-type-of core '() '()) (list target-type '())))
 
 (test-case "入れ子の drop obligation は Discharge で包むと受理される"
   (check-equal? (type-of `(Discharge ,nested-proof ,nested-wide-value)
@@ -342,7 +343,8 @@
           (outer-kept imm 9))))
   (define core `(Scope () (Discharge ,nested-proof ,source)))
   (check-equal? (core-type-of source '() '()) (list nested-wide '()))
-  (check-equal? (core-type-of core '() '()) (list nested-narrow '(Own)))
+  ;; 入れ子の除去も RSD 自身の Own を row に加えない。
+  (check-equal? (core-type-of core '() '()) (list nested-narrow '()))
   (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
   (check-config-trace configs '() nested-narrow)
   (check-not-false (member 'R-DischargeRemainder rules))
@@ -368,7 +370,8 @@
        (Discharge ,proof
          (Rec ((inside imm (Absent ,inner-wide))
                (outer-kept imm 9))))))
-  (check-equal? (core-type-of core '() '()) (list expected '(Own)))
+  ;; Absent の欄を除く RSD も内側の空 row のままである。
+  (check-equal? (core-type-of core '() '()) (list expected '()))
   (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
   (check-not-false (member 'R-DischargeRemainder rules))
   (check-config-trace configs '() expected)
@@ -427,8 +430,9 @@
     (check-equal? (key-of core) 'ok
                   (format "RSD core が受理されない: ~s => ~s; source=~s"
                           actual expected source))
+    ;; 有限な欄構造の RSD はどれも内側の空 row を保つ。
     (check-equal? (core-type-of core '() '())
-                  (list expected '(Own)))
+                  (list expected '()))
     (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
     (check-not-false (member 'R-DischargeRemainder rules)
                      (format "RSD が strip を完了しない: ~s => ~s" actual expected))
@@ -449,7 +453,8 @@
        (Discharge ,optional-proof
          (Rec ((owned imm (Absent ,option-owned)) (kept imm 9))))))
   (define-values (configs _rules) (trace-g2 `(cfg ,core () () () ())))
-  (check-equal? (core-type-of core '() '()) (list runtime-narrow '(Own)))
+  ;; optional の Absent 除去でも RSD 自身の Own は現れない。
+  (check-equal? (core-type-of core '() '()) (list runtime-narrow '()))
   (check-config-trace configs '() runtime-narrow)
   (check-equal? (configuration-core (last configs))
                 '(Rec ((kept imm 9))))

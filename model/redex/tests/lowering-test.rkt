@@ -71,6 +71,12 @@
   (check-eq? status 'capability (format "lower: ~s" result))
   result)
 
+(define (contains-pr-runtime-drop? value)
+  (match value
+    [`(PRuntime drop ,_) #t]
+    [(? list? parts) (ormap contains-pr-runtime-drop? parts)]
+    [_ #f]))
+
 ;;; backend-matrix.md §5 の符号化
 
 ;; PR の literal と、: を含む記号を入れる（backend-matrix.md §7）。
@@ -285,9 +291,7 @@
                 (Record ((x (Owned Res) imm) (y Int imm)))
                 (Record ((y Int imm)))))
      x))
-  '(PLet rsd:0 v:x
-         (PLet rsd:1 (PRuntime drop (PProj rsd:0 f:x))
-                (PRecRemove rsd:0 (f:x)))))
+  '(PLet rsd:0 v:x (PRecRemove rsd:0 (f:x))))
  (check-equal? (lower-ok '(Error 0)) '(PError 0)))
 
 (test-case "Forward の lowering は latent row を保ち Move の own も残す"
@@ -330,14 +334,10 @@
                  (Record ((owned (Owned Res) imm opt) (kept Int imm)))
                  (Record ((kept Int imm)))))
       x))
+  ;; 除去欄の cleanup は source 機械が担い、PR には drop を足さない。
   (check-equal?
    (lower-ok optional-proof)
-   '(PLet rsd:0 v:x
-          (PLet rsd:1
-                (PMatch (PProjOpt k:some k:none rsd:0 f:owned)
-                        ((k:some (rsd:2) -> (PRuntime drop rsd:2))
-                         (k:none () -> unit)))
-                (PRecRemove rsd:0 (f:owned)))))
+   '(PLet rsd:0 v:x (PRecRemove rsd:0 (f:owned))))
   (define nested-proof
     '(Discharge
       (ProofRep (Reserved o-narrow)
@@ -354,14 +354,13 @@
                         ((k:some (rsd:2) ->
                           (PRecRewrite rsd:0
                                        ((f:a rsd:3
-                                         (PLet rsd:4
-                                               (PRuntime drop
-                                                         (PProj rsd:3 f:owned))
-                                               (PRecRemove rsd:3 (f:owned)))))))
+                                         (PRecRemove rsd:3 (f:owned))))))
                          (k:none () -> rsd:0)))
                 rsd:1)))
-  (check-equal? (effect-kinds-of (lower-ok optional-proof)) (set 'own))
-  (check-equal? (effect-kinds-of (lower-ok nested-proof)) (set 'own)))
+  (check-false (contains-pr-runtime-drop? (lower-ok optional-proof)))
+  (check-false (contains-pr-runtime-drop? (lower-ok nested-proof)))
+  (check-equal? (effect-kinds-of (lower-ok optional-proof)) (set))
+  (check-equal? (effect-kinds-of (lower-ok nested-proof)) (set)))
 
 (test-case "RSD の Core と PR の観測値と drop 数が 8 対で一致する"
   (define option-owned '(Option (Owned Res)))
@@ -383,6 +382,7 @@
         `(Record (,(field 'a expected-inner 'imm #t))))
       (list actual expected inner-optional? outer-optional? owned-mode)))
   (check-equal? (length cases) 8)
+  ;; PRecRemove だけで値を狭め、PR 側に cleanup Effect を追加しない。
   (for ([case (in-list cases)] [token (in-naturals 400)])
     (match-define (list actual expected inner-optional? _outer-optional? owned-mode)
       case)
@@ -400,6 +400,11 @@
            (Discharge ,proof ,source)
            (Yield output unit))))
     (define target (lower-ok core))
+    (check-false (contains-pr-runtime-drop? target))
+    (match (core-type-of core '() '())
+      [(list _ row)
+       (check-equal? (effect-kinds-of target) (row-kinds row))]
+      [other (fail (format "RSD の source row を得られない: ~s" other))])
     (define source-observation (obs-eval-g2 core 1 fuel))
     (define target-observation (obs-eval-pr target 1 fuel))
     (check-equal? (second source-observation) 'observed)
@@ -412,7 +417,7 @@
     (check-equal? (core-dropped-token-count core-final) 1)
     (check-equal? (length (filter (lambda (rule) (eq? rule 'R-PR-Drop))
                                   target-rules))
-                  (core-dropped-token-count core-final)))
+                  0))
   (define inner-wide
     `(Record ((owned ,option-owned imm) (kept Int imm))))
   (define inner-narrow '(Record ((kept Int imm))))
@@ -428,6 +433,8 @@
                     (Rec ((a imm (Absent ,inner-wide)))))
          (Yield output unit))))
   (define absent-target (lower-ok absent-core))
+  (check-false (contains-pr-runtime-drop? absent-target))
+  (check-equal? (effect-kinds-of absent-target) (set 'yield))
   (define absent-source-observation (obs-eval-g2 absent-core 1 fuel))
   (define absent-target-observation (obs-eval-pr absent-target 1 fuel))
   (check-equal? (second absent-source-observation) 'observed)
