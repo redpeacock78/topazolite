@@ -404,10 +404,23 @@ Union の欄の値は tag で成分を表すので、tag を持つ値を書き�
 合流型を作った枝の再照合は、`Eliminate` の導入点だけ専用の規則へ切り替える。
 `mut` field の expected Union に対し、枝が単一型ならいずれかの成分と、枝が部分 Union なら全成分と `type-equiv?` で一致することを求める。
 通常の `compat?` と `Assign` の `tag-compat?` 検査は緩めない。
-この例外は `Eliminate` の合流型を導入する枝の再照合に限り、通常の `mut` 欄の変換は既存の Union 値から成分集合を広げない。
-たとえば `Int` 欄から `(Union Int Bool)` 欄への再構築は、値を `UnionInject` でタグ付けする変換であり、既存の `mut` 欄型どうしの互換性を緩める操作ではない。
-その再構築後の欄は expected Union 型を持ち、以後の書き込みは通常どおり `tag-compat?` で検査する。
-合流を到達不能なまま未回収へ送る案は、ホワイトペーパー §4.5.3 の回収主張を実装で空にするため採らない。
+この例外は `Eliminate` の合流型を導入する枝の再照合に限る。
+通常の `mut` 欄の変換では、現行実装はすでに tag を持つ Union 値の成分集合を広げない。
+これは `ROW-004` が定める可変欄の不変性を保つ保守的な実装制限であり、値の再構成を拒む独立した健全性要件とは確認できていない。
+ホワイトペーパー §4.5.2 は readonly と mutable の衝突を拒み、`ROW-004` は代入安全性のため可変欄を既定で不変とするが、再構成による Union 拡幅の可否は定めていない。
+§4.5.3 も Union 型を `TypeNarrative` へ展開する方針だけを述べる。
+
+`Int` 欄から `(Union Int Bool)` 欄への再構築は、値に新しい tag を付ける `UnionInject` を使う。
+すでに tag を持つ `(Union Bool Int)` の値から `(Union Bool (Union Int Unit))` の値を作る場合も、既存の成分を選び直して期待する Union の tag で包める。
+どちらも値の再構成であり、後者だけを拒む alias、`Owned` token、tag の機構は仕様から導けない。
+一方、`RecRewrite` が alias 関係を常に切る保証もないため、alias が無いことを拡幅の安全性の根拠にはできない。
+
+`compat?` の `mut` 欄の不変条件と `Assign` の `tag-compat?` 検査は変更しない。
+`mut` 欄の既存 Union を再構成して成分を増やす経路は、現行実装が拒否する。
+この制限は健全性要件として確定せず、`compat?` の不変条件を変えずに値変換で許せるかを、alias と `Owned` token の保存を含めて確認する必要がある。
+`Eliminate` の合流規則だけで例外を広げる案と、`compat?` 自体を緩める案は採らない。
+通常の `mut` 欄の Union 拡幅は、c3b の RSD ではなく、P2m3 の前に独立した ROW-005 elaboration サイクルで再検討する。
+合流を到達不能なまま未回収へ送る案は、ホワイトペーパー §4.5.2 の row merge の主張を実装で空にするため採らない。
 Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
 ## 4. elaboration
