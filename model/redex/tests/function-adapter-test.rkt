@@ -80,6 +80,28 @@
             (tree-count (cdr tree) predicate))
          0)))
 
+(define (normalize-test-type type)
+  (match type
+    [`(NFn (,parameters ...) ,return ,row ,obligations)
+     `(NFn ,(map normalize-test-type parameters)
+           ,(normalize-test-type return)
+           () ,row
+           ,(map normalize-proposition obligations) User)]
+    [`(Union ,left ,right)
+     (normalize-type `(Union ,(normalize-test-type left)
+                             ,(normalize-test-type right)))]
+    [_ (normalize-type type)]))
+
+(define (contains-union-injection? core expected member)
+  (tree-contains?
+   (erase-core core)
+   (lambda (node)
+     (match node
+       [`(UnionInject ,found-expected ,found-member ,_)
+        (and (equal? found-expected (normalize-test-type expected))
+             (equal? found-member (normalize-test-type member)))]
+       [_ #f]))))
+
 (define (decompose-alias-count tree mode operation)
   (tree-count
    tree
@@ -1257,3 +1279,151 @@
   (match (last configs)
     [`(cfg 42 ,_heap ,_states ,_tokens ,_trace) (void)]
     [other (fail-check (format "外側の Return が adapter を越えない: ~s" other))]))
+
+(test-case "NFn の唯一の adapter 候補は Union の第 2 層から選ぶ"
+  (define expected-union
+    (normalize-type `(Union ,adapter-site-expected-function Bool)))
+  (define source
+    `(Fn ((function ,adapter-site-actual-function)) Unit ()
+         (Let (selected const ,expected-union) function unit)))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (check-equal? (length (find-adapters (erase-core core))) 1)
+  (check-adapter-resource-forwards core 1)
+  (check-true
+   (contains-union-injection? core expected-union
+                              adapter-site-expected-function)
+   (format "選ばれた UnionInject が見つからない: ~s" (erase-core core))))
+
+(test-case "同じ Union 層の二つの NFn adapter 候補は E-TYP-031 で曖昧になる"
+  (define owned adapter-site-owned-field)
+  (define bool-record `(Record ((a Bool imm) (owned ,owned imm))))
+  (define bool-function `(NFn (,bool-record) Unit (Own) ()))
+  (define expected-union
+    (normalize-type
+     `(Union ,adapter-site-expected-function ,bool-function)))
+  (define source
+    `(Fn ((function ,adapter-site-actual-function)) Unit ()
+         (Let (selected const ,expected-union) function unit)))
+  (check-equal?
+   (diagnostic-id-of source)
+   (diagnostic-code-of 'elaborate 'ambiguous-union-member)))
+
+(test-case "check-rec-against-union も二つの NFn adapter 候補を同じ層で曖昧とする"
+  (define bool-record
+    `(Record ((a Bool imm) (owned ,adapter-site-owned-field imm))))
+  (define bool-function `(NFn (,bool-record) Unit (Own) ()))
+  (define int-record
+    `(Record ((callback ,adapter-site-expected-function imm)
+              (marker Int imm))))
+  (define bool-function-record
+    `(Record ((callback ,bool-function imm) (marker Int imm))))
+  (define expected-union
+    (normalize-type `(Union ,int-record ,bool-function-record)))
+  (define source
+    `(Fn () Unit ()
+         (Let (selected const ,expected-union)
+              (Rec ((callback imm ,(adapter-site-worker)) (marker imm 1)))
+              unit)))
+  (check-equal?
+   (diagnostic-id-of source)
+   (diagnostic-code-of 'elaborate 'ambiguous-union-member)))
+
+(test-case "資源 adapter 候補の試行は成分順と生成連番に影響しない"
+  (define adapter-member adapter-site-expected-function)
+  (define tag-compatible-member
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (check-true (compat? (normalize-test-type adapter-site-actual-function)
+                       (normalize-test-type adapter-member)))
+  (check-false (tag-compat? (normalize-test-type adapter-site-actual-function)
+                            (normalize-test-type adapter-member)))
+  (check-true (tag-compat? (normalize-test-type adapter-site-actual-function)
+                           (normalize-test-type tag-compatible-member)))
+  (check-false (type-equiv? (normalize-test-type adapter-site-actual-function)
+                            (normalize-test-type tag-compatible-member)))
+  (define (source members)
+    (define expected-union
+      (normalize-type `(Union ,(first members) ,(second members))))
+    `(Fn ((selected ,adapter-site-actual-function)
+          (converted ,adapter-site-actual-function)) Unit ()
+         (Let (wrapped const ,expected-union) selected
+           (Let (adapted const ,adapter-member) converted unit))))
+  (define results
+    (list (elaborate-ok (source (list adapter-member tag-compatible-member)))
+          (elaborate-ok (source (list tag-compatible-member adapter-member)))))
+  (for ([result (in-list results)])
+    (define core (first result))
+    (define callables (fourth result))
+    (check-equal? (length (find-adapters (erase-core core))) 1)
+    (check-adapter-resource-forwards core 1)
+    (check-equal? (map first callables) '(callable0 callable1))
+    (match-define (list name _actual callable _binders body _curry)
+      (find-adapter (erase-core core)))
+    (check-true (regexp-match? #px"^union0" (symbol->string name)))
+    (check-true
+     (tree-contains? body
+                     (lambda (node)
+                       (and (symbol? node)
+                            (regexp-match? #px"^boundary1$"
+                                           (symbol->string node))))))
+    (check-true
+     (contains-union-injection? core
+                                (normalize-type
+                                 `(Union ,adapter-member
+                                         ,tag-compatible-member))
+                                tag-compatible-member)
+     (format "順序試験で候補成分が選ばれていない: ~s"
+             (erase-core core))))
+  (check-equal? (first (first results)) (first (second results)))
+  (check-equal? (fourth (first results)) (fourth (second results))))
+
+(test-case "mut 欄の候補試行は拒否されても後続 adapter の生名を消費しない"
+  (define adapter-member adapter-site-expected-function)
+  (define tag-compatible-member
+    `(NFn (,adapter-site-target-record) Unit ((Yield Int) Own) ()))
+  (define actual-record
+    `(Record ((guard ,adapter-site-actual-function mut)
+              (callback ,adapter-site-actual-function imm))))
+  (define (source members)
+    (define expected-union
+      (normalize-type `(Union ,(first members) ,(second members))))
+    (define expected-record
+      `(Record ((guard ,expected-union mut)
+                (callback ,adapter-member imm))))
+    (mut-field-conversion-source actual-record expected-record))
+  (define results
+    (list (elaborate-ok (source (list adapter-member tag-compatible-member)))
+          (elaborate-ok (source (list tag-compatible-member adapter-member)))))
+  (for ([result (in-list results)])
+    (define core (first result))
+    (define callables (fourth result))
+    (check-equal? (length (find-adapters (erase-core core))) 1)
+    (check-equal? (map first callables) '(callable0 callable1))
+    (match-define (list name _actual callable _binders body _curry)
+      (find-adapter (erase-core core)))
+    ;; union0 は guard 欄の RecRewrite binder。候補試行が連番を残すと次は union2 になる。
+    (check-true (regexp-match? #px"^union1" (symbol->string name)))
+    (check-true
+     (contains-union-injection?
+      core
+      (normalize-type `(Union ,adapter-member ,tag-compatible-member))
+      tag-compatible-member)))
+  (check-equal? (first (first results)) (first (second results)))
+  (check-equal? (fourth (first results)) (fourth (second results))))
+
+(test-case "mut 欄の Union は型同値な成分を選び adapter を作らない"
+  ;; この exact 候補は型同値の成分を選び、adapter を作らない。
+  (define exact-actual
+    `(Record ((callback ,adapter-site-actual-function mut))))
+  (define exact-union
+    (normalize-type
+     `(Union ,adapter-site-expected-function ,adapter-site-actual-function)))
+  (define exact-expected `(Record ((callback ,exact-union mut))))
+  (match-define (list exact-core exact-type exact-row exact-callables)
+    (elaborate-ok (mut-field-conversion-source exact-actual exact-expected)))
+  (check-equal? (core-type-of exact-core '() exact-callables)
+                (list exact-type exact-row))
+  (check-equal? (find-adapters (erase-core exact-core)) '())
+  (check-true
+   (contains-union-injection? exact-core exact-union
+                              adapter-site-actual-function)))
