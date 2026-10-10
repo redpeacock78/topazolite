@@ -429,6 +429,140 @@
                       (result-getter ,getter-type)))
   (check-equal? (diagnostic-code-of-core owner '() callables) "E-OWN-036"))
 
+(test-case "E_tail の binder は別の束縛式の Forward には使えない"
+  (define producer-type '(NFn (Unit) (Owned Res) () () () User))
+  (define consumer-type '(NFn ((Owned Res)) (Owned Res) (Own) () () User))
+  (define owner-type
+    `(NFn (,producer-type ,consumer-type) (Owned Res) (Own) () () User))
+  (define owner
+    `(Lam User tail-binder-owner (producer consumer)
+       (Handle (Return tail-binder-owner (Owned Res)) (answer -> answer)
+         (Scope ()
+           (Let (n let (Owned Res)) (Apply producer unit)
+             (Let (m let (Owned Res)) (Apply consumer (Forward n))
+               (Forward m)))))))
+  (define callables `((tail-binder-owner ,owner-type)
+                      (producer ,producer-type)
+                      (consumer ,consumer-type)))
+  (check-equal? (diagnostic-code-of-core owner '() callables) "E-OWN-036"))
+
+(test-case "結果位置の T は非恒等 Handle と E_tail 外の恒等 Handle を通らない"
+  (define owned '(Owned Res))
+  (define owner-type `(NFn (,owned) Unit () () () User))
+  (define nonidentity
+    `(Lam User nonidentity-owner (p)
+       (Handle (Return nonidentity-owner Unit)
+               (answer -> (Let (ignored let Unit) unit answer))
+         (Scope ()
+           (Let (x let ,owned) p
+             (Let (discarded let ,owned) (Forward x) unit))))))
+  (check-equal?
+   (diagnostic-code-of-core nonidentity '()
+                            `((nonidentity-owner ,owner-type)))
+   "E-OWN-036")
+  ;; 束縛式内の恒等 Handle は static mode の結果位置の印ではない。
+  (define nested
+    `(Lam User nested-owner (p)
+       (Handle (Return nested-owner Unit) (answer -> answer)
+         (Scope ()
+           (Let (x let ,owned) p
+             (Let (discarded let Unit)
+               (Handle (Return nested-boundary Unit)
+                       (inner -> inner)
+                 (Let (ignored-owned let ,owned) (Forward x) unit))
+               unit))))))
+  (define nested-type owner-type)
+  (check-equal?
+   (diagnostic-code-of-core nested '() `((nested-owner ,nested-type)))
+   "E-OWN-036"))
+
+(test-case "結果位置の Forward は束縛式の内側の binder と const binder を使えない"
+  (define owned '(Owned Res))
+  (define producer-type '(NFn (Unit) (Owned Res) () () () User))
+  (define malformed
+    `(Lam User malformed-owner (producer)
+       (Handle (Return malformed-owner ,owned) (answer -> answer)
+         (Scope ()
+           (Let (result let ,owned)
+             (Let (inner let ,owned) (Apply producer unit) (Forward inner))
+             (Forward result))))))
+  (check-equal?
+   (diagnostic-code-of-core
+    malformed '()
+    `((malformed-owner (NFn (,producer-type) ,owned () () () User))
+      (producer ,producer-type)))
+   "E-OWN-036")
+  (define const-owner-type `(NFn (,producer-type) ,owned () () () User))
+  (define const-owner
+    `(Lam User const-owner (producer)
+       (Handle (Return const-owner ,owned) (answer -> answer)
+         (Scope ()
+           (Let (constant-owned const ,owned) (Apply producer unit)
+             (Forward constant-owned))))))
+  (check-equal?
+   (diagnostic-code-of-core const-owner '()
+                            `((const-owner ,const-owner-type)
+                              (producer ,producer-type)))
+   "E-OWN-036"))
+
+(test-case "E_tail の Let に束縛した UnionEliminate の結果を転送できる"
+  (define option-owned '(Option (Owned Res)))
+  (define source-union (normalize-type `(Union ,option-owned Int)))
+  (define getter-type `(NFn (Unit) ,source-union () (Own) () User))
+  (define owner-type `(NFn (,getter-type) ,option-owned () (Own) () User))
+  (define owner
+    `(Lam User tail-union-owner (get)
+       (Handle (Return tail-union-owner ,option-owned) (answer -> answer)
+         (Scope ()
+           (Let (result let ,option-owned)
+             (UnionEliminate (Apply get unit)
+               ((,option-owned option ->
+                 (Scope ()
+                   (Let (payload let ,option-owned) option
+                     (Move payload))))
+                (Int number -> (Construct ,option-owned none))))
+             (Forward result))))))
+  (define getter
+    `(Lam User tail-union-getter (ignored)
+       (Handle (Return tail-union-getter ,source-union) (answer -> answer)
+         (Scope ()
+           (UnionInject ,source-union ,option-owned
+             (Construct ,option-owned some
+               (OwnLeaf (resource 991))))))))
+  (define callables `((tail-union-owner ,owner-type)
+                      (tail-union-getter ,getter-type)))
+  (check-equal? (core-type-of owner '() callables) (list owner-type '()))
+  (define program `(Drop (Apply ,owner ,getter)))
+  (check-equal? (core-type-of program '() callables) (list 'Unit '(Own)))
+  (define-values (configs _rules)
+    (trace-g2 `(cfg (Scope () ,program) () () () ())))
+  (check-config-trace configs callables 'Unit))
+
+(test-case "finish-fn の転送 binder は結果だけで一度転送できる"
+  (define owned '(Owned Res))
+  (define owner-type `(NFn (,owned) ,owned () () () User))
+  (define accepted
+    `(Lam User result-only-owner (p)
+       (Handle (Return result-only-owner ,owned) (answer -> answer)
+         (Scope () (Let (transfer let ,owned) p (Forward transfer))))))
+  (check-equal? (core-type-of accepted '() `((result-only-owner ,owner-type)))
+                (list owner-type '()))
+  (define sink-type `(NFn (,owned) Unit (Own) () () User))
+  (define duplicate-type
+    `(NFn (,sink-type ,owned) ,owned (Own) () () User))
+  (define duplicate
+    `(Lam User mixed-position-owner (sink p)
+       (Handle (Return mixed-position-owner ,owned) (answer -> answer)
+         (Scope ()
+           (Let (transfer let ,owned) p
+             (Let (ignored let Unit) (Apply sink (Forward transfer))
+               (Forward transfer)))))))
+  (check-equal?
+   (diagnostic-code-of-core duplicate '()
+                            `((mixed-position-owner ,duplicate-type)
+                              (sink ,sink-type)))
+   "E-OWN-036"))
+
 (test-case "UnionEliminate の排他的な各枝で同じ binder を一度ずつ転送できる"
   (define input-union (normalize-type '(Union Int Bool)))
   (define sink sink-type)

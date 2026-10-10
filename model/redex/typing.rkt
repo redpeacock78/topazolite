@@ -130,6 +130,9 @@
 ;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
 (define deriving-config? (make-parameter #f))
 
+;; 構成の row 再型付けでも、check-as 内部の型検査へ同じ Ω を渡す。
+(define forward-config-states (make-parameter #f))
+
 ;; config-ok? の再型付けでだけ runtime borrow に型を与える。
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
@@ -1091,12 +1094,13 @@
                  (scan term env allowed in-transfer? local-lets?
                        pending mode)
                  node)))
-  (define (scan-result-tail term env allowed pending mode)
+  (define (scan-result-tail term env allowed tail-allowed pending mode)
     (define node (peel-node term))
+    (define result-allowed (set-union allowed tail-allowed))
     ;; 式全体が T なら、E_tail より先に一つの転送形として検査する。
     (if (and (forward-containing-now? node)
              (forward-transfer-form? node mode))
-        (scan term env allowed #t #t pending mode)
+        (scan term env result-allowed #t #t pending mode)
         (match node
       [`(Handle ,_op ,handler ,body)
        (if (identity-forward-handler? handler)
@@ -1106,13 +1110,13 @@
                (scan handler-body (bind env (peel-bind binder) #f)
                      allowed #f #t '() mode)]
               [_ (hash)])
-            (scan-result-tail body env allowed pending mode)
+            (scan-result-tail body env allowed tail-allowed pending mode)
             term)
            (scan term env allowed #f #f '() mode))]
       [`(Scope ,managed ,body)
        (if (and (list? managed)
                 (or (eq? mode 'config) (null? managed)))
-           (scan-result-tail body env allowed pending mode)
+           (scan-result-tail body env allowed tail-allowed pending mode)
            (scan term env allowed #f #f '() mode))]
       [`(Let (,binder ,binding-mode ,type) ,bound ,body)
        (define name (peel-bind binder))
@@ -1125,16 +1129,33 @@
          (and (not transfer-binding?)
               (eq? binding-mode 'let)
               (resource-type? declared)))
+       ;; config mode では β 簡約直後の値束縛が R-LetOwned 前に現れる。
+       (define runtime-transfer-binding?
+         (and (eq? mode 'config)
+              (not transfer-binding?)
+              (eq? binding-mode 'let)
+              (resource-type? declared)
+              (forward-containing-now? body)
+              (redex-match? G2m v (erase-core bound))))
        (define identity
          (cond
            [transfer-binding? (second (first pending))]
+           [runtime-transfer-binding? (gensym 'forward-runtime-result)]
            [local-binding? (gensym 'forward-result)]
            [else #f]))
+       (define body-allowed
+         (if runtime-transfer-binding?
+             (set-add allowed identity)
+             allowed))
+       (define body-tail-allowed
+         (if identity (set-add tail-allowed identity) tail-allowed))
       (usage-add
+        ;; E_tail の binder は、その束縛式では通常の Forward 文脈に入らない。
         (scan bound env allowed #f #t '() mode)
         (scan-result-tail
          body (bind env name identity)
-         (if identity (set-add allowed identity) allowed)
+         body-allowed
+         body-tail-allowed
          (if transfer-binding? (cdr pending) '()) mode)
         term)]
       [`(UnionEliminate ,scrutinee (,branches ...))
@@ -1145,16 +1166,17 @@
            (match (peel-forward-union-branch branch)
              [`(,_member ,binder -> ,body)
               (scan-result-tail body (bind env (peel-bind binder) #f)
-                                allowed pending mode)]
+                                allowed tail-allowed pending mode)]
              [_ (scan child env (set) #f #f '() mode)])))
        (usage-add
+        ;; scrutinee は E_tail の binder 文脈から独立して走査する。
         (scan scrutinee env allowed #f #t '() mode)
         (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
           (usage-max usage branch))
         term)]
       [`(Apply ,_function ,_arguments ...)
        ;; Apply 自体が結果でも、Forward はその引数位置の条件で検査する。
-       (scan term env allowed #f #t '() mode)]
+       (scan term env result-allowed #f #t '() mode)]
        [_
         ;; 許可された E_tail から外れた式は通常走査へ戻す。
         ;; config では、その部分式の内側に別の関数境界が残ることがある。
@@ -1346,7 +1368,7 @@
        (define body-usage
          (if (and (identity-forward-handler? handler)
                   (or result-root? (eq? mode 'config)))
-             (scan-result-tail body env allowed pending mode)
+             (scan-result-tail body env allowed (set) pending mode)
              (scan body env allowed in-transfer? local-lets? pending mode)))
        (usage-add body-usage
                   handler-body term)]
@@ -4837,8 +4859,11 @@
               (define normalized (normalize-type substituted))
               (unless normalized
                 (fail 'non-normalizable-result-type core-in substituted))
+              (define states (forward-config-states))
               (define invalid-forward
-                (forward-invalid-node renamed callables 'static))
+                (forward-invalid-node renamed callables
+                                      (if states 'config 'static)
+                                      (or states '())))
               (when invalid-forward
                 (fail 'forward-invalid-context invalid-forward))
               (define effective-mut-types
@@ -5082,7 +5107,8 @@
   (and (not (entry-violation core places callables environment))
        (type? expected)
        (let ([row
-              (parameterize ([declared-place-types declared])
+              (parameterize ([declared-place-types declared]
+                             [forward-config-states states])
                 (check-as/boolean core-in expected environment places callables Λ))])
          (and row
               (not (forward-invalid-node
@@ -5371,7 +5397,8 @@
                             (define value-row
                               (parameterize
                                   ([declared-place-types
-                                   (config-declared-types configuration)])
+                                   (config-declared-types configuration)]
+                                   [forward-config-states states])
                                 (check-as/boolean value
                                                   expected-value-type
                                                   '()
@@ -5382,7 +5409,8 @@
                           (let ([actual-row
                                  (parameterize
                                      ([declared-place-types
-                                       (config-declared-types configuration)])
+                                       (config-declared-types configuration)]
+                                      [forward-config-states states])
                                    (check-as/boolean core expected '()
                                                      places callables))])
                             (and actual-row

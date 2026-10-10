@@ -1280,7 +1280,8 @@ config mode は `with-config-typing` の下で `check-as/boolean` を呼ぶ `con
 
 gate は次の条件を検査する。
 
-- **条件 1**：`Forward` の対象は、資源型仮引数を持つ `Lam` の転送 `Let` の binder、または結果位置の `E_tail` 上か `T` の中にある資源型 `let` の binder である。
+- **条件 1**：`Forward` の対象は、資源型仮引数を持つ `Lam` の転送 `Let` の binder、または結果位置の `T` の中にある資源型 `let` の binder である。
+   結果位置の `E_tail` 上の binder は、その結果位置の `T` の中でだけ対象にできる。
 - **条件 2**：実行経路ごとの各 binder の `Forward` は高々一度である。
    `UnionEliminate` の枝は排他的なので枝ごとの最大を取り、`RecRewrite` の欄は合算する。
 - **条件 3**：外側の `Forward` 文脈を `Lam`、`Recur`、`RecurVal`、`RegionLam` の遅延する本体へ持ち込まない。
@@ -1315,12 +1316,14 @@ E_tail ::= [] | Handle(h, (r -> r), E_tail) | Scope(π, E_tail)
 
 `E_tail` の `Handle` は handler が恒等である場合に限る。
 `E_tail` の `Let` の束縛式と `UnionEliminate` の scrutinee は通常の文脈で独立に走査する。
+`E_tail` で加えた binder は、候補全体を `T` として走査するときか、結果位置の末尾の `Apply` を走査するときだけ許可する。
 そのため、`UnionEliminate` の scrutinee に `Forward` があっても、全体が `T` でない場合はその `Forward` を許さない。
 config mode では `E_tail` の `Scope` の管理欄が空でなくてもよい。
 
 config mode はさらに、Ω で `Available` の place を根の転送文脈へ加え、`R-Beta` または `R-RecurUnfold` の直後から `R-LetOwned` までの資源型 `Let` の binder を一時的に許す。
 これは次の `R-LetOwned` で `Available` な place に置き換わる。
 config mode では `T` の `Apply` の関数位置に値を許し、`T` の `Scope` は非空の管理欄を許す。
+config mode では、構成のどの深さにある恒等 `Handle` の本体も結果の位置として扱い、そこから `E_tail` で届く項を走査する。
 条件 4 の各経路でちょうど一度という性質は elaborate が生成する adapter の不変条件であり、gate は条件 1、2、3、5 だけを検査する。
 
 `Rec` と `Construct` は全ての欄が値になると値であり、`R-UnionInject` は `UnionVal` を作る。

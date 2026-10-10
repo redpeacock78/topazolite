@@ -729,6 +729,113 @@
     (check-owned-return-adapter-run
      '(Option (Owned Res)) token tag)))
 
+(test-case "通常の Rec は Forward を Owned 欄へ直接置けない"
+  ;; Rec の root Owned 欄は owned-record-field で拒否されるため、実行可能な fixture は作れない。
+  (define tag-union (normalize-type '(Union Int Bool)))
+  (define resource '(Owned Res))
+  (define wide-int (normalize-type `(Record ((a Int imm) (o ,resource imm)))))
+  (define wide-bool (normalize-type `(Record ((a Bool imm) (o ,resource imm)))))
+  (define actual-return (normalize-type `(Union ,wide-int ,wide-bool)))
+  (define worker-callable 'owned-return-union-worker)
+  (define worker-type
+    `(NFn (,resource ,tag-union) ,actual-return () () () User))
+  (define worker-branches
+    (for/list ([member (in-list (union-members tag-union))])
+      (match member
+        ['Bool
+         `(Bool boolean ->
+           (UnionInject ,actual-return ,wide-bool
+             (Rec ((a imm boolean) (o imm (Forward transferred))))))]
+        ['Int
+         `(Int integer ->
+           (UnionInject ,actual-return ,wide-int
+             (Rec ((a imm integer) (o imm (Forward transferred))))))])))
+  (define worker
+    `(Lam User ,worker-callable (owned-argument tag)
+       (Handle (Return owned-return-boundary ,actual-return)
+               (answer -> answer)
+         (Scope ()
+           (Let (transferred let ,resource) owned-argument
+             (UnionEliminate tag ,worker-branches))))))
+  (define worker-callables (list (list worker-callable worker-type)))
+  (check-equal? (diagnostic-id
+                 (core-type-of/diagnostic worker '() worker-callables))
+                "E-OWN-016"))
+
+(test-case "c3a2: 非 Record 分岐の返り値変換で E_tail の binder を Forward する"
+  ;; 二つの資源 Record の Union を Union(Record, Int) へ分解し、両 tag を実行する。
+  (define tag-union (normalize-type '(Union Int Bool)))
+  (define option-owned '(Option (Owned Res)))
+  (define wide-int
+    (normalize-type `(Record ((a Int imm) (o ,option-owned imm)))))
+  (define wide-bool
+    (normalize-type `(Record ((a Bool imm) (o ,option-owned imm)))))
+  (define actual-return (normalize-type `(Union ,wide-int ,wide-bool)))
+  (define narrow-record (normalize-type `(Record ((o ,option-owned imm)))))
+  (define expected-return (normalize-type `(Union ,narrow-record Int)))
+  (define actual `(NFn (,tag-union) ,actual-return (Own) ()))
+  (define expected `(NFn (,tag-union) ,expected-return (Own) ()))
+  (define source
+    `(Fn ((f ,actual) (tag ,tag-union)) Unit (Own)
+         (Let (adapted const ,expected) f
+           (Drop (Apply adapted tag)))))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (define adapter (find-adapter (erase-core core)))
+  (check-not-false adapter)
+  (match-define (list _name _actual _callable _binders body _curry) adapter)
+  (check-equal? (decompose-alias-count body 'let 'Forward) 1)
+  (check-false (tree-contains? body
+                               (lambda (node)
+                                 (match node [`(Move ,_) #t] [_ #f]))))
+  (define worker-callable 'owned-return-union-worker)
+  (define worker-type `(NFn (,tag-union) ,actual-return (Own) () () User))
+  (define worker-branches
+    `((Int integer ->
+       (UnionInject ,actual-return ,wide-int
+         (Rec ((a imm integer)
+               (o imm (Construct ,option-owned some (OwnLeaf (resource 950))))))))
+      (Bool boolean ->
+       (UnionInject ,actual-return ,wide-bool
+         (Rec ((a imm boolean)
+               (o imm (Construct ,option-owned some (OwnLeaf (resource 951))))))))))
+  (define worker
+    `(Lam User ,worker-callable (tag)
+       (Handle (Return owned-return-boundary ,actual-return)
+               (answer -> answer)
+         (Scope () (UnionEliminate tag ,worker-branches)))))
+  (define worker-callables (cons (list worker-callable worker-type) callables))
+  (check-equal? (core-type-of worker '() worker-callables)
+                (list worker-type '()))
+  (for ([tag '(Int Bool)] [tag-value (list 17 '(Construct Bool true))])
+    (define tag-argument `(UnionInject ,tag-union ,tag ,tag-value))
+    (define application `(Apply ,core ,worker ,tag-argument))
+    (check-equal? (core-type-of application '() worker-callables)
+                  (list 'Unit '(Own)))
+    (define execution (execution-core application worker-callables))
+    (define-values (status target) (lower (erase-core execution) 'racket-cs))
+    (check-eq? status 'ok)
+    (check-eq? (compare-observations execution target 1) 'match)
+    (define-values (configs rules)
+      (trace-g2 `(cfg (Scope () ,execution) () () () ())))
+    (check-config-trace configs worker-callables 'Unit)
+    (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules) 3)
+    (define forwarded-place-ids
+      (state-transition-place-ids configs rules 'Available 'Moved 'R-Forward))
+    (check-equal? (length forwarded-place-ids) 3)
+    (check-equal? (length forwarded-place-ids)
+                  (length (remove-duplicates forwarded-place-ids)))
+    (for ([before (in-list configs)] [rule (in-list rules)]
+          [after (in-list (cdr configs))] #:when (eq? rule 'R-ScopeValue))
+      (check-equal? (state-transition-count (list before after) (list rule)
+                                            'Available 'Dropped)
+                    0))
+    (match (last configs)
+      [`(cfg ,_ ,_ ,_ ,tokens ,_)
+       (check-equal? (map second tokens) '(Dropped))
+       (check-equal? (length tokens) 1)]
+      [other (fail-check (format "最後の token を検査できない: ~s" other))])))
+
 (test-case "c3a2: 資源引数と返り値の変換をともに Forward で実行する"
   (for ([tag '(int bool)] [token '(430 431)])
     (define owned '(Option (Owned Res)))
