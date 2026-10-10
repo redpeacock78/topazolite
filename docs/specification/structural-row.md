@@ -404,6 +404,9 @@ Union の欄の値は tag で成分を表すので、tag を持つ値を書き�
 合流型を作った枝の再照合は、`Eliminate` の導入点だけ専用の規則へ切り替える。
 `mut` field の expected Union に対し、枝が単一型ならいずれかの成分と、枝が部分 Union なら全成分と `type-equiv?` で一致することを求める。
 通常の `compat?` と `Assign` の `tag-compat?` 検査は緩めない。
+この例外は `Eliminate` の合流型を導入する枝の再照合に限り、通常の `mut` 欄の変換は既存の Union 値から成分集合を広げない。
+たとえば `Int` 欄から `(Union Int Bool)` 欄への再構築は、値を `UnionInject` でタグ付けする変換であり、既存の `mut` 欄型どうしの互換性を緩める操作ではない。
+その再構築後の欄は expected Union 型を持ち、以後の書き込みは通常どおり `tag-compat?` で検査する。
 合流を到達不能なまま未回収へ送る案は、ホワイトペーパー §4.5.3 の回収主張を実装で空にするため採らない。
 Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
@@ -617,6 +620,13 @@ record field の照合（§3.3）が field 型として関数型に到達した�
 `mut` field が不変に留まるのは、ROW-004 の代入安全性と同じ理由である。
 読み手はより広い関数を期待でき、書き手はより狭い関数を格納しうるため、双方向の利用に安全な照合は同値だけになる。
 
+`mut` 欄を再構築する変換の内側では、Union の成分候補を選ぶ前に、この関数型の不変性を候補ごとに判定する。
+照合は Record の共通欄と Union の枝へ再帰し、対応する `NFn` の対には `type-equiv?` を要求する。
+actual が Union なら、その各成分について判定を満たす expected 候補が必要である。
+この追加条件は第 1 層の `tag-compat?` 候補、候補ごとの変換試行、`decompose` の成分対応に共通して適用する。
+条件を満たす候補が無ければ E-TYP-012 `type-mismatch` で拒否する。
+この制約は `mut` 欄を再構築する変換の内側だけに置き、通常の `compat?` と `tag-compat?` の定義は変えない。
+
 ### 6.4 checking 位置の統一
 
 checking 位置の `check-as` は、実際の型と期待型の形にかかわらず `compat?(actual, expected)` を使う。 [REQ: VAR-001]
@@ -650,6 +660,50 @@ payload を広げると、書き込んだ値が元の場所の型に合わなく
 同値と互換を同じ関係にすると、`policy-narrative.md` §6.2 が述べる「同値な二型は互換である」という契約が意味を持たなくなる。
 緩めるのは同値でない側だけである。
 VariancePolicy が列挙する readonly / mutable field、関数入出力、borrow の region variance は、それぞれ VAR-003、VAR-001、VAR-004 で回収済みである。
+
+### 6.6 elaboration による関数値の変換
+
+`compat?` が受理し `tag-compat?` が受理しない通常の `NFn` の対では、elaborate が元の関数値を一度束縛し、関数値 adapter を構成する。
+adapter は元の関数値を捕捉する `Curry` と、User origin の `Lam` から成る。
+adapter の本体は自身の Return boundary と空の `Scope` で包み、外側の Return はその境界を越えて伝播させる。
+adapter の関数型は `judgment-type` ではなく、元の関数値 Core の `judgment-core-type` から決める。
+
+adapter は引数を反変に、返り値を共変に `convert` する。
+変換を挿入できる位置は注釈付き `Let`、`Apply` の引数、`Construct` の欄、Record の `imm` 欄、関数の結果、および期待型で検査する `Eliminate` の枝である。
+`Return` の payload は関数の境界型で検査するため、独立した変換位置ではない。
+`mut` 欄では関数 adapter を作らず、型同値でない関数型を拒否する（§6.3）。
+
+資源を持つ型の引数は adapter の転送 `Let` で place に束縛し、`Move` でなく `Forward` で元の関数へ渡す。
+この転送は adapter の latent row に `Own` を加えない。
+資源を持つ型の返り値の変換も、結果位置の gate が認める `Forward` を使う。
+一般の `Move` の row 規則は変えない。
+
+adapter の本体の row は、Apply 前に束縛する引数変換の row `ε_b` と、内側の Apply の row `((ε_a \ εin) ∪ εout)` と、返り値変換の row `ε_r` の和である。
+
+```text
+ε_adapter = ε_b ∪ ((ε_a \ εin) ∪ εout) ∪ ε_r
+```
+
+現行の c3a2 では、資源を持たない引数の変換は `Move` と RSD を含まないため `ε_b = ∅` である。
+adapter の本体 row は宣言された出口 row `εout'` に収まらなければならず、超過は E-EFF-002 `undeclared-function-effect` で拒否する。
+`Forward` は `Own` を row から除去せず、`Forward` 自身が `Own` を加えないだけである。
+adapter 内の RSD は c3b の対象であり、そのとき増える row も同じ gate で検査する。
+
+adapter の本体が要求する Proof obligation は、定義位置の Π から供給できなければならない。
+供給できない対は adapter を作らず `type-mismatch` で拒否する。
+この縮約は Lam 本体へ自身の Proof obligation を仮定として渡す機構が導入された時点で再検討する。
+elab と `core-type-of` は TypeNarrativeCap を含む固定の Π0 で始まるため、authorization で拒否される文脈は公開入口から構成できない。
+adapter が capability を増やさないことは、obligation の判定と ProofRep の搬送が直接呼び出しと一致することで固定する。
+
+Union の候補選択は、各候補の最終試行 Core に RSD があるかで既存の層へ分類する（§3.3）。
+adapter に RSD が無い候補は第 2 層に入り、RSD が本体に含まれる場合は第 4 層へ入る。
+`check-rec-against-union` はリテラルの直接 check と rebuild の候補を第 4 層の 4a と 4b に分け、4a を先に調べる。
+未選択候補の試行は callable 表と名前カウンターを復元するため、Union 成分の順序で生成結果を変えない。
+
+`Owned (NFn ...)` の signature は不変であり、signature が異なる対に adapter を作らない。
+`Owned (NFn ...)` の origin だけが異なる対は恒等に変換する。
+`Borrowed` と `BorrowedMut` の引数と返り値は恒等変換に限る。
+合流導入以外の synth 位置では異なる `NFn` を join せず、明示の Union を結果にする。
 
 ## 7. 範囲外の規則
 
