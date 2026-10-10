@@ -975,6 +975,9 @@
   (match (peel-node core)
     [(? symbol?) #t]
     [`(Forward ,_) #t]
+    [`(Discharge ,(app peel-node
+                      `(ProofRep ,_ (RemainderSafelyDropped ,_ ,_))) ,inner)
+     (forward-transfer-form? inner mode)]
     [`(UnionInject ,_ ,_ ,inner) (forward-transfer-form? inner mode)]
     [`(Rec ((,_ ,_ ,fields) ...))
      (andmap (lambda (field) (forward-transfer-form? field mode)) fields)]
