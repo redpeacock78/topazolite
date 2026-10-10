@@ -268,6 +268,10 @@
 (define adapter-site-expected-function
   `(NFn (,adapter-site-source-record) Unit (Own) ()))
 
+(define (mut-field-conversion-source actual expected)
+  `(Fn ((record ,actual)) Unit ()
+       (Let (converted const ,expected) record unit)))
+
 (define (adapter-site-worker)
   `(Fn ((argument ,adapter-site-target-record)) Unit (Own)
        (Drop argument)))
@@ -771,6 +775,47 @@
     `(Fn ((record ,actual)) Unit ()
          (Let (converted const ,expected) record unit)))
    e-type-mismatch))
+
+(test-case "mut 欄内の関数 adapter は Union injection 経由でも拒否する"
+  (define actual
+    `(Record ((callback ,adapter-site-actual-function mut))))
+  (define expected
+    `(Record ((callback (Union ,adapter-site-expected-function Int) mut))))
+  (check-false (compat? (normalize-type actual) (normalize-type expected)))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄内の関数 adapter は Union decompose 経由でも拒否する"
+  (define actual
+    `(Record ((callback (Union ,adapter-site-actual-function Int) mut))))
+  (define expected
+    `(Record ((callback (Union ,adapter-site-expected-function Int) mut))))
+  (check-false (compat? (normalize-type actual) (normalize-type expected)))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "mut 欄の内側 Record にある関数 adapter も拒否する"
+  (define actual-function-record
+    `(Record ((callback ,adapter-site-actual-function imm))))
+  (define expected-function-record
+    `(Record ((callback ,adapter-site-expected-function imm))))
+  (define actual `(Record ((nested ,actual-function-record mut))))
+  (define expected `(Record ((nested ,expected-function-record mut))))
+  (check-false (compat? (normalize-type actual) (normalize-type expected)))
+  (check-equal?
+   (diagnostic-id-of (mut-field-conversion-source actual expected))
+   e-type-mismatch))
+
+(test-case "型同値な mut 欄の関数型はそのまま受理する"
+  (define actual
+    `(Record ((callback ,adapter-site-actual-function mut))))
+  (check-true (compat? (normalize-type actual) (normalize-type actual)))
+  (match-define (list core type row callables)
+    (elaborate-ok (mut-field-conversion-source actual actual)))
+  (check-false (find-adapter (erase-core core)))
+  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case "synth Eliminate は異なる NFn を明示の Union に残す"
   (define source

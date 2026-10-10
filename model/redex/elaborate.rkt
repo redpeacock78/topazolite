@@ -782,6 +782,8 @@
     ;; 入力の式に現れる symbol と衝突させず、elab 内で一意にする。
     (define union-counter 0)
     (define union-reserved (form-symbols raw-expression))
+    ;; mut 欄の再構築中は、その内側でも関数 adapter を作らない。
+    (define mut-field-adapter-forbidden? (make-parameter #f))
     (define (fresh-union-name)
       (let next ()
         (define candidate
@@ -978,6 +980,8 @@
       (values converted converted-type))
 
     (define (function-adapter core actual expected s propositions)
+      (when (mut-field-adapter-forbidden?)
+        (reject s 'type-mismatch expected actual))
       (match* (actual expected)
         [(`(NFn (,actual-parameters ...) ,actual-return ,_actual-in
                 ,_actual-out ,actual-obligations ,_actual-origin)
@@ -1395,8 +1399,13 @@
                [else
                 (define binder (fresh-union-name))
                 (define-values (body converted-type)
-                  (convert `(#:var ,binder ,s) actual-type expected-type s
-                           propositions #:entry? #t #:transfer transfer))
+                  (parameterize
+                      ([mut-field-adapter-forbidden?
+                        (or (mut-field-adapter-forbidden?)
+                            (and (eq? actual-mark 'mut)
+                                 (eq? expected-mark 'mut)))])
+                    (convert `(#:var ,binder ,s) actual-type expected-type s
+                             propositions #:entry? #t #:transfer transfer)))
                 (list (list label binder actual-type expected-mark
                             converted-type body)
                       (list* label converted-type expected-mark
