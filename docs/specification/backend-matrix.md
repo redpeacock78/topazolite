@@ -162,7 +162,7 @@ RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え
 | `R-ProjPlace` | `R-PR-ProjPlace` | Available place の record 欄を読み、heap と状態表は変えない |
 | `R-ProjOptPlace` | `R-PR-ProjOptPlace` | Available place の optional 欄を読み、heap と状態表は変えない |
 | `R-Discharge` | なし | `RemainderSafelyDropped` 以外の Proof は実行時に意味を持たない |
-| `R-DischargeRemainder` | なし | 残余欄を drop する複合 lowering は `PRecRemove` と `PRuntime drop` を使う |
+| `R-DischargeRemainder` | なし | 複合 lowering は `PRecRemove`（入れ子では `PRecRewrite` 内）で欄を除き、除去 token の cleanup は source machine が担うため `PRuntime drop` を出さない |
 | なし | `R-PR-RecRemove` | target-only の補助規則。RSD の複合 lowering で欄を取り除く |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |
