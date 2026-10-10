@@ -559,7 +559,8 @@
                                            (append removed (list field-value))))]
                               [(list _ 'nested actual-optional? child-shape)
                                (unless (and actual-field expected-field
-                                            (eq? (third actual-field) 'imm)
+                                            ;; expected の imm 欄へは actual の mut 欄からも潜る。
+                                            (memq (third actual-field) '(imm mut))
                                             (eq? (third expected-field) 'imm)
                                             (eq? actual-optional?
                                                  (field-optional? actual-field))
@@ -577,7 +578,8 @@
                                                (field-optional? expected-field))
                                     (fail #f))
                                   (values (append output
-                                                  (list (list label mode
+                                                  (list (list label
+                                                              (third expected-field)
                                                               `(Absent ,(second expected-field)))))
                                           removed)]
                                  [(`(Record ,_) `(Record ,_) _)
@@ -586,7 +588,9 @@
                                                 field-value child-shape)
                                     [(list nested-value nested-removed)
                                      (values (append output
-                                                     (list (list label mode nested-value)))
+                                                     (list (list label
+                                                                 (third expected-field)
+                                                                 nested-value)))
                                              (append removed nested-removed))]
                                     [_ (fail #f)])]
                                  [(_ _ _) (fail #f)])]

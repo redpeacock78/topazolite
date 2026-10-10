@@ -3378,6 +3378,10 @@
         (match (check-as/full base tau-actual base-Λ
                               Ψ environment places callables fail)
           [(list row result-psi _)
+           (unless (rsd-proof-pair-ok? tau-actual tau-expected
+                                       type-compatible?)
+             (fail 'owned-narrowing-rejected core
+                   tau-expected tau-actual))
            (list tau-expected row result-psi)])])]))
 
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)

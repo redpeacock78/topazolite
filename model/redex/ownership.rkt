@@ -23,7 +23,7 @@
          "validators.rkt")
 
 (provide owned-narrowing-kind owned-narrowing-kind/for-elaboration
-         check-narrowing-return
+         check-narrowing-return rsd-eligible? rsd-proof-pair-ok?
          remainder-removal-shape remainder-target-type)
 
 (define (union-type? type)
@@ -60,7 +60,7 @@
 (define elaboration-union-mode (make-parameter #f))
 
 ;; compat?/impl と同型の再帰。Union の分岐位置も compat?/impl に合わせる。
-(define (owned-narrowing-kind/impl actual expected compatible? [ctx 'top])
+(define (owned-narrowing-kind/impl/raw actual expected compatible? [ctx 'top])
   (cond
     ;; Heap root の Owned へ Union 値を持ち上げる比較は tag を狭めない。
     ;; compatible? が持ち上げを認めた組だけ OWN-004 の追加検査を通す。
@@ -160,7 +160,7 @@
        [_ 'ok]))))
 
 ;; RemainderSafelyDropped が実行時に除去する欄を型対から得る。
-;; `drop` はこの欄を値ごと取り除き、`nested` は共通する imm Record 欄へ潜る。
+;; `drop` はこの欄を値ごと取り除き、`nested` は expected が imm の共通欄へ潜る。
 ;; `#f` は対応する型構造でない場合、空リストは除去欄が無い場合である。
 (define (remainder-removal-shape actual expected)
   (define (shape-for-type actual-type expected-type)
@@ -186,7 +186,7 @@
                         (assoc (first expected-field) actual-row))
                       (define recurse?
                         (and actual-field
-                             (eq? (third actual-field) 'imm)
+                             (memq (third actual-field) '(imm mut))
                              (eq? (third expected-field) 'imm)
                              ;; actual の必須欄は expected の optional 欄として扱える。
                              ;; 値は存在するため、その値の入れ子へ安全に降りられる。
@@ -214,8 +214,26 @@
          [(_ _) #f])]))
   (shape-for-type actual expected))
 
+;; spec §5.2。RSD が実際に欄を除き、型を狭める対だけを適格とする。
+(define (rsd-eligible? actual expected)
+  (define shape (remainder-removal-shape actual expected))
+  (define target (remainder-target-type actual expected))
+  (and shape
+       (pair? shape)
+       target
+       (not (type-equiv? target actual))))
+
+;; 再帰の各位置で不適格な RSD を濾し、Union の候補判定に残さない。
+(define (owned-narrowing-kind/impl actual expected compatible? [ctx 'top])
+  (define kind (owned-narrowing-kind/impl/raw actual expected compatible? ctx))
+  (if (and (elaboration-union-mode)
+           (or (drop-obligation? kind) (eq? kind 'nested-drop))
+           (not (rsd-eligible? actual expected)))
+      'reject
+      kind))
+
 ;; remainder-removal-shape が示す Owned 欄を actual から除いた型を返す。
-;; nested はその欄の型へ再帰的に適用し、残す欄の順序と印は actual のまま保つ。
+;; 残す欄の順序は actual のまま保ち、nested で潜った欄の印は imm にする。
 (define (remainder-target-type actual expected)
   (define shape (remainder-removal-shape actual expected))
   (define (apply-shape type shape)
@@ -237,12 +255,19 @@
                      (apply-shape (second field) child-shape))
                    (and child-type
                         (loop (cdr fields)
-                              (cons (list* (first field) child-type
-                                           (cddr field))
+                              (cons (list* (first field) child-type 'imm
+                                           (cdddr field))
                                     result)))]
                   [_ (loop (cdr fields) (cons field result))])]))]
           [_ #f])))
   (and shape (apply-shape actual shape)))
+
+;; spec §5.4。RSD の結果から target への通常の narrowing だけを許す。
+(define (rsd-proof-pair-ok? actual target compatible?)
+  (define recomputed (remainder-target-type actual target))
+  (and recomputed
+       (compatible? recomputed target)
+       (eq? (owned-narrowing-kind recomputed target compatible?) 'ok)))
 
 (define (type-value? v)
   (redex-match? G2m τ v))

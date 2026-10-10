@@ -347,9 +347,9 @@
   (match (narrowing-kind actual expected propositions)
     [`(drop-obligation ,_ ,_)
      (define target (remainder-target-type actual expected))
-     (unless target
+     (unless (rsd-eligible? actual expected)
        (error 'discharge-remainder
-              "drop-obligation に runtime removal shape がない: ~s => ~s"
+              "判定が適格でない drop-obligation を返した: ~s => ~s"
               actual expected))
      (define proof
        `(ProofRep (Reserved o-narrow)
