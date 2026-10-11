@@ -579,9 +579,9 @@ E-Let-Fn-Check は、E-Let-Annot の右辺の合成を宣言型 `τ` での検�
 `bind(bmode, τdecl, τact)` は、elaborate の `bind-with-mode` が束縛型を決める手続きである。
 この手続きは、型の互換、`const` の record 残余の拒否、`let` と `mut` の record 残余の復元、`mut` の affine と借用の拒否、OWN-004 の narrowing の順に検査する。
 ただし `τact` が `Never` のときは `τb = τdecl` とし、互換と record 残余の検査を省き、`mut` の検査と OWN-004 の narrowing の検査だけを行う。
-OWN-004 は最上位の型対に加え、共通する `imm` の `Record` 欄だけを辿った入れ子の型対も調べる。
+OWN-004 は最上位の型対に加え、共通欄のうち expected が `imm` の `Record` 欄（actual は `imm` または `mut`）だけを辿った入れ子の型対も調べる。
 その経路で `Owned` を含む残余を失う場合も、Proof の鍵には内側の型対ではなく呼び出し全体の型対を使う。
-`mut` 欄や `Union`、`Owned`、`Untrusted`、`Refined`、`NFn` の内側へはこの入れ子の判定を伝えない。
+expected が `mut` の欄や `Union`、`Owned`、`Untrusted`、`Refined`、`NFn` の内側へはこの入れ子の判定を伝えない。
 E-Let-Fn-Check では `τact = τdecl = τ` であり、`τ` は `NFn` か `Owned<NFn …>` なので record 残余の節に入らず、`τb = τ` になる。
 `Γ, x :bmode τb` は、`bmode` が `mut` のとき `x` を可変の束縛として加える。
 型注釈付き `Let` の右辺が仮引数型または Effect row を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。
@@ -667,6 +667,11 @@ elaboration は線形の穴の方式を生成せず、これは Typed Core の�
 E-Lambda は資源型の全ての仮引数を関数本体の `Scope` と `Let` の連なりへ変換する。
 β 簡約（§5.3 R-Beta）は実引数の値を仮引数の生名へ置換する。
 置換の結果として `Let` の右辺に来た資源型の値は `R-LetOwned` 系が place へ移すため、引数値は place を経由して管理される。
+
+関数値の型変換で生成する adapter の規則は `structural-row.md` §6.6 に定める。
+adapter は元の関数値を束縛し、User origin の `Lam` を `Curry` で閉包化する。
+資源型の引数と返り値の変換は、§5.1 の `T` が認める `Forward` と RSD の `Discharge` で表す。
+adapter が成分の Owned 損失を回収する方法、恒等変換を省略する条件、`inner` 文脈での拒否境界は同節を参照する。
 
 関数は、外側の place にある資源型の束縛を closure の捕捉へ変換できる。
 E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ渡し、closure の型を `Owned<NFn …>` とする。
@@ -1296,7 +1301,16 @@ T ::= x | v | Forward(x)
     | UnionEliminate(T, (τm x -> T) ...)
     | (Let (x let τ) T T)
     | Scope(π, T)
+    | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), T)
+    | Curry(Lam(...), a)
 ```
+
+`Discharge` は `RemainderSafelyDropped` の Proof を持つ場合だけ `T` に入る。
+それ以外の命題 `φ` を持つ `Discharge` は含めない。
+`Curry` は、関数が `Forward` を含まない `Lam` の値であり、引数 `a` が static mode では変数、config mode では変数または値の場合だけ `T` に入る。
+他の `Curry` は含めない。
+`R-CurryVal` は `Lam` の本体を実行せず、関数値と値の引数から `CurryVal` を作るだけであり、中断する規則へ進まない。
+`Lam` の値から origin が定まるため、`R-CurryVal` の origin 条件も満たされる。
 
 `T` の `Forward` の対象は static mode では変数、config mode では変数または `Available` な place である。
 static mode の `Scope` は空の管理欄を持ち、config mode では管理欄が空でなくてもよい。
@@ -1705,7 +1719,7 @@ G は R-LetOwned（§5.3）が最寄りの Scope を特定するために使う�
 
 通常の `R-Discharge` は `RemainderSafelyDropped` 以外の命題を持つ `Discharge` から Proof を取り除く。
 `RemainderSafelyDropped` の `Discharge` は内側の項が値になるまで評価し、残余のうち `Owned` を含む除去欄を値から取り除く。
-除去欄は最上位の残余欄と、共通する `imm` の `Record` 欄の内側にある残余欄から型対に基づいて決める。
+除去欄は最上位の残余欄と、expected が `imm` の共通 `Record` 欄の内側にある残余欄から型対に基づいて決める。
 除去欄の値に含まれる leaf token は、全て `Available` で重複がない場合に `Dropped` へ移す。
 optional の除去欄が `Absent` なら token を動かさず、欄だけを取り除く。
 除去しない残余欄は値に残す。
@@ -1731,6 +1745,9 @@ optional の除去欄が `Absent` なら token を動かさず、欄だけを取
   → ⟨E[v'], H, Ω, Λtok', θ⟩
 ```
 
+入れ子の除去は actual の欄が `imm` または `mut` で expected の欄が `imm` の場合に行い、出力する欄の印は expected の `imm` にする。
+除去しない欄は actual の順序と印を保つ。
+型付けでは、Proof の右辺を除去対象そのものとみなさず、`structural-row.md` §3.1 の T-Drop-Remainder が Proof の型対を検査する。
 `stripRemainder` は型対から得た除去欄に従って値を再帰的に作り直し、除去した値を順に返す。
 `dropLeaves` は返された各値の leaf token を左から `Dropped` にする。
 いずれかの前提を満たせないとき、`R-DischargeRemainder` は発火しない。
@@ -2530,11 +2547,13 @@ G5 はその記録を Ψ として置いた。
 | PRF-001 | §4.9、verify-origins（§3.4） |
 | PRF-002 | 型同値の ⇓class ガード（§6.3） |
 | PRF-003 | 型同値の Proof irrelevance と provenance 規定（§6.3） |
+| PRF-005 | `structural-row.md` §3.1 T-Drop-Remainder、R-DischargeRemainder（§5.2） |
 | REC-001 | C-NoSelf、C-Structural、C-Unknown、B-NoSelf、B-Structural（§6.2）、E-Recur の Partial 要求（§4.6）、性質 6 |
 | REC-002 | 観測関係（§6.1）、C-Guarded、B-Guarded（§6.2）、性質 6 |
 | OWN-001 | E-Move（§4.7）、T-MovePlace と T-Forward（§5.1）、R-Move、R-Forward、R-MoveError（§5.5）、性質 7 |
 | OWN-002 | E-Drop、E-DropVar（§4.7）、finalize、R-ScopeValue（§5.6）、性質 7 |
 | OWN-003 | R-ScopeAbort、R-ScopeError（§5.6）、性質 7 |
+| OWN-004 | `structural-row.md` §3.3 の Owned narrowing と RSD、R-DischargeRemainder（§5.2） |
 | OWN-005 | `borrow.md` §12 の `Let` の `Owned` 規則、性質 7 |
 | OWN-006 | `borrow.md` §8 の仮引数の受け渡し、性質 7 |
 | OWN-007 | `borrow.md` §8 の closure 捕捉、R-CurryVal（§5.3）、性質 7 |

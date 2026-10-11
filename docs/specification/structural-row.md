@@ -151,11 +151,18 @@ label1, ..., labeln は互いに相異なる
 Γ; Δ; Π; Ξ; Φ ⊢core c : τ_actual ! ε
 narrow(τ_actual, τ_expected) ≠ 'reject
 issuer(O) = o-narrow
+rsd-proof-pair-ok?(τ_actual, τ_expected)
 ---------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core
   (Discharge (ProofRep O (RemainderSafelyDropped τ_actual τ_expected)) c)
   : τ_expected ! ε
 ```
+
+`rsd-proof-pair-ok?(τ_actual, τ_expected)` は、`R = remainder-target-type(τ_actual, τ_expected)` としたとき、`R` が存在し、`compat?(R, τ_expected)` が真で、Core mode の `owned-narrowing-kind` が `R` から `τ_expected` へ `ok` を返すことを要求する。
+これは T-Discharge の RSD 分岐、すなわち T-Drop-Remainder が使う Proof の型対の条件である。
+Proof の発行者、既存の Core narrowing、基底項の型検査を先に行い、その後にこの条件を検査する。
+除去の形が空であることだけでは拒否しない。
+したがって、値を変えない Proof もこの関係を満たせば受理される。
 
 `Discharge` は δ-Discharge で剥がれるため、T-Drop-Remainder は新しい簡約規則を足さない。
 
@@ -303,14 +310,14 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 
 [REQ: OWN-004] `compat?` の外側には、OwnershipPolicy による narrowing の制限がある。
 引き金は余剰欄の存在ではなく、余剰欄に含まれる `Owned` が失われることである。
-判定は `compat?` と同型の並行再帰で行い、`Record` の共通 `imm` 欄、`Owned` の payload、`Untrusted` と `Refined` の payload、`Union` の候補、`NFn` の返り値と反変引数を辿る。
-`Record` の共通 `imm` 欄には、expected 側で optional とされた欄も含める。
+判定は `compat?` と同型の並行再帰で行い、`Record` の共通欄のうち expected 側が `imm` の欄、`Owned` の payload、`Untrusted` と `Refined` の payload、`Union` の候補、`NFn` の返り値と反変引数を辿る。
+expected が `imm` の共通欄では、actual 側の印は `imm` または `mut` でよく、expected 側で optional とされた欄も含める。
 `Borrowed` の payload では打ち切る。
 借用した view は正典が挙げる救済策そのものであり、所有者が元の値を保つためである。
 `Union` は互換かつ安全な候補が一つ以上あることを要求し、候補の順序で判定が変わってはならない。
 余剰欄の判定には `owned-free?` を使う。
 `copy-out-ok?` は copy 可能性の判定であり、`Owned` の有無とは別の問いである。
-共通する `imm` の `Record` 欄の鎖にある残余の損失は、鎖全体を包む最上位の型対に対して判定し、typing は `E-OWN-030` を出す。
+共通する expected `imm` の `Record` 欄の鎖にある残余の損失は、鎖全体を包む最上位の型対に対して判定し、typing は `E-OWN-030` を出す。
 `E-OWN-028` と `E-OWN-029` は、`Union`、`Owned` の payload、`Untrusted` と `Refined` の payload、`NFn` の内側で残余を失う対を拒否するときに使う。
 統合経路の例は `NFn` の返り値内にある `Record` の損失である。
 `Union` の成分内で型が異なる対は、`tag-compat?` が ownership 判定より先に拒否する。
@@ -324,6 +331,8 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 `check-as/full` の 2 箇所は宣言された `expected` をそのまま載せ、`binding-context` は残余を反映した後の束縛型を載せる。
 後者は実際に比較した型を示し、前者は寿命の推論を反映する前の型であり、兄弟の `type-mismatch` と揃える判断である。
 余剰欄に `Owned` が含まれる最上位の narrowing は `drop-obligation` を返し、`Discharge` の T-Drop-Remainder で Proof を消費する。
+RSD の除去形は最上位の余剰欄に加え、expected が `imm` の共通欄へ actual の `imm` または `mut` から潜る。
+入れ子の欄を除いた値では、その欄の印を expected の `imm` にし、除去しない欄の印は actual のまま保つ。
 `Union` の候補選別は、完全一致の後に次の四つの層を順に調べる。
 第 1 層は `tag-compat?` を満たし、判定が `ok` の成分である。
 第 2 層は `tag-compat?` を満たさず、判定が `ok` で、通常の `convert` が成功する成分である。
@@ -331,7 +340,10 @@ checking 位置の `check-as` は、実際の型と期待型の形にかかわ�
 第 4 層は判定が `drop-obligation` で、RSD 後の型から通常の `convert` が成功する成分である。
 最初に候補が見つかった層だけを使い、同じ層に複数の成分があれば `ambiguous-union-member` で拒否する。
 この順位は損失の無い成分を先に選ぶためのものであり、成分の並び順では結果を変えない。
-`check-rec-against-union` では、第 4 層をリテラルの直接 check が RSD を含む候補（4a）と `rebuild` だけで到達する候補（4b）に分け、4a を先に調べる。
+`check-rec-against-union` の第 1 段は `identity-conversion?` を満たす候補だけで一意性を判定する。
+候補が一つならその候補へ直接 check して `UnionInject` で包み、候補が無い場合は層の選択へ進む。
+候補が複数なら `ambiguous-union-member` で拒否する。
+第 4 層はリテラルの直接 check が RSD を含む候補（4a）と `rebuild` だけで到達する候補（4b）に分け、4a を先に調べる。
 RSD を含まないリテラルの直接 check 候補は第 2 層に含める。
 候補ごとの試行で得た Core に RSD が含まれるかを調べ、含まない第 2 層の候補はそこに残し、含む候補は第 4 層へ移す。
 これにより、損失の無い成分と損失のある成分が同じ層に並んで `ambiguous-union-member`（`E-TYP-031`）になる縮約を解消する。
@@ -341,12 +353,20 @@ elaborate は、expected が `Union` でない次の三つの判定点で `drop-
 判定点は `check-against-expected`、三要素の `Let`、および `merge-branches` の `Record` 合流である。
 各判定点で包む Core の実型を `τa` とし、`remainder-target-type(τa, expected)` が返す型を `τa'` とする。
 elaborate は `(Discharge (ProofRep (Reserved o-narrow) (RemainderSafelyDropped τa τa')) core)` で Core を包み、その後に通常の `convert` を適用する。
+adapter の中でも成分の `drop-obligation` を、その成分の値に掛ける RSD で果たし、その後に通常の `convert` を続ける。
+NFn の対の elaboration 判定は、引数と返り値の各成分を検査しても、それ自体は `drop-obligation` を返さない。
+NFn 対の恒等変換を省略できるのは `identity-conversion?`、すなわち `tag-compat?` が真で、Core mode の `owned-narrowing-kind` が `ok` を返す場合に限る。
+この述語は `compat?` と `tag-compat?` の定義を変更しない。
 三要素の `Let` では `let` と `mut` の束縛型が最上位の `Owned` 残余を保持するため、その最上位の損失には RSD を挿入せず、入れ子の損失だけを回収する。
 `const` では `Owned` 残余を RSD で除き、closed-binding の条件は RSD 適用後の残余に課すため、残る非 `Owned` 残余は従来どおり拒否する。
 `Union` への narrowing では、選んだ成分との対が `drop-obligation` なら RSD を挿入し、RSD 後の型から通常の `convert` を続ける。
 `decompose` による `Union` 分解では、`Record` 分岐の成分から W_k への変換と W_k から上界への変換、および `_` 分岐の成分選択で RSD を挿入する。
-この変更により、共通する `imm` の `Record` 欄の鎖にある `Union` 欄の損失は回収する。
-`NFn`、`Owned`、`Untrusted`、`Refined` の payload と mut 欄の内側にある `Union` の損失は引き続き拒否する。
+転送 mode で expected が resource-free の場合に限り、`decompose` は不要な `const` の `Let` を作らず `UnionEliminate` を直接返す。
+expected が資源を持つ場合と転送でない mode では従来の生成形を保つ。
+注釈付き `Let` の `let` または `mut` と `UnionEliminate` の枝では、RSD 後の型と期待型が `tag-compat?` を満たす drop obligation だけ変換を省く。
+`tag-compat?` を満たさない対は `convert` へ渡し、残余以外の欄変換も行う。
+この変更により、共通する expected `imm` の `Record` 欄の鎖にある `Union` 欄の損失は回収する。
+`NFn`、`Owned`、`Untrusted`、`Refined` の payload と expected が `mut` の欄の内側にある `Union` の損失は引き続き拒否する。
 
 ### 3.4 型同値との分離
 
@@ -676,10 +696,18 @@ VariancePolicy が列挙する readonly / mutable field、関数入出力、borr
 
 ### 6.6 elaboration による関数値の変換
 
-`compat?` が受理し `tag-compat?` が受理しない通常の `NFn` の対では、elaborate が元の関数値を一度束縛し、関数値 adapter を構成する。
+関数型の変換を省略できるのは `identity-conversion?` が真の場合に限る。
+この述語は `tag-compat?` が真であり、Core mode の `owned-narrowing-kind` が `ok` を返すことを要求する。
+通常の NFn 対で `compat?` が受理してもこの条件を満たさなければ、elaborate は元の関数値を一度束縛し、関数値 adapter を構成する。
 adapter は元の関数値を捕捉する `Curry` と、User origin の `Lam` から成る。
 adapter の本体は自身の Return boundary と空の `Scope` で包み、外側の Return はその境界を越えて伝播させる。
 adapter の関数型は `judgment-type` ではなく、元の関数値 Core の `judgment-core-type` から決める。
+
+elaboration の narrowing 判定で NFn の対を `top` または `chain` の文脈で調べるときは、引数と返り値の成分を `top` で判定する。
+成分の結果が `ok`、`drop-obligation`、`nested-drop` なら NFn の対自体は `ok` を返し、成分の `drop-obligation` は adapter の本体の対応する値に掛ける RSD で果たす。
+NFn の対自体が `drop-obligation` を返すことはない。
+`inner` の文脈ではこの受理を行わず、従来どおり内側の Owned 損失を拒否する。
+`Owned (NFn ...)` の signature は不変であり、`Untrusted` と `Refined` の payload は owned-free なので、これらの位置に adapter の内側の RSD は作らない。
 
 adapter は引数を反変に、返り値を共変に `convert` する。
 変換を挿入できる位置は注釈付き `Let`、`Apply` の引数、`Construct` の欄、Record の `imm` 欄、関数の結果、および期待型で検査する `Eliminate` の枝である。
@@ -697,10 +725,11 @@ adapter の本体の row は、Apply 前に束縛する引数変換の row `ε_b
 ε_adapter = ε_b ∪ ((ε_a \ εin) ∪ εout) ∪ ε_r
 ```
 
-現行の c3a2 では、資源を持たない引数の変換は `Move` と RSD を含まないため `ε_b = ∅` である。
+資源を持たない引数の変換は `Move` を含まず `ε_b = ∅` である。
+高階変換でその変換が内側の adapter と RSD を作る場合、RSD は内側の adapter の latent row にあり、外側の adapter を作る式の現在 row には加わらない。
+RSD の row は内側の row と同じなので、adapter の row 式と `εout'` の gate は変わらない。
 adapter の本体 row は宣言された出口 row `εout'` に収まらなければならず、超過は E-EFF-002 `undeclared-function-effect` で拒否する。
 `Forward` は `Own` を row から除去せず、`Forward` 自身が `Own` を加えないだけである。
-adapter 内の RSD は c3b の対象であり、そのとき増える row も同じ gate で検査する。
 
 adapter の本体が要求する Proof obligation は、定義位置の Π から供給できなければならない。
 供給できない対は adapter を作らず `type-mismatch` で拒否する。
@@ -710,8 +739,18 @@ adapter が capability を増やさないことは、obligation の判定と Pro
 
 Union の候補選択は、各候補の最終試行 Core に RSD があるかで既存の層へ分類する（§3.3）。
 adapter に RSD が無い候補は第 2 層に入り、RSD が本体に含まれる場合は第 4 層へ入る。
-`check-rec-against-union` はリテラルの直接 check と rebuild の候補を第 4 層の 4a と 4b に分け、4a を先に調べる。
+`check-rec-against-union` の第 1 段は `identity-conversion?` を満たす候補だけで曖昧性を判定する。
+候補が一つならその成分へ直接 check し、結果を `UnionInject` で包む。
+候補が無い場合は層の選択へ進む。
+この後、第 4 層をリテラルの直接 check と rebuild の候補に分け、直接 check の候補（4a）を先に調べる。
 未選択候補の試行は callable 表と名前カウンターを復元するため、Union 成分の順序で生成結果を変えない。
+
+注釈付き `Let` の `let` と `mut`、および `UnionEliminate` の枝では、RSD の後の型と期待型が `tag-compat?` を満たす drop obligation に限り、その後の `convert` を省く。
+これは従来の `convert` が tag-compatible な対に恒等変換を返していた挙動を保つためである。
+`tag-compat?` を満たさない対は `convert` に渡し、残余以外に必要な欄変換も行う。
+
+`decompose` は転送 mode で expected が resource-free のときに限り、不要な `const` の `Let` を省いて `UnionEliminate` を直接返す。
+expected が資源を持つ場合と、転送でない mode の生成形は変えない。
 
 `Owned (NFn ...)` の signature は不変であり、signature が異なる対に adapter を作らない。
 `Owned (NFn ...)` の origin だけが異なる対は恒等に変換する。
