@@ -5,6 +5,7 @@
          "../lang.rkt"
          "../machine.rkt"
          "../gen.rkt"
+         "../elaborate.rkt"
          "../typing.rkt")
 
 (define acquire '(PrimVal (Reserved o-acquire) acquire))
@@ -67,6 +68,82 @@
   (check-equal? (control after) '(OwnedLeaf (tok 0) (resource 3)))
   (check-equal? (states after) '((0 Moved)))
   (check-equal? (tokens after) '(((tok 0) Available))))
+
+(test-case "R-Forward の根 token は Scope の終端で回収する"
+  (define sink-type '(NFn ((Owned Res)) Unit () () () User))
+  (define owner-type `(NFn (,sink-type (Owned Res)) Unit () () () User))
+  (define sink
+    '(Lam User sink (raw)
+       (Handle (Return sink-boundary Unit)
+               (return-value -> return-value)
+               (Scope () (Let (received let (Owned Res)) raw unit)))))
+  (define owner
+    '(Lam User owner (h p)
+       (Handle (Return owner-boundary Unit)
+               (answer -> answer)
+               (Scope ()
+                 (Let (x let (Owned Res)) p (Apply h (Forward x)))))))
+  (define callables `((owner ,owner-type) (sink ,sink-type)))
+  (define core `(Scope (0) (Apply ,owner ,sink (Move 0))))
+  (check-equal? (core-type-of core '((0 Res)) callables) '(Unit (Own)))
+  (define start
+    `(cfg ,core ((0 (resource 3) (declared (Owned Res))))
+          ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-not-false (member 'R-Forward rules))
+  (check-not-false (member 'R-LetOwnedB rules))
+  (check-not-false (member 'R-ScopeValue rules))
+  (check-equal? (count (lambda (rule) (eq? rule 'R-Forward)) rules) 1)
+  (check-config-trace configs callables 'Unit)
+  (check-equal? (map second (tokens (last configs))) '(Dropped Dropped)))
+
+(test-case "根の OwnedLeaf を control の値で許し Perform の内側制約を保つ"
+  (define-values (scope-configs scope-rules)
+    (trace-g2 '(cfg (Scope () (Apply (PrimVal (Reserved o-acquire) acquire) 7))
+                   () () () ())))
+  (check-not-false (member 'R-ScopeValue scope-rules))
+  (check-config-trace scope-configs '() '(Owned Res))
+  (match (control (last scope-configs))
+    [`(OwnedLeaf ,_token (resource 7)) (void)]
+    [other (fail-check (format "ScopeValue が根 OwnedLeaf を返さない: ~s" other))])
+  (define terminal
+    '(cfg (OwnedLeaf (tok 7) (resource 7)) () () (((tok 7) Available)) ()))
+  (define terminal-row (runtime-row terminal '() '(Owned Res)))
+  (check-equal? terminal-row '())
+  (check-true (config-ok? terminal '() '(Owned Res) terminal-row))
+  (define heap-root
+    '(cfg unit ((0 (OwnedLeaf (tok 8) (resource 8))
+                (declared (Owned Res))))
+          ((0 Available)) (((tok 8) Available)) ()))
+  (check-false (config-ok? heap-root '() 'Unit '()))
+  (define nested-control
+    '(cfg (Scope () (OwnedLeaf (tok 9)
+                               (OwnedLeaf (tok 10) (resource 9))))
+          () () (((tok 9) Available) ((tok 10) Available)) ()))
+  (check-false (config-ok? nested-control '() '(Owned Res) '()))
+  (define nested-perform
+    '(cfg (Perform (Return escaped-boundary (Owned Res))
+                   (OwnedLeaf (tok 11)
+                              (OwnedLeaf (tok 12) (resource 10))))
+          () () (((tok 11) Available) ((tok 12) Available)) ()))
+  (check-false (control-leaf-positions-ok? (control nested-perform) #t))
+  (check-false
+   (config-ok? nested-perform '() 'Never
+               '((Return escaped-boundary (Owned Res))))))
+
+(test-case "終端へ処理されずに届く Perform は根 token を運ぶ"
+  (define token '(tok 13))
+  (define start
+    `(cfg (Perform (Return external-boundary (Owned Res))
+                  (OwnedLeaf ,token (resource 13)))
+          () () ((,token Available)) ()))
+  (define row (runtime-row start '() 'Never))
+  (check-equal? row '((Return external-boundary (Owned Res)))
+                "runtime-row の形")
+  (check-true (config-ok? start '() 'Never row))
+  (define-values (configs rules) (trace-g2 start))
+  (check-equal? rules '())
+  (check-equal? (tokens (last configs)) `((,token Available))))
 
 (test-case "R-Move は非資源の値を token で包まない"
   (define-values (_rule after)
@@ -177,6 +254,98 @@
               (declared (Record ((a (Owned Res) imm))))))
           ((0 Available)) () ())
     '() 'Unit '())))
+
+(test-case "R-ScopeAbort と R-HandleReturn は Move の根資源を回収する"
+  (define consumer-type '(NFn ((Owned Res) Unit) Unit () () () User))
+  (define consumer
+    '(Lam User consumer (raw later)
+       (Handle (Return consumer-boundary Unit)
+               (return-value -> return-value)
+               (Scope ()
+                 (Let (received let (Owned Res)) raw unit)))))
+  (define core
+    `(Handle (Return abort-boundary Unit) (answer -> answer)
+       (Scope (0)
+         (Apply ,consumer (Move 0)
+                (Perform (Return abort-boundary Unit) unit)))))
+  (define callables `((consumer ,consumer-type)))
+  (check-equal? (core-type-of core '((0 Res)) callables) '(Unit (Own)))
+  (define start
+    `(cfg ,core ((0 (resource 3) (declared (Owned Res))))
+          ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-not-false (member 'R-ScopeAbort rules))
+  (check-not-false (member 'R-HandleReturn rules))
+  (check-config-trace configs callables 'Unit)
+  (check-equal? (control (last configs)) 'unit)
+  (check-equal? (tokens (last configs)) '(((tok 0) Dropped)))
+  (define after-move
+    (for/first ([rule (in-list rules)]
+                [next (in-list (cdr configs))]
+                #:when (eq? rule 'R-Move))
+      next))
+  (check-not-false after-move)
+  (define forged
+    (match after-move
+      [`(cfg (Handle ,operation ,handler
+                     (Scope (0)
+                       (Apply ,_target (OwnedLeaf ,_token (resource 3)) ,later)))
+             ,heap ,place-states ,token-states ,trace)
+       `(cfg (Handle ,operation ,handler
+                     (Scope (0) ,later))
+             ,heap ,place-states ,token-states ,trace)]
+      [other (fail-check (format "R-Move 後の形が変わった: ~s" other))]))
+  (define forged-row (runtime-row forged callables 'Unit))
+  (check-not-false forged-row)
+  (check-false (config-ok? forged callables 'Unit forged-row)
+               "F_inner だけを捨てて Available の根 token を孤立させない"))
+
+(test-case "acquire を引数評価中に失う Surface trace は根を回収する"
+  (define source
+    '(Apply (Fn ((start Unit)) Unit (Own)
+             (Apply (Fn ((owned (Owned Res)) (later Unit)) Unit () unit)
+                    (Apply acquire 7)
+                    (Return unit)))
+            unit))
+  (match (elab source)
+    [(list core expected _declared-row callables)
+     (check-equal? expected 'Unit)
+     (define execution (execution-core core callables))
+     (define-values (configs rules) (trace-g2 (inject-g2m execution)))
+     (check-not-false (member 'R-Delta rules))
+     (check-not-false (member 'R-ScopeAbort rules))
+     (check-not-false (member 'R-HandleReturn rules))
+     (check-not-false (member 'R-ScopeValue rules))
+     (check-config-trace configs callables expected)
+     (check-equal? (control (last configs)) 'unit)
+     (check-true
+      (andmap (lambda (entry) (eq? (second entry) 'Dropped))
+              (tokens (last configs))))]
+    [other (fail-check (format "Surface の反例が elaborate できない: ~s" other))]))
+
+(test-case "R-MoveError の ScopeError と HandleError が root token を回収する"
+  (define core
+    `(Handle (Return move-error-boundary (Owned Res))
+             (answer -> answer)
+       (Scope ()
+         (Let (x let (Owned Res)) (Apply ,acquire 3)
+           (Let (y let (Owned Res)) (Move x) (Move x))))))
+  (check-equal? (core-type-of core '() '()) '((Owned Res) (Own)))
+  (define executable (execution-core core '()))
+  (define-values (configs rules)
+    (trace-g2 `(cfg ,executable () () () ())))
+  (check-not-false (member 'R-Delta rules))
+  (check-not-false (member 'R-LetOwnedB rules))
+  (check-not-false (member 'R-MoveError rules))
+  (check-not-false (member 'R-ScopeError rules))
+  (check-not-false (member 'R-HandleError rules))
+  (check-config-trace configs '() '(Owned Res))
+  (match (last configs)
+    [`(cfg (Error ,_) ,_heap ,_states ,token-states ,_trace)
+     (check-true (pair? token-states))
+     (check-true (andmap (lambda (entry) (eq? (second entry) 'Dropped))
+                         token-states))]
+    [other (fail-check (format "MoveError 後に終端 error でない: ~s" other))]))
 
 (test-case "R-LetOwnedB は Move と acquire の根 token を place へ移す"
   (define move-start

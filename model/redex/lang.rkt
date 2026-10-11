@@ -195,7 +195,7 @@
   (c ::= .... (Error p) (MutSlot p))
 
   (state ::= Available Moved Dropped)
-  ;; 値の内部に置く所有資源の印。根の値には置かず、config-ok? が拒否する。
+  ;; 所有資源の印。制御項と観測値の根にも置けるが、heap 値の根には置かない。
   (v ::= .... (OwnedLeaf tk v))
   ;; record の field 名。借用だけでなく G1m の値走査も使うため、
   ;; G2m ではなくこの共通機械言語に置く。

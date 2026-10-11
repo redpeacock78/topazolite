@@ -5182,10 +5182,9 @@
 (define (observed-tokens trace)
   (append-map collect-tokens (observed-values trace)))
 
-;; 値である最大の部分項へ leaf-positions-ok? を課し、値でない構成子はその子を
-;; 透過して見る。Drop (Rec ((f mut leaf))) のような制御項は許す一方、値の位置へ
-;; leaf を隠す構成子は拒否する。
-(define (control-leaf-positions-ok? core)
+;; 値である最大の部分項へ leaf 位置検査を課し、値でない構成子はその子を透過して見る。
+;; config の制御根と Perform payload は根 leaf を許し、heap の根は呼び出し側で厳格に検査する。
+(define (control-leaf-positions-ok? core [allow-root-leaf? #f])
   (define (value-position-ok? candidate)
     (if (redex-match? G2m v candidate)
         (observed-leaf-positions-ok? candidate)
@@ -5198,6 +5197,8 @@
     [`(Yield ,observed ,continuation)
      (and (value-position-ok? observed)
           (control-leaf-positions-ok? continuation))]
+    ;; Perform の payload は handler escape 後も外へ運ぶ値である。
+    [`(Perform ,_operation ,payload) (value-position-ok? payload)]
     [`(Curry ,function ,argument)
      (and (control-leaf-positions-ok? function)
           (value-position-ok? argument))]
@@ -5237,7 +5238,10 @@
      (andmap value-position-ok? work)]
     [_
      (cond
-       [(redex-match? G2m v core) (leaf-positions-ok? core)]
+       [(redex-match? G2m v core)
+        (if allow-root-leaf?
+            (observed-leaf-positions-ok? core)
+            (leaf-positions-ok? core))]
        [(list? core) (andmap control-leaf-positions-ok? core)]
        [else #t])]))
 
@@ -5434,15 +5438,13 @@
                                            (resource-producer-positions-ok?
                                             (second entry) #t))
                                          heap)
-                                 ;; 根の位置に leaf は置かない。
-                                 (not (owned-leaf? core))
                                  ;; H の leaf は走査で辿れる位置に限る。
                                  (andmap (lambda (entry)
                                            (leaf-positions-ok? (second entry)))
                                          heap)
                                  (andmap observed-leaf-positions-ok?
                                          (observed-values trace))
-                                 (control-leaf-positions-ok? core)
+                                 (control-leaf-positions-ok? core #t)
                                  ;; token の構造側・観測側の出現と Λtok の状態を
                                  ;; 突き合わせる。
                                  (let ([structural
