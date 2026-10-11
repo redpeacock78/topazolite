@@ -3624,7 +3624,12 @@
     ;; producer 位置から入ったときだけ OwnLeaf を許す。payload の再帰は
     ;; 通常の infer へ戻すため、入れ子の producer は親位置で個別に許可される。
     [`(OwnLeaf ,payload)
-     (unless (memq core (ownleaf-permitted))
+     (unless (or (memq core (ownleaf-permitted))
+                 (and (deriving-config?)
+                      (match (peel-node payload)
+                        [`(resource ,_) #t]
+                        [`(OwnedLeaf ,_ ,_) #t]
+                        [_ #f])))
        (fail 'unexpected-ownleaf core))
      (parameterize ([ownleaf-permitted '()])
        (infer payload (enter-child Λ 0)
@@ -5186,6 +5191,8 @@
         (observed-leaf-positions-ok? candidate)
         (control-leaf-positions-ok? candidate)))
   (match (peel-node core)
+    ;; R-OwnLeafPass は既に token を持つ producer の直前を通過する。
+    [`(OwnLeaf ,payload) (value-position-ok? payload)]
     ;; Yield の観測 payload と Curry の固定引数は producer が作る値位置
     ;; なので、根の leaf を許しつつ値内部の走査規則を適用する。
     [`(Yield ,observed ,continuation)
@@ -5233,6 +5240,23 @@
        [(redex-match? G2m v core) (leaf-positions-ok? core)]
        [(list? core) (andmap control-leaf-positions-ok? core)]
        [else #t])]))
+
+(define (resource-producer-positions-ok? core [allow-root? #f])
+  (define (resource-literal? term)
+    (match (peel-node term)
+      [`(resource ,_) #t]
+      [_ #f]))
+  (let walk ([term core] [allow? allow-root?])
+    (match (peel-node term)
+      [`(resource ,_) allow?]
+      [`(OwnLeaf ,payload)
+       (walk payload (resource-literal? payload))]
+      [`(OwnedLeaf ,_ ,payload)
+       (walk payload (resource-literal? payload))]
+      [_
+       (if (list? term)
+           (andmap (lambda (child) (walk child #f)) term)
+           #t)])))
 
 ;; finLeaf は所有値の走査が作る owner path を記録する。Construct の欄は
 ;; positional segment を使うため、空 path だけを拒否する。
@@ -5404,6 +5428,12 @@
                                  (row=? actual-row row)
                                  (not (forward-invalid-node core callables
                                                             'config states))
+                                 ;; 識別の無い resource は producer の直下に限る。
+                                 (resource-producer-positions-ok? core)
+                                 (andmap (lambda (entry)
+                                           (resource-producer-positions-ok?
+                                            (second entry) #t))
+                                         heap)
                                  ;; 根の位置に leaf は置かない。
                                  (not (owned-leaf? core))
                                  ;; H の leaf は走査で辿れる位置に限る。

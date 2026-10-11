@@ -786,11 +786,18 @@
              (for/list ([entry (in-list final-token-table)]
                         #:when (eq? (second entry) 'Available))
                (first entry)))
-           (check-equal? (length final-token-table) 1)
+           ;; eliminate の move/drop は place 1 段なので根 token は n+1=2 件、unused は 1 件。
+           (check-equal?
+            (length final-token-table)
+            (if (and (eq? kind 'eliminate) (memq action '(move drop))) 2 1))
            (check-true
             (for/and ([entry (in-list final-token-table)])
               (and (memq (second entry) '(Available Dropped)) #t))
             (format "leaf が未回収の状態で終端した: ~s" final-token-table))
+           (define finish-keys
+             (filter values (map event-key (config-events final-config))))
+           (check-equal? finish-keys (remove-duplicates finish-keys equal?)
+                         "同じ資源位置の fin / finLeaf を重ねない")
            (check-equal?
             final-value-tokens available-tokens
             "Available leaf は結果に一度だけあり、Dropped leaf は結果に残らない")))))

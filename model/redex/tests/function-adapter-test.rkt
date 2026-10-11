@@ -1186,9 +1186,10 @@
     (check-equal? (count (lambda (rule) (eq? rule 'R-Drop)) rules) 2)
     (match (last configs)
       [`(cfg ,_ ,_ ,_ ,tokens ,_)
-       ;; acquire の値は raw resource なので、追跡 token は返り値の OwnLeaf 分だけ作られる。
-       (check-equal? (map second tokens) '(Dropped))
-       (check-equal? (length tokens) 1)]
+       ;; acquire と Forward と OwnLeaf の各 producer は根を一度だけ追跡する。
+       (check-equal? (map second tokens)
+                     '(Dropped Dropped Dropped Dropped))
+       (check-equal? (length tokens) 4)]
       [other (fail-check (format "出力資源の token が残る: ~s" other))])
     (for ([rule (in-list rules)]
           [before (in-list configs)]

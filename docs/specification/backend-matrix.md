@@ -128,9 +128,9 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 26 本である。
-源の `-->g2` の 65 本を基準にする。
+源の `-->g2` の 66 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 33 本が対象外となり、25 本が残る。
+目標側に規則を持たない 34 本が対象外となり、25 本が残る。
 RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 26 本になる。
 
 | 源の規則 | 目標の規則 | 差分 |
@@ -180,6 +180,7 @@ RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え
 | `R-Forward` | `R-PR-Forward` | 非 `Available` の place で誤りへ進まない専用の転送 |
 | `R-MoveError` | `R-PR-MoveError` | なし |
 | `R-OwnLeaf` | なし | token は消去し、payload の評価だけを残す |
+| `R-OwnLeafPass` | なし | 既存の token を保ったまま `OwnLeaf` producer を剥がす |
 | `R-Drop` | `R-PR-Drop` | なし。状態表は触らない |
 | `R-Yield` | `R-PR-Yield` | なし |
 | `R-Suspend` | `R-PR-Suspend` | なし |

@@ -129,6 +129,17 @@
 (define (fin-leaf-count trace)
   (count (match-lambda [`(finLeaf ,_ ,_) #t] [_ #f]) trace))
 
+(define (finish-event-key event)
+  (match event
+    [`(fin ,place) (list place '())]
+    [`(finLeaf ,place ,path) (list place path)]
+    [_ #f]))
+
+(define (check-finish-events-unique trace)
+  (define keys (filter values (map finish-event-key trace)))
+  (check-equal? keys (remove-duplicates keys equal?)
+                "同じ資源位置の fin / finLeaf を重ねない"))
+
 (define (let-type-for core target)
   (let walk ([term (erase-core core)])
     (match term
@@ -661,7 +672,10 @@
   (define-values (configs rules) (g2-trace (initial machine-core)))
   (check-not-false (member 'R-LetOwnedB rules))
   (check-config-trace configs '() 'Unit)
-  (check-equal? (map second (token-states (last configs))) '(Dropped)))
+  ;; 1 段の Owned place を Move するため、旧 token と新しい根 token の 2 件になる。
+  (check-equal? (map second (token-states (last configs))) '(Dropped Dropped))
+  (match (last configs)
+    [`(cfg ,_ ,_ ,_ ,_ ,trace) (check-finish-events-unique trace)]))
 
 (test-case "線形の穴の方式は root Owned を Eliminate から値のまま返す"
   (define typing-core
@@ -750,8 +764,10 @@
     [other (fail-check (format "枝 binder の二度読みを拒否しなかった: ~s" other))]))
 
 (test-case "Surface の match 枝は Move と未使用を config-ok? の下で実行する"
-  (for ([body (in-list
-               (list '(Drop owned) 'unit))])
+  ;; 1 段の Move は根 token が n+1=2 件、未使用なら初期 token 1 件だけになる。
+  (for ([case (in-list (list (list '(Drop owned) 2) (list 'unit 1)))])
+    (define body (first case))
+    (define expected-token-count (second case))
     (define source
       `(Eliminate (Move argument)
          ((some (owned) -> ,body)
@@ -769,7 +785,9 @@
      (match configuration
        [`(cfg unit ,_heap ,_states ,tokens ,_trace) (map second tokens)]
        [other (list 'unexpected other)])
-     '(Dropped))))
+     (make-list expected-token-count 'Dropped))
+    (match configuration
+      [`(cfg ,_ ,_ ,_ ,_ ,trace) (check-finish-events-unique trace)])))
 
 (test-case "入れ子の match で同名 binder を shadow した後に外側を Move する"
   (define option-owned '(Option (Owned Res)))
@@ -792,7 +810,11 @@
     (apply values (run-compiled-execution-core artifact)))
   (match configuration
     [`(cfg unit ,_heap ,_states ,tokens ,_trace)
-     (check-equal? tokens '(((tok 0) Dropped) ((tok 1) Dropped)))]
+     ;; 2 資源が各 1 段の Owned place を通るため、各々 2 件、合計 4 件になる。
+     (check-equal? tokens
+                   '(((tok 0) Dropped) ((tok 1) Dropped)
+                     ((tok 2) Dropped) ((tok 3) Dropped)))
+     (check-finish-events-unique (config-events configuration))]
     [other (fail-check (format "入れ子 match の終端 config が不正: ~s" other))]))
 
 (test-case "T-MovePlace は metadata の集約資源型を返す"

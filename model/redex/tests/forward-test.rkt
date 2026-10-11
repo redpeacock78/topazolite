@@ -145,7 +145,8 @@
    (apply-reduction-relation*
     -->g2/rules
     '(cfg (Forward 0) ((0 (resource 0))) ((0 Available)) () ()))
-   '((cfg (resource 0) ((0 (resource 0))) ((0 Moved)) () ()))))
+   '((cfg (OwnedLeaf (tok 0) (resource 0))
+         ((0 (resource 0))) ((0 Moved)) (((tok 0) Available)) ()))))
 
 (test-case "Available でない place の Forward は停止する"
   (for ([state '(Moved Dropped)])

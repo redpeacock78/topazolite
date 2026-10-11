@@ -15,7 +15,7 @@
 ;; #f は目標側に規則を持たないことを表す。
 ;; Curry、Recur、Let、LetOwned、RecRewrite の 5 組は目標側でそれぞれ 1 本へ畳む。
 ;; R-Discharge と R-DischargeRemainder には一対一の写し先がない。
-;; R-OwnLeaf、各借用 Eliminate、R-RetireValue、R-RetireError、R-RetirePerform、
+;; R-OwnLeaf と R-OwnLeafPass、各借用 Eliminate、R-RetireValue、R-RetireError、R-RetirePerform、
 ;; G2m 固有規則は目標側になく、raw pointer の 7 規則も対象外である。
 ;; この表と machine.rkt の実物がずれたら下の検査が落ちる。
 (define rule-correspondence
@@ -71,6 +71,7 @@
     (R-Forward      . R-PR-Forward)
     (R-MoveError    . R-PR-MoveError)
     (R-OwnLeaf      . #f)
+    (R-OwnLeafPass  . #f)
     (R-Drop         . R-PR-Drop)
     (R-Yield        . R-PR-Yield)
     (R-RetireValue  . #f)
@@ -98,8 +99,8 @@
   (list->set (reduction-relation->rule-names -->g2/rules)))
 
 (test-case
- "-->g1/rules は 27 規則を宣言する"
- (check-equal? (set-count g1-rule-names) 27))
+ "-->g1/rules は 28 規則を宣言する"
+ (check-equal? (set-count g1-rule-names) 28))
 
 (test-case
  "-->g2/rules adds exactly thirty-eight names to -->g1/rules"
@@ -121,12 +122,12 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 65))
+ (check-equal? (set-count g2-rule-names) 66))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 65))
+ (check-equal? (length rule-correspondence) 66))
 
 (test-case
  "目標側は支援規則を含む 26 規則を持つ"

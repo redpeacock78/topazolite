@@ -13,6 +13,7 @@
   (check-equal? (rule-bucket 'R-UnionEliminateRef) 'substituting)
   (check-equal? (rule-bucket 'R-UnionEliminateMutRef) 'substituting)
   (check-equal? (rule-bucket 'R-UnionInject) 'non-substituting)
+  (check-equal? (rule-bucket 'R-OwnLeafPass) 'non-substituting)
   (check-equal? (rule-bucket 'R-RecRewrite-Open) 'non-substituting)
   (check-equal? (rule-bucket 'R-RecRewrite-Close) 'non-substituting)
   (check-equal? (rule-bucket 'R-Borrow) 'non-substituting)

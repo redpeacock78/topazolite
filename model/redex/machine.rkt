@@ -453,6 +453,25 @@
             (token-numbers events)))
   (term (tok ,(if (null? used) 0 (add1 (apply max used))))))
 
+;; 根の値が resource のときだけ、既存の leaf token 台帳へ所有を移す。
+(define (root-resource-token configuration value)
+  (match value
+    [`(resource ,_)
+     (match-define `(cfg ,_core ,_heap ,_states ,tokens ,_events)
+       configuration)
+     (define token (fresh-token configuration))
+     (list `(OwnedLeaf ,token ,value)
+           (append tokens (list (list token 'Available))))]
+    [_
+     (match-define `(cfg ,_core ,_heap ,_states ,tokens ,_events)
+       configuration)
+     (list value tokens)]))
+
+(define (acquire-root-resource-token configuration name value tokens)
+  (if (eq? name 'acquire)
+      (root-resource-token configuration value)
+      (list value tokens)))
+
 ;; leaf の token が Λtok にあり、すべて Available か。
 (define (leaves-available? leaves tokens)
   (for/and ([leaf (in-list leaves)])
@@ -717,8 +736,13 @@
    #:domain config
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω Λtok θ)
-        (cfg (in-hole E v_result) H Ω Λtok θ)
-        (where v_result (δ nm v_arg ...))
+        (cfg (in-hole E v_result) H Ω Λtok_new θ)
+        (where v_delta (δ nm v_arg ...))
+        (where c_whole (in-hole E (Apply (PrimVal O nm) v_arg ...)))
+        (where (v_result Λtok_new)
+               ,(acquire-root-resource-token
+                 (term (cfg c_whole H Ω Λtok θ))
+                 (term nm) (term v_delta) (term Λtok)))
         R-Delta)
 
    (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
@@ -812,16 +836,24 @@
         R-RecurUnfold)
 
    (--> (cfg (in-hole E (Move p)) H Ω Λtok θ)
-        (cfg (in-hole E v_result) H Ω_new Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok_new θ)
         (where Available ,(table-ref (term Ω) (term p)))
-        (where v_result ,(table-ref (term H) (term p)))
+        (where v_stored ,(table-ref (term H) (term p)))
+        (where c_whole (in-hole E (Move p)))
+        (where (v_result Λtok_new)
+               ,(root-resource-token
+                 (term (cfg c_whole H Ω Λtok θ)) (term v_stored)))
         (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
         R-Move)
 
    (--> (cfg (in-hole E (Forward p)) H Ω Λtok θ)
-        (cfg (in-hole E v_result) H Ω_new Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok_new θ)
         (where Available ,(table-ref (term Ω) (term p)))
-        (where v_result ,(table-ref (term H) (term p)))
+        (where v_stored ,(table-ref (term H) (term p)))
+        (where c_whole (in-hole E (Forward p)))
+        (where (v_result Λtok_new)
+               ,(root-resource-token
+                 (term (cfg c_whole H Ω Λtok θ)) (term v_stored)))
         (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
         R-Forward)
 
@@ -836,11 +868,16 @@
    ;; 単なる値変換にしない。
    (--> (cfg (in-hole E (OwnLeaf v_payload)) H Ω Λtok θ)
         (cfg (in-hole E (OwnedLeaf tk_new v_payload)) H Ω Λtok_new θ)
+        (side-condition (not (owned-leaf? (term v_payload))))
         (where c_whole (in-hole E (OwnLeaf v_payload)))
         (where tk_new ,(fresh-token (term (cfg c_whole H Ω Λtok θ))))
         (where Λtok_new
                ,(append (term Λtok) (list (list (term tk_new) 'Available))))
         R-OwnLeaf)
+
+   (--> (cfg (in-hole E (OwnLeaf (OwnedLeaf tk v_payload))) H Ω Λtok θ)
+        (cfg (in-hole E (OwnedLeaf tk v_payload)) H Ω Λtok θ)
+        R-OwnLeafPass)
 
    (--> (cfg (in-hole E (Drop v_arg)) H Ω Λtok θ)
         (cfg (in-hole E unit) H Ω Λtok_final θ)
@@ -1105,8 +1142,13 @@
         R-CurryVal)
 
    (--> (cfg (in-hole E (Apply (PrimVal O nm) v_arg ...)) H Ω Λtok θ)
-        (cfg (in-hole E v_result) H Ω Λtok θ)
-        (where v_result (δ/g2 nm v_arg ...))
+        (cfg (in-hole E v_result) H Ω Λtok_new θ)
+        (where v_delta (δ/g2 nm v_arg ...))
+        (where c_whole (in-hole E (Apply (PrimVal O nm) v_arg ...)))
+        (where (v_result Λtok_new)
+               ,(acquire-root-resource-token
+                 (term (cfg c_whole H Ω Λtok θ))
+                 (term nm) (term v_delta) (term Λtok)))
         R-Delta)
 
    (--> (cfg (in-hole E (Apply (Lam O cid_lam (x ...) c_body)
@@ -1509,20 +1551,37 @@
                ,(raw-steps-g2 (term config_before)))
         R-Step)))
 
+(define (own-resource-producers core)
+  (define (walk term)
+    (match term
+      [`(resource ,_) `(OwnLeaf ,term)]
+      [`(OwnLeaf ,payload)
+       `(OwnLeaf ,(if (match payload [`(resource ,_) #t] [_ #f])
+                      payload
+                      (walk payload)))]
+      [`(OwnedLeaf ,token ,payload)
+       `(OwnedLeaf ,token
+                   ,(if (match payload [`(resource ,_) #t] [_ #f])
+                        payload
+                        (walk payload)))]
+      [(? list? terms) (map walk terms)]
+      [_ term]))
+  (walk core))
+
 (define (inject core)
   (unless (redex-match? G1 c core)
     (raise-argument-error 'inject "G1 core term" core))
-  `(cfg (Scope () ,core) () () () ()))
+  `(cfg (Scope () ,(own-resource-producers core)) () () () ()))
 
 (define (inject-g2 core)
   (unless (redex-match? G2 c core)
     (raise-argument-error 'inject-g2 "G2 core term" core))
-  `(cfg (Scope () ,core) () () () ()))
+  `(cfg (Scope () ,(own-resource-producers core)) () () () ()))
 
 (define (inject-g2m core)
   (unless (redex-match? G2m c core)
     (raise-argument-error 'inject-g2m "G2m core term" core))
-  `(cfg (Scope () ,core) () () () ()))
+  `(cfg (Scope () ,(own-resource-producers core)) () () () ()))
 
 (define (run config fuel)
   (unless (redex-match? G1m config config)

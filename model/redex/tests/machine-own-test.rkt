@@ -24,10 +24,10 @@
                 (Apply ,acquire 0)
                 (Move r))))
     fuel)
-   (term (cfg (resource 0)
+   (term (cfg (OwnedLeaf (tok 1) (resource 0))
               ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
-              () ())))
+              (((tok 0) Dropped) ((tok 1) Available)) ())))
   (check-equal?
    (run
     (inject
@@ -38,7 +38,7 @@
    (term (cfg (Error 0)
               ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
-              () ())))
+              (((tok 0) Dropped) ((tok 1) Available)) ())))
   (check-equal?
    (run
     (term (cfg (Move 0)
@@ -62,7 +62,7 @@
    (term (cfg unit
               ((0 (resource 0) (declared (Owned Res))))
               ((0 Moved))
-              () ()))))
+              (((tok 0) Dropped) ((tok 1) Dropped)) ()))))
 
 (test-case "R-LetOwned: deterministic allocation targets the nearest Scope"
   (define source
@@ -150,7 +150,8 @@
               ((0 (resource 10) (declared (Owned Res)))
                (1 (resource 20) (declared (Owned Res))))
               ((0 Dropped) (1 Dropped))
-              () ((fin 1) (fin 0)))))
+              (((tok 0) Dropped) ((tok 1) Dropped))
+              ((fin 1) (fin 0)))))
   (check-equal?
    (run
     (term (cfg (Scope (0 0) unit)
@@ -174,7 +175,7 @@
    (term (cfg (Perform (Return boundary Int) 42)
               ((0 (resource 7) (declared (Owned Res))))
               ((0 Dropped))
-              () ((fin 0)))))
+              (((tok 0) Dropped)) ((fin 0)))))
   (check-equal?
    (run
     (term (cfg (Scope (0)
@@ -203,7 +204,8 @@
               ((0 (resource 10) (declared (Owned Res)))
                (1 (resource 20) (declared (Owned Res))))
               ((0 Dropped) (1 Moved))
-              () ((fin 0))))))
+              (((tok 0) Dropped) ((tok 1) Dropped) ((tok 2) Available))
+              ((fin 0))))))
 
 (test-case "R-HandleError: ownership errors bypass handlers"
   (check-equal?
@@ -220,7 +222,7 @@
    (term (cfg (Error 0)
               ((0 (resource 5) (declared (Owned Res))))
               ((0 Moved))
-              () ()))))
+              (((tok 0) Dropped) ((tok 1) Available)) ()))))
 
 ;; Lam の本体が G2 だけの形（modeful な Let）なので、G1 の origin-of では
 ;; 照合できない。G2m の R-CurryVal が同じ生成を継続することを確かめる。

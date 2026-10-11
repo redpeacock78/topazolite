@@ -409,7 +409,7 @@
       (encoded-binding 'option-leaf '(Owned Res) 'raw-option
                        (action-body 'option-leaf)))
     (define none-body
-      (if (eq? action 'move) '(resource 0) 'unit))
+      (if (eq? action 'move) '(OwnLeaf (resource 0)) 'unit))
     (define elimination
       `(Eliminate
         (Move produced)
