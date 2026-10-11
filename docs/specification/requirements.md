@@ -578,7 +578,7 @@ record の field への借用を親の借用から作れる。
 - **状態**：P2
 - **由来**：ホワイトペーパー §4.9
 - **正典**：`docs/specification/core-calculus.md` §5.6、§5.7、§7
-- **内容**：Effect propagation、handler escape、panic 相当の制御移動で評価途中の frame を捨てるとき、frame に現れる値の内部の Owned leaf をすべて Dropped にする。外へ渡す `Perform` の引数と handler へ渡す値は回収しない。
+- **内容**：Effect propagation、handler escape、panic 相当の制御移動で評価途中の frame を捨てるとき、frame に現れる所有資源（値の根と、値の内部の Owned leaf）をすべて Dropped にする。外へ渡す `Perform` の引数と handler へ渡す値は回収しない。
 
 ### PTR-001
 

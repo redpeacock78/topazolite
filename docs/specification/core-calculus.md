@@ -34,8 +34,8 @@ calculus は次の環境を使う。
 - **Ω（place 状態）**：place p から状態への有限写像。G1 の状態は `Available`、`Moved`、`Dropped` の三値とする。
 - **H（place 格納）**：place p から値への有限写像。
 - **Ξ（place typing）**：place p から型への有限写像。構成の well-formedness（§5.1）で使う。
-- **Λtok（leaf token 状態）**：値の内部の `OwnedLeaf` が持つ token から状態への有限写像。状態は `Available`、`Moved`、`Observed`、`Dropped` の四値とし、`Dropped` の entry は再利用防止の tombstone として残す。`Observed` は観測者へ引き渡された leaf の状態であり、trace の `obs` の payload からのみ到達してよい。
-- **θ（観測 trace）**：観測イベントの列。イベントは `obs(v)`（yield による観測値）、`fin(p)`（root の finalization による drop）、`finLeaf(p, fp)`（値内 leaf の finalization による drop）である。`fin(p)` は空 path の `finLeaf(p, ())` に相当する短縮形だが、leaf の path は常に非空である。
+- **Λtok（Owned token 状態）**：根と値の内部の `OwnedLeaf` が持つ token から状態への有限写像。状態は `Available`、`Moved`、`Observed`、`Dropped` の四値とし、`Dropped` の entry は再利用防止の tombstone として残す。`Observed` は観測者へ引き渡された token の状態であり、trace の `obs` の payload からのみ到達してよい。
+- **θ（観測 trace）**：観測イベントの列。イベントは `obs(v)`（yield による観測値）、`fin(p)`（root place の finalization による drop）、`finLeaf(p, fp)`（値内 leaf の finalization による drop）である。`finLeaf` の path は非空であり、値の根にある token は `finLeaf` event を生成しない。
 
 boundary stack の操作は次の二つである。
 
@@ -1355,7 +1355,7 @@ config mode では、構成のどの深さにある恒等 `Handle` の本体も�
 ```
 
 `T-Drop` は root `Owned` と集約資源型の値を受け付ける。
-place にある値の消費は `Move` または `Forward` が行い、Drop は取り出した値の内部 leaf を破棄する（§5.5）。
+place にある値の消費は `Move` または `Forward` が行い、Drop は取り出した値の根と内部 leaf の token を破棄する（§5.5）。
 
 **(T-Resource)**
 
@@ -1372,8 +1372,8 @@ place にある値の消費は `Move` または `Forward` が行い、Drop は�
 ```
 
 `OwnedLeaf` は payload の型をそのまま持つ実行時の印であり、型をもう一段 `Owned` で包まない。
-leaf は値の内部の `Rec` 欄または別の leaf の payload にだけ置き、値の根には置かない。
-`tk` は `Λtok` の一意な token であり、型付けだけでは token の重複や状態を判定しない。
+`OwnLeaf` producer の静的な位置制限と configuration の型付けにおける根の位置の扱いは §5.1 に定める。
+`tk` は `Λtok` の token を参照し、存在、重複、状態は構成検査が確認する。
 
 **(T-Error)**
 
@@ -1617,6 +1617,12 @@ dom(Ξ) = dom(H) = dom(Ω)
 Ξ; Φ ⊢config ⟨c, H, Ω, Λtok, θ⟩ : τ ! ε
 ```
 
+configuration の型付けでは、制御項の値位置にある根の `OwnedLeaf` を payload の型で型付けし、`(OwnLeaf (resource n))` を `Owned Res` として型付けする。
+また、`(OwnLeaf (OwnedLeaf tk v))` は内側の token を保ったまま payload の型で型付けする。
+この二つの追加的な `OwnLeaf` 形式の受理は configuration の型付け（`deriving-config?`）に限り、静的な Core 型付けの producer 位置の制限は変えない。
+configuration 検査は、裸の `(resource n)` を制御項と heap 値の双方で検査し、`OwnLeaf` または `OwnedLeaf` の直下と heap entry の値そのもの以外にある出現を拒否する。
+heap entry の根にある `OwnedLeaf` と、`OwnedLeaf` の直下にある別の `OwnedLeaf` も拒否する。
+
 `Ξ` は heap の値または束縛時に記録した宣言型から導く写像である。
 `R-LetOwned` と `R-LetOwnedB` は place を作るとき、heap entry に実行用 Core の有効型を宣言型として記録する。
 `R-LetMutB` は mut の `Let` に書かれた型を記録する。
@@ -1647,10 +1653,12 @@ P にある資源型の `Let` 変数は借用の owner として登録される�
 枝 binder の線形の穴の方式は place を作らないため、名前つきの借用 target にはならない。
 借用した scrutinee から渡される枝 binder は `Borrowed` または `BorrowedMut` の payload view を保ち、資源型の owner として重ねて登録しない。
 
-値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。値そのものが所有資源である場合は、従来どおり root place と `Ω` で表すため、root 位置の leaf は許さない。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
-この root 位置の禁止は heap の値と `Ξ` の導出に対する構成検査の規則である。`Yield` の観測 payload や `Curry`、`Apply`、`Let`、`Drop` のような control の producer 値位置では、producer が作る途中の root leaf を許し、その token を後続の縮約で消費または rehome する。
+値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
+構成検査では、heap 値の根にある `OwnedLeaf` と `OwnedLeaf` 直下の `OwnedLeaf` を拒否する。
+control では根の位置にある `OwnedLeaf` のほか、`Scope` の本体、`Perform` の引数、`Yield` の観測 payload など、値の producer 位置にある根の leaf を許す。
+根の leaf は空 path の token として `Λtok` に数え、`finLeaf` event は生成しない。
 
-`Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
+`Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。根と内部 leaf の token をともに数え、`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
 
 Redex model の `config-ok?` はこの二段の `Ξ` 導出と token 条件を検査する。
 heap の値は、記録から得た宣言型に対する `Owned` 型へ tag 保存互換で照合する。
@@ -1686,6 +1694,10 @@ Phase 4 以降で扱う。
 ```
 
 初期構成はプログラム c0 に対して `⟨Scope(∅, c0), ∅, ∅, ∅, ⟨⟩⟩` とする。
+`inject`、`inject-g2`、`inject-g2m` は共通の `own-resource-producers` を制御項に適用してから初期構成を作る。
+この書き換えは `OwnLeaf` または `OwnedLeaf` の直下ではない裸の `(resource n)` を `(OwnLeaf (resource n))` にし、遅延した `Lam`、`Recur`、`RecurVal` の本体も含めて制御項を再帰的に走査する。
+`H` は書き換えず、inject が作る `H` は空である。
+手組みの `H` は §5.1 の configuration 検査を通さなければならない。
 
 評価文脈は二層に分ける。
 
@@ -1761,6 +1773,29 @@ optional の除去欄が `Absent` なら token を動かさず、欄だけを取
 E[Apply(PrimVal(O, opname), v1, …, vk)] → E[δ(opname, v1, …, vk)]
 ```
 
+`opname` が `acquire` のとき、`acquire-root-resource-token` は `δ` が返す `(resource n)` を新しい根の token `tk` で包み、結果を `(OwnedLeaf tk (resource n))` とする。
+同じ遷移で `Λtok` に `tk ↦ Available` を追加する。
+他の primitive の結果と token 状態は変えない。
+
+**(R-OwnLeaf)** [REQ: OWN-009]
+
+```text
+v は値であり、v は OwnedLeaf ではない。tk は構成にない新しい token
+---------------------------------------------------------
+⟨E[OwnLeaf(v)], H, Ω, Λtok, θ⟩
+  → ⟨E[OwnedLeaf(tk, v)], H, Ω, Λtok[tk ↦ Available], θ⟩
+```
+
+**(R-OwnLeafPass)** [REQ: OWN-009]
+
+```text
+⟨E[OwnLeaf(OwnedLeaf(tk, v))], H, Ω, Λtok, θ⟩
+  → ⟨E[OwnedLeaf(tk, v)], H, Ω, Λtok, θ⟩
+```
+
+`R-OwnLeaf` は producer の値に新しい token を付ける。
+既に根の token を持つ値では `R-OwnLeafPass` が既存 token を保ち、二重発行しない。
+
 **(R-Beta)**
 
 ```text
@@ -1804,19 +1839,25 @@ E[Let(x : τ, v, x)] → E[v]
 runtime-resource-type?(τ)        c ≠ x        p fresh
 --------------------------------
 ⟨E[Scope(π, G[Let(x : τ, v, c)])], H, Ω, Λtok, θ⟩
-  → ⟨E[Scope(π · p, G[c[p/x]])], H[p ↦ v], Ω[p ↦ Available], Λtok, θ⟩
+  → ⟨E[Scope(π · p, G[c[p/x]])], H[p ↦ v_place], Ω[p ↦ Available], Λtok', θ⟩
+  (v_place, Λtok') = let-owned-value(v, Λtok, τ)
 ```
 
 資源型の束縛は place を確保し、最も内側の Scope の管理列 π へ登録する。
 文脈 G は Scope を含まないため、割り当て先は redex を囲む最寄りの Scope に一意に定まる（間に Handle frame があってもよい）。
 変数 x の出現は place p で置換され、以後の消費は Move(p) を通る。
-束縛値が root `OwnedLeaf(tk, v)` のときだけ、`v` を place へ移して `tk` を `Dropped` の tombstone とする。
+束縛型が root `Owned` で束縛値が `OwnedLeaf(tk, v)` のとき、`v` を place へ移して `tk` を `Dropped` の tombstone とする。
 集約資源型の値はそのまま heap へ移し、内部 leaf は scope の finalization が回収する。
+
+`let-owned-value(v, Λtok, τ)` は、`τ` が root `Owned` 型のときだけ `rehome-owned-root` を適用する。
+`rehome-owned-root` は `v` が `OwnedLeaf(tk, payload)` である場合、`tk` が `Available` かつ payload が直接の `OwnedLeaf` でないことを要求し、payload と `Λtok[tk ↦ Dropped]` を返す。
+それ以外では `v` と `Λtok` をそのまま返す。
 
 G2m の `Let` 規則は mode を含み、次の条件で排他的に選ぶ。
 `R-LetB` は bmode が mut でなく τ が資源型でない場合に適用する。
 `R-LetIdentityB` は bmode が mut でなく τ が資源型で本体が x の場合に適用し、place を作らず v を返す。
 `R-LetOwnedB` は bmode が mut でなく τ が資源型で本体が x でない場合に適用し、上の `R-LetOwned` と同じ place を確保する。
+`R-LetOwnedB` も `let-owned-value` を適用し、根の token を place の識別へ移す。
 `R-LetMutB` は bmode が mut の場合に従来どおり適用し、資源型の mut 束縛は E-VAR-009 で型付けが拒否する。
 従って通常の非資源型規則と資源型規則は重ならず、mut 規則も資源型規則と重ならない。
 
@@ -2004,7 +2045,8 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 ```text
 Ω(p) = Available
 --------------------------------
-⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], Λtok, θ⟩
+⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[v_result], H, Ω[p ↦ Moved], Λtok', θ⟩
+  (v_result, Λtok') = root-resource-token(⟨E[Move(p)], H, Ω, Λtok, θ⟩, H(p))
 ```
 
 **(R-Forward)** [REQ: OWN-001]
@@ -2012,8 +2054,12 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 ```text
 Ω(p) = Available
 --------------------------------
-⟨E[Forward(p)], H, Ω, Λtok, θ⟩ → ⟨E[H(p)], H, Ω[p ↦ Moved], Λtok, θ⟩
+⟨E[Forward(p)], H, Ω, Λtok, θ⟩ → ⟨E[v_result], H, Ω[p ↦ Moved], Λtok', θ⟩
+  (v_result, Λtok') = root-resource-token(⟨E[Forward(p)], H, Ω, Λtok, θ⟩, H(p))
 ```
+
+`root-resource-token(C, v)` は `v` がちょうど `(resource n)` の場合だけ、制御項、heap 値、`Λtok`、`θ` にまだ現れない `tk` を選び、`(OwnedLeaf tk v)` と `Λtok[tk ↦ Available]` を返す。
+それ以外の値では `v` と `Λtok` をそのまま返す。
 
 `R-Forward` は `Available` な place だけを消費し、`Moved` または `Dropped` の place に対する誤り規則を持たない。
 その場合は規則が発火せず、config mode の gate がその構成を拒否する。
@@ -2039,11 +2085,12 @@ Redex model の負例テストはこの遷移を確認する。
 ```
 
 Drop の引数は `Move` または `Forward` を経て取り出された値であり、place の状態遷移は値を取り出した側で済んでいる。
-値の内部の leaf は同じ走査で `Available` から `Dropped` へ遷移するが、`R-Drop` は `fin`/`finLeaf` イベントを記録しない。leaf の token が無い、または `Moved`/`Dropped` のときは規則を適用しない。
+値の根と内部 leaf の token は同じ走査で `Available` から `Dropped` へ遷移するが、`R-Drop` は `fin`/`finLeaf` イベントを記録しない。
+token が無い、重複する、または `Available` でないときは規則を適用しない。
 
 ### 5.6 scope exit と finalization
 
-中断で捨てる評価 frame が内部の `OwnedLeaf` を含む場合は、その token を `Dropped` にしてから frame を捨てる。
+中断で捨てる評価 frame が根または内部の `OwnedLeaf` を含む場合は、その token を `Dropped` にしてから frame を捨てる。
 `F_inner[unit]` に構文上現れる token が重複するか、`Available` でない token を含むとき、`dropFrame` は未定義である。
 それ以外では、各 token の状態を `Dropped` にした `Λtok` を返す。
 `F_inner[unit]` は評価枠の穴を `unit` で置き換えた項であり、外へ渡す `Perform` の引数は含まない。
@@ -2069,6 +2116,7 @@ finalize 全体を失敗させ、scope exit 規則を発火させない。
 
 scope の正常終了は、その scope が管理する未消費の affine resource を逆順で drop する。
 finalize は Available の place だけを Dropped へ遷移させるため、drop は place ごとに高々一度である（OWN-002）。
+返される値の根の token は `π` の place ではないため、`R-ScopeValue` はそれを保ったまま外へ渡す。
 
 **(R-ScopeAbort)** [REQ: OWN-003] [REQ: OWN-011]
 
@@ -2413,7 +2461,7 @@ MVP の Redex model が目標とする性質 1 から 9（ホワイトペーパ�
 4. **Boundary safety**：`Perform(Return<b, τ>, v)` が R-HandleReturn で処理されるのは、同じ境界 ID b と同じ型 τ を持つ handler だけである。 [REQ: RET-002]
 5. **TypeInfo integrity**：Δ へ導入されるすべての TypeRep の origin は、初期環境が与える type sort の `Reserved(id)`（R0(id) = type(N)）か、letType が与える `Derived(Reserved(o-type-narrative), Make(t))`（t はその TypeRep が保持する型式）のいずれかである。 [REQ: TYP-001]
 6. **Conservative analysis**：`⇓class Finite(p)` と判定された項は、評価 fuel の範囲で簡約が停止する（値、OwnershipError、許容される top-level Perform のいずれかの終端に到達する）。`⇓class Productive(p)` と判定された項は、観測深度上限までの各 n について、fuel の範囲で `c ⇓obs n` の簡約列が存在する。`Unknown` は何も主張しない。 [REQ: REC-001] [REQ: REC-002]
-7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の成功した消費（R-Move または R-Forward）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、Forward はその状態で遷移しない、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される、(f) `F_inner` を捨てる 5 規則（R-ScopeAbort、R-ScopeError、R-HandleReturn、R-HandleSkip、R-HandleError）は frame に現れる leaf token をすべて `Dropped` にし、`θ` に event を足さない。明示 drop は Move または Forward を経た値の消費であり、place の状態遷移としては (a) の消費側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-011] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
+7. **Affine safety**：任意の有限実行 trace において、(a) 各 place p の成功した消費（R-Move または R-Forward）は高々一度であり、(b) p の Dropped への遷移（finalize による）も高々一度であり、(c) `Moved` / `Dropped` の place への Move は `Error(p)` の生成（R-MoveError）以外へ遷移せず、Forward はその状態で遷移しない、(d) すべての scope exit 経路（R-ScopeValue、R-ScopeAbort、R-ScopeError）が π の Available な place を drop して `fin` イベントを記録する、(e) 値の内部の leaf token も一つの `(p, fp)` につき高々一度だけ `Dropped` となり、対応する `finLeaf(p, fp)` は root の `fin(p)` より先に記録される、(f) `F_inner` を捨てる 5 規則（R-ScopeAbort、R-ScopeError、R-HandleReturn、R-HandleSkip、R-HandleError）は frame に現れる根と leaf の token をすべて `Dropped` にし、`θ` に event を足さない、(g) 根と内部 leaf の全 token について、`Available` と `Moved` は構造にちょうど一度、`Observed` は構造になく `obs` payload にちょうど一度、`Dropped` は構造になく過去の `obs` payload に高々一度だけ現れる。明示 drop は Move または Forward を経た値の消費であり、place の状態遷移としては (a) の消費側で数える。 [REQ: OWN-001] [REQ: OWN-002] [REQ: OWN-003] [REQ: OWN-009] [REQ: OWN-010] [REQ: OWN-011] [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
 8. **Borrow safety**：任意の有限実行 trace において、(a) 生きている借用が指す place を Move、Forward、Drop せず、(b) 同じ place の重なる領域について可変借用は他の借用と同時に生きず、(c) reborrow で作った子の借用が生きているあいだ親の可変借用は現れない。ここで借用が **生きている** とは、その借用値が制御項または `H` に現れることをいう。さらに、根として作られた借用の発生は、静的な借用要求の集合と mode、field path、region で対応する。 [REQ: BOR-001] [REQ: BOR-002] [REQ: BOR-004] [REQ: BOR-005] [REQ: BOR-006]
 9. **Unsafe containment**：型検査を通った項の任意の有限実行 trace において、(a) `R-RawLoad`、`R-RawStore`、`R-PtrOffset`、`R-FromRawPtrConst`、`R-FromRawPtrMut` が発火する構成では評価文脈に `Unsafe` の枠があり、(b) その操作が要求する `PtrProp` の集合は静的側が求めた obligation の集合と一致し、(c) `R-UnsafeExit` が返す値は `PtrVal` を leaf に持たず、(d) `Unsafe` の内側の `R-Yield` が event trace へ足す観測値も `PtrVal` を leaf に持たず、(e) どの規則も発火せず終端でもない構成の redex は、`Unsafe` の内側の raw 操作であってその実行時側条件を満たさないものに限る。判定の詳細は `unsafe.md` §5 に置く。 [REQ: PTR-001] [REQ: PTR-002]
 
@@ -2558,9 +2606,9 @@ G5 はその記録を Ψ として置いた。
 | OWN-006 | `borrow.md` §8 の仮引数の受け渡し、性質 7 |
 | OWN-007 | `borrow.md` §8 の closure 捕捉、R-CurryVal（§5.3）、性質 7 |
 | OWN-008 | `borrow.md` §8 の固定引数、R-ApplyCurry（§5.3）、性質 7 |
-| OWN-009 | T-OwnedLeaf、`Λtok` の token 条件、性質 7 |
+| OWN-009 | T-OwnedLeaf、R-OwnLeaf、R-OwnLeafPass、`Λtok` の token 条件、性質 7 |
 | OWN-010 | R-Drop、finalize、R-ScopeValue、性質 7 |
-| OWN-011 | R-ScopeAbort、R-ScopeError（§5.6）、R-HandleReturn、R-HandleSkip、R-HandleError（§5.7）、性質 7（f） |
+| OWN-011 | R-ScopeAbort、R-ScopeError（§5.6）、R-HandleReturn、R-HandleSkip、R-HandleError（§5.7）、性質 7（f）、（g） |
 | BOR-001 | `borrow.md` §4 の許可条件、R-Borrow、R-BorrowError、性質 8 |
 | BOR-002 | `borrow.md` §4 の排他条件、R-BorrowMut、R-BorrowMutError、性質 8 |
 | BOR-004 | `borrow.md` §12 の読み書き、R-Read、R-ReadMut、R-Assign、性質 8 |
