@@ -806,4 +806,196 @@
             attempts typed config-count attempts (bounds-seed limits)
             (inexact->exact
              (round (- (current-inexact-milliseconds) started)))))
+
+  (test-case "根の中断を生成し trace の token 条件を検査する"
+    (define started (current-inexact-milliseconds))
+    (define interruption-kinds '(perform-handled perform-escaped move-error))
+    (define placements '(apply-argument construct-field curry-fixed))
+    (define placement-subsets
+      (for/list ([mask (in-range 1 (expt 2 (length placements)))])
+        (for/list ([placement (in-list placements)] [bit (in-naturals)]
+                   #:when (bitwise-bit-set? mask bit))
+          placement)))
+    (define random-placement-subsets
+      (for/list ([placement (in-list placements)]) (list placement)))
+    (define required-rules
+      '(R-DischargeRemainder R-RecRewrite-Open R-RecRewrite-Close
+        R-MoveError R-ScopeAbort R-ScopeError R-HandleReturn R-HandleSkip
+        R-HandleError R-OwnLeafPass))
+    (define frame-rules
+      '(R-ScopeAbort R-ScopeError R-HandleReturn R-HandleSkip R-HandleError))
+    (define seen-rules (mutable-set))
+    (define attempted 0)
+    (define config-count 0)
+
+    (define (token-state configuration token)
+      (match (assoc token (config-tokens configuration))
+        [(list _ state) state]
+        [_ #f]))
+    (define (token-number token)
+      (match token [`(tok ,number) number] [_ -1]))
+    (define (terminal-token-ids core)
+      (match core
+        [`(Perform ,_ ,argument) (collect-tokens argument)]
+        [`(Error ,_) '()]
+        [_ (collect-tokens core)]))
+    (define (trace-rules configs)
+      (for/list ([before (in-list configs)] [after (in-list (cdr configs))])
+        (define matches
+          (filter (lambda (named-step) (equal? (second named-step) after))
+                  (raw-steps-g2/named before)))
+        (check-equal? (length matches) 1
+                      (format "trace の規則名を一意に特定できる: ~s" before))
+        (if (pair? matches) (first (first matches)) 'unknown)))
+    (define (check-case! interruption placement wrapper [detailed? #f])
+      (define-values (core callables places start)
+        (generate-root-abort-case interruption placement wrapper))
+      (define static-type
+        (and detailed? (core-type-of core places callables)))
+      (define start-row (runtime-row start callables 'Unit))
+      (define run (bounded-trace-g2 start (bounds-fuel limits)))
+      (define configs (execution-configs run))
+      (define rules (if detailed? (trace-rules configs) '()))
+      (define final-config (last configs))
+      (define terminal (config-core final-config))
+      (define all-token-ids
+        (remove-duplicates
+         (append-map (lambda (configuration)
+                       (map first (config-tokens configuration)))
+                     configs)
+         equal?))
+      (define initial-token-ids (map first (config-tokens start)))
+      (define tombstone (and (pair? initial-token-ids) (first initial-token-ids)))
+
+      (when detailed?
+        (check-true (and (list? static-type)
+                         (equal? (first static-type) 'Unit))
+                    (format "生成 Core の型は Unit: ~s" static-type)))
+      (check-not-false start-row "起点 config の runtime-row がある")
+      (when start-row
+        (check-true (config-ok? start callables 'Unit start-row)
+                    "起点 config が config-ok? を満たす"))
+      (check-eq? (execution-outcome run) 'terminal)
+      (check-true
+       (or (redex-match? G2m v terminal)
+           (match terminal
+             [`(Perform ,_ ,_) #t]
+             [`(Error ,_) #t]
+             [_ #f]))
+       (format "終端は値、裸の Perform、または Error: ~s" terminal))
+      (for ([configuration (in-list configs)] [index (in-naturals)])
+        (set! config-count (add1 config-count))
+        (define row (runtime-row configuration callables 'Unit))
+        (check-not-false row
+                         (format "config ~a の runtime-row がある: ~s"
+                                 index configuration))
+        (when row
+          (check-true (config-ok? configuration callables 'Unit row)
+                      (format "config ~a が config-ok? を満たす: ~s"
+                              index configuration))))
+      (for ([rule (in-list rules)]) (set-add! seen-rules rule))
+      (for ([rule (in-list rules)]
+            [before (in-list configs)]
+            [after (in-list (cdr configs))]
+            #:when (memq rule frame-rules))
+        (check-equal? (config-events after) (config-events before)
+                      (format "~a は θ に event を加えない" rule)))
+      (unless detailed?
+        (for ([before (in-list configs)] [after (in-list (cdr configs))]
+              #:when
+              (for/or ([entry (in-list (config-tokens before))])
+                (and (eq? (second entry) 'Available)
+                     (eq? (token-state after (first entry)) 'Dropped))))
+          (check-equal? (config-events after) (config-events before)
+                        "中断 cleanup による token 回収は θ を変えない")))
+      (for ([token (in-list all-token-ids)])
+        (define drops
+          (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+            (if (and (eq? (token-state before token) 'Available)
+                     (eq? (token-state after token) 'Dropped))
+                1 0)))
+        (check-true (<= drops 1)
+                    (format "~s は Available から Dropped へ高々一度移る"
+                            token)))
+      (check-equal?
+       (sort (for/list ([entry (in-list (config-tokens final-config))]
+                        #:when (eq? (second entry) 'Available))
+               (first entry))
+             < #:key token-number)
+       (sort (terminal-token-ids terminal) < #:key token-number)
+       "終端の Available token は終端値か Perform 引数にある")
+      (check-equal? (length initial-token-ids) 1
+                    "初期 token 表は乱数化用 tombstone 一つだけ")
+      (check-eq? (token-state start tombstone) 'Dropped)
+      (for ([configuration (in-list configs)])
+        (check-eq? (token-state configuration tombstone) 'Dropped
+                   "tombstone は終端まで Dropped のまま")
+        (check-false
+         (member tombstone
+                 (collect-tokens (list (config-core configuration)
+                                       (config-heap configuration)))
+                 equal?)
+         "tombstone は構造に出現しない"))
+      (check-equal?
+       (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+         (if (and (eq? (token-state before tombstone) 'Available)
+                  (eq? (token-state after tombstone) 'Dropped))
+             1 0))
+       0 "tombstone は Available→Dropped の回数に数えない")
+      (when (and detailed? (eq? wrapper 'rec-rewrite))
+        (check-not-false (member 'R-MoveError rules)
+                         "RecRewriteOpen 変種で R-MoveError が発火する")
+        (define move-error-index (index-of rules 'R-MoveError))
+        (define before-error (list-ref configs move-error-index))
+        (define live-roots
+          (for/list ([entry (in-list (config-tokens before-error))]
+                     #:when (eq? (second entry) 'Available))
+            (first entry)))
+        (check-true (pair? live-roots)
+                    "R-MoveError 前に保持中の根 token がある")
+        (check-true
+         (for/and ([token (in-list live-roots)])
+           (eq? (token-state final-config token) 'Dropped))
+         "R-MoveError 後の中断 cleanup が保持中の根 token を回収する"))
+      (when (and detailed? (eq? wrapper 'rec-rewrite-complete))
+        (check-not-false (member 'R-RecRewrite-Open rules))
+        (check-not-false (member 'R-RecRewrite-Close rules)))
+      (set! attempted (add1 attempted)))
+
+    (call-with-search-seed
+     limits
+     (lambda ()
+       ;; 規則と型の形は決定的 corpus で全網羅し、乱数試行は構成不変条件を重ねて確かめる。
+       (for* ([interruption (in-list interruption-kinds)]
+              [placement (in-list placement-subsets)]
+              [wrapper (in-list (if (eq? interruption 'move-error)
+                                    '(none discharge-remainder rec-rewrite
+                                      rec-rewrite-complete)
+                                    '(none discharge-remainder
+                                      rec-rewrite-complete)))])
+         (check-case! interruption placement wrapper #t))
+       (for ([_attempt (in-range (bounds-attempts limits))])
+         (define interruption
+           (list-ref interruption-kinds (random (length interruption-kinds))))
+         ;; 全ての部分集合は上の決定的試行で扱い、乱数試行は trace を短く保つ。
+         (define placement
+           (list-ref random-placement-subsets
+                     (random (length random-placement-subsets))))
+         (define wrappers
+           (if (eq? interruption 'move-error)
+               '(none discharge-remainder rec-rewrite rec-rewrite-complete)
+               '(none discharge-remainder rec-rewrite-complete)))
+         (define wrapper (list-ref wrappers (random (length wrappers))))
+         (check-case! interruption placement wrapper))))
+    (check-equal? attempted
+                  (+ 70 (bounds-attempts limits))
+                  "全ての決定的組合せと設定回数の無作為試行を検査する")
+    (for ([rule (in-list required-rules)])
+      (check-true (set-member? seen-rules rule)
+                  (format "生成 trace が ~a を被覆する" rule)))
+    (printf "Root abort: attempted=~a configs=~a rules=~a seed=~a elapsed-ms=~a\n"
+            attempted config-count (sort (set->list seen-rules) symbol<?)
+            (bounds-seed limits)
+            (inexact->exact
+             (round (- (current-inexact-milliseconds) started)))))
 )

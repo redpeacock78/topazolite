@@ -46,7 +46,8 @@
          widen-variance-type
          permute-variance-type
          generate-union-core
-         generate-owned-leaf-case)
+         generate-owned-leaf-case
+         generate-root-abort-case)
 
 (struct owned-leaf-case (kind action initial callables expected) #:transparent)
 
@@ -479,6 +480,208 @@
           ((,token Available))
           ()))
   (owned-leaf-case kind action initial callables expected))
+
+;; c3m2. これらの項は資源の根を評価済みの Apply 引数に残してから、
+;; 後続の引数または RecRewrite entry で中断する。
+(define root-abort-owned-type '(Owned Res))
+(define root-abort-option-type `(Option ,root-abort-owned-type))
+(define root-abort-acquire '(PrimVal (Reserved o-acquire) acquire))
+(define root-abort-curried-signature
+  `(NFn (,root-abort-owned-type Unit) Unit () () () User))
+(define root-abort-curried-type
+  '(Owned (NFn (Unit) Unit () () () User)))
+(define (root-abort-resource-type? type)
+  (or (equal? type root-abort-owned-type)
+      (equal? type root-abort-option-type)
+      (equal? type root-abort-curried-type)
+      (equal? type `(Record ((a ,root-abort-owned-type imm))))))
+(define root-abort-curried-function
+  `(Lam User root-abort-curried-target (fixed later)
+     (Handle (Return root-abort-curry-boundary Unit)
+             (answer -> answer)
+       (Scope () (Let (stored let ,root-abort-owned-type) fixed unit)))))
+
+(define root-abort-rsd-wide
+  `(Record ((kept Int imm) (owned ,root-abort-option-type imm))))
+(define root-abort-rsd-narrow '(Record ((kept Int imm))))
+(define root-abort-rsd-proof
+  `(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped ,root-abort-rsd-wide
+                                      ,root-abort-rsd-narrow)))
+
+(define root-abort-interruptions
+  '(perform-handled perform-escaped move-error))
+(define root-abort-placements '(apply-argument construct-field curry-fixed))
+(define root-abort-wrappers
+  '(none discharge-remainder rec-rewrite rec-rewrite-complete))
+
+;; source からは到達不能: Move は Own row を出し RecRewrite entry は空 row を要求する。
+;; この変種は型付きの RecRewriteOpen 中間 config で保存性を検査する。
+(define (root-abort-rewrite-error place)
+  `(RecRewriteOpen
+    ((a imm ,root-abort-owned-type (Move ,place)))))
+
+(define root-abort-rewrite-complete
+  '(RecRewrite (Rec ((a imm 1))) ((a input Int imm Int input))))
+
+(define (root-abort-case-expression placement interruption place number)
+  (define source
+    (if (eq? interruption 'move-error)
+        `(Move ,place)
+        `(Apply ,root-abort-acquire ,number)))
+  (case placement
+    [(apply-argument) (values source root-abort-owned-type)]
+    [(construct-field)
+     (values `(Construct ,root-abort-option-type some
+                         (OwnLeaf ,source))
+             root-abort-option-type)]
+    [(curry-fixed)
+     (values `(Curry ,root-abort-curried-function (OwnLeaf ,source))
+             root-abort-curried-type)]))
+
+(define (generate-root-abort-case interruption placement wrapper)
+  (unless (memq interruption root-abort-interruptions)
+    (raise-argument-error 'generate-root-abort-case
+                          "root-abort-interruption" interruption))
+  (unless (and (list? placement)
+               (pair? placement)
+               (not (check-duplicates placement))
+               (andmap (lambda (item)
+                         (memq item root-abort-placements))
+                       placement))
+    (raise-argument-error 'generate-root-abort-case
+                          "non-empty duplicate-free root-abort-placement subset"
+                          placement))
+  (unless (memq wrapper root-abort-wrappers)
+    (raise-argument-error 'generate-root-abort-case
+                          "root-abort-wrapper" wrapper))
+  (when (and (eq? wrapper 'rec-rewrite)
+             (not (eq? interruption 'move-error)))
+    (raise-argument-error 'generate-root-abort-case
+                          "'rec-rewrite only with 'move-error"
+                          (list interruption placement wrapper)))
+
+  (define resource-base (+ 100000 (random 100000000)))
+  (define token-base (+ 200000000 (random 100000000)))
+  (define place-ids (range (length placement)))
+  (define-values (held-expressions held-types)
+    (for/fold ([expressions '()] [types '()])
+              ([item (in-list placement)]
+               [index (in-naturals)])
+      (define-values (expression type)
+        (root-abort-case-expression item interruption
+                                    (list-ref place-ids index)
+                                    (+ resource-base index)))
+      (values (append expressions (list expression))
+              (append types (list type)))))
+  (define rsd-argument
+    `(Discharge ,root-abort-rsd-proof
+       (Rec ((kept imm ,(random 100000))
+             (owned imm
+                    (Construct ,root-abort-option-type some
+                               (OwnLeaf
+                                (Apply ,root-abort-acquire
+                                       ,(+ resource-base (length placement))))))))))
+  (define rec-rewrite
+    (if (eq? wrapper 'rec-rewrite)
+        (root-abort-rewrite-error (first place-ids))
+        root-abort-rewrite-complete))
+  (define prefix-expressions
+    (append (if (eq? wrapper 'discharge-remainder)
+                (list rsd-argument)
+                '())
+            held-expressions
+            (if (memq wrapper '(rec-rewrite rec-rewrite-complete))
+                (list rec-rewrite)
+                '())))
+  (define prefix-types
+    (append (if (eq? wrapper 'discharge-remainder)
+                (list root-abort-rsd-narrow)
+                '())
+            held-types
+            (if (eq? wrapper 'rec-rewrite)
+                (list `(Record ((a ,root-abort-owned-type imm))))
+                (if (eq? wrapper 'rec-rewrite-complete)
+                    (list '(Record ((a Int imm))))
+                    '()))))
+  (define error-place (and (eq? interruption 'move-error) (first place-ids)))
+  (define interrupt-expression
+    (case interruption
+      [(perform-handled)
+       '(Perform (Return root-abort-boundary Unit) unit)]
+      [(perform-escaped)
+       '(Perform (Return root-abort-escaped-boundary Unit) unit)]
+      [(move-error) `(Move ,error-place)]))
+  (define interrupt-type
+    (if (eq? interruption 'move-error) root-abort-owned-type 'Unit))
+  (define argument-expressions
+    (if (eq? wrapper 'rec-rewrite)
+        prefix-expressions
+        (append prefix-expressions (list interrupt-expression))))
+  (define parameter-types
+    (if (eq? wrapper 'rec-rewrite)
+        prefix-types
+        (append prefix-types (list interrupt-type))))
+  (define raw-parameters
+    (for/list ([index (in-range (length parameter-types))])
+      (string->symbol (format "root-abort-raw~a" index))))
+  (define consumer-body
+    (for/fold ([body 'unit])
+              ([index (in-range (sub1 (length parameter-types)) -1 -1)])
+      (if (root-abort-resource-type? (list-ref parameter-types index))
+          `(Let (,(string->symbol (format "root-abort-received~a" index))
+                 let ,(list-ref parameter-types index))
+                ,(list-ref raw-parameters index)
+                ,body)
+          body)))
+  (define consumer-type
+    `(NFn ,parameter-types Unit () () () User))
+  (define consumer
+    `(Lam User root-abort-consumer ,raw-parameters
+       (Handle (Return root-abort-function-boundary Unit)
+               (return-value -> return-value)
+         (Scope () ,consumer-body))))
+  (define callables
+    (append
+     (if (memq 'curry-fixed placement)
+         `((root-abort-curried-target ,root-abort-curried-signature))
+         '())
+     `((root-abort-consumer ,consumer-type))))
+  (define application `(Apply ,consumer ,@argument-expressions))
+  (define scope-places
+    (if (eq? interruption 'move-error) place-ids '()))
+  (define core
+    (if (memq interruption '(perform-handled perform-escaped))
+        `(Handle (Return ,(if (eq? interruption 'perform-handled)
+                              'root-abort-boundary
+                              'root-abort-handler-boundary)
+                         Unit)
+                 (answer -> answer)
+           (Scope ,scope-places ,application))
+        `(Handle (Return root-abort-handler-boundary Unit)
+                 (answer -> answer)
+           (Scope ,scope-places ,application))))
+  (define places
+    (if (eq? interruption 'move-error)
+        (for/list ([place (in-list place-ids)])
+          (list place 'Res))
+        '()))
+  (define heap
+    (if (eq? interruption 'move-error)
+        (for/list ([place (in-list place-ids)]
+                   [index (in-naturals)])
+          (list place
+                `(resource ,(+ resource-base index))
+                `(declared ,root-abort-owned-type)))
+        '()))
+  (define states
+    (for/list ([place (in-list scope-places)]) (list place 'Available)))
+  ;; 構造出現の無い Dropped tombstone は構成条件を満たし fresh token を乱数化する。
+  (define start
+    `(cfg ,core ,heap ,states
+          (((tok ,token-base) Dropped))
+          ()))
+  (values core callables places start))
 
 (define (make-search-counts limits)
   (search-counts 0 0 (bounds-discard-limit limits)))
