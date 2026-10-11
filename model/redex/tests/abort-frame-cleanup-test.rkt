@@ -212,6 +212,46 @@
              #:when (eq? (second entry) 'Available))
     (first entry)))
 
+(define (check-unused-resource-binding core callables expected-rules)
+  (check-equal? (first (core-type-of core '() callables)) 'Unit)
+  (define-values (configs rules) (trace-g2 (inject-g2m core)))
+  (check-configs configs callables 'Unit)
+  (for ([rule (in-list expected-rules)])
+    (check-true (trace-has-rule? rules rule)
+                (format "~a を通る" rule)))
+  (check-equal? (second (last configs)) 'unit)
+  (check-true (pair? (configuration-tokens (last configs))))
+  (check-true
+   (andmap (lambda (entry) (eq? (second entry) 'Dropped))
+           (configuration-tokens (last configs)))
+   "未使用の資源 token は Dropped になる")
+  (check-true
+   (andmap (lambda (entry) (eq? (second entry) 'Dropped))
+           (fourth (last configs)))
+   "転送先の place は cleanup で Dropped になる"))
+
+(test-case "Lam の未使用の資源仮引数を回収する"
+  (define core `(Apply ,consumer-unit ,(owned-option 53) unit))
+  (check-unused-resource-binding core consumer-unit-callables '(R-Beta R-LetOwnedB)))
+
+(test-case "Recur の未使用の資源仮引数を回収する"
+  (define recur-type `(NFn (,option-owned) Unit () () () User))
+  (define callables `((unused-recur ,recur-type)))
+  (define core
+    `(Recur unused-recur loop (raw)
+       (Scope () (Let (transferred let ,option-owned) raw unit))
+       (Apply loop ,(owned-option 59))))
+  (check-unused-resource-binding core callables
+                                 '(R-RecurBind R-RecurUnfold R-LetOwnedB)))
+
+(test-case "Eliminate の未使用の資源枝 binder を回収する"
+  (define core
+    `(Eliminate ,(owned-option 61)
+       ((some (raw) ->
+          (Scope () (Let (transferred let (Owned Res)) raw unit)))
+        (none () -> unit))))
+  (check-unused-resource-binding core '() '(R-Eliminate R-LetOwnedB)))
+
 (define (rule-for-interruption-kind kind)
   (case kind
     [(scope-abort) 'R-ScopeAbort]
