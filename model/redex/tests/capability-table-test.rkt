@@ -111,7 +111,7 @@
  (define core
    '(Let (x let (Borrowed Res (RVar 0))) (Borrow 1)
       (RecRewriteOpen
-       ((a imm
+       ((a imm Int
            (Let (x let (Borrowed Res (RVar 0))) (Borrow 2) (Reborrow x)))
         (b imm (Reborrow x))))))
  ;; a の内側 x は Borrow 2、兄弟欄 b の x は外側の Borrow 1 を指す。

@@ -113,12 +113,15 @@
   (check-equal? (core-points value) '(() (0)))
   (check-equal? (core-free-vars value) (set 'x)))
 
-(test-case "RecRewriteOpen は欄の作業項だけを順に歩く"
+(test-case "RecRewriteOpen は型注釈を子にせず作業項だけを歩く"
+  (define output-type '(Record ((value Int imm))))
   (define core
-    '(RecRewriteOpen ((a imm (Apply f 1)) (b mut (Scope () x)))))
+    `(RecRewriteOpen ((a imm (Apply f 1))
+                     (b mut ,output-type (Scope () x)))))
   (check-equal? (core-children core) '((Apply f 1) (Scope () x)))
   (check-equal? (core-with-children core '(g (Scope () y)))
-                '(RecRewriteOpen ((a imm g) (b mut (Scope () y)))))
+                `(RecRewriteOpen ((a imm g)
+                                  (b mut ,output-type (Scope () y)))))
   (check-equal? (core-points core)
                 '(() (0) (0 0) (0 1) (1) (1 0)))
   (check-equal? (core-free-vars core) (set 'f 'x)))

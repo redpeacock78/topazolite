@@ -165,7 +165,7 @@
      (append (collect-tokens function)
              (collect-tokens fixed))]
     [`(RecRewriteOpen (,fields ...))
-     (append-map (lambda (field) (collect-tokens (third field))) fields)]
+     (append-map (lambda (field) (collect-tokens (last field))) fields)]
     [(? list?) (append-map collect-tokens value)]
     [_ '()]))
 
@@ -645,7 +645,7 @@
      (cons (car entry) (hash (member-key member-type) entry))]
     [`(RecRewriteOpen (,fields ...))
      (only (for/fold ([acc (set)]) ([field (in-list fields)])
-             (set-union acc (ws-of (third field)))))]
+             (set-union acc (ws-of (last field)))))]
     [`(RecRewrite ,input ,entries)
      (define input-entry (recur input))
      (define input-ws (car input-entry))

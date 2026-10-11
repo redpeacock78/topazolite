@@ -356,6 +356,10 @@
             (match field
               [`(,_label ,mode ,work)
                (and (memq mode '(imm mut)) (walk work))]
+              [`(,_label ,mode ,output-type ,work)
+               (and (memq mode '(imm mut))
+                    (type-normal? output-type)
+                    (walk work))]
               [_ #f]))]
          [`(Proj ,record ,_) (walk record)]
          [`(ProjOpt ,type ,record ,_)

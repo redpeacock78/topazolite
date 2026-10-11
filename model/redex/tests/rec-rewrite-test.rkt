@@ -186,6 +186,38 @@
    `(RecRewrite record-source ((a x ,input-type imm ,output-type ,body)))
    `((a ,input-type imm)) `((a ,output-type imm)) extra-callables))
 
+(define rec-rewrite-open-error-type
+  '(Record ((a Unit imm) (kept Int imm))))
+(define rec-rewrite-open-error-callables
+  '((recur-id (NFn () Unit () () () User))))
+
+(define (check-rec-rewrite-open-error-body position body)
+  (define core
+    `(Scope (0)
+       (RecRewrite (Rec ((a imm 1) (kept imm 2)))
+         ((a x Int imm Unit ,body)))))
+  (define initial `(cfg ,core ((0 5)) ((0 Available)) () ()))
+  (define initial-type
+    (type-of/raw core '((0 Int)) rec-rewrite-open-error-callables))
+  (check-equal? initial-type
+                (list 'ok (list rec-rewrite-open-error-type '()))
+                (format "初期項が型付けできない位置: ~a / ~s"
+                        position initial-type))
+  (check-equal? (runtime-row initial rec-rewrite-open-error-callables
+                             rec-rewrite-open-error-type)
+                '()
+                (format "初期 row が無い位置: ~a / ~s" position initial))
+  (define steps (raw-steps-g2/named initial))
+  (check-true
+   (match steps [(list (list 'R-RecRewrite-Open _)) #t] [_ #f])
+   (format "Open の一歩が一意でない位置: ~a / ~s" position steps))
+  (define opened (second (first steps)))
+  (check-equal?
+   (runtime-row opened rec-rewrite-open-error-callables
+                rec-rewrite-open-error-type)
+   '()
+   (format "Open 後の row が無い位置: ~a / ~s" position opened)))
+
 (define (test-fail reason kind key)
   (error 'rec-rewrite-test "~s ~s ~s" reason kind key))
 
@@ -329,7 +361,8 @@
   (check-equal? (config-core (second configs))
                 '(RecRewriteOpen
                   ((owned imm (OwnedLeaf (tok 11) (resource 11)))
-                   (number imm (UnionInject (Union Bool Int) Int 1)))))
+                   (number imm (Union Bool Int)
+                           (UnionInject (Union Bool Int) Int 1)))))
   (check-equal? (config-core (last configs))
                 '(Rec ((owned imm (OwnedLeaf (tok 11) (resource 11)))
                       (number imm (UnionVal (Union Bool Int) Int 1))))))
@@ -347,7 +380,8 @@
   (check-equal? rules '(R-RecRewrite-Open R-RecRewrite-Close))
   (check-equal? (config-core (second configs))
                 '(RecRewriteOpen
-                  ((owned imm (OwnedLeaf (tok 12) (resource 12))) (number imm 1))))
+                  ((owned imm (Owned Res) (OwnedLeaf (tok 12) (resource 12)))
+                   (number imm 1))))
   (check-equal? (config-core (last configs))
                 '(Rec ((owned imm (OwnedLeaf (tok 12) (resource 12))) (number imm 1)))))
 
@@ -440,7 +474,7 @@
   (check-false (member 'R-Move rules))
   (check-true
    (match (config-core (second configs))
-     [`(RecRewriteOpen ((box imm (RecRewrite ,opened-input ,_))))
+      [`(RecRewriteOpen ((box imm ,_output-type (RecRewrite ,opened-input ,_))))
       (and (equal? opened-input
                    '(Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))
                           (number imm 1))))
@@ -451,6 +485,81 @@
                 '(Rec ((box imm
                        (Rec ((owned imm (OwnedLeaf (tok 13) (resource 13)))
                              (number imm (UnionVal (Union Bool Int) Int 1)))))))))
+
+(test-case "RecRewriteOpen は直下の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body "entry 直下" '(Error 0)))
+
+(test-case "RecRewriteOpen は Let 本体の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body
+   "Let 本体" '(Let (bound const Unit) unit (Error 0))))
+
+(test-case "RecRewriteOpen は Scope 本体の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body "Scope 本体" '(Scope () (Error 0))))
+
+(test-case "RecRewriteOpen は Eliminate 枝の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body
+   "Eliminate の枝"
+   '(Eliminate (Construct (Option Int) some 1)
+      ((none () -> (Error 0)) (some (item) -> unit)))))
+
+(test-case "RecRewriteOpen は UnionEliminate 枝の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body
+   "UnionEliminate の枝"
+   '(UnionEliminate (UnionInject (Union Int Bool) Int 1)
+      ((Int item -> (Error 0)) (Bool other -> unit)))))
+
+(test-case "RecRewriteOpen は Recur 継続の Error へ entry の出力型を渡す"
+  (check-rec-rewrite-open-error-body
+   "Recur の継続" '(Recur recur-id recur-f () unit (Error 0))))
+
+(test-case "RecRewriteOpen は混在欄、Absent、Owned identity の注釈を Close で捨てる"
+  (define union-type '(Union Bool Int))
+  (define input
+    '(Rec ((owned imm (OwnedLeaf (tok 61) (resource 61)))
+          (optional imm (Absent Int))
+          (mapped imm 1)
+          (passthrough imm 2))))
+  (define core
+    `(RecRewrite ,input
+       ((owned owner (Owned Res) imm (Owned Res) owner)
+        (optional absent Int imm ,union-type
+          (UnionInject ,union-type Int absent))
+        (mapped value Int imm ,union-type
+          (UnionInject ,union-type Int value)))))
+  (define expected
+    (normalize-type
+     '(Record ((owned (Owned Res) imm)
+               (optional (Union Bool Int) imm opt)
+               (mapped (Union Bool Int) imm)
+               (passthrough Int imm)))))
+  (define-values (configs _rules)
+    (apply values
+           (g2-trace `(cfg ,core () () (((tok 61) Available)) ()))))
+  (check-valid-token-trace configs expected '() '(61))
+  (check-equal?
+   (config-core (second configs))
+   '(RecRewriteOpen
+     ((owned imm (Owned Res) (OwnedLeaf (tok 61) (resource 61)))
+      (optional imm (Union Bool Int) (Absent (Union Bool Int)))
+      (mapped imm (Union Bool Int) (UnionInject (Union Bool Int) Int 1))
+      (passthrough imm 2))))
+  (check-equal?
+   (config-core (last configs))
+   '(Rec ((owned imm (OwnedLeaf (tok 61) (resource 61)))
+         (optional imm (Absent (Union Bool Int)))
+         (mapped imm (UnionVal (Union Bool Int) Int 1))
+         (passthrough imm 2)))))
+
+(test-case "RecRewriteOpen の型注釈は present と Absent の不一致を拒否する"
+  (check-false
+   (config-ok? '(cfg (Scope () (RecRewriteOpen ((a imm Int unit))))
+                    () () () ())
+               '() '(Record ((a Int imm))) '()))
+  (check-false
+   (config-ok? '(cfg (Scope () (RecRewriteOpen
+                                ((a imm Int (Absent String)))))
+                    () () () ())
+               '() '(Record ((a Int imm opt))) '())))
 
 (test-case "RecRewrite は entry 順でなく入力欄順に処理する"
   (define input '(Rec ((a mut 1) (b mut (Construct Bool false)))))

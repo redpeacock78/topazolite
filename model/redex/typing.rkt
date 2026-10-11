@@ -1358,10 +1358,10 @@
            (usage-add usage next term)))
        (usage-add (scan input env allowed in-transfer? local-lets? '() mode)
                   entry-usage term)]
-      [`(RecRewriteOpen ((,_label ,_mode ,field-core) ...))
+      [`(RecRewriteOpen (,fields ...))
        ;; Open の欄は閉じた RecRewrite entry から作られるため、外側の Forward
        ;; binder 文脈を引き継がず、欄ごとに独立して走査する。
-       (for/fold ([usage (hash)]) ([field (in-list field-core)])
+       (for/fold ([usage (hash)]) ([field (in-list (map last fields))])
          (usage-add usage
                     (scan field '() (set) in-transfer? local-lets? '() mode)
                     term))]
@@ -3475,7 +3475,12 @@
 (define (infer-rec-rewrite-open core fields Λ Ψ environment places callables fail)
   (define plain-fields
     (for/list ([field (in-list fields)])
-      (list (peel-lbl (first field)) (second field) (third field))))
+      (match field
+        [(list label mode work)
+         (list (peel-lbl label) mode #f work)]
+        [(list label mode output-type work)
+         (list (peel-lbl label) mode (peel-ty output-type) work)]
+        [_ (fail 'ill-typed core)])))
   (unless (and (field-row-unique? plain-fields)
                (andmap (lambda (field) (memq (second field) '(imm mut)))
                        plain-fields))
@@ -3483,13 +3488,26 @@
   (define-values (typed-fields field-rows final-psi)
     (for/fold ([typed-fields '()] [field-rows '()] [current-psi Ψ])
               ([field (in-list plain-fields)] [index (in-naturals)])
-      (define work (third field))
+      (define output-type (third field))
+      (define work (fourth field))
       (define absent? (match (peel-node work) [`(Absent ,_) #t] [_ #f]))
       (define result
-        (if absent?
-            (list (peel-ty (second (peel-node work))) '() current-psi)
-            (infer work (enter-child Λ index) current-psi
-                   environment places callables fail)))
+        (cond
+          [(and output-type absent?)
+           (define absent-type (peel-ty (second (peel-node work))))
+           (unless (type-equiv? absent-type output-type)
+             (fail 'type-mismatch work output-type absent-type))
+           (list output-type '() current-psi)]
+          [output-type
+           (match (check-as/full work output-type (enter-child Λ index)
+                                 current-psi environment places callables fail)
+             [(list row next-psi _actual)
+              (list output-type row next-psi)])]
+          [absent?
+           (list (peel-ty (second (peel-node work))) '() current-psi)]
+          [else
+           (infer work (enter-child Λ index) current-psi
+                  environment places callables fail)]))
       (define row-field
         (if absent?
             (list (first field) (first result) (second field) 'opt)
@@ -5234,8 +5252,8 @@
                        (value-position-ok? body)]
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
-    [`(RecRewriteOpen ((,_label ,_mode ,work) ...))
-     (andmap value-position-ok? work)]
+    [`(RecRewriteOpen (,fields ...))
+     (andmap value-position-ok? (map last fields))]
     [_
      (cond
        [(redex-match? G2m v core)

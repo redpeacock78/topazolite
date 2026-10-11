@@ -44,7 +44,8 @@
   (define core
     '(Let (x (Owned Res)) (OwnedLeaf (tok 0) (resource 10))
        (RecRewriteOpen
-         ((a imm (Let (x (Owned Res)) (OwnedLeaf (tok 1) (resource 11)) x))
+         ((a imm (Owned Res)
+             (Let (x (Owned Res)) (OwnedLeaf (tok 1) (resource 11)) x))
          (b imm x)))))
   ;; a の一時 Let は x を隠すが、b は外側の x を参照する。token は値の欄
   ;; にあるものだけを数え、変数参照から再計上しない。

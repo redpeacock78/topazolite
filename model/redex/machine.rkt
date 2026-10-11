@@ -213,12 +213,19 @@
                  [(owned-type? input-type)
                   (and (type-equiv? input-type output-type)
                        (equal? binder body)
-                       (list label output-mode value))]
+                       (list label output-mode output-type value))]
                  [(match value [`(Absent ,_) #t] [_ #f])
-                  (list label output-mode `(Absent ,output-type))]
+                  (list label output-mode output-type `(Absent ,output-type))]
                  [else
-                  (list label output-mode
+                  (list label output-mode output-type
                         (term (substitute ,body ,binder ,value)))])])))))
+
+(define (rec-rewrite-close/proc fields)
+  `(Rec
+    ,(for/list ([field (in-list fields)])
+       (match field
+         [(list label mode work) (list label mode work)]
+         [(list label mode _output-type work) (list label mode work)]))))
 
 (define-metafunction G2m
   rec-rewrite-open : ((label m v) ...)
@@ -227,6 +234,11 @@
                      ((label_2 x_2 τ_2 m_2 τ_3 c_2) ...))
    ,(rec-rewrite-open/proc (term ((label_1 m_1 v_1) ...))
                             (term ((label_2 x_2 τ_2 m_2 τ_3 c_2) ...)))])
+
+(define-metafunction G2m
+  rec-rewrite-close : (rrvfield ...) -> c
+  [(rec-rewrite-close (rrvfield ...))
+   ,(rec-rewrite-close/proc (term (rrvfield ...)))])
 
 (define (table-ref table key)
   (match (assoc key table)
@@ -1044,9 +1056,9 @@
              H Ω Λtok θ)
         R-RecRewrite-Open)
 
-   (--> (cfg (in-hole E (RecRewriteOpen ((label m v) ...)))
+   (--> (cfg (in-hole E (RecRewriteOpen (rrvfield ...)))
              H Ω Λtok θ)
-        (cfg (in-hole E (Rec ((label m v) ...)))
+        (cfg (in-hole E (rec-rewrite-close (rrvfield ...)))
              H Ω Λtok θ)
         R-RecRewrite-Close)
 

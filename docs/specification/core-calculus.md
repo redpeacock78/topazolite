@@ -164,6 +164,8 @@ kind が `Type` の TypeRep は monotype τ を持ち、kind が矢印の TypeRe
 ```text
 mw ::= w | MutSlot(p)                            Reassign の target
 ubr ::= (τm x -> c)                              UnionEliminate の枝
+rwf ::= (ℓ, m, c) | (ℓ, m, τout, c)              RecRewriteOpen の作業欄
+rwv ::= (ℓ, m, v) | (ℓ, m, τout, v)              値になった作業欄
 
 c ::= v                                          値
     | x                                          変数
@@ -174,7 +176,8 @@ c ::= v                                          値
     | UnionInject(τU, τm, c)                     Union 成分の注入
     | UnionEliminate(c, (τm1 x1 -> c1), …, (τmn xn -> cn)) Union の tag による場合分け
     | RecRewrite(e, ((ℓ1, x1, τ1, m'1, τ'1, c1), …)) Record の欄の再構成
-    | RecRewriteOpen((ℓ1, m1, c1), …)            machine 専用の作業形
+    | RecRewriteOpen((ℓ1, m1, c1), …)            entry 未適用欄
+    | RecRewriteOpen((ℓ1, m1, τout, c1), …)      entry 適用欄。τout は Close までの metadata
     | Perform(op, c)                             Effect の発生
     | Handle(op, x -> ch, c)                     abortive handler
     | Scope(π, c)                                finalization 境界
@@ -1314,7 +1317,8 @@ T ::= x | v | Forward(x)
 
 `T` の `Forward` の対象は static mode では変数、config mode では変数または `Available` な place である。
 static mode の `Scope` は空の管理欄を持ち、config mode では管理欄が空でなくてもよい。
-config mode では簡約途中の `RecRewriteOpen` も `T` とし、各欄を空の転送文脈で走査する。
+config mode では簡約途中の `RecRewriteOpen` も `T` とし、各欄の work を空の転送文脈で走査する。
+欄に付く `τout` は work の子でも token でもなく、型検査だけに使う metadata である。
 各欄は閉じた `RecRewrite` entry から作られ、static mode では外側 binder の参照が gate より先に `unbound-variable` で拒否されるため、この扱いは受理範囲を広げない。
 
 結果の位置では、候補全体が `T` かを先に判定し、`T` なら式全体を転送形として走査する。
@@ -1589,19 +1593,24 @@ RSD は欄の値を作り直さず、除去する leaf の token を `Dropped` �
 **(T-RecRewriteOpen)** は machine 専用の作業形に限って使う。
 
 ```text
-ℓi は相異なる。mi ∈ {imm, mut}
-ci = (Absent τi) なら ρ(ℓi) = (τi, mi, opt)、εi = {}
-ci が (Absent τi) でないなら Γ; Δ; Π; Ξ; Φ ⊢core ci : τi ! εi
-                         ρ(ℓi) = (τi, mi)
+fi ∈ rwf。ℓi は相異なり mi ∈ {imm, mut}
+注釈なしで ci = (Absent τi) なら ρ(ℓi) = (τi, mi, opt)、εi = {}
+注釈なしで ci が Absent でなければ Γ; Δ; Π; Ξ; Φ ⊢core ci : τi ! εi
+                                      ρ(ℓi) = (τi, mi)
+注釈ありで ci = (Absent τi) なら type-equiv?(τi, τout,i)、ρ(ℓi) = (τout,i, mi, opt)、εi = {}
+注釈ありで ci が Absent でなければ Γ; Δ; Π; Ξ; Φ ⊢core ci : τout,i ! εi
+                                      ρ(ℓi) = (τout,i, mi)
 --------------------------------------------------------------------
-Γ; Δ; Π; Ξ; Φ ⊢core RecRewriteOpen((ℓ1, m1, c1), …, (ℓk, mk, ck))
+Γ; Δ; Π; Ξ; Φ ⊢core RecRewriteOpen(f1, …, fk)
   : Record(ρ) ! (ε1 ∪ … ∪ εk)
 ```
 
 作業列は入力欄の順に型付けする。
-present な欄は optional の印を付けない行にし、`Absent τ` の欄だけは `opt` の印を付けた行にして型を `τ` とする。
+entry の無い欄は値なので従来どおり推論する。
+entry を適用した欄は `τout` に対して型検査し、`Absent` の欄は注釈と `Absent` の型が一致することを確認して optional の行にする。
+present な欄は required の行にする。
 したがって `config-ok?` は、optional の期待欄に present な値がある作業形を受理する。
-専用の token walker は各 work を一度だけ走査し、型注釈を token として数えない。
+専用の token walker は各 work を一度だけ走査し、`τout` を子や token として数えない。
 この専用規則は通常の `Rec` の `owned-record-field` 制限を緩めない。
 
 **(T-Val)**：残る値の型付けは、リテラルの typeof、Lam への T-Lam、CurryVal への T-CurryVal、RecurVal への T-RecurVal で定める。
@@ -1707,19 +1716,22 @@ F ::= []                                          純粋文脈（Scope と Handl
     | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄)
     | UnionInject(τU, τm, F) | UnionEliminate(F, ubr̄)
     | RecRewrite(F, entries)
-    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, F), (ℓk+1, mk+1, ck+1), …)
+    | RecRewriteOpen(rwv̄, (ℓ, m, F), rwf̄)
+    | RecRewriteOpen(rwv̄, (ℓ, m, τout, F), rwf̄)
     | Perform(op, F) | Drop(F) | Yield(F, c)
     | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), F)
     | Curry(F, c) | Curry(v, F)
 
 E ::= F | E[Scope(π, F)] | E[Handle(op, h, F)]    一般文脈
     | RecRewrite(E, entries)
-    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, E), (ℓk+1, mk+1, ck+1), …)
+    | RecRewriteOpen(rwv̄, (ℓ, m, E), rwf̄)
+    | RecRewriteOpen(rwv̄, (ℓ, m, τout, E), rwf̄)
     | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), E)
 
 G ::= F | G[Handle(op, h, F)]                     Scope を含まない一般文脈
     | RecRewrite(G, entries)
-    | RecRewriteOpen((ℓ1, m1, v1), …, (ℓk, mk, G), (ℓk+1, mk+1, ck+1), …)
+    | RecRewriteOpen(rwv̄, (ℓ, m, G), rwf̄)
+    | RecRewriteOpen(rwv̄, (ℓ, m, τout, G), rwf̄)
     | Discharge(ProofRep(O, RemainderSafelyDropped(τa, τe)), G)
 ```
 
@@ -1916,9 +1928,9 @@ Payload path は payload を差し替えても UnionVal の Union 型と成分�
 ```text
 open((ℓ, m, v), entries) =
   (ℓ, m, v)                                  対応する entry が無い
-  (ℓ, m', v)                                 τ の root が Owned で identity entry
-  (ℓ, m', (Absent τ'))                       entry があり v = (Absent τ)
-  (ℓ, m', c[v/x])                            entry があり v が present
+  (ℓ, m', τ', v)                             τ の root が Owned で identity entry
+  (ℓ, m', τ', (Absent τ'))                   entry があり v = (Absent τ)
+  (ℓ, m', τ', c[v/x])                        entry があり v が present
 
 E[RecRewrite(Rec(fields), entries)]
   → E[RecRewriteOpen(open(fields, entries))]
@@ -1926,19 +1938,24 @@ E[RecRewrite(Rec(fields), entries)]
 
 `open` は入力の欄順に処理し、entry の並び順には依存しない。
 root が `Owned` の identity entry は、`type-equiv?(τ, τ')` と `c = x` を満たし、`x` を束縛せず値をそのまま移す。
+entry の無い欄は従来の三要素形を保つ。
+entry を適用した欄は出力型 `τ'` を四要素形の metadata として持つ。
 Absent の欄では `c` を評価せず、`Absent τ'` を出力する。
 present な列挙欄は、一時の `Let` を作らず `c` に値 `v` を直接置換する。
 列挙しない欄は値と mode をそのまま移す。
 Open 後に入力の `Rec` は残らず、各欄の値は作業列の一箇所だけに現れる。
+metadata は T-RecRewriteOpen の型検査に使い、作業欄の子や token には数えない。
 
 **(R-RecRewrite-Close)**
 
 ```text
-全ての ci が値である
+全ての work が値である
 -----------------------------------------------
-E[RecRewriteOpen((ℓ1, m1, c1), …, (ℓk, mk, ck))]
-  → E[Rec((ℓ1, m1, c1), …, (ℓk, mk, ck))]
+E[RecRewriteOpen(f1, …, fk)]
+  → E[Rec(close(f1), …, close(fk))]
 ```
+
+`close((ℓ, m, v)) = (ℓ, m, v)`、`close((ℓ, m, τout, v)) = (ℓ, m, v)` とし、出力型 metadata を除く。
 
 Close は作業列を通常の `Rec` に戻す。
 列挙された欄の出力 mode は `RecRewrite` の entry に書かれた mode である。

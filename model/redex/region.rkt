@@ -40,7 +40,7 @@
      (cons scrutinee (map last branches))]
     [`(RecRewrite ,input (,entries ...))
      (cons input (map last entries))]
-    [`(RecRewriteOpen ((,_ ,_ ,cs) ...)) cs]
+    [`(RecRewriteOpen (,fields ...)) (map last fields)]
     [`(Eliminate ,c ,brs)
      (cons c (for/list ([br (in-list brs)]) (last br)))]
     [`(Perform ,_ ,c) (list c)]
@@ -130,8 +130,10 @@
                   ,(for/list ([entry (in-list entries)]
                               [body (in-list (rest children))])
                      (append (drop-right entry 1) (list body))))]
-    [`(RecRewriteOpen ((,labels ,modes ,_) ...))
-     `(RecRewriteOpen ,(map list labels modes children))]
+    [`(RecRewriteOpen (,fields ...))
+     `(RecRewriteOpen
+       ,(for/list ([field (in-list fields)] [child (in-list children)])
+          (append (drop-right field 1) (list child))))]
     [`(Eliminate ,_ ,brs)
      `(Eliminate ,(first children)
                  ,(for/list ([br (in-list brs)] [c (in-list (rest children))])

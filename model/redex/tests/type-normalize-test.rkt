@@ -148,15 +148,20 @@
   (define entry
     '(n y Int imm (Union Bool Int)
          (UnionInject (Union Bool Int) Int y)))
-  ;; Open は x を欄の値で置換するだけで、entry の型注釈 τ と τ' は保つ。
+  (define output-type '(Record ((n (Union Bool Int) imm))))
+  ;; Open は置換後の欄へ entry の出力型を写し、型も作業項としては辿らない。
   (define opened
     `(RecRewriteOpen
-      ((a imm (RecRewrite (Rec ((n imm 1))) (,entry))))))
+      ((a imm ,output-type (RecRewrite (Rec ((n imm 1))) (,entry))))))
   (check-true (core-types-normal? opened))
   (check-false
    (core-types-normal?
     '(RecRewriteOpen
-      ((a imm
+      ((a imm (Record ((x Int imm) (a Int imm))) 1)))))
+  (check-false
+   (core-types-normal?
+    '(RecRewriteOpen
+      ((a imm (Record ((n (Union Bool Int) imm)))
           (RecRewrite
            (Rec ((n imm 1)))
            ((n y Int imm (Union Bool Int)
