@@ -401,3 +401,18 @@
   (define actual-arg `(NFn (,imm-expected) Unit () ()))
   (define expected-arg `(NFn (,mut-actual) Unit () ()))
   (check-rsd-elaboration? `(Fn ((callback ,actual-arg)) ,expected-arg () callback)))
+
+(test-case "最上位の残余を保つ let でも別欄の Union 注入を行う"
+  (define actual '(Record ((a Int imm) (b (Option (Owned Res)) imm))))
+  (define union '(Union Bool Int))
+  (define expected `(Record ((a ,union imm))))
+  (define source
+    `(Fn ((argument ,actual)) ,expected (Own)
+         (Let (converted let ,expected) (Move argument) converted)))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (define erased (erase-core core))
+  (check-equal? (core-type-of erased '() callables) (list type row))
+  (check-true
+   (for/or ([injection (in-list (union-injection-summary erased))])
+     (and (type-equiv? (first injection) union)
+          (equal? (second injection) 'Int)))))

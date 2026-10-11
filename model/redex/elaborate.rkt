@@ -2501,6 +2501,8 @@
                                 propositions))
          (define-values (bound-core actual-type)
            (if (and (memq binding-mode '(let mut))
+                    (tag-compat? discharged-type declared-type
+                                 (initial-candidate-context propositions))
                     (match (narrowing-kind discharged-type declared-type
                                            propositions)
                       [`(drop-obligation ,_ ,_) #t]
