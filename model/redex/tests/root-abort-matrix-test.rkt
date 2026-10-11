@@ -42,6 +42,16 @@
 (define (configuration-events configuration)
   (match configuration [`(cfg ,_ ,_ ,_ ,_ ,events) events]))
 
+(define (with-token-state configuration token state)
+  (match configuration
+    [`(cfg ,core ,heap ,places ,tokens ,events)
+     `(cfg ,core ,heap ,places
+           ,(for/list ([entry (in-list tokens)])
+              (if (equal? (first entry) token)
+                  (list token state)
+                  entry))
+           ,events)]))
+
 (define (available-token-ids configuration)
   (for/list ([entry (in-list (configuration-tokens configuration))]
              #:when (eq? (second entry) 'Available))
@@ -229,6 +239,25 @@
                     (if error-kind? '((0 Available)) '())
                     result-type token-count))
 
+(define (make-moved-root-case kind)
+  (define error-kind? (memq kind '(scope-error handle-error)))
+  (define moved-place (if error-kind? 1 0))
+  (define-values (consumer _signature consumer-callables)
+    (interrupted-consumer (list owned 'Unit)))
+  (define body
+    `(Apply ,consumer (Move ,moved-place) ,(interruption-term kind 'Unit)))
+  (interrupted-case
+   'root-only kind (wrap-interruption kind body 'Unit)
+   consumer-callables
+   (if error-kind? '((0 Res) (1 Res)) '((0 Res)))
+   (if error-kind?
+       '((0 (resource 97)) (1 (resource 81) (declared (Owned Res))))
+       '((0 (resource 81) (declared (Owned Res)))))
+   (if error-kind?
+       '((0 Available) (1 Available))
+       '((0 Available)))
+   'Unit 1))
+
 (define (start-configuration test-case)
   `(cfg ,(interrupted-case-core test-case)
         ,(interrupted-case-heap test-case)
@@ -263,7 +292,7 @@
                 (format "~s は Available から Dropped へ高々一度遷移する"
                         token))))
 
-(define (check-interrupted-case test-case)
+(define (check-interrupted-case test-case [additional-rules '()])
   (define core (interrupted-case-core test-case))
   (define callables (interrupted-case-callables test-case))
   (define places (interrupted-case-places test-case))
@@ -279,6 +308,8 @@
   (check-configs configs callables expected-type)
   (check-true (trace-has-rule? rules expected-rule)
               (format "~a が発火する" expected-rule))
+  (for ([rule (in-list additional-rules)])
+    (check-true (trace-has-rule? rules rule) (format "~a が発火する" rule)))
   (for ([rule (in-list '(R-ScopeAbort R-ScopeError R-HandleReturn
                          R-HandleSkip R-HandleError))])
     (check-frame-rule-does-not-add-events configs rules rule))
@@ -365,26 +396,22 @@
       (list kind accepted excluded)))
   (check-equal? typed-counts expected-typed-counts))
 
-(test-case "Move で place から得た root-only も ScopeAbort で回収する"
-  (define-values (consumer consumer-type consumer-callables)
-    (interrupted-consumer (list owned 'Unit)))
-  (define core
-    `(Handle (Return interrupted-boundary Unit) (answer -> answer)
-       (Scope (0)
-         (Apply ,consumer (Move 0)
-                (Perform (Return interrupted-boundary Unit) unit)))))
-  (define places '((0 Res)))
-  (define callables consumer-callables)
-  (check-equal? (core-type-of core places callables) '(Unit (Own)))
-  (define start
-    `(cfg ,core ((0 (resource 81) (declared (Owned Res))))
-          ((0 Available)) () ()))
-  (define-values (configs rules) (trace-g2 start))
-  (check-configs configs callables 'Unit)
-  (check-true (trace-has-rule? rules 'R-Move))
-  (check-true (trace-has-rule? rules 'R-ScopeAbort))
-  (check-true (trace-has-rule? rules 'R-HandleReturn))
-  (check-equal? (configuration-tokens (last configs)) '(((tok 0) Dropped))))
+(test-case "Move で place から得た根 token は中断 5 種すべてで回収する"
+  (define accepted 0)
+  (define excluded 0)
+  (for ([kind (in-list interruption-kinds)])
+    (define test-case (make-moved-root-case kind))
+    (define result
+      (core-type-of (interrupted-case-core test-case)
+                    (interrupted-case-places test-case)
+                    (interrupted-case-callables test-case)))
+    (if (eq? result 'ill-typed)
+        (set! excluded (add1 excluded))
+        (begin
+          (set! accepted (add1 accepted))
+          (check-interrupted-case test-case '(R-Move)))))
+  (check-equal? (list accepted excluded) '(5 0)
+                "5 種とも place 由来の root-only を型付けして検査する"))
 
 (test-case "RecRewrite Open は根 token を欄に一度だけ残す"
   (define record-type
@@ -446,6 +473,17 @@
   (check-false (config-ok? forged-root
                            (interrupted-case-callables root-case)
                            'Unit root-row))
+  (define root-token (first (first (configuration-tokens forged-root))))
+  (define root-dropped-control
+    (with-token-state forged-root root-token 'Dropped))
+  (define root-control-row
+    (runtime-row root-dropped-control
+                 (interrupted-case-callables root-case) 'Unit))
+  (check-not-false root-control-row)
+  (check-true (config-ok? root-dropped-control
+                          (interrupted-case-callables root-case)
+                          'Unit root-control-row)
+              "根 token を Dropped にするだけなら forged config は有効")
 
   (define rewrite-case
     (make-interrupted-case 'scope-error 'recrewrite-open-mid 5))
@@ -471,4 +509,15 @@
   (check-not-false rewrite-row)
   (check-false (config-ok? forged-rewrite
                            (interrupted-case-callables rewrite-case)
-                           'Unit rewrite-row)))
+                           'Unit rewrite-row))
+  (define rewrite-token (first (first (configuration-tokens forged-rewrite))))
+  (define rewrite-dropped-control
+    (with-token-state forged-rewrite rewrite-token 'Dropped))
+  (define rewrite-control-row
+    (runtime-row rewrite-dropped-control
+                 (interrupted-case-callables rewrite-case) 'Unit))
+  (check-not-false rewrite-control-row)
+  (check-true (config-ok? rewrite-dropped-control
+                          (interrupted-case-callables rewrite-case)
+                          'Unit rewrite-control-row)
+              "根 token を Dropped にするだけなら forged config は有効"))
