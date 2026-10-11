@@ -293,12 +293,18 @@
          '() '() '())
    (list 'ReborrowAt 'operand
          `(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow ,leaf))))
+                     (Scope () (Reborrow
+                                (Let (unused const Int) ,leaf
+                                     (Scope () (BorrowMut x)))))))
          '(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow (BorrowMut x))))) '() '() '())
+                     (Scope () (Reborrow
+                                (Let (unused const Int) 0
+                                     (Scope () (BorrowMut x))))))) '() '() '())
    (list 'ProjBorrowAt 'operand
-         `(Scope (1) (ProjBorrow (Scope () ,leaf) a))
-         '(Scope (1) (ProjBorrow (BorrowMut 1) a))
+         `(Scope (1) (ProjBorrow
+                      (Let (unused const Int) ,leaf (BorrowMut 1)) a))
+         '(Scope (1) (ProjBorrow
+                      (Let (unused const Int) 0 (BorrowMut 1)) a))
          '((1 (Record ((a Int imm) (b Bool mut))))) '() '())
    (list 'Read 'operand
          `(Scope (1) (Read ,leaf))
@@ -374,12 +380,6 @@
         (make-borrowed-row-case leaf-core control-core nested-core expected effect)])]
     [else
      (match entry
-    [(cons _ (list _ _ leaf-core control-core nested-core expected effect
-                   callables places environment))
-     (define typed (fixture-core-type control-core places callables environment))
-     (and (not (eq? typed 'ill-typed))
-          (make-row-case leaf-core control-core nested-core expected effect
-                         callables places environment))]
     [(cons _ (list _ _ leaf-core control-core nested-core expected effect callables))
      (define type
        (if expected expected
@@ -391,22 +391,16 @@
            expected
            (first (core-type-of control-core '() '()))))
      (make-row-case leaf-core control-core nested-core type effect)]
-    [(cons _ (list _ _ leaf-core control-core places callables environment))
-     (define typed (fixture-core-type control-core places callables environment))
-     (and (not (eq? typed 'ill-typed))
-          (make-row-case leaf-core control-core #f (first typed) (second typed)
-                         callables places environment))]
     [_ #f])]))
 
 (define (fixture-core-type core places callables environment)
-  (with-handlers ([exn:fail? (lambda (_) 'ill-typed)])
-   (define ir (build-region-ir core))
+  (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (define owners
     (for/hash ([entry (in-list places)])
       (values (first entry) (region-at ir '()))))
-   (core-type-of annotated places callables environment
-                 (region-ctx ir '() owners (hash)))))
+  (core-type-of annotated places callables environment
+                (region-ctx ir '() owners (hash))))
 
 (define (case-core-type rc cfg)
   (fixture-core-type (config-core cfg)
@@ -463,9 +457,10 @@
                            (ptr-sidecar? (third control-result)))
                       label)
           (check-equal? leaf-result 'discard label))
-        (begin
-          (check-eq? (case-core-type rc (row-case-leaf-cfg rc)) 'ill-typed label)
-          (check-not-eq? (case-core-type rc (row-case-control-cfg rc)) 'ill-typed
+        (let ([leaf-result (case-core-type rc (row-case-leaf-cfg rc))]
+              [control-result (case-core-type rc (row-case-control-cfg rc))])
+          (check-eq? leaf-result 'ill-typed label)
+          (check-not-eq? control-result 'ill-typed
                          (format "対照 ~a places=~s env=~s" label
                                  (row-case-places rc)
                                  (row-case-environment rc)))))))
