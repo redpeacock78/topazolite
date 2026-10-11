@@ -50,8 +50,10 @@
     (RecRewriteOpen later-field pending-code "先行する作業欄の後" accept)
     (Proj operand type-unreachable "Record 射影の入力")
     (ProjOpt operand type-unreachable "optional Record 射影の入力")
-    (ReborrowAt operand type-unreachable "借用 capability の入力")
-    (ProjBorrowAt operand type-unreachable "借用 Record の入力")
+    (ReborrowAt operand type-unreachable
+                "借用 capability の入力（root OwnedLeaf は owner を辿れず拒否）")
+    (ProjBorrowAt operand type-unreachable
+                  "借用 Record の入力（root OwnedLeaf は owner を辿れず拒否）")
     (Read operand type-unreachable "Borrowed payload")
     (Assign target type-unreachable "BorrowedMut target")
     (Assign value pending-code "target 評価後の値" reject known-row)
@@ -293,18 +295,12 @@
          '() '() '())
    (list 'ReborrowAt 'operand
          `(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow
-                                (Let (unused const Int) ,leaf
-                                     (Scope () (BorrowMut x)))))))
+                     (Scope () (Reborrow ,leaf))))
          '(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow
-                                (Let (unused const Int) 0
-                                     (Scope () (BorrowMut x))))))) '() '() '())
+                     (Scope () (Reborrow (Scope () (BorrowMut x)))))) '() '() '())
    (list 'ProjBorrowAt 'operand
-         `(Scope (1) (ProjBorrow
-                      (Let (unused const Int) ,leaf (BorrowMut 1)) a))
-         '(Scope (1) (ProjBorrow
-                      (Let (unused const Int) 0 (BorrowMut 1)) a))
+         `(Scope (1) (ProjBorrow (Scope () ,leaf) a))
+         '(Scope (1) (ProjBorrow (BorrowMut 1) a))
          '((1 (Record ((a Int imm) (b Bool mut))))) '() '())
    (list 'Read 'operand
          `(Scope (1) (Read ,leaf))
@@ -395,12 +391,22 @@
 
 (define (fixture-core-type core places callables environment)
   (define ir (build-region-ir core))
-  (define annotated (annotate-regions core ir))
-  (define owners
-    (for/hash ([entry (in-list places)])
-      (values (first entry) (region-at ir '()))))
-  (core-type-of annotated places callables environment
-                (region-ctx ir '() owners (hash))))
+  (define annotated
+    (with-handlers ([exn:fail?
+                     (lambda (error)
+                       (if (regexp-match? #rx"所有者を辿れない operand"
+                                          (exn-message error))
+                           (list 'region-rejected (exn-message error))
+                           (raise error)))])
+      (annotate-regions core ir)))
+  (match annotated
+    [`(region-rejected ,_) annotated]
+    [_
+     (define owners
+       (for/hash ([entry (in-list places)])
+         (values (first entry) (region-at ir '()))))
+     (core-type-of annotated places callables environment
+                   (region-ctx ir '() owners (hash)))]))
 
 (define (case-core-type rc cfg)
   (fixture-core-type (config-core cfg)
@@ -445,7 +451,7 @@
         #:when (eq? (third row) 'type-unreachable))
     (define rc (row-fixture (first row) (second row)))
     (check-not-false rc (format "fixture ~s/~s" (first row) (second row)))
-    (define label (format "~s/~s" (first row) (second row)))
+    (define label (format "~s/~s: ~a" (first row) (second row) (fourth row)))
     (if (equal? (list (first row) (second row)) '(FromRawPtr pointer))
         (let ([leaf-result (prepare-unsafe-term
                             (config-core (row-case-leaf-cfg rc)))]
@@ -459,7 +465,45 @@
           (check-equal? leaf-result 'discard label))
         (let ([leaf-result (case-core-type rc (row-case-leaf-cfg rc))]
               [control-result (case-core-type rc (row-case-control-cfg rc))])
-          (check-eq? leaf-result 'ill-typed label)
+          (if (memq (first row) '(ReborrowAt ProjBorrowAt))
+              (begin
+                (check-true
+                 (match leaf-result
+                   [`(region-rejected ,message)
+                    (regexp-match? #rx"所有者を辿れない operand" message)]
+                   [_ #f])
+                 label)
+                (let ([owned-place-core
+                       (if (eq? (first row) 'ReborrowAt)
+                           '(Scope ()
+                              (Let (x let (Owned Res)) (resource 1)
+                                (Scope () (Reborrow x))))
+                           '(Let (x let (Owned (Record ((a Int imm)
+                                                       (b Bool mut)))))
+                              (Rec ((a imm 1)
+                                    (b mut (Construct Bool true))))
+                              (Scope () (ProjBorrow x a))))])
+                  (check-eq? (fixture-core-type owned-place-core
+                                               (row-case-places rc)
+                                               (row-case-callables rc)
+                                               (row-case-environment rc))
+                             'ill-typed
+                             (format "~a: Owned place を operand 根にした型検査"
+                                     label))
+                  (when (eq? (first row) 'ProjBorrowAt)
+                    (check-not-eq?
+                     (fixture-core-type
+                      '(Let (x let (Owned (Record ((a Int imm)
+                                                  (b Bool mut)))))
+                         (Rec ((a imm 1)
+                               (b mut (Construct Bool true))))
+                         (Scope () (ProjBorrow (BorrowMut x) a)))
+                      (row-case-places rc)
+                      (row-case-callables rc)
+                      (row-case-environment rc))
+                     'ill-typed
+                     (format "~a: Owned record の BorrowMut 対照" label)))))
+              (check-eq? leaf-result 'ill-typed label))
           (check-not-eq? control-result 'ill-typed
                          (format "対照 ~a places=~s env=~s" label
                                  (row-case-places rc)
