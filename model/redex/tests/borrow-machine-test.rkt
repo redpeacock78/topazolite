@@ -18,10 +18,10 @@
       [(? list?) (append* (map collect t))]
       [_ '()]))
   (match config
-    [`(cfg ,c ,H ,_ () ,_) (append (collect c) (collect H))]))
+    [`(cfg ,c ,H ,_ ,_ ,_) (append (collect c) (collect H))]))
 
 (define (omega-of config)
-  (match config [`(cfg ,_ ,_ ,Ω () ,_) Ω]))
+  (match config [`(cfg ,_ ,_ ,Ω ,_ ,_) Ω]))
 
 (define (all-configs config fuel)
   (let loop ([frontier (list config)] [seen '()] [remaining fuel])

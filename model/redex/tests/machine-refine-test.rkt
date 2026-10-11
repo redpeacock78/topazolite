@@ -11,6 +11,8 @@
 (define (run-g2-core core)
   (match (run-g2 (inject-g2 core) fuel)
     [`(cfg ,result () () () ()) result]
+    [`(cfg (OwnedLeaf ,tk ,payload) () () ((,tk Available)) ())
+     `(cfg (OwnedLeaf ,tk ,payload) () () ((,tk Available)) ())]
     [result (error 'run-g2-core "unexpected: ~e" result)]))
 
 (define (stuck-g2? core)
@@ -104,6 +106,7 @@
 ;; 既存の δ は変わらない。acquire は 1 引数だが新しい節へ吸われない。
 (check-equal? (run-g2-core (term (Apply (PrimVal (Reserved o-acquire) acquire)
                                         1)))
-              (term (resource 1)))
+              (term (cfg (OwnedLeaf (tok 0) (resource 1))
+                         () () (((tok 0) Available)) ())))
 (check-equal? (run-g2-core (term (Apply (PrimVal (Reserved o-add) add) 1 2)))
               (term 3))

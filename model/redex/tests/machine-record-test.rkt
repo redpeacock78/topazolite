@@ -34,9 +34,12 @@
  (term 1))
 
 ; (e) R-LetOwnedB: Owned は bmode 付き Let でも move される（G1 R-LetOwned と同じ heap 遷移）
+; acquire の tok 0 を place へ移し、そこから Move した根に tok 1 を発行する。
 (check-equal?
  (run-g2 (inject-g2 (term (Let (r const (Owned Res)) (Apply ,acquire 0) (Move r)))) fuel)
- (term (cfg (resource 0) ((0 (resource 0) (declared (Owned Res)))) ((0 Moved)) () ())))
+ (term (cfg (OwnedLeaf (tok 1) (resource 0))
+            ((0 (resource 0) (declared (Owned Res))))
+            ((0 Moved)) (((tok 0) Dropped) ((tok 1) Available)) ())))
 
 ; (f) Rec のフィールドは記述順に E 文脈で簡約される（congruence）
 (check-equal?

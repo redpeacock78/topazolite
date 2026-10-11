@@ -9,7 +9,10 @@
 (define fuel 20)
 
 (define (final-config core)
-  (term (cfg ,core () () () ())))
+  (match core
+    [`(resource ,_) (term (cfg (OwnedLeaf (tok 0) ,core)
+                               () () (((tok 0) Available)) ()))]
+    [_ (term (cfg ,core () () () ()))]))
 
 (define (scoped core)
   (term (cfg (Scope () ,core) () () () ())))

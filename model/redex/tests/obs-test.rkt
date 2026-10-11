@@ -53,7 +53,7 @@
    (term (cfg unit
               ((0 (resource 8) (declared (Owned Res))))
               ((0 Dropped))
-              () ((fin 0) (obs 1))))))
+              (((tok 0) Dropped)) ((fin 0) (obs 1))))))
 
 (test-case "obs-eval: terminal outcomes and fuel exhaustion"
   (check-equal? (obs-eval (term 5) 1 fuel) '(() value))

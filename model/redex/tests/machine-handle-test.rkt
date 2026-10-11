@@ -31,7 +31,7 @@
    (term (cfg 42
               ((0 (resource 7) (declared (Owned Res))))
               ((0 Dropped))
-              () ((fin 0))))))
+              (((tok 0) Dropped)) ((fin 0))))))
 
 (test-case "RET-002: matching Return discards its pure continuation"
   (check-equal?

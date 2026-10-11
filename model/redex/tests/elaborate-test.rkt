@@ -53,7 +53,9 @@
    (run-elaborated core callables)
    '(cfg unit ((0 (resource 1) (declared (Owned Res)))
                (1 (resource 2) (declared (Owned Res))))
-         ((0 Moved) (1 Dropped)) () ((fin 1)))))
+         ((0 Moved) (1 Dropped))
+         (((tok 0) Dropped) ((tok 1) Dropped) ((tok 2) Dropped))
+         ((fin 1)))))
 
 (test-case "RET-001/RET-002/RET-003: return resolves to the nearest boundary"
   (match-define (list function-core _ _ _)
