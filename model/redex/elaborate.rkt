@@ -35,6 +35,7 @@
 (provide UCore
          elab
          mentions-return?
+         identity-conversion?
          ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
          row005-join)
 
@@ -339,6 +340,14 @@
   (owned-narrowing-kind/for-elaboration
    actual expected
    (lambda (a e) (type-compatible? a e propositions))))
+
+;; c3b。NFn 内側の損失は tag 互換でも恒等変換ではない。
+(define (identity-conversion? actual expected context propositions)
+  (and (tag-compat? actual expected context)
+       (eq? (owned-narrowing-kind
+             actual expected
+             (lambda (a e) (type-compatible? a e propositions)))
+            'ok)))
 
 ;; OWN-004。残余の drop が要る場合だけ Proof を挿入し、先に Owned 残余を
 ;; 取り除いた型を後続の通常の convert へ渡す。reject は呼び出し側の既存の
@@ -894,7 +903,9 @@
               [`(drop-obligation ,_ ,_)
                (remainder-target-type actual member)]
               [_ #f]))
-          (list member kind (tag-compat? actual member context) target)))
+          (list member kind
+                (identity-conversion? actual member context propositions)
+                target)))
       (define tier1
         (for/list ([analysis (in-list analyses)]
                    #:when (and (third analysis)
@@ -923,8 +934,9 @@
                                   [`(drop-obligation ,_ ,_) #t]
                                   [_ #f])
                                (fourth analysis)
-                               (tag-compat? (fourth analysis) (first analysis)
-                                            context)))
+                               (identity-conversion? (fourth analysis)
+                                                     (first analysis)
+                                                     context propositions)))
           (first analysis)))
       (define tier4-rebuild
         (for/list ([analysis (in-list analyses)]
@@ -932,8 +944,9 @@
                                   [`(drop-obligation ,_ ,_) #t]
                                   [_ #f])
                                (fourth analysis)
-                               (not (tag-compat? (fourth analysis)
-                                                 (first analysis) context))
+                               (not (identity-conversion? (fourth analysis)
+                                                          (first analysis)
+                                                          context propositions))
                                (rebuild-reachable? actual (first analysis)
                                                    'drop-obligation s
                                                    propositions
@@ -997,7 +1010,7 @@
       (define-values (discharged actual*)
         (discharge-remainder core actual member s propositions))
       (define payload
-        (if (tag-compat? actual* member context)
+        (if (identity-conversion? actual* member context propositions)
             discharged
             (let-values ([(converted _type)
                           (convert discharged actual* member s propositions
@@ -1006,7 +1019,7 @@
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
     ;; 関数値の引数と結果は、同じ OWN-004 の順で変換してから通常の convert
-    ;; へ渡す。c3a2 では RSD を含む adapter をまだ生成しない。
+    ;; へ渡す。内側の損失は adapter 本体の RSD で回収する。
     (define (convert-adapter-value core actual expected s propositions
                                    #:transfer [transfer 'move])
       (unless (type-compatible? actual expected propositions)
@@ -1015,18 +1028,10 @@
         (discharge-remainder core actual expected s propositions))
       (match (narrowing-kind actual* expected propositions)
         ['ok (void)]
-        [`(drop-obligation ,_ ,_)
-         ;; c3b で adapter 内の RSD を扱うまでの防御。現行の NFn 内部判定は
-         ;; Owned 損失を reject に畳むため、この枝は公開入力から到達しない。
-         (reject s 'type-mismatch expected actual)]
         [_ (reject s 'owned-narrowing-rejected expected actual*)])
       (define-values (converted converted-type)
         (convert discharged actual* expected s propositions
                  #:transfer transfer))
-      ;; c3b で adapter 内の RSD を許す際にも、変換後 Core の検査を fail-closed に保つ。
-      ;; c3a2 では上の NFn 内部判定が先に reject するため、公開入力からは到達しない。
-      (when (core-has-remainder-drop? converted)
-        (reject s 'type-mismatch expected actual))
       (values converted converted-type))
 
     (define (function-adapter core actual expected s propositions)
@@ -1167,7 +1172,7 @@
       (define expected-union?
         (match expected* [`(Union ,_ ,_) #t] [_ #f]))
       (cond
-        [(tag-compat? actual* expected* context)
+        [(identity-conversion? actual* expected* context propositions)
          (values core actual*)]
         [(and expected-union? (not actual-union?))
          (values (union-inject core actual* expected* s propositions
@@ -1341,10 +1346,18 @@
              (define converted
                (if (eq? member 'Never)
                    consumed-ref
-                   (let-values ([(member-core member-type)
-                                 (discharge-remainder consumed-ref member
-                                                     wrapped-type s
-                                                     propositions)])
+                     (let-values ([(member-core member-type)
+                                   (discharge-remainder consumed-ref member
+                                                       wrapped-type s
+                                                       propositions)])
+                     (define preserve-branch-residual?
+                       (and (tag-compat? member-type expected context)
+                            (match (owned-narrowing-kind
+                                    member-type expected
+                                    (lambda (a e)
+                                      (type-compatible? a e propositions)))
+                              [`(drop-obligation ,_ ,_) #t]
+                              [_ #f])))
                      ;; OWN-004 は残余を除いた実型で再確認する。
                      (match (narrowing-kind member-type wrapped-type propositions)
                        ['ok (void)]
@@ -1354,7 +1367,9 @@
                        [_ (reject s 'owned-narrowing-rejected wrapped-type
                                   member-type)])
                      (let* ([source
-                             (if (tag-compat? member-type expected context)
+                             (if (or (identity-conversion?
+                                      member-type expected context propositions)
+                                     preserve-branch-residual?)
                                  member-core
                                  (let-values ([(rebuilt _type)
                                                (convert member-core member-type
@@ -1403,9 +1418,13 @@
          ;; expected への成分の convert は手前で落ち、ここへは届かない。
          (when (owned-type? expected)
            (reject s 'invalid-resolved-type expected))
+         (define eliminated (eliminate bodies))
+         ;; 非資源の adapter 結果は UnionEliminate 自体を T に保つ。
          (values
-          (wrap-reference 'const expected (eliminate bodies)
-                          (and (not entry?) (resource-type? expected)))
+          (if (and (eq? transfer 'forward) (not (resource-type? expected)))
+              eliminated
+              (wrap-reference 'const expected eliminated
+                              (and (not entry?) (resource-type? expected))))
           expected)]))
 
     ;; P2m2c spec §5.1。expected の欄ごとに作り直し、変換か印の変更が要る欄だけを
@@ -1449,8 +1468,9 @@
                 (unless (tag-compat? actual-type expected-type context)
                   (mismatch))
                 (and mark-changed? (identity-entry))]
-               [(tag-compat? actual-type expected-type context)
-                (and mark-changed? (identity-entry))]
+              [(identity-conversion? actual-type expected-type context
+                                      propositions)
+               (and mark-changed? (identity-entry))]
                [else
                 (define binder (fresh-union-name))
                 (define-values (body converted-type)
@@ -2480,8 +2500,15 @@
                                 source-core-type remainder-target s
                                 propositions))
          (define-values (bound-core actual-type)
-           (convert discharged-core discharged-type declared-type s
-                    propositions))
+           (if (and (memq binding-mode '(let mut))
+                    (match (narrowing-kind discharged-type declared-type
+                                           propositions)
+                      [`(drop-obligation ,_ ,_) #t]
+                      [_ #f]))
+               ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
+               (values discharged-core discharged-type)
+               (convert discharged-core discharged-type declared-type s
+                        propositions)))
          ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
          (match (narrowing-kind discharged-type actual-type propositions)
            ['ok (void)]
@@ -2857,15 +2884,25 @@
             (list exact)
             (if synthesized
                 (filter (λ (candidate)
-                          (tag-compat? synthesized candidate context))
+                          (identity-conversion? synthesized candidate context
+                                                 propositions))
                         candidate-members)
                 '())))
       (define (normal-path)
         (check-against-expected
          (synth expression environment delta propositions boundaries)
          expected s propositions))
+      ;; 一意な候補を通常経路へ戻すと、後段の Union 注入が別候補を選びうる。
       (match first-stage
-        [(list _candidate) (normal-path)]
+        [(list candidate)
+         (define result
+           (check expression candidate environment delta
+                  propositions boundaries))
+         (judgment
+          `(UnionInject ,s (#:ty ,expected ,s)
+                        (#:ty ,candidate ,s)
+                        ,(judgment-core result))
+          expected (judgment-row result) expected)]
         [(list _first _second ...)
          (reject s 'ambiguous-union-member expected synthesized first-stage)]
         [_
@@ -2921,16 +2958,20 @@
          (match selected-tier
            [#f (normal-path)]
            [(list candidate)
-            (if (ormap (λ (entry)
-                         (type-equiv? candidate (first entry)))
-                       literal-results)
-                (let ([result
-                       (check expression candidate environment delta
-                              propositions boundaries)])
+            (define direct-literal?
+              (ormap (λ (entry)
+                       (type-equiv? candidate (first entry)))
+                     literal-results))
+            (if direct-literal?
+                (let* ([result
+                        (check expression candidate environment delta
+                               propositions boundaries)]
+                       [injected
+                        `(UnionInject ,s (#:ty ,expected ,s)
+                                      (#:ty ,candidate ,s)
+                                      ,(judgment-core result))])
                   (judgment
-                   `(UnionInject ,s (#:ty ,expected ,s)
-                                 (#:ty ,candidate ,s)
-                                 ,(judgment-core result))
+                   injected
                    expected (judgment-row result) expected))
                 (normal-path))]
            [candidates

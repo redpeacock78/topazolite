@@ -178,14 +178,20 @@
   (check-equal? (core-type-of (erase-core core) '() callables)
                 (list function-type row)))
 
-(test-case "NFn の返り値内の損失は引き続き E-OWN-029 で拒否する"
+(test-case "c3b で NFn の返り値内の損失を adapter 内の RSD で回収する"
+  ;; c3b で NFn 内側の損失を adapter の呼出しごとの RSD で回収する。
   (define source
     `(Fn ((source (NFn (Unit) ,nested-actual () ())))
          Int ()
          (Apply (Fn ((p (NFn (Unit) ,nested-target () ())))
                    Int () 1)
                 source)))
-  (check-equal? (diagnostic-id-of (elab source)) "E-OWN-029"))
+  (match (elab source)
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-equal? (find-rsd erased) (list nested-actual nested-target))
+     (check-equal? (core-type-of erased '() callables) (list type row))]
+    [other (fail-check (format "NFn の返り値 adapter が拒否された: ~s" other))]))
 
 (test-case "RSD 実行は型を保ち、生成 token をすべて Dropped にする"
   (match-define (list core result-type row callables)
@@ -326,14 +332,20 @@
      (fail-check (format "Union entry の RSD programme が拒否された: ~s"
                          diagnostic))]))
 
-(test-case "Eliminate の枝 check で NFn の内側の損失は RSD にしない"
+(test-case "c3b で Eliminate の枝 check が NFn の内側の損失を RSD にする"
+  ;; c3b で各枝の NFn adapter が内側の損失を RSD で回収する。
   (define source
     `(Fn ((flag Bool) (value (NFn (Unit) ,nested-actual () ())))
          (NFn (Unit) ,nested-target () ()) ()
          (Eliminate flag
            ((true () -> value)
             (false () -> value)))))
-  (check-equal? (diagnostic-id-of (elab source)) "E-OWN-029"))
+  (match (elab source)
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-equal? (find-rsd erased) (list nested-actual nested-target))
+     (check-equal? (core-type-of erased '() callables) (list type row))]
+    [other (fail-check (format "Eliminate の枝 adapter が拒否された: ~s" other))]))
 
 ;; merge-branches の record-join の拒否分岐は、row005-join が NFn を Union に残すため Surface からは到達しない（join-record 820 件の内訳にも owned-narrowing-rejected は無い）。
 (test-case "synth Eliminate の合流は NFn の署名を Union に残し、損失を生じない"
@@ -379,7 +391,8 @@
        [_ (fail-check (format "推論された Fn 型が NFn でない: ~s"
                               function-type))])]))
 
-(test-case "decompose の branch narrowing で NFn の内側の損失は拒否する"
+(test-case "c3b で decompose の branch narrowing が NFn の損失を RSD にする"
+  ;; c3b で decompose の該当枝の NFn adapter が内側の損失を回収する。
   (define actual-nfn `(NFn (Unit) ,nested-actual () ()))
   (define expected-nfn `(NFn (Unit) ,nested-target () ()))
   (define actual-left `(Record ((a Bool imm) (f ,actual-nfn imm))))
@@ -390,7 +403,10 @@
     `(Record ((a (Union Bool Int) imm) (f ,expected-nfn imm))))
   (define source-type `(Record ((p ,actual-union imm))))
   (define expected-type `(Record ((p ,expected imm))))
-  (check-equal?
-   (diagnostic-id-of
-    (elab `(Fn ((source ,source-type)) ,expected-type (Own) source)))
-   "E-OWN-029"))
+  (match (elab `(Fn ((source ,source-type)) ,expected-type (Own) source))
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (check-equal? (find-rsd erased) (list nested-actual nested-target))
+     (check-equal? (core-type-of erased '() callables) (list type row))]
+    [other (fail-check (format "decompose の branch adapter が拒否された: ~s"
+                               other))]))

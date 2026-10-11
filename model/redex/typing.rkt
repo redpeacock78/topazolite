@@ -978,6 +978,14 @@
     [`(Discharge ,(app peel-node
                       `(ProofRep ,_ (RemainderSafelyDropped ,_ ,_))) ,inner)
      (forward-transfer-form? inner mode)]
+    [`(Curry ,function ,argument)
+     (and (match (peel-node function)
+            [`(Lam ,_ ,_ ,_ ,_) #t]
+            [_ #f])
+          (not (forward-containing-now? function))
+          (or (symbol? (peel-node argument))
+              (and (eq? mode 'config)
+                   (redex-match? G2m v (erase-core argument)))))]
     [`(UnionInject ,_ ,_ ,inner) (forward-transfer-form? inner mode)]
     [`(Rec ((,_ ,_ ,fields) ...))
      (andmap (lambda (field) (forward-transfer-form? field mode)) fields)]
@@ -5446,4 +5454,26 @@
   ;; registry に無い key は error になる。
   (check-exn #px"registry に無い typing の key"
              (lambda ()
-               (with-typing (lambda (fail) (fail 'no-such-key 1))))))
+               (with-typing (lambda (fail) (fail 'no-such-key 1)))))
+
+  ;; Curry は Lam の閉包を変数か config 上の値に固定する形だけを T に含める。
+  (check-true
+   (forward-transfer-form?
+    '(Curry (Lam User callable (fixed next) unit) captured)
+    'static))
+  (check-true
+   (forward-transfer-form?
+    '(Curry (Lam User callable (fixed next) unit)
+            (Lam User fixed-value () unit))
+    'config))
+  (check-false
+   (forward-transfer-form?
+    '(Curry (Lam User callable (fixed next) unit)
+            (Lam User fixed-value () unit))
+    'static))
+  (check-false
+   (forward-transfer-form?
+    '(Curry (Lam User callable (fixed next) unit) (Forward captured))
+    'static))
+  (check-false
+   (forward-transfer-form? '(Curry callable captured) 'static)))

@@ -404,16 +404,17 @@
                         (normalize-type `(Union ,@members))))
      (diagnostic-code-of 'elaborate 'ambiguous-union-member))))
 
-;; c3b で NFn 内側の残余損失を RSD にした後、この拒否は受理へ反転する。
-(test-case "NFn の返り値の内側だけの損失は c3b まで E-OWN-029 で拒否する"
+;; c3b で NFn 内側の残余損失を adapter 内の RSD で回収する。
+(test-case "NFn の返り値の内側だけの損失を adapter 内の RSD で回収する"
   (define wide
     '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) () ()))
   (define narrow
     '(NFn (Unit) (Record ((y Int imm))) () ()))
   (define expected `(Union ,narrow String))
-  (check-equal?
-   (rejected-id `(Fn ((value ,wide)) ,expected () value))
-   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+  (define source `(Fn ((value ,wide)) ,expected () value))
+  (match-define (list core type row callables) (checked source))
+  (check-true (contains-rsd? core))
+  (check-equal? (core-type-of core '() callables) (list type row)))
 
 (test-case "Owned payload の内側の損失は互換性 gate で拒否する"
   (define actual
@@ -553,19 +554,19 @@
           (Reassign slot (Construct true (Types)))))
    (diagnostic-code-of 'elaborate 'reassign-type-mismatch)))
 
-(test-case "Reassign の compatible な reject member は E-OWN-029 になる"
+(test-case "Reassign の NFn 損失を adapter 内の RSD で回収する"
+  ;; c3b で代入時に作る NFn adapter の返り値損失を RSD で回収する。
   (define wide
-    '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) () ()))
+    '(NFn (Unit) (Record ((x (Owned Res) imm) (y Int imm))) (Partial) ()))
   (define narrow
-    '(NFn (Unit) (Record ((y Int imm))) () ()))
+    '(NFn (Unit) (Record ((y Int imm))) (Partial) ()))
   (define source
-    `(Fn ((value ,wide)) Unit (Mutation)
+    `(Fn ((callback ,wide)) Unit (Mutation)
          (Let (slot mut (Union ,narrow String))
               "s"
-              (Reassign slot value))))
-  (check-equal?
-   (rejected-id source)
-   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+              (Reassign slot callback))))
+  (match-define (list core _type _row _callables) (checked source))
+  (check-true (contains-rsd? core)))
 
 (test-case "成分試行の union 名と後続 owned binder の連番を保つ"
   (define nested-source-type

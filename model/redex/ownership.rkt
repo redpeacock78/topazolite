@@ -119,14 +119,29 @@
     [(`(NFn ,actual-parameters ,actual-return ,_ ,_ ,_ ,_)
       `(NFn ,expected-parameters ,expected-return ,_ ,_ ,_ ,_))
      (if (= (length actual-parameters) (length expected-parameters))
-         (kind-all
-          (cons (owned-narrowing-kind/impl actual-return expected-return
-                                           compatible? 'inner)
-                ;; 引数は反変。expected の引数型が actual の引数型へ narrowing
-                (for/list ([actual-parameter (in-list actual-parameters)]
-                           [expected-parameter (in-list expected-parameters)])
-                  (owned-narrowing-kind/impl expected-parameter actual-parameter
-                                             compatible? 'inner))))
+         (let ([component-context
+                (if (and (elaboration-union-mode)
+                         (memq ctx '(top chain)))
+                    'top
+                    'inner)])
+           (define kinds
+             (cons (owned-narrowing-kind/impl actual-return expected-return
+                                              compatible? component-context)
+                   ;; 引数は反変。expected の引数型が actual の引数型へ narrowing
+                   (for/list ([actual-parameter (in-list actual-parameters)]
+                              [expected-parameter (in-list expected-parameters)])
+                     (owned-narrowing-kind/impl expected-parameter actual-parameter
+                                                compatible? component-context))))
+           (if (and (elaboration-union-mode)
+                    (memq ctx '(top chain)))
+               (if (andmap (lambda (kind)
+                             (or (eq? kind 'ok)
+                                 (eq? kind 'nested-drop)
+                                 (drop-obligation? kind)))
+                           kinds)
+                   'ok
+                   'reject)
+               (kind-all kinds)))
          'reject)]
     ;; 借用した view は正典が挙げる救済策そのものであり、所有者は動かない。
     [(`(Borrowed ,_ ,_) `(Borrowed ,_ ,_)) 'ok]

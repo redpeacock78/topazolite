@@ -39,6 +39,24 @@
            (or (tree-contains? (car tree) predicate)
                (tree-contains? (cdr tree) predicate)))))
 
+(define (contains-rsd? tree)
+  (tree-contains?
+   tree
+   (lambda (node)
+     (match node
+       [`(Discharge (ProofRep (Reserved o-narrow)
+                             (RemainderSafelyDropped ,_ ,_)) ,_) #t]
+       [_ #f]))))
+
+(define (check-rsd-elaboration result)
+  (match result
+    [(list core type row callables)
+     (check-true (contains-rsd? (erase-core core)))
+     (check-equal? (core-type-of (erase-core core) '() callables)
+                   (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "NFn adapter の RSD が拒否された: ~s" diagnostic))]))
+
 (define (find-adapter node)
   (match node
     [`(Let (,name let ,actual) ,_bound
@@ -1180,7 +1198,8 @@
                                             'Available 'Dropped)
                     0))))
 
-(test-case "引数か返り値に RSD を要する adapter は owned-narrowing-rejected で拒否する"
+(test-case "引数と返り値に RSD を要する adapter を受理する"
+  ;; c3b で NFn の引数と返り値の損失を adapter 内の RSD で回収する。
   (define wide '(Record ((owned (Owned Res) imm) (value Int imm))))
   (define narrow '(Record ((value Int imm))))
   (define cases
@@ -1190,14 +1209,12 @@
                 `(NFn () ,narrow () ()))))
   (for ([types (in-list cases)])
     (match-define (list actual expected) types)
-    (check-equal?
-     (diagnostic-id-of
-      `(Fn ((f ,actual)) Int ()
-           (Let (adapted const ,expected) f adapted)))
-     (diagnostic-code-of 'elaborate 'owned-narrowing-rejected))))
+    (check-rsd-elaboration
+     (elab `(Fn ((f ,actual)) Unit ()
+              (Let (adapted const ,expected) f unit))))))
 
-(test-case "資源引数の NFn 欄にある Union 損失は c3b まで E-OWN-029 で拒否する"
-  ;; c3b で、資源引数内の NFn の返り値にある Union の Owned 損失を RSD で回収する。
+(test-case "資源引数の NFn 欄にある Union 損失を RSD で回収する"
+  ;; c3b で、資源引数内の NFn の返り値にある Union の Owned 損失を回収する。
   (define option-owned '(Option (Owned Res)))
   (define wide '(Record ((x (Owned Res) imm) (y Int imm))))
   (define narrow '(Record ((y Int imm))))
@@ -1209,11 +1226,9 @@
     `(Record ((value ,target-function imm) (owned ,option-owned imm))))
   (define actual `(NFn (,target-parameter) Unit (Own) ()))
   (define expected `(NFn (,source-parameter) Unit (Own) ()))
-  (check-equal?
-   (diagnostic-id-of
-    `(Fn ((f ,actual)) Unit ()
-         (Let (adapted const ,expected) f unit)))
-   (diagnostic-code-of 'elaborate 'owned-narrowing-rejected)))
+  (check-rsd-elaboration
+   (elab `(Fn ((f ,actual)) Unit ()
+            (Let (adapted const ,expected) f unit)))))
 
 (test-case "未選択の adapter 候補は callable と連番を消費しない"
   (define actual '(NFn (Int) Int () ()))

@@ -195,14 +195,13 @@
    (owned-narrowing-kind/for-elaboration actual expected compat?)
    'ok))
 
-(test-case "elaboration 用の Union 判定は NFn 内側の損失を拒否する"
+(test-case "elaboration 用の Union 判定は NFn 内側の損失を成分へ渡す"
   (define actual
     `(NFn (Unit) ,nested-actual () () () User))
   (define expected
     `(Union (NFn (Unit) ,nested-no-z () () () User) String))
   (check-equal?
-   (owned-narrowing-kind/for-elaboration actual expected compat?)
-   'reject))
+   (owned-narrowing-kind/for-elaboration actual expected compat?) 'ok))
 
 (test-case "elaboration 用の Union 判定は imm 鎖の nested-drop を認める"
   (define actual
@@ -242,14 +241,20 @@
   (check-equal?
    (owned-narrowing-kind/for-elaboration actual expected compat?) 'ok))
 
-(test-case "elaboration 用の actual Union 判定は内側の reject を保つ"
+(test-case "elaboration 用の actual Union 判定は NFn の損失を成分へ渡す"
   (define actual
     `(Union (NFn (Unit) ,nested-actual () () () User) Bool))
   (define expected
     `(Union (NFn (Unit) ,nested-no-z () () () User) Bool))
   (check-equal?
-   (owned-narrowing-kind/for-elaboration actual expected compat?)
-   'reject))
+   (owned-narrowing-kind/for-elaboration actual expected compat?) 'ok))
+
+(test-case "NFn 内側の損失は inner 文脈では E-OWN-029 のまま"
+  ;; Surface の NFn 成分は top で評価されるため、inner 境界は Owned payload で固定する。
+  (define actual `(Owned (NFn (Unit) ,nested-actual () () () User)))
+  (define expected `(Owned (NFn (Unit) ,nested-no-z () () () User)))
+  (check-equal? (owned-narrowing-kind/for-elaboration actual expected compat?)
+                'reject))
 
 (test-case "Union の唯一の compatible member は RSD を挿入して受理する"
   (match (elab
@@ -353,27 +358,46 @@
     `(Fn ((p ,nested-actual)) ,nested-no-z (Own) (Move p)))
    'ok))
 
-(test-case "elaborate の Apply 引数で NFn 内の残余損失を E-OWN-029 にする"
-  (check-equal?
-   (elaborate-code-of
-    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
-         (Apply (Fn ((p ,surface-rejected-nfn-expected)) Int () 1)
-                source)))
-   "E-OWN-029"))
+(test-case "elaborate の Apply 引数で NFn 内の残余損失を RSD にする"
+  ;; c3b で NFn の成分が RSD 適格性を保ったまま adapter へ進む。
+  (define result
+    (elab `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+              (Apply (Fn ((p ,surface-rejected-nfn-expected)) Int () 1)
+                     source))))
+  (match result
+    [(list core type row callables)
+     (check-true (contains-rsd? (erase-core core)))
+     (check-equal? (core-type-of (erase-core core) '() callables)
+                   (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "NFn の Apply 引数 adapter が拒否された: ~s"
+                         diagnostic))]))
 
-(test-case "elaborate の注釈付き Let で NFn 内の残余損失を E-OWN-029 にする"
-  (check-equal?
-   (elaborate-code-of
-    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
-         (Let (r let ,surface-rejected-nfn-expected) source 1)))
-   "E-OWN-029"))
+(test-case "elaborate の注釈付き Let で NFn 内の残余損失を RSD にする"
+  ;; c3b で NFn の成分が RSD 適格性を保ったまま adapter へ進む。
+  (define result
+    (elab `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+              (Let (r let ,surface-rejected-nfn-expected) source 1))))
+  (match result
+    [(list core type row callables)
+     (check-true (contains-rsd? (erase-core core)))
+     (check-equal? (core-type-of (erase-core core) '() callables)
+                   (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "NFn の Let adapter が拒否された: ~s" diagnostic))]))
 
-(test-case "elaborate の const binder で NFn 内の残余損失を E-OWN-029 にする"
-  (check-equal?
-   (elaborate-code-of
-    `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
-         (Let (r const ,surface-rejected-nfn-expected) source 1)))
-   "E-OWN-029"))
+(test-case "elaborate の const binder で NFn 内の残余損失を RSD にする"
+  ;; c3b で NFn の成分が RSD 適格性を保ったまま adapter へ進む。
+  (define result
+    (elab `(Fn ((source ,surface-rejected-nfn-actual)) Int ()
+              (Let (r const ,surface-rejected-nfn-expected) source 1))))
+  (match result
+    [(list core type row callables)
+     (check-true (contains-rsd? (erase-core core)))
+     (check-equal? (core-type-of (erase-core core) '() callables)
+                   (list type row))]
+    [`(err ,diagnostic)
+     (fail-check (format "NFn の const adapter が拒否された: ~s" diagnostic))]))
 
 (test-case "elaborate は最上位の余剰 Owned を RSD で回収する"
   (check-equal?
