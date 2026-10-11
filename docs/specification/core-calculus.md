@@ -2086,7 +2086,8 @@ Redex model の負例テストはこの遷移を確認する。
 
 Drop の引数は `Move` または `Forward` を経て取り出された値であり、place の状態遷移は値を取り出した側で済んでいる。
 値の根と内部 leaf の token は同じ走査で `Available` から `Dropped` へ遷移するが、`R-Drop` は `fin`/`finLeaf` イベントを記録しない。
-token が無い、重複する、または `Available` でないときは規則を適用しない。
+token が無い、または `Available` でないときは規則を適用しない。
+同じ token の重複は構成検査（§5.1 の token 条件）が拒否する。
 
 ### 5.6 scope exit と finalization
 
