@@ -625,6 +625,140 @@
     [_ #t]))
 
 (module+ test
+  ;; compare-observations は source の Core を inject するため、Move と place
+  ;; を含む開始 config は扱えない。ここでは既存 lower-value で heap を写す。
+  (define (events-observations events)
+    (for/list ([event (in-list events)]
+               #:when (match event [`(obs ,_) #t] [_ #f]))
+      (second event)))
+
+  (define (terminal-kind-g2m core)
+    (cond
+      [(redex-match? G2m v core) 'value]
+      [(redex-match? G2m (Error p) core) 'ownership-error]
+      [(redex-match? G2m (Perform op v) core) 'perform]
+      [else 'stuck]))
+
+  (define (run-pr-config/adaptive initial start-fuel)
+    (let loop ([current-fuel start-fuel] [remaining fuel-attempts])
+      (define result (run-pr initial current-fuel))
+      (cond
+        [(not (eq? result 'timeout)) result]
+        [(<= remaining 1) #f]
+        [else (loop (* 2 current-fuel) (sub1 remaining))])))
+
+  (define (compare-config-observations initial pr-core)
+    (match-define `(cfg ,_core ,heap ,states ,_tokens ,events) initial)
+    (define pr-heap
+      (for/list ([entry (in-list heap)])
+        (match-define (list place value _declared) entry)
+        (define-values (status pr-value) (lower-value value 'racket-cs))
+        (check-eq? status 'ok (format "heap value の lowering: ~s" value))
+        (list place pr-value)))
+    (define pr-initial `(pcfg ,pr-core ,pr-heap ,states ()))
+    (define source-run (bounded-trace-g2 initial source-fuel))
+    (define source-final (last (execution-configs source-run)))
+    (define pr-config (run-pr-config/adaptive pr-initial source-fuel))
+    (check-equal? events '() "Task 3 の開始 config は空の θ を持つ")
+    (check-eq? (execution-outcome source-run) 'terminal
+               "source config は終端まで進む")
+    (check-not-false pr-config "PR config は終端まで進む")
+    (match pr-config
+      [#f 'discard]
+      [`(pcfg ,pr-final-core ,_ ,_ ,pr-events)
+       (define source-observations
+         (for/list ([value (in-list
+                            (events-observations (config-events source-final)))])
+           (define lowered (lowered-value value))
+           (check-not-false lowered
+                            (format "Core obs の lowering: ~s" value))
+           lowered))
+       (define pr-observations (events-observations pr-events))
+       (define source-kind (terminal-kind-g2m (config-core source-final)))
+       (define pr-kind (terminal-kind-pr pr-final-core))
+       (if (and (equal? source-observations pr-observations)
+                (eq? source-kind pr-kind))
+           'match
+           'mismatch)]))
+
+  (test-case "c3m2: 中断する生成 config 63 件の観測が PR と一致する"
+    (define placements '(apply-argument construct-field curry-fixed))
+    (define placement-subsets
+      (for/list ([mask (in-range 1 8)])
+        (for/list ([placement (in-list placements)]
+                   [bit (in-naturals)]
+                   #:when (bitwise-bit-set? mask bit))
+          placement)))
+    (define compared 0)
+    (define place-free-compared 0)
+    (define excluded '())
+    (for* ([interruption (in-list
+                          '(perform-handled perform-escaped move-error))]
+           [placement (in-list placement-subsets)]
+           [wrapper (in-list
+                     (if (eq? interruption 'move-error)
+                         '(none discharge-remainder rec-rewrite
+                                rec-rewrite-complete)
+                         '(none discharge-remainder rec-rewrite-complete)))])
+      (define-values (core _callables _places initial)
+        (generate-root-abort-case interruption placement wrapper))
+      (define-values (status target) (lower core 'racket-cs))
+      (cond
+        [(eq? status 'ok)
+         (define mapped (compare-config-observations initial target))
+         (check-eq? mapped 'match
+                    (format "mapped config: ~s/~s/~s" interruption placement wrapper))
+         (set! compared (add1 compared))
+         (unless (eq? interruption 'move-error)
+           (define injected (compare-observations core target depth))
+           (check-eq? mapped injected
+                      (format "inject 比較との一致: ~s/~s/~s"
+                              interruption placement wrapper))
+           (check-eq? injected 'match)
+           (set! place-free-compared (add1 place-free-compared)))]
+        [else
+         (check-eq? status 'capability
+                    (format "予期しない lowering status: ~s" status))
+         (check-equal? (list interruption wrapper) '(move-error rec-rewrite)
+                       (format "除外理由は RecRewriteOpen のみ: ~s/~s/~s"
+                               interruption placement wrapper))
+         (set! excluded (cons (list interruption placement wrapper) excluded))]))
+    ;; RecRewriteOpen は Task 3 の中間 config にのみ現れ、source lowering の対象外。
+    (define expected-exclusions
+      (for/list ([placement (in-list placement-subsets)])
+        (list 'move-error placement 'rec-rewrite)))
+    (check-equal? compared 63)
+    (check-equal? place-free-compared 42)
+    (check-equal? (length excluded) 7)
+    (check-equal? (list->set excluded) (list->set expected-exclusions))
+    (printf "c3m2 PR observations: compared=~a place-free=~a excluded=~a\n"
+            compared place-free-compared (length excluded)))
+
+  (test-case "c3m2: Yield の根 OwnedLeaf 観測を PR payload と照合する"
+    (define number 724)
+    (define core
+      `(Yield (OwnLeaf (Apply (PrimVal (Reserved o-acquire) acquire) ,number))
+              unit))
+    (check-not-eq? (core-type-of core '() '()) 'ill-typed)
+    (define-values (status target) (lower core 'racket-cs))
+    (check-eq? status 'ok (format "Yield の lowering: ~s" target))
+    (define source (obs-eval-g2 core depth source-fuel))
+    (define pr (obs-eval-pr/adaptive target depth source-fuel))
+    (check-equal? (second source) 'value)
+    (check-true (and pr #t))
+    (check-equal? (second pr) 'value)
+    (check-match (first source)
+      `((OwnedLeaf ,_ (resource ,number))))
+    (check-equal? (map lowered-value (first source))
+                  (list `(PResource ,number)))
+    (check-equal? (first pr) (list `(PResource ,number)))
+    (check-eq? (compare-observations core target depth) 'match)
+    (define fake-core
+      `(Yield (OwnLeaf (Apply (PrimVal (Reserved o-acquire) acquire)
+                              ,(add1 number)))
+              unit))
+    (check-eq? (compare-observations fake-core target depth) 'mismatch))
+
   (test-case "P2m2a: Union tag の Core と PR の観測が一致する"
     (define union-type '(Union Int String))
     (define integer-branch
