@@ -1664,7 +1664,16 @@ P にある資源型の `Let` 変数は借用の owner として登録される�
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 構成検査では、heap 値の根にある `OwnedLeaf` と `OwnedLeaf` 直下の `OwnedLeaf` を拒否する。
-control では根の位置にある `OwnedLeaf` のほか、`Scope` の本体、`Perform` の引数、`Yield` の観測 payload など、値の producer 位置にある根の leaf を許す。
+構成検査では、制御項の根にある値の `OwnedLeaf` を許す。
+active-value の位置でも、その位置に値として現れる根の `OwnedLeaf` を許し、値の内部は `observed-leaf-positions-ok?` で検査する。
+active-value の位置は、`OwnLeaf` の payload、`Apply` の評価中の実引数、`Let` の束縛値、`Construct` の現在の欄、`Perform` の payload、`Handle` の本体、`Scope` の本体、`Yield` の観測 payload、`Drop` の引数、`Curry` の固定引数、`Rec` の現在の欄、`RecRewriteOpen` の現在の作業欄、`Unsafe` の本体である。
+`Eliminate` と `UnionEliminate` の枝は eliminator が残る間は deferred-code であり、選択後は選ばれた枝本体が制御項となって同じ規則で検査される。
+pending-code の位置も同じ規則で再帰して検査する。
+pending-code は、`Apply` の後続実引数、`Let` の本体、`Construct` の後続欄、`Recur` の継続、`Yield` の継続、`Suspend` の本体、`Curry` の後続固定引数、`Rec` の後続欄、`RecRewriteOpen` の後続作業欄、`Assign` と `Reassign` の値、`PtrOffset` の offset、`RawStore` の payload である。
+中断時に `F_inner` に残る pending-code の token は、`R-ScopeAbort`、`R-ScopeError`、`R-HandleReturn`、`R-HandleSkip`、`R-HandleError` が回収するため失われない。
+deferred-code は `OwnedLeaf` を含まない。
+deferred-code は、`Handle` の handler 節、`Recur` の本体、eliminator が残っている間の `Eliminate` と `UnionEliminate` の枝本体、`R-RecRewrite-Open` より前の `RecRewrite` entry 本体（Absent になる entry を含む）である。
+`Recur` の本体に token を捕捉できないのは、`E-OWN-008` が外側の `Owned` 資源の捕捉を拒否し、仮引数が `ResourceScope` と先行 `Let` で符号化されるためである。
 根の leaf は空 path の token として `Λtok` に数え、`finLeaf` event は生成しない。
 
 `Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。根と内部 leaf の token をともに数え、`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
