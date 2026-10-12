@@ -319,7 +319,9 @@
          ;; unsafe.md §4.3。ptrmut を実行時にも運ぶ。
          (PtrVal p fp ptrmut prov)
          (UnionVal τ τ v)
-         (RegionLam (rp ...) c))
+         (RegionLam (rp ...) c)
+         ;; c3n。token は持たず、値の子は payload だけである。
+         (OwnedTransit p v))
   (ubr ::= (τ x -> c))
 
   (F ::= ....

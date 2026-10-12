@@ -34,6 +34,7 @@
          capability-projection-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
+         owned-transit? contains-owned-transit? transit-places
          leaf-positions-ok? walk-owned-leaves walk-owned-leaves-for-drop
          observed-leaf-positions-ok?
          path-prefix?
@@ -157,6 +158,7 @@
 (define (collect-tokens value)
   (match value
     [`(OwnedLeaf ,tk ,payload) (cons tk (collect-tokens payload))]
+    [`(OwnedTransit ,_ ,payload) (collect-tokens payload)]
     [`(Absent ,_) '()]
     [`(UnionVal ,_ ,_ ,payload) (collect-tokens payload)]
     ;; CurryVal の origin は生成履歴であり、固定引数と同じ値を複製して
@@ -177,9 +179,28 @@
 ;; 値のどこかに leaf があるか。位置の妥当性は問わない。
 (define (contains-owned-leaf? value)
   (match value
+    [`(OwnedTransit ,_ ,payload) (contains-owned-leaf? payload)]
     [`(UnionVal ,_ ,_ ,payload) (contains-owned-leaf? payload)]
     [_ (or (owned-leaf? value)
            (and (list? value) (ormap contains-owned-leaf? value)))]))
+
+;; 移送 marker の place を値全体から前順で集める。
+;; contains-owned-transit? も同じ列挙結果を使う。
+(define (transit-places value)
+  (define (walk current)
+    (match (peel-node current)
+      [`(OwnedTransit ,place ,payload) (cons place (walk payload))]
+      [(? list? parts) (append-map walk parts)]
+      [_ '()]))
+  (walk value))
+
+(define (contains-owned-transit? value)
+  (pair? (transit-places value)))
+
+(define (owned-transit? value)
+  (match (peel-node value)
+    [`(OwnedTransit ,_ ,_) #t]
+    [_ #f]))
 
 ;; 値の内部の Owned leaf を、その path とともに前順で列挙する。
 ;; 根の位置の leaf は返さない。根の所有は place と Ω が持つ。
@@ -193,6 +214,7 @@
                    (list (list tk (reverse path)))
                    '())
                (walk payload path #f))]
+      [`(OwnedTransit ,_ ,payload) (walk payload path root?)]
       [`(Absent ,_) '()]
       [`(Rec ((,names ,_modes ,values) ...))
        (append-map (lambda (name child)
@@ -230,6 +252,7 @@
     [`(OwnedLeaf ,_tk ,payload)
      (and (not (owned-leaf? payload))
           (walk-leaf-positions payload))]
+    [`(OwnedTransit ,_ ,payload) (walk-leaf-positions payload)]
     [`(Absent ,_) #t]
     [`(Rec ((,_name ,_mode ,values) ...))
      (andmap walk-leaf-positions values)]

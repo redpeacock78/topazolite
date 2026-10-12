@@ -184,6 +184,11 @@
  (check-equal? (lower-value-ok '(RVal (ProofRep User TypeNarrativeCap) 1))
                '(PTagged rval 1)))
 
+(test-case "移送 marker の lowering は payload だけを残す"
+  (check-equal? (lower-value-ok '(OwnedTransit 9 (OwnedLeaf (tok 0) (resource 3))))
+                '(PResource 3))
+  (check-equal? (lower-value-ok '(OwnedTransit 9 7)) (lower-value-ok 7)))
+
 (test-case "Absent 欄の lowering は観測値から欄を落とす"
   (define core
     '(Yield (Rec ((a imm 1) (o imm (Absent Int)))) unit))
@@ -487,6 +492,7 @@
     (Discharge core  (Discharge (ProofRep User TypeNarrativeCap) x))
     (OwnLeaf    core  (OwnLeaf (resource 3)))
     (OwnedLeaf  value (OwnedLeaf (tok 0) (resource 3)))
+    (OwnedTransit value (OwnedTransit 9 7))
     (Error     core  (Error 0))
     (resource  value (resource 3))
     (Lam       value (Lam User c0 (a) a))

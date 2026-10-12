@@ -314,6 +314,8 @@
       [`(ProofRep ,_ ,_) '(PTagged proof)]
       ;; 所有 token は静的な記録なので、値では payload だけを残す。
       [`(OwnedLeaf ,_ ,payload) (lower-val payload)]
+      ;; 移送 marker は token を持たない実行時の印なので payload だけを残す。
+      [`(OwnedTransit ,_ ,payload) (lower-val payload)]
       [`(Rec ((,labels ,_ ,fields) ...))
        `(PRec ,(for/list ([label (in-list labels)] [field (in-list fields)]
                           #:unless (absent-field? field))

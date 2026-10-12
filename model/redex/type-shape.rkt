@@ -365,6 +365,7 @@
          [`(ProjOpt ,type ,record ,_)
           (and (type-normal? type) (walk record))]
          [`(resource ,_) #t]
+         [`(OwnedTransit ,_ ,payload) (walk payload)]
          [`(OwnLeaf ,payload) (walk payload)]
          [`(OwnedLeaf ,_ ,payload) (walk payload)]
          [`(UnionVal ,union-type ,member-type ,payload)
