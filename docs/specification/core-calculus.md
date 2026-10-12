@@ -1888,6 +1888,12 @@ v は値であり、v は OwnedLeaf でも OwnedTransit でもない。tk は構
 既に根の token を持つ値では `R-OwnLeafPass` が既存 token を保ち、二重発行しない。
 移送中の値では `R-OwnLeafTransit` が marker を保ち、新しい token を発行しない。
 
+**Why not（token を発行して marker を外す案）**：この案は採らない。
+この案では `(OwnedLeaf tk v)` の `v` が資源でない値になりうるが、`OwnedLeaf` の型付けは payload に `Owned` 型を要求するため、その構成は型付けされない。
+型付けを広げて非資源の payload を受け入れる案も採らない。
+その拡張は非資源値に leaf token を発行し、`Drop` と `finalize` が記録する `finLeaf` の事象と token 台帳の意味を変える。
+これは spec §4.4 の記述を、probe と実装の検証結果に合わせて改訂したものである。
+
 **(R-Beta)**
 
 ```text
