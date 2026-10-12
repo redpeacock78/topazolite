@@ -1751,7 +1751,8 @@ heap の値は、記録から得た宣言型に対する `Owned` 型へ tag 保�
 Record 欄は place の宣言型の欄型を使い、現在の値がより狭い Union でも宣言型を保つ。
 `(Payload)` は現在の値が持つ `UnionVal` の成分型を使い、data constructor の欄は constructor schema から得る。
 path が辿れない場合、Payload の位置が `UnionVal` でない場合、または place が `Available` でない場合、構成検査は失敗する。
-この回復は `config-ok?` の内部だけで行い、通常の `type-of/raw` と `key-of` は実行時借用値を型付けしない。
+この回復は構成検査の再型付け（`config-ok?` と `gen.rkt` の `runtime-row`）だけで行い、通常の `type-of/raw` と `key-of` は実行時借用値を型付けしない。
+`runtime-row` は `config-ok?` と同じ places から同じ回復を行うので、借用値を含む構成でも両者は同じ row を扱う。
 
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
