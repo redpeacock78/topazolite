@@ -59,15 +59,15 @@
                   "借用 Record の入力（root OwnedLeaf は owner を辿れず拒否）")
     (Read operand type-unreachable "Borrowed payload")
     (Assign target type-unreachable "BorrowedMut target")
-    (Assign value pending-code "target 評価後の値" reject known-row)
+    (Assign value pending-code "target 評価後の値" reject)
     (Reassign value pending-code "MutSlot target 評価後の値" reject)
     (RegionApp function type-unreachable "ForallRegion function")
     (AddressOf operand type-unreachable "place operand")
     (PtrOffset pointer type-unreachable "RawPtr operand")
-    (PtrOffset offset pending-code "pointer 評価後の offset" reject known-row)
+    (PtrOffset offset pending-code "pointer 評価後の offset" reject)
     (RawLoad pointer type-unreachable "RawPtr operand")
     (RawStore pointer type-unreachable "RawPtr operand")
-    (RawStore value pending-code "pointer 評価後の payload" reject known-row)
+    (RawStore value pending-code "pointer 評価後の payload" reject)
     (FromRawPtr pointer type-unreachable "RawPtr operand")
     (Unsafe body active-value "Unsafe boundary の本体")))
 
@@ -275,6 +275,14 @@
          `(Unsafe (RawStore (AddressOf (BorrowMutRef 0 (b) 0))
                             ,(with-leaf 9)))
          'Unit '(Mutation))))
+
+(define borrow-pending-rows
+  '(((Assign value) (Mutation))
+    ((PtrOffset offset) ())
+    ((RawStore value) (Mutation))))
+
+(define ptr-pending-rows
+  '((PtrOffset offset) (RawStore value)))
 
 (define (make-borrowed-row-case leaf-core control-core nested-core expected effect)
   (define heap
@@ -521,11 +529,9 @@
                      (row-case-callables rc)
                      (row-case-environment rc)))
 
-(define (case-config-ok? rc cfg [known-row? #f])
+(define (case-config-ok? rc cfg)
   (define row
-    (if known-row?
-        (row-case-effect rc)
-        (runtime-row cfg (row-case-callables rc) (row-case-expected rc))))
+    (runtime-row cfg (row-case-callables rc) (row-case-expected rc)))
   (and row
        (equal? row (row-case-effect rc))
        (config-ok? cfg (row-case-callables rc)
@@ -537,6 +543,22 @@
     [(? list? children) (ormap contains-borrow-value? children)]
     [_ #f]))
 
+(define (contains-form? term head)
+  (match term
+    [(? list? terms)
+     (or (and (pair? terms) (eq? (first terms) head))
+         (ormap (lambda (child) (contains-form? child head)) terms))]
+    [_ #f]))
+
+(define (borrow-allocation-pending? config)
+  (match config
+    [`(cfg ,core ,heap ,_states ,_tokens ,_trace)
+     (or (and (null? heap) (contains-form? core 'Let))
+         (and (or (contains-form? core 'BorrowAt)
+                  (contains-form? core 'BorrowMutAt))
+              (pair? heap)))]
+    [_ #f]))
+
 (test-case "c3m3: 位置表は四分類と pending の根判定を明示する"
   (check-true (andmap (lambda (row)
                         (and (memq (third row)
@@ -546,10 +568,8 @@
                       position-table))
     (check-true (andmap (lambda (row)
                         (if (eq? (third row) 'pending-code)
-                            (and (memq (fifth row) '(accept reject))
-                                 (or (= (length row) 5)
-                                     (and (= (length row) 6)
-                                          (eq? (sixth row) 'known-row))))
+                            (and (= (length row) 5)
+                                 (memq (fifth row) '(accept reject)))
                             (= (length row) 4)))
                       position-table)))
 
@@ -616,26 +636,21 @@
                                  (row-case-places rc)
                                  (row-case-environment rc)))))))
 
-(test-case "c3m3: pending-code は内側の active leaf と現行の根判定を保つ"
+(test-case "c3m3: pending-code は内側の active leaf と根判定を保つ"
   (for ([fixture (in-list pending-fixtures)])
     (define form (first fixture))
     (define hole (second fixture))
     (define row (assoc-row form hole))
-    (define known-row? (and (= (length row) 6)
-                            (eq? (sixth row) 'known-row)))
     (define rc (row-fixture form hole))
     (define label
-      (format "~s/~s: ~a~a" form hole (fourth row)
-              (if known-row?
-                  " [known-row: BorrowMutRef の既知 row を config-ok? へ渡す]"
-                  "")))
-    (check-true (case-config-ok? rc (row-case-control-cfg rc) known-row?)
+      (format "~s/~s: ~a" form hole (fourth row)))
+    (check-true (case-config-ok? rc (row-case-control-cfg rc))
                 (format "~a control: row=~s cfg=~s" label
                         (runtime-row (row-case-control-cfg rc)
                                      (row-case-callables rc)
                                      (row-case-expected rc))
                         (row-case-control-cfg rc)))
-    (check-true (case-config-ok? rc (row-case-nested-cfg rc) known-row?)
+    (check-true (case-config-ok? rc (row-case-nested-cfg rc))
                 (format "~a nested: row=~s cfg=~s" label
                         (and (row-case-nested-cfg rc)
                              (runtime-row (row-case-nested-cfg rc)
@@ -650,6 +665,7 @@
 (test-case "c3m3: pending root-leaf の accept/reject 表を全行固定する"
   (for ([row (in-list position-table)]
         #:when (eq? (third row) 'pending-code))
+    (define key (list (first row) (second row)))
     (define rc (row-fixture (first row) (second row)))
     (check-not-false rc (format "fixture ~s/~s" (first row) (second row)))
     (define label (format "~s/~s" (first row) (second row)))
@@ -657,9 +673,10 @@
                   (eq? (fifth row) 'accept)
                   label)))
 
-(test-case "c3m3: pending の借用値と known-row の印が一致する"
+(test-case "c3n3: pending の借用値を含む構成は runtime-row が row を返す"
   (for ([row (in-list position-table)]
         #:when (eq? (third row) 'pending-code))
+    (define key (list (first row) (second row)))
     (define rc (row-fixture (first row) (second row)))
     (check-not-false rc (format "fixture ~s/~s" (first row) (second row)))
     (define configs
@@ -667,19 +684,145 @@
                            (row-case-nested-cfg rc))))
     (define contains-borrow?
       (ormap (lambda (cfg) (contains-borrow-value? (config-core cfg))) configs))
-    (define exception?
-      (and (= (length row) 6)
-           (eq? (sixth row) 'known-row)))
-    (check-equal? contains-borrow? (and exception? #t)
-                  (format "~s/~s exception=~s borrow=~s"
-                          (first row) (second row)
-                          (and exception? (sixth row)) contains-borrow?))
-    (when exception?
+    (define expected-entry
+      (assoc key borrow-pending-rows))
+    (check-equal? contains-borrow? (and expected-entry #t)
+                  (format "~s/~s borrow=~s"
+                          (first row) (second row) contains-borrow?))
+    (when expected-entry
       (for ([cfg (in-list configs)])
-        (check-false (runtime-row cfg (row-case-callables rc)
-                                  (row-case-expected rc))
-                     (format "~s/~s known-row must bypass runtime-row"
-                             (first row) (second row)))))))
+        (define actual
+          (runtime-row cfg (row-case-callables rc) (row-case-expected rc)))
+        (check-equal? actual (second expected-entry)
+                      (format "~s/~s runtime-row" (first row) (second row)))
+        (check-true (and actual
+                         (config-ok? cfg (row-case-callables rc)
+                                     (row-case-expected rc) actual))
+                    (format "~s/~s config-ok?" (first row) (second row)))))))
+
+(test-case "c3n3: 借用値を含む pending 構成の trace は row と構成を保つ"
+  (for ([entry (in-list borrow-pending-rows)])
+    (define key (first entry))
+    (define rc (row-fixture (first key) (second key)))
+    (check-not-false rc (format "fixture ~s" key))
+    (define start (row-case-control-cfg rc))
+    (define start-row
+      (runtime-row start (row-case-callables rc) (row-case-expected rc)))
+    (check-equal? start-row (second entry) (format "~s 起点 row" key))
+    (define-values (configs _rules) (trace-g2 start))
+    (check-equal? (raw-steps-g2/named (last configs)) '()
+                  (format "~s trace は終端まで進む" key))
+    (define first-ptr-val
+      (for/first ([cfg (in-list configs)] [index (in-naturals)]
+                  #:when (contains-form? cfg 'PtrVal))
+        index))
+    (check-equal? (and first-ptr-val #t)
+                  (and (member key ptr-pending-rows) #t)
+                  (format "~s trace の PtrVal 境界" key))
+    (when first-ptr-val
+      (check-true (> first-ptr-val 0)
+                  (format "~s PtrVal より前に検査対象の構成がある" key))
+      (check-true (contains-form? (list-ref configs first-ptr-val) 'PtrVal)
+                  (format "~s 検査区間の直後に PtrVal がある" key)))
+    ;; PtrVal の構成は sidecar が必要なので、その回収を行う c3n4 に委ねる。
+    (define checked
+      (if first-ptr-val (take configs first-ptr-val) configs))
+    (for ([cfg (in-list checked)] [index (in-naturals)])
+      (define row
+        (runtime-row cfg (row-case-callables rc) (row-case-expected rc)))
+      (check-not-false row (format "~s config ~a の row" key index))
+      (check-true (row-subset? row start-row)
+                  (format "~s config ~a の row が増えない" key index))
+      (check-true (config-ok? cfg (row-case-callables rc)
+                              (row-case-expected rc) row)
+                  (format "~s config ~a が不正: ~s" key index cfg)))))
+
+(test-case "c3n3: source の Borrow と BorrowMut trace は materialize 後に row と構成を保つ"
+  (for ([mutable? (in-list '(#f #t))])
+    (define borrowed-type
+      (if mutable? '(BorrowedMut Int 0) '(Borrowed Int 0)))
+    (define borrow-form
+      (if mutable? '(BorrowMut x) '(Borrow x)))
+    (define source
+      `(Scope ()
+         (Let (x let (Owned Int)) 7
+           (Scope ()
+             (Let (b let ,borrowed-type) ,borrow-form (Read b))))))
+    (define ir (build-region-ir source))
+    (define rho (region->rho ir (region-at ir '(0 1 0 0))))
+    (define (materialize-region term)
+      (cond [(equal? term borrowed-type)
+             (list (first borrowed-type) (second borrowed-type) rho)]
+            [(pair? term)
+             (cons (materialize-region (car term))
+                   (materialize-region (cdr term)))]
+            [else term]))
+    (define typed-core (materialize-region source))
+    (define mut-types (box (hash)))
+    (check-equal?
+     (first (type-of/raw typed-core '() '() '()
+                          (region-ctx ir '() (hash) (hash))
+                          #:mut-types mut-types))
+     'ok
+     (format "mutable?=~s region-aware source typing" mutable?))
+    (define annotated (annotate-regions typed-core ir))
+    (define start
+      (inject-g2m (annotate-mut-binding-types annotated (unbox mut-types))))
+    (define-values (configs rules) (trace-g2 start))
+    (check-equal? (length configs) 8 (format "mutable?=~s config count" mutable?))
+    (check-equal? rules
+                  (if mutable?
+                      '(R-LetOwnedB R-BorrowMut R-LetB R-ReadMut
+                        R-ScopeValue R-ScopeValue R-ScopeValue)
+                      '(R-LetOwnedB R-Borrow R-LetB R-Read
+                        R-ScopeValue R-ScopeValue R-ScopeValue))
+                  (format "mutable?=~s rules" mutable?))
+    (define first-materialized
+      (for/first ([cfg (in-list configs)] [index (in-naturals)]
+                  #:when (contains-borrow-value? (config-core cfg)))
+        index))
+    (check-equal? first-materialized 2)
+    (define setup (take configs first-materialized))
+    (define checked (drop configs first-materialized))
+    (check-true (andmap borrow-allocation-pending? setup)
+                (format "mutable?=~s setup prefix" mutable?))
+    (check-true (pair? checked))
+    (check-true (ormap (lambda (cfg)
+                         (contains-borrow-value? (config-core cfg)))
+                       checked)
+                (format "mutable?=~s BorrowRef in control" mutable?))
+    (check-false (ormap (lambda (cfg)
+                          (contains-borrow-value? (config-heap cfg)))
+                        checked)
+                 (format "mutable?=~s BorrowRef stays in control" mutable?))
+    (for ([cfg (in-list checked)] [index (in-naturals first-materialized)])
+      (check-false (borrow-allocation-pending? cfg)
+                   (format "mutable?=~s config ~a is not setup" mutable? index))
+      (define row (runtime-row cfg '() 'Int))
+      (check-not-false row (format "mutable?=~s config ~a row" mutable? index))
+      (check-true (config-ok? cfg '() 'Int row)
+                  (format "mutable?=~s config ~a config-ok?" mutable? index)))))
+
+(test-case "c3n3: heap の BorrowRef trace は row と構成を保ち、Moved owner を拒否する"
+  (define start
+    '(cfg (Read (BorrowRef 2 () 0))
+          ((2 7 (declared Int))
+           (3 (BorrowRef 2 () 0) (declared (Borrowed Int 0))))
+          ((2 Available) (3 Available)) () ()))
+  (check-true (contains-borrow-value? (config-heap start)))
+  (define start-row (runtime-row start '() 'Int))
+  (check-equal? start-row '())
+  (check-true (config-ok? start '() 'Int start-row))
+  (define-values (configs rules) (trace-g2 start))
+  (check-equal? rules '(R-Read))
+  (check-config-trace configs '() 'Int)
+  (define moved
+    '(cfg (Read (BorrowRef 2 () 0))
+          ((2 7 (declared Int))
+           (3 (BorrowRef 2 () 0) (declared (Borrowed Int 0))))
+          ((2 Moved) (3 Available)) () ()))
+  (check-false (runtime-row moved '() 'Int))
+  (check-false (config-ok? moved '() 'Int start-row)))
 
 (test-case "c3m3: active-value の各位置は根 leaf を許す"
   (check-equal? (map (lambda (fixture) (take fixture 2)) active-value-fixtures)

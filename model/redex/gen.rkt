@@ -747,13 +747,20 @@
        (derive-places (config-heap configuration)
                       callables
                       #:declared (config-declared-types configuration)))
-     (and places
-          (core-check-row (config-core configuration)
-                          places
-                          callables
-                          type
-                          #:declared (config-declared-types configuration)
-                          #:states (config-states configuration))))))
+     (define borrow-types
+       (and places
+            (recover-runtime-borrow-types (config-core configuration)
+                                          (config-heap configuration)
+                                          (config-states configuration)
+                                          places)))
+     (and borrow-types
+          (parameterize ([config-runtime-borrow-types borrow-types])
+            (core-check-row (config-core configuration)
+                            places
+                            callables
+                            type
+                            #:declared (config-declared-types configuration)
+                            #:states (config-states configuration)))))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))
