@@ -5207,6 +5207,8 @@
     (if (redex-match? G2m v candidate)
         (observed-leaf-positions-ok? candidate)
         (control-leaf-positions-ok? candidate)))
+  (define (deferred-code-ok? candidate)
+    (not (contains-owned-leaf? candidate)))
   (match (peel-node core)
     ;; R-OwnLeafPass は既に token を持つ producer の直前を通過する。
     [`(OwnLeaf ,payload) (value-position-ok? payload)]
@@ -5228,11 +5230,16 @@
     [`(Let ,_binding ,bound ,body)
      (and (value-position-ok? bound)
           (control-leaf-positions-ok? body))]
+    [`(Construct ,_type ,_constructor ,fields ...)
+     (andmap value-position-ok? fields)]
     [`(MutSlot ,_) #t]
     [`(Drop ,argument)
      (value-position-ok? argument)]
-    ;; 所有値の分解は束縛子へ leaf 本体を渡すため、代入後の枝の本体と
-    ;; その着地先の Scope の本体は producer が作る値位置になる。
+    [`(Handle ,_operation ,handler ,body)
+     (and (deferred-code-ok? handler)
+          (value-position-ok? body))]
+    [`(Unsafe ,body)
+     (value-position-ok? body)]
     [`(Scope ,_places ,body)
      (value-position-ok? body)]
     [`(Eliminate ,scrutinee (,branches ...))
@@ -5240,7 +5247,7 @@
           (andmap (lambda (branch)
                     (match branch
                       [`(,_constructor (,_names ...) -> ,body)
-                       (value-position-ok? body)]
+                       (deferred-code-ok? body)]
                       ;; 文法上は br 形しか来ないが、未知の枝も厳格側へ落とす。
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
@@ -5249,9 +5256,20 @@
           (andmap (lambda (branch)
                     (match (erase-core branch)
                       [`(,_member ,_binder -> ,body)
-                       (value-position-ok? body)]
+                       (deferred-code-ok? body)]
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
+    [`(Recur ,_id ,_function (,_arguments ...) ,body ,next)
+     (and (deferred-code-ok? body)
+          (control-leaf-positions-ok? next))]
+    [`(RecRewrite ,input (,entries ...))
+     (and (control-leaf-positions-ok? input)
+          (andmap (lambda (entry)
+                    (match (erase-core entry)
+                      [`(,_label ,_binder ,_input-type ,_mark ,_output-type ,body)
+                       (deferred-code-ok? body)]
+                      [_ #f]))
+                  entries))]
     [`(RecRewriteOpen (,fields ...))
      (andmap value-position-ok? (map last fields))]
     [_

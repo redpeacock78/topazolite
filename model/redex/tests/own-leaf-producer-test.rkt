@@ -229,7 +229,7 @@
                1))
    '(((tok 4) (0 1)))))
 
-(test-case "所有値の分解で control へ出た根 leaf を受理する"
+(test-case "所有値の分解で選択前の枝にある根 leaf を拒否する"
   (define heap-value
     '(Construct (Option (Owned Res)) some
                 (OwnedLeaf (tok 0) (resource 1))))
@@ -244,8 +244,8 @@
   (define eliminated (apply-reduction-relation -->g2 (car moved)))
   (check-equal? (length eliminated) 1)
   (check-true (config-ok? (car eliminated) '() '(Owned Res) '()))
-  ;; 代入先の枝本体も producer の値位置として扱う。
-  (check-true
+  ;; eliminator が選ぶ前の枝は deferred-code なので token を含めない。
+  (check-false
    (control-leaf-positions-ok?
     '(Eliminate (Construct T K 1)
                 ((some (x) -> (OwnedLeaf (tok 1) (resource 1)))))))
