@@ -178,6 +178,12 @@
   (rejected '(OwnedTransit 9 7) #:heap? #f)
   (rejected '(OwnedTransit 9 7) #:declared 'Int #:expected 'Int)
   (rejected '(OwnedTransit 9 #t))
+  (define wrong-place
+    '(cfg (OwnedTransit 10 7)
+          ((9 7 (declared (Owned Int))))
+          ((9 Moved)) () ()))
+  (check-false (runtime-row wrong-place '() '(Owned Int)))
+  (check-false (config-ok? wrong-place '() '(Owned Int) '()))
   (define root-leaf-marker
     `(cfg (OwnedTransit 9 (OwnedLeaf (tok 1) (resource 1)))
           ((9 (resource 7) (declared (Owned Res))))

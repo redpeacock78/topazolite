@@ -8,6 +8,8 @@
          redex/reduction-semantics
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../elaborate.rkt"
+         "../erase.rkt"
          "../gen.rkt"
          "../lang.rkt"
          "../machine.rkt"
@@ -93,6 +95,16 @@
         (values configs rules expected after-transit))
       (values '() '() #f #f)))
 
+(define (run-elaborated-source source)
+  (match (elab source)
+    [(list span-core type row callables)
+     (define core (erase-core span-core))
+     (check-equal? (core-type-of core '() callables) (list type row))
+     (define-values (configs rules) (trace-g2 (inject-g2m core)))
+     (check-config-trace configs callables type)
+     (values configs rules type)]
+    [other (fail (format "UCore の elaborate に失敗した: ~s" other))]))
+
 (define int-function-type '(NFn (Int) Int () () () User))
 (define int-callables `((identity ,int-function-type)))
 
@@ -123,12 +135,62 @@
   (define core
     '(Scope ()
        (Let (p let (Owned Int)) 17 (Drop (Move p)))))
+  ;; Core の row は Drop の Own だけである。
   (define-values (configs rules _expected _after)
-    (run-program core '() '(R-Move R-Drop) (lambda (c) (equal? c 'unit)))
-    ;; Core の row は Drop の Own だけである。
-    )
+    (run-program core '() '(R-Move R-Drop) (lambda (c) (equal? c 'unit))))
   (check-not-false (member 'R-ScopeValue rules))
   (check-equal? (tokens (last configs)) '()))
+
+(test-case "UCore の Lam は elaboration 後に値へ簡約する"
+  (define-values (configs rules _type)
+    (run-elaborated-source '(Fn ((x Int)) Int () x)))
+  (check-not-false (member 'R-ScopeValue rules))
+  (check-true (match (control (last configs)) [`(Lam ,_ ,_ ,_ ,_) #t] [_ #f])))
+
+(test-case "UCore の PrimVal は elaboration 後に値へ簡約する"
+  (define-values (configs rules _type)
+    (run-elaborated-source 'add))
+  (check-not-false (member 'R-ScopeValue rules))
+  (check-true (match (control (last configs)) [`(PrimVal ,_ ,_) #t] [_ #f])))
+
+(test-case "UCore の Curry は CurryVal へ簡約する"
+  (define-values (configs rules _type)
+    (run-elaborated-source '(Curry add 20)))
+  (check-not-false (member 'R-CurryVal rules))
+  (check-true (match (control (last configs)) [`(CurryVal ,_ ,_ ,_) #t] [_ #f])))
+
+(test-case "UCore の Recur は RecurVal へ簡約する"
+  (define-values (configs rules _type)
+    (run-elaborated-source '(Recur loop ((x Int)) Int () x loop)))
+  (check-not-false (member 'R-RecurBind rules))
+  (check-true (match (control (last configs)) [`(RecurVal ,_ ,_ ,_ ,_) #t] [_ #f])))
+
+(test-case "C4-001 の UCore Eliminate は移送 marker を外して枝を選ぶ"
+  (define source
+    '(Fn ((xs (Owned (List Int)))) Int (Own)
+       (Eliminate (Move xs)
+         ((nil () -> 0)
+          (cons (head tail) -> head)))))
+  (define-values (function function-type _function-row callables)
+    (match (elab source)
+      [(list span-core type row known-callables)
+       (values (erase-core span-core) type row known-callables)]
+      [other (fail (format "C4-001 UCore の elaborate に失敗した: ~s" other))]))
+  (define control-term `(Scope (0) (Apply ,function (Move 0))))
+  (define places '((0 (List Int))))
+  (define typed (core-type-of control-term places callables))
+  (check-true (and (list? typed) (= (length typed) 2))
+              (format "C4-001 の実行項が型付けされない: ~s" typed))
+  (define list-value
+    '(Construct (List Int) cons 31 (Construct (List Int) nil)))
+  (define start
+    `(cfg ,control-term ((0 ,list-value (declared (Owned (List Int)))))
+          ((0 Available)) () ()))
+  (define-values (configs rules) (trace-g2 start))
+  (check-config-trace configs callables (first typed))
+  (check-not-false (member 'R-EliminateTransit rules))
+  (check-not-false (member 'R-Eliminate rules))
+  (check-equal? (control (last configs)) 31))
 
 (test-case "Moved marker を Owned の q へ再束縛して Drop する"
   (define core
