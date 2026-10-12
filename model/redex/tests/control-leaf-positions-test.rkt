@@ -665,7 +665,6 @@
 (test-case "c3m3: pending root-leaf の accept/reject 表を全行固定する"
   (for ([row (in-list position-table)]
         #:when (eq? (third row) 'pending-code))
-    (define key (list (first row) (second row)))
     (define rc (row-fixture (first row) (second row)))
     (check-not-false rc (format "fixture ~s/~s" (first row) (second row)))
     (define label (format "~s/~s" (first row) (second row)))
