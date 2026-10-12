@@ -1634,7 +1634,7 @@ dom(Ξ) = dom(H) = dom(Ω)
 configuration の型付けでは、制御項の値位置にある根の `OwnedLeaf` を payload の型で型付けし、`(OwnLeaf (resource n))` を `Owned Res` として型付けする。
 また、`(OwnLeaf (OwnedLeaf tk v))` は内側の token を保ったまま payload の型で型付けする。
 この二つの追加的な `OwnLeaf` 形式の受理は configuration の型付け（`deriving-config?`）に限り、静的な Core 型付けの producer 位置の制限は変えない。
-構成の型付けは、`OwnedTransit(p, v)` に `H[p]` の宣言型 `(Owned τ)` を与えるのは、次の四条件をすべて満たす場合に限る。
+構成の型付けが `OwnedTransit(p, v)` に `H[p]` の宣言型 `(Owned τ)` を与えるのは、次の四条件をすべて満たす場合に限る。
 
 - `Ω[p]` が `Moved` である。
 - `H[p]` に宣言型 `(Owned τ)` が記録されている。
