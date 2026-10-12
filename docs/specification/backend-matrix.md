@@ -267,12 +267,15 @@ PR ではその欄の値をそのまま残し、型と可変性の印は持た�
 `PRecRewrite` の規則は入力の `PRec` を欄順に走査し、値のある列挙欄だけを `PLet` を含む欄へ一度だけ展開する。
 入力に無い欄は出力にも現れない。
 
-所有 token を含む値は、payload の表現を保って token の操作だけを消去する。
+所有の producer と実行時専用の印は、payload の表現を保って写す。
+`OwnedLeaf` と `OwnedTransit` は、`lowering.rkt` の `make-lowering` 内にある `lower-val` が payload へ erase する。
+`OwnLeaf` は従来どおり `lower` で payload へ写す。
 
 | Typed Core | PR |
 |---|---|
 | `(OwnLeaf c)` | `(lower c)` |
 | `(OwnedLeaf tk v)` | `(lower-value v)` |
+| `(OwnedTransit p v)` | `(lower-value v)` |
 
 **表現規約** `repr` は型から目標値の形への写像である。
 

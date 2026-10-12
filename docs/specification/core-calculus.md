@@ -204,7 +204,12 @@ v ::= l                                          リテラル
     | resource(n)                                affine 資源値（acquire が生成、§3.5）
     | TypeRep(O, t, κ)                           型情報値（origin 付き）
     | ProofRep(O, φ)                             Proof 値（origin 付き）
+    | OwnedTransit(p, v)                         移送中の Owned 値（G2m の実行時専用形）
 ```
+
+**移送 marker** `OwnedTransit(p, v)` は、値 `v` が元の place `p` から移送中であることを示す G2m 専用の実行時形である。
+marker 自身は token を持たず、Core tree の子は `v` だけである。
+静的な Typed Core の入力には現れず、構成の型付けでのみ受理する。
 
 `UnionInject` は対象 Union 型 `τU`、選んだ成分型 `τm`、payload を持つ。
 `UnionEliminate` の各枝は成分型と束縛子を持ち、束縛子はその枝の本体だけで有効である。
@@ -1629,6 +1634,31 @@ dom(Ξ) = dom(H) = dom(Ω)
 configuration の型付けでは、制御項の値位置にある根の `OwnedLeaf` を payload の型で型付けし、`(OwnLeaf (resource n))` を `Owned Res` として型付けする。
 また、`(OwnLeaf (OwnedLeaf tk v))` は内側の token を保ったまま payload の型で型付けする。
 この二つの追加的な `OwnLeaf` 形式の受理は configuration の型付け（`deriving-config?`）に限り、静的な Core 型付けの producer 位置の制限は変えない。
+構成の型付けは、`OwnedTransit(p, v)` に `H[p]` の宣言型 `(Owned τ)` を与えるのは、次の四条件をすべて満たす場合に限る。
+
+- `Ω[p]` が `Moved` である。
+- `H[p]` に宣言型 `(Owned τ)` が記録されている。
+- `v` の型 `t` が `owned-lift-compatible?` により `(Owned τ)` と整合する。
+- `v` の根は `OwnedLeaf` でも `OwnedTransit` でもない。
+
+同じ place `p` を持つ marker は、制御項と heap のすべての値を通じて高々一つとする。
+`θ` は消費済みの観測履歴であるため、この一意性の検査には含めない。
+`R-Yield` の観測値には marker が残りうるが、観測後の marker は live な移送ではない。
+一意性検査は `collect-tokens` と同じ Core 子走査を使い、`CurryVal` の origin は値の子として辿らない。
+四条件に素の `(resource n)` を除外する条件は加えない。
+`resource-producer-positions-ok?` が許可された `OwnLeaf` または `OwnedLeaf` の直下以外にある裸の `(resource n)` を拒否する。
+marker を値の内部で運ぶ位置には、構成の型付けだけで適用する受け口がある。
+
+- `Construct` の `Owned` 欄。
+- `Rec` の `Owned` 欄。
+- `CurryVal` の `Owned` 固定引数。
+- `Curry` 式が `Owned` 型の仮引数へ渡す実引数。
+- `Yield` の観測値が `Owned` 型である場合。
+
+`Yield` の観測値は推論と期待型検査の双方でこの受け口を使う。
+`OwnLeaf` と `OwnedLeaf` は、payload の根が `OwnedTransit` の場合に拒否する。
+この c3n1 の改訂では marker の生成と消費を規定しない。
+`R-Move` と `R-Forward` による marker の生成と消費、`R-OwnLeaf` による marker の除去、9×9 の供給元と消費位置の行列、および `OWN-006` の行列は c3n2 で記す。
 configuration 検査は、裸の `(resource n)` を制御項と heap 値の双方で検査し、`OwnLeaf` または `OwnedLeaf` の直下と heap entry の値そのもの以外にある出現を拒否する。
 heap entry の根にある `OwnedLeaf` と、`OwnedLeaf` の直下にある別の `OwnedLeaf` も拒否する。
 
@@ -1665,16 +1695,22 @@ P にある資源型の `Let` 変数は借用の owner として登録される�
 値の内部に入った所有資源は `(OwnedLeaf tk v)` で表す。leaf の型は payload `v` の型そのものであり、payload が `Owned` 型であることを要求する。leaf は `Rec` の欄、`Construct` の欄、`CurryVal` の関数と固定引数の位置、または leaf の payload の内部に置ける。ただし payload 自体が leaf である直接の入れ子は許さない。`Rec` の欄は label を、`Construct` の欄と `CurryVal` の位置は 0 起点の位置を path の segment とする。未対応の値構成子の内部へ隠した leaf は構成検査で拒否する。
 構成検査では、heap 値の根にある `OwnedLeaf` と `OwnedLeaf` 直下の `OwnedLeaf` を拒否する。
 構成検査では、制御項の根にある値の `OwnedLeaf` を許す。
+制御項の根にある `OwnedTransit` も、次の位置分類に従って検査する。
 **active-value** の位置は、`OwnLeaf` の payload、`Apply` の評価中の実引数、`Let` の束縛値、`Construct` の現在の欄、`Perform` の payload、`Handle` の本体、`Scope` の本体、`Yield` の観測 payload、`Drop` の引数、`Curry` の固定引数、`Rec` の現在の欄、`RecRewriteOpen` の現在の作業欄、`Unsafe` の本体である。
 active-value の位置では、その位置に値として現れる根の `OwnedLeaf` を許し、値の内部は `observed-leaf-positions-ok?` で検査する。
+active-value の位置では根の `OwnedTransit` も許し、その payload の内部を `observed-leaf-positions-ok?` で検査する。
 **pending-code** の位置は、`Apply` の後続実引数、`Let` の本体、`Construct` の後続欄、`Recur` の継続、`Yield` の継続、`Suspend` の本体、`Curry` の後続固定引数、`Rec` の後続欄、`RecRewriteOpen` の後続作業欄、`Assign` と `Reassign` の値、`PtrOffset` の offset、`RawStore` の payload である。
 pending-code の位置も同じ規則で再帰して検査する。
 中断時に `F_inner` に残る pending-code の token は、`R-ScopeAbort`、`R-ScopeError`、`R-HandleReturn`、`R-HandleSkip`、`R-HandleError` が回収するため失われない。
+pending-code の位置でも根の `OwnedTransit` を許し、その payload を同じ規則で再帰して検査する。
+marker 自身は token を持たず、payload 内部の `OwnedLeaf` は上記五規則が回収する。
 **deferred-code** の位置は、`Handle` の handler 節、`Recur` の本体、eliminator が残っている間の `Eliminate` と `UnionEliminate` の枝本体、`R-RecRewrite-Open` より前の `RecRewrite` entry 本体（Absent になる entry を含む）である。
-deferred-code は `OwnedLeaf` を含まない。
+deferred-code は `OwnedLeaf` も `OwnedTransit` も含まない。
 `Eliminate` と `UnionEliminate` の枝は eliminator が残る間は deferred-code であり、選択後は選ばれた枝本体が制御項となって同じ規則で検査される。
 `Recur` の本体に token を捕捉できないのは、`E-OWN-008` が外側の `Owned` 資源の捕捉を拒否し、仮引数が `ResourceScope` と先行 `Let` で符号化されるためである。
 根の leaf は空 path の token として `Λtok` に数え、`finLeaf` event は生成しない。
+heap entry の根にある `OwnedTransit` は拒否し、欄の内部にある marker は許す。
+位置検査は欄内部の marker を通すが、構成全体の受理には上記の config-only 受け口を要する。
 
 `Λtok` の live 集合は二つに分ける。**構造側**は制御項と `Ω(p)=Available` の root の値を走査して得る。**観測側**は trace の `obs` の payload を走査して得る。根と内部 leaf の token をともに数え、`Moved`/`Dropped` の root の heap entry は履歴なので構造側から除く。それぞれの側での token の重複、両側にまたがる同一 token、`Λtok` に無い token は不正である。`Available`/`Moved` の token は構造側にちょうど一度現れ観測側に現れない。`Observed` の token は観測側にちょうど一度現れ構造側に現れない。`Dropped` の token は構造側に現れず、観測側には retire 済みの履歴として高々一度現れる。
 
