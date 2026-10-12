@@ -231,7 +231,7 @@
       [`(RVal ,_ ,value) (walk value environment target-visible?)]
       [`(BorrowRef ,_ ,_ ,_) #t]
       [`(BorrowMutRef ,_ ,_ ,_) #t]
-      [`(PtrVal ,_ ,_ ,_ ,_) #t]
+      [`(PtrVal ,_ ,_ ,_) #t]
       [`(resource ,_) #t]
       [`(Absent ,_) #t]
       [`(Construct ,_ ,_ ,fields ...)
@@ -409,7 +409,7 @@
       [`(RVal ,_ ,value) (walk value target-visible?)]
       [`(BorrowRef ,_ ,_ ,_) no-uses]
       [`(BorrowMutRef ,_ ,_ ,_) no-uses]
-      [`(PtrVal ,_ ,_ ,_ ,_) no-uses]
+      [`(PtrVal ,_ ,_ ,_) no-uses]
       [`(resource ,_) no-uses]
       [`(Absent ,_) no-uses]
       [`(Construct ,_ ,_ ,fields ...)

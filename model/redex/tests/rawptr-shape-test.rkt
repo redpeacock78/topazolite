@@ -59,7 +59,8 @@
                          (PtrOffset x 1)
                          (RawStore x 1)
                          (FromRawPtr x 0)
-                         (PtrVal 0 () Mut (Prov owned))))])
+                         (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                                   (AddrSpace native) (Prov owned)))))])
     (check-true (core-types-normal? core) (format "~s" core)))
   ;; 内側の正規形でない型注釈を見落とさない。
   (check-false
@@ -67,4 +68,8 @@
     '(Unsafe (Let (y const (Record ((b Int imm) (a Int imm)))) 1 y))))
   (check-false
    (core-types-normal?
-    '(RawStore x (Let (y const (Record ((b Int imm) (a Int imm)))) 1 y)))))
+    '(RawStore x (Let (y const (Record ((b Int imm) (a Int imm)))) 1 y))))
+  (check-false
+   (core-types-normal?
+    '(PtrVal 0 () (RawPtr (Record ((b Int imm) (a Int imm))) Mut NonNull
+                          (Align 1) (AddrSpace native) (Prov owned))))))

@@ -7,8 +7,11 @@
 ;; unsafe.md §5.3。Unsafe の内側の redex だけを拾う。
 (test-case "unsafe-raw-redex は Unsafe の内側だけを拾う（unsafe.md §5.3）"
   (define (cfg-of c)
-    `(cfg (Scope (0) ,c) ((0 (resource 1000))) ((0 Available)) () ()))
-  (define p '(PtrVal 0 () Const (Prov owned)))
+    `(cfg (Scope (0) ,c)
+          ((0 (resource 1000) (declared (Owned Res))))
+          ((0 Available)) () ()))
+  (define p '(PtrVal 0 () (RawPtr Res Const NonNull (Align 1)
+                                       (AddrSpace native) (Prov owned))))
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (RawLoad ,p)))) 'raw-load)
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (RawStore ,p 1)))) 'raw-store)
   (check-equal? (unsafe-raw-redex (cfg-of `(Unsafe (PtrOffset ,p 1)))) 'ptr-offset)
@@ -38,7 +41,8 @@
 
 ;; unsafe.md §5.3。PtrVal を leaf に持つかを構造で見る。
 (test-case "contains-ptrval? が入れ子を辿る（unsafe.md §5.3）"
-  (define p '(PtrVal 0 () Const (Prov owned)))
+  (define p '(PtrVal 0 () (RawPtr Int Const NonNull (Align 1)
+                                       (AddrSpace native) (Prov owned))))
   (check-true (contains-ptrval? p))
   (check-true (contains-ptrval? `(Tuple 1 (Tuple 2 ,p))))
   (check-false (contains-ptrval? '(Tuple 1 (Tuple 2 3))))
@@ -72,31 +76,36 @@
               (format "fail を期待した: ~s" outcome))
   (check-equal? (second outcome) expected))
 
-(define ptr '(PtrVal 0 () Const (Prov owned)))
+(define ptr '(PtrVal 0 () (RawPtr Res Const NonNull (Align 1)
+                                      (AddrSpace native) (Prov owned))))
 
 ;; 条件 1。Unsafe の外の RawLoad は落ちる。
 (test-case "Unsafe の外の RawLoad が落ちる（unsafe.md §5.3）"
   (fails-with `(cfg (Scope (0) (RawLoad ,ptr))
-                    ((0 (resource 1000))) ((0 Available)) () ())
+                    ((0 (resource 1000) (declared (Owned Res))))
+                    ((0 Available)) () ())
               full-sidecar 'raw-outside-unsafe))
 
 ;; 条件 2。静的側に記録の無い raw 操作は落ちる。
 (test-case "静的側に記録の無い raw 操作が落ちる（unsafe.md §5.3）"
   (fails-with `(cfg (Scope (0) (Unsafe (RawLoad ,ptr)))
-                    ((0 (resource 1000))) ((0 Available)) () ())
+                    ((0 (resource 1000) (declared (Owned Res))))
+                    ((0 Available)) () ())
               empty-sidecar 'obligation-mismatch))
 
 ;; 条件 3。Unsafe が PtrVal を返すと落ちる。
 (test-case "Unsafe が PtrVal を返すと落ちる（unsafe.md §5.3）"
   (fails-with `(cfg (Scope (0) (Unsafe ,ptr))
-                    ((0 (resource 1000))) ((0 Available)) () ())
+                    ((0 (resource 1000) (declared (Owned Res))))
+                    ((0 Available)) () ())
               full-sidecar 'ptrval-escapes-unsafe))
 
 ;; 条件 4。Unsafe の内側の Yield が PtrVal を観測すると落ちる。
 ;; R-Yield は実際に発火し、θ へ (obs (PtrVal ...)) を足す。
 (test-case "Unsafe の内側で PtrVal を観測すると落ちる（unsafe.md §5.3）"
   (fails-with `(cfg (Scope (0) (Unsafe (Yield ,ptr 1)))
-                    ((0 (resource 1000))) ((0 Available)) () ())
+                    ((0 (resource 1000) (declared (Owned Res))))
+                    ((0 Available)) () ())
               full-sidecar 'ptrval-in-observation))
 
 ;; 条件 5。Unsafe の内側の stuck は受理し、カウンタを進める。
@@ -104,7 +113,8 @@
   (define counters (make-ucounters))
   (check-equal? (check-unsafe-execution
                  `(cfg (Scope (0) (Unsafe (RawLoad ,ptr)))
-                       ((0 (resource 1000))) ((0 Moved)) () ())
+                       ((0 (resource 1000) (declared (Owned Res))))
+                       ((0 Moved)) () ())
                  full-sidecar 200 counters)
                 'ok)
   (check-equal? (ucounters-stuck-in-unsafe counters) 1))
@@ -112,5 +122,6 @@
 ;; 条件 5。Unsafe の外の stuck は落ちる。
 (test-case "Unsafe の外の stuck が落ちる（unsafe.md §5.3）"
   (fails-with `(cfg (Scope (0) (RawLoad ,ptr))
-                    ((0 (resource 1000))) ((0 Moved)) () ())
+                    ((0 (resource 1000) (declared (Owned Res))))
+                    ((0 Moved)) () ())
               full-sidecar 'stuck-outside-unsafe))

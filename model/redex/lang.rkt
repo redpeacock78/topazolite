@@ -316,8 +316,8 @@
          (RVal (ProofRep O φ) v)
          (BorrowRef p fp ρ)
          (BorrowMutRef p fp ρ)
-         ;; unsafe.md §4.3。ptrmut を実行時にも運ぶ。
-         (PtrVal p fp ptrmut prov)
+         ;; unsafe.md §4.3。静的な pointer 型を値に持たせる。
+         (PtrVal p fp (RawPtr τ ptrmut nul align as prov))
          (UnionVal τ τ v)
          (RegionLam (rp ...) c)
          ;; c3n。token は持たず、値の子は payload だけである。

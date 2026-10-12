@@ -29,6 +29,7 @@
          heap-walk-path
          heap-path-type
          place-root-type
+         ptr-target-type
          proj-borrow-mut
          value-set-path
          path-lookup
@@ -552,6 +553,10 @@
     [`(Owned ,τ) τ]
     [#f #f]
     [τ τ]))
+
+(define (ptr-target-type heap place path)
+  (define root-type (place-root-type heap place))
+  (and root-type (heap-path-type heap place root-type path)))
 
 ;; c3n。資源の根は OwnedLeaf へ、Owned と宣言された place の他の値は
 ;; 移送 marker へ包み、それ以外はそのまま移す。
@@ -1187,39 +1192,62 @@
         (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
         R-Assign)
 
-   ;; spec §4.2。raw pointer 操作は H と Ω の実在 place を要求する。
+   ;; unsafe.md §2.3。AddressOf は heap の宣言型から pointee 型を回復する。
    (--> (cfg (in-hole E (AddressOf (BorrowMutRef p fp ρ))) H Ω Λtok θ)
-        (cfg (in-hole E (PtrVal p fp Mut (Prov owned))) H Ω Λtok θ)
+        (cfg (in-hole E (PtrVal p fp (RawPtr τ Mut NonNull (Align 1)
+                                             (AddrSpace native) (Prov owned))))
+             H Ω Λtok θ)
+        (where τ ,(ptr-target-type (term H) (term p) (term fp)))
         R-AddressOf)
 
-   (--> (cfg (in-hole E (PtrOffset (PtrVal p fp ptrmut prov) n)) H Ω Λtok θ)
-        (cfg (in-hole E (PtrVal p fp_new ptrmut prov)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (PtrOffset
+                         (PtrVal p fp (RawPtr τ ptrmut nul align as prov)) n))
+             H Ω Λtok θ)
+        (cfg (in-hole E (PtrVal p fp_new
+                           (RawPtr τ ptrmut Nullable align as prov)))
+             H Ω Λtok θ)
         (where fp_new ,(fp-offset (term fp) (term n)))
         R-PtrOffset)
 
-   (--> (cfg (in-hole E (RawLoad (PtrVal p fp ptrmut prov))) H Ω Λtok θ)
+   (--> (cfg (in-hole E (RawLoad
+                         (PtrVal p fp (RawPtr τ ptrmut nul align as prov))))
+             H Ω Λtok θ)
         (cfg (in-hole E v_result) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (where #t ,(let ([target (ptr-target-type (term H) (term p) (term fp))])
+                     (and target (type-equiv? target (term τ)))))
         (where v_result ,(path-lookup (term H) (term p) (term fp)))
         R-RawLoad)
 
-   (--> (cfg (in-hole E (RawStore (PtrVal p fp Mut prov) v)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (RawStore
+                         (PtrVal p fp (RawPtr τ Mut nul align as prov)) v))
+             H Ω Λtok θ)
         (cfg (in-hole E unit) H_new Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (where #t ,(let ([target (ptr-target-type (term H) (term p) (term fp))])
+                     (and target (type-equiv? target (term τ)))))
         (where H_new ,(path-set (term H) (term p) (term fp) (term v)))
         R-RawStore)
 
-   (--> (cfg (in-hole E (FromRawPtr (PtrVal p fp Const (Prov owned)) ρ))
+   (--> (cfg (in-hole E (FromRawPtr
+                         (PtrVal p fp
+                                 (RawPtr τ Const nul align as (Prov owned))) ρ))
             H Ω Λtok θ)
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (where #t ,(let ([target (ptr-target-type (term H) (term p) (term fp))])
+                     (and target (type-equiv? target (term τ)))))
         (where v_target ,(path-lookup (term H) (term p) (term fp)))
         R-FromRawPtrConst)
 
-   (--> (cfg (in-hole E (FromRawPtr (PtrVal p fp Mut (Prov owned)) ρ))
+   (--> (cfg (in-hole E (FromRawPtr
+                         (PtrVal p fp
+                                 (RawPtr τ Mut nul align as (Prov owned))) ρ))
             H Ω Λtok θ)
         (cfg (in-hole E (BorrowMutRef p fp ρ)) H Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
+        (where #t ,(let ([target (ptr-target-type (term H) (term p) (term fp))])
+                     (and target (type-equiv? target (term τ)))))
         (where v_target ,(path-lookup (term H) (term p) (term fp)))
         R-FromRawPtrMut)
 

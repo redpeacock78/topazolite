@@ -79,25 +79,29 @@
     [(redex-match? G2m
                    (in-hole E_1
                      (Unsafe (in-hole E_2
-                       (PtrOffset (PtrVal p fp ptrmut prov) any_2))))
+                       (PtrOffset
+                        (PtrVal p fp (RawPtr τ ptrmut nul align as prov)) any_2))))
                    control)
      'ptr-offset]
     [(redex-match? G2m
                    (in-hole E_1
                      (Unsafe (in-hole E_2
-                       (FromRawPtr (PtrVal p fp ptrmut prov) ρ))))
+                       (FromRawPtr
+                        (PtrVal p fp (RawPtr τ ptrmut nul align as prov)) ρ))))
                    control)
      'from-raw-ptr]
     [(redex-match? G2m
                    (in-hole E_1
                      (Unsafe (in-hole E_2
-                       (RawLoad (PtrVal p fp ptrmut prov)))))
+                       (RawLoad
+                        (PtrVal p fp (RawPtr τ ptrmut nul align as prov))))))
                    control)
      'raw-load]
     [(redex-match? G2m
                    (in-hole E_1
                      (Unsafe (in-hole E_2
-                       (RawStore (PtrVal p fp ptrmut prov) any_2))))
+                       (RawStore
+                        (PtrVal p fp (RawPtr τ ptrmut nul align as prov)) any_2))))
                    control)
      'raw-store]
     [else #f]))

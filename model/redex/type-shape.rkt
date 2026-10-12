@@ -332,7 +332,7 @@
          [`(RawStore ,target ,value)
           (and (walk target) (walk value))]
          [`(FromRawPtr ,operand ,_) (walk operand)]
-         [`(PtrVal ,_ ,_ ,_ ,_) #t]
+         [`(PtrVal ,_ ,_ ,type) (type-normal? type)]
          [`(Move ,_) #t]
          [`(Forward ,_) #t]
          [`(MutSlot ,_) #t]

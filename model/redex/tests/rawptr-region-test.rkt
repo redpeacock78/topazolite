@@ -13,7 +13,10 @@
   ;; FromRawPtr の ρ は Core の子ではない。
   (check-equal? (core-children '(FromRawPtr x 0)) '(x))
   (check-equal? (core-children '(FromRawPtr x (RParam rp))) '(x))
-  (check-equal? (core-children '(PtrVal 0 () Mut (Prov owned))) '()))
+  (check-equal?
+   (core-children '(PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                          (AddrSpace native) (Prov owned))))
+   '()))
 
 ;; core-children と core-with-children が 1 対 1 で対応する。
 (test-case "core-with-children の再構成（unsafe.md §4.4）"
@@ -24,7 +27,8 @@
                          (RawStore x 1)
                          (FromRawPtr x 0)
                          (FromRawPtr x (RParam rp))
-                         (PtrVal 0 () Mut (Prov owned))))])
+                         (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                                   (AddrSpace native) (Prov owned)))))])
     (check-equal? (core-with-children term (core-children term)) term
                   (format "恒等: ~s" term)))
   ;; 子を差し替えると据え置きの成分が保たれる。

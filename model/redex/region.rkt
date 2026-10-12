@@ -76,14 +76,14 @@
     [`(RegionLam (,_ ...) ,c) (list c)]
     [`(RegionApp ,c (,_ ...)) (list c)]
     ;; pointer 操作（unsafe.md §4.4）。FromRawPtr の ρ は region 識別子で
-    ;; あり Core の子ではない。PtrVal の p と fp も Core ではない。
+    ;; あり Core の子ではない。PtrVal の p、fp、RawPtr 型も Core の子ではない。
     [`(AddressOf ,c) (list c)]
     [`(RawLoad ,c) (list c)]
     [`(Unsafe ,c) (list c)]
     [`(PtrOffset ,c_1 ,c_2) (list c_1 c_2)]
     [`(RawStore ,target ,value) (list target value)]
     [`(FromRawPtr ,c ,_) (list c)]
-    [`(PtrVal ,_ ,_ ,_ ,_) '()]
+    [`(PtrVal ,_ ,_ ,_) '()]
     [`(Borrow ,_) '()]
     [`(BorrowMut ,_) '()]
     [`(BorrowAt ,_ ,_ ,_) '()]

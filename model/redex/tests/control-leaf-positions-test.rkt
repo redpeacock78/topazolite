@@ -288,7 +288,9 @@
   (define heap
     '((0 (Rec ((a imm 7)
                (b mut 8)
-               (owned imm (OwnedLeaf (tok 0) (resource 9))))))))
+               (owned imm (OwnedLeaf (tok 0) (resource 9)))))
+        (declared (Record ((a Int imm) (b Int mut)
+                           (owned (Owned Res) imm)))))))
   (define states '((0 Available)))
   (define (configuration core tokens)
     `(cfg ,core ,heap ,states ,tokens ()))

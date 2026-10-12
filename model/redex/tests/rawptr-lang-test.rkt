@@ -78,13 +78,25 @@
   (check-true (redex-match? G2 Q (term ((PtrProp NonNull Int)
                                         (PtrProp Aligned Int))))))
 
-;; unsafe.md §4.3。PtrVal は place と field path と可変性と provenance を持つ。
+;; unsafe.md §4.3。PtrVal は place、field path、RawPtr 型を持つ。
 (test-case "PtrVal の構文（unsafe.md §4.3）"
-  (check-true (redex-match? G2m v (term (PtrVal 0 () Mut (Prov owned)))))
-  (check-true (redex-match? G2m v (term (PtrVal 3 (a 1) Const (Prov owned)))))
+  (check-true
+   (redex-match? G2m v
+                 (term (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                            (AddrSpace native) (Prov owned))))))
+  (check-true
+   (redex-match? G2m v
+                 (term (PtrVal 3 (a 1) (RawPtr Bool Const Nullable (Align 4)
+                                                    (AddrSpace native) (Prov owned))))))
   (check-false (redex-match? G2m v (term (PtrVal 0 () (Prov owned)))))
-  (check-false (redex-match? G2m v (term (PtrVal 0 () mut (Prov owned)))))
-  (check-false (redex-match? G2 v (term (PtrVal 0 () Mut (Prov owned))))))
+  (check-false
+   (redex-match? G2m v
+                 (term (PtrVal 0 () (RawPtr Int mut NonNull (Align 1)
+                                            (AddrSpace native) (Prov owned))))))
+  (check-false
+   (redex-match? G2 v
+                 (term (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                            (AddrSpace native) (Prov owned)))))))
 
 ;; unsafe.md §6.3。3 つの評価文脈すべてに枠がある。
 (test-case "評価文脈の枠（unsafe.md §6.3）"
@@ -93,10 +105,12 @@
                   (term ((Unsafe hole)
                          (AddressOf hole)
                          (PtrOffset hole 1)
-                         (PtrOffset (PtrVal 0 () Mut (Prov owned)) hole)
+                         (PtrOffset (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                                            (AddrSpace native) (Prov owned))) hole)
                          (RawLoad hole)
                          (RawStore hole 1)
-                         (RawStore (PtrVal 0 () Mut (Prov owned)) hole)
+                         (RawStore (PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
+                                                            (AddrSpace native) (Prov owned))) hole)
                          (FromRawPtr hole 0))))])
       (check-true
        (case ctx
