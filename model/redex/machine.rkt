@@ -4,10 +4,13 @@
          redex/reduction-semantics
          "lang.rkt"
          "borrow.rkt"
+         "compat.rkt"
          "origins.rkt"
          "region-param.rkt"
          "resource-type.rkt"
          "rows.rkt"
+         "schema.rkt"
+         "span-core.rkt"
          "ownership.rkt"
          "traits.rkt"
          "type-equiv.rkt"
@@ -24,6 +27,8 @@
          inject-g2m
          substitute*/g2
          heap-walk-path
+         heap-path-type
+         place-root-type
          proj-borrow-mut
          value-set-path
          path-lookup
@@ -372,6 +377,62 @@
   (and (owner-path? fp)
        (heap-walk-path (table-ref H p) fp)))
 
+;; 借用値の型を回復するとき、heap 値を型と path に沿って辿る。
+;; place の状態は呼び出し側で検査する。
+(define (heap-path-type heap place root-type path)
+  (define (member-of? union member)
+    (for/or ([candidate (in-list (union-members (normalize-type union)))])
+      (type-equiv? candidate member)))
+  (and (list? path)
+       (let walk ([type root-type] [prefix '()] [segments path])
+         (define value (path-lookup heap place prefix))
+         (and value
+              (not (match (peel-node value)
+                     [`(Absent ,_) #t]
+                     [_ #f]))
+              (if (null? segments)
+                  type
+                  (let* ([segment (peel-lbl (first segments))]
+                         [normalized (normalize-type type)]
+                         [next-type
+                          (match segment
+                            [`(Payload)
+                             (match* (normalized (peel-node value))
+                               [(`(Union ,_ ,_)
+                                 `(UnionVal ,value-union ,member ,_))
+                                (and (tag-compat? value-union normalized)
+                                     (member-of? value-union member)
+                                     (member-of? normalized member)
+                                     member)]
+                               [(_ _) #f])]
+                            [(? exact-nonnegative-integer? position)
+                             (match (peel-node value)
+                               [`(Construct ,value-type ,constructor ,_fields ...)
+                                (and (type-equiv? normalized value-type)
+                                     (let* ([schema
+                                             (constructor-schema normalized)]
+                                            [field-types
+                                             (match (and schema
+                                                         (assoc constructor schema))
+                                               [(list _ types) types]
+                                               [_ #f])])
+                                       (and field-types
+                                            (< position (length field-types))
+                                            (list-ref field-types position))))]
+                               [_ #f])]
+                            [(? symbol? label)
+                             (match normalized
+                               [`(Record ,fields)
+                                (match (field-row-lookup fields label)
+                                  [(list field-type _) field-type]
+                                  [_ #f])]
+                               [_ #f])]
+                            [_ #f])])
+                    (and next-type
+                         (walk next-type
+                               (append prefix (list segment))
+                               (rest segments)))))))))
+
 ;; spec §4.2。ポインタの末尾の自然数 segment だけを offset する。
 ;; label-only path、負の結果、非自然数の offset は不発火にする。
 (define (fp-offset fp offset)
@@ -485,6 +546,12 @@
   (match (assoc place heap)
     [`(,_ ,_ (declared ,τ)) τ]
     [_ #f]))
+
+(define (place-root-type heap place)
+  (match (place-declared-type heap place)
+    [`(Owned ,τ) τ]
+    [#f #f]
+    [τ τ]))
 
 ;; c3n。資源の根は OwnedLeaf へ、Owned と宣言された place の他の値は
 ;; 移送 marker へ包み、それ以外はそのまま移す。

@@ -5344,64 +5344,13 @@
 (define (recover-runtime-borrow-types core heap states places)
   (define recovered (make-hash))
   (define valid? #t)
-  (define (member-of? union member)
-    (for/or ([candidate (in-list (union-members (normalize-type union)))])
-      (type-equiv? candidate member)))
   (define (path-type place path)
     (and (match (assoc place states)
            [(list _ 'Available) #t]
            [_ #f])
          (let ([place-entry (assoc place places)])
            (and place-entry
-                (let walk ([type (second place-entry)] [prefix '()]
-                           [segments path])
-                  (define value (path-lookup heap place prefix))
-                  (and value
-                       (not (match (peel-node value)
-                              [`(Absent ,_) #t]
-                              [_ #f]))
-                       (if (null? segments)
-                           type
-                           (let* ([segment (peel-lbl (first segments))]
-                                  [normalized (normalize-type type)]
-                                  [next-type
-                                   (match segment
-                                     [`(Payload)
-                                      (match* (normalized (peel-node value))
-                                        [(`(Union ,_ ,_)
-                                          `(UnionVal ,value-union ,member ,_))
-                                         (and (tag-compat? value-union normalized)
-                                              (member-of? value-union member)
-                                              (member-of? normalized member)
-                                              member)]
-                                        [(_ _) #f])]
-                                     [(? exact-nonnegative-integer? position)
-                                      (match (peel-node value)
-                                        [`(Construct ,value-type ,constructor
-                                                     ,_fields ...)
-                                         (and (type-equiv? normalized value-type)
-                                              (let* ([schema
-                                                      (constructor-schema normalized)]
-                                                     [field-types
-                                                      (and schema
-                                                           (lookup schema constructor))])
-                                                (and field-types
-                                                     (< position
-                                                        (length field-types))
-                                                     (list-ref field-types position))))]
-                                        [_ #f])]
-                                     [(? symbol? label)
-                                      (match normalized
-                                        [`(Record ,fields)
-                                         (match (field-row-lookup fields label)
-                                           [(list field-type _) field-type]
-                                           [_ #f])]
-                                        [_ #f])]
-                                     [_ #f])])
-                             (and next-type
-                                  (walk next-type
-                                        (append prefix (list segment))
-                                        (rest segments)))))))))))
+                (heap-path-type heap place (second place-entry) path)))))
   (define (record-borrow! node place path region mutable?)
     (define payload-type (path-type place path))
     (if payload-type
