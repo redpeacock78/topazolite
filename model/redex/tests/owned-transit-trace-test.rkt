@@ -95,15 +95,89 @@
         (values configs rules expected after-transit))
       (values '() '() #f #f)))
 
-(define (run-elaborated-source source)
+(define (elaborate-core-source source)
   (match (elab source)
     [(list span-core type row callables)
-     (define core (erase-core span-core))
-     (check-equal? (core-type-of core '() callables) (list type row))
-     (define-values (configs rules) (trace-g2 (inject-g2m core)))
-     (check-config-trace configs callables type)
-     (values configs rules type)]
+     (values (erase-core span-core) type row callables)]
     [other (fail (format "UCore の elaborate に失敗した: ~s" other))]))
+
+(define (run-elaborated-source source)
+  (define-values (core type row callables) (elaborate-core-source source))
+  (check-equal? (core-type-of core '() callables) (list type row))
+  (define-values (configs rules) (trace-g2 (inject-g2m core)))
+  (check-config-trace configs callables type)
+  (values configs rules type))
+
+(define (replace-symbol tree old new)
+  (cond
+    [(eq? tree old) new]
+    [(pair? tree)
+     (cons (replace-symbol (car tree) old new)
+           (replace-symbol (cdr tree) old new))]
+    [else tree]))
+
+(define (ucore-function-type core-type)
+  (match core-type
+    [`(NFn (,parameters ...) ,return-type ,_immediate ,latent ,obligations ,_origin)
+     `(NFn (,@parameters) ,return-type ,latent ,obligations)]
+    [_ (fail (format "関数値の型が NFn でない: ~s" core-type))]))
+
+(define (check-u-core-owned-move-application source arguments expected-value)
+  (define-values (provider-core provider-type provider-row provider-callables)
+    (elaborate-core-source source))
+  (check-equal? (core-type-of provider-core '() provider-callables)
+                (list provider-type provider-row))
+  (define-values (provider-configs _provider-rules)
+    (trace-g2 (inject-g2m provider-core)))
+  (check-config-trace provider-configs provider-callables provider-type)
+  (define provider-value (control (last provider-configs)))
+  (define provider-callables*
+    (for/list ([entry (in-list provider-callables)])
+      (list (string->symbol (format "u-provider-~a" (first entry)))
+            (second entry))))
+  (define provider-value*
+    (for/fold ([value provider-value]) ([entry (in-list provider-callables)])
+      (replace-symbol
+       value (first entry)
+       (string->symbol (format "u-provider-~a" (first entry))))))
+  (define consumer-source
+    `(Fn ((f (Owned ,(ucore-function-type provider-type))))
+         Int (Own)
+       (Apply (Move f) ,@arguments)))
+  (define-values (consumer-core _consumer-type _consumer-row consumer-callables)
+    (elaborate-core-source consumer-source))
+  (define callables (append provider-callables* consumer-callables))
+  (define moved-core `(Scope (0) (Apply ,consumer-core (Move 0))))
+  (define places `((0 ,provider-type)))
+  (define moved-type (core-type-of moved-core places callables))
+  (check-true (and (list? moved-type) (= (length moved-type) 2))
+              (format "Owned move application が型付けされない: ~s; ~s"
+                      moved-type
+                      (core-type-of/diagnostic moved-core places callables)))
+  (define direct-core `(Apply ,provider-value* ,@arguments))
+  (define direct-type (core-type-of direct-core '() callables))
+  (check-true (and (list? direct-type) (= (length direct-type) 2))
+              (format "marker なしの直接適用が型付けされない: ~s" direct-type))
+  (when (and (list? moved-type) (= (length moved-type) 2)
+             (list? direct-type) (= (length direct-type) 2))
+    (check-equal? (first moved-type) (first direct-type))
+    (define start
+      `(cfg ,moved-core
+            ((0 ,provider-value* (declared (Owned ,provider-type))))
+            ((0 Available)) () ()))
+    (define-values (configs rules) (trace-g2 start))
+    (check-config-trace configs callables (first moved-type))
+    (define after-move (check-transit-prefix configs rules '(R-Move)))
+    (when after-move
+      (check-equal? (transit-places (control after-move)) '(0)))
+    (check-not-false (member 'R-ApplyTransit rules)
+                     "UCore の消費側 trace が R-ApplyTransit を通る")
+    (define-values (direct-configs _direct-rules)
+      (trace-g2 `(cfg ,direct-core () () () ())))
+    (check-config-trace direct-configs callables (first direct-type))
+    (check-equal? (control (last configs))
+                  (control (last direct-configs)))
+    (check-equal? (control (last configs)) expected-value)))
 
 (define int-function-type '(NFn (Int) Int () () () User))
 (define int-callables `((identity ,int-function-type)))
@@ -164,6 +238,20 @@
     (run-elaborated-source '(Recur loop ((x Int)) Int () x loop)))
   (check-not-false (member 'R-RecurBind rules))
   (check-true (match (control (last configs)) [`(RecurVal ,_ ,_ ,_ ,_) #t] [_ #f])))
+
+(test-case "UCore の Lam を Owned place から Move して適用する"
+  (check-u-core-owned-move-application
+   '(Fn ((x Int)) Int () x) '(23) 23))
+
+(test-case "UCore の PrimVal を Owned place から Move して適用する"
+  (check-u-core-owned-move-application 'add '(7 8) 15))
+
+(test-case "UCore の CurryVal を Owned place から Move して適用する"
+  (check-u-core-owned-move-application '(Curry add 20) '(22) 42))
+
+(test-case "UCore の RecurVal を Owned place から Move して適用する"
+  (check-u-core-owned-move-application
+   '(Recur loop ((x Int)) Int () x loop) '(23) 23))
 
 (test-case "C4-001 の UCore Eliminate は移送 marker を外して枝を選ぶ"
   (define source
