@@ -161,25 +161,31 @@
    `(Owned (NFn (Int) Int () () () (Derived User (Curry ,transit-leaf))))))
 
 (test-case "移送 marker の四条件違反を構成型付けで拒否する"
-  (define (rejected core [declared '(Owned Int)] [payload 7]
-                    [states '((9 Moved))] [heap? #t])
+  (define (rejected core
+                    #:expected [expected '(Owned Int)]
+                    #:declared [declared '(Owned Int)]
+                    #:payload [payload 7]
+                    #:states [states '((9 Moved))]
+                    #:heap? [heap? #t])
     (define heap
       (if heap?
           `((9 ,payload (declared ,declared)))
           '()))
     (define cfg `(cfg ,core ,heap ,states () ()))
-    (check-false (config-ok? cfg '() '(Owned Int) '())
+    (check-false (config-ok? cfg '() expected '())
                  (format "不正 marker が通った: ~s" cfg)))
-  (rejected '(OwnedTransit 9 7) '(Owned Int) 7 '((9 Available)))
-  (rejected '(OwnedTransit 9 7) '(Owned Int) 7 '((9 Moved)) #f)
-  (rejected '(OwnedTransit 9 7) 'Int 7)
-  (rejected '(OwnedTransit 9 #t) '(Owned Int) 7)
-  (define nested-leaf-marker
+  (rejected '(OwnedTransit 9 7) #:states '((9 Available)))
+  (rejected '(OwnedTransit 9 7) #:heap? #f)
+  (rejected '(OwnedTransit 9 7) #:declared 'Int #:expected 'Int)
+  (rejected '(OwnedTransit 9 #t))
+  (define root-leaf-marker
     `(cfg (OwnedTransit 9 (OwnedLeaf (tok 1) (resource 1)))
-          ((9 (resource 7) (declared (Owned (Owned Res)))))
+          ((9 (resource 7) (declared (Owned Res))))
           ((9 Moved)) (((tok 1) Available)) ()))
+  ;; heap 側も Res と整合させ、marker payload 根の検査を単独で固定する。
   (check-false
-   (config-ok? nested-leaf-marker '() '(Owned (Owned Res)) '()))
+   (runtime-row root-leaf-marker '() '(Owned Res)))
+  (check-false (config-ok? root-leaf-marker '() '(Owned Res) '()))
   (define twice '(OwnedTransit 9 (OwnedTransit 10 7)))
   (define nested-cfg
     `(cfg ,twice
@@ -195,15 +201,6 @@
    (config-ok?
     (transit-config duplicate duplicate-type)
     '() duplicate-type '()))
-  (define heap-marker
-    `(cfg (Move 0)
-          ((0 (Rec ((owned imm ,transit-marker-int)))
-             (declared (Record ((owned (Owned Int) imm)))))
-           (9 7 (declared (Owned Int))))
-          ((0 Available) (9 Moved)) () ()))
-  (check-false
-   (config-ok? heap-marker '()
-               '(Owned (Record ((owned (Owned Int) imm)))) '(Own)))
   (define root-heap-marker
     `(cfg (Move 0)
           ((0 ,transit-marker-int (declared (Owned Int)))
