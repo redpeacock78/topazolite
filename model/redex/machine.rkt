@@ -432,6 +432,7 @@
 ;; nested leaves, so #f makes malformed configurations stuck.
 (define (rehome-owned-root value tokens)
   (match value
+    [`(OwnedTransit ,_ ,payload) (list payload tokens)]
     [`(OwnedLeaf ,tk ,payload)
      (and (not (owned-leaf? payload))
           (eq? (table-ref tokens tk) 'Available)
@@ -478,6 +479,23 @@
      (match-define `(cfg ,_core ,_heap ,_states ,tokens ,_events)
        configuration)
      (list value tokens)]))
+
+;; c3n。H の項目 (p v (declared τ)) から宣言型を引く。宣言が無ければ #f。
+(define (place-declared-type heap place)
+  (match (assoc place heap)
+    [`(,_ ,_ (declared ,τ)) τ]
+    [_ #f]))
+
+;; c3n。資源の根は OwnedLeaf へ、Owned と宣言された place の他の値は
+;; 移送 marker へ包み、それ以外はそのまま移す。
+(define (transit-moved-value configuration place value)
+  (match-define `(cfg ,_core ,heap ,_states ,tokens ,_events) configuration)
+  (match value
+    [`(resource ,_) (root-resource-token configuration value)]
+    [_
+     (match (place-declared-type heap place)
+       [`(Owned ,_) (list `(OwnedTransit ,place ,value) tokens)]
+       [_ (list value tokens)])]))
 
 (define (acquire-root-resource-token configuration name value tokens)
   (if (eq? name 'acquire)
@@ -1141,6 +1159,69 @@
    (--> (cfg (in-hole E (Unsafe v)) H Ω Λtok θ)
         (cfg (in-hole E v) H Ω Λtok θ)
         R-UnsafeExit)
+
+   ;; G2m では Owned と宣言された place の非資源値を移送 marker で運ぶ。
+   (--> (cfg (in-hole E (Move p)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok_new θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_stored ,(table-ref (term H) (term p)))
+        (where c_whole (in-hole E (Move p)))
+        (where (v_result Λtok_new)
+               ,(transit-moved-value
+                 (term (cfg c_whole H Ω Λtok θ)) (term p) (term v_stored)))
+        (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
+        R-Move)
+
+   (--> (cfg (in-hole E (Forward p)) H Ω Λtok θ)
+        (cfg (in-hole E v_result) H Ω_new Λtok_new θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where v_stored ,(table-ref (term H) (term p)))
+        (where c_whole (in-hole E (Forward p)))
+        (where (v_result Λtok_new)
+               ,(transit-moved-value
+                 (term (cfg c_whole H Ω Λtok θ)) (term p) (term v_stored)))
+        (where Ω_new ,(table-set (term Ω) (term p) 'Moved))
+        R-Forward)
+
+   ;; 関数欄の marker は適用の直前に外し、従来の規則へ渡す。
+   (--> (cfg (in-hole E (Apply (OwnedTransit p v_function) v_arg ...))
+             H Ω Λtok θ)
+        (cfg (in-hole E (Apply v_function v_arg ...)) H Ω Λtok θ)
+        R-ApplyTransit)
+
+   ;; 部分適用時は関数欄の marker を CurryVal に保持する。
+   (--> (cfg (in-hole E (Curry (OwnedTransit p ov_function) v_arg))
+             H Ω Λtok θ)
+        (cfg (in-hole E
+                      (CurryVal (Derived O_f (Curry v_arg))
+                                (OwnedTransit p ov_function)
+                                v_arg))
+             H Ω Λtok θ)
+        (where O_f (origin-of/g2 ov_function))
+        R-CurryTransit)
+
+   ;; Eliminator の被検査値の marker を外して枝選択へ渡す。
+   (--> (cfg (in-hole E (Eliminate (OwnedTransit p v_scrutinee)
+                                   (br ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (Eliminate v_scrutinee (br ...))) H Ω Λtok θ)
+        R-EliminateTransit)
+
+   ;; OwnLeaf producer が移送済み Owned 値を受けるときは token を増やさない。
+   (--> (cfg (in-hole E (OwnLeaf (OwnedTransit p v_payload)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (OwnedTransit p v_payload)) H Ω Λtok θ)
+        R-OwnLeafTransit)
+
+   (--> (cfg (in-hole E (OwnLeaf v_payload)) H Ω Λtok θ)
+        (cfg (in-hole E (OwnedLeaf tk_new v_payload)) H Ω Λtok_new θ)
+        (side-condition (not (or (owned-leaf? (term v_payload))
+                                 (owned-transit? (term v_payload)))))
+        (where c_whole (in-hole E (OwnLeaf v_payload)))
+        (where tk_new ,(fresh-token (term (cfg c_whole H Ω Λtok θ))))
+        (where Λtok_new
+               ,(append (term Λtok) (list (list (term tk_new) 'Available))))
+        R-OwnLeaf)
 
    ;; G2 の Lam 本体を含む値にも origin-of を適用できるよう、G1 の
    ;; R-CurryVal を G2m の入口で上書きする。

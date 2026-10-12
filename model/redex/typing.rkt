@@ -2519,7 +2519,7 @@
 
 ;; 関数の位置に置かれた Owned<NFn ...> を一段だけ剥がす。
 ;; Move と CurryVal は place を経由するため許し、それ以外の根は拒む。
-(define owned-function-roots '(Move CurryVal))
+(define owned-function-roots '(Move CurryVal OwnedTransit))
 
 (define (owned-function-type? type)
   (match type
@@ -3663,13 +3663,12 @@
     ;; producer 位置から入ったときだけ OwnLeaf を許す。payload の再帰は
     ;; 通常の infer へ戻すため、入れ子の producer は親位置で個別に許可される。
     [`(OwnLeaf ,payload)
-     (when (owned-transit? payload)
-       (fail 'ill-typed core))
      (unless (or (memq core (ownleaf-permitted))
                  (and (deriving-config?)
                       (match (peel-node payload)
                         [`(resource ,_) #t]
                         [`(OwnedLeaf ,_ ,_) #t]
+                        [`(OwnedTransit ,_ ,_) #t]
                         [_ #f])))
        (fail 'unexpected-ownleaf core))
      (parameterize ([ownleaf-permitted '()])
@@ -5233,6 +5232,10 @@
     (if (redex-match? G2m v candidate)
         (observed-leaf-positions-ok? candidate)
         (control-leaf-positions-ok? candidate)))
+  (define (transit-position-ok? candidate)
+    (if (owned-transit? candidate)
+        (observed-leaf-positions-ok? candidate)
+        (control-leaf-positions-ok? candidate)))
   (define (deferred-code-ok? candidate)
     (not (or (contains-owned-leaf? candidate)
              (contains-owned-transit? candidate))))
@@ -5247,12 +5250,12 @@
     ;; Perform の payload は handler escape 後も外へ運ぶ値である。
     [`(Perform ,_operation ,payload) (value-position-ok? payload)]
     [`(Curry ,function ,argument)
-     (and (control-leaf-positions-ok? function)
+     (and (transit-position-ok? function)
           (value-position-ok? argument))]
     ;; CurryVal の固定引数は β 縮約で Apply の実引数や Drop の引数へ
     ;; 移るため、評価途中のこれらの値位置では根 leaf を許す。
     [`(Apply ,function ,arguments ...)
-     (and (control-leaf-positions-ok? function)
+     (and (transit-position-ok? function)
           (andmap value-position-ok? arguments))]
     [`(Let ,_binding ,bound ,body)
      (and (value-position-ok? bound)
@@ -5270,7 +5273,7 @@
     [`(Scope ,_places ,body)
      (value-position-ok? body)]
     [`(Eliminate ,scrutinee (,branches ...))
-     (and (control-leaf-positions-ok? scrutinee)
+     (and (transit-position-ok? scrutinee)
           (andmap (lambda (branch)
                     (match branch
                       [`(,_constructor (,_names ...) -> ,body)
@@ -5505,15 +5508,14 @@
                                  (andmap (lambda (entry)
                                            (leaf-positions-ok? (second entry)))
                                          heap)
-                                 ;; 移送 marker は制御項と heap 全体で一意に数える。
-                                 ;; θ は消費済みの観測履歴なので数えない。
+                                 ;; 移送 marker は制御項と Available place の値で数える。
+                                 ;; Moved/Dropped の heap 値は stale なので数えず、θ も履歴として数えない。
                                  (let ([transits
                                         (append
                                          (transit-places core)
                                          (append-map
-                                          (lambda (entry)
-                                            (transit-places (second entry)))
-                                          heap))])
+                                          transit-places
+                                          (available-root-values heap states)))])
                                    (= (length transits)
                                       (length (remove-duplicates transits))))
                                  (andmap observed-leaf-positions-ok?

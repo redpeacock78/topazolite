@@ -208,12 +208,12 @@
           ((0 Available) (9 Moved)) () ()))
   (check-false (config-ok? root-heap-marker '() '(Owned Int) '(Own))))
 
-(test-case "OwnLeaf と OwnedLeaf は payload の根 marker を拒否する"
+(test-case "OwnLeaf の marker は構成型付けだけで受け入れ、OwnedLeaf は拒否する"
   (define ownleaf-marker
     `(Construct (Option (Owned Int)) some (OwnLeaf ,transit-marker-int)))
-  (check-false
-   (runtime-row (transit-config ownleaf-marker '(Owned Int))
-                '() '(Option (Owned Int))))
+  (check-runtime-config
+   (transit-config ownleaf-marker '(Owned Int)) '() '(Option (Owned Int)))
+  (check-equal? (core-type-of ownleaf-marker '() '()) 'ill-typed)
   (define ownedleaf-marker
     `(cfg (OwnedLeaf (tok 2) ,transit-marker-int)
           ((9 7 (declared (Owned Int))))
@@ -224,7 +224,7 @@
   (check-runtime-config (transit-config producer '(Owned Int))
                         '() '(Option (Owned Res))))
 
-(test-case "移送 marker の一意性は制御項と heap に限り、θ は数えない"
+(test-case "移送 marker は制御項と Available heap で一意に数え、θ は数えない"
   (define config
     (transit-config transit-marker-int '(Owned Int) 7
                     #:trace `((obs ,transit-marker-int))))
@@ -237,14 +237,29 @@
           ((0 Available) (9 Moved)) () ()))
   (check-runtime-config heap-field '()
                         '(Record ((owned (Owned Int) imm))))
+  (define stale-marker `(OwnedTransit 9 7))
+  (define stale-record `(Rec ((owned imm ,stale-marker))))
+  (define moved-heap-duplicate
+    `(cfg (OwnedTransit 10 ,stale-record)
+          ((9 7 (declared (Owned Int)))
+           (10 ,stale-record
+               (declared (Owned (Record ((owned (Owned Int) imm)))))))
+          ((9 Moved) (10 Moved)) () ()))
+  (check-runtime-config
+   moved-heap-duplicate '()
+   '(Owned (Record ((owned (Owned Int) imm)))))
   (define duplicate-in-core-and-heap
     `(cfg ,transit-marker-int
           ((0 (Rec ((owned imm ,transit-marker-int)))
              (declared (Record ((owned (Owned Int) imm)))))
            (9 7 (declared (Owned Int))))
           ((0 Available) (9 Moved)) () ()))
+  (check-not-false
+   (runtime-row duplicate-in-core-and-heap '() '(Owned Int))
+   "Available heap の重複例は型と row を満たす")
   (check-false
-   (config-ok? duplicate-in-core-and-heap '() '(Owned Int) '())))
+   (config-ok? duplicate-in-core-and-heap '() '(Owned Int) '())
+   "Available heap に同じ place の marker があれば拒否する"))
 
 (test-case "移送 marker 内部の Owned token を通常どおり照合する"
   (define expected '(Owned (Option (Owned Res))))

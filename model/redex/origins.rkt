@@ -770,7 +770,10 @@
            [`(Derived ,parent (Expand ,_nm)) (valid-origin? r0 parent)]
            [_ #f]))]
     [`(CurryVal ,origin ,function ,argument)
-     (define parent (origin-of/proc function))
+     (define parent
+       (origin-of/proc (match function
+                         [`(OwnedTransit ,_ ,payload) payload]
+                         [_ function])))
      (and parent
           (valid-origin? r0 origin)
           (equal? origin `(Derived ,parent (Curry ,argument))))]
