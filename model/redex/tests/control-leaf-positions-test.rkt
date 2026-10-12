@@ -174,6 +174,12 @@
     [(? list? children) (map replace-leaf children)]
     [_ core]))
 
+(define (replace-leaf-with-transit core)
+  (match core
+    [`(OwnedLeaf ,_ ,_) '(OwnedTransit 90 7)]
+    [(? list? children) (map replace-leaf-with-transit children)]
+    [_ core]))
+
 (define (token-occurrences core tk)
   (match core
     [`(OwnedLeaf ,found ,_) (if (equal? found tk) 1 0)]
@@ -683,6 +689,28 @@
   (for ([fixture (in-list active-value-fixtures)])
     (check-true (control-leaf-positions-ok? (third fixture))
                 (format "~s/~s" (first fixture) (second fixture)))))
+
+(test-case "c3n1: active と pending の位置表で marker の根判定を固定する"
+  (for ([fixture (in-list active-value-fixtures)])
+    (check-true
+     (control-leaf-positions-ok? (replace-leaf-with-transit (third fixture)))
+     (format "active ~s/~s" (first fixture) (second fixture))))
+  (for ([fixture (in-list pending-fixtures)])
+    (define row (assoc-row (first fixture) (second fixture)))
+    (define rc (row-fixture (first fixture) (second fixture)))
+    (define core
+      (or (third fixture)
+          (config-core (row-case-leaf-cfg rc))))
+    (check-equal?
+     (control-leaf-positions-ok?
+      (replace-leaf-with-transit core))
+     (eq? (fifth row) 'accept)
+     (format "pending ~s/~s" (first fixture) (second fixture))))
+  (for ([form (in-list '(Handle Recur Eliminate UnionEliminate RecRewrite))])
+    (define child
+      `(Drop (Rec ((a imm (OwnedTransit 90 7))))))
+    (check-false (control-leaf-positions-ok? (deferred-core form child))
+                 (format "deferred ~s の子全体" form))))
 
 (test-case "c3m3: deferred-code は根 leaf を含む子を拒否する"
   (for ([form (in-list '(Handle Recur Eliminate UnionEliminate RecRewrite))])

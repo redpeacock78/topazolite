@@ -1480,6 +1480,7 @@
   (and (deriving-config?)
        (match (peel-node core)
          [`(OwnedLeaf ,_ ,_) #t]
+         [`(OwnedTransit ,_ ,_) #t]
          [_ #f])))
 
 (define (check-construct constructor fields data-type
@@ -3637,11 +3638,33 @@
                         environment places callables core fail))
      (list (peel-ty data-type) (first result) (second result))]
 
+    ;; Move 後に H に残る値を宣言型 Owned τ と結び付ける構成専用の印である。
+    [`(OwnedTransit ,place ,payload)
+     (unless (deriving-config?)
+       (fail 'ill-typed core))
+     (define declared (assoc place (declared-place-types)))
+     (define state (and (forward-config-states)
+                        (assoc place (forward-config-states))))
+     (unless (and state
+                  (eq? (second state) 'Moved)
+                  declared
+                  (owned-type? (second declared))
+                  (not (owned-leaf? (peel-node payload)))
+                  (not (owned-transit? payload)))
+       (fail 'ill-typed core))
+     (match-define (list payload-type payload-row payload-psi)
+       (infer payload (enter-child Λ 0) Ψ environment places callables fail))
+     (unless (owned-lift-compatible? payload-type (second declared))
+       (fail 'ill-typed core))
+     (list (second declared) payload-row payload-psi)]
+
     [`(resource ,_) (list '(Owned Res) '() Ψ)]
 
     ;; producer 位置から入ったときだけ OwnLeaf を許す。payload の再帰は
     ;; 通常の infer へ戻すため、入れ子の producer は親位置で個別に許可される。
     [`(OwnLeaf ,payload)
+     (when (owned-transit? payload)
+       (fail 'ill-typed core))
      (unless (or (memq core (ownleaf-permitted))
                  (and (deriving-config?)
                       (match (peel-node payload)
@@ -3654,6 +3677,8 @@
               Ψ environment places callables fail))]
 
     [`(OwnedLeaf ,_tk ,payload)
+     (when (owned-transit? payload)
+       (fail 'ill-typed core))
      (match-define (list payload-type payload-row payload-psi)
        (infer payload (enter-child Λ 0) Ψ environment places callables fail))
      (unless (owned-type? payload-type)
@@ -3695,6 +3720,7 @@
                   (not (and (deriving-config?)
                             (match (peel-node (third field))
                               [`(OwnedLeaf ,_ ,_) #t]
+                              [`(OwnedTransit ,_ ,_) #t]
                               [_ #f]))))
          (fail 'owned-record-field (third field))))
      (list
@@ -5208,7 +5234,8 @@
         (observed-leaf-positions-ok? candidate)
         (control-leaf-positions-ok? candidate)))
   (define (deferred-code-ok? candidate)
-    (not (contains-owned-leaf? candidate)))
+    (not (or (contains-owned-leaf? candidate)
+             (contains-owned-transit? candidate))))
   (match (peel-node core)
     ;; R-OwnLeafPass は既に token を持つ producer の直前を通過する。
     [`(OwnLeaf ,payload) (value-position-ok? payload)]
@@ -5478,6 +5505,17 @@
                                  (andmap (lambda (entry)
                                            (leaf-positions-ok? (second entry)))
                                          heap)
+                                 ;; 移送 marker は制御項と heap 全体で一意に数える。
+                                 ;; θ は消費済みの観測履歴なので数えない。
+                                 (let ([transits
+                                        (append
+                                         (transit-places core)
+                                         (append-map
+                                          (lambda (entry)
+                                            (transit-places (second entry)))
+                                          heap))])
+                                   (= (length transits)
+                                      (length (remove-duplicates transits))))
                                  (andmap observed-leaf-positions-ok?
                                          (observed-values trace))
                                  (control-leaf-positions-ok? core #t)

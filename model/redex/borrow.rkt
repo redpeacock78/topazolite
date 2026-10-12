@@ -190,6 +190,8 @@
   (define (walk current)
     (match (peel-node current)
       [`(OwnedTransit ,place ,payload) (cons place (walk payload))]
+      [`(CurryVal ,_origin ,function ,fixed)
+       (append (walk function) (walk fixed))]
       [(? list? parts) (append-map walk parts)]
       [_ '()]))
   (walk value))
@@ -266,9 +268,10 @@
      (andmap (lambda (child) (not (contains-owned-leaf? child))) current)]
     [_ #t]))
 
-;; 根の位置の leaf は Ω の root 所有と二重に数えるため拒否する。
+;; 根の位置の leaf と marker は Ω の root 所有と二重に数えるため拒否する。
 (define (leaf-positions-ok? value)
   (and (not (owned-leaf? value))
+       (not (owned-transit? value))
        (walk-leaf-positions value)))
 
 ;; obs の payload は観測した値そのものなので、根が leaf であることは正当である。
