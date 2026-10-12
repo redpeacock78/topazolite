@@ -1641,10 +1641,15 @@ configuration の型付けでは、制御項の値位置にある根の `OwnedLe
 - `v` の型 `t` が `owned-lift-compatible?` により `(Owned τ)` と整合する。
 - `v` の根は `OwnedLeaf` でも `OwnedTransit` でもない。
 
-同じ place `p` を持つ marker は、制御項と heap のすべての値を通じて高々一つとする。
+同じ place `p` を持つ marker は、制御項と、`Ω` で `Available` の place の値を通じて高々一つとする。
+`Moved` と `Dropped` の place の値は、一意性の数え上げに含めない。
+`R-Move` と `R-Forward` は place の値を `H` に残すが、`Ω` が `Available` でない place からは値を再び読み出せない。
+この範囲は `structural-tokens` が `available-root-values` から集める値の範囲と一致する。
 `θ` は消費済みの観測履歴であるため、この一意性の検査には含めない。
 `R-Yield` の観測値には marker が残りうるが、観測後の marker は live な移送ではない。
 一意性検査は `collect-tokens` と同じ Core 子走査を使い、`CurryVal` の origin は値の子として辿らない。
+`Move` で `H` の値を消す案は採らない。
+`R-Move` 後の構成と終端構成を全体で比較する既存 golden が広く期待値を持つため、`H` の値を消すとそれらの更新が広範囲に及ぶ。
 四条件に素の `(resource n)` を除外する条件は加えない。
 `resource-producer-positions-ok?` が許可された `OwnLeaf` または `OwnedLeaf` の直下以外にある裸の `(resource n)` を拒否する。
 marker を値の内部で運ぶ位置には、構成の型付けだけで適用する受け口がある。
@@ -1656,9 +1661,31 @@ marker を値の内部で運ぶ位置には、構成の型付けだけで適用�
 - `Yield` の観測値が `Owned` 型である場合。
 
 `Yield` の観測値は推論と期待型検査の双方でこの受け口を使う。
-`OwnLeaf` と `OwnedLeaf` は、payload の根が `OwnedTransit` の場合に拒否する。
-この c3n1 の改訂では marker の生成と消費を規定しない。
-`R-Move` と `R-Forward` による marker の生成と消費、`R-OwnLeaf` による marker の除去、9×9 の供給元と消費位置の行列、および `OWN-006` の行列は c3n2 で記す。
+`OwnLeaf` の payload の根が `OwnedTransit` の場合は、構成の型付けで marker の型をそのまま返す。
+`R-OwnLeafTransit` はこの producer wrapper を marker を保ったまま除き、新しい token を発行しない。
+`OwnedLeaf` の payload の根が `OwnedTransit` の場合は、構成の型付けで拒否する。
+G2m の `R-Move` と `R-Forward` は `transit-moved-value` を使って値を移す。
+値が裸の `(resource n)` なら、従来どおり `root-resource-token` が根の token を付ける。
+値が資源でなく、heap entry の宣言型が `(Owned τ)` なら、token 状態を変えずに `(OwnedTransit p v)` で包む。
+どちらにも該当しなければ、値と token 状態をそのまま保つ。
+この順序により、Owned place から取り出した資源は根の `OwnedLeaf` で表し、それ以外の Owned 値は marker で表す。
+`R-LetOwnedB` は marker を外して payload を新しい place に置き、place の宣言型を記録する。
+`Drop` は marker 自身に token の事象を割り当てず、payload 内部の `OwnedLeaf` を既存どおり回収する。
+`R-ApplyTransit` は関数位置の marker を外して通常の適用規則へ渡す。
+`R-CurryTransit` は部分適用時に marker を `CurryVal` の関数欄へ残し、origin は marker の内側の関数から導く。
+marker を `Curry` の時点で外すと、`function-owned?` の判定と部分適用結果の型が変わるため採らない。
+`R-ApplyCurry` が固定引数を関数へ戻した後、`R-ApplyTransit` が marker を外す。
+`R-EliminateTransit` は被検査値の marker を外してから通常の枝選択を行う。
+`R-OwnLeafTransit` は `(OwnLeaf (OwnedTransit p v))` を `(OwnedTransit p v)` に簡約する。
+この規則は marker が既に Owned を表すため、追加の token を発行しない。
+marker は `Scope` の結果、`Construct` と `Rec` の Owned 欄、`CurryVal` の関数欄と固定引数、`Apply` の Owned 実引数、`Yield` と `Perform` の payload で値として運ばれる。
+`R-Beta`、`R-LetB`、`R-RecurUnfold`、`R-HandleReturn` の代入も marker をそのまま運ぶ。
+関数位置の四形と C4-001 の `Eliminate` は、Core の入口と UCore の入口から marker を通る trace で固定する。
+供給元と消費位置の直接の 9×9 行列では、`S` は静的拒否、`V` は全構成で `config-ok?` と `runtime-row` が真、`I` は途中構成が無効である。
+この行列の結果は `7 S / 74 V / 0 I` であり、静的拒否の 7 組は関数でない 7 供給元を関数位置に置いた組だけである。
+`OWN-006` の仮引数符号化を通した 9×9 行列も `7 S / 74 V / 0 I` である。
+両経路の合計は `14 S / 148 V / 0 I` である。
+この規則群は計算値の place 化、Owned 仮引数、closure の捕捉、Owned の固定引数の実行時移送を定める。 [REQ: OWN-005] [REQ: OWN-006] [REQ: OWN-007] [REQ: OWN-008]
 configuration 検査は、裸の `(resource n)` を制御項と heap 値の双方で検査し、`OwnLeaf` または `OwnedLeaf` の直下と heap entry の値そのもの以外にある出現を拒否する。
 heap entry の根にある `OwnedLeaf` と、`OwnedLeaf` の直下にある別の `OwnedLeaf` も拒否する。
 
@@ -1837,7 +1864,7 @@ E[Apply(PrimVal(O, opname), v1, …, vk)] → E[δ(opname, v1, …, vk)]
 **(R-OwnLeaf)** [REQ: OWN-009]
 
 ```text
-v は値であり、v は OwnedLeaf ではない。tk は構成にない新しい token
+v は値であり、v は OwnedLeaf でも OwnedTransit でもない。tk は構成にない新しい token
 ---------------------------------------------------------
 ⟨E[OwnLeaf(v)], H, Ω, Λtok, θ⟩
   → ⟨E[OwnedLeaf(tk, v)], H, Ω, Λtok[tk ↦ Available], θ⟩
@@ -1850,8 +1877,16 @@ v は値であり、v は OwnedLeaf ではない。tk は構成にない新し�
   → ⟨E[OwnedLeaf(tk, v)], H, Ω, Λtok, θ⟩
 ```
 
+**(R-OwnLeafTransit)**
+
+```text
+⟨E[OwnLeaf(OwnedTransit(p, v))], H, Ω, Λtok, θ⟩
+  → ⟨E[OwnedTransit(p, v)], H, Ω, Λtok, θ⟩
+```
+
 `R-OwnLeaf` は producer の値に新しい token を付ける。
 既に根の token を持つ値では `R-OwnLeafPass` が既存 token を保ち、二重発行しない。
+移送中の値では `R-OwnLeafTransit` が marker を保ち、新しい token を発行しない。
 
 **(R-Beta)**
 
@@ -1875,6 +1910,23 @@ E[Curry(vf, va)] → E[CurryVal(Derived(origin(vf), Curry(va)), vf, va)]
 ```text
 E[Apply(CurryVal(O, vf, va), v1, …, vk)] → E[Apply(vf, va, v1, …, vk)]
 ```
+
+**(R-ApplyTransit)**
+
+```text
+E[Apply(OwnedTransit(p, vf), v1, …, vk)]
+  → E[Apply(vf, v1, …, vk)]
+```
+
+**(R-CurryTransit)**
+
+```text
+E[Curry(OwnedTransit(p, vf), va)]
+  → E[CurryVal(Derived(origin(vf), Curry(va)), OwnedTransit(p, vf), va)]
+```
+
+`R-CurryTransit` は marker を関数欄に残し、`R-ApplyCurry` の後の `R-ApplyTransit` まで運ぶ。
+`Curry` の時点で marker を外すと、`function-owned?` と部分適用結果の型が変わる。
 
 **(R-Let)**
 
@@ -1930,6 +1982,13 @@ E[Let(x bmode : τ, v, x)] → E[v]
 ```text
 E[Eliminate(Construct(D, Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
   → E[ci[v1/xi1, …, vk/xik]]
+```
+
+**(R-EliminateTransit)**
+
+```text
+E[Eliminate(OwnedTransit(p, v), branches)]
+  → E[Eliminate(v, branches)]
 ```
 
 **(R-UnionInject)**
@@ -2108,7 +2167,7 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 Ω(p) = Available
 --------------------------------
 ⟨E[Move(p)], H, Ω, Λtok, θ⟩ → ⟨E[v_result], H, Ω[p ↦ Moved], Λtok', θ⟩
-  (v_result, Λtok') = root-resource-token(⟨E[Move(p)], H, Ω, Λtok, θ⟩, H(p))
+  (v_result, Λtok') = transit-moved-value(⟨E[Move(p)], H, Ω, Λtok, θ⟩, p, H(p))
 ```
 
 **(R-Forward)** [REQ: OWN-001]
@@ -2117,11 +2176,15 @@ Suspend を corecursion の生産性 guard として使う設計は、観測意�
 Ω(p) = Available
 --------------------------------
 ⟨E[Forward(p)], H, Ω, Λtok, θ⟩ → ⟨E[v_result], H, Ω[p ↦ Moved], Λtok', θ⟩
-  (v_result, Λtok') = root-resource-token(⟨E[Forward(p)], H, Ω, Λtok, θ⟩, H(p))
+  (v_result, Λtok') = transit-moved-value(⟨E[Forward(p)], H, Ω, Λtok, θ⟩, p, H(p))
 ```
 
 `root-resource-token(C, v)` は `v` がちょうど `(resource n)` の場合だけ、制御項、heap 値、`Λtok`、`θ` にまだ現れない `tk` を選び、`(OwnedLeaf tk v)` と `Λtok[tk ↦ Available]` を返す。
 それ以外の値では `v` と `Λtok` をそのまま返す。
+G2m の `transit-moved-value(C, p, v)` は、`v` が `(resource n)` の場合に `root-resource-token(C, v)` を返す。
+`v` が資源でなく、`H[p]` の宣言型が `(Owned τ)` の場合は `(OwnedTransit p v)` と `Λtok` を返す。
+それ以外の場合は `v` と `Λtok` を返す。
+どの場合も `R-Move` と `R-Forward` は `H` を変えず、`Ω[p]` だけを `Moved` にする。
 
 `R-Forward` は `Available` な place だけを消費し、`Moved` または `Dropped` の place に対する誤り規則を持たない。
 その場合は規則が発火せず、config mode の gate がその構成を拒否する。
