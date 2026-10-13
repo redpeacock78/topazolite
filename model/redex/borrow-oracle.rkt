@@ -52,6 +52,26 @@
                        [_ #f]))
     (plain-ubr branch)))
 
+(define (record-field-value fields label)
+  (and (not (check-duplicates (map first fields)))
+       (for/first ([field (in-list fields)]
+                   #:when (equal? (first field) label))
+         (third field))))
+
+(define (rec-rewrite-close-preserves? open-fields closed-fields)
+  (and (= (length open-fields) (length closed-fields))
+       (for/and ([open-field (in-list open-fields)]
+                 [closed-field (in-list closed-fields)])
+         (match* (open-field closed-field)
+           [((list label mode value) (list label2 mode2 value2))
+            (and (equal? label label2) (equal? mode mode2)
+                 (equal? value value2))]
+           [((list label mode _type value)
+             (list label2 mode2 value2))
+            (and (equal? label label2) (equal? mode mode2)
+                 (equal? value value2))]
+           [(_ _) #f]))))
+
 ;; 簡約前後の制御項について、差分をすべて含む最小の位置を求め、その位置の
 ;; 部分項の対を返す。制御項が等しいときだけ #f を返す。
 ;; 子が 2 つ以上異なる節点は、その節点自体が差分を含む最小の位置である。
@@ -78,15 +98,67 @@
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
 (define (approved-forms redex contractum)
   (match (list redex contractum)
-    ;; RecRewriteOpen は借用値を一度だけ作業列へ移すだけである。
+    ;; R-RecRewrite-Open は入力欄を作業列へ一度ずつ移す。
     [(list `(RecRewrite ,_ ,_) `(RecRewriteOpen ,_)) '()]
-    [(list `(RecRewriteOpen ,_) `(Rec ,_)) '()]
+    ;; R-RecRewrite-Close は作業欄の値を保ったまま Rec へ戻す。
+    [(list `(RecRewriteOpen (,open-fields ...)) `(Rec (,closed-fields ...)))
+     #:when (rec-rewrite-close-preserves? open-fields closed-fields)
+     '()]
     ;; R-ScopeValue は finalization 後に値を unwrap するだけであり、借用値を
     ;; 保ったまま新しい借用形を作らない。
     [(list `(Scope ,_π ,value) value) '()]
     ;; R-Yield は観測 wrapper を外すだけであり、continuation 内の借用は
     ;; 新しい借用形ではない。
     [(list `(Yield ,_observed ,continuation) continuation) '()]
+    ;; R-Proj は選んだ欄の値そのものを返す。
+    [(list `(Proj (Rec (,fields ...)) ,label) contractum)
+     #:when (equal? (record-field-value fields label) contractum)
+     '()]
+    ;; R-ProjOpt は選んだ欄の値を Some で包む。
+    [(list `(ProjOpt ,type (Rec (,fields ...)) ,label)
+           `(Construct (Option ,type2) some ,value))
+     #:when (and (equal? type type2)
+                 (equal? (record-field-value fields label) value))
+     '()]
+    ;; R-UnionInject は payload を変えずに runtime tag だけを付ける。
+    [(list `(UnionInject ,union-type ,member-type ,payload)
+           `(UnionVal ,union-type2 ,member-type2 ,payload2))
+     #:when (and (equal? payload payload2)
+                 (equal? (normalize-type union-type) union-type2)
+                 (equal? (normalize-type member-type) member-type2))
+     '()]
+    ;; R-HandleValue は handler を使わず、結果値をそのまま返す。
+    [(list `(Handle ,_ (,x -> ,handler) ,value) contractum)
+     #:when (and (equal? value contractum)
+                 (null? (collect-borrow-values handler)))
+     '()]
+    ;; R-HandleSkip は空の内側文脈にある Perform と payload をそのまま返す。
+    [(list `(Handle ,op-handler (,x -> ,handler)
+                    (Perform ,op-performed ,argument))
+           `(Perform ,op-result ,argument-result))
+     #:when (and (not (equal? op-handler op-performed))
+                 (equal? op-performed op-result)
+                 (equal? argument argument-result)
+                 (null? (collect-borrow-values handler)))
+     '()]
+    ;; R-Suspend は継続を unwrap するだけである。
+    [(list `(Suspend ,continuation) continuation) '()]
+    ;; R-DischargeRemainder は strip-remainder が残す値をそのまま運ぶ。
+    [(list `(Discharge
+             (ProofRep ,_ (RemainderSafelyDropped ,actual ,expected)) ,value)
+           contractum)
+     #:when
+     (match (strip-remainder actual expected value)
+       [(list output _removed) (equal? output contractum)]
+       [_ #f])
+     '()]
+    ;; 非 RSD の R-Discharge は検査済みの内側をそのまま返す。
+    [(list `(Discharge (ProofRep ,_ ,proposition) ,inner) inner)
+     #:when
+     (match proposition
+       [`(RemainderSafelyDropped ,_ ,_) #f]
+       [_ #t])
+     '()]
     [(list `(BorrowAt ,ρ (Own ,p ,fp) ,w)
            `(BorrowRef ,p2 ,fp2 ,ρ2))
      #:when (and (equal? p p2) (equal? fp fp2) (equal? ρ ρ2))

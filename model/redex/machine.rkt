@@ -35,6 +35,7 @@
          path-lookup
          fp-offset
          path-set
+         strip-remainder
          fresh-token
          run
          run-g2

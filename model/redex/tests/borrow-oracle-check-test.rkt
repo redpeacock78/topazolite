@@ -117,6 +117,70 @@
 (test-case "R-RegionAppRecur は借用の置換規則へ分類されない"
   (check-equal? (rule-bucket 'R-RegionAppRecur) 'non-substituting))
 
+(define borrowed-value '(BorrowRef 3 (a) 7))
+
+(define (check-approved-shape label redex contractum wrong-contractum)
+  (check-equal? (borrow-form-candidates redex contractum) '()
+                (format "~a redex=~s contractum=~s" label redex contractum))
+  (check-equal? (borrow-form-candidates redex wrong-contractum)
+                '((unverified)) label))
+
+(test-case "借用値をそのまま運ぶ非置換規則だけを形で承認する"
+  (check-approved-shape
+   "R-Proj"
+   `(Proj (Rec ((borrow imm ,borrowed-value))) borrow)
+   borrowed-value
+   '(BorrowRef 3 (a) 8))
+  (check-approved-shape
+   "R-ProjOpt"
+   `(ProjOpt Int (Rec ((borrow imm ,borrowed-value))) borrow)
+   `(Construct (Option Int) some ,borrowed-value)
+   '(Construct (Option Int) some (BorrowRef 3 (a) 8)))
+  (check-approved-shape
+   "R-UnionInject"
+   `(UnionInject (Union (Borrowed Int 7) String)
+                 (Borrowed Int 7) ,borrowed-value)
+   `(UnionVal (Union (Borrowed Int 7) String)
+             (Borrowed Int 7) ,borrowed-value)
+   '(UnionVal (Union (Borrowed Int 7) String)
+             (Borrowed Int 7) (BorrowRef 3 (a) 8)))
+  (check-approved-shape
+   "R-RecRewrite-Close"
+   `(RecRewriteOpen ((borrow imm (Borrowed Int 7) ,borrowed-value)))
+   `(Rec ((borrow imm ,borrowed-value)))
+   '(Rec ((borrow imm (BorrowRef 3 (a) 8)))))
+  (check-approved-shape
+   "R-HandleValue"
+   `(Handle op (x -> unit) ,borrowed-value)
+   borrowed-value
+   '(BorrowRef 3 (a) 8))
+  (check-approved-shape
+   "R-HandleSkip"
+   `(Handle op-a (x -> unit) (Perform op-b ,borrowed-value))
+   `(Perform op-b ,borrowed-value)
+   '(Perform op-b (BorrowRef 3 (a) 8)))
+  (check-approved-shape "R-Suspend" `(Suspend ,borrowed-value)
+                        borrowed-value
+                        '(BorrowRef 3 (a) 8))
+  (check-approved-shape
+   "R-Discharge"
+   `(Discharge
+     (ProofRep (Reserved o-proof) (Implements Int Example))
+     ,borrowed-value)
+   borrowed-value
+   '(BorrowRef 3 (a) 8))
+  (check-approved-shape
+   "R-DischargeRemainder"
+   `(Discharge
+     (ProofRep
+      (Reserved o-proof)
+      (RemainderSafelyDropped
+       (Record ((borrow (Borrowed Int 7) imm) (owned (Owned Int) imm)))
+       (Record ((borrow (Borrowed Int 7) imm)))))
+     (Rec ((borrow imm ,borrowed-value) (owned imm 9))))
+   `(Rec ((borrow imm ,borrowed-value)))
+   '(Rec ((borrow imm (BorrowRef 3 (a) 8))))))
+
 (test-case "R-RegionAppRecur の空の借用 trace は oracle を通る"
   (define config
     '(cfg (Scope ()
