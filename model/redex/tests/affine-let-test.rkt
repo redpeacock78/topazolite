@@ -15,6 +15,7 @@
          "../origins.rkt"
          "../pr-machine.rkt"
          "../borrow.rkt"
+         "../borrow-gen.rkt"
          "../region.rkt"
          "../resource-type.rkt"
          "../span-core.rkt"
@@ -102,6 +103,33 @@
     (check-true (row-subset? after before)
                 (format "config ~a から次の config で row が増えた: ~s -> ~s"
                         index before after))))
+
+(define (test-config-type-failure-key configuration)
+  (match configuration
+    [`(cfg ,core ,heap ,states ,_tokens ,_trace)
+     (define declared
+       (for/list ([entry (in-list heap)]
+                  #:when (match entry
+                           [`(,_ ,_value (declared ,_type)) #t]
+                           [_ #f]))
+         (match-define (list place _value `(declared ,type)) entry)
+         (list place type)))
+     (define places (derive-places heap '() #:declared declared))
+     (define borrow-types
+       (and places (recover-runtime-borrow-types core heap states places)))
+     (match (and borrow-types
+                 (parameterize ([config-runtime-borrow-types borrow-types])
+                   (with-config-typing
+                    (lambda () (type-of/raw core places '() '())))))
+       [`(fail ,key ,_node ,_details ...) key]
+       [_ #f])]
+    [_ 'invalid-config]))
+
+(define (contains-rvar? term)
+  (match term
+    [`(RVar ,_) #t]
+    [(? list? terms) (ormap contains-rvar? terms)]
+    [_ #f]))
 
 (define (token-states config)
   (match config [`(cfg ,_ ,_ ,_ ,tokens ,_) tokens]))
@@ -425,7 +453,20 @@
           () ()))
   (check-equal? (first (second result)) 'Int)
   (check-equal? (second (second result)) '())
-  (check-config-trace (list config) '() 'Int))
+  (check-config-trace (list config) '() 'Int)
+  (match (prepare-borrow-term* core)
+    [(list 'ok prepared _sidecar _prepared-ir inferred-type)
+     (check-equal? inferred-type 'Int)
+     (check-false (test-config-type-failure-key prepared))
+     (define prepared-row (runtime-row prepared '() inferred-type))
+     (check-not-false prepared-row)
+     (check-true (config-ok? prepared '() inferred-type prepared-row))
+     (match prepared
+       [`(cfg ,prepared-core ,_heap ,_states ,_tokens ,_trace)
+        (check-false (contains-rvar? prepared-core))])]
+    [other
+     (fail (format "materialize 後の借用 Union source を準備できない: ~s"
+                   other))]))
 
 (test-case "Recur の固定点再走査は資源 Let の借用型を安定させる"
   (define declared '(Record ((owned (Option (Owned Res)) imm))))

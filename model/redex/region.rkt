@@ -6,7 +6,8 @@
          redex/reduction-semantics
          "lang.rkt"
          "erase.rkt"
-         "span-core.rkt")
+         "span-core.rkt"
+         "type-equiv.rkt")
 
 (provide core-children core-with-children core-points core-node core-free-vars
          (struct-out region)
@@ -610,7 +611,7 @@
       [`(BorrowMutAt ,_ ,own ,_) own]
       [`(ReborrowAt ,_ ,own ,_) own]
       [`(ProjBorrowAt ,_ ,own ,_ ,_) own]
-      ;; 構成検査では実行時の借用値が operand となるため、機械規則と同じ own を返す。
+      ;; 構成検査の実行時借用値から、R-Reborrow / R-ProjBorrow と同じ own を返す。
       [`(BorrowRef ,p ,fp ,_) `(Own ,p ,fp)]
       [`(BorrowMutRef ,p ,fp ,_) `(Own ,p ,fp)]
       [(? symbol? s) (own-of-designator env* s)]
@@ -769,7 +770,19 @@
          replaced
          (for/list ([k (in-list kids)] [i (in-naturals)])
            (walk k (append point (list i)))))))
-  (walk core '()))
+  (define (resolve-embedded-type-regions node)
+    (cond
+      ;; 型欄は core-children の外にあるため、σ の解決と Union 正規化を別に行う。
+      [(match node [`(RVar ,index)
+                    (region->rho ir (hash-ref σ index))]
+                   [_ #f])
+       => values]
+      [(and (list? node) (redex-match? G2m τ node))
+       (define resolved (map resolve-embedded-type-regions node))
+       (if (equal? resolved node) node (normalize-type resolved))]
+      [(list? node) (map resolve-embedded-type-regions node)]
+      [else node]))
+  (resolve-embedded-type-regions (walk core '())))
 
 ;; spec §6.1。ρ の欄に (RParam rp) が来るかを見る。
 (define (region-param? ρ)
