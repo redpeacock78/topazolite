@@ -139,40 +139,58 @@ offset の結果が非 null である保証は無く、`NonNull` を保つには
 
 ### 2.3 実行時の値と簡約
 
-実行時の pointer 値は、place、field path、可変性、provenance を持つ。
+実行時の pointer 値は、place と field path に加えて **pointer 型**を持つ。
 
 ```text
-(v ::= .... (PtrVal p fp ptrmut prov))
+(v ::= .... (PtrVal p fp (RawPtr τ ptrmut nul align as prov)))
 ```
 
 `BorrowRef p fp ρ` と同じく、`p` と `fp` が指す場所を表す。
 `RawPtr` が region の代わりに provenance を持つのに対応して、`PtrVal` も `prov` を持つ。
-さらに `ptrmut` を値へ持たせ、機械規則で `Const` と `Mut` を区別する。
+pointer 型を一つの欄へまとめることで、値と型の `ptrmut` が食い違う形を構文で表せなくする。
 
 機械規則は型検査済みの config だけでなく、手組みの config にも適用できる。
 性質 9 の生成器も config を直接組むため、実行時の値に可変性を残して `RawStore` の側で閉じる。
 
 pointer 操作の簡約規則は次の 6 本である。
 
-- `R-AddressOf` は可変借用から `Mut` の `PtrVal` を作る。
-- `R-PtrOffset` は field path の末尾の自然数 segment を動かし、入力の `ptrmut` を保つ。
+- `R-AddressOf` は可変借用の参照先について、heap の宣言型と値から field path の型 τ を求める。
+  τ が求まると、`(RawPtr τ Mut NonNull (Align 1) (AddrSpace native) (Prov owned))` を持つ `PtrVal` を作る。
+  この規則は `Ω` を読まない。
+- `R-PtrOffset` は field path の末尾の自然数 segment を動かし、pointer 型の nullability を `Nullable` にする。
+  それ以外の pointer 型の欄は保つ。
 - `R-RawLoad` は `Const` と `Mut` の両方で発火し、`H` の該当欄を読む。
 - `R-RawStore` は `Mut` の場合だけ発火し、`H` の該当欄を書き換える。
-- `R-FromRawPtrConst` は `BorrowRef` を作る。
-- `R-FromRawPtrMut` は `BorrowMutRef` を作る。
+- `R-FromRawPtrConst` は `Const` かつ `(Prov owned)` の pointer から `BorrowRef` を作る。
+- `R-FromRawPtrMut` は `Mut` かつ `(Prov owned)` の pointer から `BorrowMutRef` を作る。
+
+`R-RawLoad`、`R-RawStore`、`R-FromRawPtrConst`、`R-FromRawPtrMut` は、既存の条件に加えて、指す先の field path 型が `PtrVal` の `RawPtr` にある **pointee 型**と一致することを要求する。
+型が一致しなければ規則は発火しない。
+この guard は、`PtrOffset` の後に値の pointee 型と参照先の型が食い違う到達可能な構成を止める。
+
+条件付きの Preservation は採らない。
+食い違う構成をその対象から外すと、ホワイトペーパーが述べる無条件の一歩保存を狭める。
+`PtrVal` に型を持たせるだけの案も採らない。
+guard が無ければ、静的に `Int` と型付いた `RawLoad` が実行時に `Bool` を読む構成を止められない。
+
+`AddressOf` の静的な型制限も採らない。
+その制限は `PtrOffset` の後に型が食い違いうる項を静的に拒否し、現在受理される項の範囲を狭めるためである。
+値に pointer 型を持たせ、使用時に guard を置けば、既存の静的規則を変えずに不一致を止められる。
 
 `R-UnsafeExit` は pointer 操作ではなく boundary の規則として §4.2 で定める。
 
 `Ω` の place が `Available` であることを要求する規則は、`R-RawLoad`、`R-RawStore`、`R-FromRawPtrConst`、`R-FromRawPtrMut` の 4 本に限る。
 `R-AddressOf` と `R-PtrOffset` は `Ω` を読まない。
+`R-PtrOffset` は heap も読まない。
 `PtrVal` は capability ではなく、`Ω` を確認する必要があるのは pointer を使用する規則だからである。
 性質 9 の oracle も使用側の規則を条件としているため、この非対称は意図したものである。
 
 `RawLoad` と `RawStore` は指す先が存在しない場合に発火しない。
-`RawStore` が書ける先は `Rec` の欄に限る。
-`value-set-path` が `Rec` の欄だけを差し替える一方、`heap-walk-path` は `Construct` の欄も読めるためである。
+`RawStore` が書ける先は `Rec` の欄と `UnionVal` の `Payload` に限り、`Construct` の数値欄には書けない。
+`value-set-path` は `Rec` の欄と `UnionVal` の `Payload` を更新できるが、`Construct` の欄は更新できない。
+一方、`heap-walk-path` は `Construct` の欄も読める。
 
-`Available` でない place や存在しない field path に対する raw 操作も発火しない。
+`Available` でない place、存在しない field path、指す先の型と pointee 型が食い違う raw 操作も発火しない。
 この失敗を `Error(p)` へ変換しないのは、`Error(p)` が OwnershipError を表し、raw pointer の実行時 Proof 失敗とは別の終端だからである。
 `Unsafe` の内側で未解決の Proof を許す結果、このような構成は stuck として残る。
 
@@ -401,6 +419,9 @@ raw pointer を boundary の外へ出せない設計だからであり、これ�
 - 発火した規則が `R-UnsafeExit` であるとき、簡約後の制御項が `PtrVal` を leaf に持たない。
 - 発火した規則が `R-Yield` であり、簡約前の config の評価文脈に `Unsafe` の枠があるとき、event trace へ足す観測値が `PtrVal` を leaf に持たない。
 - どの規則も発火せず、かつ制御項が終端の形でもないとき、その config の redex が `RawLoad`、`RawStore`、`PtrOffset`、`FromRawPtr` のいずれかであって `Unsafe` の内側にある。
+
+使用側の 4 規則は、指す先の field path 型と `PtrVal` の pointee 型の一致も要求する。
+この不一致で規則が発火しない場合も、最後の条件がいう実行時側条件の失敗に含む。
 
 1 番目と 5 番目は評価文脈の一意分解を使う。
 `(in-hole E_1 (Unsafe (in-hole E_2 (RawLoad any))))` に照合できることは、次の redex が `Unsafe` の内側の `RawLoad` であることと同値である。
