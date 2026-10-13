@@ -30,8 +30,84 @@
                (format "~a: RegionLam が v" language))
    (check-true (c-match? (term (RegionApp (RegionLam (a) x) ((RParam a)))))
                (format "~a: RegionApp が c" language))
-   (check-true (τ-match? forall-a)
-               (format "~a: ForallRegion が τ" language))))
+ (check-true (τ-match? forall-a)
+             (format "~a: ForallRegion が τ" language))))
+
+(test-case "G2m の Inst cid と Poly binder の scope"
+  (define inst '(Inst recur-cid ((c (RParam a))) (Poly (a))))
+  (define recur `(Recur ,inst f (x)
+                        (Let (v let (Borrowed Int (RParam a))) x v)
+                        (Let (w let (Borrowed Int (RParam a))) x w)))
+  (check-true (redex-match? G2m cid inst))
+  (check-false (redex-match? G2 cid inst))
+  (check-true (inst-cid? inst))
+  (check-equal? (cid-base inst) 'recur-cid)
+  (check-equal? (cid-pairs inst) '((c (RParam a))))
+  (check-equal? (cid-poly inst) '(Poly (a)))
+  (check-equal? (poly-binder-parts recur) '((a) 4))
+  (check-equal? (region-free-params recur) (set 'a))
+  (parameterize ([region-binder-renamings (list (hash 'a 'a.0))])
+    (match (resolve-region-params recur)
+      [`(Recur (Inst recur-cid ((c (RParam ,pair-rp))) (Poly (a)))
+               f (x)
+               (Let (v let (Borrowed Int (RParam ,body-rp))) x v)
+               (Let (w let (Borrowed Int (RParam ,next-rp))) x w))
+       (check-equal? pair-rp 'a.0)
+       (check-equal? body-rp 'a)
+       (check-equal? next-rp 'a.0)]
+      [other (fail (format "resolve-region-params: ~s" other))])
+    (match (rename-region-params recur (hash 'a 'a.1))
+      [`(Recur (Inst recur-cid ((c (RParam ,pair-rp))) (Poly (a)))
+               f (x)
+               (Let (v let (Borrowed Int (RParam ,body-rp))) x v)
+               (Let (w let (Borrowed Int (RParam ,next-rp))) x w))
+       (check-equal? pair-rp 'a.1)
+       (check-equal? body-rp 'a)
+       (check-equal? next-rp 'a.1)]
+      [other (fail (format "rename-region-params: ~s" other))]))
+  (match (subst-region-params recur (hash 'a '(RVar 0)))
+    [`(Recur (Inst recur-cid ((c (RVar 0))) (Poly (a)))
+             f (x)
+             (Let (v let (Borrowed Int (RParam ,body-rp))) x v)
+             (Let (w let (Borrowed Int (RVar 0))) x w))
+     (check-equal? body-rp 'a)]
+    [other (fail (format "subst-region-params: ~s" other))])
+  (check-false (inst-cid? '(Inst (Inst recur-cid () Mono) () Mono)))
+  (check-exn exn:fail?
+             (lambda () (cid-base '(Inst (Inst recur-cid () Mono) () Mono))))
+  (define recur-value
+    '(RecurVal (Inst value-cid () (Poly (a))) f (x)
+       (Let (v let (Borrowed Int (RParam a))) x v)))
+  (check-equal? (poly-binder-parts recur-value) '((a) 4))
+  (check-equal? (region-free-params recur-value) (set))
+  (parameterize ([region-binder-renamings (list (hash 'a 'a.0))])
+    (check-equal? (resolve-region-params recur-value) recur-value)
+    (check-equal? (rename-region-params recur-value (hash 'a 'a.1))
+                  recur-value))
+  (check-equal? (subst-region-params recur-value (hash 'a '(RVar 0)))
+                recur-value))
+
+(test-case "Poly binder は Recur 本体だけで置換を遮る"
+  (define outer-body
+    '(Let (outer let (Borrowed Int (RParam a))) x
+       (Recur (Inst inner-cid ((c (RParam a))) (Poly (a))) innerf (y)
+         (Let (inner let (Borrowed Int (RParam a))) y inner)
+         (Let (next let (Borrowed Int (RParam a))) y next))))
+  (match (subst-region-params outer-body (hash 'a '(RVar 0)))
+    [`(Let (outer let (Borrowed Int (RVar 0))) x
+       (Recur (Inst inner-cid ((c (RVar 0))) (Poly (a))) innerf (y)
+         (Let (inner let (Borrowed Int (RParam ,inner-rp))) y inner)
+         (Let (next let (Borrowed Int (RVar 0))) y next)))
+     (check-equal? inner-rp 'a)]
+    [other (fail (format "nested Poly substitution: ~s" other))])
+  (define mono
+    '(Recur (Inst inner-cid ((c (RParam a))) Mono) innerf (y)
+       (Let (inner let (Borrowed Int (RParam a))) y inner)
+       (Let (next let (Borrowed Int (RParam a))) y next)))
+  (check-equal? (subst-region-params mono (hash 'a '(RVar 0)))
+                '(Recur (Inst inner-cid ((c (RVar 0))) Mono) innerf (y)
+                   (Let (inner let (Borrowed Int (RVar 0))) y inner)
+                   (Let (next let (Borrowed Int (RVar 0))) y next))))
 
 ;; core-children と core-with-children は RegionLam/RegionApp の形を往復する。
 (test-case

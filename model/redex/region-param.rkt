@@ -17,7 +17,12 @@
          call-with-region-params
          fresh-region-param
          fresh-region-param/avoiding
+         inst-cid?
+         cid-base
+         cid-pairs
+         cid-poly
          region-lam-parts
+         poly-binder-parts
          rebuild-region-lam
          alpha-rename-region-lam
          rename-region-params
@@ -35,6 +40,13 @@
        (set-subtract (walk body) (list->set rps))]
       [(app region-lam-parts (list _ rps body))
        (set-subtract (walk body) (list->set rps))]
+      [(app poly-binder-parts (list rps index))
+       (for/fold ([free (set)]) ([element (in-list t)] [position (in-naturals)])
+         (set-union
+          free
+          (if (= position index)
+              (set-subtract (walk element) (list->set rps))
+              (walk element))))]
       [(? list?)
        (for/fold ([free (set)]) ([element (in-list t)])
          (set-union free (walk element)))]
@@ -62,6 +74,39 @@
         (hash-ref renaming rp))
       rp))
 
+(define (inst-cid-shape? value)
+  (match value
+    [`(Inst ,_ ,_ ,_) #t]
+    [_ #f]))
+
+(define (inst-cid? value)
+  (match value
+    [`(Inst ,base ((,rps ,_) ...) Mono)
+     (and (not (inst-cid-shape? base)) (andmap symbol? rps))]
+    [`(Inst ,base ((,rps ,_) ...) (Poly (,own ...)))
+     (and (not (inst-cid-shape? base))
+          (andmap symbol? rps)
+          (andmap symbol? own))]
+    [_ #f]))
+
+(define (cid-base cid)
+  (match cid
+    [`(Inst ,base ,_ ,_)
+     (when (inst-cid-shape? base)
+       (error 'cid-base "nested Inst cid: ~s" cid))
+     base]
+    [_ cid]))
+
+(define (cid-pairs cid)
+  (match cid
+    [`(Inst ,_ ,pairs ,_) pairs]
+    [_ #f]))
+
+(define (cid-poly cid)
+  (match cid
+    [`(Inst ,_ ,_ ,poly) poly]
+    [_ #f]))
+
 ;; 型や署名の RParam だけを現在の RegionLam の fresh 名へ写す。
 ;; ForallRegion と RegionLam の束縛名は内側で shadow する。
 (define (resolve-region-params term)
@@ -78,6 +123,12 @@
        (rebuild-region-lam
         s rps
         (walk body (set-union blocked (list->set rps))))]
+      [(app poly-binder-parts (list rps index))
+       (for/list ([element (in-list t)] [position (in-naturals)])
+         (walk element
+               (if (= position index)
+                   (set-union blocked (list->set rps))
+                   blocked)))]
       [(? list?)
        (for/list ([element (in-list t)]) (walk element blocked))]
       [_ t])))
@@ -126,6 +177,17 @@
      (list s rps body)]
     [_ #f]))
 
+;; Inst は spanless G2m にだけ置く。Poly は Recur と RecurVal の本体だけを束縛する。
+(define (poly-binder-parts term)
+  (define (body-index cid)
+    (match (cid-poly cid)
+      [`(Poly (,rps ...)) (list rps 4)]
+      [_ #f]))
+  (match term
+    [`(Recur ,cid ,_ ,_ ,_ ,_) (body-index cid)]
+    [`(RecurVal ,cid ,_ ,_ ,_) (body-index cid)]
+    [_ #f]))
+
 (define (rebuild-region-lam s rps body)
   (if s (list 'RegionLam s rps body) (list 'RegionLam rps body)))
 
@@ -159,6 +221,9 @@
        (rebuild-region-lam s rps (walk body (shadow rps)))]
       [`(ForallRegion (,rps ...) ,body)
        `(ForallRegion ,rps ,(walk body (shadow rps)))]
+      [(app poly-binder-parts (list rps index))
+       (for/list ([element (in-list t)] [position (in-naturals)])
+         (walk element (if (= position index) (shadow rps) ren)))]
       [(? list?)
        (for/list ([element (in-list t)]) (walk element ren))]
       [_ t])))
@@ -177,8 +242,10 @@
 ;; (1) 表の値に自由な (RParam rp) が現れない。
 ;; (2) 値に現れる rp と同じ名前を束縛する binder が term の内側に無い。
 ;; unwrap-forall-region は値の側が (RParam name) なので (1) を満たさない。
-;; (2) を保つのは valid-callables? の入れ子の禁止である。RegionApp の実引数の
-;; 代入も同じ前提を要る（Task 4b）。
+;; (2) は source 入口での RegionLam の一意な alpha-renaming と、
+;; valid-callables? が許す ForallRegion の位置制約が保つ。RegionApp の実引数は
+;; 外側の RegionLam を剥がした後の ρ であり、Poly はその Recur 本体だけを束縛する。
+;; cid の組の値と継続は Poly の scope 外である。
 (define (subst-region-params term substitution)
   (let walk ([t term] [sub substitution])
     (define (shadow binders)
@@ -191,6 +258,9 @@
        (rebuild-region-lam s rps (walk body (shadow rps)))]
       [`(ForallRegion (,rps ...) ,body)
        `(ForallRegion ,rps ,(walk body (shadow rps)))]
+      [(app poly-binder-parts (list rps index))
+       (for/list ([element (in-list t)] [position (in-naturals)])
+         (walk element (if (= position index) (shadow rps) sub)))]
       [(? list?)
        (for/list ([element (in-list t)]) (walk element sub))]
       [_ t])))

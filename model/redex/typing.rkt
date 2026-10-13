@@ -34,6 +34,8 @@
          type-of/raw*+borrows
          type-of/raw*+ptr
          annotate-mut-binding-types
+         annotate-callable-contexts
+         callable-signature
          execution-core
          typing-visited-points
          config-ok?
@@ -660,6 +662,7 @@
 (define lifetime-counter (make-parameter #f))
 (define alpha-table (make-parameter #f))
 (define mut-binding-types-table (make-parameter #f))
+(define callable-contexts-table (make-parameter #f))
 (define resource-place-set (make-parameter (set)))
 (define resource-identity-transfers (make-parameter (set)))
 (define declared-place-types (make-parameter '()))
@@ -1040,8 +1043,79 @@
     [_ (for/or ([child (in-list (core-children (peel-node core)))])
          (forward-containing-now? child))]))
 
+(define (callable-signature callables callable)
+  (cond
+    [(not (inst-cid? callable)) (lookup callables callable)]
+    [(not (deriving-config?)) #f]
+    [else
+     (define pairs (cid-pairs callable))
+     (define keys (map first pairs))
+     (define raw (lookup callables (cid-base callable)))
+     (and (not (check-duplicates keys))
+          raw
+          (let ([table
+                 (for/hash ([pair (in-list pairs)])
+                   (values (first pair) (second pair)))])
+            (match* (raw (cid-poly callable))
+              [(`(ForallRegion (,rps ...) ,body) 'Mono)
+               (and (andmap (lambda (rp) (hash-has-key? table rp)) rps)
+                    (subst-region-params body table))]
+              [(`(ForallRegion (,rps ...) ,_) `(Poly (,own ...)))
+               (and (equal? rps own)
+                    (subst-region-params raw table))]
+              [(_ 'Mono) (subst-region-params raw table)]
+              [(_ _) #f])))]))
+
+(define (callable-context raw-signature kind)
+  (define-values (binders body)
+    (match raw-signature
+      [`(ForallRegion (,rps ...) ,inner) (values rps inner)]
+      [_ (values '() raw-signature)]))
+  (define forall?
+    (match raw-signature [`(ForallRegion ,_ ,_) #t] [_ #f]))
+  (define context (region-binder-context))
+  (define bound
+    (if (and (eq? kind 'lam) (pair? binders))
+        (begin
+          (unless (and (list? context) (= (length binders) (length context)))
+            (error 'callable-context
+                   "受理された Lam の region binder が一致しない: ~s ~s"
+                   binders context))
+          (map (lambda (rp name) (list rp `(RParam ,name))) binders context))
+        '()))
+  (define free
+    (for/list ([rp (in-set (region-free-params body))]
+               #:unless (memq rp binders))
+      (list rp `(RParam ,(resolve-region-param rp)))))
+  (values (append bound (sort free symbol<? #:key first))
+          (if (and forall? (eq? kind 'recur))
+              (list 'Poly binders)
+              'Mono)))
+
+(define (record-callable-context! Λ signature kind)
+  (define box (callable-contexts-table))
+  (when box
+    (define-values (renamed-pairs poly) (callable-context signature kind))
+    (define forall?
+      (match signature [`(ForallRegion ,_ ,_) #t] [_ #f]))
+    (when (or forall? (pair? renamed-pairs))
+      (define source-pairs
+        (for/list ([pair (in-list renamed-pairs)])
+          (match pair
+            [`(,rp (RParam ,fresh))
+             (list rp `(RParam ,(region-param-origin fresh)))]
+            [_ pair])))
+      (define point (region-ctx-point Λ))
+      (define entry (list renamed-pairs source-pairs poly))
+      (define current (unbox box))
+      (when (and (hash-has-key? current point)
+                 (not (equal? (hash-ref current point) entry)))
+        (error 'record-callable-context!
+               "同じ callable 位置が異なる文脈で推論された: ~s" point))
+      (set-box! box (hash-set current point entry)))))
+
 (define (callable-parameter-types callables callable)
-  (let loop ([signature (lookup callables callable)])
+  (let loop ([signature (callable-signature callables callable)])
     (match signature
       [`(ForallRegion (,_ ...) ,body) (loop body)]
       [`(NFn (,parameters ...) ,_ ,_ ,_ ,_ ,_) parameters]
@@ -2168,12 +2242,15 @@
 ;; 仮引数、結果、証明義務の Q、捕捉を同じ入口で検査する。
 (define (check-function-boundary parameter-types return-type obligations body
                                  bound-names environment node fail)
-  (when (ormap unbound-borrowed-type? parameter-types)
-    (fail 'borrowed-function-parameter node))
-  (when (unbound-borrowed-type? return-type)
-    (fail 'borrowed-function-result node))
-  (when (unbound-borrowed-type? obligations)
-    (fail 'borrowed-function-result node obligations))
+  ;; 構成検査では materialize 済みの具体的な region も署名に現れる。
+  ;; source の自由な RParam を拒む境界検査は、その段階では適用しない。
+  (unless (deriving-config?)
+    (when (ormap unbound-borrowed-type? parameter-types)
+      (fail 'borrowed-function-parameter node))
+    (when (unbound-borrowed-type? return-type)
+      (fail 'borrowed-function-result node))
+    (when (unbound-borrowed-type? obligations)
+      (fail 'borrowed-function-result node obligations)))
   ;; 関数自身の束縛子は同名の外側の項目を遮蔽するため、自由変数から引く。
   (define free
     (set-subtract (core-free-vars body) (list->set bound-names)))
@@ -2200,7 +2277,7 @@
 
 (define (infer-lam callable parameters body Λ Ψ
                    environment places callables node fail)
-  (define raw-signature (lookup callables callable))
+  (define raw-signature (callable-signature callables callable))
   (unless raw-signature (fail 'unknown-callable node))
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
@@ -2211,6 +2288,7 @@
     (or (unwrap-forall-region signature (region-binder-context)) signature))
   (match expanded
     [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
+     (record-callable-context! Λ raw-signature 'lam)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
@@ -2298,8 +2376,8 @@
   #:transparent)
 
 (define (recur-signature-prelude callable function parameters body
-                                 environment callables node fail)
-  (define raw-signature (lookup callables callable))
+                                 Λ environment callables node fail)
+  (define raw-signature (callable-signature callables callable))
   (unless raw-signature (fail 'unknown-callable node))
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
@@ -2310,6 +2388,7 @@
       [_ (values signature '())]))
   (match body-signature
     [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
+     (record-callable-context! Λ raw-signature 'recur)
      (unless (= (length parameters) (length parameter-types))
        (fail 'parameter-arity-mismatch node
              (length parameter-types)
@@ -2343,7 +2422,7 @@
     (recur-prelude signature body-signature binder-params region-params
                    parameter-types return-type latent-row _obligations)
     (recur-signature-prelude callable function parameters body
-                             environment callables node fail))
+                             Λ environment callables node fail))
   (define function-environment
     (extend environment
             (list function)
@@ -2411,7 +2490,7 @@
     (recur-prelude signature body-signature binder-params region-params
                    parameter-types return-type latent-row _obligations)
     (recur-signature-prelude callable function parameters body
-                             environment callables node fail))
+                             Λ environment callables node fail))
   (define function-environment
     (extend environment
             (list function)
@@ -4591,7 +4670,7 @@
      #:when (and (memq ctor '(Borrowed BorrowedMut))
                  (eq? ctor same-ctor))
      (if (equal? actual-rho expected-rho)
-     (compatible? actual expected)
+         (compatible? actual expected)
          (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
                   (for/or ([owner-rho
                             (in-list (argument-owner-rhos Λ core fail))])
@@ -4868,12 +4947,19 @@
 (define (type-of/raw* core-in places callables environment Λ
                       #:sidecar [sidecar-box #f]
                       #:ptr-sidecar [ptr-box #f]
-                      #:mut-types [mut-types-box #f])
+                      #:mut-types [mut-types-box #f]
+                      #:callable-contexts [callable-contexts-box #f])
   (when mut-types-box
     (unless (box? mut-types-box)
       (raise-argument-error 'type-of/raw* "box?" mut-types-box))
     (set-box! mut-types-box (hash)))
+  (when callable-contexts-box
+    (unless (box? callable-contexts-box)
+      (raise-argument-error 'type-of/raw* "box?" callable-contexts-box))
+    (set-box! callable-contexts-box (hash)))
   (define collected-mut-types (and mut-types-box (box (hash))))
+  (define collected-callable-contexts
+    (and callable-contexts-box (box (hash))))
   (define resolved-mut-types (box (hash)))
   (define cs (box '()))
   (define rs (box '()))
@@ -4892,6 +4978,7 @@
                    [region-binder-renamings '()]
                    [alpha-table tbl]
                    [mut-binding-types-table collected-mut-types]
+                   [callable-contexts-table collected-callable-contexts]
                    [resource-place-set (set)]
                    [resource-identity-transfers (set)]
                    [merge-alpha-sources (make-hash)]
@@ -4987,14 +5074,19 @@
   (when (and mut-types-box
              (match completed [`(ok ,_) #t] [_ #f]))
     (set-box! mut-types-box (unbox resolved-mut-types)))
+  (when (and callable-contexts-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (set-box! callable-contexts-box (unbox collected-callable-contexts)))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
 (define (type-of/raw core-in places callables [environment '()]
                      [Λ (empty-region-ctx)]
-                     #:mut-types [mut-types-box #f])
+                     #:mut-types [mut-types-box #f]
+                     #:callable-contexts [callable-contexts-box #f])
   (match (type-of/raw* core-in places callables environment Λ
-                       #:mut-types mut-types-box)
+                       #:mut-types mut-types-box
+                       #:callable-contexts callable-contexts-box)
     [(list 'ok (list type row _table _σ _renamed)) (list 'ok (list type row))]
     [other other]))
 
@@ -5002,11 +5094,13 @@
 ;; 既存の type-of/raw* の返り値と既存の 2 箇所の呼び出しは変えず、成功結果の末尾へ sidecar を足す。
 (define (type-of/raw*+borrows core-in places callables [environment '()]
                               [Λ (empty-region-ctx)]
-                              #:mut-types [mut-types-box #f])
+                              #:mut-types [mut-types-box #f]
+                              #:callable-contexts [callable-contexts-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:sidecar sidecar-box
-                       #:mut-types mut-types-box)
+                       #:mut-types mut-types-box
+                       #:callable-contexts callable-contexts-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -5015,11 +5109,13 @@
 ;; sidecar を返す入口を足す。
 (define (type-of/raw*+ptr core-in places callables [environment '()]
                           [Λ (empty-region-ctx)]
-                          #:mut-types [mut-types-box #f])
+                          #:mut-types [mut-types-box #f]
+                          #:callable-contexts [callable-contexts-box #f])
   (define ptr-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:ptr-sidecar ptr-box
-                       #:mut-types mut-types-box)
+                       #:mut-types mut-types-box
+                       #:callable-contexts callable-contexts-box)
     [(list 'ok (list type row _table _σ _renamed))
      (list 'ok (list type row (unbox ptr-box)))]
     [other other]))
@@ -5052,12 +5148,52 @@
            (walk child (append point (list index)))))))
   (walk spanless '()))
 
+(define (annotate-callable-contexts core table namespace)
+  (unless (hash? table)
+    (raise-argument-error 'annotate-callable-contexts "hash?" table))
+  (unless (memq namespace '(renamed source))
+    (raise-argument-error 'annotate-callable-contexts
+                          "'renamed or 'source" namespace))
+  (define spanless (erase-core core))
+  (define (instantiated-cid cid point)
+    (match (hash-ref table point #f)
+      [(list renamed-pairs source-pairs poly)
+       (when (match cid [`(Inst ,_ ,_ ,_) #t] [_ #f])
+         (error 'annotate-callable-contexts "Inst cid を二重に付ける: ~s" cid))
+       `(Inst ,cid ,(if (eq? namespace 'renamed)
+                        renamed-pairs
+                        source-pairs)
+              ,poly)]
+      [_ cid]))
+  (define (walk node point)
+    (define replaced
+      (match node
+        [`(Lam ,origin ,cid (,parameters ...) ,body)
+         `(Lam ,origin ,(instantiated-cid cid point) ,parameters ,body)]
+        [`(Recur ,cid ,function (,parameters ...) ,body ,next)
+         `(Recur ,(instantiated-cid cid point) ,function ,parameters ,body ,next)]
+        [_ node]))
+    (define children (core-children replaced))
+    (if (null? children)
+        replaced
+        (core-with-children
+         replaced
+         (for/list ([child (in-list children)] [index (in-naturals)])
+           (walk child (append point (list index)))))))
+  (walk spanless '()))
+
 ;; machine と lowering へ渡す Core は、型付け時に得た有効な束縛型を持つ。
 ;; 型欄を置き換えた結果は再型検査しない。OWN-004 の判定には元の宣言型が要る。
 (define (execution-core core callables)
   (define effective-types (box (hash)))
-  (match (type-of/raw core '() callables '() #:mut-types effective-types)
-    [(list 'ok _) (annotate-mut-binding-types core (unbox effective-types))]
+  (define contexts (box (hash)))
+  (match (type-of/raw core '() callables '()
+                      #:mut-types effective-types
+                      #:callable-contexts contexts)
+    [(list 'ok _)
+     (annotate-callable-contexts
+      (annotate-mut-binding-types core (unbox effective-types))
+      (unbox contexts) 'source)]
     [failure
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
@@ -5065,10 +5201,16 @@
 (define (core-type-of/materialized core-in places callables
                                    [environment '()]
                                    [Λ (empty-region-ctx)])
-  (match (type-of/raw* core-in places callables environment Λ)
+  (define contexts (box (hash)))
+  (match (type-of/raw* core-in places callables environment Λ
+                       #:callable-contexts contexts)
     [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
-     (list 'ok type (if ir (materialize-regions ir renamed table σ) renamed))]
+     (define materialized
+       (if ir (materialize-regions ir renamed table σ) renamed))
+     (list 'ok type
+           (annotate-callable-contexts materialized
+                                       (unbox contexts) 'renamed))]
     [other other]))
 
 ;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。

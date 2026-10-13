@@ -302,6 +302,13 @@
        `(Let (,x ,bmode ,(fill-type τ ir bound-point))
              ,(walk bound bound-point)
              ,(walk body body-point))]
+      [`(RegionApp ,function (,ρs ...))
+       ;; RegionApp の ρ は Core の子でないため、同じ IR の point で埋める。
+       `(RegionApp ,(walk function (append point '(0)))
+                   ,(for/list ([ρ (in-list ρs)])
+                      (if (eq? ρ 'ph)
+                          (region->rho ir (region-at ir point))
+                          ρ)))]
       [(? list?)
        (core-with-children
         t
@@ -320,7 +327,7 @@
 
 ;; spec §4.1。生成した core を検査対象の config へ通す。
 ;; 型検査が受理しない項は静かに捨てる。受理した項だけが性質 8 の対象である。
-(define (prepare-borrow-term* core)
+(define (prepare-borrow-term* core #:callables [callables '()])
   (define ir (build-region-ir core))
   (define filled (fill-region-placeholders core ir))
   ;; typing.rkt の raw 入口は G2m core を受け取るため、注釈を先に注入する。
@@ -329,18 +336,22 @@
     (with-handlers ([exn:fail? (lambda (_e) #f)])
       (annotate-regions filled ir)))
   (define mut-types (box (hash)))
+  (define callable-contexts (box (hash)))
   (define result
     (if annotated
         (with-handlers ([exn:fail? (lambda (_e) 'discard)])
-          (type-of/raw*+borrows annotated '() '()
+          (type-of/raw*+borrows annotated '() callables
                                 '() (region-ctx ir '() (hash) (hash))
-                                #:mut-types mut-types))
+                                #:mut-types mut-types
+                                #:callable-contexts callable-contexts))
         'discard))
   (match result
     [(list 'ok (list type _row table σ renamed sidecar))
      (define materialized (materialize-regions ir renamed table σ))
      (define machine-core
-       (annotate-mut-binding-types materialized (unbox mut-types)))
+       (annotate-callable-contexts
+        (annotate-mut-binding-types materialized (unbox mut-types))
+        (unbox callable-contexts) 'renamed))
      (define config (inject-g2m machine-core))
      ;; spec §4.6。初期 config に借用値が現れる項は入口の制限に反する。
      (if (initial-has-borrow? config)
@@ -348,8 +359,8 @@
          (list 'ok config sidecar ir type))]
     [_ 'discard]))
 
-(define (prepare-borrow-term core)
-  (match (prepare-borrow-term* core)
+(define (prepare-borrow-term core #:callables [callables '()])
+  (match (prepare-borrow-term* core #:callables callables)
     [(list 'ok config sidecar ir _type) (list 'ok config sidecar ir)]
     [other other]))
 

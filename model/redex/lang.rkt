@@ -255,6 +255,9 @@
          (OwnLeaf G)))
 
 (define-extended-language G2m G1m
+  ;; Task c3n5 §4.4。機械内の callable だけが出現位置の region 文脈を持つ。
+  (cid ::= .... (Inst cid ((rp ρ) ...) poly))
+  (poly ::= Mono (Poly (rp ...)))
   (m ::= imm mut)
   (bmode ::= const let mut)
   (r ::= (rf ...))

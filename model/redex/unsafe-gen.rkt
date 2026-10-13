@@ -118,17 +118,23 @@
     (with-handlers ([exn:fail? (lambda (_e) #f)])
       (annotate-regions region-filled ir)))
   (define mut-types (box (hash)))
+  (define callable-contexts (box (hash)))
+  ;; prepare-unsafe-term は入力側の名前を持つ annotated Core を machine へ渡す。
+  ;; 現在の入口は Lam と Recur を作らないが、将来それらを受ける場合も source 名を記録する。
   (define result
     (if annotated
         (with-handlers ([exn:fail? (lambda (_e) 'discard)])
           (type-of/raw*+ptr annotated '() '() '()
                               (region-ctx ir '() (hash) (hash))
-                              #:mut-types mut-types))
+                              #:mut-types mut-types
+                              #:callable-contexts callable-contexts))
         'discard))
   (match result
     [(list 'ok (list _τ _ε sidecar))
      (list 'ok
-           (inject-g2m (annotate-mut-binding-types
-                        annotated (unbox mut-types)))
+           (inject-g2m
+            (annotate-callable-contexts
+             (annotate-mut-binding-types annotated (unbox mut-types))
+             (unbox callable-contexts) 'source))
            sidecar)]
     [_ 'discard]))

@@ -189,6 +189,10 @@
                 '(PResource 3))
   (check-equal? (lower-value-ok '(OwnedTransit 9 7)) (lower-value-ok 7)))
 
+(test-case "Inst cid は lowering で消える"
+  (check-equal? (lower-value-ok '(Lam User (Inst useb ((a 7)) Mono) () unit))
+                (lower-value-ok '(Lam User useb () unit))))
+
 (test-case "Absent 欄の lowering は観測値から欄を落とす"
   (define core
     '(Yield (Rec ((a imm 1) (o imm (Absent Int)))) unit))
