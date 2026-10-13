@@ -610,6 +610,9 @@
       [`(BorrowMutAt ,_ ,own ,_) own]
       [`(ReborrowAt ,_ ,own ,_) own]
       [`(ProjBorrowAt ,_ ,own ,_ ,_) own]
+      ;; 構成検査では実行時の借用値が operand となるため、機械規則と同じ own を返す。
+      [`(BorrowRef ,p ,fp ,_) `(Own ,p ,fp)]
+      [`(BorrowMutRef ,p ,fp ,_) `(Own ,p ,fp)]
       [(? symbol? s) (own-of-designator env* s)]
       [`(Scope ,_ ,body) (walk body env*)]
       [`(Let (,x ,_ ,τ) ,bound ,body)
