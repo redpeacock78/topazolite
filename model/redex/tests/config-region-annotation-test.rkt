@@ -1,6 +1,7 @@
 #lang racket
 
 (require rackunit
+         redex/reduction-semantics
          racket/match
          racket/set
          "../borrow.rkt"
@@ -8,6 +9,7 @@
          "../lang.rkt"
          "../region.rkt"
          "../machine.rkt"
+         "../borrow-oracle.rkt"
          "../borrow-gen.rkt"
          "../region-param.rkt"
          "../typing.rkt")
@@ -445,11 +447,18 @@
     (trace-with-initial-int-place recur-forall-source recur-forall-callables))
   (check-not-false (index-of rules 'R-RecurBind))
   (check-config-trace configs recur-forall-callables expected)
+  (define region-app-index (index-of rules 'R-RegionAppRecur))
+  (check-not-false region-app-index)
+  (define before-cids
+    (collect-inst-cids
+     (config-core (list-ref configs region-app-index))))
+  (check-equal? (cid-poly (first before-cids)) '(Poly (a)))
   (check-equal? (raw-steps-g2/named (last configs)) '())
-  (define cids (collect-inst-cids (config-core (last configs))))
+  (check-true (redex-match? G2m v (config-core (last configs))))
+  (define cids (first (inst-cids-after rules configs 'R-RegionAppRecur)))
   (check-equal? (length cids) 1)
   (check-equal? (cid-base (first cids)) 'recf)
-  (check-equal? (cid-poly (first cids)) '(Poly (a))))
+  (check-eq? (cid-poly (first cids)) 'Mono))
 
 (define recur-forall0-callables
   '((recf0 (ForallRegion () (NFn () Unit () () () User)))))
@@ -464,10 +473,17 @@
     (region-app-trace/source recur-forall0-source recur-forall0-callables))
   (check-not-false (index-of rules 'R-RecurBind))
   (check-config-trace configs recur-forall0-callables expected)
+  (define region-app-index (index-of rules 'R-RegionAppRecur))
+  (check-not-false region-app-index)
+  (define before-cids
+    (collect-inst-cids
+     (config-core (list-ref configs region-app-index))))
+  (check-equal? (cid-poly (first before-cids)) '(Poly ()))
   (check-equal? (raw-steps-g2/named (last configs)) '())
-  (define cids (collect-inst-cids (config-core (last configs))))
+  (check-true (redex-match? G2m v (config-core (last configs))))
+  (define cids (first (inst-cids-after rules configs 'R-RegionAppRecur)))
   (check-equal? (length cids) 1)
-  (check-equal? (cid-poly (first cids)) '(Poly ())))
+  (check-eq? (cid-poly (first cids)) 'Mono))
 
 (define recur-outer-region-callables
   '((recouter (ForallRegion (b)
@@ -496,12 +512,94 @@
   (check-not-false (index-of rules 'R-RegionApp))
   (check-not-false (index-of rules 'R-RecurBind))
   (check-config-trace configs recur-outer-region-callables expected)
+  (define region-app-index (index-of rules 'R-RegionAppRecur))
+  (check-not-false region-app-index)
+  (define before-cids
+    (collect-inst-cids
+     (config-core (list-ref configs region-app-index))))
+  (check-equal? (length before-cids) 1)
+  (check-equal? (cid-poly (first before-cids)) '(Poly (b)))
+  (check-equal? (map first (cid-pairs (first before-cids))) '(a))
   (check-equal? (raw-steps-g2/named (last configs)) '())
-  (define cids (collect-inst-cids (config-core (last configs))))
+  (check-true (redex-match? G2m v (config-core (last configs))))
+  (define cids (first (inst-cids-after rules configs 'R-RegionAppRecur)))
   (check-equal? (length cids) 1)
-  (check-equal? (cid-poly (first cids)) '(Poly (b)))
-  (check-true (exact-nonnegative-integer?
-               (second (first (cid-pairs (first cids)))))))
+  (check-eq? (cid-poly (first cids)) 'Mono)
+  (check-equal? (map first (cid-pairs (first cids))) '(a b))
+  (check-true (andmap exact-nonnegative-integer?
+                      (map second (cid-pairs (first cids))))))
+
+(test-case "Poly の内側の Recur 本体は外側の RegionApp で置き換わらない"
+  (define callables
+    '((outer (ForallRegion (a)
+               (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))
+      (inner (ForallRegion (a)
+               (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))))
+  (define source
+    '(Scope (1)
+       (Recur outer outerf (outer-x)
+         (Let (outer-y let (BorrowedMut Int (RParam a))) outer-x
+           (Recur inner innerf (inner-x)
+             (Let (inner-y let (BorrowedMut Int (RParam a))) inner-x 0)
+             0))
+         (Apply (RegionApp outerf ((RVar 0))) (BorrowMut 1)))))
+  (match-define (list expected configs rules)
+    (trace-with-initial-int-place source callables))
+  (check-not-false (index-of rules 'R-RegionAppRecur))
+  (check-config-trace configs callables expected)
+  (define region-app-index (index-of rules 'R-RegionAppRecur))
+  (define before-cids
+    (collect-inst-cids (config-core (list-ref configs region-app-index))))
+  (check-equal? (map cid-base before-cids) '(outer inner))
+  (check-equal? (map cid-poly before-cids)
+                '((Poly (a)) (Poly (a))))
+  (define after (list-ref configs (add1 region-app-index)))
+  (define after-cids (collect-inst-cids (config-core after)))
+  (define outer-cid (findf (lambda (cid) (eq? (cid-base cid) 'outer)) after-cids))
+  (define inner-cid (findf (lambda (cid) (eq? (cid-base cid) 'inner)) after-cids))
+  (check-eq? (cid-poly outer-cid) 'Mono)
+  (define outer-rho (second (first (cid-pairs outer-cid))))
+  (check-true (exact-nonnegative-integer? outer-rho))
+  (check-equal? (cid-poly inner-cid) '(Poly (a)))
+  (define (contains? term needle)
+    (or (equal? term needle)
+        (and (list? term) (ormap (lambda (part) (contains? part needle)) term))))
+  (check-true (contains? (config-core after) `(BorrowedMut Int ,outer-rho)))
+  (check-true (contains? (config-core after) '(BorrowedMut Int (RParam a))))
+  (check-equal? (raw-steps-g2/named (last configs)) '())
+  (check-true (redex-match? G2m v (config-core (last configs)))))
+
+(test-case "R-RegionAppRecur は arity 不一致と Inst 無しでは発火しない"
+  (for ([core
+         (in-list
+          '((RegionApp (RecurVal (Inst recf () (Poly (a))) f () 0) ())
+            (RegionApp (RecurVal recf f () 0) ((RVar 0)))))])
+    (define steps (raw-steps-g2/named `(cfg ,core () () () ())))
+    (check-false (memq 'R-RegionAppRecur (map first steps)))))
+
+(test-case "具体化した RecurVal の再帰呼出しは二度 unfold する"
+  (define callables
+    '((recf (ForallRegion (a)
+             (NFn ((Option Int)) Int () () () User)))))
+  (define source
+    '(Scope (1)
+       (Recur recf f (state)
+         (Eliminate state
+           ((none () -> 0)
+            (some (item) ->
+              (Apply f (Construct (Option Int) none)))))
+         (Apply (RegionApp f (ph))
+                (Construct (Option Int) some 1)))))
+  (match-define (list expected configs rules)
+    (trace-with-initial-int-place source callables))
+  (check-config-trace configs callables expected)
+  (check-equal?
+   (check-borrow-execution (first configs) #f #f 200 (make-bcounters))
+   'ok)
+  (check-not-false (index-of rules 'R-RegionAppRecur))
+  (check-true (>= (count (lambda (rule) (eq? rule 'R-RecurUnfold)) rules) 2))
+  (check-equal? (raw-steps-g2/named (last configs)) '())
+  (check-true (redex-match? G2m v (config-core (last configs)))))
 
 (define nested-poly-callables
   '((outer (ForallRegion (a) (NFn () Int () () () User)))

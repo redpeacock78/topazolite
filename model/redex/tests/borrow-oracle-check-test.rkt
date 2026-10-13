@@ -114,6 +114,22 @@
                          R-FromRawPtrConst R-FromRawPtrMut R-UnsafeExit))])
     (check-equal? (rule-bucket name) 'non-substituting)))
 
+(test-case "R-RegionAppRecur は借用の置換規則へ分類されない"
+  (check-equal? (rule-bucket 'R-RegionAppRecur) 'non-substituting))
+
+(test-case "R-RegionAppRecur の空の借用 trace は oracle を通る"
+  (define config
+    '(cfg (Scope ()
+           (Apply
+            (RegionApp
+             (RecurVal (Inst recf () (Poly (a))) f () 0)
+             ())))
+          () () () ()))
+  (check-equal?
+   (check-borrow-execution config (borrow-sidecar '() (hash)) #f 20
+                          (make-bcounters))
+   'ok))
+
 (test-case "生きている借用の place を move する遷移は fail になる"
   ;; 条件 1。Ω が Available から Moved へ変わる前後の config を手で組む。
   ;; place 0 を指す共有借用が制御項に生きているので落ちる。

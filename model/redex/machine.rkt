@@ -1566,6 +1566,27 @@
                    (values name argument))))
         R-RegionApp)
 
+   ;; region 多相な RecurVal も Poly の binder を本体だけで束縛する。
+   (--> (cfg (in-hole E
+                      (RegionApp
+                       (RecurVal (Inst cid ((rp_c ρ_c) ...) (Poly (rp ...)))
+                                 f (x ...) c_body)
+                       (ρ ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E
+                      (RecurVal (Inst cid ((rp_c ρ_c) ... (rp ρ) ...) Mono)
+                                f (x ...) c_result))
+             H Ω Λtok θ)
+        (side-condition
+         (= (length (term (rp ...))) (length (term (ρ ...)))))
+        (where c_result
+               ,(subst-region-params
+                 (term c_body)
+                 (for/hash ([name (in-list (term (rp ...)))]
+                            [argument (in-list (term (ρ ...)))])
+                   (values name argument))))
+        R-RegionAppRecur)
+
    (--> (cfg (in-hole E
                       (Let (x bmode τ) v_bound c_body))
              H Ω Λtok θ)

@@ -694,12 +694,16 @@
      (cons (for/fold ([all input-ws]) ([ws (in-list entry-ws)])
              (set-union all ws))
            #f)]
-    ;; R-RegionApp は包みを剥がすだけで値を変えない。関数の位置が RegionLam
-    ;; であればその本体の表をそのまま通す。ws は借用を作らないため空である。
-    ;; region-lam-parts は span の有無の両方に対応する。
+    ;; RegionApp は包みを剥がすだけで値を変えない。RegionLam と RecurVal の
+    ;; どちらも、結果へ残る本体の表をそのまま通す。
     [`(RegionApp ,f ,_)
      (define parts (region-lam-parts f))
-     (cons (set) (and parts (table-of (third parts))))]
+     (define body
+       (or (and parts (third parts))
+           (match (peel-node f)
+             [`(RecurVal ,_cid ,_f ,_xs ,c_body) c_body]
+             [_ #f])))
+     (cons (set) (and body (table-of body)))]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
     ;; 宣言型はどちらの形でも最後の要素である。
     ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。
