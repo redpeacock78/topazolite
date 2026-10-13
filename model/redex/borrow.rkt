@@ -694,16 +694,19 @@
      (cons (for/fold ([all input-ws]) ([ws (in-list entry-ws)])
              (set-union all ws))
            #f)]
-    ;; RegionApp は包みを剥がすだけで値を変えない。RegionLam と RecurVal の
-    ;; どちらも、結果へ残る本体の表をそのまま通す。
+    ;; RegionLam は本体へ置き換わるので本体の表を通す。
+    ;; RecurVal は関数値のままなので関数値自身の表を通す。
     [`(RegionApp ,f ,_)
      (define parts (region-lam-parts f))
-     (define body
-       (or (and parts (third parts))
-           (match (peel-node f)
-             [`(RecurVal ,_cid ,_f ,_xs ,c_body) c_body]
-             [_ #f])))
-     (cons (set) (and body (table-of body)))]
+     (define tbl
+       (cond
+         [parts (table-of (third parts))]
+         [(match (peel-node f)
+            [`(RecurVal ,_cid ,_f ,_xs ,_c_body) #t]
+            [_ #f])
+          (table-of f)]
+         [else #f]))
+     (cons (set) tbl)]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
     ;; 宣言型はどちらの形でも最後の要素である。
     ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。

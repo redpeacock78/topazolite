@@ -65,14 +65,16 @@
  (check-equal? (borrow-token-key (empty-region-ctx) c) (set)))
 
 (test-case
- "RegionApp は RecurVal の本体の欄別表を通す"
- (define c
-   '(RegionApp
-     (RecurVal (Inst recf () (Poly (a))) f (x)
-       (Construct (Option (Borrowed Res (RParam a))) some (Borrow 1)))
-     ((RVar 0))))
- (define tbl (capability-field-table (empty-region-ctx) c))
- (check-equal? (car (hash-ref tbl (cons 'some 0))) (set '(1))))
+ "RegionApp と RecurVal は同じ関数値の表を返す"
+ (define recur
+   '(RecurVal (Inst recf () (Poly (a))) f (x)
+     (Construct (Option (Borrowed Res (RParam a))) some (Borrow 1))))
+ (define applied `(RegionApp ,recur ((RVar 0))))
+ (define recur-table (capability-field-table (empty-region-ctx) recur))
+ (define applied-table (capability-field-table (empty-region-ctx) applied))
+ (check-false recur-table)
+ (check-false applied-table)
+ (check-equal? applied-table recur-table))
 
 (test-case
  "designator は Λ から表を引く"
