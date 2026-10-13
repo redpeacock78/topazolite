@@ -68,6 +68,22 @@
           ((0 Available) (1 Available)) () ()))
   (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch))
 
+(test-case "構成検査も自由な RParam を持つ関数境界を拒否する"
+  (define callables
+    '((free-borrow
+       (NFn ((Borrowed Int (RParam z))) Unit () () () User))))
+  (define cfg '(cfg (Lam User free-borrow (p) unit) () () () ()))
+  (check-equal? (config-type-failure-key cfg callables)
+                'borrowed-function-parameter))
+
+(test-case "Apply の構成検査も具体化済み region を関数境界で許す"
+  (define signature '(NFn ((Borrowed Int 3)) Unit () () () User))
+  (define cfg
+    `(cfg (Apply (Move 1) unit)
+          ((1 (Lam User local (p) unit) (declared ,signature)))
+          ((1 Available)) () ()))
+  (check-equal? (config-type-failure-key cfg) 'type-mismatch))
+
 (test-case "複数 capability の Reborrow は own の入口検査で先に拒否される"
   (define operand
     '(Eliminate (Construct (Option Int) some 1)
@@ -254,7 +270,7 @@
        (annotate-mut-binding-types
         (materialize-regions ir renamed table sigma)
         (unbox mut-types)))
-  (define start
+     (define start
        (inject-g2m
         (annotate-callable-contexts materialized
                                     (unbox callable-contexts) 'renamed)))

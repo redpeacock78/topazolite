@@ -372,6 +372,11 @@
     [`(BorrowedMut ,_ ,ρ) ρ]
     [_ #f]))
 
+;; 構成検査では具体化済みの region を境界で許し、自由な RParam は拒む。
+(define (unbound-boundary-borrowed-type? type)
+  (unbound-borrowed-type? type (bound-region-params)
+                          #:concrete-regions-bound? (deriving-config?)))
+
 ;; 型木のどこかに借用があるかを、region の束縛状態に関係なく検出する。
 ;; 借用の所有者をこの型から復元できない位置で使う。
 (define (borrowed-type-anywhere? type)
@@ -2242,15 +2247,12 @@
 ;; 仮引数、結果、証明義務の Q、捕捉を同じ入口で検査する。
 (define (check-function-boundary parameter-types return-type obligations body
                                  bound-names environment node fail)
-  ;; 構成検査では materialize 済みの具体的な region も署名に現れる。
-  ;; source の自由な RParam を拒む境界検査は、その段階では適用しない。
-  (unless (deriving-config?)
-    (when (ormap unbound-borrowed-type? parameter-types)
-      (fail 'borrowed-function-parameter node))
-    (when (unbound-borrowed-type? return-type)
-      (fail 'borrowed-function-result node))
-    (when (unbound-borrowed-type? obligations)
-      (fail 'borrowed-function-result node obligations)))
+  (when (ormap unbound-boundary-borrowed-type? parameter-types)
+    (fail 'borrowed-function-parameter node))
+  (when (unbound-boundary-borrowed-type? return-type)
+    (fail 'borrowed-function-result node))
+  (when (unbound-boundary-borrowed-type? obligations)
+    (fail 'borrowed-function-result node obligations))
   ;; 関数自身の束縛子は同名の外側の項目を遮蔽するため、自由変数から引く。
   (define free
     (set-subtract (core-free-vars body) (list->set bound-names)))
@@ -3993,17 +3995,17 @@
         ;; 義務は呼出しの出現へ provenance を結び付けられるため、束縛済みの
         ;; RParam は呼出し側で運べる。ここでは既定の bound-region-params を
         ;; 尊重し、未束縛の借用だけを借用結果として拒む。
-        (when (unbound-borrowed-type? obligations)
+        (when (unbound-boundary-borrowed-type? obligations)
           (fail 'borrowed-function-result function obligations))
         ;; summary の無い concrete NFn は、従来の関数境界の診断を引数の
         ;; 照合より先に返す。summary のある callable だけ実体化へ進む。
         (when (and (not summary)
                    (not frame)
-                   (ormap unbound-borrowed-type? parameter-types))
+                   (ormap unbound-boundary-borrowed-type? parameter-types))
           (fail 'borrowed-function-parameter function))
         (when (and (not summary)
                    (not frame)
-                   (unbound-borrowed-type? return-type))
+                   (unbound-boundary-borrowed-type? return-type))
           (fail 'borrowed-function-result function))
         (define argument-result
           (check-many/full arguments parameter-types Λ function-psi

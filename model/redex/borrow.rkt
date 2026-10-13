@@ -433,19 +433,22 @@
     [`(BorrowedMut ,_ ,_) #t]
     [_ #f]))
 
-;; docs/specification/borrow.md §8。型木のどこかに、region 欄が束縛された (RParam rp) でない
-;; 借用型が現れるかを返す。
+;; docs/specification/borrow.md §8。型木のどこかに未束縛の借用型が現れるかを返す。
+;; concrete-regions-bound? は materialize 後の構成検査だけで有効にする。
 ;; Borrowed と BorrowedMut の節を先に置くのは、region 欄を降りると (RParam rp) の
 ;; rp が型の葉として扱われるからである。Data では具体化した schema の欄を辿る。
 (define unbound-borrowed-visited (make-parameter (set)))
-(define (unbound-borrowed-type? type [bound-params (bound-region-params)])
+(define (unbound-borrowed-type? type [bound-params (bound-region-params)]
+                               #:concrete-regions-bound? [concrete-regions-bound? #f])
   (parameterize ([unbound-borrowed-visited (set)])
     (let walk ([t type])
       (match t
         [`(Borrowed ,payload ,ρ)
-         (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+         (or (not (bound-region-param? ρ bound-params concrete-regions-bound?))
+             (walk payload))]
         [`(BorrowedMut ,payload ,ρ)
-         (or (not (bound-region-param? ρ bound-params)) (walk payload))]
+         (or (not (bound-region-param? ρ bound-params concrete-regions-bound?))
+             (walk payload))]
         [`(Data ,name (,arguments ...))
          (define key (cons name arguments))
          (define schema (data-schema name arguments))
@@ -459,9 +462,11 @@
         [(? list? ts) (ormap walk ts)]
         [_ #f]))))
 
-(define (bound-region-param? ρ bound-params)
+(define (bound-region-param? ρ bound-params concrete-regions-bound?)
   (match ρ
     [`(RParam ,rp) (set-member? bound-params rp)]
+    [(? exact-nonnegative-integer?) concrete-regions-bound?]
+    [`(RVar ,(? exact-nonnegative-integer?)) concrete-regions-bound?]
     [_ #f]))
 
 ;; c が作る借用が指す designator の集合を返す。
