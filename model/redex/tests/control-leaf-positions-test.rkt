@@ -281,9 +281,6 @@
     ((PtrOffset offset) ())
     ((RawStore value) (Mutation))))
 
-(define ptr-pending-rows
-  '((PtrOffset offset) (RawStore value)))
-
 (define (make-borrowed-row-case leaf-core control-core nested-core expected effect)
   (define heap
     '((0 (Rec ((a imm 7)
@@ -713,22 +710,7 @@
     (define-values (configs _rules) (trace-g2 start))
     (check-equal? (raw-steps-g2/named (last configs)) '()
                   (format "~s trace は終端まで進む" key))
-    (define first-ptr-val
-      (for/first ([cfg (in-list configs)] [index (in-naturals)]
-                  #:when (contains-form? cfg 'PtrVal))
-        index))
-    (check-equal? (and first-ptr-val #t)
-                  (and (member key ptr-pending-rows) #t)
-                  (format "~s trace の PtrVal 境界" key))
-    (when first-ptr-val
-      (check-true (> first-ptr-val 0)
-                  (format "~s PtrVal より前に検査対象の構成がある" key))
-      (check-true (contains-form? (list-ref configs first-ptr-val) 'PtrVal)
-                  (format "~s 検査区間の直後に PtrVal がある" key)))
-    ;; PtrVal の構成は sidecar が必要なので、その回収を行う c3n4 に委ねる。
-    (define checked
-      (if first-ptr-val (take configs first-ptr-val) configs))
-    (for ([cfg (in-list checked)] [index (in-naturals)])
+    (for ([cfg (in-list configs)] [index (in-naturals)])
       (define row
         (runtime-row cfg (row-case-callables rc) (row-case-expected rc)))
       (check-not-false row (format "~s config ~a の row" key index))

@@ -3660,6 +3660,15 @@
        (fail 'ill-typed core))
      (list (second declared) payload-row payload-psi)]
 
+    ;; unsafe.md §2.3。PtrVal は実行時構成だけで埋め込み型を持つ。
+    ;; 到達先の状態と型は使用規則の guard が検査する。
+    [`(PtrVal ,place ,_path ,type)
+     (unless (and (deriving-config?)
+                  (raw-ptr-components-ok? type)
+                  (assoc place places))
+       (fail 'ill-typed core))
+     (list type '() Ψ)]
+
     [`(resource ,_) (list '(Owned Res) '() Ψ)]
 
     ;; producer 位置から入ったときだけ OwnLeaf を許す。payload の再帰は

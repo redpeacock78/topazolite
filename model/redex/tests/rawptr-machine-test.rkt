@@ -80,11 +80,12 @@
    (step-count (rec-config (term (AddressOf (BorrowMutRef 0 (f0) (RVar 0))))))
    0))
 
-(test-case "PtrVal を含む構成の構成型付けと runtime-row はまだ未対応"
+(test-case "PtrVal を含む構成を config typing と runtime-row が受理する"
   (define config
-    (rec-config/declared `(RawLoad ,(pointer '(f0) 'Int 'Const))))
-  (check-false (config-ok? config '() 'Int '()))
-  (check-false (runtime-row config '() 'Int)))
+    (rec-config/declared `(Unsafe (RawLoad ,(pointer '(f0) 'Int 'Const)))))
+  (define row (runtime-row config '() 'Int))
+  (check-equal? row '())
+  (check-true (config-ok? config '() 'Int row)))
 
 ;; unsafe.md §2.3。R-RawLoad は Const と Mut の両方で発火する。
 (test-case "R-RawLoad は H の該当欄を読む（unsafe.md §2.3）"
