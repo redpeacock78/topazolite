@@ -5572,8 +5572,8 @@
 
 (define (config-ok? configuration callables expected row)
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
-  ;; root/leaf 位置と token 状態も検査する。G2m config を見る別の入口なので、
-  ;; places を heap から導出する entry-violation はそのまま呼ばない。
+  ;; root/leaf 位置と token 状態も検査する。places は heap から導出するが、
+  ;; own 注釈の整合は entry-violation と同じ検査で確かめる。
   (with-config-typing (lambda ()
     (and (redex-match? G2m config configuration)
          (core-types-normal? configuration)
@@ -5582,7 +5582,8 @@
          (row? row)
          (match configuration
            [`(cfg ,core ,heap ,states ,token-states ,trace)
-            (and (unique-heap? heap)
+            (and (not (own-annotation-violation core))
+                 (unique-heap? heap)
                  (unique-table? states)
                  (equal? (sort (map first heap) <)
                          (sort (map first states) <))

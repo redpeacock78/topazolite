@@ -57,11 +57,19 @@
                     ((0 7 (declared Int))) ((0 Available)) () ()))
   (check-false (config-ok? cfg '() 'Int '())))
 
+(test-case "config-ok? は BorrowAt の own と place の不一致を拒否する"
+  (define cfg
+    '(cfg (Read (BorrowAt 4 (Own 1 ()) 0))
+          ((0 7 (declared Int)) (1 8 (declared Int)))
+          ((0 Available) (1 Available)) () ()))
+  (check-false (config-ok? cfg '() 'Int '())))
+
 (test-case "構成検査は ReborrowAt の注釈を共有借用の寿命として型へ置く"
   (define cfg
     `(cfg (Read (ReborrowAt 4 (Own 0 ()) (BorrowMutRef 0 () 2)))
           ,int-heap ,int-states () ()))
   (check-false (config-type-failure-key cfg))
+  (check-not-false (runtime-row cfg '() 'Int))
   (check-true (config-ok? cfg '() 'Int '())))
 
 (test-case "構成検査の ReborrowAt は own と capability の不一致を拒否する"
@@ -69,7 +77,8 @@
     '(cfg (Read (ReborrowAt 4 (Own 1 ()) (BorrowMutRef 0 () 2)))
           ((0 7 (declared Int)) (1 8 (declared Int)))
           ((0 Available) (1 Available)) () ()))
-  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch))
+  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch)
+  (check-false (config-ok? cfg '() 'Int '())))
 
 (test-case "構成検査は ProjBorrowAt の親 capability から own を引く"
   (define cfg
@@ -78,6 +87,7 @@
               (declared (Owned (Record ((a Int mut)))))))
           ((0 Available)) () ()))
   (check-false (config-type-failure-key cfg))
+  (check-not-false (runtime-row cfg '() 'Int))
   (check-true (config-ok? cfg '() 'Int '())))
 
 (test-case "構成検査の ProjBorrowAt は誤った label の own を拒否する"
@@ -86,7 +96,8 @@
           ((0 (Rec ((a mut 7)))
               (declared (Owned (Record ((a Int mut)))))))
           ((0 Available)) () ()))
-  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch))
+  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch)
+  (check-false (config-ok? cfg '() 'Int '())))
 
 (test-case "構成検査も自由な RParam を持つ関数境界を拒否する"
   (define callables
