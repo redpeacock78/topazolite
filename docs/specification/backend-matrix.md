@@ -128,9 +128,9 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 26 本である。
-源の `-->g2` の 70 本を基準にする。
+源の `-->g2` の 71 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 38 本が対象外となり、25 本が残る。
+目標側に規則を持たない 39 本が対象外となり、25 本が残る。
 RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 26 本になる。
 
 | 源の規則 | 目標の規則 | 差分 |
@@ -165,6 +165,7 @@ RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え
 | `R-DischargeRemainder` | なし | 複合 lowering は `PRecRemove`（入れ子では `PRecRewrite` 内）で欄を除き、除去 token の cleanup は source machine が担うため `PRuntime drop` を出さない |
 | なし | `R-PR-RecRemove` | target-only の補助規則。RSD の複合 lowering で欄を取り除く |
 | `R-RegionApp` | なし | Portable Racket backend は region 適用を未設計である |
+| `R-RegionAppRecur` | なし | Portable Racket backend は region 適用を未設計である |
 | `R-Borrow` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowError` | なし | Portable Racket backend は借用を未設計である |
 | `R-BorrowMut` | なし | Portable Racket backend は借用を未設計である |

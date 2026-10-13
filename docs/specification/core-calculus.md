@@ -211,6 +211,20 @@ v ::= l                                          リテラル
 marker 自身は token を持たず、Core tree の子は `v` だけである。
 静的な Typed Core の入力には現れず、構成の型付けでのみ受理する。
 
+**出現位置の署名文脈**は、G2m の callable ID に限り **`Inst`** で記録し、その形は `(Inst cid ((rp ρ) ...) poly)` である。
+`poly` は **`Mono`** または **`(Poly (rp ...))`** である。
+各組は callable 署名の region 仮引数名 `rp` と、出現位置に対応する region `ρ` の対応を表す。
+`Lam` の `ForallRegion` binder は直上の `RegionLam` の binder 文脈へ位置で対応させ、署名の自由な `RParam` も出現位置の名前へ対応させる。
+署名の binder が本体に現れない場合も、その組を保持する。
+`Lam` が `ForallRegion ()` を持つ場合も `(Inst cid () Mono)` を付ける。
+`ForallRegion` 署名を持つ `Recur` は自身の binder をまだ剥がしていないことを `(Poly (rp ...))` で示し、自由な `RParam` の組だけを持つ。
+`ForallRegion ()` を持つ `Recur` も `(Poly ())` とし、剥がした後の `Mono` と区別する。
+`Poly` の binder は `Recur` と `RecurVal` の本体だけを束縛し、継続と組の値は束縛しない。
+machine へ入れる前に source 型付けが出現位置ごとの組を記録し、`Lam` と `Recur` の callable ID へ一度だけ付ける。
+`R-RecurBind` は `Recur` の callable ID を `RecurVal` へそのまま運ぶ。
+source の Core と callable 表の key は通常の callable ID のままであり、`Inst` は source 型付けで `unknown-callable` として拒否する。
+lowering は callable ID を消去するため、`Inst` は lowering の出力には現れない。
+
 `UnionInject` は対象 Union 型 `τU`、選んだ成分型 `τm`、payload を持つ。
 `UnionEliminate` の各枝は成分型と束縛子を持ち、束縛子はその枝の本体だけで有効である。
 `UnionVal` は machine が `UnionInject` の簡約で生成する値であり、Typed Core の入力には書けない。
@@ -1708,6 +1722,8 @@ heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
 宣言型の欄は place を作った規則だけが設定し、`Assign`、`Reassign`、`BorrowMutRef` による値の更新はその欄を保つ。
 宣言型は値や資源ではないため、token、capability、借用資源の走査には含めない。
 
+`R-ProjBorrow` と `R-ProjBorrowMut` は、結果の借用値に親の借用値の region を置く。
+`ProjBorrowAt` の注釈欄は point の注釈であり、これらの規則は読まない。
 `R-ProjBorrowMut` は、heap entry の宣言型から `Owned` の外側を一度外し、field path を Record 型の欄へ辿って最終欄の mode を選ぶ。
 機械は同じ path が heap の Record 値にも存在することを確かめ、最終欄の値が `Absent` なら簡約しない。
 metadata が無い place、型または値から辿れない path、空 path では規則は発火しない。
@@ -1753,6 +1769,24 @@ Record 欄は place の宣言型の欄型を使い、現在の値がより狭い
 path が辿れない場合、Payload の位置が `UnionVal` でない場合、または place が `Available` でない場合、構成検査は失敗する。
 この回復は構成検査の再型付け（`config-ok?` と `gen.rkt` の `runtime-row`）だけで行い、通常の `type-of/raw` と `key-of` は実行時借用値を型付けしない。
 `runtime-row` は `config-ok?` と同じ places から同じ回復を行うので、借用値を含む構成でも両者は同じ row を扱う。
+
+構成検査は `BorrowAt`、`BorrowMutAt`、`ReborrowAt`、`FromRawPtr` の注釈 `ρ` を実行時の寿命として結果の型へ置く。
+この再型付けでは注釈と point の照合、所有者の outlives 制約、borrow request の生成を行わない。
+構成の入口 `config-ok?` は own 注釈の整合性も検査し、実行時の `BorrowRef(p, fp, ρ)` と `BorrowMutRef(p, fp, ρ)` から `(Own p fp)` を導いて `ReborrowAt` と `ProjBorrowAt` の欄を照合する。
+own が一致しない構成は `own-designator-mismatch` として拒否する。
+`ProjBorrowAt` の結果の型には親の実行時借用値の region を置く。
+`RegionApp` は具体的な `ρ` の生存を検査しないが、形、実引数の個数、置換後の型、関数型との照合を行う。
+`Apply` の借用実引数では、region が異なる場合に所有者の region を引かず、payload と借用 mode を照合する。
+この条件付きの比較は `deriving-config?` の構成検査に限られ、通常の型付けは従来どおりである。
+構成検査は BOR-001 と BOR-002 の借用衝突を判定しない。
+BOR-001 と BOR-002 は source 型付けが保証し、構成検査は型と row、実行時借用値の型、token 条件を確かめる。
+`R-Beta` が既存の `BorrowRef` または `BorrowMutRef` を `Lam` 本体へ移した後も、構成検査はその型と row を再検査する。
+
+`Inst` を持つ callable の構成検査は、元の callable ID から署名を引いて出現位置の組を解決する。
+`Mono` で署名が `ForallRegion` なら binder の名前を組で置き換えて剥がし、対応する組が無い場合は `unknown-callable` とする。
+`Poly` なら署名の binder の並びが記録と一致することを確かめ、`ForallRegion` を残したまま binder 以外の自由な `RParam` だけを組で置き換える。
+解決した署名を `resolve-region-params` に渡す。
+`Inst` を持たない callable は従来の署名解決を使う。
 
 ここでの Φ は、初期構成を作る CoreArtifact `⟨Φ0, c0⟩` の Φ0 をそのまま指す。
 簡約のどの規則も Φ を書き換えないため、Φ は実行全体を通じて不変であり、Preservation（§7 性質 1）は Ξ と c の変化についてだけ述べればよい。
@@ -2126,6 +2160,27 @@ r はそのまま RecurVal へ引き継がれる。
 E[Apply(RecurVal(r, f, (x1, …, xk), c), v1, …, vk)]
   → E[c[RecurVal(r, f, (x̄), c)/f, v1/x1, …, vk/xk]]
 ```
+
+**(R-RegionApp)** は `RegionLam` の binder を与えられた region で置き換え、その本体を返す。
+置換は callable ID に記録された出現位置の署名文脈の region にも及ぶ。
+```text
+E[(RegionApp (RegionLam (rp ...) c_body) (ρ ...))]
+  → E[c_body[rp := ρ ...]]
+```
+
+置換する binder 数と実引数の数が一致しない場合は発火しない。
+
+**(R-RegionAppRecur)** は `ForallRegion` をまだ剥がしていない `RecurVal` に `RegionApp` を適用する。
+
+```text
+E[(RegionApp (RecurVal (Inst cid ((rp_c ρ_c) ...) (Poly (rp ...))) f (x ...) c_body) (ρ ...))]
+  → E[(RecurVal (Inst cid ((rp_c ρ_c) ... (rp ρ) ...) Mono) f (x ...) c_body[rp := ρ ...])]
+```
+
+`rp ...` と `ρ ...` の長さが一致しない場合は発火しない。
+置換は `R-RegionApp` と同じ region parameter の代入を使い、`Poly` の binder の束縛範囲を保つ。
+剥がした `RecurVal` は `Mono` となり、その callable ID の組には具体化した binder の対応を追加する。
+後続の `R-RecurUnfold` はこの `RecurVal` を再帰 callable の位置へ代入する。
 
 **(R-Yield)**
 

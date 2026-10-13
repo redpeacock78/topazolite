@@ -114,13 +114,18 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 ### 4.3 Materialize API
 
 - `materialize-regions ir core table σ`
-  α 表と σ から、借用の項の注釈欄を解いた寿命へ置き換えた core を返す。
-  対象は `BorrowAt` と `BorrowMutAt` と `ReborrowAt` の注釈欄である。
+  α 表と σ から、region 注釈を解決した core を返す。
+  `BorrowAt`、`BorrowMutAt`、`ReborrowAt`、`ProjBorrowAt` の注釈欄は point の α 表で解決する。
+  `ProjBorrowAt` に対応する α が無い場合は注釈欄をそのまま保つ。
+  `RegionApp` の実引数と `FromRawPtr` の region 欄は σ で解決する。
+  core の型注釈の内側にある寿命変数も σ で解決する。
+  解決によって型が変わった箇所だけを正規化する。
+  σ が複数の寿命変数を同じ region へ写すと、正規化により `Union` の同じ member が併合されることがある。
   point の数え方は §3 に従う。
 
 `check-region-annotation` は materialize の前だけで走る。
-materialize 後の注釈欄は起点ではなく寿命なので、寿命が起点より広がった
-借用へ後で掛け直すと `E-BOR-002` になる。
+構成検査は materialize 後の項を扱うため、この検査を通さない。
+materialize 後の注釈欄は起点ではなく寿命なので、寿命が起点より広がった借用へ後で掛け直すと `E-BOR-002` になる。
 
 ## 5. Well-formedness
 

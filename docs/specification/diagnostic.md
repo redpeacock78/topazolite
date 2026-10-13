@@ -519,6 +519,7 @@ phase と `backend` の対応を検査するのは `diagnostic-of` である。
 期待型を与える入口も段 3 まで検査を通す。
 
 `check-as/boolean` を通る `core-check-row` と `config-ok?` は、`type-of/raw*` と同じ collector の集合を張り、段 1、`typing-solve`、`check-region-args`、`check-borrows` の順で走る。
+構成検査では `check-region-args` は具体的な `ρ` の生存を確かめないが、`RegionApp` の形、実引数の個数、置換後の型の照合は行う。
 
 どの段の `fail` も `#f` へ潰すため、これらの入口は診断の code を外へ出さず、判定 API としての返り値だけを返す。
 
