@@ -120,6 +120,13 @@
      #:when (and (equal? type type2)
                  (equal? (record-field-value fields label) value))
      '()]
+    ;; R-ProjOpt は Absent 欄を none へ変える。
+    [(list `(ProjOpt ,type (Rec (,fields ...)) ,label)
+           `(Construct (Option ,type2) none))
+     #:when (and (equal? type type2)
+                 (equal? (record-field-value fields label)
+                         `(Absent ,type)))
+     '()]
     ;; R-UnionInject は payload を変えずに runtime tag だけを付ける。
     [(list `(UnionInject ,union-type ,member-type ,payload)
            `(UnionVal ,union-type2 ,member-type2 ,payload2))

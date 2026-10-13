@@ -137,6 +137,13 @@
    `(Construct (Option Int) some ,borrowed-value)
    '(Construct (Option Int) some (BorrowRef 3 (a) 8)))
   (check-approved-shape
+   "R-ProjOpt は Absent 欄から none を作る"
+   `(ProjOpt Int (Rec ((borrow imm ,borrowed-value)
+                       (missing imm (Absent Int))))
+                missing)
+   '(Construct (Option Int) none)
+   `(Construct (Option Int) some ,borrowed-value))
+  (check-approved-shape
    "R-UnionInject"
    `(UnionInject (Union (Borrowed Int 7) String)
                  (Borrowed Int 7) ,borrowed-value)
