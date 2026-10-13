@@ -70,6 +70,23 @@
    (list (list 'derived 'shared 3 '(0 fld) 0
                3 '(0) 0))))
 
+(test-case "ProjBorrowAt は注釈と異なる親の ρ を結果に持つ遷移を承認する"
+  (check-equal?
+   (borrow-form-candidates
+    '(ProjBorrowAt 2 (Own 3 (0 fld))
+                   (BorrowMutRef 3 (0) 1) fld)
+    '(BorrowMutRef 3 (0 fld) 1))
+   (list (list 'derived 'mut 3 '(0 fld) 1
+               3 '(0) 1))))
+
+(test-case "ProjBorrowAt の結果が親の ρ と食い違う遷移は未検証になる"
+  (check-equal?
+   (borrow-form-candidates
+    '(ProjBorrowAt 2 (Own 3 (0 fld))
+                   (BorrowMutRef 3 (0) 1) fld)
+    '(BorrowMutRef 3 (0 fld) 2))
+   (list (list 'unverified))))
+
 (test-case "ProjBorrowAt の共有から可変への昇格は未検証になる"
   (check-equal?
    (borrow-form-candidates

@@ -111,10 +111,10 @@
                  (equal? p pp) (equal? p p2)
                  (equal? fp-result (append fpp (list label)))
                  (equal? fp2 fp-result)
-                 (equal? ρ ρ2))
+                 (equal? ρp ρ2))
      (list (list 'derived
                  (if (eq? tag2 'BorrowMutRef) 'mut 'shared)
-                 p fp2 ρ pp fpp ρp))]
+                 p fp2 ρ2 pp fpp ρp))]
     ;; Eliminate は scrutinee と各 child の tag を同じものとして一般化する。
     ;; 共有・可変の片側だけを承認すると、規則名と借用 mode の不一致を隠す。
     [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
@@ -485,15 +485,20 @@
              #:when (zero? (cdr pair)))
     (car pair)))
 
-;; spec §4.4。静的側の ρ は借用を作った節点の rho_borrow を使う。
-;; alpha の σ 解は生存区間用であり、生成点の識別には使わない。
+;; spec §4.4。構成へ注入した BorrowAt の ρ は request の alpha を σ で解いた寿命である。
 (define (static-borrow-set sidecar ir)
   (for/list ([req (in-list (borrow-sidecar-requests sidecar))])
     (define rho-borrow (borrow-request-rho-borrow req))
+    (define alpha (borrow-request-alpha req))
     (define ρ
-      (if (and ir (region? rho-borrow))
-          (region->rho ir rho-borrow)
-          rho-borrow))
+      (if (lifetime-var? alpha)
+          (let ([solved
+                 (hash-ref (borrow-sidecar-sigma sidecar)
+                           (lifetime-var-index alpha))])
+            (if ir (region->rho ir solved) solved))
+          (if (and ir (region? rho-borrow))
+              (region->rho ir rho-borrow)
+              rho-borrow)))
     (list (borrow-request-mode req)
           (borrow-request-w req)
           (borrow-request-fp req)

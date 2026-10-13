@@ -613,15 +613,19 @@
          (set-member? (region-arg-request-bound request) rp)]
         [_ #f]))
     (unless bound-here?
-      (unless ir
-        (fail 'region-arg-not-live (region-arg-request-node request)))
-      (define rho
-        (subst-type-regions raw sigma ir))
-      (define at
-        (region->rho ir
-                     (region-at ir (region-arg-request-point request))))
-      (unless (relation rho at)
-        (fail 'region-arg-not-live (region-arg-request-node request))))))
+      (cond
+        ;; 構成検査は materialize 後の具体的な ρ を受け取るため、ir の
+        ;; 無い状態から point の生存を再検査しない。
+        [(and (deriving-config?) (not ir)) (void)]
+        [(not ir)
+         (fail 'region-arg-not-live (region-arg-request-node request))]
+        [else
+         (define rho (subst-type-regions raw sigma ir))
+         (define at
+           (region->rho ir
+                        (region-at ir (region-arg-request-point request))))
+         (unless (relation rho at)
+           (fail 'region-arg-not-live (region-arg-request-node request)))]))))
 
 ;; 段 2。下限制約から σ を作る。spec §6.1。
 ;; ir が無い形では借用が立たないので、制約も空であり σ も空である。
@@ -2794,6 +2798,14 @@
         '()
         Ψ_out))
 
+;; 構成検査では materialize 後の注釈 ρ が実行時の寿命である。
+;; source 型付けが既に検査した衝突、outlives、borrow request は再計算しない。
+(define (infer-borrow/config core w mutable? ρ environment places Ψ fail)
+  (define payload (borrow-target-payload w environment places core fail))
+  (list (list (if mutable? 'BorrowedMut 'Borrowed) payload ρ)
+        '()
+        Ψ))
+
 ;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
 ;; 親 capability を子の生存期間だけ停止する。判定は段 3 で行う。
 (define (infer-reborrow core operand Λ Ψ environment places callables fail)
@@ -2884,6 +2896,26 @@
                       α_child
                       core)))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
+    [_ (fail 'reborrow-non-mutable core)]))
+
+;; 構成検査では親の可変 capability が own と一致する場合だけ共有へ落とす。
+(define (infer-reborrow/config core own operand ρ Λ Ψ environment
+                               places callables fail)
+  (match-define (list τ_operand ε_operand Ψ_1)
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (match (normalize-type τ_operand)
+    [`(BorrowedMut ,τ ,_ρ_parent)
+     (define tokens (borrow-token-key Λ operand #:fail fail))
+     (when (set-empty? tokens)
+       (fail 'unresolved-borrow-owner core))
+     (match own
+       [`(Own ,p ,fp)
+        #:when (for/and ([cap (in-set tokens)])
+                 (exact-nonnegative-integer? (car cap)))
+        (unless (equal? tokens (set (cons p fp)))
+          (fail 'unresolved-borrow-owner core))]
+       [_ (void)])
+     (list `(Borrowed ,τ ,ρ) ε_operand Ψ_1)]
     [_ (fail 'reborrow-non-mutable core)]))
 
 ;; §8.1。合流した α を、借用の項が直接採番した α だけの集合へ展開する。
@@ -3202,7 +3234,8 @@
 (define (infer-from-raw-ptr core operand region Λ Ψ environment
                             places callables fail)
   ;; unsafe.md §3.3。ρ の束縛は既存の region well-formedness と同じ層で見る。
-  (check-region-annotation Λ region core fail)
+  (unless (deriving-config?)
+    (check-region-annotation Λ region core fail))
   (match-define (list τ_operand ε_operand Ψ_1)
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
   (match-define (list τ_payload _ptrmut _nul _align _as _prov)
@@ -4437,11 +4470,17 @@
     [`(BorrowMut ,w)
      (infer-borrow core w #t Λ Ψ environment places callables fail)]
     [`(BorrowAt ,ρ ,_ ,w)
-     (check-region-annotation Λ ρ core fail)
-     (infer-borrow core w #f Λ Ψ environment places callables fail)]
+     (if (deriving-config?)
+         (infer-borrow/config core w #f ρ environment places Ψ fail)
+         (begin
+           (check-region-annotation Λ ρ core fail)
+           (infer-borrow core w #f Λ Ψ environment places callables fail)))]
     [`(BorrowMutAt ,ρ ,_ ,w)
-     (check-region-annotation Λ ρ core fail)
-     (infer-borrow core w #t Λ Ψ environment places callables fail)]
+     (if (deriving-config?)
+         (infer-borrow/config core w #t ρ environment places Ψ fail)
+         (begin
+           (check-region-annotation Λ ρ core fail)
+           (infer-borrow core w #t Λ Ψ environment places callables fail)))]
     [`(BorrowRef ,_ ,_ ,_)
      #:when (and (deriving-config?) (config-runtime-borrow-types))
      (define type
@@ -4454,9 +4493,13 @@
      (if type (list type '() Ψ) (fail 'ill-typed core))]
     [`(Reborrow ,c_operand)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
-    [`(ReborrowAt ,ρ ,_ ,c_operand)
-     (check-region-annotation Λ ρ core fail)
-     (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
+    [`(ReborrowAt ,ρ ,own ,c_operand)
+     (if (deriving-config?)
+         (infer-reborrow/config core own c_operand ρ
+                                Λ Ψ environment places callables fail)
+         (begin
+           (check-region-annotation Λ ρ core fail)
+           (infer-reborrow core c_operand Λ Ψ environment places callables fail)))]
     [`(ProjBorrowAt ,_ ,_ ,operand ,label)
      (infer-projborrow core operand label Λ Ψ environment places callables fail)]
     [`(Read ,operand)
@@ -4548,9 +4591,11 @@
      #:when (and (memq ctor '(Borrowed BorrowedMut))
                  (eq? ctor same-ctor))
      (if (equal? actual-rho expected-rho)
-         (compatible? actual expected)
-         (and (for/or ([owner-rho (in-list (argument-owner-rhos Λ core fail))])
-                (equal? owner-rho expected-rho))
+     (compatible? actual expected)
+         (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
+                  (for/or ([owner-rho
+                            (in-list (argument-owner-rhos Λ core fail))])
+                    (equal? owner-rho expected-rho)))
               (compatible? actual
                            (adopt-inferred-lifetimes expected actual))))]
     [(_ _) (compatible? actual expected)]))

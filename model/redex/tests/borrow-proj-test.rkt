@@ -130,7 +130,7 @@
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg (BorrowRef 1 (a) 0)
+   (list (term (cfg (BorrowRef 1 (a) 1)
                     ,(proj-heap) ,(proj-omega) () ())))))
 
 (let ()
@@ -140,7 +140,7 @@
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg (BorrowMutRef 1 (a) 0)
+   (list (term (cfg (BorrowMutRef 1 (a) 1)
                     ,(proj-heap) ,(proj-omega) () ())))))
 
 (let ()
@@ -150,8 +150,19 @@
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg (BorrowRef 1 (b) 0)
+   (list (term (cfg (BorrowRef 1 (b) 1)
                     ,(proj-heap) ,(proj-omega) () ())))))
+
+(test-case "ProjBorrowAt の注釈欄は結果の region を決めない"
+  (for ([annotation (in-list '(0 1 7))])
+    (define conf
+      (term (cfg (ProjBorrowAt ,annotation (Own 1 (a))
+                               (BorrowMutRef 1 () 1) a)
+                 ,(proj-heap) ,(proj-omega) () ())))
+    (check-equal?
+     (apply-reduction-relation -->g2 conf)
+     (list (term (cfg (BorrowMutRef 1 (a) 1)
+                      ,(proj-heap) ,(proj-omega) () ()))))))
 
 ;; own の root だけが射影結果と食い違う configuration は stuck にする。
 (let ()

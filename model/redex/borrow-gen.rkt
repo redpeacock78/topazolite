@@ -10,7 +10,8 @@
 (provide gen-borrow-term
          literal-positions
          fill-region-placeholders
-         prepare-borrow-term)
+         prepare-borrow-term
+         prepare-borrow-term*)
 
 ;; spec §4.1。G2 core を直に作る。elaborate も surface 構文も通さない。
 ;; 生成域は借用の 3 形と、その借用が意味を持つのに必要な最小の周辺だけである。
@@ -319,7 +320,7 @@
 
 ;; spec §4.1。生成した core を検査対象の config へ通す。
 ;; 型検査が受理しない項は静かに捨てる。受理した項だけが性質 8 の対象である。
-(define (prepare-borrow-term core)
+(define (prepare-borrow-term* core)
   (define ir (build-region-ir core))
   (define filled (fill-region-placeholders core ir))
   ;; typing.rkt の raw 入口は G2m core を受け取るため、注釈を先に注入する。
@@ -336,15 +337,21 @@
                                 #:mut-types mut-types))
         'discard))
   (match result
-    [(list 'ok (list _type _row _table _σ _renamed sidecar))
+    [(list 'ok (list type _row table σ renamed sidecar))
+     (define materialized (materialize-regions ir renamed table σ))
      (define machine-core
-       (annotate-mut-binding-types annotated (unbox mut-types)))
+       (annotate-mut-binding-types materialized (unbox mut-types)))
      (define config (inject-g2m machine-core))
      ;; spec §4.6。初期 config に借用値が現れる項は入口の制限に反する。
      (if (initial-has-borrow? config)
          'discard
-         (list 'ok config sidecar ir))]
+         (list 'ok config sidecar ir type))]
     [_ 'discard]))
+
+(define (prepare-borrow-term core)
+  (match (prepare-borrow-term* core)
+    [(list 'ok config sidecar ir _type) (list 'ok config sidecar ir)]
+    [other other]))
 
 (define (initial-has-borrow? t)
   (match t

@@ -102,6 +102,26 @@
      (check-true (borrow-sidecar? sidecar))]
     [other (fail (format "unexpected: ~e" other))]))
 
+(test-case "prepare-borrow-term* は mut 束縛と既存入口を保つ"
+  ;; mut Borrowed は E-VAR-009 で拒否されるため、既存の有効な mut Int を使う。
+  (define skeleton '(Scope () (Let (m mut Int) 1000 (Reassign m 1001))))
+  (match (prepare-borrow-term* skeleton)
+    [(list 'ok `(cfg ,core ,_heap ,_states ,_tokens ,_trace)
+           _sidecar _ir _type)
+     (define mut-type
+       (let walk ([node core])
+         (match node
+           [`(Let (m mut ,τ) ,_bound ,_body) τ]
+           [(? list?)
+            (for/or ([child (in-list node)]) (walk child))]
+           [_ #f])))
+     (check-equal? mut-type 'Int)
+     (match-define (list 'ok old-config old-sidecar _old-ir)
+       (prepare-borrow-term skeleton))
+     (check-equal? (first old-config) 'cfg)
+     (check-true (borrow-sidecar? old-sidecar))]
+    [other (fail (format "unexpected: ~e" other))]))
+
 (test-case "型検査に落ちる項は discard になる"
   (check-equal? (prepare-borrow-term '(Scope () (Read 1000))) 'discard))
 

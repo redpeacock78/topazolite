@@ -82,6 +82,51 @@
 
 (define search-result (run-borrow-search))
 
+(define (matched-borrow-events counters)
+  (+ (bcounters-shared counters)
+     (bcounters-mut counters)
+     (bcounters-reborrow counters)
+     (bcounters-proj counters)
+     (bcounters-use counters)))
+
+(printf "P2m2a property 8: matched-events=~a failures=~a\n"
+        (matched-borrow-events (fourth search-result))
+        (length (third search-result)))
+
+(define (check-property8-fixture source expected-counter)
+  (match-define (list 'ok config sidecar ir _type)
+    (prepare-borrow-term* source))
+  (define counters (make-bcounters))
+  (check-equal? (check-borrow-execution config sidecar ir
+                                        (bounds-fuel limits) counters)
+                'ok)
+  (check-true (positive? (expected-counter counters)))
+  counters)
+
+(test-case "性質 8 の単純な Borrow は解決済み寿命で照合する"
+  (define counters
+    (check-property8-fixture
+     '(Scope ()
+        (Let (x let (Owned Int)) 1
+          (Let (b let (Borrowed Int ph))
+               (Scope () (Borrow x))
+               (Read b))))
+      bcounters-shared))
+  (check-equal? (bcounters-shared counters) 1))
+
+(test-case "性質 8 の ProjBorrowAt は親の解決済み寿命で照合する"
+  (define counters
+    (check-property8-fixture
+     '(Scope ()
+        (Let (c let (Owned (Record ((a Int mut) (b Int imm)))))
+             (Rec ((a mut 1) (b imm 2)))
+          (Let (q let (Borrowed Int ph))
+               (ProjBorrow (Borrow c) a)
+               (Read q))))
+      bcounters-proj))
+  (check-equal? (bcounters-shared counters) 1)
+  (check-equal? (bcounters-proj counters) 1))
+
 (test-case "性質 8 の反例が無い"
   (check-equal? (third search-result) '()))
 
@@ -124,29 +169,29 @@
     [_ #f]))
 
 (define (check-union-borrow-configs configs)
-  (define first-valid
+  (define first-checked
     (for/first ([configuration (in-list configs)]
                 [index (in-naturals)]
-                #:when (config-ok? configuration '() 'Int '()))
+                #:unless (place-allocation-pending? configuration))
       index))
-  (check-not-false first-valid "a well-formed config must be reached")
-  (if first-valid
-      (let ([skipped (take configs first-valid)]
-            [checked (drop configs first-valid)])
+  (check-not-false first-checked "the checked trace suffix must be reached")
+  (if first-checked
+      (let ([skipped (take configs first-checked)]
+            [checked (drop configs first-checked)])
         (check-true (andmap place-allocation-pending? skipped)
                     "only Owned-place/borrow allocation setup may be skipped")
-        (when (positive? first-valid)
+        (when (positive? first-checked)
           (check-true
-           (or (contains-form? (config-core (list-ref configs first-valid))
+           (or (contains-form? (config-core (list-ref configs first-checked))
                                'BorrowRef)
-               (contains-form? (config-core (list-ref configs first-valid))
+               (contains-form? (config-core (list-ref configs first-checked))
                                'BorrowMutRef))
            "the first checked config must contain the materialized borrow"))
         (check-true (andmap (lambda (configuration)
                               (config-ok? configuration '() 'Int '()))
                             checked)
                     "every config after place allocation must be valid")
-        first-valid)
+        first-checked)
       (length configs)))
 
 (test-case "borrowed Union programme は全 config と borrow oracle を通る"

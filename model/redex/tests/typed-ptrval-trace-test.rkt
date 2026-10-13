@@ -85,10 +85,11 @@
   (check-true (andmap borrow-allocation-pending? skipped)
               "除外した prefix は BorrowAt の setup 構成だけである")
   (for ([cfg (in-list skipped)] [index (in-naturals)])
-    (check-false (runtime-row cfg '() expected)
-                 (format "除外 setup 構成 ~a の runtime-row は #f" index))
-    (check-false (config-ok? cfg '() expected '())
-                 (format "除外 setup 構成 ~a の config-ok? は #f" index)))
+    (define row (runtime-row cfg '() expected))
+    (check-not-false row
+                     (format "除外 setup 構成 ~a の runtime-row がある" index))
+    (check-true (and row (config-ok? cfg '() expected row))
+                (format "除外 setup 構成 ~a が config-ok? を通る" index)))
   (define checked (if first-non-pending (drop configs first-non-pending) configs))
   (for ([cfg (in-list checked)] [index (in-naturals)])
     (check-false (borrow-allocation-pending? cfg)
@@ -146,17 +147,7 @@
       cfg))
   (check-not-false start "型検査済み source に AddressOf の実行構成がある")
   (define-values (configs rules) (trace-g2 start))
-  (if (contains-form? source 'FromRawPtr)
-      (for ([cfg (in-list configs)] [index (in-naturals)])
-        ;; c3n5 で region context を復元するまで、FromRawPtr を含む構成は
-        ;; config の型検査がこの既知の理由でだけ拒否する。
-        (check-equal? (config-type-failure-key cfg) 'borrow-region-mismatch
-                      (format "FromRawPtr config ~a の拒否理由" index))
-        (check-false (runtime-row cfg '() 'Int)
-                     (format "FromRawPtr config ~a の runtime-row" index))
-        (check-false (config-ok? cfg '() 'Int '(Unsafe))
-                     (format "FromRawPtr config ~a の config-ok?" index)))
-      (check-config-trace configs 'Int))
+  (check-config-trace configs 'Int)
   (define terminal (last configs))
   (check-equal? (raw-steps-g2/named terminal) '() "guard で stuck になる")
   (check-false (memq blocked-rule rules) "型 guard の規則は発火しない")
@@ -275,23 +266,21 @@
   (check-not-false (memq 'R-RawLoad rules))
   (check-config-trace configs 'Int))
 
-(test-case "手組み PtrVal は単独で infer でき、FromRawPtr 構成は既知の理由で拒否する"
+(test-case "手組み PtrVal と FromRawPtr を含む構成は型付けを保つ"
   (define ptr
     '(PtrVal 0 () (RawPtr Int Mut NonNull (Align 1)
                             (AddrSpace native) (Prov owned))))
   (define cfg
-    `(cfg (Unsafe (Read (FromRawPtr ,ptr (RParam rp.0))))
+    `(cfg (Unsafe (Read (FromRawPtr ,ptr 0)))
           ((0 7 (declared (Owned Int))))
           ((0 Available)) () ()))
   (check-equal?
    (with-config-typing (lambda () (core-type-of ptr '((0 Int)) '())))
    (list rawptr-int '())
    "PtrVal 部分項は deriving-config? 下で埋め込み型を返す")
-  (check-equal? (config-type-failure-key cfg) 'borrow-region-mismatch
-                "構成全体の拒否理由を c3n5 まで固定する")
-  (check-false (runtime-row cfg '() '(BorrowedMut Int (RParam rp.0))))
-  (check-false
-   (config-ok? cfg '() '(BorrowedMut Int (RParam rp.0)) '(Unsafe))))
+  (check-equal? (runtime-row cfg '() 'Int) '())
+  (check-true
+   (config-ok? cfg '() 'Int '())))
 
 (test-case "PtrVal の構成検査は place と RawPtr の形を要求する"
   (define ptr

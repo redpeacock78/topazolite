@@ -1156,9 +1156,11 @@
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         R-Reborrow)
 
-   ;; spec §5.3。H、Ω、θ は射影で変更しない。
+   ;; spec §5.3。射影先は親と同じ貸出しに属し、結果の寿命も親に従う。
+   ;; ProjBorrowAt の注釈は point を示すため結果へ移さない。
+   ;; H、Ω、θ は射影で変更しない。
    (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω Λtok θ)
-        (cfg (in-hole E (BorrowRef p fp_result ρ)) H Ω Λtok θ)
+        (cfg (in-hole E (BorrowRef p fp_result ρ_parent)) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
         (where (Own p fp_result) own)
         R-ProjBorrow)
@@ -1168,7 +1170,7 @@
         (where fp_result ,(append (term fp) (list (term label))))
         (where (Own p fp_result) own)
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
-                                          (term ρ) (term H)))
+                                          (term ρ_parent) (term H)))
         R-ProjBorrowMut)
 
    ;; spec §6.3。H、Ω、θ は読み出しで変更しない。

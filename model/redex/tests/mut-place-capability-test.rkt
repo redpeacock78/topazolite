@@ -104,9 +104,9 @@
          (let ([first-valid
                 (for/first ([config (in-list configs)]
                             [index (in-naturals)]
-                            #:when (config-valid? config))
+                            #:unless (borrow-allocation-pending? config))
                   index)])
-           (check-not-false first-valid "a well-formed config must be reached")
+           (check-not-false first-valid "the checked trace suffix must be reached")
            (when first-valid
              (define skipped (take configs first-valid))
              (define checked (drop configs first-valid))
