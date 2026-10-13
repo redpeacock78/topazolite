@@ -433,3 +433,16 @@
   (check-true (config-ok? (list-ref configs (add1 app-index)) recur-callables
                           expected (runtime-row (list-ref configs (add1 app-index))
                                                 recur-callables expected))))
+
+(test-case "R-RecurBind の継続に残る BorrowRef は素通しとして照合する"
+  (define callables
+    '((rf (NFn (Int) Int () () () User))))
+  (define-values (_configs rules)
+    (prepared-trace
+     "R-RecurBind passthrough"
+     '(Scope ()
+        (Let (x let (Owned Int)) 7
+          (Let (b let (Borrowed Int ph)) (Borrow x)
+            (Recur rf f (n) n (Read b)))))
+     'Int callables))
+  (check-not-false (memq 'R-RecurBind rules)))

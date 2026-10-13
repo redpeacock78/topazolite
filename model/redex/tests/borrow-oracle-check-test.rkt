@@ -145,6 +145,11 @@
    '(UnionVal (Union (Borrowed Int 7) String)
              (Borrowed Int 7) (BorrowRef 3 (a) 8)))
   (check-approved-shape
+   "R-RecurBind の未使用 callable を含まない継続"
+   `(Recur rf f () unit ,borrowed-value)
+   borrowed-value
+   '(BorrowRef 3 (a) 8))
+  (check-approved-shape
    "R-RecRewrite-Close"
    `(RecRewriteOpen ((borrow imm (Borrowed Int 7) ,borrowed-value)))
    `(Rec ((borrow imm ,borrowed-value)))

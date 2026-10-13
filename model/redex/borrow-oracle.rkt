@@ -127,6 +127,10 @@
                  (equal? (normalize-type union-type) union-type2)
                  (equal? (normalize-type member-type) member-type2))
      '()]
+    ;; R-RecurBind で再帰関数を使わない継続は、そのまま contractum になる。
+    [(list `(Recur ,_ ,_ ,_ ,_ ,continuation) contractum)
+     #:when (equal? continuation contractum)
+     '()]
     ;; R-HandleValue は handler を使わず、結果値をそのまま返す。
     [(list `(Handle ,_ (,x -> ,handler) ,value) contractum)
      #:when (and (equal? value contractum)
