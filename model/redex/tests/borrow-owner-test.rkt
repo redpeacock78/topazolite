@@ -229,39 +229,17 @@
              (sub1 fuel))]
       [steps (error 'g2-trace "一意な次状態を期待したが複数ある: ~s" steps)])))
 
-(define (borrow-allocation-pending? config)
-  (match config
-    [`(cfg ,core ,heap ,_states ,_tokens ,_trace)
-     (or (and (null? heap)
-              (contains-form? core 'Let))
-         (and (or (contains-form? core 'BorrowAt)
-                  (contains-form? core 'BorrowMutAt))
-              (pair? heap)))]
-    [_ #f]))
-
 (define (check-config-trace configs expected)
-  ;; config-ok? は実行時 BorrowRef の型を構成から回復する。
-  ;; c3n5 で setup prefix を全検査するまでは、setup 状態だけを区間外に置く。
-  (define first-checked
-    (for/first ([config (in-list configs)] [index (in-naturals)]
-                #:unless (borrow-allocation-pending? config))
-      index))
-  (check-not-false first-checked "借用を実行した後に検査区間が必要である")
-  (define skipped (take configs first-checked))
-  (define checked (drop configs first-checked))
-  (check-true (andmap borrow-allocation-pending? skipped)
-              "有効化前に省略できるのは借用の setup 状態だけである")
-  (when (positive? first-checked)
-    (check-true (or (contains-form? (config-core (first checked)) 'BorrowRef)
-                    (contains-form? (config-core (first checked)) 'BorrowMutRef))
-                "最初の検査状態には materialize 済みの借用が必要である"))
-  (check-true (andmap (lambda (config)
-                        (config-ok? config '() expected '()))
-                      checked)
-              "borrow materialization 後の全状態が有効である")
-  (for ([before (in-list checked)] [after (in-list (cdr checked))]
+  (define rows
+    (for/list ([config (in-list configs)] [index (in-naturals)])
+      (define row (runtime-row config '() expected))
+      (check-not-false row (format "config ~a の runtime-row" index))
+      (check-true (and row (config-ok? config '() expected row))
+                  (format "config ~a が不正: ~s" index config))
+      row))
+  (for ([before (in-list rows)] [after (in-list (cdr rows))]
         [index (in-naturals)])
-    (check-true (row-subset? '() '())
+    (check-true (row-subset? after before)
                 (format "config ~a から次の config で row が増えた" index))))
 
 (define (contains-form? term head)

@@ -549,15 +549,6 @@
          (ormap (lambda (child) (contains-form? child head)) terms))]
     [_ #f]))
 
-(define (borrow-allocation-pending? config)
-  (match config
-    [`(cfg ,core ,heap ,_states ,_tokens ,_trace)
-     (or (and (null? heap) (contains-form? core 'Let))
-         (and (or (contains-form? core 'BorrowAt)
-                  (contains-form? core 'BorrowMutAt))
-              (pair? heap)))]
-    [_ #f]))
-
 (test-case "c3m3: 位置表は四分類と pending の根判定を明示する"
   (check-true (andmap (lambda (row)
                         (and (memq (third row)
@@ -760,27 +751,15 @@
                       '(R-LetOwnedB R-Borrow R-LetB R-Read
                         R-ScopeValue R-ScopeValue R-ScopeValue))
                   (format "mutable?=~s rules" mutable?))
-    (define first-materialized
-      (for/first ([cfg (in-list configs)] [index (in-naturals)]
-                  #:when (contains-borrow-value? (config-core cfg)))
-        index))
-    (check-equal? first-materialized 2)
-    (define setup (take configs first-materialized))
-    (define checked (drop configs first-materialized))
-    (check-true (andmap borrow-allocation-pending? setup)
-                (format "mutable?=~s setup prefix" mutable?))
-    (check-true (pair? checked))
     (check-true (ormap (lambda (cfg)
                          (contains-borrow-value? (config-core cfg)))
-                       checked)
+                       configs)
                 (format "mutable?=~s BorrowRef in control" mutable?))
     (check-false (ormap (lambda (cfg)
                           (contains-borrow-value? (config-heap cfg)))
-                        checked)
+                        configs)
                  (format "mutable?=~s BorrowRef stays in control" mutable?))
-    (for ([cfg (in-list checked)] [index (in-naturals first-materialized)])
-      (check-false (borrow-allocation-pending? cfg)
-                   (format "mutable?=~s config ~a is not setup" mutable? index))
+    (for ([cfg (in-list configs)] [index (in-naturals)])
       (define row (runtime-row cfg '() 'Int))
       (check-not-false row (format "mutable?=~s config ~a row" mutable? index))
       (check-true (config-ok? cfg '() 'Int row)

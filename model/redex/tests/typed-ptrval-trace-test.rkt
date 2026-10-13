@@ -65,43 +65,13 @@
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))
 
-(define (borrow-allocation-pending? config)
-  (match config
-    [`(cfg ,core ,heap ,_states ,_tokens ,_trace)
-     (or (and (null? heap) (contains-form? core 'Let))
-         (and (or (contains-form? core 'BorrowAt)
-                  (contains-form? core 'BorrowMutAt))
-              (pair? heap)))]
-    [_ #f]))
-
 (define (check-config-trace configs expected)
-  ;; c3n5 で回収する BorrowAt の place 確保前後だけを除き、以降を全て検査する。
-  (define first-non-pending
-    (for/first ([cfg (in-list configs)] [index (in-naturals)]
-                #:unless (borrow-allocation-pending? cfg))
-      index))
-  (check-not-false first-non-pending "BorrowAt の setup 後に構成がある")
-  (define skipped (if first-non-pending (take configs first-non-pending) '()))
-  (check-true (andmap borrow-allocation-pending? skipped)
-              "除外した prefix は BorrowAt の setup 構成だけである")
-  (for ([cfg (in-list skipped)] [index (in-naturals)])
-    (define row (runtime-row cfg '() expected))
-    (check-not-false row
-                     (format "除外 setup 構成 ~a の runtime-row がある" index))
-    (check-true (and row (config-ok? cfg '() expected row))
-                (format "除外 setup 構成 ~a が config-ok? を通る" index)))
-  (define checked (if first-non-pending (drop configs first-non-pending) configs))
-  (for ([cfg (in-list checked)] [index (in-naturals)])
-    (check-false (borrow-allocation-pending? cfg)
-                 (format "構成 ~a の後で BorrowAt 除外へ戻らない" index)))
-  (check-false (ormap (lambda (cfg) (contains-form? cfg 'PtrVal)) skipped)
-               "除外した BorrowAt setup prefix に PtrVal は含まれない")
   (define initial-row
-    (and (pair? checked) (runtime-row (first checked) '() expected)))
+    (and (pair? configs) (runtime-row (first configs) '() expected)))
   (check-not-false initial-row
-                   (format "setup 後の構成は runtime-row を持つ: ~s"
-                           (and (pair? checked) (first checked))))
-  (for ([cfg (in-list checked)] [index (in-naturals)])
+                   (format "起点の構成は runtime-row を持つ: ~s"
+                           (and (pair? configs) (first configs))))
+  (for ([cfg (in-list configs)] [index (in-naturals)])
     (define row (runtime-row cfg '() expected))
     (check-not-false row (format "構成 ~a の runtime-row がある: ~s" index cfg))
     (when (and row initial-row)

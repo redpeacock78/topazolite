@@ -55,27 +55,7 @@
       (and (list? tree)
            (ormap (lambda (part) (contains-form? part form)) tree))))
 
-(define (contains-owned-binding? tree)
-  (match tree
-    [`(Let (,_ ,_ (Owned ,_)) ,_ ,_) #t]
-    [(? list? parts) (ormap contains-owned-binding? parts)]
-    [_ #f]))
-
-(define (borrow-allocation-pending? config)
-  (match config
-    [`(cfg ,core ,heap ,_ ,_ ,_)
-     (or (and (null? heap) (contains-owned-binding? core))
-         (and (or (contains-form? core 'BorrowAt)
-                  (contains-form? core 'BorrowMutAt))
-              (for/or ([entry (in-list heap)])
-                (match entry
-                  [`(,_ ,_ (declared (Owned ,_))) #t]
-                  [_ #f]))))]
-    [_ #f]))
-
-(define (typed-trace core
-                     #:skip-borrow-allocation-prefix? [skip-prefix? #f]
-                     #:callables [callables '()])
+(define (typed-trace core #:callables [callables '()])
   (define-values (ir annotated result mut-types) (typed-input core callables))
   (match result
     [`(ok (,expected ,row))
@@ -100,31 +80,11 @@
                       config (exn-message problem)))])
          (config-ok? config callables expected
                      (current-row (second config) row))))
-     (if skip-prefix?
-         (let ([first-valid
-                (for/first ([config (in-list configs)]
-                            [index (in-naturals)]
-                            #:unless (borrow-allocation-pending? config))
-                  index)])
-           (check-not-false first-valid "the checked trace suffix must be reached")
-           (when first-valid
-             (define skipped (take configs first-valid))
-             (define checked (drop configs first-valid))
-             (check-true (positive? first-valid)
-                         "borrow allocation setup must precede the first checked config")
-             (check-true (andmap borrow-allocation-pending? skipped)
-                         "only Owned-place/borrow allocation setup may be skipped")
-             (check-true
-              (or (contains-form? (second (first checked)) 'BorrowRef)
-                  (contains-form? (second (first checked)) 'BorrowMutRef))
-              "the first checked config must contain the materialized borrow")
-             (check-true (andmap config-valid? checked)
-                         "every config after borrow allocation must be valid")))
-         (check-true (andmap config-valid? configs)
-                     (format "ill-formed intermediate config: ~s"
-                             (for/first ([config (in-list configs)]
-                                         #:unless (config-valid? config))
-                               config))))
+     (check-true (andmap config-valid? configs)
+                 (format "ill-formed intermediate config: ~s"
+                         (for/first ([config (in-list configs)]
+                                     #:unless (config-valid? config))
+                           config)))
      (values expected row configs (last configs))]
     [other (fail (format "type checking failed: ~s" other))]))
 
@@ -463,7 +423,7 @@
            (Let (written let Unit) (Assign r (Rec ((a mut 3))))
              (Read (ProjBorrow r a)))))))
   (define-values (type row configs final)
-    (typed-trace core #:skip-borrow-allocation-prefix? #t))
+    (typed-trace core))
   (check-equal? type 'Int)
   (check-not-false (member 'Mutation row))
   (check-equal? (match final [`(cfg ,value ,_ ,_ ,_ ,_) value] [_ #f]) 3)

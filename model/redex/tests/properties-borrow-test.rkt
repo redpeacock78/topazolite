@@ -150,49 +150,12 @@
   (or (and (pair? tree) (eq? (first tree) form))
       (and (list? tree) (ormap (lambda (part) (contains-form? part form)) tree))))
 
-(define (contains-owned-union-binding? tree)
-  (match tree
-    [`(Let (,_ ,_ (Owned (Union ,_ ,_))) ,_ ,_) #t]
-    [(? list?) (ormap contains-owned-union-binding? tree)]
-    [_ #f]))
-
-(define (place-allocation-pending? configuration)
-  (match configuration
-    [`(cfg ,core ,heap ,_ ,_ ,_)
-     (or (and (null? heap) (contains-owned-union-binding? core))
-         (and (or (contains-form? core 'BorrowAt)
-                  (contains-form? core 'BorrowMutAt))
-              (for/or ([entry (in-list heap)])
-                (match entry
-                  [`(,_ ,_ (declared (Owned (Union ,_ ,_)))) #t]
-                  [_ #f]))))]
-    [_ #f]))
-
 (define (check-union-borrow-configs configs)
-  (define first-checked
-    (for/first ([configuration (in-list configs)]
-                [index (in-naturals)]
-                #:unless (place-allocation-pending? configuration))
-      index))
-  (check-not-false first-checked "the checked trace suffix must be reached")
-  (if first-checked
-      (let ([skipped (take configs first-checked)]
-            [checked (drop configs first-checked)])
-        (check-true (andmap place-allocation-pending? skipped)
-                    "only Owned-place/borrow allocation setup may be skipped")
-        (when (positive? first-checked)
-          (check-true
-           (or (contains-form? (config-core (list-ref configs first-checked))
-                               'BorrowRef)
-               (contains-form? (config-core (list-ref configs first-checked))
-                               'BorrowMutRef))
-           "the first checked config must contain the materialized borrow"))
-        (check-true (andmap (lambda (configuration)
-                              (config-ok? configuration '() 'Int '()))
-                            checked)
-                    "every config after place allocation must be valid")
-        first-checked)
-      (length configs)))
+  (check-true (andmap (lambda (configuration)
+                        (config-ok? configuration '() 'Int '()))
+                      configs)
+              "every config in the trace must be valid")
+  (length configs))
 
 (test-case "borrowed Union programme は全 config と borrow oracle を通る"
   (define started (current-inexact-milliseconds))
@@ -200,7 +163,7 @@
   (define typed 0)
   (define discarded 0)
   (define reached 0)
-  (define skipped-configs 0)
+  (define checked-configs 0)
   (define oracle-failures '())
   (call-with-search-seed
    limits
@@ -217,8 +180,8 @@
               (unless (eq? (execution-outcome run) 'terminal)
                 (set! oracle-failures
                       (cons (list 'nonterminal source) oracle-failures)))
-              (set! skipped-configs
-                    (+ skipped-configs (check-union-borrow-configs configs)))
+              (set! checked-configs
+                    (+ checked-configs (check-union-borrow-configs configs)))
               (unless (eq? (check-borrow-execution
                             config sidecar ir (bounds-fuel limits)
                             (make-bcounters))
@@ -235,13 +198,13 @@
   (check-equal? generated 100)
   (check-equal? discarded 0 "ill-typed Union borrow programmes are not discarded")
   (check-equal? typed generated)
-  (check-true (positive? skipped-configs)
-              "generated borrowed unions exercise allocation setup")
+  (check-true (positive? checked-configs)
+              "generated borrowed unions exercise configuration checking")
   (check-equal? oracle-failures '())
   (check-true (positive? typed))
   (check-true (positive? reached))
-  (printf "P2m2a borrowed Union: generated=~a typed=~a discarded=~a skipped-allocation-configs=~a UnionEliminate=~a elapsed-ms=~a\n"
-          generated typed discarded skipped-configs reached
+  (printf "P2m2a borrowed Union: generated=~a typed=~a discarded=~a checked-configs=~a UnionEliminate=~a elapsed-ms=~a\n"
+          generated typed discarded checked-configs reached
           (inexact->exact
            (round (- (current-inexact-milliseconds) started)))))
 
