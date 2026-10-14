@@ -51,12 +51,13 @@
     [(core type row) (make-judgment/raw core type row type)]
     [(core type row core-type)
      (make-judgment/raw core type row core-type)]))
-(struct exn:fail:elab exn:fail (primary-span phase reason details) #:transparent)
+(struct exn:fail:elab exn:fail (primary-span phase reason details related) #:transparent)
 
 ;; primary-span は第 1 引数であり既定値を持たない。既定値を持たせると渡し忘れ
 ;; が黙って通り、DIA-002 の契約が静かに崩れる。span-ok? と registry の検査で
 ;; 渡し忘れ、引数の逆順、registry に無い reason を実行時に落とす。
-(define (reject primary-span reason #:phase [phase 'elaborate] . details)
+(define (reject primary-span reason #:phase [phase 'elaborate]
+                #:related [related '()] . details)
   (unless (span-ok? primary-span)
     (error 'reject "span として妥当でない値を primary-span に受けた: ~s"
            primary-span))
@@ -69,7 +70,8 @@
     primary-span
     phase
     reason
-    details)))
+    details
+    related)))
 
 ;; c2b1 spec §4.1。欄の型を ROW-005 の規則で合流する。
 (define (row005-field-join left right)
@@ -593,6 +595,8 @@
   ;; FunctionBoundary と ExpressionBoundary は同じ Return 処理を使う。
   (and (pair? boundaries) (car boundaries)))
 
+(define (boundary-span descriptor) (fourth descriptor))
+
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
   (define span (nearest-span raw-row inherited-span))
   (define row (peel-ef raw-row))
@@ -603,13 +607,13 @@
          (match label
            ['Return
             (match (nearest-boundary boundaries)
-              [`(,_ ,_ #:infer)
+              [`(,_ ,_ #:infer ,_)
                ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
                (reject span 'return-type-not-inferable 'return-in-synth)]
-              [`(,_ ,boundary (#:probe ,_))
+              [`(,_ ,boundary (#:probe ,_) ,_)
                ;; SUR-015（spec §6.2）。下見では Return row の型を仮置きする。
                `(Return ,boundary Never)]
-              [`(,_ ,boundary ,type) `(Return ,boundary ,type)]
+              [`(,_ ,boundary ,type ,_) `(Return ,boundary ,type)]
               [_ (reject span 'return-label-outside-boundary)])]
            [`(Yield ,type)
             `(Yield ,(resolve-annotation type delta span))]
@@ -831,6 +835,7 @@
                    #:primary-span (exn:fail:elab-primary-span failure)
                    #:expected expected
                    #:found found
+                   #:related (exn:fail:elab-related failure)
                    #:expansion-context expansion-context))
 
 (define (elab raw-expression #:expansion-context [expansion-context (hash)])
@@ -2252,7 +2257,7 @@
                (extend environment parameters parameter-types #f
                        (map resource-type? parameter-types))
                delta propositions
-               (cons `(FunctionBoundary ,boundary ,return-type) boundaries)))
+               (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))
       (check-function-body-row s body-result return-type boundary declared-row)
       (finish-fn s parameter-binders parameter-types
                  captures capture-types capture-raw-names raw-names
@@ -2277,7 +2282,7 @@
     ;; SUR-015（spec §6.1、§6.2）。通常の本体結果型を優先し、Never なら
     ;; 最初に合成できた Return payload の型を候補にする。
     ;; ponytail: 入れ子ごとに下見を行うため深さに対して指数の費用。必要になれば節点ごとに記憶する。
-    (define (probe-return-type body environment delta propositions boundaries)
+    (define (probe-return-type span body environment delta propositions boundaries)
       (call-with-restored-state
        (λ ()
          (define candidates (box '()))
@@ -2287,7 +2292,7 @@
              (judgment-type
               (synth body environment delta propositions
                      (cons `(FunctionBoundary ,boundary
-                                              (#:probe ,candidates))
+                                              (#:probe ,candidates) ,span)
                            boundaries)))))
          (cond [(and body-type (not (eq? body-type 'Never))) body-type]
                [(pair? (unbox candidates)) (first (unbox candidates))]
@@ -2306,7 +2311,7 @@
                             (λ (error) (set! failure error) #f)])
              (synth body environment delta propositions
                     (cons `(ExpressionBoundary ,boundary
-                                               (#:probe ,candidates))
+                                               (#:probe ,candidates) ,span)
                           boundaries))))
          (cond
            [(and body-result (not (eq? (judgment-type body-result) 'Never)))
@@ -2328,7 +2333,7 @@
                 (map resource-type? parameter-types)))
       (define inferred-return-type
         (and (mentions-return? (list raw-row body))
-             (probe-return-type body parameter-environment
+             (probe-return-type s body parameter-environment
                                 delta propositions boundaries)))
       (if inferred-return-type
           (elaborate-annotated-fn
@@ -2340,7 +2345,7 @@
             (define body-result
               (synth body parameter-environment
                      delta propositions
-                     (cons `(FunctionBoundary ,boundary #:infer) boundaries)))
+                     (cons `(FunctionBoundary ,boundary #:infer ,s) boundaries)))
             (define return-type (judgment-type body-result))
             (check-function-body-row s body-result return-type boundary declared-row)
             (define-values (capture-raw-names raw-names capture-binders core-binders
@@ -2396,7 +2401,7 @@
                 (map resource-type? parameter-types)))
       (define body-boundaries
         (if boundary
-            (cons `(FunctionBoundary ,boundary ,return-type) boundaries)
+            (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)
             boundaries))
       (define body-result
         (check body return-type body-environment
@@ -2474,7 +2479,7 @@
       (define body-boundary (and body-boundary? (fresh-boundary)))
       (define body-boundaries
         (if body-boundary
-            (cons `(FunctionBoundary ,body-boundary #:infer) boundaries)
+            (cons `(FunctionBoundary ,body-boundary #:infer ,s) boundaries)
             boundaries))
       (define body-result
         (synth body parameter-environment delta propositions body-boundaries))
@@ -2534,7 +2539,7 @@
             (define _declared-row
               (resolve-declaration-row raw-row delta boundaries s))
             (define inferred-return-type
-              (probe-return-type body parameter-environment
+              (probe-return-type s body parameter-environment
                                  delta propositions boundaries))
             (if inferred-return-type
                 (elaborate-recur-annotated
@@ -2995,10 +3000,10 @@
 
         [`(Return ,returned)
          (match (nearest-boundary boundaries)
-           [`(,_ ,_ #:infer)
+           [`(,_ ,_ #:infer ,_)
             ;; SUR-008。推論中の戻り型で Return の payload を検査できない。
             (reject s 'return-type-not-inferable 'return-in-synth)]
-           [`(,_ ,boundary (#:probe ,candidates))
+           [`(,_ ,boundary (#:probe ,candidates) ,_)
             ;; SUR-015（spec §6.2）。payload を合成できなければ本番へ回す。
             (with-handlers ([exn:fail:elab? (λ (_) (void))])
               (define returned-result
@@ -3007,7 +3012,7 @@
                         (append (unbox candidates)
                                 (list (judgment-type returned-result)))))
             (judgment `(#:lit unit ,s) 'Never `((Return ,boundary Never)))]
-           [`(,_ ,boundary ,return-type)
+           [`(,_ ,boundary ,return-type ,_)
             (define returned-result
               (check returned return-type
                      environment delta propositions boundaries))
@@ -3421,7 +3426,7 @@
          (define boundary (fresh-boundary))
          (define body-result
            (check body expected environment delta propositions
-                  (cons `(ExpressionBoundary ,boundary ,expected)
+                  (cons `(ExpressionBoundary ,boundary ,expected ,s)
                         boundaries)))
          (define own-return `((Return ,boundary ,expected)))
          (judgment
@@ -3575,7 +3580,7 @@
              (lambda ()
                (reject ok-span 'no-such-reason)))
 
-  ;; 正しい呼び出しは exn:fail:elab を投げ、3 欄を保つ。
+  ;; 正しい呼び出しは exn:fail:elab を投げ、details と既定 related を保つ。
   (define failure
     (with-handlers ([exn:fail:elab? values])
       (reject ok-span 'unknown-type 'Foo)))
@@ -3583,6 +3588,7 @@
   (check-equal? (exn:fail:elab-primary-span failure) ok-span)
   (check-equal? (exn:fail:elab-reason failure) 'unknown-type)
   (check-equal? (exn:fail:elab-details failure) '(Foo))
+  (check-equal? (exn:fail:elab-related failure) '())
 
   ;; 3 つの details を Diagnostic の 2 欄へ落とさず保持する。
   (define ambiguous-failure
@@ -3591,4 +3597,26 @@
   (define ambiguous-diagnostic
     (elab-failure->diagnostic ambiguous-failure (hash)))
   (check-equal? (diagnostic-expected ambiguous-diagnostic) 'Expected)
-  (check-equal? (diagnostic-found ambiguous-diagnostic) '(Actual (A B))))
+  (check-equal? (diagnostic-found ambiguous-diagnostic) '(Actual (A B)))
+
+  (define diagnostic-before-related
+    (match (elab '(Fn () Bool () (Return 1)))
+      [`(err ,diagnostic) diagnostic]
+      [other (error 'elaborate-test "診断を期待したが成功した: ~s" other)]))
+  (check-equal?
+   diagnostic-before-related
+   (diagnostic "E-TYP-012" 'error 'TYP
+               "型が期待と一致しない" "型が期待と一致しない"
+               '(#:span #:synthetic 4 4)
+               '() '() '() 'Bool 'Int
+               '((surface synthetic-span (#:span #:synthetic 4 4)))
+               '() #f #f '() '() #f))
+
+  (define related-failure
+    (with-handlers ([exn:fail:elab? values])
+      (reject ok-span 'unknown-type
+              #:related (list (list 'return-boundary '(#:span src 2 3) "境界")))))
+  (check-equal? (exn:fail:elab-details related-failure) '())
+  (check-equal? (diagnostic-related
+                 (elab-failure->diagnostic related-failure (hash)))
+                (list (list 'return-boundary '(#:span src 2 3) "境界"))))
