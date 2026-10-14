@@ -799,3 +799,34 @@
                         "type T =\n  | true\n0"
                         "type T =\n  | false\n0"))])
     (check-equal? (p-code src) "E-SUR-005" src)))
+
+(test-case
+ "SUR-002b: 文字と穴の並びを string-concat の左畳み込みへ組み替える"
+ (define s (sp 0 8))
+ (check-equal? (p-expr "\"a${x}b\"")
+               `(SApply ,s (SVar ,s string-concat)
+                        ((SApply ,s (SVar ,s string-concat)
+                                 ((SStr ,(sp 1 2) "a") (SVar ,(sp 4 5) x)))
+                         (SStr ,(sp 6 7) "b")))))
+
+(test-case
+ "SUR-002b: 先頭の穴の前に開始 quote の span の空文字列を置く"
+ (define s (sp 0 6))
+ (check-equal? (p-expr "\"${x}\"")
+               `(SApply ,s (SVar ,s string-concat)
+                        ((SStr ,(sp 0 1) "") (SVar ,(sp 3 4) x)))))
+
+(test-case
+ "SUR-002b: 穴の式は 1 個の expr であり、空と余分な token は E-SUR-005 である"
+ (check-equal? (p-code "\"${}\"") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "\"${}\"")) (sp 3 4))
+ (check-equal? (p-code "\"${x y}\"") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "\"${x y}\"")) (sp 5 6)))
+
+(test-case
+ "SUR-002b: 穴の中で pipe、関数適用、複数行の block を読む"
+ (check-match (p-expr "\"${x |> f}\"")
+              `(SApply ,_ ,_ ((SStr ,_ "") (SApply ,_ (SVar ,_ f) ((SVar ,_ x))))))
+ (check-match (p-expr "\"${ {\n let y = x\n y\n} }\"")
+              `(SApply ,_ ,_ ((SStr ,_ "") (SBlock ,_ ,_ ,_))))
+ (check-equal? (p-code "\"${x\n}\"") "E-SUR-005"))

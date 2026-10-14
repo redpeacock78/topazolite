@@ -323,6 +323,8 @@
      (values `(SInt ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(eq? (kind-at ts i) 'str)
      (values `(SStr ,(span-at ts i) ,(value-at ts i)) (add1 i))]
+    [(eq? (kind-at ts i) 'istr)
+     (values (parse-interpolation ts fail i) (add1 i))]
     [(kw? ts i 'true)
      (values `(SBool ,(span-at ts i) true) (add1 i))]
     [(kw? ts i 'false)
@@ -343,6 +345,32 @@
     [(punct? ts i '|{|) (parse-block-or-record ts fail i)]
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail-at ts fail i)]))
+
+;; SUR-002b。断片を式へ写し、string-concat の左畳み込みへ組み替える。
+;; 専用の節点を作らないのは pipe と同じ理由である（surface.md §3）。
+(define (parse-interpolation ts fail i)
+  (define s (span-at ts i))
+  (define fragments (value-at ts i))
+  (define parts
+    (for/list ([fragment (in-list fragments)])
+      (match fragment
+        [`(text ,str ,fs) `(SStr ,fs ,str)]
+        [`(hole ,tokens ,_) (parse-hole tokens fail)])))
+  (define head
+    (if (eq? (first (first fragments)) 'hole)
+        (cons `(SStr (#:span ,(span-id s) ,(span-lo s) ,(add1 (span-lo s))) "")
+              parts)
+        parts))
+  (for/fold ([acc (first head)]) ([e (in-list (rest head))])
+    `(SApply ,s (SVar ,s string-concat) (,acc ,e))))
+
+;; 穴の token 列は末尾の } の手前までがちょうど 1 個の expr である。
+(define (parse-hole tokens fail)
+  (define hs (list->vector tokens))
+  (let-values ([(e j) (parse-expr hs fail 0)])
+    (unless (= j (sub1 (vector-length hs)))
+      (fail-at hs fail j))
+    e))
 
 ;; P2m3 spec §3.1。when expr { NL* arm (NL+ arm)* NL* } である。
 ;; 枝本体の後ろには改行または when の閉じ波括弧が必要である。

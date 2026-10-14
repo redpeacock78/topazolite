@@ -9,9 +9,9 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -111,7 +111,7 @@ postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
-primary  ::= int | string | "true" | "false" | "(" ")"
+primary  ::= int | string | istr | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")" | when
 when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
 arm      ::= ctor ident* "=>" expr
@@ -153,6 +153,30 @@ constructor pattern の束縛子は空白で区切って括弧で囲まず、Uni
 閉じ波括弧の後に改行がある場合、続く行は次の束縛または block の結果式として読む。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
+
+#### 文字列補間
+
+`istr` は穴を 1 つ以上含む文字列を表す 1 個の字句 token である。
+その値は文字断片と `${` から `}` までの式断片が並ぶ列であり、空の文字断片は含まない。
+parser は各文字断片を `SStr` にし、各式断片を 1 個の `expr` として解析する。
+最初の断片が式なら、開き引用符 1 byte の span を持つ空文字列を先頭に加える。
+断片列を左から畳み込み、各段を `(SApply s (SVar s string-concat) (acc e))` にする。
+ここで `s` は `istr` token 全体の span である。
+穴が無い通常の文字列は従来どおり `SStr` へ解析する。
+単一の穴 `${e}` も `string-concat("", e)` へ組み替えるため、穴の型検査を省かない。
+`string-concat` は Surface の識別子として綴れないため、利用者の束縛による捕獲は起きない。
+この名前の保証は、原文を lexer と parser に通す経路に限り、手組み Surface AST や UCore には及ばない。
+生成された適用は通常の評価順を使い、文字断片と式断片を原文の左から右へ評価する。
+穴の式は `String` と互換でなければならない。
+合成できる不一致は `E-TYP-012` となり、expected は `String`、found は穴の式の型である。
+この診断の primary span は穴の式の節点であり、括弧は節点を作らないため括弧内を指す。
+`Never` は `String` と互換であり、穴の式の合成失敗はその診断を保つ。
+`Printable` による `String` 以外の値の変換は未実装であり、`String` 以外の穴は拒否する。
+
+**Why not（`SInterp` 節点を追加する案）**：既存の `SApply` と `SStr` で意味を保てるため採らない。
+**Why not（利用者が書ける `concat` の名前を使う案）**：束縛による捕獲を避ける保証を持てないため採らない。
+**Why not（UCore+ に補間専用の節点を追加する案）**：連結 primitive の適用へ組み替えられ、型検査や実行に別の規則を要しないため採らない。
+**Why not（`Int` と `Bool` の変換 primitive を追加する案）**：`Printable` による trait 解決が未実装の段階で、型ごとの ad hoc な変換を固定するため採らない。
 
 トップレベルにも束縛を置ける。
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
@@ -875,6 +899,11 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 
+文字列補間は `istr` token から既存の `SApply` と `SStr` へ組み替えるため、Surface AST と UCore+ の構成子を増やさない。
+F* は **`TkIstr`** の認識と span の正当性を検査する。
+文字断片の値と左畳み込みの形は Racket の parser と Surface の試験で固定する。
+この変更後も parity の件数は 37/14/36 である。
+
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 F* の Surface 構成子一覧は `sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 23 個を含む。
@@ -905,7 +934,7 @@ P2m3b は枝の形を広げるが、これらの parity 対象構成子リスト
 これらは Surface 構文の構成子集合ではないため、parity の対象に含めない。
 
 - `sid`、`span`、`diag`：span と診断の層を写す型であり、Racket 側では `span-core.rkt` と `diagnostic.rkt` が持つ。
-- `stok`：`kind` 欄で 7 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
+- `stok`：`kind` 欄で 8 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
 - `lex_result`、`string_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
 - `dkind`：束縛の種別を表す欄の型であり、構成子集合の対象ではない。
   `SBind`、`STryBind`、`SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
