@@ -15,8 +15,8 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
-data 型の constructor を対象とする `match` は受理する。
-Union member pattern は `E-SUR-005` で拒み、P2m3 まで受理しない。
+data 型の constructor を対象とする `when` は受理する。
+Union member pattern は `E-SUR-005` で拒み、P2m3b まで受理しない。
 このため `PAT-001` は完了していない。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
@@ -39,8 +39,9 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`match` の 13 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when` の 13 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
+`match` は予約語ではなく、束縛名と関数名に使える識別子である。
 
 整数リテラルは `[0-9]+` である。
 符号は付かない。
@@ -88,11 +89,10 @@ suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | "true" | "false" | "(" ")"
-           | ident | anonfn | record | block | "(" expr ")" | match
-match    ::= "match" expr "{" NL* arm (NL* arm)* NL* "}"
-arm      ::= "|" ctor ["(" binders ")"] "=>" expr
+           | ident | anonfn | record | block | "(" expr ")" | when
+when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
+arm      ::= ctor ident* "=>" expr
 ctor     ::= ident | "true" | "false"
-binders  ::= ε | ident ("," ident)*
 anonfn   ::= "fn" "(" lparams ")" ["->" ty] ["!" row] block
 params   ::= ε | param ("," param)*
 param    ::= ident ":" ty
@@ -119,11 +119,12 @@ label    ::= ident ["<" ty ">"]
 
 `&` は `|` より強く結合し、どちらも左結合である。
 `?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
-`match` の各枝は `|` で始まり、枝の間は空白または改行で区切る。
-枝の本体は次の `|` または閉じ波括弧の手前で終わる。
-`K` と `K()` は同じ束縛子の列を表す。
+`when` の枝は constructor pattern で始まり、枝の先頭に `|` を置かない。
+枝は改行で区切り、束縛子は空白で区切って括弧で囲まない。
+枝の本体は通常式なら改行の手前で終わり、block なら対応する閉じ波括弧で終わる。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
-`match` の後ろには呼び出しや射影の suffix を続けられる。
+`when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
+閉じ波括弧の後に改行がある場合、続く行は次の束縛または block の結果式として読む。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
 
@@ -203,7 +204,7 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 単独の `-`、`+`、`*`、`/`、`%`、`[`、`]`、`;` は字句にならない。
 算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
 `x |> f` は `E-SUR-005` になる。`List<>` は `>` の位置で `E-SUR-005` になる。
-`|` は型位置と match の枝の先頭で受理し、`&` は型位置だけで受理する。
+`|` は型位置と data 型宣言の variant の区切りで受理し、`&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 `x |> f` は、式位置の `|` で `E-SUR-005` になる。
 
@@ -213,6 +214,7 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
 P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を、P2k1 では `return` を、P2m1 では `match` を加えた。
+P2m3a で予約語を `when` に置き換え、`match` は識別子へ戻した。
 
 ### 3.2 `let mut` の字句と構文
 
@@ -264,6 +266,15 @@ record literal の field の区切りと同じ規則である。
 
 drop する側を書く構文は置かない。
 残す label を列挙すれば残余は一意に決まるため、2 通りの綴りを持つ必要が無い。
+
+### 3.6 when の返却境界
+
+Surface の block は束縛列と末尾式から成り、式文を持たない。
+したがって `when` は常に式位置に現れる。
+`when` は `(NarrativeExpr s (Eliminate ...))` へ lowering され、**ローカルな返却境界**を作る。
+その枝の `return` は関数の境界ではなく、最も内側の `when` 式へ値を返す。
+入れ子の `when` はそれぞれ別の返却境界を持つ。
+境界の handler と synth 規則は `core-calculus.md` §4.5 が定める。
 
 ## 4. span
 
@@ -489,9 +500,10 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
-- `(SMatch s e ((SArm s_a (SName s_k K) ((SName s_x x) ...) body) ...))` は `(Eliminate s e' ((s_a K ((#:bind x s_x) ...) -> body') ...))` へ落とす。
+- `(SMatch s e ((SArm s_a (SName s_k K) ((SName s_x x) ...) body) ...))` は `(NarrativeExpr s (Eliminate s e' ((s_a K ((#:bind x s_x) ...) -> body') ...)))` へ落とす。
   scrutinee と各枝の本体を再帰的に下ろす。
   枝の束縛子は `Eliminate` の枝へ渡し、constructor 名はそのまま保つ。
+  `NarrativeExpr` は式位置の `when` にローカルな返却境界を与える（§4.5）。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
   型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。
@@ -665,11 +677,13 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 これらは trait、impl、intersect の宣言を lowering する前に検査される。
 台帳の `#:fail` に kind `data` の失敗が届くことはなく、届いた場合は内部の誤りである。
 
-`match` の網羅性、重複枝、未知の constructor は elaborate が `E-DAT-004` で拒む。
+`when` の網羅性、重複枝、未知の constructor は elaborate が `E-DAT-004` で拒む。
 枝の束縛子の個数違いと重複は `E-SYN-002` で拒む。
 scrutinee が data 型でない場合は `E-DAT-003` で拒む。
-注釈の無い位置に置いた `match` は、結果型を推論できないため `E-TYP-004` で拒む。
-これらの診断の primary span は `match` 全体である。
+注釈の無い位置の `when` は、枝に期待型を要する式がある場合に `E-TYP-004` で拒む。
+たとえば `some(1)` と `none` の枝は、注釈の無い位置で型引数を決められない。
+本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
+`E-TYP-004` と `E-DAT-004` の primary span は `when` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -744,16 +758,16 @@ Racket 側の Surface 構成子リストは 36 個、F* 側の `sexpr`、`sty`�
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
-F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約する。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約し、`match` を識別子として扱う。
 `tools/fstar-parity.rkt` の `fstar-keywords` は F* が予約する語を手で書いた一覧であり、`fstar-parity-test.rkt` がこれを `lexer.rkt` の `keywords` と照合する。
 F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保ち、CI はこの対応の食い違いを検出しない。
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 12 構成子を parity の対象とする。
-F* 側では `Eliminate` に対応する `CEliminate` と `Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 13 構成子を parity の対象とする。
+F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 12 個、F* 側の `core` の構成子リストは 11 個であり、F* 側の全対象構成子は 34 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 11 個）である。
+UCore+ の対象構成子リストは 13 個、F* 側の `core` の構成子リストは 12 個であり、F* 側の全対象構成子は 35 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 12 個）である。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

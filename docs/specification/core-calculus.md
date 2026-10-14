@@ -911,6 +911,27 @@ B' = push(B, ExpressionBoundary(b, τ))
 その中の `return` は E-Return を通じて境界の型 τ、すなわち当該式の返り値型と unify する（RET-002）。
 境界への Return Effect は handler が処理するため、式の外へは漏れない。
 
+**(E-NarrativeExpr-Synth)** [REQ: RET-002]
+
+合成位置の `NarrativeExpr` では、境界の型を **下見** で決めてから E-NarrativeExpr を適用する。
+
+```text
+b fresh
+τ = probe(B, e)
+B' = push(B, ExpressionBoundary(b, τ))
+Γ; Δ; Π; B' ⊢ e ⇐ τ ! ε ⟹ c
+--------------------------------
+Γ; Δ; Π; B ⊢ narrativeExpr(e) ⇒ τ ! ε \ {Return<b, τ>}
+  ⟹ Handle(Return<b, τ>, x -> x, Scope(∅, c))
+```
+
+下見は fresh な `ExpressionBoundary(b, probe)` の下で本体を synth し、型が `Never` でなければその型を τ にする。
+型が `Never` か本体の synth が失敗した場合は、下見で得た **return 候補** のうち最初の型を τ にする。
+本体の synth が失敗し return 候補が無い場合は、その失敗の診断を伝播する。
+本体の型が `Never` で候補も無い場合は `E-TYP-010` で拒む。
+下見中の elaboration 状態は下見の後で復元する。
+本体を τ の期待型で改めて検査し、最終 Core はその check の経路で決まる。
+
 ### 4.6 recur、yield、suspend
 
 **(E-Recur)** [REQ: RET-003] [REQ: REC-001] [REQ: EFF-001]
@@ -2773,7 +2794,7 @@ G5 はその記録を Ψ として置いた。
 | TYP-001 | E-TypeMake、E-LetType（§4.8）、性質 5 |
 | TYP-002 | E-TypeMake の spec 解釈（§4.8）、verify-origins の kind 整合（§3.4） |
 | RET-001 | E-Return、resolveReturn（§4.5） |
-| RET-002 | E-NarrativeExpr（§4.5）、T-Perform（§5.1）、R-HandleReturn（§5.7）、性質 4 |
+| RET-002 | E-NarrativeExpr、E-NarrativeExpr-Synth（§4.5）、T-Perform（§5.1）、R-HandleReturn（§5.7）、性質 4 |
 | RET-003 | E-Eliminate（§4.2）、E-Recur（§4.6） |
 | EFF-001 | E-Lambda の row 包含（§4.3）、E-Recur と E-FnDecl の row 包含（§4.6） |
 | SUR-012 | E-Let-Annot、E-Let-Fn-Check、E-Rec-Check（§4.2）、E-Lambda-Param-Infer-Check（§4.3） |
