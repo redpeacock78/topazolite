@@ -4,6 +4,7 @@
 
 (provide (struct-out capability-diagnostic)
          arithmetic-shim-features
+         string-shim-features
          backend-features
          core-form-features
          core-form-feature
@@ -38,12 +39,11 @@
     (resource-runtime native native #f (deferred "Phase 3 以降") "")
     (static-erasure   native native #f (deferred "Phase 3 以降") "")
     ;; primitive 値そのものの写し。η 展開した closure を作るだけなので両 backend
-    ;; で native である。どの名前を写せるかは下の 7 行が決める
+    ;; で native である。どの名前を写せるかは下の 8 行が決める
     ;; （backend-matrix.md §7）。
     (primitive-value  native native #f (deferred "Phase 3 以降") "")
-    ;; Γ0 の 7 件は名前ごとに 1 行を持つ。shim 列は名前 1 つであり、リストを置か
-    ;; ない（backend-matrix.md §10）。算術と比較の 6 件は G3c の表の検査が native を
-    ;; 禁じる対象になる（backend-matrix.md §10）。
+    ;; Γ0 の 8 件は名前ごとに 1 行を持つ。shim 列は名前 1 つであり、リストを置か
+    ;; ない（backend-matrix.md §10）。算術と比較の 6 件と文字列連結は native を禁じる。
     (primitive-add    shim shim tz:add (deferred "Phase 3 以降")
                       "算術は Host の演算を直接指さない")
     (primitive-sub    shim shim tz:sub (deferred "Phase 3 以降")
@@ -58,6 +58,8 @@
                       "比較は Host の演算を直接指さない")
     (primitive-acquire shim shim tz:acquire (deferred "Phase 3 以降")
                       "資源取得は Host の演算を直接指さない")
+    (primitive-string-concat shim shim tz:string-concat (deferred "Phase 3 以降")
+                      "文字列連結は Host の演算を直接指さない")
     ;; 予約行。Typed Core に対応する型が無いので形の対応表には現れない。両
     ;; backend の support を shim とするのは、Racket の任意精度整数でも
     ;; RacketScript の倍精度数でも固定幅の切り詰めを native に持たないためで
@@ -153,14 +155,16 @@
     (lt  . primitive-lt)
     (le  . primitive-le)
     (eq  . primitive-eq)
-    (acquire . primitive-acquire)))
+    (acquire . primitive-acquire)
+    (string-concat . primitive-string-concat)))
 
-;; 算術と比較の 6 件。backend-matrix.md §10 の「native を禁じる検査」は
-;; この 6 件だけを対象にする。acquire は資源取得であり、算術の禁則とは別の理由で shim
-;; である。
+;; 算術と比較の 6 件。文字列連結は別の名簿に置き、acquire は資源取得として分ける。
+;; backend-matrix.md §10 の「native を禁じる検査」は算術と比較、および文字列連結を対象にする。
 (define arithmetic-shim-features
   '(primitive-add primitive-sub primitive-mul
     primitive-lt primitive-le primitive-eq))
+
+(define string-shim-features '(primitive-string-concat))
 
 ;; 表に無い名前で例外を投げない。呼び出し側が #f を unknown-core-form の診断へ変
 ;; える（backend-matrix.md §8）。
@@ -249,14 +253,13 @@
     (unless (set-member? feature-ids (cdr row))
       (error 'check-tables! "~a: undeclared feature ~a"
              (car row) (cdr row))))
-  ;; backend-matrix.md §10。算術と比較の shim feature は両 backend で shim を
-  ;; 要求し、
-  ;; native を許さない。backend を差し替えても結果が変わらないことの Phase 0 に
+  ;; backend-matrix.md §10。算術と比較と文字列連結の shim feature は両 backend で
+  ;; shim を要求し、native を許さない。backend を差し替えても結果が変わらないことの Phase 0 に
   ;; おける形である。
-  (for* ([feature-id (in-list arithmetic-shim-features)]
+  (for* ([feature-id (in-list (append arithmetic-shim-features string-shim-features))]
          [backend (in-list '(racket-cs racketscript))])
     (unless (eq? (feature-support/matrix matrix feature-id backend) 'shim)
-      (error 'check-tables! "~a: arithmetic feature is not shim on ~a"
+      (error 'check-tables! "~a: host operation feature is not shim on ~a"
              feature-id backend)))
   (void))
 

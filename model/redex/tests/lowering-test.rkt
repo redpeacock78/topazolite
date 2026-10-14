@@ -225,13 +225,15 @@
  "primitive arity comes from Γ0, not from a copy"
  (check-equal? (primitive-arity 'add) 2)
  (check-equal? (primitive-arity 'acquire) 1)
+ (check-equal? (primitive-arity 'string-concat) 2)
  (check-false (primitive-arity 'not-a-primitive))
  (check-equal? (sort shim-primitives symbol<?)
-               '(acquire add eq le lt mul sub))
- ;; 算術と比較の 6 件と資源取得を分けておく。
- ;; backend-matrix.md §10 の表の検査は前者だけを対象にする（G3c）。
+               '(acquire add eq le lt mul string-concat sub))
+ ;; 算術と比較、資源取得、文字列連結を分けておく。
+ ;; backend-matrix.md §10 の表の検査対象と理由はそれぞれ異なる。
  (check-equal? (sort arithmetic-primitives symbol<?) '(add eq le lt mul sub))
- (check-equal? resource-primitives '(acquire)))
+ (check-equal? resource-primitives '(acquire))
+ (check-equal? string-primitives '(string-concat)))
 
 ;;; backend-matrix.md §7 の計算の表
 

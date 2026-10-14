@@ -54,6 +54,9 @@
         `(PTagged ,bool-tag-true)
         `(PTagged ,bool-tag-false))]
   [(δpr tz:acquire integer) (PResource integer)]
+  [(δpr tz:string-concat pl_1 pl_2)
+   ,(string-append (term pl_1) (term pl_2))
+   (side-condition (and (string? (term pl_1)) (string? (term pl_2))))]
   [(δpr pnm pv ...) undefined])
 
 ;; machine.rkt の substitute* と同じ理由で、arity 不一致と重複束縛子を #f に

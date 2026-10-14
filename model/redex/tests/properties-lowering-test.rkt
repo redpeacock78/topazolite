@@ -395,12 +395,16 @@
   (check-equal? expected (set))
   (check-equal? actual (set)))
 
-;; Γ0 の 7 件の primitive はいずれも latent row が () で本体に Effect が無いので、
+;; Γ0 の 8 件の primitive はいずれも latent row が () で本体に Effect が無いので、
 ;; latent-tight? を満たし等号が立つ。
-(test-case "backend-matrix.md §6: Γ0 の 7 件の primitive で等号が立つ"
+(test-case "backend-matrix.md §6: Γ0 の 8 件の primitive で等号が立つ"
   (for ([name (in-list shim-primitives)])
-    (define arity (primitive-arity name))
-    (define arguments (for/list ([_ (in-range arity)]) 1))
+    (define parameter-types
+      (match (lookup (current-Γ0) name)
+        [(list (list 'NFn (list types ...) _ _ _ _ _) _) types]))
+    (define arguments
+      (for/list ([type (in-list parameter-types)])
+        (match type ['Int 1] ['String "a"])))
     (define core
       (term (Apply (PrimVal (Reserved ,(string->symbol (format "o-~a" name)))
                             ,name)

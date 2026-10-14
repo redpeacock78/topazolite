@@ -12,10 +12,9 @@
   (term (verify-origins ,r0 ,core)))
 
 (test-case "NAR-001/TYP-001: initial origin environments"
-  ;; NAR-003: trait 行は R0 へ entry を寄与しない。第 1 欄は表の鍵であり
-  ;; trusted root ではない。43 から trait 表の 7 行分だけ減っている。
-  (check-equal? (length R0) 37)
-  (check-equal? (length Γ0) 31)
+  ;; string-concat が kernel の origin と Γ0 に 1 行ずつ加わる。
+  (check-equal? (length R0) 38)
+  (check-equal? (length Γ0) 32)
   (check-equal? (length Δ0) 9)
   (check-equal? (length Π0) 1)
   (check-equal? (assoc 'o-type-narrative R0)
@@ -25,6 +24,11 @@
   (check-equal? (assoc 'lt Γ0)
                 (term (lt ((NFn (Int Int) Bool () () () (Reserved o-lt))
                            (PrimVal (Reserved o-lt) lt)))))
+  (check-equal? (assoc 'string-concat Γ0)
+                (term (string-concat
+                       ((NFn (String String) String () () ()
+                             (Reserved o-string-concat))
+                        (PrimVal (Reserved o-string-concat) string-concat)))))
   (check-equal? (assoc 'List Δ0)
                 (term (List (TypeRep (Reserved o-list)
                                     List

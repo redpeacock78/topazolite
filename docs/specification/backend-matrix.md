@@ -428,11 +428,14 @@ Phase 0 が回収するのは、その列の全域性である。 [REQ: BAK-002]
 suite を 2 つの runtime で実際に走らせるのは Phase 3 以降である。
 Phase 0 の対応表は宣言であり、`racket-cs` と `racketscript` の support 値を runtime で確かめていない。
 
-## 10. bit 意味論と算術 shim
+## 10. bit と primitive shim
 
 算術と比較の primitive は、写し先で Host の演算を直接指してはならない。 [REQ: BIT-002]
 写し先は Topazolite が定めた shim 関数の呼び出しである。
 backend を差し替えても結果が変わらないことの根拠は、この一点にある。
+
+文字列連結も shim 関数の呼び出しへ写し、Host の文字列連結を直接指さない。
+この制約は `primitive-string-concat` の feature 行で表す。
 
 模型が shim の意味論をどう実装するかは、これとは別の話である。
 `Int` は任意精度整数なので、`tz:add` の意味論は Racket の `+` そのものである。
@@ -452,7 +455,8 @@ backend を差し替えても結果が変わらないことの根拠は、この
 | `tz:le` | 整数 2 | 同上 | `le` |
 | `tz:eq` | 整数 2 | 同上 | `eq` |
 | `tz:acquire` | 整数 1 | `(PResource n)` | `acquire` |
-| 上記以外の名前、引数個数の不一致、非整数の引数 | | 未定義 | |
+| `tz:string-concat` | 文字列 2 | 文字列の連結 | `string-concat` |
+| 上記以外の名前、引数個数の不一致、型が一致しない引数 | | 未定義 | |
 
 `Bool` の結果が 2 つの tag になるのは、源の真偽値を写像が tag の符号化を通して写すためである。
 目標機械が源の符号化に依存するのはこの 2 つの tag だけであり、両者が一致することをテストで固定する。
@@ -464,7 +468,7 @@ backend を差し替えても結果が変わらないことの根拠は、この
 
 ### 10.2 feature の分割
 
-7 件の shim に、名前ごとの feature-id を 1 つずつ与える。
+8 件の shim に、名前ごとの feature-id を 1 つずつ与える。
 表の `shim` 列は名前を 1 つだけ持ち、リストを置かない。
 名前ごとに feature を分けるのはこの形を守るためであり、1 件を `unsupported` と宣言したときに他の名前まで閉じないためでもある。
 
@@ -477,16 +481,17 @@ backend を差し替えても結果が変わらないことの根拠は、この
 | `primitive-le` | `tz:le` | 同上 |
 | `primitive-eq` | `tz:eq` | 同上 |
 | `primitive-acquire` | `tz:acquire` | 両 backend が `shim`（`native` を禁じる検査の対象外） |
+| `primitive-string-concat` | `tz:string-concat` | 両 backend が `shim`。`native` を許さない |
 
-`native` を禁じる検査の対象は上の 6 件である。
-資源取得を外すのは、BIT-002 が算術と比較の結果の同一性を言う要件だからである。
-`tz:acquire` も `shim` だが、それは Host の資源表現を目標項へ持ち込まないためであり、別の理由による。
+`native` を禁じる検査の対象は算術と比較の 6 件、および文字列連結である。
+資源取得は BIT-002 が算術と比較の結果の同一性を定めるため、この検査の対象から外す。
+`tz:acquire` も shim だが、Host の資源表現を目標項へ持ち込まないためであり、別の理由による。
 
 形の対応表は `PrimVal` の頭シンボルに `primitive-value` を割り当てる。
 これは η 展開した closure を作る層であり、両 backend で `native` である。
 名前ごとの feature は写像の内側でもう一度引く。
 頭に算術の feature を割り当てると、算術を `unsupported` と宣言したときに、kernel primitive と trait primitive と資源取得の診断まで巻き込んで閉じてしまう。
-`primitive-value` を閉じた対応表では 7 件すべての写しが診断になるが、粗い側へ倒れるだけであり、部分的な出力は返らない（§8）。
+`primitive-value` を閉じた対応表では 8 件すべての写しが診断になるが、粗い側へ倒れるだけであり、部分的な出力は返らない（§8）。
 
 ### 10.3 予約する feature
 
@@ -540,7 +545,7 @@ gate の `deferred-tests` が BAK-002 を 0 件と数えるのはこのためで
 - **型の保存**：表現規約への適合は型保存の必要条件でしかない。型の違う 2 つの関数型は同じ closure 表現へ落ちる。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち型の保存を完全に回収したことを意味しない（`BAK-001`）。
 - **Effect の保存**：`Return` は境界名と型符号の両方が残るが、`Yield` の型は `yield` へ潰れる。写し先の runtime 呼び出しが型符号を担がないためである。等号が言えるのは、適用先が構文上の closure であり、かつ宣言 latent row が本体の実効果と等しい範囲に限られる。全域では包含しか言えない。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち Effect の保存を完全に回収したことを意味しない（`BAK-001`）。
 - **Effect の dispatch tag**：目標側の operation 名は型由来の符号を担ぐ。源の handler 選択が operation 全体を比べるため、境界名だけでは選択が一致しないためである。型に由来する情報が目標項に残る点は §1 の不変条件に対する擦り寄りであり、符号には単射性しか要求しない。これは Phase 0 で固定した決定であり、後続 phase へ送る先を持たない。
-- **kernel primitive と trait primitive**：`Γ0` の 7 件以外の primitive は Phase 0 では診断を返す。源の δ を目標側の値表現の上で書き直すと、独立に検査できない二重定義になるためである。これはこれらの primitive が backend で動かないことを意味せず、Phase 0 の模型が写さないだけである（`BAK-008`）。
+- **kernel primitive と trait primitive**：`Γ0` の 8 件以外の primitive は Phase 0 では診断を返す。源の δ を目標側の値表現の上で書き直すと、独立に検査できない二重定義になるためである。これはこれらの primitive が backend で動かないことを意味せず、Phase 0 の模型が写さないだけである（`BAK-008`）。
 - **評価順の保存の測定範囲**：目標側の fuel を段階的に増やしても終端に届かない項は discard する。再帰を含む項は展開に静的な上界を持たないため、有限の試行で全項を測り切ることはできない。discard した項について保存は主張しない（`BAK-001`）。
 - **lowering 形集合の完全検査**：`lower` が源のすべての形を写すことは証明していない。形ごとの fixture と生成器の到達範囲で確かめているだけであり、源の形集合との一致は §7 の対応表が源の形を漏れなく並べていることに依存する（`BAK-009`）。
 - **backend の実体**：`racket-cs` と `racketscript` の support 値は表の宣言であり、実際の runtime で確かめていない。確認は BAK-002 と BAK-003 の検証欄が指す Phase 3 以降の成果物で行う。

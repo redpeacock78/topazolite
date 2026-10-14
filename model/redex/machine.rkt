@@ -59,6 +59,9 @@
         (term (Construct Bool true))
         (term (Construct Bool false)))]
   [(δ acquire n) (resource n)]
+  [(δ string-concat l_1 l_2)
+   ,(string-append (term l_1) (term l_2))
+   (side-condition (and (string? (term l_1)) (string? (term l_2))))]
   [(δ nm v ...) undefined])
 
 ;; Redex's substitute uses the binding forms declared by G1.  Keeping the

@@ -406,6 +406,7 @@ origin を型成分として引数位置の関数に固定すると異なる ori
 R0 = { o-add ↦ prim(add), o-sub ↦ prim(sub), o-mul ↦ prim(mul),
        o-lt ↦ prim(lt), o-le ↦ prim(le), o-eq ↦ prim(eq),
        o-acquire ↦ prim(acquire),
+       o-string-concat ↦ prim(string-concat),
        o-int ↦ type(Int), o-bool ↦ type(Bool), o-unit ↦ type(Unit),
        o-string ↦ type(String), o-never ↦ type(Never), o-res ↦ type(Res),
        o-list ↦ type(List), o-option ↦ type(Option), o-result ↦ type(Result),
@@ -422,6 +423,7 @@ lt  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-lt)>       値 PrimVal(Re
 le  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-le)>       値 PrimVal(Reserved(o-le), le)
 eq  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-eq)>       値 PrimVal(Reserved(o-eq), eq)
 acquire : NFn<(Int), Owned<Res>, (), {}, ⟨⟩, Reserved(o-acquire)>  値 PrimVal(Reserved(o-acquire), acquire)
+string-concat : NFn<(String, String), String, (), {}, ⟨⟩, Reserved(o-string-concat)>  値 PrimVal(Reserved(o-string-concat), string-concat)
 ```
 
 Γ0 は elaboration の初期 Γ ではなく、E-Prim（§4.2）と T-Prim（§5.1）だけが引く固定表である。
@@ -476,7 +478,11 @@ ng<τ, σ>  : (σ) -> Result<τ, σ>
 δ(le, m, n)  = true()  （m ≤ n のとき）、false()（それ以外）
 δ(eq, m, n)  = true()  （m = n のとき）、false()（それ以外）
 δ(acquire, n) = resource(n)
+δ(string-concat, s₁, s₂) = s₁ s₂（文字列の連結）
 ```
+
+`string-concat` の引数の個数が違う適用と、String でない引数の適用には δ を定めない。
+これらは算術 primitive と同じく不発火になり、型付きの項からは到達しない。
 
 ## 4. elaboration
 

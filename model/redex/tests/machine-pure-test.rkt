@@ -38,9 +38,27 @@
                            (term (Construct Bool true)))
                      (list (term (Apply (PrimVal (Reserved o-acquire) acquire)
                                         9))
-                           (term (resource 9)))))])
+                           (term (resource 9)))
+                     (list (term (Apply (PrimVal (Reserved o-string-concat)
+                                                 string-concat)
+                                        "a" "b"))
+                           (term "ab"))))])
     (match-define (list core expected) case)
     (check-equal? (run (inject core) fuel) (final-config expected))))
+
+(test-case
+ "SUR-002b: string-concat は文字列 2 個だけで定義される"
+ (for ([arguments
+        (in-list (list (list "a")
+                       (list "a" "b" "c")
+                       (list 1 "b")
+                       (list "a" 2)))])
+   (define core
+     `(Apply (PrimVal (Reserved o-string-concat) string-concat)
+             ,@arguments))
+   (check-equal?
+    (run-core core)
+    `(Scope () ,core))))
 
 (test-case "R-Beta/R-Let: capture-avoiding substitution"
   (check-equal?

@@ -147,25 +147,24 @@
 (test-case
  "every primitive name has its own shim feature"
  ;; backend-matrix.md §10。shim 列は名前 1 つであり、リストを置かない。
- ;; 名前と feature が
- ;; 1 対 1 なので、1 件を unsupported にしても他の 6 件は閉じない。
+ ;; 名前と feature が 1 対 1 なので、1 件を unsupported にしても他の 7 件は閉じない。
  (check-equal? (sort (map car primitive-features) symbol<?)
-               '(acquire add eq le lt mul sub))
+               '(acquire add eq le lt mul string-concat sub))
  (define feature-ids (map cdr primitive-features))
  (check-equal? (length feature-ids) (set-count (list->set feature-ids)))
  (check-eq? (primitive-feature 'add) 'primitive-add)
  (check-eq? (primitive-feature 'acquire) 'primitive-acquire)
+ (check-eq? (primitive-feature 'string-concat) 'primitive-string-concat)
  ;; Γ0 に無い名前は例外ではなく #f を返す。lower はこれを unknown-core-form の
  ;; 診断へ変える（backend-matrix.md §8）。
  (check-false (primitive-feature 'frobnicate))
  (check-equal? (feature-primitives 'primitive-add) '(add))
+ (check-equal? (feature-primitives 'primitive-string-concat) '(string-concat))
  (check-equal? (feature-primitives 'primitive-value) '()))
 
 (test-case
  "the primitive features are shim on both backends"
- ;; backend-matrix.md §10。native を許さない検査そのものは Task 15 で足す。
- ;; ここでは表の値だけ
- ;; を固定する。
+ ;; backend-matrix.md §10。ここでは全 primitive feature の support 値を固定する。
  (for* ([feature-id (in-list (map cdr primitive-features))]
         [backend (in-list '(racket-cs racketscript))])
    (check-eq? (feature-support feature-id backend) 'shim
@@ -177,7 +176,8 @@
  ;; 算術と比較の 6 件だけを G3c の検査の対象にする。
  (check-equal? (sort arithmetic-shim-features symbol<?)
                '(primitive-add primitive-eq primitive-le primitive-lt
-                 primitive-mul primitive-sub)))
+                 primitive-mul primitive-sub))
+ (check-equal? string-shim-features '(primitive-string-concat)))
 
 (test-case
  "feature-support/matrix reads the injected table"
@@ -205,14 +205,30 @@
  (check-not-exn (lambda () (check-tables!/matrix backend-features))))
 
 (test-case
- "the arithmetic roster is exactly the primitives minus resource acquisition"
+ "SUR-002b: 文字列連結は両 backend で shim であり native を禁じる"
+ (check-eq? (primitive-feature 'string-concat) 'primitive-string-concat)
+ (check-equal? string-shim-features '(primitive-string-concat))
+ (for ([backend (in-list '(racket-cs racketscript))])
+   (check-eq? (feature-support 'primitive-string-concat backend) 'shim))
+ (define injected
+   (for/list ([row (in-list backend-features)])
+     (if (eq? (first row) 'primitive-string-concat)
+         (list* (first row) 'native (cddr row))
+         row)))
+ (check-exn exn:fail? (lambda () (check-tables!/matrix injected))))
+
+(test-case
+ "the arithmetic and string rosters are the primitive names minus resource acquisition"
  ;; 名前を足して名簿へ入れ忘れると、その名前だけ native を宣言できてしまう。
  ;; 名前の表の像と名簿を突き合わせて閉じる（backend-matrix.md §10）。
- (check-equal? (sort arithmetic-shim-features symbol<?)
+ (check-equal? (sort (append arithmetic-shim-features string-shim-features) symbol<?)
                (sort (for/list ([row (in-list primitive-features)]
                                 #:unless (eq? (car row) 'acquire))
                        (cdr row))
                      symbol<?))
+ (check-equal? (sort arithmetic-shim-features symbol<?)
+               '(primitive-add primitive-eq primitive-le primitive-lt
+                 primitive-mul primitive-sub))
  ;; 資源取得も shim だが、native を禁じる検査の対象ではない。
  (check-false (memq 'primitive-acquire arithmetic-shim-features))
  (check-eq? (feature-support 'primitive-acquire 'racket-cs) 'shim)

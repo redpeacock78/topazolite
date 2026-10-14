@@ -61,7 +61,7 @@
  "the lowered term names no host operator and no source primitive name"
  ;; backend-matrix.md §10。禁じるのは生成物が Host の演算を直接指すことである。
  ;; 源の名前が符号化を経ずに残る経路も同じ検査で閉じる。
- (define forbidden '(+ - * < <= = add sub mul lt le eq acquire))
+ (define forbidden '(+ - * < <= = add sub mul lt le eq acquire string-append string-concat))
  (for ([name (in-list shim-primitives)])
    (define target (lower-value-ok (prim-value name)))
    (for ([atom (in-list (atoms target))])
@@ -86,7 +86,8 @@
  (check-equal? (term (δpr ,(shim 'lt) 2 3)) (term (PTagged k:true)))
  (check-equal? (term (δpr ,(shim 'le) 3 3)) (term (PTagged k:true)))
  (check-equal? (term (δpr ,(shim 'eq) 3 4)) (term (PTagged k:false)))
- (check-equal? (term (δpr ,(shim 'acquire) 7)) (term (PResource 7))))
+ (check-equal? (term (δpr ,(shim 'acquire) 7)) (term (PResource 7)))
+ (check-equal? (term (δpr ,(shim 'string-concat) "a" "b")) "ab"))
 
 (test-case
  "the reserved rows name shims the Phase 0 machine does not implement"
@@ -137,7 +138,7 @@
 (test-case
  "closing the head feature closes every primitive value"
  ;; 形の対応表が PrimVal に与える primitive-value は名前によらない層である。
- ;; これを閉じると 7 件すべての写しが閉じる。粗い側へ倒れるだけであり、部分的
+ ;; これを閉じると 8 件すべての写しが閉じる。粗い側へ倒れるだけであり、部分的
  ;; な出力は返さない（backend-matrix.md §8）。
  (define matrix
    (for/list ([row (in-list backend-features)])

@@ -28,6 +28,7 @@
          primitive-arity
          arithmetic-primitives
          resource-primitives
+         string-primitives
          shim-primitives
          repr-ok?
          row-kinds
@@ -68,15 +69,17 @@
 
 ;;; primitive
 
-;; backend-matrix.md §7。shim へ写すのはこの 7 件だけである。名前と feature の対応は
+;; backend-matrix.md §7。shim へ写すのはこの 8 件だけである。名前と feature の対応は
 ;; backend-matrix.rkt の primitive-features が持つので、名前の束はそこから引き、
-;; ここに書き写さない。算術と比較の 6 件と資源取得を分けておくのは、
-;; backend-matrix.md §10 の表の検査が算術と比較の側だけを対象にするためで
-;; ある（G3c で使う）。
+;; ここに書き写さない。算術と比較、資源取得、文字列連結を分けるのは、
+;; backend-matrix.md §10 の表の検査対象と理由が異なるためである。
 (define arithmetic-primitives
   (append-map feature-primitives arithmetic-shim-features))
 (define resource-primitives (feature-primitives 'primitive-acquire))
-(define shim-primitives (append arithmetic-primitives resource-primitives))
+(define string-primitives
+  (append-map feature-primitives string-shim-features))
+(define shim-primitives
+  (append arithmetic-primitives resource-primitives string-primitives))
 
 ;; arity を写して二重定義にしない。Γ0 の NFn の引数個数をそのまま使う。
 (define (primitive-arity nm)
@@ -634,7 +637,7 @@
                 (kinds-of-all
                  (for/list ([branch (in-list branches)])
                    (match branch [`(,_ (,_ ...) -> ,body) body] [_ '()]))))]
-    ;; Γ0 の 7 件の primitive の latent row はすべて () である。
+    ;; Γ0 の 8 件の primitive の latent row はすべて () である。
     [`(PPrim ,_ ,arguments ...) (kinds-of-all arguments)]
     [`(PEffect ,pop ,argument) (set-add (effect-kinds-of argument) pop)]
     ;; handler の寄与に latent-kinds を使う。handler の写しは (PLam (px) ...) で

@@ -50,13 +50,16 @@
  (check-equal? (term (δpr tz:le 3 3)) (term (PTagged k:true)))
  (check-equal? (term (δpr tz:eq 3 3)) (term (PTagged k:true)))
  (check-equal? (term (δpr tz:eq 3 4)) (term (PTagged k:false)))
- (check-equal? (term (δpr tz:acquire 7)) (term (PResource 7))))
+ (check-equal? (term (δpr tz:acquire 7)) (term (PResource 7)))
+ (check-equal? (term (δpr tz:string-concat "ab" "c")) "abc"))
 
 (test-case
  "δpr is undefined outside the table"
  (check-equal? (term (δpr tz:add 1)) (term undefined))
  (check-equal? (term (δpr tz:add 1 2 3)) (term undefined))
  (check-equal? (term (δpr tz:add 1 unit)) (term undefined))
+ (check-equal? (term (δpr tz:string-concat "a")) (term undefined))
+ (check-equal? (term (δpr tz:string-concat 1 "b")) (term undefined))
  (check-equal? (term (δpr tz:unknown 1 2)) (term undefined))
  (check-equal? (term (δpr tz:acquire unit)) (term undefined)))
 
