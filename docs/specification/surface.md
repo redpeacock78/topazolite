@@ -121,7 +121,7 @@ label    ::= ident ["<" ty ">"]
 `?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
 `when` の枝は constructor pattern で始まり、枝の先頭に `|` を置かない。
 枝は改行で区切り、束縛子は空白で区切って括弧で囲まない。
-枝の本体は通常式なら改行の手前で終わり、block なら対応する閉じ波括弧で終わる。
+枝の本体は波括弧で始まる構文（block、record、when）なら対応する閉じ波括弧まで、それ以外の式なら改行の手前まで読む。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
 `when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
 閉じ波括弧の後に改行がある場合、続く行は次の束縛または block の結果式として読む。
@@ -683,7 +683,7 @@ scrutinee が data 型でない場合は `E-DAT-003` で拒む。
 注釈の無い位置の `when` は、枝に期待型を要する式がある場合に `E-TYP-004` で拒む。
 たとえば `some(1)` と `none` の枝は、注釈の無い位置で型引数を決められない。
 本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
-`E-TYP-004` と `E-DAT-004` の primary span は `when` 全体である。
+`E-TYP-004`、`E-TYP-010`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。

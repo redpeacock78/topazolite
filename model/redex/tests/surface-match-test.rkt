@@ -3,6 +3,7 @@
 (require rackunit
          racket/match
          redex/reduction-semantics
+         "../diagnostic.rkt"
          "../lexer.rkt"
          "../parser.rkt"
          "../surface-lower.rkt"
@@ -21,6 +22,15 @@
   (define result (compile str))
   (and (diagnostic? result) (diagnostic-id result)))
 (define (ok? str) (compiled? (compile str)))
+
+(define (check-full-when-diagnostic-span prefix when-expression suffix code)
+  (define result (compile (string-append prefix when-expression suffix)))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) code)
+    (check-equal? (diagnostic-primary-span result)
+                  `( #:span src ,(string-length prefix)
+                     ,(+ (string-length prefix) (string-length when-expression))))))
 
 (define color "type Color =\n  | red\n  | green\n  | leaf\n")
 (define pair "type Pair<A> =\n  | pair<A, A>\n")
@@ -123,6 +133,28 @@
                 "E-SYN-002")
   (check-equal? (compile-code "fn h(n: Int) -> Int {\n  when n { zero => 0 }\n}\nh(1)")
                 "E-DAT-003"))
+
+(test-case "elaborate の when 診断は when 全体を primary span にする"
+  (check-full-when-diagnostic-span
+   "fn h(n: Int) -> Int {\n  "
+   "when n {\n    zero => 0\n  }"
+   "\n}\nh(1)"
+   "E-DAT-003")
+  (check-full-when-diagnostic-span
+   (string-append color "fn f(c: Color) -> Int {\n  ")
+   "when c {\n    red => 1\n  }"
+   "\n}\nf(red)"
+   "E-DAT-004")
+  (check-full-when-diagnostic-span
+   (string-append color "fn f(c: Color) -> Int {\n  ")
+   "when c {\n    red x => 1\n    green => 2\n    leaf => 3\n  }"
+   "\n}\nf(red)"
+   "E-SYN-002")
+  (check-full-when-diagnostic-span
+   "let n = "
+   "when true {\n  true => some(1)\n  false => none\n}"
+   "\nn"
+   "E-TYP-004"))
 
 (test-case "when の評価結果を得る"
   (define result

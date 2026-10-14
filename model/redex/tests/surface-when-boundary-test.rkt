@@ -110,6 +110,12 @@
   (check-equal? (code "let n = when true {\n  true => some(1)\n  false => none\n}\nn")
                 "E-TYP-004"))
 
+(test-case "Never で return 候補を合成できない NarrativeExpr は E-TYP-010 になる"
+  (match (elab '(NarrativeExpr (Return (Construct none))))
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-TYP-010")]
+    [other (fail-check (format "E-TYP-010 を期待したが ~s" other))]))
+
 (test-case "Owned の when return は恒等 handler で受理する"
   (define result
     (elab '(Fn ((returned (Owned Res))) (Owned Res) (Own)

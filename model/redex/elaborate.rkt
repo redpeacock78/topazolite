@@ -2117,6 +2117,7 @@
                [(pair? (unbox candidates)) (first (unbox candidates))]
                [else #f]))))
 
+    ;; shortcut: 入れ子の when を scrutinee に置くと下見と本検査が部分式を再走査して深さに対する費用が指数増加し、改善時は下見の Core を本検査で再利用する。
     (define (probe-narrative-type body environment delta propositions
                                   boundaries span)
       (call-with-restored-state
