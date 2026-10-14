@@ -73,6 +73,15 @@
   (check-equal? (erase-surface surface+) surface)
   (check-true (redex-match? UCore e (erase-surface surface+))))
 
+(test-case "Union member 枝は span を落として UCore へ投影される"
+  (define member-eliminate
+    (term (Eliminate ,s0 (#:var value ,s1)
+                     ((,s1 (#:ty Int ,s1) (#:bind item ,s1) -> (#:var item ,s1))))))
+  (define erased (erase-surface member-eliminate))
+  (check-equal? erased '(Eliminate value ((Int item -> item)))
+                "member 枝の型と束縛子は spanless UCore に残る")
+  (check-true (redex-match? UCore e erased)))
+
 ;; SUR-008。#:infer は span を持つ包みから裸の標識へ写る。
 (test-case "SUR-008: (#:infer s) は #:infer へ写る"
   (check-equal? (erase-surface (term (#:infer ,s1))) '#:infer)

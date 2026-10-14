@@ -98,6 +98,7 @@
          (Construct some 1)
          (Construct some (Types Int) 1)
          (Eliminate x ((some (y) -> y)))
+         (Eliminate value ((Int item -> item)))
          (Return 1)
          (NarrativeExpr 1)
          (Recur f ((x Int)) Int () x (Apply f 0))
@@ -119,6 +120,19 @@
 (test-case "annotate-surface と erase-surface は往復する"
   (for ([expr (in-list ucore-terms)])
     (check-equal? (erase-surface (annotate-surface expr)) expr (format "~a" expr))))
+
+(test-case "annotate-surface は Union member 枝へ型と束縛子の span を振る"
+  (define annotated
+    (annotate-surface '(Eliminate value ((Int item -> item)))))
+  (check-true
+   (match annotated
+     [`(Eliminate ,s ,_ ((,branch-span (#:ty Int ,type-span)
+                                      (#:bind item ,binder-span) ->
+                                      (#:var item ,body-span))))
+       (andmap span-ok? (list s branch-span type-span binder-span body-span))]
+     [_ #f]))
+  (check-equal? (erase-surface annotated)
+                '(Eliminate value ((Int item -> item)))))
 
 ;; SUR-008。結果欄の #:infer は span を持つ包みになり、erase で戻る。
 (test-case "SUR-008: annotate-surface は結果欄の #:infer を包む"

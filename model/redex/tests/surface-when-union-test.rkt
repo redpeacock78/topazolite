@@ -1,0 +1,195 @@
+#lang racket
+
+(require rackunit
+         racket/match
+         "../diagnostic.rkt"
+         "../driver.rkt"
+         "../erase.rkt"
+         "../elaborate.rkt"
+         "../machine.rkt"
+         "../origins.rkt")
+
+(define (compile source) (compile-source/string 'src source))
+(define (check-compiled result)
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a (expected ~s, found ~s)"
+                          (diagnostic-id result) (diagnostic-message result)
+                          (diagnostic-expected result) (diagnostic-found result))
+                  (format "unexpected result: ~s" result))))
+(define (code . sources)
+  (define result (compile (apply string-append sources)))
+  (and (diagnostic? result) (diagnostic-id result)))
+(define (core-code expression)
+  (match (elab expression)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
+(define (ok? source) (compiled? (compile source)))
+
+(define (run-value result)
+  (call-with-trait-ledger
+   (compiled-ledger result)
+   (lambda ()
+     (match (run-g2 (inject-g2m (erase-core (compiled-execution-core result))) 10000)
+       [`(cfg ,value ,_heap ,_states ,_tokens ,_events) value]
+       [other (fail-check (format "評価結果の config を期待したが ~s" other))]))))
+
+(define (count-form tree wanted)
+  (cond [(and (pair? tree) (eq? (car tree) wanted))
+         (add1 (apply + (map (lambda (child) (count-form child wanted)) (cdr tree))))]
+        [(pair? tree) (apply + (map (lambda (child) (count-form child wanted)) tree))]
+        [else 0]))
+
+(define option-string
+  "let option: Option<Int> = some(7)\nlet value: Option<Int> | String = option\n")
+
+(test-case "Int | String の member pattern は tag ごとに枝を選ぶ"
+  (for ([source+expected (in-list
+                          (list (list "let value: Int | String = 42\n"
+                                      42)
+                                (list "let value: Int | String = \"text\"\n"
+                                      0)))])
+    (match-define (list prefix expected) source+expected)
+    (define result
+      (compile (string-append prefix
+                              "let answer = when value {\n"
+                              "  (n: Int) => n\n"
+                              "  (s: String) => 0\n"
+                              "}\nanswer")))
+    (check-compiled result)
+    (when (compiled? result) (check-equal? (run-value result) expected))))
+
+(test-case "Option 成分と String 成分の constructor と member を混在できる"
+  (define source
+    (string-append
+     option-string
+     "let answer = when value {\n"
+     "  some n => n\n"
+     "  none => 0\n"
+     "  (s: String) => 9\n"
+     "}\nanswer"))
+  (define result (compile source))
+  (check-compiled result)
+  (when (compiled? result)
+    (check-equal? (run-value result) 7)
+    (check-true (positive? (count-form (compiled-core result) 'UnionEliminate)))
+    (check-true (positive? (count-form (compiled-core result) 'Eliminate)))))
+
+(test-case "data 成分は member pattern でまとめられ、data だけの Union も除去できる"
+  (check-true
+   (ok? (string-append option-string
+                       "let answer = when value {\n"
+                       "  (o: Option<Int>) => 1\n"
+                       "  (s: String) => 2\n"
+                       "}\nanswer")))
+  (define source
+    (string-append
+     "let result: Result<Int, String> = ok(7)\n"
+     "let value: Option<Int> | Result<Int, String> = result\n"
+     "let answer = when value {\n"
+     "  some n => n\n"
+     "  none => 0\n"
+     "  ok n => n\n"
+     "  ng message => 1\n"
+     "}\nanswer"))
+  (define result (compile source))
+  (check-compiled result)
+  (when (compiled? result)
+    (check-equal? (run-value result) 7)
+    (check-true (positive? (count-form (compiled-core result) 'UnionEliminate)))
+    (check-true (positive? (count-form (compiled-core result) 'Eliminate)))))
+
+(test-case "member 枝だけで使う外側の値を無名関数が capture する"
+  (define result
+    (compile
+     (string-append
+      "fn apply(value: Int | String, captured: Int) -> Int {\n"
+      "  let f = when value {\n"
+      "    (n: Int) => fn (x: Int) => captured\n"
+      "    (s: String) => fn (x: Int) => captured\n"
+      "  }\n"
+      "  f(0)\n"
+      "}\napply(1, 37)")))
+  (check-compiled result)
+  (when (compiled? result) (check-equal? (run-value result) 37)))
+
+(test-case "member の束縛子は同名 constructor を隠す"
+  (define result
+    (compile
+     (string-append
+      "let value: Option<Int> | String = \"kept\"\n"
+      "let answer: String = when value {\n"
+      "  some n => \"other\"\n"
+      "  none => \"other\"\n"
+      "  (none: String) => none\n"
+      "}\nanswer")))
+  (check-compiled result)
+  (when (compiled? result) (check-equal? (run-value result) "kept")))
+
+(test-case "member 枝の予約束縛子は constructor 枝と同じ診断で拒まれる"
+  (check-equal? (core-code '(Eliminate value ((some (|x⟨1⟩|) -> 0))))
+                "E-SYN-005")
+  (check-equal? (core-code '(Eliminate value ((Int |x⟨1⟩| -> 0))))
+                "E-SYN-005"))
+
+(test-case "成分の不足、重複、不一致、曖昧さは E-DAT-004 になる"
+  (define (program type arms)
+    (string-append "fn f(value: " type ") -> Int {\n  when value {\n"
+                   arms "\n  }\n}\n0"))
+  (for ([arms (in-list
+               (list "(n: Int) => n"
+                     "(n: Int) => n\n(n2: Int) => n2\n(s: String) => 0"
+                     "(b: Bool) => 0\n(s: String) => 0"
+                     "(x: Int | Bool) => 0\n(s: String) => 0"
+                     "(o: Option<Int>) => 0\nsome n => n\nnone => 0\n(s: String) => 0"
+                     "missing => 0\n(s: String) => 0"))])
+    (check-equal? (code (program "Int | String" arms)) "E-DAT-004"))
+  (check-equal?
+   (code (program "Option<Int> | Option<String>"
+                  "some n => 0\nnone => 0"))
+   "E-DAT-004"))
+
+(test-case "scrutinee と枝の種類に応じた診断を優先する"
+  (check-equal?
+   (code "fn f(value: Int) -> Int { when value { (n: Int) => none } }\n0")
+   "E-TYP-029")
+  (check-equal?
+   (code "fn f(value: Int) -> Int { when value { zero => 0 } }\n0")
+   "E-DAT-003")
+  (check-equal?
+   (code "fn f(value: Owned<Int | String>) -> Int {\n"
+         "  when value {\n    (n: Int) => n\n    (s: String) => 0\n  }\n}\n0")
+   "E-OWN-010")
+  (check-equal?
+   (code "fn f(value: Owned<Option<Int> | String>) -> Int {\n"
+         "  when value {\n    some n => n\n    none => 0\n    (s: String) => 1\n  }\n}\n0")
+   "E-OWN-010")
+  (check-equal?
+   (core-code
+    '(Fn ((value (Owned (Union Int String)))) Int ()
+         (Eliminate (Move value) ((Int n -> n) (String s -> 0)))))
+   "E-TYP-029")
+  (check-equal?
+   (core-code
+    '(Fn ((value (Owned (Union (Option Int) (Result Int String))))) Int ()
+         (Eliminate (Move value)
+                    ((some (n) -> n) (none () -> 0)
+                     (ok (n) -> n) (ng (message) -> 0)))))
+   "E-TYP-029"))
+
+(test-case "member 型の未知名は E-SUR-008 になる"
+  (check-equal?
+   (code "fn f(value: Int | String) -> Int {\n"
+         "  when value {\n    (n: Missing) => 0\n    (s: String) => 1\n  }\n}\n0")
+   "E-SUR-008"))
+
+(test-case "注釈の無い Union when は合成される"
+  (define result
+    (compile (string-append
+              "let value: Int | String = 23\n"
+              "let answer = when value {\n  (n: Int) => n\n  (s: String) => 0\n}\n"
+              "answer")))
+  (check-compiled result)
+  (when (compiled? result)
+    (check-equal? (compiled-type result) 'Int)
+    (check-equal? (run-value result) 23)))

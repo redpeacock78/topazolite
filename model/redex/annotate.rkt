@@ -115,6 +115,8 @@
     (match ubr
       [(list K (list x ...) '-> e)
        (list (next) K (map bind x) '-> (ann e))]
+      [(list type x '-> e)
+       (list (next) (ty type) (bind x) '-> (ann e))]
       [_ (error 'annotate-surface "未対応の ubr: ~a" ubr)]))
   (define (ann t)
     (match t

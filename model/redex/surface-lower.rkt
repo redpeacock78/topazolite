@@ -772,13 +772,16 @@
        `(SMatch ,s ,(r scrutinee)
                 ,(for/list ([arm (in-list arms)])
                    (match arm
-                     [`(SArm ,s_a ,k ,binders ,body)
+                     [`(SArm ,s_a (SName ,s_k ,k) ,binders ,body)
                       (define names
                         (for/list ([b (in-list binders)])
                           (match b [`(SName ,_ ,x) x])))
-                      `(SArm ,s_a ,k ,binders
+                      `(SArm ,s_a (SName ,s_k ,k) ,binders
                              ,(expr body (set-union bound
-                                                    (list->seteq names))))])))]
+                                                    (list->seteq names))))]
+                     [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
+                      `(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) ()
+                             ,(expr body (set-add bound x)))])))]
       [`(SProj ,s ,target ,label) `(SProj ,s ,(r target) ,label)]
       [`(SProjRec ,s ,target ,labels) `(SProjRec ,s ,(r target) ,labels)]
       [`(SRec ,s ,fields) `(SRec ,s ,(rec-fields fields bound))]
@@ -857,6 +860,10 @@
                                ,(for/list ([b (in-list binders)])
                                   (match b
                                     [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
+                               -> ,(lower-sexpr body env fail))]
+                       [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
+                        `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
+                               (#:bind ,x ,s_x)
                                -> ,(lower-sexpr body env fail))]))))]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。

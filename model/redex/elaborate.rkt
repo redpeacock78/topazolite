@@ -51,22 +51,23 @@
     [(core type row) (make-judgment/raw core type row type)]
     [(core type row core-type)
      (make-judgment/raw core type row core-type)]))
-(struct exn:fail:elab exn:fail (primary-span reason details) #:transparent)
+(struct exn:fail:elab exn:fail (primary-span phase reason details) #:transparent)
 
 ;; primary-span は第 1 引数であり既定値を持たない。既定値を持たせると渡し忘れ
 ;; が黙って通り、DIA-002 の契約が静かに崩れる。span-ok? と registry の検査で
 ;; 渡し忘れ、引数の逆順、registry に無い reason を実行時に落とす。
-(define (reject primary-span reason . details)
+(define (reject primary-span reason #:phase [phase 'elaborate] . details)
   (unless (span-ok? primary-span)
     (error 'reject "span として妥当でない値を primary-span に受けた: ~s"
            primary-span))
-  (unless (diagnostic-code-of 'elaborate reason)
+  (unless (diagnostic-code-of phase reason)
     (error 'reject "registry に無い reason である: ~s" reason))
   (raise
    (exn:fail:elab
     (format "elaboration failed: ~a" reason)
     (current-continuation-marks)
     primary-span
+    phase
     reason
     details)))
 
@@ -172,6 +173,8 @@
     (binder-name parameter))
   (define (branch-reserved branch)
     (match branch
+      [`(,_ ,(? symbol? binder) -> ,_)
+       (reserved-name binder)]
       [`(,_ ,parameters -> ,_)
        (and (list? parameters)
             (first-reserved (map parameter-name parameters)))]
@@ -765,6 +768,8 @@
       (sets-union
        (for/list ([branch (in-list branches)])
          (match branch
+           [`(,_ ,(? symbol? parameter) -> ,body)
+            (set-remove (free-vars/erased body) parameter)]
            [`(,_ (,parameters ...) -> ,body)
             (set-subtract (free-vars/erased body) (list->set parameters))]
            [_ (set)]))))]
@@ -816,9 +821,10 @@
 ;; registry の引き当てと欄の検証を通る経路をここへ揃える。
 (define (elab-failure->diagnostic failure expansion-context)
   (define reason (exn:fail:elab-reason failure))
+  (define phase (exn:fail:elab-phase failure))
   (define-values (expected found)
     (distribute-details reason (exn:fail:elab-details failure)))
-  (diagnostic-of 'elaborate reason
+  (diagnostic-of phase reason
                    #:primary-span (exn:fail:elab-primary-span failure)
                    #:expected expected
                    #:found found
@@ -1843,9 +1849,11 @@
 
     (define (eliminate-front scrutinee branches eliminate-span
                              environment delta propositions boundaries
-                             #:on-clause [on-clause void])
+                             #:on-clause [on-clause void]
+                             #:scrutinee-result [provided-scrutinee-result #f])
       (define scrutinee-result
-        (synth scrutinee environment delta propositions boundaries))
+        (or provided-scrutinee-result
+            (synth scrutinee environment delta propositions boundaries)))
       ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引く。
       (define-values (data-type rewrap)
         (peel-eliminate-wrapper (judgment-type scrutinee-result)))
@@ -1895,12 +1903,147 @@
           clause))
       (values scrutinee-result clauses))
 
-    (define (check-eliminate scrutinee branches expected eliminate-span
+    (define (union-eliminate scrutinee-result branches expected eliminate-span
                              environment delta propositions boundaries)
+      (define union-type (normalize-type (judgment-type scrutinee-result)))
+      (define members (union-members union-type))
+      (define (pattern raw-branch)
+        (match (peel-branch raw-branch)
+          [(list (and raw-type (list '#:ty τ _))
+                 (and raw-binder (list '#:bind _ _)) '-> body)
+           (list 'member (normalize-type τ) raw-type raw-binder body raw-branch)]
+          [(list constructor (list raw-parameters ...) '-> body)
+           (list 'constructor constructor raw-parameters body raw-branch)]
+          [_ (reject eliminate-span 'invalid-branch raw-branch)]))
+      (define patterns (map pattern branches))
+      (define assigned (make-hash))
+      (for ([member-type (in-list members)])
+        (hash-set! assigned member-type '()))
+      (for ([item (in-list patterns)])
+        (match item
+          [(list 'member τ _ _ _ raw-branch)
+           (define matches
+             (filter (lambda (member-type)
+                       (and τ (type-equiv? τ member-type)))
+                     members))
+           (unless (= (length matches) 1)
+             (reject eliminate-span 'non-exhaustive-eliminate raw-branch))
+           (define member-type (first matches))
+           (hash-set! assigned member-type
+                      (append (hash-ref assigned member-type) (list item)))]
+          [(list 'constructor constructor _ _ raw-branch)
+           (define matches
+             (for/list ([member-type (in-list members)]
+                        #:when (and (constructor-schema member-type)
+                                    (assoc constructor
+                                           (constructor-schema member-type))))
+               member-type))
+           (unless (= (length matches) 1)
+             (reject eliminate-span 'non-exhaustive-eliminate raw-branch))
+           (define member-type (first matches))
+           (hash-set! assigned member-type
+                      (append (hash-ref assigned member-type) (list item)))]))
+      (define groups
+        (for/list ([member-type (in-list members)])
+          (define group (hash-ref assigned member-type))
+          (define member-patterns
+            (filter (lambda (item) (eq? (first item) 'member)) group))
+          (define constructor-patterns
+            (filter (lambda (item) (eq? (first item) 'constructor)) group))
+          (define schema (constructor-schema member-type))
+          (define expected-constructors (and schema (map first schema)))
+          (define actual-constructors (map second constructor-patterns))
+          (unless
+              (or (and (= (length member-patterns) 1)
+                       (null? constructor-patterns))
+                  (and schema
+                       (null? member-patterns)
+                       (= (length actual-constructors)
+                          (length expected-constructors))
+                       (not (check-duplicates actual-constructors))
+                       (andmap (lambda (constructor)
+                                 (and (memq constructor actual-constructors) #t))
+                               expected-constructors)))
+            (reject eliminate-span 'non-exhaustive-eliminate group))
+          (list member-type (if (pair? member-patterns)
+                                (first member-patterns)
+                                constructor-patterns))))
+      (define results
+        (for/list ([group (in-list groups)])
+          (match-define (list member-type branch-group) group)
+          (define member-pattern? (eq? (first branch-group) 'member))
+          (define binder
+            (if member-pattern?
+                (peel-bind (fourth branch-group))
+                (fresh-union-name)))
+          (define branch-environment
+            (extend environment (list binder) (list member-type) #f
+                    (list (resource-type? member-type))))
+          (define body-expression
+            (if member-pattern?
+                (fifth branch-group)
+                `(Eliminate ,eliminate-span
+                            (#:var ,binder ,eliminate-span)
+                            ,(map fifth branch-group))))
+          (define body-result
+            (if expected
+                (check body-expression expected branch-environment
+                       delta propositions boundaries)
+                (synth body-expression branch-environment
+                       delta propositions boundaries)))
+          (define branch
+            (if member-pattern?
+                (let ([raw-branch (sixth branch-group)])
+                  (match (peel-branch raw-branch)
+                    [(list raw-type raw-binder '-> _)
+                     (list (branch-span raw-branch)
+                           raw-type raw-binder '-> (judgment-core body-result))]))
+                `(,eliminate-span
+                  (#:ty ,member-type ,eliminate-span)
+                  (#:bind ,binder ,eliminate-span)
+                  -> ,(judgment-core body-result))))
+          (list branch body-result)))
+      (define branch-results (map second results))
+      (define-values (branch-cores core-type)
+        (merge-branches (map judgment-core branch-results)
+                        (map judgment-core-type branch-results)
+                        eliminate-span propositions))
+      (judgment
+       `(UnionEliminate ,eliminate-span
+                        ,(judgment-core scrutinee-result)
+                        ,(for/list ([result (in-list results)]
+                                    [branch-core (in-list branch-cores)])
+                           (define branch (first result))
+                           (append (take branch 4) (list branch-core))))
+       (or expected core-type)
+       (rows-union
+        (cons (judgment-row scrutinee-result)
+              (map judgment-row branch-results)))
+       core-type))
+
+    (define (member-pattern? raw-branch)
+      (match (peel-branch raw-branch)
+        [(list (list '#:ty _ _) (list '#:bind _ _) '-> _) #t]
+        [_ #f]))
+
+    (define (root-owned-union? type)
+      (match (normalize-type type)
+        [`(Owned (Union ,_ ,_)) #t]
+        [_ #f]))
+
+    (define (union-type? type)
+      (match (normalize-type type)
+        [`(Union ,_ ,_) #t]
+        [_ #f]))
+
+    (define (check-eliminate scrutinee branches expected eliminate-span
+                             environment delta propositions boundaries
+                             #:scrutinee-result [provided-scrutinee-result #f])
       (define reversed-branch-results '())
       (define-values (scrutinee-result clauses)
         (eliminate-front
          scrutinee branches eliminate-span environment delta propositions boundaries
+         #:scrutinee-result provided-scrutinee-result
          #:on-clause
          (lambda (clause)
            (match-define (list _ _ _ body branch-environment _ _ _) clause)
@@ -2756,46 +2899,64 @@
          (reject s 'constructor-needs-expected-type)]
 
         [`(Eliminate ,scrutinee (,branches ...))
-         ;; 構文だけで決まる拒否を枝の elaboration より先に行い、callable
-         ;; 登録などの副作用を起こさない。
-         (for ([raw-branch (in-list branches)])
-           (match (peel-branch raw-branch)
-             [`(,_ (,_ ...) -> ,body)
-              #:when (needs-expected-type? body)
-              (reject s 'eliminate-needs-expected-type)]
-             [_ (void)]))
-         (define-values (scrutinee-result clauses)
-           (eliminate-front scrutinee branches s
-                            environment delta propositions boundaries))
-         (define results
-           (for/list ([clause (in-list clauses)])
-             (match-define (list _ _ _ body branch-environment _ _ _) clause)
-             (synth body branch-environment delta propositions boundaries)))
-         (define-values (branch-cores core-type)
-           (merge-branches (map judgment-core results)
-                           (map judgment-core-type results)
-                           s propositions))
-         (judgment
-          `(Eliminate ,s ,(judgment-core scrutinee-result)
-                      ,(for/list ([clause (in-list clauses)]
-                                  [core (in-list branch-cores)])
-                         (match-define
-                           (list raw-branch constructor raw-parameters _ _
-                                 field-types resource-names core-parameters)
-                           clause)
-                         (define wrapped-core
-                           (if (ormap values resource-names)
-                               `(Scope ,s ()
-                                       ,(wrap-resource-lets
-                                         raw-parameters field-types resource-names
-                                         core))
-                               core))
-                         `(,(branch-span raw-branch) ,constructor ,core-parameters
-                           -> ,wrapped-core)))
-          core-type
-          (rows-union
-           (cons (judgment-row scrutinee-result)
-                 (map judgment-row results))))]
+         (define scrutinee-result
+           (synth scrutinee environment delta propositions boundaries))
+         (define scrutinee-type (judgment-type scrutinee-result))
+         (cond
+           [(root-owned-union? scrutinee-type)
+            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
+           [(union-type? scrutinee-type)
+            (union-eliminate scrutinee-result branches #f s
+                             environment delta propositions boundaries)]
+           [(ormap member-pattern? branches)
+            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
+           [else
+             (define-values (data-type _rewrap)
+               (peel-eliminate-wrapper scrutinee-type))
+             (unless (constructor-schema data-type)
+               (reject s 'non-data-eliminate scrutinee-type))
+             (let-values ([(checked-scrutinee clauses)
+                           (eliminate-front
+                            scrutinee branches s environment delta propositions
+                            boundaries #:scrutinee-result scrutinee-result)])
+               (for ([raw-branch (in-list branches)])
+                 (match (peel-branch raw-branch)
+                   [`(,_ (,_ ...) -> ,body)
+                    #:when (needs-expected-type? body)
+                    (reject s 'eliminate-needs-expected-type)]
+                   [_ (void)]))
+               (let ()
+                 (define results
+                   (for/list ([clause (in-list clauses)])
+                     (match-define
+                       (list _ _ _ body branch-environment _ _ _) clause)
+                     (synth body branch-environment
+                            delta propositions boundaries)))
+                 (define-values (branch-cores core-type)
+                   (merge-branches (map judgment-core results)
+                                   (map judgment-core-type results)
+                                   s propositions))
+                 (judgment
+                  `(Eliminate ,s ,(judgment-core checked-scrutinee)
+                              ,(for/list ([clause (in-list clauses)]
+                                          [core (in-list branch-cores)])
+                                 (match-define
+                                   (list raw-branch constructor raw-parameters _ _
+                                         field-types resource-names core-parameters)
+                                   clause)
+                                 (define wrapped-core
+                                   (if (ormap values resource-names)
+                                       `(Scope ,s ()
+                                               ,(wrap-resource-lets
+                                                 raw-parameters field-types
+                                                 resource-names core))
+                                       core))
+                                 `(,(branch-span raw-branch) ,constructor
+                                   ,core-parameters -> ,wrapped-core)))
+                  core-type
+                  (rows-union
+                   (cons (judgment-row checked-scrutinee)
+                         (map judgment-row results))))))])]
 
         [`(Eliminate ,_ ,_)
          (reject s 'eliminate-needs-expected-type)]
@@ -3209,9 +3370,21 @@
                                 environment delta propositions boundaries)]
 
         [`(Eliminate ,scrutinee (,branches ...))
-         (check-eliminate scrutinee branches expected
-                          s
-                          environment delta propositions boundaries)]
+         (define scrutinee-result
+           (synth scrutinee environment delta propositions boundaries))
+         (define scrutinee-type (judgment-type scrutinee-result))
+         (cond
+           [(root-owned-union? scrutinee-type)
+            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
+           [(union-type? scrutinee-type)
+            (union-eliminate scrutinee-result branches expected s
+                             environment delta propositions boundaries)]
+           [(ormap member-pattern? branches)
+            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
+           [else
+            (check-eliminate scrutinee branches expected s
+                             environment delta propositions boundaries
+                             #:scrutinee-result scrutinee-result)])]
 
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))

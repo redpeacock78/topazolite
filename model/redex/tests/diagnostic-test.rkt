@@ -841,16 +841,24 @@
  (define source (file->string elaborate-source))
  (define production-source
    (car (string-split source "\n(module+ test")))
- (define reasons
+ (define reason-entries
    (sort
     (remove-duplicates
      (for/list ([m (in-list
                     (regexp-match*
-                     #px"\\(reject\\s+(?:[a-z-]+|\\([^)]*\\))\\s+'([a-z][a-z0-9-]*)"
+                     #px"\\(reject\\s+(?:[a-z-]+|\\([^)]*\\))\\s+'([a-z][a-z0-9-]*)(?:\\s+#:phase\\s+'([a-z][a-z0-9-]*))?"
                                    production-source
                                    #:match-select values))])
-       (string->symbol (second m))))
-    symbol<?))
+       (list (if (third m) (string->symbol (third m)) 'elaborate)
+             (string->symbol (second m)))))
+    (lambda (left right)
+      (or (symbol<? (first left) (first right))
+          (and (eq? (first left) (first right))
+               (symbol<? (second left) (second right)))))))
+ (define reasons
+   (for/list ([entry (in-list reason-entries)]
+              #:when (eq? (first entry) 'elaborate))
+     (second entry)))
  ;; 件数を固定する。下限にすると、正規表現が壊れて一部しか拾わなくなっても
  ;; 通ってしまう。G5c5b3b で elaborate 側の owned-constructor-field は OwnLeaf
  ;; gate へ移り到達しなくなったが、P1b で owned-narrowing-rejected を追加した。
@@ -866,9 +874,12 @@
  (check-equal? (length reasons) 56)
  ;; P2m2b1 Task 3 で先行登録し、Task 4 で曖昧性の producer を加えた。
  (check-not-false (diagnostic-code-of 'elaborate 'ambiguous-union-member))
- (for ([reason (in-list reasons)])
-   (check-not-false (diagnostic-code-of 'elaborate reason)
-                    (format "registry に無い reason: ~a" reason)))
+ (for ([entry (in-list reason-entries)])
+   (check-not-false (apply diagnostic-code-of entry)
+                    (format "registry に無い reason: ~a" entry)))
+ (check-equal? (filter (lambda (entry) (eq? (first entry) 'typing))
+                       reason-entries)
+               '((typing non-union-eliminate)))
  ;; resolve-proposition の第 3 引数として渡る reason は (reject '...) の
  ;; 字面で現れない。走査の対象外なので明示の許容表で確かめる。
  (for ([reason (in-list '(invalid-obligation invalid-proposition))])

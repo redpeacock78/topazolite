@@ -49,7 +49,8 @@
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own Mutation)
   (uε ::= (uℓ ...))
   (spec ::= A (Spec spec spec ...))
-  (ubr ::= (K (x ...) -> e))
+  (ubr ::= (K (x ...) -> e)
+           (uτ x -> e))
   (e ::= l
          x
          (Fn ((x uret) ...) uret uεr e)
@@ -94,7 +95,8 @@
   (sps ::= (#:ty spec s))
   (vr ::= (#:var x s))
   (lt ::= (#:lit l s))
-  (ubr ::= (s K (xs ...) -> e))
+  (ubr ::= (s K (xs ...) -> e)
+           (s ts xs -> e))
   (e ::= lt
          vr
          (Fn s ((xs tr) ...) tr esr e)
