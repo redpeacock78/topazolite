@@ -550,6 +550,9 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   これは既存の「priority の下流利用」とは別の事項であり、Phase 4 以降で扱う。
 - **trait 水準の Effect 制約と impl の適合**：trait declaration は Effect row 表記を持たず、impl が trait 水準の Effect 制約を満たすかも検査しない。
   Surface の Effect row 表記とは別の適合検査であり、Phase 2 以降で扱う。
+- **要求欄の実行時呼出し**：実装 record の値は表に保存せず、impl primitive は `Implements` の Proof を返すだけである。
+  要求欄（たとえば `Printable` の `print`）を実行時に呼ぶ経路（辞書渡し、method 呼出し）は無い。
+  ホワイトペーパーは method 呼出しの綴りも辞書の渡し方も定めていないため、Phase 2 以降へ送る。
 - **data 型への derive Sizable**：Surface は data 型への `derive Sizable` を `E-SUR-019` で拒否する。
   `sizable-leaves` は型から決まる固定個数の葉を数える規則であり、data 型の constructor ごとに欄の数が異なるためである。
   最短の着手条件は `PAT-001` の後とする。
