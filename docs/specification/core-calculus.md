@@ -56,13 +56,15 @@ Surface 構文から糖衣を除いた形に相当する。
 対応づけは `surface.md` §6 が定める。
 
 ```text
+ubr0 ::= (K (x̄) -> e) | (τ x -> e)               UCore の constructor / Union member 枝
+
 e ::= l                                          リテラル
     | x                                          変数
     | fn(x1 : τ1, …, xk : τk) -> τ ! ε  e        関数抽象（注釈付き）
     | e0(e1, …, ek)                              適用
     | let x = e1 in e2                           束縛
     | construct K<τ̄>(e1, …, ek)                  constructor 適用（型引数は省略可）
-    | eliminate e0 { K1(x̄1) => e1; …; Kn(x̄n) => en }   場合分け
+    | eliminate e0 { ubr01; …; ubr0n }           場合分け
     | return e                                   返却
     | narrativeExpr(e)                           式 Narrative 境界
     | recur f(x1 : τ1, …, xk : τk) -> τ ! ε = e1 in e2   再帰定義
@@ -81,6 +83,12 @@ spec ::= T | spec<spec1, …, spek>                型式（型名とその適�
 
 `Bool` の値はリテラルではなく、constructor 表 C0（§3.5）の `true()` と `false()` で表す。
 `eliminate` による場合分けを Bool にもそのまま使うためである。
+
+UCore の `Eliminate` 枝は constructor 形 `(K (x̄) -> e)` と **Union member 枝** `(τ x -> e)` を持つ。
+UCore+ では、それぞれ `(s K (xs ...) -> e)` と `(s (#:ty τ s) (#:bind x s) -> e)` で表す。
+Surface lowering は枝の種別を保ち、scrutinee が Union かどうかの分類と Core の枝への割り当ては型を得た後の elaborate が行う。
+Union では外側に `UnionEliminate` を作り、data 型の成分の枝には内側の `Eliminate` を置く。
+この lowering は Core に新しい eliminator 構成子を加えない。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker であり、Surface の loop 構文はここへ lowering される（ホワイトペーパー §7.2）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
@@ -229,7 +237,7 @@ lowering は callable ID を消去するため、`Inst` は lowering の出力�
 `UnionEliminate` の各枝は成分型と束縛子を持ち、束縛子はその枝の本体だけで有効である。
 `UnionVal` は machine が `UnionInject` の簡約で生成する値であり、Typed Core の入力には書けない。
 Union への暗黙 widening は P2m2b の elaboration が `UnionInject` を挿入する。
-Surface の Union pattern を `UnionEliminate` へ写すのは P2m3 とする。
+Surface の Union member pattern を `UnionEliminate` へ写すのは P2m3b で導入した。
 `RecRewrite(e, ((ℓ, x, τ, m', τ', c) ...))` は elaboration が挿入する Typed Core 専用の内部形である。
 Surface と UCore には現れず、c1b の生成器も作らない。
 各 entry の `x` は対応する `c` の中だけで束縛される。

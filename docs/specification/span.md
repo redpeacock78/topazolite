@@ -101,6 +101,7 @@ span は構成子名の直後に置く。
 | `br` | `(s K (xs ...) -> c)` | `(K (x ...) -> c)` |
 | `h` | `(s xs -> c)` | `(x -> c)` |
 | `ubr` | `(s K (xs ...) -> e)` | `(K (x ...) -> e)` |
+| `ubr` | `(s (#:ty τ s_τ) (#:bind x s_x) -> e)` | `(τ x -> e)` |
 | `op` | `(Return b ts)` | `(Return b tau)` |
 
 `xs` は `(#:bind x s)`、`ls` は `(#:lbl label s)` である。
@@ -326,6 +327,8 @@ span を一部だけ持つ項はここで落ちる。
 `erase-surface` は列の要素として現れた span を落とす。
 節点の span を落とす機構がこれであるため、項の位置に紛れた span も静かに消え、投影の出力は `UCore` に属してしまう。
 文法へ直接照合すれば、この縮退を経ずに拒否できる。
+
+`annotate-surface` は spanless な Union member 枝 `(τ x -> e)` を、型の出現位置と束縛子へ span を付けた UCore+ の枝へ写す。
 
 文法への照合だけでは §3 を満たさない。
 `s ::= (#:span sid natural natural)` は `startByte <= endByte` を書けないため、`(#:span #:synthetic 10 0)` も `UCore+` に属する。

@@ -1,6 +1,6 @@
 # Topazolite Surface 構文
 
-**状態**：P2h1 版
+**状態**：P2m3b 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/requirements.md`
 
@@ -15,9 +15,9 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
-data 型の constructor を対象とする `when` は受理する。
-Union member pattern は `E-SUR-005` で拒み、P2m3b まで受理しない。
-このため `PAT-001` は完了していない。
+data 型の constructor を対象とする `when` と、**Union member pattern** を含む `when` は受理する。
+Union member pattern と data constructor pattern は同じ `when` の最上位の枝に混在できる。
+root `(Owned (Union ...))` の `when` は受理しないため、`PAT-001` は完了していない。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
@@ -92,6 +92,7 @@ primary  ::= int | string | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")" | when
 when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
 arm      ::= ctor ident* "=>" expr
+           | "(" ident ":" ty ")" "=>" expr
 ctor     ::= ident | "true" | "false"
 anonfn   ::= "fn" "(" lparams ")" ["->" ty] ["!" row] block
 params   ::= ε | param ("," param)*
@@ -119,8 +120,9 @@ label    ::= ident ["<" ty ">"]
 
 `&` は `|` より強く結合し、どちらも左結合である。
 `?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
-`when` の枝は constructor pattern で始まり、枝の先頭に `|` を置かない。
-枝は改行で区切り、束縛子は空白で区切って括弧で囲まない。
+`when` の枝は constructor pattern または Union member pattern で始まり、枝の先頭に `|` を置かない。
+枝は改行で区切る。
+constructor pattern の束縛子は空白で区切って括弧で囲まず、Union member pattern は `(x: τ)` と書く。
 枝の本体は波括弧で始まる構文（block、record、when）なら対応する閉じ波括弧まで、それ以外の式なら改行の手前まで読む。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
 `when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
@@ -275,6 +277,41 @@ Surface の block は束縛列と末尾式から成り、式文を持たない�
 その枝の `return` は関数の境界ではなく、最も内側の `when` 式へ値を返す。
 入れ子の `when` はそれぞれ別の返却境界を持つ。
 境界の handler と synth 規則は `core-calculus.md` §4.5 が定める。
+
+### 3.7 when の Union pattern
+
+Union member pattern は `(x: τ) => e` と書く。
+τ は scrutinee の型を正規化して平坦化した Union 成分のうち、ちょうど一つと `type-equiv?` で一致しなければならない。
+Record の width compatibility による照合は行わない。
+Union 型を一つの成分として指定する pattern も受理しない。
+照合する成分が無い場合、または pattern の型が複数成分を覆う Union の場合は `E-DAT-004` とする。
+
+最上位の枝では data constructor pattern と Union member pattern を混在できる。
+
+```topazolite
+when value {
+  some n => n
+  none => 0
+  (s: String) => 1
+}
+```
+
+各 constructor は、その constructor を宣言する data 型の成分へ割り当てる。
+同じ data 型が異なる型引数で複数の Union 成分に現れ、constructor の所属成分を一つに決められない場合は `E-DAT-004` とする。
+data 型でない成分には、それと型同値な Union member pattern がちょうど一つ必要である。
+data 型の成分には、その成分と型同値な Union member pattern を一つ置くか、型引数を適用した constructor 集合を過不足なく覆う枝を置く。
+不足、重複、同じ成分に対する member pattern と constructor pattern の併存は `E-DAT-004` とする。
+pattern の選択では Union 注入時の曖昧候補診断 `E-TYP-031` を流用しない。
+
+Union member pattern の束縛子は、その枝の本体で同名の constructor を隠す。
+constructor pattern の引数の中に pattern を書く入れ子の pattern は受理しない。
+枝の本体で次の `when` を書けば、入れ子の分岐を表せる。
+Union の有限性と枝の成分への割り当ては elaborate が行い、Surface lowering は型環境を参照しない。
+
+直接の Union は `UnionEliminate` へ lowering する。
+root `(Owned (Union ...))` は、Union のタグと所有権を枝へ一度だけ移送する Core 規則が無いため、P2m3c まで拒否する。
+UCore のこの形は `E-TYP-029` で拒否する。
+Surface には `Move` 構文が無いため、所有値を消費する source 項はこの診断より前に所有権検査で拒否されることがある。
 
 ## 4. span
 
@@ -500,9 +537,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
-- `(SMatch s e ((SArm s_a (SName s_k K) ((SName s_x x) ...) body) ...))` は `(NarrativeExpr s (Eliminate s e' ((s_a K ((#:bind x s_x) ...) -> body') ...)))` へ落とす。
+- `(SMatch s e arms)` は `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   scrutinee と各枝の本体を再帰的に下ろす。
-  枝の束縛子は `Eliminate` の枝へ渡し、constructor 名はそのまま保つ。
+  constructor pattern の枝は constructor 名と束縛子を保つ。
+  Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
+  Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
   `NarrativeExpr` は式位置の `when` にローカルな返却境界を与える（§4.5）。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
@@ -677,13 +716,21 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 これらは trait、impl、intersect の宣言を lowering する前に検査される。
 台帳の `#:fail` に kind `data` の失敗が届くことはなく、届いた場合は内部の誤りである。
 
-`when` の網羅性、重複枝、未知の constructor は elaborate が `E-DAT-004` で拒む。
-枝の束縛子の個数違いと重複は `E-SYN-002` で拒む。
-scrutinee が data 型でない場合は `E-DAT-003` で拒む。
-注釈の無い位置の `when` は、枝に期待型を要する式がある場合に `E-TYP-004` で拒む。
-たとえば `some(1)` と `none` の枝は、注釈の無い位置で型引数を決められない。
+診断は次の順に判定し、先の段で拒否した場合は後の段へ進まない。
+
+1. 構文と束縛子の形を検査し、誤りを `E-SUR-005` または `E-SYN-002` とする。
+2. Union member pattern の型を解決し、未知の型名を `E-SUR-008` とする。
+3. scrutinee の型を分類する。
+   root `(Owned (Union ...))` と、Union でない scrutinee に対する Union member pattern は `E-TYP-029` とする。
+   Union でない scrutinee に constructor pattern だけがあり、data 型でもない場合は `E-DAT-003` とする。
+4. Union 成分への割り当てと網羅性を検査し、不一致、曖昧な constructor 所属、不足、重複、member と constructor の併存を `E-DAT-004` とする。
+   Union 注入候補用の `E-TYP-031` は pattern の曖昧さには使わない。
+5. 枝本体の型付けを行う。
+
+注釈の無い位置の `when` も枝を合成できれば受理する。
+枝に期待型が必要で合成できない場合は `E-TYP-004` とし、`some(1)` と `none` のように型引数を決められない枝がその例である。
 本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
-`E-TYP-004`、`E-TYP-010`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
+`E-TYP-004`、`E-TYP-010`、`E-TYP-029`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -754,11 +801,15 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 
-Racket 側の Surface 構成子リストは 36 個、F* 側の `sexpr`、`sty`、`sdecl`、Effect row の構成子リストは 23 個（`sexpr` は 14 個、`sty` は 6 個）である。
+P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
+F* の Surface 構成子一覧は `sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 23 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約し、`match` を識別子として扱う。
+`SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
+UCore+ の `Eliminate` は constructor 枝と member 枝を持ち、F* の `CEliminate` も補助型 `core_branch` の tag で区別する。
+`fstar-parity-test.rkt` は Surface の `SMatch` と UCore+ の member 枝の witness を検査する。
 `tools/fstar-parity.rkt` の `fstar-keywords` は F* が予約する語を手で書いた一覧であり、`fstar-parity-test.rkt` がこれを `lexer.rkt` の `keywords` と照合する。
 F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保ち、CI はこの対応の食い違いを検出しない。
 
@@ -768,6 +819,7 @@ UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`NarrativeExp
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 UCore+ の対象構成子リストは 13 個、F* 側の `core` の構成子リストは 12 個であり、F* 側の全対象構成子は 35 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 12 個）である。
+P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
 

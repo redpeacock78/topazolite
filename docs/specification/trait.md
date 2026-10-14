@@ -512,15 +512,18 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   これはホワイトペーパー §8.1 の Proof-bearing trait composition を値側まで回収したことを意味しない。
 - **Union の eliminator と型付き field 回復**：G2e は join 型と局所 `FieldType` witness を作るが、witness を使って Union から単一 branch の型を取り出す操作は導入しない。
   この操作は Phase 2 以降へ送る（`PAT-001`）。
-  P2m1 は data 型の constructor pattern に限る Surface の `match` を導入し、既存の `Eliminate` へ lowering する。
-  Union member pattern は受理せず、Union の tag と eliminator は P2m2 と P2m3 で扱う。
-  したがって、P2m1 は `PAT-001` の部分実装であり、要件の完了を意味しない。
+  P2m1 は data 型の constructor pattern に限る Surface の `match` を導入し、既存の `Eliminate` へ lowering した。
+  P2m2 は Union の runtime tag、`UnionInject`、`UnionEliminate` を導入した。
+  P2m3a は Surface の綴りを `when` にし、P2m3b は Union member pattern と data constructor pattern の最上位での混在を `UnionEliminate` へ lowering する。
+  root `(Owned (Union ...))` の除去は、tag と所有権を枝へ一度だけ移送する規則が未実装のため、P2m3c へ送る。
+  このため `PAT-001` は部分実装のままであり、要件の完了を意味しない。
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
-  Union 値に runtime tag が無い以上、eliminator を足すと Preservation が破れる。
-  次の三案は採らなかった。
+  Union の runtime tag と Core eliminator は導入済みであり、この形の分岐自体は Preservation と両立する。
+  当初、次の三案は採らなかった。
   branch 添字を持つ witness は、witness の意味を存在言明から位置情報へ変え、merge の局所検査を通らなくなる。
   `(Refined τ_union (FieldType label τ))` による絞り込みは、`Refined` のペイロードが validate 由来であるという RFN-001 の前提を崩す。
-  `Eliminate` の分岐を Union へ拡張する案は、branch を判別する runtime tag を値側へ導入することと同じであり、Phase 0 の値集合を越える。
+  runtime tag が無い段階では、`Eliminate` の分岐を Union へ拡張する案は値集合を広げる必要があったため、Phase 0 の範囲外として見送った。
+  P2m2 は tagged Union の値と eliminator を導入したが、root Owned Union は別の所有権移送規則を要する。
 - **合成 Proof 値の入れ子と直接実装**：合成 trait を成分とする intersect 行と、合成 trait への直接 impl の禁止は、G2g が §4.3 と §4.4 として回収した。
   合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
