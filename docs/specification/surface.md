@@ -935,7 +935,7 @@ P2m3b は枝の形を広げるが、これらの parity 対象構成子リスト
 
 - `sid`、`span`、`diag`：span と診断の層を写す型であり、Racket 側では `span-core.rkt` と `diagnostic.rkt` が持つ。
 - `stok`：`kind` 欄で 8 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
-- `lex_result`、`string_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
+- `lex_result`、`string_scan`、`hole_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
 - `dkind`：束縛の種別を表す欄の型であり、構成子集合の対象ではない。
   `SBind`、`STryBind`、`SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
   `STryBind` は `DTryBind` として種別欄に残り、`CTryBind` へ渡す束縛名を同じ variant に保持する。
