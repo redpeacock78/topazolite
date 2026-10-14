@@ -347,6 +347,11 @@
 
 ;; P2m3 spec §3.1。ctor ident* "=>" expr である。
 (define (parse-arm ts fail i)
+  (if (punct? ts i '|(|)
+      (parse-member-arm ts fail i)
+      (parse-constructor-arm ts fail i)))
+
+(define (parse-constructor-arm ts fail i)
   (define-values (name name-span)
     (cond
       [(kw? ts i 'true) (values 'true (span-at ts i))]
@@ -358,6 +363,20 @@
                 [(body body-j) (parse-expr ts fail arrow-j)])
     (values `(SArm ,(hull name-span (node-span body))
                    (SName ,name-span ,name) ,binders ,body)
+            body-j)))
+
+;; P2m3b。括弧付きの (name: type) は Union member pattern である。
+(define (parse-member-arm ts fail i)
+  (let*-values ([(open open-j) (expect-punct ts fail i '|(|)]
+                [(name name-span name-j) (expect-ident ts fail open-j)]
+                [(_colon colon-j) (expect-punct ts fail name-j '|:|)]
+                [(ty ty-j) (parse-ty ts fail colon-j)]
+                [(_close close-j) (expect-punct ts fail ty-j '|)|)]
+                [(_arrow arrow-j) (expect-punct ts fail close-j '=>)]
+                [(body body-j) (parse-expr ts fail arrow-j)])
+    (define param `(SParam ,(hull name-span (node-span ty))
+                           (SName ,name-span ,name) ,ty))
+    (values `(SArm ,(hull open (node-span body)) ,param () ,body)
             body-j)))
 
 ;; `=>` より前の識別子は空白区切りの束縛子である。

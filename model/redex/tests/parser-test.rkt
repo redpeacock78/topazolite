@@ -577,11 +577,21 @@
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_))))
 
 (test-case
- "P2m3a: when の受理しない形は E-SUR-005 になる"
+ "P2m3b: when の Union member pattern は型注釈付き束縛になる"
+ (check-match (p "when value { (s: String) => 1 }")
+              `(SProgram ,_ ()
+                 (SMatch ,_ ,_
+                         ((SArm ,_ (SParam ,_ (SName ,_ s) (TName ,_ String)) () ,_)))))
+ (check-match (p "when value { (x: Int | Bool) => 1 }")
+              `(SProgram ,_ ()
+                 (SMatch ,_ ,_
+                         ((SArm ,_ (SParam ,_ (SName ,_ x) (TUnion ,_ ,_ ,_)) () ,_)))))
+ (check-equal? (p-code "when value { (x Int) => 1 }") "E-SUR-005")
+ (check-equal? (p-code "when value { (x: ) => 1 }") "E-SUR-005"))
+
+(test-case
+ "when の不正な枝は E-SUR-005 になる"
  (check-equal? (p-code "when c { }") "E-SUR-005")
- ;; Union member pattern は P2m3b で追加する。
- (check-equal? (p-code "when c { (x: Int) => x }") "E-SUR-005")
- (check-equal? (diagnostic-primary-span (p "when c { (x: Int) => x }")) (sp 9 10))
  (check-equal? (p-code "when c { 1 => 0 }") "E-SUR-005")
  (check-equal? (p-code "when c { red 1 }") "E-SUR-005")
  (check-equal? (p-code "when c { succ(zero()) => 0 }") "E-SUR-005")
