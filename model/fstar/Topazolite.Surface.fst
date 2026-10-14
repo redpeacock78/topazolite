@@ -501,7 +501,7 @@ type sexpr =
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
-  | SMatch    : span -> sexpr -> list (span & (span & string) & list (span & string) & sexpr) -> sexpr
+  | SMatch    : span -> sexpr -> list sarm -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SConstruct : span -> (span & string) -> list sexpr -> sexpr
@@ -509,6 +509,9 @@ type sexpr =
   | SProjRec  : span -> sexpr -> list (span & string) -> sexpr
   | SRec      : span -> list (span & sexpr) -> sexpr
   | SBlock    : span -> list sdecl -> sexpr -> sexpr
+and sarm =
+  | SConstructorArm : span -> (span & string) -> list (span & string) -> sexpr -> sarm
+  | SMemberArm      : span -> span -> (span & string) -> sty -> sexpr -> sarm
 and sty =
   | TName     : span -> string -> sty
   | TRec      : span -> list sty -> sty
@@ -578,6 +581,12 @@ let span_of_node (n: node) : Tot span =
   | NRow r  -> span_of_row r
   | NLabel l -> span_of_label l
 
+let rec arm_children (arms: list sarm) : Tot (list node) (decreases arms) =
+  match arms with
+  | [] -> []
+  | SConstructorArm _ _ _ body :: tl -> NExpr body :: arm_children tl
+  | SMemberArm _ _ _ ty body :: tl -> NTy ty :: NExpr body :: arm_children tl
+
 let kids_of_expr (e: sexpr) : Tot (list node) =
   match e with
   | SInt _ _      -> []
@@ -586,7 +595,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SBool _ _     -> []
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
-  | SMatch _ e arms -> NExpr e :: map (fun (_, _, _, b) -> NExpr b) arms
+  | SMatch _ e arms -> NExpr e :: arm_children arms
   | SFn _ ps r row b ->
       map NTy (option_stys (map snd ps)) @
       (match r with None -> [] | Some t -> [NTy t]) @
@@ -744,12 +753,16 @@ and wf_fields (s: span) (fs: list (span & sexpr)) : Tot bool (decreases fs) =
   match fs with
   | []            -> true
   | (sl, e) :: tl -> contains s sl && contains s (span_of_expr e) && wf_expr e && wf_fields s tl
-and wf_arms (s: span) (arms: list (span & (span & string) & list (span & string) & sexpr))
+and wf_arms (s: span) (arms: list sarm)
   : Tot bool (decreases arms) =
   match arms with
   | [] -> true
-  | (sa, (sk, _), bs, b) :: tl ->
+  | SConstructorArm sa (sk, _) bs b :: tl ->
       contains s sa && contains sa sk && spans_in sa (map fst bs)
+      && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
+  | SMemberArm sa sp (sx, _) ty b :: tl ->
+      contains s sa && contains sa sp && contains sp sx
+      && contains sp (span_of_ty ty) && wf_ty ty
       && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
@@ -821,17 +834,27 @@ let rec wf_fields_elim s fs c =
   | []      -> ()
   | _ :: tl -> wf_fields_elim s tl c
 
-val wf_arms_elim : s:span -> arms:list (span & (span & string) & list (span & string) & sexpr)
+val wf_arms_elim : s:span -> arms:list sarm
   -> c:node -> Lemma
   (requires wf_arms s arms)
-  (ensures memP c (map (fun (_, _, _, b) -> NExpr b) arms)
+  (ensures memP c (arm_children arms)
            ==> (contains s (span_of_node c) /\ wf_node c))
   (decreases arms)
 let rec wf_arms_elim s arms c =
   match arms with
   | [] -> ()
-  | (sa, (_, _), _, b) :: tl ->
+  | SConstructorArm sa _ _ b :: tl ->
+      FStar.List.Tot.Properties.append_memP [NExpr b] (arm_children tl) c;
       contains_trans s sa (span_of_expr b);
+      wf_exprs_elim sa [b] c;
+      wf_arms_elim s tl c
+  | SMemberArm sa sp _ ty b :: tl ->
+      FStar.List.Tot.Properties.append_memP [NTy ty] (NExpr b :: arm_children tl) c;
+      FStar.List.Tot.Properties.append_memP [NExpr b] (arm_children tl) c;
+      contains_trans s sa sp;
+      contains_trans sa sp (span_of_ty ty);
+      wf_tys_elim sp [ty] c;
+      wf_exprs_elim sa [b] c;
       wf_arms_elim s tl c
 
 val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
@@ -855,7 +878,7 @@ let parse_span_containment n c =
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SMatch s e arms) ->
       FStar.List.Tot.Properties.append_memP
-        [NExpr e] (map (fun (_, _, _, b) -> NExpr b) arms) c;
+        [NExpr e] (arm_children arms) c;
       wf_exprs_elim s [e] c;
       wf_arms_elim s arms c
   | NExpr (SFn s ps r row b) ->
@@ -898,12 +921,23 @@ let parse_span_containment n c =
   | NRow (SEffRow s labels) -> wf_labels_elim s labels c
   | NLabel (SEffLabel _ _ _) -> ()
 
-type core =
+type core_ty =
+  | CTName  : string -> core_ty
+  | CTRec   : list core_ty -> core_ty
+  | CTFn    : list core_ty -> core_ty -> option seffrow -> core_ty
+  | CTUnion : core_ty -> core_ty -> core_ty
+  | CTInter : core_ty -> core_ty -> core_ty
+  | CTApp   : string -> list core_ty -> core_ty
+
+type core_branch =
+  | CConstructorBranch : span -> string -> list span -> core -> core_branch
+  | CMemberBranch      : span -> span -> string -> core_ty -> core -> core_branch
+and core =
   | CLit      : span -> core
   | CVar      : span -> core
   | CApply    : span -> core -> list core -> core
   | CProj     : span -> span -> core -> core
-  | CEliminate: span -> core -> list (span & string & list span & core) -> core
+  | CEliminate: span -> core -> list core_branch -> core
   | CNarrativeExpr: span -> core -> core
   | CRec      : span -> list (span & core) -> core
   | CFn       : span -> list span -> option seffrow -> core -> core
@@ -926,6 +960,20 @@ let span_of_core (c: core) : Tot span =
   | CLet s _ _ _     -> s
   | CReturn s _      -> s
   | CRecur s _ _ _ _ _ -> s
+
+let rec lower_core_ty (t: sty) : Tot core_ty (decreases t) =
+  match t with
+  | TName _ name -> CTName name
+  | TRec _ fields -> CTRec (lower_core_tys fields)
+  | TFn _ args result row ->
+      CTFn (lower_core_tys args) (lower_core_ty result) row
+  | TUnion _ left right -> CTUnion (lower_core_ty left) (lower_core_ty right)
+  | TInter _ left right -> CTInter (lower_core_ty left) (lower_core_ty right)
+  | TApp _ _ name args -> CTApp name (lower_core_tys args)
+and lower_core_tys (types: list sty) : Tot (list core_ty) (decreases types) =
+  match types with
+  | [] -> []
+  | ty :: tl -> lower_core_ty ty :: lower_core_tys tl
 
 let one_to_one (e: sexpr) : Tot bool =
   match e with
@@ -981,12 +1029,13 @@ and lower_fields (fs: list (span & sexpr)) : Tot (list (span & core)) (decreases
   match fs with
   | []            -> []
   | (sl, e) :: tl -> (sl, lower_expr e) :: lower_fields tl
-and lower_arms (arms: list (span & (span & string) & list (span & string) & sexpr))
-  : Tot (list (span & string & list span & core)) (decreases arms) =
+and lower_arms (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | (sa, (_, k), bs, b) :: tl ->
-      (sa, k, map fst bs, lower_expr b) :: lower_arms tl
+  | SConstructorArm sa (_, k) bs b :: tl ->
+      CConstructorBranch sa k (map fst bs) (lower_expr b) :: lower_arms tl
+  | SMemberArm sa _ (sx, x) ty b :: tl ->
+      CMemberBranch sa sx x (lower_core_ty ty) (lower_expr b) :: lower_arms tl
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail

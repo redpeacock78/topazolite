@@ -120,7 +120,10 @@
    (cons 'SReturn   (redex-match? Surface sexpr `(SReturn ,s0 (SInt ,s0 1))))
    (cons 'SMatch    (redex-match? Surface sexpr
                                   `(SMatch ,s0 (SVar ,s0 c)
-                                           ((SArm ,s0 (SName ,s0 red) () (SInt ,s0 1))))))
+                                           ((SArm ,s0
+                                                  (SParam ,s0 (SName ,s0 item)
+                                                           (TName ,s0 Int))
+                                                  () (SInt ,s0 1))))))
    (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                                                       (TName ,s0 Int) #:none (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
@@ -156,7 +159,8 @@
    (cons 'Proj     (redex-match? UCore+ e `(Proj ,s0 (#:var x ,s0) (#:lbl a ,s0))))
    (cons 'Eliminate (redex-match? UCore+ e
                                   `(Eliminate ,s0 (#:var c ,s0)
-                                              ((,s0 red () -> (#:lit 1 ,s0))))))
+                                              ((,s0 (#:ty Int ,s0) (#:bind item ,s0)
+                                                -> (#:lit 1 ,s0))))))
    (cons 'NarrativeExpr (redex-match? UCore+ e
                                       `(NarrativeExpr ,s0 (#:lit 1 ,s0))))
    (cons 'Rec      (redex-match? UCore+ e `(Rec ,s0 (((#:lbl a ,s0) imm (#:lit 1 ,s0))))))
