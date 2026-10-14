@@ -848,15 +848,16 @@
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
     ;; P2m spec §7.1。枝の束縛子は UCore+ の xs へ写す。
     [`(SMatch ,s ,scrutinee ,arms)
-     `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
-                 ,(for/list ([arm (in-list arms)])
-                    (match arm
-                      [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
-                       `(,s_a ,k
-                              ,(for/list ([b (in-list binders)])
-                                 (match b
-                                   [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
-                              -> ,(lower-sexpr body env fail))])))]
+     `(NarrativeExpr ,s
+       (Eliminate ,s ,(lower-sexpr scrutinee env fail)
+                  ,(for/list ([arm (in-list arms)])
+                     (match arm
+                       [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
+                        `(,s_a ,k
+                               ,(for/list ([b (in-list binders)])
+                                  (match b
+                                    [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
+                               -> ,(lower-sexpr body env fail))]))))]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。
     [`(SConstruct ,s (SName ,_ ,k) ,args)

@@ -587,6 +587,7 @@
        [_ (reject span 'invalid-effect-label label)]))))
 
 (define (nearest-boundary boundaries)
+  ;; FunctionBoundary と ExpressionBoundary は同じ Return 処理を使う。
   (and (pair? boundaries) (car boundaries)))
 
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
@@ -2116,6 +2117,27 @@
                [(pair? (unbox candidates)) (first (unbox candidates))]
                [else #f]))))
 
+    (define (probe-narrative-type body environment delta propositions
+                                  boundaries span)
+      (call-with-restored-state
+       (λ ()
+         (define candidates (box '()))
+         (define boundary (fresh-boundary))
+         (define failure #f)
+         (define body-result
+           (with-handlers ([exn:fail:elab?
+                            (λ (error) (set! failure error) #f)])
+             (synth body environment delta propositions
+                    (cons `(ExpressionBoundary ,boundary
+                                               (#:probe ,candidates))
+                          boundaries))))
+         (cond
+           [(and body-result (not (eq? (judgment-type body-result) 'Never)))
+            (judgment-type body-result)]
+           [(pair? (unbox candidates)) (first (unbox candidates))]
+           [failure (raise failure)]
+           [else (reject span 'narrative-expression-needs-expected-type)]))))
+
     (define (elaborate-inferred-fn s parameter-binders raw-parameter-types
                                   raw-row body
                                   environment delta propositions boundaries)
@@ -2803,8 +2825,12 @@
                         (judgment-row returned-result)))]
            [_ (reject s 'return-outside-boundary)])]
 
-        [`(NarrativeExpr ,_)
-         (reject s 'narrative-expression-needs-expected-type)]
+        [`(NarrativeExpr ,body)
+         (define expected
+           (probe-narrative-type body environment delta propositions
+                                 boundaries s))
+         ;; probe と本番は別状態で走り、最終 Core は check 規則が作る。
+         (check expression expected environment delta propositions boundaries)]
 
         [`(Recur ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                  (#:infer ,_) ,raw-row ,body ,continuation)

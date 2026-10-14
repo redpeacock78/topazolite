@@ -789,30 +789,32 @@
        (check-equal? tokens '(((tok 14) Available) ((tok 15) Dropped)))]
       [other (fail-check (format "Union の線形穴の終端 config が不正: ~s" other))])))
 
-(test-case "Surface の match 枝の資源型 binder は二度読みを拒否する"
+(test-case "Surface の when 枝の資源型 binder は二度読みを拒否する"
   (define input-type `(Option ,aggregate-option-type))
   (define source
     `(Fn ((argument ,input-type)) Int ()
-         (Eliminate (Move argument)
-           ((some (owned) ->
-            (Apply (Fn ((left ,aggregate-option-type)
-                        (right ,aggregate-option-type)) Int () 0)
-                   owned owned))
-            (none () -> 0)))))
+         (NarrativeExpr
+          (Eliminate (Move argument)
+            ((some (owned) ->
+              (Apply (Fn ((left ,aggregate-option-type)
+                          (right ,aggregate-option-type)) Int () 0)
+                     owned owned))
+             (none () -> 0))))))
   (match (elab source)
     [`(err ,diagnostic)
      (check-equal? (diagnostic-id diagnostic) "E-OWN-010")]
     [other (fail-check (format "枝 binder の二度読みを拒否しなかった: ~s" other))]))
 
-(test-case "Surface の match 枝は Move と未使用を config-ok? の下で実行する"
+(test-case "Surface の when 枝は Move と未使用を config-ok? の下で実行する"
   ;; 1 段の Move は根 token が n+1=2 件、未使用なら初期 token 1 件だけになる。
   (for ([case (in-list (list (list '(Drop owned) 2) (list 'unit 1)))])
     (define body (first case))
     (define expected-token-count (second case))
     (define source
-      `(Eliminate (Move argument)
-         ((some (owned) -> ,body)
-          (none () -> unit))))
+      `(NarrativeExpr
+        (Eliminate (Move argument)
+          ((some (owned) -> ,body)
+           (none () -> unit)))))
     (define artifact
       (check-compiled-source-core
        (elaborate-compiled
@@ -830,19 +832,21 @@
     (match configuration
       [`(cfg ,_ ,_ ,_ ,_ ,trace) (check-finish-events-unique trace)])))
 
-(test-case "入れ子の match で同名 binder を shadow した後に外側を Move する"
+(test-case "入れ子の when で同名 binder を shadow した後に外側を Move する"
   (define option-owned '(Option (Owned Res)))
   (define source
     `(Apply
       (Fn ((outer ,option-owned) (inner ,option-owned)) Unit (Own)
-        (Eliminate (Move outer)
-          ((some (owned) ->
-             (Let (nested let Unit)
-                  (Eliminate (Move inner)
-                    ((some (owned) -> (Drop (Move owned)))
-                     (none () -> unit)))
-                  (Drop (Move owned))))
-           (none () -> unit))))
+        (NarrativeExpr
+         (Eliminate (Move outer)
+           ((some (owned) ->
+              (Let (nested let Unit)
+                   (NarrativeExpr
+                    (Eliminate (Move inner)
+                      ((some (owned) -> (Drop (Move owned)))
+                       (none () -> unit))))
+                   (Drop (Move owned))))
+            (none () -> unit)))))
       (Construct some (Types (Owned Res)) (Apply acquire 13))
       (Construct some (Types (Owned Res)) (Apply acquire 14))))
   (define artifact
@@ -856,7 +860,7 @@
                    '(((tok 0) Dropped) ((tok 1) Dropped)
                      ((tok 2) Dropped) ((tok 3) Dropped)))
      (check-finish-events-unique (config-events configuration))]
-    [other (fail-check (format "入れ子 match の終端 config が不正: ~s" other))]))
+    [other (fail-check (format "入れ子 when の終端 config が不正: ~s" other))]))
 
 (test-case "T-MovePlace は metadata の集約資源型を返す"
   (define config
