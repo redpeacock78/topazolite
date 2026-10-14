@@ -460,7 +460,7 @@
                                   (mut-union-rebuildable? component member
                                                           context propositions))
                                 members)])
-                   (and (= (length rebuildable) 1)
+                   (and (pair? rebuildable)
                         (begin (set! needs-rebuild? #t) #t))))))
          (and all-fit? needs-rebuild?)]
         [else #f])))

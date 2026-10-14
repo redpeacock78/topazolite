@@ -1076,16 +1076,20 @@
     '(Record ((a (Union Bool (Union Int Unit)) mut))))
   (void (accepted `(Fn ((x ,narrow)) Int () (Let (r let ,wide) x 0)))))
 
-(test-case "ROW-005 再構成可能な成分が複数なら ambiguous-union-member"
+(test-case "ROW-005 複数の再構成候補は Let、Apply、戻り値で曖昧として拒否する"
   (define first-wide
     '(Record ((a (Union Bool (Union Int Unit)) mut))))
   (define second-wide
     '(Record ((a (Union Bool (Union Int String)) mut))))
-  (check-equal?
-   (rejected-code
-    `(Fn ((x ,row005-narrow-mut)) Int ()
-         (Let (r let (Union ,first-wide ,second-wide)) x 0)))
-   (code 'ambiguous-union-member)))
+  (define expected `(Union ,first-wide ,second-wide))
+  (define sources
+    (list `(Fn ((x ,row005-narrow-mut)) Int ()
+               (Let (r let ,expected) x 0))
+          `(Fn ((x ,row005-narrow-mut)) Int ()
+               (Apply (Fn ((y ,expected)) Int () 0) x))
+          `(Fn ((x ,row005-narrow-mut)) ,expected () x)))
+  (for ([source (in-list sources)])
+    (check-equal? (rejected-code source) (code 'ambiguous-union-member))))
 
 (test-case "ROW-005 既存層の一致候補を再構成候補より優先する"
   (define expected `(Union ,row005-narrow-mut ,row005-wide-mut))
