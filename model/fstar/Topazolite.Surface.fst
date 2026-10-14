@@ -211,7 +211,8 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
   | [a; b; c; d] ->
       if (byte_is a 116 && byte_is b 114 && byte_is c 117 && byte_is d 101) ||
          (byte_is a 116 && byte_is b 121 && byte_is c 112 && byte_is d 101) ||
-         (byte_is a 105 && byte_is b 109 && byte_is c 112 && byte_is d 108) then TkKw
+         (byte_is a 105 && byte_is b 109 && byte_is c 112 && byte_is d 108) ||
+         (byte_is a 119 && byte_is b 104 && byte_is c 101 && byte_is d 110) then TkKw
       else TkIdent
   | [a; b; c; d; e] ->
       if (byte_is a 99 && byte_is b 111 && byte_is c 110 &&
@@ -219,9 +220,7 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
          (byte_is a 102 && byte_is b 97 && byte_is c 108 &&
           byte_is d 115 && byte_is e 101) ||
          (byte_is a 116 && byte_is b 114 && byte_is c 97 &&
-          byte_is d 105 && byte_is e 116) ||
-         (byte_is a 109 && byte_is b 97 && byte_is c 116 &&
-          byte_is d 99 && byte_is e 104) then TkKw
+          byte_is d 105 && byte_is e 116) then TkKw
       else TkIdent
   | [a; b; c; d; e; f] ->
       if (byte_is a 100 && byte_is b 101 && byte_is c 114 &&
@@ -244,9 +243,10 @@ val keyword_word_reserved : unit -> Lemma
    keyword_word [99uy; 111uy; 110uy; 115uy; 116uy] == TkKw /\
    keyword_word [102uy; 97uy; 108uy; 115uy; 101uy] == TkKw /\
    keyword_word [116uy; 114uy; 97uy; 105uy; 116uy] == TkKw /\
+   keyword_word [119uy; 104uy; 101uy; 110uy] == TkKw /\
    keyword_word [100uy; 101uy; 114uy; 105uy; 118uy; 101uy] == TkKw /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy] == TkKw /\
-   keyword_word [109uy; 97uy; 116uy; 99uy; 104uy] == TkKw /\
+   keyword_word [109uy; 97uy; 116uy; 99uy; 104uy] == TkIdent /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy; 115uy] == TkIdent /\
    keyword_word [102uy; 111uy] == TkIdent)
 let keyword_word_reserved () = ()
@@ -904,6 +904,7 @@ type core =
   | CApply    : span -> core -> list core -> core
   | CProj     : span -> span -> core -> core
   | CEliminate: span -> core -> list (span & string & list span & core) -> core
+  | CNarrativeExpr: span -> core -> core
   | CRec      : span -> list (span & core) -> core
   | CFn       : span -> list span -> option seffrow -> core -> core
   | CConstruct: span -> string -> list core -> core
@@ -918,6 +919,7 @@ let span_of_core (c: core) : Tot span =
   | CApply s _ _     -> s
   | CProj s _ _      -> s
   | CEliminate s _ _ -> s
+  | CNarrativeExpr s _ -> s
   | CRec s _         -> s
   | CFn s _ _ _      -> s
   | CConstruct s _ _ -> s
@@ -966,7 +968,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SConstruct s (_, k) a -> CConstruct s k (lower_exprs a)
   | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
-  | SMatch s e arms -> CEliminate s (lower_expr e) (lower_arms arms)
+  | SMatch s e arms -> CNarrativeExpr s (CEliminate s (lower_expr e) (lower_arms arms))
   | SProjRec s e1 ls ->
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_fields fs)

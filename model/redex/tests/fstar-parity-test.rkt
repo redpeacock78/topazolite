@@ -12,8 +12,8 @@
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
  (check-equal? (length racket-surface-constructors) 36)
- (check-equal? (length racket-ucore-constructors) 12)
- (check-equal? (length fstar-constructors) 34))
+ (check-equal? (length racket-ucore-constructors) 13)
+ (check-equal? (length fstar-constructors) 35))
 
 (test-case
  "対応表に違反が無い"
@@ -157,6 +157,8 @@
    (cons 'Eliminate (redex-match? UCore+ e
                                   `(Eliminate ,s0 (#:var c ,s0)
                                               ((,s0 red () -> (#:lit 1 ,s0))))))
+   (cons 'NarrativeExpr (redex-match? UCore+ e
+                                      `(NarrativeExpr ,s0 (#:lit 1 ,s0))))
    (cons 'Rec      (redex-match? UCore+ e `(Rec ,s0 (((#:lbl a ,s0) imm (#:lit 1 ,s0))))))
    (cons 'Fn       (redex-match? UCore+ e `(Fn ,s0 (((#:bind x ,s0) (#:ty Int ,s0)))
                                                (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0))))
