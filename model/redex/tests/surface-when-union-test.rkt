@@ -261,16 +261,16 @@
    "E-OWN-010")
   (check-equal?
    (core-code
-    '(Fn ((value (Owned (Union Int String)))) Int ()
+    '(Fn ((value (Owned (Union Int String)))) Int (Own)
          (Eliminate (Move value) ((Int n -> n) (String s -> 0)))))
-   "E-TYP-029")
+   #f)
   (check-equal?
    (core-code
-    '(Fn ((value (Owned (Union (Option Int) (Result Int String))))) Int ()
+    '(Fn ((value (Owned (Union (Option Int) (Result Int String))))) Int (Own)
          (Eliminate (Move value)
                     ((some (n) -> n) (none () -> 0)
                      (ok (n) -> n) (ng (message) -> 0)))))
-   "E-TYP-029"))
+   #f))
 
 (test-case "member 型の未知名は E-SUR-008 になる"
   (check-equal?

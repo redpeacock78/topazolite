@@ -1305,6 +1305,16 @@
         (cfg (in-hole E (Eliminate v_scrutinee (br ...))) H Ω Λtok θ)
         R-EliminateTransit)
 
+   ;; UnionEliminate の移送 marker は UnionVal に限って外す。
+   (--> (cfg (in-hole E (UnionEliminate
+                         (OwnedTransit p (UnionVal τ_union τ_member v_payload))
+                         (ubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (UnionEliminate (UnionVal τ_union τ_member v_payload)
+                                        (ubr ...)))
+             H Ω Λtok θ)
+        R-UnionEliminateTransit)
+
    ;; OwnLeaf producer が移送済み Owned 値を受けるときは token を増やさない。
    (--> (cfg (in-hole E (OwnLeaf (OwnedTransit p v_payload)))
              H Ω Λtok θ)

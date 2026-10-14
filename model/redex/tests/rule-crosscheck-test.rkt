@@ -75,6 +75,7 @@
     (R-OwnLeafPass  . #f)
     (R-ApplyTransit . #f)
     (R-EliminateTransit . #f)
+    (R-UnionEliminateTransit . #f)
     (R-CurryTransit . #f)
     (R-OwnLeafTransit . #f)
     (R-Drop         . R-PR-Drop)
@@ -108,7 +109,7 @@
  (check-equal? (set-count g1-rule-names) 28))
 
 (test-case
- "-->g2/rules adds exactly forty-three names to -->g1/rules"
+ "-->g2/rules adds exactly forty-four names to -->g1/rules"
  ;; R-LetIdentity は G1 と G2 の双方に属するため、差分には含めない。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
@@ -127,14 +128,15 @@
                     'R-RawLoad 'R-RawStore 'R-FromRawPtrConst
                     'R-FromRawPtrMut 'R-UnsafeExit
                     'R-ApplyTransit 'R-EliminateTransit
+                    'R-UnionEliminateTransit
                     'R-CurryTransit 'R-OwnLeafTransit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 71))
+ (check-equal? (set-count g2-rule-names) 72))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 71))
+ (check-equal? (length rule-correspondence) 72))
 
 (test-case
  "目標側は支援規則を含む 26 規則を持つ"

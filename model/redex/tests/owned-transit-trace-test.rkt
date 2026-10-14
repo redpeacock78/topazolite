@@ -409,6 +409,68 @@
   (define transit-index (index-of rules 'R-EliminateTransit))
   (check-not-false transit-index))
 
+(test-case "Owned Union の UnionEliminate は marker を外して非資源成分を選ぶ"
+  (define core
+    '(Scope ()
+       (Let (u let (Owned (Union Int String)))
+            (UnionInject (Union Int String) Int 41)
+         (UnionEliminate (Move u)
+           ((Int n -> n) (String s -> 0))))))
+  (define-values (_configs rules _expected _after)
+    (run-program core '() '(R-Move R-UnionEliminateTransit)
+                 (lambda (c) (equal? c 41))))
+  (check-not-false (index-of rules 'R-UnionEliminateTransit))
+  (check-not-false (index-of rules 'R-UnionEliminate)))
+
+(define owned-option-union '(Union (Option (Owned Res)) String))
+
+(define (run-owned-option-union member-value)
+  (define function-source
+    `(Fn ((value (Owned ,owned-option-union))) Unit (Own)
+       (Eliminate (Move value)
+         ((some (item) -> unit)
+          (none () -> unit)
+          (String s -> unit)))))
+  (define-values (function _function-type _function-row callables)
+    (elaborate-core-source function-source))
+  (define core
+    `(Scope ()
+       (Let (u let (Owned ,owned-option-union)) ,member-value
+         (Apply ,function (Move u)))))
+  (define-values (_configs rules _expected _after)
+    (run-program core callables '() (lambda (c) (equal? c 'unit))))
+  (check-not-false (index-of rules 'R-UnionEliminateTransit))
+  (check-not-false (index-of rules 'R-UnionEliminate)))
+
+(test-case "Owned Union の資源型 data 成分を選んでも token を回収する"
+  (run-owned-option-union
+   `(UnionInject ,owned-option-union
+                 (Option (Owned Res))
+                 (Construct (Option (Owned Res)) some
+                            (OwnLeaf (resource 23))))))
+
+(test-case "Owned Union の未選択枝にある資源を残さない"
+  (run-owned-option-union
+   `(UnionInject ,owned-option-union String "s")))
+
+(test-case "Owned Union の UnionEliminate は Let の束縛式の内側でも config を保つ"
+  (define core
+    '(Scope ()
+       (Let (u let (Owned (Union Int String)))
+            (UnionInject (Union Int String) String "s")
+         (Let (r let Int)
+              (UnionEliminate (Move u) ((Int n -> n) (String s -> 7)))
+           r))))
+  (define-values (_configs rules _expected _after)
+    (run-program core '() '(R-Move R-UnionEliminateTransit)
+                 (lambda (c) (equal? c 7))))
+  (check-not-false (index-of rules 'R-UnionEliminateTransit)))
+
+(test-case "UnionEliminate の OwnedTransit は UnionVal 以外を剥がさない"
+  (define config
+    '(cfg (UnionEliminate (OwnedTransit 0 5) ((Int n -> n))) () () () ()))
+  (check-equal? (raw-steps-g2/named config) '()))
+
 (test-case "OwnLeaf の Owned Int producer は marker をそのまま運ぶ"
   (define core
     '(Scope ()

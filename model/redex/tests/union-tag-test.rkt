@@ -500,12 +500,12 @@
    (key-of '(Let (x const (Union Int (Union String (Owned Res)))) 1 x))
    'owned-union-member))
 
-(test-case "Owned Union の scrutinee は解析前に non-union-eliminate で拒否する"
+(test-case "Owned Union の scrutinee を UnionEliminate できる"
   (tagged
    (check-equal?
-    (key-of '(UnionEliminate (Move u) ((Int i -> 0) (String s -> 0)))
-            `((u (Owned ,IS) const)))
-    'non-union-eliminate)))
+    (type-of '(UnionEliminate (Move u) ((Int i -> i) (String s -> 0)))
+             `((u (Owned ,IS) const)))
+    'Int)))
 
 (test-case "check 境界は tag の無い値を Union の位置へ入れない"
   (tagged

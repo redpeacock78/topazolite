@@ -128,9 +128,9 @@ pstate ::= Available | Moved | Dropped
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
 
 規則は 26 本である。
-源の `-->g2` の 71 本を基準にする。
+源の `-->g2` の 72 本を基準にする。
 `R-CurryVal` と `R-ApplyCurry`、`R-RecurBind` と `R-RecurUnfold`、`R-Let`、`R-LetB`、`R-LetIdentity`、`R-LetIdentityB`、`R-LetOwned` と `R-LetOwnedB`、`R-RecRewrite-Open` と `R-RecRewrite-Close` を目標側の 5 本へ畳むため、7 本減る。
-目標側に規則を持たない 39 本が対象外となり、25 本が残る。
+目標側に規則を持たない 40 本が対象外となり、25 本が残る。
 RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え、合計 26 本になる。
 
 | 源の規則 | 目標の規則 | 差分 |
@@ -184,6 +184,7 @@ RSD の欄除去に使う target-only の補助規則 `R-PR-RecRemove` を加え
 | `R-OwnLeafPass` | なし | 既存の token を保ったまま `OwnLeaf` producer を剥がす |
 | `R-ApplyTransit` | なし | 移送 marker は lowering で payload へ消去するので、外す遷移が無い |
 | `R-EliminateTransit` | なし | 移送 marker は lowering で payload へ消去するので、外す遷移が無い |
+| `R-UnionEliminateTransit` | なし | 移送 marker は lowering で payload へ消去するので、外す遷移が無い |
 | `R-CurryTransit` | なし | 移送 marker は lowering で payload へ消去するので、`CurryVal` の生成は `R-CurryVal` の対応と同じになる |
 | `R-OwnLeafTransit` | なし | token も移送 marker も lowering で消去するので、payload の評価だけが残る |
 | `R-Drop` | `R-PR-Drop` | なし。状態表は触らない |

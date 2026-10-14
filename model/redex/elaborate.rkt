@@ -1904,7 +1904,10 @@
 
     (define (union-eliminate scrutinee-result branches expected eliminate-span
                              environment delta propositions boundaries)
-      (define union-type (normalize-type (judgment-type scrutinee-result)))
+      (define union-type
+        (match (normalize-type (judgment-type scrutinee-result))
+          [`(Owned ,inner) inner]
+          [type type]))
       (define members (union-members union-type))
       (define (pattern raw-branch)
         (match (peel-branch raw-branch)
@@ -2930,9 +2933,8 @@
            (synth scrutinee environment delta propositions boundaries))
          (define scrutinee-type (judgment-type scrutinee-result))
          (cond
-           [(root-owned-union? scrutinee-type)
-            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
-           [(union-type? scrutinee-type)
+           [(or (root-owned-union? scrutinee-type)
+                (union-type? scrutinee-type))
             (union-eliminate scrutinee-result branches #f s
                              environment delta propositions boundaries)]
            [(ormap member-pattern? branches)
@@ -3401,9 +3403,8 @@
            (synth scrutinee environment delta propositions boundaries))
          (define scrutinee-type (judgment-type scrutinee-result))
          (cond
-           [(root-owned-union? scrutinee-type)
-            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
-           [(union-type? scrutinee-type)
+           [(or (root-owned-union? scrutinee-type)
+                (union-type? scrutinee-type))
             (union-eliminate scrutinee-result branches expected s
                              environment delta propositions boundaries)]
            [(ormap member-pattern? branches)

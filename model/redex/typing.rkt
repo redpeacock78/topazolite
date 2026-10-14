@@ -1747,6 +1747,10 @@
     [`(Union ,_ ,_)
      (union-branch-contexts branches (normalize-type scrutinee-type) #f
                             Λ environment node scrutinee fail)]
+    [`(Owned (Union ,_ ,_))
+     (union-branch-contexts branches
+                            (second (normalize-type scrutinee-type)) #f
+                            Λ environment node scrutinee fail)]
     [`(Borrowed (Union ,_ ,_) ,ρ)
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type))
@@ -5482,7 +5486,7 @@
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
     [`(UnionEliminate ,scrutinee (,branches ...))
-     (and (control-leaf-positions-ok? scrutinee)
+     (and (transit-position-ok? scrutinee)
           (andmap (lambda (branch)
                     (match (erase-core branch)
                       [`(,_member ,_binder -> ,body)

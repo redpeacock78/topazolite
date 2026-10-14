@@ -16,6 +16,7 @@
   (check-equal? (rule-bucket 'R-OwnLeafPass) 'non-substituting)
   (check-equal? (rule-bucket 'R-ApplyTransit) 'non-substituting)
   (check-equal? (rule-bucket 'R-EliminateTransit) 'non-substituting)
+  (check-equal? (rule-bucket 'R-UnionEliminateTransit) 'non-substituting)
   (check-equal? (rule-bucket 'R-CurryTransit) 'non-substituting)
   (check-equal? (rule-bucket 'R-OwnLeafTransit) 'non-substituting)
   (check-equal? (rule-bucket 'R-RecRewrite-Open) 'non-substituting)
