@@ -64,6 +64,17 @@
   (match (p str)
     [`(SProgram ,_ ,_ ,expr) expr]
     [other other]))
+(define (p-block-binding source)
+  (match (p (format "fn f() {\n  ~a\n  0\n}\n0" source))
+    [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_ (SBlock ,_ (,binding) ,_))) ,_)
+     binding]
+    [other other]))
+(define (question-eq-span source)
+  (define start
+    (for/first ([i (in-range (sub1 (string-length source)))]
+                #:when (string=? (substring source i (+ i 2)) "?="))
+      i))
+  (and start (sp start (+ start 2))))
 (define (node-span n) (second n))
 
 ;; 型の構文木を取り出す。型別名の右辺は型の位置であり、Core の項を作らない。
@@ -541,6 +552,26 @@
  ;; 式位置の ?= は未対応の束縛構文なので拒否する。
  (check-equal? (p-code "x ?= y") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "x ?= y")) (sp 2 4)))
+
+(test-case
+ "SUR-002a: let x ?= e は STryBind である"
+ (check-match (p-block-binding "let x ?= f(y)")
+              `(STryBind ,_ (SName ,_ x) (SApply ,_ ,_ ,_)))
+ (check-match (p "let x ?= f(y)\nx")
+              `(SProgram ,_ ((STryBind ,_ (SName ,_ x) (SApply ,_ ,_ ,_)))
+                         (SVar ,_ x))))
+
+(test-case
+ "SUR-002a: const、let mut、注釈付きの ?= は記号位置で拒否する"
+ (for ([binding (in-list '("const x ?= e"
+                           "let mut x ?= e"
+                           "let x: Int ?= e"))])
+   (define source (format "fn f() {\n  ~a\n  0\n}\n0" binding))
+   (define parsed (p source))
+   (check-equal? (p-code source) "E-SUR-005" binding)
+   (check-equal? (diagnostic-primary-span parsed)
+                 (question-eq-span source)
+                 binding)))
 
 (test-case
  "SUR-011: 明示的な戻り型を -> 無しで書くと E-SUR-005 になる"

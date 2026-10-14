@@ -803,6 +803,10 @@
                                  ,(expr value scope))
                          reversed)
                    (set-add scope x))]
+          [`(STryBind ,s (SName ,s_x ,x) ,value)
+           (values (cons `(STryBind ,s (SName ,s_x ,x) ,(expr value scope))
+                         reversed)
+                   (set-add scope x))]
           [`(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row ,body)
            (define inner
              (set-union (set-add scope f) (list->seteq (param-names params))))
@@ -939,6 +943,9 @@
                        (node-span ty-or-none)))))
      (define bound-core (lower-sexpr bound env fail))
      (λ (rest) `(Let ,s_tail ,binder ,bound-core ,rest))]
+    [`(STryBind ,_ (SName ,s_x ,x) ,bound)
+     (define bound-core (lower-sexpr bound env fail))
+     (λ (rest) `(TryBind ,s_tail (#:bind ,x ,s_x) ,bound-core ,rest))]
     [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,row ,body)
      (define params-core (lower-params params env fail))
      (define result-core

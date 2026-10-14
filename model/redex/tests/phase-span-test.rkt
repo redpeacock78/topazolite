@@ -199,6 +199,7 @@
     (Let (x const Int) 1 x)
     (Fn ((n Int)) Int () (Apply add n 1))
     (Fn () Int () (NarrativeExpr (Return 2)))
+    (TryBind x 1 x)
     (Fn ((n Int)) Int (Partial) (Recur f ((m Int)) Int (Partial) (Apply f m) n))
     (Fn ((flag Bool)) Int () (Eliminate flag ((true () -> 1) (false () -> 2))))
     (Rec ((a imm 1) (b mut 2)))

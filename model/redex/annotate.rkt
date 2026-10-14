@@ -30,6 +30,8 @@
        (list 'Let (next) (list (bind x) bmode) (ann c_1) (ann c_2))]
       [(list 'Let (list x type) c_1 c_2)
        (list 'Let (next) (list (bind x) (ty type)) (ann c_1) (ann c_2))]
+      [(list 'TryBind x c_1 c_2)
+       (list 'TryBind (next) (bind x) (ann c_1) (ann c_2))]
       [(list 'Construct type K c ...)
        (list* 'Construct (next) (ty type) K (map ann c))]
       [(list 'UnionInject union-type member-type c)
@@ -141,6 +143,8 @@
        (list 'Let (next) (list (bind x) bmode) (ann e_1) (ann e_2))]
       [(list 'Let (list x bmode type) e_1 e_2)
        (list 'Let (next) (list (bind x) bmode (ty type)) (ann e_1) (ann e_2))]
+      [(list 'TryBind x e_1 e_2)
+       (list 'TryBind (next) (bind x) (ann e_1) (ann e_2))]
       [(list 'Rec (list (list label m e) ...))
        (list 'Rec (next) (for/list ([l (in-list label)]
                                     [mode (in-list m)]

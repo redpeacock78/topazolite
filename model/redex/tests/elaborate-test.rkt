@@ -26,6 +26,13 @@
     [`(err ,_) #t]
     [_ #f]))
 
+(test-case "SUR-002a Task 2: TryBind は展開前なので合成できない"
+  (match (elab '(TryBind x 1 x))
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic)
+                   (diagnostic-code-of 'elaborate 'cannot-synthesize))]
+    [other (fail-check (format "未展開 TryBind の合成拒否を期待したが ~s" other))]))
+
 (define (tree-contains? tree wanted)
   (or (equal? tree wanted)
       (and (list? tree)

@@ -749,6 +749,9 @@
     [`(Let ,name ,bound ,body)
      (set-union (free-vars/erased bound)
                 (set-remove (free-vars/erased body) name))]
+    [`(TryBind ,name ,bound ,body)
+     (set-union (free-vars/erased bound)
+                (set-remove (free-vars/erased body) name))]
     [`(Rec (,fields ...))
      (sets-union
       (for/list ([field (in-list fields)])

@@ -539,11 +539,19 @@
           (let-values ([(ty ty-j) (parse-ty ts fail (add1 name-j))])
             (values ty ty-j))
           (values '#:none name-j)))
-    (let*-values ([(equal equal-j) (expect-punct ts fail annotation-j '|=|)]
-                  [(value value-j) (parse-expr ts fail equal-j)])
-      (values `(SBind ,(hull mode-span (node-span value)) ,mode
-                      ,name-node ,annotation ,value)
-              value-j))))
+    (cond
+      [(punct? ts annotation-j '?=)
+       (unless (and (eq? mode 'let) (eq? annotation '#:none))
+         (fail-at ts fail annotation-j))
+       (let-values ([(value value-j) (parse-expr ts fail (add1 annotation-j))])
+         (values `(STryBind ,(hull mode-span (node-span value)) ,name-node ,value)
+                 value-j))]
+      [else
+       (let*-values ([(equal equal-j) (expect-punct ts fail annotation-j '|=|)]
+                     [(value value-j) (parse-expr ts fail equal-j)])
+         (values `(SBind ,(hull mode-span (node-span value)) ,mode
+                         ,name-node ,annotation ,value)
+                 value-j))])))
 
 ;; BIT-003。ty ::= tyand ("|" tyand)*。どちらの演算子も左結合である。
 (define (parse-ty ts fail i)

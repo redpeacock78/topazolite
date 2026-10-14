@@ -164,6 +164,18 @@
  (check-equal? (second (first (third (fifth t)))) 'y))
 
 (test-case
+ "SUR-002a: TryBind は尾部 span と束縛名の span を保つ"
+ (check-equal?
+  (low "{ let x ?= f(y)\n x }")
+  '(TryBind (#:span src 2 18) (#:bind x (#:span src 6 7))
+            (Apply (#:span src 11 15)
+                   (#:var f (#:span src 11 12))
+                   (#:var y (#:span src 13 14)))
+            (#:var x (#:span src 17 18))))
+ (check-match (low "let x ?= 1\nx")
+              `(TryBind ,_ (#:bind x ,_) (#:lit 1 ,_) (#:var x ,_))))
+
+(test-case
  "束縛の尾部 span は末尾式の終わりまで伸びる"
  ;; spec §7.3。2 つの Let の始まりは別だが、終わりは同じである。
  (define t (low "{ let x = 1\n let y = 2\n x }"))

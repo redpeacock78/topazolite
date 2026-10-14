@@ -9,9 +9,9 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、`?=`、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -108,6 +108,7 @@ lparam   ::= ident [":" ty]
 args     ::= ε | expr ("," expr)*
 block    ::= "{" NL* (binding NL+)* expr NL* "}"
 binding  ::= bmode ident (":" ty)? "=" expr
+           | "let" ident "?=" expr
 bmode    ::= "const" | "let" | "let" "mut"
 record   ::= "{" NL* "}"
            | "{" NL* field (fsep field)* fsep? NL* "}"
@@ -235,6 +236,18 @@ AST の `bmode` は `const`、`let`、`mut` のいずれか 1 個の symbol で�
 
 `let` と `mut` の間に改行を置くことは許さない。
 `nl` が 2 語の間にある場合、`mut` は次の束縛の先頭として扱われ、構文エラー `E-SUR-005` になる。
+
+#### `?=` による失敗伝播束縛
+
+`let x ?= e` は**失敗伝播束縛**である。
+`const x ?= e`、`let mut x ?= e`、`let x: T ?= e` は `?=` の位置で `E-SUR-005` になる。
+式位置の `?=` も `E-SUR-005` であり、primary span は複合 token 全体である。
+parser は右辺を一度だけ解析し、Surface AST の `(STryBind s (SName s_x x) e)` に置く。
+型注釈、失敗側の型、境界との適合は parser では検査しない。
+`?=` を式や `when` に組み替えるのではなく、失敗伝播束縛として UCore+ へ渡す。
+失敗伝播の型検査と Core への展開は elaborate が行う（core-calculus.md §4.5）。
+
+**Why not（`?=` を parser で `when` へ組み替える案）**：失敗層の選択と境界への伝播は右辺と周囲の型に依存するため採らない。
 
 ### 3.3 `{` の曖昧性
 
@@ -597,6 +610,10 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   仮引数型が `#:none` なら型欄は `(#:infer s_x)` となり、`s_x` は binder の span である。
   戻り型が `#:none` なら戻り型欄は `(#:infer s)` となる。
 - `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
+- `(STryBind s (SName s_x x) e)` は `(TryBind s_tail (#:bind x s_x) e' rest)` へ落とす。
+  右辺 `e` は束縛前の環境で下ろし、後続の項 `rest` では `x` を束縛する。
+  `s_tail` は `let` から後続の項の末尾までを覆い、`s_x` は束縛名の span である。
+  UCore+ では節点を保持し、型に基づく展開は elaborate が行う。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
   右辺が仮引数型または Effect row を省略した `Fn`、または型引数欄の無い `Construct` なら宣言型で検査する。
   それ以外は右辺を合成し、その結果へ binding mode の policy を適用する（core-calculus.md §4.2、structural-row.md §4）。
@@ -670,9 +687,9 @@ lower [b1 b2 b3] e = L(b1, L(b2, L(b3, lower e)))
 右から畳むことで、先の束縛の名前が後続の束縛と末尾式から見える関係が `Let` の本体として表れる。
 別名の登録と重複宣言の検査は、畳み込みとは独立に原文順で行う。
 
-`Let` と `Recur` の span は、宣言の先頭から後続の項の末尾までを覆う尾部 span である。
+`Let`、`TryBind`、`Recur` の span は、宣言の先頭から後続の項の末尾までを覆う尾部 span である。
 block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`、トップレベルの束縛または関数宣言は `[startByte(宣言 i), endByte(program の末尾式))` を持つ。
-この span は元の `SBind` や `SFnDecl` の span とは一致しない。
+この span は元の `SBind`、`STryBind`、`SFnDecl` の span とは一致しない。
 `SDataDecl` は項へ畳まず、`data-decls` に宣言を残す。
 
 impl 宣言の lowering は次の形であり、`Apply` は impl 宣言全体の span、`Let` は尾部 span を持つ。
@@ -826,7 +843,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SMatch`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
-- `SBind` と `SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `SBind`、`STryBind`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
@@ -841,10 +858,12 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
+`STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 F* の Surface 構成子一覧は `sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 23 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
+`STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
 UCore+ の `Eliminate` は constructor 枝と member 枝を持ち、F* の `CEliminate` も補助型 `core_branch` の tag で区別する。
@@ -854,10 +873,10 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`Recur`、`Return`、`FnDecl` の 13 構成子を parity の対象とする。
-F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 14 構成子を parity の対象とする。
+F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 13 個、F* 側の `core` の構成子リストは 12 個であり、F* 側の全対象構成子は 35 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 12 個）である。
+UCore+ の対象構成子リストは 14 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 36 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
@@ -871,7 +890,8 @@ P2m3b は枝の形を広げるが、これらの parity 対象構成子リスト
 - `stok`：`kind` 欄で 7 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
 - `lex_result`、`string_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
 - `dkind`：束縛の種別を表す欄の型であり、構成子集合の対象ではない。
-  `SBind` と `SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
+  `SBind`、`STryBind`、`SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
+  `STryBind` は `DTryBind` として種別欄に残り、`CTryBind` へ渡す束縛名を同じ variant に保持する。
 - `node`：`sexpr`、`sty`、`sdecl` を命題 3 でまとめて量化するための包みである。
 - `bytes_split`、`pos_split`：証明の中だけで使う補助型である。
 

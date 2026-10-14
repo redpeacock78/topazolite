@@ -567,7 +567,7 @@ let lex_try_pipe_ok () : Lemma
             z.span.startByte == 10 && z.span.endByte == 10
         | _ -> false))
 
-type dkind = | DBind | DFnDecl
+type dkind = | DBind | DTryBind : string -> dkind | DFnDecl
 
 type sexpr =
   | SInt      : span -> nat -> sexpr
@@ -847,6 +847,9 @@ and wf_decl (d: sdecl) : Tot bool (decreases d) =
       && (match k with
           | DBind -> (match ps with [] -> true | _ -> false)
                      && (match row with None -> true | Some _ -> false)
+          | DTryBind _ -> (match ps with [] -> true | _ -> false)
+                        && (match r with None -> true | Some _ -> false)
+                        && (match row with None -> true | Some _ -> false)
           | DFnDecl -> true)
       && wf_tys s (map snd ps)
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
@@ -1018,6 +1021,7 @@ and core =
   | CFn       : span -> list span -> option seffrow -> core -> core
   | CConstruct: span -> string -> list core -> core
   | CLet      : span -> span -> core -> core -> core
+  | CTryBind  : span -> span -> string -> core -> core -> core
   | CReturn   : span -> core -> core
   | CRecur    : span -> span -> list span -> seffrow -> core -> core -> core
 
@@ -1033,6 +1037,7 @@ let span_of_core (c: core) : Tot span =
   | CFn s _ _ _      -> s
   | CConstruct s _ _ -> s
   | CLet s _ _ _     -> s
+  | CTryBind s _ _ _ _ -> s
   | CReturn s _      -> s
   | CRecur s _ _ _ _ _ -> s
 
@@ -1119,6 +1124,8 @@ and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
   match d with
   | SDecl s DBind sx _ _ _ v ->
       CLet (hull s (span_of_core rest)) sx (lower_expr v) rest
+  | SDecl s (DTryBind x) sx _ _ _ v ->
+      CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest
   | SDecl s DFnDecl sx ps _ row v ->
       CRecur (hull s (span_of_core rest)) sx (map fst ps) (row_or_empty s row)
              (lower_expr v) rest
@@ -1150,6 +1157,7 @@ val lower_block_root_span : d:sdecl -> ds:list sdecl -> tail:core -> Lemma
 let lower_block_root_span d ds tail =
   match d with
   | SDecl _ DBind _ _ _ _ _ -> ()
+  | SDecl _ (DTryBind _) _ _ _ _ _ -> ()
   | SDecl _ DFnDecl _ _ _ _ _ -> ()
 
 // 命題 7。SFn は仮引数名の span と省略を含む row をそのまま運ぶ。
@@ -1201,6 +1209,11 @@ val lower_decl_bind : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
   (lower_decl (SDecl s DBind sx ps r row v) rest
    == CLet (hull s (span_of_core rest)) sx (lower_expr v) rest)
 let lower_decl_bind s sx ps r row v rest = ()
+
+val lower_decl_try_bind : s:span -> sx:span -> x:string -> v:sexpr -> rest:core -> Lemma
+  (lower_decl (SDecl s (DTryBind x) sx [] None None v) rest
+   == CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest)
+let lower_decl_try_bind s sx x v rest = ()
 
 // 命題 7。DFnDecl は後続を含む CRecur になる。
 val lower_decl_fn : s:span -> sx:span -> ps:list (span & sty) -> r:option sty

@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 36)
- (check-equal? (length racket-ucore-constructors) 13)
- (check-equal? (length fstar-constructors) 35))
+ (check-equal? (length racket-surface-constructors) 37)
+ (check-equal? (length racket-ucore-constructors) 14)
+ (check-equal? (length fstar-constructors) 36))
 
 (test-case
  "対応表に違反が無い"
@@ -93,7 +93,9 @@
  (check-equal? (row-kind 'SMatch) 'one-to-one)
  (check-equal? (row-kind 'Eliminate) 'one-to-one)
  (check-equal? (row-kind 'SBind) 'many-to-one)
+ (check-equal? (row-kind 'STryBind) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
+ (check-equal? (row-kind 'TryBind) 'one-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
  (check-equal? (row-kind 'SEffLabel) 'one-to-one))
 
@@ -103,6 +105,7 @@
   (list
    (cons 'SProgram  (redex-match? Surface sprog `(SProgram ,s0 () (SInt ,s0 1))))
    (cons 'SBind     (redex-match? Surface spitem `(SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1))))
+   (cons 'STryBind  (redex-match? Surface spitem `(STryBind ,s0 (SName ,s0 x) (SInt ,s0 1))))
    (cons 'SFnDecl   (redex-match? Surface spitem `(SFnDecl ,s0 (SName ,s0 f)
                                                            ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                                                            (TName ,s0 Int) #:none (SInt ,s0 1))))
@@ -168,6 +171,7 @@
                                                (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0))))
    (cons 'Construct (redex-match? UCore+ e `(Construct ,s0 true)))
    (cons 'Let      (redex-match? UCore+ e `(Let ,s0 ((#:bind x ,s0) let) (#:lit 1 ,s0) (#:var x ,s0))))
+   (cons 'TryBind  (redex-match? UCore+ e `(TryBind ,s0 (#:bind x ,s0) (#:lit 1 ,s0) (#:var x ,s0))))
    (cons 'Recur    (redex-match? UCore+ e `(Recur ,s0 (#:bind f ,s0) (((#:bind x ,s0) (#:ty Int ,s0)))
                                                   (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0) (#:var f ,s0))))
    (cons 'Return   (redex-match? UCore+ e `(Return ,s0 (#:lit 1 ,s0))))
