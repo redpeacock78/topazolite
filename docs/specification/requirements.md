@@ -997,6 +997,8 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
+| `Untrusted` を包む Record の `mut` Union 欄の拡幅 | `structural-row.md` §7 | Phase 4 以降 | §4.6 |
+| `Refined` を包む Record の `mut` Union 欄の拡幅 | `structural-row.md` §7 | Phase 4 以降 | §4.6 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |

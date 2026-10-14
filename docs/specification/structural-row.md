@@ -425,21 +425,32 @@ Union の欄の値は tag で成分を表すので、tag を持つ値を書き�
 `mut` field の expected Union に対し、枝が単一型ならいずれかの成分と、枝が部分 Union なら全成分と `type-equiv?` で一致することを求める。
 通常の `compat?` と `Assign` の `tag-compat?` 検査は緩めない。
 この例外は `Eliminate` の合流型を導入する枝の再照合に限る。
-通常の `mut` 欄の変換では、現行実装はすでに tag を持つ Union 値の成分集合を広げない。
-これは `ROW-004` が定める可変欄の不変性を保つ保守的な実装制限であり、値の再構成を拒む独立した健全性要件とは確認できていない。
-ホワイトペーパー §4.5.2 は readonly と mutable の衝突を拒み、`ROW-004` は代入安全性のため可変欄を既定で不変とするが、再構成による Union 拡幅の可否は定めていない。
-§4.5.3 も Union 型を `TypeNarrative` へ展開する方針だけを述べる。
+**値の再構成**は、既存の値から期待型を持つ別の値を作る操作である。
+**view の拡幅**は、同じ place を指す参照の型を広げる操作である。
+`ROW-004` が守る代入安全性は view の拡幅に関わり、値の再構成には関わらない。
 
-`Int` 欄から `(Union Int Bool)` 欄への再構築は、値に新しい tag を付ける `UnionInject` を使う。
-すでに tag を持つ `(Union Bool Int)` の値から `(Union Bool (Union Int Unit))` の値を作る場合も、既存の成分を選び直して期待する Union の tag で包める。
-どちらも値の再構成であり、後者だけを拒む alias、`Owned` token、tag の機構は仕様から導けない。
-一方、`RecRewrite` が alias 関係を常に切る保証もないため、alias が無いことを拡幅の安全性の根拠にはできない。
+`mut` 欄の Union 拡幅は、既存の Core 形で値を再構成する。
+`RecRewrite` の entry で欄の値を `UnionEliminate` にかけ、選んだ成分を期待する Union の tag で `UnionInject` し直す。
+非 Union の値を Union 欄へ渡す場合も、値を `UnionInject` で包む。
 
-`compat?` の `mut` 欄の不変条件と `Assign` の `tag-compat?` 検査は変更しない。
-`mut` 欄の既存 Union を再構成して成分を増やす経路は、現行実装が拒否する。
-この制限は健全性要件として確定せず、`compat?` の不変条件を変えずに値変換で許せるかを、alias と `Owned` token の保存を含めて確認する必要がある。
-`Eliminate` の合流規則だけで例外を広げる案と、`compat?` 自体を緩める案は採らない。
-通常の `mut` 欄の Union 拡幅は、c3b の RSD ではなく、P2m3 の前に独立した ROW-005 elaboration サイクルで再検討する。
+この再構成が健全である理由は三つある。
+`RecRewrite` は既存の heap を書き換えず、出力を `mut` binding に束縛すると新しい place が作られるため、旧い place の `declared` は狭い型のまま残る。
+旧い欄への `BorrowRef` や `BorrowMutRef` が生き残っても、その参照が見る place の型は変わらない。
+この健全性は `RecRewrite` が alias 関係を常に切る保証には依存しない。
+`UnionEliminate` は選んだ payload を一度だけ枝へ渡し、`UnionInject` は H、Ω、token 台帳を変えないため、Owned token の移送は一対一である。
+`T-RecRewrite` の線形検査と `RecRewrite` の token 多重集合の保存も既存の不変条件として働く。
+
+通常の `compat?` と `Assign` の `tag-compat?` 検査は変えない。
+したがって既存 place の `declared` は書き換わらず、同じ place を指す view の拡幅も起きない。
+`Eliminate` と `UnionEliminate` の合流には専用の経路が既にあり、この変換規則を適用する必要はない。
+function-adapter の引数と戻り値は `mut` 欄の `NFn` 不変性を保つ。
+`Yield` と handler には期待型へ値を変換する独立した位置がない。
+`Borrowed` と `BorrowedMut` の payload は同じ place を指す view なので、`ROW-004` と `VAR-004` が拡幅を拒む。
+`Owned` の payload は既存の `compat?` が受理するため、再構成を導入しない。
+
+拒否を健全性要件として確定する案は、再構成が同じ place の型や代入安全性を壊す反例がなく、row merge の要求を実装で空にするため採らない。
+`compat?` の `mut` 欄の不変条件を緩める案は、同じ place を指す view の拡幅になり `ROW-004` の代入安全性を損なうため採らない。
+`Untrusted` と `Refined` の内側の拡幅は、包みを保った値変換と Proof の輸送規則が無いため本節では受理せず、§7 の未回収として扱う。
 合流を到達不能なまま未回収へ送る案は、ホワイトペーパー §4.5.2 の row merge の主張を実装で空にするため採らない。
 Proof witness による型付き field 回復は未回収であり、§7 の後続層へ送る。
 
@@ -463,6 +474,46 @@ Union を expected とする `Rec` の check では、elaborate が候補成分�
 Typed Core の binding mode 付き `Let` が保持する注釈は宣言型 T である。
 `let` の残余 row は body を型付けする Γ の x にだけ保持し、Typed Core の注釈へ書き戻さない。
 Typed Core を独立に型付けするときは bound を再び synthesis して残余 row を復元する。
+
+**通常適合**は、実際型と期待型が `type-compatible?` を満たすことである。
+通常適合には、`Int` の値を `(Union Int Bool)` へ `UnionInject` で包むような変換を伴う対も含まれる。
+**恒等適合**は、`identity-conversion?` と `type-compatible?` の両方を満たし、Core を変えずに値を渡せることである。
+`tag-compat?` だけが真で `type-compatible?` が偽の対は恒等適合ではない。
+
+**厳密な再構成可能性**は、再構成後の型が期待型と `type-equiv?` で一致する値変換があることを表す。
+型同値の対は厳密に再構成可能である。
+非 Union から Union への対は、候補成分の選択が一意で、実際型からその成分への対が厳密に再構成可能な場合に限る。
+Union どうしの対は、平坦化した実際型の各成分に対して期待側の候補成分が一意に決まり、その成分対が厳密に再構成可能な場合に限る。
+Record どうしの対は、欄集合、可変性、presence が一致し、すべての欄の型対が厳密に再構成可能な場合に限る。
+
+**再構成可能性**は、通常適合でない型対について定義する。
+Record どうしでは、欄集合、可変性、presence を既存の規則で照合し、両辺が `mut` の欄は厳密に再構成可能でなければならない。
+それ以外の欄は通常適合または再構成可能でなければならない。
+非 Union から Union への対は、期待側の少なくとも一成分に対して再構成可能でなければならない。
+Union どうしの対は、実際側の各成分に対応する期待側の成分が通常適合または再構成可能であり、少なくとも一つの対応が再構成可能でなければならない。
+`NFn`、`Borrowed`、`BorrowedMut`、`Owned`、`Untrusted`、`Refined` の内側へは再構成を再帰しない。
+
+**retag entry**は、`mut` 欄の値を期待する欄型へ再構成する `RecRewrite` の entry である。
+型同値の場合は値をそのまま使う。
+非 Union から Union への対では値を注入先の成分型へ再帰的に合わせてから `UnionInject` する。
+Union の対では値を `UnionEliminate` で枝分けし、各成分を一意な対応先へ再帰的に合わせてから `UnionInject` する。
+Record の対では内側の `RecRewrite` を作り、型同値でない欄に再帰的な entry を置く。
+retag entry の内側では可変性にかかわらず恒等適合による短絡を使わず、型同値の場合だけ値をそのまま使う。
+
+Union の候補選択は、まず既存の `union-member-tiers` の層を調べる。
+既存の層に候補が無い場合に限り、再構成可能な成分を候補にする。
+retag entry の内側では、再構成可能な成分の代わりに厳密に再構成可能な成分を候補にする。
+候補が複数ある場合は `ambiguous-union-member` で拒否し、成分の並び順には依存しない。
+この選択規則により Let、Apply の実引数、関数本体の戻り値で同じ曖昧さを同じ診断にする。
+
+`mut` 欄の再構成は、`const`、`let`、`mut` の Let 注釈、Apply の実引数、関数本体の戻り値、`Return`、`Construct` の payload、`Rec` 欄の check、Union へ値を合わせる位置、および Union から Record への分解に適用する。
+恒等変換による短絡は、`convert`、`rebuild-record`、`union-member-tiers`、`union-inject` の payload、`decompose` の Record 枝、`check-rec-against-union` で、恒等適合の場合に限る。
+ただし `rebuild-record` で両辺が `mut` の欄は型同値の場合だけ短絡し、それ以外の欄は恒等適合の場合だけ短絡する。
+`tag-compat?` だけが真で通常適合が偽の対は短絡せず、`convert` で再構成可能性を判定する。
+再構成可能な対の `mut` 欄の出力型は期待欄型と `type-equiv?` で一致する。
+`Owned` 欄の既存分岐は変えず、`imm` と `mut` の双方で受理範囲と生成 Core を保つ。
+`Assign` と `Reassign`、合流専用経路、function-adapter、`Yield` と handler、借用型の payload には適用しない。
+`compat?` と `Assign` の `tag-compat?` 検査は変えない。 [REQ: ROW-005]
 
 binding mode を明示しない G1 由来の `let x = e1 in e2` は default const として検査する。
 この形式は bound の完全な合成型を x の型にするため、その型自身に対する残余は空である。
@@ -767,6 +818,14 @@ G2a は次の規則を導入しない。
   trait の Intersection は型構成子ではなく、同仕様 §4.3 の正典表と `RequiresBoth` Proof で表す。
 - **Refinement と Untrusted**：値が満たす命題の Proof を保持するため、Proof 層で扱う。
   G2d が `proof-value.md` §3 と §4 として導入した。
+- **Untrusted を包む Record の `mut` Union 欄の拡幅**：`Untrusted` が包む payload を開いて再構成する変換経路が無い。
+  payload の対が通常適合する直接の拡幅は既存の `compat?` が受理する。
+  未回収の対象は、包まれた Record の内側にある `mut` Union 欄の拡幅である。
+  この拒否は、`Untrusted` が外側の Record の `imm` 欄にある場合も同じ payload 検査で起きる。
+  Untrusted の値変換を導入する Phase 4 以降で扱う。
+- **Refined を包む Record の `mut` Union 欄の拡幅**：再構成した payload へ Proof を輸送する規則が無い。
+  この拒否は、`Refined` が外側の Record の `imm` 欄にある場合も同じ payload 検査で起きる。
+  Proof の輸送規則を導入する Phase 4 以降で扱う。
 - **join 型と Proof 付き merge**：型が異なる branch field の上位型と field 常在性の witness を要するため、Proof 層で扱う。
   field 常在性の witness は G2d が `proof-value.md` §5 として導入した。
   branch で型が異なる `imm` field の Union join と `FieldType` witness は、G2e が `trait.md` §7 として導入した。
@@ -801,7 +860,7 @@ closed と open を record 型の mode として保持する表現も採らな�
 | ROW-002 | §3.1 T-Proj、§3.2 T-LetOpenRecord |
 | ROW-003 | §3.5 T-EliminateRecordMerge |
 | ROW-004 | §3.1 T-Rec、§3.3 の `mut` field 不変性 |
-| ROW-005 | §3.5 の可変性を保つ Union join、§3.3 の `imm` 要求を満たす `mut` field |
+| ROW-005 | §3.5 の可変性を保つ Union join、§3.3 の `imm` 要求を満たす `mut` field、§4 の `mut` 欄の Union 拡幅の値再構成 |
 | VAR-001 | §6.1 関数互換性の規則、§6.4 checking 位置の統一 |
 | VAR-002 | §6.2 latent Effect と Proof obligation の包含 |
 | VAR-003 | §6.3 field の可変性との交差、§3.3 の `NFn` field 照合 |
