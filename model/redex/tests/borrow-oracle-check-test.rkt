@@ -118,6 +118,8 @@
   (check-equal? (rule-bucket 'R-RegionAppRecur) 'non-substituting))
 
 (define borrowed-value '(BorrowRef 3 (a) 7))
+(define transit-union-value
+  `(UnionVal (Union Int (Borrowed Int 7)) (Borrowed Int 7) ,borrowed-value))
 
 (define (check-approved-shape label redex contractum wrong-contractum)
   (check-equal? (borrow-form-candidates redex contractum) '()
@@ -205,6 +207,62 @@
    (check-borrow-execution config (borrow-sidecar '() (hash)) #f 20
                           (make-bcounters))
    'ok))
+
+(test-case "R-UnionEliminateTransit は UnionVal 全体を保つ移送だけを承認する"
+  (define redex `(OwnedTransit p ,transit-union-value))
+  (check-equal? (borrow-form-candidates redex transit-union-value
+                                        #:rule 'R-UnionEliminateTransit)
+                '())
+  (check-equal?
+   (borrow-form-candidates
+    redex `(UnionVal (Union Int (Borrowed Int 7)) (Borrowed Int 7)
+                     (BorrowRef 3 (a) 8))
+    #:rule 'R-UnionEliminateTransit)
+   '((unverified)) "payload が変わる")
+  (check-equal?
+   (borrow-form-candidates
+    redex `(UnionVal (Union (Borrowed Int 7) Int) (Borrowed Int 7)
+                     ,borrowed-value)
+    #:rule 'R-UnionEliminateTransit)
+   '((unverified)) "Union 型 tag が変わる")
+  (check-equal?
+   (borrow-form-candidates
+    redex `(UnionVal (Union Int (Borrowed Int 7)) Int ,borrowed-value)
+    #:rule 'R-UnionEliminateTransit)
+   '((unverified)) "member 型 tag が変わる"))
+
+(test-case "Union の移送の承認形は他の規則名へ漏れない"
+  (define redex `(OwnedTransit p ,transit-union-value))
+  (for ([name (in-list '(R-EliminateTransit R-ApplyTransit
+                         R-CurryTransit R-OwnLeafTransit))])
+    (check-equal? (borrow-form-candidates redex transit-union-value
+                                          #:rule name)
+                  '((unverified)) (symbol->string name)))
+  (check-equal? (borrow-form-candidates redex transit-union-value)
+                '((unverified)) "規則名なし"))
+
+(test-case "R-UnionEliminateTransit でも UnionVal でない移送は承認しない"
+  (check-equal?
+   (borrow-form-candidates `(OwnedTransit p ,borrowed-value) borrowed-value
+                           #:rule 'R-UnionEliminateTransit)
+   '((unverified))))
+
+(test-case "R-UnionEliminateTransit でも枝の列が変わる遷移は承認しない"
+  (define diff
+    (control-diff
+     `(UnionEliminate (OwnedTransit p ,transit-union-value) ((Int n -> n)))
+     `(UnionEliminate ,transit-union-value ((Int n -> 0)))))
+  (check-equal? (borrow-form-candidates (car diff) (cdr diff)
+                                        #:rule 'R-UnionEliminateTransit)
+                '((unverified))))
+
+(test-case "Owned Union の除去の実行は oracle を通る"
+  (define skeleton
+    '(Scope ()
+       (Let (u let (Owned (Union Int String)))
+            (UnionInject (Union Int String) Int 1000)
+         (UnionEliminate (Move u) ((Int n -> n) (String s -> 0))))))
+  (check-equal? (first (run skeleton)) 'ok))
 
 (test-case "生きている借用の place を move する遷移は fail になる"
   ;; 条件 1。Ω が Available から Moved へ変わる前後の config を手で組む。

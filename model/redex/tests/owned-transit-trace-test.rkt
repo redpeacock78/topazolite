@@ -14,6 +14,7 @@
          "../lang.rkt"
          "../machine.rkt"
          "../origins.rkt"
+         "../borrow-oracle.rkt"
          "../typing.rkt")
 
 (define (trace-g2 start)
@@ -421,6 +422,20 @@
                  (lambda (c) (equal? c 41))))
   (check-not-false (index-of rules 'R-UnionEliminateTransit))
   (check-not-false (index-of rules 'R-UnionEliminate)))
+
+(test-case "Owned Union の BorrowRef payload と BorrowMutRef payload の移送は oracle を通る"
+  (for ([tag (in-list '(BorrowRef BorrowMutRef))])
+    (define payload-type
+      `(,(if (eq? tag 'BorrowRef) 'Borrowed 'BorrowedMut) Int 7))
+    (define union-type `(Union Int ,payload-type))
+    (define payload `(,tag 0 () 7))
+    (define config
+      `(cfg (UnionEliminate
+             (OwnedTransit 1 (UnionVal ,union-type ,payload-type ,payload))
+             ((,payload-type borrow -> unit) (Int n -> unit)))
+            () () () ()))
+    (check-equal? (check-borrow-execution config #f #f 20 (make-bcounters))
+                  'ok (symbol->string tag))))
 
 (define owned-option-union '(Union (Option (Owned Res)) String))
 

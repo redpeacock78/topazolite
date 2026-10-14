@@ -96,7 +96,7 @@
 
 ;; spec §4.6。承認済みの redex と contractum の対の表。
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
-(define (approved-forms redex contractum)
+(define (approved-forms redex contractum rule-name)
   (match (list redex contractum)
     ;; R-RecRewrite-Open は入力欄を作業列へ一度ずつ移す。
     [(list `(RecRewrite ,_ ,_) `(RecRewriteOpen ,_)) '()]
@@ -133,6 +133,12 @@
      #:when (and (equal? payload payload2)
                  (equal? (normalize-type union-type) union-type2)
                  (equal? (normalize-type member-type) member-type2))
+     '()]
+    ;; Owned Union の除去では、UnionVal 全体を保ったまま移送 marker だけを外す。
+    [(list `(OwnedTransit ,_p (UnionVal ,τu ,τm ,v))
+           `(UnionVal ,τu2 ,τm2 ,v2))
+     #:when (and (eq? rule-name 'R-UnionEliminateTransit)
+                 (equal? τu τu2) (equal? τm τm2) (equal? v v2))
      '()]
     ;; R-RecurBind で再帰関数を使わない継続は、そのまま contractum になる。
     [(list `(Recur ,_ ,_ ,_ ,_ ,continuation) contractum)
@@ -246,8 +252,8 @@
 
 ;; spec §4.6。照合できず、しかも redex か contractum に借用値が現れるなら
 ;; unverified を返して失敗させる。借用値が無い遷移は非借用遷移として扱う。
-(define (borrow-form-candidates redex contractum)
-  (define matched (approved-forms redex contractum))
+(define (borrow-form-candidates redex contractum #:rule [rule-name #f])
+  (define matched (approved-forms redex contractum rule-name))
   (cond
     ;; 承認済みの非生成形は空 list で表す。未知の借用遷移を表す #f と区別する。
     [(list? matched) matched]
@@ -749,7 +755,8 @@
                                         (first (cfg-parts next))))
              (define raw-candidates
                (if diff
-                   (borrow-form-candidates (car diff) (cdr diff))
+                   (borrow-form-candidates (car diff) (cdr diff)
+                                           #:rule name)
                    '()))
              ;; 置換規則は借用値を本体へ運ぶことがある。ここで既知の
              ;; 置換を未検証の借用生成として扱わず、実際の発生だけを
