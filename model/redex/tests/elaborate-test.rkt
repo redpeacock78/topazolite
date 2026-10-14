@@ -26,17 +26,17 @@
     [`(err ,_) #t]
     [_ #f]))
 
-(test-case "SUR-002a Task 2: TryBind は展開前なので合成できない"
-  (match (elab '(TryBind x 1 x))
-    [`(err ,diagnostic)
-     (check-equal? (diagnostic-id diagnostic)
-                   (diagnostic-code-of 'elaborate 'cannot-synthesize))]
-    [other (fail-check (format "未展開 TryBind の合成拒否を期待したが ~s" other))]))
-
 (define (tree-contains? tree wanted)
   (or (equal? tree wanted)
       (and (list? tree)
            (ormap (lambda (part) (tree-contains? part wanted)) tree))))
+
+(test-case "SUR-002a: TryBind は data Eliminate へ展開される"
+  (match (elab '(Fn ((a (Option Int))) (Option Int) ()
+                   (TryBind x a (Construct some (Types Int) x))))
+    [(list core _type _row _callables)
+     (check-true (tree-contains? core 'Eliminate))]
+    [other (fail-check (format "TryBind の data Eliminate 展開を期待したが ~s" other))]))
 
 (define (collect-callable-ids tree tag)
   (define here

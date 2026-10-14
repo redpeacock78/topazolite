@@ -65,6 +65,7 @@ e ::= l                                          リテラル
     | let x = e1 in e2                           束縛
     | construct K<τ̄>(e1, …, ek)                  constructor 適用（型引数は省略可）
     | eliminate e0 { ubr01; …; ubr0n }           場合分け
+    | tryBind x e1 e2                             `?=` 専用の elaboration 中間形
     | return e                                   返却
     | narrativeExpr(e)                           式 Narrative 境界
     | recur f(x1 : τ1, …, xk : τk) -> τ ! ε = e1 in e2   再帰定義
@@ -89,6 +90,11 @@ UCore+ では、それぞれ `(s K (xs ...) -> e)` と `(s (#:ty τ s) (#:bind x
 Surface lowering は枝の種別を保ち、scrutinee が Union かどうかの分類と Core の枝への割り当ては型を得た後の elaborate が行う。
 Union では外側に `UnionEliminate` を作り、data 型の成分の枝には内側の `Eliminate` を置く。
 この lowering は Core に新しい eliminator 構成子を加えない。
+
+UCore の **`TryBind`** は spanless な `(TryBind x e body)` で表す。
+UCore+ では `(TryBind s (#:bind x s_x) e body)` とし、`s` は尾部の span、`s_x` は束縛名の span である。
+`TryBind` は `let x ?= e` からだけ生成し、elaboration が必ず `Eliminate` へ展開する。
+Typed Core に `TryBind` の構成子は無い。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker であり、Surface の loop 構文はここへ lowering される（ホワイトペーパー §7.2）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
@@ -939,6 +945,28 @@ B' = push(B, ExpressionBoundary(b, τ))
 本体の型が `Never` で候補も無い場合は `E-TYP-010` で拒む。
 下見中の elaboration 状態は下見の後で復元する。
 本体を τ の期待型で改めて検査し、最終 Core はその check の経路で決まる。
+
+`TryBind` は `let x ?= e` の UCore 中間形であり、elaboration は右辺 `e` を一度だけ合成してから data `Eliminate` へ展開する。
+生成した `Eliminate` はその合成結果を再利用し、`e` を再度合成しない。
+`e` が `Option<T>` なら、成功枝は `some(x) -> body`、失敗枝は `none() -> return none` となる。
+`e` が `Result<T, E>` なら、成功枝は `ok(x) -> body`、失敗枝は `ng(%err) -> return ng(%err)` となる。
+`%err` は利用者の束縛子と衝突しない fresh name である。
+`TryBind` の結果型は成功枝 `body` の型であり、失敗枝の `Return` は `Never` なので枝の合流に影響しない。
+右辺が `Owned<Option<T>>` または `Owned<Result<T, E>>` なら、elaboration は外側の `Owned` を剥がし、簡約時に `R-EliminateTransit` が移送 marker を外す。
+成功 payload または Result の誤差 payload が資源型なら、既存の data `Eliminate` と同じ枝 binder の Scope と Let encoding を使い、資源を一度だけ移送する。
+展開した `Eliminate` は `NarrativeExpr` で包まない。
+失敗は `nearestReturn` が返す最も内側の関数または式境界へ伝播し、`when` の枝にある `?=` はその `when` の境界へ戻る。
+失敗枝が生成した `Return` は戻り型の下見の候補に加えず、候補は成功枝と利用者が書いた `Return` からだけ得る。
+本体が `Never` で他の候補も無い場合、戻り型を省略した関数は `E-TYP-024`、合成位置の `NarrativeExpr` は `E-TYP-010` で拒否する。
+境界がまだ `#:infer` の段階にある場合は `E-TYP-024`、境界が無い場合は `E-RET-002` で拒否する。
+Option の失敗を受ける境界型は `Option<U>` でなければならず、Result の失敗を受ける境界型は `Result<V, E'>` であり `E'` は右辺の `E` と型同値でなければならない。
+この条件に合わない境界型は `E-TYP-033`、Option または Result でない右辺型は `E-TYP-032` で拒否する。
+本サイクルは `Return` による伝播だけを定め、`Throw` は追加しない。
+`Throw` による失敗伝播は別の設計サイクルまで申し送る。
+
+**Why not（失敗枝を戻り型の候補にする案）**：右辺の `Option<T>` や `Result<T, E>` からは境界の成功型 `U` または `V` を決められず、成功枝の情報なしに戻り型を固定する。
+**Why not（Result の誤差型を変換する案）**：誤差型の変換 trait や変換関数を定める規則が無いため、推測の変換を導入しない。
+**Why not（Option と Result を相互変換する案）**：`none` から誤差値を作る根拠がなく、`ng` から `none` へ変換すると誤差値を捨てるため、いずれも採用しない。
 
 ### 4.6 recur、yield、suspend
 

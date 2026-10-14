@@ -52,6 +52,7 @@
     [(core type row core-type)
      (make-judgment/raw core type row core-type)]))
 (struct exn:fail:elab exn:fail (primary-span phase reason details related) #:transparent)
+(define current-failure-returns (make-parameter #f))
 
 ;; primary-span は第 1 引数であり既定値を持たない。既定値を持たせると渡し忘れ
 ;; が黙って通り、DIA-002 の契約が静かに崩れる。span-ok? と registry の検査で
@@ -109,9 +110,12 @@
           'undeclared-recur-effect
           'owned-narrowing-rejected
           'owned-narrowing-needs-proof
-          'reassign-type-mismatch)
+          'reassign-type-mismatch
+          'try-bind-boundary-mismatch)
       (list expected actual))
      (values expected actual)]
+    [('try-bind-non-adt (list actual))
+     (values #f actual)]
     [(_ '()) (values #f #f)]
     [(_ (list only)) (values #f only)]
     [(_ _) (values #f details)]))
@@ -237,6 +241,8 @@
 (define (mentions-return? node)
   (match node
     [`(Return ,_ ,_) #t]
+    [`(TryBind ,_ ,_ ,_) #t]
+    [`(TryBind ,_ ,_ ,_ ,_) #t]
     [`(#:ef ,labels ,_) (and (list? labels) (memq 'Return labels) #t)]
     [`(,(or '#:ty '#:var '#:bind '#:lit) ,_ ...) #f]
     [(? list?) (ormap mentions-return? node)]
@@ -597,6 +603,10 @@
 
 (define (boundary-span descriptor) (fourth descriptor))
 
+(define (span-hull left right)
+  `(#:span ,(second left) ,(min (third left) (third right))
+           ,(max (fourth left) (fourth right))))
+
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
   (define span (nearest-span raw-row inherited-span))
   (define row (peel-ef raw-row))
@@ -839,9 +849,10 @@
                    #:expansion-context expansion-context))
 
 (define (elab raw-expression #:expansion-context [expansion-context (hash)])
-  (with-handlers ([exn:fail:elab?
-                   (lambda (failure)
-                     `(err ,(elab-failure->diagnostic failure expansion-context)))])
+  (parameterize ([current-failure-returns (mutable-seteq)])
+   (with-handlers ([exn:fail:elab?
+                    (lambda (failure)
+                      `(err ,(elab-failure->diagnostic failure expansion-context)))])
     (define reserved (reserved-binder-in raw-expression))
     (when reserved
       (reject (entry-span raw-expression)
@@ -983,6 +994,14 @@
           (string->symbol (format "union~a" union-counter)))
         (set! union-counter (add1 union-counter))
         (if (set-member? union-reserved candidate) (next) candidate)))
+
+    (define (failure-return s payload)
+      (define result `(Return ,s ,payload))
+      (define returns (current-failure-returns))
+      (unless returns
+        (error 'failure-return "elab の入口が failure return の印を設定していない"))
+      (set-add! returns result)
+      result)
 
     (define (resource-branch-body s member name alias body [alias-span s])
       (if alias
@@ -2123,6 +2142,109 @@
               (map second branch-results)))
        core-type))
 
+    (define (synth-eliminate scrutinee-result branches eliminate-span
+                             environment delta propositions boundaries)
+      (define scrutinee-type (judgment-type scrutinee-result))
+      (cond
+        [(or (root-owned-union? scrutinee-type)
+             (union-type? scrutinee-type))
+         (union-eliminate scrutinee-result branches #f eliminate-span
+                          environment delta propositions boundaries)]
+        [(ormap member-pattern? branches)
+         (reject eliminate-span 'non-union-eliminate
+                 #:phase 'typing scrutinee-type)]
+        [else
+         (define-values (data-type _rewrap)
+           (peel-eliminate-wrapper scrutinee-type))
+         (unless (constructor-schema data-type)
+           (reject eliminate-span 'non-data-eliminate scrutinee-type))
+         (define-values (checked-scrutinee clauses)
+           (eliminate-front
+            (judgment-core scrutinee-result) branches eliminate-span
+            environment delta propositions boundaries
+            #:scrutinee-result scrutinee-result))
+         (for ([raw-branch (in-list branches)])
+           (match (peel-branch raw-branch)
+             [`(,_ (,_ ...) -> ,body)
+              #:when (needs-expected-type? body)
+              (reject eliminate-span 'eliminate-needs-expected-type)]
+             [_ (void)]))
+         (define results
+           (for/list ([clause (in-list clauses)])
+             (match-define
+               (list _ _ _ body branch-environment _ _ _) clause)
+             (synth body branch-environment delta propositions boundaries)))
+         (define-values (branch-cores core-type)
+           (merge-branches (map judgment-core results)
+                           (map judgment-core-type results)
+                           eliminate-span propositions))
+         (judgment
+          `(Eliminate ,eliminate-span ,(judgment-core checked-scrutinee)
+                      ,(for/list ([clause (in-list clauses)]
+                                  [core (in-list branch-cores)])
+                         (match-define
+                           (list raw-branch constructor raw-parameters _ _
+                                 field-types resource-names core-parameters)
+                           clause)
+                         (define wrapped-core
+                           (if (ormap values resource-names)
+                               `(Scope ,eliminate-span ()
+                                       ,(wrap-resource-lets
+                                         raw-parameters field-types
+                                         resource-names core))
+                               core))
+                         `(,(branch-span raw-branch) ,constructor
+                           ,core-parameters -> ,wrapped-core)))
+          core-type
+          (rows-union
+           (cons (judgment-row checked-scrutinee)
+                 (map judgment-row results))))]))
+
+    (define (try-bind-kind type)
+      (match (normalize-type type)
+        [`(Option ,_) 'option]
+        [`(Result ,_ ,_) 'result]
+        [_ #f]))
+
+    (define (try-bind-boundary s-bind kind data-type right-type boundaries)
+      (match (nearest-boundary boundaries)
+        [#f (reject s-bind 'return-outside-boundary)]
+        [`(,_ ,_ #:infer ,_)
+         (reject s-bind 'return-type-not-inferable)]
+        [`(,_ ,_ (#:probe ,_) ,_) (void)]
+        [(list _ _ boundary-type boundary-s)
+         (define compatible?
+           (match* (kind boundary-type data-type)
+             [('option `(Option ,_) `(Option ,_)) #t]
+             [('result `(Result ,_ ,boundary-error)
+                       `(Result ,_ ,right-error))
+              (type-equiv? boundary-error right-error)]
+             [(_ _ _) #f]))
+         (unless compatible?
+           (reject s-bind 'try-bind-boundary-mismatch
+                   #:related (list (list 'return-boundary boundary-s
+                                         "失敗を受ける境界"))
+                   boundary-type right-type))]))
+
+    (define (try-bind-branches s x s_x body data-type kind)
+      (match kind
+        ['option
+         (list
+          `(,s some ((#:bind ,x ,s_x)) -> ,body)
+          `(,s none () ->
+            ,(failure-return s `(Construct ,s none))))]
+        ['result
+         (define error-type (third data-type))
+         (define error-binder (fresh-union-name))
+         (define error-value
+           (if (resource-type? error-type)
+               `(Move ,s (#:var ,error-binder ,s))
+               `(#:var ,error-binder ,s)))
+         (list
+          `(,s ok ((#:bind ,x ,s_x)) -> ,body)
+          `(,s ng ((#:bind ,error-binder ,s)) ->
+            ,(failure-return s `(Construct ,s ng ,error-value))))]))
+
     ;; SUR-012。UCore+ の型欄が省略の標識かを返す。
     (define (inferred? type)
       (match type [`(#:infer ,_) #t] [_ #f]))
@@ -2939,61 +3061,24 @@
         [`(Eliminate ,scrutinee (,branches ...))
          (define scrutinee-result
            (synth scrutinee environment delta propositions boundaries))
-         (define scrutinee-type (judgment-type scrutinee-result))
-         (cond
-           [(or (root-owned-union? scrutinee-type)
-                (union-type? scrutinee-type))
-            (union-eliminate scrutinee-result branches #f s
-                             environment delta propositions boundaries)]
-           [(ormap member-pattern? branches)
-            (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
-           [else
-             (define-values (data-type _rewrap)
-               (peel-eliminate-wrapper scrutinee-type))
-             (unless (constructor-schema data-type)
-               (reject s 'non-data-eliminate scrutinee-type))
-             (let-values ([(checked-scrutinee clauses)
-                           (eliminate-front
-                            scrutinee branches s environment delta propositions
-                            boundaries #:scrutinee-result scrutinee-result)])
-               (for ([raw-branch (in-list branches)])
-                 (match (peel-branch raw-branch)
-                   [`(,_ (,_ ...) -> ,body)
-                    #:when (needs-expected-type? body)
-                    (reject s 'eliminate-needs-expected-type)]
-                   [_ (void)]))
-               (let ()
-                 (define results
-                   (for/list ([clause (in-list clauses)])
-                     (match-define
-                       (list _ _ _ body branch-environment _ _ _) clause)
-                     (synth body branch-environment
-                            delta propositions boundaries)))
-                 (define-values (branch-cores core-type)
-                   (merge-branches (map judgment-core results)
-                                   (map judgment-core-type results)
-                                   s propositions))
-                 (judgment
-                  `(Eliminate ,s ,(judgment-core checked-scrutinee)
-                              ,(for/list ([clause (in-list clauses)]
-                                          [core (in-list branch-cores)])
-                                 (match-define
-                                   (list raw-branch constructor raw-parameters _ _
-                                         field-types resource-names core-parameters)
-                                   clause)
-                                 (define wrapped-core
-                                   (if (ormap values resource-names)
-                                       `(Scope ,s ()
-                                               ,(wrap-resource-lets
-                                                 raw-parameters field-types
-                                                 resource-names core))
-                                       core))
-                                 `(,(branch-span raw-branch) ,constructor
-                                   ,core-parameters -> ,wrapped-core)))
-                  core-type
-                  (rows-union
-                   (cons (judgment-row checked-scrutinee)
-                         (map judgment-row results))))))])]
+         (synth-eliminate scrutinee-result branches s
+                          environment delta propositions boundaries)]
+
+        [`(TryBind (#:bind ,name ,name-span) ,right ,body)
+         (define scrutinee-result
+           (synth right environment delta propositions boundaries))
+         (define right-type (judgment-type scrutinee-result))
+         (define-values (data-type _rewrap)
+           (peel-eliminate-wrapper right-type))
+         (define kind (try-bind-kind data-type))
+         (unless kind
+           (reject (span-of right) 'try-bind-non-adt right-type))
+         (define bind-span (span-hull name-span (span-of right)))
+         (try-bind-boundary bind-span kind data-type right-type boundaries)
+         (synth-eliminate
+          scrutinee-result
+          (try-bind-branches s name name-span body data-type kind)
+          s environment delta propositions boundaries)]
 
         [`(Eliminate ,_ ,_)
          (reject s 'eliminate-needs-expected-type)]
@@ -3005,12 +3090,14 @@
             (reject s 'return-type-not-inferable 'return-in-synth)]
            [`(,_ ,boundary (#:probe ,candidates) ,_)
             ;; SUR-015（spec §6.2）。payload を合成できなければ本番へ回す。
-            (with-handlers ([exn:fail:elab? (λ (_) (void))])
-              (define returned-result
-                (synth returned environment delta propositions boundaries))
-              (set-box! candidates
-                        (append (unbox candidates)
-                                (list (judgment-type returned-result)))))
+            (unless (and (current-failure-returns)
+                         (set-member? (current-failure-returns) expression))
+              (with-handlers ([exn:fail:elab? (λ (_) (void))])
+                (define returned-result
+                  (synth returned environment delta propositions boundaries))
+                (set-box! candidates
+                          (append (unbox candidates)
+                                  (list (judgment-type returned-result))))))
             (judgment `(#:lit unit ,s) 'Never `((Return ,boundary Never)))]
            [`(,_ ,boundary ,return-type ,_)
             (define returned-result
@@ -3422,6 +3509,23 @@
                              environment delta propositions boundaries
                              #:scrutinee-result scrutinee-result)])]
 
+        [`(TryBind (#:bind ,name ,name-span) ,right ,body)
+         (define scrutinee-result
+           (synth right environment delta propositions boundaries))
+         (define right-type (judgment-type scrutinee-result))
+         (define-values (data-type _rewrap)
+           (peel-eliminate-wrapper right-type))
+         (define kind (try-bind-kind data-type))
+         (unless kind
+           (reject (span-of right) 'try-bind-non-adt right-type))
+         (define bind-span (span-hull name-span (span-of right)))
+         (try-bind-boundary bind-span kind data-type right-type boundaries)
+         (check-eliminate
+          right
+          (try-bind-branches s name name-span body data-type kind)
+          expected s environment delta propositions boundaries
+          #:scrutinee-result scrutinee-result)]
+
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))
          (define body-result
@@ -3553,7 +3657,7 @@
     (list (uniquify-binders (judgment-core result))
           (judgment-type result)
           (judgment-row result)
-          (reverse reversed-callables))))
+          (reverse reversed-callables)))))
 
 ;; reject は primary-span を必須の第 1 引数に取る。渡し忘れと引数の逆順、
 ;; registry に無い reason を、どれも実行時に落として fail-loud にする。
