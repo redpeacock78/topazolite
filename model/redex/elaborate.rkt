@@ -349,6 +349,122 @@
              (lambda (a e) (type-compatible? a e propositions)))
             'ok)))
 
+(define (identity-fit? actual expected context propositions)
+  (and (identity-conversion? actual expected context propositions)
+       (type-compatible? actual expected propositions)))
+
+(define (union-compatible-members actual members propositions)
+  (define exact
+    (filter (lambda (member) (type-equiv? actual member)) members))
+  (if (pair? exact)
+      exact
+      (filter (lambda (member)
+                (type-compatible? actual member propositions))
+              members)))
+
+(define (mut-union-retaggable? actual expected context propositions)
+  (define actual* (normalize-type actual))
+  (define expected* (normalize-type expected))
+  (cond
+    [(type-equiv? actual* expected*) #t]
+    [(and (pair? actual*) (eq? (car actual*) 'Record)
+          (pair? expected*) (eq? (car expected*) 'Record))
+     (define actual-row (second actual*))
+     (define expected-row (second expected*))
+     (and (= (length actual-row) (length expected-row))
+          (for/and ([expected-field (in-list expected-row)])
+            (define label (first expected-field))
+            (define actual-field (assoc label actual-row))
+            (and actual-field
+                 (eq? (third actual-field) (third expected-field))
+                 (eq? (and (member 'opt (cdddr actual-field)) #t)
+                      (and (member 'opt (cdddr expected-field)) #t))
+                 (mut-union-retaggable? (second actual-field)
+                                        (second expected-field)
+                                        context propositions))))]
+    [(and (pair? expected*) (eq? (car expected*) 'Union))
+     (for/and ([actual-member (in-list (union-members actual*))])
+       (define expected-members (union-members expected*))
+       (define compatible
+         (union-compatible-members actual-member expected-members propositions))
+       (define candidates
+         (if (pair? compatible)
+             compatible
+             (filter (lambda (member)
+                       (mut-union-retaggable? actual-member member context
+                                              propositions))
+                     expected-members)))
+       (and (= (length candidates) 1)
+            (mut-union-retaggable? actual-member (first candidates)
+                                   context propositions)))]
+    [else #f]))
+
+(define (mut-union-rebuildable? actual expected context propositions)
+  (define actual* (normalize-type actual))
+  (define expected* (normalize-type expected))
+  (if (type-compatible? actual* expected* propositions)
+      #f
+      (cond
+        [(and (pair? actual*) (eq? (car actual*) 'Record)
+              (pair? expected*) (eq? (car expected*) 'Record))
+         (define actual-row (second actual*))
+         (define expected-row (second expected*))
+         (define needs-rebuild? #f)
+         (define fields-fit?
+           (for/and ([expected-field (in-list expected-row)])
+             (define label (first expected-field))
+             (define expected-type (second expected-field))
+             (define expected-mark (third expected-field))
+             (define expected-tail (cdddr expected-field))
+             (define actual-field (assoc label actual-row))
+             (cond
+               [(not actual-field)
+                (and (member 'opt expected-tail) #t)]
+               [else
+                (define actual-type (second actual-field))
+                (define actual-mark (third actual-field))
+                (define actual-tail (cdddr actual-field))
+                (and (not (and (eq? actual-mark 'imm)
+                               (eq? expected-mark 'mut)))
+                     (or (not (member 'opt actual-tail))
+                         (member 'opt expected-tail))
+                     (if (and (eq? actual-mark 'mut)
+                              (eq? expected-mark 'mut))
+                         (and (mut-union-retaggable? actual-type expected-type
+                                                     context propositions)
+                              (unless (type-equiv? actual-type expected-type)
+                                (set! needs-rebuild? #t))
+                              #t)
+                         (if (type-compatible? actual-type expected-type
+                                               propositions)
+                             #t
+                             (and (mut-union-rebuildable?
+                                   actual-type expected-type context propositions)
+                                  (begin (set! needs-rebuild? #t) #t)))))])))
+         (and fields-fit? needs-rebuild?)]
+        [(and (pair? expected*) (eq? (car expected*) 'Union))
+         (define members (union-members expected*))
+         (define components
+           (if (and (pair? actual*) (eq? (car actual*) 'Union))
+               (union-members actual*)
+               (list actual*)))
+         (define needs-rebuild? #f)
+         (define all-fit?
+           (for/and ([component (in-list components)])
+             (define compatible
+               (union-compatible-members component members propositions))
+             (if (pair? compatible)
+                 #t
+                 (let ([rebuildable
+                        (filter (lambda (member)
+                                  (mut-union-rebuildable? component member
+                                                          context propositions))
+                                members)])
+                   (and (= (length rebuildable) 1)
+                        (begin (set! needs-rebuild? #t) #t))))))
+         (and all-fit? needs-rebuild?)]
+        [else #f])))
+
 ;; OWN-004。残余の drop が要る場合だけ Proof を挿入し、先に Owned 残余を
 ;; 取り除いた型を後続の通常の convert へ渡す。reject は呼び出し側の既存の
 ;; 判定順序に委ねる。
@@ -573,7 +689,9 @@
     (cond
       [(eq? actual-type 'Never) declared-type]
       [else
-       (unless (type-compatible? actual-type declared-type propositions)
+       (unless (or (type-compatible? actual-type declared-type propositions)
+                   (mut-union-rebuildable?
+                    actual-type declared-type '() propositions))
          (reject s 'type-mismatch declared-type actual-type))
        (match declared-type
          [`(Record ,declared-row)
@@ -600,7 +718,10 @@
     ['ok (void)]
     [`(drop-obligation ,_ ,_)
      (reject s 'owned-narrowing-needs-proof binding-type actual-type)]
-    [_ (reject s 'owned-narrowing-rejected binding-type actual-type)])
+    [_ (unless (mut-union-rebuildable?
+                actual-type binding-type (initial-candidate-context propositions)
+                propositions)
+         (reject s 'owned-narrowing-rejected binding-type actual-type))])
   binding-type)
 
 (define (free-vars/erased expression)
@@ -793,6 +914,11 @@
     (define union-reserved (form-symbols raw-expression))
     ;; mut 欄の再構築中は、その内側でも関数 adapter を作らない。
     (define mut-field-adapter-forbidden? (make-parameter #f))
+    (define mut-field-retagging? (make-parameter #f))
+    (define (conversion-noop? actual expected context propositions)
+      (if (mut-field-retagging?)
+          (type-equiv? actual expected)
+          (identity-fit? actual expected context propositions)))
     (define (contains-nfn? type)
       (or (match type [`(NFn ,_ ...) #t] [_ #f])
           (and (pair? type) (ormap contains-nfn? type))))
@@ -904,7 +1030,7 @@
                (remainder-target-type actual member)]
               [_ #f]))
           (list member kind
-                (identity-conversion? actual member context propositions)
+                (conversion-noop? actual member context propositions)
                 target)))
       (define tier1
         (for/list ([analysis (in-list analyses)]
@@ -934,9 +1060,9 @@
                                   [`(drop-obligation ,_ ,_) #t]
                                   [_ #f])
                                (fourth analysis)
-                               (identity-conversion? (fourth analysis)
-                                                     (first analysis)
-                                                     context propositions)))
+                               (conversion-noop? (fourth analysis)
+                                                 (first analysis)
+                                                 context propositions)))
           (first analysis)))
       (define tier4-rebuild
         (for/list ([analysis (in-list analyses)]
@@ -944,9 +1070,9 @@
                                   [`(drop-obligation ,_ ,_) #t]
                                   [_ #f])
                                (fourth analysis)
-                               (not (identity-conversion? (fourth analysis)
-                                                          (first analysis)
-                                                          context propositions))
+                               (not (conversion-noop? (fourth analysis)
+                                                      (first analysis)
+                                                      context propositions))
                                (rebuild-reachable? actual (first analysis)
                                                    'drop-obligation s
                                                    propositions
@@ -954,7 +1080,17 @@
           (first analysis)))
       (define tier4
         (remove-duplicates (append tier4-rebuild tier2-lossy) type-equiv?))
-      (values tier1 tier2 tier3 tier4))
+      (define fallback
+        (if (pair? tier4)
+            '()
+            (filter
+             (lambda (member)
+               ((if (mut-field-retagging?)
+                    mut-union-retaggable?
+                    mut-union-rebuildable?)
+                actual member context propositions))
+             eligible-members)))
+      (values tier1 tier2 tier3 (if (pair? tier4) tier4 fallback)))
 
     ;; 完全一致の後、損失のない成分を優先する。
     (define (choose-union-member actual expected s propositions
@@ -1010,7 +1146,7 @@
       (define-values (discharged actual*)
         (discharge-remainder core actual member s propositions))
       (define payload
-        (if (identity-conversion? actual* member context propositions)
+        (if (conversion-noop? actual* member context propositions)
             discharged
             (let-values ([(converted _type)
                           (convert discharged actual* member s propositions
@@ -1172,7 +1308,7 @@
       (define expected-union?
         (match expected* [`(Union ,_ ,_) #t] [_ #f]))
       (cond
-        [(identity-conversion? actual* expected* context propositions)
+        [(conversion-noop? actual* expected* context propositions)
          (values core actual*)]
         [(and expected-union? (not actual-union?))
          (values (union-inject core actual* expected* s propositions
@@ -1364,10 +1500,12 @@
                        [`(drop-obligation ,_ ,_)
                         (reject s 'owned-narrowing-needs-proof wrapped-type
                                 member-type)]
-                       [_ (reject s 'owned-narrowing-rejected wrapped-type
-                                  member-type)])
+                       [_ (unless (mut-union-rebuildable?
+                                   member-type wrapped-type context propositions)
+                            (reject s 'owned-narrowing-rejected wrapped-type
+                                    member-type))])
                      (let* ([source
-                             (if (or (identity-conversion?
+                             (if (or (conversion-noop?
                                       member-type expected context propositions)
                                      preserve-branch-residual?)
                                  member-core
@@ -1391,8 +1529,10 @@
                            [`(drop-obligation ,_ ,_)
                             (reject s 'owned-narrowing-needs-proof upper
                                     wrapped-type-after)]
-                           [_ (reject s 'owned-narrowing-rejected upper
-                                      wrapped-type-after)])
+                           [_ (unless (mut-union-rebuildable?
+                                       wrapped-type-after upper context propositions)
+                                (reject s 'owned-narrowing-rejected upper
+                                        wrapped-type-after))])
                          (if (type-equiv? wrapped-type-after upper)
                              wrapped-core
                              (let-values ([(rebuilt _type)
@@ -1463,15 +1603,34 @@
                            actual-type `(#:var ,binder ,s))
                      (list* label actual-type expected-mark actual-tail)))
              (cond
+               [(and (eq? actual-mark 'mut) (eq? expected-mark 'mut))
+                (cond
+                  [(type-equiv? actual-type expected-type) #f]
+                  [(mut-union-retaggable? actual-type expected-type context
+                                          propositions)
+                   (define binder (fresh-union-name))
+                   (define-values (body converted-type)
+                     (parameterize
+                         ([mut-field-adapter-forbidden? #t]
+                          [mut-field-retagging? #t])
+                       (convert `(#:var ,binder ,s) actual-type expected-type s
+                                propositions #:entry? #t #:transfer transfer)))
+                   (unless (type-equiv? converted-type expected-type)
+                     (mismatch))
+                   (list (list label binder actual-type expected-mark
+                               converted-type body)
+                         (list* label converted-type expected-mark
+                                actual-tail))]
+                  [else (mismatch)])]
                [(owned-type? actual-type)
                 ;; T-RecRewrite は root Owned の欄を identity entry に限る。
                 (unless (tag-compat? actual-type expected-type context)
                   (mismatch))
                 (and mark-changed? (identity-entry))]
-              [(identity-conversion? actual-type expected-type context
-                                      propositions)
+              [(conversion-noop? actual-type expected-type context
+                                 propositions)
                (and mark-changed? (identity-entry))]
-               [else
+              [else
                 (define binder (fresh-union-name))
                 (define-values (body converted-type)
                   (parameterize
@@ -2517,8 +2676,11 @@
            [`(drop-obligation ,_ ,_)
             (reject s 'owned-narrowing-needs-proof actual-type
                     discharged-type)]
-           [_ (reject s 'owned-narrowing-rejected actual-type
-                      discharged-type)])
+           [_ (unless (mut-union-rebuildable?
+                       discharged-type actual-type
+                       (initial-candidate-context propositions) propositions)
+                (reject s 'owned-narrowing-rejected actual-type
+                        discharged-type))])
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
@@ -2826,7 +2988,10 @@
 
     ;; 合成の結果を期待型と比べる。汎用の _ 節と E-Lambda-Infer-Check が共有する。
     (define (check-against-expected result expected s propositions)
-      (unless (type-compatible? (judgment-type result) expected propositions)
+      (unless (or (type-compatible? (judgment-type result) expected propositions)
+                  (mut-union-rebuildable?
+                   (judgment-type result) expected
+                   (initial-candidate-context propositions) propositions))
         (reject s 'type-mismatch expected (judgment-type result)))
       (define-values (core actual-type)
         (discharge-remainder (judgment-core result)
@@ -2837,8 +3002,10 @@
         [`(drop-obligation ,_ ,_)
          (reject s 'owned-narrowing-needs-proof expected
                  actual-type)]
-        [_ (reject s 'owned-narrowing-rejected expected
-                   actual-type)])
+        [_ (unless (mut-union-rebuildable?
+                    actual-type expected
+                    (initial-candidate-context propositions) propositions)
+             (reject s 'owned-narrowing-rejected expected actual-type))])
       (define-values (converted core-type)
         (convert core actual-type expected s propositions))
       (judgment converted expected (judgment-row result) core-type))
@@ -2886,8 +3053,8 @@
             (list exact)
             (if synthesized
                 (filter (λ (candidate)
-                          (identity-conversion? synthesized candidate context
-                                                 propositions))
+                          (identity-fit? synthesized candidate context
+                                         propositions))
                         candidate-members)
                 '())))
       (define (normal-path)
@@ -2986,8 +3153,11 @@
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
            (synth expression environment delta propositions boundaries))
-         (unless (type-compatible? (judgment-type result) expected
-                                   propositions)
+         (unless (or (type-compatible? (judgment-type result) expected
+                                       propositions)
+                     (mut-union-rebuildable?
+                      (judgment-type result) expected
+                      (initial-candidate-context propositions) propositions))
            (reject s 'type-mismatch expected (judgment-type result)))
          (define actual-core-type (judgment-core-type result))
          (define-values (core actual-type)
@@ -2998,8 +3168,10 @@
            [`(drop-obligation ,_ ,_)
             (reject s 'owned-narrowing-needs-proof expected
                     actual-type)]
-           [_ (reject s 'owned-narrowing-rejected expected
-                      actual-type)])
+           [_ (unless (mut-union-rebuildable?
+                       actual-type expected
+                       (initial-candidate-context propositions) propositions)
+                (reject s 'owned-narrowing-rejected expected actual-type))])
          (define-values (converted core-type)
            (convert core actual-type expected s propositions))
          (judgment converted expected (judgment-row result) core-type)]

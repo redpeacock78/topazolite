@@ -986,3 +986,144 @@
        `(Let (r let ,wrapped) (Move argument) 0)
        'Int '(Own)))))
   (check-rsd-drops artifact 1))
+
+(define row005-narrow-union (normalize-type '(Union Bool Int)))
+(define row005-wide-union
+  (normalize-type '(Union Bool (Union Int Unit))))
+(define row005-narrow-mut
+  `(Record ((a ,row005-narrow-union mut))))
+(define row005-wide-mut `(Record ((a ,row005-wide-union mut))))
+
+(test-case "ROW-005 mut 欄の Union 拡幅を Let 注釈で受理する"
+  (for ([mode (in-list '(const let mut))])
+    (match-define (list core _type _row)
+      (accepted
+       `(Fn ((x ,row005-narrow-mut)) Int ()
+            (Let (r ,mode ,row005-wide-mut) x 0))))
+    (check-true (positive? (count-nodes 'RecRewrite core)))
+    (check-true (positive? (count-nodes 'UnionEliminate core)))
+    (check-true (positive? (count-nodes 'UnionInject core)))))
+
+(test-case "ROW-005 mut 欄の Union 拡幅を Apply と結果位置で受理する"
+  (void
+   (accepted
+    `(Fn ((x ,row005-narrow-mut)) Int ()
+         (Apply (Fn ((r ,row005-wide-mut)) Int () 0) x))))
+  (match-define (list _core type _row)
+    (accepted `(Fn ((x ,row005-narrow-mut)) ,row005-wide-mut () x)))
+  (check-equal? (normalize-type (third type)) row005-wide-mut)
+  (void
+   (accepted
+    `(Fn ((x ,row005-narrow-mut)) ,row005-wide-mut () (Return x)))))
+
+(test-case "ROW-005 mut 欄は Union 成分へ拡幅して注入する"
+  (define expected `(Union ,row005-wide-mut String))
+  (match-define (list core _type _row)
+    (accepted `(Fn ((x ,row005-narrow-mut)) ,expected () x)))
+  (check-true (positive? (count-nodes 'RecRewrite core)))
+  (check-equal? (first (union-inject-members core)) row005-wide-mut))
+
+(test-case "ROW-005 mut 欄の Construct payload と Rec 欄を check する"
+  (void
+   (accepted
+    `(Fn ((x ,row005-narrow-mut)) (Option ,row005-wide-mut) ()
+         (Construct some (Types ,row005-wide-mut) x))))
+  (void
+   (accepted
+    `(Fn ((x ,row005-narrow-mut))
+         (Record ((f ,row005-wide-mut mut))) ()
+         (Rec ((f mut x)))))))
+
+(test-case "ROW-005 mut 欄の拡幅は欄単独の恒等適合でも retag entry を作る"
+  (match-define (list core _type _row)
+    (accepted
+     `(Fn ((x ,row005-narrow-mut)) Int ()
+          (Let (r let ,row005-wide-mut) x 0))))
+  (match (rec-rewrite-entries core)
+    [(list (list 'a _ _ 'mut output-type body))
+     (check-equal? output-type row005-wide-union)
+     (check-true (positive? (count-nodes 'UnionEliminate body)))
+     (check-true (positive? (count-nodes 'UnionInject body)))]
+    [other (fail-check (format "retag entry が無い: ~s" other))]))
+
+(test-case "ROW-005 imm 欄の同じ Union 対は恒等のまま作り直さない"
+  (define narrow `(Record ((a ,row005-narrow-union imm))))
+  (define wide `(Record ((a ,row005-wide-union imm))))
+  (match-define (list core _type _row)
+    (accepted `(Fn ((x ,narrow)) Int () (Let (r let ,wide) x 0))))
+  (check-equal? (count-nodes 'UnionEliminate core) 0))
+
+(test-case "ROW-005 retag の内側の imm 欄も再構成する"
+  (define inner-narrow `(Record ((v ,row005-narrow-union imm))))
+  (define inner-wide `(Record ((v ,row005-wide-union imm))))
+  (define narrow `(Record ((r ,inner-narrow mut))))
+  (define wide `(Record ((r ,inner-wide mut))))
+  (match-define (list core _type _row)
+    (accepted `(Fn ((x ,narrow)) Int () (Let (r let ,wide) x 0))))
+  (check-true (positive? (count-nodes 'RecRewrite core)))
+  (check-true (positive? (count-nodes 'UnionEliminate core))))
+
+(test-case "ROW-005 probe 4 の入れ子 mut Record の Union 拡幅を受理する"
+  (define narrow `(Record ((r (Record ((v ,row005-narrow-union imm))) mut))))
+  (define wide `(Record ((r (Record ((v ,row005-wide-union imm))) mut))))
+  (check-equal? (normalize-type narrow) narrow)
+  (check-equal? (normalize-type wide) wide)
+  (void (accepted `(Fn ((x ,narrow)) Int () (Let (r let ,wide) x 0)))))
+
+(test-case "ROW-005 平坦化した Union 成分を retag する"
+  (define narrow `(Record ((a (Union Int Unit) mut))))
+  (define wide
+    '(Record ((a (Union Bool (Union Int Unit)) mut))))
+  (void (accepted `(Fn ((x ,narrow)) Int () (Let (r let ,wide) x 0)))))
+
+(test-case "ROW-005 再構成可能な成分が複数なら ambiguous-union-member"
+  (define first-wide
+    '(Record ((a (Union Bool (Union Int Unit)) mut))))
+  (define second-wide
+    '(Record ((a (Union Bool (Union Int String)) mut))))
+  (check-equal?
+   (rejected-code
+    `(Fn ((x ,row005-narrow-mut)) Int ()
+         (Let (r let (Union ,first-wide ,second-wide)) x 0)))
+   (code 'ambiguous-union-member)))
+
+(test-case "ROW-005 既存層の一致候補を再構成候補より優先する"
+  (define expected `(Union ,row005-narrow-mut ,row005-wide-mut))
+  (match-define (list core _type _row)
+    (accepted `(Fn ((x ,row005-narrow-mut)) ,expected () x)))
+  (check-equal? (union-inject-members core) (list row005-narrow-mut)))
+
+(test-case "ROW-005 Union 成分の削減は従来どおり拒否する"
+  (check-equal?
+   (rejected-code
+    `(Fn ((x ,row005-wide-mut)) Int ()
+         (Let (r let ,row005-narrow-mut) x 0)))
+   (code 'type-mismatch)))
+
+(test-case "ROW-005 Untrusted と Refined の payload 拡幅は受理しない"
+  (define wrappers
+    (list (cons `(Untrusted ,row005-narrow-mut)
+                `(Untrusted ,row005-wide-mut))
+          (cons `(Refined ,row005-narrow-mut (Prop ValidPort))
+                `(Refined ,row005-wide-mut (Prop ValidPort)))
+          (cons `(Record ((w (Untrusted ,row005-narrow-mut) imm)))
+                `(Record ((w (Untrusted ,row005-wide-mut) imm))))
+          (cons `(Record ((w (Refined ,row005-narrow-mut (Prop ValidPort)) imm)))
+                `(Record ((w (Refined ,row005-wide-mut (Prop ValidPort)) imm))))))
+  (for ([pair (in-list wrappers)])
+    (check-equal?
+     (rejected-code
+      `(Fn ((x ,(car pair))) Int ()
+           (Let (r const ,(cdr pair)) x 0)))
+     (code 'type-mismatch))))
+
+(test-case "ROW-005 mut の Owned 欄 payload widening は従来どおり拒否する"
+  (define actual
+    '(Record ((o (Owned (Union Int Bool)) mut))))
+  (define expected
+    '(Record ((o (Owned (Union Int (Union Bool String))) mut))))
+  (check-equal?
+   (rejected-code
+    `(Fn ((x ,actual)) Int (Own)
+         (Let (r let ,expected) (Move x) 0)))
+   (code 'type-mismatch)))
