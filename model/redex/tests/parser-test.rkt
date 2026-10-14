@@ -26,8 +26,8 @@
  (check-false (redex-match? Surface ident 'return))
  (check-false (redex-match? Surface label 'derive))
  (check-false (redex-match? Surface label 'return))
- (check-false (redex-match? Surface ident 'match))
- (check-false (redex-match? Surface label 'match))
+ (check-true (redex-match? Surface ident 'match))
+ (check-true (redex-match? Surface label 'match))
  (check-true  (redex-match? Surface ident 'SInt))
  (check-true  (redex-match? Surface ident 'none)))
 
@@ -518,57 +518,84 @@
 
 (test-case
  "式の頭に置けない語は E-SUR-005 である"
- (check-equal? (p-code "if cond { 1 }") "E-SUR-005")
- (check-equal? (p-code "match e { 1 }") "E-SUR-005"))
+ (check-equal? (p-code "if cond { 1 }") "E-SUR-005"))
 
 (test-case
- "P2m1: match は SMatch と SArm になる"
- (check-match (p "match c { | red => 1 | succ(n) => n }")
+ "when の枝は改行で区切り、束縛子は空白で並べる"
+ (check-match (p "when c {\n  zero => zero\n  succ m => m\n}")
               `(SProgram ,_ ()
-                 (SMatch ,(== (sp 0 37)) (SVar ,_ c)
-                         ((SArm ,(== (sp 12 20)) (SName ,(== (sp 12 15)) red) () (SInt ,_ 1))
-                          (SArm ,(== (sp 23 35)) (SName ,_ succ)
-                                ((SName ,(== (sp 28 29)) n)) (SVar ,_ n))))))
- ;; 改行で区切った枝と、1 行に並べた枝は同じ形になる。
- (check-match (p "match c {\n  | red => 1\n  | green => 2\n}")
+                 (SMatch ,_ (SVar ,_ c)
+                         ((SArm ,_ (SName ,_ zero) () (SVar ,_ zero))
+                          (SArm ,_ (SName ,_ succ) ((SName ,_ m)) (SVar ,_ m))))))
+ (check-match (p "when c {\n  succ m => {\n    let k = m\n    k\n  }\n}")
+              `(SProgram ,_ ()
+                 (SMatch ,_ ,_
+                         ((SArm ,_ ,_ ,_
+                                (SBlock ,_ ((SBind ,_ let (SName ,_ k) #:none ,_))
+                                         (SVar ,_ k)))))))
+ (check-match (p "when c { zero => 1 }.f")
+              `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_)))
+ (check-match (p "fn f() { let n = when c { zero => 1 }\n n }\n0")
+              `(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_
+                                       (SBlock ,_ ((SBind ,_ let (SName ,_ n) #:none
+                                                            (SMatch ,_ ,_ ,_)))
+                                                (SVar ,_ n)))) ,_))
+ (check-match (p "let match = 1\n0")
+              `(SProgram ,_ ((SBind ,_ let (SName ,_ match) #:none (SInt ,_ 1)))
+                         (SInt ,_ 0))))
+
+(test-case
+ "when の不正な枝は E-SUR-005 である"
+ (for ([src (in-list '("when c { | zero => 1 }"
+                       "when c { zero => 1 succ m => m }"
+                       "when c { zero 1 }"
+                       "when c { }"
+                       "when c { succ(m) => m }"))])
+   (check-equal? (p-code src) "E-SUR-005")))
+
+(test-case
+ "P2m3a: when は SMatch と SArm になる"
+ (check-match (p "when c { red => 1\n succ n => n }")
+              `(SProgram ,_ ()
+                 (SMatch ,_ (SVar ,_ c)
+                         ((SArm ,_ (SName ,_ red) () (SInt ,_ 1))
+                          (SArm ,_ (SName ,_ succ)
+                                ((SName ,_ n)) (SVar ,_ n))))))
+ (check-match (p "when c {\n  red => 1\n  green => 2\n}")
               `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ red) () ,_)
                                              (SArm ,_ (SName ,_ green) () ,_)))))
- ;; K と K() は同じ束縛子の列を持つ。
- (check-match (p "match c { | red() => 1 }")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ red) () ,_)))))
  ;; true と false は組み込みの Bool constructor として枝の頭に置ける。
- (check-match (p "match b { | true => 1 | false => 0 }")
+ (check-match (p "when b {\n  true => 1\n  false => 0\n}")
               `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ true) () ,_)
                                              (SArm ,_ (SName ,_ false) () ,_)))))
- ;; 本体が無名関数でも、次の | で止まる。
- (check-match (p "match c { | red => x => x | green => y => y }")
+ ;; 本体が無名関数でも、枝間の改行で止まる。
+ (check-match (p "when c {\n  red => x => x\n  green => y => y\n}")
               `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ (SVar ,_ x)))
                                              (SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ (SVar ,_ y)))))))
- ;; match は primary なので suffix を続けられる。
- (check-match (p "match c { | red => r }.a")
+ ;; when は primary なので suffix を続けられる。
+ (check-match (p "when c { red => r }.a")
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_))))
 
 (test-case
- "P2m1: match の受理しない形は E-SUR-005 になる"
- (check-equal? (p-code "match c { }") "E-SUR-005")
- ;; Union member pattern は | の後の ( の位置で拒む。
- (check-equal? (p-code "match c { | (x: Int) => x }") "E-SUR-005")
- (check-equal? (diagnostic-primary-span (p "match c { | (x: Int) => x }")) (sp 12 13))
- (check-equal? (p-code "match c { | 1 => 0 }") "E-SUR-005")
- (check-equal? (p-code "match c { | red 1 }") "E-SUR-005")
- (check-equal? (p-code "match c { | succ(zero()) => 0 }") "E-SUR-005")
- (check-equal? (p-code "match c { red => 1 }") "E-SUR-005")
- (check-equal? (p-code "let match = 1\n0") "E-SUR-005"))
+ "P2m3a: when の受理しない形は E-SUR-005 になる"
+ (check-equal? (p-code "when c { }") "E-SUR-005")
+ ;; Union member pattern は P2m3b で追加する。
+ (check-equal? (p-code "when c { (x: Int) => x }") "E-SUR-005")
+ (check-equal? (diagnostic-primary-span (p "when c { (x: Int) => x }")) (sp 9 10))
+ (check-equal? (p-code "when c { 1 => 0 }") "E-SUR-005")
+ (check-equal? (p-code "when c { red 1 }") "E-SUR-005")
+ (check-equal? (p-code "when c { succ(zero()) => 0 }") "E-SUR-005")
+ (check-equal? (p-code "when c { red => 1 } trailing") "E-SUR-005"))
 
 (test-case
- "P2m1: match の parse 結果は Surface に合い、名前にも label にもならない"
- (for ([src (in-list (list "match c { | red => 1 | succ(n) => n }"
-                           "match b { | true => 1 | false => 0 }"
-                           "match c {\n  | red => 1\n  | green => 2\n}"))])
+ "P2m3a: when の parse 結果は Surface に合い、match は名前と label になる"
+ (for ([src (in-list (list "when c { red => 1\n succ n => n }"
+                           "when b { true => 1\n false => 0 }"
+                           "when c {\n red => 1\n green => 2\n}"))])
    (check-true (redex-match? Surface sprog (p src))
                (format "~a の出力が Surface に合う" src)))
- (check-false (surface-prog? `(SProgram ,s0 () (SVar ,s0 match))))
- (check-false (surface-prog? `(SProgram ,s0 () (SRec ,s0 ((SField ,s0 (SLabel ,s0 match) (SInt ,s0 0))))))))
+ (check-true (surface-prog? `(SProgram ,s0 () (SVar ,s0 match))))
+ (check-true (surface-prog? `(SProgram ,s0 () (SRec ,s0 ((SField ,s0 (SLabel ,s0 match) (SInt ,s0 0))))))))
 
 (test-case
  "予約語 for は式の頭に置けず E-SUR-005 である"

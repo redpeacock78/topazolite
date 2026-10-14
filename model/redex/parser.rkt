@@ -307,7 +307,7 @@
      (values `(SBool ,(span-at ts i) true) (add1 i))]
     [(kw? ts i 'false)
      (values `(SBool ,(span-at ts i) false) (add1 i))]
-    [(kw? ts i 'match) (parse-match ts fail i)]
+    [(kw? ts i 'when) (parse-match ts fail i)]
     [(eq? (kind-at ts i) 'ident)
      (values `(SVar ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(punct? ts i '|(|)
@@ -324,8 +324,8 @@
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail-at ts fail i)]))
 
-;; P2m spec §5.2。match expr { NL* arm (NL* arm)* NL* } である。
-;; 枝は必ず | で始まり、本体は parse-expr が止まった位置で終わる。
+;; P2m3 spec §3.1。when expr { NL* arm (NL+ arm)* NL* } である。
+;; 枝本体の後ろには改行または when の閉じ波括弧が必要である。
 (define (parse-match ts fail i)
   (define start (span-at ts i))
   (let*-values ([(scrutinee j0) (parse-expr ts fail (add1 i))]
@@ -335,12 +335,17 @@
         [(and (punct? ts j '|}|) (pair? arms))
          (values `(SMatch ,(hull start (span-at ts j)) ,scrutinee ,(reverse arms))
                  (add1 j))]
-        [(punct? ts j '\|)
-         (let-values ([(arm arm-j) (parse-arm ts fail (add1 j))])
-           (loop (skip-nl ts arm-j) (cons arm arms)))]
-        [else (fail-at ts fail j)]))))
+        [(punct? ts j '|}|) (fail-at ts fail j)]
+        [else
+         (let-values ([(arm arm-j) (parse-arm ts fail j)])
+           (define next
+             (cond [(eq? (kind-at ts arm-j) 'nl)
+                    (skip-nl ts (add1 arm-j))]
+                   [(punct? ts arm-j '|}|) arm-j]
+                   [else (fail-at ts fail arm-j)]))
+           (loop next (cons arm arms)))]))))
 
-;; P2m spec §5.2。ctor ["(" binders ")"] "=>" expr である。
+;; P2m3 spec §3.1。ctor ident* "=>" expr である。
 (define (parse-arm ts fail i)
   (define-values (name name-span)
     (cond
@@ -355,19 +360,15 @@
                    (SName ,name-span ,name) ,binders ,body)
             body-j)))
 
-;; 括弧が無い枝と空括弧の枝は、どちらも束縛子を持たない。
+;; `=>` より前の識別子は空白区切りの束縛子である。
 (define (parse-arm-binders ts fail i)
-  (if (not (punct? ts i '|(|))
-      (values '() i)
-      (let loop ([j (add1 i)] [binders '()])
-        (if (punct? ts j '|)|)
-            (values (reverse binders) (add1 j))
-            (let-values ([(name name-span name-j) (expect-ident ts fail j)])
-              (define binder `(SName ,name-span ,name))
-              (if (punct? ts name-j '|,|)
-                  (loop (add1 name-j) (cons binder binders))
-                  (let-values ([(_close close-j) (expect-punct ts fail name-j '|)|)])
-                    (values (reverse (cons binder binders)) close-j))))))))
+  (let loop ([j i] [binders '()])
+    (cond
+      [(punct? ts j '=>) (values (reverse binders) j)]
+      [(eq? (kind-at ts j) 'ident)
+       (define binder `(SName ,(span-at ts j) ,(value-at ts j)))
+       (loop (add1 j) (cons binder binders))]
+      [else (values (reverse binders) j)])))
 
 (define (parse-anon-fn ts fail i)
   (define start (span-at ts i))

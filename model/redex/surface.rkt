@@ -19,8 +19,8 @@
 ;; source-id は任意の symbol なので variable へ広げる。
 (define-extended-language Surface Span
   (usid ::= variable)
-  (ident ::= (variable-except const let mut fn type true false trait impl for derive return match))
-  (label ::= (variable-except const let mut fn type true false trait impl for derive return match))
+  (ident ::= (variable-except const let mut fn type true false trait impl for derive return when))
+  (label ::= (variable-except const let mut fn type true false trait impl for derive return when))
   (sbool ::= true false)
   (sbmode ::= const let mut)
   (sname ::= (SName s ident))

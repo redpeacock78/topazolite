@@ -64,8 +64,10 @@
  (check-equal? (map stok-value (lex/string 'src "return")) '(return eof)))
 
 (test-case
- "P2m1: match は予約語の字句になる"
- (check-equal? (kinds "match x") '(kw ident eof)))
+ "when は予約語で match は識別子の字句になる"
+ (check-equal? (kinds "when x match") '(kw ident ident eof))
+ (check-equal? (map stok-value (lex/string 'src "when x match"))
+               '(when x match eof)))
 
 (test-case
  "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
