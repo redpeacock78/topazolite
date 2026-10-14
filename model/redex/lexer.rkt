@@ -73,6 +73,16 @@
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
        (loop (+ i 2) (cons (stok 'punct '=> (span id i (+ i 2))) acc))]
+      ;; SUR-002a。複合記号を単独の ? と | より先に切る。
+      [(and (= (bytes-ref bs i) 63)
+            (< (add1 i) n)
+            (= (bytes-ref bs (add1 i)) 61))
+       (loop (+ i 2) (cons (stok 'punct '?= (span id i (+ i 2))) acc))]
+      [(and (= (bytes-ref bs i) 124)
+            (< (add1 i) n)
+            (= (bytes-ref bs (add1 i)) 62))
+       (loop (+ i 2) (cons (stok 'punct '\|>
+                                (span id i (+ i 2))) acc))]
       [(hash-ref puncts (bytes-ref bs i) #f)
        => (lambda (p)
             (loop (add1 i) (cons (stok 'punct p (span id i (add1 i))) acc)))]

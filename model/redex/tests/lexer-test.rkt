@@ -92,6 +92,20 @@
  (check-equal? (map stok-value d) (list '= '> 'eof)))
 
 (test-case
+ "SUR-002a: ?= と |> は 2 byte の 1 token である"
+ (check-equal? (map stok-value (lex/string 'src "x |> f"))
+               (list 'x (string->symbol "|>") 'f 'eof))
+ (check-equal? (map stok-value (lex/string 'src "let x ?= e"))
+               '(let x ?= e eof))
+ (check-equal? (stok-span (second (lex/string 'src "x |> f")))
+               '(#:span src 2 4)))
+
+(test-case
+ "SUR-002a: optional 欄と型位置の | は従来どおり 1 byte である"
+ (check-equal? (map stok-value (lex/string 'src "a?: Int")) '(a ? : Int eof))
+ (check-equal? (map stok-value (lex/string 'src "A | B")) '(A \| B eof)))
+
+(test-case
  "[REQ: SUR-003] !、<、> はそれぞれ 1 字句の記号になる"
  (check-equal? (kinds "!<>") '(punct punct punct eof))
  (check-equal? (map stok-value (lex/string 'src "!<>"))

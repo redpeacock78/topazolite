@@ -269,7 +269,27 @@
      (let-values ([(node j arrow?) (parse-anon-fn ts fail i)])
        ;; => の本体は expr なので、後続の postfix は本体の側で読む。
        (if arrow? (values node j) (parse-postfix-tail ts fail node j)))]
-    [else (parse-postfix ts fail i)]))
+    [else (parse-pipe ts fail i)]))
+
+;; SUR-002a。pipe ::= postfix ("|>" postfix)*。左結合で SApply へ組み替える。
+(define (parse-pipe ts fail i)
+  (let-values ([(left j) (parse-postfix ts fail i)])
+    (parse-pipe-tail ts fail left j)))
+
+(define (parse-pipe-tail ts fail left j)
+  (if (punct? ts j '\|>)
+      (let ([right-start (add1 j)])
+        (when (eof? ts right-start)
+          (fail 'surface-unexpected-token (span-at ts j)))
+        (let-values ([(right k) (parse-postfix ts fail right-start)])
+          (parse-pipe-tail ts fail (pipe-insert left right) k)))
+      (values left j)))
+
+(define (pipe-insert left right)
+  (define s (hull (node-span left) (node-span right)))
+  (match right
+    [`(SApply ,_ ,callee ,args) `(SApply ,s ,callee ,(cons left args))]
+    [_ `(SApply ,s ,right (,left))]))
 
 (define (parse-postfix ts fail i)
   (let-values ([(base i0) (parse-primary ts fail i)])

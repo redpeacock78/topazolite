@@ -60,6 +60,11 @@
 (define (p-code str)
   (define r (p str))
   (and (diagnostic? r) (diagnostic-id r)))
+(define (p-expr str)
+  (match (p str)
+    [`(SProgram ,_ ,_ ,expr) expr]
+    [other other]))
+(define (node-span n) (second n))
 
 ;; 型の構文木を取り出す。型別名の右辺は型の位置であり、Core の項を作らない。
 (define (ty-of str)
@@ -217,9 +222,47 @@
  (check-equal? (p-code "x & y") "E-SUR-005"))
 
 (test-case
- "BIT-003: |> は parser が | の位置で拒否する"
- (check-equal? (p-code "x |> f") "E-SUR-005")
- (check-equal? (diagnostic-primary-span (p "x |> f")) (sp 2 3)))
+ "SUR-002a: pipe は最後の呼び出しの先頭へ左辺を挿入する"
+ (check-match (p-expr "x |> f(a, b)")
+              `(SApply ,_ (SVar ,_ f) ((SVar ,_ x) (SVar ,_ a) (SVar ,_ b))))
+ (check-match (p-expr "x |> f")
+              `(SApply ,_ (SVar ,_ f) ((SVar ,_ x))))
+ (check-match (p-expr "x |> f()")
+              `(SApply ,_ (SVar ,_ f) ((SVar ,_ x))))
+ (check-match (p-expr "x |> g(1)(2)")
+              `(SApply ,_ (SApply ,_ (SVar ,_ g) (,_)) ((SVar ,_ x) ,_)))
+ (check-match (p-expr "x |> f |> g")
+              `(SApply ,_ (SVar ,_ g)
+                       ((SApply ,_ (SVar ,_ f) ((SVar ,_ x))))))
+ (check-match (p-expr "x |> r.g")
+              `(SApply ,_ (SProj ,_ ,_ ,_) ((SVar ,_ x)))))
+
+(test-case
+ "SUR-002a: pipe は式全体の span と左辺の span を保つ"
+ (define tree (p-expr "x |> f(a)"))
+ (check-equal? (node-span tree) (sp 0 9))
+ (check-equal? (node-span (first (fourth tree))) (sp 0 1)))
+
+(test-case
+ "SUR-002a: return は pipe 全体を値とする"
+ (check-match (p-expr "return x |> f")
+              `(SReturn ,_ (SApply ,_ (SVar ,_ f) ((SVar ,_ x))))))
+
+(test-case
+ "SUR-002a: 無名関数と pipe の優先順位を固定する"
+ ;; block lambda は括弧で囲まない限り pipe の左辺にならない。
+ (check-equal? (p-code "fn main() -> Int {\n  fn (y: Int) -> Int { y } |> f\n}")
+               "E-SUR-005")
+ (check-match (p-expr "(fn (y: Int) -> Int { y }) |> f")
+              `(SApply ,_ (SVar ,_ f) ((SFn ,_ ,_ ,_ ,_ ,_))))
+ ;; => の本体は expr なので pipe を含む。
+ (check-match (p-expr "y => y |> f")
+              `(SFn ,_ ,_ ,_ ,_ (SApply ,_ (SVar ,_ f) ((SVar ,_ y))))))
+
+(test-case
+ "SUR-002a: pipe の右辺の欠落と改行は拒否する"
+ (check-equal? (p-code "x |>") "E-SUR-005")
+ (check-equal? (p-code "fn main() -> Int {\n  x\n  |> f\n}") "E-SUR-005"))
 
 (test-case
  "整数だけの program"
@@ -495,10 +538,9 @@
  (check-equal? (p-code "List<Int>") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "List<Int>")) (sp 4 5))
  (check-equal? (p-code "1 + 2") "E-SUR-002")
- ;; ? を字句化した後、parse-expr は x の後の ? で止まり、parse-program が拒む。
+ ;; 式位置の ?= は未対応の束縛構文なので拒否する。
  (check-equal? (p-code "x ?= y") "E-SUR-005")
- (check-equal? (diagnostic-primary-span (p "x ?= y")) (sp 2 3))
- (check-equal? (p-code "x |> f") "E-SUR-005"))
+ (check-equal? (diagnostic-primary-span (p "x ?= y")) (sp 2 4)))
 
 (test-case
  "SUR-011: 明示的な戻り型を -> 無しで書くと E-SUR-005 になる"

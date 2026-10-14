@@ -37,6 +37,11 @@ let byte_nat (b: FStar.UInt8.t) : nat = FStar.UInt8.v b
 
 let byte_is (b: FStar.UInt8.t) (n: nat) : bool = byte_nat b = n
 
+let next_byte_is (rest: list FStar.UInt8.t) (n: nat) : bool =
+  match rest with
+  | b :: _ -> byte_is b n
+  | [] -> false
+
 let is_space (b: FStar.UInt8.t) : bool =
   byte_is b 32 || byte_is b 9
 
@@ -286,6 +291,20 @@ let rec scan_fuel
              scan_fuel id n j r.remaining
                ({ kind = keyword_word r.taken; span = bounded_span id n i j } :: acc)
                (fuel - 1)
+           else if byte_is b 63 && next_byte_is tl 61 then
+             (match tl with
+              | _ :: tl2 ->
+                  scan_fuel id n (i + 2) tl2
+                    ({ kind = TkPunct; span = bounded_span id n i (i + 2) } :: acc)
+                    (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
+           else if byte_is b 124 && next_byte_is tl 62 then
+             (match tl with
+              | _ :: tl2 ->
+                  scan_fuel id n (i + 2) tl2
+                    ({ kind = TkPunct; span = bounded_span id n i (i + 2) } :: acc)
+                    (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
            else if punctuation b then
              scan_fuel id n (i + 1) tl
                ({ kind = TkPunct; span = bounded_span id n i (i + 1) } :: acc)
@@ -372,6 +391,20 @@ let rec scan_fuel_span_sound id n i rest acc fuel =
              let t = { kind = keyword_word r.taken; span = bounded_span id n i j } in
              all_tokens_ok_cons id n t acc;
              scan_fuel_span_sound id n j r.remaining (t :: acc) (fuel - 1)
+           else if byte_is b 63 && next_byte_is tl 61 then
+             (match tl with
+              | _ :: tl2 ->
+                  let t = { kind = TkPunct; span = bounded_span id n i (i + 2) } in
+                  all_tokens_ok_cons id n t acc;
+                  scan_fuel_span_sound id n (i + 2) tl2 (t :: acc) (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
+           else if byte_is b 124 && next_byte_is tl 62 then
+             (match tl with
+              | _ :: tl2 ->
+                  let t = { kind = TkPunct; span = bounded_span id n i (i + 2) } in
+                  all_tokens_ok_cons id n t acc;
+                  scan_fuel_span_sound id n (i + 2) tl2 (t :: acc) (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
            else if punctuation b then
              let t = { kind = TkPunct; span = bounded_span id n i (i + 1) } in
              all_tokens_ok_cons id n t acc;
@@ -491,6 +524,48 @@ let lex_question_ok () : Lemma
       (match lex SyntheticSid [97uy; 63uy; 58uy] with
        | LexOk [a; b; c; e] -> a.kind = TkIdent && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
        | _ -> false)
+
+(* SUR-002a。?= と |> は 2 byte の 1 token である。 *)
+let lex_try_pipe_ok () : Lemma
+  ((match lex SyntheticSid [120uy; 32uy; 124uy; 62uy; 32uy; 102uy] with
+    | LexOk [x; p; f; e] ->
+        x.kind = TkIdent && p.kind = TkPunct && f.kind = TkIdent && e.kind = TkEof &&
+        x.span.startByte == 0 && x.span.endByte == 1 &&
+        p.span.startByte == 2 && p.span.endByte == 4 &&
+        f.span.startByte == 5 && f.span.endByte == 6 &&
+        e.span.startByte == 6 && e.span.endByte == 6
+    | _ -> false) /\
+   (match lex SyntheticSid [108uy; 101uy; 116uy; 32uy; 120uy; 32uy;
+                            63uy; 61uy; 32uy; 101uy] with
+    | LexOk [l; x; q; e; z] ->
+        l.kind = TkKw && x.kind = TkIdent && q.kind = TkPunct &&
+        e.kind = TkIdent && z.kind = TkEof &&
+        l.span.startByte == 0 && l.span.endByte == 3 &&
+        x.span.startByte == 4 && x.span.endByte == 5 &&
+        q.span.startByte == 6 && q.span.endByte == 8 &&
+        e.span.startByte == 9 && e.span.endByte == 10 &&
+        z.span.startByte == 10 && z.span.endByte == 10
+    | _ -> false))
+  = assert_norm
+      ((match lex SyntheticSid [120uy; 32uy; 124uy; 62uy; 32uy; 102uy] with
+        | LexOk [x; p; f; e] ->
+            x.kind = TkIdent && p.kind = TkPunct && f.kind = TkIdent && e.kind = TkEof &&
+            x.span.startByte == 0 && x.span.endByte == 1 &&
+            p.span.startByte == 2 && p.span.endByte == 4 &&
+            f.span.startByte == 5 && f.span.endByte == 6 &&
+            e.span.startByte == 6 && e.span.endByte == 6
+        | _ -> false) /\
+       (match lex SyntheticSid [108uy; 101uy; 116uy; 32uy; 120uy; 32uy;
+                                63uy; 61uy; 32uy; 101uy] with
+        | LexOk [l; x; q; e; z] ->
+            l.kind = TkKw && x.kind = TkIdent && q.kind = TkPunct &&
+            e.kind = TkIdent && z.kind = TkEof &&
+            l.span.startByte == 0 && l.span.endByte == 3 &&
+            x.span.startByte == 4 && x.span.endByte == 5 &&
+            q.span.startByte == 6 && q.span.endByte == 8 &&
+            e.span.startByte == 9 && e.span.endByte == 10 &&
+            z.span.startByte == 10 && z.span.endByte == 10
+        | _ -> false))
 
 type dkind = | DBind | DFnDecl
 

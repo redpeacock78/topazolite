@@ -9,9 +9,9 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、`?=`、pipe、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、`?=`、interpolation（`SUR-002`）、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -51,9 +51,12 @@ Surface の経路は展開表を生成しない。
 文字列リテラルは `"` で囲む。
 エスケープは `\"`、`\\`、`\n`、`\t` の 4 種だけを許す。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`|`、`&`、`!`、`<`、`>`、`?` の 16 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`?=`、`|>`、`|`、`&`、`!`、`<`、`>`、`?` の 18 種である。
 `->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 `=>` は `=` と `>` の 2 byte からなる 1 個の `punct` token である。
+`?=` は `?` と `=` の 2 byte からなる 1 個の `punct` token である。
+`|>` は `|` と `>` の 2 byte からなる 1 個の `punct` token である。
+lexer はこれら 4 種の複合記号を、各 byte の単独記号より先に照合する。
 `!`、`<`、`>`、`?` はそれぞれ 1 byte の `punct` token である。
 
 トークンの種別は `int`、`str`、`ident`、`kw`、`punct`、`nl`、`eof` の 7 種である。
@@ -83,9 +86,10 @@ traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
 fndecl   ::= "fn" ident "(" params ")" ["->" ty] ["!" row] block NL+
-expr     ::= "return" expr | lambda | postfix
+expr     ::= "return" expr | lambda | pipe
 lambda   ::= ident "=>" expr
            | "fn" "(" lparams ")" ["!" row] "=>" expr
+pipe     ::= postfix ("|>" postfix)*
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
@@ -206,11 +210,11 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
 単独の `-`、`+`、`*`、`/`、`%`、`[`、`]`、`;` は字句にならない。
-算術演算子を含む式、`?=`、pipe は、最初の未対応記号または構文に合わない token の位置で拒否する。
-`x |> f` は `E-SUR-005` になる。`List<>` は `>` の位置で `E-SUR-005` になる。
+算術演算子を含む式と式位置の `?=` は、最初の未対応記号または構文に合わない token の位置で拒否する。
+式位置の `?=` は、複合 token 全体の span で `E-SUR-005` になる。
+`List<>` は `>` の位置で `E-SUR-005` になる。
 `|` は型位置と data 型宣言の variant の区切りで受理し、`&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
-`x |> f` は、式位置の `|` で `E-SUR-005` になる。
 
 字句にはなるが構文に無い `if` と `while` は予約語ではなく `ident` になる。
 `if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
@@ -252,6 +256,31 @@ block は末尾の式を必ず持つためである。
 record の field は読点または改行で区切る。
 block の束縛と item は改行で区切る。
 `fsep` は `, NL*` または `NL+` である。
+
+#### pipe
+
+pipe は `|>` で左辺の値を右辺の関数適用へ渡す。
+pipe は `return` と無名関数を除く式で最も弱く結合し、左結合する。
+`|>` の前後に改行は置けない。
+右辺は `postfix` であり、無名関数を右辺に置くには括弧で囲む。
+括弧で囲まない無名関数は pipe の左辺にならない。
+
+右辺の最後の suffix が呼び出しなら、左辺の値をその引数列の先頭に入れる。
+`x |> f(a, b)` は `f(x, a, b)` になり、`x |> g(1)(2)` は `g(1)(x, 2)` になる。
+最後の suffix が呼び出しでなければ、右辺を関数として左辺だけを引数に渡す。
+`x |> f` は `f(x)` になり、`x |> r.g` は `r.g(x)` になる。
+この規則では `x |> f()` も `f(x)` になる。
+`x |> f |> g` は左結合により `g(f(x))` になる。
+
+parser は pipe 専用の節点を作らず、既存の `SApply` へ組み替える。
+生成する `SApply` の span は pipe 式全体を覆い、挿入した左辺は自身の span を保つ。
+評価順は通常の適用と同じで、関数、左辺、残りの引数の順である。
+これはホワイトペーパー §2.1.4 の **curry 派生**が定める引数の位置と評価順に一致する。
+ここでいう curry 派生は、Core の `Curry` 節点と同じ型検査や所有権検査を行う意味ではない。
+
+**Why not（Core の `Curry` を経由する案）**：`make() |> consume` が `consume(make())` と異なる所有権判定になるため採らない。
+**Why not（一時 `Let` で左辺を先に評価する案）**：curry 派生の評価順と食い違い、資源型の左辺を実引数へ渡すときに Surface にない `Move` が要るため採らない。
+**Why not（`SPipe` 節点を追加する案）**：pipe の意味は型や返却境界に依存せず、`SApply` への組み替えと異なる判定が無いため採らない。
 
 ### 3.5 多 field 射影の label 列
 
