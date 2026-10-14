@@ -410,6 +410,7 @@
   (define transit-index (index-of rules 'R-EliminateTransit))
   (check-not-false transit-index))
 
+;; PAT-001: root Owned Union の branch 選択を Typed Core と config 検査で検証する。
 (test-case "Owned Union の UnionEliminate は marker を外して非資源成分を選ぶ"
   (define core
     '(Scope ()

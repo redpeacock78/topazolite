@@ -1532,9 +1532,11 @@ payload はその成分型へ check し、値の型に tag を付けた後も pa
 `⊔tag` は §6.3 の tag 保存の上界を列へ畳み込む。
 入力が空なら結果は `Never` であり、畳み込みが定義されない場合は型検査に失敗する。
 `branch-view(σ, c)` は、`σ` が資源型で `c` の head が `Scope` の場合に `payload-view(σ)`、それ以外に `σ` とする。
+scrutinee の型は、直接の `Union(τ1, …, τn)` または root `Owned<Union(τ1, …, τn)>` とする。
 
 ```text
 Γ; Δ; Π; Ξ; Φ ⊢core c0 : Union(τ1, …, τn) ! ε0
+または Γ; Δ; Π; Ξ; Φ ⊢core c0 : Owned<Union(τ1, …, τn)> ! ε0
 ubr̄ = ((σ1 x1 -> c1), …, (σm xm -> cm))
 各 τi に対して type-equiv?(σk, τi) で一致する枝 k がちょうど一つある
 σ1, …, σm は重複しない。余った枝の本体も型付けする
@@ -1779,6 +1781,9 @@ marker 自身は token を持たず、payload 内部の `OwnedLeaf` は上記五
 **deferred-code** の位置は、`Handle` の handler 節、`Recur` の本体、eliminator が残っている間の `Eliminate` と `UnionEliminate` の枝本体、`R-RecRewrite-Open` より前の `RecRewrite` entry 本体（Absent になる entry を含む）である。
 deferred-code は `OwnedLeaf` も `OwnedTransit` も含まない。
 `Eliminate` と `UnionEliminate` の枝は eliminator が残る間は deferred-code であり、選択後は選ばれた枝本体が制御項となって同じ規則で検査される。
+`control-leaf-positions-ok?` は、`Eliminate` と `UnionEliminate` の scrutinee に `transit-position-ok?` を適用する。
+`transit-position-ok?` は根の `OwnedTransit` を許し、その payload 内の leaf を `observed-leaf-positions-ok?` で検査する。
+`config-ok?` は、`UnionEliminate` の scrutinee にある `OwnedTransit` の payload が `UnionVal` の場合だけ型付けする。
 `Recur` の本体に token を捕捉できないのは、`E-OWN-008` が外側の `Owned` 資源の捕捉を拒否し、仮引数が `ResourceScope` と先行 `Let` で符号化されるためである。
 根の leaf は空 path の token として `Λtok` に数え、`finLeaf` event は生成しない。
 heap entry の根にある `OwnedTransit` は拒否し、欄の内部にある marker は許す。
@@ -2059,6 +2064,17 @@ E[Eliminate(Construct(D, Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
 E[Eliminate(OwnedTransit(p, v), branches)]
   → E[Eliminate(v, branches)]
 ```
+
+**(R-UnionEliminateTransit)**
+
+```text
+E[UnionEliminate(OwnedTransit(p, UnionVal(τU, τm, v)), ubr̄)]
+  → E[UnionEliminate(UnionVal(τU, τm, v), ubr̄)]
+```
+
+この規則は marker だけを外し、heap、place 状態、token、trace を変えない。
+marker の内側を `UnionVal` に限るのは、Union でない値の型誤りを簡約の進行で隠さないためである。
+枝の選択と payload の代入は、続く `R-UnionEliminate` が行う。
 
 **(R-UnionInject)**
 

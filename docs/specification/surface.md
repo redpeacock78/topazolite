@@ -1,6 +1,6 @@
 # Topazolite Surface 構文
 
-**状態**：P2m3b 改訂版
+**状態**：P2m3c 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
 **関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/requirements.md`
 
@@ -17,7 +17,9 @@ constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
 data 型の constructor を対象とする `when` と、**Union member pattern** を含む `when` は受理する。
 Union member pattern と data constructor pattern は同じ `when` の最上位の枝に混在できる。
-root `(Owned (Union ...))` の `when` は受理しないため、`PAT-001` は完了していない。
+root `(Owned (Union ...))` の分岐は UCore と Typed Core で受理する。
+Surface では式位置の `move` 構文がないため、所有権検査が `E-OWN-010` で拒否する。
+`PAT-001` は P2m3c で完了したが、Surface から root Owned Union を消費する経路は未実装である。
 関数と型別名の宣言は型仮引数を持てない。
 型位置では `List<Int>` のような型構成子への型適用を受理する（`SUR-016`）。
 余剰 `Owned` field の明示 projection は `SUR-006` が担う。
@@ -308,10 +310,16 @@ constructor pattern の引数の中に pattern を書く入れ子の pattern は
 枝の本体で次の `when` を書けば、入れ子の分岐を表せる。
 Union の有限性と枝の成分への割り当ては elaborate が行い、Surface lowering は型環境を参照しない。
 
-直接の Union は `UnionEliminate` へ lowering する。
-root `(Owned (Union ...))` は、Union のタグと所有権を枝へ一度だけ移送する Core 規則が無いため、P2m3c まで拒否する。
-UCore のこの形は `E-TYP-029` で拒否する。
-Surface には `Move` 構文が無いため、所有値を消費する source 項はこの診断より前に所有権検査で拒否されることがある。
+直接の Union と root `(Owned (Union ...))` は、どちらも Core の `UnionEliminate` で分岐する。
+root Owned Union では `Move` 後の `OwnedTransit` を `R-UnionEliminateTransit` が外し、既存の `R-UnionEliminate` が枝を選ぶ。
+Surface には利用者が書く `Move` 構文がないため、所有値を消費する source 項は `E-OWN-010` で拒否する。
+
+### 3.8 所有権使用モードの推論と明示的 move
+
+**所有権使用モード**を指定する式位置の `move` 構文は Surface にない。
+引数型から `move`、shared use、borrow を推論する規則は未設計である。
+closure capture、FFI 境界、曖昧な overload で使う明示的な `move` も未設計である。
+elaborate は資源型の枝 binder を消費する encoding などで UCore の `Move` を生成するが、これは利用者が書く構文とは別である。
 
 ## 4. span
 
@@ -721,7 +729,9 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 1. 構文と束縛子の形を検査し、誤りを `E-SUR-005` または `E-SYN-002` とする。
 2. Union member pattern の型を解決し、未知の型名を `E-SUR-008` とする。
 3. scrutinee の型を分類する。
-   root `(Owned (Union ...))` と、Union でない scrutinee に対する Union member pattern は `E-TYP-029` とする。
+   Union でない scrutinee に対する Union member pattern は `E-TYP-029` とする。
+   root Owned Union はこの型分類では拒否しない。
+   Surface で所有値の使用が不正な場合は `E-OWN-010` とする。
    Union でない scrutinee に constructor pattern だけがあり、data 型でもない場合は `E-DAT-003` とする。
 4. Union 成分への割り当てと網羅性を検査し、不一致、曖昧な constructor 所属、不足、重複、member と constructor の併存を `E-DAT-004` とする。
    Union 注入候補用の `E-TYP-031` は pattern の曖昧さには使わない。

@@ -440,6 +440,7 @@
 (define expected-p2l2a-ids '(SUR-016))
 (define expected-p2l3c-ids '(ADT-001))
 (define expected-p2m2c2b2o-ids '(OWN-011))
+(define expected-p2m3c-ids '(PAT-001))
 
 ;; G5 の状態を名乗るが、意図して後段のサブサイクルへ送る ID。
 ;; 現在は空である。次に送る ID が出たらここへ挙げる。
@@ -720,6 +721,10 @@
     (list (build-path root "docs/specification/core-calculus.md")))
   (define p2m2c2b2o-tests
     (list (build-path root "model/redex/tests/abort-frame-cleanup-test.rkt")))
+  (define p2m3c-specs
+    (list (build-path root "docs/specification/trait.md")))
+  (define p2m3c-tests
+    (list (build-path root "model/redex/tests/owned-transit-trace-test.rkt")))
   (list
    (cycle-descriptor 'G1 "G1" g1-specs g1-tests expected-g1-count #f)
    (cycle-descriptor 'G2a "G2" g2a-specs g2a-tests #f expected-g2a-ids)
@@ -756,7 +761,8 @@
    (cycle-descriptor 'P2k1 "P2" p2k1-specs p2k1-tests #f expected-p2k1-ids)
    (cycle-descriptor 'P2l2a "P2" p2l2a-specs p2l2a-tests #f expected-p2l2a-ids)
    (cycle-descriptor 'P2l3c "P2" p2l3c-specs p2l3c-tests #f expected-p2l3c-ids)
-   (cycle-descriptor 'P2m2c2b2o "P2" p2m2c2b2o-specs p2m2c2b2o-tests #f expected-p2m2c2b2o-ids)))
+   (cycle-descriptor 'P2m2c2b2o "P2" p2m2c2b2o-specs p2m2c2b2o-tests #f expected-p2m2c2b2o-ids)
+   (cycle-descriptor 'P2m3c "P2" p2m3c-specs p2m3c-tests #f expected-p2m3c-ids)))
 
 (define (main [output (current-output-port)]
               [error-output (current-error-port)])

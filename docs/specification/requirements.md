@@ -766,7 +766,7 @@ fixed-width integer の型と literal は、幅と符号を保った表現へ lo
 
 ### PAT-001
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
 - **正典**：`docs/specification/trait.md` §9
 
@@ -975,7 +975,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
 | Surface の return 境界（式位置の `when` は P2m3a で回収済み。残る `if` と `for` の境界、文位置の Narrative、明示的な `return to`、`E-RET-003` の lint） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
-| root `Owned` Union の除去（`Move` 後の `OwnedTransit` を受ける `UnionEliminate`） | `trait.md` §9 | Phase 2 以降（P2m3c） | §4.5.3 |
+| Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
 | data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |

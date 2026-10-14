@@ -515,15 +515,14 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   P2m1 は data 型の constructor pattern に限る Surface の `match` を導入し、既存の `Eliminate` へ lowering した。
   P2m2 は Union の runtime tag、`UnionInject`、`UnionEliminate` を導入した。
   P2m3a は Surface の綴りを `when` にし、P2m3b は Union member pattern と data constructor pattern の最上位での混在を `UnionEliminate` へ lowering する。
-  root `(Owned (Union ...))` の除去は、tag と所有権を枝へ一度だけ移送する規則が未実装のため、P2m3c へ送る。
-  このため `PAT-001` は部分実装のままであり、要件の完了を意味しない。
+  P2m3c は `R-UnionEliminateTransit` を加え、root `(Owned (Union ...))` の分岐を Typed Core で受理して `PAT-001` を完了した。 [REQ: PAT-001]
   witness は存在言明であり、どの branch から来た値かを実行時に判別する情報を持たない。
   Union の runtime tag と Core eliminator は導入済みであり、この形の分岐自体は Preservation と両立する。
   当初、次の三案は採らなかった。
   branch 添字を持つ witness は、witness の意味を存在言明から位置情報へ変え、merge の局所検査を通らなくなる。
   `(Refined τ_union (FieldType label τ))` による絞り込みは、`Refined` のペイロードが validate 由来であるという RFN-001 の前提を崩す。
   runtime tag が無い段階では、`Eliminate` の分岐を Union へ拡張する案は値集合を広げる必要があったため、Phase 0 の範囲外として見送った。
-  P2m2 は tagged Union の値と eliminator を導入したが、root Owned Union は別の所有権移送規則を要する。
+  `R-UnionEliminateTransit` は marker だけを外し、枝の選択と payload の移送は既存の `R-UnionEliminate` に委ねる。
 - **合成 Proof 値の入れ子と直接実装**：合成 trait を成分とする intersect 行と、合成 trait への直接 impl の禁止は、G2g が §4.3 と §4.4 として回収した。
   合成候補の `ProofRep` を値として生成する primitive は、上の「合成 Proof 値と primitive」のとおり未回収である。
 - **recursive Union の opaque identity**：G2e は有限に正規化できる Union だけを扱う。
