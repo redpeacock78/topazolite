@@ -609,6 +609,7 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 - **由来**：ホワイトペーパー §15
 
 `?=`、pipe、interpolation は、対応する Core の制御または値の形へ意味論を保って lowering されなければならない。
+現状では、`?=` と pipe は実装済みであり、interpolation は未実装である。
 
 ### SUR-003
 
@@ -1011,7 +1012,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 整数リテラルを含む項が性質 8 の検査域から外れること | `borrow.md` §14 | Phase 未定 | §4.8 |
 | `Foreign` の Effect label | `core-calculus.md` §3.2 | Phase 3 以降（FFI-003） | §5.2 |
 | `IO` と `Async` の Effect label | `surface.md` §3 | Phase 3 以降 | §5.1 |
-| `State<S>` と `Throw<E>` の Effect label | `surface.md` §3 | Phase 未定 | §5.1 |
+| `State<S>` と `Throw<E>` の Effect label（`?=` の失敗を `Throw` で伝播する経路を含む） | `surface.md` §3、`core-calculus.md` §4.5 | Phase 未定 | §5.1 |
 | `Allocation`、`Volatile`、`Atomic` の Effect label | `surface.md` §3 | Phase 3 以降 | §5.1 |
 | Surface の `Unsafe` label と unsafe 境界 | `surface.md` §3 | Surface に unsafe 境界を足す段階 | §5.1 |
 | 省略した Effect row の推論 | `surface.md` §3 | Phase 未定 | §5.1 |
