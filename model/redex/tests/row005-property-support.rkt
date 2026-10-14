@@ -3,10 +3,13 @@
 (require rackunit
          racket/list
          racket/match
+         redex/reduction-semantics
          "../compat.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../gen.rkt"
+         "../machine.rkt"
          "../ownership.rkt"
          "../resource-type.rkt"
          "../type-equiv.rkt"
@@ -38,6 +41,107 @@
        (type-normal? type)
        (type-shape-ok? type)
        (not (owned-union-member? type))))
+
+(define widening-b-shapes
+  '((b (Union Bool Int) mut)
+    (b (Union Bool (Union Int Unit)) mut)))
+
+(define R-widening
+  (for*/list ([a (in-list a-types)] [b (in-list widening-b-shapes)])
+    (normalize-type `(Record ((a ,a imm) ,b)))))
+
+(define widening-pairs
+  (for*/list ([actual (in-list R-widening)]
+              [expected (in-list R-widening)]
+              #:when (and (well-formed-generated-type? actual)
+                          (well-formed-generated-type? expected)
+                          (tag-compat? actual expected)
+                          (not (compat? actual expected))))
+    (list actual expected)))
+
+(define (widening-runtime-value type)
+  (match type
+    ['Int 1]
+    ['Bool '(Construct Bool true)]
+    ['String "value"]
+    [`(Union ,member ,_other)
+     `(UnionVal ,type ,member ,(widening-runtime-value member))]
+    [`(Record (,fields ...))
+     `(Rec ,(for/list ([field (in-list fields)])
+              (match field
+                [`(,label ,field-type ,mode)
+                 (list label mode (widening-runtime-value field-type))]
+                [`(,label ,field-type ,mode opt)
+                 (list label mode (widening-runtime-value field-type))])))]
+    [other (error 'widening-runtime-value "unsupported generated type: ~s" other)]))
+
+(define (widening-argument type)
+  (define heap '())
+  (define states '())
+  (define (argument-value type)
+    (match type
+      [`(Owned ,payload-type)
+       (define place (length heap))
+       (set! heap
+             (append heap
+                     (list `(,place ,(widening-runtime-value payload-type)
+                             (declared ,type)))))
+       ;; Owned 欄は Move 済み place の marker で表し、leaf token を捏造しない。
+       (set! states (append states (list `(,place Moved))))
+       `(OwnedTransit ,place ,(widening-runtime-value payload-type))]
+      [`(Record (,fields ...))
+       `(Rec ,(for/list ([field (in-list fields)])
+                (match field
+                  [`(,label ,field-type ,mode)
+                   (list label mode (argument-value field-type))]
+                  [`(,label ,field-type ,mode opt)
+                   (list label mode (argument-value field-type))])))]
+      [_ (widening-runtime-value type)]))
+  (values (argument-value type) heap states))
+
+(define (widening-trace start)
+  (let loop ([current start] [configs (list start)] [fuel 100])
+    (when (zero? fuel)
+      (error 'check-widening-trace! "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() configs]
+      [(list (list _rule next))
+       (loop next (append configs (list next)) (sub1 fuel))]
+      [steps
+       (error 'check-widening-trace! "一意な次状態を期待したが複数ある: ~s" steps)])))
+
+(define (check-widening-trace! actual expected)
+  (match (elab (conversion-program actual expected #:check-result? #t))
+    [(list core _function-type _row callables)
+     (define executable (execution-core core callables))
+     (define-values (argument heap states) (widening-argument actual))
+     (define initial
+       (match (inject-g2m `(Apply ,executable ,argument))
+         [`(cfg ,control ,initial-heap ,initial-states ,tokens ,events)
+          `(cfg ,control ,(append initial-heap heap)
+                ,(append initial-states states) ,tokens ,events)]))
+     (define configs (widening-trace initial))
+     (define rows
+       (for/list ([config (in-list configs)] [index (in-naturals)])
+         (define row (runtime-row config callables expected))
+         (check-not-false row
+                          (format "runtime row を得られない config ~a: ~s"
+                                  index config))
+         (check-true (config-ok? config callables expected row)
+                     (format "不正な中間 config ~a: ~s" index config))
+         row))
+     (for ([before (in-list rows)] [after (in-list (cdr rows))]
+           [index (in-naturals)])
+       (check-true (row-subset? after before)
+                   (format "config ~a から次の config で row が増えた: ~s -> ~s"
+                           index before after)))
+     (match* ((first configs) (last configs))
+       [(`(cfg ,_ ,_ ,_ ,initial-tokens ,_)
+         `(cfg ,_ ,_ ,_ ,final-tokens ,_))
+        (check-equal? (length final-tokens) (length initial-tokens))])]
+    [other
+     (fail-check (format "拡幅対の conversion が失敗した: ~s => ~s: ~s"
+                         actual expected other))]))
 
 (define (narrowing-kind actual expected)
   (owned-narrowing-kind actual expected compat?))

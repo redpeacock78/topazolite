@@ -4,6 +4,7 @@
          racket/match
          "../compat.rkt"
          "../ownership.rkt"
+         "../type-equiv.rkt"
          "row005-property-support.rkt")
 
 (test-case "ROW-005 convert の有限な Record 対"
@@ -19,6 +20,17 @@
   (check-equal? (sorted-counts counts)
                 '((accepted . 4) (not-compatible . 1116)))
   (displayln `(convert-union ,(hash->list counts))))
+
+(test-case "ROW-005 mut 欄の Union 拡幅対を受理し出力型が expected と一致する"
+  (check-equal? (length widening-pairs) 8)
+  (for ([pair (in-list widening-pairs)])
+    (match (run-conversion (first pair) (second pair) #:check-result? #t)
+      [`(accepted ,result-type ,_core ,_callables)
+       (check-true (type-equiv? result-type (second pair)))
+       (check-widening-trace! (first pair) (second pair))]
+      [other
+       (fail-check (format "拡幅対が受理されない: ~s => ~s: ~s"
+                           (first pair) (second pair) other))])))
 
 (test-case "Task 8 の二成分 decompose 例は convert の有限な受理群に含まれる"
   ;; この programme は convert-union 群の一件として再実行される。
