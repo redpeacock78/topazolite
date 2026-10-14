@@ -1,6 +1,7 @@
 #lang racket
 
 (require rackunit
+         racket/match
          "../lexer.rkt"
          "../diagnostic.rkt")
 
@@ -132,6 +133,70 @@
 (define (lex/string-code id str)
   (define r (lex/string id str))
   (and (diagnostic? r) (diagnostic-id r)))
+
+(define (frags str) (stok-value (first (lex/string 'src str))))
+(define (frag-shape f)
+  (match f
+    [`(text ,s ,sp) (list 'text s sp)]
+    [`(hole ,ts ,sp) (list 'hole (map stok-value ts) sp)]))
+
+(test-case
+ "SUR-002b: 穴を含む文字列は istr の 1 token であり、断片は文字と穴の並びである"
+ (check-equal? (kinds "\"a${x}b\"") '(istr eof))
+ (check-equal? (map frag-shape (frags "\"a${x}b\""))
+               '((text "a" (#:span src 1 2))
+                 (hole (x |}|) (#:span src 2 6))
+                 (text "b" (#:span src 6 7))))
+ (check-equal? (stok-span (first (lex/string 'src "\"a${x}b\"")))
+               '(#:span src 0 8)))
+
+(test-case
+ "SUR-002b: 隣り合う穴と端の穴の間には文字断片を置かない"
+ (check-equal? (map first (frags "\"${x}${y}\"")) '(hole hole))
+ (check-equal? (map first (frags "\"${x}\"")) '(hole)))
+
+(test-case
+ "SUR-002b: \\$ は穴を開始せず、$ の後ろが { でなければ通常の文字である"
+ (check-equal? (kinds "\"\\${x}\"") '(str eof))
+ (check-equal? (stok-value (first (lex/string 'src "\"\\${x}\""))) "${x}")
+ (check-equal? (stok-value (first (lex/string 'src "\"a$b\""))) "a$b"))
+
+(test-case
+ "SUR-002b: エスケープを含む文字断片の span は元の byte 範囲である"
+ (check-equal? (map frag-shape (frags "\"\\n${x}\""))
+               '((text "\n" (#:span src 1 3))
+                 (hole (x |}|) (#:span src 3 7)))))
+
+(test-case
+ "SUR-002b: 穴の終端は記号 token の } だけで決まる"
+ (check-equal? (map frag-shape (frags "\"${ { x } }\""))
+               '((hole (|{| x |}| |}|) (#:span src 1 11))))
+ (check-equal? (map stok-value (second (first (frags "\"${f(\"}\")}\""))))
+               '(f |(| "}" |)| |}|))
+ (define nested (second (first (frags "\"${f(\"${x}\")}\""))))
+ (check-equal? (map stok-kind nested) '(ident punct istr punct punct))
+ (check-equal? (map stok-value
+                    (second (first (frags "\"${ { // }\n x } }\""))))
+               '(|{| nl x |}| |}|)))
+
+(test-case
+ "SUR-002b: 穴の中の改行は nl になり、文字断片の改行だけが E-SUR-003 である"
+ (check-equal? (map stok-kind (second (first (frags "\"${ {\nx\n} }\""))))
+               '(punct nl ident nl punct punct))
+ (check-equal? (lex-code 'src #"\"a\n${x}\"") "E-SUR-003"))
+
+(test-case
+ "SUR-002b: 閉じない穴の E-SUR-003 は閉じていない最も内側の文字列の開始から入力末尾まで"
+ (check-equal? (lex/string 'src "\"a${f(")
+               (diagnostic-of 'surface 'surface-unterminated-string
+                              #:primary-span '(#:span src 0 6)))
+ (check-equal? (lex/string 'src "\"a${f(\"b")
+               (diagnostic-of 'surface 'surface-unterminated-string
+                              #:primary-span '(#:span src 6 8))))
+
+(test-case
+ "SUR-002b: 穴の中の字句の誤りは通常の字句と同じ診断になる"
+ (check-equal? (lex-code 'src #"\"${\"\\q\"}\"") "E-SUR-004"))
 
 (test-case
  "不正な byte は E-SUR-001 であり、primary span は byte 1 個を指す"

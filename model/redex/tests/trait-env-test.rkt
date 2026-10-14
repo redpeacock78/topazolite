@@ -399,7 +399,7 @@
   (custom-ledger)
   (λ ()
     (check-equal? (lowering-reason-for 'impl-env-test) 'trait-primitive)
-    (for ([name (in-list '(add sub mul lt le eq acquire))])
+    (for ([name (in-list '(add sub mul lt le eq acquire string-concat))])
       (check-false (assq name (current-trait-gamma0-entries)))))))
 
 (test-case

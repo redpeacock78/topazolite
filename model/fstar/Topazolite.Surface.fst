@@ -11,7 +11,7 @@ let within (n: nat) (s: span) : bool = span_ok s && s.endByte <= n
 let contains (p: span) (c: span) : bool =
   p.sid = c.sid && p.startByte <= c.startByte && c.endByte <= p.endByte
 
-type tkind = | TkInt | TkStr | TkIdent | TkKw | TkPunct | TkNl | TkEof
+type tkind = | TkInt | TkStr | TkIstr | TkIdent | TkKw | TkPunct | TkNl | TkEof
 type stok = { kind: tkind; span: span }
 
 type diag = { code: string; primary: span }
@@ -178,31 +178,103 @@ let codepoint_end
        | None -> j + 1)
   | [] -> j
 
+let punctuation (b: FStar.UInt8.t) : bool =
+  byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
+  byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
+  byte_is b 124 || byte_is b 38 || byte_is b 33 ||
+  byte_is b 60 || byte_is b 62 || byte_is b 63
+
 type string_scan =
-  | StringOk : nat -> list FStar.UInt8.t -> string_scan
+  | StringOk : bool -> nat -> list FStar.UInt8.t -> string_scan
   | StringFail : string -> nat -> nat -> string_scan
+
+type hole_scan =
+  | HoleOk : nat -> list FStar.UInt8.t -> hole_scan
+  | HoleFail : string -> nat -> nat -> hole_scan
 
 let rec scan_str
   (start: nat) (j: nat) (rest: list FStar.UInt8.t)
   : Tot (r:string_scan{
            match r with
-           | StringOk _ rr -> length rr <= length rest
-           | StringFail _ _ _ -> True}) (decreases rest) =
+           | StringOk _ _ rr -> length rr <= length rest
+           | StringFail _ _ _ -> True}) (decreases (length rest)) =
   match rest with
   | [] -> StringFail "E-SUR-003" start j
   | b :: tl ->
       if byte_is b 10 then StringFail "E-SUR-003" start j
-      else if byte_is b 34 then StringOk (j + 1) tl
+      else if byte_is b 34 then StringOk false (j + 1) tl
       else if byte_is b 92 then
         (match tl with
          | [] -> StringFail "E-SUR-003" start (j + 1)
          | c :: rest2 ->
              if byte_is c 10 then StringFail "E-SUR-003" start (j + 1)
              else if byte_is c 92 || byte_is c 34 ||
-                     byte_is c 110 || byte_is c 116 then
+                     byte_is c 36 || byte_is c 110 || byte_is c 116 then
                scan_str start (j + 2) rest2
              else StringFail "E-SUR-004" j (codepoint_end (j + 1) (c :: rest2)))
-      else scan_str start (j + 1) tl
+      else if byte_is b 36 && next_byte_is tl 123 then
+        (match tl with
+         | _ :: rest2 ->
+             (match scan_hole start 0 (j + 2) rest2 with
+              | HoleOk end_pos rr ->
+                  (match scan_str start end_pos rr with
+                   | StringOk _ end2 rr2 -> StringOk true end2 rr2
+                   | StringFail code fail_start fail_end ->
+                       StringFail code fail_start fail_end)
+              | HoleFail code fail_start fail_end ->
+                  StringFail code fail_start fail_end)
+         | [] -> FStar.Pervasives.false_elim ())
+      else
+        (match scan_str start (j + 1) tl with
+         | StringOk has_hole end_pos rr -> StringOk has_hole end_pos rr
+         | StringFail code fail_start fail_end ->
+             StringFail code fail_start fail_end)
+and scan_hole
+  (start: nat) (depth: nat) (j: nat) (rest: list FStar.UInt8.t)
+  : Tot (r:hole_scan{
+           match r with
+           | HoleOk _ rr -> length rr <= length rest
+           | HoleFail _ _ _ -> True}) (decreases (length rest)) =
+  match rest with
+  | [] -> HoleFail "E-SUR-003" start j
+  | b :: tl ->
+      if is_space b then scan_hole start depth (j + 1) tl
+      else if comment_start rest then
+        (match rest with
+         | _ :: _ :: tl2 ->
+             let r = skip_comment (j + 2) tl2 in
+             scan_hole start depth r.pos r.remaining
+         | _ -> FStar.Pervasives.false_elim ())
+      else if byte_is b 10 then
+        let r = scan_nl_run (j + 1) tl (length tl + 1) in
+        scan_hole start depth r.pos r.remaining
+      else if is_digit b then
+        let r = scan_int [b] tl in
+        scan_hole start depth (j + length r.taken) r.remaining
+      else if is_ident_start b then
+        let r = scan_ident [b] tl in
+        scan_hole start depth (j + length r.taken) r.remaining
+      else if byte_is b 63 && next_byte_is tl 61 then
+        (match tl with
+         | _ :: tl2 -> scan_hole start depth (j + 2) tl2
+         | [] -> FStar.Pervasives.false_elim ())
+      else if byte_is b 124 && next_byte_is tl 62 then
+        (match tl with
+         | _ :: tl2 -> scan_hole start depth (j + 2) tl2
+         | [] -> FStar.Pervasives.false_elim ())
+      else if punctuation b then
+        if byte_is b 123 then scan_hole start (depth + 1) (j + 1) tl
+        else if byte_is b 125 then
+          if depth = 0 then HoleOk (j + 1) tl
+          else scan_hole start (depth - 1) (j + 1) tl
+        else scan_hole start depth (j + 1) tl
+      else if byte_is b 34 then
+        (match scan_str j (j + 1) tl with
+         | StringOk _ end_pos rr -> scan_hole start depth end_pos rr
+         | StringFail code fail_start fail_end ->
+             HoleFail code fail_start fail_end)
+      else
+        HoleFail "E-SUR-002" j (codepoint_end j rest)
 
 let keyword_word (word: list FStar.UInt8.t) : tkind =
   match word with
@@ -256,12 +328,6 @@ val keyword_word_reserved : unit -> Lemma
    keyword_word [102uy; 111uy] == TkIdent)
 let keyword_word_reserved () = ()
 
-let punctuation (b: FStar.UInt8.t) : bool =
-  byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
-  byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
-  byte_is b 124 || byte_is b 38 || byte_is b 33 ||
-  byte_is b 60 || byte_is b 62 || byte_is b 63
-
 let rec scan_fuel
   (id: sid) (n: nat) (i: nat) (rest: list FStar.UInt8.t)
   (acc: list stok) (fuel: nat{length rest < fuel}) : Tot lex_result (decreases fuel) =
@@ -311,9 +377,10 @@ let rec scan_fuel
                (fuel - 1)
            else if byte_is b 34 then
              (match scan_str i (i + 1) tl with
-              | StringOk j rr ->
+              | StringOk has_hole j rr ->
                   scan_fuel id n j rr
-                    ({ kind = TkStr; span = bounded_span id n i j } :: acc)
+                    ({ kind = (if has_hole then TkIstr else TkStr);
+                       span = bounded_span id n i j } :: acc)
                     (fuel - 1)
               | StringFail code start j ->
                   LexFail { code = code; primary = bounded_span id n start j })
@@ -411,8 +478,9 @@ let rec scan_fuel_span_sound id n i rest acc fuel =
              scan_fuel_span_sound id n (i + 1) tl (t :: acc) (fuel - 1)
            else if byte_is b 34 then
              (match scan_str i (i + 1) tl with
-              | StringOk j rr ->
-                  let t = { kind = TkStr; span = bounded_span id n i j } in
+              | StringOk has_hole j rr ->
+                  let t = { kind = (if has_hole then TkIstr else TkStr);
+                            span = bounded_span id n i j } in
                   all_tokens_ok_cons id n t acc;
                   scan_fuel_span_sound id n j rr (t :: acc) (fuel - 1)
               | StringFail code start j ->
@@ -565,7 +633,78 @@ let lex_try_pipe_ok () : Lemma
             q.span.startByte == 6 && q.span.endByte == 8 &&
             e.span.startByte == 9 && e.span.endByte == 10 &&
             z.span.startByte == 10 && z.span.endByte == 10
-        | _ -> false))
+       | _ -> false))
+
+(* SUR-002b。interpolated string, escape, nested string, and error spans. *)
+let lex_interpolation_ok () : Lemma
+  (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 120uy; 125uy; 98uy; 34uy] with
+   | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                     s.span.endByte == 8 && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 120uy; 125uy; 98uy; 34uy] with
+       | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                        s.span.endByte == 8 && e.kind = TkEof
+       | _ -> false)
+
+let lex_escaped_dollar_ok () : Lemma
+  (match lex SyntheticSid [34uy; 92uy; 36uy; 123uy; 120uy; 125uy; 34uy] with
+   | LexOk [s; e] -> s.kind = TkStr && s.span.startByte == 0 &&
+                     s.span.endByte == 7 && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 92uy; 36uy; 123uy; 120uy; 125uy; 34uy] with
+       | LexOk [s; e] -> s.kind = TkStr && s.span.startByte == 0 &&
+                        s.span.endByte == 7 && e.kind = TkEof
+       | _ -> false)
+
+let lex_nested_string_in_hole_ok () : Lemma
+  (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy;
+                            125uy; 34uy; 41uy; 125uy; 34uy] with
+   | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                     s.span.endByte == 11 && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy;
+                               125uy; 34uy; 41uy; 125uy; 34uy] with
+       | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                        s.span.endByte == 11 && e.kind = TkEof
+       | _ -> false)
+
+let lex_nested_interpolation_in_hole_ok () : Lemma
+  (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy; 36uy;
+                            123uy; 120uy; 125uy; 34uy; 41uy; 125uy; 34uy] with
+   | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                     s.span.endByte == 14 && e.kind = TkEof
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy; 36uy;
+                               123uy; 120uy; 125uy; 34uy; 41uy; 125uy; 34uy] with
+       | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
+                        s.span.endByte == 14 && e.kind = TkEof
+       | _ -> false)
+
+let lex_unclosed_hole_span_ok () : Lemma
+  (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy] with
+   | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 0 &&
+                  d.primary.endByte == 6
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy] with
+       | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 0 &&
+                      d.primary.endByte == 6
+       | _ -> false)
+
+let lex_nested_unclosed_string_span_ok () : Lemma
+  (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy; 34uy; 98uy] with
+   | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 6 &&
+                  d.primary.endByte == 8
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy; 34uy; 98uy] with
+       | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 6 &&
+                      d.primary.endByte == 8
+       | _ -> false)
 
 type dkind = | DBind | DTryBind : string -> dkind | DFnDecl
 

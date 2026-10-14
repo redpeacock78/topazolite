@@ -4,8 +4,9 @@
 
 (provide (struct-out stok) lex lex/string keywords)
 
-;; spec §4.2。kind は int str ident kw punct nl eof のいずれかである。
+;; spec §4.2。kind は int str istr ident kw punct nl eof のいずれかである。
 (struct stok (kind value span) #:transparent)
+(struct scan-result (tokens end) #:transparent)
 
 (define keywords '(const let mut fn type true false trait impl for derive return when))
 (define puncts (hash 123 '|{| 125 '|}| 40 '|(| 41 '|)|
@@ -44,54 +45,78 @@
   (diagnostic-of 'surface key #:primary-span s))
 
 (define (scan id bs n)
+  (define result (scan-from id bs n 0 #f))
+  (if (diagnostic? result)
+      result
+      (append (scan-result-tokens result)
+              (list (stok 'eof 'eof (span id n n))))))
+
+(define (scan-from id bs n start string-start)
   ;; 走査は byte 添字で進める。char へ変換しないのは、span が byte 位置を
   ;; 指すためである。
-  (let loop ([i 0] [acc '()])
+  (let loop ([i start] [acc '()] [depth 0])
     (cond
-      [(>= i n) (reverse (cons (stok 'eof 'eof (span id n n)) acc))]
-      [(space? (bytes-ref bs i)) (loop (add1 i) acc)]
-      [(comment-start? bs n i) (loop (skip-comment bs n i) acc)]
+      [(>= i n)
+       (if string-start
+           (sur 'surface-unterminated-string (span id string-start n))
+           (scan-result (reverse acc) n))]
+      [(space? (bytes-ref bs i)) (loop (add1 i) acc depth)]
+      [(comment-start? bs n i) (loop (skip-comment bs n i) acc depth)]
       [(= (bytes-ref bs i) 10)
        (define j (skip-nl-run bs n i))
-       (loop j (cons (stok 'nl 'nl (span id i j)) acc))]
+       (loop j (cons (stok 'nl 'nl (span id i j)) acc) depth)]
       [(digit? (bytes-ref bs i))
        (define j (scan-while bs n i digit?))
        (define v (string->number (bytes->string/utf-8 (subbytes bs i j))))
-       (loop j (cons (stok 'int v (span id i j)) acc))]
+       (loop j (cons (stok 'int v (span id i j)) acc) depth)]
       [(ident-start? (bytes-ref bs i))
        (define j (scan-while bs n i ident-rest?))
        (define sym (string->symbol (bytes->string/utf-8 (subbytes bs i j))))
        (define k (if (memq sym keywords) 'kw 'ident))
-       (loop j (cons (stok k sym (span id i j)) acc))]
+       (loop j (cons (stok k sym (span id i j)) acc) depth)]
       ;; SUR-011。- は単独の記号ではなく、直後の > と合わせて 1 token にする。
       [(and (= (bytes-ref bs i) 45)
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
-       (loop (+ i 2) (cons (stok 'punct '-> (span id i (+ i 2))) acc))]
+       (loop (+ i 2) (cons (stok 'punct '-> (span id i (+ i 2))) acc) depth)]
       ;; SUR-012。=> は式本体の無名関数を導入する。
       [(and (= (bytes-ref bs i) 61)
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
-       (loop (+ i 2) (cons (stok 'punct '=> (span id i (+ i 2))) acc))]
+       (loop (+ i 2) (cons (stok 'punct '=> (span id i (+ i 2))) acc) depth)]
       ;; SUR-002a。複合記号を単独の ? と | より先に切る。
       [(and (= (bytes-ref bs i) 63)
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 61))
-       (loop (+ i 2) (cons (stok 'punct '?= (span id i (+ i 2))) acc))]
+       (loop (+ i 2) (cons (stok 'punct '?= (span id i (+ i 2))) acc) depth)]
       [(and (= (bytes-ref bs i) 124)
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
        (loop (+ i 2) (cons (stok 'punct '\|>
-                                (span id i (+ i 2))) acc))]
+                                (span id i (+ i 2))) acc) depth)]
       [(hash-ref puncts (bytes-ref bs i) #f)
        => (lambda (p)
-            (loop (add1 i) (cons (stok 'punct p (span id i (add1 i))) acc)))]
+            (define end (add1 i))
+            (define next-acc (cons (stok 'punct p (span id i end)) acc))
+            (cond
+              [(and string-start (eq? p '|}|) (zero? depth))
+               (scan-result (reverse next-acc) end)]
+              [else
+               (define next-depth
+                 (if string-start
+                     (cond [(eq? p '|{|) (add1 depth)]
+                           [(eq? p '|}|) (sub1 depth)]
+                           [else depth])
+                     depth))
+               (loop end next-acc next-depth)]))]
       [(= (bytes-ref bs i) 34)
        (define result (scan-string id bs n i))
        (if (diagnostic? result)
            result
-           (let ([j (car result)] [str (cdr result)])
-             (loop j (cons (stok 'str str (span id i j)) acc))))]
+           (let ([j (first result)]
+                 [kind (second result)]
+                 [value (third result)])
+             (loop j (cons (stok kind value (span id i j)) acc) depth)))]
       [else
        (define j (code-point-end bs n i))
        (sur 'surface-unknown-character (span id i j))])))
@@ -124,14 +149,33 @@
 ;; spec §4.5。文字列の中では、許さないエスケープが閉じない末尾より先に返る。
 ;; 逆斜線の次が入力の末尾か改行の場合は E-SUR-003 である。
 (define (scan-string id bs n i)
-  (let go ([j (add1 i)] [out '()])
+  (let go ([j (add1 i)] [text-start (add1 i)] [out '()]
+           [fragments '()] [has-hole? #f])
+    (define (decoded-text)
+      (bytes->string/utf-8 (list->bytes (reverse out))))
+    (define (close-text end)
+      (if (null? out)
+          fragments
+          (cons (list 'text (decoded-text) (span id text-start end)) fragments)))
     (cond
       [(>= j n) (sur 'surface-unterminated-string (span id i n))]
       [(= (bytes-ref bs j) 10)
        (sur 'surface-unterminated-string (span id i j))]
       [(= (bytes-ref bs j) 34)
-       (cons (add1 j)
-             (bytes->string/utf-8 (list->bytes (reverse out))))]
+       (if has-hole?
+           (list (add1 j) 'istr (reverse (close-text j)))
+           (list (add1 j) 'str (decoded-text)))]
+      [(and (= (bytes-ref bs j) 36)
+            (< (add1 j) n)
+            (= (bytes-ref bs (add1 j)) 123))
+       (define hole (scan-from id bs n (+ j 2) i))
+       (if (diagnostic? hole)
+           hole
+           (let ([end (scan-result-end hole)])
+             (go end end '()
+                 (cons (list 'hole (scan-result-tokens hole) (span id j end))
+                       (close-text j))
+                 #t)))]
       [(= (bytes-ref bs j) 92)
        (define k (add1 j))
        (cond
@@ -140,12 +184,13 @@
                (span id i (if (>= k n) n k)))]
          [else
           (define c (case (bytes-ref bs k)
-                      [(34) 34] [(92) 92] [(110) 10] [(116) 9] [else #f]))
+                      [(34) 34] [(36) 36] [(92) 92] [(110) 10] [(116) 9] [else #f]))
           (if c
-              (go (+ j 2) (cons c out))
+              (go (+ j 2) text-start (cons c out) fragments has-hole?)
               (sur 'surface-invalid-escape
                    (span id j (code-point-end bs n k))))])]
-      [else (go (add1 j) (cons (bytes-ref bs j) out))])))
+      [else (go (add1 j) text-start (cons (bytes-ref bs j) out)
+                fragments has-hole?)])))
 
 ;; UTF-8 として解釈できない最初の byte の位置を返す。無ければ #f である。
 (define (first-invalid-byte bs n)
