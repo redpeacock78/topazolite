@@ -976,6 +976,14 @@
         (set! union-counter (add1 union-counter))
         (if (set-member? union-reserved candidate) (next) candidate)))
 
+    (define (resource-branch-body s member name alias body)
+      (if alias
+          `(Scope ,s ()
+                  (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
+                       (#:var ,name ,s)
+                       ,body))
+          body))
+
     ;; 試行 Core に残余の discharge が含まれるかを調べる。
     (define (core-has-remainder-drop? core)
       (or (match core
@@ -1431,15 +1439,6 @@
                        [body (in-list bodies)])
               (match-define (list member name _alias) branch)
               `(,s (#:ty ,member ,s) (#:bind ,name ,s) -> ,body))))
-      (define (resource-branch-body member name alias body)
-        (if entry?
-            body
-            (if alias
-                `(Scope ,s ()
-                        (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
-                             ,(reference name)
-                             ,body))
-                body)))
       (define (wrap-reference mode type bound [move? #f])
         (define name (fresh-union-name))
         (define ref (reference name))
@@ -1548,7 +1547,7 @@
                                                     propositions #:entry? entry?
                                                     #:transfer transfer)])
                                rebuilt)))))))
-             (resource-branch-body member name alias converted)))
+             (resource-branch-body s member name alias converted)))
           upper)]
         [_
          (define bodies
@@ -1560,7 +1559,7 @@
                             (reference name))
                         member expected s propositions #:entry? entry?
                         #:transfer transfer))
-             (resource-branch-body member name alias body)))
+             (resource-branch-body s member name alias body)))
          ;; c2 spec §3。Union の成分は root が Owned でないので、root Owned の
          ;; expected への成分の convert は手前で落ち、ここへは届かない。
          (when (owned-type? expected)
@@ -1972,18 +1971,29 @@
         (for/list ([group (in-list groups)])
           (match-define (list member-type branch-group) group)
           (define member-pattern? (eq? (first branch-group) 'member))
+          (define source-binder
+            (and member-pattern? (peel-bind (fourth branch-group))))
+          (define resource-member? (resource-type? member-type))
           (define binder
-            (if member-pattern?
-                (peel-bind (fourth branch-group))
+            (if (and member-pattern? (not resource-member?))
+                source-binder
                 (fresh-union-name)))
+          (define alias
+            (and resource-member?
+                 (or source-binder
+                     (fresh-owned-name (set-add union-reserved binder)))))
+          (define body-binder (or alias binder))
           (define branch-environment
-            (extend environment (list binder) (list member-type) #f
-                    (list (resource-type? member-type))))
+            (extend environment (list body-binder) (list member-type) #f
+                    (list resource-member?)))
           (define body-expression
             (if member-pattern?
                 (fifth branch-group)
                 `(Eliminate ,eliminate-span
-                            (#:var ,binder ,eliminate-span)
+                            ,(if resource-member?
+                                 `(Move ,eliminate-span
+                                        (#:var ,body-binder ,eliminate-span))
+                                 `(#:var ,body-binder ,eliminate-span))
                             ,(map fifth branch-group))))
           (define body-result
             (if expected
@@ -1991,18 +2001,26 @@
                        delta propositions boundaries)
                 (synth body-expression branch-environment
                        delta propositions boundaries)))
+          (define encoded-body
+            (resource-branch-body eliminate-span member-type binder alias
+                                  (judgment-core body-result)))
           (define branch
             (if member-pattern?
                 (let ([raw-branch (sixth branch-group)])
                   (match (peel-branch raw-branch)
                     [(list raw-type raw-binder '-> _)
                      (list (branch-span raw-branch)
-                           raw-type raw-binder '-> (judgment-core body-result))]))
+                           raw-type `(#:bind ,binder ,eliminate-span)
+                           '-> encoded-body)]))
                 `(,eliminate-span
                   (#:ty ,member-type ,eliminate-span)
                   (#:bind ,binder ,eliminate-span)
-                  -> ,(judgment-core body-result))))
-          (list branch body-result)))
+                  -> ,encoded-body)))
+          (list branch
+                (judgment encoded-body
+                          (judgment-type body-result)
+                          (judgment-row body-result)
+                          (judgment-core-type body-result)))))
       (define branch-results (map second results))
       (define-values (branch-cores core-type)
         (merge-branches (map judgment-core branch-results)

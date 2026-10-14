@@ -345,7 +345,8 @@
                    [else (fail-at ts fail arm-j)]))
            (loop next (cons arm arms)))]))))
 
-;; P2m3 spec §3.1。ctor ident* "=>" expr である。
+;; P2m3 spec §3.1。constructor 枝は `ctor ident* => expr`、
+;; member 枝は `(name: type) => expr` である。
 (define (parse-arm ts fail i)
   (if (punct? ts i '|(|)
       (parse-member-arm ts fail i)

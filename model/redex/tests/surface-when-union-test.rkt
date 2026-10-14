@@ -7,7 +7,8 @@
          "../erase.rkt"
          "../elaborate.rkt"
          "../machine.rkt"
-         "../origins.rkt")
+         "../origins.rkt"
+         "../typing.rkt")
 
 (define (compile source) (compile-source/string 'src source))
 (define (check-compiled result)
@@ -39,6 +40,44 @@
          (add1 (apply + (map (lambda (child) (count-form child wanted)) (cdr tree))))]
         [(pair? tree) (apply + (map (lambda (child) (count-form child wanted)) tree))]
         [else 0]))
+
+(define (find-form tree wanted)
+  (cond [(and (pair? tree) (eq? (car tree) wanted)) tree]
+        [(pair? tree) (for/or ([child (in-list tree)]) (find-form child wanted))]
+        [else #f]))
+
+(define (check-resource-core term)
+  (match (elab term)
+    [(list core type row callables)
+     (define erased (erase-core core))
+     (define actual (core-type-of erased '() callables))
+     (define expected (list type row))
+     (check-equal? actual expected
+                   (if (equal? actual expected)
+                       ""
+                       (format "core typing diagnostic: ~s; core: ~s"
+                               (core-type-of/diagnostic erased '() callables)
+                               erased)))
+     (check-true
+      (config-ok? (inject-g2m (erase-core core)) callables type row))
+     core]
+    [(list 'err diagnostic)
+     (fail-check
+      (format "資源型 Union core の elaboration を期待したが ~a: ~a"
+              (diagnostic-id diagnostic) (diagnostic-message diagnostic)))]))
+
+(define (union-member-body core member-type)
+  (match (find-form core 'UnionEliminate)
+    [`(UnionEliminate ,_ ,_ ,branches)
+     (for/first ([branch (in-list branches)]
+                 #:when
+                 (match branch
+                   [`(,_ (#:ty ,type ,_) (#:bind ,_ ,_) -> ,_)
+                    (equal? type member-type)]
+                   [_ #f]))
+       (match branch
+         [`(,_ ,_ ,_ -> ,body) body]))]
+    [_ #f]))
 
 (define option-string
   "let option: Option<Int> = some(7)\nlet value: Option<Int> | String = option\n")
@@ -182,6 +221,73 @@
    (code "fn f(value: Int | String) -> Int {\n"
          "  when value {\n    (n: Missing) => 0\n    (s: String) => 1\n  }\n}\n0")
    "E-SUR-008"))
+
+(test-case "Owned 欄を持つ Record の member binder は資源 encoding を持つ"
+  (define record-type '(Record ((a (Owned Int) imm))))
+  (define core
+    (check-resource-core
+     `(Fn ((value (Union ,record-type Int))) Int (Own)
+          (Eliminate
+           (Move value)
+           ((,record-type record -> 1)
+            (Int number -> number))))))
+  (check-match (union-member-body core record-type)
+    `(Scope ,_ ()
+            (Let ,_ ((#:bind ,_ ,_) let (#:ty ,record-type ,_))
+                 (#:var ,_ ,_)
+                 ,_))))
+
+(test-case "Option<Owned<Int>> の member binder は資源 encoding を持つ"
+  (define option-type '(Option (Owned Int)))
+  (define core
+    (check-resource-core
+     `(Fn ((value (Union ,option-type Int))) Int (Own)
+          (Eliminate
+           (Move value)
+           ((,option-type option -> 1)
+            (Int number -> number))))))
+  (check-match (union-member-body core option-type)
+    `(Scope ,_ ()
+            (Let ,_ ((#:bind ,_ ,_) let (#:ty ,option-type ,_))
+                 (#:var ,_ ,_)
+                 ,_))))
+
+(test-case "resource data 枝は Move と未使用の両方を encoding する"
+  (define option-type '(Option (Owned Int)))
+  (for ([some-body (in-list '((Drop (Move item)) unit))])
+    (define core
+      (check-resource-core
+       `(Fn ((value (Union ,option-type Int))) Unit (Own)
+            (Eliminate
+             (Move value)
+             ((some (item) -> ,some-body)
+              (none () -> unit)
+              (Int number -> unit))))))
+    (define option-body (union-member-body core option-type))
+    (match option-body
+      [`(Scope ,_ ()
+               (Let ,_ ((#:bind ,alias ,_) let (#:ty ,option-type ,_))
+                    (#:var ,_ ,_)
+                    (Eliminate ,_ (Move ,_ (#:var ,same ,_)) ,_)))
+       (check-equal? alias same)]
+      [other (fail-check (format "resource data 枝の encoding が違う: ~s" other))])))
+
+(test-case "resource Union の枝で Move と未使用を別々に合流する"
+  (define option-type '(Option (Owned Int)))
+  (define record-type '(Record ((a (Owned Int) imm))))
+  (define core
+    (check-resource-core
+     `(Fn ((value (Union ,record-type ,option-type))) Unit (Own)
+          (Eliminate
+           (Move value)
+           ((,record-type record -> (Drop (Proj (Move record) a)))
+            (,option-type option -> unit))))))
+  (for ([member (in-list (list record-type option-type))])
+    (check-match (union-member-body core member)
+      `(Scope ,_ ()
+              (Let ,_ ((#:bind ,_ ,_) let (#:ty ,member ,_))
+                   (#:var ,_ ,_)
+                   ,_)))))
 
 (test-case "注釈の無い Union when は合成される"
   (define result
