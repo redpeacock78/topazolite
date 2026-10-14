@@ -59,13 +59,19 @@
                           (not (compat? actual expected))))
     (list actual expected)))
 
-(define (widening-runtime-value type)
+(define (widening-runtime-value type [selected-member #f])
   (match type
     ['Int 1]
     ['Bool '(Construct Bool true)]
     ['String "value"]
-    [`(Union ,member ,_other)
-     `(UnionVal ,type ,member ,(widening-runtime-value member))]
+    [`(Union ,_left ,_right)
+     (define members (union-members type))
+     (define chosen (or selected-member (first members)))
+     (unless (member chosen members equal?)
+       (error 'widening-runtime-value
+              "選択した成分が Union にありません: ~s in ~s"
+              chosen type))
+     `(UnionVal ,type ,chosen ,(widening-runtime-value chosen))]
     [`(Record (,fields ...))
      `(Rec ,(for/list ([field (in-list fields)])
               (match field
@@ -75,10 +81,10 @@
                  (list label mode (widening-runtime-value field-type))])))]
     [other (error 'widening-runtime-value "unsupported generated type: ~s" other)]))
 
-(define (widening-argument type)
+(define (widening-argument type b-member)
   (define heap '())
   (define states '())
-  (define (argument-value type)
+  (define (argument-value type [selected-member #f])
     (match type
       [`(Owned ,payload-type)
        (define place (length heap))
@@ -93,10 +99,14 @@
        `(Rec ,(for/list ([field (in-list fields)])
                 (match field
                   [`(,label ,field-type ,mode)
-                   (list label mode (argument-value field-type))]
+                   (list label mode
+                         (argument-value field-type
+                                         (and (eq? label 'b) b-member)))]
                   [`(,label ,field-type ,mode opt)
-                   (list label mode (argument-value field-type))])))]
-      [_ (widening-runtime-value type)]))
+                   (list label mode
+                         (argument-value field-type
+                                         (and (eq? label 'b) b-member)))])))]
+      [_ (widening-runtime-value type selected-member)]))
   (values (argument-value type) heap states))
 
 (define (widening-trace start)
@@ -110,11 +120,11 @@
       [steps
        (error 'check-widening-trace! "一意な次状態を期待したが複数ある: ~s" steps)])))
 
-(define (check-widening-trace! actual expected)
+(define (check-widening-trace! actual expected b-member)
   (match (elab (conversion-program actual expected #:check-result? #t))
     [(list core _function-type _row callables)
      (define executable (execution-core core callables))
-     (define-values (argument heap states) (widening-argument actual))
+     (define-values (argument heap states) (widening-argument actual b-member))
      (define initial
        (match (inject-g2m `(Apply ,executable ,argument))
          [`(cfg ,control ,initial-heap ,initial-states ,tokens ,events)

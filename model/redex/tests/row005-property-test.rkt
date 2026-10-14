@@ -26,11 +26,21 @@
   (for ([pair (in-list widening-pairs)])
     (match (run-conversion (first pair) (second pair) #:check-result? #t)
       [`(accepted ,result-type ,_core ,_callables)
-       (check-true (type-equiv? result-type (second pair)))
-       (check-widening-trace! (first pair) (second pair))]
+       (check-true (type-equiv? result-type (second pair)))]
       [other
        (fail-check (format "拡幅対が受理されない: ~s => ~s: ~s"
-                           (first pair) (second pair) other))])))
+                           (first pair) (second pair) other))]))
+  (define trace-cases
+    (for*/list ([pair (in-list widening-pairs)]
+                [b-member
+                 (in-list
+                  (union-members
+                   (second (assoc 'b (second (first pair))))))])
+      (list pair b-member)))
+  (check-equal? (length trace-cases) 16)
+  (for ([trace-case (in-list trace-cases)])
+    (match-define (list pair b-member) trace-case)
+    (check-widening-trace! (first pair) (second pair) b-member)))
 
 (test-case "Task 8 の二成分 decompose 例は convert の有限な受理群に含まれる"
   ;; この programme は convert-union 群の一件として再実行される。
