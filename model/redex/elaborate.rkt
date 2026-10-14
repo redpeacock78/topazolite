@@ -976,10 +976,10 @@
         (set! union-counter (add1 union-counter))
         (if (set-member? union-reserved candidate) (next) candidate)))
 
-    (define (resource-branch-body s member name alias body)
+    (define (resource-branch-body s member name alias body [alias-span s])
       (if alias
           `(Scope ,s ()
-                  (Let ,s ((#:bind ,alias ,s) let (#:ty ,member ,s))
+                  (Let ,s ((#:bind ,alias ,alias-span) let (#:ty ,member ,s))
                        (#:var ,name ,s)
                        ,body))
           body))
@@ -1971,13 +1971,19 @@
         (for/list ([group (in-list groups)])
           (match-define (list member-type branch-group) group)
           (define member-pattern? (eq? (first branch-group) 'member))
+          (define source-binder-node
+            (and member-pattern? (fourth branch-group)))
           (define source-binder
-            (and member-pattern? (peel-bind (fourth branch-group))))
+            (and source-binder-node (peel-bind source-binder-node)))
           (define resource-member? (resource-type? member-type))
           (define binder
             (if (and member-pattern? (not resource-member?))
                 source-binder
                 (fresh-union-name)))
+          (define alias-span
+            (if source-binder-node
+                (wrapper-span source-binder-node)
+                eliminate-span))
           (define alias
             (and resource-member?
                  (or source-binder
@@ -2003,14 +2009,17 @@
                        delta propositions boundaries)))
           (define encoded-body
             (resource-branch-body eliminate-span member-type binder alias
-                                  (judgment-core body-result)))
+                                  (judgment-core body-result) alias-span))
           (define branch
             (if member-pattern?
                 (let ([raw-branch (sixth branch-group)])
                   (match (peel-branch raw-branch)
                     [(list raw-type raw-binder '-> _)
                      (list (branch-span raw-branch)
-                           raw-type `(#:bind ,binder ,eliminate-span)
+                           raw-type
+                           (if resource-member?
+                               `(#:bind ,binder ,eliminate-span)
+                               raw-binder)
                            '-> encoded-body)]))
                 `(,eliminate-span
                   (#:ty ,member-type ,eliminate-span)

@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         "../annotate.rkt"
          "../diagnostic.rkt"
          "../driver.rkt"
          "../erase.rkt"
@@ -45,6 +46,18 @@
   (cond [(and (pair? tree) (eq? (car tree) wanted)) tree]
         [(pair? tree) (for/or ([child (in-list tree)]) (find-form child wanted))]
         [else #f]))
+
+(define (source-span source needle)
+  (match (regexp-match-positions (regexp-quote needle) source)
+    [(list (cons start end)) `(#:span src ,start ,end)]
+    [_ (error 'source-span "substring not found: ~a" needle)]))
+
+(define (replace-binder-span tree name span)
+  (match tree
+    [`(#:bind ,actual ,_) #:when (eq? actual name) `(#:bind ,actual ,span)]
+    [(list parts ...) (map (lambda (part) (replace-binder-span part name span))
+                           parts)]
+    [_ tree]))
 
 (define (check-resource-core term)
   (match (elab term)
@@ -97,6 +110,49 @@
                               "}\nanswer")))
     (check-compiled result)
     (when (compiled? result) (check-equal? (run-value result) expected))))
+
+(test-case "member 枝は source binder span を保つ"
+  (define source
+    (string-append
+     "let value: Int | String = 42\n"
+     "let answer = when value {\n"
+     "  (n: Int) => n\n"
+     "  (s: String) => 0\n"
+     "}\nanswer"))
+  (define result (compile source))
+  (check-compiled result)
+  (when (compiled? result)
+    (define span (source-span source "n: Int"))
+    (match-define `(#:span src ,start ,_) span)
+    (match (find-form (compiled-core result) 'UnionEliminate)
+      [`(UnionEliminate ,_ ,_ ,branches)
+       (define branch
+         (for/first ([branch (in-list branches)]
+                     #:when (match branch
+                              [`(,_ (#:ty Int ,_) (#:bind ,_ ,_) -> ,_) #t]
+                              [_ #f]))
+           branch))
+       (match branch
+         [`(,_ (#:ty Int ,_) (#:bind ,_ ,binder-span) -> ,_)
+          (check-equal? binder-span `(#:span src ,start ,(add1 start)))]
+         [_ (fail-check (format "Int member branch を期待した: ~s" branch))])]
+      [other (fail-check (format "UnionEliminate を期待した: ~s" other))]))
+  (define option-type '(Option (Owned Int)))
+  (define alias-span '(#:span src 80 86))
+  (define annotated
+    (replace-binder-span
+     (annotate-surface
+      `(Fn ((value (Union ,option-type Int))) Unit (Own)
+           (Eliminate (Move value)
+                      ((,option-type option -> unit)
+                       (Int number -> unit)))))
+     'option alias-span))
+  (define core (check-resource-core annotated))
+  (check-match (union-member-body core option-type)
+    `(Scope ,_ ()
+            (Let ,_ ((#:bind ,_ ,alias-span) let (#:ty ,option-type ,_))
+                 (#:var ,_ ,_)
+                 ,_))))
 
 (test-case "Option 成分と String 成分の constructor と member を混在できる"
   (define source
