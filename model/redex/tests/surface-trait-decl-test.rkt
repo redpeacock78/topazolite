@@ -184,7 +184,7 @@
 (define showable-src
   (string-append
    "trait Showable { show: fn(Self) -> String }\n"
-   "impl Showable for Int { show: fn(x: Int) -> String { \"i\" } }\n"
+   "impl Showable for Int { show: fn(x: Int) -> String { return \"i\" } }\n"
    "0"))
 
 ;; search-trait-integration-test.rkt の同名ヘルパーと同じ判定である。
@@ -315,7 +315,7 @@
     'src
     (string-append
      "trait Showable { show: fn(Self) -> String }\n"
-     "impl Showable for Int { show: fn(x: Int) -> Int { x } }\n"
+     "impl Showable for Int { show: fn(x: Int) -> Int { return x } }\n"
      "0")))
  (check-true (diagnostic? r))
  (check-not-equal? (diagnostic-id r) "E-SUR-017"))
@@ -324,11 +324,11 @@
  "record, function and nested function target types compile"
  (for ([impl (in-list
               (list
-               "impl Named for { n: Int } { name: fn(r: { n: Int }) -> String { \"r\" } }\n"
-               "impl Named for fn(Int) -> Int { name: fn(f: fn(Int) -> Int) -> String { \"f\" } }\n"
+               "impl Named for { n: Int } { name: fn(r: { n: Int }) -> String { return \"r\" } }\n"
+               "impl Named for fn(Int) -> Int { name: fn(f: fn(Int) -> Int) -> String { return \"f\" } }\n"
                (string-append
                 "impl Named for { g: fn(Int) -> Int } "
-                "{ name: fn(r: { g: fn(Int) -> Int }) -> String { \"g\" } }\n")))])
+                "{ name: fn(r: { g: fn(Int) -> Int }) -> String { return \"g\" } }\n")))])
    (define r
      (compile-source/string
       'src (string-append "trait Named { name: fn(Self) -> String }\n" impl "0")))

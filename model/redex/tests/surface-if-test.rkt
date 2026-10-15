@@ -86,8 +86,8 @@
        [other (fail-check (format "UCore を elaborate できなかった: ~s" other))]))))
 
 (test-case "if は条件に応じて選んだ枝を評価する"
-  (check-equal? (run-source "fn choose(b: Bool) -> Int { if b { 11 } else { 22 } }\nchoose(true)") 11)
-  (check-equal? (run-source "fn choose(b: Bool) -> Int { if b { 11 } else { 22 } }\nchoose(false)") 22))
+  (check-equal? (run-source "fn choose(b: Bool) -> Int { return if b { 11 } else { 22 } }\nchoose(true)") 11)
+  (check-equal? (run-source "fn choose(b: Bool) -> Int { return if b { 11 } else { 22 } }\nchoose(false)") 22))
 
 (test-case "選ばれない枝の return は実行されない"
   (check-equal?
@@ -95,7 +95,7 @@
     (string-append
      "fn choose(b: Bool) -> Int {\n"
      "  let ignored = if b { 7 } else { return 99 }\n"
-     "  2\n"
+     "  return 2\n"
      "}\nchoose(true)"))
    2))
 
@@ -105,23 +105,23 @@
     (string-append
      "fn choose(b: Bool) -> Int {\n"
      "  let result = if b { return 1 } else { 2 }\n"
-     "  3\n"
+     "  return 3\n"
      "}\nchoose(true)"))
    3))
 
 (test-case "else if は内側の if として評価される"
   (check-equal?
-   (run-source "fn choose(b: Bool) -> Int { if b { 1 } else if true { 2 } else { 3 } }\nchoose(false)")
+   (run-source "fn choose(b: Bool) -> Int { return if b { 1 } else if true { 2 } else { 3 } }\nchoose(false)")
    2))
 
 (test-case "条件内の return は if の枝境界を越えて外側へ届く"
   (check-equal?
    (run-source
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn f() -> Int {\n"
      "  let ignored = if identity(return 1) { true } else { false }\n"
-     "  2\n"
+     "  return 2\n"
      "}\nf()"))
    1))
 
@@ -155,11 +155,11 @@
     (string-append
      "fn f(b: Bool) -> Option<Int> {\n"
      "  let value: Option<Int> = if b { some(1) } else { none }\n"
-     "  value\n"
+     "  return value\n"
      "}\nf(true)"))
   (define returned
     (string-append
-     "fn f(b: Bool) -> Option<Int> { if b { some(1) } else { none } }\nf(false)"))
+     "fn f(b: Bool) -> Option<Int> { return if b { some(1) } else { none } }\nf(false)"))
   (for ([source (in-list (list annotated returned))])
     (define result (compile source))
     (check-true (compiled? result)
@@ -173,7 +173,7 @@
   (define source
     (string-append
      "fn choose(a: Bool, b: Bool) -> Int {\n"
-     "  if a { if b { 1 } else { 2 } } else { 3 }\n"
+     "  return if a { if b { 1 } else { 2 } } else { 3 }\n"
      "}\nchoose(true, false)"))
   (check-equal? (run-source source) 2))
 
@@ -207,7 +207,7 @@
    "E-TYP-003")
   (check-equal?
    (run-source
-    "fn f(c: Bool, option: Option<Int>) -> Option<Option<Int>> {\n let answer = if c { option }\n answer\n}\nf(true, some(9))")
+   "fn f(c: Bool, option: Option<Int>) -> Option<Option<Int>> {\n let answer = if c { option }\n return answer\n}\nf(true, some(9))")
    '(Construct (Option (Option Int)) some (Construct (Option Int) some 9))))
 
 (test-case "最後まで else の無い連鎖は Option にし、枝の型を既存合流へ渡す"
@@ -215,7 +215,7 @@
     (string-append
      "fn choose(a: Bool, b: Bool) -> Option<Int> {\n"
      " let answer = if a { 1 } else if b { 2 }\n"
-     " answer\n}\n"))
+     " return answer\n}\n"))
   (check-equal? (run-source (string-append integer-source "choose(true, false)"))
                 '(Construct (Option Int) some 1))
   (check-equal? (run-source (string-append integer-source "choose(false, true)"))
@@ -227,7 +227,7 @@
      (string-append
       "fn choose(a: Bool, b: Bool) {\n"
       " let answer = if a { 1 } else if b { \"s\" }\n"
-      " answer\n}\nchoose(false, true)")))
+      " return answer\n}\nchoose(false, true)")))
   (check-true (compiled? union-result))
   (when (compiled? union-result)
     (check-equal? (compiled-type union-result)
@@ -256,14 +256,14 @@
 (test-case "then の return は if の値となり、Option と不一致なら拒否する"
   (define source
     (string-append
-     "fn empty() -> Option<Int> { none }\n"
+     "fn empty() -> Option<Int> { return none }\n"
      "fn choose(c: Bool) -> Option<Int> {\n"
      " let ignored = if c { return empty() }\n"
-     " some(7)\n}\nchoose(true)"))
+     " return some(7)\n}\nchoose(true)"))
   (check-equal? (run-source source) '(Construct (Option Int) some 7))
   (check-equal?
    (compile-code
-    "fn f(c: Bool) -> Option<Int> { let answer = if c { return 0 }\n answer }\n0")
+   "fn f(c: Bool) -> Option<Int> { let answer = if c { return 0 }\n return answer }\n0")
    "E-TYP-012"))
 
 (test-case "全ての then が Never の IfSome は候補と期待型で型を得る"
@@ -339,7 +339,7 @@
     (compile
      (string-append
       "fn choose(c: Bool, make: fn() -> Owned<Int> ! Own) -> Int ! Own {\n"
-      " let answer = if c { make() }\n 0\n}\n0")))))
+      " let answer = if c { make() }\n return 0\n}\n0")))))
 
 (test-case "IfSome の解決済み payload 型を synth と check の両経路で保つ"
   (define cases
@@ -424,7 +424,7 @@
      "fn log(message: String) -> Unit { () }\n"
      "fn choose(c: Bool) -> Int {\n"
      " if c { log(\"enabled\") }\n"
-     " 7\n"
+     " return 7\n"
      "}\n"))
   (check-equal? (run-source (string-append source "choose(true)")) 7)
   (check-equal? (run-source (string-append source "choose(false)")) 7))
@@ -434,7 +434,7 @@
     (string-append
      "fn choose(c: Bool) -> Int {\n"
      " if c { return 1 }\n"
-     " 2\n"
+     " return 2\n"
      "}\n"))
   (check-equal? (run-source (string-append source "choose(true)")) 1)
   (check-equal? (run-source (string-append source "choose(false)")) 2))
@@ -445,7 +445,7 @@
      (string-append
       "fn choose(a: Bool, b: Bool) -> Int {\n"
       " if a { 1 } else if b { 2 }\n"
-      " 3\n"
+      " return 3\n"
       "}\nchoose(false, false)")))
   (check-true (compiled? result))
   (when (compiled? result)
@@ -453,16 +453,13 @@
     (check-false (member 'some (flatten (compiled-execution-core result))))
     (check-false (member 'none (flatten (compiled-execution-core result))))))
 
-(test-case "値位置の末尾 if は Unit に暗黙変換せず、後続の式文なら受理する"
-  (define source
-    (string-append
-     "fn log(message: String) -> Unit { () }\n"
-     "fn f(c: Bool) -> Unit { if c { log(\"x\") } }\n"
-     "fn g(c: Bool) -> Unit {\n"
-     " if c { log(\"x\") }\n"
-     " ()\n"
-     "}\n0"))
-  (define failed (compile source))
+(test-case "式位置の末尾 if は Option を返し、文位置の if は後続へ進む"
+  (define failed
+    (compile
+     (string-append
+      "fn log(message: String) -> Unit { () }\n"
+      "fn f(c: Bool) -> Unit { return if c { log(\"x\") } }\n"
+      "0")))
   (check-true (diagnostic? failed))
   (when (diagnostic? failed)
     (check-equal? (diagnostic-id failed) "E-TYP-012"))
@@ -485,30 +482,30 @@
 (test-case "第2条件の return は先行する IfSome 境界へ届き、第1条件は関数へ届く"
   (define second-condition
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn choose(a: Bool) -> Option<Int> {\n"
      " let answer: Option<Int> = if a { 1 } else if identity(return none) { 2 }\n"
-     " some(9)\n"
+     " return some(9)\n"
      "}\nchoose(false)"))
   (check-equal?
    (run-source second-condition)
    '(Construct (Option Int) some 9))
   (define first-condition
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn choose(b: Bool) -> Option<Int> {\n"
      " let answer = if identity(return none) { 1 } else if b { 2 }\n"
-     " some(9)\n"
+     " return some(9)\n"
      "}\nchoose(true)"))
   (check-equal?
    (run-source first-condition)
    '(Construct (Option Int) none))
   (define explicit
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn choose(a: Bool) -> Option<Int> {\n"
      " let answer: Option<Int> = if a { some(1) } else if identity(return none) { some(2) } else { none }\n"
-     " some(9)\n"
+     " return some(9)\n"
      "}\nchoose(false)"))
   (check-equal?
    (run-source explicit)
@@ -518,7 +515,7 @@
   (define source
     (string-append
      "fn f(a: Bool, b: Bool) -> Option<Int> { let answer = if a { 1 } else if b { 2 }\n"
-     " answer\n}\nf(false, true)"))
+     " return answer\n}\nf(false, true)"))
   (define result (compile source))
   (check-true (compiled? result))
   (when (compiled? result)

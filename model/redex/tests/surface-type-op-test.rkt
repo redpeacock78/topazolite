@@ -40,7 +40,7 @@
 (test-case
  "BIT-003: Record の Intersection は一つの Record に正規化される"
  (define r (compile (string-append
-                     "fn bool(x: Bool) -> Bool { x }\n"
+                     "fn bool(x: Bool) -> Bool { return x }\n"
                      "let r: { a: Int } & { b: Bool } = { a: 1, b: bool(true) }\nr")))
  (check-true (compiled? r) (format "compile failed: ~s" r))
  (check-equal? (compiled-type r) '(Record ((a Int imm) (b Bool imm)))))
@@ -85,7 +85,7 @@
 
 (test-case
  "BIT-003: Self を含む & は impl の対象型で具体化して正規化する"
- (define src (string-append "fn bool(x: Bool) -> Bool { x }\n"
+ (define src (string-append "fn bool(x: Bool) -> Bool { return x }\n"
                             "trait P { f: Self & { required: Int } }\n"
                             "impl P for { own: Bool } { f: { own: bool(true), required: 1 } }\n0"))
  (define low (lower src))

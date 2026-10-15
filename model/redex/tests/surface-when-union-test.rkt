@@ -203,7 +203,7 @@
       "    (n: Int) => fn (x: Int) => captured\n"
       "    (s: String) => fn (x: Int) => captured\n"
       "  }\n"
-      "  f(0)\n"
+      "  return f(0)\n"
       "}\napply(1, 37)")))
   (check-compiled result)
   (when (compiled? result) (check-equal? (run-value result) 37)))

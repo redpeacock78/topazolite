@@ -57,7 +57,7 @@
               "    true => return 1\n"
               "    false => 0\n"
               "  }\n"
-              "  2\n"
+              "  return 2\n"
               "}\n"
               "f(true)")))
   (check-true (compiled? result))
@@ -66,13 +66,13 @@
 (test-case "非変数 scrutinee の return は when の境界を越える"
   (define result
     (compile (string-append
-              "fn identity(x: Bool) -> Bool { x }\n"
+              "fn identity(x: Bool) -> Bool { return x }\n"
               "fn f() -> Int {\n"
               "  let ignored = when identity(return 1) {\n"
               "    true => 3\n"
               "    false => 4\n"
               "  }\n"
-              "  2\n"
+              "  return 2\n"
               "}\n"
               "f()")))
   (check-true (compiled? result))
@@ -92,7 +92,7 @@
               "    }\n"
               "    false => 0\n"
               "  }\n"
-              "  outer\n"
+              "  return outer\n"
               "}\n"
               "f()")))
   (check-true (compiled? result))
@@ -106,7 +106,7 @@
               "    true => fn(x: Int) -> Int { return x }(1)\n"
               "    false => 0\n"
               "  }\n"
-              "  2\n"
+              "  return 2\n"
               "}\n"
               "f()")))
   (check-true (compiled? result))
@@ -132,7 +132,7 @@
               "    true => return 11\n"
               "    false => return 22\n"
               "  }\n"
-              "  n\n"
+              "  return n\n"
               "}\n"
               "f(true)")))
   (check-true (compiled? result))
@@ -175,6 +175,7 @@
      "    ok x => 1\n"
      "    ng y => 0\n"
      "  }\n"
+     "  return 0\n"
      "}\n"
      "0"))
   (define source-result (compile source))
@@ -211,7 +212,7 @@
 
 (test-case "Never scrutinee は E-DAT-003 と Never を保つ"
   (define result
-    (compile "fn f() -> Int { when (return 1) { true => 2\n false => 3 } }\nf()"))
+    (compile "fn f() -> Int { return when (return 1) { true => 2\n false => 3 } }\nf()"))
   (check-true (diagnostic? result))
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) "E-DAT-003")
@@ -220,16 +221,16 @@
 (test-case "検査位置の非変数 scrutinee の when は期待型を受け取る"
   (define source
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn fromLet(b: Bool) -> Option<Int> {\n"
      "  let result: Option<Int> = when identity(b) {\n"
      "    true => some(1)\n"
      "    false => none\n"
      "  }\n"
-     "  result\n"
+     "  return result\n"
      "}\n"
      "fn fromReturn(b: Bool) -> Option<Int> {\n"
-     "  when identity(b) {\n"
+     "  return when identity(b) {\n"
      "    true => some(1)\n"
      "    false => none\n"
      "  }\n"

@@ -153,8 +153,8 @@
   (check-equal? (code "type X = Missing\ntype T =\n  | nil\n0") "E-SUR-008"))
 
 (test-case "data 型を引数と返り値に持つ関数が compile できる"
-  (check-true (compiled? (compile "type T =\n  | a\n  | b\nfn f(x: T) -> T { x }\n0")))
-  (check-true (compiled? (compile "type Box<A> =\n  | box<A>\nfn f(x: Box<Int>) -> Box<Int> { x }\n0"))))
+  (check-true (compiled? (compile "type T =\n  | a\n  | b\nfn f(x: T) -> T { return x }\n0")))
+  (check-true (compiled? (compile "type Box<A> =\n  | box<A>\nfn f(x: Box<Int>) -> Box<Int> { return x }\n0"))))
 
 (test-case "非正則な再帰は E-SUR-033 で、欄の型を primary にする"
   ;; 欄 N<List<A>> は 19-29、宣言の名前 N は 5-6。
@@ -187,14 +187,14 @@
 
 (test-case "data 型への impl は host 例外を出さない"
   (check-true (compiled? (compile
-                          "type T =\n  | k\nimpl Sizable for T { size: fn(x: T) -> Int { 0 } }\n0")))
+                          "type T =\n  | k\nimpl Sizable for T { size: fn(x: T) -> Int { return 0 } }\n0")))
   (check-true (compiled? (compile
-                          "type Box<A> =\n  | box<A>\nimpl Sizable for Box<Int> { size: fn(x: Box<Int>) -> Int { 0 } }\n0"))))
+                          "type Box<A> =\n  | box<A>\nimpl Sizable for Box<Int> { size: fn(x: Box<Int>) -> Int { return 0 } }\n0"))))
 
 (test-case "template の欄が原文の data 型を含む trait と impl は host 例外を出さない"
   (check-true
    (compiled? (compile
-               "type T =\n  | k\ntrait Tr { f: fn(T) -> Int }\nimpl Tr for Int { f: fn(x: T) -> Int { 0 } }\n0"))))
+               "type T =\n  | k\ntrait Tr { f: fn(T) -> Int }\nimpl Tr for Int { f: fn(x: T) -> Int { return 0 } }\n0"))))
 
 (test-case "非正則な再帰の具体化への impl は停止して E-SUR-033 になる"
   (check-equal?
@@ -215,22 +215,22 @@
 (define (base-related str) (diagnostic-related (compile/base str)))
 
 (test-case "基底の data は原文の宣言があっても残る"
-  (check-true (compiled? (compile/base "fn f(x: Color) -> Color { x }\n0")))
+  (check-true (compiled? (compile/base "fn f(x: Color) -> Color { return x }\n0")))
   (check-true (compiled? (compile/base
-                          "type T =\n  | mk\nfn f(x: Color, y: T) -> Color { x }\n0")))
+                          "type T =\n  | mk\nfn f(x: Color, y: T) -> Color { return x }\n0")))
   (check-true (compiled? (compile/base
-                          "impl Sizable for Color { size: fn(x: Color) -> Int { 0 } }\n0"))))
+                          "impl Sizable for Color { size: fn(x: Color) -> Int { return 0 } }\n0"))))
 
 (test-case "基底の台帳の data 型の constructor を原文から適用できる"
   ;; base-data の Color は red と blue を持つ。
   (check-false (base-code "let c = red\nc"))
-  (check-false (base-code "fn f(x: Color) -> Color { x }\nf(blue)")))
+  (check-false (base-code "fn f(x: Color) -> Color { return x }\nf(blue)")))
 
 (test-case "基底の data 索引を直接渡した lowering は host 例外を出さない"
   ;; 原文に data 宣言が無くても、束ねる条件は合成索引で決まる。
   (define r
     (lower-surface (parse (lex/string 'src
-                                     "impl Sizable for Color { size: fn(x: Color) -> Int { 0 } }\n0"))
+                                     "impl Sizable for Color { size: fn(x: Color) -> Int { return 0 } }\n0"))
                    canonical-trait-env
                    #:data-index (build-data-index base-data)))
   (check-true (lowered? r)))
@@ -238,7 +238,7 @@
 (test-case "基底の data との重なりは原文の名前を primary にし、related を持たない"
   (for ([c (in-list '(("type Color =\n  | c\n0" "E-SUR-027")
                       ("type D =\n  | red\n0" "E-SUR-029")
-                      ("fn red(x: Int) -> Int { x }\n0" "E-SUR-032")
+                      ("fn red(x: Int) -> Int { return x }\n0" "E-SUR-032")
                       ("trait Color { f: Int }\n0" "E-SUR-023")
                       ("type Color = Int\n0" "E-SUR-031")
                       ("type Sizable =\n  | k\n0" "E-SUR-023")))])
@@ -246,7 +246,7 @@
     (check-equal? (base-related (first c)) '() (first c))))
 
 (test-case "異なる名前空間の基底 data は衝突にならない"
-  (for ([source (in-list '("fn Color(x: Int) -> Int { x }\n0"
+  (for ([source (in-list '("fn Color(x: Int) -> Int { return x }\n0"
                            "type red = Int\n0"
                            "type T =\n  | Color\n0"
                            "type add =\n  | k\n0"))])

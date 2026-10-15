@@ -81,17 +81,17 @@
          (check-true (config-ok? configuration callables expected runtime))))
      (values configs rules))))
 
-(test-case "Unit を返す呼出しの式文後も block の末尾式を返す"
+(test-case "Unit 呼出しの式文後に明示した return を返す"
   (check-equal?
    (run-source
     (string-append
      "fn discard(x: Int) -> Unit { () }\n"
-     "fn f() -> Int { discard(1)\n 7 }\n"
+     "fn f() -> Int { discard(1)\n return 7 }\n"
      "f()"))
    7))
 
-(test-case "Int の式文を捨てて block の末尾式を返す"
-  (check-equal? (run-source "fn f() -> Int { 1\n 2 }\nf()") 2))
+(test-case "Int の式文を捨て、明示した return を返す"
+  (check-equal? (run-source "fn f() -> Int { 1\n return 2 }\nf()") 2))
 
 (test-case "式文と束縛を交互に並べ、後続の束縛を末尾式から使う"
   (check-equal?
@@ -103,7 +103,7 @@
      " discard(x)\n"
      " let y = 3\n"
      " discard(y)\n"
-     " add(x, y)\n"
+     " return add(x, y)\n"
      "}\n"
      "f()"))
    5))
@@ -113,7 +113,7 @@
     (compile
      (string-append
       "fn take(o: Option<Int>) -> Unit { () }\n"
-      "fn f() -> Int { take(some(1))\n 0 }\n"
+      "fn f() -> Int { take(some(1))\n return 0 }\n"
       "f()")))
   (check-true (compiled? result)
               (if (diagnostic? result)
@@ -147,7 +147,7 @@
     (string-append
      "fn choose(c: Bool) -> Int {\n"
      " if c { return 1 } else { () }\n"
-     " 2\n"
+     " return 2\n"
      "}\n"
      "choose(true)"))
   (check-equal? (run-source statement-source) 1)
@@ -155,7 +155,7 @@
     (string-append
      "fn choose(c: Bool) -> Int {\n"
      " let ignored = when c { true => return 1\n false => 2 }\n"
-     " 3\n"
+     " return 3\n"
      "}\n"
      "choose(true)"))
   (define value-result (compile value-source))
@@ -169,7 +169,7 @@
     (string-append
      "fn choose(a: Bool, b: Bool) -> Int {\n"
      " if a { if b { return 1 } else { () } } else { () }\n"
-     " 2\n"
+     " return 2\n"
      "}\n"
      "choose(true, true)"))
   (check-equal? (run-source source) 1)
@@ -184,17 +184,17 @@
      "fn take(o: Option<Int>) -> Unit { () }\n"
      "fn f() -> Int {\n"
      " take(when true { true => return none\n false => some(1) })\n"
-     " 2\n"
+     " return 2\n"
      "}\n"
      "f()"))
    2)
   (check-equal?
    (run-source
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn f() -> Int {\n"
      " if identity(when true { true => return true\n false => false }) { () } else { () }\n"
-     " 2\n"
+     " return 2\n"
      "}\n"
      "f()"))
    2)
@@ -206,7 +206,7 @@
      "  true => ()\n"
      "  false => ()\n"
      " }\n"
-     " 2\n"
+     " return 2\n"
      "}\n"
      "f()"))
    2))
@@ -214,10 +214,10 @@
 (test-case "文位置の非変数 scrutinee は葉を破棄する Eliminate に直接下ろす"
   (define source
     (string-append
-     "fn get() -> Bool { true }\n"
+     "fn get() -> Bool { return true }\n"
      "fn f() -> Int {\n"
      " when get() { true => ()\n false => () }\n"
-     " 1\n"
+     " return 1\n"
      "}\n"
      "f()"))
   (define result (lower source))
@@ -228,16 +228,16 @@
        (check-equal?
         (find-form (lowered-term result) 'Eliminate)
         '(Eliminate
-          (#:span src 43 81)
-          (Apply (#:span src 48 53) (#:var get (#:span src 48 51)))
-          (((#:span src 56 66) true () ->
-            (Let (#:span src 64 66) ((#:bind %stmt (#:span src 64 66)) const)
-                 (#:lit unit (#:span src 64 66))
-                 (#:lit unit (#:span src 64 66))))
-           ((#:span src 68 79) false () ->
-            (Let (#:span src 77 79) ((#:bind %stmt (#:span src 77 79)) const)
-                 (#:lit unit (#:span src 77 79))
-                 (#:lit unit (#:span src 77 79))))))
+          (#:span src 50 88)
+          (Apply (#:span src 55 60) (#:var get (#:span src 55 58)))
+          (((#:span src 63 73) true () ->
+            (Let (#:span src 71 73) ((#:bind %stmt (#:span src 71 73)) const)
+                 (#:lit unit (#:span src 71 73))
+                 (#:lit unit (#:span src 71 73))))
+           ((#:span src 75 86) false () ->
+            (Let (#:span src 84 86) ((#:bind %stmt (#:span src 84 86)) const)
+                 (#:lit unit (#:span src 84 86))
+                 (#:lit unit (#:span src 84 86))))))
         "文位置の when は NarrativeExpr を置かず、各葉を完全一致で破棄する")]
       [other (fail-check (format "直接の Eliminate を期待した: ~s" other))])))
 
@@ -245,7 +245,7 @@
   (define result
     (compile
      (string-append
-      "fn run() -> Int ! Own { acquire(1)\n 0 }\n"
+      "fn run() -> Int ! Own { acquire(1)\n return 0 }\n"
       "run()")))
   (check-true (compiled? result)
               (if (diagnostic? result)
@@ -264,12 +264,12 @@
 (test-case "型が異なる枝と資源値を含む文位置の when は結果を合流しない"
   (check-equal?
    (run-source
-    "fn f(c: Bool) -> Int { when c { true => 1\n false => () }\n 0 }\nf(true)")
+    "fn f(c: Bool) -> Int { when c { true => 1\n false => () }\n return 0 }\nf(true)")
    0)
   (check-equal?
    (run-source
     (string-append
-     "fn f(c: Bool) -> Int ! Own { when c { true => acquire(1)\n false => () }\n 0 }\n"
+     "fn f(c: Bool) -> Int ! Own { when c { true => acquire(1)\n false => () }\n return 0 }\n"
      "f(true)"))
    0))
 
@@ -285,7 +285,7 @@
      "   99\n"
      "  }\n"
      " }\n"
-     " 0\n"
+     " return 0\n"
      "}\n"
      "run(ok(3))"))
   (check-equal? (run-source source) 6)
@@ -297,12 +297,12 @@
   (define result
     (compile
      (string-append
-      "fn get() -> Bool { true }\n"
+      "fn get() -> Bool { return true }\n"
       "fn run() -> Int ! Own {\n"
       " when get() {\n"
       "  true => acquire(1)\n false => ()\n"
       " }\n"
-      " 0\n"
+      " return 0\n"
       "}\n"
       "run()")))
   (check-true (compiled? result)
@@ -324,7 +324,7 @@
      "  ok x => 1\n"
      "  ng y => 0\n"
      " }\n"
-     " 0\n"
+     " return 0\n"
      "}\n"
      "0"))
   (define compiled (compile source))
@@ -341,9 +341,10 @@
     (define trace-expression
       (match fn
         [`(FnDecl run ,_ ,_ ,_
-                   (Let (%stmt const Unit)
-                        (Eliminate (Apply g) ,arms)
-                        0)
+                   (BlockBody
+                    (Let (%stmt const Unit)
+                         (Eliminate (Apply g) ,arms)
+                         ,_))
                    ,_)
          (check-equal?
           arms
@@ -379,13 +380,13 @@
                 (format "statement-mode resource scrutinee trace を elaborate できなかった: ~s"
                         other))]))))
 
-(test-case "014b2 までの段階差として関数本体末尾の when は値位置に残る"
+(test-case "SFnDecl の本体は BlockBody として下ろす"
   (define result
     (lower "fn f() -> Unit { when true { true => ()\n false => () } }\nf()"))
   (check-true (lowered? result))
   (when (lowered? result)
-    ;; 関数本体の projection は次サイクルで変更する段階差である。
-    (check-not-false (find-form (lowered-term result) 'NarrativeExpr))))
+    (check-not-false (find-form (lowered-term result) 'BlockBody))
+    (check-false (find-form (lowered-term result) 'NarrativeExpr))))
 
 (test-case "最上位の式文の後に末尾式を置き、最上位 return は E-RET-002 にする"
   (check-equal?

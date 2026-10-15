@@ -52,7 +52,7 @@
     (string-append
      "fn f(b: Bool) -> Option<Int> {\n"
      "  let y = 1\n"
-     "  when b {\n"
+     "  return when b {\n"
      "    true => some(1)\n"
      "    false => none\n"
      "  }\n"
@@ -71,7 +71,7 @@
      "      false => none\n"
      "    }\n"
      "  }\n"
-     "  r\n"
+     "  return r\n"
      "}\n"
      "g(true)"))
   (check-equal? (compile-code source) 'ok))

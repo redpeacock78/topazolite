@@ -49,7 +49,7 @@
   (check-true (ok? "let l: List<Int> = cons(1, nil)\n0"))
   (check-true (ok? "let r: Result<Int, Unit> = ok(1)\n0"))
   (check-true (ok? "let r: Result<Int, Unit> = ng(())\n0"))
-  (check-true (ok? "fn f(x: Option<Int>) -> Int { 0 }\nf(some(1))")))
+  (check-true (ok? "fn f(x: Option<Int>) -> Int { return 0 }\nf(some(1))")))
 
 (test-case "素の再帰欄を持つ型の値を入れ子の適用で作れる"
   (check-true (ok? (string-append nat "let n = succ(succ(zero))\nn"))))
@@ -79,14 +79,19 @@
   ;; 組み込みの constructor と同名の最上位の let は E-SUR-032 にならない。
   (check-true (ok? "let some = 1\nsome"))
   ;; 関数の仮引数と => の仮引数は本体だけを隠す。
-  (check-true (ok? (string-append color "fn f(red: Int) -> Int { red }\nf(1)")))
+  (check-true (ok? (string-append color "fn f(red: Int) -> Int { return red }\nf(1)")))
   (check-true (ok? (string-append color "let g = fn(red: Int) => red\ng(1)")))
   ;; block の中の let。
   (check-true (ok? (string-append color "{ let red = 1\n red }"))))
 
 (test-case "局所の束縛子で隠した名前への適用は constructor にならない"
-  (check-match (term (string-append color "fn f(red: fn(Int) -> Int) -> Int { red(1) }\n0"))
-               `(FnDecl ,_ ,_ ,_ ,_ ,_ (Apply ,_ (#:var red ,_) ,_) ,_)))
+  (check-match (term (string-append color "fn f(red: fn(Int) -> Int) -> Int { return red(1) }\n0"))
+               `(FnDecl ,_ ,_ ,_ ,_ ,_
+                        (BlockBody ,_
+                          (Let ,_ ((#:bind %stmt ,_) const)
+                               (Return ,_ (Apply ,_ (#:var red ,_) ,_))
+                               (#:lit unit ,_)))
+                        ,_)))
 
 (test-case "台帳に無い名前は constructor にならず、未束縛の変数の診断になる"
   (check-not-exn (λ () (compile "foo(1)")))
@@ -97,9 +102,9 @@
   (check-equal? (compile-code "Absent") "E-VAR-002"))
 
 (test-case "関数の本体、impl の本体、record、射影の中の constructor を置き換える"
-  (check-true (ok? (string-append color "fn f() -> Color { red }\nf()")))
+  (check-true (ok? (string-append color "fn f() -> Color { return red }\nf()")))
   (check-true (ok? (string-append color "let r = { c: red }\nr.c")))
-  (check-true (ok? (string-append color "impl Sizable for Color { size: fn(x: Color) -> Int { let c = red\n 0 } }\n0"))))
+  (check-true (ok? (string-append color "impl Sizable for Color { size: fn(x: Color) -> Int { let c = red\n return 0 } }\n0"))))
 
 (test-case "索引に無い名前の SConstruct は host 例外を出さない"
   (define s '(#:span src 0 1))

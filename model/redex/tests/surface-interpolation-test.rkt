@@ -77,7 +77,7 @@
 
 (test-case
  "SUR-002b: Never の穴は受理し、穴の合成失敗はその診断のまま出る"
- (check-false (code "fn f() -> String { \"a${return \"r\"}\" }\nf()"))
+ (check-false (code "fn f() -> String { return \"a${return \"r\"}\" }\nf()"))
  (check-equal? (code "\"${x => x}\"") "E-TYP-025"))
 
 (test-case
@@ -87,17 +87,17 @@
 (test-case
  "SUR-002b: 穴の式の Effect は式全体の row に入る"
  (check-false
-  (code "fn h(n: Int) -> String ! Partial { h(n) }\nfn g() -> String ! Partial { \"${h(1)}\" }\n0"))
+  (code "fn h(n: Int) -> String ! Partial { return h(n) }\nfn g() -> String ! Partial { return \"${h(1)}\" }\n0"))
  (check-equal?
-  (code "fn h(n: Int) -> String ! Partial { h(n) }\nfn g() -> String { \"${h(1)}\" }\n0")
-  (code "fn h(n: Int) -> String ! Partial { h(n) }\nfn g() -> String { h(1) }\n0")))
+  (code "fn h(n: Int) -> String ! Partial { return h(n) }\nfn g() -> String { return \"${h(1)}\" }\n0")
+  (code "fn h(n: Int) -> String ! Partial { return h(n) }\nfn g() -> String { return h(1) }\n0")))
 
 (test-case
  "SUR-002b: 穴の式は原文の左から右の順に評価する"
  (define source
    (string-append
-    "fn f() -> String { \"f\" }\n"
-    "fn g() -> String { \"g\" }\n"
+    "fn f() -> String { return \"f\" }\n"
+    "fn g() -> String { return \"g\" }\n"
     "\"${f()}${g()}\""))
  (define result (compile source))
  (check-true (compiled? result) (format "compile failed: ~s" result))

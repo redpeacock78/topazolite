@@ -120,62 +120,62 @@
   (check-equal? (diagnostic-primary-span result) (source-span source "IO")))
 
 (test-case "SUR-003: 明示 Partial row の再帰は受理され、全体分類は Unknown になる"
-  (define result (compile "fn loop(n: Int) -> Int ! Partial { loop(n) }\n0"))
+  (define result (compile "fn loop(n: Int) -> Int ! Partial { return loop(n) }\n0"))
   (check-true (compiled? result))
   (when (compiled? result)
     (check-equal?
      (classify (erase-core (compiled-core result)) '() (compiled-callables result))
      'Unknown))
-  (check-equal? (code (compile "fn loop(n: Int) -> Int { loop(n) }\n0"))
+  (check-equal? (code (compile "fn loop(n: Int) -> Int { return loop(n) }\n0"))
                 "E-REC-002"))
 
 (test-case "SUR-003: Return row は nearest boundary と SUR-008 に従う"
   (check-equal? (code (compile "fn f() -> Int ! Return { 0 }\n0")) "E-RET-001")
   (check-true
    (compiled?
-    (compile "fn() -> Int { let g = fn() ! Return => 0\n 0 }")))
+    (compile "fn() -> Int { let g = fn() ! Return => 0\n return 0 }")))
   (check-true
    (compiled?
-    (compile "fn() { let g = fn() ! Return => 0\n 0 }"))))
+    (compile "fn() { let g = fn() ! Return => 0\n return 0 }"))))
 
 (test-case "SUR-003: 明示 row は期待型に対して省略扱いにならない"
   (check-equal?
-   (code (compile "fn ap(f: fn() -> Int) -> Int { f() }\nap(fn() ! Partial => 0)"))
+   (code (compile "fn ap(f: fn() -> Int) -> Int { return f() }\nap(fn() ! Partial => 0)"))
    "E-TYP-012")
   (check-true
    (compiled?
-    (compile "fn ap(f: fn() -> Int ! Partial) -> Int ! Partial { f() }\nap(fn() ! {} => 0)"))))
+    (compile "fn ap(f: fn() -> Int ! Partial) -> Int ! Partial { return f() }\nap(fn() ! {} => 0)"))))
 
 (test-case "SUR-003: 省略 row は検査位置で期待型から継承する"
-  (define loop-decl "fn loop(n: Int) -> Int ! Partial { loop(n) }\n")
+  (define loop-decl "fn loop(n: Int) -> Int ! Partial { return loop(n) }\n")
   (define let-arrow
     (compile (string-append loop-decl
                             "let f: fn(Int) -> Int ! Partial = x => loop(x)\nf(1)")))
   (check-signature-count let-arrow partial-int-fn 2)
   (define argument-arrow
     (compile (string-append loop-decl
-                            "fn ap(g: fn(Int) -> Int ! Partial) -> Int ! Partial { g(1) }\n"
+                            "fn ap(g: fn(Int) -> Int ! Partial) -> Int ! Partial { return g(1) }\n"
                             "ap(x => loop(x))")))
   (check-signature-count argument-arrow partial-int-fn 2)
   (define let-block
     (compile (string-append loop-decl
                             "let f: fn(Int) -> Int ! Partial = "
-                            "fn(x: Int) -> Int { loop(x) }\nf(1)")))
+                            "fn(x: Int) -> Int { return loop(x) }\nf(1)")))
   (check-signature-count let-block partial-int-fn 2)
   (define argument-block
     (compile (string-append loop-decl
-                            "fn ap(g: fn(Int) -> Int ! Partial) -> Int ! Partial { g(1) }\n"
-                            "ap(fn(x: Int) -> Int { loop(x) })")))
+                            "fn ap(g: fn(Int) -> Int ! Partial) -> Int ! Partial { return g(1) }\n"
+                            "ap(fn(x: Int) -> Int { return loop(x) })")))
   (check-signature-count argument-block partial-int-fn 2))
 
 (test-case "SUR-003: 合成位置の省略 row は空であり、非 NFn 期待型から継承しない"
-  (define loop-decl "fn loop(n: Int) -> Int ! Partial { loop(n) }\n")
+  (define loop-decl "fn loop(n: Int) -> Int ! Partial { return loop(n) }\n")
   (check-equal?
    (code (compile (string-append loop-decl
-                                "let g = fn(x: Int) -> Int { loop(x) }\n0")))
+                                "let g = fn(x: Int) -> Int { return loop(x) }\n0")))
    "E-EFF-002")
   (define union-expected
-    (compile "{ let f: (fn(Int) -> Int ! Partial) | Bool = fn(x: Int) -> Int { x }\n0 }"))
+    (compile "{ let f: (fn(Int) -> Int ! Partial) | Bool = fn(x: Int) -> Int { return x }\n0 }"))
   (check-signature-count union-expected pure-int-fn 1))
 
 (test-case "SUR-003: 省略 row は関数 span を持ち、UCore+ と erase を往復する"
@@ -192,7 +192,7 @@
 (test-case "SUR-003: 検査位置の省略戻り型で Return row は囲む境界へ解決する"
   (check-true
    (compiled?
-    (compile "let f: fn() -> Int = fn() {\n  let g = fn() ! Return => 0\n  1\n}\nf()"))))
+    (compile "let f: fn() -> Int = fn() {\n  let g = fn() ! Return => 0\n  return 1\n}\nf()"))))
 
 (test-case "UCore の有効な declaration row は P2j でも elaborate できる"
   (define result (elab '(Fn () Unit ((Yield Int)) (Yield 1 unit))))

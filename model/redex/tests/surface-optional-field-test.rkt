@@ -52,7 +52,7 @@
 
 (test-case "ADT-001。関数の引数の型の optional の欄"
   (define src
-    (string-append "fn age_of(p: { name: Int, age?: Int }) -> Option<Int> { p.age }\n"
+    (string-append "fn age_of(p: { name: Int, age?: Int }) -> Option<Int> { return p.age }\n"
                    "age_of({ name: 1 })"))
   (check-equal? (type-of src) '(Option Int))
   (check-equal? (run-value src) '(Construct (Option Int) none)))

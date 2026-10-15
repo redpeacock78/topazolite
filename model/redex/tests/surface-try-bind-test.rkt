@@ -131,7 +131,7 @@
     (string-append
      "fn f(a: Option<Int>) -> Option<Int> {\n"
      "  let x ?= a\n"
-     "  some(x)\n"
+     "  return some(x)\n"
      "}\n"
      "f(some(1))"))
   (check-equal? (run-main source) '(Construct (Option Int) some 1))
@@ -143,7 +143,7 @@
     (string-append
      "fn f(a: Result<Int, Bool>) -> Result<Unit, Bool> {\n"
      "  let x ?= a\n"
-     "  ok(())\n"
+     "  return ok(())\n"
      "}\n"
      "f(ok(1))"))
   (check-equal? (run-main source)
@@ -159,7 +159,7 @@
      "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n r2 }\n"
      "    none => fallback\n"
      "  }\n"
-     "  when r { some value => 1\n none => 2 }\n"
+     "  return when r { some value => 1\n none => 2 }\n"
      "}\n"
      "f(some(4), none, some(9))"))
   (check-equal? (run-main source) 2)
@@ -173,9 +173,9 @@
      "fn outer(a: Option<Int>) -> Int {\n"
      "  let ignored = fn(x: Option<Int>) -> Option<Int> {\n"
      "    let y ?= x\n"
-     "    some(y)\n"
+     "    return some(y)\n"
      "  }(a)\n"
-     "  7\n"
+     "  return 7\n"
      "}\nouter(none)"))
   (check-equal? (run-main source) 7))
 
@@ -189,7 +189,7 @@
     (compile (string-append
               "fn f(a: Option<Option<Int>>) {\n"
               "  let x ?= a\n"
-              "  x\n}\n"
+              "  return x\n}\n"
               "f(some(some(8)))")))
   (check-true (compiled? success-only) (format "success-only: ~s" success-only))
   (when (compiled? success-only)
@@ -198,7 +198,7 @@
                    (string-append
                     "fn f(a: Option<Option<Int>>) {\n"
                     "  let x ?= a\n"
-                    "  x\n}\n"
+                             "  return x\n}\n"
                     "f(some(some(8)))"))
                   '(Construct (Option Int) some 8)))
   (define user-return
@@ -273,7 +273,7 @@
     (check-equal? (second (first (diagnostic-related lambda-result)))
                   (source-span lambda-source "fn(x: Option<Int>) -> Int { let y ?= x\n 1 }")))
   (define when-source
-    "fn f(a: Option<Int>) -> Int { when true { true => { let y ?= a\n 1 }\n false => 0 } }\nf(none)")
+    "fn f(a: Option<Int>) -> Int { return when true { true => { let y ?= a\n 1 }\n false => 0 } }\nf(none)")
   (define when-result (compile when-source))
   (check-true (diagnostic? when-result))
   (when (diagnostic? when-result)
@@ -330,8 +330,8 @@
   (define result
     (compile
      (string-append
-      "fn make() -> Option<Int> { some(9) }\n"
-      "fn f() -> Option<Int> { let x ?= make()\n some(x) }\n"
+      "fn make() -> Option<Int> { return some(9) }\n"
+      "fn f() -> Option<Int> { let x ?= make()\n return some(x) }\n"
       "f()")))
   (check-true (compiled? result) (format "TryBind compile: ~s" result))
   (when (compiled? result)
@@ -350,9 +350,9 @@
 (test-case "pipe の関数位置、左辺、残りの引数を順に評価する"
   (define source
     (string-append
-     "fn h() { fn(a: Int, b: Int) -> Int { b } }\n"
-     "fn g() -> Int { 10 }\n"
-     "fn k() -> Int { 20 }\n"
+     "fn h() { return fn(a: Int, b: Int) -> Int { return b } }\n"
+     "fn g() -> Int { return 10 }\n"
+     "fn k() -> Int { return 20 }\n"
      "g() |> h()(k())"))
   (define result (compile source))
   (check-true (compiled? result) (format "pipe compile: ~s" result))

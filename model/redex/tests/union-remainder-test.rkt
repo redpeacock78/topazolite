@@ -600,7 +600,7 @@
 (test-case "Surface lowering 後の Union programme も Core で型付けできる"
   (define low
     (lower-surface
-     (parse (lex/string 'src "fn widen(x: Int) -> Int | String { x }\nwiden(1)"))
+     (parse (lex/string 'src "fn widen(x: Int) -> Int | String { return x }\nwiden(1)"))
      canonical-trait-env))
   (check-true (lowered? low))
   (define result (elab (lowered-term low)))

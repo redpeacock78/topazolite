@@ -39,9 +39,9 @@
     (check-true (mentions? (lowered-term r) t) src)))
 
 (test-case "型適用を注釈に持つ関数は型付けできる"
-  (for ([src (in-list '("fn f(x: Option<Int>) -> Option<Int> { x }\n0"
-                        "fn f(x: Result<Int, String>) -> Result<Int, String> { x }\n0"
-                        "type L = List<Int>\nfn f(x: L) -> L { x }\n0"))])
+  (for ([src (in-list '("fn f(x: Option<Int>) -> Option<Int> { return x }\n0"
+                        "fn f(x: Result<Int, String>) -> Result<Int, String> { return x }\n0"
+                        "type L = List<Int>\nfn f(x: L) -> L { return x }\n0"))])
     (define r (compile src))
     (check-true (compiled? r) (format "~a: ~s" src r))))
 

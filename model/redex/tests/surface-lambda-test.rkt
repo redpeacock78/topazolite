@@ -18,12 +18,12 @@
 
 (test-case "SUR-012: 適用の実引数の位置で仮引数型を補う"
   (check-equal?
-   (type-of "fn ap(g: fn(Int) -> Int, x: Int) -> Int { g(x) }\nap(y => y, 4)")
+   (type-of "fn ap(g: fn(Int) -> Int, x: Int) -> Int { return g(x) }\nap(y => y, 4)")
    'Int))
 
 (test-case "SUR-012: 型注釈付きの束縛で仮引数型を補う"
   (check-equal? (type-of "{ let f: fn(Int) -> Int = x => x\n f(3) }") 'Int)
-  (check-equal? (type-of "{ let f: fn(Int) -> Int = fn(x) { x }\n f(3) }") 'Int)
+  (check-equal? (type-of "{ let f: fn(Int) -> Int = fn(x) { return x }\n f(3) }") 'Int)
   (check-equal?
    (type-of "{ let f: fn(Int, Bool) -> Bool = fn(x: Int, b) => b\n f(1, true) }")
    'Bool))
@@ -39,14 +39,15 @@
 
 ;; P2i3b spec §7。閉包を返す関数宣言は、本体に自分の名前が無いので gate を通る。
 (test-case "SUR-012: 閉包を返す fn 宣言は受理され 3 へ評価される"
-  (define r (c "fn mk() -> fn(Int) -> Int { fn(y: Int) -> Int { y } }\nmk()(3)"))
+  (define r (c "fn mk() -> fn(Int) -> Int { return fn(y: Int) -> Int { return y } }\nmk()(3)"))
   (check-true (compiled? r))
   (check-equal? (compiled-type r) 'Int)
   (call-with-trait-ledger
    (compiled-ledger r)
    (lambda ()
-     (check-equal? (run (inject (erase-core (compiled-execution-core r))) 10000)
-                   '(cfg 3 () () () ())))))
+     (match (run-g2 (inject-g2m (erase-core (compiled-execution-core r))) 10000)
+       [`(cfg ,value ,_ ,_ ,_ ,_) (check-equal? value 3)]
+       [other (fail-check (format "評価結果の config を期待したが ~s" other))]))))
 
 (test-case "SUR-012: 合成位置の仮引数省略は E-TYP-025、span は binder"
   (define r (c "{ let f = x => x\n f(1) }"))

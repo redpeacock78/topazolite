@@ -17,6 +17,10 @@
 ;; P2m3a。data 型の when の名前解決、lowering、elaborate である。
 (define (lower str) (lower-surface (parse (lex/string 'src str)) canonical-trait-env))
 (define (term str) (lowered-term (lower str)))
+(define (find-form tree wanted)
+  (cond [(and (pair? tree) (eq? (car tree) wanted)) tree]
+        [(pair? tree) (for/or ([child (in-list tree)]) (find-form child wanted))]
+        [else #f]))
 (define (compile str) (compile-source/string 'src str))
 (define (compile-code str)
   (define result (compile str))
@@ -55,46 +59,41 @@
                             (,_ succ ((#:bind m ,_)) -> (NarrativeExpr ,_ (#:var m ,_))))))
 
 (test-case "枝の束縛子は本体で同名 constructor を隠す"
-  (check-match (term (string-append nat
+  (check-match
+   (find-form (term (string-append nat
                                    "fn f(n: Nat) -> Nat {\n"
-                                   "  when n {\n    zero => zero\n    succ zero => zero\n  }\n"
-                                   "}\nf(zero)"))
-               `(FnDecl ,_ ,_ ,_ ,_ ,_
-                        (NarrativeExpr ,_
-                          (Eliminate ,_ ,_
-                                     ((,_ zero () -> (Construct ,_ zero (Types)))
-                                      (,_ succ ((#:bind zero ,_)) -> (#:var zero ,_)))))
-                        ,_)))
+                                   "  return when n {\n    zero => zero\n    succ zero => zero\n  }\n"
+                                   "}\nf(zero)")) 'Eliminate)
+   `(Eliminate ,_ ,_
+               ((,_ zero () -> (Construct ,_ zero (Types)))
+                (,_ succ ((#:bind zero ,_)) -> (#:var zero ,_))))))
 
 (test-case "枝の頭は外側の束縛を無視して constructor として読む"
-  (check-match (term (string-append color
+  (check-match
+   (find-form (term (string-append color
                                    "fn f(c: Color) -> Int {\n"
                                    "  let red = 5\n"
-                                   "  when c {\n    red => red\n    green => 2\n    leaf => 3\n  }\n"
-                                   "}\nf(red)"))
-               `(FnDecl ,_ ,_ ,_ ,_ ,_
-                        (Let ,_ ,_ (#:lit 5 ,_)
-                             (NarrativeExpr ,_
-                               (Eliminate ,_ (#:var c ,_)
-                                          ((,_ red () -> (#:var red ,_))
-                                           (,_ green () -> (#:lit 2 ,_))
-                                           (,_ leaf () -> (#:lit 3 ,_))))))
-                        ,_)))
+                                   "  return when c {\n    red => red\n    green => 2\n    leaf => 3\n  }\n"
+                                   "}\nf(red)")) 'Eliminate)
+   `(Eliminate ,_ (#:var c ,_)
+                ((,_ red () -> (#:var red ,_))
+                (,_ green () -> (#:lit 2 ,_))
+                (,_ leaf () -> (#:lit 3 ,_))))))
 
 (test-case "単相、generic、再帰 data、Bool の when を受理する"
   (check-true (ok? (string-append color
                                   "fn f(c: Color) -> Int {\n"
-                                  "  when c {\n    red => 1\n    green => 2\n    leaf => 3\n  }\n"
+                                  "  return when c {\n    red => 1\n    green => 2\n    leaf => 3\n  }\n"
                                   "}\nf(green)")))
   (check-true (ok? (string-append pair
                                   "fn fst(p: Pair<Int>) -> Int {\n"
-                                  "  when p { pair a b => a }\n"
+                                  "  return when p { pair a b => a }\n"
                                   "}\nfst(pair(1, 2))")))
   (check-true (ok? (string-append nat
                                   "fn pred(n: Nat) -> Nat {\n"
-                                  "  when n {\n    zero => zero\n    succ m => m\n  }\n"
+                                  "  return when n {\n    zero => zero\n    succ m => m\n  }\n"
                                   "}\npred(succ(zero))")))
-  (check-true (ok? "fn not(b: Bool) -> Bool {\n  when b {\n    true => false\n    false => true\n  }\n}\nnot(true)")))
+  (check-true (ok? "fn not(b: Bool) -> Bool {\n  return when b {\n    true => false\n    false => true\n  }\n}\nnot(true)")))
 
 (test-case "注釈付き束縛は when を check し、注釈なし when は synth する"
   (check-true (ok? (string-append color
@@ -160,7 +159,7 @@
   (define result
     (compile (string-append color
                            "fn f(c: Color) -> Int {\n"
-                           "  when c {\n    red => 1\n    green => 2\n    leaf => 3\n  }\n"
+                           "  return when c {\n    red => 1\n    green => 2\n    leaf => 3\n  }\n"
                            "}\nf(green)")))
   (check-true (compiled? result))
   (call-with-trait-ledger
