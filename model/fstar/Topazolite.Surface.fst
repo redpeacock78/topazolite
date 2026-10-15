@@ -1553,5 +1553,5 @@ val lower_decl_fn : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
   -> row:option seffrow -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DFnDecl sx ps r row v) rest
    == CRecur (hull s (span_of_core rest)) sx (map fst ps)
-             (row_or_empty s row) (lower_expr v) rest)
+             (row_or_empty s row) (lower_stmt v) rest)
 let lower_decl_fn s sx ps r row v rest = ()
