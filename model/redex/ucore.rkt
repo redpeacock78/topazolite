@@ -64,7 +64,7 @@
          (Construct K e ...)
          (Construct K (Types uτ ...) e ...)
          (Eliminate e (ubr ...))
-         ;; SUR-014b1。Surface lowering marker; elaborate は明示的な if へ展開する。
+         ;; SUR-014b1。Surface の lowering が作る印であり、elaborate が明示形の if へ展開する。
          (IfSome (uifclause uifclause ...))
          (Return e)
          (NarrativeExpr e)

@@ -2499,7 +2499,7 @@
 
     (define (if-some-result-type clauses s environment delta
                                  propositions boundaries)
-      ;; Candidate order mirrors the nested false-branch evaluation order.
+      ;; 候補の並びは入れ子の false 枝の評価順に合わせる。
       (define observations
         (append*
          (for/list ([clause (in-list clauses)] [index (in-naturals)])
@@ -2516,7 +2516,7 @@
             (list (probe-if-some-part
                    body environment delta propositions boundaries
                    (span-through-end s_i s)))))))
-      ;; The source-order list interleaves c_i (i > 1) before then_i.
+      ;; 原文の順の列は c_i（i > 1）を then_i の前に挟む。
       (define then-results
         (for/list ([clause (in-list clauses)] [index (in-naturals)])
           (list-ref observations (* index 2))))
