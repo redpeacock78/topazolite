@@ -2263,6 +2263,9 @@
         [`(Construct ,_ ,_ ...) #t]
         ;; P2m spec §7.2。Eliminate は結果型の期待型を必要とする。
         [`(Eliminate ,_ ,_) #t]
+        ;; Surface block は Let の列なので、末尾まで期待型の必要性を伝える。
+        [`(Let ,_ ,_ ,body) (needs-expected-type? body)]
+        [`(NarrativeExpr ,body) (needs-expected-type? body)]
         [_ #f]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body
@@ -2687,13 +2690,38 @@
                 normalized
                 (judgment-row result)))
 
-    (define (synth-let-body body name binding-type environment
-                            delta propositions boundaries)
-      (if (and (resource-type? binding-type)
-               (eq? (peel-node body) name))
-          ;; identity Let は place を介さず値をそのまま渡す。
-          (judgment `(#:var ,name ,(span-of body)) binding-type '())
-          (synth body environment delta propositions boundaries)))
+    (define (elaborate-let-tail s binder binding-type binding-mode
+                                bound-result body environment delta
+                                propositions boundaries core-binder bound-core
+                                #:expected [expected #f])
+      (define name (peel-bind binder))
+      (define body-environment
+        (extend environment (list name) (list binding-type)
+                (and (eq? binding-mode 'mut) '(mut))
+                (list (resource-type? binding-type))))
+      (define identity-resource?
+        (and (resource-type? binding-type)
+             (eq? (peel-node body) name)))
+      (define body-result
+        (cond
+          [expected
+           (if identity-resource?
+               ;; identity Let は place を介さず値をそのまま渡す。
+               (check-against-expected
+                (judgment `(#:var ,name ,(span-of body)) binding-type '())
+                expected (span-of body) propositions)
+               (check body expected body-environment delta propositions
+                      boundaries))]
+          [identity-resource?
+           (judgment `(#:var ,name ,(span-of body)) binding-type '())]
+          [else
+           (synth body body-environment delta propositions boundaries)]))
+      (judgment `(Let ,s ,core-binder
+                      ,bound-core
+                      ,(judgment-core body-result))
+                (judgment-type body-result)
+                (row-union (judgment-row bound-result)
+                           (judgment-row body-result))))
 
     (define (projection-chain expression environment)
       (define (walk node)
@@ -2924,34 +2952,22 @@
         ;; 検査が同じ key を返す。
         [`(Let (,raw-name ,binding-mode) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define name (peel-bind raw-name))
          (define bound-result
            (synth bound environment delta propositions boundaries))
          (define actual-type (judgment-type bound-result))
          (define binding-type
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
-         (define body-result
-           (synth-let-body
-            body name binding-type
-            (extend environment (list name) (list binding-type)
-                    (and (eq? binding-mode 'mut) '(mut))
-                    (list (resource-type? binding-type)))
-            delta propositions boundaries))
-         (judgment
-          `(Let ,s (,raw-name ,binding-mode
-                              (#:ty ,binding-type ,(span-of bound)))
-                ,(judgment-core bound-result)
-                ,(judgment-core body-result))
-          (judgment-type body-result)
-          (row-union (judgment-row bound-result)
-                     (judgment-row body-result)))]
+         (elaborate-let-tail
+          s raw-name binding-type binding-mode bound-result body environment
+          delta propositions boundaries
+          `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
+          (judgment-core bound-result))]
 
         ;; 注釈なし Let の (#:bind x s) を注釈あり Let の 3 つ組として
         ;; 誤って分解しないよう、binder の包みの形で分岐する。
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define name (peel-bind raw-name))
          (define declared-type (resolve-annotation raw-type delta s))
          (when (and (eq? binding-mode 'mut)
                     (or (not (owned-free? declared-type))
@@ -3010,40 +3026,23 @@
          (define binding-type
            (bind-with-mode s binding-mode declared-type actual-type
                            propositions))
-         (define body-result
-           (synth-let-body
-            body name binding-type
-            (extend environment (list name) (list binding-type)
-                    (and (eq? binding-mode 'mut) '(mut))
-                    (list (resource-type? binding-type)))
-            delta propositions boundaries))
-         (judgment
-          `(Let ,s (,raw-name ,binding-mode
-                              (#:ty ,declared-type ,(wrapper-span raw-type)))
-                ,bound-core
-                ,(judgment-core body-result))
-          (judgment-type body-result)
-          (row-union (judgment-row bound-result)
-                     (judgment-row body-result)))]
+         (elaborate-let-tail
+          s raw-name binding-type binding-mode
+          bound-result
+          body environment delta propositions boundaries
+          `(,raw-name ,binding-mode (#:ty ,declared-type
+                                         ,(wrapper-span raw-type)))
+          bound-core)]
 
         [`(Let ,raw-name ,bound ,body)
-         (define name (peel-bind raw-name))
          (define bound-result
            (synth bound environment delta propositions boundaries))
          (define binding-type (judgment-type bound-result))
-         (define body-result
-           (synth-let-body
-            body name binding-type
-            (extend environment (list name) (list binding-type) #f
-                    (list (resource-type? binding-type)))
-            delta propositions boundaries))
-         (judgment
-          `(Let ,s (,raw-name (#:ty ,(judgment-type bound-result) ,s))
-                ,(judgment-core bound-result)
-                ,(judgment-core body-result))
-          (judgment-type body-result)
-          (row-union (judgment-row bound-result)
-                     (judgment-row body-result)))]
+         (elaborate-let-tail
+          s raw-name binding-type #f bound-result body environment delta
+          propositions boundaries
+          `(,raw-name (#:ty ,(judgment-type bound-result) ,s))
+          (judgment-core bound-result))]
 
         [`(Construct ,constructor (Types ,raw-types ...) ,fields ...)
          (define type-arguments
@@ -3462,6 +3461,93 @@
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
+        [`(Let (,raw-name ,binding-mode) ,bound ,body)
+         #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
+         (define bound-result
+           (synth bound environment delta propositions boundaries))
+         (define actual-type (judgment-type bound-result))
+         (define binding-type
+           (bind-with-mode s binding-mode actual-type actual-type
+                           propositions))
+         (elaborate-let-tail
+          s raw-name binding-type binding-mode bound-result body environment
+          delta propositions boundaries
+          `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
+          (judgment-core bound-result)
+          #:expected expected)]
+
+        [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
+         #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
+         (define declared-type (resolve-annotation raw-type delta s))
+         (when (and (eq? binding-mode 'mut)
+                    (or (not (owned-free? declared-type))
+                        (unbound-borrowed-type? declared-type (set))))
+           (reject s 'mut-binding-unsupported-type declared-type))
+         (define record-literal-checkable?
+           (match* ((peel-node bound) declared-type)
+             [(`(Rec (,fields ...)) `(Record ,row))
+              (list? (omitted-optional-labels
+                      (map (lambda (field) (peel-lbl (first field))) fields)
+                      row))]
+             [(_ _) #f]))
+         (define bound-result
+           (if (or (needs-expected-type? bound) record-literal-checkable?)
+               (check bound declared-type environment delta propositions boundaries)
+               (synth bound environment delta propositions boundaries)))
+         (define source-core-type (judgment-core-type bound-result))
+         (define remainder-target
+           (match* (binding-mode source-core-type declared-type)
+             [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+              `(Record ,(append declared-row
+                                (field-row-residual actual-row declared-row)))]
+             [(_ _ _) declared-type]))
+         (define-values (discharged-core discharged-type)
+           (discharge-remainder (judgment-core bound-result)
+                                source-core-type remainder-target s
+                                propositions))
+         (define-values (bound-core actual-type)
+           (if (and (memq binding-mode '(let mut))
+                    (tag-compat? discharged-type declared-type
+                                 (initial-candidate-context propositions))
+                    (match (narrowing-kind discharged-type declared-type
+                                           propositions)
+                      [`(drop-obligation ,_ ,_) #t]
+                      [_ #f]))
+               (values discharged-core discharged-type)
+               (convert discharged-core discharged-type declared-type s
+                        propositions)))
+         (match (narrowing-kind discharged-type actual-type propositions)
+           ['ok (void)]
+           [`(drop-obligation ,_ ,_)
+            (reject s 'owned-narrowing-needs-proof actual-type
+                    discharged-type)]
+           [_ (unless (mut-union-rebuildable?
+                       discharged-type actual-type
+                       (initial-candidate-context propositions) propositions)
+                (reject s 'owned-narrowing-rejected actual-type
+                        discharged-type))])
+         (define binding-type
+           (bind-with-mode s binding-mode declared-type actual-type
+                           propositions))
+         (elaborate-let-tail
+          s raw-name binding-type binding-mode bound-result body environment
+          delta propositions boundaries
+          `(,raw-name ,binding-mode (#:ty ,declared-type
+                                         ,(wrapper-span raw-type)))
+          bound-core
+          #:expected expected)]
+
+        [`(Let ,raw-name ,bound ,body)
+         (define bound-result
+           (synth bound environment delta propositions boundaries))
+         (define binding-type (judgment-type bound-result))
+         (elaborate-let-tail
+          s raw-name binding-type #f bound-result body environment delta
+          propositions boundaries
+          `(,raw-name (#:ty ,binding-type ,s))
+          (judgment-core bound-result)
+          #:expected expected)]
+
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
            (synth expression environment delta propositions boundaries))
