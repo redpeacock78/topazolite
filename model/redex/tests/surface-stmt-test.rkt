@@ -316,6 +316,69 @@
     (check-equal? (config-control (last configs)) 0)
     (check-equal? (config-tokens (last configs)) '(((tok 0) Dropped)))))
 
+(test-case "資源型 scrutinee の文位置 when は Surface lowering と同じ形で token を破棄する"
+  (define source
+    (string-append
+     "fn run(g: fn() -> Result<Owned<Int>, Int>) -> Int {\n"
+     " when g() {\n"
+     "  ok x => 1\n"
+     "  ng y => 0\n"
+     " }\n"
+     " 0\n"
+     "}\n"
+     "0"))
+  (define compiled (compile source))
+  (check-true (compiled? compiled)
+              (if (diagnostic? compiled)
+                  (format "~a: ~a" (diagnostic-id compiled)
+                          (diagnostic-message compiled))
+                  (format "unexpected result: ~s" compiled)))
+  (define lowered (lower source))
+  (check-true (lowered? lowered))
+  (when (and (compiled? compiled) (lowered? lowered))
+    (define erased (erase-surface (lowered-term lowered)))
+    (define fn (find-form erased 'FnDecl))
+    (define trace-expression
+      (match fn
+        [`(FnDecl run ,_ ,_ ,_
+                   (Let (%stmt const Unit)
+                        (Eliminate (Apply g) ,arms)
+                        0)
+                   ,_)
+         (check-equal?
+          arms
+          '((ok (x) -> (Let (%stmt const) 1 unit))
+            (ng (y) -> (Let (%stmt const) 0 unit)))
+          "Surface lowering は SExprStmt と枝の葉の discard 形を保つ")
+         `(Let (%stmt const Unit)
+               (Eliminate
+                (Construct ok (Types (Owned Res) Int) (Apply acquire 1))
+                ,arms)
+               0)]
+        [other (fail-check (format "lowered function body の形が異なる: ~s" other))
+               #f]))
+    (when trace-expression
+      (match (elab trace-expression)
+        [(list core expected _row callables)
+         (call-with-trait-ledger
+          (current-trait-ledger)
+          (lambda ()
+            (define start (inject-g2m (erase-core core)))
+            (define-values (configs _rules) (trace-g2 start))
+            (for ([configuration (in-list configs)] [index (in-naturals)])
+              (define runtime (runtime-row configuration callables expected))
+              (check-not-false runtime
+                               (format "config ~a has runtime-row" index))
+              (when runtime
+                (check-true
+                 (config-ok? configuration callables expected runtime))))
+            (define terminal (last configs))
+            (check-equal? (config-control terminal) 0)
+            (check-equal? (config-tokens terminal) '(((tok 0) Dropped))))) ]
+        [other (fail-check
+                (format "statement-mode resource scrutinee trace を elaborate できなかった: ~s"
+                        other))]))))
+
 (test-case "014b2 までの段階差として関数本体末尾の when は値位置に残る"
   (define result
     (lower "fn f() -> Unit { when true { true => ()\n false => () } }\nf()"))
