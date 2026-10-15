@@ -637,7 +637,14 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `if c { a } else { b }` は、条件に `Bool` を注釈した合成 `SBlock` と `true` / `false` の枝を持つ `SMatch` へ parser が組み替える。
-  その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () a) (SArm s_else (SName s_else false) () b))))` である。
+  その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () a) (SArm s_else (SName s_kw false) () b))))` である。
+  `s` は `if` から最後の token までの span である。
+  `s_c` は条件式の節点の span である。
+  `s_if` は `if` keyword の span である。
+  `s_then` は then block の span である。
+  `s_kw` は `else` keyword の span である。
+  `s_else` は `else` token から else 側の最後の token までの span である。
+  true pattern に `s_then` を使うのは、その span を then 側の `SArm` に含めるためである。
   この注釈により条件が Bool と適合しない場合は `E-TYP-012` となり、診断を 1 件に保つ。
   `SIf` 節点を追加しないのは、既存の `SBlock` と `SMatch` で表せるためである。
   Bool の `Eliminate` を条件へ直接掛けないのは、型検査の不一致を `E-DAT-003` ではなく `E-TYP-012` にするためである。
