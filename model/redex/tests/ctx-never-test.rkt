@@ -50,29 +50,27 @@
    (core-type-of `(Eliminate ,ret1 ((some (y) -> y) (none () -> 0))) '() '())
    'ill-typed))
 
-(test-case "全枝 Never の Eliminate を receiver にした射影は拒否する"
+(test-case "全枝 Never の Eliminate を receiver にした射影は正常型 bottom を伝える"
   (check-equal?
-   (core-type-of
+   (typed-type-normal
     `(Proj (Eliminate (Construct Bool true)
              ((true () -> (Perform (Return b Int) 1))
               (false () -> (Perform (Return b Int) 2))))
-           a)
-    '() '())
-   'ill-typed))
+           a))
+   '(Never ⊥)))
 
 (test-case "Never 束縛の Let は本体の正常型を保持する"
   (check-equal?
    (typed-with-normal `(Let (x const Int) ,ret1 5))
    '(Never ((Return b Int)) Int)))
 
-(test-case "束縛値と本体が Never の Let を receiver にした射影は拒否する"
+(test-case "束縛値と本体が Never の Let を receiver にした射影は正常型 bottom を伝える"
   (check-equal?
-   (core-type-of
+   (typed-type-normal
     (list 'Proj
           (list 'Let '(x const Int) ret1 '(Perform (Return b Int) 2))
-          'a)
-    '() '())
-   'ill-typed))
+          'a))
+   '(Never ⊥)))
 
 (test-case "外側への Return で Never の本体を持つ内側 Handle は Never"
   (check-equal?
@@ -195,8 +193,25 @@
     '() '() `((h ,int-function-type)))
    '(Never (Record ((a Int imm))))))
 
-(test-case "Rec synthesis は正常型が bottom の欄を拒否する"
-  (check-equal? (core-type-of `(Rec ((a imm ,ret1))) '() '()) 'ill-typed))
+(test-case "Rec synthesis は正常型が bottom の欄で正常型 bottom を伝える"
+  (check-equal? (typed-type-normal `(Rec ((a imm ,ret1))) '() '())
+                '(Never ⊥)))
+
+(test-case "Rec synthesis は bottom の欄の後ろの欄の誤りを報告する"
+  (check-equal?
+   (core-type-of `(Rec ((a imm ,ret1) (b imm (Apply f unit)))) '()
+                 test-callables)
+   'ill-typed))
+
+(test-case "Rec synthesis は bottom の欄があっても重複 label を拒否する"
+  (check-equal? (core-type-of `(Rec ((a imm ,ret1) (a imm 1))) '() '())
+                'ill-typed))
+
+(test-case "Rec synthesis の row は bottom の欄の後ろの effect を含む"
+  (check-equal?
+   (typed-with-normal
+    `(Rec ((a imm ,ret1) (b imm (Perform (Return c Int) 2)))))
+   '(Never ((Return b Int) (Return c Int)) ⊥)))
 
 (test-case "Rec checking は期待 record 型で Never の欄を検査する"
   (define parameter-type '(Record ((a Int imm))))
@@ -206,6 +221,24 @@
     '(Apply h (Rec ((a imm (Perform (Return b Int) 1)))))
     '() '() `((h ,function-type)))
    '(Never Int)))
+
+(test-case "Rec checking は Never 欄の正常型 bottom で owned gate を飛ばす"
+  (define parameter-type '(Record ((a (Owned Res) imm))))
+  (define function-type `(NFn (,parameter-type) Int () () () User))
+  (check-equal?
+   (typed-type-normal
+    `(Apply h (Rec ((a imm ,ret1))))
+    '() '() `((h ,function-type)))
+   '(Never Int)))
+
+(test-case "Rec checking は後続の正常な Owned 欄の gate を維持する"
+  (define parameter-type '(Record ((a (Owned Res) imm) (b (Owned Res) imm))))
+  (define function-type `(NFn (,parameter-type) Int () () () User))
+  (check-equal?
+   (core-type-of
+    `(Apply h (Rec ((a imm ,ret1) (b imm (Apply f 1)))))
+    '() '() `((h ,function-type) (f ,owned-function-type)))
+   'ill-typed))
 
 (test-case "Record check は欄を期待型で検査し、合成の拒否は保つ"
   (define record '(Rec ((a imm (Error 0)))))
@@ -258,9 +291,16 @@
     '() '() `((h ,int-function-type)))
    '(Never (Record ((a Int imm))))))
 
-(test-case "RecRewriteOpen の未注釈欄は正常型 bottom を拒否する"
+(test-case "RecRewriteOpen の未注釈欄は正常型 bottom を伝える"
   (check-equal?
-   (core-type-of `(RecRewriteOpen ((a imm ,ret1))) '() '())
+   (typed-type-normal `(RecRewriteOpen ((a imm ,ret1))) '() '())
+   '(Never ⊥)))
+
+(test-case "RecRewriteOpen は bottom 欄の後ろの欄の誤りを報告する"
+  (check-equal?
+   (core-type-of
+    `(RecRewriteOpen ((a imm ,ret1) (b imm (Apply f unit))))
+    '() test-callables)
    'ill-typed))
 
 (test-case "RecRewriteOpen の注釈つき欄は bottom を検査型で受理する"
@@ -274,11 +314,33 @@
     `(Proj ,(never-with-normal '(Record ((a Int imm)))) a))
    '(Never Int)))
 
+(test-case "Proj は bottom の receiver で未知 label を診断しない"
+  (check-equal? (typed-type-normal `(Proj ,ret1 nosuch)) '(Never ⊥)))
+
 (test-case "ProjOpt は receiver の正常型から optional 欄型を得る"
   (check-equal?
    (typed-type-normal
     `(ProjOpt Int ,(never-with-normal '(Record ((a Int imm opt)))) a))
    '(Never (Option Int))))
+
+(test-case "ProjOpt は bottom の receiver で欄を参照しない"
+  (check-equal?
+   (typed-type-normal `(ProjOpt Int ,ret1 nosuch))
+   '(Never ⊥)))
+
+(test-case "ProjOpt は正常型の定まる receiver の required 欄を Option で受理する"
+  (check-equal?
+   (typed-type-normal
+    `(ProjOpt Int ,(never-with-normal '(Record ((a Int imm)))) a)
+    '() '())
+   '(Never (Option Int))))
+
+(test-case "ProjOpt は正常型の定まる receiver の注釈の不一致を拒否する"
+  (check-equal?
+   (core-type-of
+    `(ProjOpt Bool ,(never-with-normal '(Record ((a Int imm opt)))) a)
+    '() '())
+   'ill-typed))
 
 (test-case "Reborrow と Read は正常型 bottom の receiver を拒否する"
   (check-equal? (core-type-of `(ReborrowAt rho own ,ret1) '() '()) 'ill-typed)

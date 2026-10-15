@@ -1450,7 +1450,8 @@ F = Handle(op, h, □) なら op ∉ ε0
 ```
 
 正常型 `τ0°` が `⊥` のとき、通常の規則がその被演算子の型を使わずに適用できる位置では `⊥` のまま検査する。
-被演算子の型から型を決める位置で `τ0° = ⊥` なら、通常の規則が失敗し、既存の診断で拒否する。
+被演算子の型を親の結果型の構成にだけ使う位置では、`τ0° = ⊥` なら親の正常型も `⊥` とする。
+被演算子の型を他の部分項の検査や副条件に使う位置では、`τ0° = ⊥` のとき通常の規則を適用せず、既存の診断で拒否する。
 `Never` の後ろにある被演算子も省略せず通常どおり検査する。
 結果の row は通常の規則が全ての被演算子から得る row の和である。
 `Handle(op, h, □)` で `c0` の row `ε0` に `op` が無いなら、`c0` が `Never` になる原因の `Return` はこの `Handle` に捕まらないため、`Never` は外へ伝播する。
@@ -1470,13 +1471,13 @@ F = Handle(op, h, □) なら op ∉ ε0
 | `Scope` | 本体 | 要しない | 本体の正常型 |
 | `Handle` | 本体 | 要しない。row 条件を満たす場合だけ適用 | 本体の正常型 |
 | `OwnLeaf` | 被演算子 | 要しない。payload の型をそのまま返す | payload の正常型 |
-| `Rec` | 欄 | 合成では要する、検査では要しない | 欄の正常型から作る Record 型、検査では期待型 |
+| `Rec` | 欄 | 合成と期待外欄の検査では要する。正常型 `⊥` は伝える。期待欄の検査では要しない | 合成では欄の正常型から作る Record 型。欄が `⊥` なら `⊥`。検査では期待型 |
 | `Discharge` | 被演算子 | 要する | 既存規則の結果型 |
 | `UnionInject` | 被演算子 | 要しない。Union 型の注釈で検査する | 注釈の Union 型 |
 | `UnionEliminate` | scrutinee | 要する。member と wrapper の情報が必要 | `Never` でない枝の合流型、全枝 `Never` なら `⊥` |
 | `RecRewrite` | 対象 | 要する | 既存規則の結果型 |
-| `RecRewriteOpen` | 作業欄 | 注釈つき欄は要しない、注釈の無い欄は要する | 既存規則の結果型。注釈の無い欄の型はその正常型 |
-| `Proj`、`ProjOpt` | receiver | 要する | 欄の型 |
+| `RecRewriteOpen` | 作業欄 | 注釈つき欄と `Absent` は要しない。注釈の無い欄は要する。正常型 `⊥` は伝える | 既存規則の結果型。注釈の無い欄は正常型を型とする。正常型 `⊥` なら `⊥` |
+| `Proj`、`ProjOpt` | receiver | 通常は要する。正常型 `⊥` は伝え、その場合は欄を参照しない | 欄の型。receiver が `⊥` なら `⊥` |
 | `ReborrowAt`、`ProjBorrowAt`、`Read` | 被演算子 | 要する | 既存規則の結果型 |
 | `Assign` | target、値 | target は要する、値は要しない | `Unit` |
 | `Reassign` | 値 | 要しない。束縛の型で検査する | `Unit` |
@@ -1736,7 +1737,7 @@ ci ≠ Absent で ρexp(ℓi) = σi なら τi = σi if αi = Never、それ以�
 ci ≠ Absent で ℓi ∉ dom(ρexp) なら τi = αi° if αi = Never、それ以外は αi
   αi = Never なら αi° ≠ ⊥
 ρact(ℓi) = (τi, mi) （ci ≠ Absent の場合）
-各 ci が Absent でないなら owned-type?(τi) は偽
+各 ci が Absent でなく、αi = Never かつ αi° = ⊥ でないなら owned-type?(τi) は偽
 compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τexp) = ok
 --------------------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core Rec(fields) : Record(ρact) ! (ε1 ∪ … ∪ εk)
@@ -1747,6 +1748,8 @@ compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τe
 期待欄の省略は optional 欄でも `compatible?` が拒否するため、optional 欄を空にするには `Absent τ` 欄を明示する。
 `Absent(τi)` は評価せず、型 `τi` の optional 欄として row に記録する。
 期待 row に欄がある式の検査結果型が `Never` なら、構成する row の欄型には期待欄型を使い、`Rec` 自体の judgment type は T-Ctx-Never により `Never`、正常型は `Record(ρact)` となる。
+その式の正常型が `⊥` なら、その欄だけ `owned-record-field` の gate を適用しない。
+ほかの欄の型検査と所有の gate は通常どおり行う。
 期待 row に欄がない式を合成した結果が `Never` なら、欄型を決める正常型が必要であり、`⊥` の場合は既存の診断で拒否する。
 Present 欄の root `Owned` は `owned-record-field` で拒否するが、`Absent` 欄にはこの gate を適用しない。
 構成検査専用の runtime leaf 再型付けに限り、`owned-record-field` の拒否を緩和する。

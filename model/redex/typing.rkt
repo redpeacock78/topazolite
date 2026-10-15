@@ -3898,8 +3898,6 @@
                     environment places callables fail))
            (define field-type
              (typing-normal-child-type core Λ index (first inferred)))
-           (when (eq? field-type 'Never)
-             (fail 'ill-typed work))
            (cons field-type (rest inferred))]))
       (define row-field
         (if absent?
@@ -3908,7 +3906,11 @@
       (values (append typed-fields (list row-field))
               (append field-rows (list (second result)))
               (third result))))
-  (list `(Record ,typed-fields) (rows-union field-rows) final-psi))
+  (list (if (ormap (lambda (field) (eq? (second field) 'Never))
+                   typed-fields)
+            'Never
+            `(Record ,typed-fields))
+        (rows-union field-rows) final-psi))
 
 (define (infer/body core Λ Ψ environment places callables fail)
   (match (peel-node core)
@@ -4112,14 +4114,13 @@
                        current-psi environment places callables fail)]))
          (define field-type
            (typing-normal-child-type core Λ i (first result)))
-         (when (eq? field-type 'Never)
-           (fail 'ill-typed (third field)))
          (values (append results
                          (list (cons field-type (rest result))))
                  (third result))))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
-       (when (and (owned-type? (first result))
+       (when (and (not (eq? (first result) 'Never))
+                  (owned-type? (first result))
                   (not (match (peel-node (third field))
                          [`(Absent ,_) #t]
                          [_ #f]))
@@ -4130,12 +4131,14 @@
                               [_ #f]))))
          (fail 'owned-record-field (third field))))
      (list
-      `(Record
-        ,(for/list ([field (in-list plain-fields)]
-                    [result (in-list results)])
-           (if (match (peel-node (third field)) [`(Absent ,_) #t] [_ #f])
-               `(,(first field) ,(first result) ,(second field) opt)
-               `(,(first field) ,(first result) ,(second field)))))
+      (if (ormap (lambda (result) (eq? (first result) 'Never)) results)
+          'Never
+          `(Record
+            ,(for/list ([field (in-list plain-fields)]
+                        [result (in-list results)])
+               (if (match (peel-node (third field)) [`(Absent ,_) #t] [_ #f])
+                   `(,(first field) ,(first result) ,(second field) opt)
+                   `(,(first field) ,(first result) ,(second field))))))
       (rows-union (map second results))
       final-psi)]
 
@@ -4177,6 +4180,8 @@
            (match (cons (typing-normal-child-type core Λ 0
                                                  (first record-result))
                         (rest record-result))
+             [(list 'Never record-row record-psi)
+              (list 'Never record-row record-psi)]
              [(list `(Record ,row) record-row record-psi)
               (define field (assoc (peel-lbl label) row))
               (cond
@@ -4202,6 +4207,8 @@
            (match (cons (typing-normal-child-type core Λ 0
                                                  (first record-result))
                         (rest record-result))
+             [(list 'Never record-row record-psi)
+              (list 'Never record-row record-psi)]
              [(list `(Record ,row) record-row record-psi)
               (define field (assoc (peel-lbl label) row))
               (cond
@@ -5079,9 +5086,14 @@
                    (second expected-field)
                    (typing-normal-child-type core Λ index (first result)))
                (first result)))
+         (define bottom-field?
+           (and (not absent?)
+                (eq? (first result) 'Never)
+                (eq? (typing-child-normal-type Λ index) '⊥)))
          (when (eq? result-type 'Never)
            (fail 'ill-typed expression))
-         (when (and (owned-type? result-type)
+         (when (and (not bottom-field?)
+                    (owned-type? result-type)
                     (not absent?)
                     (not (config-runtime-leaf? expression)))
            (fail 'owned-record-field expression))

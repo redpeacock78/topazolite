@@ -412,6 +412,28 @@
   (check-equal? (configuration-tokens (last configs)) '(((tok 0) Dropped)))
   (check-frame-rule-does-not-add-events configs rules 'R-HandleSkip))
 
+(test-case "Rec の bottom 欄で中断すると先行 OwnedLeaf の token を回収する"
+  (define handled '(Return handled-boundary Int))
+  (define performed '(Return escaped-boundary Int))
+  (define core
+    `(Scope ()
+       (Handle ,handled (answer -> answer)
+         (Rec ((owned imm
+                (Construct (Option (Owned Res)) some
+                           (OwnLeaf (Apply ,acquire 73))))
+               (interrupted imm (Perform ,performed 1)))))))
+  (with-config-typing
+   (lambda ()
+     (check-equal? (core-type-of core '() '())
+                   `(Never (,performed)))))
+  (define-values (configs rules)
+    (trace-g2 `(cfg ,core () () () ())))
+  (check-configs configs '() 'Never)
+  (check-true (trace-has-rule? rules 'R-HandleSkip))
+  (check-equal? (second (last configs)) `(Perform ,performed 1))
+  (check-equal? (configuration-tokens (last configs)) '(((tok 0) Dropped)))
+  (check-equal? (collect-tokens (second (last configs))) '()))
+
 (test-case "OWN-011: HandleReturn は frame を回収し Return 値を handler へ渡す"
   (define operation `(Return return-boundary ,option-owned))
   (define core
