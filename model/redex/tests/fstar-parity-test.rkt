@@ -11,7 +11,7 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 37)
+ (check-equal? (length racket-surface-constructors) 38)
  (check-equal? (length racket-ucore-constructors) 14)
  (check-equal? (length fstar-constructors) 36))
 
@@ -94,6 +94,7 @@
  (check-equal? (row-kind 'Eliminate) 'one-to-one)
  (check-equal? (row-kind 'SBind) 'many-to-one)
  (check-equal? (row-kind 'STryBind) 'many-to-one)
+ (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
  (check-equal? (row-kind 'TryBind) 'one-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
@@ -106,6 +107,7 @@
    (cons 'SProgram  (redex-match? Surface sprog `(SProgram ,s0 () (SInt ,s0 1))))
    (cons 'SBind     (redex-match? Surface spitem `(SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1))))
    (cons 'STryBind  (redex-match? Surface spitem `(STryBind ,s0 (SName ,s0 x) (SInt ,s0 1))))
+   (cons 'SExprStmt (redex-match? Surface spitem `(SExprStmt ,s0 (SInt ,s0 1))))
    (cons 'SFnDecl   (redex-match? Surface spitem `(SFnDecl ,s0 (SName ,s0 f)
                                                            ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                                                            (TName ,s0 Int) #:none (SInt ,s0 1))))

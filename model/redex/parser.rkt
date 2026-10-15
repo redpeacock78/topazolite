@@ -240,15 +240,18 @@
       [else
        (let-values ([(expr j) (parse-expr ts fail i)])
          (define k (skip-nl ts j))
-         (if (not (eof? ts k))
-             (fail-at ts fail k)
-             (let ([first-span
-                    (if (null? items)
-                        (node-span expr)
-                        (node-span (last items)))])
-               (values `(SProgram ,(hull first-span (node-span expr))
-                                 ,(reverse items) ,expr)
-                       k))))])))
+         (cond
+           [(eof? ts k)
+            (let ([first-span
+                   (if (null? items)
+                       (node-span expr)
+                       (node-span (last items)))])
+              (values `(SProgram ,(hull first-span (node-span expr))
+                                ,(reverse items) ,expr)
+                      k))]
+           [(eq? (kind-at ts j) 'nl)
+            (loop k (cons `(SExprStmt ,(node-span expr) ,expr) items))]
+           [else (fail-at ts fail j)]))])))
 
 (define (parse-expr ts fail i)
   (cond
@@ -568,12 +571,16 @@
           (if (not (eq? (kind-at ts binding-j) 'nl))
               (fail-at ts fail binding-j)
               (loop (skip-nl ts binding-j) (cons binding bindings))))
-        (let*-values ([(body body-j) (parse-expr ts fail j)]
-                     [(close close-j)
-                      (let ([after-body (skip-nl ts body-j)])
-                        (expect-punct ts fail after-body '|}|))])
-          (values `(SBlock ,(hull open close) ,(reverse bindings) ,body)
-                  close-j)))))
+        (let*-values ([(body body-j) (parse-expr ts fail j)])
+          (define after-body (skip-nl ts body-j))
+          (cond
+            [(punct? ts after-body '|}|)
+             (let-values ([(close close-j) (expect-punct ts fail after-body '|}|)])
+               (values `(SBlock ,(hull open close) ,(reverse bindings) ,body)
+                       close-j))]
+            [(eq? (kind-at ts body-j) 'nl)
+             (loop after-body (cons `(SExprStmt ,(node-span body) ,body) bindings))]
+            [else (fail-at ts fail body-j)])))))
 
 (define (parse-bmode ts fail i)
   (cond

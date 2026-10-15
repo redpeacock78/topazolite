@@ -711,7 +711,7 @@ let lex_nested_unclosed_string_span_ok () : Lemma
                       d.primary.endByte == 8
        | _ -> false)
 
-type dkind = | DBind | DTryBind : string -> dkind | DFnDecl
+type dkind = | DBind | DTryBind : string -> dkind | DExpr | DFnDecl
 
 type sexpr =
   | SInt      : span -> nat -> sexpr
@@ -994,6 +994,12 @@ and wf_decl (d: sdecl) : Tot bool (decreases d) =
           | DTryBind _ -> (match ps with [] -> true | _ -> false)
                         && (match r with None -> true | Some _ -> false)
                         && (match row with None -> true | Some _ -> false)
+          | DExpr -> sx.sid = s.sid
+                      && sx.startByte = s.startByte
+                      && sx.endByte = s.endByte
+                      && (match ps with [] -> true | _ -> false)
+                      && (match r with None -> true | Some _ -> false)
+                      && (match row with None -> true | Some _ -> false)
           | DFnDecl -> true)
       && wf_tys s (map snd ps)
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
@@ -1228,6 +1234,9 @@ let rec proj_fields (s_recv: span) (ls: list (span & string))
   | []      -> []
   | (sl, _) :: tl -> (sl, CProj sl sl (CVar s_recv)) :: proj_fields s_recv tl
 
+let discard_stmt (s: span) (value: core) : Tot core =
+  CLet s s value (CConstruct s "unit" [])
+
 let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   match e with
   | SInt s _      -> CLit s
@@ -1280,9 +1289,38 @@ and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
       CLet (hull s (span_of_core rest)) sx (lower_expr v) rest
   | SDecl s (DTryBind x) sx _ _ _ v ->
       CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest
+  | SDecl s DExpr sx _ _ _ v ->
+      CLet (hull s (span_of_core rest)) sx (lower_stmt v) rest
   | SDecl s DFnDecl sx ps _ row v ->
       CRecur (hull s (span_of_core rest)) sx (map fst ps) (row_or_empty s row)
              (lower_expr v) rest
+
+and lower_stmt (e: sexpr) : Tot core (decreases e) =
+  match e with
+  | SBlock _ ds t -> lower_block ds (lower_stmt t)
+  | SMatch s scrutinee arms ->
+      CEliminate s (lower_expr scrutinee) (lower_arms_stmt arms)
+  | SInt s _ -> discard_stmt s (CLit s)
+  | SStr s _ -> discard_stmt s (CLit s)
+  | SUnit s -> discard_stmt s (CConstruct s "unit" [])
+  | SBool s b -> discard_stmt s (CConstruct s (if b then "true" else "false") [])
+  | SVar s _ -> discard_stmt s (CVar s)
+  | SReturn s e -> discard_stmt s (CReturn s (lower_expr e))
+  | SFn s ps _ row b -> discard_stmt s (CFn s (map fst ps) row (lower_expr b))
+  | SApply s f a -> discard_stmt s (CApply s (lower_expr f) (lower_exprs a))
+  | SConstruct s (_, k) a -> discard_stmt s (CConstruct s k (lower_exprs a))
+  | SProj s e1 (sl, _) -> discard_stmt s (CProj s sl (lower_expr e1))
+  | SProjRec s e1 ls ->
+      discard_stmt s (CLet s (span_of_expr e1) (lower_expr e1)
+                        (CRec s (proj_fields (span_of_expr e1) ls)))
+  | SRec s fs -> discard_stmt s (CRec s (lower_fields fs))
+and lower_arms_stmt (arms: list sarm) : Tot (list core_branch) (decreases arms) =
+  match arms with
+  | [] -> []
+  | SConstructorArm sa (_, k) bs b :: tl ->
+      CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms_stmt tl
+  | SMemberArm sa sx (sb, x) ty b :: tl ->
+      CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms_stmt tl
 
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
@@ -1312,7 +1350,34 @@ let lower_block_root_span d ds tail =
   match d with
   | SDecl _ DBind _ _ _ _ _ -> ()
   | SDecl _ (DTryBind _) _ _ _ _ _ -> ()
+  | SDecl _ DExpr _ _ _ _ _ -> ()
   | SDecl _ DFnDecl _ _ _ _ _ -> ()
+
+val lower_stmt_preserves_span : e:sexpr -> Lemma
+  (requires one_to_one e)
+  (ensures span_of_core (lower_stmt e) == span_of_expr e)
+let lower_stmt_preserves_span e =
+  match e with
+  | SInt _ _ -> ()
+  | SStr _ _ -> ()
+  | SUnit _ -> ()
+  | SBool _ _ -> ()
+  | SVar _ _ -> ()
+  | SReturn _ _ -> ()
+  | SMatch _ _ _ -> ()
+  | SFn _ _ _ _ _ -> ()
+  | SApply _ _ _ -> ()
+  | SConstruct _ _ _ -> ()
+  | SProj _ _ _ -> ()
+  | SProjRec _ _ _ -> ()
+  | SRec _ _ -> ()
+  | SBlock _ _ _ -> ()
+
+val lower_stmt_block_root_span : s:span -> d:sdecl -> ds:list sdecl -> tail:sexpr -> Lemma
+  (span_of_core (lower_stmt (SBlock s (d :: ds) tail))
+   == hull (span_of_decl d) (span_of_core (lower_block ds (lower_stmt tail))))
+let lower_stmt_block_root_span s d ds tail =
+  lower_block_root_span d ds (lower_stmt tail)
 
 // 命題 7。SFn は仮引数名の span と省略を含む row をそのまま運ぶ。
 val lower_fn_fields : s:span -> ps:list (span & option sty) -> r:option sty
@@ -1368,6 +1433,17 @@ val lower_decl_try_bind : s:span -> sx:span -> x:string -> v:sexpr -> rest:core 
   (lower_decl (SDecl s (DTryBind x) sx [] None None v) rest
    == CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest)
 let lower_decl_try_bind s sx x v rest = ()
+
+val lower_decl_expr : s:span -> v:sexpr -> rest:core -> Lemma
+  (lower_decl (SDecl s DExpr s [] None None v) rest
+   == CLet (hull s (span_of_core rest)) s (lower_stmt v) rest)
+let lower_decl_expr s v rest = ()
+
+val wf_decl_expr_shape : s:span -> sx:span -> ps:list (span & sty)
+  -> r:option sty -> row:option seffrow -> v:sexpr -> Lemma
+  (requires wf_decl (SDecl s DExpr sx ps r row v))
+  (ensures s == sx && ps == [] && r == None && row == None)
+let wf_decl_expr_shape s sx ps r row v = ()
 
 // 命題 7。DFnDecl は後続を含む CRecur になる。
 val lower_decl_fn : s:span -> sx:span -> ps:list (span & sty) -> r:option sty

@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
@@ -93,8 +93,8 @@ lexer はこれら 4 種の複合記号を、各 byte の単独記号より先�
 ホワイトペーパーの Surface 構文はここより広く、受理しない構文は診断で拒否する。
 
 ```text
-program  ::= NL* pitem* expr NL*
-pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding NL+
+program  ::= NL* (pitem NL+)* expr NL*
+pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding | expr-stmt
 typedecl ::= "type" ident "=" ty NL+
            | "type" ident tparams? "=" NL* "|" variant (NL* "|" variant)* NL+
 tparams  ::= "<" ident ("," ident)* ">"
@@ -124,9 +124,11 @@ param    ::= ident ":" ty
 lparams  ::= ε | lparam ("," lparam)*
 lparam   ::= ident [":" ty]
 args     ::= ε | expr ("," expr)*
-block    ::= "{" NL* (binding NL+)* expr NL* "}"
+block    ::= "{" NL* (sbind NL+)* expr NL* "}"
 binding  ::= bmode ident (":" ty)? "=" expr
            | "let" ident "?=" expr
+sbind    ::= binding | expr-stmt
+expr-stmt ::= expr
 bmode    ::= "const" | "let" | "let" "mut"
 record   ::= "{" NL* "}"
            | "{" NL* field (fsep field)* fsep? NL* "}"
@@ -155,6 +157,10 @@ constructor pattern の束縛子は空白で区切って括弧で囲まず、Uni
 `else` は then block の閉じ波括弧と同じ行に置く。
 `else` を次の行まで探さないのは、改行が block の式を区切る意味を持つためである。
 閉じ波括弧の後に改行がある場合、続く行は次の束縛または block の結果式として読む。
+block と program は、改行で終わる式を式文として読み、最後の式を結果式として読む。
+式文と束縛は任意の順に並べられる。
+block 内では、式の直後が `}` ならその式が結果式になり、そうでなく式の直後が改行ならその式が式文になる。
+program 内では、式の後が EOF ならその式が結果式になり、そうでなく式の直後が改行ならその式が式文になる。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
 
@@ -358,18 +364,32 @@ record literal の field の区切りと同じ規則である。
 drop する側を書く構文は置かない。
 残す label を列挙すれば残余は一意に決まるため、2 通りの綴りを持つ必要が無い。
 
-### 3.6 when の返却境界
+### 3.6 式文と when の返却境界
 
-Surface の block は束縛列と末尾式から成り、式文を持たない。
-したがって `when` は常に式位置に現れる。
-変数を scrutinee とする `when` は `(NarrativeExpr s (Eliminate ...))` へ lowering され、**ローカルな返却境界**を作る。
-非変数を scrutinee とする `when` は `(Eliminate s e' arms'')` へ lowering され、各枝の本体 `body'` は枝の span `s_arm` の `(NarrativeExpr s_arm body')` へ lowering される。
+**式文**は、改行で終わる式を後続の束縛または式の前に置き、その値を使わない構文である。
+block の末尾式と program の最終式は式文ではなく、値位置のままである。
+block と program の式文は、束縛と交互に置ける。
+
+式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、**ローカルな返却境界**を作る。
+scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` へ lowering し、各枝の本体を枝の span `s_arm` の `(NarrativeExpr s_arm body')` で包む。
 その枝の `return` は最も内側の枝の境界へ値を返し、scrutinee 内の `return` は外側の境界へ届く。
-変数 scrutinee は `return` を含まないため、従来の全体境界を保っても範囲は変わらない。
 この区別は、ホワイトペーパー §3.3 の thunk 展開で scrutinee が境界の外で評価されることに対応する。
-入れ子の `when` はそれぞれ別の返却境界を持つ。
-**Why not（scrutinee を `const` で先に束縛する案）**：束縛子を `Eliminate` が Move せずに読むため、資源型の scrutinee が `E-OWN-010` になる。
-**Why not（Core に枝だけを覆う返却境界の形を足す案）**：既存の `NarrativeExpr` を各枝に置けば同じ範囲を表せるため採らない。
+式位置の `when` の lowering は、式文の追加によって変わらない。
+
+文位置の `when` は `(Eliminate s e' arms')` へ lowering し、scrutinee は通常の値位置で下ろし、枝の本体だけを文の mode で下ろす。
+文の mode の枝には `NarrativeExpr` を置かないため、その枝の `return` は外側の境界へ届く。
+`SBlock` の文の mode は末尾式へ伝わり、各束縛の右辺、scrutinee、関数呼出しの実引数、record の欄、`return` の値などの部分式には伝わらない。
+**文の mode** の式は、通常の mode で値を合成した後、型注釈を持たない const の**破棄の束縛**で包む。
+その束縛の本体は `unit` である。
+このため `Int` を含む非 `Unit` の値も式文に置ける。
+資源値は式文の直後に drop されず、最寄りの Core `Scope` の finalization で `Dropped` になる。
+`SBlock` は `Scope` を追加しないため、その token は後続の式の実行中も `Available` のまま残る。
+
+文位置の `when` の枝の値を `Unit` に揃えるのは、枝の型を合流する必要をなくすためである。
+枝全体を一度に破棄すると、異なる型の枝が合流され、資源型の枝を含むと `E-TYP-012` になりうる。
+**Why not（scrutinee を `const` で先に束縛する案）**：`Eliminate` が束縛子を Move せずに読むため、資源型の scrutinee が `E-OWN-010` になる。
+**Why not（Core に文位置の分岐節点を追加する案）**：既存の `Eliminate` と破棄の束縛で同じ結果を表せる。
+**Why not（式文ごとに即時に drop する案）**：`Scope` を狭めるか明示的な `Drop` を生成する必要があり、借用の寿命と trace と Effect が変わる。
 境界の handler と synth 規則は `core-calculus.md` §4.5 が定める。
 
 ### 3.7 when の Union pattern
@@ -652,6 +672,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
   scrutinee と各枝の本体を再帰的に下ろす。
+  文の mode では scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
+  文の mode の枝に `NarrativeExpr` を置かないのは、`return` を外側の境界へ伝えるためである。
   constructor pattern の枝は constructor 名と束縛子を保つ。
   Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
@@ -672,7 +694,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   row が明示されていれば、空の row も期待型から継承せず、宣言 row と期待 row の照合は既存の検査規則で行う。
   仮引数型が `#:none` なら型欄は `(#:infer s_x)` となり、`s_x` は binder の span である。
   戻り型が `#:none` なら戻り型欄は `(#:infer s)` となる。
-- `(SBlock s (bind ...) e)` は、束縛を右から畳んだ `Let` の入れ子へ落とす。
+- `(SBlock s (sbind ...) e)` は、束縛と式文を原文順に走査し、右から畳んだ `Let` の入れ子へ落とす。
+  末尾式は通常の mode で下ろし、文位置に限り文の mode で下ろす。
 - `(STryBind s (SName s_x x) e)` は `(TryBind s_tail (#:bind x s_x) e' rest)` へ落とす。
   右辺 `e` は束縛前の環境で下ろし、後続の項 `rest` では `x` を束縛する。
   `s_tail` は `let` から後続の項の末尾までを覆い、`s_x` は束縛名の span である。
@@ -680,6 +703,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
   右辺が仮引数型または Effect row を省略した `Fn`、または型引数欄の無い `Construct` なら宣言型で検査する。
   それ以外は右辺を合成し、その結果へ binding mode の policy を適用する（core-calculus.md §4.2、structural-row.md §4）。
+- `(SExprStmt s e)` は `(Let s_tail ((#:bind %stmt s) const (#:ty Unit s)) e_stmt rest)` へ落とす。
+  `e_stmt` は `e` を文の mode で下ろした項である。
+  `s_tail` は式文の始まりから後続の項の末尾までを覆う。
+  注釈は文の mode の結果型を固定し、捨てる式の型を制限しない。
+  資源値は最寄りの Core `Scope` の finalization で drop される。
 - `(SFnDecl s (SName s_f f) ... return-sty-or-none row-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。明示 row は lower-row の結果を row 節の span `s_row` とともに置く。
   row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
   戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
@@ -925,10 +953,12 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 文字列補間は `istr` token から既存の `SApply` と `SStr` へ組み替えるため、Surface AST と UCore+ の構成子を増やさない。
 F* は **`TkIstr`** の認識と span の正当性を検査する。
 文字断片の値と左畳み込みの形は Racket の parser と Surface の試験で固定する。
-この変更後も parity の件数は 37/14/36 である。
+`SExprStmt` を加えた後の parity の件数は 38/14/36 である。
 
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
+`SExprStmt` は Racket Surface の構成子であり、F* では `DExpr` を持つ既存の `SDecl` へ対応する。
+`SExprStmt` を加えた後の parity 件数は、Racket Surface が 38 個、UCore+ が 14 個、F* が 36 個である。
 F* の Surface 構成子一覧は `sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 23 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。

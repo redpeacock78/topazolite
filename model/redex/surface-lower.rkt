@@ -807,6 +807,8 @@
            (values (cons `(STryBind ,s (SName ,s_x ,x) ,(expr value scope))
                          reversed)
                    (set-add scope x))]
+          [`(SExprStmt ,s ,value)
+           (values (cons `(SExprStmt ,s ,(expr value scope)) reversed) scope)]
           [`(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row ,body)
            (define inner
              (set-union (set-add scope f) (list->seteq (param-names params))))
@@ -825,6 +827,19 @@
   (values items* (expr tail bound*)))
 
 ;; spec §7.2 の対応表である。
+(define (lower-arms arms env fail lower-body)
+  (for/list ([arm (in-list arms)])
+    (match arm
+      [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
+       `(,s_a ,k
+              ,(for/list ([b (in-list binders)])
+                 (match b [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
+              -> ,(lower-body s_a body))]
+      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
+       `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
+              (#:bind ,x ,s_x)
+              -> ,(lower-body s_a body))])))
+
 (define (lower-sexpr e env fail)
   (match e
     [`(SInt ,s ,n) `(#:lit ,n ,s)]
@@ -861,18 +876,7 @@
        (define body* (lower-sexpr body env fail))
        (if variable-scrutinee? body* `(NarrativeExpr ,s_a ,body*)))
      (define lowered-arms
-       (for/list ([arm (in-list arms)])
-         (match arm
-           [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
-            `(,s_a ,k
-                   ,(for/list ([b (in-list binders)])
-                      (match b
-                        [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
-                   -> ,(lower-body s_a body))]
-           [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
-            `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
-                   (#:bind ,x ,s_x)
-                   -> ,(lower-body s_a body))])))
+       (lower-arms arms env fail lower-body))
      (if variable-scrutinee?
          `(NarrativeExpr ,s (Eliminate ,s ,scrutinee-core ,lowered-arms))
          `(Eliminate ,s ,scrutinee-core ,lowered-arms))]
@@ -910,6 +914,22 @@
     [`(SBlock ,_ ,binds ,tail)
      ;; spec §7.2。block 自身は節点を作らず、束縛の入れ子と末尾式になる。
      (fold-items binds tail env (hasheq) fail)]))
+
+;; SUR-014b spec §5.2。文の mode は block の末尾式と枝本体へだけ伝わり、
+;; 文位置の Narrative は返却境界を作らない。
+(define (lower-stmt e env fail)
+  (match e
+    [`(SBlock ,_ ,binds ,tail)
+     (fold-items binds tail env (hasheq) fail #:lower-tail lower-stmt)]
+    [`(SMatch ,s ,scrutinee ,arms)
+     `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
+                 ,(lower-arms arms env fail
+                              (λ (_s_a body) (lower-stmt body env fail))))]
+    [_
+     (define s (node-span e))
+     `(Let ,s ((#:bind %stmt ,s) const)
+           ,(lower-sexpr e env fail)
+           (#:lit unit ,s))]))
 
 ;; spec §7.3。尾部の span は「その宣言の始まり」から「末尾式の終わり」までで
 ;; ある。span は (#:span sid lo hi) の 4 要素である。
@@ -953,6 +973,11 @@
     [`(STryBind ,_ (SName ,s_x ,x) ,bound)
      (define bound-core (lower-sexpr bound env fail))
      (λ (rest) `(TryBind ,s_tail (#:bind ,x ,s_x) ,bound-core ,rest))]
+    [`(SExprStmt ,s ,value)
+     ;; SUR-014b1 spec §5.2。Unit 注釈は文の mode の結果型を固定し、捨てる値の型は制限しない。
+     (define value-core (lower-stmt value env fail))
+     (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
+                     ,value-core ,rest))]
     [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,row ,body)
      (define params-core (lower-params params env fail))
      (define result-core
@@ -973,12 +998,12 @@
 ;; spec §6.1。診断は 1 件だけ返すので、どれが返るかは走る順序で決まる。
 ;; 落とす順序は原文の並び順であり、包む順序だけが逆である。末尾式は
 ;; 原文では最後なので、宣言をすべて落とし終えてから落とす。
-(define (fold-items items tail env core-info fail)
+(define (fold-items items tail env core-info fail #:lower-tail [lower-tail lower-sexpr])
   (define end-span (node-span tail))
   (define wraps
     (for/list ([item (in-list items)])
       (lower-item item (tail-span item end-span) env core-info fail)))
-  (define tail-core (lower-sexpr tail env fail))
+  (define tail-core (lower-tail tail env fail))
   (for/fold ([acc tail-core]) ([wrap (in-list (reverse wraps))])
     (wrap acc)))
 
