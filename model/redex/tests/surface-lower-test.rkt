@@ -196,6 +196,15 @@
  (check-equal? (low "type T =\n  | a\n1") '(#:lit 1 (#:span src 15 16))))
 
 (test-case
+ "impl 本体の record は BlockBody で包まない"
+ (define t
+   (low "trait Local { size: fn(Self) -> Int }\nimpl Local for Int { size: fn(x: Int) -> Int { 0 } }\n0"))
+ (check-true
+  (match t
+    [`(Let ,_ ,_ (Apply ,_ ,_ (Rec ,_ ,_)) ,_) #t]
+    [_ #f])))
+
+(test-case
  "トップレベルの束縛も Let になり、尾部は program の末尾式まで伸びる"
  ;; 型宣言を前に置くと、別名の展開と尾部 span の両方を一度に固定できる。
  ;; 注釈の #:ty は展開後の Int を持つが、span は使用箇所の A のままである。

@@ -1000,7 +1000,7 @@
      ;; spec §6.6。生成した primitive を Let の束縛名にしない。elab は局所の
      ;; environment を Γ0 より先に引くので、同名の Let は Proof の経路を隠す。
      (match-define (list binder prim) (hash-ref core-info item))
-     (define body-core (lower-block-body body env fail))
+     (define body-core (lower-sexpr body env fail))
      (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
                      (Apply ,s (#:var ,prim ,s) ,body-core) ,rest))]
     [`(SDeriveDecl ,s ,_ ,_)
