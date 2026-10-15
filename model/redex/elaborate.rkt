@@ -44,6 +44,9 @@
   #:constructor-name make-judgment/raw
   #:omit-define-syntaxes)
 
+;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
+(struct resolved-type-argument (type) #:transparent)
+
 ;; 既存の三引数の構築は judgment の型を Core の型として使う。
 ;; check の一部だけ、実際に生成した Core の型を明示する。
 (define judgment
@@ -2472,7 +2475,7 @@
              (if (null? rest) s_0 (span-through-end (first (first rest)) s)))
            (define false-body
              (if (null? rest)
-                 `(Construct ,s_0 none (Types ,T))
+                 `(Construct ,s_0 none (Types ,(resolved-type-argument T)))
                  (expand rest)))
            `(Let ,chain-span
               ((#:bind %ifcond ,condition-span) const (#:ty Bool ,s_i))
@@ -2480,7 +2483,8 @@
               (NarrativeExpr ,chain-span
                 (Eliminate ,chain-span (#:var %ifcond ,condition-span)
                   ((,body-span true () ->
-                    (Construct ,body-span some (Types ,T) ,body))
+                    (Construct ,body-span some
+                               (Types ,(resolved-type-argument T)) ,body))
                    (,false-span false () -> ,false-body)))))]))
       (expand clauses))
 
@@ -3168,7 +3172,9 @@
         [`(Construct ,constructor (Types ,raw-types ...) ,fields ...)
          (define type-arguments
            (for/list ([type (in-list raw-types)])
-             (resolve-annotation type delta s)))
+             (match type
+               [(resolved-type-argument resolved) resolved]
+               [_ (resolve-annotation type delta s)])))
          (define result-type
            (constructor-result constructor type-arguments s))
          (elaborate-constructor constructor fields result-type

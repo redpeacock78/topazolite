@@ -341,6 +341,49 @@
       "fn choose(c: Bool, make: fn() -> Owned<Int> ! Own) -> Int ! Own {\n"
       " let answer = if c { make() }\n 0\n}\n0")))))
 
+(test-case "IfSome の解決済み payload 型を synth と check の両経路で保つ"
+  (define cases
+    (list
+     (list "Int" "" "x: Int" "x" "Int")
+     (list "String" "" "x: String" "x" "String")
+     (list "Record" "" "x: { a: Int }" "x" "{ a: Int }")
+     (list "Union" "" "x: Int | Bool" "x" "Int | Bool")
+     (list "Option" "" "x: Option<Int>" "x" "Option<Int>")
+     (list "NFn" "" "" "fn(x: Int) => x" "fn(Int) -> Int")
+     (list "alias" "type Handler = fn(Int) -> Int\n"
+           "x: Handler" "x" "Handler")
+     (list "data application" "type Box<A> =\n  | box<A>\n"
+           "x: Box<Int>" "x" "Box<Int>")
+     (list "Owned" "" "make: fn() -> Owned<Int> ! Own"
+           "make()" "Owned<Int>")))
+  (for ([test-case (in-list cases)])
+    (match-define (list label prelude parameter payload type) test-case)
+    (for ([annotation (in-list (list #f (format "Option<~a>" type)))])
+      (define binding
+        (if annotation
+            (format "let answer: ~a = if c { ~a }" annotation payload)
+            (format "let answer = if c { ~a }" payload)))
+      (define effect-row (if (string=? label "Owned") " ! Own" ""))
+      (define source
+        (format "~afn f(c: Bool~a) -> Option<~a>~a { ~a\n answer }\n0"
+                prelude
+                (if (string=? parameter "") "" (string-append ", " parameter))
+                type
+                effect-row
+                binding))
+      (define result (compile source))
+      (check-true (compiled? result)
+                  (format "~a, ~a: ~a"
+                          label
+                          (if annotation "check" "synth")
+                          (if (diagnostic? result)
+                              (diagnostic-id result)
+                              result)))
+      (when (compiled? result)
+        (check-false
+         (regexp-match? #rx"resolved-type-argument"
+                        (format "~s" (compiled-core result))))))))
+
 (test-case "IfSome の Core は Owned を some へ移し、未選択なら Scope で drop する"
   (define (source condition)
     `(Apply

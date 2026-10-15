@@ -1000,7 +1000,10 @@ B' = push(B, ExpressionBoundary(b, τ))
 期待型が `Option<U>` なら、`T = U` として `IfSome` を明示形へ展開し、`Option<U>` に対して検査する。
 期待型が `Option` でなければ E-IfSome-Synth で得た `Option<T>` を既存の検査経路で期待型と照合する。
 明示形は各 then を `some<T>` で包み、最後の false 枝を `none<T>` とする 014a の値位置 `if` の連鎖である。
-生成する `Construct` には `Types T` を明記するため、束縛値が `Never` の `Let` の下でも明示形を合成できる。
+`some` と `none` の型引数には、elaboration 内部の解決済み型の印を使う。
+この印は型注釈として再解決せず、elaboration が `Construct` を Core へ変換するときに消える。
+これにより、`NFn` のように Surface 注釈と Core 型の形が異なる型でも、束縛値が `Never` の `Let` の下で明示形を合成できる。
+この印は UCore+ の文法に含まれず、`annotate`、`erase`、自由変数の走査にも現れない。
 
 **(E-IfSome-Synth)**
 
