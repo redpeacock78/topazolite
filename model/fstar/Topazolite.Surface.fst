@@ -1434,7 +1434,7 @@ val lower_ifsome_root_spans : s:span -> clauses:list sifclause
 let lower_ifsome_root_spans s clauses s0 =
   match clauses with
   | [] -> ()
-  | (si, _) :: _ -> assert (hull si s == s)
+  | SIfClause si _ _ :: _ -> assert (hull si s == s)
 
 // 命題 6。空でない block の根の span は先頭宣言と後続の根の hull である。
 val lower_block_root_span : d:sdecl -> ds:list sdecl -> tail:core -> Lemma
