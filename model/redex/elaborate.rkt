@@ -2723,6 +2723,65 @@
                 (row-union (judgment-row bound-result)
                            (judgment-row body-result))))
 
+    (define (elaborate-annotated-let-bound s binding-mode raw-type bound
+                                           environment delta propositions
+                                           boundaries)
+      (define declared-type (resolve-annotation raw-type delta s))
+      (when (and (eq? binding-mode 'mut)
+                 (or (not (owned-free? declared-type))
+                     (unbound-borrowed-type? declared-type (set))))
+        ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
+        ;; 前に拒むため、elaborate と typing が同じ key を返す。
+        (reject s 'mut-binding-unsupported-type declared-type))
+      (define record-literal-checkable?
+        (match* ((peel-node bound) declared-type)
+          [(`(Rec (,fields ...)) `(Record ,row))
+           ;; 空リストも有効な Rec なので、欄ごとの check を内側へ伝える。
+           (list? (omitted-optional-labels
+                   (map (lambda (field) (peel-lbl (first field))) fields)
+                   row))]
+          [(_ _) #f]))
+      (define bound-result
+        (if (or (needs-expected-type? bound) record-literal-checkable?)
+            (check bound declared-type environment delta propositions boundaries)
+            (synth bound environment delta propositions boundaries)))
+      (define source-core-type (judgment-core-type bound-result))
+      ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
+      ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
+      (define remainder-target
+        (match* (binding-mode source-core-type declared-type)
+          [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+           `(Record ,(append declared-row
+                             (field-row-residual actual-row declared-row)))]
+          [(_ _ _) declared-type]))
+      (define-values (discharged-core discharged-type)
+        (discharge-remainder (judgment-core bound-result)
+                             source-core-type remainder-target s propositions))
+      (define-values (bound-core actual-type)
+        (if (and (memq binding-mode '(let mut))
+                 (tag-compat? discharged-type declared-type
+                              (initial-candidate-context propositions))
+                 (match (narrowing-kind discharged-type declared-type
+                                        propositions)
+                   [`(drop-obligation ,_ ,_) #t]
+                   [_ #f]))
+            ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
+            (values discharged-core discharged-type)
+            (convert discharged-core discharged-type declared-type s
+                     propositions)))
+      ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
+      (match (narrowing-kind discharged-type actual-type propositions)
+        ['ok (void)]
+        [`(drop-obligation ,_ ,_)
+         (reject s 'owned-narrowing-needs-proof actual-type discharged-type)]
+        [_ (unless (mut-union-rebuildable?
+                    discharged-type actual-type
+                    (initial-candidate-context propositions) propositions)
+             (reject s 'owned-narrowing-rejected actual-type discharged-type))])
+      (define binding-type
+        (bind-with-mode s binding-mode declared-type actual-type propositions))
+      (values bound-result bound-core declared-type binding-type))
+
     (define (projection-chain expression environment)
       (define (walk node)
         (match (peel-node node)
@@ -2968,64 +3027,10 @@
         ;; 誤って分解しないよう、binder の包みの形で分岐する。
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define declared-type (resolve-annotation raw-type delta s))
-         (when (and (eq? binding-mode 'mut)
-                    (or (not (owned-free? declared-type))
-                        (unbound-borrowed-type? declared-type (set))))
-           ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
-           ;; 前に拒むため、elaborate と typing が同じ key を返す。
-           (reject s 'mut-binding-unsupported-type declared-type))
-         (define record-literal-checkable?
-           (match* ((peel-node bound) declared-type)
-             [(`(Rec (,fields ...)) `(Record ,row))
-              ;; 空リストも有効な Rec なので、欄ごとの check を内側へ伝える。
-              (list? (omitted-optional-labels
-                      (map (lambda (field) (peel-lbl (first field))) fields)
-                      row))]
-             [(_ _) #f]))
-         (define bound-result
-           (if (or (needs-expected-type? bound) record-literal-checkable?)
-               (check bound declared-type environment delta propositions boundaries)
-               (synth bound environment delta propositions boundaries)))
-         (define source-core-type (judgment-core-type bound-result))
-         ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
-         ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
-         (define remainder-target
-           (match* (binding-mode source-core-type declared-type)
-             [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-              `(Record ,(append declared-row
-                                (field-row-residual actual-row declared-row)))]
-             [(_ _ _) declared-type]))
-         (define-values (discharged-core discharged-type)
-           (discharge-remainder (judgment-core bound-result)
-                                source-core-type remainder-target s
-                                propositions))
-         (define-values (bound-core actual-type)
-           (if (and (memq binding-mode '(let mut))
-                    (tag-compat? discharged-type declared-type
-                                 (initial-candidate-context propositions))
-                    (match (narrowing-kind discharged-type declared-type
-                                           propositions)
-                      [`(drop-obligation ,_ ,_) #t]
-                      [_ #f]))
-               ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
-               (values discharged-core discharged-type)
-               (convert discharged-core discharged-type declared-type s
-                        propositions)))
-         ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
-         (match (narrowing-kind discharged-type actual-type propositions)
-           ['ok (void)]
-           [`(drop-obligation ,_ ,_)
-            (reject s 'owned-narrowing-needs-proof actual-type
-                    discharged-type)]
-           [_ (unless (mut-union-rebuildable?
-                       discharged-type actual-type
-                       (initial-candidate-context propositions) propositions)
-                (reject s 'owned-narrowing-rejected actual-type
-                        discharged-type))])
-         (define binding-type
-           (bind-with-mode s binding-mode declared-type actual-type
-                           propositions))
+         (define-values (bound-result bound-core declared-type binding-type)
+           (elaborate-annotated-let-bound
+            s binding-mode raw-type bound environment delta propositions
+            boundaries))
          (elaborate-let-tail
           s raw-name binding-type binding-mode
           bound-result
@@ -3478,57 +3483,10 @@
 
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define declared-type (resolve-annotation raw-type delta s))
-         (when (and (eq? binding-mode 'mut)
-                    (or (not (owned-free? declared-type))
-                        (unbound-borrowed-type? declared-type (set))))
-           (reject s 'mut-binding-unsupported-type declared-type))
-         (define record-literal-checkable?
-           (match* ((peel-node bound) declared-type)
-             [(`(Rec (,fields ...)) `(Record ,row))
-              (list? (omitted-optional-labels
-                      (map (lambda (field) (peel-lbl (first field))) fields)
-                      row))]
-             [(_ _) #f]))
-         (define bound-result
-           (if (or (needs-expected-type? bound) record-literal-checkable?)
-               (check bound declared-type environment delta propositions boundaries)
-               (synth bound environment delta propositions boundaries)))
-         (define source-core-type (judgment-core-type bound-result))
-         (define remainder-target
-           (match* (binding-mode source-core-type declared-type)
-             [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-              `(Record ,(append declared-row
-                                (field-row-residual actual-row declared-row)))]
-             [(_ _ _) declared-type]))
-         (define-values (discharged-core discharged-type)
-           (discharge-remainder (judgment-core bound-result)
-                                source-core-type remainder-target s
-                                propositions))
-         (define-values (bound-core actual-type)
-           (if (and (memq binding-mode '(let mut))
-                    (tag-compat? discharged-type declared-type
-                                 (initial-candidate-context propositions))
-                    (match (narrowing-kind discharged-type declared-type
-                                           propositions)
-                      [`(drop-obligation ,_ ,_) #t]
-                      [_ #f]))
-               (values discharged-core discharged-type)
-               (convert discharged-core discharged-type declared-type s
-                        propositions)))
-         (match (narrowing-kind discharged-type actual-type propositions)
-           ['ok (void)]
-           [`(drop-obligation ,_ ,_)
-            (reject s 'owned-narrowing-needs-proof actual-type
-                    discharged-type)]
-           [_ (unless (mut-union-rebuildable?
-                       discharged-type actual-type
-                       (initial-candidate-context propositions) propositions)
-                (reject s 'owned-narrowing-rejected actual-type
-                        discharged-type))])
-         (define binding-type
-           (bind-with-mode s binding-mode declared-type actual-type
-                           propositions))
+         (define-values (bound-result bound-core declared-type binding-type)
+           (elaborate-annotated-let-bound
+            s binding-mode raw-type bound environment delta propositions
+            boundaries))
          (elaborate-let-tail
           s raw-name binding-type binding-mode bound-result body environment
           delta propositions boundaries

@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         "../annotate.rkt"
          "../diagnostic.rkt"
          "../driver.rkt"
          "../elaborate.rkt"
@@ -20,6 +21,11 @@
   (match (elab expression)
     [`(err ,diagnostic) (diagnostic-id diagnostic)]
     [_ 'ok]))
+
+(define (elab-diagnostic expression)
+  (match (elab expression)
+    [`(err ,diagnostic) diagnostic]
+    [other (fail-check (format "失敗を期待したが ~s" other))]))
 
 (define (check-row-sum form row)
   `(Fn () (TypeInfo Type) ,row ,form))
@@ -151,3 +157,26 @@
                 (list wide narrow))
   (check-equal? (find-narrowing-proof (erase-core checked-core))
                 (find-narrowing-proof (erase-core synth-core))))
+
+(test-case "Let の末尾で期待型を要する枝は Eliminate の診断位置で拒否する"
+  (define expression
+    '(Eliminate (Construct true (Types))
+       ((true () -> (Let (y const) 1 (Construct none)))
+        (false () -> (Construct some (Types Int) 1)))))
+  (define diagnostic (elab-diagnostic expression))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'elaborate 'eliminate-needs-expected-type))
+  (check-equal? (diagnostic-primary-span diagnostic)
+                (second (annotate-surface expression))))
+
+(test-case "NarrativeExpr 内の Let 末尾でも Eliminate の診断位置を保つ"
+  (define expression
+    '(Eliminate (Construct true (Types))
+       ((true () -> (NarrativeExpr
+                     (Let (y const) 1 (Construct none))))
+        (false () -> (Construct some (Types Int) 1)))))
+  (define diagnostic (elab-diagnostic expression))
+  (check-equal? (diagnostic-id diagnostic)
+                (diagnostic-code-of 'elaborate 'eliminate-needs-expected-type))
+  (check-equal? (diagnostic-primary-span diagnostic)
+                (second (annotate-surface expression))))
