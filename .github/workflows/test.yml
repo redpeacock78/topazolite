@@ -18,8 +18,11 @@ jobs:
           distribution: 'full'
           architecture: 'x64'
 
+      - name: raco make
+        run: raco make -j 4 model/redex/tests/*.rkt
+
       - name: raco test
-        run: raco test -j 2 model/redex/tests/
+        run: raco test -j 4 model/redex/tests/
 
       - name: requirement coverage
         if: always()
