@@ -707,7 +707,8 @@ Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ�
 
 式位置と文位置の `when` と `if`、式文、および `else` の無い `if` は実装済みである。
 `else` の無い `if` は、文位置では後続へ進み、式位置では `Option<T>` を返す。
-関数本体の明示的な `return` と本体ブロック、および `for` は未実装であり、後続で扱う。
+関数宣言と block 本体の無名関数では、明示的な `return`、全経路の返却検査、および `E-RET-004` を実装済みである。
+`when` の arm の本体ブロック、被演算子位置の `return` による `Never` の伝播、および `for` は未実装であり、後続で扱う。
 
 ### SUR-015
 
@@ -979,7 +980,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。残るのは関数本体の明示的な `return` と全経路の返却の検査、本体ブロック、`for` の境界、明示的な `return to`、`E-RET-003`。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。残るのは `when` arm の本体ブロック、被演算子位置の `return` による `Never` の伝播、`for` の境界、明示的な `return to`、`E-RET-003`。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
 | data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
