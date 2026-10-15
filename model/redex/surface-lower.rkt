@@ -855,20 +855,27 @@
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
     ;; P2m spec §7.1。枝の束縛子は UCore+ の xs へ写す。
     [`(SMatch ,s ,scrutinee ,arms)
-     `(NarrativeExpr ,s
-       (Eliminate ,s ,(lower-sexpr scrutinee env fail)
-                  ,(for/list ([arm (in-list arms)])
-                     (match arm
-                       [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
-                        `(,s_a ,k
-                               ,(for/list ([b (in-list binders)])
-                                  (match b
-                                    [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
-                               -> ,(lower-sexpr body env fail))]
-                       [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
-                        `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
-                               (#:bind ,x ,s_x)
-                               -> ,(lower-sexpr body env fail))]))))]
+     (define scrutinee-core (lower-sexpr scrutinee env fail))
+     (define variable-scrutinee? (match scrutinee [`(SVar ,_ ,_) #t] [_ #f]))
+     (define (lower-body s_a body)
+       (define body* (lower-sexpr body env fail))
+       (if variable-scrutinee? body* `(NarrativeExpr ,s_a ,body*)))
+     (define lowered-arms
+       (for/list ([arm (in-list arms)])
+         (match arm
+           [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
+            `(,s_a ,k
+                   ,(for/list ([b (in-list binders)])
+                      (match b
+                        [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
+                   -> ,(lower-body s_a body))]
+           [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
+            `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
+                   (#:bind ,x ,s_x)
+                   -> ,(lower-body s_a body))])))
+     (if variable-scrutinee?
+         `(NarrativeExpr ,s (Eliminate ,s ,scrutinee-core ,lowered-arms))
+         `(Eliminate ,s ,scrutinee-core ,lowered-arms))]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。
     [`(SConstruct ,s (SName ,_ ,k) ,args)

@@ -49,10 +49,10 @@
                                    "  zero => succ(zero)\n"
                                    "  succ m => m\n"
                                    "}"))
-               `(NarrativeExpr ,_
-                  (Eliminate ,_ (Construct ,_ succ (Types) (Construct ,_ zero (Types)))
-                             ((,_ zero () -> (Construct ,_ succ (Types) (Construct ,_ zero (Types))))
-                              (,_ succ ((#:bind m ,_)) -> (#:var m ,_))))))
+               `(Eliminate ,_
+                           (Construct ,_ succ (Types) (Construct ,_ zero (Types)))
+                           ((,_ zero () -> (NarrativeExpr ,_ (Construct ,_ succ (Types) (Construct ,_ zero (Types)))))
+                            (,_ succ ((#:bind m ,_)) -> (NarrativeExpr ,_ (#:var m ,_))))))
 
 (test-case "枝の束縛子は本体で同名 constructor を隠す"
   (check-match (term (string-append nat

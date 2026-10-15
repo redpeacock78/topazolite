@@ -358,9 +358,14 @@ drop する側を書く構文は置かない。
 
 Surface の block は束縛列と末尾式から成り、式文を持たない。
 したがって `when` は常に式位置に現れる。
-`when` は `(NarrativeExpr s (Eliminate ...))` へ lowering され、**ローカルな返却境界**を作る。
-その枝の `return` は関数の境界ではなく、最も内側の `when` 式へ値を返す。
+変数を scrutinee とする `when` は `(NarrativeExpr s (Eliminate ...))` へ lowering され、**ローカルな返却境界**を作る。
+非変数を scrutinee とする `when` は `(Eliminate s e' arms'')` へ lowering され、各枝の本体 `body'` は枝の span `s_arm` の `(NarrativeExpr s_arm body')` へ lowering される。
+その枝の `return` は最も内側の枝の境界へ値を返し、scrutinee 内の `return` は外側の境界へ届く。
+変数 scrutinee は `return` を含まないため、従来の全体境界を保っても範囲は変わらない。
+この区別は、ホワイトペーパー §3.3 の thunk 展開で scrutinee が境界の外で評価されることに対応する。
 入れ子の `when` はそれぞれ別の返却境界を持つ。
+**Why not（scrutinee を `const` で先に束縛する案）**：束縛子を `Eliminate` が Move せずに読むため、資源型の scrutinee が `E-OWN-010` になる。
+**Why not（Core に枝だけを覆う返却境界の形を足す案）**：既存の `NarrativeExpr` を各枝に置けば同じ範囲を表せるため採らない。
 境界の handler と synth 規則は `core-calculus.md` §4.5 が定める。
 
 ### 3.7 when の Union pattern
@@ -628,12 +633,13 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
-- `(SMatch s e arms)` は `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
+- `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
+  それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
   scrutinee と各枝の本体を再帰的に下ろす。
   constructor pattern の枝は constructor 名と束縛子を保つ。
   Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
-  `NarrativeExpr` は式位置の `when` にローカルな返却境界を与える（§4.5）。
+  枝の `NarrativeExpr` は式位置の `when` の返却境界を枝の本体だけに与える（§4.5）。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
   型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。

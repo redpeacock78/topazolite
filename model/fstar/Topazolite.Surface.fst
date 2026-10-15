@@ -1235,7 +1235,10 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SConstruct s (_, k) a -> CConstruct s k (lower_exprs a)
   | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
-  | SMatch s e arms -> CNarrativeExpr s (CEliminate s (lower_expr e) (lower_arms arms))
+  | SMatch s (SVar se _) arms ->
+      CNarrativeExpr s (CEliminate s (CVar se) (lower_arms arms))
+  | SMatch s e arms ->
+      CEliminate s (lower_expr e) (lower_arms_bounded arms)
   | SProjRec s e1 ls ->
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_fields fs)
@@ -1255,6 +1258,13 @@ and lower_arms (arms: list sarm) : Tot (list core_branch) (decreases arms) =
       CConstructorBranch sa k (map fst bs) (lower_expr b) :: lower_arms tl
   | SMemberArm sa _ (sx, x) ty b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_expr b) :: lower_arms tl
+and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arms) =
+  match arms with
+  | [] -> []
+  | SConstructorArm sa (_, k) bs b :: tl ->
+      CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
+  | SMemberArm sa _ (sx, x) ty b :: tl ->
+      CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail

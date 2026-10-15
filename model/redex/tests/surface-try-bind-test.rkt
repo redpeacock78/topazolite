@@ -279,7 +279,7 @@
   (when (diagnostic? when-result)
     (check-equal? (diagnostic-id when-result) "E-TYP-033")
     (check-equal? (second (first (diagnostic-related when-result)))
-                  (source-span when-source "when true { true => { let y ?= a\n 1 }\n false => 0 }"))))
+                  (source-span when-source "true => { let y ?= a\n 1 }"))))
 
 (test-case "Owned resource 変数の右辺は when と同じ E-OWN-010"
   (define try-source
