@@ -416,3 +416,14 @@
    (for/or ([injection (in-list (union-injection-summary erased))])
      (and (type-equiv? (first injection) union)
           (equal? (second injection) 'Int)))))
+
+(test-case "資源 identity でない Let の検査も最上位の残余を保つ"
+  (define actual '(Record ((a Int imm) (b (Option (Owned Res)) imm))))
+  (define union '(Union Bool Int))
+  (define expected `(Record ((a ,union imm))))
+  (define source
+    `(Fn ((argument ,actual)) ,expected (Own)
+         (Let (converted let ,expected) (Move argument)
+              (Let (marker const Int) 1 (Move converted)))))
+  (match-define (list core type row callables) (elaborate-ok source))
+  (check-equal? (core-type-of (erase-core core) '() callables) (list type row)))

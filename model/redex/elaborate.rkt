@@ -2704,24 +2704,24 @@
              (eq? (peel-node body) name)))
       (define body-result
         (cond
-          [expected
-           (if identity-resource?
-               ;; identity Let は place を介さず値をそのまま渡す。
-               (check-against-expected
-                (judgment `(#:var ,name ,(span-of body)) binding-type '())
-                expected (span-of body) propositions)
-               (check body expected body-environment delta propositions
-                      boundaries))]
           [identity-resource?
            (judgment `(#:var ,name ,(span-of body)) binding-type '())]
+          [expected
+           (check body expected body-environment delta propositions
+                  boundaries)]
           [else
            (synth body body-environment delta propositions boundaries)]))
-      (judgment `(Let ,s ,core-binder
-                      ,bound-core
-                      ,(judgment-core body-result))
-                (judgment-type body-result)
-                (row-union (judgment-row bound-result)
-                           (judgment-row body-result))))
+      (define let-result
+        (judgment `(Let ,s ,core-binder
+                        ,bound-core
+                        ,(judgment-core body-result))
+                  (judgment-type body-result)
+                  (row-union (judgment-row bound-result)
+                             (judgment-row body-result))))
+      (if (and expected identity-resource?)
+          ;; 資源 identity Let は資源の place を保つため、Let 全体を検査する。
+          (check-against-expected let-result expected s propositions)
+          let-result))
 
     (define (elaborate-annotated-let-bound s binding-mode raw-type bound
                                            environment delta propositions

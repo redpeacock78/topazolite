@@ -644,7 +644,8 @@ bind(bmode, τdecl, τ1) = τb       τdecl は注釈型、注釈が無ければ
 E-Let-Check は E-Let、E-Let-Annot、E-Let-Fn-Check の右辺の前提と束縛型の処理を保ち、本体だけを期待型 `τexpected` で検査する。
 右辺が期待型を必要とする関数であれば E-Let-Fn-Check を適用し、それ以外では対応する合成規則の右辺を適用する。
 合成位置と検査位置で Typed Core の `Let` の形と Effect row の合併は変わらない。
-本体が資源型 identity `Let` の束縛名そのものである場合は、E-Var を経由せず直接受け渡し、値の型を `τexpected` と突き合わせる。
+本体が資源型 identity `Let` の束縛名そのものである場合は、E-Var を経由しない `#:var` を本体に置き、合成位置と同じ Core の `Let` 全体を `τexpected` と突き合わせる。
+期待型への変換は `Let` 全体へ適用する。
 
 **(E-Construct-Check)**
 
