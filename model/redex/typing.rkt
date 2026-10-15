@@ -27,10 +27,12 @@
          "validators.rkt")
 
 (provide core-type-of
+         core-type-of/normal
          core-type-of/diagnostic
          core-check
          core-check-row
          type-of/raw
+         type-of/raw*+normal
          type-of/raw*+borrows
          type-of/raw*+ptr
          annotate-mut-binding-types
@@ -1767,7 +1769,9 @@
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define contexts
-    (union-eliminate-branches (first scrutinee-result) branches Λ environment
+    (union-eliminate-branches
+     (typing-normal-child-type node Λ 0 (first scrutinee-result))
+     branches Λ environment
                               node scrutinee fail))
   (define branch-results
     (for/list ([context (in-list contexts)])
@@ -1806,7 +1810,9 @@
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define contexts
-    (union-eliminate-branches (first scrutinee-result) branches Λ environment
+    (union-eliminate-branches
+     (typing-normal-child-type node Λ 0 (first scrutinee-result))
+     branches Λ environment
                               node scrutinee fail))
   (define attempts
     (for/list ([context (in-list contexts)])
@@ -1881,7 +1887,8 @@
                          [compatible? type-compatible?])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
-  (define data-type (first scrutinee-result))
+  (define data-type
+    (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define branch-results
@@ -2211,7 +2218,8 @@
 (define (infer-eliminate scrutinee branches Λ Ψ environment places callables node fail)
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
-  (define data-type (first scrutinee-result))
+  (define data-type
+    (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail))
   (define attempts
@@ -2907,8 +2915,12 @@
 ;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
 ;; 親 capability を子の生存期間だけ停止する。判定は段 3 で行う。
 (define (infer-reborrow core operand Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (define ir (region-ctx-ir Λ))
   (unless ir (fail 'borrow-unknown-owner-region core))
   (match (normalize-type τ_operand)
@@ -2999,8 +3011,12 @@
 ;; 構成検査では親の可変 capability が own と一致する場合だけ共有へ落とす。
 (define (infer-reborrow/config core own operand ρ Λ Ψ environment
                                places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (match (normalize-type τ_operand)
     [`(BorrowedMut ,τ ,_ρ_parent)
      (define tokens (borrow-token-key Λ operand #:fail fail))
@@ -3045,8 +3061,12 @@
 ;; [REQ: BOR-004] 借用の field 射影。親の α をそのまま使い、
 ;; 新しい α と borrow-request は作らない（spec §5.1）。
 (define (infer-projborrow core operand label Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (define-values (m_parent τ_inner α)
     (match (normalize-type τ_operand)
       [`(Borrowed ,τ ,α) (values 'Borrowed τ α)]
@@ -3116,8 +3136,12 @@
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
 ;; ρ は結果の型に現れない（spec §6.1）。
 (define (infer-read core operand Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (define-values (τ_payload α_view)
     (match (normalize-type τ_operand)
       [`(Borrowed ,τ ,α) (values τ α)]
@@ -3139,8 +3163,12 @@
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
 ;; Union payload は値全体の tag 保存互換で照合する。
 (define (infer-assign core target value Λ Ψ environment places callables fail)
-  (match-define (list τ_target ε_target Ψ_1)
+  (define target-result
     (infer target (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_target
+    (typing-normal-child-type core Λ 0 (first target-result)))
+  (define ε_target (second target-result))
+  (define Ψ_1 (third target-result))
   (define τ_target* (normalize-type τ_target))
   (define-values (τ_payload α_target)
     (match τ_target*
@@ -3191,7 +3219,8 @@
        type]))
   (match-define (list τ_value ε_value Ψ_1)
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
-  (unless (reassign-narrowing? τ_value τ_slot)
+  (unless (or (eq? τ_value 'Never)
+              (reassign-narrowing? τ_value τ_slot))
     (fail 'reassign-type-mismatch core τ_slot τ_value))
   (unless (storage-ok? τ_slot)
     (fail 'mutable-callable-storage-requires-partial core τ_slot))
@@ -3253,8 +3282,12 @@
 ;; 6 引数はすべて生成源の値へ固定し、書き手に選ばせない。
 ;; AddressOf 自身は H を触らないため Unsafe を row へ載せない。
 (define (infer-address-of core operand Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (define τ_payload
     (match (normalize-type τ_operand)
       [`(BorrowedMut ,τ ,_) τ]
@@ -3267,8 +3300,12 @@
 ;; unsafe.md §2.2。offset の結果が非 null である保証は無いため
 ;; nul を Nullable へ落とす。ptrmut と align と as と prov は保つ。
 (define (infer-ptr-offset core operand offset Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (match-define (list τ_offset ε_offset Ψ_2)
     (infer offset (enter-child Λ 1) Ψ_1 environment places callables fail))
   (unless (type-compatible? (normalize-type τ_offset) 'Int)
@@ -3282,8 +3319,12 @@
         Ψ_2))
 
 (define (infer-raw-load core operand Λ Ψ environment places callables fail)
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (match-define (list τ_payload _ptrmut _nul _align _as _prov)
     (pointer-parts core τ_operand fail))
   (check-raw-obligations! core (raw-load-obligation-ids) τ_payload fail)
@@ -3291,8 +3332,12 @@
   (list τ_payload (row-union ε_operand '(Unsafe)) Ψ_1))
 
 (define (infer-raw-store core target value Λ Ψ environment places callables fail)
-  (match-define (list τ_target ε_target Ψ_1)
+  (define target-result
     (infer target (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_target
+    (typing-normal-child-type core Λ 0 (first target-result)))
+  (define ε_target (second target-result))
+  (define Ψ_1 (third target-result))
   ;; 失敗記号の details を core へ揃えるため、fail を包み直して渡す。
   (raw-store-target-check τ_target (lambda (key _node) (fail key core)))
   (match-define (list τ_value ε_value Ψ_2)
@@ -3334,8 +3379,12 @@
   ;; unsafe.md §3.3。ρ の束縛は既存の region well-formedness と同じ層で見る。
   (unless (deriving-config?)
     (check-region-annotation Λ region core fail))
-  (match-define (list τ_operand ε_operand Ψ_1)
+  (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (define τ_operand
+    (typing-normal-child-type core Λ 0 (first operand-result)))
+  (define ε_operand (second operand-result))
+  (define Ψ_1 (third operand-result))
   (match-define (list τ_payload _ptrmut _nul _align _as _prov)
     (pointer-parts core τ_operand fail))
   (check-raw-obligations! core (from-raw-ptr-obligation-ids) τ_payload fail)
@@ -3423,14 +3472,214 @@
       (and (exact-nonnegative-integer? root)
            (lookup places root))))
 
+;; G1/G2 の E に現れる正格な子と、通常の規則がその型を使う位置をまとめる。
+;; 子の添字は region.rkt の core-children と同じである。
+(define typing-evaluation-contexts
+  '((Apply all (0))
+    (Let (0) ())
+    (Construct all ())
+    (Eliminate (0) (0))
+    (Perform (0) ())
+    (Drop (0) (0))
+    (Yield (0) (0))
+    (Curry all (0))
+    (Scope (0) ())
+    (Handle handle-body ())
+    (OwnLeaf (0) ())
+    (Rec record-fields record-fields)
+    (Discharge (0) (0))
+    (UnionInject (0) ())
+    (UnionEliminate (0) (0))
+    (RecRewrite (0) (0))
+    (RecRewriteOpen open-fields unannotated-open-fields)
+    (Proj (0) (0))
+    (ProjOpt (0) (0))
+    (ReborrowAt (0) (0))
+    (ProjBorrowAt (0) (0))
+    (Read (0) (0))
+    (Assign all (0))
+    (Reassign (0) ())
+    (RegionApp (0) (0))
+    (AddressOf (0) (0))
+    (PtrOffset all (0))
+    (RawLoad (0) (0))
+    (RawStore all (0))
+    (FromRawPtr (0) (0))
+    (Unsafe (0) ())))
+
+(define typing-normal-results (make-parameter #f))
+
+(define (typing-context-rule core)
+  (define term (peel-node core))
+  (and (pair? term) (assq (car term) typing-evaluation-contexts)))
+
+(define (typing-context-indices core selector)
+  (define children (core-children (peel-node core)))
+  (cond
+    [(eq? selector 'all) (range (length children))]
+    [(eq? selector 'handle-body) '(1)]
+    [(eq? selector 'record-fields)
+     (for/list ([field (in-list (second (peel-node core)))]
+                [index (in-naturals)]
+                #:unless (match (peel-node (third field))
+                           [`(Absent ,_) #t]
+                           [_ #f]))
+       index)]
+    [(eq? selector 'open-fields)
+     (for/list ([field (in-list (second (peel-node core)))]
+                [index (in-naturals)]
+                #:unless (match (peel-node (last field))
+                           [`(Absent ,_) #t]
+                           [_ #f]))
+       index)]
+    [(eq? selector 'unannotated-open-fields)
+     (for/list ([field (in-list (second (peel-node core)))]
+                [index (in-naturals)]
+                #:when (and (= (length field) 3)
+                            (not (match (peel-node (last field))
+                                   [`(Absent ,_) #t]
+                                   [_ #f]))))
+       index)]
+    [(list? selector) selector]
+    [else '()]))
+
+(define (typing-result-at Λ)
+  (define table (typing-normal-results))
+  (and table (hash-ref table (region-ctx-point Λ) #f)))
+
+(define (typing-child-result Λ index)
+  (typing-result-at (enter-child Λ index)))
+
+(define (typing-child-normal-type Λ index)
+  (match (typing-child-result Λ index)
+    [(list _ normal-type _) normal-type]
+    [_ #f]))
+
+(define (typing-normal-child-type core Λ index actual-type)
+  (define rule (typing-context-rule core))
+  (define required
+    (and rule
+         (member index (typing-context-indices core (third rule)))))
+  (if (and required (eq? actual-type 'Never))
+      (let ([normal-type (typing-child-normal-type Λ index)])
+        (if (and normal-type (not (eq? normal-type '⊥)))
+            normal-type
+            actual-type))
+      actual-type))
+
+(define (typing-context-never? core Λ)
+  (define rule (typing-context-rule core))
+  (and rule
+       (not (eq? (first rule) 'Handle))
+       (let ([indices (typing-context-indices core (second rule))])
+         (for/or ([index (in-list indices)])
+           (match (typing-child-result Λ index)
+           [(list 'Never _ _) #t]
+            [_ #f])))))
+
+(define (typing-normal-from-let Λ)
+  (match* ((typing-child-result Λ 0) (typing-child-result Λ 1))
+    [((list bound-type _ _) (list body-type body-normal _))
+     (if (eq? bound-type 'Never)
+         (if (eq? body-type 'Never) '⊥ body-normal)
+         body-normal)]
+    [(_ _) '⊥]))
+
+(define (typing-handle-propagates-never? core Λ)
+  (match (peel-node core)
+    [`(Handle ,operation ,_ ,_)
+     (match (typing-child-result Λ 1)
+       [(list 'Never _ body-row)
+        (define operation*
+          (match operation
+            [`(Return ,boundary ,type)
+             `(Return ,boundary ,(peel-ty type))]
+            [_ operation]))
+        (not (member operation* body-row effect-equiv?))]
+       [_ #f])]
+    [_ #f]))
+
+(define (typing-result-never? core Λ raw-type)
+  (or (eq? raw-type 'Never)
+      (typing-context-never? core Λ)
+      (typing-handle-propagates-never? core Λ)))
+
+(define (typing-normal-from-infer core Λ raw-type)
+  (define term (peel-node core))
+  (cond
+    [(and (match term [`(Handle ,_ ,_ ,_) #t] [_ #f])
+          (typing-handle-propagates-never? core Λ))
+     (or (typing-child-normal-type Λ 1) '⊥)]
+    [(not (eq? raw-type 'Never)) raw-type]
+    [else
+     (match term
+       [`(Let ,_ ,_ ,_)
+        (typing-normal-from-let Λ)]
+       [`(Suspend ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Scope ,_ ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(OwnLeaf ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(OwnedLeaf ,_ ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Unsafe ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Discharge ,_ ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Yield ,_ ,_) (or (typing-child-normal-type Λ 1) '⊥)]
+       [`(Recur ,_ ,_ ,_ ,_ ,_)
+        (or (typing-child-normal-type Λ 1) '⊥)]
+       [`(Handle ,_ ,_ ,_)
+        (if (typing-handle-propagates-never? core Λ)
+            (or (typing-child-normal-type Λ 1) '⊥)
+            '⊥)]
+       [_ '⊥])]))
+
+(define (typing-normal-from-check core Λ expected actual-type)
+  (cond
+    [(typing-result-at Λ)
+     => (lambda (result) (second result))]
+    [(and (match (peel-node core) [`(Handle ,_ ,_ ,_) #t] [_ #f])
+          (typing-handle-propagates-never? core Λ))
+     (or (typing-child-normal-type Λ 1) '⊥)]
+    [(not (eq? actual-type 'Never)) actual-type]
+    [else
+     (match (peel-node core)
+       [`(Let ,_ ,_ ,_)
+        (typing-normal-from-let Λ)]
+       [`(Suspend ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Scope ,_ ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(OwnLeaf ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Unsafe ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Discharge ,_ ,_) (or (typing-child-normal-type Λ 0) '⊥)]
+       [`(Yield ,_ ,_) (or (typing-child-normal-type Λ 1) '⊥)]
+       [`(Recur ,_ ,_ ,_ ,_ ,_)
+        (or (typing-child-normal-type Λ 1) '⊥)]
+       [`(Handle ,_ ,_ ,_)
+        (if (typing-handle-propagates-never? core Λ)
+            (or (typing-child-normal-type Λ 1) '⊥)
+            expected)]
+       [_ '⊥])]))
+
+(define (record-typing-result! Λ actual-type normal-type row)
+  (define table (typing-normal-results))
+  (when table
+    (hash-set! table (region-ctx-point Λ)
+               (list actual-type normal-type row))))
+
 (define (infer core Λ Ψ environment places callables fail)
-  ((typing-point-probe) (region-ctx-point Λ))
-  (define result
-    (infer/body core Λ Ψ environment places callables fail))
-  (collect-use-regions! (first result)
-                        (region-ctx-ir Λ)
-                        (region-ctx-point Λ))
-  result)
+  (if (not (typing-normal-results))
+      (parameterize ([typing-normal-results (make-hash)])
+        (infer core Λ Ψ environment places callables fail))
+      (let* ([raw-result
+              (infer/body core Λ Ψ environment places callables fail)]
+             [raw-type (first raw-result)]
+             [normal-type (typing-normal-from-infer core Λ raw-type)]
+             [result-type
+              (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
+             [result (list result-type (second raw-result)
+                           (third raw-result))])
+        ((typing-point-probe) (region-ctx-point Λ))
+        (record-typing-result! Λ result-type normal-type (second result))
+        (collect-use-regions! result-type
+                              (region-ctx-ir Λ)
+                              (region-ctx-point Λ))
+        result)))
 
 ;; producer 位置から入ったときだけ OwnLeaf を許す。許可は節点そのものを
 ;; memq で保持するため、兄弟の位置へ漏れない。既定は拒否である。
@@ -3527,8 +3776,10 @@
            (list tau-expected row result-psi)])])]))
 
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
-  (match (infer input (enter-child Λ 0) Ψ
-                environment places callables fail)
+  (define input-result
+    (infer input (enter-child Λ 0) Ψ environment places callables fail))
+  (match (cons (typing-normal-child-type core Λ 0 (first input-result))
+               (rest input-result))
     [(list `(Record ,row) input-row input-psi)
      (define labels
        (for/list ([entry (in-list entries)]) (peel-lbl (first entry))))
@@ -3640,8 +3891,14 @@
           [absent?
            (list (peel-ty (second (peel-node work))) '() current-psi)]
           [else
-           (infer work (enter-child Λ index) current-psi
-                  environment places callables fail)]))
+           (define inferred
+             (infer work (enter-child Λ index) current-psi
+                    environment places callables fail))
+           (define field-type
+             (typing-normal-child-type core Λ index (first inferred)))
+           (when (eq? field-type 'Never)
+             (fail 'ill-typed work))
+           (cons field-type (rest inferred))]))
       (define row-field
         (if absent?
             (list (first field) (first result) (second field) 'opt)
@@ -3851,7 +4108,13 @@
              [`(Absent ,type) (list (peel-ty type) '() current-psi)]
              [_ (infer (third field) (enter-child Λ i)
                        current-psi environment places callables fail)]))
-         (values (append results (list result)) (third result))))
+         (define field-type
+           (typing-normal-child-type core Λ i (first result)))
+         (when (eq? field-type 'Never)
+           (fail 'ill-typed (third field)))
+         (values (append results
+                         (list (cons field-type (rest result))))
+                 (third result))))
      (for ([field (in-list plain-fields)]
            [result (in-list results)])
        (when (and (owned-type? (first result))
@@ -3906,18 +4169,22 @@
               (place-projection-root? (first projection) places))
          (infer-place-projection core (first projection) (second projection)
                                  #f Λ Ψ environment places fail)
-         (match (infer record (enter-child Λ 0)
-                       Ψ environment places callables fail)
-           [(list `(Record ,row) record-row record-psi)
-            (define field (assoc (peel-lbl label) row))
-            (cond
-              [(not field) (fail 'unknown-record-label core)]
-              [(field-optional? field) (fail 'project-optional-field core)]
-              [else
-               (match (field-row-lookup row (peel-lbl label))
-                 [(list field-type _) (list field-type record-row record-psi)]
-                 [_ (fail 'unknown-record-label core)])])]
-           [_ (fail 'project-non-record record)]))]
+         (let ([record-result
+                (infer record (enter-child Λ 0)
+                       Ψ environment places callables fail)])
+           (match (cons (typing-normal-child-type core Λ 0
+                                                 (first record-result))
+                        (rest record-result))
+             [(list `(Record ,row) record-row record-psi)
+              (define field (assoc (peel-lbl label) row))
+              (cond
+                [(not field) (fail 'unknown-record-label core)]
+                [(field-optional? field) (fail 'project-optional-field core)]
+                [else
+                 (match (field-row-lookup row (peel-lbl label))
+                   [(list field-type _) (list field-type record-row record-psi)]
+                   [_ (fail 'unknown-record-label core)])])]
+             [_ (fail 'project-non-record record)])))]
 
     [`(ProjOpt ,τ ,record ,label)
      (define type (peel-ty τ))
@@ -3927,21 +4194,29 @@
               (place-projection-root? (first projection) places))
          (infer-place-projection core (first projection) (second projection)
                                  (third projection) Λ Ψ environment places fail)
-         (match (infer record (enter-child Λ 0)
-                       Ψ environment places callables fail)
-           [(list `(Record ,row) record-row record-psi)
-            (define field (assoc (peel-lbl label) row))
-            (cond
-              [(not field) (fail 'unknown-record-label core)]
-              [(type-compatible? (second field) type)
-               (list `(Option ,type) record-row record-psi)]
-              [else (fail 'projopt-invalid-field core)])]
-           [_ (fail 'project-non-record record)]))]
+         (let ([record-result
+                (infer record (enter-child Λ 0)
+                       Ψ environment places callables fail)])
+           (match (cons (typing-normal-child-type core Λ 0
+                                                 (first record-result))
+                        (rest record-result))
+             [(list `(Record ,row) record-row record-psi)
+              (define field (assoc (peel-lbl label) row))
+              (cond
+                [(not field) (fail 'unknown-record-label core)]
+                [(type-compatible? (second field) type)
+                 (list `(Option ,type) record-row record-psi)]
+                [else (fail 'projopt-invalid-field core)])]
+             [_ (fail 'project-non-record record)])))]
 
     [`(RegionApp ,function (,rhos ...))
-     (match-define (list function-type function-row function-psi)
+     (define function-result
        (infer function (enter-child Λ 0)
               Ψ environment places callables fail))
+     (define function-type
+       (typing-normal-child-type core Λ 0 (first function-result)))
+     (define function-row (second function-result))
+     (define function-psi (third function-result))
      (match function-type
        [`(ForallRegion (,rps ...) ,body-type)
         (unless (= (length rps) (length rhos))
@@ -3984,9 +4259,13 @@
        [_ (fail 'region-app-non-forall core function-type)])]
 
     [`(Apply ,function ,arguments ...)
-     (match-define (list function-type function-row function-psi)
+     (define function-result
        (infer function (enter-child Λ 0)
               Ψ environment places callables fail))
+     (define function-type
+       (typing-normal-child-type core Λ 0 (first function-result)))
+     (define function-row (second function-result))
+     (define function-psi (third function-result))
      (define-values (peeled _function-owned?)
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
@@ -4112,8 +4391,14 @@
        [(zero? remainder-count)
         (match (peel-node base)
           [`(Apply ,function ,_ ...)
-           (match (infer function (enter-child base-Λ 0)
-                          Ψ environment places callables fail)
+           (define function-result
+             (infer function (enter-child base-Λ 0)
+                    Ψ environment places callables fail))
+           (define function-type
+             (typing-normal-child-type base base-Λ 0
+                                       (first function-result)))
+           (match (list function-type (second function-result)
+                        (third function-result))
              [(list `(NFn ,_ ,_ ,_ ,_ ,obligations ,_) _ function-psi)
               (unless (= (length propositions) (length obligations))
                 (fail 'discharge-obligation-count core))
@@ -4367,7 +4652,11 @@
        (parameterize ([ownleaf-permitted (list observed)])
          (infer observed (enter-child Λ 0)
                Ψ environment places callables fail)))
-      (define observed-owned? (owned-type? (first observed-result)))
+      (define observed-type
+        (typing-normal-child-type core Λ 0 (first observed-result)))
+      (when (eq? observed-type 'Never)
+        (fail 'ill-typed observed))
+      (define observed-owned? (owned-type? observed-type))
       (cond
         [(and observed-owned?
               (not (ownleaf-root? observed))
@@ -4383,7 +4672,7 @@
            (rows-union
             (list (second observed-result)
                   (second next-result)
-                  `((Yield ,(first observed-result)))))
+                  `((Yield ,observed-type))))
            (third next-result))]
 
     [`(Suspend ,body)
@@ -4484,6 +4773,13 @@
                     (lambda (key node . details)
                       (assert-typing-key key)
                       (recover #f))))))
+     (when argument-result
+       (define argument-type
+         (typing-normal-child-type core Λ 0 (first argument-result)))
+       (when (eq? argument-type 'Never)
+         (fail 'drop-non-owned argument))
+       (set! argument-result
+             (cons argument-type (rest argument-result))))
      (cond
        [(and argument-result
              (resource-type? (first argument-result)))
@@ -4505,9 +4801,13 @@
               (second argument-row))])]
 
     [`(Curry ,function ,argument)
-     (match-define (list function-type function-row function-psi)
+     (define function-result
        (infer function (enter-child Λ 0)
               Ψ environment places callables fail))
+     (define function-type
+       (typing-normal-child-type core Λ 0 (first function-result)))
+     (define function-row (second function-result))
+     (define function-psi (third function-result))
      (define-values (peeled function-owned?)
        (peel-owned-function function-type function fail))
      (match (list peeled function-row function-psi)
@@ -4700,9 +5000,9 @@
                            (adopt-inferred-lifetimes expected actual))))]
     [(_ _) (compatible? actual expected)]))
 
-(define (check-as/full core expected Λ Ψ environment places callables fail
-                       [compatible? type-compatible?]
-                       #:adopt? [adopt? #t])
+(define (check-as/full/body core expected Λ Ψ environment places callables fail
+                            [compatible? type-compatible?]
+                            #:adopt? [adopt? #t])
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
@@ -4722,6 +5022,74 @@
                               Ψ
                               environment places callables core fail)
        [(list row psi) (list row psi actual)])]
+
+    [`(Rec ,fields)
+     #:when (match (normalize-type (peel-ty expected))
+              [`(Record ,_) #t]
+              [_ #f])
+     (define expected-row (second (normalize-type (peel-ty expected))))
+     (define plain-fields
+       (for/list ([field (in-list fields)])
+         (match field
+           [(list label mode expression)
+            (list (peel-lbl label) mode expression)]
+           [_ (fail 'ill-typed core)])))
+     (unless (field-row-unique? plain-fields)
+       (fail 'duplicate-record-label core))
+     (define-values (actual-row effect-rows next-psi)
+       (for/fold ([row '()] [rows '()] [current-psi Ψ])
+                 ([field (in-list plain-fields)] [index (in-naturals)])
+         (define label (first field))
+         (define mode (second field))
+         (define expression (third field))
+         (define expected-field (assoc label expected-row))
+         (define absent?
+           (match (peel-node expression) [`(Absent ,_) #t] [_ #f]))
+         (define result
+           (cond
+             [absent?
+             (list (peel-ty (second (peel-node expression))) '() current-psi)]
+             [expected-field
+              (match (check-as/full expression (second expected-field)
+                                     (enter-child Λ index) current-psi
+                                     environment places callables fail
+                                     compatible?)
+                [(list field-row field-psi actual-type)
+                 (list actual-type field-row field-psi)])]
+             [else
+              (define inferred
+                (infer expression (enter-child Λ index) current-psi
+                       environment places callables fail))
+              (list (first inferred) (second inferred) (third inferred))]))
+         (define result-type
+           (if (and (not absent?) (eq? (first result) 'Never))
+               (if expected-field
+                   (second expected-field)
+                   (typing-normal-child-type core Λ index (first result)))
+               (first result)))
+         (when (eq? result-type 'Never)
+           (fail 'ill-typed expression))
+         (when (and (owned-type? result-type)
+                    (not absent?)
+                    (not (config-runtime-leaf? expression)))
+           (fail 'owned-record-field expression))
+         (values (append row
+                         (list (if absent?
+                                   (list label result-type mode 'opt)
+                                   (list label result-type mode))))
+                 (append rows (list (second result)))
+                 (third result))))
+     (define actual `(Record ,actual-row))
+     (define expected*
+       (if adopt? (adopt-inferred-lifetimes expected actual) expected))
+     (unless (compatible? actual expected*)
+       (fail 'type-mismatch core expected actual))
+     (match (owned-narrowing-kind actual expected* compatible?)
+       ['ok (void)]
+       [`(drop-obligation ,_ ,_)
+        (fail 'owned-narrowing-needs-proof core expected actual)]
+       [_ (fail 'owned-narrowing-rejected core expected actual)])
+     (list (rows-union effect-rows) next-psi actual)]
 
     [`(Error ,place)
      (unless (and (exact-nonnegative-integer? place)
@@ -4890,7 +5258,11 @@
        (parameterize ([ownleaf-permitted (list observed)])
          (infer observed (enter-child Λ 0)
                Ψ environment places callables fail)))
-      (define observed-owned? (owned-type? (first observed-result)))
+      (define observed-type
+        (typing-normal-child-type core Λ 0 (first observed-result)))
+      (when (eq? observed-type 'Never)
+        (fail 'ill-typed observed))
+      (define observed-owned? (owned-type? observed-type))
       (cond
         [(and observed-owned?
               (not (ownleaf-root? observed))
@@ -4905,7 +5277,7 @@
      (list (rows-union
             (list (second observed-result)
                   (first next-result)
-                  `((Yield ,(first observed-result)))))
+                  `((Yield ,observed-type))))
            (second next-result)
            (third next-result))]
 
@@ -4935,6 +5307,28 @@
            (fail 'owned-narrowing-needs-proof core expected actual)]
           [_ (fail 'owned-narrowing-rejected core expected actual)])
         (list row result-psi actual)])]))
+
+(define (check-as/full core expected Λ Ψ environment places callables fail
+                       [compatible? type-compatible?]
+                       #:adopt? [adopt? #t])
+  (if (not (typing-normal-results))
+      (parameterize ([typing-normal-results (make-hash)])
+        (check-as/full core expected Λ Ψ environment places callables fail
+                       compatible? #:adopt? adopt?))
+      (let* ([raw-result
+              (check-as/full/body core expected Λ Ψ environment places callables
+                                  fail compatible? #:adopt? adopt?)]
+             [row (first raw-result)]
+             [psi (second raw-result)]
+             [raw-type (third raw-result)]
+             [normal-type (typing-normal-from-check core Λ expected raw-type)]
+             [result-type
+              (if (typing-result-never? core Λ raw-type) 'Never raw-type)])
+        (record-typing-result! Λ result-type normal-type row)
+        (collect-use-regions! result-type
+                              (region-ctx-ir Λ)
+                              (region-ctx-point Λ))
+        (list row psi result-type))))
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素を落として渡す。
 (define (check-as core expected Λ Ψ environment places callables fail
@@ -4979,7 +5373,8 @@
                       #:sidecar [sidecar-box #f]
                       #:ptr-sidecar [ptr-box #f]
                       #:mut-types [mut-types-box #f]
-                      #:callable-contexts [callable-contexts-box #f])
+                      #:callable-contexts [callable-contexts-box #f]
+                      #:normal-type [normal-type-box #f])
   (when mut-types-box
     (unless (box? mut-types-box)
       (raise-argument-error 'type-of/raw* "box?" mut-types-box))
@@ -4988,6 +5383,10 @@
     (unless (box? callable-contexts-box)
       (raise-argument-error 'type-of/raw* "box?" callable-contexts-box))
     (set-box! callable-contexts-box (hash)))
+  (when normal-type-box
+    (unless (box? normal-type-box)
+      (raise-argument-error 'type-of/raw* "box?" normal-type-box))
+    (set-box! normal-type-box #f))
   (define collected-mut-types (and mut-types-box (box (hash))))
   (define collected-callable-contexts
     (and callable-contexts-box (box (hash))))
@@ -4998,9 +5397,11 @@
   (define ras (box '()))
   (define tbl (box (hash)))
   (define origins (make-hash))
+  (define normal-results (make-hash))
   (define ir (region-ctx-ir Λ))
   (define result
-    (parameterize ([lifetime-collector cs]
+    (parameterize ([typing-normal-results normal-results]
+                   [lifetime-collector cs]
                    [request-collector rs]
                    [ptr-request-collector (and ptr-box ptr-rs)]
                    [region-arg-collector ras]
@@ -5068,6 +5469,24 @@
               (define normalized (normalize-type substituted))
               (unless normalized
                 (fail 'non-normalizable-result-type core-in substituted))
+              (define root-result
+                (hash-ref normal-results (region-ctx-point Λ) #f))
+              (unless root-result
+                (error 'type-of/raw*
+                       "正常型の記録が見つからない: ~s"
+                       (region-ctx-point Λ)))
+              (define raw-normal (second root-result))
+              (define normalized-normal
+                (if (eq? raw-normal '⊥)
+                    '⊥
+                    (let ([normal
+                           (normalize-type
+                            (subst-type-regions raw-normal σ ir))])
+                      (unless normal
+                        (fail 'non-normalizable-result-type core-in raw-normal))
+                      normal)))
+              (when normal-type-box
+                (set-box! normal-type-box normalized-normal))
               (define states (forward-config-states))
               (define invalid-forward
                 (forward-invalid-node renamed callables
@@ -5119,6 +5538,15 @@
                        #:mut-types mut-types-box
                        #:callable-contexts callable-contexts-box)
     [(list 'ok (list type row _table _σ _renamed)) (list 'ok (list type row))]
+    [other other]))
+
+(define (type-of/raw*+normal core-in places callables [environment '()]
+                             [Λ (empty-region-ctx)])
+  (define normal-type (box #f))
+  (match (type-of/raw* core-in places callables environment Λ
+                       #:normal-type normal-type)
+    [(list 'ok (list type row table σ renamed))
+     (list 'ok (list type row table σ renamed (unbox normal-type)))]
     [other other]))
 
 ;; spec §4.4。性質 8 の bounded 検査だけが使う入口。
@@ -5316,6 +5744,13 @@
                       [Λ (empty-region-ctx)])
   (match (type-of/raw core-in places callables environment Λ)
     [(list 'ok result) result]
+    [_ 'ill-typed]))
+
+(define (core-type-of/normal core-in places callables [environment '()]
+                             [Λ (empty-region-ctx)])
+  (match (type-of/raw*+normal core-in places callables environment Λ)
+    [(list 'ok (list type row _table _σ _renamed normal-type))
+     (list type row normal-type)]
     [_ 'ill-typed]))
 
 ;; spec §8: Diagnostic を組む位置はここ 1 箇所だけである。

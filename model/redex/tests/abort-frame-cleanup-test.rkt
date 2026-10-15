@@ -268,7 +268,8 @@
 (define (check-interrupted-program kind positions index)
   (define-values (core callables places start)
     (interrupted-program kind positions index))
-  (define expected `(Unit ,(expected-row-for-interruption-kind kind)))
+  (define expected-type (if (eq? kind 'handle-skip) 'Never 'Unit))
+  (define expected `(,expected-type ,(expected-row-for-interruption-kind kind)))
   (define actual (core-type-of core places callables))
   (check-equal? actual expected
                 (format "~a / ~s は型付けできる" kind positions))
@@ -315,14 +316,14 @@
         (check-interrupted-program kind (first entry) (second entry)))
       (list kind (length accepted) (- (length leaf-position-groups)
                                       (length accepted)))))
-  ;; Rec リテラルは欄を synth するため、Error が欄に直接ある 2 群だけ
-  ;; ScopeError / HandleError の候補から除く（E-TYP-016）。件数を群ごとに固定する。
+  ;; Rec の検査位置では期待行で欄を検査するため、Error も欄型を得る。
+  ;; 全ての leaf 配置を型付けできることを群ごとに固定する。
   (check-equal? typed-counts
                 '((scope-abort 6 0)
-                  (scope-error 4 2)
+                  (scope-error 6 0)
                   (handle-return 6 0)
                   (handle-skip 6 0)
-                  (handle-error 4 2))))
+                  (handle-error 6 0))))
 
 (test-case "OWN-003/OWN-011: ScopeError は捨てる frame の leaf を Dropped にする"
   (define core
@@ -404,7 +405,7 @@
          (Apply ,consumer-unit ,(owned-option 29)
                 (Perform ,performed unit)))))
   (check-equal? (core-type-of core '() consumer-unit-callables)
-                '(Unit ((Return other-boundary Unit))))
+                '(Never ((Return other-boundary Unit))))
   (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
   (check-configs configs consumer-unit-callables 'Unit)
   (check-true (trace-has-rule? rules 'R-HandleSkip))
@@ -446,7 +447,7 @@
          (Apply ,consumer ,(owned-option 41)
                 (Perform ,performed ,(owned-option 43))))))
   (check-equal? (core-type-of core '() callables)
-                `(Unit ((Return other-boundary ,option-owned))))
+                `(Never ((Return other-boundary ,option-owned))))
   (define-values (configs rules) (trace-g2 `(cfg ,core () () () ())))
   (check-configs configs callables 'Unit)
   (check-true (trace-has-rule? rules 'R-HandleSkip))

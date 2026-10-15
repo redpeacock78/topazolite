@@ -1431,6 +1431,68 @@ T-Let-Never は、束縛式が `Never` なら `Let` 全体を `Never` とする�
 結果の row は束縛式と本体の row の和である。
 この規則は簡約規則や G2 の機械規則を追加せず、既存の Return の脱出と scope の finalization を使う。
 
+この節では、型 `τ` と row `ε` に加えて、式が正常に値を生成すると仮定した場合の型を**正常型** `τ°` として併記する。
+正常型が無いことを表す `⊥` は型ではなく、`Never` を正常型とする式は無い。
+正常に値を生成する式の `τ°` は通常の型 `τ` と等しく、`Never` でも正常型が定まる式は `τ = Never` と正常型 `τ°` を同時に持つ。
+`Perform(Return<b, τ>, c)` の正常型は `⊥` である。
+`Eliminate` と `UnionEliminate` の正常型は `Never` でない枝の型の既存の合流であり、全ての枝が `Never` なら `⊥` である。
+束縛式が `Never` の `Let` の正常型は、本体の型が `Never` なら `⊥`、それ以外なら本体の正常型である。
+
+**(T-Ctx-Never)**
+
+```text
+c = F[c0]        F は下表の一段の正格評価文脈
+Γ; Δ; Π; Ξ; Φ ⊢core c0 : Never ! ε0        c0 の正常型 τ0°
+F の通常の規則は、c0 を τ0° の項として c を τ ! ε で型付けする
+F = Handle(op, h, □) なら op ∉ ε0
+-------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core c : Never ! ε           c の正常型 τ°
+```
+
+正常型 `τ0°` が `⊥` のとき、通常の規則がその被演算子の型を使わずに適用できる位置では `⊥` のまま検査する。
+被演算子の型から型を決める位置で `τ0° = ⊥` なら、通常の規則が失敗し、既存の診断で拒否する。
+`Never` の後ろにある被演算子も省略せず通常どおり検査する。
+結果の row は通常の規則が全ての被演算子から得る row の和である。
+`Handle` の条件と健全性の説明は E-Ctx-Never の条件（§4.5）と同じであり、row は捕まえる Return が `Never` の原因である可能性を除外するために用いる。
+
+| 文脈 | 正格な位置 | 正常型の要否 | 結果の正常型 |
+| --- | --- | --- | --- |
+| `Apply` | 関数、実引数 | 関数には要する、実引数には要しない | 関数型の戻り型 |
+| `Let` | 束縛値 | 要しない。Core の束縛子が型を持つ | 本体の正常型 |
+| `Construct` | 欄 | 要しない。constructor の型注釈で検査する | 注釈の型 |
+| `Eliminate` | scrutinee | 要する。constructor schema が必要 | `Never` でない枝の合流型、全枝 `Never` なら `⊥` |
+| `Perform` | 引数 | 要しない。operation の型成分で検査する | operation の結果型。結果型が `Never` なら `⊥` |
+| `Drop` | 被演算子 | 要する。drop の可否を判定する | `Unit` |
+| `Yield` | observed | 要する。`next` は逐次の継続なので一覧に含めない | `next` の正常型。`next` の型が `Never` なら `⊥` |
+| `Curry` | 関数、実引数 | 関数には要する、実引数には要しない | 部分適用後の関数型 |
+| `Scope` | 本体 | 要しない | 本体の正常型 |
+| `Handle` | 本体 | 要しない。row 条件を満たす場合だけ適用 | 本体の正常型 |
+| `OwnLeaf` | 被演算子 | 要しない。payload の型をそのまま返す | payload の正常型 |
+| `Rec` | 欄 | 合成では要する、検査では要しない | 欄の正常型から作る Record 型、検査では期待型 |
+| `Discharge` | 被演算子 | 要する | 既存規則の結果型 |
+| `UnionInject` | 被演算子 | 要しない。Union 型の注釈で検査する | 注釈の Union 型 |
+| `UnionEliminate` | scrutinee | 要する。member と wrapper の情報が必要 | `Never` でない枝の合流型、全枝 `Never` なら `⊥` |
+| `RecRewrite` | 対象 | 要する | 既存規則の結果型 |
+| `RecRewriteOpen` | 作業欄 | 注釈つき欄は要しない、注釈の無い欄は要する | 既存規則の結果型。注釈の無い欄の型はその正常型 |
+| `Proj`、`ProjOpt` | receiver | 要する | 欄の型 |
+| `ReborrowAt`、`ProjBorrowAt`、`Read` | 被演算子 | 要する | 既存規則の結果型 |
+| `Assign` | target、値 | target は要する、値は要しない | `Unit` |
+| `Reassign` | 値 | 要しない。束縛の型で検査する | `Unit` |
+| `RegionApp` | 関数 | 要する | region 適用後の関数型 |
+| `AddressOf`、`PtrOffset`、`RawLoad`、`RawStore`、`FromRawPtr` | 被演算子 | pointer は要する、offset と値は要しない | 既存規則の結果型 |
+| `Unsafe` | 本体 | 要しない | 本体の正常型 |
+
+`Suspend` は G1/G2 の評価文脈 `E` に含まれないが、E-Suspend は本体の型を結果へ伝えるため、本体の正常型もそのまま伝える。
+これは T-Ctx-Never の適用ではなく、E-Suspend の既存の結果型に対応する。
+`Recur` の本体は遅延され、継続の型と正常型は E-Recur の既存規則が結果へ伝える。
+`RecRewrite` の entry 本体は R-RecRewrite-Open より前は遅延コードなので一覧に含めない。
+展開後の `RecRewriteOpen` では作業欄が評価され、上表の規則が適用される。
+`Fn`、`Lam`、`RegionLam`、`RecurVal` の本体は遅延して評価するため一覧に含めない。
+`Eliminate` と `UnionEliminate` の枝は、既存の枝合流規則が全ての枝の型を検査し、全枝 `Never` の場合に親を `Never` とする。
+`Yield` の `next` と `Let` の本体は逐次の継続であり、各通常規則が継続の型を結果にする。
+`RecRewriteOpen` の `Absent` 欄は評価対象ではなく、一覧の作業欄に含めない。
+T-Ctx-Never は簡約規則や G2 の機械規則を追加せず、既存の Return 脱出、枝合流、scope finalization を用いる。
+
 **(T-Scope)**
 
 ```text
