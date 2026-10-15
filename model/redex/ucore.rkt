@@ -51,6 +51,7 @@
   (spec ::= A (Spec spec spec ...))
   (ubr ::= (K (x ...) -> e)
            (uτ x -> e))
+  (uifclause ::= (e e))
   (e ::= l
          x
          (Fn ((x uret) ...) uret uεr e)
@@ -63,6 +64,8 @@
          (Construct K e ...)
          (Construct K (Types uτ ...) e ...)
          (Eliminate e (ubr ...))
+         ;; SUR-014b1。Surface lowering marker; elaborate は明示的な if へ展開する。
+         (IfSome (uifclause uifclause ...))
          (Return e)
          (NarrativeExpr e)
          (TryBind x e e)
@@ -95,6 +98,9 @@
   (esr ::= es (#:ef #:infer s))
   (sps ::= (#:ty spec s))
   (vr ::= (#:var x s))
+  ;; t は Surface の then block span であり、SBlock の lowering 後も
+  ;; some と true branch の primary span を保つために節へ残す。
+  (uifclause+ ::= (s s e e))
   (lt ::= (#:lit l s))
   (ubr ::= (s K (xs ...) -> e)
            (s ts xs -> e))
@@ -110,6 +116,7 @@
          (Construct s K e ...)
          (Construct s K (Types ts ...) e ...)
          (Eliminate s e (ubr ...))
+         (IfSome s (uifclause+ uifclause+ ...) s)
          (Return s e)
          (NarrativeExpr s e)
          (TryBind s xs e e)

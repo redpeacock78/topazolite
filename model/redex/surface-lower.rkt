@@ -40,6 +40,9 @@
 ;; span-core.rkt の span-of は #:lit と #:var の形も見るので名前を分ける。
 (define (node-span n) (second n))
 
+(define (span-through-end start end)
+  (list '#:span (second start) (third start) (fourth end)))
+
 ;; spec §6。宣言の並びを 1 度目に読む。名前の衝突と重複だけを見て、
 ;; 展開前の sty のまま表へ入れる。前方参照を許すには、展開を始める前に
 ;; 全宣言を読み終えている必要がある。
@@ -780,8 +783,15 @@
                              ,(expr body (set-union bound
                                                     (list->seteq names))))]
                      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
-                      `(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) ()
+                     `(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) ()
                              ,(expr body (set-add bound x)))])))]
+      [`(SIfSome ,s ,clauses ,s_0)
+       `(SIfSome ,s
+                 ,(for/list ([clause (in-list clauses)])
+                    (match clause
+                      [`(,s_i ,condition ,body)
+                       `(,s_i ,(r condition) ,(r body))]))
+                 ,s_0)]
       [`(SProj ,s ,target ,label) `(SProj ,s ,(r target) ,label)]
       [`(SProjRec ,s ,target ,labels) `(SProjRec ,s ,(r target) ,labels)]
       [`(SRec ,s ,fields) `(SRec ,s ,(rec-fields fields bound))]
@@ -880,6 +890,14 @@
      (if variable-scrutinee?
          `(NarrativeExpr ,s (Eliminate ,s ,scrutinee-core ,lowered-arms))
          `(Eliminate ,s ,scrutinee-core ,lowered-arms))]
+    [`(SIfSome ,s ,clauses ,s_0)
+     `(IfSome ,s
+              ,(for/list ([clause (in-list clauses)])
+                 (match clause
+                   [`(,s_i ,condition ,body)
+                    (list s_i (node-span body) (lower-sexpr condition env fail)
+                          (lower-sexpr body env fail))]))
+              ,s_0)]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。
     [`(SConstruct ,s (SName ,_ ,k) ,args)
@@ -925,6 +943,31 @@
      `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
                  ,(lower-arms arms env fail
                               (λ (_s_a body) (lower-stmt body env fail))))]
+    [`(SIfSome ,s ,clauses ,s_0)
+     (define last-body (third (last clauses)))
+     (define end-span (node-span last-body))
+     (define (lower-chain remaining)
+       (match remaining
+         [(cons `(,s_i ,condition ,body) rest)
+          (define chain-span (span-through-end s_i end-span))
+          (define condition-span (node-span condition))
+          (define body-span (node-span body))
+          (define false-span
+            (if (null? rest)
+                s_0
+                (span-through-end (first (first rest)) end-span)))
+          (define false-body
+            (if (null? rest)
+                `(SUnit ,s_0)
+                (lower-chain rest)))
+          `(SBlock ,chain-span
+             ((SBind ,chain-span const
+                     (SName ,condition-span %ifcond)
+                     (TName ,s_i Bool) ,condition))
+             (SMatch ,chain-span (SVar ,condition-span %ifcond)
+               ((SArm ,body-span (SName ,body-span true) () ,body)
+                (SArm ,false-span (SName ,false-span false) () ,false-body))))]))
+     (lower-stmt (lower-chain clauses) env fail)]
     [_
      (define s (node-span e))
      `(Let ,s ((#:bind %stmt ,s) const)

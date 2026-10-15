@@ -721,6 +721,7 @@ type sexpr =
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
   | SMatch    : span -> sexpr -> list sarm -> sexpr
+  | SIfSome   : span -> list (span & (sexpr & sexpr)) -> span -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SConstruct : span -> (span & string) -> list sexpr -> sexpr
@@ -763,6 +764,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SVar s _      -> s
   | SReturn s _   -> s
   | SMatch s _ _  -> s
+  | SIfSome s _ _ -> s
   | SFn s _ _ _ _ -> s
   | SApply s _ _  -> s
   | SConstruct s _ _ -> s
@@ -806,6 +808,13 @@ let rec arm_children (arms: list sarm) : Tot (list node) (decreases arms) =
   | SConstructorArm _ _ _ body :: tl -> NExpr body :: arm_children tl
   | SMemberArm _ _ _ ty body :: tl -> NTy ty :: NExpr body :: arm_children tl
 
+let rec ifsome_children (clauses: list (span & (sexpr & sexpr)))
+  : Tot (list node) (decreases clauses) =
+  match clauses with
+  | [] -> []
+  | (_, (condition, body)) :: tl ->
+      NExpr condition :: NExpr body :: ifsome_children tl
+
 let kids_of_expr (e: sexpr) : Tot (list node) =
   match e with
   | SInt _ _      -> []
@@ -815,6 +824,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
   | SMatch _ e arms -> NExpr e :: arm_children arms
+  | SIfSome _ clauses _ -> ifsome_children clauses
   | SFn _ ps r row b ->
       map NTy (option_stys (map snd ps)) @
       (match r with None -> [] | Some t -> [NTy t]) @
@@ -855,6 +865,9 @@ let hull (a b: span) : Tot span =
   { sid = a.sid;
     startByte = (if a.startByte <= b.startByte then a.startByte else b.startByte);
     endByte   = (if a.endByte >= b.endByte then a.endByte else b.endByte) }
+
+let span_through_end (a b: span) : Tot span =
+  { sid = a.sid; startByte = a.startByte; endByte = b.endByte }
 
 // 名前と label の span は子の節点ではないので、wf が親への包含を直接検査する。
 let rec spans_in (s: span) (ss: list span) : Tot bool (decreases ss) =
@@ -962,6 +975,9 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SProj s e1 (sl, _) -> contains s sl && contains s (span_of_expr e1) && wf_expr e1
   | SProjRec s e1 ls -> spans_in s (map fst ls) && contains s (span_of_expr e1) && wf_expr e1
   | SMatch s e arms -> contains s (span_of_expr e) && wf_expr e && wf_arms s arms
+  | SIfSome s clauses s0 ->
+      clauses <> [] && s0.sid = s.sid && s0.startByte = s0.endByte &&
+      s0.endByte = s.endByte && contains s s0 && wf_ifsome_clauses s clauses
   | SRec s fs     -> wf_fields s fs
   | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
 and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
@@ -983,6 +999,13 @@ and wf_arms (s: span) (arms: list sarm)
       contains s sa && contains sa sp && contains sp sx
       && contains sp (span_of_ty ty) && wf_ty ty
       && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
+and wf_ifsome_clauses (s: span) (clauses: list (span & (sexpr & sexpr)))
+  : Tot bool (decreases clauses) =
+  match clauses with
+  | [] -> true
+  | (si, (condition, body)) :: tl ->
+      contains s si && contains s (span_of_expr condition) && wf_expr condition &&
+      contains s (span_of_expr body) && wf_expr body && wf_ifsome_clauses s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
   match d with
   | SDecl s k sx ps r row v ->
@@ -1085,6 +1108,21 @@ let rec wf_arms_elim s arms c =
       wf_exprs_elim sa [b] c;
       wf_arms_elim s tl c
 
+val wf_ifsome_clauses_elim : s:span -> clauses:list (span & (sexpr & sexpr))
+  -> c:node -> Lemma
+  (requires wf_ifsome_clauses s clauses)
+  (ensures memP c (ifsome_children clauses)
+           ==> (contains s (span_of_node c) /\ wf_node c))
+  (decreases clauses)
+let rec wf_ifsome_clauses_elim s clauses c =
+  match clauses with
+  | [] -> ()
+  | (_, (condition, body)) :: tl ->
+      FStar.List.Tot.Properties.append_memP
+        [NExpr condition; NExpr body] (ifsome_children tl) c;
+      wf_exprs_elim s [condition; body] c;
+      wf_ifsome_clauses_elim s tl c
+
 val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
   (requires wf_decls s ds)
   (ensures memP c (map NDecl ds) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -1109,6 +1147,7 @@ let parse_span_containment n c =
         [NExpr e] (arm_children arms) c;
       wf_exprs_elim s [e] c;
       wf_arms_elim s arms c
+  | NExpr (SIfSome s clauses _) -> wf_ifsome_clauses_elim s clauses c
   | NExpr (SFn s ps r row b) ->
       FStar.List.Tot.Properties.append_memP
         (map NTy (option_stys (map snd ps)))
@@ -1214,6 +1253,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SVar _ _     -> true
   | SReturn _ _  -> true
   | SMatch _ _ _ -> true
+  | SIfSome _ _ _ -> false
   | SFn _ _ _ _ _ -> true
   | SApply _ _ _ -> true
   | SConstruct _ _ _ -> true
@@ -1253,6 +1293,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
       CNarrativeExpr s (CEliminate s (CVar se) (lower_arms arms))
   | SMatch s e arms ->
       CEliminate s (lower_expr e) (lower_arms_bounded arms)
+  | SIfSome s clauses s0 -> lower_ifsome_expr s clauses s0
   | SProjRec s e1 ls ->
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_fields fs)
@@ -1279,6 +1320,25 @@ and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arm
       CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
   | SMemberArm sa _ (sx, x) ty b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
+and lower_ifsome_expr (s: span) (clauses: list (span & (sexpr & sexpr)))
+    (s0: span) : Tot core (decreases clauses) =
+  match clauses with
+  | [] -> CConstruct s0 "none" []
+  | (si, (condition, body)) :: tl ->
+      let chain_span = span_through_end si s in
+      let condition_span = span_of_expr condition in
+      let body_span = span_of_expr body in
+      let false_span =
+        match tl with
+        | [] -> s0
+        | (next_span, _) :: _ -> span_through_end next_span s in
+      CLet chain_span condition_span (lower_expr condition)
+        (CNarrativeExpr chain_span
+          (CEliminate chain_span (CVar condition_span)
+            [CConstructorBranch body_span "true" []
+               (CConstruct body_span "some" [lower_expr body]);
+             CConstructorBranch false_span "false" []
+               (lower_ifsome_expr s tl s0)]))
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
   match ds with
   | []      -> tail
@@ -1300,6 +1360,7 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   | SBlock _ ds t -> lower_block ds (lower_stmt t)
   | SMatch s scrutinee arms ->
       CEliminate s (lower_expr scrutinee) (lower_arms_stmt arms)
+  | SIfSome s clauses s0 -> lower_ifsome_stmt s clauses s0
   | SInt s _ -> discard_stmt s (CLit s)
   | SStr s _ -> discard_stmt s (CLit s)
   | SUnit s -> discard_stmt s (CConstruct s "unit" [])
@@ -1321,6 +1382,23 @@ and lower_arms_stmt (arms: list sarm) : Tot (list core_branch) (decreases arms) 
       CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms_stmt tl
   | SMemberArm sa sx (sb, x) ty b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms_stmt tl
+and lower_ifsome_stmt (s: span) (clauses: list (span & (sexpr & sexpr)))
+    (s0: span) : Tot core (decreases clauses) =
+  match clauses with
+  | [] -> discard_stmt s0 (CConstruct s0 "unit" [])
+  | (si, (condition, body)) :: tl ->
+      let chain_span = span_through_end si s in
+      let condition_span = span_of_expr condition in
+      let body_span = span_of_expr body in
+      let false_span =
+        match tl with
+        | [] -> s0
+        | (next_span, _) :: _ -> span_through_end next_span s in
+      CLet chain_span condition_span (lower_expr condition)
+        (CEliminate chain_span (CVar condition_span)
+          [CConstructorBranch body_span "true" [] (lower_stmt body);
+           CConstructorBranch false_span "false" []
+             (lower_ifsome_stmt s tl s0)])
 
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
@@ -1334,6 +1412,7 @@ let lower_preserves_span e =
   | SVar _ _     -> ()
   | SReturn _ _  -> ()
   | SMatch _ _ _ -> ()
+  | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SConstruct _ _ _ -> ()
@@ -1341,6 +1420,19 @@ let lower_preserves_span e =
   | SProjRec _ _ _ -> ()
   | SRec _ _     -> ()
   | SBlock _ _ _ -> ()
+
+val lower_ifsome_root_spans : s:span -> clauses:list (span & (sexpr & sexpr))
+  -> s0:span -> Lemma
+  (requires clauses <> [] /\
+     (match clauses with
+      | (si, _) :: _ -> contains s si /\ s.startByte = si.startByte
+      | [] -> false))
+  (ensures span_of_core (lower_expr (SIfSome s clauses s0)) == s /\
+           span_of_core (lower_stmt (SIfSome s clauses s0)) == s)
+let lower_ifsome_root_spans s clauses s0 =
+  match clauses with
+  | [] -> ()
+  | (si, _) :: _ -> assert (hull si s == s)
 
 // 命題 6。空でない block の根の span は先頭宣言と後続の根の hull である。
 val lower_block_root_span : d:sdecl -> ds:list sdecl -> tail:core -> Lemma
@@ -1365,6 +1457,7 @@ let lower_stmt_preserves_span e =
   | SVar _ _ -> ()
   | SReturn _ _ -> ()
   | SMatch _ _ _ -> ()
+  | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SConstruct _ _ _ -> ()

@@ -34,6 +34,9 @@
   `(#:span ,(span-id a) ,(min (span-lo a) (span-lo b))
            ,(max (span-hi a) (span-hi b))))
 
+(define (empty-span-after s)
+  `(#:span ,(span-id s) ,(span-hi s) ,(span-hi s)))
+
 ;; Surface の節点はすべて (Ctor span ...) の形なので、span は第 2 要素である
 ;; （spec §5.2）。宣言と式の両方に使う。
 (define (node-span n) (second n))
@@ -402,26 +405,38 @@
   (define if-span (span-at ts i))
   (let*-values ([(condition condition-j) (parse-expr ts fail (add1 i))]
                 [(then then-j) (parse-block ts fail condition-j)])
-    (unless (kw? ts then-j 'else) (fail-at ts fail then-j))
-    (define else-span (span-at ts then-j))
-    (define else-start (add1 then-j))
-    (define-values (else-part end-j)
-      (cond
-        [(punct? ts else-start '|{|) (parse-block ts fail else-start)]
-        [(kw? ts else-start 'if) (parse-if ts fail else-start)]
-        [else (fail-at ts fail else-start)]))
-    (define whole (hull if-span (node-span else-part)))
-    (define condition-span (node-span condition))
-    (define then-span (node-span then))
-    (values
-     `(SBlock ,whole
-        ((SBind ,whole const (SName ,condition-span %ifcond)
-                (TName ,if-span Bool) ,condition))
-        (SMatch ,whole (SVar ,condition-span %ifcond)
-          ((SArm ,then-span (SName ,then-span true) () ,then)
-           (SArm ,(hull else-span (node-span else-part))
-                 (SName ,else-span false) () ,else-part))))
-     end-j)))
+    (define clause `(,if-span ,condition ,then))
+    (cond
+      [(not (kw? ts then-j 'else))
+       (values `(SIfSome ,(hull if-span (node-span then)) (,clause)
+                         ,(empty-span-after (node-span then)))
+               then-j)]
+      [else
+       (define else-span (span-at ts then-j))
+       (define else-start (add1 then-j))
+       (define-values (else-part end-j)
+         (cond
+           [(punct? ts else-start '|{|) (parse-block ts fail else-start)]
+           [(kw? ts else-start 'if) (parse-if ts fail else-start)]
+           [else (fail-at ts fail else-start)]))
+       (match else-part
+         [`(SIfSome ,inner-span ,clauses ,s_0)
+          (values `(SIfSome ,(hull if-span inner-span)
+                            (,clause ,@clauses) ,s_0)
+                  end-j)]
+         [_
+          (define whole (hull if-span (node-span else-part)))
+          (define condition-span (node-span condition))
+          (define then-span (node-span then))
+          (values
+           `(SBlock ,whole
+              ((SBind ,whole const (SName ,condition-span %ifcond)
+                      (TName ,if-span Bool) ,condition))
+              (SMatch ,whole (SVar ,condition-span %ifcond)
+                ((SArm ,then-span (SName ,then-span true) () ,then)
+                 (SArm ,(hull else-span (node-span else-part))
+                       (SName ,else-span false) () ,else-part))))
+           end-j)])])))
 
 ;; P2m3 spec §3.1。constructor 枝は `ctor ident* => expr`、
 ;; member 枝は `(name: type) => expr` である。

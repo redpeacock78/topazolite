@@ -47,7 +47,10 @@
 
 (test-case
  "parser の診断がそのまま返る"
- (check-equal? (code "if cond { 1 }") "E-SUR-006")
+ (define if-some-result (c "if true { 1 }"))
+ (check-true (compiled? if-some-result))
+ (when (compiled? if-some-result)
+   (check-equal? (compiled-type if-some-result) '(Option Int)))
  (check-equal? (code "") "E-SUR-006")
  (check-equal? (code "f(") "E-SUR-006"))
 

@@ -592,9 +592,25 @@
    (check-equal? (diagnostic-primary-span (p src)) at)))
 
 (test-case
- "if の else が無い形は E-SUR-006 である"
- (check-equal? (p-code "if cond { 1 }") "E-SUR-006"))
-
+ "else の無い if は SIfSome にする"
+ (check-equal?
+  (p-expr "if c { 1 }")
+  `(SIfSome ,(sp 0 10)
+            ((,(sp 0 2) (SVar ,(sp 3 4) c)
+              (SBlock ,(sp 5 10) () (SInt ,(sp 7 8) 1))))
+            ,(sp 10 10)))
+ (check-equal?
+  (p-expr "if a { 1 } else if b { 2 }")
+  `(SIfSome ,(sp 0 26)
+            ((,(sp 0 2) (SVar ,(sp 3 4) a)
+              (SBlock ,(sp 5 10) () (SInt ,(sp 7 8) 1)))
+             (,(sp 16 18) (SVar ,(sp 19 20) b)
+              (SBlock ,(sp 21 26) () (SInt ,(sp 23 24) 2))))
+            ,(sp 26 26)))
+ (check-match
+  (p-expr "if a { 1 } else if b { 2 } else { 3 }")
+  `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
+           (SMatch ,_ ,_ ,_))))
 (test-case
  "if / else は SBlock と true / false の SMatch へ組み替える"
  (check-equal?
@@ -619,17 +635,22 @@
                 (SMatch ,_ (SVar ,_ %ifcond)
                   ((SArm ,_ (SName ,_ true) () (SBlock ,_ () (SInt ,_ 2)))
                    (SArm ,_ (SName ,_ false) () (SBlock ,_ () (SInt ,_ 3)))))))))))
+ (check-match
+  (p-expr "if a { 1 } else { if b { 2 } }")
+  `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
+           (SMatch ,_ ,_
+             ((SArm ,_ (SName ,_ true) () ,_)
+              (SArm ,_ (SName ,_ false) ()
+                    (SBlock ,_ ()
+                            (SIfSome ,_ ((,_ ,_ ,_)) ,_)))))))
 )
 
 (test-case
  "if の else は同じ行に必要で、不正位置は既存の Surface 診断になる"
- (for ([src (in-list '("if c { 1 }"
-                       "if c { 1 }\n0"
-                       "if c { 1 }\nelse { 2 }"
+ (for ([src (in-list '("if c { 1 }\nelse { 2 }"
                        "if c { 1 } else 2"))]
-       [code (in-list '("E-SUR-006" "E-SUR-005" "E-SUR-005" "E-SUR-005"))]
-       [at (in-list '((#:span src 10 10) (#:span src 10 11)
-                      (#:span src 10 11) (#:span src 16 17)))])
+       [code (in-list '("E-SUR-005" "E-SUR-005"))]
+       [at (in-list '((#:span src 11 15) (#:span src 16 17)))])
    (check-equal? (p-code src) code src)
    (check-equal? (diagnostic-primary-span (p src)) at src))
  (for ([src (in-list '("let if = 1\n0"

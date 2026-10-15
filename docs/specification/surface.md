@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
@@ -114,7 +114,7 @@ sep      ::= ("," | NL) NL*
 primary  ::= int | string | istr | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")" | when | ifexpr
 when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
-ifexpr   ::= "if" expr block "else" (block | ifexpr)
+ifexpr   ::= "if" expr block ("else" (block | ifexpr))?
 arm      ::= ctor ident* "=>" expr
            | "(" ident ":" ty ")" "=>" expr
 ctor     ::= ident | "true" | "false"
@@ -392,6 +392,18 @@ scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` �
 **Why not（式文ごとに即時に drop する案）**：`Scope` を狭めるか明示的な `Drop` を生成する必要があり、借用の寿命と trace と Effect が変わる。
 境界の handler と synth 規則は `core-calculus.md` §4.5 が定める。
 
+式位置の `if` に `else` が無い場合、parser は字面上の `else if` の連鎖を Surface の `SIfSome` にする。
+値位置の `SIfSome` は UCore+ の `IfSome` へ下ろし、elaborate が then の型 `T` を既存の枝合流で決めて `Option<T>` を返す明示的な `if` へ展開する。
+明示形は各 then の値を `some` で包み、最後の false 枝を `none` にする。
+then の型が `Option<U>` なら結果型は `Option<Option<U>>` となり、平坦化しない。
+この展開は通常の値位置の `if` と同じ返却境界を各節に作る。
+文位置の `SIfSome` は `Option` の `some` と `none` を生成せず、各 then と最後の Unit 枝を文の mode で実行する `SBlock` と `SMatch` の連鎖へ下ろす。
+明示的な `else` を持つ `if` は従来どおり `SBlock` と `SMatch` へ組み替え、値位置では両枝が結果型を決める。
+字面上の `else if` の連鎖だけを一つの `SIfSome` にまとめ、明示的な `else { if ... }` は内側の `if` を独立して扱う。
+then block の span は `IfSome` の節が保持し、展開した `some` と true 枝へ渡す。
+この span は位置情報であり、else の有無や型付けを判別する条件には使わない。
+`IfSome` の下見と検査は `core-calculus.md` §4.5 が定める。
+
 ### 3.7 when の Union pattern
 
 Union member pattern は `(x: τ) => e` と書く。
@@ -668,6 +680,13 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   この注釈により条件が Bool と適合しない場合は `E-TYP-012` となり、診断を 1 件に保つ。
   `SIf` 節点を追加しないのは、既存の `SBlock` と `SMatch` で表せるためである。
   Bool の `Eliminate` を条件へ直接掛けないのは、型検査の不一致を `E-DAT-003` ではなく `E-TYP-012` にするためである。
+- 式位置の `if c { a }` は Surface `(SIfSome s ((s_i c a) ...) s_0)` へ組み替える。
+  `else if` だけを同じ連鎖へまとめ、`else { if ... }` は内側の block に独立した `SIfSome` を置く。
+  通常の mode では UCore+ `(IfSome s ((s_i t_i c_i' b_i') ...) s_0)` へ下ろし、`t_i` に then block の span を保つ。
+  elaborate はこの marker を `some` と `none` を持つ明示的な `if` へ展開し、結果型を `Option<T>` とする。
+  then の型が `Option<U>` のときも平坦化せず、結果型は `Option<Option<U>>` となる。
+  文の mode では既存の `SBlock` と `SMatch` の連鎖へ下ろし、false 枝を `Unit` にするため `Option` の構築子を生成しない。
+  `IfSome` は elaborate が消費する UCore+ の中間 marker であり、Core の構成子と計算規則には加えない。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
@@ -912,8 +931,9 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 
 命題 3 は `wf_node` を前提とする条件付き補題である。
 parser の出力が `wf_node` を満たすことは F* 側からは示さない。
-命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、1 つの節点を複数の節点へ増やす `SProjRec`、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
+命題 4 は尾部 span を持つ `SBlock`、`SBind`、`SFnDecl` と、1 つの節点を複数の節点へ増やす `SProjRec`、`SIfSome`、節点を生成しない `STypeDecl`、`SProgram`、型構成子を量化対象から外す。
 `SProjRec` の lowering の根の span は入力の span を保存するが、複数の節点へ展開するため命題 4 の対象外である。
+`SIfSome` も複数の節点へ展開するため命題 4 の対象外であり、別の補題が式位置と文位置の lowering の根の span を入力と一致させる。
 命題 6 は、空の block の元の span を保存するとは主張しない。
 空の block の lowering は末尾式の lowering そのものであり、`SBlock` の span を持たない。
 命題 7 は、`SFn` の仮引数名の span と row、`SProj` の label の span、`SRec` の label の span の列、`SProjRec` の受け側の span と各 field の label の span、`SBind` の束縛名の span、`SFnDecl` の関数名と仮引数名の span と row を扱う。
@@ -933,10 +953,10 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 
 ### 8.1 Surface AST の対応
 
-- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SMatch`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SMatch`、`SIfSome`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
-- `SBind`、`STryBind`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `SBind`、`STryBind`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
@@ -954,12 +974,13 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 F* は **`TkIstr`** の認識と span の正当性を検査する。
 文字断片の値と左畳み込みの形は Racket の parser と Surface の試験で固定する。
 `SExprStmt` を加えた後の parity の件数は 38/14/36 である。
+`SIfSome` と `IfSome` を加えた後の parity の件数は 39/15/37 である。
 
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 `SExprStmt` は Racket Surface の構成子であり、F* では `DExpr` を持つ既存の `SDecl` へ対応する。
 `SExprStmt` を加えた後の parity 件数は、Racket Surface が 38 個、UCore+ が 14 個、F* が 36 個である。
-F* の Surface 構成子一覧は `sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 23 個を含む。
+F* の Surface 構成子一覧は `sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 24 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
@@ -973,10 +994,11 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 14 構成子を parity の対象とする。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 15 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+`IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 14 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 36 個（`sexpr` 14 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
+UCore+ の対象構成子リストは 15 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 37 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。

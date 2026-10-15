@@ -158,6 +158,11 @@
       [(list 'Construct K e ...) (list* 'Construct (next) K (map ann e))]
       [(list 'Eliminate e (list ubr ...))
        (list 'Eliminate (next) (ann e) (map ann-ubr ubr))]
+      [(list 'IfSome (list (list condition body) ...))
+       (list 'IfSome (next)
+             (for/list ([c (in-list condition)] [b (in-list body)])
+               (list (next) (next) (ann c) (ann b)))
+             (next))]
       [(list 'Return e) (list 'Return (next) (ann e))]
       [(list 'NarrativeExpr e) (list 'NarrativeExpr (next) (ann e))]
       [(list 'Recur f (list (list x type) ...) result row e_1 e_2)

@@ -607,6 +607,9 @@
   `(#:span ,(second left) ,(min (third left) (third right))
            ,(max (fourth left) (fourth right))))
 
+(define (span-through-end start end)
+  `(#:span ,(second start) ,(third start) ,(fourth end)))
+
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
   (define span (nearest-span raw-row inherited-span))
   (define row (peel-ef raw-row))
@@ -790,6 +793,13 @@
            [`(,_ (,parameters ...) -> ,body)
             (set-subtract (free-vars/erased body) (list->set parameters))]
            [_ (set)]))))]
+    [`(IfSome (,clauses ...))
+     (sets-union
+      (for/list ([clause (in-list clauses)])
+        (match clause
+          [`(,condition ,body)
+           (set-union (free-vars/erased condition)
+                      (free-vars/erased body))])))]
     [`(Return ,body) (free-vars/erased body)]
     [`(NarrativeExpr ,body) (free-vars/erased body)]
     [`(Recur ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
@@ -2254,7 +2264,7 @@
       (eq? (peel-ef raw-row) '#:infer))
 
     ;; SUR-012 / SUR-003 / P2l2b2。注釈付き Let の宣言型を期待型に使う形である。
-    (define (needs-expected-type? expression)
+    (define (needs-expected-type? expression #:if-some? [if-some? #f])
       (match (peel-node expression)
         [`(Fn ((,_ ,parameter-types) ...) ,_ ,raw-row ,_)
          (or (ormap inferred? parameter-types)
@@ -2263,9 +2273,10 @@
         [`(Construct ,_ ,_ ...) #t]
         ;; P2m spec §7.2。Eliminate は結果型の期待型を必要とする。
         [`(Eliminate ,_ ,_) #t]
+        [`(IfSome ,_ ,_) if-some?]
         ;; Surface block は Let の列なので、末尾まで期待型の必要性を伝える。
-        [`(Let ,_ ,_ ,body) (needs-expected-type? body)]
-        [`(NarrativeExpr ,body) (needs-expected-type? body)]
+        [`(Let ,_ ,_ ,body) (needs-expected-type? body #:if-some? if-some?)]
+        [`(NarrativeExpr ,body) (needs-expected-type? body #:if-some? if-some?)]
         [_ #f]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body
@@ -2444,6 +2455,100 @@
            [(pair? (unbox candidates)) (first (unbox candidates))]
            [failure (raise failure)]
            [else (reject span 'narrative-expression-needs-expected-type)]))))
+
+    (define (if-some-explicit clauses s s_0)
+      (define (expand remaining)
+        (match remaining
+          [(cons `(,s_i ,then-span ,condition ,body) rest)
+           (define chain-span (span-through-end s_i s))
+           (define condition-span (span-of condition))
+           (define body-span then-span)
+           (define false-span
+             (if (null? rest) s_0 (span-through-end (first (first rest)) s)))
+           (define false-body
+             (if (null? rest)
+                 `(Construct ,s_0 none)
+                 (expand rest)))
+           `(Let ,chain-span
+              ((#:bind %ifcond ,condition-span) const (#:ty Bool ,s_i))
+              ,condition
+              (NarrativeExpr ,chain-span
+                (Eliminate ,chain-span (#:var %ifcond ,condition-span)
+                  ((,body-span true () ->
+                    (Construct ,body-span some ,body))
+                   (,false-span false () -> ,false-body)))))]))
+      (expand clauses))
+
+    (define (probe-if-some-part expression environment delta propositions
+                                boundaries boundary-span)
+      ;; shortcut: IfSome の下見後に明示形を再検査するため入れ子で指数増加し、改善時は観測 Core を再利用する。
+      (call-with-restored-state
+       (λ ()
+         (define candidates (box '()))
+         (define boundary (fresh-boundary))
+         (define failure #f)
+         (define result
+           (with-handlers ([exn:fail:elab?
+                            (λ (error) (set! failure error) #f)])
+             (synth expression environment delta propositions
+                    (cons `(ExpressionBoundary ,boundary
+                                               (#:probe ,candidates)
+                                               ,boundary-span)
+                          boundaries))))
+         (list result (unbox candidates) failure))))
+
+    (define (if-some-result-type clauses s environment delta
+                                 propositions boundaries)
+      ;; Candidate order mirrors the nested false-branch evaluation order.
+      (define observations
+        (append*
+         (for/list ([clause (in-list clauses)] [index (in-naturals)])
+           (match-define (list s_i _then-span condition body) clause)
+           (append
+            (if (zero? index)
+                '()
+                (let ([previous-span
+                       (span-through-end
+                        (first (list-ref clauses (sub1 index))) s)])
+                  (list (probe-if-some-part
+                         condition environment delta propositions boundaries
+                         previous-span))))
+            (list (probe-if-some-part
+                   body environment delta propositions boundaries
+                   (span-through-end s_i s)))))))
+      ;; The source-order list interleaves c_i (i > 1) before then_i.
+      (define then-results
+        (for/list ([clause (in-list clauses)] [index (in-naturals)])
+          (list-ref observations (* index 2))))
+      (define successful-live
+        (for/list ([probe (in-list then-results)]
+                   #:when (and (first probe)
+                               (not (eq? (judgment-type (first probe)) 'Never))))
+          (first probe)))
+      (define merged-type
+        (and (pair? successful-live)
+             (let-values ([(cores type)
+                           (merge-branches
+                            (map judgment-core successful-live)
+                            (map judgment-type successful-live)
+                            s propositions)])
+               type)))
+      (define candidates
+        (append* (map second observations)))
+      (define failure
+        (for/first ([probe (in-list observations)]
+                    #:when (third probe))
+          (third probe)))
+      (define T
+        (cond
+          [merged-type merged-type]
+          [(pair? candidates)
+           (match (first candidates)
+             [`(Option ,inner) inner]
+             [_ (reject s 'type-mismatch 'Option (first candidates))])]
+          [failure (raise failure)]
+          [else (reject s 'narrative-expression-needs-expected-type)]))
+      `(Option ,T))
 
     (define (elaborate-inferred-fn s parameter-binders raw-parameter-types
                                   raw-row body
@@ -2742,7 +2847,8 @@
                    row))]
           [(_ _) #f]))
       (define bound-result
-        (if (or (needs-expected-type? bound) record-literal-checkable?)
+        (if (or (needs-expected-type? bound #:if-some? #t)
+                record-literal-checkable?)
             (check bound declared-type environment delta propositions boundaries)
             (synth bound environment delta propositions boundaries)))
       (define source-core-type (judgment-core-type bound-result))
@@ -3067,6 +3173,13 @@
            (synth scrutinee environment delta propositions boundaries))
          (synth-eliminate scrutinee-result branches s
                           environment delta propositions boundaries)]
+
+        [`(IfSome (,clauses ...) ,s_0)
+         (define expected
+           (if-some-result-type clauses s environment delta
+                               propositions boundaries))
+         (check (if-some-explicit clauses s s_0)
+                expected environment delta propositions boundaries)]
 
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
          (define scrutinee-result
@@ -3552,6 +3665,16 @@
             (check-eliminate scrutinee branches expected s
                              environment delta propositions boundaries
                              #:scrutinee-result scrutinee-result)])]
+
+        [`(IfSome (,clauses ...) ,s_0)
+         (match (normalize-type expected)
+           [`(Option ,_)
+            (check (if-some-explicit clauses s s_0)
+                   expected environment delta propositions boundaries)]
+           [_
+            (check-against-expected
+             (synth expression environment delta propositions boundaries)
+             expected s propositions)])]
 
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
          (define scrutinee-result

@@ -51,6 +51,8 @@
              (SReturn s sexpr)
              ;; P2m spec §5.3。枝の列は空でない。
              (SMatch s sexpr (sarm sarm ...))
+             ;; SUR-014b1。最後まで else が無い if の連鎖である。
+             (SIfSome s (sifclause sifclause ...) s)
              (SFn s (slparam ...) sty-or-none srow-or-none sexpr)
              (SApply s sexpr (sexpr ...))
              ;; P2l2b2 spec §9.3.5。parser では作らず、名前解決が作る。
@@ -62,6 +64,7 @@
   ;; P2m spec §5.3。Bool も constructor 名として使える。
   (sarm ::= (SArm s sctor (sname ...) sexpr)
             (SArm s sparam () sexpr))
+  (sifclause ::= (s sexpr sexpr))
   (sctor ::= sname (SName s true) (SName s false))
   (spitem ::= (STypeDecl s sname sty)
               (STraitDecl s sname (styfield ...))

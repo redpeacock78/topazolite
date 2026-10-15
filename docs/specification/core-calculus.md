@@ -65,6 +65,7 @@ e ::= l                                          リテラル
     | let x = e1 in e2                           束縛
     | construct K<τ̄>(e1, …, ek)                  constructor 適用（型引数は省略可）
     | eliminate e0 { ubr01; …; ubr0n }           場合分け
+    | ifSome((c1, b1), …, (cn, bn))               else の無い式位置 if の elaboration marker
     | tryBind x e1 e2                             `?=` 専用の elaboration 中間形
     | return e                                   返却
     | narrativeExpr(e)                           式 Narrative 境界
@@ -95,6 +96,11 @@ UCore の **`TryBind`** は spanless な `(TryBind x e body)` で表す。
 UCore+ では `(TryBind s (#:bind x s_x) e body)` とし、`s` は尾部の span、`s_x` は束縛名の span である。
 `TryBind` は `let x ?= e` からだけ生成し、elaboration が必ず `Eliminate` へ展開する。
 Typed Core に `TryBind` の構成子は無い。
+
+UCore の `IfSome` は else の無い式位置の `if` から生成する elaboration marker である。
+UCore+ では `(IfSome s ((s_i t_i c_i b_i) ...) s_0)` とし、`t_i` は then block の span を保持する。
+`t_i` は `SBlock` の lowering で失われる位置情報を補い、展開した `some` と true 枝の span に使う。
+`IfSome` は span によって意味を変えず、elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開するため、Typed Core と Core の文法および簡約規則には現れない。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker であり、Surface の loop 構文はここへ lowering される（ホワイトペーパー §7.2）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
@@ -968,6 +974,40 @@ B' = push(B, ExpressionBoundary(b, τ))
 本体の型が `Never` で候補も無い場合は `E-TYP-010` で拒む。
 下見中の elaboration 状態は下見の後で復元する。
 本体を τ の期待型で改めて検査し、最終 Core はその check の経路で決まる。
+
+**(E-IfSome)**
+
+`IfSome` は UCore+ の elaboration marker である。
+期待型が `Option<U>` なら、`T = U` として `IfSome` を明示形へ展開し、`Option<U>` に対して検査する。
+期待型が `Option` でなければ E-IfSome-Synth で得た `Option<T>` を既存の検査経路で期待型と照合する。
+明示形は各 then を `some` で包み、最後の false 枝を `none` とする 014a の値位置 `if` の連鎖である。
+`some` と `none` の `Construct` に型引数は書かず、期待型から既存の E-Construct-Check で型を得る。
+
+**(E-IfSome-Synth)**
+
+合成位置では、型 `T` を下見で決め、明示形を `Option<T>` に対して検査する。
+
+```text
+T = probe-ifSome(B, clauses)
+expand-ifSome(clauses, T) ⇐ Option<T> ! ε ⟹ c
+------------------------------------------------
+IfSome(clauses) ⇒ Option<T> ! ε ⟹ c
+```
+
+下見は各 then `b_i` と、第 2 節以降の条件 `c_2 ... c_n` を、それぞれ fresh な `ExpressionBoundary` の下で synth する。
+最初の条件 `c_1` はその連鎖の境界より前に評価されるため下見の候補に含めない。
+各下見は Core と型、`Never` の有無、return 候補、診断を記録し、elaboration の状態を復元する。
+`Never` でない then の Core と型を既存の `merge-branches` に渡し、その合流型を `T` とする。
+`Never` の then は合流から除く。
+非 `Never` の then が無く return 候補がある場合は、原文の順（`then_1`、`c_2`、`then_2`、…、`c_n`、`then_n`）で最初の候補を選ぶ。
+候補型が `Option<U>` なら `T = U` とし、それ以外は expected `Option`、found 候補型の `E-TYP-012` とする。
+候補がなく下見で診断が生じていれば最初の診断を伝播し、全ての then が `Never` で候補も診断も無ければ `E-TYP-010` とする。
+最終 Core は `Option<T>` に対する検査で生成し、必要な Union 注入などの変換もその経路で決める。
+
+異なる `Owned` 型を持つ then の合流は、既存の `merge-branches` と `owned-union-member` の規則に従い `E-TYP-012` で拒否する。
+`IfSome` の then の型が `Option<U>` なら結果型は `Option<Option<U>>` となり、暗黙の平坦化はしない。
+型注釈のない総称 constructor を `IfSome` の then に限って synth する規則は追加しない。
+一般の `Construct` と `Eliminate` の合成規則も変更しない。
 
 `TryBind` は `let x ?= e` の UCore 中間形であり、elaboration は右辺 `e` を一度だけ合成してから data `Eliminate` へ展開する。
 生成した `Eliminate` はその合成結果を再利用し、`e` を再度合成しない。
