@@ -47,7 +47,7 @@
 
 (test-case
  "parser の診断がそのまま返る"
- (check-equal? (code "if cond { 1 }") "E-SUR-005")
+ (check-equal? (code "if cond { 1 }") "E-SUR-006")
  (check-equal? (code "") "E-SUR-006")
  (check-equal? (code "f(") "E-SUR-006"))
 

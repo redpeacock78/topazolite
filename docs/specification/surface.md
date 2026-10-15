@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
@@ -41,7 +41,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when` の 13 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else` の 15 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 `match` は予約語ではなく、束縛名と関数名に使える識別子である。
 
@@ -112,8 +112,9 @@ suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | istr | "true" | "false" | "(" ")"
-           | ident | anonfn | record | block | "(" expr ")" | when
+           | ident | anonfn | record | block | "(" expr ")" | when | ifexpr
 when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
+ifexpr   ::= "if" expr block "else" (block | ifexpr)
 arm      ::= ctor ident* "=>" expr
            | "(" ident ":" ty ")" "=>" expr
 ctor     ::= ident | "true" | "false"
@@ -150,6 +151,9 @@ constructor pattern の束縛子は空白で区切って括弧で囲まず、Uni
 枝の本体は波括弧で始まる構文（block、record、when）なら対応する閉じ波括弧まで、それ以外の式なら改行の手前まで読む。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
 `when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
+`if` は条件と then block の後に必ず `else` と block または `else if` を続ける。
+`else` は then block の閉じ波括弧と同じ行に置く。
+`else` を次の行まで探さないのは、改行が block の式を区切る意味を持つためである。
 閉じ波括弧の後に改行がある場合、続く行は次の束縛または block の結果式として読む。
 型の括弧は結合順を変えるために使い、括弧自体は AST の節点を作らない。
 型の位置の `()` は `E-SUR-005` で拒否する。
@@ -258,8 +262,8 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 `|` は型位置と data 型宣言の variant の区切りで受理し、`&` は型位置だけで受理する。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 
-字句にはなるが構文に無い `if` と `while` は予約語ではなく `ident` になる。
-`if cond { }` のように後ろへ式が続く形は、2 つ目の primary の位置で `E-SUR-005` になる。
+`while` は予約語ではなく `ident` になる。
+`if` に `else` が無ければ入力末尾で `E-SUR-006` となり、then block の後に改行があればその改行で `E-SUR-005` となる。
 `return expr` は最も弱く結合する前置式で、`expr` 全体を戻り値とする。
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
@@ -632,6 +636,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true (Types))` と `(Construct s false (Types))` へ落とす。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
+- `if c { a } else { b }` は、条件に `Bool` を注釈した合成 `SBlock` と `true` / `false` の枝を持つ `SMatch` へ parser が組み替える。
+  その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () a) (SArm s_else (SName s_else false) () b))))` である。
+  この注釈により条件が Bool と適合しない場合は `E-TYP-012` となり、診断を 1 件に保つ。
+  `SIf` 節点を追加しないのは、既存の `SBlock` と `SMatch` で表せるためである。
+  Bool の `Eliminate` を条件へ直接掛けないのは、型検査の不一致を `E-DAT-003` ではなく `E-TYP-012` にするためである。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
@@ -834,6 +843,7 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 枝に期待型が必要で合成できない場合は `E-TYP-004` とし、`some(1)` と `none` のように型引数を決められない枝がその例である。
 本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
 `E-TYP-004`、`E-TYP-010`、`E-TYP-029`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
+`if` の条件が Bool と適合しない場合は `E-TYP-012` とし、expected は `Bool`、found は変換が拒否した型、primary span は `if` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。
 lexer が token を生成できない E-SUR-001、E-SUR-003、E-SUR-004 はこの原則の例外である。
@@ -861,7 +871,7 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
 4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 12 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
-5. **予約語**：Racket の `lexer.rkt` が予約する 13 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+5. **予約語**：Racket の `lexer.rkt` が予約する 15 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
 6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
 7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
 
@@ -917,7 +927,7 @@ P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
-F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 13 語を予約し、`match` を識別子として扱う。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 15 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
 UCore+ の `Eliminate` は constructor 枝と member 枝を持ち、F* の `CEliminate` も補助型 `core_branch` の tag で区別する。
 `fstar-parity-test.rkt` は Surface の `SMatch` と UCore+ の member 枝の witness を検査する。

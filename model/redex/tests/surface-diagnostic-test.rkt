@@ -114,7 +114,7 @@
         (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
         (list 'surface-unterminated-string (lambda () (lex 'src #"\"a"))                 2)
         (list 'surface-invalid-escape      (lambda () (lex 'src #"\"a\\q\""))            5)
-        (list 'surface-unexpected-token    (lambda () (parse (lex/string 'src "if x { 1 }"))) 10)
+        (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "if x { 1 }"))) 10)
         (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "")))      0)
         (list 'surface-projection-labels   (lambda () (parse (lex/string 'src "r.{}")))  4)
         (list 'surface-derive-no-recipe

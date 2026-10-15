@@ -71,6 +71,12 @@
                '(when x match eof)))
 
 (test-case
+ "if と else は完全一致で予約語になり、接頭辞を共有する語は識別子になる"
+ (check-equal? (kinds "if else ifx elsewhere") '(kw kw ident ident eof))
+ (check-equal? (map stok-value (lex/string 'src "if else ifx elsewhere"))
+               '(if else ifx elsewhere eof)))
+
+(test-case
  "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
  (check-equal? (kinds "fn() -> Int") '(kw punct punct punct ident eof))
  ;; a は 0-1、-> は 1-3、b は 3-4。

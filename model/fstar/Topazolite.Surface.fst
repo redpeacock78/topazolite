@@ -279,7 +279,9 @@ and scan_hole
 let keyword_word (word: list FStar.UInt8.t) : tkind =
   match word with
   | [a; b] ->
-      if byte_is a 102 && byte_is b 110 then TkKw else TkIdent
+      if (byte_is a 102 && byte_is b 110) ||
+         (byte_is a 105 && byte_is b 102) then TkKw
+      else TkIdent
   | [a; b; c] ->
       if (byte_is a 108 && byte_is b 101 && byte_is c 116) ||
          (byte_is a 109 && byte_is b 117 && byte_is c 116) ||
@@ -289,7 +291,8 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
       if (byte_is a 116 && byte_is b 114 && byte_is c 117 && byte_is d 101) ||
          (byte_is a 116 && byte_is b 121 && byte_is c 112 && byte_is d 101) ||
          (byte_is a 105 && byte_is b 109 && byte_is c 112 && byte_is d 108) ||
-         (byte_is a 119 && byte_is b 104 && byte_is c 101 && byte_is d 110) then TkKw
+         (byte_is a 119 && byte_is b 104 && byte_is c 101 && byte_is d 110) ||
+         (byte_is a 101 && byte_is b 108 && byte_is c 115 && byte_is d 101) then TkKw
       else TkIdent
   | [a; b; c; d; e] ->
       if (byte_is a 99 && byte_is b 111 && byte_is c 110 &&
@@ -307,10 +310,11 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
       else TkIdent
   | _ -> TkIdent
 
-// 命題 5。Racket の lexer.rkt が予約する 13 語のそれぞれに TkKw を返す。
+// 命題 5。Racket の lexer.rkt が予約する 15 語のそれぞれに TkKw を返す。
 // 予約語を接頭辞に持つ語と、予約語より短い語は TkIdent のままである。
 val keyword_word_reserved : unit -> Lemma
   (keyword_word [102uy; 110uy] == TkKw /\
+   keyword_word [105uy; 102uy] == TkKw /\
    keyword_word [108uy; 101uy; 116uy] == TkKw /\
    keyword_word [109uy; 117uy; 116uy] == TkKw /\
    keyword_word [102uy; 111uy; 114uy] == TkKw /\
@@ -321,6 +325,7 @@ val keyword_word_reserved : unit -> Lemma
    keyword_word [102uy; 97uy; 108uy; 115uy; 101uy] == TkKw /\
    keyword_word [116uy; 114uy; 97uy; 105uy; 116uy] == TkKw /\
    keyword_word [119uy; 104uy; 101uy; 110uy] == TkKw /\
+   keyword_word [101uy; 108uy; 115uy; 101uy] == TkKw /\
    keyword_word [100uy; 101uy; 114uy; 105uy; 118uy; 101uy] == TkKw /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy] == TkKw /\
    keyword_word [109uy; 97uy; 116uy; 99uy; 104uy] == TkIdent /\

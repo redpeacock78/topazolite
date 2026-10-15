@@ -24,6 +24,8 @@
  (check-false (redex-match? Surface ident 'for))
  (check-false (redex-match? Surface ident 'derive))
  (check-false (redex-match? Surface ident 'return))
+ (check-false (redex-match? Surface ident 'if))
+ (check-false (redex-match? Surface ident 'else))
  (check-false (redex-match? Surface label 'derive))
  (check-false (redex-match? Surface label 'return))
  (check-true (redex-match? Surface ident 'match))
@@ -590,8 +592,52 @@
    (check-equal? (diagnostic-primary-span (p src)) at)))
 
 (test-case
- "式の頭に置けない語は E-SUR-005 である"
- (check-equal? (p-code "if cond { 1 }") "E-SUR-005"))
+ "if の else が無い形は E-SUR-006 である"
+ (check-equal? (p-code "if cond { 1 }") "E-SUR-006"))
+
+(test-case
+ "if / else は SBlock と true / false の SMatch へ組み替える"
+ (check-equal?
+  (p-expr "if c { 1 } else { 2 }")
+  `(SBlock ,(sp 0 21)
+     ((SBind ,(sp 0 21) const (SName ,(sp 3 4) %ifcond)
+             (TName ,(sp 0 2) Bool) (SVar ,(sp 3 4) c)))
+     (SMatch ,(sp 0 21) (SVar ,(sp 3 4) %ifcond)
+        ((SArm ,(sp 5 10) (SName ,(sp 5 10) true) ()
+              (SBlock ,(sp 5 10) () (SInt ,(sp 7 8) 1)))
+        (SArm ,(sp 11 21) (SName ,(sp 11 15) false) ()
+              (SBlock ,(sp 16 21) () (SInt ,(sp 18 19) 2)))))))
+ (check-match
+  (p-expr "if c { 1 } else if d { 2 } else { 3 }")
+  `(SBlock ,_
+     ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ c)))
+     (SMatch ,_ (SVar ,_ %ifcond)
+       ((SArm ,_ (SName ,_ true) () (SBlock ,_ () (SInt ,_ 1)))
+        (SArm ,_ (SName ,_ false) ()
+              (SBlock ,_
+                ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ d)))
+                (SMatch ,_ (SVar ,_ %ifcond)
+                  ((SArm ,_ (SName ,_ true) () (SBlock ,_ () (SInt ,_ 2)))
+                   (SArm ,_ (SName ,_ false) () (SBlock ,_ () (SInt ,_ 3)))))))))))
+)
+
+(test-case
+ "if の else は同じ行に必要で、不正位置は既存の Surface 診断になる"
+ (for ([src (in-list '("if c { 1 }"
+                       "if c { 1 }\n0"
+                       "if c { 1 }\nelse { 2 }"
+                       "if c { 1 } else 2"))]
+       [code (in-list '("E-SUR-006" "E-SUR-005" "E-SUR-005" "E-SUR-005"))]
+       [at (in-list '((#:span src 10 10) (#:span src 10 11)
+                      (#:span src 10 11) (#:span src 16 17)))])
+   (check-equal? (p-code src) code src)
+   (check-equal? (diagnostic-primary-span (p src)) at src))
+ (for ([src (in-list '("let if = 1\n0"
+                       "fn else() -> Int { 1 }\n0"
+                       "fn f(if: Int) -> Int { 1 }\n0"))]
+       [at (in-list '((#:span src 4 6) (#:span src 3 7) (#:span src 5 7)))])
+   (check-equal? (p-code src) "E-SUR-005" src)
+   (check-equal? (diagnostic-primary-span (p src)) at src)))
 
 (test-case
  "when の枝は改行で区切り、束縛子は空白で並べる"
@@ -759,6 +805,8 @@
  "節点の span は子孫のすべての span を包含する"
  (for ([src (in-list (list "1"
                            "f(x).a"
+                           "if c { 1 } else { 2 }"
+                           "if c { 1 } else if d { 2 } else { 3 }"
                            "r.{a, b}"
                            "return 1"
                            "type A = Int\nconst x: A = 1\n1"

@@ -330,6 +330,7 @@
     [(kw? ts i 'false)
      (values `(SBool ,(span-at ts i) false) (add1 i))]
     [(kw? ts i 'when) (parse-match ts fail i)]
+    [(kw? ts i 'if) (parse-if ts fail i)]
     [(eq? (kind-at ts i) 'ident)
      (values `(SVar ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(punct? ts i '|(|)
@@ -392,6 +393,32 @@
                    [(punct? ts arm-j '|}|) arm-j]
                    [else (fail-at ts fail arm-j)]))
            (loop next (cons arm arms)))]))))
+
+;; SUR-014a。条件を Bool 注釈付き束縛にし、既存の when と同じ枝へ組み替える。
+(define (parse-if ts fail i)
+  (define if-span (span-at ts i))
+  (let*-values ([(condition condition-j) (parse-expr ts fail (add1 i))]
+                [(then then-j) (parse-block ts fail condition-j)])
+    (unless (kw? ts then-j 'else) (fail-at ts fail then-j))
+    (define else-span (span-at ts then-j))
+    (define else-start (add1 then-j))
+    (define-values (else-part end-j)
+      (cond
+        [(punct? ts else-start '|{|) (parse-block ts fail else-start)]
+        [(kw? ts else-start 'if) (parse-if ts fail else-start)]
+        [else (fail-at ts fail else-start)]))
+    (define whole (hull if-span (node-span else-part)))
+    (define condition-span (node-span condition))
+    (define then-span (node-span then))
+    (values
+     `(SBlock ,whole
+        ((SBind ,whole const (SName ,condition-span %ifcond)
+                (TName ,if-span Bool) ,condition))
+        (SMatch ,whole (SVar ,condition-span %ifcond)
+          ((SArm ,then-span (SName ,then-span true) () ,then)
+           (SArm ,(hull else-span (node-span else-part))
+                 (SName ,else-span false) () ,else-part))))
+     end-j)))
 
 ;; P2m3 spec §3.1。constructor 枝は `ctor ident* => expr`、
 ;; member 枝は `(name: type) => expr` である。
