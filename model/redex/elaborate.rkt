@@ -608,7 +608,12 @@
            ,(max (fourth left) (fourth right))))
 
 (define (span-through-end start end)
-  `(#:span ,(second start) ,(third start) ,(fourth end)))
+  ;; 逆順は位置順を持たない synthetic span だけで起こりうるため、source span の逆転は hull で隠さない。
+  (if (and (eq? (second start) '#:synthetic)
+           (eq? (second end) '#:synthetic)
+           (> (third start) (fourth end)))
+      (span-hull start end)
+      `(#:span ,(second start) ,(third start) ,(fourth end))))
 
 (define (resolve-declaration-row raw-row delta boundaries inherited-span)
   (define span (nearest-span raw-row inherited-span))
@@ -2456,7 +2461,7 @@
            [failure (raise failure)]
            [else (reject span 'narrative-expression-needs-expected-type)]))))
 
-    (define (if-some-explicit clauses s s_0)
+    (define (if-some-explicit clauses s s_0 T)
       (define (expand remaining)
         (match remaining
           [(cons `(,s_i ,then-span ,condition ,body) rest)
@@ -2467,7 +2472,7 @@
              (if (null? rest) s_0 (span-through-end (first (first rest)) s)))
            (define false-body
              (if (null? rest)
-                 `(Construct ,s_0 none)
+                 `(Construct ,s_0 none (Types ,T))
                  (expand rest)))
            `(Let ,chain-span
               ((#:bind %ifcond ,condition-span) const (#:ty Bool ,s_i))
@@ -2475,7 +2480,7 @@
               (NarrativeExpr ,chain-span
                 (Eliminate ,chain-span (#:var %ifcond ,condition-span)
                   ((,body-span true () ->
-                    (Construct ,body-span some ,body))
+                    (Construct ,body-span some (Types ,T) ,body))
                    (,false-span false () -> ,false-body)))))]))
       (expand clauses))
 
@@ -3183,7 +3188,8 @@
          (define expected
            (if-some-result-type clauses s environment delta
                                propositions boundaries))
-         (check (if-some-explicit clauses s s_0)
+         (match-define `(Option ,T) expected)
+         (check (if-some-explicit clauses s s_0 T)
                 expected environment delta propositions boundaries)]
 
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
@@ -3677,8 +3683,8 @@
 
         [`(IfSome (,clauses ...) ,s_0)
          (match (normalize-type expected)
-           [`(Option ,_)
-            (check (if-some-explicit clauses s s_0)
+           [`(Option ,T)
+            (check (if-some-explicit clauses s s_0 T)
                    expected environment delta propositions boundaries)]
            [_
             (check-against-expected
@@ -3842,6 +3848,16 @@
   (require rackunit)
 
   (define ok-span '(#:span src 3 7))
+
+  (define synthetic-span
+    (span-through-end '(#:span #:synthetic 20 20)
+                      '(#:span #:synthetic 14 14)))
+  (check-true (span-ok? synthetic-span))
+  (check-equal? synthetic-span '(#:span #:synthetic 14 20))
+  (define reversed-source-span
+    (span-through-end '(#:span src 20 20) '(#:span src 14 14)))
+  (check-false (span-ok? reversed-source-span))
+  (check-equal? reversed-source-span '(#:span src 20 14))
 
   ;; primary-span を渡し忘れると reason が span の位置へ入る。
   (check-exn #px"arity mismatch"

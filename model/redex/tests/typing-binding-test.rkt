@@ -16,11 +16,11 @@
 ; 非 record の T は G1 の Let と同じ（const と let で差なし）
 (check-equal? (core-type-of '(Let (x const Int) 1 x) '() '()) '(Int ()))
 (check-equal? (core-type-of '(Let (x let Int) 1 x) '() '()) '(Int ()))
-; record bound が Never: policy を課さず受理し、x は expected record 型で使える
-; ((Perform (Return boundary Int) 1) は Never を synth、row に (Return boundary Int)）
+; bound が Never なら、通常の Let 全体も Never になる（T-Let-Never）。
+; Return の effect row は Let に残る。
 (check-equal?
  (core-type-of `(Let (x const (Record ((a Int imm)))) (Perform (Return boundary Int) 1) (Proj x a)) '() '())
- '(Int ((Return boundary Int))))
+ '(Never ((Return boundary Int))))
 ; Let の effect row は bound と body の effect の和（structural-row.md §5.4）
 (check-equal? (core-type-of '(Let (x const Int) (Suspend 1) x) '() '()) '(Int (Suspend)))
 

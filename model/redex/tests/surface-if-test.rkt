@@ -10,6 +10,7 @@
          "../gen.rkt"
          "../machine.rkt"
          "../origins.rkt"
+         "../span-core.rkt"
          "../typing.rkt")
 
 (define (compile source) (compile-source/string 'src source))
@@ -56,6 +57,10 @@
     (append (if (predicate value) (list value) '())
             (if (list? value) (append-map walk value) '())))
   (walk term))
+
+(define (all-spans term)
+  (append (if (match term [`(#:span ,_ ,_ ,_) #t] [_ #f]) (list term) '())
+          (if (list? term) (append-map all-spans term) '())))
 
 (define (source-span source pattern)
   (match (regexp-match-positions pattern source)
@@ -308,6 +313,25 @@
     [`(err ,diagnostic)
      (check-equal? (diagnostic-id diagnostic) "E-TYP-010")]
     [other (fail-check (format "c1 の候補を除外して E-TYP-010 を期待したが ~s" other))]))
+
+(test-case "第2条件の return 候補で束縛する Surface IfSome を合成できる"
+  (define source
+    (string-append
+     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn choose(a: Bool, option: Option<Int>) -> Option<Int> {\n"
+     " let answer = if a { 1 } else if identity(return option) { 2 }\n"
+     " answer\n}\nchoose(false, some(9))"))
+  (check-equal? (run-source source) '(Construct (Option Int) some 9)))
+
+(test-case "複数節の synthetic IfSome は展開後も妥当な span を持つ"
+  (define source
+    '(FnDecl f ((a Bool) (b Bool)) (Option Int) (Partial)
+       (Let answer (IfSome ((a 1) (b 2))) answer)
+       unit))
+  (match (elab (annotate-surface source))
+    [(list core _type _row _callables)
+     (check-true (andmap span-ok? (all-spans core)))]
+    [other (fail-check (format "IfSome の elaboration を期待したが ~s" other))]))
 
 (test-case "Owned payload の IfSome は Surface の expected 経路を型検査する"
   (check-true

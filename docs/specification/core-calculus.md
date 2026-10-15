@@ -999,8 +999,8 @@ B' = push(B, ExpressionBoundary(b, τ))
 `IfSome` は UCore+ の elaboration marker である。
 期待型が `Option<U>` なら、`T = U` として `IfSome` を明示形へ展開し、`Option<U>` に対して検査する。
 期待型が `Option` でなければ E-IfSome-Synth で得た `Option<T>` を既存の検査経路で期待型と照合する。
-明示形は各 then を `some` で包み、最後の false 枝を `none` とする 014a の値位置 `if` の連鎖である。
-`some` と `none` の `Construct` に型引数は書かず、期待型から既存の E-Construct-Check で型を得る。
+明示形は各 then を `some<T>` で包み、最後の false 枝を `none<T>` とする 014a の値位置 `if` の連鎖である。
+生成する `Construct` には `Types T` を明記するため、束縛値が `Never` の `Let` の下でも明示形を合成できる。
 
 **(E-IfSome-Synth)**
 
