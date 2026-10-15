@@ -850,9 +850,12 @@
     (define (check-case! interruption placement wrapper [detailed? #f])
       (define-values (core callables places start)
         (generate-root-abort-case interruption placement wrapper))
+      ;; perform-escaped は Handle の対象外なので、T-Ctx-Never が Never を伝える。
+      (define expected-type
+        (if (eq? interruption 'perform-escaped) 'Never 'Unit))
       (define static-type
         (and detailed? (core-type-of core places callables)))
-      (define start-row (runtime-row start callables 'Unit))
+      (define start-row (runtime-row start callables expected-type))
       (define run (bounded-trace-g2 start (bounds-fuel limits)))
       (define configs (execution-configs run))
       (define rules (if detailed? (trace-rules configs) '()))
@@ -869,11 +872,12 @@
 
       (when detailed?
         (check-true (and (list? static-type)
-                         (equal? (first static-type) 'Unit))
-                    (format "生成 Core の型は Unit: ~s" static-type)))
+                         (equal? (first static-type) expected-type))
+                    (format "生成 Core の型は ~a: ~s"
+                            expected-type static-type)))
       (check-not-false start-row "起点 config の runtime-row がある")
       (when start-row
-        (check-true (config-ok? start callables 'Unit start-row)
+        (check-true (config-ok? start callables expected-type start-row)
                     "起点 config が config-ok? を満たす"))
       (check-eq? (execution-outcome run) 'terminal)
       (check-true
@@ -885,12 +889,12 @@
        (format "終端は値、裸の Perform、または Error: ~s" terminal))
       (for ([configuration (in-list configs)] [index (in-naturals)])
         (set! config-count (add1 config-count))
-        (define row (runtime-row configuration callables 'Unit))
+        (define row (runtime-row configuration callables expected-type))
         (check-not-false row
                          (format "config ~a の runtime-row がある: ~s"
                                  index configuration))
         (when row
-          (check-true (config-ok? configuration callables 'Unit row)
+          (check-true (config-ok? configuration callables expected-type row)
                       (format "config ~a が config-ok? を満たす: ~s"
                               index configuration))))
       (for ([rule (in-list rules)]) (set-add! seen-rules rule))

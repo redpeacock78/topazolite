@@ -232,12 +232,15 @@
        (values `(Apply ,consumer ,rewrite)
                consumer-callables 'Unit 1)]))
   (define core (wrap-interruption kind body result-type))
+  ;; handle-skip の Return は Handle に捕まらず、T-Ctx-Never で Never になる。
+  (define expected-type
+    (if (eq? kind 'handle-skip) 'Never result-type))
   (define error-kind? (memq kind '(scope-error handle-error)))
   (interrupted-case shape kind core callables
                     (if error-kind? '((0 Res)) '())
                     (if error-kind? '((0 (resource 97))) '())
                     (if error-kind? '((0 Available)) '())
-                    result-type token-count))
+                    expected-type token-count))
 
 (define (make-moved-root-case kind)
   (define error-kind? (memq kind '(scope-error handle-error)))
@@ -246,6 +249,7 @@
     (interrupted-consumer (list owned 'Unit)))
   (define body
     `(Apply ,consumer (Move ,moved-place) ,(interruption-term kind 'Unit)))
+  ;; handle-skip の Return は Handle に捕まらず、T-Ctx-Never で Never になる。
   (interrupted-case
    'root-only kind (wrap-interruption kind body 'Unit)
    consumer-callables
@@ -256,7 +260,7 @@
    (if error-kind?
        '((0 Available) (1 Available))
        '((0 Available)))
-   'Unit 1))
+   (if (eq? kind 'handle-skip) 'Never 'Unit) 1))
 
 (define (start-configuration test-case)
   `(cfg ,(interrupted-case-core test-case)

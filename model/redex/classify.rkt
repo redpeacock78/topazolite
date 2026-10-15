@@ -64,8 +64,9 @@
     [_ #f]))
 
 (define (branch-contexts scrutinee branches environment callables)
-  (match (core-type-of scrutinee '() callables environment)
-    [(list wrapper-type _)
+  (match (core-type-of/normal scrutinee '() callables environment)
+    [(list _ _ wrapper-type)
+     #:when (not (eq? wrapper-type '⊥))
      ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引き、
      ;; 剥がした型で schema を引いてから、欄の型を包み直す。
      (define-values (data-type rewrap)
@@ -91,8 +92,9 @@
     [_ #f]))
 
 (define (union-branch-contexts scrutinee branches environment callables)
-  (match (core-type-of scrutinee '() callables environment)
-    [(list source-type _)
+  (match (core-type-of/normal scrutinee '() callables environment)
+    [(list _ _ source-type)
+     #:when (not (eq? source-type '⊥))
      (define normalized (normalize-type source-type))
      (define-values (union-type rewrap)
        (match normalized
@@ -176,8 +178,8 @@
     [_ #f]))
 
 (define (callee-type function environment callables)
-  (match (core-type-of function '() callables environment)
-    [(list type _) type]
+  (match (core-type-of/normal function '() callables environment)
+    [(list _ _ normal-type) (and (not (eq? normal-type '⊥)) normal-type)]
     [_ (borrow-free-type function environment)]))
 
 (define (latent-row-safe? function environment callables)
@@ -784,6 +786,7 @@
     (second label)))
 
 (define (guard-component-row core environment callables expected-types)
+  ;; 判定に使うのは row だけであり、Never でも row は被演算子全体の和を保つ。
   (match (core-type-of core '() callables environment)
     [(list _ row) row]
     [_
