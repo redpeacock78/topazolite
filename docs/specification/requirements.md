@@ -705,6 +705,9 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ意味論を保って lowering されなければならない。
 
+式位置の `if`、`else if`、`else` は実装済みであり、条件を `Bool` 注釈付きの束縛としてから `when` へ組み替える。
+else の無い `if`（文位置）と `for` は未実装であり、後続で扱う。
+
 ### SUR-015
 
 - **状態**：P2
@@ -975,7 +978,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| Surface の return 境界（式位置の `when` は P2m3a で回収済み。残る `if` と `for` の境界、文位置の Narrative、明示的な `return to`、`E-RET-003` の lint） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| Surface の return 境界（式位置の `when` と `if` は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。残る else の無い `if`（文位置）と `for` の境界、文位置の Narrative、明示的な `return to`、`E-RET-003` の lint） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
 | data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
