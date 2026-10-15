@@ -1333,7 +1333,7 @@ and lower_ifsome_expr (s: span) (clauses: list sifclause)
       let false_span =
         match tl with
         | [] -> s0
-        | (next_span, _) :: _ -> span_through_end next_span s in
+        | SIfClause next_span _ _ :: _ -> span_through_end next_span s in
       CLet chain_span condition_span (lower_expr condition)
         (CNarrativeExpr chain_span
           (CEliminate chain_span (CVar condition_span)
@@ -1395,7 +1395,7 @@ and lower_ifsome_stmt (s: span) (clauses: list sifclause)
       let false_span =
         match tl with
         | [] -> s0
-        | (next_span, _) :: _ -> span_through_end next_span s in
+        | SIfClause next_span _ _ :: _ -> span_through_end next_span s in
       CLet chain_span condition_span (lower_expr condition)
         (CEliminate chain_span (CVar condition_span)
           [CConstructorBranch body_span "true" [] (lower_stmt body);
