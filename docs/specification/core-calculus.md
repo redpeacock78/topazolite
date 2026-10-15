@@ -1726,8 +1726,8 @@ C0(K) の宣言を D の型引数で具体化して (σ1, …, σk) -> D を得�
 
 **(T-Rec-Check)**
 
-`期待 row に欄がある Present 式は欄型に対して check し、実際の結果型を αi、その row を εi とする。
-期待 row に欄がない Present 式は synth し、結果型を αi、その row を εi とする。
+`期待 row` に欄がある `Present` 式は欄型に対して check し、実際の結果型を αi、その row を εi とする。
+`期待 row` に欄がない `Present` 式は synth し、結果型を αi、その row を εi とする。
 
 ```text
 τexp = Record(ρexp)        fields = ((ℓi, mi, ci) ...)        ℓi は相異なる
@@ -1743,8 +1743,8 @@ compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τe
 ```
 
 `Rec` を `Record` 型 `τexp` の位置で検査するとき、期待 row に欄がある式はその欄の型で検査し、期待 row に欄がない式は合成する。
-省略した期待欄は optional 欄に限り、対応する `Absent` 欄を構成する。
-未知の欄または省略した required 欄があれば既存の診断で拒否する。
+期待 row に無い欄は合成して `ρact` に残し、`compatible?` の width 部分型で判定する。
+期待欄の省略は optional 欄でも `compatible?` が拒否するため、optional 欄を空にするには `Absent τ` 欄を明示する。
 `Absent(τi)` は評価せず、型 `τi` の optional 欄として row に記録する。
 期待 row に欄がある式の検査結果型が `Never` なら、構成する row の欄型には期待欄型を使い、`Rec` 自体の judgment type は T-Ctx-Never により `Never`、正常型は `Record(ρact)` となる。
 期待 row に欄がない式を合成した結果が `Never` なら、欄型を決める正常型が必要であり、`⊥` の場合は既存の診断で拒否する。
