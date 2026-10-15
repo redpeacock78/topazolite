@@ -721,7 +721,7 @@ type sexpr =
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
   | SMatch    : span -> sexpr -> list sarm -> sexpr
-  | SIfSome   : span -> list (span & (sexpr & sexpr)) -> span -> sexpr
+  | SIfSome   : span -> list sifclause -> span -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SConstruct : span -> (span & string) -> list sexpr -> sexpr
@@ -732,6 +732,8 @@ type sexpr =
 and sarm =
   | SConstructorArm : span -> (span & string) -> list (span & string) -> sexpr -> sarm
   | SMemberArm      : span -> span -> (span & string) -> sty -> sexpr -> sarm
+and sifclause =
+  | SIfClause : span -> sexpr -> sexpr -> sifclause
 and sty =
   | TName     : span -> string -> sty
   | TRec      : span -> list sty -> sty
@@ -808,11 +810,11 @@ let rec arm_children (arms: list sarm) : Tot (list node) (decreases arms) =
   | SConstructorArm _ _ _ body :: tl -> NExpr body :: arm_children tl
   | SMemberArm _ _ _ ty body :: tl -> NTy ty :: NExpr body :: arm_children tl
 
-let rec ifsome_children (clauses: list (span & (sexpr & sexpr)))
+let rec ifsome_children (clauses: list sifclause)
   : Tot (list node) (decreases clauses) =
   match clauses with
   | [] -> []
-  | (_, (condition, body)) :: tl ->
+  | SIfClause _ condition body :: tl ->
       NExpr condition :: NExpr body :: ifsome_children tl
 
 let kids_of_expr (e: sexpr) : Tot (list node) =
@@ -999,11 +1001,11 @@ and wf_arms (s: span) (arms: list sarm)
       contains s sa && contains sa sp && contains sp sx
       && contains sp (span_of_ty ty) && wf_ty ty
       && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
-and wf_ifsome_clauses (s: span) (clauses: list (span & (sexpr & sexpr)))
+and wf_ifsome_clauses (s: span) (clauses: list sifclause)
   : Tot bool (decreases clauses) =
   match clauses with
   | [] -> true
-  | (si, (condition, body)) :: tl ->
+  | SIfClause si condition body :: tl ->
       contains s si && contains s (span_of_expr condition) && wf_expr condition &&
       contains s (span_of_expr body) && wf_expr body && wf_ifsome_clauses s tl
 and wf_decl (d: sdecl) : Tot bool (decreases d) =
@@ -1108,7 +1110,7 @@ let rec wf_arms_elim s arms c =
       wf_exprs_elim sa [b] c;
       wf_arms_elim s tl c
 
-val wf_ifsome_clauses_elim : s:span -> clauses:list (span & (sexpr & sexpr))
+val wf_ifsome_clauses_elim : s:span -> clauses:list sifclause
   -> c:node -> Lemma
   (requires wf_ifsome_clauses s clauses)
   (ensures memP c (ifsome_children clauses)
@@ -1117,7 +1119,7 @@ val wf_ifsome_clauses_elim : s:span -> clauses:list (span & (sexpr & sexpr))
 let rec wf_ifsome_clauses_elim s clauses c =
   match clauses with
   | [] -> ()
-  | (_, (condition, body)) :: tl ->
+  | SIfClause _ condition body :: tl ->
       FStar.List.Tot.Properties.append_memP
         [NExpr condition; NExpr body] (ifsome_children tl) c;
       wf_exprs_elim s [condition; body] c;
@@ -1320,11 +1322,11 @@ and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arm
       CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
   | SMemberArm sa _ (sx, x) ty b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
-and lower_ifsome_expr (s: span) (clauses: list (span & (sexpr & sexpr)))
+and lower_ifsome_expr (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =
   match clauses with
   | [] -> CConstruct s0 "none" []
-  | (si, (condition, body)) :: tl ->
+  | SIfClause si condition body :: tl ->
       let chain_span = span_through_end si s in
       let condition_span = span_of_expr condition in
       let body_span = span_of_expr body in
@@ -1382,11 +1384,11 @@ and lower_arms_stmt (arms: list sarm) : Tot (list core_branch) (decreases arms) 
       CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms_stmt tl
   | SMemberArm sa sx (sb, x) ty b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms_stmt tl
-and lower_ifsome_stmt (s: span) (clauses: list (span & (sexpr & sexpr)))
+and lower_ifsome_stmt (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =
   match clauses with
   | [] -> discard_stmt s0 (CConstruct s0 "unit" [])
-  | (si, (condition, body)) :: tl ->
+  | SIfClause si condition body :: tl ->
       let chain_span = span_through_end si s in
       let condition_span = span_of_expr condition in
       let body_span = span_of_expr body in
@@ -1421,11 +1423,11 @@ let lower_preserves_span e =
   | SRec _ _     -> ()
   | SBlock _ _ _ -> ()
 
-val lower_ifsome_root_spans : s:span -> clauses:list (span & (sexpr & sexpr))
+val lower_ifsome_root_spans : s:span -> clauses:list sifclause
   -> s0:span -> Lemma
   (requires clauses <> [] /\
      (match clauses with
-      | (si, _) :: _ -> contains s si /\ s.startByte = si.startByte
+      | SIfClause si _ _ :: _ -> contains s si /\ s.startByte = si.startByte
       | [] -> false))
   (ensures span_of_core (lower_expr (SIfSome s clauses s0)) == s /\
            span_of_core (lower_stmt (SIfSome s clauses s0)) == s)
