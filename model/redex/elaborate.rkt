@@ -2796,7 +2796,7 @@
                 (judgment-row result)))
 
     (define (elaborate-let-tail s binder binding-type binding-mode
-                                bound-result body environment delta
+                                bound-result bound-never? body environment delta
                                 propositions boundaries core-binder bound-core
                                 #:expected [expected #f])
       (define name (peel-bind binder))
@@ -2811,7 +2811,7 @@
         (cond
           [identity-resource?
            (judgment `(#:var ,name ,(span-of body)) binding-type '())]
-          [expected
+          [(and expected (not bound-never?))
            (check body expected body-environment delta propositions
                   boundaries)]
           [else
@@ -2819,8 +2819,8 @@
       (define let-result
         (judgment `(Let ,s ,core-binder
                         ,bound-core
-                        ,(judgment-core body-result))
-                  (judgment-type body-result)
+                  ,(judgment-core body-result))
+                  (if bound-never? 'Never (judgment-type body-result))
                   (row-union (judgment-row bound-result)
                              (judgment-row body-result))))
       (if (and expected identity-resource?)
@@ -2886,7 +2886,8 @@
              (reject s 'owned-narrowing-rejected actual-type discharged-type))])
       (define binding-type
         (bind-with-mode s binding-mode declared-type actual-type propositions))
-      (values bound-result bound-core declared-type binding-type))
+      (values bound-result bound-core declared-type binding-type
+              (eq? source-core-type 'Never)))
 
     (define (projection-chain expression environment)
       (define (walk node)
@@ -3124,7 +3125,8 @@
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
          (elaborate-let-tail
-          s raw-name binding-type binding-mode bound-result body environment
+          s raw-name binding-type binding-mode bound-result
+          (eq? actual-type 'Never) body environment
           delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
           (judgment-core bound-result))]
@@ -3133,13 +3135,15 @@
         ;; 誤って分解しないよう、binder の包みの形で分岐する。
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define-values (bound-result bound-core declared-type binding-type)
+         (define-values (bound-result bound-core declared-type binding-type
+                         bound-never?)
            (elaborate-annotated-let-bound
             s binding-mode raw-type bound environment delta propositions
             boundaries))
          (elaborate-let-tail
           s raw-name binding-type binding-mode
           bound-result
+          bound-never?
           body environment delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,declared-type
                                          ,(wrapper-span raw-type)))
@@ -3150,7 +3154,8 @@
            (synth bound environment delta propositions boundaries))
          (define binding-type (judgment-type bound-result))
          (elaborate-let-tail
-          s raw-name binding-type #f bound-result body environment delta
+          s raw-name binding-type #f bound-result
+          (eq? (judgment-type bound-result) 'Never) body environment delta
           propositions boundaries
           `(,raw-name (#:ty ,(judgment-type bound-result) ,s))
           (judgment-core bound-result))]
@@ -3588,7 +3593,8 @@
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
          (elaborate-let-tail
-          s raw-name binding-type binding-mode bound-result body environment
+          s raw-name binding-type binding-mode bound-result
+          (eq? actual-type 'Never) body environment
           delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
           (judgment-core bound-result)
@@ -3596,12 +3602,14 @@
 
         [`(Let (,raw-name ,binding-mode ,raw-type) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define-values (bound-result bound-core declared-type binding-type)
+         (define-values (bound-result bound-core declared-type binding-type
+                         bound-never?)
            (elaborate-annotated-let-bound
             s binding-mode raw-type bound environment delta propositions
             boundaries))
          (elaborate-let-tail
-          s raw-name binding-type binding-mode bound-result body environment
+          s raw-name binding-type binding-mode bound-result bound-never?
+          body environment
           delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,declared-type
                                          ,(wrapper-span raw-type)))
@@ -3613,7 +3621,8 @@
            (synth bound environment delta propositions boundaries))
          (define binding-type (judgment-type bound-result))
          (elaborate-let-tail
-          s raw-name binding-type #f bound-result body environment delta
+          s raw-name binding-type #f bound-result
+          (eq? (judgment-type bound-result) 'Never) body environment delta
           propositions boundaries
           `(,raw-name (#:ty ,binding-type ,s))
           (judgment-core bound-result)

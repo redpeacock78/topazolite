@@ -653,6 +653,25 @@ E-Let-Check は E-Let、E-Let-Annot、E-Let-Fn-Check の右辺の前提と束縛
 本体が資源型 identity `Let` の束縛名そのものである場合は、E-Var を経由しない `#:var` を本体に置き、合成位置と同じ Core の `Let` 全体を `τexpected` と突き合わせる。
 期待型への変換は `Let` 全体へ適用する。
 
+**(E-Let-Never)**
+
+```text
+Γ; Δ; Π; B ⊢ e1 ⇒ Never ! ε1 ⟹ c1
+bind(bmode, τdecl, Never) = τb       τdecl は注釈型、注釈が無ければ Never
+Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+--------------------------------
+Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇒ Never ! ε1 ∪ ε2 ⟹ Let(x bmode : τb, c1, c2)
+```
+
+E-Let-Never は通常の E-Let、E-Let-Annot、E-Let-Check に適用し、E-Let-Fn-Check には適用しない。
+束縛値が `Never` でも本体を合成し、本体の型の誤りを報告する。
+本体の row は到達不能な場合も結果に含める。
+検査位置では本体を期待型で検査せず、結果の `Never` を `compat?` で外側の期待型へ照合する。
+そのため、到達不能な本体にある `none` など期待型を要する式は合成に失敗することがある。
+注釈付き `Let` では、`Never` の判定に変換前の右辺の Core 型を使う。
+資源型 identity `Let` の束縛名の扱いは既存の専用経路を保つ。
+`TryBind` と `FnDecl` の継続にはこの規則を適用しない。
+
 **(E-Construct-Check)**
 
 ```text
@@ -1376,6 +1395,20 @@ ch = Scope(∅, Let(x' : τ, x, ch'))
 
 Perform が運ぶ値の型は op の型成分 τ と一致する。
 この一致が、境界 b の handler が受け取る値の型を保証する（§7 性質 4 の基礎）。
+
+**(T-Let-Never)**
+
+```text
+Γ; Δ; Π; Ξ; Φ ⊢core c1 : Never ! ε1
+Γ, x :bmode τb; Δ; Π; Ξ; Φ ⊢core c2 : τ2 ! ε2
+--------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Let(x bmode : τb, c1, c2) : Never ! ε1 ∪ ε2
+```
+
+T-Let-Never は、束縛式が `Never` なら `Let` 全体を `Never` とする。
+束縛子の型付けと本体の型付けは既存の `Let` と同じであり、本体の型の誤りも検査する。
+結果の row は束縛式と本体の row の和である。
+この規則は簡約規則や G2 の機械規則を追加せず、既存の Return の脱出と scope の finalization を使う。
 
 **(T-Scope)**
 

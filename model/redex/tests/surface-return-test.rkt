@@ -59,9 +59,8 @@
       (check-equal? (compiled-callables inferred)
                     (compiled-callables explicit)))))
 
-(test-case "SUR-015: 通常の本体結果型が return payload の型と合わなければ拒否する"
-  (check-equal? (code "fn f() { let a = return 1\n \"a\" }\n0")
-                "E-TYP-012"))
+(test-case "SUR-015: 束縛値の Return 後は異型の到達不能な本体を許す"
+  (check-true (compiled? (c "fn f() { let a = return 1\n \"a\" }\n0"))))
 
 (test-case "SUR-015: 候補が無ければ旧経路の E-TYP-024 になる"
   (check-equal? (code "fn f() { return y }\n0") "E-TYP-024")

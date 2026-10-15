@@ -1789,10 +1789,17 @@
          (unify-borrow-lifetimes
           (map (lambda (result) (normalize-type (third result)))
                branch-results))))))
+  (define merged
+    (cond
+      ;; すべての枝が Never なら、寿命合流の形で期待型へ戻さない。
+      [(andmap (lambda (result) (eq? (third result) 'Never)) branch-results)
+       'Never]
+      [(= (length unified) 1) (first unified)]
+      [else expected]))
   (list (rows-union
          (cons (second scrutinee-result) (map first branch-results)))
         branch-psi
-        (if (= (length unified) 1) (first unified) expected)))
+        merged))
 
 (define (infer-union-eliminate scrutinee branches Λ Ψ environment
                                places callables node fail)
@@ -1905,7 +1912,12 @@
          (unify-borrow-lifetimes
           (map (lambda (result) (normalize-type (third result)))
                branch-results))))))
-  (define merged (if (= (length unified) 1) (first unified) expected))
+  (define merged
+    (cond
+      [(andmap (lambda (result) (eq? (third result) 'Never)) branch-results)
+       'Never]
+      [(= (length unified) 1) (first unified)]
+      [else expected]))
   (list (rows-union
          (cons (second scrutinee-result)
                (map first branch-results)))
@@ -2639,7 +2651,7 @@
     [`(Record ,declared-row)
      (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
        [(list 'Never bound-row bound-psi)
-        (list bound-row declared-type bound-psi)]
+        (list bound-row declared-type bound-psi #t)]
        [(list `(Record ,actual-row) bound-row bound-psi)
         (unless (tag-compat? `(Record ,actual-row) `(Record ,declared-row)
                              (current-Γ-pc0)
@@ -2689,7 +2701,7 @@
            (fail 'owned-narrowing-rejected bound
                  `(Record ,binding-row)
                  `(Record ,actual-row))])
-        (list bound-row `(Record ,binding-row) bound-psi)]
+        (list bound-row `(Record ,binding-row) bound-psi #f)]
        [(list actual-type _ _)
         (fail 'type-mismatch bound declared-type actual-type)])]
     [`(Owned ,payload)
@@ -2705,10 +2717,10 @@
      (match (check-as/full bound declared-type (enter-child Λ 0)
                            Ψ environment places callables fail
                            owned-lift-compatible?)
-       [(list row bound-psi _)
+       [(list row bound-psi actual)
         ;; 宣言型をそのまま束縛の型にする。payload に借用が無いことを
         ;; 直前に確かめたので、寿命を写す先が無い。
-        (list row declared-type bound-psi)])]
+        (list row declared-type bound-psi (eq? actual 'Never))])]
     [_
      (match (check-as/full bound declared-type (enter-child Λ 0)
                            Ψ environment places callables fail)
@@ -2722,7 +2734,8 @@
         ;; 束縛の型には推論した寿命を持つ側を置く。
         ;; 宣言型を置くと spec §5.1 の下限収集が (RVar k) を見つけられず、
         ;; 束縛した名前を使う位置の region が σ に入らない。
-        (list row (adopt-inferred-lifetimes declared-type actual) bound-psi)])]))
+        (list row (adopt-inferred-lifetimes declared-type actual) bound-psi
+              (eq? actual 'Never))])]))
 
 ;; PRF-004: Discharge の連なりを外側から剥がし、(φ 列, 基底) を返す。
 ;; 型付けを連なりの全体で見るため、節の側では再帰しない。
@@ -4128,7 +4141,7 @@
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound Λ
                              Ψ environment places callables core fail)
-       [(list bound-row binding-type bound-psi)
+       [(list bound-row binding-type bound-psi bound-never?)
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
@@ -4178,12 +4191,14 @@
         (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
         (match body-result
           [(list body-type body-row body-psi)
-           (list body-type (row-union bound-row body-row) body-psi)])])]
+           (list (if bound-never? 'Never body-type)
+                 (row-union bound-row body-row) body-psi)])])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
        (check-as/full bound (peel-ty type) (enter-child Λ 0)
                       Ψ environment places callables fail))
+     (define bound-never? (eq? (third bound-result) 'Never))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
@@ -4226,7 +4241,7 @@
      (record-effective-let-type! Λ binding-type)
      (match body-result
        [(list body-type body-row body-psi)
-        (list body-type
+        (list (if bound-never? 'Never body-type)
               (row-union (first bound-result) body-row)
               body-psi)])]
 
@@ -4718,7 +4733,7 @@
      (match (binding-context binding-mode (peel-ty type) bound
                              Λ
                              Ψ environment places callables core fail)
-       [(list bound-row binding-type bound-psi)
+       [(list bound-row binding-type bound-psi bound-never?)
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
@@ -4743,39 +4758,37 @@
                                 fields))
         (define Λ_body (enter-child Λ_token 1))
         (define identity? (eq? (peel-node body) x))
+        (define body-environment
+          (extend environment (list x) (list binding-type)
+                  (and (eq? binding-mode 'mut) '(mut))))
         (define body-result
           (with-let-place
            x binding-type
            (lambda ()
+             (define (infer-body)
+               (infer body Λ_body bound-psi body-environment
+                      places callables fail))
+             (define (check-body)
+               (check-as/full body expected Λ_body bound-psi body-environment
+                              places callables fail compatible?))
              (if identity?
                  (with-identity-transfer
-                  x
-                  (lambda ()
-                    (check-as/full body
-                                   expected
-                                   Λ_body
-                                   bound-psi
-                                   (extend environment (list x)
-                                           (list binding-type)
-                                           (and (eq? binding-mode 'mut) '(mut)))
-                                   places callables fail compatible?)))
-                 (check-as/full body
-                                expected
-                                Λ_body
-                                bound-psi
-                                (extend environment (list x)
-                                        (list binding-type)
-                                        (and (eq? binding-mode 'mut) '(mut)))
-                                places callables fail compatible?)))))
+                  x (lambda () (if bound-never? (infer-body) (check-body))))
+                 (if bound-never? (infer-body) (check-body))))))
         (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
-        (list (row-union bound-row (first body-result))
-              (second body-result)
-              (third body-result))])]
+        (if bound-never?
+            (list (row-union bound-row (second body-result))
+                  (third body-result)
+                  'Never)
+            (list (row-union bound-row (first body-result))
+                  (second body-result)
+                  (third body-result)))])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
        (check-as/full bound (peel-ty type) (enter-child Λ 0)
                       Ψ environment places callables fail compatible?))
+     (define bound-never? (eq? (third bound-result) 'Never))
      (define x (peel-bind name))
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
@@ -4801,6 +4814,8 @@
                              fields))
      (define Λ_body (enter-child Λ_token 1))
      (define identity? (eq? (peel-node body) x))
+     (define body-environment
+       (extend environment (list x) (list binding-type)))
      (define body-result
        (with-let-place
         x binding-type
@@ -4809,16 +4824,26 @@
               (with-identity-transfer
                x
                (lambda ()
-                 (check-as/full body expected Λ_body (second bound-result)
-                                (extend environment (list x) (list binding-type))
-                                places callables fail compatible?)))
-              (check-as/full body expected Λ_body (second bound-result)
-                             (extend environment (list x) (list binding-type))
-                             places callables fail compatible?)))))
+                 (if bound-never?
+                     (infer body Λ_body (second bound-result)
+                            body-environment places callables fail)
+                     (check-as/full body expected Λ_body (second bound-result)
+                                    body-environment places callables fail
+                                    compatible?))))
+              (if bound-never?
+                  (infer body Λ_body (second bound-result)
+                         body-environment places callables fail)
+                  (check-as/full body expected Λ_body (second bound-result)
+                                 body-environment places callables fail
+                                 compatible?))))))
      (record-effective-let-type! Λ binding-type)
-     (list (row-union (first bound-result) (first body-result))
-           (second body-result)
-           (third body-result))]
+     (if bound-never?
+         (list (row-union (first bound-result) (second body-result))
+               (third body-result)
+               'Never)
+         (list (row-union (first bound-result) (first body-result))
+               (second body-result)
+               (third body-result)))]
 
     [`(UnionEliminate ,scrutinee (,branches ...))
      (check-union-eliminate scrutinee branches expected Λ Ψ
