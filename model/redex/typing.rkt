@@ -3473,6 +3473,8 @@
            (lookup places root))))
 
 ;; G1/G2 の E に現れる正格な子と、通常の規則がその型を使う位置をまとめる。
+;; 共通の infer/check wrapper がこの表を参照して Never を親へ伝えるため、
+;; 個別の infer 節が参照しない Perform の項も評価文脈の網羅表として必要である。
 ;; 子の添字は region.rkt の core-children と同じである。
 (define typing-evaluation-contexts
   '((Apply all (0))
@@ -4387,6 +4389,13 @@
        (match phi [`(RemainderSafelyDropped ,_ ,_) #t] [_ #f]))
      (define remainder-count
        (for/sum ([phi (in-list propositions)]) (if (remainder-phi? phi) 1 0)))
+     (define (ensure-base-normal result)
+       (when (match (typing-result-at base-Λ)
+               [(list 'Never '⊥ _) #t]
+               [_ #f])
+         ;; Discharge は被演算子が Never でも正常型 ⊥ では通常規則を適用できない。
+         (fail 'ill-typed base))
+       result)
      (cond
        [(zero? remainder-count)
         (match (peel-node base)
@@ -4407,7 +4416,9 @@
                 (unless (proposition-equiv? phi obligation)
                   (fail 'discharge-proposition-mismatch core)))
               ;; 型と Effect 行は基底の Apply のものを返す。
-              (infer base base-Λ function-psi environment places callables fail)]
+              (ensure-base-normal
+               (infer base base-Λ function-psi
+                      environment places callables fail))]
              [_ (fail 'apply-non-function function)])]
           [_ (fail 'discharge-target-not-apply base)])]
        [(< remainder-count (length propositions))
@@ -4420,8 +4431,9 @@
           (fail 'discharge-remainder-chain core))
         ;; remainder-count が 1 で propositions も 1 要素なので、ここでは
         ;; RemainderSafelyDropped の単一義務を処理する。
-        (infer-remainder-discharge core (first propositions) base base-Λ
-                                   Ψ environment places callables fail)])]
+        (ensure-base-normal
+         (infer-remainder-discharge core (first propositions) base base-Λ
+                                    Ψ environment places callables fail))])]
 
     [`(Let (,name ,binding-mode ,type) ,bound ,body)
      (match (binding-context binding-mode (peel-ty type) bound Λ

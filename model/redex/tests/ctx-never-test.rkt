@@ -65,6 +65,15 @@
    (typed-with-normal `(Let (x const Int) ,ret1 5))
    '(Never ((Return b Int)) Int)))
 
+(test-case "束縛値と本体が Never の Let を receiver にした射影は拒否する"
+  (check-equal?
+   (core-type-of
+    (list 'Proj
+          (list 'Let '(x const Int) ret1 '(Perform (Return b Int) 2))
+          'a)
+    '() '())
+   'ill-typed))
+
 (test-case "外側への Return で Never の本体を持つ内側 Handle は Never"
   (check-equal?
    (typed-with-normal
@@ -128,6 +137,11 @@
     '() '() `((h ,int-function-type)))
    '(Never Int)))
 
+(test-case "Yield は正常型 bottom の observed を拒否する"
+  (check-equal?
+   (core-type-of (list 'Yield ret1 5) '() '())
+   'ill-typed))
+
 (test-case "Yield の Never な next は bottom を伝える"
   (check-equal?
    (typed-type-normal `(Yield 1 ,ret1))
@@ -154,6 +168,16 @@
        (Apply h ,ret1))
     '() '() `((h ,function-type)))
    '(Never Int)))
+
+(test-case "Discharge は正常型 bottom の基底を拒否する"
+  (define function-type
+    '(NFn (Int) Never () () (TypeNarrativeCap) User))
+  (check-equal?
+   (core-type-of
+    '(Discharge (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+       (Apply h 1))
+    '() '() `((h ,function-type)))
+   'ill-typed))
 
 (test-case "OwnLeaf は Never の payload の正常型を伝える"
   (define owned-function '(NFn (Int) (Owned Res) () (Own) () User))
@@ -182,6 +206,15 @@
     '(Apply h (Rec ((a imm (Perform (Return b Int) 1)))))
     '() '() `((h ,function-type)))
    '(Never Int)))
+
+(test-case "Record check は欄を期待型で検査し、合成の拒否は保つ"
+  (define record '(Rec ((a imm (Error 0)))))
+  (check-true
+   (core-check record '((0 Res)) '()
+               '(Record ((a Int imm))) '()))
+  (check-equal?
+   (core-type-of record '((0 Res)) '())
+   'ill-typed))
 
 (test-case "UnionInject は注釈で payload を検査し正常型を保つ"
   (check-equal?

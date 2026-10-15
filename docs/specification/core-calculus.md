@@ -1453,7 +1453,9 @@ F = Handle(op, h, □) なら op ∉ ε0
 被演算子の型から型を決める位置で `τ0° = ⊥` なら、通常の規則が失敗し、既存の診断で拒否する。
 `Never` の後ろにある被演算子も省略せず通常どおり検査する。
 結果の row は通常の規則が全ての被演算子から得る row の和である。
-`Handle` の条件と健全性の説明は E-Ctx-Never の条件（§4.5）と同じであり、row は捕まえる Return が `Never` の原因である可能性を除外するために用いる。
+`Handle(op, h, □)` で `c0` の row `ε0` に `op` が無いなら、`c0` が `Never` になる原因の `Return` はこの `Handle` に捕まらないため、`Never` は外へ伝播する。
+`ε0` に `op` が含まれる場合は、この `Handle` が原因の `Return` を捕まえる可能性を row だけでは除外できないため、伝播しない側へ倒す。
+`ε0` に `op` があっても、その出現が別の境界の `Return` に由来する場合は伝播できるため、この判定は不完全であり、`return to` の設計サイクルで回収する。
 
 | 文脈 | 正格な位置 | 正常型の要否 | 結果の正常型 |
 | --- | --- | --- | --- |
@@ -1721,6 +1723,34 @@ C0(K) の宣言を D の型引数で具体化して (σ1, …, σk) -> D を得�
 
 `Construct` も `D` を自身のフィールドとして保持するため、`vf` と同様に外部の期待型を経由せず単独で synthesize できる。
 これは E-Construct-Check・E-Construct-Synth（§4.2）双方の前提をそのまま Typed Core の型付けへ転写した規則であり、手書きの Typed Core が D と K・field の型を食い違わせて偽造することも防ぐ。
+
+**(T-Rec-Check)**
+
+`期待 row に欄がある Present 式は欄型に対して check し、実際の結果型を αi、その row を εi とする。
+期待 row に欄がない Present 式は synth し、結果型を αi、その row を εi とする。
+
+```text
+τexp = Record(ρexp)        fields = ((ℓi, mi, ci) ...)        ℓi は相異なる
+ci = Absent τi なら ρact(ℓi) = (τi, mi, opt)、εi = {}
+ci ≠ Absent で ρexp(ℓi) = σi なら τi = σi if αi = Never、それ以外は αi
+ci ≠ Absent で ℓi ∉ dom(ρexp) なら τi = αi° if αi = Never、それ以外は αi
+  αi = Never なら αi° ≠ ⊥
+ρact(ℓi) = (τi, mi) （ci ≠ Absent の場合）
+各 ci が Absent でないなら owned-type?(τi) は偽
+compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τexp) = ok
+--------------------------------------------------------------------------
+Γ; Δ; Π; Ξ; Φ ⊢core Rec(fields) : Record(ρact) ! (ε1 ∪ … ∪ εk)
+```
+
+`Rec` を `Record` 型 `τexp` の位置で検査するとき、期待 row に欄がある式はその欄の型で検査し、期待 row に欄がない式は合成する。
+省略した期待欄は optional 欄に限り、対応する `Absent` 欄を構成する。
+未知の欄または省略した required 欄があれば既存の診断で拒否する。
+`Absent(τi)` は評価せず、型 `τi` の optional 欄として row に記録する。
+期待 row に欄がある式の検査結果型が `Never` なら、構成する row の欄型には期待欄型を使い、`Rec` 自体の judgment type は T-Ctx-Never により `Never`、正常型は `Record(ρact)` となる。
+期待 row に欄がない式を合成した結果が `Never` なら、欄型を決める正常型が必要であり、`⊥` の場合は既存の診断で拒否する。
+Present 欄の root `Owned` は `owned-record-field` で拒否するが、`Absent` 欄にはこの gate を適用しない。
+構成検査専用の runtime leaf 再型付けに限り、`owned-record-field` の拒否を緩和する。
+最後に `compatible?` と OWN-004 の `owned-narrowing-kind` gate を適用し、互換性または narrowing の gate が失敗すれば既存の診断で拒否する。
 
 **(T-UnionInject)**
 
