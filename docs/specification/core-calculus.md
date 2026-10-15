@@ -66,6 +66,7 @@ e ::= l                                          リテラル
     | construct K<τ̄>(e1, …, ek)                  constructor 適用（型引数は省略可）
     | eliminate e0 { ubr01; …; ubr0n }           場合分け
     | ifSome((c1, b1), …, (cn, bn))               else の無い式位置 if の elaboration marker
+    | blockBody(e)                                  関数本体の statement projection marker
     | tryBind x e1 e2                             `?=` 専用の elaboration 中間形
     | return e                                   返却
     | narrativeExpr(e)                           式 Narrative 境界
@@ -101,6 +102,12 @@ UCore の `IfSome` は else の無い式位置の `if` から生成する elabor
 UCore+ では `(IfSome s ((s_i t_i c_i b_i) ...) s_0)` とし、`t_i` は then block の span を保持する。
 `t_i` は `SBlock` の lowering で失われる位置情報を補い、展開した `some` と true 枝の span に使う。
 `IfSome` は span によって意味を変えず、elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開するため、Typed Core と Core の文法および簡約規則には現れない。
+
+UCore の `BlockBody` は spanless な `(BlockBody e)` で表す。
+UCore+ では `(BlockBody s e)` とし、`s` は Surface 本体 block の閉じ波括弧 1 byte の span、`e` は文の mode で lowering した項である。
+`BlockBody` は `SFn` の block 本体と `SFnDecl` の本体だけに置き、elaboration が関数本体の検査前に剥がす。
+関数本体以外の位置にある `BlockBody` は不変条件の違反として拒否する。
+Typed Core と Core の文法および簡約規則には `BlockBody` は現れない。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker であり、Surface の loop 構文はここへ lowering される（ホワイトペーパー §7.2）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
@@ -763,6 +770,15 @@ E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ
 元の place は `Move` によって `Moved` になり、closure の関数位置には `Move` を経由して到達する。
 `Recur` と `RecurVal` の資源型捕捉は、再帰本体の複製を一回の `Move` で制限できないため、E-Recur の制限として残す（§4.6）。
 
+`BlockBody` の本体は既に文の mode で lowering されているため、正常完了する型は `Unit` であり、明示的な `return` で全経路を離れると型は `Never` になる。
+戻り型が `Unit` の場合は内側の項を `Unit` で検査し、落ち抜けを `unit` とする。
+戻り型が `Unit` 以外の場合は内側の項を合成し、その型が `Never` でなければ `E-RET-004` とする。
+`E-RET-004` の primary span は block の閉じ波括弧であり、戻り型注釈がある場合はその注釈を related span とする。
+戻り型を省略した本体は、関数境界へ届く `return` の値の型を候補として下見し、本体が `Never` なら最初の候補を戻り型とする。
+本体が `Unit` なら戻り型も `Unit` とし、非 `Unit` の候補が混在すれば `E-RET-004` とする。
+候補の無い `Never` 本体は `E-TYP-024` とし、下見中に候補を得て診断が起きた場合は候補から戻り型を決めて本検査で同じ診断を報告する。
+この下見と本検査の間で本体を再 elaboration することは、戻り型省略の規則の一部である。
+
 **(E-Lambda)** [REQ: EFF-001]
 
 ```text
@@ -1124,6 +1140,8 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 その場合、本体を `FunctionBoundary(b, τ)` の下で検査し、自身の `Return<b, τ>` を宣言 row の包含検査から除く。
 本体の合成 row に自身の `Return<b, τ>` がある場合だけ、Typed Core の本体を `Handle` で包む。
 `Handle` は資源型の仮引数の `Scope` と `Let` の内側に置き、分類 gate には Handle で包む前の本体を渡す。
+`BlockBody` の本体については E-Lambda と同じ statement projection の検査を行い、戻り型が `Unit` 以外なら本体の型 `Never` を要求する。
+戻り型省略の場合も E-Lambda と同じ候補下見を使い、戻り型を決めた後に再帰宣言の事前検査結果を再利用して本体を検査する。
 
 ```text
 ε' = resolveReturn(B, εdecl)

@@ -84,7 +84,7 @@
 (test-case "到達不能な Let 本体の型誤りも報告する"
   (check-equal?
    (code (string-append
-          "fn takes(x: Int) -> Int { x }\n"
+          "fn takes(x: Int) -> Int { return x }\n"
           "fn f() -> Int { let a = return 1\n takes(\"s\") }\nf()"))
    "E-TYP-012"))
 

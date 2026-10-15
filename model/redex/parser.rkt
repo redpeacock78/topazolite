@@ -269,7 +269,10 @@
      (define x-span (span-at ts i))
      (define param `(SParam ,x-span (SName ,x-span ,(value-at ts i)) #:none))
      (let-values ([(body body-j) (parse-expr ts fail (+ i 2))])
-       (values `(SFn ,(hull x-span (node-span body)) (,param) #:none #:none ,body)
+       (define body-kind
+         (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+       (values `(SFn ,(hull x-span (node-span body)) (,param) #:none #:none
+                     ,body-kind ,body)
                body-j))]
     [(kw? ts i 'fn)
      (let-values ([(node j arrow?) (parse-anon-fn ts fail i)])
@@ -498,10 +501,14 @@
       (if (and (eq? return-type '#:none) (punct? ts row-j '=>))
           (let-values ([(_arrow arrow-j) (expect-punct ts fail row-j '=>)])
             (let-values ([(body body-j) (parse-expr ts fail arrow-j)])
-              (values `(SFn ,(hull start (node-span body)) ,params #:none ,row ,body)
+              (define body-kind
+                (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+              (values `(SFn ,(hull start (node-span body)) ,params #:none ,row
+                            ,body-kind ,body)
                       body-j #t)))
           (let-values ([(body body-j) (parse-block ts fail row-j)])
-            (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,row ,body)
+            (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,row
+                          block ,body)
                     body-j #f))))))
 
 (define (record-ahead? ts i)

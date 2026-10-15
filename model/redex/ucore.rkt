@@ -66,6 +66,8 @@
          (Eliminate e (ubr ...))
          ;; SUR-014b1。Surface の lowering が作る印であり、elaborate が明示形の if へ展開する。
          (IfSome (uifclause uifclause ...))
+         ;; SUR-014b2a。関数本体の文の mode を elaborate へ伝える印である。
+         (BlockBody e)
          (Return e)
          (NarrativeExpr e)
          (TryBind x e e)
@@ -117,6 +119,7 @@
          (Construct s K (Types ts ...) e ...)
          (Eliminate s e (ubr ...))
          (IfSome s (uifclause+ uifclause+ ...) s)
+         (BlockBody s e)
          (Return s e)
          (NarrativeExpr s e)
          (TryBind s xs e e)

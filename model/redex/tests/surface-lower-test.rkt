@@ -98,6 +98,7 @@
     (prog '() `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                     (TName ,s0 Int)
                     #:none
+                    expr
                     (SVar ,s0 x)))))
  (check-equal? r
   `(Fn ,s0 (((#:bind x ,s0) (#:ty Int ,s0)))
@@ -209,15 +210,23 @@
  (define with-return (low "fn f() -> Int { return 1 }\n0"))
  (check-match with-return
               `(FnDecl ,_ (#:bind f ,_) () (#:ty Int ,_) ,_
-                       (Return ,_ (#:lit 1 ,_)) ,_))
+                       (BlockBody ,_
+                         (Let ,_ ((#:bind %stmt ,_) const)
+                              (Return ,_ (#:lit 1 ,_))
+                              (#:lit unit ,_)))
+                       ,_))
  (define t (low "fn f(a: Int) -> Int { a }\nf(1)"))
  (check-equal? (first t) 'FnDecl)
  (check-equal? (third t) '(#:bind f (#:span src 3 4)))
  (check-equal? (fourth t) '(((#:bind a (#:span src 5 6)) (#:ty Int (#:span src 8 11)))))
  (check-equal? (fifth t) '(#:ty Int (#:span src 16 19)))
  (check-equal? (sixth t) '(#:ef () (#:span src 0 25)))
- ;; 本体は束縛の無い block なので末尾式そのものである
- (check-equal? (seventh t) '(#:var a (#:span src 22 23)))
+ ;; 関数本体 block は marker を持ち、末尾値を文として破棄する。
+ (check-match (seventh t)
+              `(BlockBody ,_
+                 (Let ,_ ((#:bind %stmt ,_) const)
+                      (#:var a ,_)
+                      (#:lit unit ,_))))
  ;; 尾部は program の末尾式まで伸びる
  (check-equal? (second t) '(#:span src 0 30)))
 

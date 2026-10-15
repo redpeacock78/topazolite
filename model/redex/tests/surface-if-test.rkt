@@ -317,10 +317,10 @@
 (test-case "第2条件の return 候補で束縛する Surface IfSome を合成できる"
   (define source
     (string-append
-     "fn identity(x: Bool) -> Bool { x }\n"
+     "fn identity(x: Bool) -> Bool { return x }\n"
      "fn choose(a: Bool, option: Option<Int>) -> Option<Int> {\n"
      " let answer = if a { 1 } else if identity(return option) { 2 }\n"
-     " answer\n}\nchoose(false, some(9))"))
+     " return answer\n}\nchoose(false, some(9))"))
   (check-equal? (run-source source) '(Construct (Option Int) some 9)))
 
 (test-case "複数節の synthetic IfSome は展開後も妥当な span を持つ"
@@ -364,13 +364,16 @@
             (format "let answer: ~a = if c { ~a }" annotation payload)
             (format "let answer = if c { ~a }" payload)))
       (define effect-row (if (string=? label "Owned") " ! Own" ""))
+      (define result-type
+        (if (string=? label "Owned") "Unit" (format "Option<~a>" type)))
       (define source
-        (format "~afn f(c: Bool~a) -> Option<~a>~a { ~a\n answer }\n0"
+        (format "~afn f(c: Bool~a) -> ~a~a { ~a\n ~a }\n0"
                 prelude
                 (if (string=? parameter "") "" (string-append ", " parameter))
-                type
+                result-type
                 effect-row
-                binding))
+                binding
+                (if (string=? label "Owned") "return ()" "return answer")))
       (define result (compile source))
       (check-true (compiled? result)
                   (format "~a, ~a: ~a"

@@ -808,6 +808,8 @@
           [`(,condition ,body)
            (set-union (free-vars/erased condition)
                       (free-vars/erased body))])))]
+    [`(BlockBody ,body) (free-vars/erased body)]
+    [`(BlockBody ,_ ,body) (free-vars/erased body)]
     [`(Return ,body) (free-vars/erased body)]
     [`(NarrativeExpr ,body) (free-vars/erased body)]
     [`(Recur ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
@@ -2340,6 +2342,69 @@
       (unless (row-subset? residual-row declared-row)
         (reject s 'undeclared-function-effect declared-row residual-row)))
 
+    (define (block-body? body)
+      (match body [`(BlockBody ,_ ,_) #t] [_ #f]))
+
+    (define (block-body-span body)
+      (match body
+        [`(BlockBody ,span ,_) span]
+        [_ (error 'block-body-span "BlockBody が必要である: ~s" body)]))
+
+    (define (check-function-body body return-type return-span
+                                 environment delta propositions boundaries)
+      (match body
+        [`(BlockBody ,block-span ,inner)
+         (if (equal? (normalize-type return-type) 'Unit)
+             (check inner return-type environment delta propositions boundaries)
+             (let ([result (synth inner environment delta propositions boundaries)])
+               (unless (eq? (judgment-type result) 'Never)
+                 (reject block-span 'function-body-missing-return
+                         #:related
+                         (if return-span
+                             (list (list 'return-type-annotation return-span
+                                         "戻り型の注釈"))
+                             '())))
+               result))]
+        [_ (check body return-type environment delta propositions boundaries)]))
+
+    (define (probe-block-return span body environment delta propositions
+                                boundaries)
+      (match body
+        [`(BlockBody ,_ ,inner)
+         (call-with-restored-state
+          (λ ()
+            (define candidates (box '()))
+            (define boundary (fresh-boundary))
+            (define failure #f)
+            (define result
+              (with-handlers ([exn:fail:elab?
+                               (λ (error) (set! failure error) #f)])
+                (synth inner environment delta propositions
+                       (cons `(FunctionBoundary ,boundary
+                                                (#:probe ,candidates) ,span)
+                             boundaries))))
+            (values result (unbox candidates) failure)))]
+        [_ (error 'probe-block-return "BlockBody が必要である: ~s" body)]))
+
+    (define (infer-block-return-type span body environment delta propositions
+                                     boundaries)
+      (define block-span (block-body-span body))
+      (define-values (result candidates failure)
+        (probe-block-return span body environment delta propositions boundaries))
+      (cond
+        [(and result (eq? (judgment-type result) 'Never))
+         (if (pair? candidates)
+             (first candidates)
+             (reject span 'return-type-not-inferable))]
+        [(and result (eq? (judgment-type result) 'Unit))
+         (when (ormap (λ (candidate) (not (equal? candidate 'Unit))) candidates)
+           (reject block-span 'function-body-missing-return))
+         'Unit]
+        [result (reject block-span 'function-body-missing-return)]
+        [(pair? candidates) (first candidates)]
+        [failure (raise failure)]
+        [else (reject span 'return-type-not-inferable)]))
+
     (define (row-member-return? row boundary)
       (for/or ([label (in-list row)])
         (match label
@@ -2378,7 +2443,8 @@
                                    #:expected-parameter-types
                                    [expected-parameter-types #f]
                                    #:inherited-row
-                                   [inherited-row #f])
+                                   [inherited-row #f]
+                                   #:return-span [return-span #f])
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta
@@ -2397,11 +2463,12 @@
              ,return-type () ,declared-row () User))
       (define callable (fresh-callable signature))
       (define body-result
-        (check body return-type
-               (extend environment parameters parameter-types #f
-                       (map resource-type? parameter-types))
-               delta propositions
-               (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))
+        (check-function-body
+         body return-type return-span
+         (extend environment parameters parameter-types #f
+                 (map resource-type? parameter-types))
+         delta propositions
+         (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))
       (check-function-body-row s body-result return-type boundary declared-row)
       (finish-fn s parameter-binders parameter-types
                  captures capture-types capture-raw-names raw-names
@@ -2571,9 +2638,12 @@
         (extend environment parameters parameter-types #f
                 (map resource-type? parameter-types)))
       (define inferred-return-type
-        (and (mentions-return? (list raw-row body))
-             (probe-return-type s body parameter-environment
-                                delta propositions boundaries)))
+        (if (block-body? body)
+            (infer-block-return-type s body parameter-environment
+                                     delta propositions boundaries)
+            (and (mentions-return? (list raw-row body))
+                 (probe-return-type s body parameter-environment
+                                    delta propositions boundaries))))
       (if inferred-return-type
           (elaborate-annotated-fn
            s parameter-binders raw-parameter-types
@@ -2607,19 +2677,30 @@
              s raw-function parameter-binders raw-parameter-types
              resolve-return raw-row body continuation
              environment delta propositions boundaries
-             #:boundary? boundary?)
-      (define function (peel-bind raw-function))
-      (define parameters (map peel-bind parameter-binders))
-      (when (check-duplicates (cons function parameters))
-        (reject s 'duplicate-recur-binder function parameters))
-      (define parameter-types
-        (for/list ([type (in-list raw-parameter-types)])
-          (resolve-annotation type delta s)))
-      (when (captures-owned? body (cons function parameters) environment)
-        (reject s 'owned-recur-capture))
+             #:boundary? boundary?
+             #:allow-block-body? [allow-block-body? #f]
+             #:prepared-header [prepared-header #f]
+             #:inherited-row [inherited-row #f]
+             #:return-span [return-span #f])
+      (when (and (block-body? body) (not allow-block-body?))
+        (reject (block-body-span body) 'invalid-syntax))
+      (define-values (function parameters parameter-types)
+        (if prepared-header
+            (apply values prepared-header)
+            (let ([function (peel-bind raw-function)]
+                  [parameters (map peel-bind parameter-binders)])
+              (when (check-duplicates (cons function parameters))
+                (reject s 'duplicate-recur-binder function parameters))
+              (define parameter-types
+                (for/list ([type (in-list raw-parameter-types)])
+                  (resolve-annotation type delta s)))
+              (when (captures-owned? body (cons function parameters) environment)
+                (reject s 'owned-recur-capture))
+              (values function parameters parameter-types))))
       (define return-type (resolve-return))
       (define declared-row
-        (resolve-declaration-row raw-row delta boundaries s))
+        (or inherited-row
+            (resolve-declaration-row raw-row delta boundaries s)))
       (define signature
         `(NFn ,parameter-types ,return-type () ,declared-row () User))
       (define boundary (and boundary? (fresh-boundary)))
@@ -2643,8 +2724,8 @@
             (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)
             boundaries))
       (define body-result
-        (check body return-type body-environment
-               delta propositions body-boundaries))
+        (check-function-body body return-type return-span body-environment
+                             delta propositions body-boundaries))
       (if boundary
           (check-function-body-row s body-result return-type boundary declared-row)
           (unless (row-subset? (judgment-row body-result) declared-row)
@@ -2766,32 +2847,51 @@
              s raw-function parameter-binders raw-parameter-types
              raw-row body continuation
              environment delta propositions boundaries)
-      (if (not (mentions-return? (list raw-row body)))
-          (elaborate-recur-inferred
-           s raw-function parameter-binders raw-parameter-types
-           raw-row body continuation environment delta propositions boundaries)
+      (if (block-body? body)
           (let-values ([(function parameters parameter-types parameter-environment)
                         (prepare-inferred-recur-header
                          s raw-function parameter-binders raw-parameter-types
                          body environment delta)])
-            ;; FnDecl の宣言 row は、自身の境界を積む前に外側で解決する。
-            (define _declared-row
+            (define declared-row
               (resolve-declaration-row raw-row delta boundaries s))
-            (define inferred-return-type
-              (probe-return-type s body parameter-environment
-                                 delta propositions boundaries))
-            (if inferred-return-type
-                (elaborate-recur-annotated
-                 s raw-function parameter-binders raw-parameter-types
-                 (λ () inferred-return-type)
-                 raw-row body continuation
-                 environment delta propositions boundaries
-                 #:boundary? #t)
-                (elaborate-recur-inferred
-                 s raw-function parameter-binders raw-parameter-types
-                 raw-row body continuation
-                 environment delta propositions boundaries
-                 #:body-boundary? #t)))))
+            (define return-type
+              (infer-block-return-type s body parameter-environment
+                                       delta propositions boundaries))
+            (elaborate-recur-annotated
+             s raw-function parameter-binders raw-parameter-types
+             (λ () return-type)
+             raw-row body continuation
+             environment delta propositions boundaries
+             #:boundary? (mentions-return? (list raw-row body))
+             #:allow-block-body? #t
+             #:prepared-header (list function parameters parameter-types)
+             #:inherited-row declared-row))
+          (if (not (mentions-return? (list raw-row body)))
+              (elaborate-recur-inferred
+               s raw-function parameter-binders raw-parameter-types
+               raw-row body continuation environment delta propositions boundaries)
+              (let-values ([(function parameters parameter-types parameter-environment)
+                            (prepare-inferred-recur-header
+                             s raw-function parameter-binders raw-parameter-types
+                             body environment delta)])
+                ;; FnDecl の宣言 row は、自身の境界を積む前に外側で解決する。
+                (define _declared-row
+                  (resolve-declaration-row raw-row delta boundaries s))
+                (define inferred-return-type
+                  (probe-return-type s body parameter-environment
+                                     delta propositions boundaries))
+                (if inferred-return-type
+                    (elaborate-recur-annotated
+                     s raw-function parameter-binders raw-parameter-types
+                     (λ () inferred-return-type)
+                     raw-row body continuation
+                     environment delta propositions boundaries
+                     #:boundary? #t)
+                    (elaborate-recur-inferred
+                     s raw-function parameter-binders raw-parameter-types
+                     raw-row body continuation
+                     environment delta propositions boundaries
+                     #:body-boundary? #t))))))
 
     (define (synth expression environment delta propositions boundaries)
       (define s (span-of expression))
@@ -2984,7 +3084,9 @@
           (λ () (resolve-annotation raw-return-type delta s))
           raw-row body continuation
           environment delta propositions boundaries
-          #:boundary? (mentions-return? (list raw-row body)))]
+          #:boundary? (mentions-return? (list raw-row body))
+          #:allow-block-body? #t
+          #:return-span (nearest-span raw-return-type s))]
 
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                   (#:infer ,_) ,raw-row ,body ,continuation)
@@ -3022,7 +3124,13 @@
          (elaborate-annotated-fn
           s parameter-binders raw-parameter-types
           (λ () (resolve-annotation raw-return-type delta s))
-          raw-row body environment delta propositions boundaries)]
+          raw-row body environment delta propositions boundaries
+          #:return-span
+          (and (not (inferred? raw-return-type))
+               (nearest-span raw-return-type s)))]
+
+        [`(BlockBody ,_)
+         (reject s 'invalid-syntax)]
 
         [`(Apply ,function ,arguments ...)
          (define raw-function-result
@@ -3829,7 +3937,10 @@
               #:expected-parameter-types
               (and omitted-parameters? parameter-types)
               #:inherited-row
-              (and (inferred-row? raw-row) expected-row))
+              (and (inferred-row? raw-row) expected-row)
+              #:return-span
+              (and (not (inferred? raw-return-type))
+                   (nearest-span raw-return-type s)))
              expected s propositions)]
            [_
             (check-against-expected

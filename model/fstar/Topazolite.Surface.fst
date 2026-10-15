@@ -712,6 +712,7 @@ let lex_nested_unclosed_string_span_ok () : Lemma
        | _ -> false)
 
 type dkind = | DBind | DTryBind : string -> dkind | DExpr | DFnDecl
+type sbodykind = | BExpr | BBlock
 
 type sexpr =
   | SInt      : span -> nat -> sexpr
@@ -722,7 +723,7 @@ type sexpr =
   | SReturn   : span -> sexpr -> sexpr
   | SMatch    : span -> sexpr -> list sarm -> sexpr
   | SIfSome   : span -> list sifclause -> span -> sexpr
-  | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sexpr -> sexpr
+  | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sbodykind -> sexpr -> sexpr
   | SApply    : span -> sexpr -> list sexpr -> sexpr
   | SConstruct : span -> (span & string) -> list sexpr -> sexpr
   | SProj     : span -> sexpr -> (span & string) -> sexpr
@@ -767,7 +768,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SReturn s _   -> s
   | SMatch s _ _  -> s
   | SIfSome s _ _ -> s
-  | SFn s _ _ _ _ -> s
+  | SFn s _ _ _ _ _ -> s
   | SApply s _ _  -> s
   | SConstruct s _ _ -> s
   | SProj s _ _   -> s
@@ -827,7 +828,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SReturn _ e   -> [NExpr e]
   | SMatch _ e arms -> NExpr e :: arm_children arms
   | SIfSome _ clauses _ -> ifsome_children clauses
-  | SFn _ ps r row b ->
+  | SFn _ ps r row _ b ->
       map NTy (option_stys (map snd ps)) @
       (match r with None -> [] | Some t -> [NTy t]) @
       (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr b]
@@ -966,7 +967,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SBool _ _     -> true
   | SVar _ _      -> true
   | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
-  | SFn s ps r row b ->
+  | SFn s ps r row _ b ->
       spans_in s (map fst ps)
       && wf_tys s (option_stys (map snd ps))
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
@@ -1150,7 +1151,7 @@ let parse_span_containment n c =
       wf_exprs_elim s [e] c;
       wf_arms_elim s arms c
   | NExpr (SIfSome s clauses _) -> wf_ifsome_clauses_elim s clauses c
-  | NExpr (SFn s ps r row b) ->
+  | NExpr (SFn s ps r row _ b) ->
       FStar.List.Tot.Properties.append_memP
         (map NTy (option_stys (map snd ps)))
         ((match r with None -> [] | Some t -> [NTy t]) @
@@ -1256,7 +1257,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SReturn _ _  -> true
   | SMatch _ _ _ -> true
   | SIfSome _ _ _ -> false
-  | SFn _ _ _ _ _ -> true
+  | SFn _ _ _ _ _ _ -> true
   | SApply _ _ _ -> true
   | SConstruct _ _ _ -> true
   | SProj _ _ _  -> true
@@ -1287,7 +1288,9 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
   | SVar s _      -> CVar s
   | SReturn s e   -> CReturn s (lower_expr e)
-  | SFn s ps _ row b -> CFn s (map fst ps) row (lower_expr b)
+  | SFn s ps _ row kind b ->
+      CFn s (map fst ps) row
+        (match kind with BExpr -> lower_expr b | BBlock -> lower_stmt b)
   | SApply s f a  -> CApply s (lower_expr f) (lower_exprs a)
   | SConstruct s (_, k) a -> CConstruct s k (lower_exprs a)
   | SProj s e1 (sl, _) -> CProj s sl (lower_expr e1)
@@ -1355,7 +1358,7 @@ and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
       CLet (hull s (span_of_core rest)) sx (lower_stmt v) rest
   | SDecl s DFnDecl sx ps _ row v ->
       CRecur (hull s (span_of_core rest)) sx (map fst ps) (row_or_empty s row)
-             (lower_expr v) rest
+             (lower_stmt v) rest
 
 and lower_stmt (e: sexpr) : Tot core (decreases e) =
   match e with
@@ -1369,7 +1372,10 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   | SBool s b -> discard_stmt s (CConstruct s (if b then "true" else "false") [])
   | SVar s _ -> discard_stmt s (CVar s)
   | SReturn s e -> discard_stmt s (CReturn s (lower_expr e))
-  | SFn s ps _ row b -> discard_stmt s (CFn s (map fst ps) row (lower_expr b))
+  | SFn s ps _ row kind b ->
+      discard_stmt s
+        (CFn s (map fst ps) row
+          (match kind with BExpr -> lower_expr b | BBlock -> lower_stmt b))
   | SApply s f a -> discard_stmt s (CApply s (lower_expr f) (lower_exprs a))
   | SConstruct s (_, k) a -> discard_stmt s (CConstruct s k (lower_exprs a))
   | SProj s e1 (sl, _) -> discard_stmt s (CProj s sl (lower_expr e1))
@@ -1415,7 +1421,7 @@ let lower_preserves_span e =
   | SReturn _ _  -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
-  | SFn _ _ _ _ _ -> ()
+  | SFn _ _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SConstruct _ _ _ -> ()
   | SProj _ _ _  -> ()
@@ -1460,7 +1466,7 @@ let lower_stmt_preserves_span e =
   | SReturn _ _ -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
-  | SFn _ _ _ _ _ -> ()
+  | SFn _ _ _ _ _ _ -> ()
   | SApply _ _ _ -> ()
   | SConstruct _ _ _ -> ()
   | SProj _ _ _ -> ()
@@ -1476,9 +1482,11 @@ let lower_stmt_block_root_span s d ds tail =
 
 // 命題 7。SFn は仮引数名の span と省略を含む row をそのまま運ぶ。
 val lower_fn_fields : s:span -> ps:list (span & option sty) -> r:option sty
-  -> row:option seffrow -> b:sexpr -> Lemma
-  (lower_expr (SFn s ps r row b) == CFn s (map fst ps) row (lower_expr b))
-let lower_fn_fields s ps r row b = ()
+  -> row:option seffrow -> kind:sbodykind -> b:sexpr -> Lemma
+  (lower_expr (SFn s ps r row kind b) ==
+   CFn s (map fst ps) row
+     (match kind with BExpr -> lower_expr b | BBlock -> lower_stmt b))
+let lower_fn_fields s ps r row kind b = ()
 
 // 命題 7。SProj は label の span を運ぶ。
 val lower_proj_label : s:span -> e1:sexpr -> l:(span & string) -> Lemma

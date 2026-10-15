@@ -32,6 +32,7 @@
   (sparam ::= (SParam s sname sty))
   (slparam ::= (SParam s sname sty-or-none))
   (sfield ::= (SField s slabel sexpr))
+  (body-kind ::= expr block)
   ;; P2l3 spec §9。末尾の opt は欄が optional であることを表す。
   (styfield ::= (TField s slabel sty) (TField s slabel sty opt))
   (sty ::= (TName s ident)
@@ -53,7 +54,7 @@
              (SMatch s sexpr (sarm sarm ...))
              ;; SUR-014b1。最後まで else が無い if の連鎖である。
              (SIfSome s (sifclause sifclause ...) s)
-             (SFn s (slparam ...) sty-or-none srow-or-none sexpr)
+             (SFn s (slparam ...) sty-or-none srow-or-none body-kind sexpr)
              (SApply s sexpr (sexpr ...))
              ;; P2l2b2 spec §9.3.5。parser では作らず、名前解決が作る。
              (SConstruct s sname (sexpr ...))

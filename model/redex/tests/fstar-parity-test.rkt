@@ -12,7 +12,7 @@
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
  (check-equal? (length racket-surface-constructors) 39)
- (check-equal? (length racket-ucore-constructors) 15)
+ (check-equal? (length racket-ucore-constructors) 16)
  (check-equal? (length fstar-constructors) 37))
 
 (test-case
@@ -94,6 +94,7 @@
  (check-equal? (row-kind 'SIfSome) 'one-to-one)
  (check-equal? (row-kind 'Eliminate) 'one-to-one)
  (check-equal? (row-kind 'IfSome) 'none)
+ (check-equal? (row-kind 'BlockBody) 'none)
  (check-equal? (row-kind 'SBind) 'many-to-one)
  (check-equal? (row-kind 'STryBind) 'many-to-one)
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
@@ -137,7 +138,7 @@
                                                   (SBlock ,s0 () (SInt ,s0 1))))
                                             ,s0)))
    (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
-                                                      (TName ,s0 Int) #:none (SInt ,s0 1))))
+                                                      (TName ,s0 Int) #:none expr (SInt ,s0 1))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
    (cons 'SConstruct (redex-match? Surface sexpr
                                    `(SConstruct ,s0 (SName ,s0 k) ((SInt ,s0 1)))))
@@ -177,6 +178,7 @@
                                  `(IfSome ,s0
                                           ((,s0 ,s0 (Construct ,s0 true) (#:lit 1 ,s0)))
                                           ,s0)))
+   (cons 'BlockBody (redex-match? UCore+ e `(BlockBody ,s0 (#:lit 1 ,s0))))
    (cons 'NarrativeExpr (redex-match? UCore+ e
                                       `(NarrativeExpr ,s0 (#:lit 1 ,s0))))
    (cons 'Rec      (redex-match? UCore+ e `(Rec ,s0 (((#:lbl a ,s0) imm (#:lit 1 ,s0))))))

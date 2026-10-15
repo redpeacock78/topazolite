@@ -185,15 +185,15 @@
    [other (fail-check (format "空 row の SFnDecl を期待したが ~s" other))])
  (match (p "fn(x) ! Partial => x")
    [`(SProgram ,_ () (SFn ,_ ,_ #:none
-                           (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) ,_))
+                           (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) expr ,_))
     (void)]
    [other (fail-check (format "row 付き arrow Fn を期待したが ~s" other))])
  (match (p "fn(x: Int) -> Int ! Partial { x }")
-   [`(SProgram ,_ () (SFn ,_ ,_ ,_ (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) ,_))
+   [`(SProgram ,_ () (SFn ,_ ,_ ,_ (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) block ,_))
     (void)]
    [other (fail-check (format "row 付き block Fn を期待したが ~s" other))])
  (match (p "x => x")
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,_)) (void)]
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr ,_)) (void)]
    [other (fail-check (format "row 省略の SFn を期待したが ~s" other))]))
 
 (test-case
@@ -267,10 +267,10 @@
  (check-equal? (p-code "fn main() -> Int {\n  fn (y: Int) -> Int { y } |> f\n}")
                "E-SUR-005")
  (check-match (p-expr "(fn (y: Int) -> Int { y }) |> f")
-              `(SApply ,_ (SVar ,_ f) ((SFn ,_ ,_ ,_ ,_ ,_))))
+              `(SApply ,_ (SVar ,_ f) ((SFn ,_ ,_ ,_ ,_ block ,_))))
  ;; => の本体は expr なので pipe を含む。
  (check-match (p-expr "y => y |> f")
-              `(SFn ,_ ,_ ,_ ,_ (SApply ,_ (SVar ,_ f) ((SVar ,_ y))))))
+              `(SFn ,_ ,_ ,_ ,_ expr (SApply ,_ (SVar ,_ f) ((SVar ,_ y))))))
 
 (test-case
  "SUR-002a: pipe の右辺の欠落と改行は拒否する"
@@ -399,6 +399,7 @@
                                (TName (#:span src 6 9) Int)))
                       (TName (#:span src 14 17) Int)
                       #:none
+                      block
                       (SBlock (#:span src 18 23) ()
                               (SVar (#:span src 20 21) a))))))
 
@@ -412,7 +413,7 @@
  (define anon (p "fn(x: Int) { x }"))
  (check-true (redex-match? Surface sprog anon))
  (match anon
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,_)) (void)]
+   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none block ,_)) (void)]
    [other (fail-check (format "省略した SFn を期待したが ~s" other))]))
 
 (test-case
@@ -424,7 +425,7 @@
  (match (p "x => x")
    [`(SProgram ,_ ()
                (SFn ,s ((SParam ,sx (SName ,sx2 x) #:none))
-                    #:none #:none (SVar ,_ x)))
+                    #:none #:none expr (SVar ,_ x)))
     (check-equal? sx (sp 0 1))
     (check-equal? sx2 sx)
     (check-equal? s (sp 0 6))]
@@ -436,17 +437,17 @@
               `(SProgram ,_ ()
                          (SFn ,_ ((SParam ,_ (SName ,_ x) #:none)
                                   (SParam ,_ (SName ,_ y) (TName ,_ Int)))
-                              #:none #:none ,_))))
+                              #:none #:none expr ,_))))
 
 (test-case
  "SUR-012: fn() => a"
  (check-match (p "fn() => a")
-              `(SProgram ,_ () (SFn ,_ () #:none #:none (SVar ,_ a)))))
+              `(SProgram ,_ () (SFn ,_ () #:none #:none expr (SVar ,_ a)))))
 
 (test-case
  "SUR-012: 本体は postfix まで伸びる"
  (check-match (p "x => x(1)")
-              `(SProgram ,_ () (SFn ,_ ,_ #:none #:none (SApply ,_ ,_ ,_)))))
+              `(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr (SApply ,_ ,_ ,_)))))
 
 (test-case
  "SUR-012: => は右結合"
@@ -455,19 +456,20 @@
                          (SFn ,_ ,_
                               #:none
                               #:none
+                              expr
                               (SFn ,_ ,_
-                                   #:none #:none (SVar ,_ x))))))
+                                   #:none #:none expr (SVar ,_ x))))))
 
 (test-case
  "SUR-012: , と } が本体を閉じる"
  (check-match (p "f(x => x, 1)")
               `(SProgram ,_ ()
                          (SApply ,_ ,_
-                                 ((SFn ,_ ,_ #:none #:none ,_) (SInt ,_ 1)))))
+                                 ((SFn ,_ ,_ #:none #:none expr ,_) (SInt ,_ 1)))))
  (check-match (p "{ a: x => x, b: 1 }")
               `(SProgram ,_ ()
                          (SRec ,_
-                               ((SField ,_ ,_ (SFn ,_ ,_ #:none #:none ,_))
+                               ((SField ,_ ,_ (SFn ,_ ,_ #:none #:none expr ,_))
                                 (SField ,_ ,_ (SInt ,_ 1)))))))
 
 (test-case
@@ -710,8 +712,8 @@
                                              (SArm ,_ (SName ,_ false) () ,_)))))
  ;; 本体が無名関数でも、枝間の改行で止まる。
  (check-match (p "when c {\n  red => x => x\n  green => y => y\n}")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ (SVar ,_ x)))
-                                             (SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ (SVar ,_ y)))))))
+              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ x)))
+                                             (SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ y)))))))
  ;; when は primary なので suffix を続けられる。
  (check-match (p "when c { red => r }.a")
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_))))
@@ -758,7 +760,7 @@
  (check-match (p "return f(1).a")
               `(SProgram ,_ () (SReturn ,_ (SProj ,_ (SApply ,_ ,_ ,_) ,_))))
  (check-match (p "return x => x")
-              `(SProgram ,_ () (SReturn ,_ (SFn ,_ ,_ ,_ ,_ ,_))))
+              `(SProgram ,_ () (SReturn ,_ (SFn ,_ ,_ ,_ ,_ expr ,_))))
  (check-match (p "return return 1")
               `(SProgram ,_ () (SReturn ,_ (SReturn ,_ (SInt ,_ 1)))))
  (check-equal? (second (fourth (p "return 1"))) '(#:span src 0 8)))

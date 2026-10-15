@@ -21,7 +21,7 @@
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
 ;; Diagnostic の欄の形に付ける diagnostic-schema-version とは別物である。
-(define diagnostic-registry-version 36)
+(define diagnostic-registry-version 37)
 
 ;; registry の 1 行。
 ;; key は phase が診断を識別するのに使う記号であり、phase ごとに意味が違う。
@@ -324,6 +324,10 @@
     ("E-TYP-033" try-bind-boundary-mismatch
                  "?= の失敗を受ける境界の型が右辺の型と合わない")))
 
+(define elaborate-entries-v37
+  '(("E-RET-004" function-body-missing-return
+                 "関数本体が全経路で値を返さない")))
+
 (define typing-entries-v25
   '(("E-TYP-026" mutable-callable-storage-requires-partial
                  "Partial を持たない callable を可変記憶域へ書き込めない")))
@@ -497,6 +501,7 @@
           (rows 'elaborate 25 elaborate-entries-v25)
           (rows 'elaborate 33 elaborate-entries-v33)
           (rows 'elaborate 36 elaborate-entries-v36)
+          (rows 'elaborate 37 elaborate-entries-v37)
           deprecated-elaborate-entries
           (rows 'typing 1 typing-entries-v1)
           (rows 'typing 2 typing-entries-v2)

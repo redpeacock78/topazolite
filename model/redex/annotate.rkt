@@ -158,6 +158,7 @@
       [(list 'Construct K e ...) (list* 'Construct (next) K (map ann e))]
       [(list 'Eliminate e (list ubr ...))
        (list 'Eliminate (next) (ann e) (map ann-ubr ubr))]
+      [(list 'BlockBody e) (list 'BlockBody (next) (ann e))]
       [(list 'IfSome (list (list condition body) ...))
        (list 'IfSome (next)
              (for/list ([c (in-list condition)] [b (in-list body)])

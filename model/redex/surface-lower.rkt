@@ -767,8 +767,8 @@
       [`(SApply ,s ,f ,args) `(SApply ,s ,(r f) ,(map r args))]
       [`(SConstruct ,s ,k ,args) `(SConstruct ,s ,k ,(map r args))]
       [`(SReturn ,s ,v) `(SReturn ,s ,(r v))]
-      [`(SFn ,s ,params ,ty ,row ,body)
-       `(SFn ,s ,params ,ty ,row
+      [`(SFn ,s ,params ,ty ,row ,body-kind ,body)
+       `(SFn ,s ,params ,ty ,row ,body-kind
              ,(expr body (set-union bound (list->seteq (param-names params)))))]
       ;; P2m spec §6。枝の本体では束縛子が同名 constructor を隠す。
       [`(SMatch ,s ,scrutinee ,arms)
@@ -861,7 +861,7 @@
     [`(SVar ,s ,x) `(#:var ,x ,s)]
     ;; SUR-015。
     [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]
-    [`(SFn ,s ,params ,result-ty ,row ,body)
+    [`(SFn ,s ,params ,result-ty ,row ,body-kind ,body)
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
@@ -874,7 +874,9 @@
      `(Fn ,s ,(lower-params params env fail)
           ,result-core
           ,effect-row
-          ,(lower-sexpr body env fail))]
+          ,(if (eq? body-kind 'block)
+               (lower-block-body body env fail)
+               (lower-sexpr body env fail)))]
     [`(SApply ,s ,f ,arguments)
      `(Apply ,s ,(lower-sexpr f env fail)
              ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
@@ -974,6 +976,13 @@
            ,(lower-sexpr e env fail)
            (#:lit unit ,s))]))
 
+(define (lower-block-body body env fail)
+  (match body
+    [`(SBlock (#:span ,source ,_ ,end) ,_ ,_)
+     `(BlockBody (#:span ,source ,(sub1 end) ,end)
+                 ,(lower-stmt body env fail))]
+    [_ (error 'lower-block-body "block 本体に SBlock 以外が渡された: ~s" body)]))
+
 ;; spec §7.3。尾部の span は「その宣言の始まり」から「末尾式の終わり」までで
 ;; ある。span は (#:span sid lo hi) の 4 要素である。
 (define (tail-span item end-span)
@@ -991,7 +1000,7 @@
      ;; spec §6.6。生成した primitive を Let の束縛名にしない。elab は局所の
      ;; environment を Γ0 より先に引くので、同名の Let は Proof の経路を隠す。
      (match-define (list binder prim) (hash-ref core-info item))
-     (define body-core (lower-sexpr body env fail))
+     (define body-core (lower-block-body body env fail))
      (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
                      (Apply ,s (#:var ,prim ,s) ,body-core) ,rest))]
     [`(SDeriveDecl ,s ,_ ,_)
@@ -1031,7 +1040,7 @@
      (define effect-row
        `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
               ,(if (eq? row '#:none) s (node-span row))))
-     (define body-core (lower-sexpr body env fail))
+     (define body-core (lower-block-body body env fail))
      (λ (rest) `(FnDecl ,s_tail (#:bind ,f ,s_f) ,params-core
                        ,result-core
                        ,effect-row

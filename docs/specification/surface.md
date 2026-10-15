@@ -241,7 +241,15 @@ elaborate の `E-EFF-001` は防御的な分岐として残るが、UCore の ro
 `=>` の本体は `expr` であり、`,`、`)`、`}`、改行の手前まで読む。
 `x => x(1)` は適用を含む本体となり、無名関数をその場で適用するときは `(x => x)(1)` のように括弧で囲む。
 `x => y => x` は右結合である。
+`=>` の本体が `SBlock` になる場合、その本体は block として扱い、戻り値を作る各経路に明示的な `return` を要する。
+`=> {}` と `=> { a: 1 }` は record 式として解析されるため、式本体として扱う。
 `fn(x) -> T => e` は block が始まる位置で `E-SUR-005` になる。
+`fn(x) -> T { ... }` と関数宣言の本体は block であり、末尾式の値を暗黙に返さない。
+戻り型が `Unit` の block 本体は落ち抜けると `unit` を返し、それ以外の戻り型では全経路で明示的な `return` を要する。
+block 本体の全経路が戻り値を返さない場合は `E-RET-004` とし、primary span は本体の閉じ波括弧、戻り型注釈があれば related span はその注釈とする。
+戻り型を省略した block 本体は `return` の候補と落ち抜けの有無から推論し、非 `Unit` の候補と落ち抜けが混在すれば `E-RET-004` とする。
+`return` は無名関数の境界へ届き、式位置の `when` の arm 本体ブロックでは `when` の境界へ届く。
+式位置の `when` の arm 本体ブロックの lowering は本体ブロックの規則を別サイクルで定める。
 
 program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
@@ -706,7 +714,10 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SProj s e (SLabel s_l l))` は `(Proj s e' (#:lbl l s_l))` へ落とす。
 - `(SProjRec s e ((SLabel s_l l) ...))` は、受け側を 1 度だけ束縛する `Let` と、label ごとの `Proj` を並べた `Rec` へ落とす。 [REQ: SUR-006]
 - `(SRec s ((SField s_f (SLabel s_l l) e) ...))` は `(Rec s (((#:lbl l s_l) imm e') ...))` へ落とす。
-- `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
+- `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body-kind body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
+  `body-kind` が `expr` なら本体を通常の mode で下ろす。
+  `body-kind` が `block` なら `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
+  `BlockBody` は関数本体の位置でだけ使う elaboration marker であり、Typed Core へは残らない。
   row が省略されていれば `(#:ef #:infer s)` を置き、`s` は関数全体の span である。
   `=>` と block の両形の無名関数でこの印を使う。
   検査位置では期待型から `Owned` を 1 層剥がして `NFn` を得た場合に、その出口 row を継承し、合成位置または `NFn` でない期待型では空 row になる（core-calculus.md §4.2、§4.3）。
@@ -728,6 +739,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   注釈は文の mode の結果型を固定し、捨てる式の型を制限しない。
   資源値は最寄りの Core `Scope` の finalization で drop される。
 - `(SFnDecl s (SName s_f f) ... return-sty-or-none row-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。明示 row は lower-row の結果を row 節の span `s_row` とともに置く。
+  本体は `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
   row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
   戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
@@ -963,6 +975,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SArm`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
+  `SFn` の `body-kind` は F* 側の補助型 `sbodykind` の `BExpr` または `BBlock` として保持し、構成子数には加えない。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
   `TField` の末尾の `opt` も F* には残らない。
@@ -975,6 +988,7 @@ F* は **`TkIstr`** の認識と span の正当性を検査する。
 文字断片の値と左畳み込みの形は Racket の parser と Surface の試験で固定する。
 `SExprStmt` を加えた後の parity の件数は 38/14/36 である。
 `SIfSome` と `IfSome` を加えた後の parity の件数は 39/15/37 である。
+`BlockBody` を加えた後の parity の件数は 39/16/37 である。
 
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
@@ -994,11 +1008,12 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 15 構成子を parity の対象とする。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 16 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
+`BlockBody` は elaboration が関数本体の検査前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 15 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 37 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
+UCore+ の対象構成子リストは 16 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 37 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
