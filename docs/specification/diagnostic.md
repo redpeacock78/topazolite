@@ -192,7 +192,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 37 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 38 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
@@ -294,7 +294,9 @@ registry version 36 で elaborate に `E-TYP-032` と `E-TYP-033` を加えた�
 
 registry version 37 で elaborate に `E-RET-004` `function-body-missing-return` を 1 行足した。
 
-現在の registry は 229 行である。
+registry version 38 で elaborate に `E-RET-005` `when-arm-missing-return` を 1 行足した。
+
+現在の registry は 230 行である。
 
 `deprecated-in` を持つのは 8 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
@@ -305,9 +307,9 @@ registry version 37 で elaborate に `E-RET-004` `function-body-missing-return`
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v37.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v38.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222、223、225、226、228、229 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222、223、225、226、228、229、230 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -432,6 +434,9 @@ v36 は elaborate へ `E-TYP-032` `try-bind-non-adt` と `E-TYP-033` `try-bind-b
 
 v37 は elaborate へ `E-RET-004` `function-body-missing-return` を 1 行足した。
 廃止した行は無いため、組は 228 に 1 を足した 229 になる。
+
+v38 は elaborate へ `E-RET-005` `when-arm-missing-return` を 1 行足した。
+廃止した行は無いため、組は 229 に 1 を足した 230 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

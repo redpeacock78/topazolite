@@ -22,6 +22,10 @@
     [(list (cons start end)) `(#:span src ,start ,end)]
     [_ (error 'source-span "substring not found: ~a" needle)]))
 
+(define (block-close-span source needle)
+  (match-define `(#:span src ,_ ,end) (source-span source needle))
+  `(#:span src ,(sub1 end) ,end))
+
 (define (run-value result)
   (call-with-trait-ledger
    (compiled-ledger result)
@@ -93,7 +97,7 @@
               "        true => return 1\n"
               "        false => 0\n"
               "      }\n"
-              "      2\n"
+              "      return 2\n"
               "    }\n"
               "    false => 0\n"
               "  }\n"
@@ -102,6 +106,174 @@
               "f()")))
   (check-true (compiled? result))
   (when (compiled? result) (check-equal? (run-value result) 2)))
+
+(test-case "式位置 when の本体ブロック arm は return の値を返す"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return true }\n")
+       "fn choose(" (if variable? "a: Bool" "") ") -> Int {\n"
+       "  return when " scrutinee " {\n"
+       "    true => { return 1 }\n"
+       "    false => { return 2 }\n"
+       "  }\n}\n"
+       (if variable? "choose(true)" "choose()")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result) (check-equal? (run-value result) 1))))
+
+(test-case "when の本体ブロック arm の落ち抜けは閉じ波括弧を指す"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return true }\n")
+       "fn choose(" (if variable? "a: Bool" "") ") -> Int {\n"
+       "  return when " scrutinee " {\n"
+       "    true => { 1 }\n"
+       "    false => { return 2 }\n"
+       "  }\n}\n"
+       (if variable? "choose(true)" "choose()")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-RET-005")
+      (check-equal? (diagnostic-primary-span result)
+                    (block-close-span source "true => { 1 }")))))
+
+(test-case "when の本体ブロックの部分 return は合成位置と検査位置で拒否する"
+  (for* ([scrutinee (in-list '("a" "g()"))]
+         [annotation (in-list '(#f #t))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return false }\n")
+       "fn choose(" (if variable? "a: Bool, " "") "b: Bool) -> Int {\n"
+       (if annotation "  let result: Int = when " "  let result = when ")
+       scrutinee " {\n"
+       "    true => { if b { return 1 } }\n"
+       "    false => { return 2 }\n"
+       "  }\n  return result\n}\n"
+       (if variable? "choose(true, false)" "choose(false)")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-RET-005")
+      (check-equal? (diagnostic-primary-span result)
+                    (block-close-span source "true => { if b { return 1 } }")))))
+
+(test-case "Unit の when は落ち抜ける本体ブロック arm を受理する"
+  (for* ([scrutinee (in-list '("a" "g()"))]
+         [annotation (in-list '(#f #t))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return false }\n")
+       "fn choose(" (if variable? "a: Bool" "") ") -> Unit {\n"
+       (if annotation "  let result: Unit = when " "  let result = when ")
+       scrutinee " {\n"
+       "    true => { 1 }\n"
+       "    false => { 2 }\n"
+       "  }\n"
+       "  return result\n}\n"
+       (if variable? "choose(true)" "choose()")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))))
+
+(test-case "値 arm と本体ブロック arm の return 候補を合流する"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return false }\n")
+       "fn choose(" (if variable? "a: Bool" "") ") -> Int | String {\n"
+       "  let result = when " scrutinee " {\n"
+       "    true => 1\n"
+       "    false => { return \"s\" }\n"
+       "  }\n  return result\n}\n"
+       (if variable? "choose(true)" "choose()")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) '(Union Int String))
+      (match (run-value result)
+        [`(UnionVal ,_ Int 1) #:when variable? (void)]
+        [`(UnionVal ,_ String "s") #:when (not variable?) (void)]
+        [other (fail-check (format "unexpected Union value: ~s" other))]))))
+
+(test-case "入れ子 when の落ち抜け記録は境界を越えない"
+  (define nested-statement
+    (compile
+     (string-append
+      "fn f(a: Bool, b: Bool) -> Int {\n"
+      "  let result = when a {\n"
+      "    true => {\n"
+      "      when b {\n"
+      "        true => { 1 }\n"
+      "        false => { 2 }\n"
+      "      }\n"
+      "      return 7\n"
+      "    }\n"
+      "    false => { return 9 }\n"
+      "  }\n  return result\n}\nf(true, false)")))
+  (check-true (compiled? nested-statement)
+              (if (diagnostic? nested-statement)
+                  (format "~a: ~a" (diagnostic-id nested-statement)
+                          (diagnostic-message nested-statement))
+                  (format "unexpected result: ~s" nested-statement)))
+  (when (compiled? nested-statement)
+    (check-equal? (run-value nested-statement) 7))
+  (define nested-expression
+    (compile
+     (string-append
+      "fn f(a: Bool, b: Bool) -> Int {\n"
+      "  when a {\n"
+      "    true => {\n"
+      "      let inner = when b {\n"
+      "        true => { return 1 }\n"
+      "        false => { return 2 }\n"
+      "      }\n"
+      "      ()\n"
+      "    }\n"
+      "    false => { return 3 }\n"
+      "  }\n  return 0\n}\nf(true, false)")))
+  (check-true (compiled? nested-expression)
+              (if (diagnostic? nested-expression)
+                  (format "~a: ~a" (diagnostic-id nested-expression)
+                          (diagnostic-message nested-expression))
+                  (format "unexpected result: ~s" nested-expression)))
+  (when (compiled? nested-expression)
+    (check-equal? (run-value nested-expression) 0)))
+
+(test-case "=> {} と => { a: 1 } は when の record 値を返す"
+  (for ([source-and-type
+         (in-list
+          (list
+           (list "let result = when true { true => {}\n false => {} }\nresult"
+                 '(Record ()))
+           (list "let result = when true { true => { a: 1 }\n false => { a: 2 } }\nresult"
+                 '(Record ((a Int imm))))))])
+    (define result (compile (first source-and-type)))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) (second source-and-type)))))
 
 (test-case "枝の無名関数の return はその関数の境界で止まる"
   (define result

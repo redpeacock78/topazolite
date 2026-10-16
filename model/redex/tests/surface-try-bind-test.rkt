@@ -156,7 +156,7 @@
     (string-append
      "fn f(a: Option<Int>, b: Option<Int>, fallback: Option<Int>) -> Int {\n"
      "  let r: Option<Int> = when a {\n"
-     "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n r2 }\n"
+     "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n return r2 }\n"
      "    none => fallback\n"
      "  }\n"
      "  return when r { some value => 1\n none => 2 }\n"
@@ -273,13 +273,13 @@
     (check-equal? (second (first (diagnostic-related lambda-result)))
                   (source-span lambda-source "fn(x: Option<Int>) -> Int { let y ?= x\n 1 }")))
   (define when-source
-    "fn f(a: Option<Int>) -> Int { return when true { true => { let y ?= a\n 1 }\n false => 0 } }\nf(none)")
+    "fn f(a: Option<Int>) -> Int { return when true { true => { let y ?= a\n return 1 }\n false => 0 } }\nf(none)")
   (define when-result (compile when-source))
   (check-true (diagnostic? when-result))
   (when (diagnostic? when-result)
     (check-equal? (diagnostic-id when-result) "E-TYP-033")
     (check-equal? (second (first (diagnostic-related when-result)))
-                  (source-span when-source "true => { let y ?= a\n 1 }"))))
+                  (source-span when-source "true => { let y ?= a\n return 1 }"))))
 
 (test-case "Owned resource 変数の右辺は when と同じ E-OWN-010"
   (define try-source

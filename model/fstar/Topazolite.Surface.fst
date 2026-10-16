@@ -1314,17 +1314,25 @@ and lower_fields (fs: list (span & sexpr)) : Tot (list (span & core)) (decreases
 and lower_arms (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm sa (_, k) bs _ b :: tl ->
+  | SConstructorArm sa (_, k) bs BExpr b :: tl ->
       CConstructorBranch sa k (map fst bs) (lower_expr b) :: lower_arms tl
-  | SMemberArm sa _ (sx, x) ty _ b :: tl ->
+  | SConstructorArm sa (_, k) bs BBlock b :: tl ->
+      CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms tl
+  | SMemberArm sa _ (sx, x) ty BExpr b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_expr b) :: lower_arms tl
+  | SMemberArm sa _ (sx, x) ty BBlock b :: tl ->
+      CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms tl
 and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm sa (_, k) bs _ b :: tl ->
+  | SConstructorArm sa (_, k) bs BExpr b :: tl ->
       CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
-  | SMemberArm sa _ (sx, x) ty _ b :: tl ->
+  | SConstructorArm sa (_, k) bs BBlock b :: tl ->
+      CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_stmt b)) :: lower_arms_bounded tl
+  | SMemberArm sa _ (sx, x) ty BExpr b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
+  | SMemberArm sa _ (sx, x) ty BBlock b :: tl ->
+      CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_stmt b)) :: lower_arms_bounded tl
 and lower_ifsome_expr (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =
   match clauses with

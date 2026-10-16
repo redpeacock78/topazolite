@@ -182,10 +182,17 @@
     [other (fail-check (format "候補無し Never の推論 Fn は拒否される: ~s" other))])
   (check-not-false (match (elab annotated) [(list _ _ _ _) #t] [_ #f])))
 
-(test-case "13. BlockBody は関数本体以外では不変条件違反になる"
-  (match (elab '(Let x (BlockBody 1) x))
-    [`(err ,diagnostic) (check-equal? (diagnostic-id diagnostic) "E-SYN-003")]
-    [other (fail-check (format "関数本体以外の BlockBody を拒否する: ~s" other))]))
+(test-case "13. when arm と関数本体以外の BlockBody は不変条件違反になる"
+  (for ([term (in-list
+               (list '(Let x (BlockBody 1) x)
+                     '(NarrativeExpr
+                       (BlockBody (#:span src 3 4)
+                                  (Return (#:lit 1 (#:span src 3 4)))))))])
+    (match (elab term)
+      [`(err ,diagnostic)
+       (check-equal? (diagnostic-id diagnostic) "E-SYN-003")]
+      [other
+       (fail-check (format "許可位置以外の BlockBody を拒否する: ~s" other))])))
 
 (test-case "14. parser は arrow body の block と record を区別する"
   (for ([source-kind (in-list

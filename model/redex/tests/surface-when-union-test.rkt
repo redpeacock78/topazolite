@@ -154,6 +154,57 @@
                  (#:var ,_ ,_)
                  ,_))))
 
+(test-case "Union member の本体ブロック arm は return の値を返す"
+  (define source
+    (string-append
+     "fn choose(value: Int | String) -> Int | String {\n"
+     "  return when value {\n"
+     "    (x: Int) => { return x }\n"
+     "    (s: String) => { return 0 }\n"
+     "  }\n}\nchoose(1)"))
+  (define result (compile source))
+  (check-compiled result)
+  (when (compiled? result)
+    (match (run-value result)
+      [`(UnionVal ,_ Int 1) (void)]
+      [other (fail-check (format "Int member の UnionVal を期待した: ~s"
+                                 other))])))
+
+(test-case "Union member の本体ブロック arm の落ち抜けは E-RET-005"
+  (define source
+    (string-append
+     "fn choose(value: Int | String) -> Int {\n"
+     "  let answer = when value {\n"
+     "    (x: Int) => { x }\n"
+     "    (s: String) => { return 0 }\n"
+     "  }\n  return answer\n}\nchoose(1)"))
+  (define result (compile source))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-RET-005")
+    (match-define `(#:span src ,_ ,end)
+      (source-span source "(x: Int) => { x }"))
+    (check-equal? (diagnostic-primary-span result)
+                  `(#:span src ,(sub1 end) ,end))))
+
+(test-case "Union の constructor group 内の落ち抜けを when の E-RET-005 へ伝える"
+  (define source
+    (string-append
+     "fn choose(value: Option<Int> | String) -> Int {\n"
+     "  let result = when value {\n"
+     "    some x => { return 0 }\n"
+     "    none => { () }\n"
+     "    (s: String) => { return 1 }\n"
+     "  }\n  return result\n}\nchoose(none)"))
+  (define result (compile source))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-RET-005")
+    (match-define `(#:span src ,_ ,end)
+      (source-span source "none => { () }"))
+    (check-equal? (diagnostic-primary-span result)
+                  `(#:span src ,(sub1 end) ,end))))
+
 (test-case "Option 成分と String 成分の constructor と member を混在できる"
   (define source
     (string-append

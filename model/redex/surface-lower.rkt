@@ -840,15 +840,15 @@
 (define (lower-arms arms env fail lower-body)
   (for/list ([arm (in-list arms)])
     (match arm
-      [`(SArm ,s_a (SName ,_ ,k) ,binders ,_body-kind ,body)
+      [`(SArm ,s_a (SName ,_ ,k) ,binders ,body-kind ,body)
        `(,s_a ,k
               ,(for/list ([b (in-list binders)])
                  (match b [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
-              -> ,(lower-body s_a body))]
-      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,_body-kind ,body)
+              -> ,(lower-body s_a body-kind body))]
+      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body-kind ,body)
        `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
               (#:bind ,x ,s_x)
-              -> ,(lower-body s_a body))])))
+              -> ,(lower-body s_a body-kind body))])))
 
 (define (lower-sexpr e env fail)
   (match e
@@ -884,8 +884,11 @@
     [`(SMatch ,s ,scrutinee ,arms)
      (define scrutinee-core (lower-sexpr scrutinee env fail))
      (define variable-scrutinee? (match scrutinee [`(SVar ,_ ,_) #t] [_ #f]))
-     (define (lower-body s_a body)
-       (define body* (lower-sexpr body env fail))
+     (define (lower-body s_a body-kind body)
+       (define body*
+         (if (eq? body-kind 'block)
+             (lower-block-body body env fail)
+             (lower-sexpr body env fail)))
        (if variable-scrutinee? body* `(NarrativeExpr ,s_a ,body*)))
      (define lowered-arms
        (lower-arms arms env fail lower-body))
@@ -944,7 +947,8 @@
     [`(SMatch ,s ,scrutinee ,arms)
      `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
                  ,(lower-arms arms env fail
-                              (λ (_s_a body) (lower-stmt body env fail))))]
+                              (λ (_s_a _body-kind body)
+                                (lower-stmt body env fail))))]
     [`(SIfSome ,s ,clauses ,s_0)
      (define last-body (third (last clauses)))
      (define end-span (node-span last-body))

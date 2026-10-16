@@ -401,6 +401,12 @@ scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` �
 直接 `Owned` を成分に持つ Union は既存の gate で拒否し、候補が無ければ `E-TYP-010` とする。
 検査位置では合流を推論せず、本体と各 `return` の値を期待型で検査する。
 
+式位置の `when` で本体ブロックの arm は `BlockBody` へ下ろし、末尾値を返さない。
+正常に落ち抜ける arm の結果は `Unit` であり、その arm の `return` は §4.5 の既存の `when` 境界へ届く。
+落ち抜けは `when` ごとに記録し、`when` 全体の結果型が `Unit` 以外なら `E-RET-005` とする。
+primary は原文順で最初に落ち抜けた arm の閉じ波括弧であり、related span は無い。
+scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごとの `NarrativeExpr` という既存の境界配置を保ち、判定はいずれも `when` 全体の型が決まった後に行う。
+
 文位置の `when` は `(Eliminate s e' arms')` へ lowering し、scrutinee は通常の値位置で下ろし、枝の本体だけを文の mode で下ろす。
 文の mode の枝には `NarrativeExpr` を置かないため、その枝の `return` は外側の境界へ届く。
 `SBlock` の文の mode は末尾式へ伝わり、各束縛の右辺、scrutinee、関数呼出しの実引数、record の欄、`return` の値などの部分式には伝わらない。
@@ -715,13 +721,15 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
-  scrutinee と各枝の本体を再帰的に下ろす。
-  文の mode では scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
+  `body-kind` が `expr` の本体は通常の mode で下ろし、`block` の本体は `(BlockBody s_close (lower-stmt body))` とする。
+  `s_close` は本体 block の閉じ波括弧 1 byte の span である。
+  文の mode では `body-kind` に依らず、scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
   文の mode の枝に `NarrativeExpr` を置かないのは、`return` を外側の境界へ伝えるためである。
   constructor pattern の枝は constructor 名と束縛子を保つ。
   Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body-kind body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
   枝の `NarrativeExpr` は式位置の `when` の返却境界を枝の本体だけに与える（§4.5）。
+  `BlockBody` は式位置の本体ブロック arm に限って使い、elaboration が落ち抜けと `E-RET-005` を検査する前に剥がす。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
   型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。
@@ -734,7 +742,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body-kind body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
   `body-kind` が `expr` なら本体を通常の mode で下ろす。
   `body-kind` が `block` なら `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
-  `BlockBody` は関数本体の位置でだけ使う elaboration marker であり、Typed Core へは残らない。
+  `BlockBody` は関数本体と式位置の `when` の本体ブロック arm で使う elaboration marker であり、Typed Core へは残らない。
   row が省略されていれば `(#:ef #:infer s)` を置き、`s` は関数全体の span である。
   `=>` と block の両形の無名関数でこの印を使う。
   検査位置では期待型から `Owned` を 1 層剥がして `NFn` を得た場合に、その出口 row を継承し、合成位置または `NFn` でない期待型では空 row になる（core-calculus.md §4.2、§4.3）。
@@ -1029,7 +1037,7 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 16 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
-`BlockBody` は elaboration が関数本体の検査前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
+`BlockBody` は elaboration が関数本体または式位置の `when` の本体ブロック arm を検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 UCore+ の対象構成子リストは 16 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 37 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。

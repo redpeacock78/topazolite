@@ -41,7 +41,8 @@
          "diagnostic-fixture-v34.rkt"
          "diagnostic-fixture-v35.rkt"
          "diagnostic-fixture-v36.rkt"
-         "diagnostic-fixture-v37.rkt")
+         "diagnostic-fixture-v37.rkt"
+         "diagnostic-fixture-v38.rkt")
 
 ;; [REQ: DIA-005] error code の安定識別子と versioning（diagnostic.md）
 ;; [REQ: DIA-001] Diagnostic IR の生成（diagnostic.md §8）
@@ -84,12 +85,12 @@
  "registry の行数と内訳と since が一致する"
  ;; 件数は registry へ行を足すたびにこの test も動かす。下限にすると、
  ;; 足し忘れや二重登録が通ってしまう。
- (check-equal? (length diagnostic-registry) 229)
+ (check-equal? (length diagnostic-registry) 230)
  (define (count-of phase)
    (for/sum ([row (in-list diagnostic-registry)]
              #:when (eq? (diagnostic-code-phase row) phase))
      1))
- (check-equal? (count-of 'elaborate) 67)
+ (check-equal? (count-of 'elaborate) 68)
  (check-equal? (count-of 'typing) 116)
  (check-equal? (count-of 'origins) 1)
  (check-equal? (count-of 'lowering) 4)
@@ -105,7 +106,7 @@
  ;; version 16 の elaborate / typing、version 18 の typing、version 23 と 24 の elaborate、
  ;; version 25 の elaborate / typing、version 26 の surface、version 27 の typing、
  ;; version 28 と 29 の surface、version 30 の elaborate と typing、
- ;; version 31 と 32 の typing、version 33 と 36 と 37 の elaborate、version 34 と 35 の typing である。
+ ;; version 31 と 32 の typing、version 33 と 36 から 38 の elaborate、version 34 と 35 の typing である。
  (check-equal? (since-count 1) 59)
  (check-equal? (since-count 2) 48)
  (check-equal? (since-count 3) 13)
@@ -142,6 +143,7 @@
  (check-equal? (since-count 35) 1)
  (check-equal? (since-count 36) 2)
  (check-equal? (since-count 37) 1)
+ (check-equal? (since-count 38) 1)
  ;; version 6 で E-BOR-024 を、version 7 と 8 で E-OWN の行を廃止した。
  (define deprecated-map
    '(("E-BOR-024" . 6) ("E-OWN-004" . 8) ("E-OWN-005" . 8)
@@ -238,13 +240,13 @@
 
 ;; test 12
 (test-case
- "schema version は 4、registry version は 37 である"
+ "schema version は 4、registry version は 38 である"
  (check-equal? diagnostic-schema-version 4)
- (check-equal? diagnostic-registry-version 37))
+ (check-equal? diagnostic-registry-version 38))
 
 (test-case
- "registry version 37 と入口 key"
- (check-equal? diagnostic-registry-version 37)
+ "registry version 38 と入口 key"
+ (check-equal? diagnostic-registry-version 38)
  (check-equal? (diagnostic-code-of 'typing 'ill-typed) "E-TYP-001")
  (check-equal? (diagnostic-code-of 'typing 'not-core-term) "E-SYN-004")
  (check-equal? (diagnostic-code-of 'typing 'type-origin-invalid)
@@ -867,6 +869,20 @@
          (eq? (diagnostic-code-key row) key))
     (format "~a が registry に同じ組で存在する" code))))
 
+(test-case
+ "凍結 fixture v38 の全 (code phase key) が現在の registry に同じ組で存在する"
+ (check-equal? (length diagnostic-entries-v38) 230)
+ (check-not-false (member '("E-RET-005" elaborate when-arm-missing-return)
+                          diagnostic-entries-v38))
+ (for ([entry (in-list diagnostic-entries-v38)])
+   (match-define (list code phase key) entry)
+   (define row (diagnostic-code-row code))
+   (check-true
+    (and row
+         (eq? (diagnostic-code-phase row) phase)
+         (eq? (diagnostic-code-key row) key))
+    (format "~a が registry に同じ組で存在する" code))))
+
 (define-runtime-path elaborate-source "../elaborate.rkt")
 
 ;; test 7
@@ -907,7 +923,7 @@
  ;; P2m2c3 Task 3 では typing の防御的な拒否を elaborate の type-mismatch へ写す。
  ;; SUR-002a Task 4 では TryBind の診断 key を 2 件加えた。
  ;; SUR-014b2a では関数本体の全経路返却診断を加えた。
- (check-equal? (length reasons) 59)
+ (check-equal? (length reasons) 60)
  ;; P2m2b1 Task 3 で先行登録し、Task 4 で曖昧性の producer を加えた。
  (check-not-false (diagnostic-code-of 'elaborate 'ambiguous-union-member))
  (for ([entry (in-list reason-entries)])

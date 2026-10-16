@@ -709,7 +709,8 @@ Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ�
 `else` の無い `if` は、文位置では後続へ進み、式位置では `Option<T>` を返す。
 関数宣言と block 本体の無名関数では、明示的な `return`、全経路の返却検査、および `E-RET-004` を実装済みである。
 被演算子位置の `return` による `Never` の伝播と、`?=` の右辺が `Never` の場合の受理も実装済みである。
-`when` の arm の本体ブロックと `for` は未実装であり、後続で扱う。
+式位置の `when` の arm の本体ブロックと落ち抜け検査も実装済みである。
+`for` は未実装であり、後続で扱う。
 
 ### SUR-015
 
@@ -981,7 +982,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。被演算子位置の `return` による `Never` の伝播と、`?=` の右辺が `Never` の場合の受理も回収済み。残るのは `when` arm の本体ブロック、`for` の境界、明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）、Core の `Handle` の T-Ctx-Never の条件が、本体の row に捕まえる op があれば外側への `Return` でも `Never` を伝えないこと（Surface では観測できない。`return to` のサイクルで扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。式位置の `when` arm の本体ブロックと落ち抜け検査、被演算子位置の `return` による `Never` の伝播、および `?=` の右辺が `Never` の場合の受理も回収済み。残るのは `for` の境界、明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）、Core の `Handle` の T-Ctx-Never の条件が、本体の row に捕まえる op があれば外側への `Return` でも `Never` を伝えないこと（Surface では観測できない。`return to` のサイクルで扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
 | data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |

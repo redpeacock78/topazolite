@@ -50,6 +50,9 @@
 ;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
 (struct resolved-type-argument (type) #:transparent)
 
+(define current-when-arm-fallthroughs (make-parameter #f))
+(define current-deferred-when-fallthroughs (make-parameter #f))
+
 ;; 既存の三引数の構築は judgment の型を Core の型として使う。
 ;; check の一部だけ、実際に生成した Core の型を明示する。
 (define judgment
@@ -125,6 +128,7 @@
      (values expected actual)]
     [('try-bind-non-adt (list actual))
      (values #f actual)]
+    [('when-arm-missing-return '()) (values #f #f)]
     [(_ '()) (values #f #f)]
     [(_ (list only)) (values #f only)]
     [(_ _) (values #f details)]))
@@ -1969,8 +1973,34 @@
           clause))
       (values scrutinee-result clauses))
 
+    (define (record-when-arm-fallthrough! span)
+      (define fallthroughs (current-when-arm-fallthroughs))
+      (unless (box? fallthroughs)
+        (reject span 'invalid-syntax))
+      (set-box! fallthroughs (append (unbox fallthroughs) (list span))))
+
+    (define (deferred-when-fallthroughs expression)
+      (match (current-deferred-when-fallthroughs)
+        [(cons target fallthroughs)
+         (and (eq? target expression) fallthroughs)]
+        [_ #f]))
+
+    (define (first-when-fallthrough spans)
+      (first (sort spans < #:key third)))
+
+    (define (finish-when-fallthroughs result spans result-type span deferred)
+      (cond
+        [(null? spans) result]
+        [deferred
+         (set-box! deferred (append (unbox deferred) spans))
+         result]
+        [(not (equal? (normalize-type result-type) 'Unit))
+         (reject (first-when-fallthrough spans) 'when-arm-missing-return)]
+        [else result]))
+
     (define (union-eliminate scrutinee-result branches expected eliminate-span
-                             environment delta propositions boundaries)
+                             environment delta propositions boundaries
+                             #:defer-fallthroughs [deferred #f])
       (define union-type
         (match (normalize-type (type-for-context scrutinee-result))
           [`(Owned ,inner) inner]
@@ -2037,8 +2067,10 @@
           (list member-type (if (pair? member-patterns)
                                 (first member-patterns)
                                 constructor-patterns))))
+      (define fallthroughs (box '()))
       (define results
-        (for/list ([group (in-list groups)])
+        (parameterize ([current-when-arm-fallthroughs fallthroughs])
+          (for/list ([group (in-list groups)])
           (match-define (list member-type branch-group) group)
           (define member-pattern? (eq? (first branch-group) 'member))
           (define source-binder-node
@@ -2071,12 +2103,23 @@
                                         (#:var ,body-binder ,eliminate-span))
                                  `(#:var ,body-binder ,eliminate-span))
                             ,(map fifth branch-group))))
+          (define body-deferred
+            (and (not member-pattern?)
+                 (match body-expression [`(Eliminate ,_ ,_) #t] [_ #f])
+                 (box '())))
           (define body-result
-            (if expected
-                (check body-expression expected branch-environment
-                       delta propositions boundaries)
-                (synth body-expression branch-environment
-                       delta propositions boundaries)))
+            (parameterize
+                ([current-deferred-when-fallthroughs
+                  (and body-deferred
+                       (cons body-expression body-deferred))])
+              (if expected
+                  (check body-expression expected branch-environment
+                         delta propositions boundaries)
+                  (synth body-expression branch-environment
+                         delta propositions boundaries))))
+          (when body-deferred
+            (set-box! fallthroughs
+                      (append (unbox fallthroughs) (unbox body-deferred))))
           (define encoded-body
             (resource-branch-body eliminate-span member-type binder alias
                                   (judgment-core body-result) alias-span))
@@ -2100,13 +2143,14 @@
                           (judgment-type body-result)
                           (judgment-row body-result)
                           (judgment-core-type body-result)
-                          (judgment-normal-type body-result)))))
+                (judgment-normal-type body-result))))))
       (define branch-results (map second results))
       (define-values (branch-cores core-type)
         (merge-branches (map judgment-core branch-results)
                         (map judgment-core-type branch-results)
                         eliminate-span propositions))
-      (judgment
+      (define result
+        (judgment
        `(UnionEliminate ,eliminate-span
                         ,(judgment-core scrutinee-result)
                         ,(for/list ([result (in-list results)]
@@ -2124,6 +2168,9 @@
            'Never
            core-type)
        (default-normal-type core-type)))
+      (finish-when-fallthroughs result (unbox fallthroughs)
+                                (or expected (judgment-type result))
+                                eliminate-span deferred))
 
     (define (member-pattern? raw-branch)
       (match (peel-branch raw-branch)
@@ -2142,29 +2189,33 @@
 
     (define (check-eliminate scrutinee branches expected eliminate-span
                              environment delta propositions boundaries
-                             #:scrutinee-result [provided-scrutinee-result #f])
+                             #:scrutinee-result [provided-scrutinee-result #f]
+                             #:defer-fallthroughs [deferred #f])
       (define reversed-branch-results '())
+      (define fallthroughs (box '()))
       (define-values (scrutinee-result clauses)
-        (eliminate-front
-         scrutinee branches eliminate-span environment delta propositions boundaries
-         #:scrutinee-result provided-scrutinee-result
-         #:on-clause
-         (lambda (clause)
-           (match-define (list _ _ _ body branch-environment _ _ _) clause)
-           (define result
-             (check body expected branch-environment
-                    delta propositions boundaries))
-           (set! reversed-branch-results
-                 (cons (list (judgment-core result)
-                             (judgment-row result)
-                             (judgment-core-type result))
-                       reversed-branch-results)))))
+        (parameterize ([current-when-arm-fallthroughs fallthroughs])
+          (eliminate-front
+           scrutinee branches eliminate-span environment delta propositions boundaries
+           #:scrutinee-result provided-scrutinee-result
+           #:on-clause
+           (lambda (clause)
+             (match-define (list _ _ _ body branch-environment _ _ _) clause)
+             (define result
+               (check body expected branch-environment
+                      delta propositions boundaries))
+             (set! reversed-branch-results
+                   (cons (list (judgment-core result)
+                               (judgment-row result)
+                               (judgment-core-type result))
+                         reversed-branch-results))))))
       (define branch-results (reverse reversed-branch-results))
       (define-values (rebuilt-branch-cores core-type)
         (merge-branches (map first branch-results)
                         (map third branch-results)
                         eliminate-span propositions))
-      (judgment
+      (define result
+        (judgment
        `(Eliminate ,eliminate-span
                    ,(judgment-core scrutinee-result)
                    ,(for/list ([clause (in-list clauses)]
@@ -2194,15 +2245,19 @@
            'Never
            core-type)
        (default-normal-type core-type)))
+      (finish-when-fallthroughs result (unbox fallthroughs) expected
+                                eliminate-span deferred))
 
     (define (synth-eliminate scrutinee-result branches eliminate-span
-                             environment delta propositions boundaries)
+                             environment delta propositions boundaries
+                             #:defer-fallthroughs [deferred #f])
       (define scrutinee-type (type-for-context scrutinee-result))
       (cond
         [(or (root-owned-union? scrutinee-type)
              (union-type? scrutinee-type))
          (union-eliminate scrutinee-result branches #f eliminate-span
-                          environment delta propositions boundaries)]
+                          environment delta propositions boundaries
+                          #:defer-fallthroughs deferred)]
         [(ormap member-pattern? branches)
          (reject eliminate-span 'non-union-eliminate
                  #:phase 'typing scrutinee-type)]
@@ -2211,27 +2266,30 @@
            (peel-eliminate-wrapper scrutinee-type))
          (unless (constructor-schema data-type)
            (reject eliminate-span 'non-data-eliminate scrutinee-type))
-         (define-values (checked-scrutinee clauses)
-           (eliminate-front
-            (judgment-core scrutinee-result) branches eliminate-span
-            environment delta propositions boundaries
-            #:scrutinee-result scrutinee-result))
-         (for ([raw-branch (in-list branches)])
-           (match (peel-branch raw-branch)
-             [`(,_ (,_ ...) -> ,body)
-              #:when (needs-expected-type? body)
-              (reject eliminate-span 'eliminate-needs-expected-type)]
-             [_ (void)]))
-         (define results
-           (for/list ([clause (in-list clauses)])
-             (match-define
-               (list _ _ _ body branch-environment _ _ _) clause)
-             (synth body branch-environment delta propositions boundaries)))
-         (define-values (branch-cores core-type)
-           (merge-branches (map judgment-core results)
-                           (map judgment-core-type results)
-                           eliminate-span propositions))
-         (judgment
+         (define fallthroughs (box '()))
+         (define result
+           (parameterize ([current-when-arm-fallthroughs fallthroughs])
+             (define-values (checked-scrutinee clauses)
+               (eliminate-front
+                (judgment-core scrutinee-result) branches eliminate-span
+                environment delta propositions boundaries
+                #:scrutinee-result scrutinee-result))
+             (for ([raw-branch (in-list branches)])
+               (match (peel-branch raw-branch)
+                 [`(,_ (,_ ...) -> ,body)
+                  #:when (needs-expected-type? body)
+                  (reject eliminate-span 'eliminate-needs-expected-type)]
+                 [_ (void)]))
+             (define results
+               (for/list ([clause (in-list clauses)])
+                 (match-define
+                   (list _ _ _ body branch-environment _ _ _) clause)
+                 (synth body branch-environment delta propositions boundaries)))
+             (define-values (branch-cores core-type)
+               (merge-branches (map judgment-core results)
+                               (map judgment-core-type results)
+                               eliminate-span propositions))
+             (judgment
           `(Eliminate ,eliminate-span ,(judgment-core checked-scrutinee)
                       ,(for/list ([clause (in-list clauses)]
                                   [core (in-list branch-cores)])
@@ -2255,7 +2313,10 @@
            (cons (judgment-row checked-scrutinee)
                  (map judgment-row results)))
           core-type
-          (default-normal-type core-type))]))
+          (default-normal-type core-type))))
+         (finish-when-fallthroughs result (unbox fallthroughs)
+                                   (judgment-type result) eliminate-span
+                                   deferred)]))
 
     (define (try-bind-kind type)
       (match (normalize-type type)
@@ -2431,6 +2492,47 @@
       (match body
         [`(BlockBody ,span ,_) span]
         [_ (error 'block-body-span "BlockBody が必要である: ~s" body)]))
+
+    (define (without-block-fallthrough result)
+      (if (eq? (judgment-type result) 'Never)
+          (judgment (judgment-core result) 'Never (judgment-row result)
+                    (judgment-core-type result) '⊥)
+          result))
+
+    (define (require-when-arm-body close-span)
+      (unless (box? (current-when-arm-fallthroughs))
+        (reject close-span 'invalid-syntax)))
+
+    (define (synth-when-arm-block-body close-span inner environment delta
+                                      propositions boundaries)
+      (require-when-arm-body close-span)
+      (define result
+        (synth inner environment delta propositions boundaries))
+      (cond
+        [(eq? (judgment-type result) 'Never)
+         (without-block-fallthrough result)]
+        [else
+         (unless (eq? (judgment-type result) 'Unit)
+           (reject close-span 'invalid-syntax))
+         (record-when-arm-fallthrough! close-span)
+         result]))
+
+    (define (check-when-arm-block-body close-span inner expected environment
+                                       delta propositions boundaries)
+      (require-when-arm-body close-span)
+      (define result
+        (check inner 'Unit environment delta propositions boundaries))
+      (cond
+        [(eq? (judgment-type result) 'Never)
+         (without-block-fallthrough result)]
+        [else
+         (unless (eq? (judgment-type result) 'Unit)
+           (reject close-span 'invalid-syntax))
+         (record-when-arm-fallthrough! close-span)
+         (if (equal? (normalize-type expected) 'Unit)
+             result
+             (judgment (judgment-core result) expected
+                       (judgment-row result) expected expected))]))
 
     (define (check-function-body body return-type return-span
                                  environment delta propositions boundaries)
@@ -2645,15 +2747,20 @@
       (call-with-restored-state
        (λ ()
          (define candidate-box (box '()))
+         (define deferred
+           (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
          (define boundary (fresh-boundary))
          (define failure #f)
          (define body-result
-           (with-handlers ([exn:fail:elab?
-                            (λ (error) (set! failure error) #f)])
-             (synth body environment delta propositions
-                    (cons `(ExpressionBoundary ,boundary
-                                               (#:probe ,candidate-box) ,span)
-                          boundaries))))
+           (parameterize
+               ([current-deferred-when-fallthroughs
+                 (and deferred (cons body deferred))])
+             (with-handlers ([exn:fail:elab?
+                              (λ (error) (set! failure error) #f)])
+               (synth body environment delta propositions
+                      (cons `(ExpressionBoundary ,boundary
+                                                 (#:probe ,candidate-box) ,span)
+                            boundaries)))))
          (define normal-type
            (and body-result (judgment-normal-type body-result)))
          (define candidates
@@ -3315,6 +3422,10 @@
           (and (not (inferred? raw-return-type))
                (nearest-span raw-return-type s)))]
 
+        [`(BlockBody ,inner)
+         (synth-when-arm-block-body (block-body-span expression) inner environment delta
+                                   propositions boundaries)]
+
         [`(BlockBody ,_)
          (reject s 'invalid-syntax)]
 
@@ -3521,7 +3632,9 @@
          (define scrutinee-result
            (synth scrutinee environment delta propositions boundaries))
          (synth-eliminate scrutinee-result branches s
-                          environment delta propositions boundaries)]
+                          environment delta propositions boundaries
+                          #:defer-fallthroughs
+                          (deferred-when-fallthroughs expression))]
 
         [`(IfSome (,clauses ...) ,s_0)
          (define expected
@@ -3946,6 +4059,10 @@
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
+        [`(BlockBody ,inner)
+         (check-when-arm-block-body (block-body-span expression) inner expected environment delta
+                                    propositions boundaries)]
+
         [`(Let (,raw-name ,binding-mode) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
         (define bound-result
@@ -4028,17 +4145,21 @@
          (define scrutinee-result
            (synth scrutinee environment delta propositions boundaries))
          (define scrutinee-type (type-for-context scrutinee-result))
+         (define deferred
+           (deferred-when-fallthroughs expression))
          (cond
            [(or (root-owned-union? scrutinee-type)
                 (union-type? scrutinee-type))
             (union-eliminate scrutinee-result branches expected s
-                             environment delta propositions boundaries)]
+                             environment delta propositions boundaries
+                             #:defer-fallthroughs deferred)]
            [(ormap member-pattern? branches)
             (reject s 'non-union-eliminate #:phase 'typing scrutinee-type)]
            [else
             (check-eliminate scrutinee branches expected s
                              environment delta propositions boundaries
-                             #:scrutinee-result scrutinee-result)])]
+                             #:scrutinee-result scrutinee-result
+                             #:defer-fallthroughs deferred)])]
 
         [`(IfSome (,clauses ...) ,s_0)
          (match (normalize-type expected)
@@ -4058,10 +4179,20 @@
 
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))
+         (define deferred
+           (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
          (define body-result
-           (check body expected environment delta propositions
-                  (cons `(ExpressionBoundary ,boundary ,expected ,s)
-                        boundaries)))
+           (parameterize
+               ([current-deferred-when-fallthroughs
+                 (and deferred (cons body deferred))])
+             (check body expected environment delta propositions
+                    (cons `(ExpressionBoundary ,boundary ,expected ,s)
+                          boundaries))))
+         (when (and deferred
+                    (pair? (unbox deferred))
+                    (not (equal? (normalize-type expected) 'Unit)))
+           (reject (first-when-fallthrough (unbox deferred))
+                   'when-arm-missing-return))
          (define own-return `((Return ,boundary ,expected)))
          (define caught?
            (for/or ([label (in-list own-return)])
