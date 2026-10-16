@@ -1821,8 +1821,8 @@
                      [flow (flow-set-normal state normal)]))))
 
 (define (flow-check-backedge fail node entry output)
-  ;; Defensive check: recursive bodies pin every captured outer mut slot and
-  ;; Let exit removes body-local slots, so ordinary Recur has no mutable back-edge.
+  ;; 通常の Recur では捕捉した外側の mut slot は pin され、Let の出口で局所 slot は除かれる。
+  ;; したがって、この検査は将来の経路追加に備える防御的な確認である。
   (define input-normal (flow-state-normal (psi-flow entry)))
   (define output-normal (flow-state-normal (psi-flow output)))
   (when (and (hash? input-normal) (hash? output-normal))

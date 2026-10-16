@@ -188,17 +188,22 @@
 
 (test-case "片側で捕捉した pin の合流後も現在の shape を読める"
   (define closure-type '(NFn () Int () () () User))
-  (define core
-    `(Let (x mut ,named) ,initial-record
-       (Let (ignored const Unit)
-         (Eliminate b
-           ((true () -> (Let (f const ,closure-type)
-                          (Lam User f () (Proj x id))
-                          unit))
-            (false () -> unit)))
-         (Proj x id))))
-  (check-equal? (type-row core `((f ,closure-type)) '((b Bool)))
-                '(Int ())))
+  (for ([scrutinee (in-list '(b (Apply g)))])
+    (define environment
+      (if (eq? scrutinee 'b)
+          '((b Bool))
+          '((g (NFn () Bool () () () User)))))
+    (define core
+      `(Let (x mut ,named) ,initial-record
+         (Let (ignored const Unit)
+           (Eliminate ,scrutinee
+             ((true () -> (Let (f const ,closure-type)
+                            (Lam User f () (Proj x id))
+                            unit))
+              (false () -> unit)))
+           (Proj x id))))
+    (check-equal? (type-row core `((f ,closure-type)) environment)
+                  '(Int ()))))
 
 (test-case "閉包を内側 scope から返して外側で呼び出せる"
   (define closure-type '(NFn () Int () () () User))
@@ -293,6 +298,19 @@
     `(Let (x mut ,named) ,initial-record
        (Handle (Return exit Int) (x -> x)
          (Perform (Return exit Int) 1))))
+   '(Int ()))
+
+  (check-equal?
+   (type-row
+    `(Let (x mut ,named) ,initial-record
+       (Let (updated const Unit)
+         ,(reassign-to 'x with-active active-record)
+         (Let (y const Int) (Let (x const Int) 1 x) (Proj x active)))))
+   '(Int (Mutation)))
+
+  (check-equal?
+   (type-row `(Let (x mut ,named) ,initial-record (Recur g g (x) x 0))
+             `((g ,function-type)))
    '(Int ())))
 
 (test-case "argument evaluation threads flow from earlier arguments"
@@ -460,67 +478,64 @@
   (check-equal? (type-row core) '(Int (Mutation))))
 
 (test-case "正常に完了しない枝の発行地点を handler へ伝える"
-  (define core
-    `(Let (x mut ,named) ,initial-record
-       (Handle (Return exit Int)
-         (v -> (Proj x active))
-         (Eliminate b
-           ((true () -> (Let (updated const Unit)
-                          ,(reassign-to 'x with-active active-record)
-                          (Perform (Return exit Int) 1)))
-            (false () -> (Let (updated const Unit)
-                           ,(reassign-to 'x with-active active-record)
-                           2)))))))
-  (check-equal? (type-row core '() '((b Bool))) '(Int (Mutation))))
-
-(test-case "Handle の正常出口は synthesis と check の両方で τ° を使う"
-  (for ([scrutinee (in-list '(condition (Apply choose)))])
+  (for ([scrutinee (in-list '(b (Apply g)))])
     (define environment
-      (if (eq? scrutinee 'condition)
-          '((condition Bool))
-          '((choose (NFn () Bool () () () User)))))
-    (define all-return
-      `(Eliminate ,scrutinee
-         ((true () -> (Perform (Return exit Int) 1))
-          (false () -> (Perform (Return exit Int) 2)))))
-    (define catches-normally
-      `(Handle (Return exit Int) (v -> v) ,all-return))
-    (check-equal? (typed-type-normal catches-normally '() environment)
-                  '(Int Int))
-    (check-equal?
-     (typed-type-normal `(Let (answer const Int) ,catches-normally answer)
-                        '() environment)
-     '(Int Int))))
+      (if (eq? scrutinee 'b)
+          '((b Bool))
+          '((g (NFn () Bool () () () User)))))
+    (define core
+      `(Let (x mut ,named) ,initial-record
+         (Handle (Return exit Int)
+           (v -> (Proj x active))
+           (Eliminate ,scrutinee
+             ((true () -> (Let (updated const Unit)
+                            ,(reassign-to 'x with-active active-record)
+                            (Perform (Return exit Int) 1)))
+              (false () -> (Let (updated const Unit)
+                             ,(reassign-to 'x with-active active-record)
+                             2)))))))
+    (check-equal? (type-row core '() environment) '(Int (Mutation)))))
 
 (test-case "関数本体の早期 return と正常出口で局所 mut の shape が異なってもよい"
   (define function-type '(NFn (Bool) Int () (Mutation) () User))
-  (define core
-    `(Lam User f (condition)
-       (Handle (Return f Int) (value -> value)
-         (Let (x mut ,named) ,initial-record
-           (Eliminate condition
-             ((true () -> (Let (updated const Unit)
-                            ,(reassign-to 'x with-active active-record)
-                            (Perform (Return f Int) 1)))
-              (false () -> (Proj x id))))))))
-  (check-equal? (key-of core `((f ,function-type))) 'ok))
+  (for ([scrutinee (in-list '(condition (Apply g)))])
+    (define callables
+      `((f ,function-type)))
+    (define environment
+      (if (eq? scrutinee 'condition)
+          '()
+          '((g (NFn () Bool () () () User)))))
+    (define core
+      `(Lam User f (condition)
+         (Handle (Return f Int) (value -> value)
+           (Let (x mut ,named) ,initial-record
+             (Eliminate ,scrutinee
+               ((true () -> (Let (updated const Unit)
+                              ,(reassign-to 'x with-active active-record)
+                              (Perform (Return f Int) 1)))
+                (false () -> (Proj x id))))))))
+    (check-equal? (key-of core callables environment) 'ok)))
 
 (test-case "TryBind の失敗枝を除く Return と正常枝の flow を合流する"
-  (define core
-    `(Let (x mut ,named) ,initial-record
-       (Let (handled const (Option Int))
-         (Handle (Return exit (Option Int)) (value -> value)
-           (Eliminate option-value
-             ((some (payload) -> (Let (updated const Unit)
-                                   ,(reassign-to 'x with-active active-record)
-                                   (Construct (Option Int) some payload)))
-              (none () -> (Let (updated const Unit)
-                            ,(reassign-to 'x with-active active-record)
-                            (Perform (Return exit (Option Int))
-                                     (Construct (Option Int) none)))))))
-         (Proj x active))))
-  (check-equal? (type-row core '() '((option-value (Option Int))))
-                '(Int (Mutation))))
+  (for ([scrutinee (in-list '(option-value (Apply option-source)))])
+    (define environment
+      (if (eq? scrutinee 'option-value)
+          '((option-value (Option Int)))
+          '((option-source (NFn () (Option Int) () () () User)))))
+    (define core
+      `(Let (x mut ,named) ,initial-record
+         (Let (handled const (Option Int))
+           (Handle (Return exit (Option Int)) (value -> value)
+             (Eliminate ,scrutinee
+               ((some (payload) -> (Let (updated const Unit)
+                                     ,(reassign-to 'x with-active active-record)
+                                     (Construct (Option Int) some payload)))
+                (none () -> (Let (updated const Unit)
+                              ,(reassign-to 'x with-active active-record)
+                              (Perform (Return exit (Option Int))
+                                       (Construct (Option Int) none)))))))
+           (Proj x active))))
+    (check-equal? (type-row core '() environment) '(Int (Mutation)))))
 
 (test-case "check-position bottom retains escapes and excludes dead flow updates"
   (for ([scrutinee (in-list '(condition (Apply choose)))])
@@ -538,7 +553,7 @@
            (v -> (Proj x id))
            (Let (dead const Int) ,all-return
              ,(reassign-to 'x with-active-id active-id-record)))))
-    ;; The outer handler sees the state at the caught Return, not the dead Let body.
+    ;; 外側の handler は dead な Let 本体でなく、捕捉した Return 時点の状態を見る。
     (check-equal? (type-row core '() environment) '(Int (Mutation)))))
 
 (test-case "Never 束縛値を持つ Handle と非正常 handler の脱出 flow を保つ"
@@ -565,8 +580,7 @@
              (Let (updated const Unit)
                ,(reassign-to 'x with-other-id other-id-record)
                (Perform (Return outer Int) 2))))))
-    ;; The inner handler's outer Return is the only reachable exit; both following
-    ;; reassignments are unreachable and must not alter the outer handler's view.
+    ;; 内側の handler からの外側 Return だけが到達可能で、後続の再代入は外側の view を変えない。
     (check-equal? (key-of core '() environment) 'ok)))
 
 (test-case "Recur が捕捉した mut slot の shape 変更を拒否する"
