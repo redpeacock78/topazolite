@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
@@ -94,7 +94,7 @@ lexer はこれら 4 種の複合記号を、各 byte の単独記号より先�
 
 ```text
 program  ::= NL* (pitem NL+)* expr NL*
-pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding | expr-stmt
+pitem    ::= typedecl | traitdecl | impldecl | derivedecl | fndecl | binding | reassign | expr-stmt
 typedecl ::= "type" ident "=" ty NL+
            | "type" ident tparams? "=" NL* "|" variant (NL* "|" variant)* NL+
 tparams  ::= "<" ident ("," ident)* ">"
@@ -124,10 +124,11 @@ param    ::= ident ":" ty
 lparams  ::= ε | lparam ("," lparam)*
 lparam   ::= ident [":" ty]
 args     ::= ε | expr ("," expr)*
-block    ::= "{" NL* (sbind NL+)* expr NL* "}"
+block    ::= "{" NL* (sbind NL+)* (expr | reassign) NL* "}"
 binding  ::= bmode ident (":" ty)? "=" expr
            | "let" ident "?=" expr
-sbind    ::= binding | expr-stmt
+sbind    ::= binding | reassign | expr-stmt
+reassign ::= ident "=" expr
 expr-stmt ::= expr
 bmode    ::= "const" | "let" | "let" "mut"
 record   ::= "{" NL* "}"
@@ -304,6 +305,19 @@ AST の `bmode` は `const`、`let`、`mut` のいずれか 1 個の symbol で�
 
 `let` と `mut` の間に改行を置くことは許さない。
 `nl` が 2 語の間にある場合、`mut` は次の束縛の先頭として扱われ、構文エラー `E-SUR-005` になる。
+
+#### 変数の再代入
+
+再代入文 `x = e` は、`let mut x` で導入した変数を更新する文である。
+block の文の並びと program の項目の並びに置けるが、式の位置には置けない。
+parser は行頭の `ident` の次が `=` の場合に再代入文として読む。
+lexer は `=`、`=>`、`?=` を別の token として返すため、無名関数や失敗伝播束縛とは衝突しない。
+右辺は `expr` であり、target の `ident` は束縛を作らない。
+
+`SReassign` の形は `(SReassign s (SName s_x x) e)` である。
+`s_x` は target 名だけの span、`s` は target から右辺の末尾までの再代入文全体の span である。
+block の末尾が再代入文なら、parser は再代入文の span を持つ合成 `SUnit` を末尾式として置く。
+これは `if c { x = 1 }` のように、末尾式を持つ block の値を `Unit` にするためである。
 
 #### `?=` による失敗伝播束縛
 
@@ -760,6 +774,9 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SBind s bmode (SName s_x x) ty e)` は、注釈があれば型注釈付き `Let` へ、無ければ mode-only `Let` へ落とす。
   右辺が仮引数型または Effect row を省略した `Fn`、または型引数欄の無い `Construct` なら宣言型で検査する。
   それ以外は右辺を合成し、その結果へ binding mode の policy を適用する（core-calculus.md §4.2、structural-row.md §4）。
+- `(SReassign s (SName s_x x) e)` は `(Let s_tail ((#:bind %stmt s) const (#:ty Unit s)) (Reassign s (#:var x s_x) e') rest)` へ落とす。
+  `e'` は右辺 `e` の lowering 結果、`s_tail` は再代入文の始まりから後続項の末尾までを覆う。
+  再代入は文なので、その式文の値は `Unit` である。
 - `(SExprStmt s e)` は `(Let s_tail ((#:bind %stmt s) const (#:ty Unit s)) e_stmt rest)` へ落とす。
   `e_stmt` は `e` を文の mode で下ろした項である。
   `s_tail` は式文の始まりから後続の項の末尾までを覆う。

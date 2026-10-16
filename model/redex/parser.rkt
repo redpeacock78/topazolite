@@ -63,7 +63,11 @@
       (kw? ts i 'derive)
       (kw? ts i 'const)
       (kw? ts i 'let)
+      (reassign-ahead? ts i)
       (and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))))
+
+(define (reassign-ahead? ts i)
+  (and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=)))
 
 ;; spec §3.2。pitem の後には NL+ が要る。ここを緩めると、宣言と次の式の
 ;; 境界が消えて曖昧になる。
@@ -80,6 +84,7 @@
     [(kw? ts i 'derive) (parse-derive-decl ts fail i)]
     [(and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))
      (parse-fn-decl ts fail i)]
+    [(reassign-ahead? ts i) (parse-reassign ts fail i)]
     [(or (kw? ts i 'const) (kw? ts i 'let))
      (parse-binding ts fail i)]
     [else (fail-at ts fail i)]))
@@ -593,21 +598,35 @@
   (unless (punct? ts i '|{|) (fail-at ts fail i))
   (define open (span-at ts i))
   (let loop ([j (skip-nl ts (add1 i))] [bindings '()])
-    (if (or (kw? ts j 'const) (kw? ts j 'let))
-        (let-values ([(binding binding-j) (parse-binding ts fail j)])
-          (if (not (eq? (kind-at ts binding-j) 'nl))
-              (fail-at ts fail binding-j)
-              (loop (skip-nl ts binding-j) (cons binding bindings))))
-        (let*-values ([(body body-j) (parse-expr ts fail j)])
-          (define after-body (skip-nl ts body-j))
-          (cond
-            [(punct? ts after-body '|}|)
-             (let-values ([(close close-j) (expect-punct ts fail after-body '|}|)])
-               (values `(SBlock ,(hull open close) ,(reverse bindings) ,body)
-                       close-j))]
-            [(eq? (kind-at ts body-j) 'nl)
-             (loop after-body (cons `(SExprStmt ,(node-span body) ,body) bindings))]
-            [else (fail-at ts fail body-j)])))))
+    (cond
+      [(or (kw? ts j 'const) (kw? ts j 'let))
+       (let-values ([(binding binding-j) (parse-binding ts fail j)])
+         (if (not (eq? (kind-at ts binding-j) 'nl))
+             (fail-at ts fail binding-j)
+             (loop (skip-nl ts binding-j) (cons binding bindings))))]
+      [(reassign-ahead? ts j)
+       (let-values ([(reassign reassign-j) (parse-reassign ts fail j)])
+         (define after-reassign (skip-nl ts reassign-j))
+         (cond
+           [(punct? ts after-reassign '|}|)
+            (let-values ([(close close-j) (expect-punct ts fail after-reassign '|}|)])
+              (values `(SBlock ,(hull open close) ,(reverse (cons reassign bindings))
+                               (SUnit ,(node-span reassign)))
+                      close-j))]
+           [(eq? (kind-at ts reassign-j) 'nl)
+            (loop after-reassign (cons reassign bindings))]
+           [else (fail-at ts fail reassign-j)]))]
+      [else
+       (let*-values ([(body body-j) (parse-expr ts fail j)])
+         (define after-body (skip-nl ts body-j))
+         (cond
+           [(punct? ts after-body '|}|)
+            (let-values ([(close close-j) (expect-punct ts fail after-body '|}|)])
+              (values `(SBlock ,(hull open close) ,(reverse bindings) ,body)
+                      close-j))]
+           [(eq? (kind-at ts body-j) 'nl)
+            (loop after-body (cons `(SExprStmt ,(node-span body) ,body) bindings))]
+           [else (fail-at ts fail body-j)]))])))
 
 (define (parse-bmode ts fail i)
   (cond
@@ -641,6 +660,14 @@
          (values `(SBind ,(hull mode-span (node-span value)) ,mode
                          ,name-node ,annotation ,value)
                  value-j))])))
+
+(define (parse-reassign ts fail i)
+  (let*-values ([(name name-span name-j) (expect-ident ts fail i)]
+                [(_equal equal-j) (expect-punct ts fail name-j '=)]
+                [(value value-j) (parse-expr ts fail equal-j)])
+    (values `(SReassign ,(hull name-span (node-span value))
+                        (SName ,name-span ,name) ,value)
+            value-j)))
 
 ;; BIT-003。ty ::= tyand ("|" tyand)*。どちらの演算子も左結合である。
 (define (parse-ty ts fail i)

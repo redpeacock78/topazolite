@@ -817,6 +817,10 @@
            (values (cons `(STryBind ,s (SName ,s_x ,x) ,(expr value scope))
                          reversed)
                    (set-add scope x))]
+          [`(SReassign ,s (SName ,s_x ,x) ,value)
+           (values (cons `(SReassign ,s (SName ,s_x ,x) ,(expr value scope))
+                         reversed)
+                   scope)]
           [`(SExprStmt ,s ,value)
            (values (cons `(SExprStmt ,s ,(expr value scope)) reversed) scope)]
           [`(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row ,body)
@@ -1029,6 +1033,10 @@
     [`(STryBind ,_ (SName ,s_x ,x) ,bound)
      (define bound-core (lower-sexpr bound env fail))
      (λ (rest) `(TryBind ,s_tail (#:bind ,x ,s_x) ,bound-core ,rest))]
+    [`(SReassign ,s (SName ,s_x ,x) ,value)
+     (define value-core (lower-sexpr value env fail))
+     (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
+                     (Reassign ,s (#:var ,x ,s_x) ,value-core) ,rest))]
     [`(SExprStmt ,s ,value)
      ;; SUR-014b1 spec §5.2。Unit 注釈は文の mode の結果型を固定し、捨てる値の型は制限しない。
      (define value-core (lower-stmt value env fail))

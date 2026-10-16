@@ -91,6 +91,20 @@
  (check-equal? (low "{}") '(Rec (#:span src 0 2) ())))
 
 (test-case
+ "SUR-014c0a: 再代入は Unit 文へ下ろし、構成子の解決は右辺だけに行う"
+ (check-match
+  (low "let mut x = 0\nx = x\n2")
+  `(Let ,_ ((#:bind x ,_) mut) ,_
+     (Let ,_ ((#:bind %stmt ,_) const (#:ty Unit ,_))
+          (Reassign ,_ (#:var x ,_) (#:var x ,_))
+          (#:lit 2 ,_))))
+ (check-match
+  (low "type Flag = | mark\nmark = mark\n0")
+  `(Let ,_ ((#:bind %stmt ,_) const (#:ty Unit ,_))
+        (Reassign ,_ (#:var mark ,_) (Construct ,_ mark (Types)))
+        (#:lit 0 ,_))))
+
+(test-case
  "Fn は引数と返り値の型注釈を持ち、省略した効果行は #:infer へ落ちる"
  ;; parser は Fn の本体を必ず SBlock にするので、Surface の項を手で組む。
  (define r

@@ -928,3 +928,43 @@
  (check-match (p-expr "\"${ {\n let y = x\n y\n} }\"")
               `(SApply ,_ ,_ ((SStr ,_ "") (SBlock ,_ ,_ ,_))))
  (check-equal? (p-code "\"${x\n}\"") "E-SUR-005"))
+
+(test-case
+ "SUR-014c0a: 再代入文を program と block で読む"
+ (check-match (p "let mut x = 0\nx = 1\n2")
+              `(SProgram ,_ ((SBind ,_ mut (SName ,_ x) #:none ,_)
+                             (SReassign ,(== (sp 14 19)) (SName ,(== (sp 14 15)) x) (SInt ,_ 1)))
+                         (SInt ,_ 2)))
+ (check-match (p "fn f() {\n  let mut x = 0\n  x = 1\n  x\n}\n0")
+              `(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_
+                                      (SBlock ,_ ((SBind ,_ mut ,_ ,_ ,_)
+                                                  (SReassign ,_ (SName ,_ x) (SInt ,_ 1)))
+                                                 (SVar ,_ x))))
+                         (SInt ,_ 0))))
+
+(test-case
+ "SUR-014c0a: 再代入だけで終わる block は文 span の SUnit を持つ"
+ (match-define
+   `(SProgram ,_ ((SExprStmt ,_ (SIfSome ,_ ((,_ (SVar ,_ c) ,if-block)) ,_))) ,_)
+   (p "if c { x = 1 }\n0"))
+ (match-define `(SBlock ,_ (,if-reassign) ,if-tail) if-block)
+ (check-match if-reassign `(SReassign ,(== (sp 7 12)) (SName ,_ x) (SInt ,_ 1)))
+ (check-equal? if-tail `(SUnit ,(sp 7 12)))
+ (match-define
+   `(SProgram ,_ ((SExprStmt ,_ (SMatch ,_ ,_ ,arms))) ,_)
+   (p "when c { true => { x = 1 }\n false => 0 }\n0"))
+ (define true-arm (first arms))
+ (define false-arm (second arms))
+ (match-define `(SArm ,_ (SName ,_ true) () block ,true-block) true-arm)
+ (match-define `(SBlock ,_ (,reassign) (SUnit ,unit-span)) true-block)
+ (check-match reassign `(SReassign ,_ (SName ,_ x) (SInt ,_ 1)))
+ (check-equal? unit-span (second reassign))
+ (check-match false-arm `(SArm ,_ (SName ,_ false) () expr (SInt ,_ 0))))
+
+(test-case
+ "SUR-014c0a: 再代入文は式位置ではなく、既存の arrow と ?= は保つ"
+ (for ([src (in-list '("x = = 1" "x => x = 1" "f(x = 1)"))])
+   (check-equal? (p-code src) "E-SUR-005" src))
+ (check-match (p "x => x") `(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr ,_)))
+ (check-match (p "let x ?= some(1)\n0")
+              `(SProgram ,_ ((STryBind ,_ (SName ,_ x) ,_)) (SInt ,_ 0))))

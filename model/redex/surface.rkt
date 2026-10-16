@@ -43,6 +43,7 @@
            (TApp s sname (sty sty ...)))
   (sbind ::= (SBind s sbmode sname sty-or-none sexpr)
              (STryBind s sname sexpr)
+             (SReassign s sname sexpr)
              (SExprStmt s sexpr))
   (sexpr ::= (SInt s natural)
              (SStr s string)
