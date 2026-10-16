@@ -915,7 +915,7 @@
                     (format "registry に無い reason: ~a" entry)))
  (check-equal? (filter (lambda (entry) (eq? (first entry) 'typing))
                        reason-entries)
-               '((typing non-union-eliminate)))
+               '((typing ill-typed) (typing non-union-eliminate)))
  ;; resolve-proposition の第 3 引数として渡る reason は (reject '...) の
  ;; 字面で現れない。走査の対象外なので明示の許容表で確かめる。
  (for ([reason (in-list '(invalid-obligation invalid-proposition))])
