@@ -52,6 +52,91 @@
   (check-equal? (classify map-loop map-environment map-callables)
                 '(Finite structural)))
 
+(define reassign-loop-callables
+  '((reassign-loop-id (NFn ((List Int)) Int () () () User))
+    (reassign-closure-id (NFn () Unit () () () User))))
+
+(define reassign-loop-continuation
+  '(Apply loop (Construct (List Int) nil)))
+
+(define independent-write
+  `(Recur reassign-loop-id loop (xs)
+     (Let (cell mut Int) 0
+       (Eliminate xs
+         ((nil () -> 0)
+          (cons (head tail) ->
+            (Let (ignored Unit) (Reassign cell 1)
+              (Apply loop tail))))))
+     ,reassign-loop-continuation))
+(define nondecreasing-write-rhs
+  `(Recur reassign-loop-id loop (xs)
+     (Let (cell mut Int) 0
+       (Eliminate xs
+         ((nil () -> 0)
+          (cons (head tail) ->
+            (Let (ignored Unit) (Reassign cell (Apply loop xs))
+              (Apply loop tail))))))
+     ,reassign-loop-continuation))
+(define reassigned-alias
+  `(Recur reassign-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Let (m let (List Int)) tail
+            (Let (ignored Unit) (Reassign m xs)
+              (Apply loop m))))))
+     ,reassign-loop-continuation))
+(define shadowed-alias-write
+  `(Recur reassign-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Let (m let (List Int)) tail
+            (Let (ignored Unit)
+              (Let (m mut (List Int)) (Construct (List Int) nil)
+                (Let (updated Unit) (Reassign m (Construct (List Int) nil)) unit))
+              (Apply loop m))))))
+     ,reassign-loop-continuation))
+(define closure-write
+  `(Recur reassign-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Let (m let (List Int)) tail
+            (Let (ignored (NFn () Unit () () () User))
+              (Lam () reassign-closure-id ()
+                (Let (updated Unit) (Reassign m xs) unit))
+              (Apply loop m))))))
+     ,reassign-loop-continuation))
+(define write-after-call
+  `(Recur reassign-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Let (m let (List Int)) tail
+            (Let (ignored Int) (Apply loop m)
+              (Let (updated Unit) (Reassign m xs) 0))))))
+     ,reassign-loop-continuation))
+;; 無関係な slot と shadow された内側の slot への書込みは、外側の減少判定を壊さない。
+(test-case "REC-001: Reassign unrelated to the decreasing alias preserves structural classification"
+  (check-equal? (classify independent-write '() reassign-loop-callables)
+                '(Finite structural)))
+(test-case "REC-001: recursive call in a Reassign RHS still must decrease"
+  (check-equal? (classify nondecreasing-write-rhs '() reassign-loop-callables)
+                'Unknown))
+(test-case "REC-001: reassigned strict alias is not a decreasing argument"
+  (check-equal? (classify reassigned-alias '() reassign-loop-callables)
+                'Unknown))
+(test-case "REC-001: Reassign to a shadowed alias does not poison outer descent"
+  (check-equal? (classify shadowed-alias-write '() reassign-loop-callables)
+                '(Finite structural)))
+(test-case "REC-001: Reassign to a captured alias inside a closure prevents descent"
+  (check-equal? (classify closure-write '() reassign-loop-callables)
+                'Unknown))
+(test-case "REC-001: Reassign after a decreasing call conservatively prevents descent"
+  (check-equal? (classify write-after-call '() reassign-loop-callables)
+                'Unknown))
+
 (define union-list-type '(Union (List Int) String))
 (define union-list-callables
   `((union-list-loop-id (NFn (,union-list-type) Int () () () User))))

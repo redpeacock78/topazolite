@@ -6,6 +6,7 @@
          "schema.rkt"
          "type-equiv.rkt"
          (only-in "type-shape.rkt" proj-borrow-mode)
+         (only-in "region.rkt" core-children)
          "typing.rkt")
 
 (provide classify
@@ -551,6 +552,59 @@
     (for/fold ([remaining variables])
               ([name (in-list names)])
       (set-remove remaining name)))
+  (define (reassigned-in-scope? name core)
+    (define (walk core visible?)
+      (match core
+        [`(Reassign ,target ,value)
+         (or (and visible? (eq? target name))
+             (walk value visible?))]
+        [`(Lam ,_ ,_ (,parameters ...) ,body)
+         (walk body (and visible? (not (memq name parameters))))]
+        [`(RecurVal ,_ ,function (,parameters ...) ,body)
+         (walk body
+               (and visible? (not (memq name (cons function parameters)))))]
+        [`(Let (,bound ,_ ,_) ,value ,body)
+         (or (walk value visible?)
+             (walk body (and visible? (not (eq? name bound)))))]
+        [`(Let (,bound ,_) ,value ,body)
+         (or (walk value visible?)
+             (walk body (and visible? (not (eq? name bound)))))]
+        [`(Eliminate ,scrutinee (,branches ...))
+         (or (walk scrutinee visible?)
+             (for/or ([branch (in-list branches)])
+               (match branch
+                 [`(,_ (,parameters ...) -> ,branch-body)
+                  (walk branch-body
+                        (and visible? (not (memq name parameters))))]
+                 [_ #f])))]
+        [`(UnionEliminate ,scrutinee (,branches ...))
+         (or (walk scrutinee visible?)
+             (for/or ([branch (in-list branches)])
+               (match branch
+                 [`(,_ ,bound -> ,branch-body)
+                  (walk branch-body
+                        (and visible? (not (eq? name bound))))]
+                 [_ #f])))]
+        [`(RecRewrite ,input (,entries ...))
+         (or (walk input visible?)
+             (for/or ([entry (in-list entries)])
+               (match entry
+                 [`(,_ ,bound ,_ ,_ ,_ ,entry-body)
+                  (walk entry-body
+                        (and visible? (not (eq? name bound))))]
+                 [_ #f])))]
+        [`(Handle ,_ (,bound -> ,handler) ,handled)
+         (or (walk handler (and visible? (not (eq? name bound))))
+             (walk handled visible?))]
+        [`(Recur ,_ ,function (,parameters ...) ,recur-body ,continuation)
+         (or (walk recur-body
+                   (and visible?
+                        (not (memq name (cons function parameters)))))
+             (walk continuation
+                   (and visible? (not (eq? name function)))))]
+        [_ (for/or ([child (in-list (core-children core))])
+             (walk child visible?))]))
+    (walk core #t))
   ;; 走査対象の位置にある Move と Forward は構造を保つ透過操作であり、根を辿る。
   ;; これは束縛別名の規則とは別で、どちらを bound にした名前も rebind で継承しない。
   (define (transparent-root core)
@@ -571,6 +625,10 @@
     (define next-strict (set-remove strict name))
     (values (if kept-decomposable? (set-add next-decomposable name) next-decomposable)
             (if kept-strict? (set-add next-strict name) next-strict)))
+  (define (rebind-in-scope name bound body decomposable strict)
+    (if (reassigned-in-scope? name body)
+        (values (set-remove decomposable name) (set-remove strict name))
+        (rebind name bound decomposable strict)))
   (define (walk core decomposable strict target-visible?)
     (match core
       [(or (? integer?) (? string?) 'unit (? symbol?)) #t]
@@ -635,13 +693,13 @@
                 arguments))]
       [`(Let (,name ,_) ,bound ,body)
        (define-values (next-decomposable next-strict)
-         (rebind name bound decomposable strict))
+         (rebind-in-scope name bound body decomposable strict))
        (and (walk bound decomposable strict target-visible?)
             (walk body next-decomposable next-strict
                   (and target-visible? (not (eq? name target)))))]
       [`(Let (,name ,_ ,_) ,bound ,body)
        (define-values (next-decomposable next-strict)
-         (rebind name bound decomposable strict))
+         (rebind-in-scope name bound body decomposable strict))
        (and (walk bound decomposable strict target-visible?)
             (walk body next-decomposable next-strict
                   (and target-visible? (not (eq? name target)))))]
@@ -687,6 +745,8 @@
             [_ #f])))]
       [`(Perform ,_ ,argument)
        (walk argument decomposable strict target-visible?)]
+      [`(Reassign ,_ ,value)
+       (walk value decomposable strict target-visible?)]
       [`(Handle ,_ (,name -> ,handler) ,handled)
        (and (walk handler
                   (set-remove decomposable name)

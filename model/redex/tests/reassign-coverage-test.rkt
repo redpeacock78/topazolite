@@ -6,9 +6,8 @@
          "../lowering.rkt"
          "../diagnostic.rkt")
 
-;; spec §6.7。classify は Reassign の節を持たない。既定節へ落ちるため
-;; Reassign の内側の自己呼出しは構造的下降として見えず Unknown になる。
-;; Assign も同じ扱いである。
+;; spec §6.7。Reassign の RHS も減少判定で走査するが、ここでは自己呼出しに
+;; 根の引数 n を渡すため減少せず、Unknown のままである。
 (define mut-callables '((mut-loop-id (NFn (Int) Int () () () User))))
 
 (check-equal?
