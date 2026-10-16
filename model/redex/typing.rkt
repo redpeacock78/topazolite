@@ -1738,8 +1738,6 @@
   (define place
     (match plain
       [`(MutSlot ,p) p]
-      [(? exact-nonnegative-integer? p)
-       (and (assoc p (config-runtime-values)) p)]
       [_ #f]))
   (if place
       (match (assoc place (config-runtime-values))
@@ -1764,6 +1762,7 @@
   (define permissions
     (for/fold ([joined before]) ([branch (in-list branches)])
       (psi-join joined branch)))
+  ;; Config は到達済みの実行枝だけの flow を検査し、permission は全枝を保つ。
   (define flow-branches
     (if (and (deriving-config?) active-index)
         (list (list-ref branches active-index))
@@ -6298,11 +6297,7 @@
 ;; Ω[p]=Available の root の値だけを live 集合へ入れる。Moved root の H entry
 ;; は R-Move 後も stale value を保持するため、ここへ含めない。
 (define (available-root-values heap states)
-  (for/list ([entry (in-list heap)]
-             #:when (match (assoc (first entry) states)
-                       [(list _ 'Available) #t]
-                       [_ #f]))
-    (second entry)))
+  (map second (available-place-values heap states)))
 
 (define (available-place-values heap states)
   (for/list ([entry (in-list heap)]

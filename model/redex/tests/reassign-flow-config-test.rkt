@@ -138,7 +138,7 @@
     selected-config
     callables 'Unit '(Mutation))))
 
-(test-case "実行した Eliminate 枝の view を後続の欄読み出しへ伝える"
+(test-case "config 専用: 実行中の Eliminate 枝の view を後続の欄読み出しへ伝える"
   (define branch
     `(Eliminate (Construct Bool true)
        ((true () ->
@@ -153,6 +153,8 @@
     `(cfg ,core
           ((0 ,mut-record-value (declared ,mut-record-view)))
           ((0 Available)) () ()))
+  ;; 静的型付けは両枝の flow を合流するが、config は到達済みの枝だけを検査する。
+  (check-equal? (core-type-of core `((0 ,mut-record-view)) '()) 'ill-typed)
   (check-config-trace (config-trace initial) '() 'Bool))
 
 (test-case "Moved heap closure と trace の closure は初期 pin を作らない"
@@ -185,14 +187,39 @@
       `(cfg (MutSlot 0) ((0 1 (declared ,view))) ((0 Available)) () ()))
     (check-false (config-ok? configuration '() view '()))))
 
-(test-case "Return 後の Reassign は config の正常 flow を更新しない"
+(test-case "Return 後の shape 変更は config の正常 flow に入らない"
+  (define old-view '(Record ((id Int imm) (name String imm))))
+  (define changed-view '(Record ((active Bool imm) (name String imm))))
+  (define old-value '(Rec ((name imm "A") (id imm 1))))
+  (define changed-value
+    '(Rec ((name imm "B") (active imm (Construct Bool true)))))
   (define configuration
-    '(cfg (Handle (Return stop Int)
-           (value -> 0)
-           (Let (dead const Int) (Perform (Return stop Int) 1)
-             (Reassign (MutSlot 0) Int 2)))
-          ((0 1 (declared Int))) ((0 Available)) () ()))
+    `(cfg
+      (Handle (Return stop Int)
+        (value -> (Proj (MutSlot 0) id))
+        (Let (dead const Int) (Perform (Return stop Int) 1)
+          (Let (written const Unit)
+            (Reassign (MutSlot 0) ,changed-view ,changed-value)
+            (Proj (MutSlot 0) id))))
+      ((0 ,old-value (declared ,old-view))) ((0 Available)) () ()))
   (check-config-trace (config-trace configuration) '() 'Int))
+
+(test-case "BorrowMutRef 先の Owned place は config 再型付けで再代入できる"
+  (define input-type '(Record ((a Int mut))))
+  (define borrow-ref '(BorrowMutRef 0 () 0))
+  (define core
+    `(Let (snapshot const ,input-type) (Read ,borrow-ref)
+       (Let (written let Unit)
+         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
+         snapshot)))
+  (define heap
+    `((0 (Rec ((a mut 1))) (declared (Owned ,input-type)))))
+  (define initial `(cfg ,core ,heap ((0 Available)) () ()))
+  (define configs (config-trace initial))
+  (check-true (config-ok? initial '() input-type '(Mutation)))
+  (check-config-trace configs '() input-type)
+  (check-equal? (second (assoc 0 (list-ref (last configs) 2)))
+                '(Rec ((a mut 2)))))
 
 (test-case "C0 は mut Let、R-LetMutB、Reassign の view で一致する"
   (define core

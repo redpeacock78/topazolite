@@ -31,12 +31,6 @@
     [(list 'ok value) value]
     [other other]))
 
-(define (typed-type-normal core [callables '()] [environment '()])
-  (match (type-of/raw*+normal core '() callables environment)
-    [(list 'ok (list type _row _table _sigma _renamed normal-type))
-     (list type normal-type)]
-    [_ 'ill-typed]))
-
 (define (key-of core [callables '()] [environment '()])
   (match (result core callables environment)
     [(list 'fail key _node _details ...) key]
