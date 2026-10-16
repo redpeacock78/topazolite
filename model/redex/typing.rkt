@@ -43,6 +43,7 @@
          config-ok?
          config-runtime-borrow-types
          recover-runtime-borrow-types
+         captured-mut-slots
          with-config-typing
          ownleaf-permitted
          unsafe-permitted
@@ -142,6 +143,9 @@
 ;; config-ok? の再型付けでだけ runtime borrow に型を与える。
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
+
+;; config の Eliminate は既に実行状態にある scrutinee の値だけを選択に使う。
+(define config-runtime-values (make-parameter #f))
 
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
 (define (with-config-typing thunk)
@@ -1729,12 +1733,43 @@
                             (flow-state-escapes left)
                             (flow-state-escapes right))))
 
-(define (psi-flow-branch-join fail node before branches)
+(define (config-runtime-value term)
+  (define plain (peel-node term))
+  (define place
+    (match plain
+      [`(MutSlot ,p) p]
+      [(? exact-nonnegative-integer? p)
+       (and (assoc p (config-runtime-values)) p)]
+      [_ #f]))
+  (if place
+      (match (assoc place (config-runtime-values))
+        [(list _ value) value]
+        [_ #f])
+      (and (redex-match? G2m v plain) plain)))
+
+(define (config-selected-branch-index node scrutinee branches)
+  (define value (config-runtime-value scrutinee))
+  (match (list (peel-node node) (peel-node value))
+    [(list `(Eliminate ,_ ,_) `(Construct ,_ ,constructor ,_ ...))
+     (for/first ([branch (in-list branches)] [index (in-naturals)]
+                 #:when (eq? (first branch) constructor))
+       index)]
+    [(list `(UnionEliminate ,_ ,_) `(UnionVal ,_ ,member ,_))
+     (for/first ([branch (in-list branches)] [index (in-naturals)]
+                 #:when (type-equiv? (first branch) member))
+       index)]
+    [_ #f]))
+
+(define (psi-flow-branch-join fail node before branches [active-index #f])
   (define permissions
     (for/fold ([joined before]) ([branch (in-list branches)])
       (psi-join joined branch)))
+  (define flow-branches
+    (if (and (deriving-config?) active-index)
+        (list (list-ref branches active-index))
+        branches))
   (define flow
-    (for/fold ([joined #f]) ([branch (in-list branches)])
+    (for/fold ([joined #f]) ([branch (in-list flow-branches)])
       (if joined
           (flow-join-state fail node joined (psi-flow branch))
           (psi-flow branch))))
@@ -1769,7 +1804,9 @@
              [saved (hash-ref normal name #f)]
              [masked (hash-remove normal name)]
              [next (if (eq? mode 'mut)
-                       (hash-set masked name (flow-entry declared current #f))
+                       (hash-set masked name
+                                 (flow-entry (if (deriving-config?) #f declared)
+                                             current #f))
                        masked)])
         (values (struct-copy psi Ψ
                              [flow (flow-set-normal state next)])
@@ -1797,28 +1834,72 @@
                                         (hash boundary
                                               (flow-state-normal state)))])])))
 
+(define (mut-slots-in core)
+  (let walk ([term (peel-node core)])
+    (match term
+      [`(MutSlot ,(? exact-nonnegative-integer? place)) (set place)]
+      [(? list? parts)
+       (for/fold ([found (set)]) ([part (in-list parts)])
+         (set-union found (walk part)))]
+      [_ (set)])))
+
+;; MutSlot は名前ではなく place 識別子なので、closure body の binder は
+;; 捕捉走査で隠さない。Reassign の target も同じ走査に含める。
+(define (captured-mut-slots value)
+  (let walk ([term (peel-node value)])
+    (match term
+      [`(Lam ,_ ,_ ,_ ,body) (mut-slots-in body)]
+      [`(RecurVal ,_ ,_ ,_ ,body) (mut-slots-in body)]
+      [`(RegionLam (,_ ...) ,body) (mut-slots-in body)]
+      [(? list? parts)
+       (for/fold ([found (set)]) ([part (in-list parts)])
+         (set-union found (walk part)))]
+      [_ (set)])))
+
+(define (flow-pin-mut-slots Ψ places)
+  (define state (psi-flow Ψ))
+  (if (eq? (flow-state-normal state) 'bottom)
+      Ψ
+      (let ([normal
+             (for/fold ([entries (flow-state-normal state)])
+                       ([place (in-set places)])
+               (define key `(MutSlot ,place))
+               (define entry (hash-ref entries key #f))
+               (if entry
+                   (let ([pins (or (flow-entry-pins entry) (set))])
+                     (hash-set entries key
+                               (flow-entry (flow-entry-declared entry)
+                                           (flow-entry-current entry)
+                                           (set-add pins
+                                                    (flow-entry-current entry)))))
+                   entries))])
+        (struct-copy psi Ψ [flow (flow-set-normal state normal)]))))
+
 (define (flow-pin-captures Ψ body environment [bound-names '()])
   (define state (psi-flow Ψ))
   (if (eq? (flow-state-normal state) 'bottom)
       Ψ
-      (let* ([free (set-subtract (core-free-vars body)
-                                 (list->set bound-names))]
-             [normal
-              (for/fold ([entries (flow-state-normal state)])
-                        ([name (in-set free)]
-                         #:when (eq? (binding-mode-of environment name) 'mut))
-                (define entry
-                  (hash-ref entries name
-                            (lambda ()
-                              (define type (lookup environment name))
-                              (flow-entry type type #f))))
-                (define pins (or (flow-entry-pins entry) (set)))
-                (hash-set entries name
-                          (flow-entry (flow-entry-declared entry)
-                                      (flow-entry-current entry)
-                                      (set-add pins (flow-entry-current entry)))))])
-        (struct-copy psi Ψ
-                     [flow (flow-set-normal state normal)]))))
+      (if (deriving-config?)
+          (flow-pin-mut-slots Ψ (mut-slots-in body))
+          (let* ([free (set-subtract (core-free-vars body)
+                                    (list->set bound-names))]
+                 [normal
+                  (for/fold ([entries (flow-state-normal state)])
+                            ([name (in-set free)]
+                             #:when (eq? (binding-mode-of environment name) 'mut))
+                    (define entry
+                      (hash-ref entries name
+                                (lambda ()
+                                  (define type (lookup environment name))
+                                  (flow-entry type type #f))))
+                    (define pins (or (flow-entry-pins entry) (set)))
+                    (hash-set entries name
+                              (flow-entry (flow-entry-declared entry)
+                                          (flow-entry-current entry)
+                                          (set-add pins
+                                                   (flow-entry-current entry)))))])
+            (struct-copy psi Ψ
+                         [flow (flow-set-normal state normal)])))))
 
 (define (flow-check-backedge fail node entry output)
   ;; 通常の Recur では捕捉した外側の mut slot は pin され、Let の出口で局所 slot は除かれる。
@@ -1956,7 +2037,10 @@
                         places callables fail compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)))
+                          (map second branch-results)
+                          (and (deriving-config?)
+                               (config-selected-branch-index
+                                node scrutinee branches))))
   (define unified
     (parameterize ([merge-position
                     (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
@@ -2010,7 +2094,10 @@
                         places callables fail type-compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)))
+                          (map second branch-results)
+                          (and (deriving-config?)
+                               (config-selected-branch-index
+                                node scrutinee branches))))
   (list result-type
         (rows-union (cons (second scrutinee-result)
                           (map first branch-results)))
@@ -2078,7 +2165,10 @@
                         compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)))
+                          (map second branch-results)
+                          (and (deriving-config?)
+                               (config-selected-branch-index
+                                node scrutinee branches))))
   ;; 分岐ごとに別の α を持つ借用を 1 本へ合流する。合流しなかったときは
   ;; expected を返し、分岐 0 の型を根拠なく選ばない。
   (define unified
@@ -2429,7 +2519,10 @@
                    type-compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-rows)))
+                          (map second branch-rows)
+                          (and (deriving-config?)
+                               (config-selected-branch-index
+                                node scrutinee branches))))
   (list result-type
         (rows-union
          (cons (second scrutinee-result)
@@ -2958,7 +3051,8 @@
 ;; 制約違反として報告されることはない。type-of/raw* と同じ契約である。
 (define (check-as/boolean core expected environment places callables
                           [Λ (empty-region-ctx)]
-                          #:compatible? [compatible? type-compatible?])
+                          #:compatible? [compatible? type-compatible?]
+                          #:initial-psi [initial-psi (empty-psi)])
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
@@ -2989,7 +3083,7 @@
               (parameterize ([current-region-relation relation])
                 ;; 段 1。
                 (match-define (list row Ψ)
-                  (check-as renamed expected Λ (empty-psi)
+                  (check-as renamed expected Λ initial-psi
                             environment places callables fail
                             compatible?))
                 ;; 段 2。
@@ -3413,25 +3507,41 @@
        (if flow-entry*
            (flow-entry-declared flow-entry*)
            (and (not (deriving-config?)) τ_slot)))
-     (unless (reassign-narrowing? τ_value τ_flow)
+     ;; config の Core には BorrowMutRef 先の Owned place を MutSlot で更新する形もある。
+     ;; Owned wrapper は保存用であり、値を検査する flow view ではない。
+     (define owned-place-view?
+       (and (deriving-config?)
+            (match target
+              [`(MutSlot ,place)
+               (match (assoc place (declared-place-types))
+                 [(list _ `(Owned ,_)) #t]
+                 [_ #f])]
+              [_ #f])))
+     (define τ_flow-view
+       (if owned-place-view?
+           (match τ_flow [`(Owned ,payload) payload] [_ τ_flow])
+           τ_flow))
+     (unless (reassign-narrowing? τ_value τ_flow-view)
        (fail 'reassign-type-mismatch core τ_flow τ_value))
      (when (and declared
                 (not (tag-compat? τ_flow declared
                                   (current-Γ-pc0) (current-region-relation))))
        (fail 'reassign-type-mismatch core declared τ_flow))
-     (when (not (mut-slot-type-supported? τ_flow))
-       (fail 'mut-binding-unsupported-type core τ_flow))
-     (unless (storage-ok? τ_flow)
-       (fail 'mutable-callable-storage-requires-partial core τ_flow))
+     (unless owned-place-view?
+       (when (not (mut-slot-type-supported? τ_flow-view))
+         (fail 'mut-binding-unsupported-type core τ_flow-view)))
+     (unless (storage-ok? τ_flow-view)
+       (fail 'mutable-callable-storage-requires-partial core τ_flow-view))
      (define pins (and flow-entry* (flow-entry-pins flow-entry*)))
      (when (and pins
                 (for/or ([pin (in-set pins)])
                   (not (type-equiv? τ_flow pin))))
        (fail 'reassign-type-mismatch core pins τ_flow))
      (define next-entry
-       (flow-entry declared τ_flow pins))
+       (flow-entry declared τ_flow-view pins))
      (list 'Unit (rows-union (list ε_value '(Mutation)))
-           (if (hash? current-state)
+           (if (and (hash? current-state)
+                    (or flow-entry* (not (deriving-config?))))
                (flow-update Ψ_1 key next-entry)
                Ψ_1))]))
 
@@ -4961,7 +5071,12 @@
            (third result))]
 
     [`(MutSlot ,place)
-     (define type (lookup places place))
+     (define state (flow-state-normal (psi-flow Ψ)))
+     (define entry
+       (and (hash? state) (hash-ref state `(MutSlot ,place) #f)))
+     (define type
+       (or (and entry (flow-entry-current entry))
+           (lookup places place)))
      (unless type (fail 'unknown-place core))
      (list type '() Ψ)]
 
@@ -6111,16 +6226,24 @@
 (define (core-check-row core-in places callables expected [environment '()]
                         [Λ (empty-region-ctx)]
                         #:declared [declared '()]
-                        #:states [states #f])
+                        #:states [states #f]
+                        #:heap [heap #f])
   ;; span.md §7.3: core-type-of と同じく、既存の型走査へ渡す前に投影する。
   (require-expanded! 'core-check-row core-in)
   (define core (erase-core core-in))
+  (define initial-psi
+    (and heap states
+         (config-initial-psi core heap states places declared)))
+  (define live-values
+    (and heap states (available-place-values heap states)))
   (and (not (entry-violation core places callables environment))
        (type? expected)
        (let ([row
               (parameterize ([declared-place-types declared]
-                             [forward-config-states states])
-                (check-as/boolean core-in expected environment places callables Λ))])
+                             [forward-config-states states]
+                             [config-runtime-values live-values])
+                (check-as/boolean core-in expected environment places callables Λ
+                                  #:initial-psi (or initial-psi (empty-psi))))])
          (and row
               (not (forward-invalid-node
                     core-in callables
@@ -6180,6 +6303,51 @@
                        [(list _ 'Available) #t]
                        [_ #f]))
     (second entry)))
+
+(define (available-place-values heap states)
+  (for/list ([entry (in-list heap)]
+             #:when (match (assoc (first entry) states)
+                       [(list _ 'Available) #t]
+                       [_ #f]))
+    (list (first entry) (second entry))))
+
+(define (config-owned-place? place declared)
+  ;; Owned の declared metadata は R-LetOwnedB 由来で、mut binder ではない。
+  (match (assoc place declared)
+    [(list _ `(Owned ,_)) #t]
+    [_ #f]))
+
+(define (config-initial-psi core heap states places [declared '()])
+  (define values (available-root-values heap states))
+  (define captured
+    (for/fold ([found (set)]) ([value (in-list values)])
+      (set-union found (captured-mut-slots value))))
+  (define places-in-scope
+    (for/fold ([found (mut-slots-in core)]) ([value (in-list values)])
+      (set-union found (mut-slots-in value))))
+  (define normal
+    (for/fold ([entries (hash)]) ([place (in-set places-in-scope)]
+                                 #:when (and (assoc place places)
+                                             (not (config-owned-place?
+                                                   place declared))))
+      (define view (second (assoc place places)))
+      (hash-set entries `(MutSlot ,place)
+                (flow-entry #f view
+                            (and (set-member? captured place)
+                                 (set view))))))
+  (psi (set) (set) (set) (flow-state normal (hash))))
+
+(define (config-mut-views-supported? core heap states places declared)
+  (define live-places
+    (for/fold ([found (mut-slots-in core)])
+              ([value (in-list (available-root-values heap states))])
+      (set-union found (mut-slots-in value))))
+  (for/and ([place (in-set live-places)])
+    (if (config-owned-place? place declared)
+        #t
+        (match (assoc place places)
+          [(list _ view) (mut-slot-type-supported? view)]
+          [_ #f]))))
 
 ;; θ の (obs v) の payload を出現順に返す。観測は履歴であるが、観測した値
 ;; そのものは回収前の live な値として残るため、token 検査の対象に含める。
@@ -6366,10 +6534,9 @@
                  (unique-table? token-states)
                  (trace-paths-ok? trace)
                  ;; G5 derives Ξ from each heap value rather than assuming Res.
-                 (let ([places
-                        (derive-places
-                         heap callables
-                         #:declared (config-declared-types configuration))])
+                 (let* ([declared-types (config-declared-types configuration)]
+                        [places (derive-places heap callables
+                                               #:declared declared-types)])
                    (and
                     places
                     (let ([borrow-types
@@ -6377,55 +6544,62 @@
                             core heap states places)])
                       (and
                        borrow-types
-                       (parameterize ([config-runtime-borrow-types borrow-types])
-                         (and
-                          (for/and ([entry (in-list heap)])
-                            (define declared
-                              (second (assoc (first entry) places)))
-                            (define declared-entry
-                              (assoc (first entry)
-                                     (config-declared-types configuration)))
-                            (define declared-root-owned?
-                              (and declared-entry
-                                   (owned-type? (second declared-entry))))
-                            (define value (second entry))
-                            (define expected-value-type
-                              (if (or declared-root-owned?
-                                      (not declared-entry))
-                                  `(Owned ,declared)
-                                  declared))
-                            (define compatible?
-                              (if (or declared-root-owned?
-                                      (and (not declared-entry)
-                                           (contains-owned-leaf? value)))
-                                  owned-lift-compatible?
-                                  type-compatible?))
-                            ;; root Owned の place だけ payload を Owned へ持ち上げる。
-                            ;; 内側に Owned leaf を持つ Record は宣言型の row のまま
-                            ;; 照合し、欄の互換性と token 検査をそれぞれ保つ。
-                            (define value-row
-                              (parameterize
-                                  ([declared-place-types
-                                   (config-declared-types configuration)]
-                                   [forward-config-states states])
-                                (check-as/boolean value
-                                                  expected-value-type
-                                                  '()
-                                                  places
-                                                  callables
-                                                  #:compatible? compatible?)))
-                            (and value-row (null? value-row)))
-                          (let ([actual-row
-                                 (parameterize
-                                     ([declared-place-types
-                                       (config-declared-types configuration)]
+                       (let ([initial-psi
+                              (config-initial-psi
+                               core heap states places declared-types)]
+                             [live-values
+                              (available-place-values heap states)])
+                         (parameterize ([config-runtime-borrow-types borrow-types]
+                                        [config-runtime-values live-values])
+                           (and
+                            (config-mut-views-supported?
+                             core heap states places declared-types)
+                            (for/and ([entry (in-list heap)])
+                              (define declared
+                                (second (assoc (first entry) places)))
+                              (define declared-entry
+                                (assoc (first entry) declared-types))
+                              (define declared-root-owned?
+                                (and declared-entry
+                                     (owned-type? (second declared-entry))))
+                              (define value (second entry))
+                              (define expected-value-type
+                                (if (or declared-root-owned?
+                                        (not declared-entry))
+                                    `(Owned ,declared)
+                                    declared))
+                              (define compatible?
+                                (if (or declared-root-owned?
+                                        (and (not declared-entry)
+                                             (contains-owned-leaf? value)))
+                                    owned-lift-compatible?
+                                    type-compatible?))
+                              ;; root Owned の place だけ payload を Owned へ持ち上げる。
+                              ;; 内側に Owned leaf を持つ Record は宣言型の row のまま
+                              ;; 照合し、欄の互換性と token 検査をそれぞれ保つ。
+                              (define value-row
+                                (parameterize
+                                    ([declared-place-types declared-types]
+                                     [forward-config-states states])
+                                  (check-as/boolean value
+                                                    expected-value-type
+                                                    '()
+                                                    places
+                                                    callables
+                                                    #:compatible? compatible?
+                                                    #:initial-psi initial-psi)))
+                              (and value-row (null? value-row)))
+                            (let ([actual-row
+                                   (parameterize
+                                     ([declared-place-types declared-types]
                                       [forward-config-states states])
-                                   (check-as/boolean core expected '()
-                                                     places callables))])
-                            (and actual-row
-                                 (row=? actual-row row)
-                                 (not (forward-invalid-node core callables
-                                                            'config states))
+                                     (check-as/boolean core expected '()
+                                                       places callables
+                                                       #:initial-psi initial-psi))])
+                              (and actual-row
+                                   (row=? actual-row row)
+                                   (not (forward-invalid-node core callables
+                                                              'config states))
                                  ;; 識別の無い resource は producer の直下に限る。
                                  (resource-producer-positions-ok? core)
                                  (andmap (lambda (entry)
@@ -6477,7 +6651,7 @@
                                         [(Available Moved) (and (= s 1) (= o 0))]
                                         [(Observed) (and (= s 0) (= o 1))]
                                         [(Dropped) (and (= s 0) (<= o 1))]
-                                        [else #f])))))))))))))]
+                                        [else #f]))))))))))))))]
            [_ #f])))))
 
 (module+ test

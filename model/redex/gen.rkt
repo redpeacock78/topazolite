@@ -760,7 +760,8 @@
                             callables
                             type
                             #:declared (config-declared-types configuration)
-                            #:states (config-states configuration)))))))
+                            #:states (config-states configuration)
+                            #:heap (config-heap configuration)))))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))
