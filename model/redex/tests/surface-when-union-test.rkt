@@ -188,22 +188,46 @@
                   `(#:span src ,(sub1 end) ,end))))
 
 (test-case "Union の constructor group 内の落ち抜けを when の E-RET-005 へ伝える"
+  (for ([scrutinee (in-list '("value" "g()"))])
+    (define variable? (equal? scrutinee "value"))
+    (define source
+      (string-append
+       (if variable?
+           ""
+           "fn g() -> Option<Int> | String { return \"s\" }\n")
+       "fn choose(" (if variable? "value: Option<Int> | String" "")
+       ") -> Int {\n"
+       "  let result = when " scrutinee " {\n"
+       "    some x => { return 0 }\n"
+       "    none => { () }\n"
+       "    (s: String) => { return 1 }\n"
+       "  }\n  return result\n}\n"
+       (if variable? "choose(none)" "choose()")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-RET-005")
+      (match-define `(#:span src ,_ ,end)
+        (source-span source "none => { () }"))
+      (check-equal? (diagnostic-primary-span result)
+                    `(#:span src ,(sub1 end) ,end)))))
+
+(test-case "constructor arm 内の文位置 when の落ち抜けは外側へ漏れない"
   (define source
     (string-append
-     "fn choose(value: Option<Int> | String) -> Int {\n"
+     "fn f(value: Option<Int> | String, b: Bool) -> Int {\n"
      "  let result = when value {\n"
-     "    some x => { return 0 }\n"
-     "    none => { () }\n"
-     "    (s: String) => { return 1 }\n"
-     "  }\n  return result\n}\nchoose(none)"))
+     "    some x => {\n"
+     "      when b { true => { 1 }\n false => { 2 } }\n"
+     "      return x\n"
+     "    }\n"
+     "    none => { return 0 }\n"
+     "    (s: String) => { return 3 }\n"
+     "  }\n  return result\n}\n"
+     "let option: Option<Int> = some(7)\nf(option, false)"))
   (define result (compile source))
-  (check-true (diagnostic? result))
-  (when (diagnostic? result)
-    (check-equal? (diagnostic-id result) "E-RET-005")
-    (match-define `(#:span src ,_ ,end)
-      (source-span source "none => { () }"))
-    (check-equal? (diagnostic-primary-span result)
-                  `(#:span src ,(sub1 end) ,end))))
+  (check-compiled result)
+  (when (compiled? result) (check-equal? (run-value result) 7)))
 
 (test-case "Option 成分と String 成分の constructor と member を混在できる"
   (define source

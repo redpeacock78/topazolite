@@ -215,48 +215,52 @@
         [other (fail-check (format "unexpected Union value: ~s" other))]))))
 
 (test-case "入れ子 when の落ち抜け記録は境界を越えない"
-  (define nested-statement
-    (compile
-     (string-append
-      "fn f(a: Bool, b: Bool) -> Int {\n"
-      "  let result = when a {\n"
-      "    true => {\n"
-      "      when b {\n"
-      "        true => { 1 }\n"
-      "        false => { 2 }\n"
-      "      }\n"
-      "      return 7\n"
-      "    }\n"
-      "    false => { return 9 }\n"
-      "  }\n  return result\n}\nf(true, false)")))
-  (check-true (compiled? nested-statement)
-              (if (diagnostic? nested-statement)
-                  (format "~a: ~a" (diagnostic-id nested-statement)
-                          (diagnostic-message nested-statement))
-                  (format "unexpected result: ~s" nested-statement)))
-  (when (compiled? nested-statement)
-    (check-equal? (run-value nested-statement) 7))
-  (define nested-expression
-    (compile
-     (string-append
-      "fn f(a: Bool, b: Bool) -> Int {\n"
-      "  when a {\n"
-      "    true => {\n"
-      "      let inner = when b {\n"
-      "        true => { return 1 }\n"
-      "        false => { return 2 }\n"
-      "      }\n"
-      "      ()\n"
-      "    }\n"
-      "    false => { return 3 }\n"
-      "  }\n  return 0\n}\nf(true, false)")))
-  (check-true (compiled? nested-expression)
-              (if (diagnostic? nested-expression)
-                  (format "~a: ~a" (diagnostic-id nested-expression)
-                          (diagnostic-message nested-expression))
-                  (format "unexpected result: ~s" nested-expression)))
-  (when (compiled? nested-expression)
-    (check-equal? (run-value nested-expression) 0)))
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define nested-statement
+      (compile
+       (string-append
+        (if variable? "" "fn g() -> Bool { return true }\n")
+        "fn f(" (if variable? "a: Bool, " "") "b: Bool) -> Int {\n"
+        "  let result = when " scrutinee " {\n"
+        "    true => {\n"
+        "      when b {\n"
+        "        true => { 1 }\n"
+        "        false => { 2 }\n"
+        "      }\n"
+        "      return 7\n"
+        "    }\n"
+        "    false => { return 9 }\n"
+        "  }\n  return result\n}\n"
+        (if variable? "f(true, false)" "f(false)"))))
+    (check-true (compiled? nested-statement)
+                (if (diagnostic? nested-statement)
+                    (format "~a: ~a" (diagnostic-id nested-statement)
+                            (diagnostic-message nested-statement))
+                    (format "unexpected result: ~s" nested-statement)))
+    (when (compiled? nested-statement)
+      (check-equal? (run-value nested-statement) 7))
+    (define nested-expression
+      (compile
+       (string-append
+        (if variable? "" "fn g() -> Bool { return true }\n")
+        "fn f(" (if variable? "a: Bool, " "") "b: Bool) -> Unit {\n"
+        "  let result = when " scrutinee " {\n"
+        "    true => {\n"
+        "      let inner = when b {\n"
+        "        true => { return 1 }\n"
+        "        false => { return 2 }\n"
+        "      }\n"
+        "      ()\n"
+        "    }\n"
+        "    false => { () }\n"
+        "  }\n  ()\n}\n"
+        (if variable? "f(true, false)" "f(false)"))))
+    (check-true (compiled? nested-expression)
+                (if (diagnostic? nested-expression)
+                    (format "~a: ~a" (diagnostic-id nested-expression)
+                            (diagnostic-message nested-expression))
+                    (format "unexpected result: ~s" nested-expression)))))
 
 (test-case "=> {} と => { a: 1 } は when の record 値を返す"
   (for ([source-and-type
