@@ -3798,7 +3798,7 @@
          (unless (storage-ok? slot-type)
            (reject s 'mutable-callable-storage-requires-partial slot-type))
          (propagate-context-never
-          (judgment `(Reassign ,s ,raw-name ,slot-type ,value-core)
+          (judgment `(Reassign ,s ,raw-name (#:ty ,slot-type ,s) ,value-core)
                     'Unit
                     (row-union (judgment-row result) '(Mutation)))
           (list result))]

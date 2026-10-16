@@ -2,9 +2,11 @@
 
 (require rackunit
          racket/match
+         redex/reduction-semantics
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../span-core.rkt"
          "../type-equiv.rkt"
          "../typing.rkt")
 
@@ -144,6 +146,20 @@
   (match-define (list core _ _)
     (accepted `(Let (x mut ,IS) 1 (Reassign x "s"))))
   (check-equal? (count-nodes 'UnionInject core) 2))
+
+(test-case "elaborate の Reassign は spanful Core の型欄を持つ"
+  (for ([source (in-list
+                 (list '(Let (x mut Int) 1 (Reassign x 2))
+                       `(Let (x mut ,IS) 1 (Reassign x "s"))))]
+        [expected-type (in-list (list 'Int IS))])
+    (match (elab/tag source)
+      [(list core _ _ _)
+       (check-true (redex-match? G2+ c core) (format "source: ~s\ncore: ~s" source core))
+       (match core
+         [`(Let ,_ ,_ ,_ (Reassign ,_ ,_ (#:ty ,actual-type ,_) ,_))
+          (check-equal? actual-type expected-type (format "source: ~s" source))]
+         [_ (fail-check (format "Reassign shape missing from ~s" core))])]
+      [other (fail-check (format "elaborate rejected ~s: ~s" source other))])))
 
 (test-case "Reassign は Union の右辺を分解しない"
   (check-equal?
