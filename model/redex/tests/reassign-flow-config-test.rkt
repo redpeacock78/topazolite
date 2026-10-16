@@ -121,7 +121,7 @@
    (config-ok? (closure-config core noncapturing-closure 'Available)
                closure-callables 'Unit '(Mutation))))
 
-(test-case "未実行の Eliminate 枝にある closure は view を pin しない"
+(test-case "未実行枝の closure と view 変更の Core は静的型付けと config 再型付けが拒否する"
   (define callables `((f ,partial-closure-type)))
   (define branch-closure
     `(Eliminate (Construct Bool false)
@@ -133,12 +133,14 @@
        (Reassign (MutSlot 0) ,changed-record-view ,changed-record-value)))
   (define selected-config
     (closure-config core noncapturing-closure 'Available))
-  (check-true
-   (config-ok?
-    selected-config
-    callables 'Unit '(Mutation))))
+  (check-equal?
+   (match (type-of/raw core `((0 ,mut-record-view)) callables)
+     [(list 'fail key _ _) key]
+     [_ 'ok])
+   'reassign-type-mismatch)
+  (check-false (config-ok? selected-config callables 'Unit '(Mutation))))
 
-(test-case "config 専用: 実行中の Eliminate 枝の view を後続の欄読み出しへ伝える"
+(test-case "分岐の view 不一致は静的型付けと config 再型付けの両方が拒否する"
   (define branch
     `(Eliminate (Construct Bool true)
        ((true () ->
@@ -153,9 +155,12 @@
     `(cfg ,core
           ((0 ,mut-record-value (declared ,mut-record-view)))
           ((0 Available)) () ()))
-  ;; 静的型付けは両枝の flow を合流するが、config は到達済みの枝だけを検査する。
-  (check-equal? (core-type-of core `((0 ,mut-record-view)) '()) 'ill-typed)
-  (check-config-trace (config-trace initial) '() 'Bool))
+  (check-equal?
+   (match (type-of/raw core `((0 ,mut-record-view)) '())
+     [(list 'fail key _ _) key]
+     [_ 'ok])
+   'reassign-type-mismatch)
+  (check-false (config-ok? initial '() 'Bool '(Mutation))))
 
 (test-case "Moved heap closure と trace の closure は初期 pin を作らない"
   (check-true

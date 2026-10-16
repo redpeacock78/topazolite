@@ -144,9 +144,6 @@
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
 
-;; config の Eliminate は既に実行状態にある scrutinee の値だけを選択に使う。
-(define config-runtime-values (make-parameter #f))
-
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
 (define (with-config-typing thunk)
   (parameterize ([deriving-config? #t])
@@ -1733,42 +1730,12 @@
                             (flow-state-escapes left)
                             (flow-state-escapes right))))
 
-(define (config-runtime-value term)
-  (define plain (peel-node term))
-  (define place
-    (match plain
-      [`(MutSlot ,p) p]
-      [_ #f]))
-  (if place
-      (match (assoc place (config-runtime-values))
-        [(list _ value) value]
-        [_ #f])
-      (and (redex-match? G2m v plain) plain)))
-
-(define (config-selected-branch-index node scrutinee branches)
-  (define value (config-runtime-value scrutinee))
-  (match (list (peel-node node) (peel-node value))
-    [(list `(Eliminate ,_ ,_) `(Construct ,_ ,constructor ,_ ...))
-     (for/first ([branch (in-list branches)] [index (in-naturals)]
-                 #:when (eq? (first branch) constructor))
-       index)]
-    [(list `(UnionEliminate ,_ ,_) `(UnionVal ,_ ,member ,_))
-     (for/first ([branch (in-list branches)] [index (in-naturals)]
-                 #:when (type-equiv? (first branch) member))
-       index)]
-    [_ #f]))
-
-(define (psi-flow-branch-join fail node before branches [active-index #f])
+(define (psi-flow-branch-join fail node before branches)
   (define permissions
     (for/fold ([joined before]) ([branch (in-list branches)])
       (psi-join joined branch)))
-  ;; Config は到達済みの実行枝だけの flow を検査し、permission は全枝を保つ。
-  (define flow-branches
-    (if (and (deriving-config?) active-index)
-        (list (list-ref branches active-index))
-        branches))
   (define flow
-    (for/fold ([joined #f]) ([branch (in-list flow-branches)])
+    (for/fold ([joined #f]) ([branch (in-list branches)])
       (if joined
           (flow-join-state fail node joined (psi-flow branch))
           (psi-flow branch))))
@@ -2036,10 +2003,7 @@
                         places callables fail compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)
-                          (and (deriving-config?)
-                               (config-selected-branch-index
-                                node scrutinee branches))))
+                          (map second branch-results)))
   (define unified
     (parameterize ([merge-position
                     (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
@@ -2093,10 +2057,7 @@
                         places callables fail type-compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)
-                          (and (deriving-config?)
-                               (config-selected-branch-index
-                                node scrutinee branches))))
+                          (map second branch-results)))
   (list result-type
         (rows-union (cons (second scrutinee-result)
                           (map first branch-results)))
@@ -2164,10 +2125,7 @@
                         compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-results)
-                          (and (deriving-config?)
-                               (config-selected-branch-index
-                                node scrutinee branches))))
+                          (map second branch-results)))
   ;; 分岐ごとに別の α を持つ借用を 1 本へ合流する。合流しなかったときは
   ;; expected を返し、分岐 0 の型を根拠なく選ばない。
   (define unified
@@ -2518,10 +2476,7 @@
                    type-compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
-                          (map second branch-rows)
-                          (and (deriving-config?)
-                               (config-selected-branch-index
-                                node scrutinee branches))))
+                          (map second branch-rows)))
   (list result-type
         (rows-union
          (cons (second scrutinee-result)
@@ -6233,14 +6188,11 @@
   (define initial-psi
     (and heap states
          (config-initial-psi core heap states places declared)))
-  (define live-values
-    (and heap states (available-place-values heap states)))
   (and (not (entry-violation core places callables environment))
        (type? expected)
        (let ([row
               (parameterize ([declared-place-types declared]
-                             [forward-config-states states]
-                             [config-runtime-values live-values])
+                             [forward-config-states states])
                 (check-as/boolean core-in expected environment places callables Λ
                                   #:initial-psi (or initial-psi (empty-psi))))])
          (and row
@@ -6541,11 +6493,8 @@
                        borrow-types
                        (let ([initial-psi
                               (config-initial-psi
-                               core heap states places declared-types)]
-                             [live-values
-                              (available-place-values heap states)])
-                         (parameterize ([config-runtime-borrow-types borrow-types]
-                                        [config-runtime-values live-values])
+                               core heap states places declared-types)])
+                         (parameterize ([config-runtime-borrow-types borrow-types])
                            (and
                             (config-mut-views-supported?
                              core heap states places declared-types)
