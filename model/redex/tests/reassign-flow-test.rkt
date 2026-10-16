@@ -12,6 +12,8 @@
 (define with-borrowed
   '(Record ((borrowed (Borrowed Int 0) imm opt) (name String imm))))
 (define union-type '(Union Int String))
+(define rawptr-int
+  '(RawPtr Int Mut NonNull (Align 1) (AddrSpace native) (Prov owned)))
 
 (define initial-record '(Rec ((name imm "A") (id imm 1))))
 (define active-record '(Rec ((name imm "B") (active imm 2))))
@@ -25,10 +27,31 @@
     [(list 'ok value) value]
     [other other]))
 
+(define (typed-type-normal core [callables '()] [environment '()])
+  (match (type-of/raw*+normal core '() callables environment)
+    [(list 'ok (list type _row _table _sigma _renamed normal-type))
+     (list type normal-type)]
+    [_ 'ill-typed]))
+
 (define (key-of core [callables '()] [environment '()])
   (match (result core callables environment)
     [(list 'fail key _node _details ...) key]
     [(list 'ok _) 'ok]))
+
+(define (owned-argument-key body result-type)
+  (define signature
+    `(NFn ((Owned Int)) ,result-type () (Own Unsafe) () User))
+  (define core
+    `(Lam User owned-check (raw)
+       (Handle (Return boundary ,result-type)
+         (return-value -> return-value)
+         (Scope () (Let (x let (Owned Int)) raw ,body)))))
+  (define ir (build-region-ir core))
+  (match (type-of/raw (annotate-regions core ir)
+                      '() `((owned-check ,signature)) '()
+                      (region-ctx ir '() (hash) (hash)))
+    [(list 'ok _) 'ok]
+    [(list 'fail key _node _details ...) key]))
 
 (define (reassign-to target type value)
   `(Reassign ,target ,type ,value))
@@ -82,6 +105,24 @@
            0))))
   (check-equal? (key-of capture `((f ,closure-type)))
                 'reassign-type-mismatch))
+
+(test-case "mut binder の借用と Move は拒否し、Owned 引数なら許す"
+  (for ([expression (in-list '((Read (Borrow x))
+                               (Read (BorrowMut x))
+                               (Unsafe (AddressOf (BorrowMut x)))))])
+    (check-equal? (key-of `(Let (x mut Int) 1 ,expression))
+                  'borrow-unknown-owner-region))
+  (check-equal? (key-of '(Let (x mut Int) 1 (Move x))) 'move-non-owned)
+  (check-equal? (owned-argument-key '(Read (Borrow x)) 'Int) 'ok)
+  (check-equal? (owned-argument-key '(Read (BorrowMut x)) 'Int) 'ok)
+  (check-equal?
+   (owned-argument-key
+    `(Unsafe (Let (pointer mut ,rawptr-int)
+               (AddressOf (BorrowMut x))
+               unit))
+    'Unit)
+   'ok)
+  (check-equal? (owned-argument-key '(Drop (Move x)) 'Unit) 'ok))
 
 (test-case "flow branch join uses only live branch exits"
   (define (eliminate scrutinee left-type left-value right-type right-value)
@@ -141,6 +182,31 @@
   (check-equal? (key-of core `((f ,closure-type)) '((b Bool)))
                 'reassign-type-mismatch))
 
+(test-case "片側で捕捉した pin の合流後も現在の shape を読める"
+  (define closure-type '(NFn () Int () () () User))
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Let (ignored const Unit)
+         (Eliminate b
+           ((true () -> (Let (f const ,closure-type)
+                          (Lam User f () (Proj x id))
+                          unit))
+            (false () -> unit)))
+         (Proj x id))))
+  (check-equal? (type-row core `((f ,closure-type)) '((b Bool)))
+                '(Int ())))
+
+(test-case "閉包を内側 scope から返して外側で呼び出せる"
+  (define closure-type '(NFn () Int () () () User))
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Let (f const ,closure-type)
+         (Let (inner const ,closure-type)
+           (Lam User inner () (Proj x id))
+           inner)
+         (Apply f))))
+  (check-equal? (type-row core `((inner ,closure-type))) '(Int ())))
+
 (test-case "RecurVal captures and pins mut slots"
   (define function-type '(NFn () Int () () () User))
   (define core
@@ -174,12 +240,56 @@
   (check-equal? (type-row nested) '(Int (Mutation)))
   (define bound-reassigns-outer
     `(Let (x mut ,named) ,initial-record
-       (Let (x mut ,with-active)
-         (Let (updated const Unit)
-           ,(reassign-to 'x with-active active-record)
-           ,active-record)
+       (Let (inner const Int)
+         (Let (x mut ,with-active)
+           (Let (updated const Unit)
+             ,(reassign-to 'x with-active active-record)
+             ,active-record)
+           0)
          (Proj x active))))
   (check-equal? (type-row bound-reassigns-outer) '(Int (Mutation))))
+
+(test-case "Let mut 以外の binder は同名の外側 flow を読まない"
+  (define function-type '(NFn (Int) Int () () () User))
+  (define parameter-shadow
+    `(Let (x mut ,named) ,initial-record
+       (Let (f const ,function-type)
+         (Lam User f (x) x)
+         0)))
+  (check-equal? (type-row parameter-shadow `((f ,function-type))) '(Int ()))
+
+  (define (data-shadow scrutinee)
+    `(Let (x mut ,named) ,initial-record
+       (Let (ignored const Int)
+         (Eliminate ,scrutinee ((some (x) -> x) (none () -> 0)))
+         0)))
+  (for ([scrutinee (in-list '(option-value (Apply option-source)))])
+    (define environment
+      (if (eq? scrutinee 'option-value)
+          '((option-value (Option Int)))
+          '((option-source (NFn () (Option Int) () () () User)))))
+    (check-equal? (type-row (data-shadow scrutinee) '() environment)
+                  '(Int ())))
+
+  (define (union-shadow scrutinee)
+    `(Let (x mut ,named) ,initial-record
+       (Let (ignored const Int)
+         (UnionEliminate ,scrutinee ((Int x -> x) (String x -> 0)))
+         0)))
+  (for ([scrutinee (in-list '(union-value (Apply union-source)))])
+    (define environment
+      (if (eq? scrutinee 'union-value)
+          '((union-value (Union Int String)))
+          '((union-source (NFn () (Union Int String) () () () User)))))
+    (check-equal? (type-row (union-shadow scrutinee) '() environment)
+                  '(Int ())))
+
+  (check-equal?
+   (type-row
+    `(Let (x mut ,named) ,initial-record
+       (Handle (Return exit Int) (x -> x)
+         (Perform (Return exit Int) 1))))
+   '(Int ())))
 
 (test-case "argument evaluation threads flow from earlier arguments"
   (define function-type '(NFn (Unit Int) Int () () () User))
@@ -264,6 +374,18 @@
          (Proj x id))))
    'unknown-record-label))
 
+(test-case "発行地点のない handler の正常 flow は後続へ混ぜない"
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Let (handled const Int)
+         (Handle (Return exit Int)
+           (v -> (Let (updated const Unit)
+                   ,(reassign-to 'x with-active active-record)
+                   (Proj x active)))
+           (Proj x id))
+         (Proj x id))))
+  (check-equal? (type-row core) '(Int (Mutation))))
+
 (test-case "a Perform whose argument is Never does not establish a handler flow"
   (define core
     `(Let (x mut ,named) ,initial-record
@@ -318,6 +440,84 @@
              (Perform (Return inner Int) 1))))))
   (check-equal? (type-row core) '(Int (Mutation))))
 
+(test-case "発行地点のない Never handler の脱出 flow を捨てる"
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Handle (Return outer Int)
+         (v -> (Proj x id))
+         (Let (inner-result const Int)
+           (Handle (Return inner Int)
+             (v -> (Let (updated const Unit)
+                     ,(reassign-to 'x with-active active-record)
+                     (Perform (Return outer Int) 2)))
+             (Proj x id))
+           (Proj x id)))))
+  ;; inner Return の発行地点が無いため、Never な handler の outer Return は外へ漏れない。
+  (check-equal? (type-row core) '(Int (Mutation))))
+
+(test-case "正常に完了しない枝の発行地点を handler へ伝える"
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Handle (Return exit Int)
+         (v -> (Proj x active))
+         (Eliminate b
+           ((true () -> (Let (updated const Unit)
+                          ,(reassign-to 'x with-active active-record)
+                          (Perform (Return exit Int) 1)))
+            (false () -> (Let (updated const Unit)
+                           ,(reassign-to 'x with-active active-record)
+                           2)))))))
+  (check-equal? (type-row core '() '((b Bool))) '(Int (Mutation))))
+
+(test-case "Handle の正常出口は synthesis と check の両方で τ° を使う"
+  (for ([scrutinee (in-list '(condition (Apply choose)))])
+    (define environment
+      (if (eq? scrutinee 'condition)
+          '((condition Bool))
+          '((choose (NFn () Bool () () () User)))))
+    (define all-return
+      `(Eliminate ,scrutinee
+         ((true () -> (Perform (Return exit Int) 1))
+          (false () -> (Perform (Return exit Int) 2)))))
+    (define catches-normally
+      `(Handle (Return exit Int) (v -> v) ,all-return))
+    (check-equal? (typed-type-normal catches-normally '() environment)
+                  '(Int Int))
+    (check-equal?
+     (typed-type-normal `(Let (answer const Int) ,catches-normally answer)
+                        '() environment)
+     '(Int Int))))
+
+(test-case "関数本体の早期 return と正常出口で局所 mut の shape が異なってもよい"
+  (define function-type '(NFn (Bool) Int () (Mutation) () User))
+  (define core
+    `(Lam User f (condition)
+       (Handle (Return f Int) (value -> value)
+         (Let (x mut ,named) ,initial-record
+           (Eliminate condition
+             ((true () -> (Let (updated const Unit)
+                            ,(reassign-to 'x with-active active-record)
+                            (Perform (Return f Int) 1)))
+              (false () -> (Proj x id))))))))
+  (check-equal? (key-of core `((f ,function-type))) 'ok))
+
+(test-case "TryBind の失敗枝を除く Return と正常枝の flow を合流する"
+  (define core
+    `(Let (x mut ,named) ,initial-record
+       (Let (handled const (Option Int))
+         (Handle (Return exit (Option Int)) (value -> value)
+           (Eliminate option-value
+             ((some (payload) -> (Let (updated const Unit)
+                                   ,(reassign-to 'x with-active active-record)
+                                   (Construct (Option Int) some payload)))
+              (none () -> (Let (updated const Unit)
+                            ,(reassign-to 'x with-active active-record)
+                            (Perform (Return exit (Option Int))
+                                     (Construct (Option Int) none)))))))
+         (Proj x active))))
+  (check-equal? (type-row core '() '((option-value (Option Int))))
+                '(Int (Mutation))))
+
 (test-case "check-position bottom retains escapes and excludes dead flow updates"
   (define all-return
     '(Eliminate (Construct Bool true)
@@ -331,7 +531,7 @@
          ,(reassign-to 'x with-id initial-record)))))
   (check-equal? (type-row core) '(Int (Mutation))))
 
-(test-case "Recur back-edge checks normal flow but ignores all-escape exits"
+(test-case "Recur が捕捉した mut slot の shape 変更を拒否する"
   (define ftype '(NFn () Int () (Mutation) () User))
   (define bad
     `(Let (x mut ,named) ,initial-record
@@ -340,7 +540,7 @@
            ,(reassign-to 'x with-active active-record)
            (Proj x active))
          0)))
-  ;; Capturing Recur pins the slot at entry, so its body cannot change the view.
+  ;; x は入口で capture pin されるため、ここでは back-edge 検査に到達しない。
   (check-equal? (key-of bad `((f ,ftype))) 'reassign-type-mismatch)
   (define exits-type '(NFn () Int () ((Return outer Int)) () User))
   (define exits

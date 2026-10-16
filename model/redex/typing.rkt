@@ -1821,6 +1821,8 @@
                      [flow (flow-set-normal state normal)]))))
 
 (define (flow-check-backedge fail node entry output)
+  ;; Defensive check: recursive bodies pin every captured outer mut slot and
+  ;; Let exit removes body-local slots, so ordinary Recur has no mutable back-edge.
   (define input-normal (flow-state-normal (psi-flow entry)))
   (define output-normal (flow-state-normal (psi-flow output)))
   (when (and (hash? input-normal) (hash? output-normal))
@@ -5140,8 +5142,12 @@
      (define flow-entry*
        (and (hash? (flow-state-normal state))
             (hash-ref (flow-state-normal state) name #f)))
+     ;; flow entry を作るのは Let mut だけで、内側の Let mut は entry を上書きする。
+     ;; 仮引数や枝・handler の binder が同じ名前を隠す場合は外側の entry を使わない。
      (define visible-type
-       (if flow-entry* (flow-entry-current flow-entry*) type))
+       (if (and flow-entry* (eq? (binding-mode-of environment name) 'mut))
+           (flow-entry-current flow-entry*)
+           type))
      (when (and (resource-type? type)
                 (not (set-member? (resource-identity-transfers) name)))
        (fail 'owned-variable-requires-move core))
