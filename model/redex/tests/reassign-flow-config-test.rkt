@@ -209,22 +209,15 @@
       ((0 ,old-value (declared ,old-view))) ((0 Available)) () ()))
   (check-config-trace (config-trace configuration) '() 'Int))
 
-(test-case "BorrowMutRef 先の Owned place は config 再型付けで再代入できる"
+(test-case "config 再型付けは Owned place への MutSlot 再代入を拒否する"
   (define input-type '(Record ((a Int mut))))
-  (define borrow-ref '(BorrowMutRef 0 () 0))
-  (define core
-    `(Let (snapshot const ,input-type) (Read ,borrow-ref)
-       (Let (written let Unit)
-         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
-         snapshot)))
+  (define record '(Rec ((a mut 1))))
+  (define core `(Reassign (MutSlot 0) (Owned ,input-type)
+                          (Rec ((a mut 2)))))
   (define heap
-    `((0 (Rec ((a mut 1))) (declared (Owned ,input-type)))))
+    `((0 ,record (declared (Owned ,input-type)))))
   (define initial `(cfg ,core ,heap ((0 Available)) () ()))
-  (define configs (config-trace initial))
-  (check-true (config-ok? initial '() input-type '(Mutation)))
-  (check-config-trace configs '() input-type)
-  (check-equal? (second (assoc 0 (list-ref (last configs) 2)))
-                '(Rec ((a mut 2)))))
+  (check-false (config-ok? initial '() 'Unit '(Mutation))))
 
 (test-case "C0 は mut Let、R-LetMutB、Reassign の view で一致する"
   (define core

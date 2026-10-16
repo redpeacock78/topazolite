@@ -1574,17 +1574,17 @@ handler の中から同じ boundary へ Return する脱出は外側へ伝わる
 捕捉後の再代入は P のすべての型と一致しなければならず、C を変えない。
 
 静的な `Reassign` `(Reassign w C c)` で、c が `Never` なら全体も `Never` とし、C への更新と Mutation を行わない。
-それ以外では、c の型が C に `reassign-narrowing?` で収まり、C が宣言型 T に `tag-compat?` で適合し、C が再帰的に Owned-free、borrow-free かつ `storage-ok?` であり、P があれば C がその全要素と型同値であることを検査する。
+それ以外では、c の型が C に `reassign-narrowing?` で収まり、C が宣言型 T に `tag-compat?` で適合し、C が再帰的に Owned-free、borrow-free かつ `storage-ok?` であり、P が空でなければ C がその全要素と型同値であることを検査する。
 成功時は binder の flow 型を C に更新し、`Unit ! (ε_c ∪ {Mutation})` を返す。
 
 ```text
-N(w) = (T, C, P)     S ⊢flow c : τv ! εv ⇒ (N1, E1)     τv ≠ Never
+N1(w) = (T, C_old, P1)     S ⊢flow c : τv ! εv ⇒ (N1, E1)     τv ≠ Never
 reassign-narrowing?(τv, C)     tag-compat?(C, T)
 owned-free?(C)     borrow-free?(C)     storage-ok?(C)
-P = #f  または  ∀p ∈ P. type-equiv?(C, p)
+P1 = ∅  または  ∀p ∈ P1. type-equiv?(C, p)
 -----------------------------------------------------------------
 S ⊢flow Reassign(w, C, c) : Unit ! (εv ∪ {Mutation})
-  ⇒ (if N1 = ⊥ then ⊥ else N1[w ↦ (T, C, P)], E1)
+  ⇒ (if N1 = ⊥ then ⊥ else N1[w ↦ (T, C, P1)], E1)
 ```
 
 右辺が `Never` の場合は、flow 状態を更新せずに右辺の脱出を保ち、Mutation を加えない。

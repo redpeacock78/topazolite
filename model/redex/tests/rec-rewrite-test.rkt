@@ -680,7 +680,7 @@
   (define baseline-core
     `(Let (snapshot const ,input-type) (Read ,borrow-ref)
        (Let (written let Unit)
-         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
+         (Assign (BorrowMutRef 0 (a) 0) 2)
          snapshot)))
   (define rewritten-core
     `(Let (snapshot const ,rewritten-type)
@@ -688,7 +688,7 @@
          ((a source Int mut ,union-type
            (UnionInject ,union-type Int source))))
        (Let (written let Unit)
-         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
+         (Assign (BorrowMutRef 0 (a) 0) 2)
          snapshot)))
   (define heap
     `((0 (Rec ((a mut 1))) (declared (Owned ,input-type)))))

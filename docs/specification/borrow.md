@@ -364,7 +364,7 @@ Core の合流は tag の無い欄の型から Union を作らないので、`{ 
 右辺が正常に完了する `Reassign` の結果は `Unit` であり、`H` の slot とその現在の view を原子的に更新して `Ω` と `θ` は動かさない。
 右辺が `Never` なら `Reassign` も `Never` となり、slot、view、`Ω`、`θ` を更新せず、Mutation row も加えない。
 そのため `Reassign` は借用の capability や Ψ の借用記録を新たに作らない。
-`mut` binding は `Owned` と借用を型に持てず、`MutSlot` は `Reassign` の target に限られるため、mut place 自体は Borrow、BorrowMut、Move、または pointer の target にならない。
+`mut` binding は `Owned` と借用を型に持てない。`MutSlot` は読み出しと `Reassign` の target にだけ現れ、Borrow、BorrowMut、Move、pointer 生成の被演算子にはならない。
 
 ## 13. 使用の判定
 

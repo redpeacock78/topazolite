@@ -3461,38 +3461,23 @@
        (if flow-entry*
            (flow-entry-declared flow-entry*)
            (and (not (deriving-config?)) τ_slot)))
-     ;; config の Core には BorrowMutRef 先の Owned place を MutSlot で更新する形もある。
-     ;; Owned wrapper は保存用であり、値を検査する flow view ではない。
-     (define owned-place-view?
-       (and (deriving-config?)
-            (match target
-              [`(MutSlot ,place)
-               (match (assoc place (declared-place-types))
-                 [(list _ `(Owned ,_)) #t]
-                 [_ #f])]
-              [_ #f])))
-     (define τ_flow-view
-       (if owned-place-view?
-           (match τ_flow [`(Owned ,payload) payload] [_ τ_flow])
-           τ_flow))
-     (unless (reassign-narrowing? τ_value τ_flow-view)
+     (unless (reassign-narrowing? τ_value τ_flow)
        (fail 'reassign-type-mismatch core τ_flow τ_value))
      (when (and declared
                 (not (tag-compat? τ_flow declared
                                   (current-Γ-pc0) (current-region-relation))))
        (fail 'reassign-type-mismatch core declared τ_flow))
-     (unless owned-place-view?
-       (when (not (mut-slot-type-supported? τ_flow-view))
-         (fail 'mut-binding-unsupported-type core τ_flow-view)))
-     (unless (storage-ok? τ_flow-view)
-       (fail 'mutable-callable-storage-requires-partial core τ_flow-view))
+     (when (not (mut-slot-type-supported? τ_flow))
+       (fail 'mut-binding-unsupported-type core τ_flow))
+     (unless (storage-ok? τ_flow)
+       (fail 'mutable-callable-storage-requires-partial core τ_flow))
      (define pins (and flow-entry* (flow-entry-pins flow-entry*)))
      (when (and pins
                 (for/or ([pin (in-set pins)])
                   (not (type-equiv? τ_flow pin))))
        (fail 'reassign-type-mismatch core pins τ_flow))
      (define next-entry
-       (flow-entry declared τ_flow-view pins))
+       (flow-entry declared τ_flow pins))
      (list 'Unit (rows-union (list ε_value '(Mutation)))
            (if (and (hash? current-state)
                     (or flow-entry* (not (deriving-config?))))
