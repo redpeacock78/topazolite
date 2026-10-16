@@ -711,7 +711,7 @@ let lex_nested_unclosed_string_span_ok () : Lemma
                       d.primary.endByte == 8
        | _ -> false)
 
-type dkind = | DBind | DTryBind : string -> dkind | DExpr | DFnDecl
+type dkind = | DBind | DTryBind : string -> dkind | DReassign | DExpr | DFnDecl
 type sbodykind = | BExpr | BBlock
 
 type sexpr =
@@ -1020,6 +1020,9 @@ and wf_decl (d: sdecl) : Tot bool (decreases d) =
           | DTryBind _ -> (match ps with [] -> true | _ -> false)
                         && (match r with None -> true | Some _ -> false)
                         && (match row with None -> true | Some _ -> false)
+          | DReassign -> (match ps with [] -> true | _ -> false)
+                         && (match r with None -> true | Some _ -> false)
+                         && (match row with None -> true | Some _ -> false)
           | DExpr -> sx.sid = s.sid
                       && sx.startByte = s.startByte
                       && sx.endByte = s.endByte
@@ -1214,6 +1217,7 @@ and core =
   | CConstruct: span -> string -> list core -> core
   | CLet      : span -> span -> core -> core -> core
   | CTryBind  : span -> span -> string -> core -> core -> core
+  | CReassign : span -> span -> core -> core
   | CReturn   : span -> core -> core
   | CRecur    : span -> span -> list span -> seffrow -> core -> core -> core
 
@@ -1230,6 +1234,7 @@ let span_of_core (c: core) : Tot span =
   | CConstruct s _ _ -> s
   | CLet s _ _ _     -> s
   | CTryBind s _ _ _ _ -> s
+  | CReassign s _ _  -> s
   | CReturn s _      -> s
   | CRecur s _ _ _ _ _ -> s
 
@@ -1362,6 +1367,8 @@ and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
       CLet (hull s (span_of_core rest)) sx (lower_expr v) rest
   | SDecl s (DTryBind x) sx _ _ _ v ->
       CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest
+  | SDecl s DReassign sx _ _ _ v ->
+      CLet (hull s (span_of_core rest)) s (CReassign s sx (lower_expr v)) rest
   | SDecl s DExpr sx _ _ _ v ->
       CLet (hull s (span_of_core rest)) sx (lower_stmt v) rest
   | SDecl s DFnDecl sx ps _ row v ->
@@ -1458,6 +1465,7 @@ let lower_block_root_span d ds tail =
   match d with
   | SDecl _ DBind _ _ _ _ _ -> ()
   | SDecl _ (DTryBind _) _ _ _ _ _ -> ()
+  | SDecl _ DReassign _ _ _ _ _ -> ()
   | SDecl _ DExpr _ _ _ _ _ -> ()
   | SDecl _ DFnDecl _ _ _ _ _ -> ()
 
@@ -1544,6 +1552,11 @@ val lower_decl_try_bind : s:span -> sx:span -> x:string -> v:sexpr -> rest:core 
   (lower_decl (SDecl s (DTryBind x) sx [] None None v) rest
    == CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest)
 let lower_decl_try_bind s sx x v rest = ()
+
+val lower_decl_reassign : s:span -> sx:span -> v:sexpr -> rest:core -> Lemma
+  (lower_decl (SDecl s DReassign sx [] None None v) rest
+   == CLet (hull s (span_of_core rest)) s (CReassign s sx (lower_expr v)) rest)
+let lower_decl_reassign s sx v rest = ()
 
 val lower_decl_expr : s:span -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DExpr s [] None None v) rest

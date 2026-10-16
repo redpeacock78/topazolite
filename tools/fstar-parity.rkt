@@ -12,7 +12,7 @@
 ;; spec §10.2 のリスト 1。model/redex/surface.rkt の Surface の構成子名である。
 (define racket-surface-constructors
   '(SProgram
-    SBind STryBind SExprStmt SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
+    SBind STryBind SReassign SExprStmt SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SDataDecl
     SInt SStr SUnit SBool SVar SReturn SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
@@ -21,14 +21,14 @@
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
 (define racket-ucore-constructors
-  '(#:lit #:var Apply Proj Eliminate IfSome BlockBody NarrativeExpr Rec Fn Construct Let TryBind Recur Return FnDecl))
+  '(#:lit #:var Apply Proj Eliminate IfSome BlockBody NarrativeExpr Rec Fn Construct Let TryBind Reassign Recur Return FnDecl))
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
   '(SInt SStr SUnit SBool SVar SReturn SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SDecl SEffRow SEffLabel
-    CLit CVar CApply CProj CEliminate CNarrativeExpr CRec CFn CConstruct CLet CTryBind CRecur CReturn))
+    CLit CVar CApply CProj CEliminate CNarrativeExpr CRec CFn CConstruct CLet CTryBind CReassign CRecur CReturn))
 
 ;; P2k2 spec §7 / P2m spec §5.1。model/fstar/Topazolite.Surface.fst の keyword_word が
 ;; TkKw を返す語である。F* の補題 keyword_word_reserved と手で対応させる。
@@ -70,7 +70,7 @@
    (one-to-one 'TApp 'TApp)
    (one-to-one 'SEffRow 'SEffRow)
    (one-to-one 'SEffLabel 'SEffLabel)
-   (corr-row '(SBind STryBind SFnDecl SExprStmt) '(SDecl) 'many-to-one)
+   (corr-row '(SBind STryBind SReassign SExprStmt SFnDecl) '(SDecl) 'many-to-one)
    (no-counterpart 'STypeDecl)
    (no-counterpart 'STraitDecl)
    (no-counterpart 'SImplDecl)
@@ -96,6 +96,7 @@
    (one-to-one 'Construct 'CConstruct)
    (one-to-one 'Let 'CLet)
    (one-to-one 'TryBind 'CTryBind)
+   (one-to-one 'Reassign 'CReassign)
    (corr-row '(Recur FnDecl) '(CRecur) 'many-to-one)
    (one-to-one 'Return 'CReturn)
    (excluded 'stok)

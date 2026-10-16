@@ -1018,7 +1018,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SMatch`、`SIfSome`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
-- `SBind`、`STryBind`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `SBind`、`STryBind`、`SReassign`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
@@ -1040,6 +1040,7 @@ F* は **`TkIstr`** の認識と span の正当性を検査する。
 `SExprStmt` を加えた後の parity の件数は 38/14/36 である。
 `SIfSome` と `IfSome` を加えた後の parity の件数は 39/15/37 である。
 `BlockBody` を加えた後の parity の件数は 39/16/37 である。
+`SReassign` と `Reassign` を F* 側へ加えた後の parity の件数は 40/17/38 である。
 
 P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、F* が 35 個である。
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
@@ -1059,12 +1060,12 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Recur`、`Return`、`FnDecl` の 16 構成子を parity の対象とする。
-F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Return`、`FnDecl` の 17 構成子を parity の対象とする。
+F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Reassign` に対応する `CReassign`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
 `BlockBody` は elaboration が関数本体または式位置の `when` の本体ブロック arm を検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 16 個、F* 側の `core` の構成子リストは 13 個であり、F* 側の全対象構成子は 37 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 13 個）である。
+UCore+ の対象構成子リストは 17 個、F* 側の `core` の構成子リストは 14 個であり、F* 側の全対象構成子は 38 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 14 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
@@ -1078,8 +1079,9 @@ P2m3b は枝の形を広げるが、これらの parity 対象構成子リスト
 - `stok`：`kind` 欄で 8 種の token を表す 1 構成子の record であり、構成子名の集合を成さない。
 - `lex_result`、`string_scan`、`hole_scan`：走査結果を表す和であり、Racket 側では返り値の場合分けとして書かれる。
 - `dkind`：束縛の種別を表す欄の型であり、構成子集合の対象ではない。
-  `SBind`、`STryBind`、`SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
+  `SBind`、`STryBind`、`SReassign`、`SExprStmt`、`SFnDecl` が F* 側の `SDecl` 1 つへ対応する多対 1 の行は、この型の畳み込みとは別に表す。
   `STryBind` は `DTryBind` として種別欄に残り、`CTryBind` へ渡す束縛名を同じ variant に保持する。
+  `SReassign` は `DReassign` として種別欄に残り、`CReassign` へ lowering される。
 - `node`：`sexpr`、`sty`、`sdecl` を命題 3 でまとめて量化するための包みである。
 - `bytes_split`、`pos_split`：証明の中だけで使う補助型である。
 
