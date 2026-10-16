@@ -18,6 +18,10 @@
 (define initial-record '(Rec ((name imm "A") (id imm 1))))
 (define active-record '(Rec ((name imm "B") (active imm 2))))
 (define other-record '(Rec ((name imm "C") (other imm 3))))
+(define with-active-id '(Record ((active Int imm) (id Int imm) (name String imm))))
+(define active-id-record '(Rec ((active imm 2) (id imm 1) (name imm "B"))))
+(define with-other-id '(Record ((id Int imm) (name String imm) (other Int imm))))
+(define other-id-record '(Rec ((id imm 1) (name imm "C") (other imm 3))))
 
 (define (result core [callables '()] [environment '()])
   (type-of/raw core '() callables environment (empty-region-ctx)))
@@ -519,17 +523,51 @@
                 '(Int (Mutation))))
 
 (test-case "check-position bottom retains escapes and excludes dead flow updates"
-  (define all-return
-    '(Eliminate (Construct Bool true)
-       ((true () -> (Perform (Return exit Int) 1))
-        (false () -> (Perform (Return exit Int) 2)))))
-  (define core
-    `(Let (x mut ,named) ,initial-record
-       (Handle (Return exit Int)
-         (v -> (Proj x id))
-         (Let (dead const Int) ,all-return
-         ,(reassign-to 'x with-id initial-record)))))
-  (check-equal? (type-row core) '(Int (Mutation))))
+  (for ([scrutinee (in-list '(condition (Apply choose)))])
+    (define environment
+      (if (eq? scrutinee 'condition)
+          '((condition Bool))
+          '((choose (NFn () Bool () () () User)))))
+    (define all-return
+      `(Eliminate ,scrutinee
+         ((true () -> (Perform (Return exit Int) 1))
+          (false () -> (Perform (Return exit Int) 2)))))
+    (define core
+      `(Let (x mut ,named) ,initial-record
+         (Handle (Return exit Int)
+           (v -> (Proj x id))
+           (Let (dead const Int) ,all-return
+             ,(reassign-to 'x with-active-id active-id-record)))))
+    ;; The outer handler sees the state at the caught Return, not the dead Let body.
+    (check-equal? (type-row core '() environment) '(Int (Mutation)))))
+
+(test-case "Never 束縛値を持つ Handle と非正常 handler の脱出 flow を保つ"
+  (for ([scrutinee (in-list '(condition (Apply choose)))])
+    (define environment
+      (if (eq? scrutinee 'condition)
+          '((condition Bool))
+          '((choose (NFn () Bool () () () User)))))
+    (define all-return
+      `(Eliminate ,scrutinee
+         ((true () -> (Perform (Return inner Int) 1))
+          (false () -> (Perform (Return inner Int) 2)))))
+    (define core
+      `(Let (x mut ,named) ,initial-record
+         (Handle (Return outer Int)
+           (v -> (Proj x active))
+           (Let (handled const Int)
+             (Handle (Return inner Int)
+               (v -> (Let (updated const Unit)
+                       ,(reassign-to 'x with-active-id active-id-record)
+                       (Perform (Return outer Int) v)))
+               (Let (dead const Int) ,all-return
+                 ,(reassign-to 'x with-other-id other-id-record)))
+             (Let (updated const Unit)
+               ,(reassign-to 'x with-other-id other-id-record)
+               (Perform (Return outer Int) 2))))))
+    ;; The inner handler's outer Return is the only reachable exit; both following
+    ;; reassignments are unreachable and must not alter the outer handler's view.
+    (check-equal? (key-of core '() environment) 'ok)))
 
 (test-case "Recur が捕捉した mut slot の shape 変更を拒否する"
   (define ftype '(NFn () Int () (Mutation) () User))
