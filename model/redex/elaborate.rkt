@@ -2432,6 +2432,17 @@
         [`(NarrativeExpr ,body) (needs-expected-type? body #:if-some? if-some?)]
         [_ #f]))
 
+    ;; 注釈付き let と Reassign は同じ期待型依存の RHS を check する。
+    (define (expected-type-checkable? expression expected)
+      (or (needs-expected-type? expression #:if-some? #t)
+          (match* ((peel-node expression) expected)
+            [(`(Rec (,fields ...)) `(Record ,row))
+             ;; 空リストも有効な Rec なので、欄ごとの check を内側へ伝える。
+             (list? (omitted-optional-labels
+                     (map (lambda (field) (peel-lbl (first field))) fields)
+                     row))]
+            [(_ _) #f])))
+
     ;; SUR-014。data の合成位置の事前検査だけが使う。入れ子の Eliminate は枝の結果位置を見る。
     (define (branch-needs-expected-type? expression)
       (match (peel-node expression)
@@ -3245,17 +3256,8 @@
         ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
         ;; 前に拒むため、elaborate と typing が同じ key を返す。
         (reject s 'mut-binding-unsupported-type declared-type))
-      (define record-literal-checkable?
-        (match* ((peel-node bound) declared-type)
-          [(`(Rec (,fields ...)) `(Record ,row))
-           ;; 空リストも有効な Rec なので、欄ごとの check を内側へ伝える。
-           (list? (omitted-optional-labels
-                   (map (lambda (field) (peel-lbl (first field))) fields)
-                   row))]
-          [(_ _) #f]))
       (define bound-result
-        (if (or (needs-expected-type? bound #:if-some? #t)
-                record-literal-checkable?)
+        (if (expected-type-checkable? bound declared-type)
             (check bound declared-type environment delta propositions boundaries)
             (synth bound environment delta propositions boundaries)))
       (if (eq? (judgment-type bound-result) 'Never)
@@ -3769,7 +3771,9 @@
          (unless (eq? (binding-mode-of environment name) 'mut)
            (reject s 'immutable-binding name))
          (define result
-           (synth value environment delta propositions boundaries))
+           (if (expected-type-checkable? value slot-type)
+               (check value slot-type environment delta propositions boundaries)
+               (synth value environment delta propositions boundaries)))
          (define value-type (judgment-core-type result))
          (define slot-union?
            (match (normalize-type slot-type)
