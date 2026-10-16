@@ -5090,17 +5090,22 @@
            (and (not absent?)
                 (eq? (first result) 'Never)
                 (eq? (typing-child-normal-type Λ index) '⊥)))
-         (when (eq? result-type 'Never)
+         (define omit-bottom-extra?
+           (and (not expected-field) bottom-field?))
+         (when (and (eq? result-type 'Never)
+                    (not omit-bottom-extra?))
            (fail 'ill-typed expression))
          (when (and (not bottom-field?)
                     (owned-type? result-type)
                     (not absent?)
                     (not (config-runtime-leaf? expression)))
            (fail 'owned-record-field expression))
-         (values (append row
-                         (list (if absent?
-                                   (list label result-type mode 'opt)
-                                   (list label result-type mode))))
+         (values (if omit-bottom-extra?
+                    row
+                    (append row
+                            (list (if absent?
+                                      (list label result-type mode 'opt)
+                                      (list label result-type mode)))))
                  (append rows (list (second result)))
                  (third result))))
      (define actual `(Record ,actual-row))

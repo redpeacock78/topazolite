@@ -35,6 +35,13 @@
   (when (compiled? result)
     (check-equal? (run-value result) 1)))
 
+(test-case "検査 Rec の bottom 余剰欄は関数を呼び出す前に return する"
+  (define result
+    (c "fn g(r: { a: Int }) -> Int { return r.a }\nfn f() -> Int { return g({ a: 1, b: return 2 }) }\nf()"))
+  (check-true (compiled? result))
+  (when (compiled? result)
+    (check-equal? (run-value result) 2)))
+
 (test-case "SUR-015: return の値が戻り型と合わなければ拒否する"
   (check-equal? (code "fn f() -> Int { return \"a\" }\n0")
                 (diagnostic-code-of 'elaborate 'type-mismatch)))

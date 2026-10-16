@@ -1734,9 +1734,10 @@ C0(K) の宣言を D の型引数で具体化して (σ1, …, σk) -> D を得�
 τexp = Record(ρexp)        fields = ((ℓi, mi, ci) ...)        ℓi は相異なる
 ci = Absent τi なら ρact(ℓi) = (τi, mi, opt)、εi = {}
 ci ≠ Absent で ρexp(ℓi) = σi なら τi = σi if αi = Never、それ以外は αi
-ci ≠ Absent で ℓi ∉ dom(ρexp) なら τi = αi° if αi = Never、それ以外は αi
-  αi = Never なら αi° ≠ ⊥
-ρact(ℓi) = (τi, mi) （ci ≠ Absent の場合）
+ci ≠ Absent、ℓi ∉ dom(ρexp)、αi ≠ Never なら τi = αi
+ci ≠ Absent、ℓi ∉ dom(ρexp)、αi = Never、αi° ≠ ⊥ なら τi = αi°
+ci ≠ Absent、ℓi ∉ dom(ρexp)、αi = Never、αi° = ⊥ なら ℓi ∉ dom(ρact)
+ci ≠ Absent、ℓi ∈ dom(ρact) なら ρact(ℓi) = (τi, mi)
 各 ci が Absent でなく、αi = Never かつ αi° = ⊥ でないなら owned-type?(τi) は偽
 compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τexp) = ok
 --------------------------------------------------------------------------
@@ -1750,7 +1751,9 @@ compatible?(Record(ρact), τexp)        owned-narrowing-kind(Record(ρact), τe
 期待 row に欄がある式の検査結果型が `Never` なら、構成する row の欄型には期待欄型を使い、`Rec` 自体の judgment type は T-Ctx-Never により `Never`、正常型は `Record(ρact)` となる。
 その式の正常型が `⊥` なら、その欄だけ `owned-record-field` の gate を適用しない。
 ほかの欄の型検査と所有の gate は通常どおり行う。
-期待 row に欄がない式を合成した結果が `Never` なら、欄型を決める正常型が必要であり、`⊥` の場合は既存の診断で拒否する。
+期待 row に欄がない式を合成した結果が `Never` で、正常型が `⊥` なら、その欄を `ρact` に加えず、`Rec` の正常型を残りの欄から作る。
+この欄の row も `Rec` 全体の effect row には含める。
+正常型が定まる余剰欄はその型で `ρact` に加える。
 Present 欄の root `Owned` は `owned-record-field` で拒否するが、`Absent` 欄にはこの gate を適用しない。
 構成検査専用の runtime leaf 再型付けに限り、`owned-record-field` の拒否を緩和する。
 最後に `compatible?` と OWN-004 の `owned-narrowing-kind` gate を適用し、互換性または narrowing の gate が失敗すれば既存の診断で拒否する。

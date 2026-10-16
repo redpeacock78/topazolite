@@ -222,6 +222,18 @@
     '() '() `((h ,function-type)))
    '(Never Int)))
 
+(test-case "Rec checking は期待型に無い bottom 欄を row から省く"
+  (define parameter-type '(Record ((a Int imm))))
+  (define function-type `(NFn (,parameter-type) Int () () () User))
+  (define core
+    '(Apply h (Rec ((a imm 1) (b imm (Perform (Return b Int) 2))))))
+  (check-equal?
+   (typed-with-normal core '() '() `((h ,function-type)))
+   '(Never ((Return b Int)) Int))
+  (check-equal?
+   (core-type-of core '() '() `((h ,function-type)))
+   '(Never ((Return b Int)))))
+
 (test-case "Rec checking は Never 欄の正常型 bottom で owned gate を飛ばす"
   (define parameter-type '(Record ((a (Owned Res) imm))))
   (define function-type `(NFn (,parameter-type) Int () () () User))
