@@ -775,15 +775,15 @@
        `(SMatch ,s ,(r scrutinee)
                 ,(for/list ([arm (in-list arms)])
                    (match arm
-                     [`(SArm ,s_a (SName ,s_k ,k) ,binders ,body)
+                     [`(SArm ,s_a (SName ,s_k ,k) ,binders ,body-kind ,body)
                       (define names
                         (for/list ([b (in-list binders)])
                           (match b [`(SName ,_ ,x) x])))
-                      `(SArm ,s_a (SName ,s_k ,k) ,binders
+                     `(SArm ,s_a (SName ,s_k ,k) ,binders ,body-kind
                              ,(expr body (set-union bound
                                                     (list->seteq names))))]
-                     [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
-                     `(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) ()
+                     [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body-kind ,body)
+                      `(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body-kind
                              ,(expr body (set-add bound x)))])))]
       [`(SIfSome ,s ,clauses ,s_0)
        `(SIfSome ,s
@@ -840,12 +840,12 @@
 (define (lower-arms arms env fail lower-body)
   (for/list ([arm (in-list arms)])
     (match arm
-      [`(SArm ,s_a (SName ,_ ,k) ,binders ,body)
+      [`(SArm ,s_a (SName ,_ ,k) ,binders ,_body-kind ,body)
        `(,s_a ,k
               ,(for/list ([b (in-list binders)])
                  (match b [`(SName ,s_x ,x) `(#:bind ,x ,s_x)]))
               -> ,(lower-body s_a body))]
-      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,body)
+      [`(SArm ,s_a (SParam ,s_param (SName ,s_x ,x) ,sty) () ,_body-kind ,body)
        `(,s_a (#:ty ,(lower-sty sty env fail) ,(node-span sty))
               (#:bind ,x ,s_x)
               -> ,(lower-body s_a body))])))
@@ -967,8 +967,8 @@
                      (SName ,condition-span %ifcond)
                      (TName ,s_i Bool) ,condition))
              (SMatch ,chain-span (SVar ,condition-span %ifcond)
-               ((SArm ,body-span (SName ,body-span true) () ,body)
-                (SArm ,false-span (SName ,false-span false) () ,false-body))))]))
+               ((SArm ,body-span (SName ,body-span true) () expr ,body)
+                (SArm ,false-span (SName ,false-span false) () expr ,false-body))))]))
      (lower-stmt (lower-chain clauses) env fail)]
     [_
      (define s (node-span e))

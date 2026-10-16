@@ -63,8 +63,8 @@
              (SRec s (sfield ...))
              (SBlock s (sbind ...) sexpr))
   ;; P2m spec §5.3。Bool も constructor 名として使える。
-  (sarm ::= (SArm s sctor (sname ...) sexpr)
-            (SArm s sparam () sexpr))
+  (sarm ::= (SArm s sctor (sname ...) body-kind sexpr)
+            (SArm s sparam () body-kind sexpr))
   (sifclause ::= (s sexpr sexpr))
   (sctor ::= sname (SName s true) (SName s false))
   (spitem ::= (STypeDecl s sname sty)

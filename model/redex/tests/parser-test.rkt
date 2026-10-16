@@ -621,28 +621,28 @@
      ((SBind ,(sp 0 21) const (SName ,(sp 3 4) %ifcond)
              (TName ,(sp 0 2) Bool) (SVar ,(sp 3 4) c)))
      (SMatch ,(sp 0 21) (SVar ,(sp 3 4) %ifcond)
-        ((SArm ,(sp 5 10) (SName ,(sp 5 10) true) ()
+        ((SArm ,(sp 5 10) (SName ,(sp 5 10) true) () expr
               (SBlock ,(sp 5 10) () (SInt ,(sp 7 8) 1)))
-        (SArm ,(sp 11 21) (SName ,(sp 11 15) false) ()
+        (SArm ,(sp 11 21) (SName ,(sp 11 15) false) () expr
               (SBlock ,(sp 16 21) () (SInt ,(sp 18 19) 2)))))))
  (check-match
   (p-expr "if c { 1 } else if d { 2 } else { 3 }")
   `(SBlock ,_
      ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ c)))
      (SMatch ,_ (SVar ,_ %ifcond)
-       ((SArm ,_ (SName ,_ true) () (SBlock ,_ () (SInt ,_ 1)))
-        (SArm ,_ (SName ,_ false) ()
+       ((SArm ,_ (SName ,_ true) () expr (SBlock ,_ () (SInt ,_ 1)))
+        (SArm ,_ (SName ,_ false) () expr
               (SBlock ,_
                 ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ d)))
                 (SMatch ,_ (SVar ,_ %ifcond)
-                  ((SArm ,_ (SName ,_ true) () (SBlock ,_ () (SInt ,_ 2)))
-                   (SArm ,_ (SName ,_ false) () (SBlock ,_ () (SInt ,_ 3)))))))))))
+                  ((SArm ,_ (SName ,_ true) () expr (SBlock ,_ () (SInt ,_ 2)))
+                   (SArm ,_ (SName ,_ false) () expr (SBlock ,_ () (SInt ,_ 3)))))))))))
  (check-match
   (p-expr "if a { 1 } else { if b { 2 } }")
   `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
            (SMatch ,_ ,_
-             ((SArm ,_ (SName ,_ true) () ,_)
-              (SArm ,_ (SName ,_ false) ()
+             ((SArm ,_ (SName ,_ true) () expr ,_)
+              (SArm ,_ (SName ,_ false) () expr
                     (SBlock ,_ ()
                             (SIfSome ,_ ((,_ ,_ ,_)) ,_)))))))
 )
@@ -667,12 +667,12 @@
  (check-match (p "when c {\n  zero => zero\n  succ m => m\n}")
               `(SProgram ,_ ()
                  (SMatch ,_ (SVar ,_ c)
-                         ((SArm ,_ (SName ,_ zero) () (SVar ,_ zero))
-                          (SArm ,_ (SName ,_ succ) ((SName ,_ m)) (SVar ,_ m))))))
+                         ((SArm ,_ (SName ,_ zero) () expr (SVar ,_ zero))
+                          (SArm ,_ (SName ,_ succ) ((SName ,_ m)) expr (SVar ,_ m))))))
  (check-match (p "when c {\n  succ m => {\n    let k = m\n    k\n  }\n}")
               `(SProgram ,_ ()
                  (SMatch ,_ ,_
-                         ((SArm ,_ ,_ ,_
+                         ((SArm ,_ ,_ ,_ block
                                 (SBlock ,_ ((SBind ,_ let (SName ,_ k) #:none ,_))
                                          (SVar ,_ k)))))))
  (check-match (p "when c { zero => 1 }.f")
@@ -700,20 +700,20 @@
  (check-match (p "when c { red => 1\n succ n => n }")
               `(SProgram ,_ ()
                  (SMatch ,_ (SVar ,_ c)
-                         ((SArm ,_ (SName ,_ red) () (SInt ,_ 1))
+                         ((SArm ,_ (SName ,_ red) () expr (SInt ,_ 1))
                           (SArm ,_ (SName ,_ succ)
-                                ((SName ,_ n)) (SVar ,_ n))))))
+                                ((SName ,_ n)) expr (SVar ,_ n))))))
  (check-match (p "when c {\n  red => 1\n  green => 2\n}")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ red) () ,_)
-                                             (SArm ,_ (SName ,_ green) () ,_)))))
+              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ red) () expr ,_)
+                                             (SArm ,_ (SName ,_ green) () expr ,_)))))
  ;; true と false は組み込みの Bool constructor として枝の頭に置ける。
  (check-match (p "when b {\n  true => 1\n  false => 0\n}")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ true) () ,_)
-                                             (SArm ,_ (SName ,_ false) () ,_)))))
+              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ (SName ,_ true) () expr ,_)
+                                             (SArm ,_ (SName ,_ false) () expr ,_)))))
  ;; 本体が無名関数でも、枝間の改行で止まる。
  (check-match (p "when c {\n  red => x => x\n  green => y => y\n}")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ x)))
-                                             (SArm ,_ ,_ () (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ y)))))))
+              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () expr (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ x)))
+                                             (SArm ,_ ,_ () expr (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ y)))))))
  ;; when は primary なので suffix を続けられる。
  (check-match (p "when c { red => r }.a")
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_))))
@@ -723,13 +723,40 @@
  (check-match (p "when value { (s: String) => 1 }")
               `(SProgram ,_ ()
                  (SMatch ,_ ,_
-                         ((SArm ,_ (SParam ,_ (SName ,_ s) (TName ,_ String)) () ,_)))))
+                         ((SArm ,_ (SParam ,_ (SName ,_ s) (TName ,_ String)) () expr ,_)))))
  (check-match (p "when value { (x: Int | Bool) => 1 }")
               `(SProgram ,_ ()
                  (SMatch ,_ ,_
-                         ((SArm ,_ (SParam ,_ (SName ,_ x) (TUnion ,_ ,_ ,_)) () ,_)))))
+                         ((SArm ,_ (SParam ,_ (SName ,_ x) (TUnion ,_ ,_ ,_)) () expr ,_)))))
  (check-equal? (p-code "when value { (x Int) => 1 }") "E-SUR-005")
  (check-equal? (p-code "when value { (x: ) => 1 }") "E-SUR-005"))
+
+(test-case
+ "when arm の本体が式か本体ブロックかを記録する"
+ (check-match
+  (p "when a {\n true => { return 1 }\n false => 0\n}")
+  `(SProgram ,_ ()
+     (SMatch ,_ ,_
+       ((SArm ,_ (SName ,_ true) () block (SBlock ,_ () (SReturn ,_ (SInt ,_ 1))))
+        (SArm ,_ (SName ,_ false) () expr (SInt ,_ 0))))))
+ (check-match
+  (p "when a {\n true => {}\n false => { a: 1 }\n}")
+  `(SProgram ,_ ()
+     (SMatch ,_ ,_
+       ((SArm ,_ (SName ,_ true) () expr (SRec ,_ ()))
+        (SArm ,_ (SName ,_ false) () expr (SRec ,_ ((SField ,_ ,_ (SInt ,_ 1)))))))))
+ (check-match
+  (p "when u { (x: Int) => { return x } }")
+  `(SProgram ,_ ()
+     (SMatch ,_ ,_
+       ((SArm ,_ (SParam ,_ (SName ,_ x) (TName ,_ Int)) () block
+              (SBlock ,_ () (SReturn ,_ (SVar ,_ x))))))))
+ (check-match
+  (p-expr "if c { 1 } else { 2 }")
+  `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
+     (SMatch ,_ ,_
+       ((SArm ,_ (SName ,_ true) () expr ,_)
+        (SArm ,_ (SName ,_ false) () expr ,_))))))
 
 (test-case
  "when の不正な枝は E-SUR-005 になる"

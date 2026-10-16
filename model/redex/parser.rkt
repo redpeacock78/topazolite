@@ -436,13 +436,16 @@
               ((SBind ,whole const (SName ,condition-span %ifcond)
                       (TName ,if-span Bool) ,condition))
               (SMatch ,whole (SVar ,condition-span %ifcond)
-                ((SArm ,then-span (SName ,then-span true) () ,then)
+                ((SArm ,then-span (SName ,then-span true) () expr ,then)
                  (SArm ,(hull else-span (node-span else-part))
-                       (SName ,else-span false) () ,else-part))))
+                       (SName ,else-span false) () expr ,else-part))))
            end-j)])])))
 
 ;; P2m3 spec §3.1。constructor 枝は `ctor ident* => expr`、
 ;; member 枝は `(name: type) => expr` である。
+(define (expression-body-kind body)
+  (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+
 (define (parse-arm ts fail i)
   (if (punct? ts i '|(|)
       (parse-member-arm ts fail i)
@@ -458,8 +461,9 @@
   (let*-values ([(binders binders-j) (parse-arm-binders ts fail (add1 i))]
                 [(_arrow arrow-j) (expect-punct ts fail binders-j '=>)]
                 [(body body-j) (parse-expr ts fail arrow-j)])
+    (define body-kind (expression-body-kind body))
     (values `(SArm ,(hull name-span (node-span body))
-                   (SName ,name-span ,name) ,binders ,body)
+                   (SName ,name-span ,name) ,binders ,body-kind ,body)
             body-j)))
 
 ;; P2m3b。括弧付きの (name: type) は Union member pattern である。
@@ -473,7 +477,8 @@
                 [(body body-j) (parse-expr ts fail arrow-j)])
     (define param `(SParam ,(hull name-span (node-span ty))
                            (SName ,name-span ,name) ,ty))
-    (values `(SArm ,(hull open (node-span body)) ,param () ,body)
+    (define body-kind (expression-body-kind body))
+    (values `(SArm ,(hull open (node-span body)) ,param () ,body-kind ,body)
             body-j)))
 
 ;; `=>` より前の識別子は空白区切りの束縛子である。
@@ -501,8 +506,7 @@
       (if (and (eq? return-type '#:none) (punct? ts row-j '=>))
           (let-values ([(_arrow arrow-j) (expect-punct ts fail row-j '=>)])
             (let-values ([(body body-j) (parse-expr ts fail arrow-j)])
-              (define body-kind
-                (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+              (define body-kind (expression-body-kind body))
               (values `(SFn ,(hull start (node-span body)) ,params #:none ,row
                             ,body-kind ,body)
                       body-j #t)))

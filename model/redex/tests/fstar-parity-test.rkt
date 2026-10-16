@@ -131,7 +131,7 @@
                                            ((SArm ,s0
                                                   (SParam ,s0 (SName ,s0 item)
                                                            (TName ,s0 Int))
-                                                   () (SInt ,s0 1))))))
+                                                   () expr (SInt ,s0 1))))))
    (cons 'SIfSome  (redex-match? Surface sexpr
                                   `(SIfSome ,s0
                                             ((,s0 (SVar ,s0 c)
@@ -156,7 +156,7 @@
    (cons 'TApp      (redex-match? Surface sty `(TApp ,s0 (SName ,s0 List) ((TName ,s0 Int)))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
    (cons 'SArm      (redex-match? Surface sarm
-                                  `(SArm ,s0 (SName ,s0 red) () (SInt ,s0 1))))
+                                  `(SArm ,s0 (SName ,s0 red) () expr (SInt ,s0 1))))
    (cons 'SParam    (redex-match? Surface sparam `(SParam ,s0 (SName ,s0 x) (TName ,s0 Int))))
    (cons 'SField    (redex-match? Surface sfield `(SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))
    (cons 'SLabel    (redex-match? Surface slabel `(SLabel ,s0 a)))

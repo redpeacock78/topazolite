@@ -731,8 +731,8 @@ type sexpr =
   | SRec      : span -> list (span & sexpr) -> sexpr
   | SBlock    : span -> list sdecl -> sexpr -> sexpr
 and sarm =
-  | SConstructorArm : span -> (span & string) -> list (span & string) -> sexpr -> sarm
-  | SMemberArm      : span -> span -> (span & string) -> sty -> sexpr -> sarm
+  | SConstructorArm : span -> (span & string) -> list (span & string) -> sbodykind -> sexpr -> sarm
+  | SMemberArm      : span -> span -> (span & string) -> sty -> sbodykind -> sexpr -> sarm
 and sifclause =
   | SIfClause : span -> sexpr -> sexpr -> sifclause
 and sty =
@@ -808,8 +808,8 @@ let span_of_node (n: node) : Tot span =
 let rec arm_children (arms: list sarm) : Tot (list node) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm _ _ _ body :: tl -> NExpr body :: arm_children tl
-  | SMemberArm _ _ _ ty body :: tl -> NTy ty :: NExpr body :: arm_children tl
+  | SConstructorArm _ _ _ _ body :: tl -> NExpr body :: arm_children tl
+  | SMemberArm _ _ _ ty _ body :: tl -> NTy ty :: NExpr body :: arm_children tl
 
 let rec ifsome_children (clauses: list sifclause)
   : Tot (list node) (decreases clauses) =
@@ -995,10 +995,10 @@ and wf_arms (s: span) (arms: list sarm)
   : Tot bool (decreases arms) =
   match arms with
   | [] -> true
-  | SConstructorArm sa (sk, _) bs b :: tl ->
+  | SConstructorArm sa (sk, _) bs _ b :: tl ->
       contains s sa && contains sa sk && spans_in sa (map fst bs)
       && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
-  | SMemberArm sa sp (sx, _) ty b :: tl ->
+  | SMemberArm sa sp (sx, _) ty _ b :: tl ->
       contains s sa && contains sa sp && contains sp sx
       && contains sp (span_of_ty ty) && wf_ty ty
       && contains sa (span_of_expr b) && wf_expr b && wf_arms s tl
@@ -1097,12 +1097,12 @@ val wf_arms_elim : s:span -> arms:list sarm
 let rec wf_arms_elim s arms c =
   match arms with
   | [] -> ()
-  | SConstructorArm sa _ _ b :: tl ->
+  | SConstructorArm sa _ _ _ b :: tl ->
       FStar.List.Tot.Properties.append_memP [NExpr b] (arm_children tl) c;
       contains_trans s sa (span_of_expr b);
       wf_exprs_elim sa [b] c;
       wf_arms_elim s tl c
-  | SMemberArm sa sp _ ty b :: tl ->
+  | SMemberArm sa sp _ ty _ b :: tl ->
       FStar.List.Tot.Properties.append_memP [NTy ty] (NExpr b :: arm_children tl) c;
       FStar.List.Tot.Properties.append_memP [NExpr b] (arm_children tl) c;
       contains_trans s sa sp;
@@ -1314,16 +1314,16 @@ and lower_fields (fs: list (span & sexpr)) : Tot (list (span & core)) (decreases
 and lower_arms (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm sa (_, k) bs b :: tl ->
+  | SConstructorArm sa (_, k) bs _ b :: tl ->
       CConstructorBranch sa k (map fst bs) (lower_expr b) :: lower_arms tl
-  | SMemberArm sa _ (sx, x) ty b :: tl ->
+  | SMemberArm sa _ (sx, x) ty _ b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_expr b) :: lower_arms tl
 and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm sa (_, k) bs b :: tl ->
+  | SConstructorArm sa (_, k) bs _ b :: tl ->
       CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
-  | SMemberArm sa _ (sx, x) ty b :: tl ->
+  | SMemberArm sa _ (sx, x) ty _ b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
 and lower_ifsome_expr (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =
@@ -1386,9 +1386,9 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
 and lower_arms_stmt (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
-  | SConstructorArm sa (_, k) bs b :: tl ->
+  | SConstructorArm sa (_, k) bs _ b :: tl ->
       CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms_stmt tl
-  | SMemberArm sa sx (sb, x) ty b :: tl ->
+  | SMemberArm sa sx (sb, x) ty _ b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms_stmt tl
 and lower_ifsome_stmt (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =

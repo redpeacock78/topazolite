@@ -151,6 +151,8 @@ label    ::= ident ["<" ty ">"]
 枝は改行で区切る。
 constructor pattern の束縛子は空白で区切って括弧で囲まず、Union member pattern は `(x: τ)` と書く。
 枝の本体は波括弧で始まる構文（block、record、when）なら対応する閉じ波括弧まで、それ以外の式なら改行の手前まで読む。
+`SArm` は本体とともに `body-kind` を保持し、本体が `SBlock` なら `block`、それ以外は `expr` とする。
+`{}` と `{ a: 1 }` は record 式なので `expr` であり、`if` の合成が作る枝も `expr` である。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
 `when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
 `if` は条件と then block の後に必ず `else` と block または `else if` を続ける。
@@ -684,7 +686,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
 - `if c { a } else { b }` は、条件に `Bool` を注釈した合成 `SBlock` と `true` / `false` の枝を持つ `SMatch` へ parser が組み替える。
-  その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () a) (SArm s_else (SName s_kw false) () b))))` である。
+  その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () expr a) (SArm s_else (SName s_kw false) () expr b))))` である。
   `s` は `if` から最後の token までの span である。
   `s_c` は条件式の節点の span である。
   `s_if` は `if` keyword の span である。
@@ -709,7 +711,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   文の mode では scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
   文の mode の枝に `NarrativeExpr` を置かないのは、`return` を外側の境界へ伝えるためである。
   constructor pattern の枝は constructor 名と束縛子を保つ。
-  Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
+  Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body-kind body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
   枝の `NarrativeExpr` は式位置の `when` の返却境界を枝の本体だけに与える（§4.5）。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
@@ -983,6 +985,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SName`、`SArm`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
   `SFn` の `body-kind` は F* 側の補助型 `sbodykind` の `BExpr` または `BBlock` として保持し、構成子数には加えない。
+  `SArm` の `body-kind` も同じ補助型の `BExpr` または `BBlock` として保持し、構成子数には加えない。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
   `SParam` と `SField` のそれ自体の span と `TField` は Core へ届かないので、F* には残らない。
   `TField` の末尾の `opt` も F* には残らない。
