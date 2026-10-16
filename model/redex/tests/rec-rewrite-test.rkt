@@ -55,7 +55,7 @@
 (define (contains-mutation? core)
   (match core
     [`(Assign ,_ ,_) #t]
-    [`(Reassign ,_ ,_) #t]
+    [`(Reassign ,_ ,_ ,_) #t]
     [(? list? parts) (ormap contains-mutation? parts)]
     [_ #f]))
 
@@ -680,7 +680,7 @@
   (define baseline-core
     `(Let (snapshot const ,input-type) (Read ,borrow-ref)
        (Let (written let Unit)
-         (Reassign (MutSlot 0) (Rec ((a mut 2))))
+         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
          snapshot)))
   (define rewritten-core
     `(Let (snapshot const ,rewritten-type)
@@ -688,7 +688,7 @@
          ((a source Int mut ,union-type
            (UnionInject ,union-type Int source))))
        (Let (written let Unit)
-         (Reassign (MutSlot 0) (Rec ((a mut 2))))
+         (Reassign (MutSlot 0) (Owned ,input-type) (Rec ((a mut 2))))
          snapshot)))
   (define heap
     `((0 (Rec ((a mut 1))) (declared (Owned ,input-type)))))

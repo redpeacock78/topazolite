@@ -207,7 +207,7 @@
 (define (contains-mutation? core)
   (match core
     [`(Assign ,_ ,_) #t]
-    [`(Reassign ,_ ,_) #t]
+    [`(Reassign ,_ ,_ ,_) #t]
     [(? list? parts) (ormap contains-mutation? parts)]
     [_ #f]))
 
@@ -738,7 +738,7 @@
   (define narrow-reassign
     `(Let (x mut ,wide-union)
           (UnionInject ,U1 Int 1)
-          (Reassign x (UnionInject ,U1 Int 2))))
+          (Reassign x ,wide-union (UnionInject ,U1 Int 2))))
   (define owned-loss-environment
     '((slot (Record ((y Int imm))) mut)
       (source (NFn (Unit)
@@ -749,7 +749,8 @@
   (tagged
    (check-equal? (key-of narrow-reassign) 'ok)
    (check-equal?
-    (key-of `(Reassign slot ,owned-loss-value) owned-loss-environment)
+    (key-of `(Reassign slot (Record ((y Int imm))) ,owned-loss-value)
+            owned-loss-environment)
                  'reassign-type-mismatch)))
 
 (define borrowed-union-core
@@ -1179,7 +1180,7 @@
    (steps-ok?
     `(Scope ()
        (Let (m mut ,wide) (UnionInject ,narrow Int 1)
-         (Reassign m (UnionInject ,wide Bool (Construct Bool true)))))
+         (Reassign m ,wide (UnionInject ,wide Bool (Construct Bool true)))))
     'Unit '(Mutation))))
 
 (test-case "const alias を mut binding へ渡した後も wide slot に再代入できる"
@@ -1190,7 +1191,7 @@
     `(Scope ()
        (Let (x const ,wide) (UnionInject ,narrow Int 1)
          (Let (m mut ,wide) x
-           (Reassign m (UnionInject ,wide Bool (Construct Bool true))))))
+           (Reassign m ,wide (UnionInject ,wide Bool (Construct Bool true))))))
     'Unit '(Mutation))))
 
 (test-case "config-ok? は heap 値を記録した宣言型と照合する"
@@ -1239,7 +1240,7 @@
            ((0 Available)) () ())))
   (define reassigned
     (machine-run
-     `(cfg (Reassign (MutSlot 0) (UnionInject ,wide Int 5))
+     `(cfg (Reassign (MutSlot 0) ,wide (UnionInject ,wide Int 5))
            ((0 (UnionVal ,narrow Int 1) (declared ,wide)))
            ((0 Available)) () ())))
   (check-equal? assigned

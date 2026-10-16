@@ -19,7 +19,7 @@
 (check-equal?
  (key-of (term (Recur loop-id loop (x)
                       (Let (m mut Int) x
-                           (Let (u const Unit) (Reassign m 2) m))
+                           (Let (u const Unit) (Reassign m Int 2) m))
                       (Apply loop 1))))
  'undeclared-function-effect)
 
@@ -27,7 +27,7 @@
 (check-equal?
  (key-of (term (Recur mut-loop-id loop (x)
                       (Let (m mut Int) x
-                           (Let (u const Unit) (Reassign m 2) m))
+                           (Let (u const Unit) (Reassign m Int 2) m))
                       (Apply loop 1))))
  'ok)
 

@@ -65,7 +65,7 @@
        (Eliminate xs
          ((nil () -> 0)
           (cons (head tail) ->
-            (Let (ignored Unit) (Reassign cell 1)
+            (Let (ignored Unit) (Reassign cell Int 1)
               (Apply loop tail))))))
      ,reassign-loop-continuation))
 (define nondecreasing-write-rhs
@@ -74,7 +74,7 @@
        (Eliminate xs
          ((nil () -> 0)
           (cons (head tail) ->
-            (Let (ignored Unit) (Reassign cell (Apply loop xs))
+            (Let (ignored Unit) (Reassign cell Int (Apply loop xs))
               (Apply loop tail))))))
      ,reassign-loop-continuation))
 (define reassigned-alias
@@ -83,7 +83,7 @@
        ((nil () -> 0)
         (cons (head tail) ->
           (Let (m let (List Int)) tail
-            (Let (ignored Unit) (Reassign m xs)
+            (Let (ignored Unit) (Reassign m (List Int) xs)
               (Apply loop m))))))
      ,reassign-loop-continuation))
 (define shadowed-alias-write
@@ -94,7 +94,7 @@
           (Let (m let (List Int)) tail
             (Let (ignored Unit)
               (Let (m mut (List Int)) (Construct (List Int) nil)
-                (Let (updated Unit) (Reassign m (Construct (List Int) nil)) unit))
+                (Let (updated Unit) (Reassign m (List Int) (Construct (List Int) nil)) unit))
               (Apply loop m))))))
      ,reassign-loop-continuation))
 (define closure-write
@@ -105,7 +105,7 @@
           (Let (m let (List Int)) tail
             (Let (ignored (NFn () Unit () () () User))
               (Lam () reassign-closure-id ()
-                (Let (updated Unit) (Reassign m xs) unit))
+                (Let (updated Unit) (Reassign m (List Int) xs) unit))
               (Apply loop m))))))
      ,reassign-loop-continuation))
 (define write-after-call
@@ -115,7 +115,7 @@
         (cons (head tail) ->
           (Let (m let (List Int)) tail
             (Let (ignored Int) (Apply loop m)
-              (Let (updated Unit) (Reassign m xs) 0))))))
+              (Let (updated Unit) (Reassign m (List Int) xs) 0))))))
      ,reassign-loop-continuation))
 ;; 無関係な slot と shadow された内側の slot への書込みは、外側の減少判定を壊さない。
 (test-case "REC-001: Reassign unrelated to the decreasing alias preserves structural classification"
@@ -225,7 +225,7 @@
 (test-case "REC-001: Partial の slot を呼ぶ手書きの Core は Unknown"
   (check-equal?
    (classify '(Let (cell mut (NFn (Int) Int () (Partial) () User)) g0
-                (Let (ignored Unit) (Reassign cell f) (Apply cell 1)))
+                (Let (ignored Unit) (Reassign cell (NFn (Int) Int () (Partial) () User) f) (Apply cell 1)))
              '((g0 (NFn (Int) Int () (Partial) () User))
                (f (NFn (Int) Int () (Partial) () User)))
              '())
@@ -312,7 +312,7 @@
 (test-case "REC-001: Reassign を含み Partial の callee を呼ばない項は Finite no-recursion"
   (check-equal?
    (classify '(Let (cell mut (NFn (Int) Int () (Partial) () User)) g0
-                (Let (ignored Unit) (Reassign cell f) 1))
+                (Let (ignored Unit) (Reassign cell (NFn (Int) Int () (Partial) () User) f) 1))
              '((g0 (NFn (Int) Int () (Partial) () User))
                (f (NFn (Int) Int () (Partial) () User)))
              '())

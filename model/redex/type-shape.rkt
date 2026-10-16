@@ -318,7 +318,8 @@
          [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
          [`(Read ,operand) (walk operand)]
          [`(Assign ,target ,value) (and (walk target) (walk value))]
-         [`(Reassign ,target ,value) (and (walk target) (walk value))]
+         [`(Reassign ,target ,flow-type ,value)
+          (and (type-normal? flow-type) (walk target) (walk value))]
          [`(RegionLam (,_ ...) ,body) (walk body)]
          [`(RegionApp ,function (,_ ...)) (walk function)]
          ;; pointer 操作（unsafe.md §4.4）。型を持つ位置が無いため operand を

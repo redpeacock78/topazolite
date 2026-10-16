@@ -72,7 +72,7 @@
     [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
     [`(Read ,c) (list c)]
     [`(Assign ,target ,value) (list target value)]
-    [`(Reassign ,_ ,value) (list value)]
+    [`(Reassign ,_ ,_flow-type ,value) (list value)]
     ;; RegionLam の束縛名と RegionApp の ρ は Core の子ではない。
     [`(RegionLam (,_ ...) ,c) (list c)]
     [`(RegionApp ,c (,_ ...)) (list c)]
@@ -171,7 +171,8 @@
      `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
     [`(Read ,_) `(Read ,(first-child))]
     [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
-    [`(Reassign ,target ,_) `(Reassign ,target ,(first-child))]
+    [`(Reassign ,target ,flow-type ,_)
+     `(Reassign ,target ,flow-type ,(first-child))]
     [`(RegionLam ,rps ,_) `(RegionLam ,rps ,(first-child))]
     [`(RegionApp ,_ ,ρs) `(RegionApp ,(first-child) ,ρs)]
     [`(AddressOf ,_) `(AddressOf ,(first-child))]
@@ -258,7 +259,7 @@
                   (if (symbol? w-own) (set w-own) (set)))]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
       [`(Forward ,w) (if (symbol? w) (set w) (set))]
-      [`(Reassign ,target ,value)
+      [`(Reassign ,target ,_flow-type ,value)
        (set-union (if (symbol? target) (set target) (set))
                   (walk value))]
       [(? symbol? s)

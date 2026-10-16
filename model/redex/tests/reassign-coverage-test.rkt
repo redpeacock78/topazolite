@@ -12,7 +12,7 @@
 
 (check-equal?
  (classify '(Recur mut-loop-id loop (n)
-                   (Reassign x (Apply loop n))
+                   (Reassign x Int (Apply loop n))
                    (Apply loop 1))
            '() mut-callables)
  'Unknown)
@@ -36,10 +36,10 @@
   (check-true (provenance? let-provenance))
   (check-equal? (resolve-designator let-provenance 'x) '(0))
   (define reassign-pre
-    '(cfg (Reassign (MutSlot 0) 2)
+    '(cfg (Reassign (MutSlot 0) Int 2)
           ((0 1)) ((0 Available)) () ()))
   (define reassign-post
-    '(cfg unit ((0 2)) ((0 Available)) () ()))
+    '(cfg unit ((0 2 (declared Int))) ((0 Available)) () ()))
   (check-equal? (rule-bucket 'R-Reassign) 'non-substituting)
   (check-true
    (provenance?

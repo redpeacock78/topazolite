@@ -104,7 +104,7 @@
 
 (test-case "prepare-borrow-term* は mut 束縛と既存入口を保つ"
   ;; mut Borrowed は E-VAR-009 で拒否されるため、既存の有効な mut Int を使う。
-  (define skeleton '(Scope () (Let (m mut Int) 1000 (Reassign m 1001))))
+  (define skeleton '(Scope () (Let (m mut Int) 1000 (Reassign m Int 1001))))
   (match (prepare-borrow-term* skeleton)
     [(list 'ok `(cfg ,core ,_heap ,_states ,_tokens ,_trace)
            _sidecar _ir _type)

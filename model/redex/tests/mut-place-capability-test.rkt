@@ -15,7 +15,7 @@
 (define (has-mutation? term)
   (match term
     [`(Assign ,_ ,_) #t]
-    [`(Reassign ,_ ,_) #t]
+    [`(Reassign ,_ ,_ ,_) #t]
     [(? list? parts) (ormap has-mutation? parts)]
     [_ #f]))
 
@@ -100,7 +100,7 @@
   (define core
     `(Scope ()
        (Let (m mut ,record-type) (Rec ((a imm 1)))
-         (Let (written let Unit) (Reassign m (Rec ((a imm 2)))) m))))
+         (Let (written let Unit) (Reassign m ,record-type (Rec ((a imm 2)))) m))))
   (define-values (_type _row configs _final) (typed-trace core))
   (define recorded
     (filter (lambda (config) (pair? (config-declared-types config))) configs))
@@ -139,24 +139,24 @@
      `(Scope ()
         (Let (m mut ,record-type) (Rec ((a imm 1)))
           (Let (s const ,record-type) (Rec ((a mut 2)))
-            (Let (written let Unit) (Reassign m s) m))))
+            (Let (written let Unit) (Reassign m ,record-type s) m))))
      `(Scope ()
         (Let (m mut ,record-type) (Rec ((a imm 1)))
           (Let (called let Unit)
-            (Apply (Lam User ,callable-id (s) (Reassign m s))
+            (Apply (Lam User ,callable-id (s) (Reassign m ,record-type s))
                    (Rec ((a mut 2))))
             m)))
      `(Scope ()
         (Let (m mut ,record-type) (Rec ((a imm 1)))
           (Eliminate
            (Construct (Option ,record-type) some (Rec ((a mut 2))))
-           ((some (s) -> (Let (written let Unit) (Reassign m s) m))
+           ((some (s) -> (Let (written let Unit) (Reassign m ,record-type s) m))
             (none () -> m)))))
      `(Scope ()
         (Let (m mut ,record-type) (Rec ((a imm 1)))
           (UnionEliminate
            (UnionInject ,union-type ,record-type (Rec ((a mut 2))))
-           ((,record-type s -> (Let (written let Unit) (Reassign m s) m))
+           ((,record-type s -> (Let (written let Unit) (Reassign m ,record-type s) m))
             (Bool b -> m)))))))
   (for ([core (in-list cores)] [index (in-naturals)])
     (define callables (if (= index 1) `((,callable-id ,callable-type)) '()))
@@ -178,7 +178,7 @@
   (define core
     `(Scope ()
        (Let (m mut ,record-type) (Rec ((a imm 1)))
-         (Reassign m (Rec ((a mut 2)))))))
+         (Reassign m ,record-type (Rec ((a mut 2)))))))
   (define-values (type row _configs _final) (typed-trace core))
   (check-equal? type 'Unit)
   (check-not-false (member 'Mutation row)))
@@ -187,14 +187,14 @@
   (define mut-record-type '(Record ((a Int mut))))
   (define base-env `((m ,mut-record-type mut)))
   (check-equal?
-   (result-key '(Reassign m (Rec ((a imm 2)))) base-env)
+   (result-key `(Reassign m ,mut-record-type (Rec ((a imm 2)))) base-env)
    'reassign-type-mismatch "mut slot type mismatch")
   (check-equal?
-   (result-key '(Reassign m (Rec ((a imm 2) (b imm 3)))) base-env)
+   (result-key `(Reassign m ,mut-record-type (Rec ((a imm 2) (b imm 3)))) base-env)
    'reassign-type-mismatch "extra field")
   (check-equal?
    (result-key
-    '(Reassign m (Rec ((a imm 2))))
+    `(Reassign m (Record ((a Int imm opt))) (Rec ((a imm 2))))
     '((m (Record ((a Int imm opt))) mut)))
    'reassign-type-mismatch "optional mismatch"))
 
@@ -202,13 +202,13 @@
   (define nested-imm
     '(Record ((a (Record ((c Int imm))) imm))))
   (check-equal?
-   (result-key '(Reassign m (Rec ((a imm (Rec ((c mut 2)))))))
+   (result-key `(Reassign m ,nested-imm (Rec ((a imm (Rec ((c mut 2)))))))
                `((m ,nested-imm mut)))
    'ok)
   (define outer-mut
     '(Record ((a (Record ((c Int imm))) mut))))
   (check-equal?
-   (result-key '(Reassign m (Rec ((a mut (Rec ((c mut 2)))))))
+   (result-key `(Reassign m ,outer-mut (Rec ((a mut (Rec ((c mut 2)))))))
                `((m ,outer-mut mut)))
    'reassign-type-mismatch))
 
@@ -303,7 +303,7 @@
   (define reassign-core
     '(Scope ()
        (Let (m mut (Record ((a Int imm)))) (Rec ((a imm 1)))
-         (Let (written let Unit) (Reassign m (Rec ((a imm 2)))) m))))
+         (Let (written let Unit) (Reassign m (Record ((a Int imm))) (Rec ((a imm 2)))) m))))
   (for ([core (in-list (list residual-core alias-core reassign-core))])
     (define-values (ir annotated result mut-types) (typed-input core))
     (check-true (match result [`(ok ,_) #t] [_ #f]))

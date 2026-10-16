@@ -7,20 +7,23 @@
 
 (check-true (redex-match? UCore e '(Reassign x 1)))
 (check-true (redex-match? UCore+ e `(Reassign ,s (#:var x ,s) (#:lit 1 ,s))))
-(check-true (redex-match? G2 c '(Reassign x 1)))
-(check-true (redex-match? G2m c '(Reassign x 1)))
-(check-true (redex-match? G2+ c `(Reassign ,s (#:var x ,s) (#:lit 1 ,s))))
+(check-true (redex-match? G2 c '(Reassign x Int 1)))
+(check-true (redex-match? G2m c '(Reassign x Int 1)))
+(check-true
+ (redex-match? G2+ c `(Reassign ,s (#:var x ,s) (#:ty Int ,s) (#:lit 1 ,s))))
+(check-false (redex-match? G2 c '(Reassign x 1)))
+(check-false (redex-match? G2m c '(Reassign x 1)))
 
 ;; target は任意の項ではない。Rec リテラルへの再代入は文法が弾く。
-(check-false (redex-match? G2 c '(Reassign (Rec ((a imm 1))) 1)))
+(check-false (redex-match? G2 c '(Reassign (Rec ((a imm 1))) Int 1)))
 ;; G2 には place が無いので、place target は G2m でのみ合法である。
-(check-false (redex-match? G2 c '(Reassign 0 1)))
-(check-true (redex-match? G2m c '(Reassign 0 1)))
+(check-false (redex-match? G2 c '(Reassign 0 Int 1)))
+(check-true (redex-match? G2m c '(Reassign 0 Int 1)))
 
 ;; MutSlot は G1m の c の atom である。
 (check-true (redex-match? G1m c '(MutSlot 0)))
 (check-true (redex-match? G2m c '(MutSlot 0)))
-(check-true (redex-match? G2m c '(Reassign (MutSlot 0) 1)))
+(check-true (redex-match? G2m c '(Reassign (MutSlot 0) Int 1)))
 ;; 実行時だけの形なので source 側の G2 には無い。
 (check-false (redex-match? G2 c '(MutSlot 0)))
 
@@ -32,7 +35,7 @@
 (check-false (redex-match? G2m c '(BorrowMut (MutSlot 0))))
 
 ;; 評価文脈の穴は値の側だけである。
-(check-true (redex-match? G2m E (term (Reassign (MutSlot 0) hole))))
-(check-true (redex-match? G2m F (term (Reassign (MutSlot 0) hole))))
-(check-true (redex-match? G2m G (term (Reassign (MutSlot 0) hole))))
-(check-false (redex-match? G2m E (term (Reassign hole 1))))
+(check-true (redex-match? G2m E (term (Reassign (MutSlot 0) Int hole))))
+(check-true (redex-match? G2m F (term (Reassign (MutSlot 0) Int hole))))
+(check-true (redex-match? G2m G (term (Reassign (MutSlot 0) Int hole))))
+(check-false (redex-match? G2m E (term (Reassign hole Int 1))))

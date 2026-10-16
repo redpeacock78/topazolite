@@ -372,7 +372,7 @@
 (test-case "Reassign は値の注釈型で Never を受ける"
   (check-equal?
    (typed-type-normal
-    `(Let (x mut Int) 1 (Reassign x ,ret1)))
+    `(Let (x mut Int) 1 (Reassign x Int ,ret1)))
    '(Never Unit)))
 
 (test-case "RegionApp は正常型 bottom の関数位置を拒否する"

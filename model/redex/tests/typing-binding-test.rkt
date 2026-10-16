@@ -71,7 +71,7 @@
              (Let (y const (Record ((a Int imm opt))))
                   (Rec ((a imm 2)))
                   (Let (ignored const Unit)
-                       (Reassign x y)
+                       (Reassign x (Record ((a Int imm opt))) y)
                        (Proj s a)))))
   '() '())
  '(Int (Mutation)))

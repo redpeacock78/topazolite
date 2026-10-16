@@ -4925,7 +4925,7 @@
      (infer-read core operand Λ Ψ environment places callables fail)]
     [`(Assign ,target ,value)
      (infer-assign core target value Λ Ψ environment places callables fail)]
-    [`(Reassign ,target ,value)
+    [`(Reassign ,target ,_flow-type ,value)
      (infer-reassign core target value Λ Ψ environment places callables fail)]
     [`(AddressOf ,operand)
      (infer-address-of core operand Λ Ψ environment places callables fail)]

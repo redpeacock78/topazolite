@@ -1679,10 +1679,12 @@
 
    ;; spec §9.4。target は (MutSlot p) の形だけを受ける。裸の p は
    ;; R-LetOwnedB が置いた形であり、再代入の対象ではないので詰まる。
-   (--> (cfg (in-hole E (Reassign (MutSlot p) v_new)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (Reassign (MutSlot p) τ v_new)) H Ω Λtok θ)
         (cfg (in-hole E unit) H_new Ω Λtok θ)
         (where Available ,(table-ref (term Ω) (term p)))
-        (where H_new ,(table-set (term H) (term p) (term v_new)))
+        (where H_new ,(record-declared-type
+                       (table-set (term H) (term p) (term v_new))
+                       (term p) (term τ)))
         R-Reassign)
 
    ;; G2m の Rec を含む値にも leaf 回収を適用する。G1m の同名規則は

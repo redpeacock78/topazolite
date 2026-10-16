@@ -157,7 +157,7 @@
                   (Let (y const (Record ((a Int imm opt))))
                        (Rec ((a imm 2)))
                    (Let (ignored const Unit)
-                        (Reassign x y)
+                        (Reassign x (Record ((a Int imm opt))) y)
                         (Proj s a)))))))
          fuel)
  (term (cfg 1 ((0 (Rec ((a imm 2))) (declared (Record ((a Int imm opt)))))) ((0 Dropped)) () ((fin 0)))))

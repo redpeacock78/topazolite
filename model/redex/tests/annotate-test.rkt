@@ -76,6 +76,7 @@
          (Proj (Rec ((a imm 1))) a)
          (ProjOpt Int (Rec ((a imm 1))) a)
          (Let (x const Int) 1 x)
+         (Reassign x Int 1)
          (Discharge (ProofRep User ValidNarrativeTrait) 1)
          (UVal 1)
          (RVal (ProofRep User (Prop p)) 1))))

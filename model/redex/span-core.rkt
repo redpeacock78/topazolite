@@ -131,7 +131,7 @@
          (Suspend s c)
          (Move s w)
          (Forward s w)
-         (Reassign s w c)
+         (Reassign s w ts c)
          (Drop s c)
          (Curry s c c)
          (OwnLeaf s c))

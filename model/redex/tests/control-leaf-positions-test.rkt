@@ -253,11 +253,11 @@
          'Unit '() '((loop-id (NFn () Unit () () () User))))
    (list 'Reassign 'value
          `(Scope () (Let (x mut Int) 1
-                      (Let (y const Unit) (Reassign x ,leaf) y)))
+                      (Let (y const Unit) (Reassign x Int ,leaf) y)))
          '(Scope () (Let (x mut Int) 1
-                      (Let (y const Unit) (Reassign x 2) y)))
+                      (Let (y const Unit) (Reassign x Int 2) y)))
          `(Scope () (Let (x mut Int) 1
-                      (Let (y const Unit) (Reassign x ,(with-leaf 2)) y)))
+                      (Let (y const Unit) (Reassign x Int ,(with-leaf 2)) y)))
          'Unit '(Mutation))
    ;; row-fixture は、型付き trace から作る control config を使う。
    (list 'PtrOffset 'offset #f #f #f 'Int '())

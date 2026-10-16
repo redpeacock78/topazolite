@@ -969,6 +969,7 @@
    (reach-row 'immutable-binding
               (reach-node 'Reassign 1561 1575
                           (reach-var 'x 1562 1563)
+                          (reach-ty 'Int 1564 1567)
                           (reach-lit 2 1570 1571))
               '() '() '((x Int)) (reach-span 1561 1575))
    (reach-row 'mut-binding-unsupported-type
@@ -982,6 +983,7 @@
    (reach-row 'reassign-type-mismatch
               (reach-node 'Reassign 1601 1615
                           (reach-var 'x 1602 1603)
+                          (reach-ty 'Int 1604 1607)
                           (reach-lit 'unit 1610 1611))
               '() '() '((x Int mut)) (reach-span 1601 1615))
    (reach-row 'owned-narrowing-rejected
@@ -1023,6 +1025,7 @@
    (reach-row 'mutable-callable-storage-requires-partial
               (reach-node 'Reassign 1726 1740
                           (reach-var 'cell 1727 1731)
+                          (reach-ty '(NFn (Int) Int () () () User) 1731 1732)
                           (reach-var 'g 1732 1733))
               '() '()
               '((cell (NFn (Int) Int () () () User) mut)

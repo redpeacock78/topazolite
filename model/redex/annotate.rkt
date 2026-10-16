@@ -50,8 +50,8 @@
       [(list 'Suspend c) (list 'Suspend (next) (ann c))]
       [(list 'Move w) (list 'Move (next) (ann w))]
       [(list 'Forward w) (list 'Forward (next) (ann w))]
-      [(list 'Reassign target value)
-       (list 'Reassign (next) (ann target) (ann value))]
+      [(list 'Reassign target type value)
+       (list 'Reassign (next) (ann target) (ty type) (ann value))]
       [(list 'Drop c) (list 'Drop (next) (ann c))]
       [(list 'Curry c_1 c_2) (list 'Curry (next) (ann c_1) (ann c_2))]
       [(list 'OwnLeaf c) (list 'OwnLeaf (next) (ann c))]

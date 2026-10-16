@@ -341,7 +341,7 @@
       [`(Assign ,place ,value)
        (and (walk place environment target-visible?)
             (walk value environment target-visible?))]
-      [`(Reassign ,_ ,value)
+      [`(Reassign ,_ ,_flow-type ,value)
        (walk value environment target-visible?)]
       [`(Read ,argument)
        (walk argument environment target-visible?)]
@@ -516,7 +516,7 @@
       [`(Assign ,place ,value)
        (combine-uses (list (walk place target-visible?)
                            (walk value target-visible?)))]
-      [`(Reassign ,place ,value)
+      [`(Reassign ,place ,_flow-type ,value)
        (combine-uses (list (walk place target-visible?)
                            (walk value target-visible?)))]
       [`(Read ,argument) (walk argument target-visible?)]
@@ -555,7 +555,7 @@
   (define (reassigned-in-scope? name core)
     (define (walk core visible?)
       (match core
-        [`(Reassign ,target ,value)
+        [`(Reassign ,target ,_flow-type ,value)
          (or (and visible? (eq? target name))
              (walk value visible?))]
         [`(Lam ,_ ,_ (,parameters ...) ,body)
@@ -745,7 +745,7 @@
             [_ #f])))]
       [`(Perform ,_ ,argument)
        (walk argument decomposable strict target-visible?)]
-      [`(Reassign ,_ ,value)
+      [`(Reassign ,_ ,_flow-type ,value)
        (walk value decomposable strict target-visible?)]
       [`(Handle ,_ (,name -> ,handler) ,handled)
        (and (walk handler
