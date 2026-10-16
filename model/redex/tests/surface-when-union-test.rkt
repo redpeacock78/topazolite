@@ -455,3 +455,88 @@
   (when (compiled? result)
     (check-equal? (compiled-type result) 'Int)
     (check-equal? (run-value result) 23)))
+
+;; SUR-014b2s。data の when と Union の when の入れ子を合成位置に置く。
+(define (cross-program variable? scrutinee-type parameters return-type body arguments)
+  (string-append
+   (if variable? "" (string-append "fn g() -> " scrutinee-type " { return "
+                                   (if (equal? scrutinee-type "Bool") "true" "1")
+                                   " }\n"))
+   "fn f(" parameters ") -> " return-type " {\n"
+   "  let z = " body "\n"
+   "  return z\n}\n"
+   "f(" arguments ")"))
+
+(test-case "合成位置の data when の枝の Union when を受理する"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define result
+      (compile
+       (cross-program
+        variable? "Bool"
+        (if variable? "a: Bool, u: Int | String" "u: Int | String")
+        "Int"
+        (string-append
+         "when " scrutinee " {\n"
+         "    true => when u {\n      (x: Int) => x\n      (s: String) => 0\n    }\n"
+         "    false => 3\n  }")
+        (if variable? "true, 5" "5"))))
+    (check-compiled result)
+    (when (compiled? result)
+      (check-equal? (compiled-type result) 'Int)
+      (check-equal? (run-value result) 5))))
+
+(test-case "data when の中の Union when の葉の some と none は外側全体で E-TYP-004"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define body
+      (string-append
+       "when " scrutinee " {\n"
+       "    true => when u {\n      (x: Int) => some(x)\n      (s: String) => none\n    }\n"
+       "    false => none\n  }"))
+    (define source
+      (cross-program variable? "Bool"
+                     (if variable? "a: Bool, u: Int | String" "u: Int | String")
+                     "Option<Int>" body (if variable? "true, 5" "5")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-004")
+      (check-equal? (diagnostic-primary-span result) (source-span source body)))))
+
+(test-case "Union when の中の data when の葉の some と none は内側全体で E-TYP-004"
+  (for ([scrutinee (in-list '("u" "g()"))])
+    (define variable? (equal? scrutinee "u"))
+    (define inner "when b {\n      true => some(x)\n      false => none\n    }")
+    (define source
+      (cross-program variable? "Int | String"
+                     (if variable? "u: Int | String, b: Bool" "b: Bool")
+                     "Option<Int>"
+                     (string-append
+                      "when " scrutinee " {\n"
+                      "    (x: Int) => " inner "\n"
+                      "    (s: String) => none\n  }")
+                     (if variable? "1, true" "true")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-004")
+      (check-equal? (diagnostic-primary-span result) (source-span source inner)))))
+
+(test-case "Union when の葉の型引数の無い constructor は E-TYP-003 で constructor を指す"
+  (for ([scrutinee (in-list '("u" "g()"))])
+    (define variable? (equal? scrutinee "u"))
+    (define source
+      (cross-program variable? "Int | String"
+                     (if variable? "u: Int | String" "")
+                     "Option<Int>"
+                     (string-append
+                      "when " scrutinee " {\n"
+                      "    (x: Int) => some(x)\n"
+                      "    (s: String) => none\n  }")
+                     (if variable? "1" "")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-003")
+      (check-equal? (diagnostic-primary-span result) (source-span source "some(x)")))))

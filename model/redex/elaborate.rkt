@@ -2277,7 +2277,7 @@
              (for ([raw-branch (in-list branches)])
                (match (peel-branch raw-branch)
                  [`(,_ (,_ ...) -> ,body)
-                  #:when (needs-expected-type? body)
+                  #:when (branch-needs-expected-type? body)
                   (reject eliminate-span 'eliminate-needs-expected-type)]
                  [_ (void)]))
              (define results
@@ -2431,6 +2431,16 @@
         [`(Let ,_ ,_ ,body) (needs-expected-type? body #:if-some? if-some?)]
         [`(NarrativeExpr ,body) (needs-expected-type? body #:if-some? if-some?)]
         [_ #f]))
+
+    ;; SUR-014。data の合成位置の事前検査だけが使う。入れ子の Eliminate は枝の結果位置を見る。
+    (define (branch-needs-expected-type? expression)
+      (match (peel-node expression)
+        [`(Eliminate ,_ (,branches ...))
+         (for/or ([branch (in-list branches)])
+           (branch-needs-expected-type? (last (peel-branch branch))))]
+        [`(Let ,_ ,_ ,body) (branch-needs-expected-type? body)]
+        [`(NarrativeExpr ,body) (branch-needs-expected-type? body)]
+        [_ (needs-expected-type? expression)]))
 
     (define (prepare-fn s parameter-binders raw-parameter-types body
                         environment delta

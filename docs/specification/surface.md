@@ -933,9 +933,15 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 5. 枝本体の型付けを行う。
 
 注釈の無い位置の `when` も枝を合成できれば受理する。
-枝に期待型が必要で合成できない場合は `E-TYP-004` とし、`some(1)` と `none` のように型引数を決められない枝がその例である。
+scrutinee が data 型の `when` では、枝を合成する前に各枝の結果位置（入れ子の `when` と `else` を持つ `if` の枝、`let` の後の末尾の式）をたどり、期待型が必要で合成できない式があれば `E-TYP-004` とする。
+arm の本体ブロック、`else` の無い `if` の内部、scrutinee、関数呼び出しの引数はたどらない。
+`some(1)` と `none` のように型引数を決められない constructor がその例であり、入れ子の `when` と `if` そのものは、結果位置がすべて合成できれば受理する。
+scrutinee が Union の `when` は枝を個別に合成するので、型引数を決められない constructor の枝は `E-TYP-003` になり、primary span はその constructor である。
 本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
 `E-TYP-004`、`E-TYP-010`、`E-TYP-029`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
+入れ子の場合、`E-TYP-004` の primary span は、結果位置をたどった連鎖の上で最も外側にある data の `when` または `if` 全体である。
+連鎖がたどらない位置で途切れた後は、その式を型付けする通常の経路の診断と span になる。
+その式が注釈の無い位置で合成される場合に限り、内側が data の `when` か `else` を持つ `if` なら `E-TYP-004` でその全体が、Union の `when` なら `E-TYP-003` でその constructor が primary span である。
 `if` の条件が Bool と適合しない場合は `E-TYP-012` とし、expected は `Bool`、found は変換が拒否した型、primary span は `if` 全体である。
 
 診断の primary span は、原則として誤りを起こした token または節点の span とする。

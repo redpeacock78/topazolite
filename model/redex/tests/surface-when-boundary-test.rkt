@@ -602,3 +602,87 @@
   (check-true (diagnostic? result))
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) "E-OWN-032")))
+
+;; SUR-014b2s。合成位置の let に body を置いた関数を作る。scrutinee の値は true。
+(define (synth-let-program variable? return-type body)
+  (string-append
+   (if variable? "" "fn g() -> Bool { return true }\n")
+   "fn f(" (if variable? "a: Bool, " "") "b: Bool) -> " return-type " {\n"
+   "  let z = " body "\n"
+   "  return z\n}\n"
+   "f(" (if variable? "true, " "") "false)"))
+
+(test-case "合成位置の data when は枝の入れ子の when と if を合成する"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (for ([row (in-list
+                (list
+                 (list (string-append
+                        "when " scrutinee " {\n"
+                        "    true => when b {\n      true => 1\n      false => 2\n    }\n"
+                        "    false => 3\n  }")
+                       2)
+                 (list (string-append "if b { 1 } else if " scrutinee " { 2 } else { 3 }")
+                       2)
+                 (list (string-append
+                        "when " scrutinee " {\n"
+                        "    true => if b { 1 } else { 2 }\n"
+                        "    false => 3\n  }")
+                       2)
+                 ;; 内側の when の return は内側の when の境界へ返り、内側の when の値 7 になる。
+                 (list (string-append
+                        "when " scrutinee " {\n"
+                        "    true => when b {\n      true => 1\n      false => return 7\n    }\n"
+                        "    false => 3\n  }")
+                       7)))])
+      (define result (compile (synth-let-program variable? "Int" (first row))))
+      (check-true (compiled? result)
+                  (if (diagnostic? result)
+                      (format "~a: ~a" (diagnostic-id result)
+                              (diagnostic-message result))
+                      (format "unexpected result: ~s" result)))
+      (when (compiled? result)
+        (check-equal? (compiled-type result) 'Int)
+        (check-equal? (run-value result) (second row))))))
+
+(test-case "合成位置の入れ子の枝の型は外側の when で合流する"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define result
+      (compile
+       (synth-let-program
+        variable? "Int | String"
+        (string-append
+         "when " scrutinee " {\n"
+         "    true => when b {\n      true => 1\n      false => \"s\"\n    }\n"
+         "    false => 3\n  }"))))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) '(Union Int String))
+      (match (run-value result)
+        [`(UnionVal ,_ String "s") (void)]
+        [other (fail-check (format "String member の UnionVal を期待した: ~s"
+                                   other))]))))
+
+(test-case "合成位置の入れ子の葉が型引数を決められないと外側全体で E-TYP-004"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (for ([body (in-list
+                 (list
+                  (string-append
+                   "when " scrutinee " {\n"
+                   "    true => when b {\n      true => some(1)\n      false => none\n    }\n"
+                   "    false => none\n  }")
+                  (string-append
+                   "if " scrutinee " { some(1) } else if b { none } else { none }")))])
+      (define source (synth-let-program variable? "Option<Int>" body))
+      (define result (compile source))
+      (check-true (diagnostic? result))
+      (when (diagnostic? result)
+        (check-equal? (diagnostic-id result) "E-TYP-004")
+        (check-equal? (diagnostic-primary-span result)
+                      (source-span source body))))))
