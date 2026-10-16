@@ -663,21 +663,51 @@ E-Let-Check は E-Let、E-Let-Annot、E-Let-Fn-Check の右辺の前提と束縛
 **(E-Let-Never)**
 
 ```text
-Γ; Δ; Π; B ⊢ e1 ⇒ Never ! ε1 ⟹ c1
-bind(bmode, τdecl, Never) = τb       τdecl は注釈型、注釈が無ければ Never
+Γ; Δ; Π; B ⊢ e1 ⇒ Never ! ε1 ⟹ c1       （正常型 τ1°）
+bind(bmode, τdecl, τ1°) = τb              τdecl は注釈型、注釈が無く τ1° が未定なら Never
 Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
 --------------------------------
-Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇒ Never ! ε1 ∪ ε2 ⟹ Let(x bmode : τb, c1, c2)
+Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇒ Never ! ε1 ∪ ε2 ⟹ Let(x bmode : τb, c1, c2) （正常型は τ2 が Never なら ⊥、それ以外なら τ2°）
+```
+
+**(E-Let-Never-Check)**
+
+```text
+Γ; Δ; Π; B ⊢ e1 ⇒ Never ! ε1 ⟹ c1       （正常型 τ1°）
+bind(bmode, τdecl, τ1°) = τb
+Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇐ τexpected ! ε2 ⟹ c2 ⇒ τ2      または      Γ, x :bmode τb; Δ; Π; B ⊢ e2 ⇒ τ2 ! ε2 ⟹ c2
+--------------------------------（検査位置）
+Γ; Δ; Π; B ⊢ bmode x : T = e1 in e2 ⇐ τexpected ! ε1 ∪ ε2 ⟹ Let(x bmode : τb, c1, c2) ⇒ Never
+                                     （正常型は τ2 が Never なら ⊥、それ以外なら τ2）
 ```
 
 E-Let-Never は通常の E-Let、E-Let-Annot、E-Let-Check に適用し、E-Let-Fn-Check には適用しない。
-束縛値が `Never` でも本体を合成し、本体の型の誤りを報告する。
+合成位置では、束縛値が `Never` でも本体を合成し、本体の型の誤りを報告する。
 本体の row は到達不能な場合も結果に含める。
-検査位置では本体を期待型で検査せず、結果の `Never` を `compat?` で外側の期待型へ照合する。
-そのため、到達不能な本体にある `none` など期待型を要する式は合成に失敗することがある。
+検査位置では本体を期待型で検査し、その検査が elaborate の診断で失敗した場合に限って合成へ戻る。
+検査と合成の両方が失敗した場合は、合成側の診断を報告する。
+検査の正常型は、本体の judgment の型が `Never` なら `⊥`、それ以外なら検査の judgment の型である。
+検査から合成へ戻るときは、検査の途中で更新した elaborate の可変状態を検査前へ戻す。
+検査が成功したときは、検査で生成した Core と状態を保つ。
 注釈付き `Let` では、`Never` の判定に変換前の右辺の Core 型を使う。
 資源型 identity `Let` の束縛名の扱いは既存の専用経路を保つ。
-`TryBind` と `FnDecl` の継続にはこの規則を適用しない。
+`FnDecl` の継続にはこの規則を適用しない。
+`TryBind` の右辺が `Never` の場合は §4.5 の規則を適用する。
+
+**(E-Ctx-Never)**
+
+```text
+e = F[e0]        F は T-Ctx-Never の表にある一段の正格評価文脈
+Γ; Δ; Π; B ⊢ e0 ⇒ Never ! ε0 ⟹ c0       （正常型 τ0°）
+F の通常の elaboration が、c0 を τ0° の項として e を τ ! ε で導く
+F = Handle(op, h, □) なら op ∉ ε0
+-------------------------------------------------------------------
+Γ; Δ; Π; B ⊢ e ⇒ Never ! ε ⟹ c          （正常型 τ°）
+```
+
+E-Ctx-Never は Core の T-Ctx-Never と同じ正格な位置で、通常の elaboration と同じ順に全ての被演算子を検査する。
+row は `Never` の被演算子を含む全ての被演算子の row を合併する。
+`Handle` の条件と健全性の根拠、および row 判定の不完全さは Core の T-Ctx-Never の節を参照する。
 
 **(E-Construct-Check)**
 
@@ -1047,12 +1077,21 @@ IfSome(clauses) ⇒ Option<T> ! ε ⟹ c
 型注釈のない総称 constructor を `IfSome` の then に限って synth する規則は追加しない。
 一般の `Construct` と `Eliminate` の合成規則も変更しない。
 
-`TryBind` は `let x ?= e` の UCore 中間形であり、elaboration は右辺 `e` を一度だけ合成してから data `Eliminate` へ展開する。
-生成した `Eliminate` はその合成結果を再利用し、`e` を再度合成しない。
+`TryBind` は `let x ?= e` の UCore 中間形であり、elaboration は右辺 `e` を一度だけ合成する。
+右辺の型が通常の `Option<T>` または `Result<T, E>` なら、その型に応じて data `Eliminate` へ展開し、生成した `Eliminate` は右辺の合成結果を再利用する。
+右辺が `Never` で正常型 `Option<T>` または `Result<T, E>` を持つ場合も、正常型から枝の schema を得て通常の data `Eliminate` へ展開する。
 `e` が `Option<T>` なら、成功枝は `some(x) -> body`、失敗枝は `none() -> return none` となる。
 `e` が `Result<T, E>` なら、成功枝は `ok(x) -> body`、失敗枝は `ng(%err) -> return ng(%err)` となる。
 `%err` は利用者の束縛子と衝突しない fresh name である。
 `TryBind` の結果型は成功枝 `body` の型であり、失敗枝の `Return` は `Never` なので枝の合流に影響しない。
+右辺が `Never` の場合、T-Ctx-Never により全体の型も `Never` となる。
+右辺の正常型が `⊥` の場合は成功枝の束縛子を `Never` とする。
+合成位置では本体を合成する。
+検査位置では本体を期待型で検査し、その検査が elaborate の診断で失敗した場合に限って状態を戻して合成する。
+両方とも失敗したときは合成の側の診断を報告する。
+生成する Core と結果の正常型は E-Let-Never と同じ規則に従う。
+この場合は失敗枝を生成しない。
+右辺が直接の `return` なら正常型が `⊥` になるため、従来の `E-TYP-032` ではなくこの規則の経路を通る。
 右辺が `Owned<Option<T>>` または `Owned<Result<T, E>>` なら、elaboration は外側の `Owned` を剥がし、簡約時に `R-EliminateTransit` が移送 marker を外す。
 成功 payload または Result の誤差 payload が資源型なら、既存の data `Eliminate` と同じ枝 binder の Scope と Let encoding を使い、資源を一度だけ移送する。
 展開した `Eliminate` は `NarrativeExpr` で包まない。
@@ -1461,7 +1500,7 @@ F = Handle(op, h, □) なら op ∉ ε0
 | 文脈 | 正格な位置 | 正常型の要否 | 結果の正常型 |
 | --- | --- | --- | --- |
 | `Apply` | 関数、実引数 | 関数には要する、実引数には要しない | 関数型の戻り型 |
-| `Let` | 束縛値 | 要しない。Core の束縛子が型を持つ | 本体の正常型 |
+| `Let` | 束縛値 | 要しない。Core の束縛子が型を持つ | 束縛値と本体がともに `Never` なら `⊥`、それ以外は本体の正常型 |
 | `Construct` | 欄 | 要しない。constructor の型注釈で検査する | 注釈の型 |
 | `Eliminate` | scrutinee | 要する。constructor schema が必要 | `Never` でない枝の合流型、全枝 `Never` なら `⊥` |
 | `Perform` | 引数 | 要しない。operation の型成分で検査する | operation の結果型。結果型が `Never` なら `⊥` |

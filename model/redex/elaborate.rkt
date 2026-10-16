@@ -39,10 +39,13 @@
          ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
          row005-join)
 
-(struct judgment (core type row core-type)
+(struct judgment (core type row core-type normal-type)
   #:transparent
   #:constructor-name make-judgment/raw
   #:omit-define-syntaxes)
+
+(define (default-normal-type type)
+  (if (eq? type 'Never) '⊥ type))
 
 ;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
 (struct resolved-type-argument (type) #:transparent)
@@ -51,9 +54,12 @@
 ;; check の一部だけ、実際に生成した Core の型を明示する。
 (define judgment
   (case-lambda
-    [(core type row) (make-judgment/raw core type row type)]
+    [(core type row)
+     (make-judgment/raw core type row type (default-normal-type type))]
     [(core type row core-type)
-     (make-judgment/raw core type row core-type)]))
+     (make-judgment/raw core type row core-type (default-normal-type type))]
+    [(core type row core-type normal-type)
+     (make-judgment/raw core type row core-type normal-type)]))
 (struct exn:fail:elab exn:fail (primary-span phase reason details related) #:transparent)
 (define current-failure-returns (make-parameter #f))
 
@@ -1370,6 +1376,7 @@
       (define expected-union?
         (match expected* [`(Union ,_ ,_) #t] [_ #f]))
       (cond
+        [(eq? actual* 'Never) (values core 'Never)]
         [(conversion-noop? actual* expected* context propositions)
          (values core actual*)]
         [(and expected-union? (not actual-union?))
@@ -1764,7 +1771,9 @@
                 ,bound-core
                 ,(judgment-core body-result))
           (judgment-type body-result)
-          (row-union bound-row (judgment-row body-result)))]))
+          (row-union bound-row (judgment-row body-result))
+          (judgment-core-type body-result)
+          (judgment-normal-type body-result))]))
 
     ;; 生名の binder は対応する仮引数の binder の span をそのまま持つ。
     ;; 名前だけを差し替えて位置は動かさない。G2+ は各仮引数へ
@@ -1888,10 +1897,14 @@
           (if (owned-type? field-type)
               `(OwnLeaf ,type-span ,(judgment-core result))
               (judgment-core result))))
-      (judgment `(Construct ,type-span (#:ty ,expected ,type-span) ,constructor
-                            ,@field-cores)
-                expected
-                (rows-union (map judgment-row results))))
+      (define result
+        (judgment `(Construct ,type-span (#:ty ,expected ,type-span) ,constructor
+                              ,@field-cores)
+                  expected
+                  (rows-union (map judgment-row results))
+                  expected
+                  expected))
+      (propagate-context-never result results))
 
     (define (eliminate-front scrutinee branches eliminate-span
                              environment delta propositions boundaries
@@ -1902,7 +1915,7 @@
             (synth scrutinee environment delta propositions boundaries)))
       ;; 包みは data 型を包むだけで構成子を変えない。typing.rkt と同じ表を引く。
       (define-values (data-type rewrap)
-        (peel-eliminate-wrapper (judgment-type scrutinee-result)))
+        (peel-eliminate-wrapper (type-for-context scrutinee-result)))
       (define schema-core (constructor-schema data-type))
       (unless schema-core
         (reject eliminate-span 'non-data-eliminate (judgment-type scrutinee-result)))
@@ -1952,7 +1965,7 @@
     (define (union-eliminate scrutinee-result branches expected eliminate-span
                              environment delta propositions boundaries)
       (define union-type
-        (match (normalize-type (judgment-type scrutinee-result))
+        (match (normalize-type (type-for-context scrutinee-result))
           [`(Owned ,inner) inner]
           [type type]))
       (define members (union-members union-type))
@@ -2079,7 +2092,8 @@
                 (judgment encoded-body
                           (judgment-type body-result)
                           (judgment-row body-result)
-                          (judgment-core-type body-result)))))
+                          (judgment-core-type body-result)
+                          (judgment-normal-type body-result)))))
       (define branch-results (map second results))
       (define-values (branch-cores core-type)
         (merge-branches (map judgment-core branch-results)
@@ -2092,10 +2106,16 @@
                                     [branch-core (in-list branch-cores)])
                            (define branch (first result))
                            (append (take branch 4) (list branch-core))))
-       (or expected core-type)
+       (if (or (eq? (judgment-type scrutinee-result) 'Never)
+               (eq? core-type 'Never))
+           'Never
+           (or expected core-type))
        (rows-union
         (cons (judgment-row scrutinee-result)
               (map judgment-row branch-results)))
+       (if (eq? (judgment-type scrutinee-result) 'Never)
+           'Never
+           core-type)
        core-type))
 
     (define (member-pattern? raw-branch)
@@ -2156,15 +2176,21 @@
                             branch-core))
                       `(,(branch-span raw-branch) ,constructor ,core-parameters
                         -> ,core)))
-       expected
+       (if (or (eq? (judgment-type scrutinee-result) 'Never)
+               (eq? core-type 'Never))
+           'Never
+           expected)
        (rows-union
         (cons (judgment-row scrutinee-result)
               (map second branch-results)))
+       (if (eq? (judgment-type scrutinee-result) 'Never)
+           'Never
+           core-type)
        core-type))
 
     (define (synth-eliminate scrutinee-result branches eliminate-span
                              environment delta propositions boundaries)
-      (define scrutinee-type (judgment-type scrutinee-result))
+      (define scrutinee-type (type-for-context scrutinee-result))
       (cond
         [(or (root-owned-union? scrutinee-type)
              (union-type? scrutinee-type))
@@ -2215,10 +2241,14 @@
                                core))
                          `(,(branch-span raw-branch) ,constructor
                            ,core-parameters -> ,wrapped-core)))
-          core-type
+          (if (eq? (judgment-type scrutinee-result) 'Never)
+              'Never
+              core-type)
           (rows-union
            (cons (judgment-row checked-scrutinee)
-                 (map judgment-row results))))]))
+                 (map judgment-row results)))
+          core-type
+          core-type)]))
 
     (define (try-bind-kind type)
       (match (normalize-type type)
@@ -2264,6 +2294,51 @@
           `(,s ok ((#:bind ,x ,s_x)) -> ,body)
           `(,s ng ((#:bind ,error-binder ,s)) ->
             ,(failure-return s `(Construct ,s ng ,error-value))))]))
+
+    (define (elaborate-try-bind s name name-span right right-result body
+                                expected environment delta propositions
+                                boundaries)
+      (define right-never?
+        (eq? (judgment-type right-result) 'Never))
+      (define right-normal-type (type-for-context right-result))
+      (cond
+        [(and right-never? (eq? right-normal-type 'Never))
+         (define body-environment
+           (extend environment (list name) '(Never) #f '(#f)))
+         (define body-result
+           (if expected
+               (check-never-bound-body body expected body-environment delta
+                                       propositions boundaries)
+               (synth body body-environment delta propositions boundaries)))
+         (define result
+           (judgment
+            `(Let ,s ((#:bind ,name ,name-span) const (#:ty Never ,name-span))
+                  ,(judgment-core right-result) ,(judgment-core body-result))
+            'Never
+            (row-union (judgment-row right-result) (judgment-row body-result))
+            'Never
+            (if (eq? (judgment-type body-result) 'Never)
+                '⊥
+                (judgment-normal-type body-result))))
+         (if expected
+             (check-against-expected result expected s propositions)
+             result)]
+        [else
+         (define-values (data-type _rewrap)
+           (peel-eliminate-wrapper right-normal-type))
+         (define kind (try-bind-kind data-type))
+         (unless kind
+           (reject (span-of right) 'try-bind-non-adt right-normal-type))
+         (define bind-span (span-hull name-span (span-of right)))
+         (try-bind-boundary bind-span kind data-type right-normal-type boundaries)
+         (define branches
+           (try-bind-branches s name name-span body data-type kind))
+         (if expected
+             (check-eliminate right branches expected s environment delta
+                              propositions boundaries
+                              #:scrutinee-result right-result)
+             (synth-eliminate right-result branches s environment delta
+                              propositions boundaries))]))
 
     ;; SUR-012。UCore+ の型欄が省略の標識かを返す。
     (define (inferred? type)
@@ -2476,19 +2551,65 @@
                  return-type boundary body-result
                  signature callable reserved-with-formals))
 
-    ;; SUR-015（spec §6.2）。下見中に消費した各連番と callable 表を必ず戻す。
+    (define (elaboration-state)
+      (list boundary-counter callable-counter owned-counter union-counter
+            reversed-callables))
+    (define (restore-elaboration-state! saved)
+      (set! boundary-counter (first saved))
+      (set! callable-counter (second saved))
+      (set! owned-counter (third saved))
+      (set! union-counter (fourth saved))
+      (set! reversed-callables (fifth saved)))
+
+    ;; 下見で消費した fresh 名と callable 表を本検査へ漏らさない。
     (define (call-with-restored-state thunk)
-      (define saved (list boundary-counter callable-counter owned-counter
-                          union-counter reversed-callables))
+      (define saved (elaboration-state))
       (dynamic-wind
        void
        thunk
-       (λ ()
-         (set! boundary-counter (first saved))
-         (set! callable-counter (second saved))
-         (set! owned-counter (third saved))
-         (set! union-counter (fourth saved))
-         (set! reversed-callables (fifth saved)))))
+       (λ () (restore-elaboration-state! saved))))
+
+    (define (probe-candidate-boxes boundaries)
+      (for/fold ([boxes '()]) ([boundary (in-list boundaries)])
+        (match boundary
+          [`(,_ ,_ (#:probe ,candidate-box) ,_)
+           (if (and (box? candidate-box) (not (memq candidate-box boxes)))
+               (cons candidate-box boxes)
+               boxes)]
+          [_ boxes])))
+
+    ;; 失敗した検査の fresh 名、implicit Return 印、外側 probe の候補を戻す。
+    (define (call-with-elaboration-rollback-on-error boundaries thunk)
+      (define saved-state (elaboration-state))
+      (define saved-probes
+        (for/list ([candidate-box (in-list (probe-candidate-boxes boundaries))])
+          (list candidate-box (unbox candidate-box))))
+      (define outer-failure-returns (current-failure-returns))
+      (define attempted-failure-returns (mutable-seteq))
+      (for ([returned (in-set outer-failure-returns)])
+        (set-add! attempted-failure-returns returned))
+      (with-handlers
+          ([exn?
+            (λ (error)
+              (restore-elaboration-state! saved-state)
+              (for ([saved-probe (in-list saved-probes)])
+                (set-box! (first saved-probe) (second saved-probe)))
+              (raise error))])
+        (define result
+          (parameterize ([current-failure-returns attempted-failure-returns])
+            (thunk)))
+        (for ([returned (in-set attempted-failure-returns)])
+          (set-add! outer-failure-returns returned))
+        result))
+
+    (define (check-never-bound-body body expected environment delta
+                                    propositions boundaries)
+      (with-handlers ([exn:fail:elab?
+                       (λ (_) (synth body environment delta propositions
+                                     boundaries))])
+        (call-with-elaboration-rollback-on-error
+         boundaries
+         (λ () (check body expected environment delta propositions boundaries)))))
 
     ;; SUR-015（spec §6.1、§6.2）。通常の本体結果型を優先し、Never なら
     ;; 最初に合成できた Return payload の型を候補にする。
@@ -2900,9 +3021,34 @@
       (define normalized (normalize-type (judgment-type result)))
       (unless normalized
         (reject s 'non-normalizable-type (judgment-type result)))
+      (define normal-type
+        (if (eq? (judgment-normal-type result) '⊥)
+            '⊥
+            (or (normalize-type (judgment-normal-type result))
+                (reject s 'non-normalizable-type
+                        (judgment-normal-type result)))))
+      (define normalized-core-type
+        (or (normalize-type (judgment-core-type result))
+            (reject s 'non-normalizable-type
+                    (judgment-core-type result))))
       (judgment (judgment-core result)
                 normalized
-                (judgment-row result)))
+                (judgment-row result)
+                normalized-core-type
+                normal-type))
+
+    ;; 正格な被演算子が Never でも通常の型検査と row の合併は済ませる。
+    (define (propagate-context-never result children)
+      (if (ormap (λ (child) (eq? (judgment-type child) 'Never)) children)
+          (judgment (judgment-core result) 'Never (judgment-row result)
+                    'Never (judgment-normal-type result))
+          result))
+
+    (define (type-for-context result)
+      (if (and (eq? (judgment-type result) 'Never)
+               (not (eq? (judgment-normal-type result) '⊥)))
+          (judgment-normal-type result)
+          (judgment-type result)))
 
     (define (elaborate-let-tail s binder binding-type binding-mode
                                 bound-result bound-never? body environment delta
@@ -2920,22 +3066,38 @@
         (cond
           [identity-resource?
            (judgment `(#:var ,name ,(span-of body)) binding-type '())]
+          [(and expected bound-never?)
+           (check-never-bound-body body expected body-environment delta
+                                   propositions boundaries)]
           [(and expected (not bound-never?))
            (check body expected body-environment delta propositions
                   boundaries)]
           [else
            (synth body body-environment delta propositions boundaries)]))
+      (define let-type
+        (if (or bound-never? (eq? (judgment-type body-result) 'Never))
+            'Never
+            (judgment-type body-result)))
+      (define let-normal-type
+        (if (and bound-never?
+                 (eq? (judgment-type body-result) 'Never))
+            '⊥
+            (judgment-normal-type body-result)))
       (define let-result
         (judgment `(Let ,s ,core-binder
                         ,bound-core
                   ,(judgment-core body-result))
-                  (if bound-never? 'Never (judgment-type body-result))
+                  let-type
                   (row-union (judgment-row bound-result)
-                             (judgment-row body-result))))
+                             (judgment-row body-result))
+                  let-type
+                  let-normal-type))
       (if (and expected identity-resource?)
           ;; 資源 identity Let は資源の place を保つため、Let 全体を検査する。
           (check-against-expected let-result expected s propositions)
-          let-result))
+          (if (and expected bound-never?)
+              (check-against-expected let-result expected s propositions)
+              let-result)))
 
     (define (elaborate-annotated-let-bound s binding-mode raw-type bound
                                            environment delta propositions
@@ -2960,43 +3122,48 @@
                 record-literal-checkable?)
             (check bound declared-type environment delta propositions boundaries)
             (synth bound environment delta propositions boundaries)))
-      (define source-core-type (judgment-core-type bound-result))
-      ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
-      ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
-      (define remainder-target
-        (match* (binding-mode source-core-type declared-type)
-          [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-           `(Record ,(append declared-row
-                             (field-row-residual actual-row declared-row)))]
-          [(_ _ _) declared-type]))
-      (define-values (discharged-core discharged-type)
-        (discharge-remainder (judgment-core bound-result)
-                             source-core-type remainder-target s propositions))
-      (define-values (bound-core actual-type)
-        (if (and (memq binding-mode '(let mut))
-                 (tag-compat? discharged-type declared-type
-                              (initial-candidate-context propositions))
-                 (match (narrowing-kind discharged-type declared-type
-                                        propositions)
-                   [`(drop-obligation ,_ ,_) #t]
-                   [_ #f]))
-            ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
-            (values discharged-core discharged-type)
-            (convert discharged-core discharged-type declared-type s
-                     propositions)))
-      ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
-      (match (narrowing-kind discharged-type actual-type propositions)
-        ['ok (void)]
-        [`(drop-obligation ,_ ,_)
-         (reject s 'owned-narrowing-needs-proof actual-type discharged-type)]
-        [_ (unless (mut-union-rebuildable?
-                    discharged-type actual-type
-                    (initial-candidate-context propositions) propositions)
-             (reject s 'owned-narrowing-rejected actual-type discharged-type))])
-      (define binding-type
-        (bind-with-mode s binding-mode declared-type actual-type propositions))
-      (values bound-result bound-core declared-type binding-type
-              (eq? source-core-type 'Never)))
+      (if (eq? (judgment-type bound-result) 'Never)
+          (values bound-result (judgment-core bound-result) declared-type
+                  (bind-with-mode s binding-mode declared-type declared-type
+                                  propositions)
+                  #t)
+          (let ()
+            (define source-core-type (judgment-core-type bound-result))
+            ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
+            ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
+            (define remainder-target
+              (match* (binding-mode source-core-type declared-type)
+                [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+                 `(Record ,(append declared-row
+                                   (field-row-residual actual-row declared-row)))]
+                [(_ _ _) declared-type]))
+            (define-values (discharged-core discharged-type)
+              (discharge-remainder (judgment-core bound-result)
+                                   source-core-type remainder-target s propositions))
+            (define-values (bound-core actual-type)
+              (if (and (memq binding-mode '(let mut))
+                       (tag-compat? discharged-type declared-type
+                                    (initial-candidate-context propositions))
+                       (match (narrowing-kind discharged-type declared-type
+                                              propositions)
+                         [`(drop-obligation ,_ ,_) #t]
+                         [_ #f]))
+                  ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
+                  (values discharged-core discharged-type)
+                  (convert discharged-core discharged-type declared-type s
+                           propositions)))
+            ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
+            (match (narrowing-kind discharged-type actual-type propositions)
+              ['ok (void)]
+              [`(drop-obligation ,_ ,_)
+               (reject s 'owned-narrowing-needs-proof actual-type discharged-type)]
+              [_ (unless (mut-union-rebuildable?
+                          discharged-type actual-type
+                          (initial-candidate-context propositions) propositions)
+                   (reject s 'owned-narrowing-rejected actual-type discharged-type))])
+            (define binding-type
+              (bind-with-mode s binding-mode declared-type actual-type propositions))
+            (values bound-result bound-core declared-type binding-type #f))))
 
     (define (projection-chain expression environment)
       (define (walk node)
@@ -3135,14 +3302,24 @@
         [`(Apply ,function ,arguments ...)
          (define raw-function-result
            (synth function environment delta propositions boundaries))
-         (define reserved
-           (function-reserved-names function arguments environment))
+         (define function-never?
+           (eq? (judgment-type raw-function-result) 'Never))
          (define-values (function-result wrap)
-           (normalize-owned-function raw-function-result (span-of function)
-                                     reserved))
-         (define-values (function-type _function-owned?)
-           (peel-owned-function-elab (judgment-type function-result)
-                                     (judgment-core function-result)))
+           (if function-never?
+               (values raw-function-result #f)
+               (normalize-owned-function
+                raw-function-result (span-of function)
+                (function-reserved-names function arguments environment))))
+         (define function-type
+           (if function-never?
+               (match (type-for-context function-result)
+                 [`(Owned ,inner) inner]
+                 [type type])
+               (let-values ([(type _owned?)
+                             (peel-owned-function-elab
+                              (judgment-type function-result)
+                              (judgment-core function-result))])
+                 type)))
          (match function-type
            [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
             ;; PRF-004: 判定と搬送で探索を二重に走らせない。obligation-proofs は
@@ -3162,7 +3339,8 @@
                       ,@(map judgment-core argument-results)))
             (close-owned-function
              wrap
-             (judgment
+             (propagate-context-never
+              (judgment
               ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
               ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
               (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
@@ -3171,7 +3349,8 @@
               (rows-union
                (append (list (judgment-row function-result))
                        (map judgment-row argument-results)
-                       (list latent-row)))))]
+                       (list latent-row))))
+              (cons function-result argument-results)))]
            [_ (reject s 'apply-non-function (judgment-type function-result))])]
 
         [`(Rec (,raw-fields ...))
@@ -3187,47 +3366,74 @@
              (match-define `(,label ,mutability ,field-expression) field)
              (define result
                (synth field-expression environment delta propositions boundaries))
-             (when (owned-type? (judgment-type result))
+             (define field-type (type-for-context result))
+             (when (and (not (eq? (judgment-normal-type result) '⊥))
+                        (owned-type? field-type))
                (reject s 'owned-record-field label))
              (list label mutability result)))
-         (judgment
-          `(Rec ,s
-            ,(for/list ([field (in-list field-results)]
-                        [raw-label (in-list raw-labels)])
-               (match-define (list label mutability result) field)
-               `(,raw-label ,mutability ,(judgment-core result))))
-          `(Record
-            ,(for/list ([field (in-list field-results)])
-               (match-define (list label mutability result) field)
-               `(,label ,(judgment-type result) ,mutability)))
-          (rows-union
+         (define normal-row
            (for/list ([field (in-list field-results)])
-             (judgment-row (third field)))))]
+             (match-define (list label mutability result) field)
+             (list label (type-for-context result) mutability)))
+         (define normal-type
+           (if (ormap (λ (field)
+                        (eq? (judgment-normal-type (third field)) '⊥))
+                      field-results)
+               '⊥
+               `(Record ,normal-row)))
+         (propagate-context-never
+          (judgment
+           `(Rec ,s
+             ,(for/list ([field (in-list field-results)]
+                         [raw-label (in-list raw-labels)])
+                (match-define (list _label mutability result) field)
+                `(,raw-label ,mutability ,(judgment-core result))))
+           `(Record
+             ,(for/list ([field (in-list field-results)])
+                (match-define (list label mutability result) field)
+                `(,label ,(judgment-type result) ,mutability)))
+           (rows-union
+            (for/list ([field (in-list field-results)])
+              (judgment-row (third field))))
+           `(Record
+             ,(for/list ([field (in-list field-results)])
+                (match-define (list label mutability result) field)
+                `(,label ,(judgment-core-type result) ,mutability)))
+           normal-type)
+          (map third field-results))]
 
         [`(Proj ,record ,raw-label)
          (or (elaborate-place-projection expression environment)
              (let ([label (peel-lbl raw-label)])
                (define record-result
                  (synth record environment delta propositions boundaries))
-               (match (judgment-type record-result)
+               (match (type-for-context record-result)
+                 ['Never
+                  (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
+                            'Never (judgment-row record-result) 'Never '⊥)]
                  [`(Record ,row)
                   (define field (assoc label row))
                   (cond
                     [(not field) (reject s 'unknown-record-label label)]
                     [(field-optional? field)
                      (define field-type (second field))
-                     (judgment `(ProjOpt ,s (#:ty ,field-type ,s)
-                                         ,(judgment-core record-result) ,raw-label)
-                               `(Option ,field-type)
-                               (judgment-row record-result))]
+                     (propagate-context-never
+                      (judgment `(ProjOpt ,s (#:ty ,field-type ,s)
+                                          ,(judgment-core record-result) ,raw-label)
+                                `(Option ,field-type)
+                                (judgment-row record-result))
+                      (list record-result))]
                     [else
                      (match (field-row-lookup row label)
                        [(list field-type _)
-                        (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
-                                  field-type
-                                  (judgment-row record-result))]
+                        (propagate-context-never
+                         (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
+                                   field-type
+                                   (judgment-row record-result))
+                         (list record-result))]
                        [_ (reject s 'unknown-record-label label)])])]
-                 [_ (reject s 'project-non-record (judgment-type record-result))])))]
+                 [_ (reject s 'project-non-record
+                            (type-for-context record-result))])))]
 
         ;; spec §8。注釈なしの const と let と let mut である。宣言型が
         ;; 無いので束縛式の型をそのまま宣言型とみなす。宣言型だけで分かる
@@ -3237,13 +3443,13 @@
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
          (define bound-result
            (synth bound environment delta propositions boundaries))
-         (define actual-type (judgment-type bound-result))
+         (define actual-type (type-for-context bound-result))
          (define binding-type
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
          (elaborate-let-tail
           s raw-name binding-type binding-mode bound-result
-          (eq? actual-type 'Never) body environment
+          (eq? (judgment-type bound-result) 'Never) body environment
           delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
           (judgment-core bound-result))]
@@ -3269,7 +3475,7 @@
         [`(Let ,raw-name ,bound ,body)
          (define bound-result
            (synth bound environment delta propositions boundaries))
-         (define binding-type (judgment-type bound-result))
+         (define binding-type (type-for-context bound-result))
          (elaborate-let-tail
           s raw-name binding-type #f bound-result
           (eq? (judgment-type bound-result) 'Never) body environment delta
@@ -3309,18 +3515,8 @@
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
          (define scrutinee-result
            (synth right environment delta propositions boundaries))
-         (define right-type (judgment-type scrutinee-result))
-         (define-values (data-type _rewrap)
-           (peel-eliminate-wrapper right-type))
-         (define kind (try-bind-kind data-type))
-         (unless kind
-           (reject (span-of right) 'try-bind-non-adt right-type))
-         (define bind-span (span-hull name-span (span-of right)))
-         (try-bind-boundary bind-span kind data-type right-type boundaries)
-         (synth-eliminate
-          scrutinee-result
-          (try-bind-branches s name name-span body data-type kind)
-          s environment delta propositions boundaries)]
+         (elaborate-try-bind s name name-span right scrutinee-result body #f
+                             environment delta propositions boundaries)]
 
         [`(Eliminate ,_ ,_)
          (reject s 'eliminate-needs-expected-type)]
@@ -3381,25 +3577,34 @@
            (synth observed environment delta propositions boundaries))
          (define next-result
            (synth next environment delta propositions boundaries))
+         (define observed-type (type-for-context observed-result))
+         (when (eq? observed-type 'Never)
+           (reject s 'ill-typed #:phase 'typing))
          (define observed-core
-           (if (owned-type? (judgment-type observed-result))
+           (if (owned-type? observed-type)
                `(OwnLeaf ,s ,(judgment-core observed-result))
                (judgment-core observed-result)))
-         (judgment
-          `(Yield ,s ,observed-core
-                  ,(judgment-core next-result))
-          (judgment-type next-result)
-          (rows-union
-           (list (judgment-row observed-result)
-                 (judgment-row next-result)
-                 `((Yield ,(judgment-type observed-result))))))]
+         (propagate-context-never
+          (judgment
+           `(Yield ,s ,observed-core
+                   ,(judgment-core next-result))
+           (judgment-type next-result)
+           (rows-union
+            (list (judgment-row observed-result)
+                  (judgment-row next-result)
+                  `((Yield ,observed-type))))
+           (judgment-core-type next-result)
+           (judgment-normal-type next-result))
+          (list observed-result next-result))]
 
         [`(Suspend ,body)
          (define result
            (synth body environment delta propositions boundaries))
          (judgment `(Suspend ,s ,(judgment-core result))
                    (judgment-type result)
-                   (row-union (judgment-row result) '(Suspend)))]
+                   (row-union (judgment-row result) '(Suspend))
+                   (judgment-core-type result)
+                   (judgment-normal-type result))]
 
         [`(Move ,raw-name)
          (define name (peel-node raw-name))
@@ -3446,9 +3651,11 @@
              [else (reject s 'reassign-type-mismatch slot-type value-type)]))
          (unless (storage-ok? slot-type)
            (reject s 'mutable-callable-storage-requires-partial slot-type))
-         (judgment `(Reassign ,s ,raw-name ,value-core)
-                   'Unit
-                   (row-union (judgment-row result) '(Mutation)))]
+         (propagate-context-never
+          (judgment `(Reassign ,s ,raw-name ,value-core)
+                    'Unit
+                    (row-union (judgment-row result) '(Mutation)))
+          (list result))]
 
         [`(Drop ,raw-name)
          #:when (let ([name (peel-node raw-name)])
@@ -3461,23 +3668,33 @@
         [`(Drop ,body)
          (define result
            (synth body environment delta propositions boundaries))
-         (unless (resource-type? (judgment-type result))
-           (reject s 'drop-non-owned (judgment-type result)))
-         (judgment `(Drop ,s ,(judgment-core result))
-                   'Unit
-                   (row-union (judgment-row result) '(Own)))]
+         (define operand-type (type-for-context result))
+         (unless (resource-type? operand-type)
+           (reject s 'drop-non-owned operand-type))
+         (propagate-context-never
+          (judgment `(Drop ,s ,(judgment-core result))
+                    'Unit
+                    (row-union (judgment-row result) '(Own)))
+          (list result))]
 
         [`(Curry ,function ,argument)
          (define raw-function-result
            (synth function environment delta propositions boundaries))
+         (define function-never?
+           (eq? (judgment-type raw-function-result) 'Never))
          (define-values (function-result wrap)
-           (normalize-owned-function
-            raw-function-result
-            (span-of function)
-            (function-reserved-names function (list argument) environment)))
+           (if function-never?
+               (values raw-function-result #f)
+               (normalize-owned-function
+                raw-function-result (span-of function)
+                (function-reserved-names function (list argument) environment))))
          (define-values (function-type function-owned?)
-           (peel-owned-function-elab (judgment-type function-result)
-                                     (judgment-core function-result)))
+           (if function-never?
+               (match (type-for-context function-result)
+                 [`(Owned ,inner) (values inner #t)]
+                 [type (values type #f)])
+               (peel-owned-function-elab (judgment-type function-result)
+                                         (judgment-core function-result))))
          (match function-type
            [`(NFn (,first-type ,remaining-types ...)
                   ,return-type ,latent-in ,latent-out ,obligations ,origin)
@@ -3495,14 +3712,16 @@
                     ,obligations ,new-origin))
             (close-owned-function
              wrap
-             (judgment
+             (propagate-context-never
+              (judgment
               `(Curry ,s ,(judgment-core function-result)
                       ,argument-core)
               (if (or function-owned? (resource-type? first-type))
                   `(Owned ,bare-result)
                   bare-result)
               (row-union (judgment-row function-result)
-                         (judgment-row argument-result))))]
+                         (judgment-row argument-result)))
+              (list function-result argument-result)))]
            [_ (reject s 'curry-non-function function-type)])]
 
         [`(TypeMake ,spec)
@@ -3547,22 +3766,26 @@
                    (judgment-type result) expected
                    (initial-candidate-context propositions) propositions))
         (reject s 'type-mismatch expected (judgment-type result)))
-      (define-values (core actual-type)
-        (discharge-remainder (judgment-core result)
-                             (judgment-core-type result)
-                             expected s propositions))
-      (match (narrowing-kind actual-type expected propositions)
-        ['ok (void)]
-        [`(drop-obligation ,_ ,_)
-         (reject s 'owned-narrowing-needs-proof expected
-                 actual-type)]
-        [_ (unless (mut-union-rebuildable?
-                    actual-type expected
-                    (initial-candidate-context propositions) propositions)
-             (reject s 'owned-narrowing-rejected expected actual-type))])
-      (define-values (converted core-type)
-        (convert core actual-type expected s propositions))
-      (judgment converted expected (judgment-row result) core-type))
+      (if (eq? (judgment-type result) 'Never)
+          (judgment (judgment-core result) 'Never (judgment-row result)
+                    'Never (judgment-normal-type result))
+          (let ()
+            (define-values (core actual-type)
+              (discharge-remainder (judgment-core result)
+                                   (judgment-core-type result)
+                                   expected s propositions))
+            (match (narrowing-kind actual-type expected propositions)
+              ['ok (void)]
+              [`(drop-obligation ,_ ,_)
+               (reject s 'owned-narrowing-needs-proof expected
+                       actual-type)]
+              [_ (unless (mut-union-rebuildable?
+                          actual-type expected
+                          (initial-candidate-context propositions) propositions)
+                   (reject s 'owned-narrowing-rejected expected actual-type))])
+            (define-values (converted core-type)
+              (convert core actual-type expected s propositions))
+            (judgment converted expected (judgment-row result) core-type))))
 
     ;; Rec の欄を Record 型へ直接 check できる形かを返す。
     (define (record-literal-member? raw-fields expected)
@@ -3706,15 +3929,15 @@
       (match (peel-node expression)
         [`(Let (,raw-name ,binding-mode) ,bound ,body)
          #:when (and (pair? raw-name) (eq? (car raw-name) '#:bind))
-         (define bound-result
-           (synth bound environment delta propositions boundaries))
-         (define actual-type (judgment-type bound-result))
+        (define bound-result
+          (synth bound environment delta propositions boundaries))
+         (define actual-type (type-for-context bound-result))
          (define binding-type
            (bind-with-mode s binding-mode actual-type actual-type
                            propositions))
          (elaborate-let-tail
           s raw-name binding-type binding-mode bound-result
-          (eq? actual-type 'Never) body environment
+          (eq? (judgment-type bound-result) 'Never) body environment
           delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,binding-type ,(span-of bound)))
           (judgment-core bound-result)
@@ -3739,7 +3962,7 @@
         [`(Let ,raw-name ,bound ,body)
          (define bound-result
            (synth bound environment delta propositions boundaries))
-         (define binding-type (judgment-type bound-result))
+         (define binding-type (type-for-context bound-result))
          (elaborate-let-tail
           s raw-name binding-type #f bound-result
           (eq? (judgment-type bound-result) 'Never) body environment delta
@@ -3751,28 +3974,31 @@
         [`(Construct ,constructor (Types ,_ ...) ,_ ...)
          (define result
            (synth expression environment delta propositions boundaries))
-         (unless (or (type-compatible? (judgment-type result) expected
-                                       propositions)
-                     (mut-union-rebuildable?
-                      (judgment-type result) expected
-                      (initial-candidate-context propositions) propositions))
-           (reject s 'type-mismatch expected (judgment-type result)))
-         (define actual-core-type (judgment-core-type result))
-         (define-values (core actual-type)
-           (discharge-remainder (judgment-core result)
-                                actual-core-type expected s propositions))
-         (match (narrowing-kind actual-type expected propositions)
-           ['ok (void)]
-           [`(drop-obligation ,_ ,_)
-            (reject s 'owned-narrowing-needs-proof expected
-                    actual-type)]
-           [_ (unless (mut-union-rebuildable?
-                       actual-type expected
-                       (initial-candidate-context propositions) propositions)
-                (reject s 'owned-narrowing-rejected expected actual-type))])
-         (define-values (converted core-type)
-           (convert core actual-type expected s propositions))
-         (judgment converted expected (judgment-row result) core-type)]
+         (if (eq? (judgment-type result) 'Never)
+             (check-against-expected result expected s propositions)
+             (let ([result-type (judgment-type result)])
+               (unless (or (type-compatible? (judgment-type result) expected
+                                             propositions)
+                           (mut-union-rebuildable?
+                            result-type expected
+                            (initial-candidate-context propositions) propositions))
+                 (reject s 'type-mismatch expected result-type))
+               (let-values ([(core actual-type)
+                             (discharge-remainder
+                              (judgment-core result)
+                              (judgment-core-type result) expected s propositions)])
+                 (match (narrowing-kind actual-type expected propositions)
+                   ['ok (void)]
+                   [`(drop-obligation ,_ ,_)
+                    (reject s 'owned-narrowing-needs-proof expected
+                            actual-type)]
+                   [_ (unless (mut-union-rebuildable?
+                               actual-type expected
+                               (initial-candidate-context propositions) propositions)
+                        (reject s 'owned-narrowing-rejected expected actual-type))])
+                 (let-values ([(converted core-type)
+                               (convert core actual-type expected s propositions)])
+                   (judgment converted expected (judgment-row result) core-type)))))]
 
         [`(Construct ,constructor ,fields ...)
          (elaborate-constructor constructor fields expected
@@ -3782,7 +4008,7 @@
         [`(Eliminate ,scrutinee (,branches ...))
          (define scrutinee-result
            (synth scrutinee environment delta propositions boundaries))
-         (define scrutinee-type (judgment-type scrutinee-result))
+         (define scrutinee-type (type-for-context scrutinee-result))
          (cond
            [(or (root-owned-union? scrutinee-type)
                 (union-type? scrutinee-type))
@@ -3808,19 +4034,8 @@
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
          (define scrutinee-result
            (synth right environment delta propositions boundaries))
-         (define right-type (judgment-type scrutinee-result))
-         (define-values (data-type _rewrap)
-           (peel-eliminate-wrapper right-type))
-         (define kind (try-bind-kind data-type))
-         (unless kind
-           (reject (span-of right) 'try-bind-non-adt right-type))
-         (define bind-span (span-hull name-span (span-of right)))
-         (try-bind-boundary bind-span kind data-type right-type boundaries)
-         (check-eliminate
-          right
-          (try-bind-branches s name name-span body data-type kind)
-          expected s environment delta propositions boundaries
-          #:scrutinee-result scrutinee-result)]
+         (elaborate-try-bind s name name-span right scrutinee-result body
+                             expected environment delta propositions boundaries)]
 
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))
@@ -3829,13 +4044,23 @@
                   (cons `(ExpressionBoundary ,boundary ,expected ,s)
                         boundaries)))
          (define own-return `((Return ,boundary ,expected)))
+         (define caught?
+           (for/or ([label (in-list own-return)])
+             (member label (judgment-row body-result) effect-equiv?)))
+         (define propagate?
+           (and (eq? (judgment-type body-result) 'Never)
+                (not caught?)))
          (judgment
           `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
                    (,s (#:bind return-value ,s) ->
                        (#:var return-value ,s))
                    (Scope ,s () ,(judgment-core body-result)))
-          expected
-          (row-difference (judgment-row body-result) own-return))]
+          (if propagate? 'Never expected)
+          (row-difference (judgment-row body-result) own-return)
+          (if propagate? 'Never expected)
+          (if propagate?
+              (judgment-normal-type body-result)
+              expected))]
 
         [`(Rec (,raw-fields ...))
          #:when (record-literal-member? raw-fields expected)
@@ -3857,7 +4082,8 @@
              (define result
                (check field-expression field-type environment delta propositions
                      boundaries))
-             (when (owned-type? (judgment-type result))
+             (when (and (not (eq? (judgment-normal-type result) '⊥))
+                        (owned-type? (type-for-context result)))
                (reject s 'owned-record-field label))
              (list label mutability result)))
          (define absent-fields
@@ -3880,7 +4106,7 @@
               ,(append
                 (for/list ([field (in-list field-results)])
                   (match-define (list label mutability result) field)
-                  `(,label ,(judgment-type result) ,mutability))
+                  `(,label ,(type-for-context result) ,mutability))
                 (for/list ([field (in-list expected-fields)]
                            #:when (memq (first field) (or omitted '())))
                   `(,(first field) ,(second field) ,(third field) opt))))
@@ -3894,8 +4120,13 @@
                   `(,label ,(judgment-core-type result) ,mutability))
                 (for/list ([field (in-list expected-fields)]
                            #:when (memq (first field) (or omitted '())))
-                  `(,(first field) ,(second field) ,(third field) opt))))))
-         (check-against-expected rec-result expected s propositions)]
+                  `(,(first field) ,(second field) ,(third field) opt))))
+            expected))
+         (check-against-expected
+          (propagate-context-never
+           rec-result
+           (map third field-results))
+          expected s propositions)]
 
         [`(Rec (,raw-fields ...))
          #:when (match expected [`(Union ,_ ,_) #t] [_ #f])

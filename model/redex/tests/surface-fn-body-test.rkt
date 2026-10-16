@@ -80,10 +80,20 @@
   (check-true (compiled? result))
   (when (compiled? result) (check-equal? (run-value result) 1)))
 
-(test-case "5. 被演算子内だけの return は 014b2n まで返却保証に数えない"
-  (check-equal?
-   (code "fn log(x: Int) -> Unit { () }\nfn f() -> Int { log(return 1) }\nf()")
-   "E-RET-004"))
+(test-case "5. 実引数の return で本体が正常完了しないことを受理する"
+  (define result
+    (compile "fn log(x: Int) -> Unit { () }\nfn f() -> Int { log(return 1) }\nf()"))
+  (check-true (compiled? result))
+  (when (compiled? result) (check-equal? (run-value result) 1)))
+
+(test-case "検査の record の余分な bottom 欄からの return を受理する"
+  (define result
+    (compile (string-append
+              "fn g(r: { a: Int }) -> Int { return r.a }\n"
+              "fn f() -> Int { return g({ a: 1, b: return 2 }) }\n"
+              "f()")))
+  (check-true (compiled? result))
+  (when (compiled? result) (check-equal? (run-value result) 2)))
 
 (test-case "6. Unit 関数は落ち抜け、return、文位置 if を受理する"
   (for ([source (in-list
