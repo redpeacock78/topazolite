@@ -17,6 +17,11 @@
   (define result (compile source))
   (and (diagnostic? result) (diagnostic-id result)))
 
+(define (source-span source needle)
+  (match (regexp-match-positions (regexp (regexp-quote needle)) source)
+    [(list (cons start end)) `(#:span src ,start ,end)]
+    [_ (error 'source-span "substring not found: ~a" needle)]))
+
 (define (run-value result)
   (call-with-trait-ledger
    (compiled-ledger result)
@@ -170,27 +175,37 @@
                                    other))]))))
 
 (test-case "when の全 return 候補を合流し、同型候補はその型を保つ"
-  (define different
-    (compile
-     (string-append
-      "fn identityInt(x: Int) -> Int { return x }\n"
-      "fn identityString(x: String) -> String { return x }\n"
-      "fn choose(a: Bool) -> Int | String {\n"
-      " let answer = when a {\n"
-      "  true => identityInt(return 1)\n"
-      "  false => identityString(return \"s\")\n"
-      " }\n return answer\n}\nchoose(true)")))
-  (check-true (compiled? different)
-              (if (diagnostic? different)
-                  (format "~a: ~a" (diagnostic-id different)
-                          (diagnostic-message different))
-                  (format "unexpected result: ~s" different)))
-  (when (compiled? different)
-    (check-equal? (compiled-type different) '(Union Int String))
-    (match (run-value different)
-      [`(UnionVal ,_ Int 1) (void)]
-      [other (fail-check (format "Int member の UnionVal を期待したが ~s"
-                                 other))]))
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define different
+      (compile
+       (string-append
+        (if variable? "" "fn g() -> Bool { return false }\n")
+        "fn identityInt(x: Int) -> Int { return x }\n"
+        "fn identityString(x: String) -> String { return x }\n"
+        "fn choose(" (if variable? "a: Bool" "") ") -> Int | String {\n"
+        " let answer = when " scrutinee " {\n"
+        "  true => identityInt(return 1)\n"
+        "  false => identityString(return \"s\")\n"
+        " }\n return answer\n}\n"
+        (if variable? "choose(true)" "choose()"))))
+    (check-true (compiled? different)
+                (if (diagnostic? different)
+                    (format "~a: ~a" (diagnostic-id different)
+                            (diagnostic-message different))
+                    (format "unexpected result: ~s" different)))
+    (when (compiled? different)
+      (check-equal? (compiled-type different) '(Union Int String))
+      (let ([value (run-value different)])
+        (if variable?
+            (match value
+              [`(UnionVal ,_ Int 1) (void)]
+              [other (fail-check (format "scrutinee ~a の UnionVal が不正: ~s"
+                                         scrutinee other))])
+            (match value
+              [`(UnionVal ,_ String "s") (void)]
+              [other (fail-check (format "scrutinee ~a の UnionVal が不正: ~s"
+                                         scrutinee other))])))))
   (define same
     (compile
      (string-append
@@ -209,34 +224,48 @@
     (check-equal? (run-value same) 2)))
 
 (test-case "when の record return 候補は ROW-005 で合流する"
-  (define result
-    (compile
-     (string-append
-      "fn choose(a: Bool) {\n"
-      " let answer = when a {\n"
-      "  true => return { a: 1 }\n"
-      "  false => return { a: 2, b: 3 }\n"
-      " }\n return answer\n}\nchoose(false)")))
-  (check-true (compiled? result)
-              (if (diagnostic? result)
-                  (format "~a: ~a" (diagnostic-id result)
-                          (diagnostic-message result))
-                  (format "unexpected result: ~s" result)))
-  (when (compiled? result)
-    (check-equal?
-     (compiled-type result)
-     (row005-join
-      (list '(Record ((a Int imm))) '(Record ((a Int imm) (b Int imm))))))))
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define result
+      (compile
+       (string-append
+        (if variable? "" "fn g() -> Bool { return false }\n")
+        "fn choose(" (if variable? "a: Bool" "") ") {\n"
+        " let answer = when " scrutinee " {\n"
+        "  true => return { a: 1 }\n"
+        "  false => return { a: 2, b: 3 }\n"
+        " }\n return answer\n}\n"
+        (if variable? "choose(false)" "choose()"))))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal?
+       (compiled-type result)
+       (row005-join
+        (list '(Record ((a Int imm))) '(Record ((a Int imm) (b Int imm)))))))))
 
 (test-case "when の Owned 候補が直接の Owned Union を作る場合は拒否する"
-  (check-equal?
-   (code
-    (string-append
-     "fn choose(a: Bool, left: fn() -> Owned<Int> ! Own, right: fn() -> Owned<String> ! Own) ! Own {\n"
-     " let answer = when a { true => return left()\n"
-     "  false => return right() }\n"
-     " return answer\n}\n0"))
-   "E-TYP-012"))
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return false }\n")
+       "fn choose(" (if variable? "a: Bool, " "")
+       "left: fn() -> Owned<Int> ! Own, right: fn() -> Owned<String> ! Own) ! Own {\n"
+       " let answer = when " scrutinee " { true => return left()\n"
+       "  false => return right() }\n return answer\n}\n0"))
+    (define needle
+      (string-append "when " scrutinee " { true => return left()\n"
+                     "  false => return right() }"))
+    (define result (compile source))
+    (check-true (diagnostic? result) (format "unexpected result: ~s" result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-012")
+      (check-equal? (diagnostic-primary-span result)
+                    (source-span source needle)))))
 
 (test-case "期待 Union で検査する when return は注入され実行できる"
   (define result
