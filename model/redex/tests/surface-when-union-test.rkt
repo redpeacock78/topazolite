@@ -229,6 +229,31 @@
   (check-compiled result)
   (when (compiled? result) (check-equal? (run-value result) 7)))
 
+(test-case "Union member arm の if 式は本体ブロックではない"
+  (for* ([scrutinee (in-list '("value" "g()"))]
+         [position (in-list '(synth annotated return))])
+    (define variable? (equal? scrutinee "value"))
+    (define arms
+      (string-append
+       " {\n"
+       "    (x: Int) => if b { x } else { 0 }\n"
+       "    (s: String) => 5\n"
+       "  }\n"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Int | String { return 1 }\n")
+       "fn f(" (if variable? "value: Int | String, " "") "b: Bool) -> Int {\n"
+       (case position
+         [(synth) (string-append "  let z = when " scrutinee arms "  return z\n")]
+         [(annotated)
+          (string-append "  let z: Int = when " scrutinee arms "  return z\n")]
+         [(return) (string-append "  return when " scrutinee arms)])
+       "}\n"
+       (if variable? "f(1, true)" "f(true)")))
+    (define result (compile source))
+    (check-compiled result)
+    (when (compiled? result) (check-equal? (run-value result) 1))))
+
 (test-case "Option 成分と String 成分の constructor と member を混在できる"
   (define source
     (string-append

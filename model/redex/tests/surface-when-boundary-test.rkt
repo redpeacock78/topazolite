@@ -262,6 +262,33 @@
                             (diagnostic-message nested-expression))
                     (format "unexpected result: ~s" nested-expression)))))
 
+(test-case "when の arm の if 式は本体ブロックではない"
+  (for* ([scrutinee (in-list '("a" "g()"))]
+         [position (in-list '(annotated return))])
+    (define variable? (equal? scrutinee "a"))
+    (define arms
+      (string-append
+       " {\n"
+       "    true => if b { 1 } else if c { 2 } else { 3 }\n"
+       "    false => 4\n"
+       "  }\n"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return true }\n")
+       "fn f(" (if variable? "a: Bool, " "") "b: Bool, c: Bool) -> Int {\n"
+       (if (eq? position 'annotated)
+           (string-append "  let z: Int = when " scrutinee arms "  return z\n")
+           (string-append "  return when " scrutinee arms))
+       "}\n"
+       (if variable? "f(true, false, true)" "f(false, true)")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result) (check-equal? (run-value result) 2))))
+
 (test-case "=> {} と => { a: 1 } は when の record 値を返す"
   (for ([source-and-type
          (in-list

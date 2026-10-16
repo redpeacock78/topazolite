@@ -269,8 +269,7 @@
      (define x-span (span-at ts i))
      (define param `(SParam ,x-span (SName ,x-span ,(value-at ts i)) #:none))
      (let-values ([(body body-j) (parse-expr ts fail (+ i 2))])
-       (define body-kind
-         (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+       (define body-kind (expression-body-kind ts (+ i 2) body))
        (values `(SFn ,(hull x-span (node-span body)) (,param) #:none #:none
                      ,body-kind ,body)
                body-j))]
@@ -441,10 +440,12 @@
                        (SName ,else-span false) () expr ,else-part))))
            end-j)])])))
 
-;; P2m3 spec §3.1。constructor 枝は `ctor ident* => expr`、
-;; member 枝は `(name: type) => expr` である。
-(define (expression-body-kind body)
-  (match body [`(SBlock ,_ ,_ ,_) 'block] [_ 'expr]))
+;; 原文の先頭 token も使う。if 式は parse 後に SBlock になる。
+(define (expression-body-kind ts body-start body)
+  (if (and (punct? ts body-start '|{|)
+           (match body [`(SBlock ,_ ,_ ,_) #t] [_ #f]))
+      'block
+      'expr))
 
 (define (parse-arm ts fail i)
   (if (punct? ts i '|(|)
@@ -461,7 +462,7 @@
   (let*-values ([(binders binders-j) (parse-arm-binders ts fail (add1 i))]
                 [(_arrow arrow-j) (expect-punct ts fail binders-j '=>)]
                 [(body body-j) (parse-expr ts fail arrow-j)])
-    (define body-kind (expression-body-kind body))
+    (define body-kind (expression-body-kind ts arrow-j body))
     (values `(SArm ,(hull name-span (node-span body))
                    (SName ,name-span ,name) ,binders ,body-kind ,body)
             body-j)))
@@ -477,7 +478,7 @@
                 [(body body-j) (parse-expr ts fail arrow-j)])
     (define param `(SParam ,(hull name-span (node-span ty))
                            (SName ,name-span ,name) ,ty))
-    (define body-kind (expression-body-kind body))
+    (define body-kind (expression-body-kind ts arrow-j body))
     (values `(SArm ,(hull open (node-span body)) ,param () ,body-kind ,body)
             body-j)))
 
@@ -506,7 +507,7 @@
       (if (and (eq? return-type '#:none) (punct? ts row-j '=>))
           (let-values ([(_arrow arrow-j) (expect-punct ts fail row-j '=>)])
             (let-values ([(body body-j) (parse-expr ts fail arrow-j)])
-              (define body-kind (expression-body-kind body))
+              (define body-kind (expression-body-kind ts arrow-j body))
               (values `(SFn ,(hull start (node-span body)) ,params #:none ,row
                             ,body-kind ,body)
                       body-j #t)))

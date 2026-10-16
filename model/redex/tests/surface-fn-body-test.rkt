@@ -199,11 +199,29 @@
                       '(("fn(x: Int) => { return x }" block)
                         ("x => { return x }" block)
                         ("x => x" expr)
-                        ("x => {}" expr)))])
+                        ("x => {}" expr)
+                        ("x => if true { x } else { 2 }" expr)
+                        ("fn(x: Int) => if true { x } else { 2 }" expr)
+                        ("x => if true { x } else if false { 1 } else { 2 }" expr)
+                        ("x => ({ return x })" expr)
+                        ("x => (if true { x } else { 2 })" expr)
+                        ("x => { a: 1 }" expr)))])
     (match (parse (lex/string 'src (first source-kind)))
       [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,kind ,_))
        (check-eq? kind (second source-kind))]
       [other (fail-check (format "SFn body-kind を得られない: ~s" other))])))
+
+(test-case "18. arrow lambda の本体の if 式は値を返す"
+  (for ([source (in-list
+                 '("fn apply(f: fn(Int) -> Int) -> Int { return f(3) }\napply(x => if true { x } else { 2 })"
+                   "fn apply(f: fn(Int) -> Int) -> Int { return f(3) }\napply(fn(x: Int) => if true { x } else { 2 })"))])
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result) (check-equal? (run-value result) 3))))
 
 (test-case "15. 下見で候補を得た後の到達不能 none は E-TYP-003 を保つ"
   (check-equal? (code "fn f() { return 1\n none }\nf()") "E-TYP-003")
