@@ -59,6 +59,14 @@
            a))
    '(Never ⊥)))
 
+(test-case "全枝 Never の UnionEliminate の正常型は bottom"
+  (check-equal?
+   (typed-type-normal
+    `(UnionEliminate
+      (UnionInject (Union Int String) Int ,ret1)
+      ((Int x -> ,ret1) (String y -> ,ret1))))
+   '(Never ⊥)))
+
 (test-case "Never 束縛の Let は本体の正常型を保持する"
   (check-equal?
    (typed-with-normal `(Let (x const Int) ,ret1 5))

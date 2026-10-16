@@ -266,6 +266,26 @@
    "fn f(c: Bool) -> Option<Int> { let answer = if c { return 0 }\n return answer }\n0")
    "E-TYP-012"))
 
+(test-case "else 付き if の正常経路と境界へ届く return 候補を合流する"
+  (define result
+    (compile
+     (string-append
+      "fn identity(x: String) -> String { return x }\n"
+      "fn choose(c: Bool) -> Int | String {\n"
+      " let answer = if c { identity(return \"s\") } else { 1 }\n"
+      " return answer\n}\nchoose(true)")))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  (format "unexpected result: ~s" result)))
+  (when (compiled? result)
+    (check-equal? (compiled-type result) '(Union Int String))
+    (match (run-value result)
+      [`(UnionVal ,_ String "s") (void)]
+      [other (fail-check (format "String member の UnionVal を期待したが ~s"
+                                 other))])))
+
 (test-case "全ての then が Never の IfSome は候補と期待型で型を得る"
   (define no-candidate
     (elab

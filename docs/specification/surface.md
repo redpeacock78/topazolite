@@ -251,7 +251,10 @@ elaborate の `E-EFF-001` は防御的な分岐として残るが、UCore の ro
 最寄りの return 境界または `Handle` に到達する前の被演算子位置でも、§4.5 の T-Ctx-Never が「伝える」とする位置で `return` が起きると、式全体の型は `Never` となる。
 正常型を必要とする拒否位置では `Never` を伝えず、現在の診断で拒否する。
 block 本体の全経路が戻り値を返さない場合は `E-RET-004` とし、primary span は本体の閉じ波括弧、戻り型注釈があれば related span はその注釈とする。
-戻り型を省略した block 本体は `return` の候補と落ち抜けの有無から推論し、非 `Unit` の候補と落ち抜けが混在すれば `E-RET-004` とする。
+戻り型を省略した block 本体は `return` の候補と落ち抜けの有無から推論する。
+本体の型が `Never` なら、その関数境界へ届く `return` の候補を枝と同じ規則で合流し、各値を合流型で検査する。
+候補が無い場合は `E-TYP-024` とする。
+本体の型が `Unit` で落ち抜ける場合は、候補がすべて `Unit` のときだけ `Unit` とし、非 `Unit` の候補があれば `E-RET-004` とする。
 `return` は無名関数の境界へ届き、式位置の `when` の arm 本体ブロックでは `when` の境界へ届く。
 式位置の `when` の arm 本体ブロックの lowering は本体ブロックの規則を別サイクルで定める。
 
@@ -392,6 +395,11 @@ scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` �
 その枝の `return` は最も内側の枝の境界へ値を返し、scrutinee 内の `return` は外側の境界へ届く。
 この区別は、ホワイトペーパー §3.3 の thunk 展開で scrutinee が境界の外で評価されることに対応する。
 式位置の `when` の lowering は、式文の追加によって変わらない。
+
+合成位置の `NarrativeExpr` は、正常型が `⊥` でなければその型を最初の候補とし、その境界へ届く `return` の値の型を原文順に加える。
+`Never` の候補は除き、候補を枝と同じ規則で合流する（同型、record は ROW-005、その他は Union）。
+直接 `Owned` を成分に持つ Union は既存の gate で拒否し、候補が無ければ `E-TYP-010` とする。
+検査位置では合流を推論せず、本体と各 `return` の値を期待型で検査する。
 
 文位置の `when` は `(Eliminate s e' arms')` へ lowering し、scrutinee は通常の値位置で下ろし、枝の本体だけを文の mode で下ろす。
 文の mode の枝には `NarrativeExpr` を置かないため、その枝の `return` は外側の境界へ届く。

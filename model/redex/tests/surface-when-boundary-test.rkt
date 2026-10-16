@@ -140,6 +140,124 @@
     (check-equal? (compiled-type result) 'Int)
     (check-equal? (run-value result) 11)))
 
+(test-case "when の正常経路と境界へ届く return 候補を合流する"
+  (for ([source (in-list
+                 (list
+                  (string-append
+                   "fn identity(x: String) -> String { return x }\n"
+                   "fn choose(a: Bool) -> Int | String {\n"
+                   " let answer = when a { true => 1\n"
+                   "  false => identity(return \"s\") }\n"
+                   " return answer\n}\nchoose(false)")
+                  (string-append
+                   "fn identity(x: String) -> String { return x }\n"
+                   "fn flag() -> Bool { return false }\n"
+                   "fn choose() -> Int | String {\n"
+                   " let answer = when flag() { true => 1\n"
+                   "  false => identity(return \"s\") }\n"
+                   " return answer\n}\nchoose()")))])
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) '(Union Int String))
+      (match (run-value result)
+        [`(UnionVal ,_ String "s") (void)]
+        [other (fail-check (format "String member の UnionVal を期待したが ~s"
+                                   other))]))))
+
+(test-case "when の全 return 候補を合流し、同型候補はその型を保つ"
+  (define different
+    (compile
+     (string-append
+      "fn identityInt(x: Int) -> Int { return x }\n"
+      "fn identityString(x: String) -> String { return x }\n"
+      "fn choose(a: Bool) -> Int | String {\n"
+      " let answer = when a {\n"
+      "  true => identityInt(return 1)\n"
+      "  false => identityString(return \"s\")\n"
+      " }\n return answer\n}\nchoose(true)")))
+  (check-true (compiled? different)
+              (if (diagnostic? different)
+                  (format "~a: ~a" (diagnostic-id different)
+                          (diagnostic-message different))
+                  (format "unexpected result: ~s" different)))
+  (when (compiled? different)
+    (check-equal? (compiled-type different) '(Union Int String))
+    (match (run-value different)
+      [`(UnionVal ,_ Int 1) (void)]
+      [other (fail-check (format "Int member の UnionVal を期待したが ~s"
+                                 other))]))
+  (define same
+    (compile
+     (string-append
+      "fn identity(x: Int) -> Int { return x }\n"
+      "fn choose(a: Bool) -> Int {\n"
+      " let answer = when a { true => 1\n"
+      "  false => identity(return 2) }\n"
+      " return answer\n}\nchoose(false)")))
+  (check-true (compiled? same)
+              (if (diagnostic? same)
+                  (format "~a: ~a" (diagnostic-id same)
+                          (diagnostic-message same))
+                  (format "unexpected result: ~s" same)))
+  (when (compiled? same)
+    (check-equal? (compiled-type same) 'Int)
+    (check-equal? (run-value same) 2)))
+
+(test-case "when の record return 候補は ROW-005 で合流する"
+  (define result
+    (compile
+     (string-append
+      "fn choose(a: Bool) {\n"
+      " let answer = when a {\n"
+      "  true => return { a: 1 }\n"
+      "  false => return { a: 2, b: 3 }\n"
+      " }\n return answer\n}\nchoose(false)")))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  (format "unexpected result: ~s" result)))
+  (when (compiled? result)
+    (check-equal?
+     (compiled-type result)
+     (row005-join
+      (list '(Record ((a Int imm))) '(Record ((a Int imm) (b Int imm))))))))
+
+(test-case "when の Owned 候補が直接の Owned Union を作る場合は拒否する"
+  (check-equal?
+   (code
+    (string-append
+     "fn choose(a: Bool, left: fn() -> Owned<Int> ! Own, right: fn() -> Owned<String> ! Own) ! Own {\n"
+     " let answer = when a { true => return left()\n"
+     "  false => return right() }\n"
+     " return answer\n}\n0"))
+   "E-TYP-012"))
+
+(test-case "期待 Union で検査する when return は注入され実行できる"
+  (define result
+    (compile
+     (string-append
+      "fn choose(a: Bool) -> Int | String {\n"
+      " return when a { true => return 1\n"
+      "  false => return \"s\" }\n}\nchoose(false)")))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  (format "unexpected result: ~s" result)))
+  (when (compiled? result)
+    (check-true
+     (contains-form? (compiled-core result) 'UnionInject))
+    (match (run-value result)
+      [`(UnionVal ,_ String "s") (void)]
+      [other (fail-check (format "String member の UnionVal を期待したが ~s"
+                                 other))])))
+
 (test-case "合成位置の非変数 when は従来の E-TYP-004 と span を保つ"
   (define diagnostic
     (compile "let n = when true {\n  true => some(1)\n  false => none\n}\nn"))

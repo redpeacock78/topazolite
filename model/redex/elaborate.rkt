@@ -1398,9 +1398,9 @@
          (function-adapter core actual* expected* s propositions)]
         [else (reject s 'type-mismatch expected actual)]))
 
-    ;; c2b1 spec §5.1。枝を ROW-005 の上界へそろえ、実際に作り直した Core の型から
-    ;; Core の合流型を求める。Never の枝は Core と同じく上界から除く。
-    (define (merge-branches cores types s propositions)
+    ;; 型だけを合流し、record の欄を作り直す必要があるかも返す。
+    ;; return 候補には Core が無いため、枝の型付けと共通の判定を使う。
+    (define (merge-branch-types types s)
       (define live (filter (lambda (type) (not (eq? type 'Never))) types))
       (define all-equivalent?
         (and (pair? live)
@@ -1432,6 +1432,13 @@
                                      live)
                               first-type))))
            union]))
+      (values target record-join?))
+
+    ;; c2b1 spec §5.1。枝を ROW-005 の上界へそろえ、実際に作り直した Core の型から
+    ;; Core の合流型を求める。Never の枝は Core と同じく上界から除く。
+    (define (merge-branches cores types s propositions)
+      (define live (filter (lambda (type) (not (eq? type 'Never))) types))
+      (define-values (target record-join?) (merge-branch-types types s))
       (define rebuilt-pairs
         (for/list ([core (in-list cores)] [type (in-list types)])
           (cond
@@ -2116,7 +2123,7 @@
        (if (eq? (judgment-type scrutinee-result) 'Never)
            'Never
            core-type)
-       core-type))
+       (default-normal-type core-type)))
 
     (define (member-pattern? raw-branch)
       (match (peel-branch raw-branch)
@@ -2186,7 +2193,7 @@
        (if (eq? (judgment-type scrutinee-result) 'Never)
            'Never
            core-type)
-       core-type))
+       (default-normal-type core-type)))
 
     (define (synth-eliminate scrutinee-result branches eliminate-span
                              environment delta propositions boundaries)
@@ -2248,7 +2255,7 @@
            (cons (judgment-row checked-scrutinee)
                  (map judgment-row results)))
           core-type
-          core-type)]))
+          (default-normal-type core-type))]))
 
     (define (try-bind-kind type)
       (match (normalize-type type)
@@ -2469,7 +2476,9 @@
       (cond
         [(and result (eq? (judgment-type result) 'Never))
          (if (pair? candidates)
-             (first candidates)
+             (let-values ([(type _record-join?)
+                           (merge-branch-types candidates span)])
+               type)
              (reject span 'return-type-not-inferable))]
         [(and result (eq? (judgment-type result) 'Unit))
          (when (ormap (λ (candidate) (not (equal? candidate 'Unit))) candidates)
@@ -2635,7 +2644,7 @@
                                   boundaries span)
       (call-with-restored-state
        (λ ()
-         (define candidates (box '()))
+         (define candidate-box (box '()))
          (define boundary (fresh-boundary))
          (define failure #f)
          (define body-result
@@ -2643,12 +2652,22 @@
                             (λ (error) (set! failure error) #f)])
              (synth body environment delta propositions
                     (cons `(ExpressionBoundary ,boundary
-                                               (#:probe ,candidates) ,span)
+                                               (#:probe ,candidate-box) ,span)
                           boundaries))))
+         (define normal-type
+           (and body-result (judgment-normal-type body-result)))
+         (define candidates
+           (append
+            (if (and normal-type (not (eq? normal-type '⊥)))
+                (list normal-type)
+                '())
+            (filter (λ (type) (not (eq? type 'Never)))
+                    (unbox candidate-box))))
          (cond
-           [(and body-result (not (eq? (judgment-type body-result) 'Never)))
-            (judgment-type body-result)]
-           [(pair? (unbox candidates)) (first (unbox candidates))]
+           [(pair? candidates)
+            (let-values ([(type _record-join?)
+                          (merge-branch-types candidates span)])
+              type)]
            [failure (raise failure)]
            [else (reject span 'narrative-expression-needs-expected-type)]))))
 

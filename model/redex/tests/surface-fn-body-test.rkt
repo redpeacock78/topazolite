@@ -123,10 +123,20 @@
       (check-equal? (diagnostic-id result) "E-RET-004")
       (check-equal? (diagnostic-related result) '()))))
 
-(test-case "8. 省略戻り型の候補は最初の return で決まり、後続を検査する"
-  (check-equal?
-   (code "fn f(b: Bool) { if b { return 1 } else { return \"x\" } }\nf(true)")
-   "E-TYP-012"))
+(test-case "8. 省略戻り型の候補は Union に合流し、後続を検査する"
+  (define result
+    (compile "fn f(b: Bool) { if b { return 1 } else { return \"x\" } }\nf(true)"))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  (format "unexpected result: ~s" result)))
+  (when (compiled? result)
+    (check-equal? (compiled-type result) '(Union Int String))
+    (match (run-value result)
+      [`(UnionVal ,_ Int 1) (void)]
+      [other (fail-check (format "Int member の UnionVal を期待したが ~s"
+                                 other))])))
 
 (test-case "9. when の局所境界で捕まる return は関数候補にならない"
   (define result
