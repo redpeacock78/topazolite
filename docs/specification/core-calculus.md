@@ -144,15 +144,15 @@ OwnershipError の源は R-Move / R-Drop に限られるため（§5.5）、row 
 C-Guarded の guard 部品条件（§6.2）がこの上界を使う。
 
 `Mutation` は同じ記憶域を書き換える操作の出現を示す静的な marker である。
-`Mutation` を出す項は `Assign`、`RawStore`、`Reassign` の 3 つである。
+`Mutation` を出す項は `Assign`、`RawStore`、および右辺が正常に完了する `Reassign` である。
 `RawLoad` と `PtrOffset` と `AddressOf` は記憶域を読むだけであり、`Mutation` を出さない。
 `Assign` の型付け規則は `Unit ! (ε_target ∪ ε_value ∪ {Mutation})` を返す。
-`Reassign` の型付け規則は `Unit ! (ε_value ∪ {Mutation})` を返す。
+右辺が正常に完了する `Reassign` は `Unit ! (ε_value ∪ {Mutation})` を返す。右辺が `Never` の `Reassign` は `Never ! ε_value` を返し、Mutation を加えない。
 target は binder に限られるため、`Assign` と違って target 側の ε は無い。
 `Unsafe` は `(Unsafe c)` の境界で row から取り除かれる。
 `Mutation` は取り除かれず、関数境界を越えて宣言 row へ現れる。
 三つの書込みはどれも、書込み先の宣言型 `τ_dest` について `storage-ok(τ_dest)` を前提にする。
-`τ_dest` は、`Reassign` では対象 slot の型、`Assign` では `(BorrowedMut τ ρ)` の payload `τ`、`RawStore` では `(RawPtr τ Mut nul align as prov)` の payload `τ` である。
+`τ_dest` は、`Reassign` ではその位置の slot の flow 型 C、`Assign` では `(BorrowedMut τ ρ)` の payload `τ`、`RawStore` では `(RawPtr τ Mut nul align as prov)` の payload `τ` である。
 `storage-ok(τ)` は、`τ` の value path で到達するすべての `NFn` の出口 row `εout` が `Partial` を含むことである。
 value path は `Record` の欄、`Union` の成分、data 型の型引数、`Owned`、`Borrowed`、`BorrowedMut`、`Untrusted`、`Refined` の payload、`ForallRegion` の本体、`RawPtr` の payload を辿り、`NFn` の仮引数型、戻り型、`Q` と、`Proof`、`TypeInfo` へは降りない。
 この前提が無いと、可変記憶域の callable を書き換えて自分自身を呼ばせる循環が、どの宣言 row にも `Partial` を残さずに作れる。
@@ -214,7 +214,7 @@ c ::= v                                          値
     | Suspend(c)                                 生産性の区切り
     | Move(w)                                    affine 資源の消費（w は変数または place）
     | Forward(w)                                 row に Own を加えない affine 資源の転送
-    | Reassign(mw, c)                            binder が指す slot の更新
+    | Reassign(mw, τ, c)                         binder が指す slot の更新。τ は更新後の flow 型
     | Drop(c)                                    明示 drop
     | Curry(c1, c2)                              部分適用
     | Error(p)                                   ownership error の伝播（簡約が生成、§5.5）
@@ -1525,7 +1525,7 @@ F = Handle(op, h, □) なら op ∉ ε0
 | `Proj`、`ProjOpt` | receiver | 通常は要する。正常型 `⊥` は伝え、その場合は欄を参照しない | 欄の型。receiver が `⊥` なら `⊥` |
 | `ReborrowAt`、`ProjBorrowAt`、`Read` | 被演算子 | 要する | 既存規則の結果型 |
 | `Assign` | target、値 | target は要する、値は要しない | `Unit` |
-| `Reassign` | 値 | 要しない。束縛の型で検査する | `Unit` |
+| `Reassign` | 値 | 要しない。flow 欄と束縛の宣言型で検査する | 通常は `Unit`。右辺の正常型が `⊥` なら `⊥` |
 | `RegionApp` | 関数 | 要する | region 適用後の関数型 |
 | `AddressOf`、`PtrOffset`、`RawLoad`、`RawStore`、`FromRawPtr` | 被演算子 | pointer は要する、offset と値は要しない | 既存規則の結果型 |
 | `Unsafe` | 本体 | 要しない | 本体の正常型 |
@@ -1540,6 +1540,66 @@ F = Handle(op, h, □) なら op ∉ ε0
 `Yield` の `next` と `Let` の本体は逐次の継続であり、各通常規則が継続の型を結果にする。
 `RecRewriteOpen` の `Absent` 欄は評価対象ではなく、一覧の作業欄に含めない。
 T-Ctx-Never は簡約規則や G2 の機械規則を追加せず、既存の Return 脱出、枝合流、scope finalization を用いる。
+
+### mut slot の flow と脱出
+
+Core の型付けは型と Effect row に加え、flow 状態 `(N, E)` を評価順に運ぶ。
+`N` は正常に評価を続ける位置の状態であり、各 mut binder に宣言型 T、現在の flow 型 C、pin 集合 P を対応させる。
+正常な継続が無い状態は `⊥` である。
+`E` は Return boundary ごとの脱出状態の表である。
+状態を比較する位置では、その scope にある binder だけを比べる。
+`Let` の scope を出るときはその binder を N と各 E の状態から除く。
+以下では、通常の型付け導出に flow 入力と出力を添えたものを `S ⊢flow c : τ ! ε ⇒ S'` と略記する。
+`S=(N,E)` であり、この略記は既存の型・row judgment を置き換えない。
+
+逐次に評価される部分項は左から右へ状態を渡す。
+入口の N が `⊥` なら後続項は通常の型検査を受けるが、評価されないため、その N と E は全体の結果へ加えない。
+`Perform(Return<b, τ>, c)` は引数が正常に完了した後の状態を E[b] に記録し、N を `⊥` にする。
+引数が正常に完了しなければ発行地点は作らない。
+callee の latent row に `Return<b, τ>` がある `Apply` も、callee と引数の評価後の状態を E[b] に記録する。
+閉包本体の脱出は閉包の生成位置へ伝えず、呼び出し位置で扱う。
+
+`Eliminate`、`UnionEliminate` などの分岐では、N は正常に完了する枝の状態を合流し、E は同じ boundary の脱出状態を合流する。
+合流する状態の T と C は `type-equiv?` で一致しなければならず、不一致は `reassign-type-mismatch` で拒否する。
+P は枝の集合和をとる。
+型付けは合流型を計算せず、各枝の C は elaboration が決めた型で一致させる。
+全枝が正常に完了しなければ N は `⊥` であり、枝内の脱出は E に残る。
+
+`Handle(Return<b, τ>, x -> c_h, c_body)` では、E[b] があるとき c_h をその脱出状態から型付けする。
+E[b] が無い場合も c_h は入口状態で検査するが、その結果の N と E は全体へ加えない。
+全体の N は c_body と到達可能な handler の正常出口の合流、E は E_body から b を除いたものと handler の脱出の和である。
+handler の中から同じ boundary へ Return する脱出は外側へ伝わる。
+
+閉包が mut binder を捕捉すると、その位置の C を P に加え、閉包本体は P の下で検査する。
+捕捉後の再代入は P のすべての型と一致しなければならず、C を変えない。
+
+静的な `Reassign` `(Reassign w C c)` で、c が `Never` なら全体も `Never` とし、C への更新と Mutation を行わない。
+それ以外では、c の型が C に `reassign-narrowing?` で収まり、C が宣言型 T に `tag-compat?` で適合し、C が再帰的に Owned-free、borrow-free かつ `storage-ok?` であり、P があれば C がその全要素と型同値であることを検査する。
+成功時は binder の flow 型を C に更新し、`Unit ! (ε_c ∪ {Mutation})` を返す。
+
+```text
+N(w) = (T, C, P)     S ⊢flow c : τv ! εv ⇒ (N1, E1)     τv ≠ Never
+reassign-narrowing?(τv, C)     tag-compat?(C, T)
+owned-free?(C)     borrow-free?(C)     storage-ok?(C)
+P = #f  または  ∀p ∈ P. type-equiv?(C, p)
+-----------------------------------------------------------------
+S ⊢flow Reassign(w, C, c) : Unit ! (εv ∪ {Mutation})
+  ⇒ (if N1 = ⊥ then ⊥ else N1[w ↦ (T, C, P)], E1)
+```
+
+右辺が `Never` の場合は、flow 状態を更新せずに右辺の脱出を保ち、Mutation を加えない。
+
+```text
+S ⊢flow c : Never ! εv ⇒ (⊥, E1)
+-----------------------------------------------
+S ⊢flow Reassign(w, C, c) : Never ! εv ⇒ (⊥, E1)
+```
+
+簡約中の mut place の heap entry `(p v (declared C))` は、この現在の view を記録する。
+R-LetMutB は実行用 Let の型欄 C0 を初期 view とし、R-Reassign は値と C を一つの遷移で更新する。
+静的な宣言型 T は heap に保存されず、静的型付けが各再代入で C と T の互換性を検査する。
+config の再型付けは値が C に適合することと C の storage 条件を確認するが、T との互換性は再検査しない。
+したがって Preservation の主張は、静的に型付けされた Core から始まる到達可能な config に限る。
 
 **(T-Scope)**
 
@@ -2038,7 +2098,13 @@ machine へ入れる前に、その表を使って該当する `Let` の型欄�
 その metadata には residual の欄が含まれず、その経路で得た config は Preservation の証拠に使わない。
 
 heap entry は `(p v)` または `(p v (declared τ))` の形を取る。
-宣言型の欄は place を作った規則だけが設定し、`Assign`、`Reassign`、`BorrowMutRef` による値の更新はその欄を保つ。
+Owned place の宣言型欄は place を作った規則だけが設定し、`Assign` と `BorrowMutRef` による値の更新はその欄を保つ。
+`Reassign` の target は mut place に限り、その `(declared τ)` は source の宣言型ではなく現在の flow view C を記録する。
+R-LetMutB は実行用 `Let` の型欄 C0 で view を初期化し、R-Reassign は右辺の値と view C を一つの遷移で更新する。
+source の宣言型 T は静的型付けが保持し、各更新で C が T に `tag-compat?` であることを検査する。
+config の再型付けは T を持たないためこの条件を再検査せず、値が記録済みの C に適合することを確かめる。
+したがって Preservation の対象は、静的に型付けされた Core から始まる到達可能な config である。
+T と C の役割は mut place で分かれ、Owned place の宣言型の意味は変わらない。
 宣言型は値や資源ではないため、token、capability、借用資源の走査には含めない。
 
 `R-ProjBorrow` と `R-ProjBorrowMut` は、結果の借用値に親の借用値の region を置く。
@@ -2939,7 +3005,7 @@ gate が保証するのは `f` の各呼出しであり、継続 `c2` が `f` �
   record の `mut` 欄と `Owned` の payload では、型同値の代わりに `tag-narrowing?` を使う。
   通常の `compat?` も `Owned` の payload には `tag-narrowing?` を使うため、両判定の照合は一致する。
 - record 束縛と `Assign` は、値の型を宣言型へ `tag-compat?` で照合する。
-  `Reassign` は `reassign-narrowing?` を使い、slot の宣言型と欄の集合および optional の印を保ちながら、期待が `imm` の欄に限り実際の `mut` を許す。
+  `Reassign` は `reassign-narrowing?` を使い、その位置の slot の flow 型 C の欄集合と optional の印を保ちながら、期待が `imm` の欄に限り実際の `mut` を許す。C と source の宣言型 T の適合は別に `tag-compat?` で検査する。
   期待が `mut` の欄と `Owned` などの wrapper の内側は `tag-narrowing?` のままであり、余剰欄を落とす narrowing は許さない。
   synth 位置の枝合流は tag 保存の上界を使い、tag の無い値から Union を作らない。
 - `tag-narrowing?` は Union の成分集合を狭める関係であり、Union の成分型の内部へは再帰しない。

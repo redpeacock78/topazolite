@@ -361,8 +361,10 @@ Core の合流は tag の無い欄の型から Union を作らないので、`{ 
 
 `Assign` と `Reassign` は異なる更新である。 [REQ: SCP-001]
 `Assign` は借用した designator が指す field を書き換えるが、`Reassign` は借用を経由せず、`mut` binding が指す slot 自体を差し替える。
-`Reassign` の結果は `Unit` であり、`H` の slot だけを書き換えて `Ω` と `θ` は動かさない。
+右辺が正常に完了する `Reassign` の結果は `Unit` であり、`H` の slot とその現在の view を原子的に更新して `Ω` と `θ` は動かさない。
+右辺が `Never` なら `Reassign` も `Never` となり、slot、view、`Ω`、`θ` を更新せず、Mutation row も加えない。
 そのため `Reassign` は借用の capability や Ψ の借用記録を新たに作らない。
+`mut` binding は `Owned` と借用を型に持てず、`MutSlot` は `Reassign` の target に限られるため、mut place 自体は Borrow、BorrowMut、Move、または pointer の target にならない。
 
 ## 13. 使用の判定
 

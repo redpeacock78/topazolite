@@ -294,7 +294,10 @@ record の sub は、sup が要求する field をすべて満たす限り余剰
 `mut` field は読みと書きの双方に使われるため、`mut` を要求する位置では field 型が `type-equiv?` で一致する場合だけ互換とする。
 `imm` を要求する位置には `mut` field を渡せる。 [REQ: ROW-005]
 書き込み能力を捨てる方向であり、その位置からは読み出しだけが可能なため、§3.5 の降格した field を構成できる。
-`Reassign` の slot も値を imm 欄へ渡す位置なので、実際の値に mut 欄があっても代入できるが、slot の宣言型と能力は変わらない。
+`Reassign` の値も slot の現在の flow 型へ渡すため、実際の値に mut 欄があっても期待が imm の欄として受理できる。
+source の宣言型と binding mode は変わらないが、再代入後の flow 型 C は変わり得る。
+各 C は宣言型 T に tag-compat? で適合し、値の型は reassign-narrowing? で C に収まらなければならない。
+この C が再代入後の slot の view であり、後続の読み出しは現在の view に従う。
 一方だけが `Owned` である field 型は互換でない。
 双方が `Owned` の場合は、内部型を `tag-narrowing?` で照合する。
 `Owned` は一意な所有者なので、Union の成分集合を広げても旧い型の view から値に触れる経路は残らない。
