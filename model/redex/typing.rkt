@@ -1682,6 +1682,177 @@
           binders
           identity-transfers)))
 
+;; flow は各式で局所の脱出を集め、子から戻るときに入口の脱出表へ足す。
+(define (flow-clear-escapes Ψ)
+  (struct-copy psi Ψ
+               [flow (struct-copy flow-state (psi-flow Ψ) [escapes (hash)])]))
+
+(define (flow-set-normal flow normal)
+  (struct-copy flow-state flow [normal normal]))
+
+(define (flow-join fail node left right)
+  (cond
+    [(eq? left 'bottom) right]
+    [(eq? right 'bottom) left]
+    [else
+     (for/fold ([joined (hash)])
+               ([key (in-list (filter (lambda (key) (hash-has-key? right key))
+                                      (hash-keys left)))])
+       (define a (hash-ref left key))
+       (define b (hash-ref right key))
+       (unless (and (type-equiv? (flow-entry-declared a)
+                                 (flow-entry-declared b))
+                    (type-equiv? (flow-entry-current a)
+                                 (flow-entry-current b)))
+         (fail 'reassign-type-mismatch node
+               (flow-entry-current a) (flow-entry-current b)))
+       (define pins-a (or (flow-entry-pins a) (set)))
+       (define pins-b (or (flow-entry-pins b) (set)))
+       (hash-set joined key
+                 (flow-entry (flow-entry-declared a)
+                             (flow-entry-current a)
+                             (and (or (not (set-empty? pins-a))
+                                      (not (set-empty? pins-b)))
+                                  (set-union pins-a pins-b)))))]))
+
+(define (escape-union fail node left right)
+  (for/fold ([joined left]) ([(boundary state) (in-hash right)])
+    (hash-set joined boundary
+              (if (hash-has-key? joined boundary)
+                  (flow-join fail node (hash-ref joined boundary) state)
+                  state))))
+
+(define (flow-join-state fail node left right)
+  (flow-state (flow-join fail node
+                         (flow-state-normal left) (flow-state-normal right))
+              (escape-union fail node
+                            (flow-state-escapes left)
+                            (flow-state-escapes right))))
+
+(define (psi-flow-branch-join fail node before branches)
+  (define permissions
+    (for/fold ([joined before]) ([branch (in-list branches)])
+      (psi-join joined branch)))
+  (define flow
+    (for/fold ([joined #f]) ([branch (in-list branches)])
+      (if joined
+          (flow-join-state fail node joined (psi-flow branch))
+          (psi-flow branch))))
+  (struct-copy psi permissions [flow (or flow (psi-flow before))]))
+
+(define (flow-exit-binder state name saved)
+  (define (restore entries)
+    (if (eq? saved #f)
+        (hash-remove entries name)
+        (hash-set entries name saved)))
+  (flow-state (if (eq? (flow-state-normal state) 'bottom)
+                  'bottom
+                  (restore (flow-state-normal state)))
+              (for/hash ([(boundary exits) (in-hash (flow-state-escapes state))])
+                (values boundary
+                        (if (eq? exits 'bottom) 'bottom (restore exits))))))
+
+(define (flow-update Ψ key entry)
+  (define state (psi-flow Ψ))
+  (if (eq? (flow-state-normal state) 'bottom)
+      Ψ
+      (struct-copy psi Ψ
+                   [flow (flow-set-normal
+                          state
+                          (hash-set (flow-state-normal state) key entry))])))
+
+(define (flow-enter-let Ψ name mode declared current)
+  (define state (psi-flow Ψ))
+  (if (eq? (flow-state-normal state) 'bottom)
+      (values Ψ #f)
+      (let* ([normal (flow-state-normal state)]
+             [saved (hash-ref normal name #f)]
+             [masked (hash-remove normal name)]
+             [next (if (eq? mode 'mut)
+                       (hash-set masked name (flow-entry declared current #f))
+                       masked)])
+        (values (struct-copy psi Ψ
+                             [flow (flow-set-normal state next)])
+                saved))))
+
+(define (flow-leave-let bound-psi body-psi name saved fail node)
+  (define body-state (flow-exit-binder (psi-flow body-psi) name saved))
+  (define escapes
+    (escape-union fail node
+                  (flow-state-escapes (psi-flow bound-psi))
+                  (flow-state-escapes body-state)))
+  (struct-copy psi body-psi
+               [flow (flow-state (flow-state-normal body-state) escapes)]))
+
+(define (flow-record-escape Ψ boundary fail node)
+  (define state (psi-flow Ψ))
+  (if (eq? (flow-state-normal state) 'bottom)
+      Ψ
+      (struct-copy psi Ψ
+                   [flow (struct-copy flow-state state
+                                      [escapes
+                                       (escape-union
+                                        fail node
+                                        (flow-state-escapes state)
+                                        (hash boundary
+                                              (flow-state-normal state)))])])))
+
+(define (flow-pin-captures Ψ body environment [bound-names '()])
+  (define state (psi-flow Ψ))
+  (if (eq? (flow-state-normal state) 'bottom)
+      Ψ
+      (let* ([free (set-subtract (core-free-vars body)
+                                 (list->set bound-names))]
+             [normal
+              (for/fold ([entries (flow-state-normal state)])
+                        ([name (in-set free)]
+                         #:when (eq? (binding-mode-of environment name) 'mut))
+                (define entry
+                  (hash-ref entries name
+                            (lambda ()
+                              (define type (lookup environment name))
+                              (flow-entry type type #f))))
+                (define pins (or (flow-entry-pins entry) (set)))
+                (hash-set entries name
+                          (flow-entry (flow-entry-declared entry)
+                                      (flow-entry-current entry)
+                                      (set-add pins (flow-entry-current entry)))))])
+        (struct-copy psi Ψ
+                     [flow (flow-set-normal state normal)]))))
+
+(define (flow-check-backedge fail node entry output)
+  (define input-normal (flow-state-normal (psi-flow entry)))
+  (define output-normal (flow-state-normal (psi-flow output)))
+  (when (and (hash? input-normal) (hash? output-normal))
+    (unless (set=? (list->set (hash-keys input-normal))
+                   (list->set (hash-keys output-normal)))
+      (fail 'reassign-type-mismatch node input-normal output-normal))
+    (for ([key (in-hash-keys input-normal)])
+      (define before (hash-ref input-normal key))
+      (define after (hash-ref output-normal key))
+      (unless (and (type-equiv? (flow-entry-declared before)
+                                (flow-entry-declared after))
+                   (type-equiv? (flow-entry-current before)
+                                (flow-entry-current after))
+                   (set=? (or (flow-entry-pins before) (set))
+                          (or (flow-entry-pins after) (set))))
+        (fail 'reassign-type-mismatch node before after)))))
+
+(define (flow-restore-output input output normal-type fail node)
+  (define before (psi-flow input))
+  (define after (psi-flow output))
+  (define escapes
+    (escape-union fail node
+                  (flow-state-escapes before)
+                  (flow-state-escapes after)))
+  (struct-copy psi output
+               [flow (flow-state
+                      (if (or (eq? normal-type '⊥)
+                              (eq? (flow-state-normal before) 'bottom))
+                          'bottom
+                          (flow-state-normal after))
+                      escapes)]))
+
 ;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
 ;; 各枝の束縛子へ payload path を引き継ぐ。
 (define (union-branch-contexts branches union-type wrapper Λ environment
@@ -1782,9 +1953,8 @@
                         (third scrutinee-result) (second context)
                         places callables fail compatible?)))))
   (define branch-psi
-    (for/fold ([joined (third scrutinee-result)])
-              ([result (in-list branch-results)])
-      (psi-join joined (second result))))
+    (psi-flow-branch-join fail node (third scrutinee-result)
+                          (map second branch-results)))
   (define unified
     (parameterize ([merge-position
                     (list (region-ctx-ir Λ) (region-ctx-point Λ) node)])
@@ -1837,9 +2007,8 @@
                         (third scrutinee-result) (second context)
                         places callables fail type-compatible?)))))
   (define branch-psi
-    (for/fold ([joined (third scrutinee-result)])
-              ([result (in-list branch-results)])
-      (psi-join joined (second result))))
+    (psi-flow-branch-join fail node (third scrutinee-result)
+                          (map second branch-results)))
   (list result-type
         (rows-union (cons (second scrutinee-result)
                           (map first branch-results)))
@@ -1906,9 +2075,8 @@
                         fail
                         compatible?)))))
   (define branch-psi
-    (for/fold ([joined (third scrutinee-result)])
-              ([result (in-list branch-results)])
-      (psi-join joined (second result))))
+    (psi-flow-branch-join fail node (third scrutinee-result)
+                          (map second branch-results)))
   ;; 分岐ごとに別の α を持つ借用を 1 本へ合流する。合流しなかったときは
   ;; expected を返し、分岐 0 の型を根拠なく選ばない。
   (define unified
@@ -2258,9 +2426,8 @@
                    fail
                    type-compatible?)))))
   (define branch-psi
-    (for/fold ([joined (third scrutinee-result)])
-              ([result (in-list branch-rows)])
-      (psi-join joined (second result))))
+    (psi-flow-branch-join fail node (third scrutinee-result)
+                          (map second branch-rows)))
   (list result-type
         (rows-union
          (cons (second scrutinee-result)
@@ -2356,6 +2523,8 @@
        (for/fold ([Λ_body (enter-child Λ 0)])
                  ([x (in-list parameters)] [w (in-list formals)] #:when w)
          (region-ctx-add-token Λ_body x (set (cons w '())))))
+     (define closure-psi
+       (flow-pin-captures Ψ body body-environment parameters))
      (define collector (box '()))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
@@ -2379,7 +2548,7 @@
             (with-resource-identity-transfers
              (resource-binder-names parameters parameter-types)
              (lambda ()
-               (check-as body return-type body-context Ψ body-environment
+               (check-as body return-type body-context closure-psi body-environment
                          places callables fail)))))))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
@@ -2390,7 +2559,7 @@
                         (forwarding-index parameter-types return-type)
                         (hash))
       fail)
-     (list expanded '() Ψ)]
+     (list expanded '() closure-psi)]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
     ;; 囲う RegionLam があるはずという仮定を置かず、表に無い場合と key を
     ;; 共有して fail-closed にする（spec §5.7）。
@@ -2462,6 +2631,8 @@
   (define body-environment
     (function-body-environment body-function-environment
                                 parameters parameter-types))
+  (define closure-psi
+    (flow-pin-captures Ψ body body-environment (cons function parameters)))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
   (define formals
     (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
@@ -2497,18 +2668,19 @@
                    (check-as body return-type body-context Ψ_in body-environment
                              places callables fail))))))
       [(list body-row Ψ_1)
+       (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
            (fixpoint Ψ_next))]))
-  (match-define (list body-row Ψ_body frame) (fixpoint Ψ))
+  (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
   ;; §4.4。RecurVal は継続を持たないので、剥がした本体の要約を自身の
   ;; 出現へ登録する。RegionApp がこの節点を直接参照できるようにする。
   (record-callable-summary! Λ node (recur-frame->summary frame) fail)
-  (list signature '() Ψ))
+  (list signature '() closure-psi))
 
 (define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
@@ -2532,6 +2704,8 @@
   (define body-environment
     (function-body-environment body-function-environment
                                parameters parameter-types))
+  (define closure-psi
+    (flow-pin-captures Ψ body body-environment (cons function parameters)))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
   (define formals
     (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
@@ -2574,12 +2748,13 @@
                   (check-as body return-type body-context Ψ_in body-environment
                             places callables fail))))))
       [(list body-row Ψ_1)
+       (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (if (equal? Ψ_next Ψ_in)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
            (fixpoint Ψ_next))]))
-  (match-define (list body-row Ψ_body frame) (fixpoint Ψ))
+  (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
   (list function-environment Ψ_body frame))
@@ -2647,11 +2822,14 @@
        (fail 'owned-function-requires-move core))
      (values (second type) #t)]))
 
+(define (mut-slot-type-supported? type)
+  (and (owned-free? type)
+       (not (borrowed-type-anywhere? type))))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (when (and (eq? binding-mode 'mut)
-             (or (not (owned-free? declared-type))
-                 (borrowed-type-anywhere? declared-type)))
+             (not (mut-slot-type-supported? declared-type)))
     ;; 宣言型だけで明らかな affine/borrowed binding は bound を推論する前に
     ;; 拒む。これにより借用の所有者検査より mut の契約を先に報告できる。
     (fail 'mut-binding-unsupported-type node))
@@ -2682,8 +2860,7 @@
              (define row (field-row-⊕ declared-row residual))
              (for ([field (in-list row)])
                (define type (second field))
-               (when (or (not (owned-free? type))
-                         (borrowed-type-anywhere? type))
+               (when (not (mut-slot-type-supported? type))
                  (fail 'mut-binding-unsupported-type node)))
              row]
             [else (fail 'ill-typed node)]))
@@ -2734,8 +2911,7 @@
                            Ψ environment places callables fail)
        [(list row bound-psi actual)
         (when (and (eq? binding-mode 'mut)
-                   (or (not (owned-free? actual))
-                       (borrowed-type-anywhere? actual)))
+                   (not (mut-slot-type-supported? actual)))
           ;; Record 以外の mut binding も同じ契約を受ける。ここは宣言型の
           ;; match の外側なので Borrowed/Owned の non-record root を拾う。
           (fail 'mut-binding-unsupported-type node))
@@ -3199,7 +3375,8 @@
 ;; binding の宣言で決まり、再代入で変わらない。imm 欄への mut 欄の代入を許す
 ;; reassign-narrowing? で値を照合する。
 ;; 一般の compat? は余剰 Owned を落としうる。
-(define (infer-reassign core target value Λ Ψ environment places callables fail)
+(define (infer-reassign core target flow-type value Λ Ψ
+                        environment places callables fail)
   (define τ_slot
     (match target
       ;; 実行時の形。R-LetMutB が置いた mut の slot である。
@@ -3217,14 +3394,44 @@
        (unless (eq? (binding-mode-of environment name) 'mut)
          (fail 'immutable-binding core))
        type]))
+  (define τ_flow (peel-ty flow-type))
   (match-define (list τ_value ε_value Ψ_1)
     (infer value (enter-child Λ 0) Ψ environment places callables fail))
-  (unless (or (eq? τ_value 'Never)
-              (reassign-narrowing? τ_value τ_slot))
-    (fail 'reassign-type-mismatch core τ_slot τ_value))
-  (unless (storage-ok? τ_slot)
-    (fail 'mutable-callable-storage-requires-partial core τ_slot))
-  (list 'Unit (rows-union (list ε_value '(Mutation))) Ψ_1))
+  (cond
+    [(eq? τ_value 'Never) (list 'Never ε_value Ψ_1)]
+    [else
+     (define key
+       (match target
+         [`(MutSlot ,place) `(MutSlot ,place)]
+         [_ (peel-node target)]))
+     (define current-state (flow-state-normal (psi-flow Ψ_1)))
+     (define flow-entry*
+       (and (hash? current-state) (hash-ref current-state key #f)))
+     (define declared
+       (if flow-entry*
+           (flow-entry-declared flow-entry*)
+           (and (not (deriving-config?)) τ_slot)))
+     (unless (reassign-narrowing? τ_value τ_flow)
+       (fail 'reassign-type-mismatch core τ_flow τ_value))
+     (when (and declared
+                (not (tag-compat? τ_flow declared
+                                  (current-Γ-pc0) (current-region-relation))))
+       (fail 'reassign-type-mismatch core declared τ_flow))
+     (when (not (mut-slot-type-supported? τ_flow))
+       (fail 'mut-binding-unsupported-type core τ_flow))
+     (unless (storage-ok? τ_flow)
+       (fail 'mutable-callable-storage-requires-partial core τ_flow))
+     (define pins (and flow-entry* (flow-entry-pins flow-entry*)))
+     (when (and pins
+                (for/or ([pin (in-set pins)])
+                  (not (type-equiv? τ_flow pin))))
+       (fail 'reassign-type-mismatch core pins τ_flow))
+     (define next-entry
+       (flow-entry declared τ_flow pins))
+     (list 'Unit (rows-union (list ε_value '(Mutation)))
+           (if (hash? current-state)
+               (flow-update Ψ_1 key next-entry)
+               Ψ_1))]))
 
 ;; unsafe.md §2.2。pointer の型成分を検査し、成分の並びを返す。
 (define (pointer-parts core type fail)
@@ -3668,14 +3875,17 @@
   (if (not (typing-normal-results))
       (parameterize ([typing-normal-results (make-hash)])
         (infer core Λ Ψ environment places callables fail))
-      (let* ([raw-result
-              (infer/body core Λ Ψ environment places callables fail)]
+      (let* ([input-psi Ψ]
+             [local-psi (flow-clear-escapes Ψ)]
+             [raw-result
+              (infer/body core Λ local-psi environment places callables fail)]
              [raw-type (first raw-result)]
              [normal-type (typing-normal-from-infer core Λ raw-type)]
              [result-type
               (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
-             [result (list result-type (second raw-result)
-                           (third raw-result))])
+             [result-psi (flow-restore-output input-psi (third raw-result)
+                                              normal-type fail core)]
+             [result (list result-type (second raw-result) result-psi)])
         ((typing-point-probe) (region-ctx-point Λ))
         (record-typing-result! Λ result-type normal-type (second result))
         (collect-use-regions! result-type
@@ -3924,6 +4134,7 @@
                 environment places callables core fail)]
 
     [`(RegionLam (,rps ...) ,body)
+     (define closure-psi (flow-pin-captures Ψ body environment))
      (match-define (list body-type body-row body-psi)
        (parameterize (;; RegionLam の本体は RegionApp まで遅延する。
                       [region-binder-context rps]
@@ -3933,9 +4144,9 @@
                              (region-binder-renamings))]
                       [bound-region-params
                        (set-union (bound-region-params) (list->set rps))])
-         (infer body (enter-child Λ 0) Ψ
+         (infer body (enter-child Λ 0) closure-psi
                 (without-owned environment) places callables fail)))
-     (list `(ForallRegion ,rps ,body-type) body-row body-psi)]
+     (list `(ForallRegion ,rps ,body-type) body-row closure-psi)]
 
     [`(PrimVal ,_ ,name)
      (match (assoc name (current-Γ0))
@@ -4336,6 +4547,11 @@
         (when (and frame (eq? (recur-frame-state frame) 'tentative))
           (recur-check-roots frame argument-caps core fail))
         (define next-psi (second argument-result))
+        (define call-psi
+          (for/fold ([state next-psi]) ([effect (in-list latent-out)])
+            (match effect
+              [`(Return ,boundary ,_) (flow-record-escape state boundary fail core)]
+              [_ state])))
         (when summary
           (define formals (callable-summary-formals summary))
           (define subst
@@ -4353,7 +4569,8 @@
               (values w (argument-source Λ a τ i))))
           (set! next-psi
                 (instantiate-deferred! summary Λ core subst sources
-                                        next-psi fail)))
+                                        call-psi fail)))
+        (unless summary (set! next-psi call-psi))
         (when (borrow-region return-type)
           (define i (forwarding-index parameter-types return-type))
           (unless i (fail 'unresolved-borrow-owner core))
@@ -4469,6 +4686,9 @@
                                 callable
                                 fields))
         (define Λ_body (enter-child Λ_token 1))
+        (define-values (body-psi saved-flow)
+          (flow-enter-let bound-psi x binding-mode (peel-ty type) binding-type))
+        (set! body-psi (flow-clear-escapes body-psi))
         (define identity? (eq? (peel-node body) x))
         (define body-result
           (with-let-place
@@ -4480,14 +4700,14 @@
                   (lambda ()
                     (infer body
                            Λ_body
-                           bound-psi
+                           body-psi
                            (extend environment (list x)
                                    (list binding-type)
                                    (and (eq? binding-mode 'mut) '(mut)))
                            places callables fail)))
-                 (infer body
-                        Λ_body
-                        bound-psi
+                (infer body
+                       Λ_body
+                        body-psi
                         (extend environment (list x)
                                 (list binding-type)
                                 (and (eq? binding-mode 'mut) '(mut)))
@@ -4496,7 +4716,8 @@
         (match body-result
           [(list body-type body-row body-psi)
            (list (if bound-never? 'Never body-type)
-                 (row-union bound-row body-row) body-psi)])])]
+                 (row-union bound-row body-row)
+                 (flow-leave-let bound-psi body-psi x saved-flow fail core))])])]
 
     [`(Let (,name ,type) ,bound ,body)
      (define bound-result
@@ -4527,6 +4748,9 @@
                              callable
                              fields))
      (define Λ_body (enter-child Λ_token 1))
+     (define-values (body-psi saved-flow)
+       (flow-enter-let (second bound-result) x 'let binding-type binding-type))
+     (set! body-psi (flow-clear-escapes body-psi))
      (define identity? (eq? (peel-node body) x))
      (define body-result
        (with-let-place
@@ -4536,18 +4760,19 @@
               (with-identity-transfer
                x
                (lambda ()
-                 (infer body Λ_body (second bound-result)
+                 (infer body Λ_body body-psi
                         (extend environment (list x) (list binding-type))
                         places callables fail)))
-              (infer body Λ_body (second bound-result)
+              (infer body Λ_body body-psi
                      (extend environment (list x) (list binding-type))
                      places callables fail)))))
      (record-effective-let-type! Λ binding-type)
      (match body-result
-       [(list body-type body-row body-psi)
+        [(list body-type body-row body-psi)
         (list (if bound-never? 'Never body-type)
               (row-union (first bound-result) body-row)
-              body-psi)])]
+              (flow-leave-let (second bound-result) body-psi
+                              x saved-flow fail core))])]
 
     [`(Eliminate ,scrutinee (,branches ...))
      (infer-eliminate scrutinee branches Λ
@@ -4560,19 +4785,32 @@
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
-     (define argument-row
-       (check-as argument type* (enter-child Λ 0)
-                 Ψ environment places callables fail))
+     (define argument-result
+       (check-as/full argument type* (enter-child Λ 0)
+                      Ψ environment places callables fail))
+     (define argument-psi (second argument-result))
      (list 'Never
-           (row-union (first argument-row)
+           (row-union (first argument-result)
                       `((Return ,boundary ,type*)))
-           (second argument-row))]
+           (flow-record-escape argument-psi boundary fail core))]
 
     [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
      (define body-result
-       (check-as body type* (enter-child Λ 1)
+       (check-as/full body type* (enter-child Λ 1)
                  Ψ environment places callables fail))
+     (define body-psi (second body-result))
+     (define body-flow (psi-flow body-psi))
+     (define caught-state
+       (hash-ref (flow-state-escapes body-flow) boundary #f))
+     (define handler-base
+       (psi-join Ψ body-psi))
+     (define handler-input
+       (struct-copy psi handler-base
+                    [flow (flow-state
+                           (or caught-state
+                               (flow-state-normal (psi-flow Ψ)))
+                           (hash))]))
      (define handler-result
        (match (peel-branch handler-clause)
          [`(,name -> ,handler)
@@ -4581,7 +4819,7 @@
                         [`(#:var ,x ,_) x]
                         [_ #f])
                       (peel-bind name))
-          (list '() (psi-join Ψ (second body-result)))]
+          (list '() handler-input type*)]
          [`(,name -> ,handler)
           #:when (resource-type? type*)
           (define binder (peel-bind name))
@@ -4608,35 +4846,54 @@
              (with-identity-transfer
               binder
               (lambda ()
-                (check-as handler
-                          type*
-                          (enter-child Λ 0)
-                          (psi-join Ψ (second body-result))
-                          (extend environment
-                                  (list binder)
-                                  (list (resource-branch-binding-type type*)))
-                          places
-                          callables
-                          fail)))))]
+                (check-as/full handler
+                               type*
+                               (enter-child Λ 0)
+                               handler-input
+                               (extend environment
+                                       (list binder)
+                                       (list (resource-branch-binding-type type*)))
+                               places
+                               callables
+                               fail)))))]
          [`(,name -> ,handler)
           (with-place-shadowing
            (list (peel-bind name))
            (lambda ()
-             (check-as handler
-                       type*
-                       (enter-child Λ 0)
-                       (psi-join Ψ (second body-result))
-                       (extend environment (list (peel-bind name)) (list type*))
-                       places
-                       callables
-                       fail)))]
+             (check-as/full handler
+                            type*
+                            (enter-child Λ 0)
+                            handler-input
+                            (extend environment (list (peel-bind name)) (list type*))
+                            places
+                            callables
+                            fail)))]
          [_ (fail 'ill-typed core)]))
+     (define handler-psi (second handler-result))
+     (define handler-row (first handler-result))
+     (define handler-flow (psi-flow handler-psi))
+     (define body-escapes (flow-state-escapes body-flow))
+     (define output-escapes
+       (escape-union fail core
+                     (hash-remove body-escapes boundary)
+                     (if caught-state
+                         (flow-state-escapes handler-flow)
+                         (hash))))
+     (define output-normal
+       (if caught-state
+           (flow-join fail core
+                      (flow-state-normal body-flow)
+                      (flow-state-normal handler-flow))
+           (flow-state-normal body-flow)))
+     (define output-psi
+       (struct-copy psi (psi-join body-psi handler-psi)
+                    [flow (flow-state output-normal output-escapes)]))
      (list type*
            (row-union
             (row-difference (first body-result)
                             `((Return ,boundary ,type*)))
-            (first handler-result))
-           (psi-join (second body-result) (second handler-result)))]
+            handler-row)
+           output-psi)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
@@ -4879,10 +5136,16 @@
     [(? symbol? name)
      (define type (lookup environment name))
      (unless type (fail 'unbound-variable core))
+     (define state (psi-flow Ψ))
+     (define flow-entry*
+       (and (hash? (flow-state-normal state))
+            (hash-ref (flow-state-normal state) name #f)))
+     (define visible-type
+       (if flow-entry* (flow-entry-current flow-entry*) type))
      (when (and (resource-type? type)
                 (not (set-member? (resource-identity-transfers) name)))
        (fail 'owned-variable-requires-move core))
-     (list type '() Ψ)]
+     (list visible-type '() Ψ)]
 
     [`(Borrow ,w)
      (infer-borrow core w #f Λ Ψ environment places callables fail)]
@@ -4925,8 +5188,9 @@
      (infer-read core operand Λ Ψ environment places callables fail)]
     [`(Assign ,target ,value)
      (infer-assign core target value Λ Ψ environment places callables fail)]
-    [`(Reassign ,target ,_flow-type ,value)
-     (infer-reassign core target value Λ Ψ environment places callables fail)]
+    [`(Reassign ,target ,flow-type ,value)
+     (infer-reassign core target flow-type value Λ Ψ
+                     environment places callables fail)]
     [`(AddressOf ,operand)
      (infer-address-of core operand Λ Ψ environment places callables fail)]
     [`(PtrOffset ,operand ,offset)
@@ -5154,6 +5418,9 @@
                                 callable
                                 fields))
         (define Λ_body (enter-child Λ_token 1))
+        (define-values (body-psi saved-flow)
+          (flow-enter-let bound-psi x binding-mode (peel-ty type) binding-type))
+        (set! body-psi (flow-clear-escapes body-psi))
         (define identity? (eq? (peel-node body) x))
         (define body-environment
           (extend environment (list x) (list binding-type)
@@ -5162,11 +5429,11 @@
           (with-let-place
            x binding-type
            (lambda ()
-             (define (infer-body)
-               (infer body Λ_body bound-psi body-environment
+            (define (infer-body)
+               (infer body Λ_body body-psi body-environment
                       places callables fail))
-             (define (check-body)
-               (check-as/full body expected Λ_body bound-psi body-environment
+            (define (check-body)
+               (check-as/full body expected Λ_body body-psi body-environment
                               places callables fail compatible?))
              (if identity?
                  (with-identity-transfer
@@ -5175,10 +5442,12 @@
         (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
         (if bound-never?
             (list (row-union bound-row (second body-result))
-                  (third body-result)
+                  (flow-leave-let bound-psi (third body-result)
+                                  x saved-flow fail core)
                   'Never)
             (list (row-union bound-row (first body-result))
-                  (second body-result)
+                  (flow-leave-let bound-psi (second body-result)
+                                  x saved-flow fail core)
                   (third body-result)))])]
 
     [`(Let (,name ,type) ,bound ,body)
@@ -5210,6 +5479,9 @@
                              callable
                              fields))
      (define Λ_body (enter-child Λ_token 1))
+     (define-values (body-psi saved-flow)
+       (flow-enter-let (second bound-result) x 'let binding-type binding-type))
+     (set! body-psi (flow-clear-escapes body-psi))
      (define identity? (eq? (peel-node body) x))
      (define body-environment
        (extend environment (list x) (list binding-type)))
@@ -5222,24 +5494,26 @@
                x
                (lambda ()
                  (if bound-never?
-                     (infer body Λ_body (second bound-result)
+                     (infer body Λ_body body-psi
                             body-environment places callables fail)
-                     (check-as/full body expected Λ_body (second bound-result)
+                     (check-as/full body expected Λ_body body-psi
                                     body-environment places callables fail
                                     compatible?))))
               (if bound-never?
-                  (infer body Λ_body (second bound-result)
+                  (infer body Λ_body body-psi
                          body-environment places callables fail)
-                  (check-as/full body expected Λ_body (second bound-result)
+                  (check-as/full body expected Λ_body body-psi
                                  body-environment places callables fail
                                  compatible?))))))
      (record-effective-let-type! Λ binding-type)
      (if bound-never?
          (list (row-union (first bound-result) (second body-result))
-               (third body-result)
+               (flow-leave-let (second bound-result) (third body-result)
+                               x saved-flow fail core)
                'Never)
          (list (row-union (first bound-result) (first body-result))
-               (second body-result)
+               (flow-leave-let (second bound-result) (second body-result)
+                               x saved-flow fail core)
                (third body-result)))]
 
     [`(UnionEliminate ,scrutinee (,branches ...))
@@ -5344,15 +5618,18 @@
       (parameterize ([typing-normal-results (make-hash)])
         (check-as/full core expected Λ Ψ environment places callables fail
                        compatible? #:adopt? adopt?))
-      (let* ([raw-result
-              (check-as/full/body core expected Λ Ψ environment places callables
+      (let* ([input-psi Ψ]
+             [local-psi (flow-clear-escapes Ψ)]
+             [raw-result
+              (check-as/full/body core expected Λ local-psi environment places callables
                                   fail compatible? #:adopt? adopt?)]
              [row (first raw-result)]
-             [psi (second raw-result)]
+             [raw-psi (second raw-result)]
              [raw-type (third raw-result)]
              [normal-type (typing-normal-from-check core Λ expected raw-type)]
              [result-type
-              (if (typing-result-never? core Λ raw-type) 'Never raw-type)])
+              (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
+             [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
         (record-typing-result! Λ result-type normal-type row)
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)

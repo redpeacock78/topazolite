@@ -15,6 +15,8 @@
          region-ctx-add-token region-ctx-token region-ctx-field-table
          region-ctx-source region-ctx-summary
          (struct-out borrow-capability)
+         (struct-out flow-entry)
+         (struct-out flow-state)
          (struct-out psi)
          (struct-out borrow-request)
          (struct-out borrow-sidecar)
@@ -103,7 +105,10 @@
 ;; Ψ は評価順に流れる permission 状態である。Λ と違い、木を下る向きだけでは
 ;; 足りない。(Let (y τ) (Reborrow x) c_body) の c_body は (Reborrow x) の
 ;; 兄弟であり、c_1 で取った借用が c_2 へ届かなければ BOR-002 を判定できない。
-(struct psi (shared mut suspended) #:transparent)
+;; flow は permission と独立して流れる mut の型状態である。
+(struct flow-entry (declared current pins) #:transparent)
+(struct flow-state (normal escapes) #:transparent)
+(struct psi (shared mut suspended flow) #:transparent)
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
 (struct borrow-request (w fp mode alpha rho-borrow node) #:transparent)
@@ -113,13 +118,14 @@
 (struct borrow-sidecar (requests sigma) #:transparent)
 (struct use-request (w fp operation source point-region node kind otherwise) #:transparent)
 
-(define (empty-psi) (psi (set) (set) (set)))
+(define (empty-psi) (psi (set) (set) (set) (flow-state (hash) (hash))))
 
-;; 分岐の合流。どれか 1 つの経路で生きている借用を生きているものとして扱う。
+;; Permission だけを合流する。flow は呼び出し側の枝規則が別に合流する。
 (define (psi-join Ψ_1 Ψ_2)
   (psi (set-union (psi-shared Ψ_1) (psi-shared Ψ_2))
        (set-union (psi-mut Ψ_1) (psi-mut Ψ_2))
-       (set-union (psi-suspended Ψ_1) (psi-suspended Ψ_2))))
+       (set-union (psi-suspended Ψ_1) (psi-suspended Ψ_2))
+       (psi-flow Ψ_1)))
 
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
 ;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
@@ -133,7 +139,8 @@
            (psi-mut Ψ))
        (if held?
            (set-add (psi-suspended Ψ) (list w fp α_parent α_child node))
-           (psi-suspended Ψ))))
+           (psi-suspended Ψ))
+       (psi-flow Ψ)))
 
 ;; path の形そのもの。segment は record の label、位置 natural、union payload である。
 (define (path-wf? fp)
