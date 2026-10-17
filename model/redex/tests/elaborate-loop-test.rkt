@@ -1,12 +1,15 @@
 #lang racket
 
 (require rackunit
+         racket/list
+         racket/set
          redex/reduction-semantics
          "../annotate.rkt"
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
          "../typing.rkt"
+         "../type-equiv.rkt"
          "../ucore.rkt")
 
 (define (elaborated-core expression)
@@ -88,6 +91,9 @@
   (check-loop-shape-error
    (loop-form '(Apply loop) '() '#:infer)))
 
+(test-case "loop 印の #:infer 禁止は自己呼出しの有無に依存しない"
+  (check-loop-shape-error (loop-form 'unit '() '#:infer)))
+
 (test-case "loop 印は遅延した callable の内側の呼出しを拒否する"
   (for ([body
          (in-list
@@ -157,3 +163,142 @@
     [`(err ,diagnostic)
      (check-equal? (diagnostic-id diagnostic) "E-VAR-013" (format "~s" diagnostic))]
     [other (fail-check (format "Loop の初回引数による pin を期待したが ~s" other))]))
+
+(test-case "loop-join は候補が無いか入力が収まらないとき T へ戻る"
+  (define declared '(Record ((name String imm))))
+  (define candidate '(Record ((name String imm) (id Int imm))))
+  (check-equal? (loop-join (list candidate candidate) declared '()
+                           (λ (_input _candidate) #t))
+                (normalize-type candidate))
+  (check-equal? (loop-join (list candidate) declared '()
+                           (λ (_input _candidate) #f))
+                declared)
+  (check-equal? (loop-join (list candidate '(Record ((other Bool imm))))
+                           'Never '() (λ (_input _candidate) #t))
+                'Never)
+  (check-equal? (loop-join '(Int String) '(Union Int String) '()
+                           (λ (_input _candidate) #t))
+                '(Union Int String)))
+
+(test-case "loop-type-depth は各型構成子を一段として数える"
+  (check-equal? (loop-type-depth 'Int) 0)
+  (check-equal? (loop-type-depth '(Record ((a Int imm)))) 1)
+  (check-equal? (loop-type-depth '(Union Int String)) 1)
+  (check-equal? (loop-type-depth '(Data Box ((Record ((a Int imm)))))) 2)
+  (check-equal? (loop-type-depth '(NFn ((Record ((a Int imm)))) Unit () () () User)) 2)
+  (check-equal? (loop-type-depth '(Owned (Record ((a Int imm))))) 2)
+  (check-equal? (loop-type-depth '(Borrowed (Union Int String) r)) 2))
+
+(test-case "loop-cycle? は正規化で同値な型を履歴から検出する"
+  (check-true
+   (loop-cycle? '(Union String Int)
+                (list '(Union Int String) '(Record ()))))
+  (check-false (loop-cycle? '(Record ((a Int imm))) '())))
+
+(test-case "loop-excess-fields は Union の対応 Record に共通する欄だけを除外する"
+  (define declared
+    '(Record ((f (Union (Record ((a Int imm) (k Int imm)))
+                        (Record ((b Int imm) (k String imm)))) imm))))
+  (define view
+    '(Record ((f (Record ((a Int imm) (b Int imm) (k Int imm))) imm))))
+  (define fields (loop-excess-fields view declared))
+  (check-equal? (map loop-excess-key-field fields) '(b))
+  (check-equal? (loop-excess-key-path (first fields)) '((field f)))
+  (check-equal? (loop-excess-key-correspondence (first fields))
+                '(((field f) (union 0)))))
+
+(test-case "loop-widen は一方の Union 成員の除去鍵で他方の欄を落とさない"
+  (define declared
+    '(Union (Record ((kind Int imm)))
+            (Record ((id Int imm) (kind String imm)))))
+  (define previous
+    '(Union (Record ((id Int imm) (kind Int imm)))
+            (Record ((id Int imm) (kind String imm)))))
+  (define key
+    (first
+     (filter (λ (candidate) (eq? (loop-excess-key-field candidate) 'id))
+             (loop-excess-fields previous declared))))
+  (define-values (widened removed)
+    (loop-widen previous previous declared (set key)))
+  (check-true (set-member? removed key))
+  (define int-row
+    (for/or ([member (in-list (union-members widened))])
+      (match member
+        [`(Record ,row)
+         (and (equal? (second (assq 'kind row)) 'Int) row)]
+        [_ #f])))
+  (define string-row
+    (for/or ([member (in-list (union-members widened))])
+      (match member
+        [`(Record ,row)
+         (and (equal? (second (assq 'kind row)) 'String) row)]
+        [_ #f])))
+  (check-false (assq 'id int-row))
+  (check-not-false (assq 'id string-row)))
+
+(test-case "loop-widen は S1-S2-S1 の移行後に同じ除去鍵を再適用する"
+  (define declared
+    '(Union (Record ((kind Int imm)))
+            (Union (Record ((id Int imm) (kind String imm)))
+                   (Record ((other Bool imm))))))
+  (define s1
+    '(Union (Record ((id Int imm) (kind Int imm)))
+            (Record ((other Bool imm)))))
+  (define s1-deeper
+    '(Union (Record ((id (Record ((child Int imm))) imm) (kind Int imm)))
+            (Record ((other Bool imm)))))
+  (define-values (first-view removed1)
+    (loop-widen s1 s1-deeper declared (set)))
+  (check-equal? (set-count removed1) 1)
+  (define s2
+    '(Union (Record ((id Int imm) (kind String imm)))
+            (Record ((other Bool imm)))))
+  (define-values (second-view removed2)
+    (loop-widen first-view s2 declared removed1))
+  (define s1-again
+    '(Union (Record ((id Int imm) (kind Int imm)))
+            (Record ((other Bool imm)))))
+  (define-values (third removed3)
+    (loop-widen second-view s1-again declared removed2))
+  (define int-row
+    (for/or ([member (in-list (union-members third))])
+      (match member
+        [`(Record ,row)
+         (and (equal? (second (assq 'kind row)) 'Int) row)]
+        [_ #f])))
+  (check-true (set-member? removed3 (first (set->list removed1))))
+  (check-false (assq 'id int-row)))
+
+(test-case "loop-widen は除去後に宣言型へ収まらなければ T を返す"
+  (define declared '(Record ((a Int imm))))
+  (define previous '(Record ((a String imm) (extra Int imm))))
+  (define next '(Record ((a String imm) (extra (Record ((child Int imm))) imm))))
+  (define-values (widened _removed)
+    (loop-widen previous next declared (set)))
+  (check-true (type-equiv? widened declared)))
+
+(test-case "loop-excess-fields は Owned と NFn 返り値をたどり引数と data は不透明"
+  (define declared
+    '(Record ((data (Data Box ((Record ((kept Int imm))))) imm)
+              (fn (NFn ((Record ((arg Int imm))))
+                       (Record ((kept String imm))) () () () User) imm)
+              (owned (Owned (Record ((kept Bool imm)))) imm))))
+  (define view
+    '(Record ((data (Data Box ((Record ((extra Int imm) (kept Int imm))))) imm)
+              (fn (NFn ((Record ((arg-extra Int imm) (arg Int imm))))
+                       (Record ((extra String imm) (kept String imm))) () () () User) imm)
+              (owned (Owned (Record ((extra Bool imm) (kept Bool imm)))) imm))))
+  (define fields (loop-excess-fields view declared))
+  (check-equal? (sort (map loop-excess-key-field fields) symbol<?)
+                '(extra extra))
+  (check-equal? (length fields) 2)
+  (check-not-false (member '((field fn) (nfn-return))
+                           (map loop-excess-key-path fields)))
+  (check-not-false (member '((field owned) (Owned-payload))
+                           (map loop-excess-key-path fields)))
+  (check-false
+   (member '((field fn) (nfn-parameter 0))
+           (map loop-excess-key-path fields)))
+  (check-false
+   (member '((field data) (Data-argument 0))
+           (map loop-excess-key-path fields))))

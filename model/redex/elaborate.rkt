@@ -39,7 +39,13 @@
          ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
          row005-join
          flow-join-type
-         flow-join-decision)
+         flow-join-decision
+         loop-join
+         (struct-out loop-excess-key)
+         loop-excess-fields
+         loop-type-depth
+         loop-widen
+         loop-cycle?)
 
 (struct judgment (core type row core-type normal-type)
   #:transparent
@@ -155,6 +161,225 @@
            (andmap (λ (type) (rebuildable? type target)) branch-types))
       target
       'reassign-type-mismatch))
+
+(struct loop-excess-key (path correspondence field) #:transparent)
+
+(define (loop-join inputs declared-type propositions fits?)
+  (define-values (candidate _path)
+    (flow-join-type inputs declared-type propositions))
+  (define target (normalize-type declared-type))
+  (if (and candidate
+           (andmap (λ (input) (fits? input candidate)) inputs))
+      candidate
+      target))
+
+(define (loop-type-depth type)
+  (define (depths types)
+    (if (null? types) 0 (apply max (map loop-type-depth types))))
+  (define (plus children) (add1 (depths children)))
+  (match type
+    [`(Record ,row) (if (null? row) 1 (add1 (depths (map second row))))]
+    [`(Union ,_ ,_) (add1 (depths (union-members type)))]
+    [`(Intersection ,left ,right) (plus (list left right))]
+    [`(List ,element) (plus (list element))]
+    [`(Option ,element) (plus (list element))]
+    [`(Result ,ok-type ,error-type) (plus (list ok-type error-type))]
+    [`(Owned ,inner) (plus (list inner))]
+    [`(Borrowed ,payload ,_) (plus (list payload))]
+    [`(BorrowedMut ,payload ,_) (plus (list payload))]
+    [`(RawPtr ,payload ,_ ,_ ,_ ,_ ,_) (plus (list payload))]
+    [`(Untrusted ,payload) (plus (list payload))]
+    [`(Refined ,payload ,_) (plus (list payload))]
+    [`(Data ,_ (,arguments ...)) (plus arguments)]
+    [`(NFn ,parameters ,return-type ,_ ,_ ,_ ,_)
+     (plus (cons return-type parameters))]
+    [`(ForallRegion (,_ ...) ,body) (plus (list body))]
+    [`(TypeInfo ,_) 1]
+    [`(Proof ,_) 1]
+    [_ 0]))
+
+(define (loop-expand-targets targets)
+  (append-map
+   (λ (target)
+     (match-define (list path type) target)
+     (match type
+       [`(Union ,_ ,_)
+        (for/list ([member (in-list (union-members type))]
+                   [index (in-naturals)])
+          (list (append path (list `(union ,index))) member))]
+       [_ (list target)]))
+   targets))
+
+(define (loop-compatible-records view targets)
+  (for/list ([target (in-list (loop-expand-targets targets))]
+             #:when (match (second target)
+                      [`(Record ,_)
+                       ;; 直下の Record は親位置として保持し、Union 成員だけ tag で選ぶ。
+                       (or (not (ormap (λ (part)
+                                         (match part [`(union ,_) #t] [_ #f]))
+                                       (first target)))
+                           (tag-compat? view (second target)))]
+                      [_ #f]))
+    target))
+
+(define (loop-correspondence records)
+  (sort (remove-duplicates (map first records) equal?)
+        string<? #:key (λ (path) (format "~s" path))))
+
+(define (loop-target-fields records label)
+  (for/list ([record (in-list records)]
+             #:do [(match-define (list path `(Record ,row)) record)
+                   (define field (assq label row))]
+             #:when field)
+    (list (append path (list `(field ,label))) (second field))))
+
+(define (loop-payload-targets targets constructor payload-index path-token)
+  (for/list ([target (in-list (loop-expand-targets targets))]
+             #:do [(match-define (list path type) target)]
+             #:when (and (list? type) (eq? (first type) constructor)))
+    (list (append path (list path-token))
+          (list-ref type payload-index))))
+
+(define (loop-excess-field-entries view declared-type)
+  (define normalized-view (normalize-type view))
+  (define normalized-declared (normalize-type declared-type))
+  (define (walk view targets path)
+    (match view
+      [`(Union ,_ ,_)
+       (append-map (λ (member) (walk member targets path))
+                   (union-members view))]
+      [`(Record ,row)
+       (define records (loop-compatible-records view targets))
+       (define correspondence (loop-correspondence records))
+       (append-map
+        (λ (field)
+          (define label (first field))
+          (define common?
+            (and (pair? records)
+                 (for/and ([record (in-list records)])
+                   (assq label (second (second record))))))
+          (if common?
+              (walk (second field)
+                    (loop-target-fields records label)
+                    (append path (list `(field ,label))))
+              (list (cons (loop-excess-key path correspondence label)
+                          (second field)))))
+        row)]
+      [`(Owned ,payload)
+       (walk payload (loop-payload-targets targets 'Owned 1 '(Owned-payload))
+             (append path '((Owned-payload))))]
+      [`(Untrusted ,payload)
+       (walk payload (loop-payload-targets targets 'Untrusted 1 '(Untrusted-payload))
+             (append path '((Untrusted-payload))))]
+      [`(Refined ,payload ,_)
+       (walk payload (loop-payload-targets targets 'Refined 1 '(Refined-payload))
+             (append path '((Refined-payload))))]
+      [`(Borrowed ,payload ,_)
+       (walk payload (loop-payload-targets targets 'Borrowed 1 '(Borrowed-payload))
+             (append path '((Borrowed-payload))))]
+      [`(BorrowedMut ,payload ,_)
+       (walk payload (loop-payload-targets targets 'BorrowedMut 1 '(BorrowedMut-payload))
+             (append path '((BorrowedMut-payload))))]
+      [`(NFn ,_ ,return-type ,_ ,_ ,_ ,_)
+       (walk return-type (loop-payload-targets targets 'NFn 2 '(nfn-return))
+             (append path '((nfn-return))))]
+      [_ '()]))
+  (if (and normalized-view normalized-declared)
+      (walk normalized-view (list (list '() normalized-declared)) '())
+      '()))
+
+(define (loop-excess-fields view declared-type)
+  (remove-duplicates (map car (loop-excess-field-entries view declared-type)) equal?))
+
+(define (loop-remove-excess view declared-type removed)
+  (define (walk view targets path)
+    (match view
+      [`(Union ,left ,right)
+       (normalize-type `(Union ,(walk left targets path)
+                               ,(walk right targets path)))]
+      [`(Record ,row)
+       (define records (loop-compatible-records view targets))
+       (define correspondence (loop-correspondence records))
+       (define new-row
+         (append-map
+          (λ (field)
+            (define label (first field))
+            (define common?
+              (and (pair? records)
+                   (for/and ([record (in-list records)])
+                     (assq label (second (second record))))))
+            (define key (loop-excess-key path correspondence label))
+            (cond
+              [(set-member? removed key) '()]
+              [common?
+               (define child-path (append path (list `(field ,label))))
+               (define child-targets (loop-target-fields records label))
+               (list (field-with-type
+                      field (walk (second field) child-targets child-path)))]
+              [else (list field)]))
+          row))
+       `(Record ,new-row)]
+      [`(Owned ,payload)
+       `(Owned ,(walk payload (loop-payload-targets targets 'Owned 1 '(Owned-payload))
+                      (append path '((Owned-payload)))))]
+      [`(Untrusted ,payload)
+       `(Untrusted ,(walk payload (loop-payload-targets targets 'Untrusted 1 '(Untrusted-payload))
+                          (append path '((Untrusted-payload)))))]
+      [`(Refined ,payload ,proposition)
+       `(Refined ,(walk payload (loop-payload-targets targets 'Refined 1 '(Refined-payload))
+                        (append path '((Refined-payload)))) ,proposition)]
+      [`(Borrowed ,payload ,region)
+       `(Borrowed ,(walk payload (loop-payload-targets targets 'Borrowed 1 '(Borrowed-payload))
+                         (append path '((Borrowed-payload)))) ,region)]
+      [`(BorrowedMut ,payload ,region)
+       `(BorrowedMut ,(walk payload (loop-payload-targets targets 'BorrowedMut 1 '(BorrowedMut-payload))
+                            (append path '((BorrowedMut-payload)))) ,region)]
+      [`(NFn ,parameters ,return-type ,in-row ,out-row ,obligations ,origin)
+       `(NFn ,parameters
+             ,(walk return-type (loop-payload-targets targets 'NFn 2 '(nfn-return))
+                   (append path '((nfn-return))))
+             ,in-row ,out-row ,obligations ,origin)]
+      [_ view]))
+  (normalize-type
+   (walk view (list (list '() (normalize-type declared-type))) '())))
+
+(define (loop-widen previous next declared-type removed)
+  (define target (normalize-type declared-type))
+  (define normalized-previous (normalize-type previous))
+  (define normalized-next (normalize-type next))
+  (define already-pruned
+    (loop-remove-excess normalized-next target removed))
+  (define previous-depths
+    (for/fold ([depths (hash)])
+              ([entry (in-list (loop-excess-field-entries normalized-previous target))])
+      (define key (car entry))
+      (hash-set depths key
+                (max (hash-ref depths key 0)
+                     (loop-type-depth (cdr entry))))))
+  (define next-depths
+    (for/fold ([depths (hash)])
+              ([entry (in-list (loop-excess-field-entries already-pruned target))])
+      (define key (car entry))
+      (hash-set depths key
+                (max (hash-ref depths key 0)
+                     (loop-type-depth (cdr entry))))))
+  (define removed*
+    (for/fold ([keys removed]) ([(key depth) (in-hash next-depths)])
+      (if (> depth (hash-ref previous-depths key 0))
+          (set-add keys key)
+          keys)))
+  (define widened (loop-remove-excess already-pruned target removed*))
+  (if (and widened (tag-compat? widened target))
+      (values widened removed*)
+      (values target removed*)))
+
+(define (loop-cycle? view history)
+  (define normalized-view (normalize-type view))
+  (and normalized-view
+       (for/or ([previous (in-list history)])
+         (define normalized-previous (normalize-type previous))
+         (and normalized-previous
+              (type-equiv? normalized-view normalized-previous)))))
 
 ;; §6: details を expected と found へ配る。既定は件数だけで決まり、意味を
 ;; 推測しない。producer は details の先頭へ expected、次へ actual を渡す
