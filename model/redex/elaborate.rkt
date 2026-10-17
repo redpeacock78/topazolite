@@ -261,20 +261,20 @@
     [(? list?) (ormap mentions-return? node)]
     [_ #f]))
 
-;; P1c2b。modes を渡すと 3 要素 entry を作る。
+;; P1c2b。modes を渡すと binding mode を持つ entry を作る。
 ;; place-flags の真の entry は c1c1 の P に属する Let 束縛である。
 ;; 非 Let binder は place-flags を渡さず、同名の外側 entry を遮蔽する。
-(define (extend environment names types [modes #f] [place-flags #f])
+;; entry は (name type mode place? flow-key) で、非 mut の flow-key は #f。
+(define (extend environment names types [modes #f] [place-flags #f]
+                [flow-keys #f])
   (append
    (for/list ([name (in-list names)]
               [type (in-list types)]
               [index (in-naturals)])
      (define mode (and modes (list-ref modes index)))
      (define place? (and place-flags (list-ref place-flags index)))
-     (cond
-       [place? (list name type mode #t)]
-       [modes (list name type mode)]
-       [else (list name type)]))
+     (define flow-key (and flow-keys (list-ref flow-keys index)))
+     (list name type mode (and place? #t) flow-key))
    environment))
 
 ;; P1c2b。mode を持つ entry から binding mode を返す。
@@ -285,7 +285,7 @@
 
 (define (place-binding? environment name)
   (match (assoc name environment)
-    [(list _ _ _ #t) #t]
+    [(list _ _ _ #t _ ...) #t]
     [_ #f]))
 
 (define (owned-type? type)
@@ -906,6 +906,51 @@
     (define callable-counter 0)
     (define owned-counter 0)
     (define reversed-callables '())
+
+    ;; SUR-014c0b1b spec §3。mut binder key から現在の C と pin への写像。
+    (struct flow-entry (type pins) #:transparent)
+    (define flow-state (box (hasheq)))
+    (define (flow-snapshot) (unbox flow-state))
+    (define (flow-restore! snapshot) (set-box! flow-state snapshot))
+    (define (call-with-flow-rollback thunk)
+      (define snapshot (flow-snapshot))
+      (dynamic-wind void thunk (λ () (flow-restore! snapshot))))
+    (define (fresh-flow-key) (gensym 'mut-flow))
+    (define (flow-key-of environment name)
+      (match (assoc name environment)
+        [(list _ _ 'mut _ key) key]
+        [_ #f]))
+    (define (flow-type key)
+      (flow-entry-type (hash-ref (unbox flow-state) key)))
+    (define (flow-pins key)
+      (flow-entry-pins (hash-ref (unbox flow-state) key)))
+    (define (flow-set-type! key type)
+      (define entry (hash-ref (unbox flow-state) key))
+      (set-box! flow-state
+                (hash-set (unbox flow-state) key
+                          (flow-entry type (flow-entry-pins entry)))))
+    (define (flow-add-pin! key pin)
+      (define normalized
+        (or (normalize-type pin)
+            (error 'flow-add-pin! "正規化できない pin: ~s" pin)))
+      (define entry (hash-ref (unbox flow-state) key))
+      (unless (ormap (λ (current) (type-equiv? current normalized))
+                     (flow-entry-pins entry))
+        (set-box! flow-state
+                  (hash-set (unbox flow-state) key
+                            (flow-entry
+                             (flow-entry-type entry)
+                             (append (flow-entry-pins entry) (list normalized))))))
+      (void))
+    (define (live-flow-keys environment)
+      (remove-duplicates
+       (filter values
+               (for/list ([name (in-list (remove-duplicates
+                                          (map first environment)))])
+                 (flow-key-of environment name)))))
+    (define (flow-view environment name)
+      (define key (flow-key-of environment name))
+      (if key (flow-type key) (lookup environment name)))
 
     (define (fresh-boundary)
       (define boundary
@@ -2698,7 +2743,7 @@
       (define saved (elaboration-state))
       (dynamic-wind
        void
-       thunk
+       (λ () (call-with-flow-rollback thunk))
        (λ () (restore-elaboration-state! saved))))
 
     (define (probe-candidate-boxes boundaries)
@@ -2713,6 +2758,7 @@
     ;; 失敗した検査の fresh 名、implicit Return 印、外側 probe の候補を戻す。
     (define (call-with-elaboration-rollback-on-error boundaries thunk)
       (define saved-state (elaboration-state))
+      (define saved-flow (flow-snapshot))
       (define saved-probes
         (for/list ([candidate-box (in-list (probe-candidate-boxes boundaries))])
           (list candidate-box (unbox candidate-box))))
@@ -2724,6 +2770,7 @@
           ([exn?
             (λ (error)
               (restore-elaboration-state! saved-state)
+              (flow-restore! saved-flow)
               (for ([saved-probe (in-list saved-probes)])
                 (set-box! (first saved-probe) (second saved-probe)))
               (raise error))])
@@ -3200,27 +3247,45 @@
     (define (elaborate-let-tail s binder binding-type binding-mode
                                 bound-result bound-never? body environment delta
                                 propositions boundaries core-binder bound-core
+                                #:declared-type [declared-type binding-type]
                                 #:expected [expected #f])
       (define name (peel-bind binder))
+      (define flow-key
+        (and (eq? binding-mode 'mut) (fresh-flow-key)))
+      (define environment-type
+        (if flow-key declared-type binding-type))
       (define body-environment
-        (extend environment (list name) (list binding-type)
+        (extend environment (list name) (list environment-type)
                 (and (eq? binding-mode 'mut) '(mut))
-                (list (resource-type? binding-type))))
+                (list (resource-type? binding-type))
+                (and flow-key (list flow-key))))
+      (define _flow-entry
+        (when flow-key
+          (set-box! flow-state
+                    (hash-set (unbox flow-state) flow-key
+                              (flow-entry binding-type '())))))
       (define identity-resource?
         (and (resource-type? binding-type)
              (eq? (peel-node body) name)))
       (define body-result
-        (cond
-          [identity-resource?
-           (judgment `(#:var ,name ,(span-of body)) binding-type '())]
-          [(and expected bound-never?)
-           (check-never-bound-body body expected body-environment delta
-                                   propositions boundaries)]
-          [(and expected (not bound-never?))
-           (check body expected body-environment delta propositions
-                  boundaries)]
-          [else
-           (synth body body-environment delta propositions boundaries)]))
+        (dynamic-wind
+         void
+         (λ ()
+           (cond
+             [identity-resource?
+              (judgment `(#:var ,name ,(span-of body)) binding-type '())]
+             [(and expected bound-never?)
+              (check-never-bound-body body expected body-environment delta
+                                      propositions boundaries)]
+             [(and expected (not bound-never?))
+              (check body expected body-environment delta propositions
+                     boundaries)]
+             [else
+              (synth body body-environment delta propositions boundaries)]))
+         (λ ()
+           (when flow-key
+             (set-box! flow-state
+                       (hash-remove (unbox flow-state) flow-key))))))
       (define let-type
         (if (or bound-never? (eq? (judgment-type body-result) 'Never))
             'Never
@@ -3323,7 +3388,7 @@
     (define (elaborate-place-projection expression environment)
       (match (projection-chain expression environment)
         [(list root root-node steps)
-         (define initial-type (normalize-type (lookup environment root)))
+         (define initial-type (normalize-type (flow-view environment root)))
          (define initial-core `(#:var ,root ,(span-of root-node)))
          (define-values (projected-type projected-core _index)
            (for/fold ([current-type initial-type]
@@ -3364,7 +3429,7 @@
         ['unit (judgment `(#:lit unit ,s) 'Unit '())]
 
         [(? symbol? name)
-         (define local-type (lookup environment name))
+         (define local-type (flow-view environment name))
          (cond
            [local-type
             ;; UCore に Handle と RecRewrite は無い。encoding と handler の
@@ -3611,8 +3676,9 @@
           bound-never?
           body environment delta propositions boundaries
           `(,raw-name ,binding-mode (#:ty ,declared-type
-                                         ,(wrapper-span raw-type)))
-          bound-core)]
+                                      ,(wrapper-span raw-type)))
+          bound-core
+          #:declared-type declared-type)]
 
         [`(Let ,raw-name ,bound ,body)
          (define bound-result
@@ -3676,7 +3742,9 @@
                          (set-member? (current-failure-returns) expression))
               (with-handlers ([exn:fail:elab? (λ (_) (void))])
                 (define returned-result
-                  (synth returned environment delta propositions boundaries))
+                  (call-with-flow-rollback
+                   (λ ()
+                     (synth returned environment delta propositions boundaries))))
                 (set-box! candidates
                           (append (unbox candidates)
                                   (list (judgment-type returned-result))))))
@@ -3766,7 +3834,7 @@
         ;; ある。target は binder なので judgment を作らず、生の綴りのまま運ぶ。
         [`(Reassign ,raw-name ,value)
          (define name (peel-node raw-name))
-         (define slot-type (lookup environment name))
+         (define slot-type (flow-view environment name))
          (unless slot-type (reject s 'unbound-variable name))
          (unless (eq? (binding-mode-of environment name) 'mut)
            (reject s 'immutable-binding name))
@@ -4107,6 +4175,7 @@
           `(,raw-name ,binding-mode (#:ty ,declared-type
                                          ,(wrapper-span raw-type)))
           bound-core
+          #:declared-type declared-type
           #:expected expected)]
 
         [`(Let ,raw-name ,bound ,body)
