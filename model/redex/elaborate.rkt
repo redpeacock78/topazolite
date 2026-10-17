@@ -3311,6 +3311,101 @@
               (check-against-expected let-result expected s propositions)
               let-result)))
 
+    (define (elaborate-mut-compatible-value s binding-mode declared-type value
+                                            environment delta propositions
+                                            boundaries
+                                            #:mismatch-key [mismatch-key #f])
+      (define result
+        (if (expected-type-checkable? value declared-type)
+            (check value declared-type environment delta propositions boundaries)
+            (synth value environment delta propositions boundaries)))
+      (define (with-mismatch-key thunk actual-type)
+        (if mismatch-key
+            (with-handlers
+                ([exn:fail:elab?
+                  (lambda (failure)
+                    (if (memq (exn:fail:elab-reason failure)
+                              '(type-mismatch owned-narrowing-needs-proof
+                                owned-narrowing-rejected))
+                        (reject s mismatch-key declared-type actual-type)
+                        (raise failure)))])
+              (thunk))
+            (thunk)))
+      (if (eq? (judgment-type result) 'Never)
+          (values result (judgment-core result) declared-type
+                  (bind-with-mode s binding-mode declared-type declared-type
+                                  propositions)
+                  #t)
+          (let ()
+            (define source-core-type (judgment-core-type result))
+            ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
+            ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
+            (define remainder-target
+              (match* (binding-mode source-core-type declared-type)
+                [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+                 `(Record ,(append declared-row
+                                   (field-row-residual actual-row declared-row)))]
+                [(_ _ _) declared-type]))
+            (define-values (discharged-core discharged-type)
+              (discharge-remainder (judgment-core result)
+                                   source-core-type remainder-target s propositions))
+            (define-values (bound-core actual-type)
+              (with-mismatch-key
+               (lambda ()
+                 (if (and (memq binding-mode '(let mut))
+                          (tag-compat? discharged-type declared-type
+                                       (initial-candidate-context propositions))
+                          (match (narrowing-kind discharged-type declared-type
+                                                propositions)
+                            [`(drop-obligation ,_ ,_) #t]
+                            [_ #f]))
+                     ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
+                     (values discharged-core discharged-type)
+                     (convert discharged-core discharged-type declared-type s
+                              propositions)))
+               source-core-type))
+            ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
+            (with-mismatch-key
+             (lambda ()
+               (match (narrowing-kind discharged-type actual-type propositions)
+                 ['ok (void)]
+                 [`(drop-obligation ,_ ,_)
+                  (reject s 'owned-narrowing-needs-proof actual-type
+                          discharged-type)]
+                 [_ (unless (mut-union-rebuildable?
+                             discharged-type actual-type
+                             (initial-candidate-context propositions) propositions)
+                      (reject s 'owned-narrowing-rejected actual-type
+                              discharged-type))]))
+             source-core-type)
+            (define binding-type
+              (with-mismatch-key
+               (lambda ()
+                 (bind-with-mode s binding-mode declared-type actual-type
+                                 propositions))
+               actual-type))
+            (values result bound-core declared-type binding-type #f))))
+
+    (define (rebuild-flow-value s core actual target propositions)
+      (if (reassign-narrowing? actual target)
+          core
+          (let-values ([(converted converted-type)
+                        (with-handlers
+                            ([exn:fail:elab?
+                              (lambda (_failure)
+                                (reject s 'reassign-type-mismatch
+                                        target actual))])
+                          (convert core actual target s propositions))])
+            (define-values (discharged discharged-type)
+              (discharge-remainder converted converted-type target s propositions))
+            (if (type-equiv? discharged-type target)
+                discharged
+                `(Discharge ,s
+                            (ProofRep (Reserved o-narrow)
+                                      (RemainderSafelyDropped
+                                       ,discharged-type ,target))
+                            ,discharged)))))
+
     (define (elaborate-annotated-let-bound s binding-mode raw-type bound
                                            environment delta propositions
                                            boundaries)
@@ -3321,52 +3416,9 @@
         ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
         ;; 前に拒むため、elaborate と typing が同じ key を返す。
         (reject s 'mut-binding-unsupported-type declared-type))
-      (define bound-result
-        (if (expected-type-checkable? bound declared-type)
-            (check bound declared-type environment delta propositions boundaries)
-            (synth bound environment delta propositions boundaries)))
-      (if (eq? (judgment-type bound-result) 'Never)
-          (values bound-result (judgment-core bound-result) declared-type
-                  (bind-with-mode s binding-mode declared-type declared-type
-                                  propositions)
-                  #t)
-          (let ()
-            (define source-core-type (judgment-core-type bound-result))
-            ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
-            ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
-            (define remainder-target
-              (match* (binding-mode source-core-type declared-type)
-                [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-                 `(Record ,(append declared-row
-                                   (field-row-residual actual-row declared-row)))]
-                [(_ _ _) declared-type]))
-            (define-values (discharged-core discharged-type)
-              (discharge-remainder (judgment-core bound-result)
-                                   source-core-type remainder-target s propositions))
-            (define-values (bound-core actual-type)
-              (if (and (memq binding-mode '(let mut))
-                       (tag-compat? discharged-type declared-type
-                                    (initial-candidate-context propositions))
-                       (match (narrowing-kind discharged-type declared-type
-                                              propositions)
-                         [`(drop-obligation ,_ ,_) #t]
-                         [_ #f]))
-                  ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
-                  (values discharged-core discharged-type)
-                  (convert discharged-core discharged-type declared-type s
-                           propositions)))
-            ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
-            (match (narrowing-kind discharged-type actual-type propositions)
-              ['ok (void)]
-              [`(drop-obligation ,_ ,_)
-               (reject s 'owned-narrowing-needs-proof actual-type discharged-type)]
-              [_ (unless (mut-union-rebuildable?
-                          discharged-type actual-type
-                          (initial-candidate-context propositions) propositions)
-                   (reject s 'owned-narrowing-rejected actual-type discharged-type))])
-            (define binding-type
-              (bind-with-mode s binding-mode declared-type actual-type propositions))
-            (values bound-result bound-core declared-type binding-type #f))))
+      (elaborate-mut-compatible-value
+       s binding-mode declared-type bound environment delta propositions
+       boundaries))
 
     (define (projection-chain expression environment)
       (define (walk node)
@@ -3834,42 +3886,46 @@
         ;; ある。target は binder なので judgment を作らず、生の綴りのまま運ぶ。
         [`(Reassign ,raw-name ,value)
          (define name (peel-node raw-name))
-         (define slot-type (flow-view environment name))
-         (unless slot-type (reject s 'unbound-variable name))
+         (define declared-type (lookup environment name))
+         (define key (flow-key-of environment name))
+         (unless declared-type (reject s 'unbound-variable name))
          (unless (eq? (binding-mode-of environment name) 'mut)
            (reject s 'immutable-binding name))
-         (define result
-           (if (expected-type-checkable? value slot-type)
-               (check value slot-type environment delta propositions boundaries)
-               (synth value environment delta propositions boundaries)))
-         (define value-type (judgment-core-type result))
-         (define slot-union?
-           (match (normalize-type slot-type)
-             [`(Union ,_ ,_) #t]
-             [_ #f]))
-         (define value-union?
-           (match (normalize-type value-type)
-             [`(Union ,_ ,_) #t]
-             [_ #f]))
-         (define value-core
-           (cond
-             ;; P2m2b spec §3.4。Never は変換を置かずそのまま通す。
-             [(eq? (normalize-type value-type) 'Never)
-              (judgment-core result)]
-             ;; Union への代入は成分を一意に選んで tag を付ける。
-             [(and slot-union? (not value-union?))
-              (union-inject (judgment-core result) value-type slot-type
-                            s propositions
-                            #:no-member-key 'reassign-type-mismatch)]
-             [(reassign-narrowing? value-type slot-type) (judgment-core result)]
-             [else (reject s 'reassign-type-mismatch slot-type value-type)]))
-         (unless (storage-ok? slot-type)
-           (reject s 'mutable-callable-storage-requires-partial slot-type))
-         (propagate-context-never
-          (judgment `(Reassign ,s ,raw-name (#:ty ,slot-type ,s) ,value-core)
-                    'Unit
-                    (row-union (judgment-row result) '(Mutation)))
-          (list result))]
+         (unless key (reject s 'immutable-binding name))
+         (define-values (result value-core _target-type value-type rhs-never?)
+           (elaborate-mut-compatible-value
+            s 'mut declared-type value environment delta propositions boundaries
+            #:mismatch-key 'reassign-type-mismatch))
+         (if (or rhs-never? (eq? (judgment-normal-type result) '⊥))
+             (let ([current-type (flow-view environment name)])
+               (judgment `(Reassign ,s ,raw-name (#:ty ,current-type ,s)
+                                    ,(judgment-core result))
+                         'Never (judgment-row result) 'Never '⊥))
+             (let ()
+               (define flow-type
+                 (or (normalize-type value-type)
+                     (reject s 'non-normalizable-type value-type)))
+               (define pins (flow-pins key))
+               (define pin (and (pair? pins) (first pins)))
+               (when (and pin
+                          (not (andmap (lambda (candidate)
+                                         (type-equiv? candidate pin))
+                                       pins)))
+                 (reject s 'reassign-type-mismatch declared-type flow-type))
+               (define final-type
+                 (if (and pin (not (type-equiv? flow-type pin)))
+                     pin flow-type))
+               (define final-core
+                 (if (type-equiv? flow-type final-type)
+                     value-core
+                     (rebuild-flow-value s value-core flow-type final-type
+                                         propositions)))
+               (unless (storage-ok? final-type)
+                 (reject s 'mutable-callable-storage-requires-partial final-type))
+               (flow-set-type! key final-type)
+               (judgment `(Reassign ,s ,raw-name (#:ty ,final-type ,s) ,final-core)
+                         'Unit
+                         (row-union (judgment-row result) '(Mutation)))))]
 
         [`(Drop ,raw-name)
          #:when (let ([name (peel-node raw-name)])

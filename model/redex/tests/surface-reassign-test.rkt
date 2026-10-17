@@ -180,6 +180,10 @@
   (assert-diagnostic "let mut x = 0\nx = true\n0"
                      "E-VAR-013" "x = true" #:whole? #t))
 
+(test-case "右辺の型付け診断は再代入の型不一致へ置き換えない"
+  (assert-diagnostic "let mut x = 0\nx = missing\n0"
+                     "E-VAR-002" "missing" #:whole? #t))
+
 (test-case "Mutation row と無名関数の期待 row を検査する"
   (check-equal?
    (run-source
