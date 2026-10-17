@@ -72,6 +72,8 @@
          (NarrativeExpr e)
          (TryBind x e e)
          (Recur f ((x uτ) ...) uret uε e e)
+         ;; SUR-014c0b2。for lowering 専用の固定点計算用 loop 印。
+         (Loop f ((x uτ) ...) uret uε e (e ...))
          (FnDecl f ((x uτ) ...) uret uε e e)
          (Yield e e)
          (Suspend e)
@@ -124,6 +126,7 @@
          (NarrativeExpr s e)
          (TryBind s xs e e)
          (Recur s xs ((xs ts) ...) tr es e e)
+         (Loop s xs ((xs ts) ...) tr es e (e ...))
          (FnDecl s xs ((xs ts) ...) tr es e e)
          (Yield s e e)
          (Suspend s e)

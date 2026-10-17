@@ -280,6 +280,17 @@
            (first-reserved (map parameter-name parameters))
            (walk body)
            (walk continuation))]
+      ;; Loop は Recur と同じ束縛を持ち、初回呼出しの実引数も走査する。
+      [`(Loop ,function ,parameters ,_ ,_ ,body (,arguments ...))
+       (or (reserved-name function)
+           (first-reserved (map parameter-name (map first parameters)))
+           (walk body)
+           (for/or ([argument (in-list arguments)]) (walk argument)))]
+      [`(Loop ,_ ,function ,parameters ,_ ,_ ,body (,arguments ...))
+       (or (reserved-name function)
+           (first-reserved (map parameter-name (map first parameters)))
+           (walk body)
+           (for/or ([argument (in-list arguments)]) (walk argument)))]
       ;; Task 2 では FnDecl を Recur と同じ束縛形として検査する。
       [`(FnDecl ,function ,parameters ,_ ,_ ,body ,continuation)
        (or (reserved-name function)
@@ -883,6 +894,11 @@
       (set-subtract (free-vars/erased body)
                     (list->set (cons function parameters)))
       (set-remove (free-vars/erased continuation) function))]
+    [`(Loop ,function ((,parameters ,_) ...) ,_ ,_ ,body (,arguments ...))
+     (set-union
+      (set-subtract (free-vars/erased body)
+                    (list->set (cons function parameters)))
+      (set-remove (sets-union (map free-vars/erased arguments)) function))]
     [`(FnDecl ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
      (set-union
       (set-subtract (free-vars/erased body)
@@ -3416,6 +3432,122 @@
                 normalized-core-type
                 normal-type))
 
+    (define (validate-loop-shape! s raw-function parameter-binders
+                                  raw-result-type body arguments)
+      (define function (peel-bind raw-function))
+      (define (violation reason)
+        (error 'elaborate "loop 印の形の違反: ~a (~s)" reason s))
+      (define (check-binder! binder)
+        (when (eq? (binder-name binder) function)
+          (violation 'function-rebound)))
+      (define (check-parameter-binders! parameters)
+        (for ([parameter (in-list parameters)])
+          (check-binder! parameter)))
+      (check-parameter-binders! parameter-binders)
+      (when (inferred? raw-result-type)
+        (violation 'inferred-result-type))
+      (for ([argument (in-list arguments)])
+        (unless (match argument
+                  [`(#:var ,_ ,_) #t]
+                  [`(#:lit ,_ ,_) #t]
+                  [_ #f])
+          (violation 'non-atomic-initial-argument)))
+      (when (for/or ([argument (in-list arguments)])
+              (set-member? (free-vars argument) function))
+        (violation 'self-reference-in-initial-argument))
+
+      (define (walk-branch branch delayed?)
+        (match branch
+          [`(,_ ,_ (,binders ...) -> ,branch-body)
+           (for-each check-binder! binders)
+           (walk branch-body delayed?)]
+          [`(,_ (#:ty ,_ ,_) ,binder -> ,branch-body)
+           (check-binder! binder)
+           (walk branch-body delayed?)]
+          [_ (violation 'unknown-branch-shape)]))
+
+      (define (walk expression delayed?)
+        (match (peel-node expression)
+          [(? exact-integer?) (void)]
+          [(? string?) (void)]
+          ['unit (void)]
+          [(? symbol? name)
+           (when (eq? name function)
+             (violation 'function-used-outside-apply-head))]
+          [`(Apply ,callee ,arguments ...)
+           (match callee
+             [`(#:var ,name ,_) #:when (eq? name function)
+              (when delayed? (violation 'delayed-self-call))]
+             [_ (walk callee delayed?)])
+           (for-each (λ (argument) (walk argument delayed?)) arguments)]
+          [`(Fn ((,binders ,_) ...) ,_ ,_ ,body)
+           (check-parameter-binders! binders)
+           (walk body #t)]
+          [`(Let ,binder ,bound ,body)
+           (check-binder! binder)
+           (walk bound delayed?)
+           (walk body delayed?)]
+          [`(Rec ((,_ ,_ ,fields) ...))
+           (for-each (λ (field) (walk field delayed?)) fields)]
+          [`(Proj ,record ,_) (walk record delayed?)]
+          [`(Construct ,_ (Types ,_ ...) ,fields ...)
+           (for-each (λ (field) (walk field delayed?)) fields)]
+          [`(Construct ,_ ,fields ...)
+           (for-each (λ (field) (walk field delayed?)) fields)]
+          [`(Eliminate ,scrutinee (,branches ...))
+           (walk scrutinee delayed?)
+           (for-each (λ (branch) (walk-branch branch delayed?)) branches)]
+          [`(IfSome (,clauses ...) ,_)
+           (for ([clause (in-list clauses)])
+             (match clause
+               [`(,_ ,_ ,condition ,branch-body)
+                (walk condition delayed?)
+                (walk branch-body delayed?)]
+               [_ (violation 'unknown-if-some-shape)]))]
+          [`(BlockBody ,body) (walk body delayed?)]
+          [`(Return ,body) (walk body delayed?)]
+          [`(NarrativeExpr ,body) (walk body delayed?)]
+          [`(TryBind ,binder ,bound ,body)
+           (check-binder! binder)
+           (walk bound delayed?)
+           (walk body delayed?)]
+          [`(Recur ,nested-function ((,binders ,_) ...) ,_ ,_ ,body
+                   ,continuation)
+           (check-binder! nested-function)
+           (check-parameter-binders! binders)
+           (walk body #t)
+           (walk continuation delayed?)]
+          [`(Loop ,nested-function ((,binders ,_) ...) ,_ ,_ ,body
+                  (,initial-arguments ...))
+           (check-binder! nested-function)
+           (check-parameter-binders! binders)
+           (walk body #t)
+           (for-each (λ (argument) (walk argument delayed?))
+                     initial-arguments)]
+          [`(FnDecl ,nested-function ((,binders ,_) ...) ,_ ,_ ,body
+                    ,continuation)
+           (check-binder! nested-function)
+           (check-parameter-binders! binders)
+           (walk body #t)
+           (walk continuation delayed?)]
+          [`(Yield ,observed ,next)
+           (walk observed delayed?)
+           (walk next delayed?)]
+          [`(Suspend ,body) (walk body delayed?)]
+          [`(Move ,place) (walk place delayed?)]
+          [`(Reassign ,place ,value)
+           (walk place delayed?)
+           (walk value delayed?)]
+          [`(Drop ,body) (walk body delayed?)]
+          [`(Curry ,function-expression ,argument)
+           (walk function-expression delayed?)
+           (walk argument #t)]
+          [`(TypeMake ,_) (void)]
+          [`(LetType ,_ ,_ ,body) (walk body delayed?)]
+          [_ (violation (format "unknown-production ~s"
+                                (peel-node expression)))]))
+      (walk body #f))
+
     ;; 正格な被演算子が Never でも通常の型検査と row の合併は済ませる。
     (define (propagate-context-never result children)
       (if (ormap (λ (child) (eq? (judgment-type child) 'Never)) children)
@@ -3852,7 +3984,20 @@
                (when (resource-type? type)
                  (reject s 'owned-variable-requires-move name))
                (judgment (attach-span value s) type '())]
-              [_ (reject s 'unbound-variable name)])])]
+               [_ (reject s 'unbound-variable name)])])]
+
+        [`(Loop ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
+                ,raw-result-type ,raw-row ,body (,arguments ...))
+         (validate-loop-shape! s raw-function
+                               (map list parameter-binders raw-parameter-types)
+                               raw-result-type body arguments)
+         (synth/raw
+          `(Recur ,s ,raw-function
+                  ,(map list parameter-binders raw-parameter-types)
+                  ,raw-result-type ,raw-row ,body
+                  (Apply ,s (#:var ,(peel-bind raw-function) ,s)
+                         ,@arguments))
+          environment delta propositions boundaries)]
 
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                   ,raw-return-type ,raw-row ,body ,continuation)

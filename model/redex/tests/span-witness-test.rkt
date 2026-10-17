@@ -145,7 +145,7 @@
     (check-equal? (and (redex-match? G2+ φ prop) #t)
                   (and (redex-match? G2 φ prop) #t))))
 
-(test-case "UCore+ の e は 22 production すべてに証人を持つ"
+(test-case "UCore+ の e は 23 production すべてに証人を持つ"
   (for ([expr (in-list
                (list (term (#:lit 1 ,s0))
                      (term (#:var x ,s0))
@@ -167,6 +167,9 @@
                      (term (Recur ,s0 (#:bind f ,s1) (((#:bind x ,s1) (#:ty Int ,s1)))
                                   (#:ty Int ,s1) (#:ef () ,s1)
                                   (#:var x ,s1) (Apply ,s1 (#:var f ,s1) (#:lit 0 ,s1))))
+                     (term (Loop ,s0 (#:bind f ,s1) (((#:bind x ,s1) (#:ty Int ,s1)))
+                                 (#:ty Int ,s1) (#:ef () ,s1)
+                                 (#:var x ,s1) ((#:lit 0 ,s1))))
                      (term (Yield ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
                      (term (Suspend ,s0 (#:lit 1 ,s1)))
                      (term (Move ,s0 (#:var x ,s1)))

@@ -172,6 +172,13 @@
                (list (bind name) (ty t_a)))
              (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
              (ef row) (ann e_1) (ann e_2))]
+      [(list 'Loop f (list (list x type) ...) result row body
+             (list argument ...))
+       (list 'Loop (next) (bind f)
+             (for/list ([name (in-list x)] [t_a (in-list type)])
+               (list (bind name) (ty t_a)))
+             (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
+             (ef row) (ann body) (map ann argument))]
       [(list 'FnDecl f (list (list x type) ...) result row e_1 e_2)
        (list 'FnDecl (next) (bind f)
              (for/list ([name (in-list x)] [t_a (in-list type)])
