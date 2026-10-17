@@ -4,10 +4,12 @@
          racket/list
          racket/set
          "../borrow.rkt"
+         "../compat.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
+         "../ownership.rkt"
          "../region.rkt"
          "../typing.rkt")
 
@@ -87,6 +89,31 @@
     `(cfg (Reassign (MutSlot 0) ,view ,wide-value)
           ((0 (Rec ((id imm 1) (name imm "A"))) (declared ,view)))
           ((0 Available)) (((tok 72) Available)) ()))
+  (check-false (runtime-row configuration '() 'Unit))
+  (check-false (config-ok? configuration '() 'Unit '(Mutation))))
+
+(test-case "RSD の余剰 Borrowed 欄を含む値は config 再代入で拒否する"
+  (define view '(Record ((id Int imm) (name String imm))))
+  (define actual
+    '(Record ((borrow (Borrowed Int 0) imm)
+              (id Int imm)
+              (name String imm))))
+  (define initial-value '(Rec ((id imm 1) (name imm "A"))))
+  (define borrowed-value
+    '(Rec ((borrow imm (BorrowRef 1 () 0)) (id imm 2) (name imm "B"))))
+  ;; RSD 自体はこの narrowing pair を許す。実行時の mut-slot-type-supported?
+  ;; が借用を含む物理値を先に拒否することを config で固定する。
+  (check-false (reassign-narrowing? actual view))
+  (check-true (rsd-proof-pair-ok? actual view tag-compat?))
+  (define heap
+    `((0 ,initial-value (declared ,view)) (1 7 (declared Int))))
+  (define states '((0 Available) (1 Available)))
+  (check-true
+   (config-ok? `(cfg unit ,heap ,states () ()) '() 'Unit '())
+   "BorrowRef の owner を持つ既存 config は妥当である")
+  (define configuration
+    `(cfg (Reassign (MutSlot 0) ,view ,borrowed-value)
+          ,heap ,states () ()))
   (check-false (runtime-row configuration '() 'Unit))
   (check-false (config-ok? configuration '() 'Unit '(Mutation))))
 

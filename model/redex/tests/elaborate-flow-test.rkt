@@ -59,7 +59,7 @@
        [`(cfg ,value ,_heap ,_states ,_tokens ,_events) value]
        [other (fail-check (format "terminal config を期待したが ~s" other))]))))
 
-(define (check-config-trace source)
+(define (check-config-trace source [required-rules '()])
   (define result (compile-source/string 'src source))
   (check-true (compiled? result)
               (format "compile 成功を期待したが ~s" result))
@@ -69,17 +69,22 @@
      (λ ()
        (define initial
          (inject-g2m (erase-core (compiled-execution-core result))))
-       (define configs
+       (define-values (configs rules)
          (let loop ([current initial] [seen '()] [fuel 10000])
            (when (zero? fuel)
              (error 'check-config-trace "評価 fuel を使い切った: ~s" current))
            (match (raw-steps-g2/named current)
-             ['() (reverse (cons current seen))]
-             [(list (list _rule next))
-              (loop next (cons current seen) (sub1 fuel))]
+             ['() (values (reverse (cons current seen)) '())]
+             [(list (list rule next))
+              (define-values (configs rules)
+                (loop next (cons current seen) (sub1 fuel)))
+              (values configs (cons rule rules))]
              [steps
               (error 'check-config-trace
                      "一意な次状態を期待したが複数ある: ~s" steps)])))
+       (for ([rule (in-list required-rules)])
+         (check-not-false (member rule rules)
+                          (format "trace に ~a があること" rule)))
        (for ([configuration (in-list configs)] [index (in-naturals)])
          (define row
            (runtime-row configuration (compiled-callables result)
@@ -91,6 +96,19 @@
           (config-ok? configuration (compiled-callables result)
                       (compiled-type result) row)
           (format "config ~a の保存を期待した: ~s" index configuration)))))))
+
+(define (check-rsd-config-trace source expected)
+  (define result (compile-source/string 'src source))
+  (check-true (compiled? result)
+              (format "compile 成功を期待したが ~s" result))
+  (when (compiled? result)
+    (check-true
+     (regexp-match? #rx"RemainderSafelyDropped"
+                    (format "~s" (erase-core (compiled-core result))))
+     "elaborated core に RSD があること")
+    ;; 全ての中間 config を再型付けする。R-DischargeRemainder の直後も含む。
+    (check-config-trace source '(R-DischargeRemainder))
+    (check-equal? (run-source source) expected)))
 
 (define (count-form tree wanted)
   (cond
@@ -858,6 +876,61 @@
                   (Proj value id)))
          (Proj value active))))
   (check-equal? (elab-diagnostic-id expression) "E-RCD-004"))
+
+(test-case "pin 入口の RSD 後の再代入は変数・呼出し scrutinee の両方で保たれる"
+  (for ([condition (in-list '("flag" "g()"))])
+    (define prefix
+      (if (string=? condition "flag")
+          ""
+          "fn g() -> Bool { return true }\n"))
+    (define source
+      (string-append
+       prefix
+       "fn f(flag: Bool) -> Int ! Mutation {\n"
+       "  let mut value: { name: String } = { name: \"A\", id: 1 }\n"
+       "  let reader = fn() => value.id\n"
+       "  if " condition " { value = { name: \"B\", id: 2, active: true } } else { () }\n"
+       "  return reader()\n"
+       "}\nf(true)"))
+    (check-rsd-config-trace source 2)))
+
+(test-case "join 入口の RSD 後の再代入は変数・呼出し scrutinee の両方で保たれる"
+  (for ([condition (in-list '("flag" "g()"))])
+    (define prefix
+      (if (string=? condition "flag")
+          ""
+          "fn g() -> Bool { return true }\n"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       prefix
+       "fn f(flag: Bool) -> Int ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  if " condition " { value = { name: \"B\", id: 2, active: true } } else { () }\n"
+       "  return value.id\n"
+       "}\nf(true)"))
+    (check-rsd-config-trace source 2)))
+
+(test-case "escape 入口の RSD 後の再代入は変数・呼出し scrutinee の両方で保たれる"
+  (for ([condition (in-list '("flag" "g()"))])
+    (define prefix
+      (if (string=? condition "flag")
+          ""
+          "fn g() -> Bool { return true }\n"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       prefix
+       "fn f(flag: Bool) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  let answer: Option<String> = when " condition " {\n"
+       "    true => { value = { name: \"B\", id: 2, active: true }\n"
+       "                return some(value.name) }\n"
+       "    false => { return some(value.name) }\n"
+       "  }\n"
+       "  return value.name\n"
+       "}\nf(true)"))
+    (check-rsd-config-trace source "B")))
 
 (test-case "Recur と FnDecl は捕捉時に pin し、呼出しの row と flow を保つ"
   (for ([constructor (in-list '(Recur FnDecl))])
