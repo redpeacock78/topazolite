@@ -117,7 +117,7 @@ elaboration は loop 印を固定点の下で検査し、必要な `Reassign` �
 loop 印は Typed Core と Core には残らない（§5.1）。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker である。
-Surface の `for` は UCore の loop 印へ lowering され、elaboration が固定点を求めた後に `Recur` と初回 `Apply` へ展開する（§5.1）。
+Surface の `for` は UCore の loop 印へ lowering され、elaboration が固定点を求めた後に `Recur` と初回 `Apply` へ展開する（ホワイトペーパー §7.2、§5.1）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
 このラベルは elaboration が最寄りの境界へ静的に解決する（§4.5）。
 
@@ -1700,6 +1700,7 @@ data 型は対応先を payload へ配らず不透明に扱う。
 停止するのは、T に沿って辿る位置と型の候補が有限であり、余剰欄は深さが増えた段で記録されて以後戻らないためである。
 対応する Record の集合は T 内の有限な出現箇所の部分集合であり、その集合が反復で変わっても除去鍵は有限個である。
 T の構造外に残る余剰欄は、型の深さが増えた段で除かれるので深さが有界となる。
+余剰欄の名前、Union 成員、型構成子は loop 印の本体、T、C0 に現れるものに限られるため、その幅も有限である。
 正規化後の view が有限個しかないため、反復が収束しなければ履歴との循環を検出して T にする。
 
 全対象の view が更新前と等価になったとき、その view を固定点 C* とする。
