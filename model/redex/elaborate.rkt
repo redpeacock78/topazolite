@@ -390,10 +390,11 @@
 
 (define (check-recur-body-gate s function parameters body environment
                                callables declared-row)
-  ;; 分類器は型環境だけを使うため、elaborate の束縛 metadata を渡さない。
+  ;; block scrutinee の Reassign を分類器が型検査できるよう mut mode は保つ。
   (define classifier-environment
     (for/list ([entry (in-list environment)])
       (match entry
+        [(list name type 'mut _ ...) (list name type 'mut)]
         [(list name type _ ...) (list name type)]
         [_ entry])))
   (when (and (eq? (classify-recur-body function parameters body

@@ -3,6 +3,7 @@
 (require rackunit
          racket/match
          "../classify.rkt"
+         "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt")
 
@@ -20,7 +21,10 @@
     [`(Let (,name ,_mode ,type) ,bound ,body)
      (or (find-recur-context bound callables environment)
          (find-recur-context body callables
-                             (cons (list name type) environment)))]
+                             (cons (if (eq? _mode 'mut)
+                                       (list name type 'mut)
+                                       (list name type))
+                                   environment)))]
     [`(Recur ,_ ,_ ,_ ,_ ,_) (list tree environment)]
     [(? list? parts)
      (for/or ([part (in-list parts)])
@@ -56,6 +60,53 @@
                         (cons (head tail) -> (Apply loop tail))))
                      (Apply loop values))))
              (false () -> 0)))))))
+
+(define (mutating-block-scrutinee-recur condition binding-mode)
+  `(Fn ((values (List Int))
+        (flag Bool)
+        (g (NFn () Bool () ())))
+       Int (Mutation)
+       (Let (value ,binding-mode Int) 0
+         (Recur loop ((rest (List Int))) Int (Return Mutation)
+           (Let ignored
+                (Eliminate
+                 (Let block-result (Reassign value 1) ,condition)
+                 ((true () -> unit)
+                  (false () -> unit)))
+             (Eliminate rest
+               ((nil () -> (Return 0))
+                (cons (head tail) -> (Apply loop tail)))))
+           (Apply loop values)))))
+
+(define (elaboration-error-id result)
+  (match result
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
+
+(test-case "captured mut の block scrutinee は変数と呼出しの両形で structural"
+  (for ([condition (in-list '(flag (Apply g)))])
+    (match (elab (mutating-block-scrutinee-recur condition 'mut))
+      [(list core _type _row callables)
+       (define found (find-recur-context (erase-core core) callables))
+       (check-not-false found)
+       (match-define (list recur environment) found)
+       (match-define `(Recur ,callable ,function (,parameters ...) ,body ,_continuation)
+         recur)
+       (match-define `(NFn (,parameter-types ...) ,_ ,_ ,latent-row ,_ ,_)
+         (second (assoc callable callables)))
+       (define body-environment
+         (append (map list parameters parameter-types)
+                 (list (list function (second (assoc callable callables))))
+                 environment))
+       (check-false (memq 'Partial latent-row))
+       (check-equal?
+        (classify-recur-body function parameters body body-environment callables)
+        '(Finite structural))]
+      [other (fail-check
+              (format "structural Recur の elaboration 成功を期待した: ~s" other))]))
+  (check-equal?
+   (elaboration-error-id (elab (mutating-block-scrutinee-recur 'flag 'const)))
+   "E-VAR-011"))
 
 (test-case "pending Return を含む Recur の分類は解決前後で structural"
   (for ([condition (in-list '(flag (Apply g)))])
