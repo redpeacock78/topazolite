@@ -4372,6 +4372,7 @@
       (for ([target (in-list targets)])
         (flow-set-type! (second target)
                         (hash-ref final-views (second target))))
+      ;; 外側 trial 中なら、入れ子 loop の本検査もその trial の一部として catch を継承する。
       (define recur-result
         (elaborate-recur-annotated
          s raw-function parameter-binders raw-parameter-types

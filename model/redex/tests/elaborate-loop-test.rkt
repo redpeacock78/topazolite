@@ -572,10 +572,43 @@
              (TryBind ignored
                       (Construct some (Types Unit) unit)
                       (Construct some (Types Unit) unit)))
-         (Let (missing const Int) (Proj value missing)
+         (Let missing (Proj value missing)
            (Apply loop)))))
   (check-equal? (elab-error-id (wrap 'loop failing-body)) "E-RCD-004")
   (check-equal? (elab-error-id (wrap 'recur failing-body)) "E-RCD-004"))
+
+(test-case "外側 trial 中の内側 loop 本検査も注釈つき Let の診断を受け止める"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define probed-when
+      '(NarrativeExpr
+        (Let (matched-value const Unit)
+             (Eliminate (Proj value id)
+               ((Int i -> unit) (String s -> unit)))
+          (Return unit))))
+    (define inner-body
+      `(Let (%stmt const Unit)
+            (Let (edge const Unit) (Apply inner) ,probed-when)
+         (Apply inner)))
+    (define outer-body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (ignored const Unit)
+                (Loop inner () Unit (Partial Mutation) ,inner-body ())
+             (Let (changed const Unit)
+                  (Reassign value (Rec ((name imm "B") (id imm "s"))))
+               (Apply outer))))
+          (false () -> (Apply outer)))))
+    (define after
+      '(Eliminate (Proj value id)
+         ((Int i -> unit) (String s -> unit))))
+    (check-equal?
+     (second
+      (elaborated-core
+       (loop-program scrutinee
+                     `(Loop outer () Unit (Partial Mutation)
+                            ,outer-body ())
+                     after #:return 'Unit)))
+     'Unit)))
 
 (test-case "loop 試行は probe 中の注釈つき Let を受け止め後続の flow を使う"
   (for ([scrutinee (in-list '(flag (Apply g)))])
