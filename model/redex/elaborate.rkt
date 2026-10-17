@@ -980,14 +980,16 @@
         (hash-clear! escapes)
         (for ([(boundary pending) (in-hash snapshot)])
           (hash-set! escapes boundary pending))))
-    (define (call-with-flow-rollback thunk)
+    ;; Recur 本体の Return は外側 Narrative が後で合流するため、flow だけ巻き戻す。
+    (define (call-with-flow-rollback thunk #:preserve-escapes? [preserve-escapes? #f])
       (define snapshot (flow-snapshot))
       (define escapes (boundary-escape-snapshot))
       (dynamic-wind
        void thunk
        (λ ()
          (flow-restore! snapshot)
-         (boundary-escape-restore! escapes))))
+         (unless preserve-escapes?
+           (boundary-escape-restore! escapes)))))
     (define (fresh-flow-key) (gensym 'mut-flow))
     (define (flow-key-of environment name)
       (match (assoc name environment)
@@ -1062,6 +1064,21 @@
         [(pair? core)
          (cons (resolve-pending-escapes (car core))
                (resolve-pending-escapes (cdr core)))]
+        [else core]))
+
+    (define (classification-view core)
+      ;; 脱出直前の再構成は payload 評価後で再帰呼出しを含まず、分類事実を変えない。
+      (cond
+        [(pending-escape? core)
+         (define span (pending-escape-span core))
+         `(Perform ,span
+                   (Return ,(pending-escape-boundary core)
+                           (#:ty ,(pending-escape-return-type core) ,span))
+                   ,(classification-view
+                     (pending-escape-payload-core core)))]
+        [(pair? core)
+         (cons (classification-view (car core))
+               (classification-view (cdr core)))]
         [else core]))
 
     (define (fresh-callable signature)
@@ -3200,7 +3217,8 @@
         (call-with-flow-rollback
          (λ ()
            (check-function-body body return-type return-span body-environment
-                                delta propositions body-boundaries))))
+                                delta propositions body-boundaries))
+         #:preserve-escapes? #t))
       (if boundary
           (check-function-body-row s body-result return-type boundary declared-row)
           (unless (row-subset? (judgment-row body-result) declared-row)
@@ -3232,7 +3250,8 @@
                 ,wrapped-body
                 ,(judgment-core continuation-result)))
       (check-recur-body-gate s function parameters
-                             (judgment-core body-result)
+                             (classification-view
+                              (judgment-core body-result))
                              body-environment
                              (reverse reversed-callables)
                              declared-row)
@@ -3280,7 +3299,8 @@
       (define body-result
         (call-with-flow-rollback
          (λ ()
-           (synth body parameter-environment delta propositions body-boundaries))))
+           (synth body parameter-environment delta propositions body-boundaries))
+         #:preserve-escapes? #t))
       (define return-type (judgment-type body-result))
       (unless (row-subset? (judgment-row body-result) declared-row)
         (reject s 'undeclared-recur-effect
@@ -3312,7 +3332,8 @@
         `(Recur ,s ,callable ,raw-function ,core-binders
                 ,wrapped-body ,(judgment-core continuation-result)))
       (check-recur-body-gate s function parameters
-                             (judgment-core body-result)
+                             (classification-view
+                              (judgment-core body-result))
                              parameter-environment
                              (reverse reversed-callables)
                              declared-row)
