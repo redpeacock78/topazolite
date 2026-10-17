@@ -1214,6 +1214,7 @@
       #:transparent)
     (define current-boundary-escapes (make-parameter #f))
     (define current-loop-trials (make-parameter '()))
+    (define current-loop-trial-catching? (make-parameter #f))
     (define flow-state (box (hasheq)))
     (define (flow-snapshot) (unbox flow-state))
     (define (flow-restore! snapshot) (set-box! flow-state snapshot))
@@ -3177,7 +3178,9 @@
       (define saved (elaboration-state))
       (dynamic-wind
        void
-       (λ () (call-with-flow-rollback thunk))
+       (λ ()
+         (parameterize ([current-loop-trial-catching? #f])
+           (call-with-flow-rollback thunk)))
        (λ () (restore-elaboration-state! saved))))
 
     (define (probe-candidate-boxes boundaries)
@@ -3188,6 +3191,42 @@
                (cons candidate-box boxes)
                boxes)]
           [_ boxes])))
+
+    (define (call-with-loop-trial-catch boundaries thunk on-catch)
+      (if (not (current-loop-trial-catching?))
+          (thunk)
+          (let* ([saved-flow (flow-snapshot)]
+                 [saved-escapes (boundary-escape-snapshot)]
+                 [deferred (current-deferred-when-fallthroughs)]
+                 [boxes
+                  (remove-duplicates
+                   (append
+                    (probe-candidate-boxes boundaries)
+                    (if (box? (current-when-arm-fallthroughs))
+                        (list (current-when-arm-fallthroughs))
+                        '())
+                    (if (and (pair? deferred) (box? (cdr deferred)))
+                        (list (cdr deferred))
+                        '()))
+                   eq?)]
+                 [saved-boxes
+                  (for/list ([candidate-box (in-list boxes)])
+                    (list candidate-box (unbox candidate-box)))]
+                 [failure-returns (current-failure-returns)]
+                 [saved-failure-returns (set->list failure-returns)])
+            (with-handlers
+                ([exn:fail:elab?
+                  (λ (_)
+                    (flow-restore! saved-flow)
+                    (boundary-escape-restore! saved-escapes)
+                    (for ([saved-box (in-list saved-boxes)])
+                      (set-box! (first saved-box) (second saved-box)))
+                    (for ([returned (in-list (set->list failure-returns))])
+                      (set-remove! failure-returns returned))
+                    (for ([returned (in-list saved-failure-returns)])
+                      (set-add! failure-returns returned))
+                    (on-catch))])
+              (thunk)))))
 
     (define (call-with-loop-trial-rollback boundaries thunk)
       (define saved-state (elaboration-state))
@@ -3244,7 +3283,8 @@
                 (set-box! (first saved-probe) (second saved-probe)))
               (raise error))])
         (define result
-          (parameterize ([current-failure-returns attempted-failure-returns])
+          (parameterize ([current-loop-trial-catching? #f]
+                         [current-failure-returns attempted-failure-returns])
             (thunk)))
         (for ([returned (in-set attempted-failure-returns)])
           (set-add! outer-failure-returns returned))
@@ -4224,7 +4264,8 @@
            boundaries
            (λ ()
              (flow-restore! trial-state)
-             (parameterize ([current-loop-trials
+             (parameterize ([current-loop-trial-catching? #t]
+                            [current-loop-trials
                              (cons trial (current-loop-trials))])
                (elaborate-recur-annotated
                 s raw-function parameter-binders raw-parameter-types
@@ -4366,9 +4407,20 @@
         ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
         ;; 前に拒むため、elaborate と typing が同じ key を返す。
         (reject s 'mut-binding-unsupported-type declared-type))
-      (elaborate-mut-compatible-value
-       s binding-mode declared-type bound environment delta propositions
-       boundaries))
+      (call-with-loop-trial-catch
+       boundaries
+       (λ ()
+         (elaborate-mut-compatible-value
+          s binding-mode declared-type bound environment delta propositions
+          boundaries))
+       (λ ()
+         (define placeholder-core `(#:lit unit ,s))
+         (define placeholder
+           (judgment placeholder-core declared-type '()))
+         (values placeholder placeholder-core declared-type
+                 (bind-with-mode s binding-mode declared-type declared-type
+                                 propositions)
+                 #f))))
 
     (define (projection-chain expression environment)
       (define (walk node)

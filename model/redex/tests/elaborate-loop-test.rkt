@@ -74,6 +74,36 @@
               (append-map callable-references tree)
               '())))
 
+(define (recur-body-in tree)
+  (or (match tree
+        [`(Recur ,_ ,_ ,_ ,body ,_) body]
+        [_ #f])
+      (and (pair? tree)
+           (or (recur-body-in (car tree))
+               (recur-body-in (cdr tree))))))
+
+(define (normalize-loop-fresh-names tree)
+  (cond
+    [(symbol? tree)
+     (define text (symbol->string tree))
+     (cond
+       [(regexp-match? #rx"^union[0-9]+$" text) 'union]
+       [(regexp-match? #rx"^boundary[0-9]+$" text) 'boundary]
+       [else
+        (string->symbol (regexp-replace #rx"⟨[0-9]+⟩$" text ""))])]
+    [(pair? tree)
+     (cons (normalize-loop-fresh-names (car tree))
+           (normalize-loop-fresh-names (cdr tree)))]
+    [else tree]))
+
+(define (normalize-reassign-values tree)
+  (match tree
+    [`(Reassign ,target ,view ,_rhs) `(Reassign ,target ,view rhs)]
+    [(cons head tail)
+     (cons (normalize-reassign-values head)
+           (normalize-reassign-values tail))]
+    [_ tree]))
+
 (test-case "Loop は UCore と UCore+ の形を持ち annotate と erase が往復する"
   (define raw '(Loop loop ((x Int)) Int () x (initial)))
   (check-true (redex-match? UCore e raw))
@@ -546,6 +576,133 @@
            (Apply loop)))))
   (check-equal? (elab-error-id (wrap 'loop failing-body)) "E-RCD-004")
   (check-equal? (elab-error-id (wrap 'recur failing-body)) "E-RCD-004"))
+
+(test-case "loop 試行は probe 中の注釈つき Let を受け止め後続の flow を使う"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define probed-when
+      '(NarrativeExpr
+        (Let (inner const Unit)
+             (Eliminate (Proj value id)
+               ((Int i -> unit) (String s -> unit)))
+          (Return unit))))
+    (define trial-rhs
+      `(Let (edge const Unit) (Apply loop) ,probed-when))
+    (define body
+      `(Let (%stmt const Unit) ,trial-rhs
+         (Let (changed const Unit)
+              (Reassign value (Rec ((name imm "B") (id imm "s"))))
+           (Apply loop))))
+    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define after
+      '(Eliminate (Proj value id)
+         ((Int i -> unit) (String s -> unit))))
+    (define loop-result
+      (elaborated-core
+       (loop-program scrutinee marker after #:return 'Unit)))
+    (check-equal?
+     (second loop-result)
+     'Unit)
+    (define recur-result
+      (elaborated-core
+       (loop-program
+        scrutinee
+        `(Recur loop () Unit (Partial Mutation) ,body (Apply loop))
+        after #:declared '(Record ((name String imm)
+                                  (id (Union Int String) imm)))
+        #:return 'Unit)))
+    ;; C0→C* の前置変換、Reassign RHS の再構成形、fresh 名を除き、
+    ;; Recur 本体の構造は C* で直接書いた Recur と一致する。
+    (check-equal?
+     (normalize-loop-fresh-names
+      (normalize-reassign-values (recur-body-in (first loop-result))))
+     (normalize-loop-fresh-names
+      (normalize-reassign-values (recur-body-in (first recur-result)))))
+    (check-equal? (rest loop-result) (rest recur-result))
+    (define unannotated-body
+      `(Let (statement const) ,trial-rhs
+         (Let (changed const Unit)
+              (Reassign value (Rec ((name imm "B") (id imm "s"))))
+           (Apply loop))))
+    (define unannotated-marker
+      `(Loop loop () Unit (Partial Mutation) ,unannotated-body ()))
+    (check-equal?
+     (elab-error-id
+     (loop-program scrutinee unannotated-marker after #:return 'Unit))
+     "E-TYP-029")))
+
+(test-case "loop 試行は when を持つ注釈付き Let を飛ばし C* で本検査する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define when-expression
+      '(NarrativeExpr
+        (Let (matched-value const Unit)
+             (Eliminate (Proj value id)
+               ((Int i -> unit) (String s -> unit)))
+          (Return unit))))
+    (define body
+      `(Let (edge const Unit) (Apply loop)
+         (Let (matched const Unit) ,when-expression
+           (Let (changed const Unit)
+                (Reassign value (Rec ((name imm "B") (id imm "s"))))
+             (Apply loop)))))
+    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define after
+      '(Eliminate (Proj value id)
+         ((Int i -> unit) (String s -> unit))))
+    (check-equal?
+     (second (elaborated-core
+              (loop-program scrutinee marker after #:return 'Unit)))
+     'Unit)
+    (define unannotated-body
+      `(Let (edge const Unit) (Apply loop)
+         (Let matched ,when-expression
+           (Let (changed const Unit)
+                (Reassign value (Rec ((name imm "B") (id imm "s"))))
+             (Apply loop)))))
+    (check-equal?
+     (elab-error-id
+      (loop-program scrutinee
+                    `(Loop loop () Unit (Partial Mutation)
+                       ,unannotated-body ())
+                    after #:return 'Unit))
+     "E-TYP-029")))
+
+(test-case "loop 試行の診断 catch は escape と when box を戻し back-edge を残す"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define attempt
+      '(Eliminate flag
+         ((true () ->
+           (Let (tried const (Option Unit))
+                (NarrativeExpr
+                 (TryBind ignored
+                          (Construct some (Types Unit) unit)
+                          (Construct some (Types Unit) unit)))
+             (Return unit)))
+          (false () -> (BlockBody unit)))))
+    (define narrative
+      `(NarrativeExpr
+        (Eliminate ,scrutinee
+          ((true () -> (BlockBody unit))
+           (false () ->
+             (BlockBody
+              (Let (caught const Unit)
+                   (Let (before const Unit) ,attempt
+                     (Eliminate (Proj value id)
+                       ((Int i -> unit) (String s -> unit))))
+                unit)))))))
+    (define body
+      `(Let (%stmt const Unit)
+            (Let (edge const Unit) (Apply loop) ,narrative)
+         (Let (changed const Unit)
+              (Reassign value (Rec ((name imm "B") (id imm "s"))))
+           (Apply loop))))
+    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define after
+      '(Eliminate (Proj value id)
+         ((Int i -> unit) (String s -> unit))))
+    (check-equal?
+     (second (elaborated-core
+              (loop-program scrutinee marker after #:return 'Unit)))
+     'Unit)))
 
 (test-case "安定した C0 を保ち、loop の前後に不要な Reassign を挿さない"
   (define body
