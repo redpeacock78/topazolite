@@ -23,6 +23,7 @@
          "validators.rkt")
 
 (provide owned-narrowing-kind owned-narrowing-kind/for-elaboration
+         borrow-hiding-kind
          check-narrowing-return rsd-eligible? rsd-proof-pair-ok?
          remainder-removal-shape remainder-target-type)
 
@@ -174,8 +175,80 @@
           [_ 'ok])]
        [_ 'ok]))))
 
+;; Borrow の narrowing は OWN-004 と独立に判定する。RSD を置けない内側では
+;; obligation を拒否し、最上位と imm 共通欄の鎖だけで除去義務を返す。
+(define (borrow-hiding-kind/impl actual expected compatible? [ctx 'top])
+  (cond
+    [(or (union-type? actual) (union-type? expected))
+     (if (for/and ([actual-member (in-list (union-members actual))])
+           (for/or ([expected-member (in-list (union-members expected))])
+             (and (compatible? actual-member expected-member)
+                  (eq? (borrow-hiding-kind/impl actual-member expected-member
+                                                compatible? 'inner)
+                       'ok))))
+         'ok
+         'reject)]
+    [else
+     (match* (actual expected)
+       [(`(Record ,actual-row) `(Record ,expected-row))
+        (kind-max/nested
+         (borrow-residual-kind actual-row expected-row actual expected ctx)
+         (borrow-common-imm-fields-kind actual-row expected-row
+                                        compatible? ctx))]
+       [(`(Owned ,actual-payload) `(Owned ,expected-payload))
+        (borrow-hiding-kind/impl actual-payload expected-payload
+                                 compatible? 'inner)]
+       [(`(Untrusted ,actual-payload) `(Untrusted ,expected-payload))
+        (borrow-hiding-kind/impl actual-payload expected-payload
+                                 compatible? 'inner)]
+       [(`(Refined ,actual-payload ,_) `(Refined ,expected-payload ,_))
+        (borrow-hiding-kind/impl actual-payload expected-payload
+                                 compatible? 'inner)]
+       [(`(NFn ,actual-parameters ,actual-return ,_ ,_ ,_ ,_)
+         `(NFn ,expected-parameters ,expected-return ,_ ,_ ,_ ,_))
+        (if (= (length actual-parameters) (length expected-parameters))
+            (kind-all
+             (cons (borrow-hiding-kind/impl actual-return expected-return
+                                            compatible? 'inner)
+                   (for/list ([actual-parameter (in-list actual-parameters)]
+                              [expected-parameter (in-list expected-parameters)])
+                     (borrow-hiding-kind/impl expected-parameter actual-parameter
+                                              compatible? 'inner))))
+            'reject)]
+       ;; Borrowed<Record> は capability view であり、参照自体は隠れない。
+       [(`(Borrowed ,_ ,_) `(Borrowed ,_ ,_)) 'ok]
+       [(_ _) 'ok])]))
+
+(define (borrow-residual-kind actual-row expected-row actual expected ctx)
+  (cond
+    [(for/and ([field (in-list (field-row-residual actual-row expected-row))])
+       (borrow-free? (second field)))
+     'ok]
+    [(eq? ctx 'top) `(drop-obligation ,actual ,expected)]
+    [(eq? ctx 'chain) 'nested-drop]
+    [else 'reject]))
+
+(define (borrow-common-imm-fields-kind actual-row expected-row compatible? ctx)
+  (define child-ctx (if (memq ctx '(top chain)) 'chain 'inner))
+  (kind-all/nested
+   (for/list ([field (in-list expected-row)])
+     (match field
+       [(list label expected-type 'imm _ ...)
+        (match (field-row-lookup actual-row label)
+          [(list actual-type _)
+           (borrow-hiding-kind/impl actual-type expected-type
+                                    compatible? child-ctx)]
+          [_ 'ok])]
+       [_ 'ok]))))
+
+(define (borrow-hiding-kind actual expected compatible?)
+  (define kind (borrow-hiding-kind/impl actual expected compatible? 'top))
+  (if (eq? kind 'nested-drop)
+      `(drop-obligation ,actual ,expected)
+      kind))
+
 ;; RemainderSafelyDropped が実行時に除去する欄を型対から得る。
-;; `drop` はこの欄を値ごと取り除き、`nested` は expected が imm の共通欄へ潜る。
+;; `drop` は Owned/borrowed の余剰欄を値ごと取り除き、`nested` は expected が imm の共通欄へ潜る。
 ;; `#f` は対応する型構造でない場合、空リストは除去欄が無い場合である。
 (define (remainder-removal-shape actual expected)
   (define (shape-for-type actual-type expected-type)
@@ -190,7 +263,8 @@
                       (for/list ([field
                                   (in-list
                                    (field-row-residual actual-row expected-row))]
-                                 #:unless (owned-free? (second field)))
+                                 #:unless (and (owned-free? (second field))
+                                               (borrow-free? (second field))))
                         (list (first field) 'drop (field-optional? field)))])
                  (let loop ([remaining expected-row] [nested '()])
                    (cond
@@ -247,7 +321,7 @@
       'reject
       kind))
 
-;; remainder-removal-shape が示す Owned 欄を actual から除いた型を返す。
+;; remainder-removal-shape が示す Owned/borrowed 欄を actual から除いた型を返す。
 ;; 残す欄の順序は actual のまま保ち、nested で潜った欄の印は imm にする。
 (define (remainder-target-type actual expected)
   (define shape (remainder-removal-shape actual expected))
@@ -282,7 +356,8 @@
   (define recomputed (remainder-target-type actual target))
   (and recomputed
        (compatible? recomputed target)
-       (eq? (owned-narrowing-kind recomputed target compatible?) 'ok)))
+       (eq? (owned-narrowing-kind recomputed target compatible?) 'ok)
+       (eq? (borrow-hiding-kind recomputed target compatible?) 'ok)))
 
 (define (type-value? v)
   (redex-match? G2m τ v))

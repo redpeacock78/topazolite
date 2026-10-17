@@ -635,7 +635,8 @@
 (define (leaves-droppable?/proc value tokens)
   (leaves-available? (walk-owned-leaves-for-drop value) tokens))
 
-;; τa と τe から決めた除去欄を値から取り除く。
+;; τa と τe から決めた Owned/borrowed の除去欄を値から取り除く。
+;; BorrowRef はここで値から消えるが、所有 token の台帳更新は呼び出し側に任せる。
 ;; 型と値が一致しない形は #f を返して fail-closed にする。
 (define (strip-remainder actual-type expected-type value)
   (define shape (remainder-removal-shape actual-type expected-type))

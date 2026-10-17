@@ -14,6 +14,7 @@
          kernel-primitive-name?
          validator-error-message
          owned-free?
+         borrow-free?
          copy-out-scan
          effect-copy-out-scan
          copy-out-ok?
@@ -168,6 +169,41 @@
             (walk return-type visited)
             (andmap effect-free? in-effects)
             (andmap effect-free? effects))]
+      [`(Data ,name (,arguments ...))
+       (define key (cons name arguments))
+       (define schema (data-schema name arguments))
+       (and schema
+            (or (set-member? visited key)
+                (for/and ([field (in-list (data-field-types name arguments))])
+                  (walk field (set-add visited key)))))]
+      [_ #f])))
+
+;; 借用参照が物理的に残らない型だけを真とする。関数の署名と RawPtr の
+;; pointee metadata は値に格納された参照ではないため辿らず、未知の形は拒否する。
+(define (borrow-free? type)
+  (let walk ([type type] [visited (set)])
+    (match type
+      ['Int #t] ['Bool #t] ['Unit #t] ['String #t] ['Never #t] ['Res #t]
+      [`(TypeInfo ,_) #t]
+      [`(Proof ,_) #t]
+      [`(Borrowed ,_ ,_) #f]
+      [`(BorrowedMut ,_ ,_) #f]
+      [`(RawPtr ,_ ,_ ,_ ,_ ,_ ,_) #t]
+      [`(NFn ,_ ,_ ,_ ,_ ,_ ,_) #t]
+      [`(Owned ,payload) (walk payload visited)]
+      [`(List ,element) (walk element visited)]
+      [`(Option ,element) (walk element visited)]
+      [`(Result ,ok-type ,error-type)
+       (and (walk ok-type visited) (walk error-type visited))]
+      [`(Untrusted ,payload) (walk payload visited)]
+      [`(Refined ,payload ,_) (walk payload visited)]
+      [`(Record ,row)
+       (for/and ([field (in-list row)]) (walk (second field) visited))]
+      [`(Union ,left ,right)
+       (and (walk left visited) (walk right visited))]
+      [`(Intersection ,left ,right)
+       (and (walk left visited) (walk right visited))]
+      [`(ForallRegion (,_ ...) ,body) (walk body visited)]
       [`(Data ,name (,arguments ...))
        (define key (cons name arguments))
        (define schema (data-schema name arguments))
