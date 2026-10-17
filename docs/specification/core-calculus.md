@@ -1565,13 +1565,20 @@ P は枝の集合和をとる。
 型付けは合流型を計算せず、各枝の C は elaboration が決めた型で一致させる。
 全枝が正常に完了しなければ N は `⊥` であり、枝内の脱出は E に残る。
 
+elaboration は同じ flow 状態を式の評価順に受け渡し、`Reassign` の右辺から新しい C を求めるときは、`let mut` の初期 view C0 と同じ check、残余 row、convert の経路を使う。
+分岐では正常に完了する枝の view を §3.5 の `merge-row` と T への補正で合流し、pin があればその pin を優先する。
+合流した view と異なる枝は既存の値変換と `RecRewrite`、必要なら `UnionInject` で変換した後、`RemainderSafelyDropped` の Proof を持つ `Discharge` で view を狭め、枝の末尾で `Reassign` する。
+Return boundary への脱出も同じ規則で合流し、発行 operand の評価後、発行の直前に view を作り直す。
+`Never` の右辺と正常に完了しない枝は正常出口の合流に加えず、脱出状態は boundary ごとに保つ。
+
 `Handle(Return<b, τ>, x -> c_h, c_body)` では、E[b] があるとき c_h をその脱出状態から型付けする。
 E[b] が無い場合も c_h は入口状態で検査するが、その結果の N と E は全体へ加えない。
 全体の N は c_body と到達可能な handler の正常出口の合流、E は E_body から b を除いたものと handler の脱出の和である。
 handler の中から同じ boundary へ Return する脱出は外側へ伝わる。
 
-閉包が mut binder を捕捉すると、その位置の C を P に加え、閉包本体は P の下で検査する。
+`Lam`、`RegionLam`、`Fn`、`FnDecl` の本体、および `Recur` の定義（その値 `RecurVal`）が mut binder を捕捉すると、その値を作る位置の C を P に加え、閉包本体は P の下で検査する。
 捕捉後の再代入は P のすべての型と一致しなければならず、C を変えない。
+`Curry` は評価済みの実引数値を保持するが、mut binder の slot 参照を保持しないため、新たな pin を作らない。
 
 静的な `Reassign` `(Reassign w C c)` で、c が `Never` なら全体も `Never` とし、C への更新と Mutation を行わない。
 それ以外では、c の型が C に `reassign-narrowing?` で収まり、C が宣言型 T に `tag-compat?` で適合し、C が再帰的に Owned-free、borrow-free かつ `storage-ok?` であり、P が空でなければ C がその全要素と型同値であることを検査する。
@@ -1599,6 +1606,10 @@ S ⊢flow Reassign(w, C, c) : Never ! εv ⇒ (⊥, E1)
 R-LetMutB は実行用 Let の型欄 C0 を初期 view とし、R-Reassign は値と C を一つの遷移で更新する。
 静的な宣言型 T は heap に保存されず、静的型付けが各再代入で C と T の互換性を検査する。
 config の再型付けは値が C に適合することと C の storage 条件を確認するが、T との互換性は再検査しない。
+ただし、`RemainderSafelyDropped` を消費した後の物理値に、C の view から隠れた非 `Owned`・非借用の余剰欄が残る場合は、`rsd-proof-pair-ok?` の契約を満たす限り config の再型付けで受理する。
+この場合も config の型と heap の `declared` view は C のままであり、物理値の型へ広げない。
+余剰欄に借用を含む場合は `mut-slot-type-supported?` が、`Owned` を含む場合は `runtime-row` が拒否する。
+静的な `reassign-narrowing?` と R-Reassign の原子的な更新はこの例外の対象外である。
 したがって Preservation の主張は、静的に型付けされた Core から始まる到達可能な config に限る。
 
 **(T-Scope)**
@@ -2965,6 +2976,9 @@ aj は xj を Eliminate で分解して得た field 変数（またはその再�
 ----------------------------------------------------------
 f; (x1, …, xk); c1 ⇓body Finite(structural)
 ```
+
+`pre`、再帰呼出しの出現位置の検査、および減少引数の検査は、値を変えない `Scope`、`OwnLeaf`、`Discharge` をその本体へ透過して走査する。
+`ProofRep` は実行時の値を包む項ではないため、この走査の対象にしない。
 
 **(B-Guarded)** [REQ: REC-002]
 

@@ -415,6 +415,32 @@ elaborate は ROW-005 の join 上界を求め、各枝をその上界へ作り�
 非 `Never` 枝に record 型と非 record 型が混在すれば型エラーである。
 非 `Never` 枝がすべて非 record 型なら、G1 の `Eliminate` 規則を使う。
 
+この説明は式の結果値を `Eliminate` の上界へ変換する場合である。
+mut binder の flow view の合流は同じ分岐位置で行う別の処理であり、現在の flow view を `merge-row` で合流してから必要な枝の値を作り直す。
+
+正常に完了する枝の flow view を C₁, …, Cₙ、その binder の宣言型を T とする。
+各 Cᵢ は再代入の検査で T と `tag-compat?` で適合し、T の各 label は各 Cᵢ に存在する。
+全ての Cᵢ が `type-equiv?` で同値なら合流 view は C₁ である。
+それ以外で全てが Record 型なら、まず `merge-row(C₁, …, Cₙ)` を J とする。
+J のうち、T にもある label ℓ について `tag-compat?(J.ℓ, T.ℓ)` が成り立たない場合は、その欄を T.ℓ の型、可変性、presence に置き換える。
+こうして得た J′ が合流 view であり、T に無い欄は J のまま残す。
+tag の適合は各欄ごとに判定されるため、T の欄へ戻す補正は入れ子の Record や Union の欄にも適用できる。
+`merge-row` が失敗する場合、または非 Record 型の Cᵢ が互いに非同値の場合は、T を合流 view とする防御的な fallback を使う。
+どの経路でも最終 view が T に `tag-compat?` で適合しなければ、再代入の型不一致として拒否する。
+T が Union 型の場合は、再代入の右辺を T に対して型付けするときに成員値を T へ `UnionInject` するため、各 Cᵢ は T となり、同値の経路で合流する。
+
+正常に完了する枝のいずれかで pin がある場合は、merge-row の結果に代えて pin を合流 view とする。
+複数の枝が pin を持つ場合、全 pin は `type-equiv?` で同値でなければならず、同値でなければ再代入の型不一致として拒否する。
+pin を持たない枝はその view へ作り直し、合流後の pin 集合は正常に完了する各枝の pin 集合の和である。
+
+枝の Cᵢ が合流 view と異なり、既存の `reassign-narrowing?` が成り立たない場合は、通常の `convert`、`RecRewrite`、`UnionInject` で欄の値を変換し、その値を `Discharge(ProofRep(O, RemainderSafelyDropped(τ_actual, τ_view)), c)` で view へ狭めてから同じ mut slot へ再代入する。
+`rsd-proof-pair-ok?(τ_actual, τ_view)` は §3.1 のとおり残余型の互換性と Core mode の narrowing 条件を検査する。
+この Proof により、余剰欄を値から物理的に取り除かずに view から隠せる。
+mut slot の型は `Owned` と借用を含まないため、隠れた余剰欄も非資源・非借用であり、所有 token を捨てない。
+config の再型付けではこの Proof の契約を使い、物理値に残る安全な余剰欄を許すが、config の型と heap の `declared` view は合流後の型のままにする。
+この config 上の許容は静的な `reassign-narrowing?` を変更しない。
+ホワイトペーパー §4.5.2 の「安全に共通する row と Proof」は、この合流 view と `RemainderSafelyDropped` の Proof に対応する。
+
 この構造的交差は、全経路に存在する field だけを残す decidable な近似である。
 型が異なる field の Union join は、G2e が `trait.md` §7 として導入した。
 G2g は join の対象を `imm` field から全 field へ広げた。 [REQ: ROW-005]
