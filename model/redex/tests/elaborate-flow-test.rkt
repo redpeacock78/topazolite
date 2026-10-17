@@ -3,6 +3,7 @@
 (require rackunit
          racket/list
          racket/match
+         "../borrow.rkt"
          "../diagnostic.rkt"
          "../driver.rkt"
          "../elaborate.rkt"
@@ -435,3 +436,279 @@
   (check-true (diagnostic? result))
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) "E-EFF-002")))
+
+(test-case "局所 Narrative の match 脱出は変数と呼出しの両経路で flow を合流する"
+  (for ([scrutinee (in-list '("b" "yes(b)"))])
+    (define variable? (string=? scrutinee "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  let ignored = when " scrutinee " {\n"
+       "    true => { value = { name: \"B\", active: true }\n return 1 }\n"
+       "    false => { value = { name: \"C\", active: false }\n return 2 }\n"
+       "  }\n"
+       "  return value.name\n"
+       "}\n"
+       "f(true)"))
+    (check-equal? (run-source source) "B")
+    (check-equal?
+     (run-source (string-replace source "f(true)" "f(false)"))
+     "C")))
+
+(test-case "局所 Narrative の IfSome 脱出は変数と呼出しの両経路で flow を合流する"
+  (for ([condition (in-list '("b" "yes(b)"))])
+    (define variable? (string=? condition "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  let ignored: Option<Int> = if " condition " { value = { name: \"B\", active: true }\n return some(1) }\n"
+       "  return value.name\n"
+       "}\n"
+       "f(true)"))
+    (check-equal? (run-source source) "B")
+    (check-equal?
+     (run-source (string-replace source "f(true)" "f(false)"))
+     "A")))
+
+(test-case "TryBind の失敗側 Return は周囲の Narrative flow へ合流する"
+  (for* ([scrutinee (in-list '("b" "yes(b)"))]
+         [right (in-list '("maybe" "identityOption(maybe)"))])
+    (define variable? (string=? scrutinee "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn identityOption(value: Option<Int>) -> Option<Int> { return value }\n"
+       "fn f(b: Bool, maybe: Option<Int>) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  let answer: Option<String> = when " scrutinee " {\n"
+       "    true => { value = { name: \"B\", active: true }\n let picked ?= " right "\n return some(value.name) }\n"
+       "    false => { value = { name: \"C\", active: false }\n return some(value.name) }\n"
+       "  }\n"
+       "  return value.name\n"
+       "}\n"
+       "f(true, none)"))
+    (check-equal? (run-source source) "B")
+    (define false-source
+      (string-replace source "f(true, none)" "f(false, none)"))
+    (check-equal? (run-source false-source) "C")))
+
+(test-case "関数境界の早期 Return は正常出口と別の局所 flow を使う"
+  (for ([scrutinee (in-list '("b" "yes(b)"))])
+    (define variable? (string=? scrutinee "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  when " scrutinee " {\n"
+       "    true => { value = { name: \"B\", active: true }\n return value.name }\n"
+       "    false => { value = { name: \"C\", active: false } }\n"
+       "  }\n"
+       "  return value.name\n"
+       "}\n"
+       "f(true)"))
+    (check-equal? (run-source source) "B")
+    (check-equal?
+     (run-source (string-replace source "f(true)" "f(false)"))
+     "C")))
+
+(test-case "Return の payload を評価してから境界の view を再構成する"
+  (define expression
+    '(Fn ((flag Bool)) String (Mutation)
+        (Let (value mut (Record ((name String imm))))
+             (Rec ((name imm "A") (id imm 1)))
+          (Let (answer const Int)
+               (NarrativeExpr
+                (Eliminate flag
+                           ((true () ->
+                             (Return
+                              (Let (tmp const Unit)
+                                   (Reassign value
+                                             (Rec ((name imm "B")
+                                                   (id imm 2)
+                                                   (active imm
+                                                           (Construct true (Types))))))
+                                   (Proj value id))))
+                            (false () -> (Return 3)))))
+            (Proj value name)))))
+  (match (elab expression)
+    [(list core _type _row callables)
+     (define erased (erase-core core))
+     (define (has-form? tree wanted)
+       (cond
+         [(and (pair? tree) (eq? (car tree) wanted)) #t]
+         [(pair? tree)
+          (or (has-form? (car tree) wanted)
+              (has-form? (cdr tree) wanted))]
+         [else #f]))
+     (define (payload-before-reassign? tree)
+       (or (match tree
+             [`(Perform (Return ,_ ,_)
+                        (Let (,temporary const ,_) ,payload
+                          (Let (,unit-name const Unit)
+                            (Reassign ,_ ,_ ,_) ,tail)))
+              (and (eq? tail temporary)
+                   (has-form? payload 'Reassign))]
+             [_ #f])
+           (and (pair? tree)
+                (or (payload-before-reassign? (car tree))
+                    (payload-before-reassign? (cdr tree))))))
+     (check-true (payload-before-reassign? erased)
+                 (format "Return payload precedes the boundary Reassign: ~s" erased))
+     (void)]
+    [other (fail-check (format "elaboration success expected: ~s" other))]))
+
+(test-case "Never の Return payload は脱出 table に登録しない"
+  (check-true
+   (match (elab '(Fn () Int () (NarrativeExpr (Return (Return 7)))))
+     [(list core _ _ _)
+      (define (return-with-let-operand? tree)
+        (or (match tree
+              [`(Perform (Return ,_ ,_) (Let ,_ ,_ ,_)) #t]
+              [_ #f])
+            (and (pair? tree)
+                 (or (return-with-let-operand? (car tree))
+                     (return-with-let-operand? (cdr tree))))))
+      (not (return-with-let-operand? (erase-core core)))]
+     [_ #f])))
+
+(test-case "資源 Return の operand 内で view を再構成して token を一度だけ返す"
+  (define expression
+    '(Apply
+      (Fn ((flag Bool) (payload (Owned Res)))
+          (Owned Res) (Mutation Own)
+          (Let (value mut (Record ((name String imm))))
+               (Rec ((name imm "A") (id imm 1)))
+            (NarrativeExpr
+             (Eliminate flag
+               ((true () ->
+                  (Let (rebuilt const Unit)
+                       (Reassign value
+                                 (Rec ((name imm "B")
+                                       (active imm (Construct true (Types))))))
+                    (Return (Move payload))))
+                (false () -> (Return (Move payload))))))))
+      (Construct true (Types))
+      (Apply acquire 1)))
+  (match (elab expression)
+    [(list core type row callables)
+     (check-equal? type '(Owned Res))
+     (check-not-false (member 'Own row))
+     (check-not-false (member 'Mutation row))
+     (define (resource-return-with-rebuild? tree)
+       (or (match tree
+             [`(Perform (Return ,_ (Owned Res))
+                        (Let (,temporary let (Owned Res)) (Move ,_)
+                          (Let (,_ const Unit) (Reassign ,_ ,_ ,_)
+                            (Move ,moved))))
+              (eq? temporary moved)]
+             [_ #f])
+           (and (pair? tree)
+                (or (resource-return-with-rebuild? (car tree))
+                    (resource-return-with-rebuild? (cdr tree))))))
+     (check-true (resource-return-with-rebuild? (erase-core core)))
+     (define typed (core-type-of/diagnostic (erase-core core) '() callables))
+     (check-equal? typed (list type row))
+     (call-with-trait-ledger
+      (current-trait-ledger)
+      (λ ()
+        (define terminal
+          (run-g2 (inject-g2m (erase-core core)) 10000))
+        (match terminal
+          [`(cfg ,value ,_heap ,_states ,tokens ,_events)
+           (define carried (collect-tokens value))
+           (define available
+             (filter (λ (entry) (eq? (second entry) 'Available)) tokens))
+           (check-equal? (length carried) 1)
+           (check-equal? (map first available) carried)]
+          [other (fail-check (format "terminal config expected, got ~s" other))])))]
+    [other (fail-check (format "UCore elaboration expected, got ~s" other))]))
+
+(test-case "局所 Narrative からの脱出で内側 mut shadow が外側 flow に混ざらない"
+  (for ([scrutinee (in-list '("b" "yes(b)"))])
+    (define variable? (string=? scrutinee "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut x: Named = { name: \"outer\", id: 1 }\n"
+       "  let ignored = when " scrutinee " {\n"
+       "    true => { let mut x: Named = { name: \"inner\", id: 2 }\n x = { name: \"changed\", active: true }\n return true }\n"
+       "    false => { return false }\n"
+       "  }\n"
+       "  return x.name\n"
+       "}\n"
+       "f(true)"))
+    (check-equal? (run-source source) "outer")
+    (check-equal? (run-source (string-replace source "f(true)" "f(false)"))
+                  "outer")))
+
+(test-case "synth probe の Return 候補は本番 Narrative flow へ漏れない"
+  (for ([scrutinee (in-list '("b" "yes(b)"))])
+    (define variable? (string=? scrutinee "b"))
+    (define source
+      (string-append
+       "type Named = { name: String }\n"
+       (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut value: Named = { name: \"A\", id: 1 }\n"
+       "  let ignored = when " scrutinee " {\n"
+       "    true => { value = { name: \"B\", active: true }\n return 1 }\n"
+       "    false => 2\n"
+       "  }\n"
+       "  return value.name\n"
+       "}\n"
+       "f(true)"))
+    (define result (compile-source/string 'src source))
+    (check-true (compiled? result)
+                (format "compile expected, got ~s" result))
+    (when (compiled? result)
+      (check-equal? (count-form (erase-core (compiled-core result)) 'Perform)
+                    (+ 2 (if variable? 0 1)))
+      (check-equal? (run-source source) "B")
+      (check-equal?
+       (run-source (string-replace source "f(true)" "f(false)"))
+       "A"))))
+
+(test-case "Never で τ° を持つ Return payload は脱出として登録しない"
+  ;; Some の欄の Return は Never だが、T-Ctx-Never の τ° は Option<Int>。
+  (define (branch name active value)
+    `(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm ,name)
+                          (active imm (Construct ,(if active 'true 'false)
+                                                 (Types))))))
+       (Return (Construct some (Return (Construct some ,value))))))
+  (for ([scrutinee (in-list (list 'flag '(Apply g)))])
+    (define expression
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ()))) Bool (Mutation)
+          (Let (value mut (Record ((name String imm))))
+               (Rec ((name imm "A") (id imm 1)))
+            (Let (ignored const (Option Int))
+                 (NarrativeExpr
+                  (Eliminate ,scrutinee
+                    ((true () -> ,(branch "B" #t 1))
+                     (false () -> ,(branch "C" #f 2)))))
+              (Proj value active))))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))))
+    (match (elab expression)
+      [(list core type row callables)
+       (define erased (erase-core core))
+       (check-equal? type 'Bool)
+       (check-equal? row '(Mutation))
+       ;; 各枝には外側の Return と、payload 内の実際の脱出が一つずつ残る。
+       (check-equal? (count-form erased 'Perform) 4)
+       (check-equal? (core-type-of/diagnostic erased '() callables)
+                     (list type row))]
+      [other (fail-check (format "elaboration success expected: ~s" other))])))

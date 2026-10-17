@@ -964,12 +964,30 @@
 
     ;; SUR-014c0b1b spec §3。mut binder key から現在の C と pin への写像。
     (struct flow-entry (type pins) #:transparent)
+    (struct pending-escape
+      (boundary snapshot payload-core payload-result return-type span cell)
+      #:transparent)
+    (define current-boundary-escapes (make-parameter #f))
     (define flow-state (box (hasheq)))
     (define (flow-snapshot) (unbox flow-state))
     (define (flow-restore! snapshot) (set-box! flow-state snapshot))
+    (define (boundary-escape-snapshot)
+      (and (current-boundary-escapes)
+           (hash-copy (current-boundary-escapes))))
+    (define (boundary-escape-restore! snapshot)
+      (define escapes (current-boundary-escapes))
+      (when (and escapes snapshot)
+        (hash-clear! escapes)
+        (for ([(boundary pending) (in-hash snapshot)])
+          (hash-set! escapes boundary pending))))
     (define (call-with-flow-rollback thunk)
       (define snapshot (flow-snapshot))
-      (dynamic-wind void thunk (λ () (flow-restore! snapshot))))
+      (define escapes (boundary-escape-snapshot))
+      (dynamic-wind
+       void thunk
+       (λ ()
+         (flow-restore! snapshot)
+         (boundary-escape-restore! escapes))))
     (define (fresh-flow-key) (gensym 'mut-flow))
     (define (flow-key-of environment name)
       (match (assoc name environment)
@@ -1012,6 +1030,34 @@
         (string->symbol (format "boundary~a" boundary-counter)))
       (set! boundary-counter (add1 boundary-counter))
       boundary)
+
+    (define (judgment-completes? result)
+      (not (eq? (judgment-type result) 'Never)))
+
+    (define (register-pending-escape boundary return-type span result)
+      (define escapes (current-boundary-escapes))
+      (and escapes
+           (judgment-completes? result)
+           (let* ([pending
+                   (pending-escape boundary (flow-snapshot)
+                                   (judgment-core result) result
+                                   return-type span (box #f))]
+                  [previous (hash-ref escapes boundary '())])
+             (hash-set! escapes boundary (append previous (list pending)))
+             pending)))
+
+    (define (resolve-pending-escapes core)
+      (cond
+        [(pending-escape? core)
+         (define resolved (unbox (pending-escape-cell core)))
+         (unless resolved
+           (error 'resolve-pending-escapes
+                  "境界で確定されていない脱出: ~s" core))
+         (resolve-pending-escapes resolved)]
+        [(pair? core)
+         (cons (resolve-pending-escapes (car core))
+               (resolve-pending-escapes (cdr core)))]
+        [else core]))
 
     (define (fresh-callable signature)
       (define callable
@@ -2249,12 +2295,12 @@
                            (judgment-row body-result)
                            (judgment-core-type body-result)
                            (judgment-normal-type body-result))
-                 (flow-snapshot))))))
+                 (flow-snapshot) #f)))))
       (define-values (branch-results _joined-flow)
         (join-branch-flows
          eliminate-span environment entry-flow (map second branch-work)
          propositions
-         #:reachable? (not (eq? (judgment-normal-type scrutinee-result) '⊥))))
+         #:reachable? (judgment-completes? scrutinee-result)))
       (define results
         (for/list ([item (in-list branch-work)]
                    [branch-result (in-list branch-results)])
@@ -2305,7 +2351,7 @@
                              environment delta propositions boundaries
                              #:scrutinee-result [provided-scrutinee-result #f]
                              #:defer-fallthroughs [deferred #f])
-      (define entry-flow (flow-snapshot))
+      (define entry-flow #f)
       (define reversed-branch-results '())
       (define fallthroughs (box '()))
       (define-values (scrutinee-result clauses)
@@ -2316,24 +2362,24 @@
            #:on-clause
            (lambda (clause)
              (match-define (list _ _ _ body branch-environment _ _ _) clause)
+             (unless entry-flow (set! entry-flow (flow-snapshot)))
              (flow-restore! entry-flow)
              (define result
                (check body expected branch-environment
                       delta propositions boundaries))
              (set! reversed-branch-results
                    (cons (flow-branch branch-environment result
-                                      (flow-snapshot))
+                                      (flow-snapshot) #f)
                          reversed-branch-results))))))
+      (unless entry-flow (set! entry-flow (flow-snapshot)))
       (define-values (joined-results _joined-flow)
         (join-branch-flows
          eliminate-span environment entry-flow
          (reverse reversed-branch-results)
          propositions
          #:reachable?
-         (not (eq? (judgment-normal-type
-                    (or provided-scrutinee-result
-                        scrutinee-result))
-                   '⊥))))
+         (judgment-completes? (or provided-scrutinee-result
+                                  scrutinee-result))))
       (define branch-results
         (for/list ([result (in-list joined-results)])
           (list (judgment-core result)
@@ -2417,13 +2463,13 @@
                    (list _ _ _ body branch-environment _ _ _) clause)
                  (define branch-result
                    (synth body branch-environment delta propositions boundaries))
-                 (flow-branch branch-environment branch-result (flow-snapshot))))
+                 (flow-branch branch-environment branch-result (flow-snapshot)
+                              #f)))
              (define-values (results _joined-flow)
                (join-branch-flows
                 eliminate-span environment entry-flow flow-branches
                 propositions
-                #:reachable?
-                (not (eq? (judgment-normal-type scrutinee-result) '⊥))))
+                #:reachable? (judgment-completes? scrutinee-result)))
              (define-values (branch-cores core-type)
                (merge-branches (map judgment-core results)
                                (map judgment-core-type results)
@@ -2853,6 +2899,7 @@
     (define (call-with-elaboration-rollback-on-error boundaries thunk)
       (define saved-state (elaboration-state))
       (define saved-flow (flow-snapshot))
+      (define saved-escapes (boundary-escape-snapshot))
       (define saved-probes
         (for/list ([candidate-box (in-list (probe-candidate-boxes boundaries))])
           (list candidate-box (unbox candidate-box))))
@@ -2865,6 +2912,7 @@
             (λ (error)
               (restore-elaboration-state! saved-state)
               (flow-restore! saved-flow)
+              (boundary-escape-restore! saved-escapes)
               (for ([saved-probe (in-list saved-probes)])
                 (set-box! (first saved-probe) (second saved-probe)))
               (raise error))])
@@ -3500,7 +3548,7 @@
                                        ,discharged-type ,target))
                             ,discharged)))))
 
-    (struct flow-branch (environment result snapshot) #:transparent)
+    (struct flow-branch (environment result snapshot escape) #:transparent)
 
     (define (flow-name-for-key environment key)
       (for/or ([entry (in-list environment)])
@@ -3521,13 +3569,12 @@
 
     ;; 枝の検査は同じ入口から始め、正常出口の C だけを合流する。
     (define (join-branch-flows s environment entry branches propositions
-                               #:reachable? [reachable? #t])
+                               #:reachable? [reachable? #t]
+                               #:live-keys [provided-live-keys #f])
       (define live-branches
         (if reachable?
             (filter (λ (branch)
-                      (not (eq? (judgment-normal-type
-                                 (flow-branch-result branch))
-                                '⊥)))
+                      (judgment-completes? (flow-branch-result branch)))
                     branches)
             '()))
       (cond
@@ -3536,7 +3583,7 @@
          (values (map (λ (branch) (flow-branch-result branch)) branches)
                  entry)]
         [else
-         (define keys (live-flow-keys environment))
+         (define keys (or provided-live-keys (live-flow-keys environment)))
          (define joined-entries
            (for/list ([key (in-list keys)])
              (define name (flow-name-for-key environment key))
@@ -3576,7 +3623,8 @@
              (define result (flow-branch-result branch))
              (if (not (memq branch live-branches))
                  result
-                 (let ([reassignments
+                 (let* ([escape (flow-branch-escape branch)]
+                        [reassignments
                         (for/list ([joined (in-list joined-entries)]
                                    #:do [(match-define (list key target _pins)
                                            joined)]
@@ -3594,52 +3642,80 @@
                                   (flow-branch-snapshot branch) key
                                   (hash-ref entry key)))
                                 target))])
-                   (if (null? reassignments)
-                       result
-                       (let ([core
-                              (call-with-flow-rollback
-                               (λ ()
-                                 (flow-restore!
-                                  (flow-branch-snapshot branch))
-                                 (define result-core (judgment-core result))
-                                 (define result-type
-                                   (judgment-core-type result))
-                                 (define temporary (fresh-union-name))
-                                 (define resource? (resource-type? result-type))
-                                 (define tail
-                                   (if resource?
-                                       `(Move ,s (#:var ,temporary ,s))
-                                       `(#:var ,temporary ,s)))
-                                 (define rebuilt-tail
-                                   (for/fold ([body tail])
-                                             ([reassignment
-                                               (in-list
-                                                (reverse reassignments))])
-                                     (match-define (list key name actual target)
-                                       reassignment)
-                                     (define rebuilt
-                                       (rebuild-flow-value
-                                        s `(#:var ,name ,s) actual target
-                                        propositions))
-                                     (define unit-name (fresh-union-name))
-                                     `(Let ,s
-                                           ((#:bind ,unit-name ,s) const
-                                            (#:ty Unit ,s))
-                                           (Reassign ,s (#:var ,name ,s)
-                                                     (#:ty ,target ,s)
-                                                     ,rebuilt)
-                                           ,body)))
-                                 `(Let ,s
-                                       ((#:bind ,temporary ,s)
-                                        ,(if resource? 'let 'const)
-                                        (#:ty ,result-type ,s))
-                                       ,result-core ,rebuilt-tail)))])
-                         (judgment core
-                                   (judgment-type result)
-                                   (row-union (judgment-row result)
-                                              '(Mutation))
-                                   (judgment-core-type result)
-                                   (judgment-normal-type result))))))))
+                   (cond
+                     [(and (null? reassignments) (not escape)) result]
+                     [(and escape (null? reassignments))
+                      (define span (pending-escape-span escape))
+                      (judgment
+                       `(Perform ,span
+                                 (Return ,(pending-escape-boundary escape)
+                                         (#:ty ,(pending-escape-return-type escape)
+                                               ,span))
+                                 ,(judgment-core result))
+                       'Never
+                       (row-union
+                        (judgment-row result)
+                        `((Return ,(pending-escape-boundary escape)
+                                  ,(pending-escape-return-type escape))))
+                       'Never '⊥)]
+                     [else
+                      (define core
+                        (call-with-flow-rollback
+                         (λ ()
+                           (flow-restore! (flow-branch-snapshot branch))
+                           (define result-core (judgment-core result))
+                           (define result-type (judgment-core-type result))
+                           (define temporary (fresh-union-name))
+                           (define resource? (resource-type? result-type))
+                           (define tail
+                             (if resource?
+                                 `(Move ,s (#:var ,temporary ,s))
+                                 `(#:var ,temporary ,s)))
+                           (define rebuilt-tail
+                             (for/fold ([body tail])
+                                       ([reassignment
+                                         (in-list (reverse reassignments))])
+                               (match-define (list key name actual target)
+                                 reassignment)
+                               (define rebuilt
+                                 (rebuild-flow-value
+                                  s `(#:var ,name ,s) actual target propositions))
+                               (define unit-name (fresh-union-name))
+                               `(Let ,s
+                                     ((#:bind ,unit-name ,s) const
+                                      (#:ty Unit ,s))
+                                     (Reassign ,s (#:var ,name ,s)
+                                               (#:ty ,target ,s) ,rebuilt)
+                                     ,body)))
+                           (define operand
+                             `(Let ,s
+                                   ((#:bind ,temporary ,s)
+                                    ,(if resource? 'let 'const)
+                                    (#:ty ,result-type ,s))
+                                   ,result-core ,rebuilt-tail))
+                           (if escape
+                               `(Perform ,(pending-escape-span escape)
+                                         (Return
+                                          ,(pending-escape-boundary escape)
+                                         (#:ty ,(pending-escape-return-type escape)
+                                                ,(pending-escape-span escape)))
+                                         ,operand)
+                               operand))))
+                      (if escape
+                          (judgment
+                           core 'Never
+                           (row-union
+                            (row-union
+                             (judgment-row result)
+                             `((Return ,(pending-escape-boundary escape)
+                                       ,(pending-escape-return-type escape))))
+                            '(Mutation))
+                           'Never '⊥)
+                          (judgment core
+                                    (judgment-type result)
+                                    (row-union (judgment-row result) '(Mutation))
+                                    (judgment-core-type result)
+                                    (judgment-normal-type result)))])))))
          (flow-restore! joined-snapshot)
          (values rewritten-results joined-snapshot)]))
 
@@ -4042,9 +4118,16 @@
             (define returned-result
               (check returned return-type
                      environment delta propositions boundaries))
+            (define pending
+              (match (nearest-boundary boundaries)
+                [`(ExpressionBoundary ,candidate ,_ ,_)
+                 (register-pending-escape candidate return-type s
+                                          returned-result)]
+                [_ #f]))
             (judgment
-             `(Perform ,s (Return ,boundary (#:ty ,return-type ,s))
-                       ,(judgment-core returned-result))
+             (or pending
+                 `(Perform ,s (Return ,boundary (#:ty ,return-type ,s))
+                           ,(judgment-core returned-result)))
              'Never
              (row-union `((Return ,boundary ,return-type))
                         (judgment-row returned-result)))]
@@ -4555,24 +4638,50 @@
 
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))
+         (define entry-flow (flow-snapshot))
+         (define boundary-keys (live-flow-keys environment))
+         (define escapes (make-hasheq))
          (define deferred
            (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
          (define body-result
            (parameterize
-               ([current-deferred-when-fallthroughs
+               ([current-boundary-escapes escapes]
+                [current-deferred-when-fallthroughs
                  (and deferred (cons body deferred))])
              (check body expected environment delta propositions
                     (cons `(ExpressionBoundary ,boundary ,expected ,s)
                           boundaries))))
+         (define normal-exit (flow-snapshot))
          (when (and deferred
                     (pair? (unbox deferred))
                     (not (equal? (normalize-type expected) 'Unit)))
            (reject (first-when-fallthrough (unbox deferred))
                    'when-arm-missing-return))
+         (define pending (hash-ref escapes boundary '()))
+         (define branches
+           (cons (flow-branch environment body-result normal-exit #f)
+                 (for/list ([escape (in-list pending)])
+                   (flow-branch environment
+                                (pending-escape-payload-result escape)
+                                (pending-escape-snapshot escape)
+                                escape))))
+         (define-values (joined-results _joined-flow)
+           (join-branch-flows s environment entry-flow branches propositions
+                              #:live-keys boundary-keys))
+         (for ([escape (in-list pending)]
+               [result (in-list (cdr joined-results))])
+           (set-box! (pending-escape-cell escape) (judgment-core result)))
+         (define resolved-body-core
+           (resolve-pending-escapes
+            (judgment-core (first joined-results))))
+         (define boundary-row
+           (rows-union
+            (cons (judgment-row body-result)
+                  (map judgment-row joined-results))))
          (define own-return `((Return ,boundary ,expected)))
          (define caught?
            (for/or ([label (in-list own-return)])
-             (member label (judgment-row body-result) effect-equiv?)))
+             (member label boundary-row effect-equiv?)))
          (define propagate?
            (and (eq? (judgment-type body-result) 'Never)
                 (not caught?)))
@@ -4580,9 +4689,9 @@
           `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
                    (,s (#:bind return-value ,s) ->
                        (#:var return-value ,s))
-                   (Scope ,s () ,(judgment-core body-result)))
+                   (Scope ,s () ,resolved-body-core))
           (if propagate? 'Never expected)
-          (row-difference (judgment-row body-result) own-return)
+          (row-difference boundary-row own-return)
           (if propagate? 'Never expected)
           (if propagate?
               (judgment-normal-type body-result)
