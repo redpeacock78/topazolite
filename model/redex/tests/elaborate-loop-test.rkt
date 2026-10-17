@@ -32,6 +32,41 @@
   (check-exn loop-shape-error? (λ () (elab expression))
              (format "loop 印の形の内部エラーを期待した: ~s" expression)))
 
+(define (loop-program scrutinee loop-expression after
+                      #:declared [declared '(Record ((name String imm)))]
+                      #:initial [initial '(Rec ((name imm "A") (id imm 1)))]
+                      #:return [return-type 'String]
+                      #:row [row '(Partial Mutation)])
+  `(Apply
+    (Fn ((flag Bool) (g (NFn () Bool () ())))
+        ,return-type ,row
+      (Let (value mut ,declared) ,initial
+        (Let (ignored const Unit) ,loop-expression ,after)))
+    (Construct true (Types))
+    (Fn () Bool () (Construct true (Types)))))
+
+(define (elab-error-id expression)
+  (match (elab expression)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
+
+(define (count-form tree tag)
+  (+ (if (and (pair? tree) (eq? (car tree) tag)) 1 0)
+     (if (pair? tree)
+         (apply + (map (λ (part) (count-form part tag)) tree))
+         0)))
+
+(define (callable-references tree)
+  (define here
+    (match tree
+      [`(Lam ,_ ,callable ,_ ,_) (list callable)]
+      [`(Recur ,callable ,_ ,_ ,_ ,_) (list callable)]
+      [_ '()]))
+  (append here
+          (if (pair? tree)
+              (append-map callable-references tree)
+              '())))
+
 (test-case "Loop は UCore と UCore+ の形を持ち annotate と erase が往復する"
   (define raw '(Loop loop ((x Int)) Int () x (initial)))
   (check-true (redex-match? UCore e raw))
@@ -52,6 +87,312 @@
        (Recur loop () Unit (Partial Mutation) ,body (Apply loop))))
   (check-equal? (elaborated-core loop-expression)
                 (elaborated-core recur-expression)))
+
+(test-case "loop 印の back-edge から shape を広げ本検査で受理する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "B")
+                                (active imm (Construct true (Types))))))
+             (Apply loop)))
+          (false () -> unit))))
+    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define recur `(Recur loop () Unit (Partial Mutation) ,body (Apply loop)))
+    (define program (loop-program scrutinee marker '(Proj value name)))
+    (define inaccessible
+      (loop-program scrutinee marker '(Proj value active)))
+    (check-equal? (second (elaborated-core program)) 'String)
+    (check-equal? (elab-error-id inaccessible) "E-RCD-004")
+    (check-equal?
+     (elab-error-id (loop-program scrutinee recur '(Proj value name)))
+     "E-VAR-013")))
+
+(test-case "C* の下で読めない欄は本検査で拒否する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (observed const Int) (Proj value id)
+             (Let (changed const Unit)
+                  (Reassign value (Rec ((name imm "B"))))
+               (Apply loop))))
+          (false () -> unit))))
+    (define expression
+      (loop-program scrutinee
+                    `(Loop loop () Unit (Partial Mutation) ,body ())
+                    '(Proj value name)))
+    (check-equal? (elab-error-id expression) "E-RCD-004")))
+
+(test-case "正常出口が無い loop は C0 を保ち view 再代入を挿入しない"
+  (define expression
+    '(Apply
+      (Fn ((flag Bool) (g (NFn () Bool () ()))) Int (Partial)
+        (Let (value mut (Record ((name String imm))))
+             (Rec ((name imm "A") (id imm 1)))
+          (Loop loop () Int (Return Partial) (Return (Proj value id)) ())))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (match (elab expression)
+    [(list core type row callables)
+     (check-equal? type 'Int)
+     (check-equal? (core-type-of/diagnostic (erase-core core) '() callables)
+                   (list type row))
+     (check-equal? (count-form (erase-core core) 'Reassign) 0)]
+    [other (fail-check (format "脱出だけの loop を期待したが ~s" other))]))
+
+(test-case "T の欄と同じ幅で loop 内の余剰欄を代入できる"
+  (define body
+    '(Let (changed const Unit)
+          (Reassign value (Rec ((name imm "B") (id imm 1))))
+       (Apply loop)))
+  (define expression
+    (loop-program 'flag
+                  `(Loop loop () Unit (Partial Mutation) ,body ())
+                  '(Proj value name)
+                  #:initial '(Rec ((name imm "A")))))
+  (check-equal? (second (elaborated-core expression)) 'String))
+
+(test-case "loop 内で作った closure は C* の view を pin する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define closure-type '(NFn () String () ()))
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "B")
+                                (active imm (Construct true (Types))))))
+             (Let (closure const ,closure-type)
+                  (Fn () String () (Proj value name))
+               (Let (changed-again const Unit)
+                    (Reassign value (Rec ((name imm "C"))))
+                 unit))))
+          (false () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "D")
+                                (active imm (Construct false (Types))))))
+             (Apply loop))))))
+    (define expression
+      (loop-program scrutinee
+                    `(Loop loop () Unit (Partial Mutation) ,body ())
+                    '(Proj value name)))
+    (check-equal? (second (elaborated-core expression)) 'String)
+    (check-equal?
+     (elab-error-id
+      (loop-program scrutinee
+                    `(Loop loop () Unit (Partial Mutation) ,body ())
+                    '(Proj value active)))
+     "E-RCD-004")))
+
+(test-case "loop 印の外側にある pin は loop の view を固定する"
+  (define closure-type '(NFn () Int () ()))
+  (define (with-outer-pin loop-expression)
+    `(Apply
+      (Fn ((flag Bool) (g (NFn () Bool () ()))) Int (Partial Mutation)
+        (Let (value mut (Record ((name String imm))))
+             (Rec ((name imm "A") (id imm 1)))
+          (Let (closure const ,closure-type)
+               (Fn () Int () (Proj value id))
+            (Let (ignored const Unit)
+                 ,loop-expression
+              (Apply closure)))))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (define compatible-body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "B") (id imm 2)
+                          (active imm (Construct true (Types))))))
+       (Apply loop)))
+  (define expression
+    (with-outer-pin
+     `(Loop loop () Unit (Partial Mutation) ,compatible-body ())))
+  (check-equal? (second (elaborated-core expression)) 'Int)
+  (define incompatible-body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "B")
+                          (active imm (Construct true (Types))))))
+       (Apply loop)))
+  (define incompatible
+    (with-outer-pin
+     `(Loop loop () Unit (Partial Mutation) ,incompatible-body ())))
+  (check-equal? (elab-error-id incompatible) "E-VAR-013"))
+
+(test-case "loop 試行の callable と fresh 名は C0 での Recur と一致する"
+  (define closure-type '(NFn () String () ()))
+  (define body
+    `(Let (closure const ,closure-type)
+          (Fn () String () (Proj value name))
+       (Apply loop)))
+  (define loop-expression
+    (loop-program 'flag
+                  `(Loop loop () Unit (Partial) ,body ())
+                  '(Proj value name)
+                  #:row '(Partial)))
+  (define recur-expression
+    (loop-program 'flag
+                  `(Recur loop () Unit (Partial) ,body (Apply loop))
+                  '(Proj value name)
+                  #:row '(Partial)))
+  (check-equal? (elaborated-core loop-expression)
+                (elaborated-core recur-expression)))
+
+(test-case "C* と異なる本体でも callable 表は出力 Core と一致する"
+  (define closure-type '(NFn () String () ()))
+  (define body
+    `(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "B")
+                          (active imm (Construct true (Types))))))
+       (Let (closure const ,closure-type)
+            (Fn () String () (Proj value name))
+         (Apply loop))))
+  (match (elab
+          (loop-program 'flag
+                        `(Loop loop () Unit (Partial Mutation) ,body ())
+                        '(Proj value name)))
+    [(list core type row callables)
+     (check-equal? (core-type-of/diagnostic (erase-core core) '() callables)
+                   (list type row))
+     (check-equal? (sort (map first callables) symbol<?)
+                   (sort (remove-duplicates
+                          (callable-references (erase-core core)))
+                         symbol<?))]
+    [other (fail-check (format "C* の loop を期待したが ~s" other))]))
+
+(test-case "loop の入れ子でも外側の trial の pin 抑止を保つ"
+  (define inner-body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "B")
+                          (active imm (Construct true (Types))))))
+       (Apply inner)))
+  (define outer-body
+    `(Let (inner-result const Unit)
+          (Loop inner () Unit (Partial Mutation) ,inner-body ())
+       (Apply outer)))
+  (define expression
+    (loop-program 'flag
+                  `(Loop outer () Unit (Partial Mutation) ,outer-body ())
+                  '(Proj value name)))
+  (check-equal? (second (elaborated-core expression)) 'String))
+
+(test-case "同名の内側 mut binder は loop の対象を shadow する"
+  (define body
+    '(Let (inner-result const Unit)
+          (Let (value mut (Record ((name String imm))))
+               (Rec ((name imm "inner")))
+            (Let (changed const Unit)
+                 (Reassign value
+                           (Rec ((name imm "B")
+                                 (active imm (Construct true (Types))))))
+              unit))
+       (Let (observed const String) (Proj value name)
+         (Apply loop))))
+  (define expression
+    (loop-program 'flag
+                  `(Loop loop () Unit (Partial Mutation) ,body ())
+                  '(Proj value name)))
+  (check-equal? (second (elaborated-core expression)) 'String))
+
+(test-case "閉包捕捉の間で shape を変える枝も C* で受理する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define closure-type '(NFn () String () ()))
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "B")
+                                (active imm (Construct true (Types))))))
+             (Let (closure const ,closure-type)
+                  (Fn () String () (Proj value name))
+               (Let (changed-again const Unit)
+                    (Reassign value
+                              (Rec ((name imm "C") (id imm 2))))
+                 unit))))
+          (false () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "D")
+                                (active imm (Construct false (Types))))))
+             (Apply loop))))))
+    (define loop-expression
+      `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (check-equal?
+     (second (elaborated-core
+              (loop-program scrutinee loop-expression '(Proj value name))))
+     'String)
+    (check-equal?
+     (elab-error-id
+     (loop-program scrutinee loop-expression '(Proj value active)))
+     "E-RCD-004")))
+
+(test-case "試行の fallthrough と failure Return は成功・失敗後に漏れない"
+  (define narrative
+    '(NarrativeExpr
+      (Eliminate flag
+        ((true () -> unit)
+         (false () -> unit)))))
+  (define success-body
+    `(Let (matched const Unit) ,narrative
+       (Let (bound const (Option Unit))
+            (NarrativeExpr
+             (TryBind ignored
+                      (Construct some (Types Unit) unit)
+                      (Construct some (Types Unit) unit)))
+         (Apply loop))))
+  (define (wrap loop-expression body)
+    `(Apply
+      (Fn ((flag Bool) (g (NFn () Bool () ()))) (Option Unit) (Partial)
+        (Let (value mut (Record ((name String imm))))
+             (Rec ((name imm "A") (id imm 1)))
+          (Let (ignored const Unit)
+               ,(match loop-expression
+                  ['loop `(Loop loop () Unit (Partial) ,body ())]
+                  ['recur `(Recur loop () Unit (Partial) ,body (Apply loop))])
+            (Return (Construct some (Types Unit) unit)))))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (check-equal?
+   (elaborated-core (wrap 'loop success-body))
+   (elaborated-core (wrap 'recur success-body)))
+  (define failing-body
+    `(Let (matched const Unit) ,narrative
+       (Let (bound const (Option Unit))
+            (NarrativeExpr
+             (TryBind ignored
+                      (Construct some (Types Unit) unit)
+                      (Construct some (Types Unit) unit)))
+         (Let (missing const Int) (Proj value missing)
+           (Apply loop)))))
+  (check-equal? (elab-error-id (wrap 'loop failing-body)) "E-RCD-004")
+  (check-equal? (elab-error-id (wrap 'recur failing-body)) "E-RCD-004"))
+
+(test-case "安定した C0 を保ち、loop の前後に不要な Reassign を挿さない"
+  (define body
+    '(Let (observed const Int) (Proj value id)
+       (Let (changed const Unit)
+            (Reassign value
+                      (Rec ((name imm "B") (id imm 1))))
+         (Apply loop))))
+  (define expression
+    (loop-program 'flag
+                  `(Loop loop () Unit (Partial Mutation) ,body ())
+                  '(Proj value id)
+                  #:return 'Int))
+  (match (elab expression)
+    [(list core type row callables)
+     (check-equal? type 'Int)
+     (check-equal? (core-type-of/diagnostic (erase-core core) '() callables)
+                   (list type row))
+     (check-equal? (count-form (erase-core core) 'Reassign) 1)]
+    [other (fail-check (format "C0 が安定する loop を期待したが ~s" other))]))
 
 (test-case "loop 印の初回 Apply は変数と literal の引数を既存 Recur へ渡す"
   (for ([argument (in-list '(initial 7))])

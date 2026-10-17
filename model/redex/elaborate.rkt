@@ -1132,6 +1132,8 @@
     [`(Yield ,observed ,next)
      (set-union (free-vars/erased observed) (free-vars/erased next))]
     [`(Suspend ,body) (free-vars/erased body)]
+    [`(Reassign ,name ,value)
+     (set-union (free-vars/erased name) (free-vars/erased value))]
     [`(Move ,name) (set name)]
     [`(Drop ,body) (free-vars/erased body)]
     [`(Curry ,function ,argument)
@@ -1206,10 +1208,12 @@
 
     ;; SUR-014c0b1b spec §3。mut binder key から現在の C と pin への写像。
     (struct flow-entry (type pins) #:transparent)
+    (struct loop-trial (function targets entry-views log) #:transparent)
     (struct pending-escape
       (boundary snapshot payload-core payload-result return-type span cell)
       #:transparent)
     (define current-boundary-escapes (make-parameter #f))
+    (define current-loop-trials (make-parameter '()))
     (define flow-state (box (hasheq)))
     (define (flow-snapshot) (unbox flow-state))
     (define (flow-restore! snapshot) (set-box! flow-state snapshot))
@@ -1241,29 +1245,51 @@
       (flow-entry-type (hash-ref (unbox flow-state) key)))
     (define (flow-pins key)
       (flow-entry-pins (hash-ref (unbox flow-state) key)))
+    (define (loop-trial-suppressed-key? key)
+      (for/or ([trial (in-list (current-loop-trials))])
+        (memq key (loop-trial-targets trial))))
     (define (flow-set-type! key type)
       (define entry (hash-ref (unbox flow-state) key))
       (set-box! flow-state
                 (hash-set (unbox flow-state) key
                           (flow-entry type (flow-entry-pins entry)))))
     (define (flow-add-pin! key pin)
-      (define normalized
-        (or (normalize-type pin)
-            (error 'flow-add-pin! "正規化できない pin: ~s" pin)))
-      (define entry (hash-ref (unbox flow-state) key))
-      (unless (ormap (λ (current) (type-equiv? current normalized))
-                     (flow-entry-pins entry))
-        (set-box! flow-state
-                  (hash-set (unbox flow-state) key
-                            (flow-entry
-                             (flow-entry-type entry)
-                             (append (flow-entry-pins entry) (list normalized))))))
-      (void))
+      (unless (loop-trial-suppressed-key? key)
+        (define normalized
+          (or (normalize-type pin)
+              (error 'flow-add-pin! "正規化できない pin: ~s" pin)))
+        (define entry (hash-ref (unbox flow-state) key))
+        (unless (ormap (λ (current) (type-equiv? current normalized))
+                       (flow-entry-pins entry))
+          (set-box! flow-state
+                    (hash-set (unbox flow-state) key
+                              (flow-entry
+                               (flow-entry-type entry)
+                               (append (flow-entry-pins entry) (list normalized))))))
+        (void)))
     (define (flow-pin-captures! body bound-names environment)
       (for ([name (in-set (set-subtract (free-vars body)
                                         (list->set bound-names)))])
         (define key (flow-key-of environment name))
         (when key (flow-add-pin! key (flow-type key)))))
+    (define (record-loop-back-edge! function arguments)
+      (define function-name
+        (match (peel-node function)
+          [(? symbol? name) name]
+          [_ #f]))
+      (define trial
+        (and function-name
+             (for/or ([candidate (in-list (current-loop-trials))])
+               (and (eq? function-name (loop-trial-function candidate))
+                    candidate))))
+      (when (and trial (andmap judgment-completes? arguments))
+        (set-box! (loop-trial-log trial)
+                  (append (unbox (loop-trial-log trial))
+                          (list (flow-snapshot))))
+        (for ([key (in-list (loop-trial-targets trial))])
+          (flow-set-type! key
+                          (hash-ref (loop-trial-entry-views trial) key))))
+      (void))
     (define (live-flow-keys environment)
       (remove-duplicates
        (filter values
@@ -3163,6 +3189,39 @@
                boxes)]
           [_ boxes])))
 
+    (define (call-with-loop-trial-rollback boundaries thunk)
+      (define saved-state (elaboration-state))
+      (define saved-flow (flow-snapshot))
+      (define saved-escapes (boundary-escape-snapshot))
+      (define deferred (current-deferred-when-fallthroughs))
+      (define boxes
+        (remove-duplicates
+         (append (probe-candidate-boxes boundaries)
+                 (if (box? (current-when-arm-fallthroughs))
+                     (list (current-when-arm-fallthroughs))
+                     '())
+                 (if (and (pair? deferred) (box? (cdr deferred)))
+                     (list (cdr deferred))
+                     '()))
+         eq?))
+      (define saved-boxes
+        (for/list ([candidate-box (in-list boxes)])
+          (list candidate-box (unbox candidate-box))))
+      (define failure-returns (current-failure-returns))
+      (define saved-failure-returns (set->list failure-returns))
+      (dynamic-wind
+       void thunk
+       (λ ()
+         (restore-elaboration-state! saved-state)
+         (flow-restore! saved-flow)
+         (boundary-escape-restore! saved-escapes)
+         (for ([saved-box (in-list saved-boxes)])
+           (set-box! (first saved-box) (second saved-box)))
+         (for ([returned (in-list (set->list failure-returns))])
+           (set-remove! failure-returns returned))
+         (for ([returned (in-list saved-failure-returns)])
+           (set-add! failure-returns returned)))))
+
     ;; 失敗した検査の fresh 名、implicit Return 印、外側 probe の候補を戻す。
     (define (call-with-elaboration-rollback-on-error boundaries thunk)
       (define saved-state (elaboration-state))
@@ -3411,7 +3470,9 @@
              #:allow-block-body? [allow-block-body? #f]
              #:prepared-header [prepared-header #f]
              #:inherited-row [inherited-row #f]
-             #:return-span [return-span #f])
+             #:return-span [return-span #f]
+             #:on-body-result [on-body-result #f]
+             #:exclude-loop-trial [exclude-loop-trial #f])
       (when (and (block-body? body) (not allow-block-body?))
         (reject (block-body-span body) 'invalid-syntax))
       (define-values (function parameters parameter-types)
@@ -3458,8 +3519,11 @@
       (define body-result
         (call-with-flow-rollback
          (λ ()
-           (check-function-body body return-type return-span body-environment
-                                delta propositions body-boundaries))
+           (define result
+             (check-function-body body return-type return-span body-environment
+                                  delta propositions body-boundaries))
+           (when on-body-result (on-body-result result))
+           result)
          #:preserve-escapes? #t))
       (if boundary
           (check-function-body-row s body-result return-type boundary declared-row)
@@ -3467,8 +3531,13 @@
             (reject s 'undeclared-recur-effect
                     declared-row (judgment-row body-result))))
       (define continuation-result
-        (synth continuation function-environment
-               delta propositions boundaries))
+        (parameterize
+            ([current-loop-trials
+              (if exclude-loop-trial
+                  (remq exclude-loop-trial (current-loop-trials))
+                  (current-loop-trials))])
+          (synth continuation function-environment
+                 delta propositions boundaries)))
       (define handled-body
         (if (and boundary
                  (row-member-return? (judgment-row body-result) boundary))
@@ -4119,6 +4188,173 @@
          (flow-restore! joined-snapshot)
          (values rewritten-results joined-snapshot)]))
 
+    (define (elaborate-loop s raw-function parameter-binders
+                            raw-parameter-types raw-return-type raw-row
+                            body arguments environment delta propositions
+                            boundaries)
+      (define function (peel-bind raw-function))
+      (define parameters (map peel-bind parameter-binders))
+      (define free-names
+        (set-subtract (free-vars body)
+                      (list->set (cons function parameters))))
+      (define targets
+        (for/list ([name (in-list (remove-duplicates (map first environment)))]
+                   #:when (and (set-member? free-names name)
+                               (flow-key-of environment name)))
+          (list name (flow-key-of environment name))))
+      (define keys (map second targets))
+      (define declared-types
+        (for/hash ([target (in-list targets)])
+          (values (second target) (lookup environment (first target)))))
+      (define initial-views
+        (for/hash ([key (in-list keys)]) (values key (flow-type key))))
+      (define initial-state (flow-snapshot))
+      (define (with-views state views)
+        (for/fold ([updated state]) ([(key type) (in-hash views)])
+          (define entry (hash-ref updated key))
+          (hash-set updated key (flow-entry type (flow-entry-pins entry)))))
+      (define (trial-on views)
+        (define trial-state (with-views initial-state views))
+        (define entry-views
+          (for/hash ([key (in-list keys)])
+            (values key (hash-ref views key))))
+        (define trial (loop-trial function keys entry-views (box '())))
+        (with-handlers ([exn:fail:elab? (λ (_) (void))])
+          (call-with-loop-trial-rollback
+           boundaries
+           (λ ()
+             (flow-restore! trial-state)
+             (parameterize ([current-loop-trials
+                             (cons trial (current-loop-trials))])
+               (elaborate-recur-annotated
+                s raw-function parameter-binders raw-parameter-types
+                (λ () (resolve-annotation raw-return-type delta s))
+                raw-row body
+                `(Apply ,s (#:var ,function ,s) ,@arguments)
+                environment delta propositions boundaries
+                #:boundary? #f
+                #:on-body-result
+                (λ (result)
+                  (when (judgment-completes? result)
+                    (set-box! (loop-trial-log trial)
+                              (append (unbox (loop-trial-log trial))
+                                      (list (flow-snapshot))))))
+                #:exclude-loop-trial trial)))))
+        (unbox (loop-trial-log trial)))
+      (define (fixed-point)
+        (let iterate ([views initial-views]
+                      [history (for/hash ([key (in-list keys)])
+                                 (values key (list (hash-ref initial-views key))))]
+                      [removed (for/hash ([key (in-list keys)])
+                                 (values key (set)))]
+                      [fixed-at-declared (set)])
+          (define trial-entry (with-views initial-state views))
+          (define records (trial-on views))
+          (define-values (next-views next-removed next-fixed)
+            (for/fold ([next-views (hasheq)]
+                       [next-removed removed]
+                       [next-fixed fixed-at-declared])
+                      ([target (in-list targets)])
+              (define name (first target))
+              (define key (second target))
+              (define declared (hash-ref declared-types key))
+              (define current (hash-ref views key))
+              (cond
+                [(set-member? fixed-at-declared key)
+                 (values (hash-set next-views key declared)
+                         next-removed next-fixed)]
+                [else
+                 (define snapshots (cons trial-entry records))
+                 (define inputs
+                   (for/list ([snapshot (in-list snapshots)])
+                     (flow-entry-type (hash-ref snapshot key))))
+                 (define fit-failed? #f)
+                 (define fit-index -1)
+                 (define (fits? actual candidate)
+                   (set! fit-index (add1 fit-index))
+                   (define snapshot (list-ref snapshots fit-index))
+                   (define fits
+                     (with-handlers ([exn:fail:elab? (λ (_) #f)])
+                       (call-with-loop-trial-rollback
+                        boundaries
+                        (λ ()
+                          (flow-restore! snapshot)
+                          (or (reassign-narrowing? actual candidate)
+                              (begin
+                                (rebuild-flow-value
+                                 s `(#:var ,name ,s) actual candidate propositions)
+                                #t))))))
+                   (unless fits (set! fit-failed? #t))
+                   fits)
+                 (define-values (candidate _path)
+                   (flow-join-type inputs declared propositions))
+                 (define joined
+                   (loop-join inputs declared propositions fits?))
+                 (define fallback? (or (not candidate) fit-failed?))
+                 (define-values (widened removed*)
+                   (if fallback?
+                       (values declared (hash-ref removed key))
+                       (loop-widen current joined declared
+                                   (hash-ref removed key))))
+                 (define cycle?
+                   (and (not (type-equiv? widened current))
+                        (loop-cycle? widened (hash-ref history key))))
+                 (define next (if cycle? declared widened))
+                 (values (hash-set next-views key next)
+                         (hash-set next-removed key removed*)
+                         (if (or fallback? cycle?)
+                             (set-add next-fixed key)
+                             next-fixed))])))
+          (if (for/and ([key (in-list keys)])
+                (type-equiv? (hash-ref views key) (hash-ref next-views key)))
+              next-views
+              (iterate next-views
+                       (for/fold ([next-history history])
+                                 ([key (in-list keys)])
+                         (hash-set next-history key
+                                   (append (hash-ref history key)
+                                           (list (hash-ref next-views key)))))
+                       next-removed next-fixed))))
+      (define final-views
+        (if (null? targets) initial-views (fixed-point)))
+      (define prefix-assignments
+        (for/list ([target (in-list targets)]
+                   #:do [(define name (first target))
+                         (define key (second target))
+                         (define current (hash-ref initial-views key))
+                         (define final (hash-ref final-views key))]
+                   #:unless (reassign-narrowing? current final))
+          (define rebuilt
+            (rebuild-flow-value s `(#:var ,name ,s) current final propositions))
+          (list name final rebuilt)))
+      (for ([target (in-list targets)])
+        (flow-set-type! (second target)
+                        (hash-ref final-views (second target))))
+      (define recur-result
+        (elaborate-recur-annotated
+         s raw-function parameter-binders raw-parameter-types
+         (λ () (resolve-annotation raw-return-type delta s))
+         raw-row body
+         `(Apply ,s (#:var ,function ,s) ,@arguments)
+         environment delta propositions boundaries
+         #:boundary? #f))
+      (if (null? prefix-assignments)
+          recur-result
+          (let ([core
+                 (for/fold ([tail (judgment-core recur-result)])
+                           ([assignment (in-list (reverse prefix-assignments))])
+                   (match-define (list name type rebuilt) assignment)
+                   (define temporary (fresh-union-name))
+                   `(Let ,s
+                         ((#:bind ,temporary ,s) const (#:ty Unit ,s))
+                         (Reassign ,s (#:var ,name ,s) (#:ty ,type ,s) ,rebuilt)
+                         ,tail))])
+            (judgment core
+                      (judgment-type recur-result)
+                      (row-union '(Mutation) (judgment-row recur-result))
+                      (judgment-core-type recur-result)
+                      (judgment-normal-type recur-result)))))
+
     (define (elaborate-annotated-let-bound s binding-mode raw-type bound
                                            environment delta propositions
                                            boundaries)
@@ -4216,13 +4452,10 @@
          (validate-loop-shape! s raw-function
                                (map list parameter-binders raw-parameter-types)
                                raw-result-type body arguments)
-         (synth/raw
-          `(Recur ,s ,raw-function
-                  ,(map list parameter-binders raw-parameter-types)
-                  ,raw-result-type ,raw-row ,body
-                  (Apply ,s (#:var ,(peel-bind raw-function) ,s)
-                         ,@arguments))
-          environment delta propositions boundaries)]
+         (elaborate-loop s raw-function parameter-binders
+                         raw-parameter-types raw-result-type raw-row
+                         body arguments environment delta propositions
+                         boundaries)]
 
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                   ,raw-return-type ,raw-row ,body ,continuation)
@@ -4322,20 +4555,22 @@
             (define applied
               `(Apply ,s ,(judgment-core function-result)
                       ,@(map judgment-core argument-results)))
-            (close-owned-function
-             wrap
-             (propagate-context-never
-              (judgment
-              ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 φ_2) が
-              ;; (Discharge P_1 (Discharge P_2 (Apply ...))) になる。
-              (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
-                `(Discharge ,s ,proof ,core))
-              return-type
-              (rows-union
-               (append (list (judgment-row function-result))
-                       (map judgment-row argument-results)
-                       (list latent-row))))
-              (cons function-result argument-results)))]
+            (define result
+              (close-owned-function
+               wrap
+               (propagate-context-never
+                (judgment
+                ;; 義務列の先頭を最も外側にする。逆順に畳むと (φ_1 (φ_2 Apply)) になる。
+                (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
+                  `(Discharge ,s ,proof ,core))
+                return-type
+                (rows-union
+                 (append (list (judgment-row function-result))
+                         (map judgment-row argument-results)
+                         (list latent-row))))
+               (cons function-result argument-results))))
+            (record-loop-back-edge! function argument-results)
+            result]
            [_ (reject s 'apply-non-function (judgment-type function-result))])]
 
         [`(Rec (,raw-fields ...))
