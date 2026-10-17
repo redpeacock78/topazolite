@@ -565,17 +565,18 @@
   (check-equal?
    (elaborated-core (wrap 'loop success-body))
    (elaborated-core (wrap 'recur success-body)))
-  (define failing-body
-    `(Let (matched const Unit) ,narrative
-       (Let (bound const (Option Unit))
-            (NarrativeExpr
-             (TryBind ignored
-                      (Construct some (Types Unit) unit)
-                      (Construct some (Types Unit) unit)))
-         (Let missing (Proj value missing)
-           (Apply loop)))))
-  (check-equal? (elab-error-id (wrap 'loop failing-body)) "E-RCD-004")
-  (check-equal? (elab-error-id (wrap 'recur failing-body)) "E-RCD-004"))
+  (for ([missing-binder (in-list '((missing const Int) missing))])
+    (define failing-body
+      `(Let (matched const Unit) ,narrative
+         (Let (bound const (Option Unit))
+              (NarrativeExpr
+               (TryBind ignored
+                        (Construct some (Types Unit) unit)
+                        (Construct some (Types Unit) unit)))
+           (Let ,missing-binder (Proj value missing)
+             (Apply loop)))))
+    (check-equal? (elab-error-id (wrap 'loop failing-body)) "E-RCD-004")
+    (check-equal? (elab-error-id (wrap 'recur failing-body)) "E-RCD-004")))
 
 (test-case "外側 trial 中の内側 loop 本検査も注釈つき Let の診断を受け止める"
   (for ([scrutinee (in-list '(flag (Apply g)))])
@@ -589,26 +590,26 @@
       `(Let (%stmt const Unit)
             (Let (edge const Unit) (Apply inner) ,probed-when)
          (Apply inner)))
-    (define outer-body
-      `(Eliminate ,scrutinee
-         ((true () ->
-           (Let (ignored const Unit)
-                (Loop inner () Unit (Partial Mutation) ,inner-body ())
-             (Let (changed const Unit)
-                  (Reassign value (Rec ((name imm "B") (id imm "s"))))
-               (Apply outer))))
-          (false () -> (Apply outer)))))
     (define after
       '(Eliminate (Proj value id)
          ((Int i -> unit) (String s -> unit))))
-    (check-equal?
-     (second
-      (elaborated-core
-       (loop-program scrutinee
-                     `(Loop outer () Unit (Partial Mutation)
-                            ,outer-body ())
-                     after #:return 'Unit)))
-     'Unit)))
+    (define (outer-loop binder)
+      (define outer-body
+        `(Eliminate ,scrutinee
+           ((true () ->
+             (Let ,binder
+                  (Loop inner () Unit (Partial Mutation) ,inner-body ())
+               (Let (changed const Unit)
+                    (Reassign value (Rec ((name imm "B") (id imm "s"))))
+                 (Apply outer))))
+            (false () -> (Apply outer)))))
+      `(Loop outer () Unit (Partial Mutation) ,outer-body ()))
+    (for ([binder (in-list '((ignored const Unit) ignored))])
+      (check-equal?
+       (second
+        (elaborated-core
+         (loop-program scrutinee (outer-loop binder) after #:return 'Unit)))
+       'Unit))))
 
 (test-case "loop 試行は probe 中の注釈つき Let を受け止め後続の flow を使う"
   (for ([scrutinee (in-list '(flag (Apply g)))])
