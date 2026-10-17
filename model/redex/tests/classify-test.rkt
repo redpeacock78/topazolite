@@ -52,6 +52,43 @@
   (check-equal? (classify map-loop map-environment map-callables)
                 '(Finite structural)))
 
+(define discharge-proof
+  '(ProofRep (Reserved o-narrow)
+             (RemainderSafelyDropped (Record ()) (Record ()))))
+(define discharged-structural-loop
+  `(Recur list-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Discharge ,discharge-proof (Apply loop tail)))))
+     (Apply loop (Construct (List Int) nil))))
+(define owned-discharged-structural-loop
+  `(Recur list-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (OwnLeaf
+           (Discharge ,discharge-proof (Apply loop tail))))))
+     (Apply loop (Construct (List Int) nil))))
+(define discharged-nondecreasing-loop
+  `(Recur list-loop-id loop (xs)
+     (Eliminate xs
+       ((nil () -> 0)
+        (cons (head tail) ->
+          (Discharge ,discharge-proof (Apply loop xs)))))
+     (Apply loop (Construct (List Int) nil))))
+
+(test-case "REC-001: 構造的減少は Discharge と OwnLeaf の内側まで調べる"
+  (check-equal? (classify discharged-structural-loop '() structural-callables)
+                '(Finite structural))
+  (check-equal?
+   (classify owned-discharged-structural-loop '() structural-callables)
+   '(Finite structural)))
+
+(test-case "REC-001: Discharge 内でも減少しない自己適用は Unknown"
+  (check-equal? (classify discharged-nondecreasing-loop '() structural-callables)
+                'Unknown))
+
 (define reassign-loop-callables
   '((reassign-loop-id (NFn ((List Int)) Int () () () User))
     (reassign-closure-id (NFn () Unit () () () User))))

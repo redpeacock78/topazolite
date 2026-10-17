@@ -747,6 +747,11 @@
        (walk argument decomposable strict target-visible?)]
       [`(Reassign ,_ ,_flow-type ,value)
        (walk value decomposable strict target-visible?)]
+      [`(OwnLeaf ,scoped)
+       (walk scoped decomposable strict target-visible?)]
+      ;; Discharge は proof を消費して本体を返すため、減少走査は本体を調べる。
+      [`(Discharge ,_ ,body)
+       (walk body decomposable strict target-visible?)]
       [`(Handle ,_ (,name -> ,handler) ,handled)
        (and (walk handler
                   (set-remove decomposable name)
