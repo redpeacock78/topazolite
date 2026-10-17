@@ -179,7 +179,7 @@
   (define (plus children) (add1 (depths children)))
   (match type
     [`(Record ,row) (if (null? row) 1 (add1 (depths (map second row))))]
-    [`(Union ,_ ,_) (add1 (depths (union-members type)))]
+    [`(Union ,_ ,_) (depths (union-members type))]
     [`(Intersection ,left ,right) (plus (list left right))]
     [`(List ,element) (plus (list element))]
     [`(Option ,element) (plus (list element))]
@@ -4323,7 +4323,8 @@
                          (define key (second target))
                          (define current (hash-ref initial-views key))
                          (define final (hash-ref final-views key))]
-                   #:unless (reassign-narrowing? current final))
+                   #:unless (type-equiv? (normalize-type current)
+                                         (normalize-type final)))
           (define rebuilt
             (rebuild-flow-value s `(#:var ,name ,s) current final propositions))
           (list name final rebuilt)))

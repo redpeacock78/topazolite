@@ -56,6 +56,13 @@
          (apply + (map (λ (part) (count-form part tag)) tree))
          0)))
 
+(define (contains-reassign-view? tree type)
+  (cond
+    [(and (list? tree) (= (length tree) 4) (eq? (first tree) 'Reassign))
+     (type-equiv? (third tree) type)]
+    [(pair? tree) (ormap (λ (part) (contains-reassign-view? part type)) tree)]
+    [else #f]))
+
 (define (callable-references tree)
   (define here
     (match tree
@@ -109,6 +116,138 @@
     (check-equal?
      (elab-error-id (loop-program scrutinee recur '(Proj value name)))
      "E-VAR-013")))
+
+(test-case "loop の有限な余剰欄 Union は三成員へ収束する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define transitions
+      `(Let (from-relay const Unit)
+            (Reassign value
+                      (Rec ((name imm "V") (tag imm (Proj relay tag)))))
+         (Let (from-source const Unit)
+              (Reassign relay
+                        (Rec ((name imm "R") (tag imm (Proj source tag)))))
+           (Apply loop))))
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () -> ,transitions)
+          (false () -> unit))))
+    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define post-loop
+      '(Eliminate (Proj value tag)
+         ((Int i -> unit) (String s -> unit) (Bool b -> unit))))
+    (define program
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ()))
+             (seed (Union Int String)))
+            Unit (Partial Mutation)
+          (Let (value mut (Record ((name String imm))))
+            (Rec ((name imm "A") (tag imm seed)))
+            (Let (relay mut (Record ((name String imm))))
+                 (Rec ((name imm "S") (tag imm "S")))
+              (Let (source const (Record ((name String imm) (tag Bool imm))))
+                   (Rec ((name imm "B") (tag imm (Construct true (Types)))))
+                (Let (ignored const Unit) ,marker ,post-loop)))))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))
+        1))
+    (match (elaborated-core program)
+      [(list core type _row _callables)
+       (check-equal? type 'Unit)
+       ;; 2 本文代入に、value と relay の入口 view 再構成が 1 件ずつ加わる。
+       (check-equal? (count-form core 'Reassign) 4)])))
+
+(test-case "loop の自己包含 Record は余剰欄を拡幅して停止する"
+  (define body
+    '(Let (changed const Unit)
+          (Reassign value (Rec ((name imm "a") (child imm value))))
+       (Apply loop)))
+  (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define initial '(Rec ((name imm "A") (child imm 1))))
+    (define name-program
+      (loop-program scrutinee marker '(Proj value name) #:initial initial))
+    (define child-program
+      (loop-program scrutinee marker '(Proj value child) #:initial initial))
+    (check-equal? (second (elaborated-core name-program)) 'String)
+    (check-equal? (elab-error-id child-program) "E-RCD-004")))
+
+(test-case "loop の data wrapper 内の自己値も停止して受理される"
+  (define body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "a")
+                          (child imm
+                                 (Construct some
+                                            (Types (Record ((name String imm))))
+                                            value)))))
+       (Apply loop)))
+  (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define initial
+      '(Rec ((name imm "A")
+             (child imm (Construct some (Types Int) 1)))))
+    (define program
+      (loop-program scrutinee marker '(Proj value name) #:initial initial))
+    (check-equal? (second (elaborated-core program)) 'String)))
+
+(test-case "loop の入れ子 Record は停止し名前だけを残す"
+  (define body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm (Proj value name))
+                          (id imm (Rec ((child imm value)))))))
+       (Apply loop)))
+  (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define initial '(Rec ((name imm "A") (id imm 1))))
+    (define name-program
+      (loop-program scrutinee marker '(Proj value name) #:initial initial))
+    (define id-program
+      (loop-program scrutinee marker '(Proj value id) #:initial initial))
+    (check-equal? (second (elaborated-core name-program)) 'String)
+    ;; 本検査でも再代入の右辺が id を読むため、この対照形は拒否される。
+    (check-equal? (elab-error-id id-program) "E-RCD-004")))
+
+(test-case "loop の id を読む自己包含形は C* の本検査で拒否する"
+  (define body
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm (Proj value name))
+                          (id imm (Rec ((child imm (Proj value id))))))))
+       (Apply loop)))
+  (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+  (check-equal?
+   (elab-error-id
+    (loop-program 'flag marker '(Proj value name)
+                  #:initial '(Rec ((name imm "A") (id imm 1)))))
+   "E-RCD-004"))
+
+(test-case "Return 脱出は C* の view で合流する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define body
+      `(Eliminate ,scrutinee
+         ((true () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "B") (id imm 2))))
+             (Return value)))
+          (false () ->
+           (Let (changed const Unit)
+                (Reassign value
+                          (Rec ((name imm "B")
+                                (id imm (Rec ((child imm 1)))))))
+             unit)))))
+    (define marker `(Loop loop () Unit (Return Partial Mutation) ,body ()))
+    (define program
+      (loop-program scrutinee marker '(Rec ((name imm "done")))
+                    #:declared '(Record ((name String imm)))
+                    #:initial '(Rec ((name imm "A") (id imm 1)))
+                    #:return '(Record ((name String imm)))))
+    (define-values (core type _row _callables)
+      (apply values (elaborated-core program)))
+    (check-true (type-equiv? type '(Record ((name String imm)))))
+    (check-true
+     (contains-reassign-view? core '(Record ((name String imm)))))))
 
 (test-case "C* の下で読めない欄は本検査で拒否する"
   (for ([scrutinee (in-list '(flag (Apply g)))])
@@ -521,14 +660,14 @@
                            (λ (_input _candidate) #t))
                 '(Union Int String)))
 
-(test-case "loop-type-depth は各型構成子を一段として数える"
+(test-case "loop-type-depth は Union を除く各型構成子を一段として数える"
   (check-equal? (loop-type-depth 'Int) 0)
   (check-equal? (loop-type-depth '(Record ((a Int imm)))) 1)
-  (check-equal? (loop-type-depth '(Union Int String)) 1)
+  (check-equal? (loop-type-depth '(Union Int String)) 0)
   (check-equal? (loop-type-depth '(Data Box ((Record ((a Int imm)))))) 2)
   (check-equal? (loop-type-depth '(NFn ((Record ((a Int imm)))) Unit () () () User)) 2)
   (check-equal? (loop-type-depth '(Owned (Record ((a Int imm))))) 2)
-  (check-equal? (loop-type-depth '(Borrowed (Union Int String) r)) 2))
+  (check-equal? (loop-type-depth '(Borrowed (Union Int String) r)) 1))
 
 (test-case "loop-cycle? は正規化で同値な型を履歴から検出する"
   (check-true
