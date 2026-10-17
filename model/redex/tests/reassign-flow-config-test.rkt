@@ -8,6 +8,7 @@
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
+         "../region.rkt"
          "../typing.rkt")
 
 (define (config-trace initial)
@@ -49,6 +50,45 @@
   (check-true
    (for/or ([configuration (in-list configs)])
      (equal? (config-declared-types configuration) `((0 ,view))))))
+
+(test-case "RSD 後の config は非資源の余剰欄を物理値に残したまま再代入できる"
+  (define view '(Record ((id Int imm) (name String imm))))
+  (define wide-value
+    '(Rec ((active imm (Construct Bool true)) (id imm 2) (name imm "B"))))
+  (define core `(Reassign (MutSlot 0) ,view ,wide-value))
+  (define configuration
+    `(cfg ,core
+          ((0 (Rec ((id imm 1) (name imm "A"))) (declared ,view)))
+          ((0 Available)) () ()))
+  (check-equal? (runtime-row configuration '() 'Unit) '(Mutation))
+  (check-true (config-ok? configuration '() 'Unit '(Mutation)))
+  (check-equal? (config-declared-types configuration) `((0 ,view))))
+
+(test-case "config 再代入の RSD 受理は静的な width 再代入を許さない"
+  (define view '(Record ((id Int imm) (name String imm))))
+  (define wide-value
+    '(Rec ((active imm (Construct Bool true)) (id imm 2) (name imm "B"))))
+  (define result
+    (type-of/raw `(Reassign value ,view ,wide-value)
+                 '() '() `((value ,view mut)) (empty-region-ctx)))
+  (check-equal?
+   (match result
+     [(list 'fail key _node _details ...) key]
+     [_ 'ok])
+   'reassign-type-mismatch))
+
+(test-case "config 再代入は余剰の Owned field を受理しない"
+  (define view '(Record ((id Int imm) (name String imm))))
+  (define wide-value
+    '(Rec ((id imm 2)
+           (name imm "B")
+           (owned imm (OwnedLeaf (tok 72) (resource 1))))))
+  (define configuration
+    `(cfg (Reassign (MutSlot 0) ,view ,wide-value)
+          ((0 (Rec ((id imm 1) (name imm "A"))) (declared ,view)))
+          ((0 Available)) (((tok 72) Available)) ()))
+  (check-false (runtime-row configuration '() 'Unit))
+  (check-false (config-ok? configuration '() 'Unit '(Mutation))))
 
 (test-case "config の Union 再代入後は tag 付き view で読み出す"
   (define union-type '(Union Int String))

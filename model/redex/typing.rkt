@@ -3461,7 +3461,12 @@
        (if flow-entry*
            (flow-entry-declared flow-entry*)
            (and (not (deriving-config?)) τ_slot)))
-     (unless (reassign-narrowing? τ_value τ_flow)
+     ;; config の許容は、静的に型付けされた Core の RSD が除去後に残した
+     ;; 非資源・非借用の物理的な余剰欄を再型付けするときに限る。
+     (unless (or (reassign-narrowing? τ_value τ_flow)
+                 (and (deriving-config?)
+                      (mut-slot-type-supported? τ_value)
+                      (rsd-proof-pair-ok? τ_value τ_flow type-compatible?)))
        (fail 'reassign-type-mismatch core τ_flow τ_value))
      (when (and declared
                 (not (tag-compat? τ_flow declared
