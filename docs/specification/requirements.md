@@ -1016,7 +1016,8 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |
 | TypeInfo 生成関数を第一級値として渡す機能 | `core-calculus.md` §3.5 | Phase 未定 | §4.1 |
-| 閉包捕捉後の mut binder の flow 縮約（読むだけの閉包も捕捉時の view を pin し、pin へ値を作り直せない再代入を拒否する。緩和には閉包ごとの読取り path と書込み先・更新後の状態の要約、および呼出し時に呼出し側の flow を更新する effect が要る） | `core-calculus.md` §5.1 | Phase 未定 | §4.5.2 |
+| 閉包捕捉後の mut binder の flow 縮約（汎用の閉包と `Recur` では読むだけの閉包も捕捉時の view を pin し、pin へ値を作り直せない再代入を拒否する。loop 印は固定点で扱う。緩和には閉包ごとの読取り path と書込み先・更新後の状態の要約、および呼出し時に呼出し側の flow を更新する effect が要る） | `core-calculus.md` §5.1 | Phase 未定 | §4.5.2 |
+| loop 印の固定点計算による flow の精度縮約（合流候補を作れない場合か入力を候補へ作り直せない場合、および循環の検出で T へ拡幅すること、有限に収束する余剰欄も深さの増加で除くこと、試行で受け止めない診断の後の再代入を観測できないこと） | `core-calculus.md` §5.1 | Phase 未定 | §4.5.2 |
 | 型位置の表記（`type` 宣言、Union と Intersection の演算子）を TypeNarrative による TypeInfo 生成として表す機能 | `surface.md` §5 | Phase 未定 | §4.3 |
 | 観測 payload に残る借用の生存判定 | `core-calculus.md` §5.1 | Phase 4 以降 | §4.8 |
 | 非同期な観測者を表す非決定的な retire | `core-calculus.md` §5.6 | Phase 未定 | 無し |

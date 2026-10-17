@@ -110,7 +110,14 @@ UCore+ では `(BlockBody s e)` とし、`s` は Surface 本体 block の閉じ�
 これら以外の位置にある `BlockBody` は不変条件の違反として拒否する。
 Typed Core と Core の文法および簡約規則には `BlockBody` は現れない。
 
-`recur` はユーザーへ `fix` を露出しない内部 marker であり、Surface の loop 構文はここへ lowering される（ホワイトペーパー §7.2）。
+UCore は `for` の lowering だけが作る loop 印 `(Loop f ((x uτ) ...) uret uε e (a ...))` を持つ。
+UCore+ では `(Loop s xs ((xs ts) ...) tr es e (a+ ...))` とし、`s` は印の span、`xs` と `ts` は関数名と仮引数の binder および型の注釈、`tr` と `es` は結果型と Effect row の注釈である。
+最後の欄は初回呼出しの実引数であり、loop 印の本体と宣言は `Recur` と同じ意味を持つ。
+elaboration は loop 印を固定点の下で検査し、必要な `Reassign` の後ろに既存の `Recur` と初回 `Apply` を出力する。
+loop 印は Typed Core と Core には残らない（§5.1）。
+
+`recur` はユーザーへ `fix` を露出しない内部 marker である。
+Surface の `for` は UCore の loop 印へ lowering され、elaboration が固定点を求めた後に `Recur` と初回 `Apply` へ展開する（§5.1）。
 `fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
 このラベルは elaboration が最寄りの境界へ静的に解決する（§4.5）。
 
@@ -1611,6 +1618,99 @@ config の再型付けは値が C に適合することと C の storage 条件�
 余剰欄に借用を含む場合は `mut-slot-type-supported?` が、`Owned` を含む場合は `runtime-row` が拒否する。
 静的な `reassign-narrowing?` と R-Reassign の原子的な更新はこの例外の対象外である。
 したがって Preservation の主張は、静的に型付けされた Core から始まる到達可能な config に限る。
+
+### loop 印の固定点
+
+loop 印は、`Recur` と、その継続に置く初回の自己呼出しを一つにまとめた UCore の中間形である。
+宣言する結果型は明示しなければならず、`#:infer` は loop 印の形の違反となる。
+この印は `for` の lowering だけが生成するため、形の違反は Surface 診断ではなく内部不変条件の違反として扱う。
+
+elaboration は、loop 印の本体が自由に参照する mut binder を**対象**とする。
+本体の中で導入された mut binder は対象に含めない。
+各対象には宣言型 T、初期 view C0、試行中の view Ck を対応させる。
+T は binder の宣言型、C0 は loop 印へ入る時点の flow 型である。
+
+固定点の試行が back-edge を正しく観測できるよう、elaboration は loop 印の形を検証する。
+初回呼出しの実引数は変数または literal に限り、関数名 f を含めない。
+本体に現れる f は、遅延した callable の本体の外にある `Apply` の先頭で、変数 f としてだけ現れてよい。
+遅延した callable には `Fn`、`Recur`、`FnDecl`、`Loop`、`Curry` が含まれる。
+本体に f の呼出しがあること自体は要求しない。
+本体の中で f を束縛し直すこともできない。
+検証は関数名と仮引数、`Let`、`Eliminate`、`IfSome`、`TryBind`、`Curry` の binder、および入れ子の `Fn`、`Recur`、`FnDecl`、`Loop` の名前と仮引数を含む。
+検証に失敗した loop 印は内部不変条件の違反として停止し、Surface 診断へ変換しない。
+
+elaboration は C0 から試行を始め、本体で f を先頭とする `Apply` の実引数を評価した後の対象 view を back-edge として記録する。
+記録後は呼出し後の対象 view を Ck に戻す。
+本体が正常に完了する場合は出口の view も記録する。
+`Never` で終わる経路と外側の Return boundary へ脱出する経路は正常出口に含めず、外側への脱出は固定点の計算の後、本検査で登録し直す。
+
+試行は loop 印の入口から既にある pin を保つが、対象には試行中の pin を加えない。
+対象でない局所 mut binder の pin は通常どおり扱う。
+この区別により、試行中に見えた一時的な view が固定点の計算を止めず、本検査では最終 view の下で閉包を pin できる。
+
+試行は出力を作らず、成功または失敗の後に状態を巻き戻す。
+巻き戻す状態には flow、pending Return、fresh identity と callable の表、probe の候補、暗黙の Return の印、`when` の fallthrough、および失敗した Return の記録を含める。
+back-edge と正常出口の記録だけは試行の観測結果なので保持する。
+
+試行中の診断は最終的な受理を決めない。
+文位置の `%stmt` を束縛する `Let` または型注釈のある `Let` の右辺で診断が起きた場合、elaboration はその右辺より前の状態へ戻し、注釈に基づく仮の束縛で本体の試行を続ける。
+この局所的な復元では fresh identity と callable の表を保ち、試行全体の終了時にだけそれらを戻す。
+それ以外の位置の診断はその試行を終え、それまでに記録した back-edge と正常出口だけを合流へ渡す。
+elaboration は診断例外だけをこの規則で扱い、内部不変条件の違反は伝播させる。
+本検査は診断を受け止めず、本体全体を検査し直す。
+loop 試行中の probe は診断の受け止めを無効にする。
+外側の試行中に入れ子の loop 印を検査するときは外側の受け止めを継承し、外側の本検査では診断を受け止めない。
+
+対象ごとに、back-edge と正常出口の view を F(Ck) とし、次の規則で試行の候補を更新する。
+
+```text
+C0 = 初期 view
+C(k+1) = join(Ck, F(Ck))
+```
+
+`join` は Ck と記録された view を既存の flow 合流でまとめる。
+全入力が型同値ならその共通型を候補とする。
+それ以外では Record の `merge-row` を使い、T の欄との tag 互換性を保つよう補正する。
+非同値の入力に Record でない型が含まれる場合、または `merge-row` が合流を作れない場合は候補が無い。
+候補を作れない場合、または入力の一つを候補へ作り直せない場合は、その対象の view を T にする。
+作り直しの可否は `reassign-narrowing?` を先に試し、成り立たなければ該当 snapshot の状態を戻して既存の `rebuild-flow-value` を試す。
+この試行の合流は拒否せず、最終的な受理は本検査だけが決める。
+
+反復が収束しないときは、正規化した view の履歴との循環を検出した対象を T にする。
+余剰欄の型が反復で深くなった場合にも停止できるよう、elaboration はその欄を除いて以後の view に戻さない。
+余剰欄の判定では、T の位置を対応先の集合として view の型構造に沿って配る。
+view が Union の位置では同じ対応先を各成員へ渡す。
+Record の位置では、直下の T の Record を候補に保ち、T 側の Union 成員の Record は view と `tag-compat?` で両立するものだけを候補にする。
+対応する Record が一つ以上あり、その全てが欄を持つ場合に限って欄の型へ対応先を配り、それ以外の欄を余剰欄とする。
+Union 成員の対応は T 側の成員 index で区別し、view 側の成員を区別に使わない。
+除去の記録は構造の経路、対応する Record の集合、欄名の組ごとに保つ。
+余剰欄の下位部分も余剰欄として扱う。
+余剰欄の除去で view が T に `tag-compat?` で収まらなくなった場合は T にする。
+T への拡幅と余剰欄の除去は view の精度を落とすが、固定した反復回数による打切りは行わない。
+
+型の深さは、型構成子を一段として数える。
+Union は成員の深さの最大とし、Union 自身は段に数えない。
+Record、Intersection、`List`、`Option`、`Result`、`Owned`、`Borrowed`、`BorrowedMut`、`RawPtr`、`Untrusted`、`Refined`、名前付き data 型、`NFn`、`ForallRegion`、`TypeInfo`、`Proof` は一段として数える。
+payload と型引数を持つ構成子では、その子型の深さの最大に一を加える。
+基本型は深さ 0 である。
+data 型は対応先を payload へ配らず不透明に扱う。
+対応先は `NFn` の返り値にだけ配り、反変となる引数型には配らない。
+深さの計算では `NFn` の引数型と返り値型を子型として数える。
+
+停止するのは、T に沿って辿る位置と型の候補が有限であり、余剰欄は深さが増えた段で記録されて以後戻らないためである。
+対応する Record の集合は T 内の有限な出現箇所の部分集合であり、その集合が反復で変わっても除去鍵は有限個である。
+T の構造外に残る余剰欄は、型の深さが増えた段で除かれるので深さが有界となる。
+正規化後の view が有限個しかないため、反復が収束しなければ履歴との循環を検出して T にする。
+
+全対象の view が更新前と等価になったとき、その view を固定点 C* とする。
+初期 view C0 と C* が等価でない対象には、C0 の値を C* へ作り直す `Reassign` を loop 印の前に挿入する。
+C0 が C* に幅の狭い型として収まるだけの場合も挿入する。
+挿入しなければ、elaboration が使う C* と Core の loop 入口に残る C0 が異なり、本体の再代入を Core が検査できないためである。
+
+その後、elaboration は対象の view を C* に置き、通常の `Recur` として本体を検査し、初回 `Apply` を継続として検査する。
+loop 印は出力から消え、Core の型付け規則は増えない。
+本検査が成功すれば、対象への再代入と正常出口は C* に作り直され、自己呼出しの入口と出口の flow は既存の `flow-check-backedge` を満たす。
+固定点の試行が加えなかった pin と Return の脱出も、本検査で最終 view の下に作られる。
 
 **(T-Scope)**
 
