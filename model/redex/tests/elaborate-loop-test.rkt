@@ -205,7 +205,7 @@
     (define id-program
       (loop-program scrutinee marker '(Proj value id) #:initial initial))
     (check-equal? (second (elaborated-core name-program)) 'String)
-    ;; 本検査でも再代入の右辺が id を読むため、この対照形は拒否される。
+    ;; 本検査後も id は C* から除かれているため、この対照形は拒否される。
     (check-equal? (elab-error-id id-program) "E-RCD-004")))
 
 (test-case "loop の id を読む自己包含形は C* の本検査で拒否する"
@@ -216,11 +216,45 @@
                           (id imm (Rec ((child imm (Proj value id))))))))
        (Apply loop)))
   (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
-  (check-equal?
-   (elab-error-id
-    (loop-program 'flag marker '(Proj value name)
-                  #:initial '(Rec ((name imm "A") (id imm 1)))))
-   "E-RCD-004"))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (check-equal?
+     (elab-error-id
+      (loop-program scrutinee marker '(Proj value name)
+                    #:initial '(Rec ((name imm "A") (id imm 1)))))
+     "E-RCD-004")))
+
+(test-case "loop の余剰欄に Owned を含む値は loop 印の前に拒否する"
+  (define (resource-program scrutinee extra-value)
+    `(Apply
+      (Fn ((make (NFn () (Owned Int) (Own) ()))
+           (flag Bool)
+           (g (NFn () Bool () ())))
+        String (Partial Mutation Own)
+        (Let (value mut (Record ((name String imm))))
+             (Rec ((name imm "A")))
+          (Let (ignored const Unit)
+               (Loop loop () Unit (Partial Mutation Own)
+                 (Eliminate ,scrutinee
+                   ((true () ->
+                     (Let (changed const Unit)
+                          (Reassign value
+                                    (Rec ((name imm "B") (extra imm ,extra-value))))
+                       (Apply loop)))
+                    (false () -> unit)))
+                 ())
+            (Proj value name))))
+      (Fn () (Owned Int) (Own) (Apply acquire 13))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define direct (resource-program scrutinee '(Apply make)))
+    (check-equal? (elab-error-id direct) "E-OWN-007")
+    (check-equal?
+     (elab-error-id
+      (resource-program
+       scrutinee
+       '(Construct some (Types (Owned Int)) (Apply make))))
+     "E-VAR-012")))
 
 (test-case "Return 脱出は C* の view で合流する"
   (for ([scrutinee (in-list '(flag (Apply g)))])
