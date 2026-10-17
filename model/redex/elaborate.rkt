@@ -1015,6 +1015,11 @@
                              (flow-entry-type entry)
                              (append (flow-entry-pins entry) (list normalized))))))
       (void))
+    (define (flow-pin-captures! body bound-names environment)
+      (for ([name (in-set (set-subtract (free-vars body)
+                                        (list->set bound-names)))])
+        (define key (flow-key-of environment name))
+        (when key (flow-add-pin! key (flow-type key)))))
     (define (live-flow-keys environment)
       (remove-duplicates
        (filter values
@@ -2841,6 +2846,8 @@
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta
                     #:expected-parameter-types expected-parameter-types))
+      (define _capture-flow-pin
+        (flow-pin-captures! body parameters environment))
       (define return-type (resolve-return))
       (define declared-row
         (or inherited-row
@@ -2855,12 +2862,14 @@
              ,return-type () ,declared-row () User))
       (define callable (fresh-callable signature))
       (define body-result
-        (check-function-body
-         body return-type return-span
-         (extend environment parameters parameter-types #f
-                 (map resource-type? parameter-types))
-         delta propositions
-         (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))
+        (call-with-flow-rollback
+         (λ ()
+           (check-function-body
+            body return-type return-span
+            (extend environment parameters parameter-types #f
+                    (map resource-type? parameter-types))
+            delta propositions
+            (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))))
       (check-function-body-row s body-result return-type boundary declared-row)
       (finish-fn s parameter-binders parameter-types
                  captures capture-types capture-raw-names raw-names
@@ -3089,6 +3098,8 @@
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta))
+      (define _capture-flow-pin
+        (flow-pin-captures! body parameters environment))
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
       (define parameter-environment
@@ -3109,9 +3120,12 @@
           (let ()
             (define boundary (fresh-boundary))
             (define body-result
-              (synth body parameter-environment
-                     delta propositions
-                     (cons `(FunctionBoundary ,boundary #:infer ,s) boundaries)))
+              (call-with-flow-rollback
+               (λ ()
+                 (synth body parameter-environment
+                        delta propositions
+                        (cons `(FunctionBoundary ,boundary #:infer ,s)
+                              boundaries)))))
             (define return-type (judgment-type body-result))
             (check-function-body-row s body-result return-type boundary declared-row)
             (define-values (capture-raw-names raw-names capture-binders core-binders
@@ -3180,9 +3194,13 @@
         (if boundary
             (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)
             boundaries))
+      (define _capture-flow-pin
+        (flow-pin-captures! body (cons function parameters) environment))
       (define body-result
-        (check-function-body body return-type return-span body-environment
-                             delta propositions body-boundaries))
+        (call-with-flow-rollback
+         (λ ()
+           (check-function-body body return-type return-span body-environment
+                                delta propositions body-boundaries))))
       (if boundary
           (check-function-body-row s body-result return-type boundary declared-row)
           (unless (row-subset? (judgment-row body-result) declared-row)
@@ -3235,6 +3253,7 @@
           (resolve-annotation type delta s)))
       (when (captures-owned? body (cons function parameters) environment)
         (reject s 'owned-recur-capture))
+      (flow-pin-captures! body (cons function parameters) environment)
       (when (set-member? (free-vars body) function)
         (reject s 'return-type-not-inferable 'self-reference))
       (values function parameters parameter-types
@@ -3259,7 +3278,9 @@
             (cons `(FunctionBoundary ,body-boundary #:infer ,s) boundaries)
             boundaries))
       (define body-result
-        (synth body parameter-environment delta propositions body-boundaries))
+        (call-with-flow-rollback
+         (λ ()
+           (synth body parameter-environment delta propositions body-boundaries))))
       (define return-type (judgment-type body-result))
       (unless (row-subset? (judgment-row body-result) declared-row)
         (reject s 'undeclared-recur-effect

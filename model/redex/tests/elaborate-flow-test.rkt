@@ -100,6 +100,11 @@
      (apply + (map (λ (child) (count-form child wanted)) tree))]
     [else 0]))
 
+(define (elab-diagnostic-id expression)
+  (match (elab expression)
+    [(list 'err diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
+
 (test-case "非 mut の仮引数は外側の mut flow key を遮蔽する"
   (check-equal?
    (elab-type
@@ -520,51 +525,56 @@
      (run-source (string-replace source "f(true)" "f(false)"))
      "C")))
 
-(test-case "Return の payload を評価してから境界の view を再構成する"
-  (define expression
-    '(Fn ((flag Bool)) String (Mutation)
-        (Let (value mut (Record ((name String imm))))
-             (Rec ((name imm "A") (id imm 1)))
-          (Let (answer const Int)
-               (NarrativeExpr
-                (Eliminate flag
-                           ((true () ->
-                             (Return
-                              (Let (tmp const Unit)
-                                   (Reassign value
-                                             (Rec ((name imm "B")
-                                                   (id imm 2)
-                                                   (active imm
-                                                           (Construct true (Types))))))
-                                   (Proj value id))))
-                            (false () -> (Return 3)))))
-            (Proj value name)))))
-  (match (elab expression)
-    [(list core _type _row callables)
-     (define erased (erase-core core))
-     (define (has-form? tree wanted)
-       (cond
-         [(and (pair? tree) (eq? (car tree) wanted)) #t]
-         [(pair? tree)
-          (or (has-form? (car tree) wanted)
-              (has-form? (cdr tree) wanted))]
-         [else #f]))
-     (define (payload-before-reassign? tree)
-       (or (match tree
-             [`(Perform (Return ,_ ,_)
-                        (Let (,temporary const ,_) ,payload
-                          (Let (,unit-name const Unit)
-                            (Reassign ,_ ,_ ,_) ,tail)))
-              (and (eq? tail temporary)
-                   (has-form? payload 'Reassign))]
-             [_ #f])
-           (and (pair? tree)
-                (or (payload-before-reassign? (car tree))
-                    (payload-before-reassign? (cdr tree))))))
-     (check-true (payload-before-reassign? erased)
-                 (format "Return payload precedes the boundary Reassign: ~s" erased))
-     (void)]
-    [other (fail-check (format "elaboration success expected: ~s" other))]))
+(test-case "Return payload の評価後に境界の view を再構成する"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define expression
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ()))) String (Mutation)
+          (Let (value mut (Record ((name String imm))))
+               (Rec ((name imm "A") (id imm 1)))
+            (Let (answer const Int)
+                 (NarrativeExpr
+                  (Eliminate ,scrutinee
+                    ((true () ->
+                       (Return
+                        (Let (tmp const Unit)
+                             (Reassign value
+                                       (Rec ((name imm "B")
+                                             (id imm 2)
+                                             (active imm
+                                                     (Construct true (Types))))))
+                             (Proj value id))))
+                     (false () -> (Return 3)))))
+              (Proj value name))))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))))
+    (match (elab expression)
+      [(list core type row callables)
+       (define erased (erase-core core))
+       (define (has-form? tree wanted)
+         (cond
+           [(and (pair? tree) (eq? (car tree) wanted)) #t]
+           [(pair? tree)
+            (or (has-form? (car tree) wanted)
+                (has-form? (cdr tree) wanted))]
+           [else #f]))
+       (define (payload-before-reassign? tree)
+         (or (match tree
+               [`(Perform (Return ,_ ,_)
+                          (Let (,temporary const ,_) ,payload
+                            (Let (,unit-name const Unit)
+                              (Reassign ,_ ,_ ,_) ,tail)))
+                (and (eq? tail temporary)
+                     (has-form? payload 'Reassign))]
+               [_ #f])
+             (and (pair? tree)
+                  (or (payload-before-reassign? (car tree))
+                      (payload-before-reassign? (cdr tree))))))
+       (check-true (payload-before-reassign? erased)
+                   (format "脱出 payload の後に境界 Reassign があること: ~s" erased))
+       (check-equal? (core-type-of/diagnostic erased '() callables)
+                     (list type row))]
+      [other (fail-check (format "elaboration success expected: ~s" other))])))
 
 (test-case "Never の Return payload は脱出 table に登録しない"
   (check-true
@@ -580,57 +590,60 @@
       (not (return-with-let-operand? (erase-core core)))]
      [_ #f])))
 
-(test-case "資源 Return の operand 内で view を再構成して token を一度だけ返す"
-  (define expression
-    '(Apply
-      (Fn ((flag Bool) (payload (Owned Res)))
-          (Owned Res) (Mutation Own)
+(test-case "資源 Return operand 内で view を再構成して token を一度だけ返す"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define expression
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ())) (payload (Owned Res)))
+            (Owned Res) (Mutation Own)
           (Let (value mut (Record ((name String imm))))
                (Rec ((name imm "A") (id imm 1)))
             (NarrativeExpr
-             (Eliminate flag
+             (Eliminate ,scrutinee
                ((true () ->
                   (Let (rebuilt const Unit)
                        (Reassign value
                                  (Rec ((name imm "B")
+                                       (id imm 2)
                                        (active imm (Construct true (Types))))))
                     (Return (Move payload))))
                 (false () -> (Return (Move payload))))))))
-      (Construct true (Types))
-      (Apply acquire 1)))
-  (match (elab expression)
-    [(list core type row callables)
-     (check-equal? type '(Owned Res))
-     (check-not-false (member 'Own row))
-     (check-not-false (member 'Mutation row))
-     (define (resource-return-with-rebuild? tree)
-       (or (match tree
-             [`(Perform (Return ,_ (Owned Res))
-                        (Let (,temporary let (Owned Res)) (Move ,_)
-                          (Let (,_ const Unit) (Reassign ,_ ,_ ,_)
-                            (Move ,moved))))
-              (eq? temporary moved)]
-             [_ #f])
-           (and (pair? tree)
-                (or (resource-return-with-rebuild? (car tree))
-                    (resource-return-with-rebuild? (cdr tree))))))
-     (check-true (resource-return-with-rebuild? (erase-core core)))
-     (define typed (core-type-of/diagnostic (erase-core core) '() callables))
-     (check-equal? typed (list type row))
-     (call-with-trait-ledger
-      (current-trait-ledger)
-      (λ ()
-        (define terminal
-          (run-g2 (inject-g2m (erase-core core)) 10000))
-        (match terminal
-          [`(cfg ,value ,_heap ,_states ,tokens ,_events)
-           (define carried (collect-tokens value))
-           (define available
-             (filter (λ (entry) (eq? (second entry) 'Available)) tokens))
-           (check-equal? (length carried) 1)
-           (check-equal? (map first available) carried)]
-          [other (fail-check (format "terminal config expected, got ~s" other))])))]
-    [other (fail-check (format "UCore elaboration expected, got ~s" other))]))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))
+        (Apply acquire 1)))
+    (match (elab expression)
+      [(list core type row callables)
+       (check-equal? type '(Owned Res))
+       (check-not-false (member 'Own row))
+       (check-not-false (member 'Mutation row))
+       (define (resource-return-with-rebuild? tree)
+         (or (match tree
+               [`(Perform (Return ,_ (Owned Res))
+                          (Let (,temporary let (Owned Res)) (Move ,_)
+                            (Let (,_ const Unit) (Reassign ,_ ,_ ,_)
+                              (Move ,moved))))
+                (eq? temporary moved)]
+               [_ #f])
+             (and (pair? tree)
+                  (or (resource-return-with-rebuild? (car tree))
+                      (resource-return-with-rebuild? (cdr tree))))))
+       (define erased (erase-core core))
+       (check-true (resource-return-with-rebuild? erased))
+       (define typed (core-type-of/diagnostic erased '() callables))
+       (check-equal? typed (list type row))
+       (call-with-trait-ledger
+        (current-trait-ledger)
+        (λ ()
+          (define terminal (run-g2 (inject-g2m erased) 10000))
+          (match terminal
+            [`(cfg ,value ,_heap ,_states ,tokens ,_events)
+             (define carried (collect-tokens value))
+             (define available
+               (filter (λ (entry) (eq? (second entry) 'Available)) tokens))
+             (check-equal? (length carried) 1)
+             (check-equal? (map first available) carried)]
+            [other (fail-check (format "terminal config expected, got ~s" other))])))]
+      [other (fail-check (format "UCore elaboration expected, got ~s" other))])))
 
 (test-case "局所 Narrative からの脱出で内側 mut shadow が外側 flow に混ざらない"
   (for ([scrutinee (in-list '("b" "yes(b)"))])
@@ -712,3 +725,157 @@
        (check-equal? (core-type-of/diagnostic erased '() callables)
                      (list type row))]
       [other (fail-check (format "elaboration success expected: ~s" other))])))
+
+(define pinned-name-type '(Record ((name String imm))))
+(define pinned-name-id-type '(Record ((id Int imm) (name String imm))))
+(define pinned-name-initial '(Rec ((name imm "A") (id imm 1))))
+(define pinned-name-active
+  '(Rec ((active imm (Construct true (Types))) (name imm "B"))))
+(define pinned-name-id-active
+  '(Rec ((active imm (Construct true (Types))) (id imm 2) (name imm "B"))))
+
+(test-case "closure 後の再代入は pin と一致する view へ再構成できる"
+  (for ([right-hand-side
+         (in-list
+          (list
+           '(Rec ((name imm "B") (id imm 2)))
+           pinned-name-id-active))])
+    (define expression
+      `(Let (value mut ,pinned-name-type) ,pinned-name-initial
+         (Let (saved const (NFn () Int () ()))
+              (Fn () Int () (Proj value id))
+           (Let (changed const Unit)
+                (Reassign value ,right-hand-side)
+             (Proj value id)))))
+    (check-equal? (elab-type expression) 'Int)))
+
+(test-case "closure pin に P の欄が欠けるか欄型が違う右辺は拒否する"
+  (define missing-field
+    `(Let (value mut ,pinned-name-type) ,pinned-name-initial
+       (Let (saved const (NFn () Int () ()))
+            (Fn () Int () (Proj value id))
+         (Let (changed const Unit)
+              (Reassign value ,pinned-name-active)
+           (Proj value name)))))
+  (define wrong-field-type
+    '(Let (value mut (Record ((name String imm))))
+          (Rec ((name imm "A") (id imm 1)))
+       (Let (saved const (NFn () Int () ()))
+            (Fn () Int () (Proj value id))
+         (Let (changed const Unit)
+              (Reassign value (Rec ((name imm "B") (id imm "x"))))
+           (Proj value name)))))
+  (check-equal? (elab-diagnostic-id missing-field) "E-VAR-013")
+  (check-equal? (elab-diagnostic-id wrong-field-type) "E-VAR-013"))
+
+(test-case "closure pin の枝合流は同じ pin を保ち、片側の pin も引き継ぐ"
+  (define function-type '(NFn () String () ()))
+  (define (branch-expression scrutinee true-branch false-branch)
+    `(Apply
+      (Fn ((flag Bool) (g (NFn () Bool () ()))) String (Mutation)
+        (Let (value mut ,pinned-name-type) ,pinned-name-initial
+          (Let (saved const ,function-type)
+               (Eliminate ,scrutinee
+                 ((true () -> ,true-branch)
+                  (false () -> ,false-branch)))
+            (Proj value name))))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define captures-value '(Fn () String () (Proj value name)))
+    (define no-capture '(Fn () String () "constant"))
+    (check-equal?
+     (elab-type (branch-expression scrutinee captures-value no-capture))
+     'String)
+    (check-equal?
+     (elab-type (branch-expression scrutinee captures-value captures-value))
+     'String)))
+
+(test-case "異なる closure pin と pin へ作り直せない枝は枝合流で拒否する"
+  (define function-type '(NFn () String () ()))
+  (define (branch-expression scrutinee true-branch false-branch)
+    `(Apply
+      (Fn ((flag Bool) (g (NFn () Bool () ()))) String (Mutation)
+        (Let (value mut ,pinned-name-type) ,pinned-name-initial
+          (Let (saved const ,function-type)
+               (Eliminate ,scrutinee
+                 ((true () -> ,true-branch)
+                  (false () -> ,false-branch)))
+            (Proj value name))))
+      (Construct true (Types))
+      (Fn () Bool () (Construct true (Types)))))
+  (define (assign-then-closure rhs)
+    `(Let (changed const Unit) (Reassign value ,rhs)
+       (Fn () String () (Proj value name))))
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (check-equal?
+     (elab-diagnostic-id
+      (branch-expression
+       scrutinee
+       (assign-then-closure pinned-name-id-active)
+       (assign-then-closure
+        '(Rec ((enabled imm (Construct true (Types))) (id imm 3) (name imm "C"))))))
+     "E-VAR-013")
+    (check-equal?
+     (elab-diagnostic-id
+      (branch-expression
+       scrutinee
+       '(Fn () String () (Proj value name))
+       (assign-then-closure pinned-name-active)))
+     "E-VAR-013")))
+
+(test-case "closure 本体は pin view で再代入し、内部 flow を外へ漏らさない"
+  (define expression
+    `(Let (value mut ,pinned-name-type) ,pinned-name-initial
+       (Let (saved const (NFn () Int (Mutation) ()))
+            (Fn () Int (Mutation)
+                (Let (changed const Unit)
+                     (Reassign value ,pinned-name-id-active)
+                  (Proj value id)))
+         (Proj value active))))
+  (check-equal? (elab-diagnostic-id expression) "E-RCD-004"))
+
+(test-case "Recur と FnDecl は捕捉時に pin し、呼出しの row と flow を保つ"
+  (for ([constructor (in-list '(Recur FnDecl))])
+    (define expression
+      `(Let (value mut ,pinned-name-type) ,pinned-name-initial
+         (,constructor loop () Int (Mutation)
+           (Let (changed const Unit)
+                (Reassign value ,pinned-name-id-active)
+             (Proj value id))
+           (Let (changed const Unit)
+                (Reassign value ,pinned-name-id-active)
+             (Apply loop)))))
+    (match (elab expression)
+      [(list core type row callables)
+       (check-equal? type 'Int)
+       (check-equal? row '(Mutation))
+       (check-equal? (find-reassign-view (erase-core core))
+                     pinned-name-id-type)
+       (check-equal? (core-type-of/diagnostic (erase-core core) '() callables)
+                     (list type row))]
+      [other (fail-check (format "Recur の elaboration success expected: ~s" other))])))
+
+(test-case "Curry の固定引数は mut binder を pin しない"
+  (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define expression
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ()))) Bool (Mutation)
+          (Let (value mut ,pinned-name-type) ,pinned-name-initial
+            (Let (saved const (NFn (Bool) Int () ()))
+                 (Curry
+                  (Fn ((captured ,pinned-name-id-type) (unused Bool)) Int ()
+                      (Proj captured id))
+                  value)
+              (Eliminate ,scrutinee
+                ((true () ->
+                   (Let (changed const Unit)
+                        (Reassign value ,pinned-name-active)
+                     (Proj value active)))
+                 (false () ->
+                   (Let (changed const Unit)
+                        (Reassign value ,pinned-name-active)
+                     (Proj value active))))))))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))))
+    (check-equal? (elab-type expression) 'Bool)))
