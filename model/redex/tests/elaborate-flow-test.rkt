@@ -105,6 +105,14 @@
     [(list 'err diagnostic) (diagnostic-id diagnostic)]
     [_ #f]))
 
+(define (check-elab-core-typing expression expected-type)
+  (match (elab expression)
+    [(list core type row callables)
+     (check-equal? type expected-type)
+     (check-equal? (core-type-of/diagnostic (erase-core core) '() callables)
+                   (list type row))]
+    [other (fail-check (format "elaboration success expected: ~s" other))]))
+
 (test-case "非 mut の仮引数は外側の mut flow key を遮蔽する"
   (check-equal?
    (elab-type
@@ -747,7 +755,7 @@
            (Let (changed const Unit)
                 (Reassign value ,right-hand-side)
              (Proj value id)))))
-    (check-equal? (elab-type expression) 'Int)))
+    (check-elab-core-typing expression 'Int)))
 
 (test-case "closure pin に P の欄が欠けるか欄型が違う右辺は拒否する"
   (define missing-field
@@ -784,12 +792,10 @@
   (for ([scrutinee (in-list '(flag (Apply g)))])
     (define captures-value '(Fn () String () (Proj value name)))
     (define no-capture '(Fn () String () "constant"))
-    (check-equal?
-     (elab-type (branch-expression scrutinee captures-value no-capture))
-     'String)
-    (check-equal?
-     (elab-type (branch-expression scrutinee captures-value captures-value))
-     'String)))
+    (check-elab-core-typing
+     (branch-expression scrutinee captures-value no-capture) 'String)
+    (check-elab-core-typing
+     (branch-expression scrutinee captures-value captures-value) 'String)))
 
 (test-case "異なる closure pin と pin へ作り直せない枝は枝合流で拒否する"
   (define function-type '(NFn () String () ()))
@@ -808,6 +814,23 @@
     `(Let (changed const Unit) (Reassign value ,rhs)
        (Fn () String () (Proj value name))))
   (for ([scrutinee (in-list '(flag (Apply g)))])
+    (define no-pin-branch
+      `(Apply
+        (Fn ((flag Bool) (g (NFn () Bool () ()))) String (Mutation)
+          (Let (value mut ,pinned-name-type) ,pinned-name-initial
+            (Let (result const String)
+                 (Eliminate ,scrutinee
+                   ((true () ->
+                      (Let (saved const (NFn () Int () ()))
+                           (Fn () Int () (Proj value id))
+                        "captured"))
+                    (false () ->
+                      (Let (changed const Unit)
+                           (Reassign value ,pinned-name-active)
+                        "not captured"))))
+              (Proj value name))))
+        (Construct true (Types))
+        (Fn () Bool () (Construct true (Types)))))
     (check-equal?
      (elab-diagnostic-id
       (branch-expression
@@ -822,7 +845,8 @@
        scrutinee
        '(Fn () String () (Proj value name))
        (assign-then-closure pinned-name-active)))
-     "E-VAR-013")))
+     "E-VAR-013")
+    (check-equal? (elab-diagnostic-id no-pin-branch) "E-VAR-013")))
 
 (test-case "closure 本体は pin view で再代入し、内部 flow を外へ漏らさない"
   (define expression
@@ -878,4 +902,4 @@
                      (Proj value active))))))))
         (Construct true (Types))
         (Fn () Bool () (Construct true (Types)))))
-    (check-equal? (elab-type expression) 'Bool)))
+    (check-elab-core-typing expression 'Bool)))
