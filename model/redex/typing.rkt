@@ -2098,6 +2098,7 @@
      (unless (tag-compat? payload-type member-type*
                           (current-Γ-pc0) (current-region-relation))
        (fail 'ill-typed node))
+     (check-borrow-hiding! payload-type member-type* node fail)
      (list union-type* row next-psi)]))
 
 (define (check-eliminate scrutinee branches expected
@@ -2875,6 +2876,12 @@
   (and (owned-free? type)
        (not (borrowed-type-anywhere? type))))
 
+;; BOR-001 / OWN-004。余剰の借用を型 view から隠すには、明示的な RSD が要る。
+(define (check-borrow-hiding! actual expected node fail
+                              [compatible? type-compatible?])
+  (unless (eq? (borrow-hiding-kind actual expected compatible?) 'ok)
+    (fail 'borrow-hidden-by-narrowing node)))
+
 (define (binding-context binding-mode declared-type bound Λ Ψ
                          environment places callables node fail)
   (when (and (eq? binding-mode 'mut)
@@ -2918,6 +2925,11 @@
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
         (define narrowing-row binding-row)
+        (check-borrow-hiding!
+         `(Record ,actual-row) `(Record ,narrowing-row) bound fail
+         (lambda (actual expected)
+           (compat? actual expected (current-Γ-pc0)
+                    (current-region-relation))))
         ;; OWN-004。binding-row の宣言欄と残余欄を保って narrowing を検査する。
         (match (owned-narrowing-kind
                 `(Record ,actual-row)
@@ -3413,6 +3425,7 @@
      (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
   (unless (type-compatible? τ_value τ_payload)
     (fail 'assign-union-variant core))
+  (check-borrow-hiding! τ_value τ_payload core fail)
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
@@ -3468,6 +3481,7 @@
                       (mut-slot-type-supported? τ_value)
                       (rsd-proof-pair-ok? τ_value τ_flow type-compatible?)))
        (fail 'reassign-type-mismatch core τ_flow τ_value))
+     (check-borrow-hiding! τ_value τ_flow core fail reassign-narrowing?)
      (when (and declared
                 (not (tag-compat? τ_flow declared
                                   (current-Γ-pc0) (current-region-relation))))
@@ -3609,6 +3623,7 @@
     (pointer-parts core τ_target fail))
   (unless (type-compatible? τ_value τ_payload)
     (fail 'rawstore-type-mismatch core))
+  (check-borrow-hiding! τ_value τ_payload core fail)
   (check-raw-obligations! core (raw-store-obligation-ids) τ_payload fail)
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
@@ -3720,6 +3735,8 @@
                  [(and optional-type
                        (not (type-compatible? field-type optional-type)))
                   (fail 'projopt-invalid-field core)])
+               (when optional-type
+                 (check-borrow-hiding! field-type optional-type core fail))
                (if optional-type `(Option ,optional-type) field-type))
              (if (field-optional? field)
                  (fail 'project-optional-field core)
@@ -4030,6 +4047,10 @@
     [`(RemainderSafelyDropped ,tau-actual ,tau-expected)
      (unless (proof-issuer-ok? (current-R0) origin phi)
        (fail 'discharge-proof-issuer core))
+     (when (eq? (borrow-hiding-kind tau-actual tau-expected
+                                    type-compatible?)
+                'reject)
+       (fail 'borrow-hidden-by-narrowing core))
      (match (owned-narrowing-kind tau-actual tau-expected type-compatible?)
        ['reject
         (fail 'owned-narrowing-rejected core tau-expected tau-actual)]
@@ -4039,8 +4060,15 @@
           [(list row result-psi _)
            (unless (rsd-proof-pair-ok? tau-actual tau-expected
                                        type-compatible?)
-             (fail 'owned-narrowing-rejected core
-                   tau-expected tau-actual))
+             (define target-type
+               (remainder-target-type tau-actual tau-expected))
+             (if (and target-type
+                      (not (eq? (borrow-hiding-kind target-type tau-expected
+                                                   type-compatible?)
+                                'ok)))
+                 (fail 'borrow-hidden-by-narrowing core)
+                 (fail 'owned-narrowing-rejected core
+                       tau-expected tau-actual)))
            (list tau-expected row result-psi)])])]))
 
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
@@ -4190,6 +4218,24 @@
                 environment places callables core fail)]
 
     [`(RegionLam (,rps ...) ,body)
+     (define free (core-free-vars body))
+     (define visible
+       (for/fold ([entries '()]) ([entry (in-list environment)])
+         (if (assoc (first entry) entries)
+             entries
+             (cons entry entries))))
+     (for ([entry (in-list visible)]
+           #:when (set-member? free (first entry)))
+       (define type (second entry))
+       (define hidden?
+         (match type
+           [`(ForallRegion (,bound ...) ,body-type)
+            (unbound-borrowed-type?
+             body-type
+             (set-union (list->set rps) (list->set bound)))]
+           [_ (unbound-borrowed-type? type (list->set rps))]))
+       (when hidden?
+         (fail 'borrow-hidden-by-narrowing core)))
      (define closure-psi (flow-pin-captures Ψ body environment))
      (match-define (list body-type body-row body-psi)
        (parameterize (;; RegionLam の本体は RegionApp まで遅延する。
@@ -4481,6 +4527,7 @@
               (cond
                 [(not field) (fail 'unknown-record-label core)]
                 [(type-compatible? (second field) type)
+                 (check-borrow-hiding! (second field) type core fail)
                  (list `(Option ,type) record-row record-psi)]
                 [else (fail 'projopt-invalid-field core)])]
              [_ (fail 'project-non-record record)])))]
@@ -5357,6 +5404,7 @@
      (define actual (peel-ty data-type))
      (unless (compatible? actual expected)
        (fail 'type-mismatch core expected actual))
+     (check-borrow-hiding! actual expected core fail compatible?)
      ;; 現行の Bool/List/Option/Result schema は type-equiv? へ落ちるため
      ;; narrowing はここへ届かない。Record を持つ nominal data type の追加時に生きる。
      ;; OWN-004。互換だと判断した組に対してだけ narrowing の損失を見る。
@@ -5442,6 +5490,7 @@
        (if adopt? (adopt-inferred-lifetimes expected actual) expected))
      (unless (compatible? actual expected*)
        (fail 'type-mismatch core expected actual))
+     (check-borrow-hiding! actual expected* core fail compatible?)
      (match (owned-narrowing-kind actual expected* compatible?)
        ['ok (void)]
        [`(drop-obligation ,_ ,_)
@@ -5669,6 +5718,7 @@
                    (call-argument-compatible? actual expected core Λ
                                               compatible? fail))
           (fail 'type-mismatch core expected actual))
+        (check-borrow-hiding! actual expected* core fail compatible?)
         (match (owned-narrowing-kind actual expected* compatible?)
           ['ok (void)]
           [`(drop-obligation ,_ ,_)

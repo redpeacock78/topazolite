@@ -192,7 +192,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 38 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 39 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
@@ -437,6 +437,9 @@ v37 は elaborate へ `E-RET-004` `function-body-missing-return` を 1 行足し
 
 v38 は elaborate へ `E-RET-005` `when-arm-missing-return` を 1 行足した。
 廃止した行は無いため、組は 229 に 1 を足した 230 になる。
+
+v39 は typing へ `E-BOR-027` `borrow-hidden-by-narrowing` を 1 行足した。
+廃止した行は無いため、組は 230 に 1 を足した 231 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

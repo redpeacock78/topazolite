@@ -187,6 +187,14 @@
   `(RemainderSafelyDropped ,reach-remainder-actual ,reach-remainder-expected))
 (define reach-record-a '(Record ((a Int imm))))
 (define reach-list-int '(List Int))
+(define reach-borrow-wide
+  '(Record ((hidden (Borrowed Int 0) imm) (name String imm))))
+(define reach-borrow-narrow '(Record ((name String imm))))
+(define reach-borrow-callable
+  `(NFn (,reach-borrow-narrow) Unit () () () User))
+(define reach-borrow-callables `((g ,reach-borrow-callable)))
+(define reach-borrow-environment
+  `((g ,reach-borrow-callable) (w ,reach-borrow-wide)))
 (define reach-record-optional
   '(Record ((a Int imm) (b Int imm opt))))
 (define reach-projborrow-optional-ir
@@ -283,7 +291,7 @@
     projborrow-optional-field
     reborrow-non-mutable reborrow-region-escapes
     borrowed-function-capture borrowed-function-parameter
-    borrowed-function-result
+    borrowed-function-result borrow-hidden-by-narrowing
     ;; REG
     region-app-arity region-app-non-forall region-arg-not-live
     ;; PTR
@@ -1030,15 +1038,21 @@
               '() '()
               '((cell (NFn (Int) Int () () () User) mut)
                 (g (NFn (Int) Int () () () User) let))
-              (reach-span 1726 1740))))
+              (reach-span 1726 1740))
+   (reach-row 'borrow-hidden-by-narrowing
+              (reach-node 'Apply 1900 1910
+                          (reach-var 'g 1901 1902)
+                          (reach-var 'w 1903 1904))
+              '() reach-borrow-callables reach-borrow-environment
+              (reach-span 1903 1904))))
 
-(test-case "typing の producer key 集合が registry v35 と一致する"
+(test-case "typing の producer key 集合が registry v39 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)
                            (not (diagnostic-code-deprecated-in row))))
       (diagnostic-code-key row)))
-  (check-equal? (length producer-keys) 113)
+  (check-equal? (length producer-keys) 114)
   (check-equal? (sort producer-keys symbol<?)
                 (sort registry-keys symbol<?)))
 
