@@ -9,7 +9,7 @@
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
@@ -41,7 +41,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else` の 15 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else`、`leave`、`pure` の 17 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 `match` は予約語ではなく、束縛名と関数名に使える識別子である。
 
@@ -103,7 +103,7 @@ traitdecl ::= "trait" ident tyrec NL+
 impldecl ::= "impl" ident "for" ty record NL+
 derivedecl ::= "derive" ident "for" ty NL+
 fndecl   ::= "fn" ident "(" params ")" ["->" ty] ["!" row] block NL+
-expr     ::= "return" expr | lambda | pipe
+expr     ::= "return" expr | "leave" expr | lambda | pipe
 lambda   ::= ident "=>" expr
            | "fn" "(" lparams ")" ["!" row] "=>" expr
 pipe     ::= postfix ("|>" postfix)*
@@ -221,8 +221,8 @@ row の label は lowering が左から検査し、未知の label、引数の�
 診断の primary span は最初に不正となった label の span であり、`Yield<T>` の型引数中にある未知の型名は既存の `E-SUR-008` になる。
 重複 label は lowering ではそのまま保ち、宣言 row と `resolve-type-row` を通る row の正規化で除く。
 
-宣言 row の `Return` は、row を書いた関数を囲む最も近い境界の `Return<b, T>` を指す。
-Surface の関数宣言の宣言 row は、その宣言の外側の境界へ解決されるため、最上位では `E-RET-001` になる。
+宣言 row の `Return` は、row を書いた関数を囲む最寄りの関数境界の `Return<b, T>` を指す。
+Surface の関数宣言の宣言 row は、その宣言の外側にある最寄りの関数境界へ解決されるため、最上位では `E-RET-001` になる。
 関数宣言の本体の `return` は、その関数宣言が作る境界へ解決される。
 合成位置で戻り型を省略した無名関数の中にある無名関数の宣言 row の `Return` は、戻り型の候補があれば外側の無名関数の推論した戻り型へ解決され、候補が無ければ `E-TYP-024` になる。
 候補が無いときに `E-TYP-024` になるのは、本体の elaboration が `return` に先に到達した場合に限る。
@@ -251,15 +251,17 @@ elaborate の `E-EFF-001` は防御的な分岐として残るが、UCore の ro
 `fn(x) -> T => e` は block が始まる位置で `E-SUR-005` になる。
 `fn(x) -> T { ... }` と関数宣言の本体は block であり、末尾式の値を暗黙に返さない。
 戻り型が `Unit` の block 本体は落ち抜けると `unit` を返し、それ以外の戻り型では全経路で明示的な `return` を要する。
-最寄りの return 境界または `Handle` に到達する前の被演算子位置でも、§4.5 の T-Ctx-Never が「伝える」とする位置で `return` が起きると、式全体の型は `Never` となる。
+最寄りの関数境界または `Handle` に到達する前の被演算子位置でも、§4.5 の T-Ctx-Never が「伝える」とする位置で `return` が起きると、式全体の型は `Never` となる。
 正常型を必要とする拒否位置では `Never` を伝えず、現在の診断で拒否する。
 block 本体の全経路が戻り値を返さない場合は `E-RET-004` とし、primary span は本体の閉じ波括弧、戻り型注釈があれば related span はその注釈とする。
 戻り型を省略した block 本体は `return` の候補と落ち抜けの有無から推論する。
 本体の型が `Never` なら、その関数境界へ届く `return` の候補を枝と同じ規則で合流し、各値を合流型で検査する。
 候補が無い場合は `E-TYP-024` とする。
 本体の型が `Unit` で落ち抜ける場合は、候補がすべて `Unit` のときだけ `Unit` とし、非 `Unit` の候補があれば `E-RET-004` とする。
-`return` は無名関数の境界へ届き、式位置の `when` の arm 本体ブロックでは `when` の境界へ届く。
-式位置の `when` の arm 本体ブロックの lowering は本体ブロックの規則を別サイクルで定める。
+`return e` は最寄りの関数境界へ脱出し、関数の戻り型に対して `e` を検査する。
+`leave e` は最寄りの式境界へ脱出し、その境界の期待型に対して `e` を検査する。
+`FnDecl` と `Recur` の本体へ入るときは `LeaveBoundaryStop` を置くため、その本体の `leave` は外側の式境界へ届かない。
+到達可能な式境界が無い `leave` は `E-RET-006` になる。
 
 program の末尾は式でなければならない。
 空の入力と、宣言だけで式の無い入力は、どちらも `E-SUR-006` で拒否する。
@@ -288,11 +290,12 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 
 `while` は予約語ではなく `ident` になる。
 `if` に `else` が無ければ入力末尾で `E-SUR-006` となり、then block の後に改行があればその改行で `E-SUR-005` となる。
-`return expr` は最も弱く結合する前置式で、`expr` 全体を戻り値とする。
+`return expr` と `leave expr` は最も弱く結合する前置式であり、それぞれ `expr` 全体を関数の戻り値と式境界への脱出値とする。
 予約語 `for` は式の先頭には置けず、その位置で `E-SUR-005` になる。
 
 P2h1 では `trait`、`impl`、`for` を予約語へ加え、P2h2 では `derive` を、P2k1 では `return` を、P2m1 では `match` を加えた。
 P2m3a で予約語を `when` に置き換え、`match` は識別子へ戻した。
+L1b で `leave` と `pure` を予約語へ加えた。
 
 ### 3.2 `let mut` の字句と構文
 
@@ -360,7 +363,7 @@ block の束縛と item は改行で区切る。
 #### pipe
 
 pipe は `|>` で左辺の値を右辺の関数適用へ渡す。
-pipe は `return` と無名関数を除く式で最も弱く結合し、左結合する。
+pipe は `return`、`leave`、無名関数を除く式で最も弱く結合し、左結合する。
 `|>` の前後に改行は置けない。
 右辺は `postfix` であり、無名関数を右辺に置くには括弧で囲む。
 括弧で囲まない無名関数は pipe の左辺にならない。
@@ -400,32 +403,37 @@ record literal の field の区切りと同じ規則である。
 drop する側を書く構文は置かない。
 残す label を列挙すれば残余は一意に決まるため、2 通りの綴りを持つ必要が無い。
 
-### 3.6 式文と when の返却境界
+### 3.6 式文と when の境界
 
 **式文**は、改行で終わる式を後続の束縛または式の前に置き、その値を使わない構文である。
 block の末尾式と program の最終式は式文ではなく、値位置のままである。
 block と program の式文は、束縛と交互に置ける。
 
-式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、**ローカルな返却境界**を作る。
+式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、`leave` のローカルな式境界を作る。
 scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` へ lowering し、各枝の本体を枝の span `s_arm` の `(NarrativeExpr s_arm body')` で包む。
-その枝の `return` は最も内側の枝の境界へ値を返し、scrutinee 内の `return` は外側の境界へ届く。
-この区別は、ホワイトペーパー §3.3 の thunk 展開で scrutinee が境界の外で評価されることに対応する。
+`return` はどちらの形でも最寄りの関数境界へ届き、`when` の式境界へ値を返すのは `leave` である。
+非変数 scrutinee は arm の `NarrativeExpr` の外で評価されるため、その中の `leave` は外側の式境界へ届く。
+この境界配置は、ホワイトペーパー §3.3 の thunk 展開で scrutinee が arm の境界の外で評価されることに対応する。
 式位置の `when` の lowering は、式文の追加によって変わらない。
 
-合成位置の `NarrativeExpr` は、正常型が `⊥` でなければその型を最初の候補とし、その境界へ届く `return` の値の型を原文順に加える。
+合成位置の `NarrativeExpr` は、正常型が `⊥` でなければその型を最初の候補とし、その境界へ届く `leave` の値の型を原文順に加える。
 `Never` の候補は除き、候補を枝と同じ規則で合流する（同型、record は ROW-005、その他は Union）。
-直接 `Owned` を成分に持つ Union は既存の gate で拒否し、候補が無ければ `E-TYP-010` とする。
-検査位置では合流を推論せず、本体と各 `return` の値を期待型で検査する。
+下見で型を決められない `leave none` も自身宛ての脱出候補として扱うが、型候補には含めない。
+直接 `Owned` を成分に持つ Union は既存の gate で拒否する。
+検査位置では合流を推論せず、`return` の値を関数の戻り型で、`leave` の値を式境界の期待型で検査する。
 
 式位置の `when` で本体ブロックの arm は `BlockBody` へ下ろし、末尾値を返さない。
-正常に落ち抜ける arm の結果は `Unit` であり、その arm の `return` は §4.5 の既存の `when` 境界へ届く。
+正常に落ち抜ける arm の結果は `Unit` であり、その arm の `leave` は §4.5 の `when` 境界へ届く。
+その arm の `return` は `when` の境界を越えて最寄りの関数境界へ届く。
 落ち抜けは `when` ごとに記録し、`when` 全体の結果型が `Unit` 以外なら `E-RET-005` とする。
 primary は原文順で最初に落ち抜けた arm の閉じ波括弧であり、related span は無い。
 scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごとの `NarrativeExpr` という既存の境界配置を保ち、判定はいずれも `when` 全体の型が決まった後に行う。
 
-文位置の `when` は `(Eliminate s e' arms')` へ lowering し、scrutinee は通常の値位置で下ろし、枝の本体だけを文の mode で下ろす。
-文の mode の枝には `NarrativeExpr` を置かないため、その枝の `return` は外側の境界へ届く。
-`SBlock` の文の mode は末尾式へ伝わり、各束縛の右辺、scrutinee、関数呼出しの実引数、record の欄、`return` の値などの部分式には伝わらない。
+文位置の `when` は、scrutinee を通常の値位置で下ろし、枝の本体を文の mode で下ろした `Eliminate` を、`%stmt` に束縛する `Unit` 注釈付きの `const Let` の右辺に置く。
+この束縛によって `Eliminate` は検査位置を通るが、枝の式の値を捨てる意味は変わらず、非 `Unit` の枝値も受理される。
+文の mode の枝には `NarrativeExpr` を置かないため、その枝の `leave` は外側の式境界へ届く。
+`return` は `NarrativeExpr` の有無にかかわらず最寄りの関数境界へ届く。
+`SBlock` の文の mode は末尾式へ伝わり、各束縛の右辺、scrutinee、関数呼出しの実引数、record の欄、`return` と `leave` の値などの部分式には伝わらない。
 **文の mode** の式は、通常の mode で値を合成した後、型注釈を持たない const の**破棄の束縛**で包む。
 その束縛の本体は `unit` である。
 このため `Int` を含む非 `Unit` の値も式文に置ける。
@@ -443,7 +451,9 @@ scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごと
 値位置の `SIfSome` は UCore+ の `IfSome` へ下ろし、elaborate が then の型 `T` を既存の枝合流で決めて `Option<T>` を返す明示的な `if` へ展開する。
 明示形は各 then の値を `some` で包み、最後の false 枝を `none` にする。
 then の型が `Option<U>` なら結果型は `Option<Option<U>>` となり、平坦化しない。
-この展開は通常の値位置の `if` と同じ返却境界を各節に作る。
+この展開は通常の値位置の `if` と同じ `leave` の式境界を各節に作る。
+`leave` の payload は `T` に対して検査し、境界から返すときに `some` で一度だけ包む。
+`return` は関数境界へ直接届き、この `some` の包みを受けない。
 文位置の `SIfSome` は `Option` の `some` と `none` を生成せず、各 then と最後の Unit 枝を文の mode で実行する `SBlock` と `SMatch` の連鎖へ下ろす。
 明示的な `else` を持つ `if` は従来どおり `SBlock` と `SMatch` へ組み替え、値位置では両枝が結果型を決める。
 字面上の `else if` の連鎖だけを一つの `SIfSome` にまとめ、明示的な `else { if ... }` は内側の `if` を独立して扱う。
@@ -740,11 +750,12 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `body-kind` が `expr` の本体は通常の mode で下ろし、`block` の本体は `(BlockBody s_close (lower-stmt body))` とする。
   `s_close` は本体 block の閉じ波括弧 1 byte の span である。
   文の mode では `body-kind` に依らず、scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
-  文の mode の枝に `NarrativeExpr` を置かないのは、`return` を外側の境界へ伝えるためである。
+  文の mode の枝に `NarrativeExpr` を置かないため、`leave` は周囲の式境界へ届く。
+  `return` は枝の `NarrativeExpr` の有無にかかわらず最寄りの関数境界へ届く。
   constructor pattern の枝は constructor 名と束縛子を保つ。
   Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body-kind body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
-  枝の `NarrativeExpr` は式位置の `when` の返却境界を枝の本体だけに与える（§4.5）。
+  枝の `NarrativeExpr` は式位置の `when` の `leave` 境界を枝の本体だけに与える（§4.5）。
   `BlockBody` は式位置の本体ブロック arm に限って使い、elaboration が落ち抜けと `E-RET-005` を検査する前に剥がす。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
@@ -954,7 +965,9 @@ scrutinee が data 型の `when` では、枝を合成する前に各枝の結�
 arm の本体ブロック、`else` の無い `if` の内部、scrutinee、関数呼び出しの引数はたどらない。
 `some(1)` と `none` のように型引数を決められない constructor がその例であり、入れ子の `when` と `if` そのものは、結果位置がすべて合成できれば受理する。
 scrutinee が Union の `when` は枝を個別に合成するので、型引数を決められない constructor の枝は `E-TYP-003` になり、primary span はその constructor である。
-本体が `Never` で `return` の型候補が無い `NarrativeExpr` は `E-TYP-010` で拒む。
+合成位置では、全ての arm 本体が `NarrativeExpr` である `Eliminate` の枝の合流型が `Never` の場合、`E-TYP-010` で拒む。
+また、正常値候補と自身宛ての `leave` 候補（型を決められない `leave none` を含む）が無い `NarrativeExpr` の直接の本体が `Eliminate` で、その枝の合流型が `Never` の場合も `E-TYP-010` で拒む。
+scrutinee の型が `Never` であることだけでは拒否せず、これら二つの形以外では全枝 `Never` の `Eliminate` を `Never` に合成する。
 `E-TYP-004`、`E-TYP-010`、`E-TYP-029`、`E-DAT-004`、`E-SYN-002`、`E-DAT-003` の primary span は `when` 全体である。
 入れ子の場合、`E-TYP-004` の primary span は、結果位置をたどった連鎖の上で最も外側にある data の `when` または `if` 全体である。
 連鎖がたどらない位置で途切れた後は、その式を型付けする通常の経路の診断と span になる。
