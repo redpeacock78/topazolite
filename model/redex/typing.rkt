@@ -41,6 +41,7 @@
          execution-core
          typing-visited-points
          config-ok?
+         config-view-compatible?
          config-runtime-borrow-types
          recover-runtime-borrow-types
          captured-mut-slots
@@ -2876,6 +2877,16 @@
   (and (owned-free? type)
        (not (borrowed-type-anywhere? type))))
 
+;; ROW-001 / OWN-009 / BOR-001。config の再型付けだけで使う view の互換。
+(define (config-view-compatible? actual view)
+  (or (type-equiv? actual view)
+      (and (eq? (owned-narrowing-kind actual view type-compatible?) 'ok)
+           (eq? (borrow-hiding-kind actual view type-compatible?) 'ok)
+           (match* (actual view)
+             [(`(Record ,_) `(Record ,_))
+              (rsd-proof-pair-ok? actual view type-compatible?)]
+             [(_ _) (type-compatible? actual view)]))))
+
 ;; BOR-001 / OWN-004。余剰の借用を型 view から隠すには、明示的な RSD が要る。
 (define (check-borrow-hiding! actual expected node fail
                               [compatible? type-compatible?])
@@ -2904,7 +2915,10 @@
         (define binding-row
           (case binding-mode
             [(const)
-             (if (null? residual)
+             (if (or (null? residual)
+                     (and (deriving-config?)
+                          (config-view-compatible? `(Record ,actual-row)
+                                                   declared-type)))
                  declared-row
                  (fail 'const-record-residual bound residual))]
             ;; P1c2b。mut は残余を落とさない。落とすと const と同じ制約になる。
@@ -3479,7 +3493,7 @@
      (unless (or (reassign-narrowing? τ_value τ_flow)
                  (and (deriving-config?)
                       (mut-slot-type-supported? τ_value)
-                      (rsd-proof-pair-ok? τ_value τ_flow type-compatible?)))
+                      (config-view-compatible? τ_value τ_flow)))
        (fail 'reassign-type-mismatch core τ_flow τ_value))
      (check-borrow-hiding! τ_value τ_flow core fail reassign-narrowing?)
      (when (and declared
@@ -4096,7 +4110,10 @@
          (unless field (fail 'unknown-record-label core))
          (match-define (list input-type input-mode)
            (field-row-lookup row label))
-         (unless (and (type-equiv? tau input-type)
+         (unless (and (or (type-equiv? tau input-type)
+                          (and (deriving-config?)
+                               (not (owned-type? tau))
+                               (config-view-compatible? input-type tau)))
                       (memq output-mode '(imm mut))
                       (or (eq? output-mode input-mode)
                           (eq? output-mode 'imm)))
