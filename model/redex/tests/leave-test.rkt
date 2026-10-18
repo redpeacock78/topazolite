@@ -95,9 +95,10 @@
   (define result
     (success
      '(Apply (Fn () Int ()
-                 (NarrativeExpr (Leave (NarrativeExpr 1)))))))
-  (check-equal? (return-boundaries (first result)) '(boundary1))
-  (check-equal? (run-success result) '(cfg 1 () () () ())))
+                 (NarrativeExpr
+                  (Leave (NarrativeExpr (Leave 2))))))))
+  (check-equal? (return-boundaries (first result)) '(boundary1 boundary2))
+  (check-equal? (run-success result) '(cfg 2 () () () ())))
 
 (test-case "[REQ: RET-002] probe と型付き境界は到達不能な Leave を合流しない"
   ;; 合成位置では後続 Leave が probe の候補へ混ざらず、境界型は Int のままになる。
@@ -116,3 +117,65 @@
   (check-equal? (third checked) '())
   (check-equal? (return-boundaries (first checked)) '(boundary1))
   (check-equal? (run-success checked) '(cfg 1 () () () ())))
+
+(test-case "[REQ: RET-001, RET-002] Never の後の厳格な operand と arm の Leave は境界に混ざらない"
+  (define (check-order expression)
+    (define probed (success `(NarrativeExpr ,expression)))
+    (check-equal? (second probed) 'Int)
+    (check-equal? (third probed) '())
+    (check-equal? (length (return-boundaries (first probed))) 1)
+    (check-equal? (run-success probed) '(cfg 1 () () () ()))
+
+    (define checked
+      (success
+       `(Apply (Fn () Int () (NarrativeExpr ,expression)))))
+    (check-equal? (second checked) 'Int)
+    (check-equal? (third checked) '())
+    (check-equal? (length (return-boundaries (first checked))) 1)
+    (check-equal? (run-success checked) '(cfg 1 () () () ())))
+
+  (check-order
+   '(Apply (Fn ((first Int) (second String)) Int () first)
+           (Leave 1) (Leave "s")))
+  (check-order
+   '(Let x
+         (Construct cons (Types Int)
+                    (Leave 1) (Leave (Construct nil (Types Int))))
+      1))
+  (check-order
+   '(Let x
+         (Rec ((first imm (Leave 1)) (second imm (Leave "s"))))
+      1))
+  (check-order
+   '(Let (record const (Record ((first Int imm) (second String imm))))
+         (Rec ((first imm (Leave 1)) (second imm (Leave "s"))))
+      1))
+  (check-order
+   '(Let x
+         (Eliminate (Construct some (Types Int) (Leave 1))
+                    ((some (value) -> (Leave "s"))
+                     (none () -> (Leave "t"))))
+      1))
+
+  ;; dead payload は境界の型で check できる場合、synth の失敗に巻き戻さない。
+  (define dead-contextual-payload
+    (success
+     '(Apply (Fn () (Option Int) ()
+                 (NarrativeExpr
+                  (Let x
+                       (Leave (Construct some (Types Int) 1))
+                       (Leave (Construct none))))))))
+  (check-equal? (second dead-contextual-payload) '(Option Int))
+  (check-equal? (run-success dead-contextual-payload)
+                '(cfg (Construct (Option Int) some 1) () () () ()))
+
+  ;; probe 中も先行する候補を局所的に使えるため、dead の none は synth 不要である。
+  (define dead-probed-payload
+    (success
+     '(NarrativeExpr
+       (Let x
+            (Leave (Construct some (Types Int) 1))
+            (Leave (Construct none))))))
+  (check-equal? (second dead-probed-payload) '(Option Int))
+  (check-equal? (run-success dead-probed-payload)
+                '(cfg (Construct (Option Int) some 1) () () () ())))

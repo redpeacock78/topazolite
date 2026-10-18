@@ -1340,9 +1340,25 @@
          (reject s 'return-type-not-inferable 'return-in-synth)]
         [`(,_ ,boundary-id (#:probe ,candidates) ,_)
          (if (not reachable?)
-             (begin
-               (synth returned environment delta propositions boundaries)
-               (judgment `(#:lit unit ,s) 'Never '() 'Never '⊥))
+             (let* ([checked-result
+                     (for/or ([candidate (in-list (unbox candidates))]
+                              #:unless (eq? candidate 'Never))
+                       (with-handlers ([exn:fail:elab? (λ (_) #f)])
+                         (call-with-restored-state
+                          (λ ()
+                            (check returned candidate environment delta
+                                   propositions boundaries)))))]
+                    [returned-result
+                     (or checked-result
+                         (call-with-restored-state
+                          (λ ()
+                            (synth returned environment delta propositions
+                                   boundaries))))])
+               ;; 到達不能な Leave は payload の Core を残すが、候補や flow は更新しない。
+               (judgment (judgment-core returned-result) 'Never
+                         (judgment-row returned-result)
+                         (judgment-core-type returned-result)
+                         (judgment-normal-type returned-result)))
              (begin
                ;; SUR-015。payload を合成できなければ本番へ回す。
                (unless (and (current-failure-returns)
@@ -1361,10 +1377,23 @@
                          `((Return ,boundary-id Never))))) ]
         [`(,_ ,boundary-id ,return-type ,_)
          (if (not reachable?)
-             (begin
-               ;; 到達不能な Leave の payload は検査するが、脱出候補と効果にはしない。
-               (synth returned environment delta propositions boundaries)
-               (judgment `(#:lit unit ,s) 'Never '() 'Never '⊥))
+             (let ([returned-result
+                    ;; Dead payload の Core は親の局所型検査にも必要なので保持する。
+                    (with-handlers ([exn:fail:elab?
+                                     (λ (_)
+                                       (call-with-restored-state
+                                        (λ ()
+                                          (synth returned environment delta
+                                                 propositions boundaries))))])
+                      (call-with-restored-state
+                       (λ ()
+                         (check returned return-type environment delta
+                                propositions boundaries))))])
+               ;; 到達不能な Leave は payload の row だけを保ち、脱出と flow は作らない。
+               (judgment (judgment-core returned-result) 'Never
+                         (judgment-row returned-result)
+                         (judgment-core-type returned-result)
+                         (judgment-normal-type returned-result)))
              (let* ([returned-result
                      (check returned return-type
                             environment delta propositions boundaries)]
@@ -2386,9 +2415,19 @@
     (define (check-many expressions types environment delta propositions boundaries span)
       (unless (= (length expressions) (length types))
         (reject span 'arity-mismatch (length types) (length expressions)))
-      (for/list ([item (in-list expressions)]
-                 [type (in-list types)])
-        (check item type environment delta propositions boundaries)))
+      (let loop ([items expressions]
+                 [expected-types types]
+                 [reachable? (current-leave-reachable?)]
+                 [results '()])
+        (if (null? items)
+            (reverse results)
+            (let ([result
+                   (parameterize ([current-leave-reachable? reachable?])
+                     (check (first items) (first expected-types)
+                            environment delta propositions boundaries))])
+              (loop (rest items) (rest expected-types)
+                    (and reachable? (judgment-completes? result))
+                    (cons result results))))))
 
     (define (elaborate-constructor constructor fields expected type-span
                                    environment delta propositions boundaries)
@@ -2468,7 +2507,11 @@
                   field-types resource-names core-parameters))
           ;; check-eliminate の互換な診断順を保つため、利用側の枝検査は
           ;; binder の検査直後、次の枝の binder 検査より前に呼ぶ。
-          (on-clause clause)
+          (parameterize
+              ([current-leave-reachable?
+                (and (current-leave-reachable?)
+                     (judgment-completes? scrutinee-result))])
+            (on-clause clause))
           clause))
       (values scrutinee-result clauses))
 
@@ -2611,7 +2654,10 @@
             (begin
               (flow-restore! entry-flow)
               (parameterize
-                  ([current-deferred-when-fallthroughs
+                  ([current-leave-reachable?
+                    (and (current-leave-reachable?)
+                         (judgment-completes? scrutinee-result))]
+                   [current-deferred-when-fallthroughs
                     (and body-deferred
                          (cons body-expression body-deferred))])
                 (if expected
@@ -2815,7 +2861,11 @@
                  (match-define
                    (list _ _ _ body branch-environment _ _ _) clause)
                  (define branch-result
-                   (synth body branch-environment delta propositions boundaries))
+                   (parameterize
+                       ([current-leave-reachable?
+                         (and (current-leave-reachable?)
+                              (judgment-completes? scrutinee-result))])
+                     (synth body branch-environment delta propositions boundaries)))
                  (flow-branch branch-environment branch-result (flow-snapshot)
                               #f)))
              (define-values (results _joined-flow)
@@ -2912,10 +2962,11 @@
          (define body-environment
            (extend environment (list name) '(Never) #f '(#f)))
          (define body-result
-           (if expected
-               (check-never-bound-body body expected body-environment delta
-                                       propositions boundaries)
-               (synth body body-environment delta propositions boundaries)))
+           (parameterize ([current-leave-reachable? #f])
+             (if expected
+                 (check-never-bound-body body expected body-environment delta
+                                         propositions boundaries)
+                 (synth body body-environment delta propositions boundaries))))
          (define result
            (judgment
             `(Let ,s ((#:bind ,name ,name-span) const (#:ty Never ,name-span))
@@ -3210,14 +3261,15 @@
              ,return-type () ,declared-row () User))
       (define callable (fresh-callable signature))
       (define body-result
-        (call-with-flow-rollback
-         (λ ()
-           (check-function-body
-            body return-type return-span
-            (extend environment parameters parameter-types #f
-                    (map resource-type? parameter-types))
-            delta propositions
-            (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)))))
+        (parameterize ([current-leave-reachable? #t])
+          (call-with-flow-rollback
+           (λ ()
+             (check-function-body
+              body return-type return-span
+              (extend environment parameters parameter-types #f
+                      (map resource-type? parameter-types))
+              delta propositions
+              (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries))))))
       (check-function-body-row s body-result return-type boundary declared-row)
       (finish-fn s parameter-binders parameter-types
                  captures capture-types capture-raw-names raw-names
@@ -3526,12 +3578,13 @@
         (extend environment parameters parameter-types #f
                 (map resource-type? parameter-types)))
       (define inferred-return-type
-        (if (block-body? body)
-            (infer-block-return-type s body parameter-environment
-                                     delta propositions boundaries)
-            (and (mentions-return? (list raw-row body))
-                 (probe-return-type s body parameter-environment
-                                    delta propositions boundaries))))
+        (parameterize ([current-leave-reachable? #t])
+          (if (block-body? body)
+              (infer-block-return-type s body parameter-environment
+                                       delta propositions boundaries)
+              (and (mentions-return? (list raw-row body))
+                   (probe-return-type s body parameter-environment
+                                      delta propositions boundaries)))))
       (if inferred-return-type
           (elaborate-annotated-fn
            s parameter-binders raw-parameter-types
@@ -3540,12 +3593,13 @@
           (let ()
             (define boundary (fresh-boundary))
             (define body-result
-              (call-with-flow-rollback
-               (λ ()
-                 (synth body parameter-environment
-                        delta propositions
-                        (cons `(FunctionBoundary ,boundary #:infer ,s)
-                              boundaries)))))
+              (parameterize ([current-leave-reachable? #t])
+                (call-with-flow-rollback
+                 (λ ()
+                   (synth body parameter-environment
+                          delta propositions
+                          (cons `(FunctionBoundary ,boundary #:infer ,s)
+                                boundaries))))))
             (define return-type (judgment-type body-result))
             (check-function-body-row s body-result return-type boundary declared-row)
             (define-values (capture-raw-names raw-names capture-binders core-binders
@@ -3619,14 +3673,16 @@
       (define _capture-flow-pin
         (flow-pin-captures! body (cons function parameters) environment))
       (define body-result
-        (call-with-flow-rollback
-         (λ ()
-           (define result
-             (check-function-body body return-type return-span body-environment
-                                  delta propositions body-boundaries))
-           (when on-body-result (on-body-result result))
-           result)
-         #:preserve-escapes? #t))
+        (parameterize ([current-leave-reachable?
+                        (or boundary? (current-leave-reachable?))])
+          (call-with-flow-rollback
+           (λ ()
+             (define result
+               (check-function-body body return-type return-span body-environment
+                                    delta propositions body-boundaries))
+             (when on-body-result (on-body-result result))
+             result)
+           #:preserve-escapes? #t)))
       (if boundary
           (check-function-body-row s body-result return-type boundary declared-row)
           (unless (row-subset? (judgment-row body-result) declared-row)
@@ -3710,10 +3766,12 @@
             (cons `(FunctionBoundary ,body-boundary #:infer ,s) boundaries)
             boundaries))
       (define body-result
-        (call-with-flow-rollback
-         (λ ()
-           (synth body parameter-environment delta propositions body-boundaries))
-         #:preserve-escapes? #t))
+        (parameterize ([current-leave-reachable?
+                        (or body-boundary? (current-leave-reachable?))])
+          (call-with-flow-rollback
+           (λ ()
+             (synth body parameter-environment delta propositions body-boundaries))
+           #:preserve-escapes? #t)))
       (define return-type (judgment-type body-result))
       (unless (row-subset? (judgment-row body-result) declared-row)
         (reject s 'undeclared-recur-effect
@@ -4670,8 +4728,12 @@
             (when (memq #f proofs)
               (reject s 'unsatisfied-proof-obligation obligations))
             (define argument-results
-              (check-many arguments parameter-types
-                          environment delta propositions boundaries s))
+              (parameterize
+                  ([current-leave-reachable?
+                    (and (current-leave-reachable?)
+                         (judgment-completes? function-result))])
+                (check-many arguments parameter-types
+                            environment delta propositions boundaries s)))
             (define applied
               `(Apply ,s ,(judgment-core function-result)
                       ,@(map judgment-core argument-results)))
@@ -4701,11 +4763,15 @@
              (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject s 'duplicate-record-label fields))
+         (define field-reachable? (current-leave-reachable?))
          (define field-results
            (for/list ([field (in-list fields)])
              (match-define `(,label ,mutability ,field-expression) field)
              (define result
-               (synth field-expression environment delta propositions boundaries))
+               (parameterize ([current-leave-reachable? field-reachable?])
+                 (synth field-expression environment delta propositions boundaries)))
+             (set! field-reachable?
+                   (and field-reachable? (judgment-completes? result)))
              (define field-type (type-for-context result))
              (when (and (not (eq? (judgment-normal-type result) '⊥))
                         (owned-type? field-type))
@@ -4904,7 +4970,11 @@
          (define observed-result
            (synth observed environment delta propositions boundaries))
          (define next-result
-           (synth next environment delta propositions boundaries))
+           (parameterize
+               ([current-leave-reachable?
+                 (and (current-leave-reachable?)
+                      (judgment-completes? observed-result))])
+             (synth next environment delta propositions boundaries)))
          (define observed-type (type-for-context observed-result))
          (when (eq? observed-type 'Never)
            (reject s 'ill-typed #:phase 'typing))
@@ -5033,8 +5103,12 @@
            [`(NFn (,first-type ,remaining-types ...)
                   ,return-type ,latent-in ,latent-out ,obligations ,origin)
             (define argument-result
-              (check argument first-type
-                     environment delta propositions boundaries))
+              (parameterize
+                  ([current-leave-reachable?
+                    (and (current-leave-reachable?)
+                         (judgment-completes? function-result))])
+                (check argument first-type
+                       environment delta propositions boundaries)))
             (define argument-core
               (if (owned-type? first-type)
                   `(OwnLeaf ,s ,(judgment-core argument-result))
@@ -5454,13 +5528,17 @@
              (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject s 'duplicate-record-label fields))
+         (define field-reachable? (current-leave-reachable?))
          (define field-results
            (for/list ([field (in-list fields)])
              (match-define `(,label ,mutability ,field-expression) field)
              (define field-type (second (assq label expected-fields)))
              (define result
-               (check field-expression field-type environment delta propositions
-                     boundaries))
+               (parameterize ([current-leave-reachable? field-reachable?])
+                 (check field-expression field-type environment delta propositions
+                        boundaries)))
+             (set! field-reachable?
+                   (and field-reachable? (judgment-completes? result)))
              (when (and (not (eq? (judgment-normal-type result) '⊥))
                         (owned-type? (type-for-context result)))
                (reject s 'owned-record-field label))
