@@ -1376,7 +1376,7 @@
         [`(,_ ,_ #:infer ,_)
          ;; Return と Leave は境界解決後の推論経路を共有する。
          (reject s 'return-type-not-inferable 'return-in-synth)]
-        [(list _ boundary-id (list '#:probe candidates) _ _adapter ...)
+        [(list boundary-kind boundary-id (list '#:probe candidates) _ _adapter ...)
          (if (not reachable?)
              (let* ([checked-result
                      (for/or ([candidate (in-list (unbox candidates))]
@@ -1405,20 +1405,26 @@
                (unless (and (current-failure-returns)
                             (set-member? (current-failure-returns)
                                          expression))
-                 (with-handlers ([exn:fail:elab? (λ (_) (void))])
-                   (define returned-result
-                     (call-with-flow-rollback
-                      (λ ()
-                        (synth returned environment delta propositions
-                               boundaries))))
-                   (set-box! candidates
-                             (append (unbox candidates)
-                                     (list
-                                      (if (option-payload-adapter?
-                                           leave-adapter)
-                                          `(leave-payload
-                                            ,(judgment-type returned-result))
-                                          (judgment-type returned-result)))))))
+                 (let ([returned-result
+                        (with-handlers ([exn:fail:elab? (λ (_) #f)])
+                          (call-with-flow-rollback
+                           (λ ()
+                             (synth returned environment delta propositions
+                                    boundaries))))])
+                   (if returned-result
+                       (set-box! candidates
+                                 (append (unbox candidates)
+                                         (list
+                                          (if (option-payload-adapter?
+                                               leave-adapter)
+                                              `(leave-payload
+                                                ,(judgment-type returned-result))
+                                              (judgment-type returned-result)))))
+                       ;; 下見不能な式境界向け Leave は、他候補が無いときに Never と推論しない。
+                       (when (eq? boundary-kind 'ExpressionBoundary)
+                         (set-box! candidates
+                                   (append (unbox candidates)
+                                           (list '#:unresolved-leave-candidate)))))))
                (judgment `(#:lit unit ,s) 'Never
                          `((Return ,boundary-id Never))))) ]
         [(list boundary-kind boundary-id return-type _ _adapter ...)
@@ -3513,12 +3519,16 @@
                             boundaries)))))
          (define normal-type
            (and body-result (judgment-normal-type body-result)))
+         (define unresolved-leave?
+           (memq '#:unresolved-leave-candidate (unbox candidate-box)))
          (define candidates
            (append
             (if (and normal-type (not (eq? normal-type '⊥)))
                 (list normal-type)
                 '())
-            (filter (λ (type) (not (eq? type 'Never)))
+            (filter (λ (type)
+                      (and (not (eq? type 'Never))
+                           (not (eq? type '#:unresolved-leave-candidate))))
                     (unbox candidate-box))))
          (cond
            [(pair? candidates)
@@ -3526,6 +3536,10 @@
                           (merge-branch-types candidates span)])
               type)]
            [failure (raise failure)]
+           [(and body-result
+                 (eq? (judgment-type body-result) 'Never)
+                 (not unresolved-leave?))
+            'Never]
            [else (reject span 'narrative-expression-needs-expected-type)]))))
 
     (define (if-some-explicit clauses s s_0 T)
@@ -5010,10 +5024,14 @@
         [`(Eliminate ,scrutinee (,branches ...))
          (define scrutinee-result
            (synth scrutinee environment delta propositions boundaries))
-         (synth-eliminate scrutinee-result branches s
-                          environment delta propositions boundaries
-                          #:defer-fallthroughs
-                          (deferred-when-fallthroughs expression))]
+         (define result
+           (synth-eliminate scrutinee-result branches s
+                            environment delta propositions boundaries
+                            #:defer-fallthroughs
+                            (deferred-when-fallthroughs expression)))
+         (when (eq? (judgment-core-type result) 'Never)
+           (reject s 'narrative-expression-needs-expected-type))
+         result]
 
         [`(IfSome (,clauses ...) ,s_0)
          (define expected

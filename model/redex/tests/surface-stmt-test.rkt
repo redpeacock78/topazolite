@@ -243,8 +243,16 @@
   (define result (lower source))
   (check-true (lowered? result))
   (when (lowered? result)
-    (match (find-form (lowered-term result) 'Eliminate)
-      [`(Eliminate ,_ (Apply ,_ ,_) ,_)
+    (define (find-statement-eliminate tree)
+      (match tree
+        [`(Let ,_ ((#:bind %stmt ,_) const (#:ty Unit ,_))
+               (Eliminate ,_ (Apply ,_ ,_) ,_) ,_) tree]
+        [(? list? parts) (for/or ([part (in-list parts)])
+                           (find-statement-eliminate part))]
+        [_ #f]))
+    (match (find-statement-eliminate (lowered-term result))
+      [`(Let ,_ ((#:bind %stmt ,_) const (#:ty Unit ,_))
+             (Eliminate ,_ (Apply ,_ ,_) ,_) ,_)
        (check-equal?
         (find-form (lowered-term result) 'Eliminate)
         '(Eliminate
@@ -258,8 +266,25 @@
             (Let (#:span src 84 86) ((#:bind %stmt (#:span src 84 86)) const)
                  (#:lit unit (#:span src 84 86))
                  (#:lit unit (#:span src 84 86))))))
-        "文位置の when は NarrativeExpr を置かず、各葉を完全一致で破棄する")]
-      [other (fail-check (format "直接の Eliminate を期待した: ~s" other))])))
+        "文位置の when は Unit 注釈の %stmt で結果を捨てる")]
+      [other (fail-check (format "%stmt に包まれた Eliminate を期待した: ~s" other))])))
+
+(test-case "[REQ: RET-001] 文位置の when は非 Unit の枝の値を捨てて後続へ進む"
+  (define source
+    (string-append
+     "fn choose(flag: Bool) -> Int {\n"
+     " when flag { true => 11\n false => 12 }\n"
+     " return 3\n}\nchoose(true)"))
+  (check-equal? (run-source source) 3))
+
+(test-case "[REQ: RET-001] 文位置の非変数 when の全枝 return は関数境界へ届く"
+  (define source
+    (string-append
+     "fn get_flag() -> Bool { return true }\n"
+     "fn choose() -> Int {\n"
+     " when get_flag() { true => return 11\n false => return 12 }\n"
+     "}\nchoose()"))
+  (check-equal? (run-source source) 11))
 
 (test-case "Owned の式文の token は後続の実行中に Available で Scope 終了時に Dropped になる"
   (define result

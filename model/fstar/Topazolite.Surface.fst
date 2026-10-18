@@ -1385,7 +1385,7 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   match e with
   | SBlock _ ds t -> lower_block ds (lower_stmt t)
   | SMatch s scrutinee arms ->
-      CEliminate s (lower_expr scrutinee) (lower_arms_stmt arms)
+      discard_stmt s (CEliminate s (lower_expr scrutinee) (lower_arms_stmt arms))
   | SIfSome s clauses s0 -> lower_ifsome_stmt s clauses s0
   | SInt s _ -> discard_stmt s (CLit s)
   | SStr s _ -> discard_stmt s (CLit s)

@@ -206,7 +206,7 @@
        "  let answer: Option<Int> = when " scrutinee " {\n"
        "    some x => { let item ?= b\n let wrapped: Option<Int> = some(x)\n leave wrapped }\n"
        "    none => fallback\n"
-       "  }\n  return answer\n}\nf(some(4), none, some(9))"))
+       "  }\n  return fallback\n}\nf(some(4), none, some(9))"))
     (define result (compile-ok source))
     (check-equal? (compiled-type result) '(Option Int))
     (check-equal? (run-value result) '(Construct (Option Int) none)))
@@ -288,7 +288,8 @@
        "    true => return 1\n"
        "    false => false\n"
        "  }\n"
-       "  if answer { return 2 } else { return 3 }\n"
+       "  if answer { return 2 }\n"
+       "  return 3\n"
        "}\nf(" (if variable? "true" "") ")"))
     (define synth-source
       (string-replace source "let answer: Bool = when" "let answer = when"))
@@ -298,7 +299,8 @@
           (check-equal?
            (run-value (compile-ok (string-replace synth-source "f(true)" "f(false)")))
            3))
-        (check-equal? (code synth-source) "E-TYP-010"))
+        (let ([inferred (compile-ok synth-source)])
+          (check-equal? (run-value inferred) 1)))
     (define true-result (compile-ok source))
     (check-equal? (compiled-type true-result) 'Int)
     (check-equal? (run-value true-result) 1)
@@ -412,3 +414,70 @@
   (check-equal? (config-control (last configs)) '(Construct (Option Int) none))
   (check-equal? (map second (config-tokens (last configs))) '(Dropped))
   (check-equal? (length (config-tokens (last configs))) 1))
+
+(test-case "[REQ: RET-001, RET-002] 合成位置の非変数 when は候補の無いNever枝を除く"
+  (for* ([scrutinee (in-list '("flag" "get_flag(flag)"))]
+         [block? (in-list '(#f #t))]
+         [checked? (in-list '(#f #t))])
+    (define variable? (string=? scrutinee "flag"))
+    (define prefix (if variable? "" "fn get_flag(x: Bool) -> Bool { return x }\n"))
+    (define return-arm (if block? "{ return 1 }" "return 1"))
+    (define source
+      (string-append
+       prefix
+       "fn f(flag: Bool) -> Int {\n"
+       "  let answer" (if checked? ": Bool" "") " = when " scrutinee " {\n"
+       "    true => " return-arm "\n"
+       "    false => false\n"
+       "  }\n"
+       "  if answer { return 2 }\n"
+       "  return 3\n"
+       "}\nf(true)"))
+    (define result (compile-ok source))
+    (check-equal? (compiled-type result) 'Int)
+    (check-equal? (run-value result) 1)
+    (check-equal?
+     (run-value (compile-ok (string-replace source "f(true)" "f(false)")))
+     3)))
+
+(test-case "[REQ: RET-001] 手書きUCoreのReturnだけのNarrativeExprをNeverへ合成する"
+  (match
+      (elab
+       '(FnDecl f () Int ()
+          (Let answer (NarrativeExpr (Return 1)) (Return 2))
+          unit))
+    [(list core _type _row _callables)
+     (define (has-never-return-handler? tree)
+       (or (match tree
+             [`(Handle ,_ (Return ,_ (#:ty Never ,_)) ,_ ,_) #t]
+             [_ #f])
+           (and (list? tree)
+                (ormap has-never-return-handler? tree))))
+     (check-true (has-never-return-handler? core))]
+    [other (fail-check (format "手書きUCoreをelaborateできなかった: ~s" other))]))
+
+(test-case "[REQ: RET-001] 期待型のある部分式の全枝returnは文位置とlet位置で受理される"
+  (for ([statement? (in-list '(#t #f))])
+    (define source
+      (string-append
+       "fn consume(value: Bool) -> Unit { () }\n"
+       "fn f(flag: Bool) -> Int {\n"
+       (if statement?
+           "  consume(when flag { true => return 1\n false => return 2 })\n"
+           "  let ignored = consume(when flag { true => return 1\n false => return 2 })\n")
+       "  return 3\n}\nf(true)"))
+    (define result (compile-ok source))
+    (check-equal? (run-value result) 1)
+    (check-equal?
+     (run-value (compile-ok (string-replace source "f(true)" "f(false)")))
+     2)))
+
+(test-case "[REQ: RET-001] 合成位置の部分式にある全枝returnはE-TYP-010"
+  (check-equal?
+   (code (string-append
+          "fn get_flag() -> Bool { return true }\n"
+          "fn f() -> Int {\n"
+          "  { let value = when get_flag() { true => return 1\n"
+          "      false => return 2 }\n    () }\n"
+          "  return 3\n}\nf()"))
+   "E-TYP-010"))

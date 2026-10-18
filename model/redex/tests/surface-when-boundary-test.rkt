@@ -87,6 +87,30 @@
   (check-true (compiled? result))
   (when (compiled? result) (check-equal? (run-value result) 1)))
 
+(test-case "[REQ: RET-001, RET-002] 非変数whenのscrutinee内のleaveは外側境界へ届く"
+  (define result
+    (compile
+     (string-append
+      "fn identity(x: Bool) -> Bool { return x }\n"
+      "fn f() -> Int {\n"
+      "  let answer = when true {\n"
+      "    true => {\n"
+      "      let ignored = when identity(leave 5) { true => 1\n false => 2 }\n"
+      "      leave 9\n"
+      "    }\n"
+      "    false => 0\n"
+      "  }\n"
+      "  return answer\n"
+      "}\nf()")))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  "when の scrutinee 内 leave の compile を期待した"))
+  (when (compiled? result)
+    (check-equal? (compiled-type result) 'Int)
+    (check-equal? (run-value result) 5)))
+
 (test-case "入れ子の when の leave は各境界で止まる"
   (define result
     (compile (string-append

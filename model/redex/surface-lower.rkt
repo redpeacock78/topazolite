@@ -946,15 +946,22 @@
 
 ;; SUR-014b spec §5.2。文の mode は block の末尾式と枝本体へだけ伝わり、
 ;; 文位置の Narrative は返却境界を作らない。
+(define (lower-statement-match let-span binder-span match-span
+                               scrutinee arms env fail rest)
+  `(Let ,let-span ((#:bind %stmt ,binder-span) const (#:ty Unit ,binder-span))
+        (Eliminate ,match-span ,(lower-sexpr scrutinee env fail)
+                   ,(lower-arms arms env fail
+                                (λ (_s_a _body-kind body)
+                                  (lower-stmt body env fail))))
+        ,rest))
+
 (define (lower-stmt e env fail)
   (match e
     [`(SBlock ,_ ,binds ,tail)
      (fold-items binds tail env (hasheq) fail #:lower-tail lower-stmt)]
     [`(SMatch ,s ,scrutinee ,arms)
-     `(Eliminate ,s ,(lower-sexpr scrutinee env fail)
-                 ,(lower-arms arms env fail
-                              (λ (_s_a _body-kind body)
-                                (lower-stmt body env fail))))]
+     ;; 文の when は結果を捨てる注釈付き束縛にし、式位置の合成規則と分ける。
+     (lower-statement-match s s s scrutinee arms env fail `(#:lit unit ,s))]
     [`(SIfSome ,s ,clauses ,s_0)
      (define last-body (third (last clauses)))
      (define end-span (node-span last-body))
@@ -1041,9 +1048,14 @@
                      (Reassign ,s (#:var ,x ,s_x) ,value-core) ,rest))]
     [`(SExprStmt ,s ,value)
      ;; SUR-014b1 spec §5.2。Unit 注釈は文の mode の結果型を固定し、捨てる値の型は制限しない。
-     (define value-core (lower-stmt value env fail))
-     (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
-                     ,value-core ,rest))]
+     (match value
+       [`(SMatch ,s_match ,scrutinee ,arms)
+        (λ (rest)
+          (lower-statement-match s_tail s s_match scrutinee arms env fail rest))]
+       [_
+        (let ([value-core (lower-stmt value env fail)])
+          (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
+                          ,value-core ,rest)))])]
     [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,row ,body)
      (define params-core (lower-params params env fail))
      (define result-core
