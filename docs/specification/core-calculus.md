@@ -26,7 +26,7 @@ calculus は次の環境を使う。
 - **Γ（term bindings）**：項変数から型への有限写像。`Γ, x : τ` で拡張する。
 - **Δ（type / kind bindings）**：型名から TypeInfo 値（§3.4）への有限写像。
 - **Π（proof / capability bindings）**：Proof 名から命題と origin の組への有限写像。
-- **B（boundary stack）**：boundary frame の stack。frame は `FunctionBoundary(b, τ)` または `ExpressionBoundary(b, τ)` であり、b は elaboration が発行する一意な境界 ID である。
+- **B（boundary stack）**：boundary frame の stack。frame は `FunctionBoundary(b, τ)` または `ExpressionBoundary(b, τ)` であり、b は elaboration が発行する一意な境界 ID である。`ExpressionBoundary` は §4.5 の Leave adapter を持つことがあり、その場合も τ は境界の結果型を表す。
 - **R0（予約 origin レジストリ）**：予約 origin ID から、その ID が正当化する値の種類（§3.4 の sort）への有限写像。初期環境だけが定め、elaboration と簡約の間で不変である。
 
 簡約意味論（§5）はさらに次を使う。
@@ -1041,6 +1041,33 @@ nearestReturn(B) = Frame(b, τ)        Frame は FunctionBoundary または Expr
 
 `return` の送信先は実行時の探索ではなく、elaboration 時に boundary stack から静的に決まる（RET-001）。
 返す式は境界の型 τ に対して検査される。
+
+`nearestExpression(B)` は、B を内側からたどり、最初の `FunctionBoundary` に達する前に現れる最初の `ExpressionBoundary` を返す。
+その範囲に `ExpressionBoundary` がなければ未定義とする。
+
+式境界は Leave の結果を変換する adapter `A` を持つことがある。
+この仕様で使う adapter は恒等変換 `identity` と `some<T>` に限る。
+adapter を省略した `ExpressionBoundary(b, τ)` は恒等 adapter を持つものとする。
+`some<T>` adapter を持つ境界は `τ = Option<T>` であり、Leave の被演算子の検査型を T、境界へ渡す値を `Construct(Option<T>, some, c)` とする。
+else のない値位置 `if` が作る `Option<T>` の式境界は `some<T>` adapter を持つ。
+下見では Leave の被演算子の型を包む前の候補として合流し、境界を確定した後の検査で `some` を一度だけ構成する。
+
+**(E-Leave)** [REQ: RET-002]
+
+```text
+nearestExpression(B) = ExpressionBoundary(b, τ, A)
+Γ; Δ; Π; B ⊢ e ⇐ leave-type(τ, A) ! ε ⟹ c
+------------------------------------------------------------
+Γ; Δ; Π; B ⊢ leave e ⇒ Never ! {Return<b, τ>} ∪ ε
+  ⟹ Perform(Return<b, τ>, adaptLeave(A, c))
+```
+
+`leave-type(τ, identity) = τ`、`adaptLeave(identity, c) = c` とする。
+`some<T>` adapter では `leave-type(Option<T>, some<T>) = T`、`adaptLeave(some<T>, c) = Construct(Option<T>, some, c)` とする。
+式境界が無い場合、または最初の `FunctionBoundary` より外側にしか式境界が無い場合は `E-RET-006` `leave-outside-expression-boundary` で拒否する。
+`leave` は境界 ID を elaboration 時に静的に選び、Typed Core では `Return` と同じ `Perform` を使う。
+`Return` は従来どおり `nearestReturn` を使い、Leave adapter を適用しない。
+loop 印が作る `Recur` は `FunctionBoundary` を push しないため、その本体の `leave` は外側にある最寄りの式境界へ解決する。
 
 **(E-NarrativeExpr)** [REQ: RET-002]
 
