@@ -192,7 +192,7 @@ renderer が具体的な整形を要求するのは G4f 以降であり、その
 
 Diagnostic IR は schema version と registry version の二つの版を持つ。
 
-`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 39 である。
+`diagnostic-schema-version` は 4 であり、`diagnostic-registry-version` は 40 である。
 
 P2e2 では schema version は 4 のまま保ち、registry version だけを上げる。
 
@@ -296,20 +296,24 @@ registry version 37 で elaborate に `E-RET-004` `function-body-missing-return`
 
 registry version 38 で elaborate に `E-RET-005` `when-arm-missing-return` を 1 行足した。
 
-現在の registry は 230 行である。
+registry version 39 で typing に `E-BOR-027` `borrow-hidden-by-narrowing` を 1 行足した。
+
+registry version 40 で elaborate に `E-RET-006` `leave-outside-expression-boundary` を 1 行足した。
+
+現在の registry は 232 行である。
 
 `deprecated-in` を持つのは 8 行である。
 `E-BOR-024` が 6 を持ち、`E-OWN-006` と `E-OWN-009` と `E-OWN-015` が 7 を持ち、`E-OWN-004` と `E-OWN-005` と `E-OWN-014` が 8 を持つ。
 `E-RCD-011` は 31 を持つ。
-残る 221 行は `#f` である。
+残る 224 行は `#f` である。
 
 ## 11. 凍結 fixture
 
 registry version ごとに、その版を出した時点の code 集合を記録する凍結 fixture を置く。
 
-`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v38.rkt` まで、registry version ごとに 1 本を置く。
+`diagnostic-fixture-v1.rkt` から `diagnostic-fixture-v40.rkt` まで、registry version ごとに 1 本を置く。
 
-組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222、223、225、226、228、229、230 である。
+組数は v1 から順に 59、107、120、132、136、136、138、139、141、153、155、156、162、169、180、185、186、187、193、194、195、198、199、200、202、203、204、206、214、217、218、222、223、225、226、228、229、230、231、232 である。
 
 v6 は v5 と同じ組数である。version 6 は `E-BOR-024` を廃止するだけで、廃止した行も registry に残るためである。
 
@@ -440,6 +444,9 @@ v38 は elaborate へ `E-RET-005` `when-arm-missing-return` を 1 行足した�
 
 v39 は typing へ `E-BOR-027` `borrow-hidden-by-narrowing` を 1 行足した。
 廃止した行は無いため、組は 230 に 1 を足した 231 になる。
+
+v40 は elaborate へ `E-RET-006` `leave-outside-expression-boundary` を 1 行足した。
+廃止した行は無いため、組は 231 に 1 を足した 232 になる。
 
 fixture は `(code phase key)` の組を持ち、test は fixture の全組が現在の registry に同じ組で存在することだけを要求する。
 

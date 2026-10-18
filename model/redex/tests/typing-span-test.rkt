@@ -1046,7 +1046,7 @@
               '() reach-borrow-callables reach-borrow-environment
               (reach-span 1903 1904))))
 
-(test-case "typing の producer key 集合が registry v39 と一致する"
+(test-case "typing の producer key 集合が registry v40 と一致する"
   (define registry-keys
     (for/list ([row (in-list diagnostic-registry)]
                #:when (and (eq? (diagnostic-code-phase row) 'typing)

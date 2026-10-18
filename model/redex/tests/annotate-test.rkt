@@ -101,6 +101,7 @@
          (Eliminate x ((some (y) -> y)))
          (Eliminate value ((Int item -> item)))
          (Return 1)
+         (Leave 1)
          (NarrativeExpr 1)
          (Recur f ((x Int)) Int () x (Apply f 0))
          (Loop f ((x Int)) Int () x (x))

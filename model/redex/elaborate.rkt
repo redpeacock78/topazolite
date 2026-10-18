@@ -906,6 +906,12 @@
   ;; FunctionBoundary と ExpressionBoundary は同じ Return 処理を使う。
   (and (pair? boundaries) (car boundaries)))
 
+(define (nearest-expression-boundary boundaries)
+  (for/first ([boundary (in-list boundaries)]
+              #:break (eq? (first boundary) 'FunctionBoundary)
+              #:when (eq? (first boundary) 'ExpressionBoundary))
+    boundary))
+
 (define (boundary-span descriptor) (fourth descriptor))
 
 (define (span-hull left right)
@@ -1113,6 +1119,7 @@
     [`(BlockBody ,body) (free-vars/erased body)]
     [`(BlockBody ,_ ,body) (free-vars/erased body)]
     [`(Return ,body) (free-vars/erased body)]
+    [`(Leave ,body) (free-vars/erased body)]
     [`(NarrativeExpr ,body) (free-vars/erased body)]
     [`(Recur ,function ((,parameters ,_) ...) ,_ ,_ ,body ,continuation)
      (set-union
@@ -1213,6 +1220,7 @@
       (boundary snapshot payload-core payload-result return-type span cell)
       #:transparent)
     (define current-boundary-escapes (make-parameter #f))
+    (define current-leave-reachable? (make-parameter #t))
     (define current-loop-trials (make-parameter '()))
     (define current-loop-trial-catching? (make-parameter #f))
     (define flow-state (box (hasheq)))
@@ -1321,6 +1329,60 @@
                   [previous (hash-ref escapes boundary '())])
              (hash-set! escapes boundary (append previous (list pending)))
              pending)))
+
+    (define (elaborate-boundary-escape expression s returned boundary
+                                       environment delta
+                                       propositions boundaries
+                                       #:reachable? [reachable? #t])
+      (match boundary
+        [`(,_ ,_ #:infer ,_)
+         ;; Return と Leave は境界解決後の推論経路を共有する。
+         (reject s 'return-type-not-inferable 'return-in-synth)]
+        [`(,_ ,boundary-id (#:probe ,candidates) ,_)
+         (if (not reachable?)
+             (begin
+               (synth returned environment delta propositions boundaries)
+               (judgment `(#:lit unit ,s) 'Never '() 'Never '⊥))
+             (begin
+               ;; SUR-015。payload を合成できなければ本番へ回す。
+               (unless (and (current-failure-returns)
+                            (set-member? (current-failure-returns)
+                                         expression))
+                 (with-handlers ([exn:fail:elab? (λ (_) (void))])
+                   (define returned-result
+                     (call-with-flow-rollback
+                      (λ ()
+                        (synth returned environment delta propositions
+                               boundaries))))
+                   (set-box! candidates
+                             (append (unbox candidates)
+                                     (list (judgment-type returned-result))))))
+               (judgment `(#:lit unit ,s) 'Never
+                         `((Return ,boundary-id Never))))) ]
+        [`(,_ ,boundary-id ,return-type ,_)
+         (if (not reachable?)
+             (begin
+               ;; 到達不能な Leave の payload は検査するが、脱出候補と効果にはしない。
+               (synth returned environment delta propositions boundaries)
+               (judgment `(#:lit unit ,s) 'Never '() 'Never '⊥))
+             (let* ([returned-result
+                     (check returned return-type
+                            environment delta propositions boundaries)]
+                    [pending
+                     (match boundary
+                       [`(ExpressionBoundary ,candidate ,_ ,_)
+                        (register-pending-escape candidate return-type s
+                                                 returned-result)]
+                       [_ #f])])
+               (judgment
+                (or pending
+                    `(Perform ,s (Return ,boundary-id
+                                          (#:ty ,return-type ,s))
+                              ,(judgment-core returned-result)))
+                'Never
+                (row-union `((Return ,boundary-id ,return-type))
+                           (judgment-row returned-result)))))]
+        [_ (reject s 'return-outside-boundary)]))
 
     (define (resolve-pending-escapes core)
       (cond
@@ -3840,6 +3902,7 @@
                [_ (violation 'unknown-if-some-shape)]))]
           [`(BlockBody ,body) (walk body delayed?)]
           [`(Return ,body) (walk body delayed?)]
+          [`(Leave ,body) (walk body delayed?)]
           [`(NarrativeExpr ,body) (walk body delayed?)]
           [`(TryBind ,binder ,bound ,body)
            (check-binder! binder)
@@ -3922,17 +3985,20 @@
         (dynamic-wind
          void
          (λ ()
-           (cond
-             [identity-resource?
-              (judgment `(#:var ,name ,(span-of body)) binding-type '())]
-             [(and expected bound-never?)
-              (check-never-bound-body body expected body-environment delta
-                                      propositions boundaries)]
-             [(and expected (not bound-never?))
-              (check body expected body-environment delta propositions
-                     boundaries)]
-             [else
-              (synth body body-environment delta propositions boundaries)]))
+           (parameterize
+               ([current-leave-reachable?
+                 (and (current-leave-reachable?) (not bound-never?))])
+             (cond
+               [identity-resource?
+                (judgment `(#:var ,name ,(span-of body)) binding-type '())]
+               [(and expected bound-never?)
+                (check-never-bound-body body expected body-environment delta
+                                        propositions boundaries)]
+               [(and expected (not bound-never?))
+                (check body expected body-environment delta propositions
+                       boundaries)]
+               [else
+                (synth body body-environment delta propositions boundaries)])))
          (λ ()
            (when flow-key
              (set-box! flow-state
@@ -4799,41 +4865,17 @@
          (reject s 'eliminate-needs-expected-type)]
 
         [`(Return ,returned)
-         (match (nearest-boundary boundaries)
-           [`(,_ ,_ #:infer ,_)
-            ;; SUR-008。推論中の戻り型で Return の payload を検査できない。
-            (reject s 'return-type-not-inferable 'return-in-synth)]
-           [`(,_ ,boundary (#:probe ,candidates) ,_)
-            ;; SUR-015（spec §6.2）。payload を合成できなければ本番へ回す。
-            (unless (and (current-failure-returns)
-                         (set-member? (current-failure-returns) expression))
-              (with-handlers ([exn:fail:elab? (λ (_) (void))])
-                (define returned-result
-                  (call-with-flow-rollback
-                   (λ ()
-                     (synth returned environment delta propositions boundaries))))
-                (set-box! candidates
-                          (append (unbox candidates)
-                                  (list (judgment-type returned-result))))))
-            (judgment `(#:lit unit ,s) 'Never `((Return ,boundary Never)))]
-           [`(,_ ,boundary ,return-type ,_)
-            (define returned-result
-              (check returned return-type
-                     environment delta propositions boundaries))
-            (define pending
-              (match (nearest-boundary boundaries)
-                [`(ExpressionBoundary ,candidate ,_ ,_)
-                 (register-pending-escape candidate return-type s
-                                          returned-result)]
-                [_ #f]))
-            (judgment
-             (or pending
-                 `(Perform ,s (Return ,boundary (#:ty ,return-type ,s))
-                           ,(judgment-core returned-result)))
-             'Never
-             (row-union `((Return ,boundary ,return-type))
-                        (judgment-row returned-result)))]
-           [_ (reject s 'return-outside-boundary)])]
+         (elaborate-boundary-escape
+          expression s returned (nearest-boundary boundaries)
+          environment delta propositions boundaries)]
+
+        [`(Leave ,returned)
+         (define boundary (nearest-expression-boundary boundaries))
+         (unless boundary
+           (reject s 'leave-outside-expression-boundary))
+         (elaborate-boundary-escape
+          expression s returned boundary environment delta propositions
+          boundaries #:reachable? (current-leave-reachable?))]
 
         [`(NarrativeExpr ,body)
          (define expected

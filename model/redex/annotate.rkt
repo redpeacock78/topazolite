@@ -165,6 +165,7 @@
                (list (next) (next) (ann c) (ann b)))
              (next))]
       [(list 'Return e) (list 'Return (next) (ann e))]
+      [(list 'Leave e) (list 'Leave (next) (ann e))]
       [(list 'NarrativeExpr e) (list 'NarrativeExpr (next) (ann e))]
       [(list 'Recur f (list (list x type) ...) result row e_1 e_2)
        (list 'Recur (next) (bind f)

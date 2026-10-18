@@ -69,6 +69,7 @@
          ;; SUR-014b2a。関数本体の文の mode を elaborate へ伝える印である。
          (BlockBody e)
          (Return e)
+         (Leave e)
          (NarrativeExpr e)
          (TryBind x e e)
          (Recur f ((x uτ) ...) uret uε e e)
@@ -123,6 +124,7 @@
          (IfSome s (uifclause+ uifclause+ ...) s)
          (BlockBody s e)
          (Return s e)
+         (Leave s e)
          (NarrativeExpr s e)
          (TryBind s xs e e)
          (Recur s xs ((xs ts) ...) tr es e e)
