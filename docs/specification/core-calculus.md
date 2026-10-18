@@ -1636,11 +1636,19 @@ S ⊢flow Reassign(w, C, c) : Never ! εv ⇒ (⊥, E1)
 簡約中の mut place の heap entry `(p v (declared C))` は、この現在の view を記録する。
 R-LetMutB は実行用 Let の型欄 C0 を初期 view とし、R-Reassign は値と C を一つの遷移で更新する。
 静的な宣言型 T は heap に保存されず、静的型付けが各再代入で C と T の互換性を検査する。
-config の再型付けは値が C に適合することと C の storage 条件を確認するが、T との互換性は再検査しない。
-ただし、`RemainderSafelyDropped` を消費した後の物理値に、C の view から隠れた非 `Owned`・非借用の余剰欄が残る場合は、`rsd-proof-pair-ok?` の契約を満たす限り config の再型付けで受理する。
-この場合も config の型と heap の `declared` view は C のままであり、物理値の型へ広げない。
-余剰欄に借用を含む場合は `mut-slot-type-supported?` が、`Owned` を含む場合は `runtime-row` が拒否する。
-静的な `reassign-narrowing?` と R-Reassign の原子的な更新はこの例外の対象外である。
+config 再型付けで実値の型 σ を静的な view τ として受理する条件を、config の view の互換 `σ ⊑cfg τ` とする。
+`σ ⊑cfg τ` は、`type-equiv?(σ, τ)` が真の場合に成り立つ。
+σ と τ がともに `Record` の場合は、`owned-narrowing-kind(σ, τ) = ok`、`borrow-hiding-kind(σ, τ) = ok`、および `rsd-proof-pair-ok?(σ, τ, type-compatible?)` がすべて成り立つ場合に限り `σ ⊑cfg τ` とする。
+σ と τ の少なくとも一方が `Record` でない場合は、`owned-narrowing-kind(σ, τ) = ok`、`borrow-hiding-kind(σ, τ) = ok`、および `type-compatible?(σ, τ)`（`tag-compat?`）がすべて成り立つ場合に限り `σ ⊑cfg τ` とする。
+この判定は `deriving-config?` が真の再型付けだけに使い、静的型付けの条件は変えない。
+`σ ⊑cfg τ` で受理した `const` の束縛、`RecRewrite` entry binder、または `Reassign` の view を持つ位置の型は τ のままとする。
+`const` の config 再型付けでは、値の型 σ と宣言型 τ に `σ ⊑cfg τ` を要求し、束縛型は τ のままとする。
+この関係は各位置の `check-borrow-hiding!` と storage 条件を置き換えない。
+`RemainderSafelyDropped` を消費した後に `Owned` と借用を含まない余剰欄が物理値へ残る場合は、型対が上記の `Record` 条件を満たす限り `σ ⊑cfg τ` として受理する。
+この場合も config の型と heap の `declared` view は τ のままであり、物理値の型へ広げない。
+この関係と既存の検査は、借用または `Owned` を隠す余剰欄を持つ config を受理しない。
+`mut-slot-type-supported?` と `runtime-row` の storage 条件も従来どおり維持する。
+静的な `reassign-narrowing?` と R-Reassign の原子的な更新は、この config 再型付けの条件では変わらない。
 したがって Preservation の主張は、静的に型付けされた Core から始まる到達可能な config に限る。
 
 ### loop 印の固定点
@@ -2073,6 +2081,8 @@ elaboration は `Eliminate` と `UnionEliminate` の資源型の枝 binder に�
 
 `τi` は入力の `Record` の欄の型であり、`τ'i` は出力の欄の型である。
 型付けは entry の `τi` と入力の欄型 `σi` の一致を検査する。
+config 再型付けでは root が `Owned` でない entry に限り、この条件を `σi ⊑cfg τi` に置き換え、entry binder `xi` は引き続き `τi` で束縛する。
+root が `Owned` の entry は静的型付けと config 再型付けの両方で、入力型の一致、出力型の一致、および identity を要求する。
 出力の行は指定した欄の型と可変性だけを置き換え、optional の印と残余の欄を保つ。
 root が `Owned` の欄は identity entry に限り、`ci` を合成も評価もせず、`xi` を束縛しない構文上の transfer とする。
 それ以外の entry は `xi : τi` の下で `ci` を `τ'i` に check し、entry 本体の Effect row が空であることを要求する。
@@ -2238,7 +2248,7 @@ Owned place の宣言型欄は place を作った規則だけが設定し、`Ass
 `Reassign` の target は mut place に限り、その `(declared τ)` は source の宣言型ではなく現在の flow view C を記録する。
 R-LetMutB は実行用 `Let` の型欄 C0 で view を初期化し、R-Reassign は右辺の値と view C を一つの遷移で更新する。
 source の宣言型 T は静的型付けが保持し、各更新で C が T に `tag-compat?` であることを検査する。
-config の再型付けは T を持たないためこの条件を再検査せず、値が記録済みの C に適合することを確かめる。
+config の `Reassign` は T を持たないためこの条件を再検査せず、右辺の値型 σ と記録済みの C に `σ ⊑cfg C` を要求する。
 したがって Preservation の対象は、静的に型付けされた Core から始まる到達可能な config である。
 T と C の役割は mut place で分かれ、Owned place の宣言型の意味は変わらない。
 宣言型は値や資源ではないため、token、capability、借用資源の走査には含めない。
