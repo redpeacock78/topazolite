@@ -42,19 +42,81 @@
     (check-true (config-ok? configuration callables expected row)
                 (format "config ~a の config-ok?: ~s" index configuration))))
 
-(define (check-source-trace source)
+(define (check-source-trace source
+                            #:require-rules [required-rules '()]
+                            #:forbid-rules [forbidden-rules '()]
+                            #:return-trace? [return-trace? #f])
   (define compiled (compile-source/string 'src source))
   (check-true (compiled? compiled)
               (format "compile 成功を期待した: ~s" compiled))
-  (when (compiled? compiled)
-    (call-with-trait-ledger
-     (compiled-ledger compiled)
-     (lambda ()
-       (check-configs
-        (config-trace
-         (inject-g2m (erase-core (compiled-execution-core compiled))))
-        (compiled-type compiled)
-        (compiled-callables compiled))))))
+  (define trace
+    (and
+     (compiled? compiled)
+     (call-with-trait-ledger
+      (compiled-ledger compiled)
+      (lambda ()
+        (define-values
+          (configs rules)
+          (config-trace+rules
+           (inject-g2m (erase-core (compiled-execution-core compiled)))))
+        (check-configs configs (compiled-type compiled)
+                       (compiled-callables compiled))
+        (for ([rule (in-list required-rules)])
+          (check-not-false (member rule rules)
+                           (format "trace に ~a がある: ~s" rule rules)))
+        (for ([rule (in-list forbidden-rules)])
+          (check-false (member rule rules)
+                       (format "trace に ~a が無い: ~s" rule rules)))
+        (list compiled configs rules)))))
+  (if return-trace? trace (void)))
+
+(define (count-form term wanted)
+  (cond
+    [(pair? term)
+     (+ (if (eq? (car term) wanted) 1 0)
+        (count-form (car term) wanted)
+        (count-form (cdr term) wanted))]
+    [else 0]))
+
+(define (check-rsd-step trace expected callables)
+  (match-define (list _compiled configs rules) trace)
+  (define index (index-of rules 'R-DischargeRemainder))
+  (check-not-false index "trace includes R-DischargeRemainder")
+  (when index
+    (define after (list-ref configs (add1 index)))
+    (define row (runtime-row after callables expected))
+    (check-not-false row "the config immediately after RSD has a runtime row")
+    (when row
+      (check-true (config-ok? after callables expected row)
+                  (format "config immediately after RSD: ~s" after)))
+    (check-not-false
+     (find-term
+      (lambda (term)
+        (match term
+          [`(Rec ,fields) (and (assoc 'name fields) (assoc 'id fields))]
+          [_ #f]))
+      (config-heap after))
+     "RSD 後の heap に hidden ではない nested id が残る")))
+
+(define (joined-view-source condition result-type body)
+  (string-append
+   (if (string=? condition "g(b)")
+       "fn g(value: Bool) -> Bool { return value }\n"
+       "")
+   "type Profile = { name: String }\n"
+   "type View = { profile: Profile }\n"
+   "fn f(b: Bool) -> " result-type " ! Mutation {\n"
+   "  let mut value: View = { profile: { name: \"A\", id: 1 }, root: 0 }\n"
+   "  if " condition " {\n"
+   "    value = { profile: { name: \"B\" }, active: true }\n"
+   "  } else { () }\n"
+   body
+   "}\nf(false)"))
+
+(define (check-final-core trace expected)
+  (when trace
+    (match-define (list _compiled configs _rules) trace)
+    (check-equal? (config-core (last configs)) expected)))
 
 (define (check-config-trace initial expected [callables '()])
   (check-configs (config-trace initial) expected callables))
@@ -563,3 +625,307 @@
   (check-true (diagnostic? result))
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) "E-RCD-004")))
+
+(test-case "merge view の nested update・shape 再代入・即時 capture 呼び出しを trace で保つ"
+  (for ([condition (in-list '("b" "g(b)"))])
+    (define updated
+      (check-source-trace
+        (joined-view-source
+        condition "String"
+        (string-append
+         "  value = { profile: { name: \"C\" } }\n"
+         "  return value.profile.name\n"))
+       #:require-rules '(R-DischargeRemainder)
+       #:return-trace? #t))
+    (when updated
+      (check-rsd-step updated (compiled-type (first updated))
+                      (compiled-callables (first updated)))
+      (check-final-core updated "C"))
+
+    (define reshaped
+      (check-source-trace
+        (joined-view-source
+        condition "Bool"
+        (string-append
+         "  value = { profile: { name: \"C\" }, active: true }\n"
+         "  return value.active\n"))
+       #:require-rules '(R-DischargeRemainder)
+       #:return-trace? #t))
+    (when reshaped
+      (check-rsd-step reshaped (compiled-type (first reshaped))
+                      (compiled-callables (first reshaped)))
+      (check-final-core reshaped '(Construct Bool true)))
+
+    (define captured
+      (check-source-trace
+        (joined-view-source
+        condition "String"
+       (string-append
+         "  let reader = fn() => value.profile.name\n"
+         "  return reader()\n"))
+       #:require-rules '(R-DischargeRemainder)
+       #:return-trace? #t))
+    (when captured
+      (check-rsd-step captured (compiled-type (first captured))
+                      (compiled-callables (first captured)))
+      (check-final-core captured "A"))))
+
+(test-case "同じ静的 J への分岐合流は変換を挿さず trace を保つ"
+  (for ([condition (in-list '("b" "g(b)"))])
+    (define prefix
+      (string-append
+       (if (string=? condition "g(b)")
+           "fn g(value: Bool) -> Bool { return value }\n"
+           "")
+       "type Profile = { name: String }\n"
+       "type View = { profile: Profile }\n"
+       "fn f(b: Bool) -> String ! Mutation {\n"
+       "  let mut value: View = { profile: { name: \"A\", id: 1 }, root: 0 }\n"
+       "  if " condition " {\n"
+       "    value = { profile: { name: \"B\" } }\n"
+       "  } else {\n"
+       "    value = { profile: { name: \"C\" } }\n"
+       "  }\n"
+       "  return value.profile.name\n"
+       "}\nf(false)"))
+    (define trace
+      (check-source-trace prefix #:forbid-rules '(R-DischargeRemainder)
+                          #:return-trace? #t))
+    (when trace
+      (check-equal? (count-form (compiled-core (first trace)) 'Reassign) 2)
+      (check-true (positive? (count-form (compiled-core (first trace)) 'Eliminate)))
+      (check-final-core trace "C"))))
+
+(test-case "merge 後に RecRewrite する関数へ渡した入力を各 config で再型付けする"
+  (for ([condition (in-list '("b" "g(b)"))])
+    (define source
+      (string-append
+       (if (string=? condition "g(b)")
+           "fn g(value: Bool) -> Bool { return value }\n"
+           "")
+       "type Profile = { name: String }\n"
+       "type WideProfile = { name: String | Int }\n"
+       "type View = { profile: Profile }\n"
+       "type Widened = { profile: WideProfile }\n"
+       "fn rewrite(p: View) -> Widened { return p }\n"
+       "fn f(b: Bool) -> Widened ! Mutation {\n"
+       "  let mut value: View = { profile: { name: \"A\", id: 1 }, root: 0 }\n"
+       "  if " condition " {\n"
+       "    value = { profile: { name: \"B\" }, active: true }\n"
+       "  } else { () }\n"
+       "  return rewrite(value)\n"
+       "}\nf(false)"))
+    (define trace
+       (check-source-trace source
+                          #:require-rules '(R-DischargeRemainder
+                                            R-RecRewrite-Open
+                                            R-RecRewrite-Close)
+                          #:return-trace? #t))
+    (when trace
+      (check-true (positive? (count-form (compiled-core (first trace))
+                                         'RecRewrite)))
+      (check-rsd-step trace (compiled-type (first trace))
+                      (compiled-callables (first trace))))))
+
+(test-case "Option payload の広い Record を枝で取り出して RecRewrite する"
+  (define prefix
+    (string-append
+     "type Profile = { name: String }\n"
+     "type WideProfile = { name: String | Int }\n"
+     "type View = { profile: Profile }\n"
+     "type Widened = { profile: WideProfile }\n"
+     "fn rewrite(p: View) -> Widened { return p }\n"
+     "fn g() -> Option<View> ! Mutation {\n"
+     "  let mut value: View = { profile: { name: \"A\", id: 1 }, root: 0 }\n"
+     "  if false { value = { profile: { name: \"B\" }, active: true } } else { () }\n"
+     "  return some(value)\n"
+     "}\n"))
+  (for ([scrutinee (in-list '(variable apply))])
+    (define source
+      (string-append
+       prefix
+       (if (eq? scrutinee 'variable)
+           (string-append
+            "fn f(option: Option<View>) -> Widened {\n"
+            "  return when option {\n"
+            "    some value => rewrite(value)\n"
+            "    none => rewrite({ profile: { name: \"none\" } })\n"
+            "  }\n}\nf(g())")
+           (string-append
+            "fn f() -> Widened ! Mutation {\n"
+            "  return when g() {\n"
+            "    some value => rewrite(value)\n"
+            "    none => rewrite({ profile: { name: \"none\" } })\n"
+            "  }\n}\nf()"))))
+    (define trace
+       (check-source-trace source
+                          #:require-rules '(R-DischargeRemainder
+                                            R-RecRewrite-Open
+                                            R-RecRewrite-Close)
+                          #:return-trace? #t))
+    (when trace
+      (check-true (positive? (count-form (compiled-core (first trace))
+                                         'RecRewrite)))
+      (check-rsd-step trace (compiled-type (first trace))
+                      (compiled-callables (first trace))))))
+
+(test-case "Union payload の広い Record を枝で取り出して RecRewrite する"
+  (define prefix
+    (string-append
+     "type Profile = { name: String }\n"
+     "type WideProfile = { name: String | Int }\n"
+     "type View = { profile: Profile }\n"
+     "type Choice = View | Bool\n"
+     "type Widened = { profile: WideProfile }\n"
+     "fn rewrite(p: View) -> Widened { return p }\n"
+     "fn g() -> Choice ! Mutation {\n"
+     "  let mut value: View = { profile: { name: \"A\", id: 1 }, root: 0 }\n"
+     "  if false { value = { profile: { name: \"B\" }, active: true } } else { () }\n"
+     "  return value\n"
+     "}\n"))
+  (for ([scrutinee (in-list '(variable apply))])
+    (define source
+      (string-append
+       prefix
+       (if (eq? scrutinee 'variable)
+           (string-append
+            "fn f(choice: Choice) -> Widened {\n"
+            "  return when choice {\n"
+            "    (value: View) => rewrite(value)\n"
+            "    (flag: Bool) => rewrite({ profile: { name: \"none\" } })\n"
+            "  }\n}\nf(g())")
+           (string-append
+            "fn f() -> Widened ! Mutation {\n"
+            "  return when g() {\n"
+            "    (value: View) => rewrite(value)\n"
+            "    (flag: Bool) => rewrite({ profile: { name: \"none\" } })\n"
+            "  }\n}\nf()"))))
+    (define trace
+       (check-source-trace source
+                          #:require-rules '(R-DischargeRemainder
+                                            R-RecRewrite-Open
+                                            R-RecRewrite-Close)
+                          #:return-trace? #t))
+    (when trace
+      (check-true (positive? (count-form (compiled-core (first trace))
+                                         'RecRewrite)))
+      (check-rsd-step trace (compiled-type (first trace))
+                      (compiled-callables (first trace))))))
+
+(test-case "RecRewrite 後も書換え欄と未書換え欄の nested width を読み取れる"
+  (define source
+    (string-append
+     "type Name = { name: String }\n"
+     "type WideName = { name: String | Int }\n"
+     "type Flag = { flag: Bool }\n"
+     "type Output = { profile: WideName, keep: Flag, convert: Int | String }\n"
+     "type Input = { profile: Name, keep: Flag, convert: Int }\n"
+     "fn rewrite(input: Input) -> Output { return input }\n"
+     "fn f(b: Bool) -> Bool ! Mutation {\n"
+     "  let mut value: Input = { profile: { name: \"A\", id: 1 }, keep: { flag: true, code: 9 }, convert: 1, root: 0 }\n"
+     "  if b { value = { profile: { name: \"B\" }, keep: { flag: false }, convert: 2 } } else { () }\n"
+     "  let result: Output = rewrite(value)\n"
+     "  return when result.profile.name {\n"
+     "    (name: String) => result.keep.flag\n"
+     "    (id: Int) => false\n"
+     "  }\n"
+     "}\nf(false)"))
+  (define trace
+    (check-source-trace source
+                        #:require-rules '(R-DischargeRemainder
+                                          R-RecRewrite-Open
+                                          R-RecRewrite-Close)
+                        #:return-trace? #t))
+  (when trace
+    (define-values (_compiled configs rules) (apply values trace))
+    (define close-indices
+      (for/list ([rule (in-list rules)] [index (in-naturals)]
+                 #:when (eq? rule 'R-RecRewrite-Close))
+        index))
+    (define close-index (and (pair? close-indices) (last close-indices)))
+    (check-not-false close-index)
+    (when close-index
+      (define after (config-core (list-ref configs (add1 close-index))))
+      (define output
+        (find-term
+         (lambda (term)
+           (match term
+             [`(Rec ,fields)
+              (and (assoc 'profile fields) (assoc 'keep fields)
+                   (assoc 'convert fields))]
+             [_ #f]))
+         after))
+      (check-not-false output
+                       (format "RecRewrite 後の Output Record が live: ~s" after))
+      (when output
+        (define fields (second output))
+        (define rewritten
+          (find-term
+           (lambda (term)
+             (match term [`(Rec ,row) (assoc 'id row)] [_ #f]))
+           (third (assoc 'profile fields))))
+        (define untouched
+          (find-term
+           (lambda (term)
+             (match term [`(Rec ,row) (assoc 'code row)] [_ #f]))
+           (third (assoc 'keep fields))))
+        (check-not-false rewritten "書換え欄 profile の nested id が残る")
+        (check-not-false untouched "未書換え欄 keep の nested code が残る")))))
+
+(test-case "Union 部分集合と NFn 共変欄の RecRewrite 後を trace で検査する"
+  (define union-source
+    (string-append
+     "type Input = { choice: Int | String, convert: Int }\n"
+     "type Output = { choice: Bool | Int | String, convert: Int | String }\n"
+     "fn widen(input: Input) -> Output { return input }\n"
+     "widen({ choice: 1, convert: 2 })"))
+  (define union-trace
+    (check-source-trace union-source
+                        #:require-rules '(R-RecRewrite-Open
+                                          R-RecRewrite-Close)
+                        #:return-trace? #t))
+  (when union-trace
+    (check-true (positive? (count-form (compiled-core (first union-trace))
+                                       'RecRewrite))))
+
+  (define function-source
+    (string-append
+     "type Name = { name: String }\n"
+     "type WideName = { name: String, id: Int }\n"
+     "type Input = { call: fn() -> WideName, convert: Int }\n"
+     "type Output = { call: fn() -> Name, convert: Int | String }\n"
+     "fn g() -> WideName { return { name: \"A\", id: 1 } }\n"
+     "fn f(input: Input) -> String {\n"
+     "  let output: Output = input\n"
+     "  return output.call().name\n"
+     "}\nf({ call: g, convert: 1 })"))
+  (define function-trace
+    (check-source-trace function-source
+                        #:require-rules '(R-RecRewrite-Open
+                                          R-RecRewrite-Close)
+                        #:return-trace? #t))
+  (when function-trace
+    (check-true (positive? (count-form (compiled-core (first function-trace))
+                                       'RecRewrite)))
+    (check-final-core function-trace "A")))
+
+(test-case "scalar Union の注入と消去を全 trace config で検査する"
+  (for ([scrutinee (in-list '(variable apply))])
+    (define source
+      (if (eq? scrutinee 'variable)
+          (string-append
+           "fn g() -> Int | String { return 7 }\n"
+           "fn f(value: Int | String) -> Int {\n"
+           "  return when value {\n    (number: Int) => number\n    (text: String) => 0\n  }\n"
+           "}\nf(g())")
+          (string-append
+           "fn g() -> Int | String { return 7 }\n"
+           "fn f() -> Int {\n"
+           "  return when g() {\n    (number: Int) => number\n    (text: String) => 0\n  }\n"
+           "}\nf()")))
+    (define trace (check-source-trace source #:return-trace? #t))
+    (when trace
+      (define compiled (first trace))
+      (check-true (positive? (count-form (compiled-core compiled) 'UnionInject)))
+      (check-true (positive? (count-form (compiled-core compiled) 'UnionEliminate)))
+      (check-final-core trace 7))))
