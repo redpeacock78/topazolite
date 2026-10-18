@@ -507,6 +507,42 @@
      (check-equal? (diagnostic-id diagnostic) "E-TYP-010")]
     [other (fail-check (format "c1 の候補を除外して E-TYP-010 を期待したが ~s" other))]))
 
+(test-case "下見不能な Leave は型候補に混ざらない"
+  (define cases
+    (list
+     (cons
+      (string-append
+       "fn choose(c: Bool) -> Option<Option<Int>> {\n"
+       " let answer = if c { leave none }\n"
+       " return answer\n"
+       "}\nchoose(true)")
+      "E-TYP-010")
+     (cons
+      (string-append
+       "fn choose(c1: Bool, c2: Bool) -> Option<Option<Int>> {\n"
+       " let answer = if c1 { leave none } else if c2 { leave some(2) }\n"
+       " return answer\n"
+       "}\nchoose(true, false)")
+      "E-TYP-010")
+     (cons
+      (string-append
+       "fn choose(c: Bool) -> Option<Option<Int>> {\n"
+       " let answer = if c { leave none\n leave some(2) }\n"
+       " return answer\n"
+       "}\nchoose(true)")
+      "E-TYP-003")))
+  (define (contains-unresolved-leave? value)
+    (or (eq? value '#:unresolved-leave-candidate)
+        (and (list? value)
+             (ormap contains-unresolved-leave? value))))
+  (for ([entry (in-list cases)])
+    (define source (car entry))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) (cdr entry) source)
+      (check-false (contains-unresolved-leave? (diagnostic-found result))))))
+
 (test-case "第2条件の return 候補で束縛する Surface IfSome を合成できる"
   (define source
     (string-append

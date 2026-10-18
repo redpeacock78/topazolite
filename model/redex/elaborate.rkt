@@ -951,7 +951,7 @@
            ['Leave
             (if loop-row?
                 (match (nearest-expression-boundary boundaries)
-                  [(list _ boundary (list '#:probe _) _ _adapter ...)
+                  [(list _ boundary (list '#:probe _ ...) _ _adapter ...)
                    `(Return ,boundary Never)]
                   [(list _ _ '#:infer _ _adapter ...)
                    (reject span 'return-type-not-inferable 'return-in-synth)]
@@ -1376,7 +1376,9 @@
         [`(,_ ,_ #:infer ,_)
          ;; Return と Leave は境界解決後の推論経路を共有する。
          (reject s 'return-type-not-inferable 'return-in-synth)]
-        [(list boundary-kind boundary-id (list '#:probe candidates) _ _adapter ...)
+        [(list boundary-kind boundary-id
+               (list '#:probe candidates unresolved-leave-boxes ...)
+               _ _adapter ...)
          (if (not reachable?)
              (let* ([checked-result
                      (for/or ([candidate (in-list (unbox candidates))]
@@ -1420,11 +1422,11 @@
                                               `(leave-payload
                                                 ,(judgment-type returned-result))
                                               (judgment-type returned-result)))))
-                       ;; 下見不能な式境界向け Leave は、他候補が無いときに Never と推論しない。
-                       (when (eq? boundary-kind 'ExpressionBoundary)
-                         (set-box! candidates
-                                   (append (unbox candidates)
-                                           (list '#:unresolved-leave-candidate)))))))
+                       ;; 下見不能な Leave の状態を型候補へ混ぜない。
+                       (when (and (eq? boundary-kind 'ExpressionBoundary)
+                                  (pair? unresolved-leave-boxes)
+                                  (box? (first unresolved-leave-boxes)))
+                         (set-box! (first unresolved-leave-boxes) #t)))))
                (judgment `(#:lit unit ,s) 'Never
                          `((Return ,boundary-id Never))))) ]
         [(list boundary-kind boundary-id return-type _ _adapter ...)
@@ -3365,10 +3367,15 @@
     (define (probe-candidate-boxes boundaries)
       (for/fold ([boxes '()]) ([boundary (in-list boundaries)])
         (match boundary
-          [(list _ _ (list '#:probe candidate-box) _ _adapter ...)
-           (if (and (box? candidate-box) (not (memq candidate-box boxes)))
-               (cons candidate-box boxes)
-               boxes)]
+          [(list _ _ (list '#:probe candidate-box probe-state-boxes ...)
+                 _ _adapter ...)
+           (for/fold ([boxes boxes])
+                     ([candidate-box (in-list (cons candidate-box
+                                                    probe-state-boxes))])
+             (if (and (box? candidate-box)
+                      (not (memq candidate-box boxes)))
+                 (cons candidate-box boxes)
+                 boxes))]
           [_ boxes])))
 
     (define (call-with-loop-trial-catch boundaries thunk on-catch)
@@ -3503,6 +3510,7 @@
       (call-with-restored-state
        (λ ()
          (define candidate-box (box '()))
+         (define unresolved-leave-box (box #f))
          (define deferred
            (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
          (define boundary (fresh-boundary))
@@ -3515,20 +3523,19 @@
                               (λ (error) (set! failure error) #f)])
                (synth body environment delta propositions
                       (cons `(ExpressionBoundary ,boundary
-                                                 (#:probe ,candidate-box) ,span #f)
+                                                 (#:probe ,candidate-box
+                                                  ,unresolved-leave-box)
+                                                 ,span #f)
                             boundaries)))))
          (define normal-type
            (and body-result (judgment-normal-type body-result)))
-         (define unresolved-leave?
-           (memq '#:unresolved-leave-candidate (unbox candidate-box)))
+         (define unresolved-leave? (unbox unresolved-leave-box))
          (define candidates
            (append
             (if (and normal-type (not (eq? normal-type '⊥)))
                 (list normal-type)
                 '())
-            (filter (λ (type)
-                      (and (not (eq? type 'Never))
-                           (not (eq? type '#:unresolved-leave-candidate))))
+            (filter (λ (type) (not (eq? type 'Never)))
                     (unbox candidate-box))))
          (cond
            [(pair? candidates)
