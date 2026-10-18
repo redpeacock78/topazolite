@@ -78,6 +78,26 @@
      [_ '()])
    (if (list? tree) (append-map return-boundaries tree) '())))
 
+(define (return-handler-boundaries tree)
+  (append
+   (match tree
+     [`(Handle (Return ,boundary ,_) ,_ ,_) (list boundary)]
+     [`(Handle ,_ (Return ,boundary ,_) ,_ ,_) (list boundary)]
+     [_ '()])
+   (if (list? tree) (append-map return-handler-boundaries tree) '())))
+
+(define (literal-return-boundary tree value)
+  (or
+   (match tree
+     [`(Perform ,_ (Return ,boundary ,_) (#:lit ,actual ,_))
+      (and (equal? actual value) boundary)]
+     [`(Perform (Return ,boundary ,_) (#:lit ,actual ,_))
+      (and (equal? actual value) boundary)]
+     [_ #f])
+   (and (list? tree)
+        (for/or ([part (in-list tree)])
+          (literal-return-boundary part value)))))
+
 (define (contains-tree? tree wanted)
   (or (equal? tree wanted)
       (and (list? tree) (ormap (lambda (part) (contains-tree? part wanted)) tree))))
@@ -101,7 +121,7 @@
        "  let value = when " (if variable? "flag" "get_flag()") " {\n"
        "    true => if c { return 11 } else { 12 }\n"
        "    false => 13\n"
-       "  }\n  return value\n}\n"
+       "  }\n  return add(value, 100)\n}\n"
        (if variable? "choose(true, true)" "choose(true)")))
     (define result (compile-ok source))
     (check-equal? (compiled-type result) 'Int)
@@ -131,62 +151,94 @@
      "fn outer() -> Int {\n"
      "  let inner = fn() -> Int {\n"
      "    let value = when true { true => leave 3\n false => 0 }\n"
-     "    return value\n"
+     "    return add(value, 100)\n"
      "  }\n"
      "  return add(inner(), 1)\n"
      "}\nouter()"))
   (define result (compile-ok source))
   (check-equal? (compiled-type result) 'Int)
-  (check-equal? (run-value result) 4)
+  (check-equal? (run-value result) 104)
   (check-equal?
    (code "fn f(c: Bool) -> Int { let x = if c { let h = fn(y: Int) => { leave y }\n 1 } else { 2 }\n x }\n0")
    "E-RET-006"))
 
 (test-case "[REQ: RET-001] 関数境界の外の値位置 when の return は E-RET-002"
-  (check-equal?
-   (code "let value = when true { true => return 1\n false => 0 }\n0")
-   "E-RET-002"))
+  (for ([scrutinee (in-list '("flag" "get_flag()"))])
+    (define variable? (string=? scrutinee "flag"))
+    (define prefix (if variable? "let flag = true\n"
+                       "fn get_flag() -> Bool { return true }\n"))
+    (check-equal?
+     (code (string-append prefix "let value = when " scrutinee
+                          " { true => return 1\n false => 0 }\n0"))
+     "E-RET-002")))
 
 (test-case "[REQ: RET-001, RET-002] when arm の ?= は関数戻り型で検査する"
-  (define source
-    (string-append
-     "fn f(flag: Bool, value: Option<Int>) -> Int {\n"
-     "  let answer = when flag {\n"
-     "    true => { let item ?= value\n 1 }\n"
-     "    false => 0\n"
-     "  }\n  return answer\n}\nf(true, none)"))
-  (define result (compile source))
-  (check-true (diagnostic? result))
-  (when (diagnostic? result)
-    (check-equal? (diagnostic-id result) "E-TYP-033")
-    (check-equal? (diagnostic-expected result) 'Int)
-    (check-equal? (diagnostic-found result) '(Option Int))
-    (check-equal? (map first (diagnostic-related result)) '(return-boundary))
-    (match (second (first (diagnostic-related result)))
-      [`(#:span src 0 ,end) (check-true (positive? end))]
-      [other (fail-check (format "関数境界の related span を期待したが ~s" other))]))
+  (for ([scrutinee (in-list '("flag" "get_flag()"))])
+    (define variable? (string=? scrutinee "flag"))
+    (define prefix (if variable? ""
+                       "fn get_flag() -> Bool { return true }\n"))
+    (define parameters (if variable? "flag: Bool, " ""))
+    (define arguments (if variable? "true, none" "none"))
+    (define source
+      (string-append
+       prefix "fn f(" parameters "value: Option<Int>) -> Int {\n"
+       "  let answer = when " scrutinee " {\n"
+       "    true => { let item ?= value\n 1 }\n"
+       "    false => 0\n"
+       "  }\n  return answer\n}\nf(" arguments ")"))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-033")
+      (check-equal? (diagnostic-expected result) 'Int)
+      (check-equal? (diagnostic-found result) '(Option Int))
+      (check-equal? (map first (diagnostic-related result)) '(return-boundary))
+      (match (second (first (diagnostic-related result)))
+        [`(#:span src ,start ,end) (check-true (< start end))]
+        [other (fail-check (format "関数境界の related span を期待したが ~s" other))])))
+
+  (for ([scrutinee (in-list '("a" "get_option(a)"))])
+    (define prefix (if (string=? scrutinee "a") ""
+                       "fn get_option(x: Option<Int>) -> Option<Int> { return x }\n"))
+    (define source
+      (string-append
+       prefix "fn f(a: Option<Int>, b: Option<Int>, fallback: Option<Int>) -> Option<Int> {\n"
+       "  let answer: Option<Int> = when " scrutinee " {\n"
+       "    some x => { let item ?= b\n let wrapped: Option<Int> = some(x)\n leave wrapped }\n"
+       "    none => fallback\n"
+       "  }\n  return answer\n}\nf(some(4), none, some(9))"))
+    (define result (compile-ok source))
+    (check-equal? (compiled-type result) '(Option Int))
+    (check-equal? (run-value result) '(Construct (Option Int) none)))
 
   (check-equal?
    (code "let option: Option<Int> = some(1)\nlet item ?= option\nitem")
    "E-RET-002"))
 
 (test-case "[REQ: RET-001] when arm の関数 row Return は外側関数へ、外では拒否する"
-  (define source
-    (string-append
-     "fn f(flag: Bool) -> Int {\n"
-     "  let g = when flag {\n"
-     "    true => fn() ! Return => 0\n"
-     "    false => fn() ! Return => 1\n"
-     "  }\n  return 2\n}\nf(true)"))
-  (define result (compile-ok source))
-  (check-equal? (compiled-type result) 'Int)
-  (check-equal? (run-value result) 2)
-  (check-true
-   (contains-tree? (compiled-core result)
-                   '(NFn () Int () ((Return boundary0 Int)) () User)))
-  (check-false
-   (contains-tree? (compiled-core result)
-                   '(NFn () Int () ((Return boundary1 Int)) () User)))
+  (for ([scrutinee (in-list '("flag" "get_flag()"))])
+    (define prefix (if (string=? scrutinee "flag") ""
+                       "fn get_flag() -> Bool { return true }\n"))
+    (define source
+      (string-append
+       prefix "fn f(flag: Bool) -> Int {\n"
+       "  let g = when " scrutinee " {\n"
+       "    true => fn() ! Return => 0\n"
+       "    false => fn() ! Return => 1\n"
+       "  }\n  return 2\n}\nf(true)"))
+    (define result (compile-ok source))
+    (define target-boundary
+      (if (string=? scrutinee "flag") 'boundary0 'boundary1))
+    (define local-boundary
+      (if (string=? scrutinee "flag") 'boundary1 'boundary2))
+    (check-equal? (compiled-type result) 'Int)
+    (check-equal? (run-value result) 2)
+    (check-true
+     (contains-tree? (compiled-core result)
+                     `(NFn () Int () ((Return ,target-boundary Int)) () User)))
+    (check-false
+     (contains-tree? (compiled-core result)
+                     `(NFn () Int () ((Return ,local-boundary Int)) () User))))
   (check-equal? (code "fn() ! Return => 0") "E-RET-001"))
 
 (test-case "[REQ: RET-001] if 条件と when scrutinee の return は関数へ届く"
@@ -223,8 +275,39 @@
     (check-equal? (compiled-type checked) 'Int)
     (check-equal? (run-value checked) 1)))
 
+(test-case "[REQ: RET-001, RET-002] 一部だけ return する when も脱出枝を合成候補から除外する"
+  (for ([scrutinee (in-list '("flag" "get_flag()"))])
+    (define variable? (string=? scrutinee "flag"))
+    (define prefix (if variable? ""
+                       "fn get_flag() -> Bool { return true }\n"))
+    (define source
+      (string-append
+       prefix
+       "fn f(" (if variable? "flag: Bool" "") ") -> Int {\n"
+       "  let answer: Bool = when " scrutinee " {\n"
+       "    true => return 1\n"
+       "    false => false\n"
+       "  }\n"
+       "  if answer { return 2 } else { return 3 }\n"
+       "}\nf(" (if variable? "true" "") ")"))
+    (define synth-source
+      (string-replace source "let answer: Bool = when" "let answer = when"))
+    (if variable?
+        (let ([inferred (compile-ok synth-source)])
+          (check-equal? (run-value inferred) 1)
+          (check-equal?
+           (run-value (compile-ok (string-replace synth-source "f(true)" "f(false)")))
+           3))
+        (check-equal? (code synth-source) "E-TYP-010"))
+    (define true-result (compile-ok source))
+    (check-equal? (compiled-type true-result) 'Int)
+    (check-equal? (run-value true-result) 1)
+    (when variable?
+      (define false-result (compile-ok (string-replace source "f(true)" "f(false)")))
+      (check-equal? (run-value false-result) 3))))
+
 (test-case "[REQ: RET-001] Loop の row は Return と Leave を別境界へ解決する"
-  (for ([flag (in-list '(true false))] [expected (in-list '(1 2))])
+  (for ([flag (in-list '(true false))] [expected (in-list '(1 12))])
     (define expression
       `(Apply
         (Fn ((flag Bool)) Int ()
@@ -235,17 +318,22 @@
                     ((true () -> (Return 1))
                      (false () -> (Leave 2))))
                   ()))
-            (Return answer)))
+            (Return (Apply add answer 10))))
         (Construct ,flag (Types))))
     (match (elab expression)
       [(list core type row callables)
        (check-equal? type 'Int)
        (check-equal? (core-type-of core '() callables) (list type row))
+       (define handlers (return-handler-boundaries core))
+       (define function-boundary (first handlers))
+       (define expression-boundary (second handlers))
+       (check-equal? function-boundary 'boundary0)
+       (check-equal? expression-boundary 'boundary1)
+       (check-equal? (literal-return-boundary core 1) function-boundary)
+       (check-equal? (literal-return-boundary core 2) expression-boundary)
        (define boundaries (return-boundaries core))
-       (check-not-false (member 'boundary0 boundaries)
-                        (format "Return boundary の一覧: ~s" boundaries))
-       (check-not-false (member 'boundary1 boundaries)
-                        (format "Return boundary の一覧: ~s" boundaries))
+       (check-not-false (member function-boundary boundaries))
+       (check-not-false (member expression-boundary boundaries))
        (define start (inject-g2m (erase-core core)))
        (define-values (configs _rules) (run-configs start callables type))
        (check-configs configs callables type)
@@ -304,20 +392,22 @@
   (check-equal? (config-control leave-final) `(Construct ,option-owned none))
   (check-equal? (map second (config-tokens leave-final)) '(Dropped)))
 
-(test-case "[REQ: RET-001, RET-002] ?= の失敗枝は関数境界へ戻り Scope の Owned を cleanup する"
-  ;; TryBind の失敗枝が Eliminate の none arm から Return を行う Core を trace する。
+(test-case "[REQ: RET-001, RET-002] ?= の失敗枝は途中の式境界を越えて関数へ戻り Scope を cleanup する"
+  ;; TryBind の失敗枝の Return が式境界を飛び越えて関数境界へ届く Core を trace する。
   (define expression
     '(Handle (Return function-boundary (Option Int)) (returned -> returned)
        (Scope ()
          (Let (held let (Owned Res))
               (Apply (PrimVal (Reserved o-acquire) acquire) 2)
-           (Eliminate (Construct (Option Int) none)
-             ((some (item) -> (Construct (Option Int) some item))
-              (none () ->
+           (Handle (Return expression-boundary (Option Int)) (local -> local)
+             (Eliminate (Construct (Option Int) none)
+               ((some (item) -> (Construct (Option Int) some item))
+                (none () ->
                 (Perform (Return function-boundary (Option Int))
-                  (Construct (Option Int) none)))))))))
+                    (Construct (Option Int) none))))))))))
   (check-equal? (core-type-of expression '() '()) '((Option Int) ()))
   (define-values (configs rules) (trace-core expression '() '(Option Int)))
+  (check-not-false (member 'R-HandleSkip rules))
   (check-not-false (member 'R-ScopeAbort rules))
   (check-equal? (config-control (last configs)) '(Construct (Option Int) none))
   (check-equal? (map second (config-tokens (last configs))) '(Dropped))
