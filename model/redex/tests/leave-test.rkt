@@ -358,3 +358,27 @@
   (check-equal? (length (return-boundaries (first checked-union-order))) 1)
   (check-equal? (run-success checked-union-order)
                 '(cfg (UnionVal (Union Int String) Int 1) () () () ())))
+
+(test-case "[REQ: RET-001] 外側の式境界を越える Recur の Leave は拒否する"
+  (check-leave-error
+   '(NarrativeExpr (Recur f () Int () (Leave 1) unit))))
+
+(test-case "[REQ: RET-001] 外側の式境界を越える FnDecl の Leave は拒否する"
+  (check-leave-error
+   '(NarrativeExpr (FnDecl f () Int () (Leave 1) unit))))
+
+(test-case "[REQ: RET-001] Recur 本体内の式境界は Leave を捕まえる"
+  (define result
+    (success '(NarrativeExpr
+               (Recur f () Int () (NarrativeExpr (Leave 1)) unit))))
+  (check-equal? (second result) 'Unit))
+
+(test-case "[REQ: RET-001, RET-002] Leave の探索停止印は TryBind の関数宛先を遮らない"
+  (define result
+    (success
+     '(Apply
+       (Fn () (Option Int) ()
+         (Recur loop () #:infer (Return)
+           (TryBind x (Construct some (Types Int) 1) x)
+           (Construct some (Types Int) 2))))))
+  (check-equal? (return-boundaries (first result)) '(boundary0)))

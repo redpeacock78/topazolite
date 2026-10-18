@@ -909,7 +909,8 @@
 
 (define (nearest-expression-boundary boundaries)
   (for/first ([boundary (in-list boundaries)]
-              #:break (eq? (first boundary) 'FunctionBoundary)
+              #:break (memq (first boundary)
+                            '(FunctionBoundary LeaveBoundaryStop))
               #:when (eq? (first boundary) 'ExpressionBoundary))
     boundary))
 
@@ -3762,9 +3763,13 @@
         (extend function-environment parameters parameter-types #f
                 (map resource-type? parameter-types)))
       (define body-boundaries
-        (if boundary
-            (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)
-            boundaries))
+        (cond
+          [boundary
+           (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)]
+          [loop-row? boundaries]
+          [else
+           ;; 関数境界を作らない FnDecl / Recur 本体から Leave を外へ漏らさない。
+           (cons '(LeaveBoundaryStop) boundaries)]))
       (define _capture-flow-pin
         (flow-pin-captures! body (cons function parameters) environment))
       (define body-result
@@ -3859,7 +3864,7 @@
       (define body-boundaries
         (if body-boundary
             (cons `(FunctionBoundary ,body-boundary #:infer ,s) boundaries)
-            boundaries))
+            (cons '(LeaveBoundaryStop) boundaries)))
       (define body-result
         (parameterize ([current-escape-reachable?
                         (or body-boundary? (current-escape-reachable?))])
