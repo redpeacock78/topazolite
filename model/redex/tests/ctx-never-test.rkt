@@ -118,6 +118,35 @@
     '() test-callables '((c Bool)))
    '(Int ((Return outer Int)) Int)))
 
+(test-case "mut 束縛が無くても到達可能な Return を捕まえる Handle は Int"
+  (check-equal?
+   (car
+    (typed-with-normal
+     '(Handle (Return b Int) (x -> x)
+        (Perform (Return b Int) 1))))
+   'Int))
+
+(test-case "latent Return を持つ関数の Apply は捕まえる Handle の E に鍵を残す"
+  (check-equal?
+   (car
+    (typed-with-normal
+     '(Handle (Return b Int) (x -> x)
+        (Apply k 1))
+     '() test-callables
+     '((k (NFn (Int) Never () ((Return b Int)) () User)))))
+   'Int))
+
+(test-case "内側の Handle が同じ境界を消費すると外側の Handle は Never"
+  (check-equal?
+   (car
+    (typed-with-normal
+     '(Handle (Return b Int) (x -> x)
+        (Let (y const Int)
+             (Handle (Return b Int) (x -> x)
+               (Perform (Return b Int) 1))
+          (Perform (Return outer Int) 2)))))
+   'Never))
+
 (define (never-returning-branch)
   '(Handle (Return inner Bool) (x -> x)
      (Let (y const Int) (Perform (Return outer Int) 1)
