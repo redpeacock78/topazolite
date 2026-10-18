@@ -179,3 +179,51 @@
   (check-equal? (second dead-probed-payload) '(Option Int))
   (check-equal? (run-success dead-probed-payload)
                 '(cfg (Construct (Option Int) some 1) () () () ())))
+
+(test-case "[REQ: RET-001, RET-002] Never の TryBind 右辺と Union scrutinee の後の Leave は境界に混ざらない"
+  (define (check-option-order expression)
+    (define probed (success `(NarrativeExpr ,expression)))
+    (check-equal? (second probed) '(Option Int))
+    (check-equal? (third probed) '())
+    (check-equal? (length (return-boundaries (first probed))) 1)
+    (check-equal? (run-success probed)
+                  '(cfg (Construct (Option Int) some 1) () () () ()))
+
+    (define checked
+      (success
+       `(Apply (Fn () (Option Int) () (NarrativeExpr ,expression)))))
+    (check-equal? (second checked) '(Option Int))
+    (check-equal? (third checked) '())
+    (check-equal? (length (return-boundaries (first checked))) 1)
+    (check-equal? (run-success checked)
+                  '(cfg (Construct (Option Int) some 1) () () () ())))
+
+  (check-option-order
+   '(TryBind x
+             (Let y (Leave (Construct some (Types Int) 1)) y)
+             (Leave (Construct some (Types Int) 2))))
+
+  (define union-body
+    '(Let (x const (Union Int String)) (Leave u)
+          (Eliminate x
+            ((Int i -> (Leave u))
+             (String s -> (Leave u))))))
+  (define union-application
+    `(Apply (Fn ((u (Union Int String))) (Union Int String) ()
+                (NarrativeExpr ,union-body))
+            1))
+  (define union-order (success `(NarrativeExpr ,union-application)))
+  (check-equal? (second union-order) '(Union Int String))
+  (check-equal? (third union-order) '())
+  (check-equal? (length (return-boundaries (first union-order))) 1)
+  (check-equal? (run-success union-order)
+                '(cfg (UnionVal (Union Int String) Int 1) () () () ()))
+
+  (define checked-union-order
+    (success
+     union-application))
+  (check-equal? (second checked-union-order) '(Union Int String))
+  (check-equal? (third checked-union-order) '())
+  (check-equal? (length (return-boundaries (first checked-union-order))) 1)
+  (check-equal? (run-success checked-union-order)
+                '(cfg (UnionVal (Union Int String) Int 1) () () () ())))
