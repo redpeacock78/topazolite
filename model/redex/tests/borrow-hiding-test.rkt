@@ -137,6 +137,25 @@
    (borrow-hiding-kind `(Owned ,wide) `(Owned ,narrow) always-compatible)
    'reject))
 
+(test-case "Union 値の Owned root への持ち上げは借用検査を通る"
+  (define union-type '(Union Int String))
+  (check-equal?
+   (borrow-hiding-kind union-type `(Owned ,union-type) compat?)
+   'ok)
+  (define owned-union `(Owned ,union-type))
+  (define (check-lift bound callables environment)
+    (typed `(Let (value let ,owned-union) ,bound (Move value))
+           '() callables environment))
+  (check-equal?
+   (typing-key (check-lift 'source '() `((source ,union-type))))
+   'ok
+   "変数から Owned Union へ持ち上げる")
+  (define g-type `(NFn () ,union-type () () () User))
+  (check-equal?
+   (typing-key (check-lift '(Apply g) `((g ,g-type)) `((g ,g-type))))
+   'ok
+   "呼び出し結果から Owned Union へ持ち上げる"))
+
 (test-case "NFn と wrapper の内側の隠れる借用は互換時も拒否する"
   (define wide '(Record ((name String imm) (b (Borrowed Int ρ) imm))))
   (define narrow '(Record ((name String imm))))

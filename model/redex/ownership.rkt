@@ -179,6 +179,11 @@
 ;; obligation を拒否し、最上位と imm 共通欄の鎖だけで除去義務を返す。
 (define (borrow-hiding-kind/impl actual expected compatible? [ctx 'top])
   (cond
+    ;; Owned への持ち上げは heap root の位置だけで行う。Union は payload
+    ;; 側で成分ごとに調べ、他の payload 内 narrowing は RSD できない。
+    [(and (match actual [`(Owned ,_) #f] [_ #t])
+          (match expected [`(Owned ,payload) #t] [_ #f]))
+     (borrow-hiding-kind/impl actual (second expected) compatible? 'inner)]
     [(or (union-type? actual) (union-type? expected))
      (if (for/and ([actual-member (in-list (union-members actual))])
            (for/or ([expected-member (in-list (union-members expected))])
