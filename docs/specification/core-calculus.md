@@ -735,7 +735,9 @@ F = Handle(op, h, □) なら op ∉ ε0
 
 E-Ctx-Never は Core の T-Ctx-Never と同じ正格な位置で、通常の elaboration と同じ順に全ての被演算子を検査する。
 row は `Never` の被演算子を含む全ての被演算子の row を合併する。
-`Handle` の条件と健全性の根拠、および row 判定の不完全さは Core の T-Ctx-Never の節を参照する。
+~~`Handle` の条件と健全性の根拠、および row 判定の不完全さは Core の T-Ctx-Never の節を参照する。~~
+`Handle` の健全性の根拠は Core の T-Ctx-Never の節を参照する。
+E-Ctx-Never の `Handle` の副条件は row による判定であり、Core の脱出状態 E[b] の不在による判定より保守的である（Core が `Never` に型付けする形を elaboration が `Never` としないことがある）。
 
 **(E-Construct-Check)**
 
