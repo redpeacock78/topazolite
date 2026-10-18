@@ -292,7 +292,8 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
          (byte_is a 116 && byte_is b 121 && byte_is c 112 && byte_is d 101) ||
          (byte_is a 105 && byte_is b 109 && byte_is c 112 && byte_is d 108) ||
          (byte_is a 119 && byte_is b 104 && byte_is c 101 && byte_is d 110) ||
-         (byte_is a 101 && byte_is b 108 && byte_is c 115 && byte_is d 101) then TkKw
+         (byte_is a 101 && byte_is b 108 && byte_is c 115 && byte_is d 101) ||
+         (byte_is a 112 && byte_is b 117 && byte_is c 114 && byte_is d 101) then TkKw
       else TkIdent
   | [a; b; c; d; e] ->
       if (byte_is a 99 && byte_is b 111 && byte_is c 110 &&
@@ -300,7 +301,9 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
          (byte_is a 102 && byte_is b 97 && byte_is c 108 &&
           byte_is d 115 && byte_is e 101) ||
          (byte_is a 116 && byte_is b 114 && byte_is c 97 &&
-          byte_is d 105 && byte_is e 116) then TkKw
+          byte_is d 105 && byte_is e 116) ||
+         (byte_is a 108 && byte_is b 101 && byte_is c 97 &&
+          byte_is d 118 && byte_is e 101) then TkKw
       else TkIdent
   | [a; b; c; d; e; f] ->
       if (byte_is a 100 && byte_is b 101 && byte_is c 114 &&
@@ -310,7 +313,7 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
       else TkIdent
   | _ -> TkIdent
 
-// 命題 5。Racket の lexer.rkt が予約する 15 語のそれぞれに TkKw を返す。
+// 命題 5。Racket の lexer.rkt が予約する 17 語のそれぞれに TkKw を返す。
 // 予約語を接頭辞に持つ語と、予約語より短い語は TkIdent のままである。
 val keyword_word_reserved : unit -> Lemma
   (keyword_word [102uy; 110uy] == TkKw /\
@@ -326,10 +329,13 @@ val keyword_word_reserved : unit -> Lemma
    keyword_word [116uy; 114uy; 97uy; 105uy; 116uy] == TkKw /\
    keyword_word [119uy; 104uy; 101uy; 110uy] == TkKw /\
    keyword_word [101uy; 108uy; 115uy; 101uy] == TkKw /\
+   keyword_word [112uy; 117uy; 114uy; 101uy] == TkKw /\
    keyword_word [100uy; 101uy; 114uy; 105uy; 118uy; 101uy] == TkKw /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy] == TkKw /\
+   keyword_word [108uy; 101uy; 97uy; 118uy; 101uy] == TkKw /\
    keyword_word [109uy; 97uy; 116uy; 99uy; 104uy] == TkIdent /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy; 115uy] == TkIdent /\
+   keyword_word [108uy; 101uy; 97uy; 118uy; 101uy; 115uy] == TkIdent /\
    keyword_word [102uy; 111uy] == TkIdent)
 let keyword_word_reserved () = ()
 

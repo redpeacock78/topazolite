@@ -8,7 +8,7 @@
 (struct stok (kind value span) #:transparent)
 (struct scan-result (tokens end) #:transparent)
 
-(define keywords '(const let mut fn type true false trait impl for derive return when if else))
+(define keywords '(const let mut fn type true false trait impl for derive return when if else leave pure))
 (define puncts (hash 123 '|{| 125 '|}| 40 '|(| 41 '|)|
                      44 '|,| 58 '|:| 61 '|=| 46 '|.|
                      124 '\| 38 '& 33 '! 60 '< 62 '> 63 '?))

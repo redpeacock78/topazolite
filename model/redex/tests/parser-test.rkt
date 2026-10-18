@@ -28,6 +28,10 @@
  (check-false (redex-match? Surface ident 'else))
  (check-false (redex-match? Surface label 'derive))
  (check-false (redex-match? Surface label 'return))
+ (check-false (redex-match? Surface ident 'leave))
+ (check-false (redex-match? Surface ident 'pure))
+ (check-false (redex-match? Surface label 'leave))
+ (check-false (redex-match? Surface label 'pure))
  (check-true (redex-match? Surface ident 'match))
  (check-true (redex-match? Surface label 'match))
  (check-true  (redex-match? Surface ident 'SInt))
@@ -537,6 +541,13 @@
  (check-equal? (p-code "let derive = 0\n0") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "let derive = 0\n0"))
                '(#:span src 4 10)))
+
+(test-case
+ "leave と pure は束縛名や関数名に使えない"
+ (for ([src (in-list '("let leave = 1\n0"
+                       "let pure = 1\n0"
+                       "fn pure() -> Int { return 1 }\n0"))])
+   (check-equal? (p-code src) "E-SUR-005")))
 
 (test-case
  "the three new keywords are no longer identifiers"

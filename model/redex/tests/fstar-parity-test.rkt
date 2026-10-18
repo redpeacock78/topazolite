@@ -64,7 +64,7 @@
  "F* の予約語の一覧が lexer.rkt の予約語と一致する"
  (check-equal? (sort fstar-keywords symbol<?)
                (sort keywords symbol<?))
- (check-equal? (length fstar-keywords) 15))
+ (check-equal? (length fstar-keywords) 17))
 
 (test-case
  "kind と欄の数が食い違うと違反になる"

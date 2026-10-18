@@ -65,6 +65,11 @@
  (check-equal? (map stok-value (lex/string 'src "return")) '(return eof)))
 
 (test-case
+ "leave と pure は予約語で、接頭辞を共有する語は識別子である"
+ (check-equal? (kinds "leave pure leaves purely leav")
+               '(kw kw ident ident ident eof)))
+
+(test-case
  "when は予約語で match は識別子の字句になる"
  (check-equal? (kinds "when x match") '(kw ident ident eof))
  (check-equal? (map stok-value (lex/string 'src "when x match"))
