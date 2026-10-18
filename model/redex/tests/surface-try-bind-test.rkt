@@ -151,21 +151,21 @@
   (check-equal? (run-main (regexp-replace #rx"ok\\(1\\)" source "ng(false)"))
                 '(Construct (Result Unit Bool) ng (Construct Bool false))))
 
-(test-case "when の枝の ?= は when へ返り、その後の関数本体を続ける"
+(test-case "when の枝の ?= 失敗は関数を抜ける"
   (define source
     (string-append
-     "fn f(a: Option<Int>, b: Option<Int>, fallback: Option<Int>) -> Int {\n"
+     "fn f(a: Option<Int>, b: Option<Int>, fallback: Option<Int>) -> Option<Int> {\n"
      "  let r: Option<Int> = when a {\n"
-     "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n return r2 }\n"
+     "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n leave r2 }\n"
      "    none => fallback\n"
      "  }\n"
-     "  return when r { some value => 1\n none => 2 }\n"
+     "  return r\n"
      "}\n"
      "f(some(4), none, some(9))"))
-  (check-equal? (run-main source) 2)
+  (check-equal? (run-main source) '(Construct (Option Int) none))
   (check-equal? (run-main (string-replace source "none, some(9)"
                                          "some(5), some(9)"))
-                1))
+                '(Construct (Option Int) some 4)))
 
 (test-case "無名関数内の ?= は無名関数へ返る"
   (define source
@@ -279,7 +279,7 @@
   (when (diagnostic? when-result)
     (check-equal? (diagnostic-id when-result) "E-TYP-033")
     (check-equal? (second (first (diagnostic-related when-result)))
-                  (source-span when-source "true => { let y ?= a\n return 1 }"))))
+                  (source-span when-source when-source))))
 
 (test-case "Owned resource 変数の右辺は when と同じ E-OWN-010"
   (define try-source
@@ -289,7 +289,7 @@
   (check-equal? (code try-source) "E-OWN-010")
   (check-equal? (code when-source) "E-OWN-010"))
 
-(test-case "失敗枝だけでは戻り型も NarrativeExpr の期待型も推論できない"
+(test-case "失敗枝は関数戻り型を必要とし、NarrativeExpr でも関数境界が先行する"
   (define inferred-function
     '(Fn ((a (Option Int)) (loop (NFn () Never () ())))
          #:infer ()
@@ -301,7 +301,7 @@
             (NarrativeExpr (TryBind x a (Apply loop)))
             1)))
   (check-equal? (elab-code inferred-function) "E-TYP-024")
-  (check-equal? (elab-code narrative) "E-TYP-010"))
+  (check-equal? (elab-code narrative) "E-TYP-033"))
 
 (test-case "TryBind の失敗枝は利用者の Return 候補を上書きしない"
   (define source
@@ -316,7 +316,7 @@
     (check-equal? (third (second (first (compiled-callables result))))
                   '(Option Bool))))
 
-(test-case "TryBind の成功枝が Never の NarrativeExpr は期待型を要する"
+(test-case "TryBind の失敗は Never の NarrativeExpr から関数境界へ届く"
   (check-equal?
    (elab-code
     '(Fn ((a (Option Int)) (loop (NFn () Never () ())))
@@ -324,7 +324,7 @@
        (Let value
             (NarrativeExpr (TryBind x a (Apply loop)))
             1)))
-   "E-TYP-010"))
+   "E-TYP-033"))
 
 (test-case "TryBind の右辺は一度だけ Core に現れる"
   (define result

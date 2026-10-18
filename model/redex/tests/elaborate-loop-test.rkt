@@ -557,8 +557,8 @@
              (Rec ((name imm "A") (id imm 1)))
           (Let (ignored const Unit)
                ,(match loop-expression
-                  ['loop `(Loop loop () Unit (Partial) ,body ())]
-                  ['recur `(Recur loop () Unit (Partial) ,body (Apply loop))])
+                  ['loop `(Loop loop () Unit (Return Partial) ,body ())]
+                  ['recur `(Recur loop () Unit (Return Partial) ,body (Apply loop))])
             (Return (Construct some (Types Unit) unit)))))
       (Construct true (Types))
       (Fn () Bool () (Construct true (Types)))))
@@ -585,7 +585,7 @@
         (Let (matched-value const Unit)
              (Eliminate (Proj value id)
                ((Int i -> unit) (String s -> unit)))
-          (Return unit))))
+          (Leave unit))))
     (define inner-body
       `(Let (%stmt const Unit)
             (Let (edge const Unit) (Apply inner) ,probed-when)
@@ -618,7 +618,7 @@
         (Let (inner const Unit)
              (Eliminate (Proj value id)
                ((Int i -> unit) (String s -> unit)))
-          (Return unit))))
+          (Leave unit))))
     (define trial-rhs
       `(Let (edge const Unit) (Apply loop) ,probed-when))
     (define body
@@ -671,7 +671,7 @@
         (Let (matched-value const Unit)
              (Eliminate (Proj value id)
                ((Int i -> unit) (String s -> unit)))
-          (Return unit))))
+          (Leave unit))))
     (define body
       `(Let (edge const Unit) (Apply loop)
          (Let (matched const Unit) ,when-expression
@@ -710,7 +710,7 @@
                  (TryBind ignored
                           (Construct some (Types Unit) unit)
                           (Construct some (Types Unit) unit)))
-             (Return unit)))
+             (Leave unit)))
           (false () -> (BlockBody unit)))))
     (define narrative
       `(NarrativeExpr
@@ -729,14 +729,16 @@
          (Let (changed const Unit)
               (Reassign value (Rec ((name imm "B") (id imm "s"))))
            (Apply loop))))
-    (define marker `(Loop loop () Unit (Partial Mutation) ,body ()))
+    (define marker `(Loop loop () Unit (Return Partial Mutation) ,body ()))
     (define after
       '(Eliminate (Proj value id)
-         ((Int i -> unit) (String s -> unit))))
+         ((Int i -> (Construct some (Types Unit) unit))
+          (String s -> (Construct some (Types Unit) unit)))))
     (check-equal?
      (second (elaborated-core
-              (loop-program scrutinee marker after #:return 'Unit)))
-     'Unit)))
+              (loop-program scrutinee marker after
+                            #:return '(Option Unit))))
+     '(Option Unit))))
 
 (test-case "安定した C0 を保ち、loop の前後に不要な Reassign を挿さない"
   (define body

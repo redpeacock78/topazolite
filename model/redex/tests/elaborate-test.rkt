@@ -64,7 +64,7 @@
          (((tok 0) Dropped) ((tok 1) Dropped) ((tok 2) Dropped))
          ((fin 1)))))
 
-(test-case "RET-001/RET-002/RET-003: return resolves to the nearest boundary"
+(test-case "RET-001/RET-002/RET-003: return resolves to the nearest function boundary"
   (match-define (list function-core _ _ _)
     (success
      (elab
@@ -81,10 +81,10 @@
      (elab '(Fn () Int () (NarrativeExpr (Return 2))))))
   (check-true
    (tree-contains? narrative-core
-                   '(Perform (Return boundary1 Int) 2)))
+                   '(Perform (Return boundary0 Int) 2)))
   (check-false
    (tree-contains? narrative-core
-                   '(Perform (Return boundary0 Int) 2)))
+                   '(Perform (Return boundary1 Int) 2)))
 
   (match-define (list recur-core _ _ callables)
     (success

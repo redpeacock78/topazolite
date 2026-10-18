@@ -105,6 +105,7 @@
          (NarrativeExpr 1)
          (Recur f ((x Int)) Int () x (Apply f 0))
          (Loop f ((x Int)) Int () x (x))
+         (Loop f ((x Int)) Int (Leave) x (x))
          (Yield 1 2)
          (Suspend 1)
          (Move x)

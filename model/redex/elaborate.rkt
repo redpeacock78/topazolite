@@ -902,9 +902,10 @@
        [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
        [_ (reject span 'invalid-effect-label label)]))))
 
-(define (nearest-boundary boundaries)
-  ;; FunctionBoundary と ExpressionBoundary は同じ Return 処理を使う。
-  (and (pair? boundaries) (car boundaries)))
+(define (nearest-function-boundary boundaries)
+  (for/first ([boundary (in-list boundaries)]
+              #:when (eq? (first boundary) 'FunctionBoundary))
+    boundary))
 
 (define (nearest-expression-boundary boundaries)
   (for/first ([boundary (in-list boundaries)]
@@ -926,7 +927,8 @@
       (span-hull start end)
       `(#:span ,(second start) ,(third start) ,(fourth end))))
 
-(define (resolve-declaration-row raw-row delta boundaries inherited-span)
+(define (resolve-declaration-row raw-row delta boundaries inherited-span
+                                 #:loop-row? [loop-row? #f])
   (define span (nearest-span raw-row inherited-span))
   (define row (peel-ef raw-row))
   (if (eq? row '#:infer)
@@ -935,7 +937,7 @@
        (for/list ([label (in-list row)])
          (match label
            ['Return
-            (match (nearest-boundary boundaries)
+            (match (nearest-function-boundary boundaries)
               [`(,_ ,_ #:infer ,_)
                ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
                (reject span 'return-type-not-inferable 'return-in-synth)]
@@ -945,6 +947,17 @@
               [(list _ boundary type _ _adapter ...)
                `(Return ,boundary ,type)]
               [_ (reject span 'return-label-outside-boundary)])]
+           ['Leave
+            (if loop-row?
+                (match (nearest-expression-boundary boundaries)
+                  [(list _ boundary (list '#:probe _) _ _adapter ...)
+                   `(Return ,boundary Never)]
+                  [(list _ _ '#:infer _ _adapter ...)
+                   (reject span 'return-type-not-inferable 'return-in-synth)]
+                  [(list _ boundary type _ _adapter ...)
+                   `(Return ,boundary ,type)]
+                  [_ (reject span 'leave-outside-expression-boundary)])
+                (reject span 'invalid-effect-label label))]
            [`(Yield ,type)
             `(Yield ,(resolve-annotation type delta span))]
            [(or 'Suspend 'Partial 'Compile 'Own 'Mutation) label]
@@ -1221,7 +1234,7 @@
       (boundary snapshot payload-core payload-result return-type span cell)
       #:transparent)
     (define current-boundary-escapes (make-parameter #f))
-    (define current-leave-reachable? (make-parameter #t))
+    (define current-escape-reachable? (make-parameter #t))
     (define current-loop-trials (make-parameter '()))
     (define current-loop-trial-catching? (make-parameter #f))
     (define flow-state (box (hasheq)))
@@ -2454,12 +2467,12 @@
         (reject span 'arity-mismatch (length types) (length expressions)))
       (let loop ([items expressions]
                  [expected-types types]
-                 [reachable? (current-leave-reachable?)]
+                 [reachable? (current-escape-reachable?)]
                  [results '()])
         (if (null? items)
             (reverse results)
             (let ([result
-                   (parameterize ([current-leave-reachable? reachable?])
+                   (parameterize ([current-escape-reachable? reachable?])
                      (check (first items) (first expected-types)
                             environment delta propositions boundaries))])
               (loop (rest items) (rest expected-types)
@@ -2545,8 +2558,8 @@
           ;; check-eliminate の互換な診断順を保つため、利用側の枝検査は
           ;; binder の検査直後、次の枝の binder 検査より前に呼ぶ。
           (parameterize
-              ([current-leave-reachable?
-                (and (current-leave-reachable?)
+              ([current-escape-reachable?
+                (and (current-escape-reachable?)
                      (judgment-completes? scrutinee-result))])
             (on-clause clause))
           clause))
@@ -2691,8 +2704,8 @@
             (begin
               (flow-restore! entry-flow)
               (parameterize
-                  ([current-leave-reachable?
-                    (and (current-leave-reachable?)
+                  ([current-escape-reachable?
+                    (and (current-escape-reachable?)
                          (judgment-completes? scrutinee-result))]
                    [current-deferred-when-fallthroughs
                     (and body-deferred
@@ -2899,8 +2912,8 @@
                    (list _ _ _ body branch-environment _ _ _) clause)
                  (define branch-result
                    (parameterize
-                       ([current-leave-reachable?
-                         (and (current-leave-reachable?)
+                       ([current-escape-reachable?
+                         (and (current-escape-reachable?)
                               (judgment-completes? scrutinee-result))])
                      (synth body branch-environment delta propositions boundaries)))
                  (flow-branch branch-environment branch-result (flow-snapshot)
@@ -2950,7 +2963,7 @@
         [_ #f]))
 
     (define (try-bind-boundary s-bind kind data-type right-type boundaries)
-      (match (nearest-boundary boundaries)
+      (match (nearest-function-boundary boundaries)
         [#f (reject s-bind 'return-outside-boundary)]
         [`(,_ ,_ #:infer ,_)
          (reject s-bind 'return-type-not-inferable)]
@@ -2999,7 +3012,7 @@
          (define body-environment
            (extend environment (list name) '(Never) #f '(#f)))
          (define body-result
-           (parameterize ([current-leave-reachable? #f])
+           (parameterize ([current-escape-reachable? #f])
              (if expected
                  (check-never-bound-body body expected body-environment delta
                                          propositions boundaries)
@@ -3298,7 +3311,7 @@
              ,return-type () ,declared-row () User))
       (define callable (fresh-callable signature))
       (define body-result
-        (parameterize ([current-leave-reachable? #t])
+        (parameterize ([current-escape-reachable? #t])
           (call-with-flow-rollback
            (λ ()
              (check-function-body
@@ -3650,7 +3663,7 @@
         (extend environment parameters parameter-types #f
                 (map resource-type? parameter-types)))
       (define inferred-return-type
-        (parameterize ([current-leave-reachable? #t])
+        (parameterize ([current-escape-reachable? #t])
           (if (block-body? body)
               (infer-block-return-type s body parameter-environment
                                        delta propositions boundaries)
@@ -3665,7 +3678,7 @@
           (let ()
             (define boundary (fresh-boundary))
             (define body-result
-              (parameterize ([current-leave-reachable? #t])
+              (parameterize ([current-escape-reachable? #t])
                 (call-with-flow-rollback
                  (λ ()
                    (synth body parameter-environment
@@ -3700,7 +3713,8 @@
              #:inherited-row [inherited-row #f]
              #:return-span [return-span #f]
              #:on-body-result [on-body-result #f]
-             #:exclude-loop-trial [exclude-loop-trial #f])
+             #:exclude-loop-trial [exclude-loop-trial #f]
+             #:loop-row? [loop-row? #f])
       (when (and (block-body? body) (not allow-block-body?))
         (reject (block-body-span body) 'invalid-syntax))
       (define-values (function parameters parameter-types)
@@ -3719,7 +3733,8 @@
       (define return-type (resolve-return))
       (define declared-row
         (or inherited-row
-            (resolve-declaration-row raw-row delta boundaries s)))
+            (resolve-declaration-row raw-row delta boundaries s
+                                     #:loop-row? loop-row?)))
       (define signature
         `(NFn ,parameter-types ,return-type () ,declared-row () User))
       (define boundary (and boundary? (fresh-boundary)))
@@ -3745,8 +3760,8 @@
       (define _capture-flow-pin
         (flow-pin-captures! body (cons function parameters) environment))
       (define body-result
-        (parameterize ([current-leave-reachable?
-                        (or boundary? (current-leave-reachable?))])
+        (parameterize ([current-escape-reachable?
+                        (or boundary? (current-escape-reachable?))])
           (call-with-flow-rollback
            (λ ()
              (define result
@@ -3838,8 +3853,8 @@
             (cons `(FunctionBoundary ,body-boundary #:infer ,s) boundaries)
             boundaries))
       (define body-result
-        (parameterize ([current-leave-reachable?
-                        (or body-boundary? (current-leave-reachable?))])
+        (parameterize ([current-escape-reachable?
+                        (or body-boundary? (current-escape-reachable?))])
           (call-with-flow-rollback
            (λ ()
              (synth body parameter-environment delta propositions body-boundaries))
@@ -4116,8 +4131,8 @@
          void
          (λ ()
            (parameterize
-               ([current-leave-reachable?
-                 (and (current-leave-reachable?) (not bound-never?))])
+               ([current-escape-reachable?
+                 (and (current-escape-reachable?) (not bound-never?))])
              (cond
                [identity-resource?
                 (judgment `(#:var ,name ,(span-of body)) binding-type '())]
@@ -4476,7 +4491,8 @@
                     (set-box! (loop-trial-log trial)
                               (append (unbox (loop-trial-log trial))
                                       (list (flow-snapshot))))))
-                #:exclude-loop-trial trial)))))
+                #:exclude-loop-trial trial
+                #:loop-row? #t)))))
         (unbox (loop-trial-log trial)))
       (define (fixed-point)
         (let iterate ([views initial-views]
@@ -4576,7 +4592,8 @@
          raw-row body
          `(Apply ,s (#:var ,function ,s) ,@arguments)
          environment delta propositions boundaries
-         #:boundary? #f))
+         #:boundary? #f
+         #:loop-row? #t))
       (if (null? prefix-assignments)
           recur-result
           (let ([core
@@ -4801,8 +4818,8 @@
               (reject s 'unsatisfied-proof-obligation obligations))
             (define argument-results
               (parameterize
-                  ([current-leave-reachable?
-                    (and (current-leave-reachable?)
+                  ([current-escape-reachable?
+                    (and (current-escape-reachable?)
                          (judgment-completes? function-result))])
                 (check-many arguments parameter-types
                             environment delta propositions boundaries s)))
@@ -4835,12 +4852,12 @@
              (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject s 'duplicate-record-label fields))
-         (define field-reachable? (current-leave-reachable?))
+         (define field-reachable? (current-escape-reachable?))
          (define field-results
            (for/list ([field (in-list fields)])
              (match-define `(,label ,mutability ,field-expression) field)
              (define result
-               (parameterize ([current-leave-reachable? field-reachable?])
+               (parameterize ([current-escape-reachable? field-reachable?])
                  (synth field-expression environment delta propositions boundaries)))
              (set! field-reachable?
                    (and field-reachable? (judgment-completes? result)))
@@ -5004,8 +5021,9 @@
 
         [`(Return ,returned)
          (elaborate-boundary-escape
-          expression s returned (nearest-boundary boundaries)
-          environment delta propositions boundaries)]
+          expression s returned (nearest-function-boundary boundaries)
+          environment delta propositions boundaries
+          #:reachable? (current-escape-reachable?))]
 
         [`(Leave ,returned)
          (define boundary (nearest-expression-boundary boundaries))
@@ -5013,7 +5031,7 @@
            (reject s 'leave-outside-expression-boundary))
          (elaborate-boundary-escape
           expression s returned boundary environment delta propositions
-          boundaries #:reachable? (current-leave-reachable?)
+          boundaries #:reachable? (current-escape-reachable?)
           #:leave-adapter
           (match boundary
             [`(ExpressionBoundary ,_ ,_ ,_ ,adapter) adapter]
@@ -5047,8 +5065,8 @@
            (synth observed environment delta propositions boundaries))
          (define next-result
            (parameterize
-               ([current-leave-reachable?
-                 (and (current-leave-reachable?)
+               ([current-escape-reachable?
+                 (and (current-escape-reachable?)
                       (judgment-completes? observed-result))])
              (synth next environment delta propositions boundaries)))
          (define observed-type (type-for-context observed-result))
@@ -5180,8 +5198,8 @@
                   ,return-type ,latent-in ,latent-out ,obligations ,origin)
             (define argument-result
               (parameterize
-                  ([current-leave-reachable?
-                    (and (current-leave-reachable?)
+                  ([current-escape-reachable?
+                    (and (current-escape-reachable?)
                          (judgment-completes? function-result))])
                 (check argument first-type
                        environment delta propositions boundaries)))
@@ -5576,12 +5594,9 @@
             (cons (judgment-row body-result)
                   (map judgment-row joined-results))))
          (define own-return `((Return ,boundary ,expected)))
-         (define caught?
-           (for/or ([label (in-list own-return)])
-             (member label boundary-row effect-equiv?)))
          (define propagate?
            (and (eq? (judgment-type body-result) 'Never)
-                (not caught?)))
+                (null? pending)))
          (judgment
           `(Handle ,s (Return ,boundary (#:ty ,expected ,s))
                    (,s (#:bind return-value ,s) ->
@@ -5607,13 +5622,13 @@
              (list (peel-lbl raw-label) mutability field-expression)))
          (unless (field-row-unique? fields)
            (reject s 'duplicate-record-label fields))
-         (define field-reachable? (current-leave-reachable?))
+         (define field-reachable? (current-escape-reachable?))
          (define field-results
            (for/list ([field (in-list fields)])
              (match-define `(,label ,mutability ,field-expression) field)
              (define field-type (second (assq label expected-fields)))
              (define result
-               (parameterize ([current-leave-reachable? field-reachable?])
+               (parameterize ([current-escape-reachable? field-reachable?])
                  (check field-expression field-type environment delta propositions
                         boundaries)))
              (set! field-reachable?

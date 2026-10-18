@@ -154,13 +154,13 @@
                  (#:var ,_ ,_)
                  ,_))))
 
-(test-case "Union member の本体ブロック arm は return の値を返す"
+(test-case "Union member の本体ブロック arm は leave の値を返す"
   (define source
     (string-append
      "fn choose(value: Int | String) -> Int | String {\n"
      "  return when value {\n"
-     "    (x: Int) => { return x }\n"
-     "    (s: String) => { return 0 }\n"
+     "    (x: Int) => { leave x }\n"
+     "    (s: String) => { leave 0 }\n"
      "  }\n}\nchoose(1)"))
   (define result (compile source))
   (check-compiled result)
@@ -170,13 +170,13 @@
       [other (fail-check (format "Int member の UnionVal を期待した: ~s"
                                  other))])))
 
-(test-case "Union member の本体ブロック arm の落ち抜けは E-RET-005"
+(test-case "Union member の本体ブロック arm の leave 落ち抜けは E-RET-005"
   (define source
     (string-append
      "fn choose(value: Int | String) -> Int {\n"
      "  let answer = when value {\n"
      "    (x: Int) => { x }\n"
-     "    (s: String) => { return 0 }\n"
+     "    (s: String) => { leave 0 }\n"
      "  }\n  return answer\n}\nchoose(1)"))
   (define result (compile source))
   (check-true (diagnostic? result))
@@ -198,9 +198,9 @@
        "fn choose(" (if variable? "value: Option<Int> | String" "")
        ") -> Int {\n"
        "  let result = when " scrutinee " {\n"
-       "    some x => { return 0 }\n"
+      "    some x => { leave 0 }\n"
        "    none => { () }\n"
-       "    (s: String) => { return 1 }\n"
+      "    (s: String) => { leave 1 }\n"
        "  }\n  return result\n}\n"
        (if variable? "choose(none)" "choose()")))
     (define result (compile source))
@@ -219,10 +219,10 @@
      "  let result = when value {\n"
      "    some x => {\n"
      "      when b { true => { 1 }\n false => { 2 } }\n"
-     "      return x\n"
+       "      leave x\n"
      "    }\n"
-     "    none => { return 0 }\n"
-     "    (s: String) => { return 3 }\n"
+     "    none => { leave 0 }\n"
+     "    (s: String) => { leave 3 }\n"
      "  }\n  return result\n}\n"
      "let option: Option<Int> = some(7)\nf(option, false)"))
   (define result (compile source))

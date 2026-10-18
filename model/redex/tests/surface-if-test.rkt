@@ -99,7 +99,7 @@
      "}\nchoose(true)"))
    2))
 
-(test-case "枝の return は if の値になって関数の残りが実行される"
+(test-case "then の return は if の値ではなく関数を抜ける"
   (check-equal?
    (run-source
     (string-append
@@ -107,6 +107,14 @@
      "  let result = if b { return 1 } else { 2 }\n"
      "  return 3\n"
      "}\nchoose(true)"))
+   1)
+  (check-equal?
+   (run-source
+    (string-append
+     "fn choose(b: Bool) -> Int {\n"
+     "  let result = if b { return 1 } else { 2 }\n"
+     "  return 3\n"
+     "}\nchoose(false)"))
    3))
 
 (test-case "else if は内側の if として評価される"
@@ -253,14 +261,14 @@
      "let answer: Maybe<Int> = if true { 1 }\n0"))
    "E-TYP-012"))
 
-(test-case "then の return は if の値となり、Option と不一致なら拒否する"
+(test-case "then の return は関数を抜け、Option には包まれない"
   (define source
     (string-append
      "fn empty() -> Option<Int> { return none }\n"
      "fn choose(c: Bool) -> Option<Int> {\n"
-     " let ignored = if c { return empty() }\n"
+     " let ignored: Option<Int> = if c { return empty() }\n"
      " return some(7)\n}\nchoose(true)"))
-  (check-equal? (run-source source) '(Construct (Option Int) some 7))
+  (check-equal? (run-source source) '(Construct (Option Int) none))
   (check-equal?
    (compile-code
    "fn f(c: Bool) -> Option<Int> { let answer = if c { return 0 }\n return answer }\n0")
@@ -471,7 +479,7 @@
         unit)))
   (check-false (match expected [`(err ,_) #t] [_ #f])))
 
-(test-case "第2節の条件 return 候補は使い、第1節の条件候補は使わない"
+(test-case "IfSome 内の Return は枝候補を作らない"
   (define prefix
     '(FnDecl f
        ((a Bool) (b Bool) (option (Option Int))
@@ -481,7 +489,10 @@
          (IfSome ((a (Apply stop)) ((Return option) (Apply stop))))
          answer)
        unit))
-  (check-false (match (elab prefix) [`(err ,_) #t] [_ #f]))
+  (match (elab prefix)
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-TYP-010")]
+    [other (fail-check (format "候補無しの E-TYP-010 を期待したが ~s" other))])
   (define first-condition
     '(FnDecl f
        ((a Bool) (option (Option Int))
@@ -661,7 +672,7 @@
   (when (compiled? result)
     (check-equal? (compiled-type result) 'Unit)))
 
-(test-case "第2条件の return は先行する IfSome 境界へ届き、第1条件は関数へ届く"
+(test-case "第1・第2条件の return はともに関数境界へ届く"
   (define second-condition
     (string-append
      "fn identity(x: Bool) -> Bool { return x }\n"
@@ -671,7 +682,7 @@
      "}\nchoose(false)"))
   (check-equal?
    (run-source second-condition)
-   '(Construct (Option Int) some 9))
+   '(Construct (Option Int) none))
   (define first-condition
     (string-append
      "fn identity(x: Bool) -> Bool { return x }\n"
@@ -691,7 +702,7 @@
      "}\nchoose(false)"))
   (check-equal?
    (run-source explicit)
-   '(Construct (Option Int) some 9)))
+   '(Construct (Option Int) none)))
 
 (test-case "IfSome の明示形は節と then block の span を保つ"
   (define source

@@ -4,6 +4,7 @@
          racket/list
          racket/match
          "../diagnostic.rkt"
+         "../driver.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
          "../machine.rkt"
@@ -33,10 +34,31 @@
        (append-map return-boundaries tree)
        '())))
 
+(define (return-performs tree)
+  (append
+   (match tree
+     [`(Perform (Return ,boundary ,type) ,_) (list (list boundary type))]
+     [_ '()])
+   (if (list? tree)
+       (append-map return-performs tree)
+       '())))
+
+(define (without-perform-boundary tree)
+  (match tree
+    [`(Perform (Return ,_ ,type) ,payload)
+     `(Perform (Return ,type) ,(without-perform-boundary payload))]
+    [(? list? parts) (map without-perform-boundary parts)]
+    [_ tree]))
+
 (define (leave-error expression)
   (match (elab expression)
     [`(err ,diagnostic) diagnostic]
     [other (fail-check (format "E-RET-006 を期待したが ~s" other))]))
+
+(define (elab-error-id expression)
+  (match (elab expression)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
 
 (define (check-leave-error expression [expected-span #f])
   (define diagnostic (leave-error expression))
@@ -47,12 +69,15 @@
   (when expected-span
     (check-equal? (diagnostic-primary-span diagnostic) expected-span)))
 
-(test-case "[REQ: RET-001, RET-002] 式境界直下の Leave は Return と同じ Core になる"
+(test-case "[REQ: RET-001, RET-002] 式境界の Leave は局所、Return は関数境界へ届く"
   (define leave
     (success '(Apply (Fn () Int () (NarrativeExpr (Leave 1))))))
   (define returned
     (success '(Apply (Fn () Int () (NarrativeExpr (Return 1))))))
-  (check-equal? (take leave 3) (take returned 3))
+  (check-equal? (without-perform-boundary (first leave))
+                (without-perform-boundary (first returned)))
+  (check-equal? (return-boundaries (first leave)) '(boundary1))
+  (check-equal? (return-boundaries (first returned)) '(boundary0))
   (check-equal? (run-success leave) '(cfg 1 () () () ()))
   (define span '(#:span synthetic 0 0))
   (check-false (mentions-return? `(Leave ,span (#:lit 1 ,span))))
@@ -86,10 +111,55 @@
     (success
      '(Apply (Fn ((value Int)) Int ()
                  (NarrativeExpr
-                  (Loop loop () Int (Return) (Leave value) ())))
+                  (Loop loop () Int (Leave) (Leave value) ())))
              7)))
   (check-equal? (return-boundaries (first result)) '(boundary1))
   (check-equal? (run-success result) '(cfg 7 () () () ())))
+
+(test-case "[REQ: RET-001] Loop row は Return と Leave を個別に宣言する"
+  (define (expression flag row)
+    `(Apply
+      (Fn ((flag Bool)) Int ()
+        (Let (answer const Int)
+             (NarrativeExpr
+              (Loop loop () Int ,row
+                (Eliminate flag
+                  ((true () -> (Return 1))
+                   (false () -> (Leave 2))))
+                ()))
+          (Return answer)))
+      (Construct ,flag (Types))))
+  (define both (success (expression 'true '(Return Leave))))
+  (check-equal? (run-success both) '(cfg 1 () () () ()))
+  (define other-branch (success (expression 'false '(Return Leave))))
+  (check-equal? (run-success other-branch) '(cfg 2 () () () ()))
+  (for ([row (in-list '((Return) (Leave)))])
+    (check-equal? (diagnostic-id
+                   (match (elab (expression 'true row))
+                     [`(err ,diagnostic) diagnostic]
+                     [other (fail-check (format "E-EFF-003 を期待したが ~s" other))]))
+                  "E-EFF-003")))
+
+(test-case "[REQ: RET-001] Loop 内で消費される Leave は Loop row を要しない"
+  (define result
+    (success '(Loop loop () Int () (NarrativeExpr (Leave 5)) ())))
+  (check-equal? (second result) 'Int))
+
+(test-case "[REQ: RET-001] Loop の Leave row は probe では Never に仮置きされる"
+  (define result
+    (success '(NarrativeExpr (Loop loop () Int (Leave) (Leave 5) ()))))
+  (check-equal? (second result) 'Int))
+
+(test-case "[REQ: RET-001] 式境界の無い Loop Leave row は E-RET-006"
+  (check-leave-error '(Loop loop () Int (Leave) (Leave 1) ())))
+
+(test-case "[REQ: RET-001] Loop 以外の宣言 row は Leave を受け付けない"
+  (for ([expression
+         (in-list
+          (list '(Fn () Int (Leave) 1)
+                '(FnDecl f () Int (Leave) unit unit)
+                '(Recur f () Int (Leave) unit (Apply f))))])
+    (check-equal? (elab-error-id expression) "E-SYN-003")))
 
 (test-case "[REQ: RET-001] Leave の NarrativeExpr payload は自身の境界へ戻らない"
   (define result
@@ -117,6 +187,67 @@
   (check-equal? (third checked) '())
   (check-equal? (return-boundaries (first checked)) '(boundary1))
   (check-equal? (run-success checked) '(cfg 1 () () () ())))
+
+(test-case "[REQ: RET-001, RET-002] 省略戻り型の dead Return は候補に混ざらない"
+  (define inferred
+    (success
+     '(Apply
+       (Fn () #:infer ()
+           (NarrativeExpr (Let ignored (Return 1) (Return "s")))))))
+  (check-equal? (second inferred) 'Int)
+  (check-equal? (length (return-boundaries (first inferred))) 1)
+  (check-equal? (run-success inferred) '(cfg 1 () () () ())))
+
+(test-case "[REQ: RET-001, RET-002] 注釈付き関数の dead Return は脱出にならない"
+  (define checked
+    (success
+     '(Apply
+       (Fn () Int ()
+           (NarrativeExpr (Let ignored (Return 1) (Return "s")))))))
+  (check-equal? (second checked) 'Int)
+  (check-equal? (return-performs (first checked)) '((boundary0 Int)))
+  (check-equal? (run-success checked) '(cfg 1 () () () ())))
+
+(test-case "[REQ: RET-001, RET-002] 到達する Return none は境界型との不一致になる"
+  (define result
+    (compile-source/string 'src
+                           "fn f() -> Int { return none }\nf()"))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-DAT-002")))
+
+(test-case "[REQ: RET-001, RET-002] synth できない dead Return payload は E-TYP-003"
+  (define result
+    (compile-source/string 'src
+                           "fn f() -> Int { return 1\n return none }\nf()"))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-TYP-003")))
+
+(test-case "[REQ: RET-001, RET-002] synth できない dead Leave payload は E-TYP-003"
+  (define result
+    (elab
+     '(Apply (Fn () Int ()
+                 (NarrativeExpr
+                  (Let ignored (Leave 1) (Leave (Construct none))))))))
+  (match result
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-TYP-003")]
+    [other (fail-check (format "E-TYP-003 を期待したが ~s" other))]))
+
+(test-case "[REQ: RET-001, RET-002] dead Return none は Option 戻り値で受理される"
+  (define checked
+    (success
+     '(Apply
+       (Fn () (Option Int) ()
+           (NarrativeExpr
+            (Let ignored
+                 (Return (Construct some (Types Int) 1))
+                 (Return (Construct none))))))))
+  (check-equal? (second checked) '(Option Int))
+  (check-equal? (return-performs (first checked)) '((boundary0 (Option Int))))
+  (check-equal? (run-success checked)
+                '(cfg (Construct (Option Int) some 1) () () () ())))
 
 (test-case "[REQ: RET-001, RET-002] Never の後の厳格な operand と arm の Leave は境界に混ざらない"
   (define (check-order expression)

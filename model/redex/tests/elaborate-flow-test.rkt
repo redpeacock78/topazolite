@@ -478,8 +478,8 @@
        "fn f(b: Bool) -> String ! Mutation {\n"
        "  let mut value: Named = { name: \"A\", id: 1 }\n"
        "  let ignored = when " scrutinee " {\n"
-       "    true => { value = { name: \"B\", active: true }\n return 1 }\n"
-       "    false => { value = { name: \"C\", active: false }\n return 2 }\n"
+       "    true => { value = { name: \"B\", active: true }\n leave 1 }\n"
+       "    false => { value = { name: \"C\", active: false }\n leave 2 }\n"
        "  }\n"
        "  return value.name\n"
        "}\n"
@@ -498,7 +498,7 @@
        (if variable? "" "fn yes(value: Bool) -> Bool { return value }\n")
        "fn f(b: Bool) -> String ! Mutation {\n"
        "  let mut value: Named = { name: \"A\", id: 1 }\n"
-       "  let ignored: Option<Int> = if " condition " { value = { name: \"B\", active: true }\n return some(1) }\n"
+       "  let ignored: Option<Int> = if " condition " { value = { name: \"B\", active: true }\n leave 1 }\n"
        "  return value.name\n"
        "}\n"
        "f(true)"))
@@ -507,7 +507,7 @@
      (run-source (string-replace source "f(true)" "f(false)"))
      "A")))
 
-(test-case "TryBind の失敗側 Return は周囲の Narrative flow へ合流する"
+(test-case "TryBind の失敗値は関数境界の型で検査する"
   (for* ([scrutinee (in-list '("b" "yes(b)"))]
          [right (in-list '("maybe" "identityOption(maybe)"))])
     (define variable? (string=? scrutinee "b"))
@@ -525,10 +525,10 @@
        "  return value.name\n"
        "}\n"
        "f(true, none)"))
-    (check-equal? (run-source source) "B")
-    (define false-source
-      (string-replace source "f(true, none)" "f(false, none)"))
-    (check-equal? (run-source false-source) "C")))
+    (define result (compile-source/string 'src source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-033"))))
 
 (test-case "関数境界の早期 Return は正常出口と別の局所 flow を使う"
   (for ([scrutinee (in-list '("b" "yes(b)"))])
@@ -551,7 +551,7 @@
      (run-source (string-replace source "f(true)" "f(false)"))
      "C")))
 
-(test-case "Return payload の評価後に境界の view を再構成する"
+(test-case "Leave payload の評価後に境界の view を再構成する"
   (for ([scrutinee (in-list '(flag (Apply g)))])
     (define expression
       `(Apply
@@ -562,7 +562,7 @@
                  (NarrativeExpr
                   (Eliminate ,scrutinee
                     ((true () ->
-                       (Return
+                       (Leave
                         (Let (tmp const Unit)
                              (Reassign value
                                        (Rec ((name imm "B")
@@ -570,7 +570,7 @@
                                              (active imm
                                                      (Construct true (Types))))))
                              (Proj value id))))
-                     (false () -> (Return 3)))))
+                     (false () -> (Leave 3)))))
               (Proj value name))))
         (Construct true (Types))
         (Fn () Bool () (Construct true (Types)))))
@@ -616,7 +616,7 @@
       (not (return-with-let-operand? (erase-core core)))]
      [_ #f])))
 
-(test-case "資源 Return operand 内で view を再構成して token を一度だけ返す"
+(test-case "資源 Leave operand 内で view を再構成して token を一度だけ返す"
   (for ([scrutinee (in-list '(flag (Apply g)))])
     (define expression
       `(Apply
@@ -632,8 +632,8 @@
                                  (Rec ((name imm "B")
                                        (id imm 2)
                                        (active imm (Construct true (Types))))))
-                    (Return (Move payload))))
-                (false () -> (Return (Move payload))))))))
+                (Leave (Move payload))))
+                (false () -> (Leave (Move payload))))))))
         (Construct true (Types))
         (Fn () Bool () (Construct true (Types)))
         (Apply acquire 1)))
@@ -681,8 +681,8 @@
        "fn f(b: Bool) -> String ! Mutation {\n"
        "  let mut x: Named = { name: \"outer\", id: 1 }\n"
        "  let ignored = when " scrutinee " {\n"
-       "    true => { let mut x: Named = { name: \"inner\", id: 2 }\n x = { name: \"changed\", active: true }\n return true }\n"
-       "    false => { return false }\n"
+       "    true => { let mut x: Named = { name: \"inner\", id: 2 }\n x = { name: \"changed\", active: true }\n leave true }\n"
+       "    false => { leave false }\n"
        "  }\n"
        "  return x.name\n"
        "}\n"
@@ -701,7 +701,7 @@
        "fn f(b: Bool) -> String ! Mutation {\n"
        "  let mut value: Named = { name: \"A\", id: 1 }\n"
        "  let ignored = when " scrutinee " {\n"
-       "    true => { value = { name: \"B\", active: true }\n return 1 }\n"
+       "    true => { value = { name: \"B\", active: true }\n leave 1 }\n"
        "    false => 2\n"
        "  }\n"
        "  return value.name\n"
@@ -718,26 +718,32 @@
        (run-source (string-replace source "f(true)" "f(false)"))
        "A"))))
 
-(test-case "Never で τ° を持つ Return payload は脱出として登録しない"
-  ;; Some の欄の Return は Never だが、T-Ctx-Never の τ° は Option<Int>。
-  (define (branch name active value)
+(test-case "Never で τ° を持つ Leave payload は脱出として登録しない"
+  ;; Return は Never だが、T-Ctx-Never の τ° は通常型を保つ。
+  (define (escaping-branch name active)
     `(Let (changed const Unit)
           (Reassign value
                     (Rec ((name imm ,name)
                           (active imm (Construct ,(if active 'true 'false)
                                                  (Types))))))
-       (Return (Construct some (Return (Construct some ,value))))))
+       (Leave (Return (Construct ,(if active 'true 'false) (Types))))))
+  (define normal-branch
+    '(Let (changed const Unit)
+          (Reassign value
+                    (Rec ((name imm "C")
+                          (active imm (Construct false (Types))))))
+       (Construct false (Types))))
   (for ([scrutinee (in-list (list 'flag '(Apply g)))])
     (define expression
       `(Apply
         (Fn ((flag Bool) (g (NFn () Bool () ()))) Bool (Mutation)
           (Let (value mut (Record ((name String imm))))
                (Rec ((name imm "A") (id imm 1)))
-            (Let (ignored const (Option Int))
+            (Let (ignored const Bool)
                  (NarrativeExpr
                   (Eliminate ,scrutinee
-                    ((true () -> ,(branch "B" #t 1))
-                     (false () -> ,(branch "C" #f 2)))))
+                    ((true () -> ,(escaping-branch "B" #t))
+                     (false () -> ,normal-branch))))
               (Proj value active))))
         (Construct true (Types))
         (Fn () Bool () (Construct true (Types)))))
@@ -745,9 +751,9 @@
       [(list core type row callables)
        (define erased (erase-core core))
        (check-equal? type 'Bool)
-       (check-equal? row '(Mutation))
-       ;; 各枝には外側の Return と、payload 内の実際の脱出が一つずつ残る。
-       (check-equal? (count-form erased 'Perform) 4)
+       (check-not-false (member 'Mutation row))
+       ;; payload 内の Return は関数境界へ届き、外側 Leave は記録しない。
+       (check-equal? (count-form erased 'Perform) 2)
        (check-equal? (core-type-of/diagnostic erased '() callables)
                      (list type row))]
       [other (fail-check (format "elaboration success expected: ~s" other))])))
@@ -925,8 +931,8 @@
        "  let mut value: Named = { name: \"A\", id: 1 }\n"
        "  let answer: Option<String> = when " condition " {\n"
        "    true => { value = { name: \"B\", id: 2, active: true }\n"
-       "                return some(value.name) }\n"
-       "    false => { return some(value.name) }\n"
+       "                leave some(value.name) }\n"
+       "    false => { leave some(value.name) }\n"
        "  }\n"
        "  return value.name\n"
        "}\nf(true)"))

@@ -44,6 +44,9 @@
   (uret ::= uτ #:infer)
   ;; Fn の宣言 row は、省略時に空と区別する。
   (uεr ::= uε #:infer)
+  ;; Loop の Leave だけは外側の式境界へ解決するため、Loop 専用の row を持つ。
+  (uℓloop ::= uℓ Leave)
+  (uεloop ::= (uℓloop ...))
   (tℓ ::= (Return b uτ) (Yield uτ) Suspend Partial Compile Own Mutation)
   (tε ::= (tℓ ...))
   (uℓ ::= Return (Yield uτ) Suspend Partial Compile Own Mutation)
@@ -74,7 +77,7 @@
          (TryBind x e e)
          (Recur f ((x uτ) ...) uret uε e e)
          ;; SUR-014c0b2。for lowering 専用の固定点計算用 loop 印。
-         (Loop f ((x uτ) ...) uret uε e (e ...))
+         (Loop f ((x uτ) ...) uret uεloop e (e ...))
          (FnDecl f ((x uτ) ...) uret uε e e)
          (Yield e e)
          (Suspend e)
@@ -99,6 +102,7 @@
   ;; SUR-008。結果欄の span は関数全体のものである。
   (tr ::= ts (#:infer s))
   (es ::= (#:ef uε s))
+  (esloop ::= (#:ef uεloop s))
   ;; SUR-003。省略 row の span は関数全体のものである。
   (esr ::= es (#:ef #:infer s))
   (sps ::= (#:ty spec s))
@@ -128,7 +132,7 @@
          (NarrativeExpr s e)
          (TryBind s xs e e)
          (Recur s xs ((xs ts) ...) tr es e e)
-         (Loop s xs ((xs ts) ...) tr es e (e ...))
+         (Loop s xs ((xs ts) ...) tr esloop e (e ...))
          (FnDecl s xs ((xs ts) ...) tr es e e)
          (Yield s e e)
          (Suspend s e)
