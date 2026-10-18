@@ -89,14 +89,74 @@
     )
    '(Never ((Return outer Int)) Int)))
 
-(test-case "本体の row に捕まえる op がある Handle は Never を伝えない"
+(test-case "到達しない Return だけを row に持つ捕まえる Handle は Never"
   (check-equal?
    (typed-with-normal
     '(Handle (Return inner Int) (x -> x)
        (Apply (Lam User g (v w) v)
               (Perform (Return outer Int) 1)
               (Perform (Return inner Int) 2))))
+   '(Never ((Return outer Int)) Int)))
+
+(test-case "Let の束縛値が外側への Return なら本体の Return は到達せず Handle は Never"
+  (check-equal?
+   (typed-with-normal
+    '(Handle (Return inner Int) (x -> x)
+       (Let (y const Int) (Perform (Return outer Int) 1)
+         (Perform (Return inner Int) 2))))
+   '(Never ((Return outer Int)) ⊥)))
+
+(test-case "到達する枝の Return が残る捕まえる Handle は Never にならない"
+  (check-equal?
+   (typed-with-normal
+    '(Handle (Return inner Int) (x -> x)
+       (Let (y const Unit)
+            (Eliminate c
+              ((true () -> (Perform (Return outer Int) 1))
+               (false () -> unit)))
+         (Perform (Return inner Int) 2)))
+    '() test-callables '((c Bool)))
    '(Int ((Return outer Int)) Int)))
+
+(define (never-returning-branch)
+  '(Handle (Return inner Bool) (x -> x)
+     (Let (y const Int) (Perform (Return outer Int) 1)
+       (Perform (Return inner Bool) (Construct Bool true)))))
+
+(test-case "到達しない Return の枝は合成位置の Eliminate の候補に入らない"
+  (check-equal?
+   (typed-with-normal
+    `(Eliminate c
+       ((true () -> ,(never-returning-branch))
+        (false () -> 2)))
+    '() test-callables '((c Bool)))
+   '(Int ((Return outer Int)) Int)))
+
+(test-case "到達しない Return の枝は検査位置の Eliminate の候補に入らない"
+  (check-equal?
+   (typed-with-normal
+    `(Let (result const Int)
+       (Eliminate c
+         ((true () -> ,(never-returning-branch))
+          (false () -> 2)))
+       result)
+    '() test-callables '((c Bool)))
+   '(Int ((Return outer Int)) Int)))
+
+(test-case "同じ境界の型違いの到達する Return は E に鍵を残し Handle を Never にしない"
+  (check-equal?
+   (typed-with-normal
+    '(Handle (Return b Int) (x -> x)
+       (Perform (Return b Bool) (Construct Bool true))))
+   '(Int ((Return b Bool)) Int)))
+
+(test-case "Apply の実引数の型違い Return も E に鍵を残し Handle を Never にしない"
+  (check-equal?
+   (typed-with-normal
+    '(Handle (Return b Int) (x -> x)
+       (Apply (Lam User g (v w) v) 1
+              (Perform (Return b Bool) (Construct Bool true)))))
+   '(Int ((Return b Bool)) Int)))
 
 (test-case "Apply の関数位置は Never の正常型で呼出し型を決める"
   (define function-type '(NFn (Int) Int () () () User))

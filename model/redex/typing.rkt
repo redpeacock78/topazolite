@@ -3848,7 +3848,7 @@
 
 (define (typing-child-normal-type Λ index)
   (match (typing-child-result Λ index)
-    [(list _ normal-type _) normal-type]
+    [(list _ normal-type _ _) normal-type]
     [_ #f]))
 
 (define (typing-normal-child-type core Λ index actual-type)
@@ -3870,12 +3870,12 @@
        (let ([indices (typing-context-indices core (second rule))])
          (for/or ([index (in-list indices)])
            (match (typing-child-result Λ index)
-           [(list 'Never _ _) #t]
+           [(list 'Never _ _ _) #t]
             [_ #f])))))
 
 (define (typing-normal-from-let Λ)
   (match* ((typing-child-result Λ 0) (typing-child-result Λ 1))
-    [((list bound-type _ _) (list body-type body-normal _))
+    [((list bound-type _ _ _) (list body-type body-normal _ _))
      (if (eq? bound-type 'Never)
          (if (eq? body-type 'Never) '⊥ body-normal)
          body-normal)]
@@ -3883,15 +3883,16 @@
 
 (define (typing-handle-propagates-never? core Λ)
   (match (peel-node core)
+    [`(Handle (Return ,boundary ,_) ,_ ,_)
+     (match (typing-child-result Λ 1)
+       ;; E は latent row の上界なので、鍵の不在だけを Never 判定に使う。
+       [(list 'Never _ _ escape-boundaries)
+        (not (memq boundary escape-boundaries))]
+       [_ #f])]
     [`(Handle ,operation ,_ ,_)
      (match (typing-child-result Λ 1)
-       [(list 'Never _ body-row)
-        (define operation*
-          (match operation
-            [`(Return ,boundary ,type)
-             `(Return ,boundary ,(peel-ty type))]
-            [_ operation]))
-        (not (member operation* body-row effect-equiv?))]
+       [(list 'Never _ body-row _)
+        (not (member operation body-row effect-equiv?))]
        [_ #f])]
     [_ #f]))
 
@@ -3952,11 +3953,15 @@
             expected)]
        [_ '⊥])]))
 
-(define (record-typing-result! Λ actual-type normal-type row)
+(define (record-typing-result! Λ actual-type normal-type row escape-boundaries)
   (define table (typing-normal-results))
   (when table
     (hash-set! table (region-ctx-point Λ)
-               (list actual-type normal-type row))))
+               (list actual-type normal-type row escape-boundaries))))
+
+(define (psi-escape-boundaries Ψ)
+  ;; wrapper は入口で E を消すため、restore 前の Ψ に局所 E だけが残る。
+  (hash-keys (flow-state-escapes (psi-flow Ψ))))
 
 (define (infer core Λ Ψ environment places callables fail)
   (if (not (typing-normal-results))
@@ -3974,7 +3979,8 @@
                                               normal-type fail core)]
              [result (list result-type (second raw-result) result-psi)])
         ((typing-point-probe) (region-ctx-point Λ))
-        (record-typing-result! Λ result-type normal-type (second result))
+        (record-typing-result! Λ result-type normal-type (second result)
+                               (psi-escape-boundaries (third raw-result)))
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))
@@ -4735,7 +4741,7 @@
        (for/sum ([phi (in-list propositions)]) (if (remainder-phi? phi) 1 0)))
      (define (ensure-base-normal result)
        (when (match (typing-result-at base-Λ)
-               [(list 'Never '⊥ _) #t]
+               [(list 'Never '⊥ _ _) #t]
                [_ #f])
          ;; Discharge は被演算子が Never でも正常型 ⊥ では通常規則を適用できない。
          (fail 'ill-typed base))
@@ -5762,7 +5768,8 @@
              [result-type
               (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
              [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
-        (record-typing-result! Λ result-type normal-type row)
+        (record-typing-result! Λ result-type normal-type row
+                               (psi-escape-boundaries raw-psi))
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))
