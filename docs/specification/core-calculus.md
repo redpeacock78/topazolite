@@ -26,7 +26,7 @@ calculus は次の環境を使う。
 - **Γ（term bindings）**：項変数から型への有限写像。`Γ, x : τ` で拡張する。
 - **Δ（type / kind bindings）**：型名から TypeInfo 値（§3.4）への有限写像。
 - **Π（proof / capability bindings）**：Proof 名から命題と origin の組への有限写像。
-- **B（boundary stack）**：boundary frame の stack。frame は `FunctionBoundary(b, τ)` または `ExpressionBoundary(b, τ)` であり、b は elaboration が発行する一意な境界 ID である。`ExpressionBoundary` は §4.5 の Leave adapter を持つことがあり、その場合も τ は境界の結果型を表す。
+- **B（boundary stack）**：boundary frame と探索停止 marker の stack。frame は `FunctionBoundary(b, τ)` または `ExpressionBoundary(b, τ)` であり、b は elaboration が発行する一意な境界 ID である。`ExpressionBoundary` は §4.5 の Leave adapter を持つことがあり、その場合も τ は境界の結果型を表す。`LeaveBoundaryStop` は `nearestExpression` の探索だけを止め、脱出の宛先にはならない。
 - **R0（予約 origin レジストリ）**：予約 origin ID から、その ID が正当化する値の種類（§3.4 の sort）への有限写像。初期環境だけが定め、elaboration と簡約の間で不変である。
 
 簡約意味論（§5）はさらに次を使う。
@@ -40,12 +40,14 @@ calculus は次の環境を使う。
 boundary stack の操作は次の二つである。
 
 ```text
-push(B, frame)      frame を先頭に積んだ stack を返す
-nearestReturn(B)    先頭の frame を返す。空なら未定義
+push(B, frame)          frame を先頭に積んだ stack を返す
+nearestFunction(B)      最初の FunctionBoundary を返す。無ければ未定義
+nearestExpression(B)    最初の FunctionBoundary または LeaveBoundaryStop より内側にある ExpressionBoundary を返す。無ければ未定義
 ```
 
-`nearestReturn` は FunctionBoundary と ExpressionBoundary を区別しない。
-どちらも `return` の送信先になれる。
+`nearestFunction` と `nearestExpression` は B を内側からたどる。
+`nearestExpression` は最初の FunctionBoundary または `LeaveBoundaryStop` に達した時点で探索を止める。
+`FnDecl` と `Recur` の本体が自身の関数境界を積まない場合は `LeaveBoundaryStop` を積み、その本体の `leave` が外側の式境界へ抜けることを防ぐ。
 
 ## 3. 構文
 
@@ -110,16 +112,21 @@ UCore+ では `(BlockBody s e)` とし、`s` は Surface 本体 block の閉じ�
 これら以外の位置にある `BlockBody` は不変条件の違反として拒否する。
 Typed Core と Core の文法および簡約規則には `BlockBody` は現れない。
 
-UCore は `for` の lowering だけが作る loop 印 `(Loop f ((x uτ) ...) uret uε e (a ...))` を持つ。
-UCore+ では `(Loop s xs ((xs ts) ...) tr es e (a+ ...))` とし、`s` は印の span、`xs` と `ts` は関数名と仮引数の binder および型の注釈、`tr` と `es` は結果型と Effect row の注釈である。
+UCore は `for` の lowering だけが作る loop 印 `(Loop f ((x uτ) ...) uret uεloop e (a ...))` を持つ。
+UCore+ では `(Loop s xs ((xs ts) ...) tr esloop e (a+ ...))` とし、`s` は印の span、`xs` と `ts` は関数名と仮引数の binder および型の注釈、`tr` と `esloop` は結果型と Loop 専用 Effect row の注釈である。
+`uεloop` は通常の宣言 row label に Loop 専用 label `Leave` を加えた row であり、span 付きの `esloop` も同じ label 集合を表す。
+通常の `fn`、`fnDecl`、`recur` の宣言 row は `Leave` を受け付けない。
 最後の欄は初回呼出しの実引数であり、loop 印の本体と宣言は `Recur` と同じ意味を持つ。
 elaboration は loop 印を固定点の下で検査し、必要な `Reassign` の後ろに既存の `Recur` と初回 `Apply` を出力する。
 loop 印は Typed Core と Core には残らない（§5.1）。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker である。
 Surface の `for` は UCore の loop 印へ lowering され、elaboration が固定点を求めた後に `Recur` と初回 `Apply` へ展開する（ホワイトペーパー §7.2、§5.1）。
-`fn` と `recur` の注釈にある Effect row ε の中では、境界 ID を持たないラベル `Return` を書ける。
-このラベルは elaboration が最寄りの境界へ静的に解決する（§4.5）。
+`fn`、`fnDecl`、`recur` の宣言 row では、境界 ID を持たないラベル `Return` を書ける。
+Loop 専用 row では `Return` と `Leave` を書ける。
+elaboration は `Return` を最寄りの関数境界へ、Loop row の `Leave` を最寄りの式境界へ静的に解決する（§4.5）。
+Loop row には Loop 本体から実際に Loop を越える脱出だけを含め、Loop 内の境界で捕まる脱出は含めない。
+`Leave` は Loop 以外の宣言 row では文法違反となり、`E-SYN-003` で拒否する。
 
 ### 3.2 型、Effect row、kind
 
@@ -135,7 +142,7 @@ Surface の `for` は UCore の loop 印へ lowering され、elaboration が固
 κ ::= Type | κ1 -> κ2                            kind
 
 ε ⊆ { Return<b, τ>, Yield<τ>, Suspend, Partial, Compile, Own, Mutation }   Effect row
-     （宣言注釈の中の ε に限り、境界 ID を持たない Return ラベルを許す。§3.1、§4.5）
+     （宣言注釈では境界 ID を持たない Return ラベルを許す。Loop 専用 row の Leave も elaboration 前に限り許す。§3.1、§4.5）
 
 Q ::= ⟨φ1, …, φn⟩                                Proof obligation の列
 
@@ -808,8 +815,10 @@ field 型への `Owned<_>` の禁止は G1 の制限である。
 elaboration は線形の穴の方式を生成せず、これは Typed Core の手書き項にある `Eliminate` と `UnionEliminate` の枝だけが使える規則である。
 
 `eliminate` は文 Narrative に相当し、boundary を push しない。
-各枝の elaboration は B をそのまま受け取るため、枝の中の `return` は外側の最寄りの境界へ解決される。
-これが RET-003（文 Narrative は明示的に指定されない限りローカル return boundary を作らない）の calculus 上の表現である。
+各枝の elaboration は `Eliminate` 自身が B を変えずに受け取るため、枝の `return` は最寄りの関数境界へ解決され、枝の `leave` は最寄りの式境界へ解決される。
+非変数の式位置 `when` が作る arm ごとの `NarrativeExpr` は枝本体の境界となるが、scrutinee はその境界の外で評価する。
+したがって scrutinee 中の `leave` は arm の境界ではなく、その外側の最寄りの式境界へ解決する。
+これが RET-003（文 Narrative は `leave` の境界を作らない）の calculus 上の表現である。
 
 ### 4.3 関数と Narrative 適用
 
@@ -843,7 +852,8 @@ E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ
 この下見と本検査の間で本体を再 elaboration することは、戻り型省略の規則の一部である。
 
 式位置の `when` の本体ブロック arm も `BlockBody` へ下ろすが、関数本体のような戻り型の検査は行わない。
-その arm は落ち抜ければ `Unit`、`return` で `Never` となり、`return` は式位置の `when` の既存の境界へ届く。
+その arm は落ち抜ければ `Unit`、脱出だけで終われば `Never` となる。
+arm の `return` は関数境界へ届き、`leave` は式位置の `when` が作る arm の式境界へ届く。
 落ち抜けの有無は `when` ごとに記録し、`when` 全体の結果型が確定した後、結果型が `Unit` 以外なら原文順で最初に落ち抜けた arm の閉じ波括弧を primary とする `E-RET-005` を報告する。
 この marker は UCore+ の elaboration で消費され、Core の型付け規則は増やさない。
 
@@ -926,7 +936,7 @@ B' = push(B, FunctionBoundary(b, ?))
 ```
 
 `FunctionBoundary(b, ?)` は戻り型が未定の境界である。
-`nearestReturn(B') = Frame(b, ?)` のとき、E-Return と `resolveReturn` は導出を持たない。
+`nearestFunction(B') = FunctionBoundary(b, ?)` のとき、E-Return と `resolveReturn` は導出を持たない。
 
 **(E-Lambda-Infer-Check)** [REQ: SUR-008]
 
@@ -1022,28 +1032,33 @@ F* 側は Surface の構文と lowering の対応を扱い Typed Core の型層�
 
 ### 4.5 return と boundary
 
-宣言 row の中の境界 ID を持たないラベル `Return` は、elaboration が次で解決する。
+通常の宣言 row にある境界 ID を持たないラベル `Return` は、elaboration が次で解決する。
 
 ```text
 resolveReturn(B, ε) = ε の各 Return を Return<b, τ> に置換
-                      （nearestReturn(B) = Frame(b, τ)）
+                      （nearestFunction(B) = FunctionBoundary(b, τ)）
 ```
+
+Loop 専用 row の `Leave` は、Loop の位置で最寄りの式境界へ解決する。
+この row には Loop を越える脱出だけを記し、Loop 内の式境界が捕まえる `leave` は含めない。
+`Return` と `Leave` はそれぞれ `Return<b, τ>` に解決され、Typed Core に `Leave` label は残らない。
+通常の関数・再帰の宣言 row は境界 ID を持たない `Return` を受け付けるが、`Leave` は受け付けない。
+Return label に対応する関数境界が無ければ `E-RET-001`、Loop row の Leave label に対応する式境界が無ければ `E-RET-006` となる。
 
 **(E-Return)** [REQ: RET-001]
 
 ```text
-nearestReturn(B) = Frame(b, τ)        Frame は FunctionBoundary または ExpressionBoundary
+nearestFunction(B) = FunctionBoundary(b, τ)
 Γ; Δ; Π; B ⊢ e ⇐ τ ! ε ⟹ c
 --------------------------------
 Γ; Δ; Π; B ⊢ return e ⇒ Never ! {Return<b, τ>} ∪ ε
   ⟹ Perform(Return<b, τ>, c)
 ```
 
-`return` の送信先は実行時の探索ではなく、elaboration 時に boundary stack から静的に決まる（RET-001）。
+`return` は最寄りの `FunctionBoundary` だけを送信先とし、間にある `ExpressionBoundary` を越える。
+送信先は実行時の探索ではなく、elaboration 時に boundary stack から静的に決まる（RET-001）。
 返す式は境界の型 τ に対して検査される。
-
-`nearestExpression(B)` は、B を内側からたどり、最初の `FunctionBoundary` に達する前に現れる最初の `ExpressionBoundary` を返す。
-その範囲に `ExpressionBoundary` がなければ未定義とする。
+関数境界が無い `return` は `E-RET-002` で拒否する。
 
 式境界は Leave の結果を変換する adapter `A` を持つことがある。
 この仕様で使う adapter は恒等変換 `identity` と `some<T>` に限る。
@@ -1066,8 +1081,16 @@ nearestExpression(B) = ExpressionBoundary(b, τ, A)
 `some<T>` adapter では `leave-type(Option<T>, some<T>) = T`、`adaptLeave(some<T>, c) = Construct(Option<T>, some, c)` とする。
 式境界が無い場合、または最初の `FunctionBoundary` より外側にしか式境界が無い場合は `E-RET-006` `leave-outside-expression-boundary` で拒否する。
 `leave` は境界 ID を elaboration 時に静的に選び、Typed Core では `Return` と同じ `Perform` を使う。
-`Return` は従来どおり `nearestReturn` を使い、Leave adapter を適用しない。
-loop 印が作る `Recur` は `FunctionBoundary` を push しないため、その本体の `leave` は外側にある最寄りの式境界へ解決する。
+`leave` を関数本体の中で使い、内側に式境界が無ければ `E-RET-006` で拒否する。
+`Return` は `nearestFunction` へ解決し、Leave adapter を適用しない。
+loop 印が作る `Recur` は `FunctionBoundary` を push しないため、その本体の `return` は外側の最寄りの関数境界へ、その Loop row の `Leave` は外側の最寄りの式境界へ解決する。
+Loop row に対応する式境界が無い `Leave` label は、本文で使われなくても `E-RET-006` となる。
+Loop 以外の `fn`、`fnDecl`、`recur` の宣言 row にある `Leave` は文法違反として `E-SYN-003` で拒否する。
+`FnDecl` と `Recur` の本体が `FunctionBoundary` を積まない場合も `LeaveBoundaryStop` を積むため、外側に式境界があっても関数本体の `leave` は `E-RET-006` となる。
+
+elaboration が到達不能と判定した位置の `return` と `leave` は、到達可能な脱出、関数戻り型の下見候補、式境界の Leave 候補として記録しない。
+到達不能な被演算子も型検査は行い、`return` は宛先の関数戻り型、`leave` は adapter 適用前の payload 型で check を試みる。
+check が失敗した場合は状態を復元して synth するため、期待型を要する payload が dead code にだけ現れれば、到達可能な位置より厳しく拒否されるのではなく payload 自身の synth 診断が報告される。
 
 **(E-NarrativeExpr)** [REQ: RET-002]
 
@@ -1081,8 +1104,10 @@ B' = push(B, ExpressionBoundary(b, τ))
 ```
 
 式 Narrative は自身の ExpressionBoundary を push する。
-その中の `return` は E-Return を通じて境界の型 τ、すなわち当該式の返り値型と unify する（RET-002）。
-境界への Return Effect は handler が処理するため、式の外へは漏れない。
+その中の `leave` は E-Leave を通じて境界の型 τ、すなわち当該式の返り値型と unify する（RET-002）。
+その式境界自身への Return Effect は handler が処理するため、式の外へは漏れない。
+`return` はこの式境界を越えて最寄りの関数境界へ届き、式の値として使われない。
+この handler の `Never` 伝播は、自身の境界 ID b への到達可能な脱出が無いことを条件とし、T-Ctx-Never の `Handle(Return<b, τ>, …)` と同じ判定を使う。
 
 **(E-NarrativeExpr-Synth)** [REQ: RET-002]
 
@@ -1099,11 +1124,24 @@ B' = push(B, ExpressionBoundary(b, τ))
 ```
 
 下見は fresh な `ExpressionBoundary(b, probe)` の下で本体を synth し、型が `Never` でなければその型を τ にする。
-型が `Never` か本体の synth が失敗した場合は、下見で得た **return 候補** のうち最初の型を τ にする。
-本体の synth が失敗し return 候補が無い場合は、その失敗の診断を伝播する。
-本体の型が `Never` で候補も無い場合は `E-TYP-010` で拒む。
+型が `Never` か本体の synth が失敗した場合は、下見で得たこの境界宛ての `leave` 候補のうち最初の型を τ にする。
+値の型を probe で決められない `leave` も境界へ脱出する候補として数え、候補が無い場合と区別する。
+この候補は境界の結果型を決める型候補にはならず、型候補が他に無ければ `leave` の payload の synth 診断を維持する。
+本体の synth が失敗し候補が無い場合は、その失敗の診断を伝播する。
+本体の synth が成功して `Never` を返し、正常な値の候補もこの境界宛ての `leave` 候補も無い場合、`NarrativeExpr` 自身は `Never` に合成する。
 下見中の elaboration 状態は下見の後で復元する。
 本体を τ の期待型で改めて検査し、最終 Core はその check の経路で決まる。
+
+合成の位置で `Eliminate` の枝の合流型が `Never` のときも、通常は `Never` に合成する。
+ただし、Surface の `when` が生成する次の二つの構造では `E-TYP-010` で拒否する。
+第一は、全ての arm 本体が `NarrativeExpr` である `Eliminate` である。
+第二は、正常値候補も型として決められないものを含む自身宛ての `leave` 候補も無い `NarrativeExpr` の直接の本体が `Eliminate` である。
+いずれも判定対象は枝の合流型であり、scrutinee の型が `Never` であることだけでは拒否しない。
+これらは Core の形に基づく規則なので、同じ形の手書き UCore にも適用する。
+一部の arm だけが `NarrativeExpr` である形は第一のガードに該当しない。
+Surface の非変数 scrutinee の `when` は各 arm を `NarrativeExpr` で包み、scrutinee はその境界の外で評価する。
+文位置の `when` は lowering で `%stmt` を `const Unit` 注釈つきで束縛する `Let` の右辺となり、`Eliminate` は synth でなく check の経路へ進むため、上記の合成ガードは適用しない。
+`Eliminate` の check 規則は変更しない。
 
 **(E-IfSome)**
 
@@ -1129,10 +1167,10 @@ IfSome(clauses) ⇒ Option<T> ! ε ⟹ c
 
 下見は各 then `b_i` と、第 2 節以降の条件 `c_2 ... c_n` を、それぞれ fresh な `ExpressionBoundary` の下で synth する。
 最初の条件 `c_1` はその連鎖の境界より前に評価されるため下見の候補に含めない。
-各下見は Core と型、`Never` の有無、return 候補、診断を記録し、elaboration の状態を復元する。
+各下見は Core と型、`Never` の有無、この下見が作る式境界宛ての `leave` 候補、診断を記録し、elaboration の状態を復元する。
 `Never` でない then の Core と型を既存の `merge-branches` に渡し、その合流型を `T` とする。
 `Never` の then は合流から除く。
-非 `Never` の then が無く return 候補がある場合は、原文の順（`then_1`、`c_2`、`then_2`、…、`c_n`、`then_n`）で最初の候補を選ぶ。
+非 `Never` の then が無く `leave` 候補がある場合は、原文の順（`then_1`、`c_2`、`then_2`、…、`c_n`、`then_n`）で最初の候補を選ぶ。
 候補型が `Option<U>` なら `T = U` とし、それ以外は expected `Option`、found 候補型の `E-TYP-012` とする。
 候補がなく下見で診断が生じていれば最初の診断を伝播し、全ての then が `Never` で候補も診断も無ければ `E-TYP-010` とする。
 最終 Core は `Option<T>` に対する検査で生成し、必要な Union 注入などの変換もその経路で決める。
@@ -1160,7 +1198,9 @@ IfSome(clauses) ⇒ Option<T> ! ε ⟹ c
 右辺が `Owned<Option<T>>` または `Owned<Result<T, E>>` なら、elaboration は外側の `Owned` を剥がし、簡約時に `R-EliminateTransit` が移送 marker を外す。
 成功 payload または Result の誤差 payload が資源型なら、既存の data `Eliminate` と同じ枝 binder の Scope と Let encoding を使い、資源を一度だけ移送する。
 展開した `Eliminate` は `NarrativeExpr` で包まない。
-失敗は `nearestReturn` が返す最も内側の関数または式境界へ伝播し、`when` の枝にある `?=` はその `when` の境界へ戻る。
+失敗は最寄りの関数境界へ伝播し、式境界では捕まえない。
+関数境界が無い場合は `E-RET-002` で拒否する。
+失敗値の型が関数境界の戻り型と一致しない場合は `E-TYP-033` で拒否し、関数境界の span を related span にする。
 失敗枝が生成した `Return` は戻り型の下見の候補に加えず、候補は成功枝と利用者が書いた `Return` からだけ得る。
 本体が `Never` で他の候補も無い場合、戻り型を省略した関数は `E-TYP-024`、合成位置の `NarrativeExpr` は `E-TYP-010` で拒否する。
 境界がまだ `#:infer` の段階にある場合は `E-TYP-024`、境界が無い場合は `E-RET-002` で拒否する。
@@ -1228,8 +1268,8 @@ gate の分類で c2 を `unit` に置き換えると、C-Guarded が要求す�
 whole-term の分類から c2 の条件を外すと、発散する継続を持つ Recur が Finite になり、性質 6 を破る。
 r は fresh な CallableId であり、表層名 f そのものを内部識別子として使うのではない（f は同じ CoreArtifact 内の他の `recur` と衝突しうる。§3.3）。この導出が組み立てる `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)` は e0 全体の CoreArtifact の Φ に加わる。GUN（§3.3）により、e0 の elaboration 導出中に現れる他のすべての E-Lambda・E-Recur 適用の ℓ/r とは相異なる。
 
-`recur` は loop の lowering 先となる内部 marker であり、関数境界を push しない（RET-003 の適用対象）。
-body の中の `return` は外側の最寄りの境界へ解決される。
+loop 印が lowering する `Recur` は Surface の関数境界を作らない（RET-003 の適用対象）。
+その本体の `return` は外側の最寄りの関数境界へ解決される。
 これにより、Surface の `for` の body にある `return` が関数境界へ伝播する意味論（ホワイトペーパー §3.2.2）が Core 上で再現される。
 body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-001 の表現である。
 
@@ -1242,6 +1282,8 @@ body の row 包含 `εbody ⊆ ε'` は、E-Lambda の row 包含と同じ EFF-
 宣言 row は本体の境界を積む前の B で解決し、継続も B で elaboration する。
 本体の構文に `Return` 式または宣言 row の `Return` label があるときだけ fresh な境界 b を積む。
 その場合、本体を `FunctionBoundary(b, τ)` の下で検査し、自身の `Return<b, τ>` を宣言 row の包含検査から除く。
+`leave` は関数境界を作らず、最寄りの式境界を探す。
+本体に自身の `FunctionBoundary` が無い `FnDecl` は `LeaveBoundaryStop` を積み、外側の式境界へ誤って抜けることを防ぐ。
 本体の合成 row に自身の `Return<b, τ>` がある場合だけ、Typed Core の本体を `Handle` で包む。
 `Handle` は資源型の仮引数の `Scope` と `Let` の内側に置き、分類 gate には Handle で包む前の本体を渡す。
 `BlockBody` の本体については E-Lambda と同じ statement projection の検査を行い、戻り型が `Unit` 以外なら本体の型 `Never` を要求する。
@@ -1286,7 +1328,8 @@ r fresh                                            （CallableId、§3.3。本�
 ```
 
 `f` が `e1` に自由に現れないため、E-Recur の `Γf` の下で `e1` を検査することと、`f` を含まない環境で合成することは同じ結果を与える。
-`Recur` は FunctionBoundary を push しないため、本体の `Return` は外側の最寄りの境界へ向かう。
+`Recur` は FunctionBoundary を push しないため、本体の `Return` は外側の最寄りの関数境界へ向かう。
+自身の `FunctionBoundary` を積まない `Recur` は `LeaveBoundaryStop` を使い、外側の式境界を `leave` の宛先にしない。
 
 **(E-Yield)**
 
@@ -1570,7 +1613,7 @@ E0 は `Perform` と latent row から保守的に記録される脱出の上界
 | `Apply` | 関数、実引数 | 関数には要する、実引数には要しない | 関数型の戻り型 |
 | `Let` | 束縛値 | 要しない。Core の束縛子が型を持つ | 束縛値と本体がともに `Never` なら `⊥`、それ以外は本体の正常型 |
 | `Construct` | 欄 | 要しない。constructor の型注釈で検査する | 注釈の型 |
-| `Eliminate` | scrutinee | 要する。constructor schema が必要 | `Never` でない枝の合流型、全枝 `Never` なら `⊥` |
+| `Eliminate` | scrutinee | 要する。constructor schema が必要 | `Never` でない枝の合流型、全枝 `Never` なら通常 `⊥`（§4.5 の二つの合成ガードを除く） |
 | `Perform` | 引数 | 要しない。operation の型成分で検査する | operation の結果型。結果型が `Never` なら `⊥` |
 | `Drop` | 被演算子 | 要する。drop の可否を判定する | `Unit` |
 | `Yield` | observed | 要する。`next` は逐次の継続なので一覧に含めない | `next` の正常型。`next` の型が `Never` なら `⊥` |
@@ -1598,7 +1641,9 @@ E0 は `Perform` と latent row から保守的に記録される脱出の上界
 `RecRewrite` の entry 本体は R-RecRewrite-Open より前は遅延コードなので一覧に含めない。
 展開後の `RecRewriteOpen` では作業欄が評価され、上表の規則が適用される。
 `Fn`、`Lam`、`RegionLam`、`RecurVal` の本体は遅延して評価するため一覧に含めない。
-`Eliminate` と `UnionEliminate` の枝は、既存の枝合流規則が全ての枝の型を検査し、全枝 `Never` の場合に親を `Never` とする。
+`Eliminate` と `UnionEliminate` の枝は、既存の枝合流規則が全ての枝の型を検査し、全枝 `Never` の場合に通常は親を `Never` とする。
+`Eliminate` が §4.5 に示す Surface `when` 由来の二つの構造のいずれかに一致する場合、合成の位置では `E-TYP-010` のガードが優先する。
+このガード以外では、手書き UCore の `Eliminate` と `UnionEliminate` を含め、全枝 `Never` の結果型は `Never` のままである。
 `Yield` の `next` と `Let` の本体は逐次の継続であり、各通常規則が継続の型を結果にする。
 `RecRewriteOpen` の `Absent` 欄は評価対象ではなく、一覧の作業欄に含めない。
 T-Ctx-Never は簡約規則や G2 の機械規則を追加せず、既存の Return 脱出、枝合流、scope finalization を用いる。
@@ -1687,6 +1732,9 @@ config 再型付けで実値の型 σ を静的な view τ として受理する
 loop 印は、`Recur` と、その継続に置く初回の自己呼出しを一つにまとめた UCore の中間形である。
 宣言する結果型は明示しなければならず、`#:infer` は loop 印の形の違反となる。
 この印は `for` の lowering だけが生成するため、形の違反は Surface 診断ではなく内部不変条件の違反として扱う。
+loop 印は Surface の関数境界を作らない。
+`Return` label は loop 印の位置にある最寄りの関数境界へ、`Leave` label は最寄りの式境界へ解決し、いずれも本体が loop 印を越えて実際に脱出する場合にだけ row に置く。
+そのため、Loop 本体からの `Return` は loop の再帰呼出しで捕まえず、`Leave` は式境界を使って `for` の値を返す。
 
 elaboration は、loop 印の本体が自由に参照する mut binder を**対象**とする。
 本体の中で導入された mut binder は対象に含めない。
@@ -1705,7 +1753,7 @@ T は binder の宣言型、C0 は loop 印へ入る時点の flow 型である�
 elaboration は C0 から試行を始め、本体で f を先頭とする `Apply` の実引数を評価した後の対象 view を back-edge として記録する。
 記録後は呼出し後の対象 view を Ck に戻す。
 本体が正常に完了する場合は出口の view も記録する。
-`Never` で終わる経路と外側の Return boundary へ脱出する経路は正常出口に含めず、外側への脱出は固定点の計算の後、本検査で登録し直す。
+`Never` で終わる経路と Loop 外の Return または Leave boundary へ脱出する経路は正常出口に含めず、外側への脱出は固定点の計算の後、本検査で登録し直す。
 
 試行は loop 印の入口から既にある pin を保つが、対象には試行中の pin を加えない。
 対象でない局所 mut binder の pin は通常どおり扱う。
@@ -3269,7 +3317,8 @@ findPositive =
 ```
 
 `Bool` の分解は C0 の `true()` と `false()`（§3.5）に対する `eliminate` である。
-`loop` の宣言 row の `Return` は、elaboration が narrativeExpr の境界 bE へ解決する。
+`loop` の宣言 row の `Return` は、elaboration が関数境界 bf へ解決する。
+外側の `narrativeExpr` が作る bE はこの `return` を捕まえない。
 簡約列の中の `lt` は、E-Prim が解決した `PrimVal(Reserved(o-lt), lt)` の略記である（§8.2 の `mul` も同様）。
 
 入力は `cons(-1, cons(2, nil))`（型引数の表記は省略、以下同じ）とする。
@@ -3287,10 +3336,11 @@ Apply(findPositive, cons(-1, cons(2, nil)))
 → (R-Eliminate) false 枝 → Apply(loopVal, cons(2, nil))
 → (R-RecurUnfold、R-Eliminate) cons 枝、head = 2
 → (R-Delta) Apply(lt, 0, 2) → Construct(true)
-→ (R-Eliminate) true 枝 → Perform(Return<bE, Result<Int, Unit>>, Construct(ok, 2))
+→ (R-Eliminate) true 枝 → Perform(Return<bf, Result<Int, Unit>>, Construct(ok, 2))
 → (R-ScopeAbort) 内側 Scope の finalization（π = ∅、イベントなし）
-→ (R-HandleReturn) bE の handler が捕捉 → Construct(ok, 2)
-→ (R-ScopeValue、R-HandleValue) 外側の Scope と bf の handler を素通り
+→ (R-HandleSkip) bE の handler は境界 ID が異なるので Return を外へ伝える
+→ (R-ScopeAbort) 関数 Scope の finalization（π = ∅、イベントなし）
+→ (R-HandleReturn) bf の handler が捕捉 → Construct(ok, 2)
 ```
 
 期待する最終値は `Construct(ok, 2)` である。
