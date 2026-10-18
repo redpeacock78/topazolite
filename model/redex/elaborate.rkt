@@ -3534,7 +3534,8 @@
       (match (peel-node body)
         [`(Eliminate (#:var ,condition-name ,_) ,_)
          (and (assoc condition-name environment)
-              ;; if-some-explicit uses this dedicated binder, which annotate freshens.
+              ;; Surface では % 始まりの名前を書けないため、%ifcond-option 接頭辞で if-some-explicit の合成 binder（else のない if）を識別する。
+              ;; binder 名を変える場合は、この判定も更新しないと識別できない。
               (regexp-match? #rx"^%ifcond-option" (symbol->string condition-name))
               (match (normalize-type expected)
                 [`(Option ,payload-type) `(Option ,payload-type)]
