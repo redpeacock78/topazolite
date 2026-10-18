@@ -363,6 +363,10 @@
   (check-leave-error
    '(NarrativeExpr (Recur f () Int () (Leave 1) unit))))
 
+(test-case "[REQ: RET-001] 推論 Recur 本体は Leave の宛先探索を止める"
+  (check-leave-error
+   '(NarrativeExpr (Recur f () #:infer () (Leave 1) unit))))
+
 (test-case "[REQ: RET-001] 外側の式境界を越える FnDecl の Leave は拒否する"
   (check-leave-error
    '(NarrativeExpr (FnDecl f () Int () (Leave 1) unit))))
