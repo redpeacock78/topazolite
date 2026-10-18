@@ -266,6 +266,168 @@
    "fn f(c: Bool) -> Option<Int> { let answer = if c { return 0 }\n return answer }\n0")
    "E-TYP-012"))
 
+(test-case "else の無い if の leave は Option payload を包む"
+  (define typed-source
+    (string-append
+     "fn choose(c: Bool) -> Option<Int> {\n"
+     " let answer: Option<Int> = if c { leave 0 }\n"
+     " return answer\n}\nchoose(true)"))
+  (check-equal? (run-source typed-source)
+                '(Construct (Option Int) some 0))
+  (check-equal?
+   (run-source
+    (string-append
+     "fn choose(c: Bool) -> Option<Int> {\n"
+     " let answer: Option<Int> = if c { leave 0 }\n"
+     " return answer\n}\nchoose(false)"))
+   '(Construct (Option Int) none))
+  (define inferred-source
+    (string-append
+     "fn choose(c: Bool) -> Option<Int> {\n"
+     " let answer = if c { leave 0 }\n"
+     " return answer\n}\nchoose(true)"))
+  (define inferred (compile inferred-source))
+  (check-true (compiled? inferred))
+  (when (compiled? inferred)
+    (check-equal? (compiled-type inferred) '(Option Int))
+    (check-equal? (run-value inferred) '(Construct (Option Int) some 0))))
+
+(test-case "if の leave some は payload 型に対して検査する"
+  (define source
+    (string-append
+     "fn choose(c: Bool) -> Option<Int> {\n"
+     " let answer: Option<Int> = if c { leave some(0) }\n"
+     " return answer\n}\nchoose(true)"))
+  (define result (compile source))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-DAT-002")
+    (check-equal? (diagnostic-primary-span result)
+                  (source-span source #rx"some\\(0\\)"))))
+
+(test-case "入れ子の if の leave は内側の Option 境界で包む"
+  (define source
+    (string-append
+     "fn choose(c1: Bool, c2: Bool) -> Option<Option<Int>> {\n"
+     " let answer = if c1 { if c2 { leave 1 } }\n"
+     " return answer\n}\nchoose(true, true)"))
+  (check-equal? (run-source source)
+                '(Construct (Option (Option Int)) some
+                            (Construct (Option Int) some 1))))
+
+(test-case "else-if の各節の leave を Option payload として合流する"
+  (define (source call)
+    (string-append
+     "fn choose(c1: Bool, c2: Bool) -> Option<Int> {\n"
+     " let answer = if c1 { leave 1 } else if c2 { leave 2 }\n"
+     " return answer\n}\nchoose(" call ")"))
+  (check-equal? (run-source (source "true, true"))
+                '(Construct (Option Int) some 1))
+  (check-equal? (run-source (source "false, true"))
+                '(Construct (Option Int) some 2))
+  (check-equal? (run-source (source "false, false"))
+                '(Construct (Option Int) none)))
+
+(test-case "文位置 if の leave は外側の Option 境界へ届く"
+  (define (source c d)
+    (string-append
+     "fn choose(c: Bool, d: Bool) -> Option<Int> {\n"
+     " let answer = if c { if d { leave 1 }\n 2 }\n"
+     " return answer\n}\nchoose(" c ", " d ")"))
+  (check-equal? (run-source (source "true" "true"))
+                '(Construct (Option Int) some 1))
+  (check-equal? (run-source (source "true" "false"))
+                '(Construct (Option Int) some 2))
+  (check-equal? (run-source (source "false" "true"))
+                '(Construct (Option Int) none)))
+
+(test-case "else-if 条件内の leave は式境界へ戻り関数を抜けない"
+  (define cases
+    (list
+     (cons
+      "fn choose(a: Bool, b: Bool) -> Option<Int> {\n let ignored = if a { 1 } else if { let dead = leave 9\n b } { 2 }\n return some(10)\n}\nchoose(false, true)"
+      'variable)
+     (cons
+      "fn get_flag() -> Bool { return true }\nfn choose(a: Bool) -> Option<Int> {\n let ignored = if a { 1 } else if { let dead = leave 9\n get_flag() } { 2 }\n return some(10)\n}\nchoose(false)"
+      'call)))
+  (for ([entry (in-list cases)])
+    (define result (compile (car entry)))
+    (check-true (compiled? result)
+                (format "~a: ~a" (cdr entry)
+                        (if (diagnostic? result) (diagnostic-id result) result)))
+    (when (compiled? result)
+      (check-equal? (run-value result) '(Construct (Option Int) some 10))
+      (define some-nine?
+        (pair?
+         (core-forms
+          (λ (node)
+            (match node
+              [`(Construct ,_ (#:ty (Option ,_) ,_) some (#:lit 9 ,_)) #t]
+              [_ #f]))
+          (compiled-core result))))
+      (check-true some-nine? (format "~a has a pending some(9)" (cdr entry))))))
+
+(test-case "到達不能な leave は候補と境界の型を汚さない"
+  (define cases
+    (list
+     (cons
+      "fn choose(c: Bool) -> Option<Int> { let answer: Option<Int> = if c { let dead = leave 1\n leave 2 }\n return answer\n}\nchoose(true)"
+      '(Construct (Option Int) some 1))
+     (cons
+      "fn choose(c: Bool) -> Option<Int> { let answer = if c { let dead = leave 1\n leave \"s\" }\n return answer\n}\nchoose(true)"
+      '(Construct (Option Int) some 1))))
+  (for ([entry (in-list cases)])
+    (define result (compile (car entry)))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "diagnostic: ~a" (diagnostic-id result))
+                    "compiled"))
+    (when (compiled? result)
+      (check-equal? (run-value result) (cdr entry)))))
+
+(test-case "leave operand は pending escape の解決後に一度だけ some で包む"
+  (define (option-return-operands core)
+    (for/list ([node
+                (in-list
+                 (core-forms
+                  (λ (node)
+                    (match node
+                      [`(Perform ,_ (Return ,_ ,_)
+                                 (Construct ,_ (#:ty (Option ,_) ,_) some ,_)) #t]
+                      [_ #f]))
+                  core))])
+      (fourth node)))
+  (define cases
+    (list
+     (cons
+      "fn choose(c: Bool) -> Option<Int> { let answer: Option<Int> = if c { leave 0 }\n return answer\n}\nchoose(true)"
+      '(0))
+     (cons
+      "fn choose(c: Bool, d: Bool) -> Option<Int> { let answer: Option<Int> = if c { if d { leave 1 }\n leave 2 }\n return answer\n}\nchoose(true, true)"
+      '(1 2))))
+  (for ([entry (in-list cases)])
+    (define result (compile (car entry)))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "diagnostic: ~a" (diagnostic-id result))
+                    "compiled"))
+    (when (compiled? result)
+      (define operands (option-return-operands (compiled-core result)))
+      (define payloads
+        (for/list ([operand (in-list operands)])
+          (match operand
+            [`(Construct ,_ (#:ty (Option ,_) ,_) some ,payload) payload]
+            [_ (fail-check (format "some operand expected, got ~s" operand))])))
+      (define payload-values
+        (for/list ([payload (in-list payloads)])
+          (match payload [`(#:lit ,value ,_) value] [_ #f])))
+      (check-equal? (sort (filter exact-integer? payload-values) <) (cdr entry))
+      (for ([payload (in-list payloads)])
+        (check-false
+         (match payload
+           [`(Construct ,_ (#:ty (Option ,_) ,_) some ,_) #t]
+           [_ #f]))))))
+
 (test-case "else 付き if の正常経路と境界へ届く return 候補を合流する"
   (define result
     (compile

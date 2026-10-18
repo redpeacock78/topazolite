@@ -939,10 +939,11 @@
               [`(,_ ,_ #:infer ,_)
                ;; SUR-008。合成位置で戻り型が未定の間、宣言 row の Return は解決できない。
                (reject span 'return-type-not-inferable 'return-in-synth)]
-              [`(,_ ,boundary (#:probe ,_) ,_)
+              [(list _ boundary (list '#:probe _) _ _adapter ...)
                ;; SUR-015（spec §6.2）。下見では Return row の型を仮置きする。
                `(Return ,boundary Never)]
-              [`(,_ ,boundary ,type ,_) `(Return ,boundary ,type)]
+              [(list _ boundary type _ _adapter ...)
+               `(Return ,boundary ,type)]
               [_ (reject span 'return-label-outside-boundary)])]
            [`(Yield ,type)
             `(Yield ,(resolve-annotation type delta span))]
@@ -1330,15 +1331,38 @@
              (hash-set! escapes boundary (append previous (list pending)))
              pending)))
 
+    (define (option-payload-adapter? adapter)
+      (or (eq? adapter 'option-payload)
+          (match adapter [`(Option ,_) #t] [_ #f])))
+
+    (define (option-adapter-payload-type adapter)
+      (match adapter [`(Option ,type) type] [_ #f]))
+
+    (define (leave-probe-candidate-type candidate adapter)
+      (match candidate
+        [`(leave-payload ,type) type]
+        [`(Option ,type) #:when (eq? adapter 'option-payload) type]
+        [_ candidate]))
+
+    (define (wrap-leave-payload span result adapter)
+      (match adapter
+        [`(Option ,payload-type)
+         (judgment
+          `(Construct ,span (#:ty ,adapter ,span) some
+                      ,(judgment-core result))
+          adapter (judgment-row result) adapter adapter)]
+        [_ result]))
+
     (define (elaborate-boundary-escape expression s returned boundary
                                        environment delta
                                        propositions boundaries
-                                       #:reachable? [reachable? #t])
+                                       #:reachable? [reachable? #t]
+                                       #:leave-adapter [leave-adapter #f])
       (match boundary
         [`(,_ ,_ #:infer ,_)
          ;; Return と Leave は境界解決後の推論経路を共有する。
          (reject s 'return-type-not-inferable 'return-in-synth)]
-        [`(,_ ,boundary-id (#:probe ,candidates) ,_)
+        [(list _ boundary-id (list '#:probe candidates) _ _adapter ...)
          (if (not reachable?)
              (let* ([checked-result
                      (for/or ([candidate (in-list (unbox candidates))]
@@ -1346,7 +1370,10 @@
                        (with-handlers ([exn:fail:elab? (λ (_) #f)])
                          (call-with-restored-state
                           (λ ()
-                            (check returned candidate environment delta
+                            (check returned
+                                   (leave-probe-candidate-type
+                                    candidate leave-adapter)
+                                   environment delta
                                    propositions boundaries)))))]
                     [returned-result
                      (or checked-result
@@ -1372,10 +1399,18 @@
                                boundaries))))
                    (set-box! candidates
                              (append (unbox candidates)
-                                     (list (judgment-type returned-result))))))
+                                     (list
+                                      (if (option-payload-adapter?
+                                           leave-adapter)
+                                          `(leave-payload
+                                            ,(judgment-type returned-result))
+                                          (judgment-type returned-result)))))))
                (judgment `(#:lit unit ,s) 'Never
                          `((Return ,boundary-id Never))))) ]
-        [`(,_ ,boundary-id ,return-type ,_)
+        [(list boundary-kind boundary-id return-type _ _adapter ...)
+         #:when (memq boundary-kind '(ExpressionBoundary FunctionBoundary))
+         (define payload-type
+           (or (option-adapter-payload-type leave-adapter) return-type))
          (if (not reachable?)
              (let ([returned-result
                     ;; Dead payload の Core は親の局所型検査にも必要なので保持する。
@@ -1387,7 +1422,7 @@
                                                  propositions boundaries))))])
                       (call-with-restored-state
                        (λ ()
-                         (check returned return-type environment delta
+                         (check returned payload-type environment delta
                                 propositions boundaries))))])
                ;; 到達不能な Leave は payload の row だけを保ち、脱出と flow は作らない。
                (judgment (judgment-core returned-result) 'Never
@@ -1395,22 +1430,24 @@
                          (judgment-core-type returned-result)
                          (judgment-normal-type returned-result)))
              (let* ([returned-result
-                     (check returned return-type
+                     (check returned payload-type
                             environment delta propositions boundaries)]
+                    [adapted-result
+                     (wrap-leave-payload s returned-result leave-adapter)]
                     [pending
                      (match boundary
-                       [`(ExpressionBoundary ,candidate ,_ ,_)
+                       [`(ExpressionBoundary ,candidate ,_ ,_ ,_)
                         (register-pending-escape candidate return-type s
-                                                 returned-result)]
+                                                 adapted-result)]
                        [_ #f])])
                (judgment
                 (or pending
                     `(Perform ,s (Return ,boundary-id
                                           (#:ty ,return-type ,s))
-                              ,(judgment-core returned-result)))
+                              ,(judgment-core adapted-result)))
                 'Never
                 (row-union `((Return ,boundary-id ,return-type))
-                           (judgment-row returned-result)))))]
+                           (judgment-row adapted-result)))))]
         [_ (reject s 'return-outside-boundary)]))
 
     (define (resolve-pending-escapes core)
@@ -2917,8 +2954,8 @@
         [#f (reject s-bind 'return-outside-boundary)]
         [`(,_ ,_ #:infer ,_)
          (reject s-bind 'return-type-not-inferable)]
-        [`(,_ ,_ (#:probe ,_) ,_) (void)]
-        [(list _ _ boundary-type boundary-s)
+        [(list _ _ (list '#:probe _) _ _adapter ...) (void)]
+        [(list _ _ boundary-type boundary-s _adapter ...)
          (define compatible?
            (match* (kind boundary-type data-type)
              [('option `(Option ,_) `(Option ,_)) #t]
@@ -3300,7 +3337,7 @@
     (define (probe-candidate-boxes boundaries)
       (for/fold ([boxes '()]) ([boundary (in-list boundaries)])
         (match boundary
-          [`(,_ ,_ (#:probe ,candidate-box) ,_)
+          [(list _ _ (list '#:probe candidate-box) _ _adapter ...)
            (if (and (box? candidate-box) (not (memq candidate-box boxes)))
                (cons candidate-box boxes)
                boxes)]
@@ -3450,7 +3487,7 @@
                               (λ (error) (set! failure error) #f)])
                (synth body environment delta propositions
                       (cons `(ExpressionBoundary ,boundary
-                                                 (#:probe ,candidate-box) ,span)
+                                                 (#:probe ,candidate-box) ,span #f)
                             boundaries)))))
          (define normal-type
            (and body-result (judgment-normal-type body-result)))
@@ -3483,15 +3520,26 @@
                  `(Construct ,s_0 none (Types ,(resolved-type-argument T)))
                  (expand rest)))
            `(Let ,chain-span
-              ((#:bind %ifcond ,condition-span) const (#:ty Bool ,s_i))
+              ((#:bind %ifcond-option ,condition-span) const (#:ty Bool ,s_i))
               ,condition
               (NarrativeExpr ,chain-span
-                (Eliminate ,chain-span (#:var %ifcond ,condition-span)
+                (Eliminate ,chain-span (#:var %ifcond-option ,condition-span)
                   ((,body-span true () ->
                     (Construct ,body-span some
                                (Types ,(resolved-type-argument T)) ,body))
                    (,false-span false () -> ,false-body)))))]))
       (expand clauses))
+
+    (define (if-some-boundary-adapter body expected environment)
+      (match (peel-node body)
+        [`(Eliminate (#:var ,condition-name ,_) ,_)
+         (and (assoc condition-name environment)
+              ;; if-some-explicit uses this dedicated binder, which annotate freshens.
+              (regexp-match? #rx"^%ifcond-option" (symbol->string condition-name))
+              (match (normalize-type expected)
+                [`(Option ,payload-type) `(Option ,payload-type)]
+                [_ #f]))]
+        [_ #f]))
 
     (define (probe-if-some-part expression environment delta propositions
                                 boundaries boundary-span)
@@ -3507,7 +3555,7 @@
              (synth expression environment delta propositions
                     (cons `(ExpressionBoundary ,boundary
                                                (#:probe ,candidates)
-                                               ,boundary-span)
+                                               ,boundary-span option-payload)
                           boundaries))))
          (list result (unbox candidates) failure))))
 
@@ -3539,16 +3587,39 @@
                    #:when (and (first probe)
                                (not (eq? (judgment-type (first probe)) 'Never))))
           (first probe)))
-      (define merged-type
-        (and (pair? successful-live)
-             (let-values ([(cores type)
-                           (merge-branches
-                            (map judgment-core successful-live)
-                            (map judgment-type successful-live)
-                            s propositions)])
-               type)))
-      (define candidates
+      (define raw-candidates
         (append* (map second observations)))
+      (define leave-payload-types
+        (for/list ([candidate (in-list raw-candidates)]
+                   #:when (match candidate [`(leave-payload ,_) #t] [_ #f]))
+          (second candidate)))
+      (define return-candidates
+        (filter (λ (candidate)
+                  (not (match candidate [`(leave-payload ,_) #t] [_ #f])))
+                raw-candidates))
+      (define merged-type
+        (cond
+          [(pair? leave-payload-types)
+           (define return-payload-types
+             (for/list ([candidate (in-list return-candidates)])
+               (match candidate
+                 [`(Option ,inner) inner]
+                 [_ (reject s 'type-mismatch 'Option candidate)])))
+           (let-values ([(type _record-join?)
+                         (merge-branch-types
+                          (append (map judgment-type successful-live)
+                                  leave-payload-types return-payload-types)
+                          s)])
+             type)]
+          [(pair? successful-live)
+           (let-values ([(cores type)
+                         (merge-branches
+                          (map judgment-core successful-live)
+                          (map judgment-type successful-live)
+                          s propositions)])
+             type)]
+          [else #f]))
+      (define candidates return-candidates)
       (define failure
         (for/first ([probe (in-list observations)]
                     #:when (third probe))
@@ -4941,7 +5012,11 @@
            (reject s 'leave-outside-expression-boundary))
          (elaborate-boundary-escape
           expression s returned boundary environment delta propositions
-          boundaries #:reachable? (current-leave-reachable?))]
+          boundaries #:reachable? (current-leave-reachable?)
+          #:leave-adapter
+          (match boundary
+            [`(ExpressionBoundary ,_ ,_ ,_ ,adapter) adapter]
+            [_ #f]))]
 
         [`(NarrativeExpr ,body)
          (define expected
@@ -5456,6 +5531,8 @@
 
         [`(NarrativeExpr ,body)
          (define boundary (fresh-boundary))
+         (define leave-adapter
+           (if-some-boundary-adapter body expected environment))
          (define entry-flow (flow-snapshot))
          (define boundary-keys (live-flow-keys environment))
          (define escapes (make-hasheq))
@@ -5467,7 +5544,8 @@
                 [current-deferred-when-fallthroughs
                  (and deferred (cons body deferred))])
              (check body expected environment delta propositions
-                    (cons `(ExpressionBoundary ,boundary ,expected ,s)
+                    (cons `(ExpressionBoundary ,boundary ,expected ,s
+                                               ,leave-adapter)
                           boundaries))))
          (define normal-exit (flow-snapshot))
          (when (and deferred
