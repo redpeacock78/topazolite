@@ -813,6 +813,22 @@
  (check-equal? (p-code "return") "E-SUR-006"))
 
 (test-case
+ "leave は最も弱く結合する前置の式である"
+ (check-match (p "leave f(1).a")
+              `(SProgram ,_ () (SLeave ,_ (SProj ,_ (SApply ,_ ,_ ,_) ,_))))
+ (check-match (p "leave x => x")
+              `(SProgram ,_ () (SLeave ,_ (SFn ,_ ,_ ,_ ,_ expr ,_))))
+ (check-match (p "leave leave 1")
+              `(SProgram ,_ () (SLeave ,_ (SLeave ,_ (SInt ,_ 1)))))
+ (check-equal? (second (fourth (p "leave 1"))) '(#:span src 0 7)))
+
+(test-case
+ "leave の直後に式が無ければ return と同じ診断になる"
+ (for ([src (in-list '("{ leave }" "f(leave)" "f(leave, 1)" "{ leave\n1 }"))])
+   (check-equal? (p-code src) "E-SUR-005" src))
+ (check-equal? (p-code "leave") "E-SUR-006"))
+
+(test-case
  "let と mut の間の改行は束縛として受理しない"
  (check-equal? (p-code "{ let\nmut x = 1\n x }") "E-SUR-005"))
 

@@ -11,8 +11,8 @@
 
 (test-case
  "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 40)
- (check-equal? (length racket-ucore-constructors) 17)
+ (check-equal? (length racket-surface-constructors) 41)
+ (check-equal? (length racket-ucore-constructors) 18)
  (check-equal? (length fstar-constructors) 38))
 
 (test-case
@@ -100,7 +100,9 @@
  (check-equal? (row-kind 'SReassign) 'many-to-one)
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
+ (check-equal? (row-kind 'SLeave) 'none)
  (check-equal? (row-kind 'Reassign) 'one-to-one)
+ (check-equal? (row-kind 'Leave) 'none)
  (check-equal? (row-kind 'TryBind) 'one-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
  (check-equal? (row-kind 'SEffLabel) 'one-to-one))
@@ -129,6 +131,7 @@
    (cons 'SBool     (redex-match? Surface sexpr `(SBool ,s0 true)))
    (cons 'SVar      (redex-match? Surface sexpr `(SVar ,s0 x)))
    (cons 'SReturn   (redex-match? Surface sexpr `(SReturn ,s0 (SInt ,s0 1))))
+   (cons 'SLeave    (redex-match? Surface sexpr `(SLeave ,s0 (SInt ,s0 1))))
    (cons 'SMatch    (redex-match? Surface sexpr
                                   `(SMatch ,s0 (SVar ,s0 c)
                                            ((SArm ,s0
@@ -194,6 +197,7 @@
    (cons 'Recur    (redex-match? UCore+ e `(Recur ,s0 (#:bind f ,s0) (((#:bind x ,s0) (#:ty Int ,s0)))
                                                   (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0) (#:var f ,s0))))
    (cons 'Return   (redex-match? UCore+ e `(Return ,s0 (#:lit 1 ,s0))))
+   (cons 'Leave    (redex-match? UCore+ e `(Leave ,s0 (#:lit 1 ,s0))))
    (cons 'FnDecl   (redex-match? UCore+ e `(FnDecl ,s0 (#:bind f ,s0) ()
                                                    (#:ty Int ,s0) (#:ef () ,s0)
                                                    (#:lit 1 ,s0) (#:lit unit ,s0))))))

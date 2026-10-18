@@ -21,6 +21,15 @@
        [`(cfg ,value () () () ()) value]
        [other (fail-check (format "純粋な整数値の終端状態を期待したが ~s" other))]))))
 
+(define (run-source source)
+  (define result (c source))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  (format "~s" result)))
+  (and (compiled? result) (run-value result)))
+
 (test-case "SUR-015: 関数宣言の return は受理され、早期に戻る"
   (define result (c "fn f(x: Int) -> Int { let a = return x\n 0 }\nf(7)"))
   (check-true (compiled? result))
@@ -81,3 +90,66 @@
 (test-case "SUR-015: 戻り型省略の自己参照拒否は変わらない"
   (check-equal? (code "fn f() { let a = return 1\n f() }\n0")
                 "E-TYP-024"))
+
+(test-case "leave は式位置の if と when の値を関数へ返す"
+  (for ([pair
+         (in-list
+          (list
+           (cons "fn choose(b: Bool) -> Int {\n let x = if b { leave 11 } else { 22 }\n return x\n}\nchoose(true)" 11)
+           (cons "fn choose(b: Bool) -> Int {\n let x = if b { leave 11 } else { 22 }\n return x\n}\nchoose(false)" 22)
+           (cons "fn choose(b: Bool) -> Int {\n let x = when b { true => { leave 11 }\n false => 22 }\n return x\n}\nchoose(true)" 11)
+           (cons "fn choose(b: Bool) -> Int {\n let x = when b { true => { leave 11 }\n false => 22 }\n return x\n}\nchoose(false)" 22)))])
+    (define result (c (car pair)))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) 'Int)
+      (check-equal? (run-value result) (cdr pair)))))
+
+(test-case "文位置 if の leave は外側 when の境界へ解決する"
+  (define variable-source
+    (string-append
+     "fn choose(c: Bool, flag: Bool) -> Int {\n"
+     " let x = when flag {\n"
+     "  true => { if c { leave 1 }\n leave 2 }\n"
+     "  false => 3\n"
+     " }\n return x\n}\nchoose(true, true)"))
+  (define call-source
+    (string-append
+     "fn get_flag() -> Bool { return true }\n"
+     "fn choose(c: Bool) -> Int {\n"
+     " let x = when get_flag() {\n"
+     "  true => { if c { leave 1 }\n leave 2 }\n"
+     "  false => 3\n"
+     " }\n return x\n}\nchoose(true)"))
+  (check-equal? (run-source variable-source) 1)
+  (check-equal? (run-source call-source) 1)
+  (check-equal?
+   (run-source
+    (string-append
+     "fn choose(c: Bool, flag: Bool) -> Int {\n"
+     " let x = when flag { true => { if c { leave 1 }\n leave 2 }\n"
+     " false => 3 }\n return x\n}\nchoose(false, true)"))
+   2))
+
+(test-case "leave if は外側 when の境界で一度だけ返る"
+  (for ([pair (in-list '((true . 1) (false . 2)))])
+    (define source
+      (format
+       (string-append
+        "fn choose(c: Bool, flag: Bool) -> Int {\n"
+        " let x = when flag { true => { leave if c { 1 } else { 2 } }\n"
+        " false => 3 }\n return x\n}\nchoose(~a, true)")
+       (car pair)))
+    (check-equal? (run-source source) (cdr pair))))
+
+(test-case "式境界の外と内側関数の leave は E-RET-006 で拒否する"
+  (check-equal? (code "fn f(c: Bool) -> Int { if c { leave 1 }\n 2 }\n0")
+                "E-RET-006")
+  (check-equal?
+   (code "fn f(c: Bool) -> Int { let x = if c { let h = fn(y: Int) => { leave y }\n 1 } else { 2 }\n x }\n0")
+   "E-RET-006")
+  (check-equal? (code "fn f() -> Int { leave 1 }\n0") "E-RET-006"))

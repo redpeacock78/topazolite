@@ -254,6 +254,12 @@
  (check-equal? (second t) '(#:span src 0 30)))
 
 (test-case
+ "leave は UCore の Leave へ下り、constructor 解決も payload をたどる"
+ (check-match (low "leave 1") `(Leave ,_ (#:lit 1 ,_)))
+ (check-match (low "type Color = | red\nleave red")
+              `(Leave ,_ (Construct ,_ red (Types)))))
+
+(test-case
  "落とした program は UCore+ の e に合う"
  (for ([src (in-list (list "{ let x = 1\n x }"
                            "{ let x: Int = 1\n x }"

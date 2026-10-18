@@ -51,6 +51,7 @@
              (SBool s sbool)
              (SVar s ident)
              (SReturn s sexpr)
+             (SLeave s sexpr)
              ;; P2m spec §5.3。枝の列は空でない。
              (SMatch s sexpr (sarm sarm ...))
              ;; SUR-014b1。最後まで else が無い if の連鎖である。

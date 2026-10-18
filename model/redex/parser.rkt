@@ -269,6 +269,9 @@
     [(kw? ts i 'return)
      (let-values ([(value j) (parse-expr ts fail (add1 i))])
        (values `(SReturn ,(hull (span-at ts i) (node-span value)) ,value) j))]
+    [(kw? ts i 'leave)
+     (let-values ([(value j) (parse-expr ts fail (add1 i))])
+       (values `(SLeave ,(hull (span-at ts i) (node-span value)) ,value) j))]
     ;; SUR-012。識別子の直後が => なら式本体の無名関数である。
     [(and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=>))
      (define x-span (span-at ts i))

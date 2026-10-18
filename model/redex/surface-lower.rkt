@@ -767,6 +767,7 @@
       [`(SApply ,s ,f ,args) `(SApply ,s ,(r f) ,(map r args))]
       [`(SConstruct ,s ,k ,args) `(SConstruct ,s ,k ,(map r args))]
       [`(SReturn ,s ,v) `(SReturn ,s ,(r v))]
+      [`(SLeave ,s ,v) `(SLeave ,s ,(r v))]
       [`(SFn ,s ,params ,ty ,row ,body-kind ,body)
        `(SFn ,s ,params ,ty ,row ,body-kind
              ,(expr body (set-union bound (list->seteq (param-names params)))))]
@@ -865,6 +866,7 @@
     [`(SVar ,s ,x) `(#:var ,x ,s)]
     ;; SUR-015。
     [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]
+    [`(SLeave ,s ,value) `(Leave ,s ,(lower-sexpr value env fail))]
     [`(SFn ,s ,params ,result-ty ,row ,body-kind ,body)
      (define result-core
        (if (eq? result-ty '#:none)
