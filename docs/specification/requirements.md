@@ -626,6 +626,7 @@ Surface の Effect row 表記は、宣言と式の Effect 制約を保った Cor
 - **由来**：ホワイトペーパー §15
 
 shared borrow と lexical region の Surface 表記は、既存の borrow と region の境界を保つ Core の規則へ lowering されなければならない。
+narrowing で view から隠れる借用残余は、Core と同じ RemainderSafelyDropped の義務か拒否として lowering されなければならない。
 
 ### SUR-005
 

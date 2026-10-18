@@ -148,6 +148,11 @@ opaque な region 引数が入り、伝播で左辺を広げられなくなる�
 本文書が定める条件の診断は `E-BOR` 分類である。
 key と番号は `docs/specification/diagnostic.md` の registry に従う。
 
+`E-BOR-027` `borrow-hidden-by-narrowing` は、borrow-hiding-kind が拒否を返す narrowing、または RSD の義務があるのに有効な `Discharge` が無い Core を拒否する。
+`RegionLam` が自由変数として捕捉する可視環境項目の型に、bound set で束縛されない借用 region が含まれる場合も同じ診断で拒否する。
+その bound set は当該 `RegionLam` の alpha-renamed binder と、捕捉する環境項目自身の `ForallRegion` binder だけから作り、外側の region binder は引き継がない。
+この診断は owner と借用 region の outlives 関係違反を報告する `E-BOR-004` とは異なり、borrowed value を narrowing で view から隠す根拠が無いことを示す。
+
 ## 8. 関数境界の受け渡し
 
 [REQ: BOR-007] 関数の仮引数の型、結果型、捕捉に `Borrowed` と `BorrowedMut` を置ける。
@@ -414,6 +419,9 @@ Core の合流は tag の無い欄の型から Union を作らないので、`{ 
 いずれも所有者と起点を呼出しの出現から運ぶ手立てが無いためである。
 前の 3 つは既存の関数境界の診断で落とし、最後の 1 つは `E-REG-003` で落とす。
 Phase 4 以降で扱う。
+本サイクルでは、narrowing で借用を含む残余欄が record または関数の境界を越える経路を、RSD による物理除去か拒否で閉じる。
+`RegionLam` が自身の binder に束縛されない借用を含む環境項目を捕捉する経路も `E-BOR-027` で拒否する。
+この二つは、上に列挙した closure と部分適用が運ぶ借用 provenance の未回収を解決しない。
 2. 借用規則の backend 写し先。Phase 2 以降で扱う（`BAK-010`）。
 
 3. 性質 8 の bounded 検査が覆わない範囲。

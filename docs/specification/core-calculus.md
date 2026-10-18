@@ -642,14 +642,34 @@ E-Let-Fn-Check は、E-Let-Annot の右辺の合成を宣言型 `τ` での検�
 `bind(bmode, τdecl, τact)` は、elaborate の `bind-with-mode` が束縛型を決める手続きである。
 この手続きは、型の互換、`const` の record 残余の拒否、`let` と `mut` の record 残余の復元、`mut` の affine と借用の拒否、OWN-004 の narrowing の順に検査する。
 ただし `τact` が `Never` のときは `τb = τdecl` とし、互換と record 残余の検査を省き、`mut` の検査と OWN-004 の narrowing の検査だけを行う。
-OWN-004 は最上位の型対に加え、共通欄のうち expected が `imm` の `Record` 欄（actual は `imm` または `mut`）だけを辿った入れ子の型対も調べる。
+OWN-004 は最上位の型対に加え、共通欄のうち expected が `imm` の `Record` 欄（actual は `imm` または `mut`）だけを辿った入れ子の型対も調べる。 [REQ: OWN-004]
 その経路で `Owned` を含む残余を失う場合も、Proof の鍵には内側の型対ではなく呼び出し全体の型対を使う。
 expected が `mut` の欄や `Union`、`Owned`、`Untrusted`、`Refined`、`NFn` の内側へはこの入れ子の判定を伝えない。
+BOR-001 は別の述語 `borrow-hiding-kind` で借用を含む残余欄を検査する。 [REQ: BOR-001]
+この述語は、最上位の `Record` と expected が `imm` の共通 `Record` 欄を辿り、残余が借用を含まなければ許可し、借用を含む残余が RSD 可能な位置にあれば除去義務を返す。
+RSD 可能な位置は最上位と expected が `imm` の共通 `Record` 欄の連鎖に限られ、それ以外の内側で借用を隠す narrowing は拒否する。
+OWN-004 と BOR-001 が同じ値の narrowing に除去義務を返す場合は、一つの `RemainderSafelyDropped` の `Discharge` で両方の残余を取り除く。
+
+`borrow-free?(τ)` は、値に保持される借用参照が τ に無いとき真を返す。
+`Borrowed` と `BorrowedMut` は偽となり、値を構成する型の欄と payload は再帰的に調べる。
+`Data` は schema の欄を循環検出付きで調べ、schema が無い型や未知の型構成子は偽となる。
+`NFn` の署名と `RawPtr` の pointee metadata は値に格納された借用参照ではないため辿らない。
+関数値が実際に捕捉する環境の借用は、関数境界の検査が別に扱う。
+
+`Borrowed<Record …>` 同士の payload narrowing は capability view の変更であり、借用参照そのものを値から除く残余の narrowing として扱わない。
+`Union` の成分、`NFn` の引数と返り値、`Owned`、`Untrusted`、`Refined` の payload の内側は RSD を置けない位置として検査する。
+`NFn` の返り値は actual から expected へ、引数は expected から actual へ向けて調べる。
+`UnionInject` の payload は独立した項なので、その payload を明示的な `Discharge` で包める。
+ただし actual が非 `Owned` で expected が `Owned<τ>` のときは τ への持ち上げとして payload を内側の位置で検査し、借用を隠す narrowing を許可しない。
+この場合 actual が `Union` なら payload の成員ごとに検査する。
 E-Let-Fn-Check では `τact = τdecl = τ` であり、`τ` は `NFn` か `Owned<NFn …>` なので record 残余の節に入らず、`τb = τ` になる。
 `Γ, x :bmode τb` は、`bmode` が `mut` のとき `x` を可変の束縛として加える。
 型注釈付き `Let` の右辺が仮引数型または Effect row を省略した `Fn` でない場合は、従来どおり E-Let-Annot を適用する。
 仮引数型または Effect row を省略した `Fn` を E-Let-Fn-Check で検査するとき、省略した row は期待型の出口 row に置き換える。
 このため row だけを省略した関数も、宣言型の row を本体の検査へ届けられる。
+`const` の record 残余 `ρ` は、束縛式の合成型と宣言型との差から決める。
+明示的な RSD の `Discharge` がその式の合成型を宣言型へ狭めていれば `ρ` は空であり、直接または `Let` に包まれた `Discharge` を `const` に束縛できる。
+`Discharge` が無い式の最上位の残余は、従来どおり `E-RCD-005` で拒否する。
 
 **(E-Let-Check)**
 
@@ -807,6 +827,10 @@ E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ
 集約資源型の捕捉元は P に入っていなければならず、P の外にある仮引数などを捕捉すると `move-non-owned` で拒否する。
 元の place は `Move` によって `Moved` になり、closure の関数位置には `Move` を経由して到達する。
 `Recur` と `RecurVal` の資源型捕捉は、再帰本体の複製を一回の `Move` で制限できないため、E-Recur の制限として残す（§4.6）。
+
+`RegionLam` の入口では、本体に自由に現れる可視環境項目の型を検査する。
+借用の region は、当該 `RegionLam` の alpha-renamed binder と、その環境項目自身の `ForallRegion` が束縛する region だけで束縛されなければならない。
+外側の region binder はこの検査の bound set に引き継がず、違反は `E-BOR-027` で拒否する。
 
 `BlockBody` の本体は既に文の mode で lowering されているため、正常完了する型は `Unit` であり、明示的な `return` で全経路を離れると型は `Never` になる。
 戻り型が `Unit` の場合は内側の項を `Unit` で検査し、落ち抜けを `unit` とする。
@@ -2349,8 +2373,9 @@ G は R-LetOwned（§5.3）が最寄りの Scope を特定するために使う�
 初期構成が最外に Scope を持ち、簡約が Scope を項の外へ運び出さないため、redex を囲む Scope は常に存在する。
 
 通常の `R-Discharge` は `RemainderSafelyDropped` 以外の命題を持つ `Discharge` から Proof を取り除く。
-`RemainderSafelyDropped` の `Discharge` は内側の項が値になるまで評価し、残余のうち `Owned` を含む除去欄を値から取り除く。
+`RemainderSafelyDropped` の `Discharge` は内側の項が値になるまで評価し、残余欄の型が `owned-free?` または `borrow-free?` を満たさない欄を値から取り除く。
 除去欄は最上位の残余欄と、expected が `imm` の共通 `Record` 欄の内側にある残余欄から型対に基づいて決める。
+型付け側の除去後の型と実行時の `stripRemainder` は、同じ除去 shape を使う。
 除去欄の値に含まれる leaf token は、全て `Available` で重複がない場合に `Dropped` へ移す。
 optional の除去欄が `Absent` なら token を動かさず、欄だけを取り除く。
 除去しない残余欄は値に残す。
@@ -2383,6 +2408,11 @@ optional の除去欄が `Absent` なら token を動かさず、欄だけを取
 `dropLeaves` は返された各値の leaf token を左から `Dropped` にする。
 いずれかの前提を満たせないとき、`R-DischargeRemainder` は発火しない。
 この規則は OwnershipError へ進まない。
+BOR-001 の借用除去だけで消える `BorrowRef` と `BorrowMutRef` は `Λtok` を変えない。
+除去対象に `Owned` の leaf も含まれる場合、その token は従来どおり `Dropped` にする。
+借用参照を値から除いても `H`、`Ω`、`θ`、静的な `Ψ`、region の寿命は変わらず、別の alias に対する制約も残る。
+RSD の証明対は、除去後の型 `σ'` について `compatible?(σ', τe)`、`owned-narrowing-kind(σ', τe) = ok`、`borrow-hiding-kind(σ', τe) = ok` を満たさなければならない。
+この条件により、除去欄が空の shape で型だけを狭める証明も拒否する。
 
 ### 5.3 関数適用と curry
 
@@ -3310,7 +3340,7 @@ G5 はその記録を Ψ として置いた。
 | OWN-009 | T-OwnedLeaf、R-OwnLeaf、R-OwnLeafPass、`Λtok` の token 条件、性質 7 |
 | OWN-010 | R-Drop、finalize、R-ScopeValue、性質 7 |
 | OWN-011 | R-ScopeAbort、R-ScopeError（§5.6）、R-HandleReturn、R-HandleSkip、R-HandleError（§5.7）、性質 7（f）、（g） |
-| BOR-001 | `borrow.md` §4 の許可条件、R-Borrow、R-BorrowError、性質 8 |
+| BOR-001 | `borrow.md` §4 と §7 の許可条件および narrowing、E-BOR-027、R-Borrow、R-BorrowError、R-DischargeRemainder（§5.2）、性質 8 |
 | BOR-002 | `borrow.md` §4 の排他条件、R-BorrowMut、R-BorrowMutError、性質 8 |
 | BOR-004 | `borrow.md` §12 の読み書き、R-Read、R-ReadMut、R-Assign、性質 8 |
 | BOR-005 | `borrow.md` §11 の field 射影、R-ProjBorrow、R-ProjBorrowMut、性質 8 |
