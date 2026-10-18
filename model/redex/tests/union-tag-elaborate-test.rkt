@@ -55,6 +55,27 @@
                        ((true () -> (Apply s)) (false () -> (Apply p))))
             (Let (n const Never) x 0))))
 
+(define (all-never-narrative-arms-source)
+  '(Fn ((s (NFn () Never (Suspend) ()))
+        (p (NFn () Never (Partial) ())))
+       Int (Suspend Partial)
+       (Let x
+            (Eliminate (Construct true (Types))
+                       ((true () -> (NarrativeExpr (Apply s)))
+                        (false () -> (NarrativeExpr (Apply p)))))
+            (Let (n const Never) x 0))))
+
+(define (all-never-narrative-body-source)
+  '(Fn ((s (NFn () Never (Suspend) ()))
+        (p (NFn () Never (Partial) ())))
+       Int (Suspend Partial)
+       (Let x
+            (NarrativeExpr
+             (Eliminate (Construct true (Types))
+                        ((true () -> (Apply s))
+                         (false () -> (Apply p)))))
+            (Let (n const Never) x 0))))
+
 (test-case "注釈付き Let は非 Union の値を Union へ inject する"
   (match-define (list core type _) (accepted `(Let (x const ,IS) 1 x)))
   (check-equal? type (normalize-type IS))
@@ -226,6 +247,25 @@
                          ((true () -> (Apply s)) (false () -> (Apply p))))
               (Let (n const Never) x 0))))
    (code 'undeclared-function-effect)))
+
+(test-case "NarrativeExpr で包まれた全枝 Never の Eliminate は E-TYP-010"
+  (check-equal? (rejected-code (all-never-narrative-arms-source))
+                (code 'narrative-expression-needs-expected-type)))
+
+(test-case "NarrativeExpr の直接の全枝 Never Eliminate は候補無しなら E-TYP-010"
+  (check-equal? (rejected-code (all-never-narrative-body-source))
+                (code 'narrative-expression-needs-expected-type)))
+
+(test-case "scrutinee だけが Never の Eliminate は通常の枝型を保つ"
+  (for ([scrutinee (in-list '(x (Return (Construct true (Types)))))])
+    (void
+     (accepted
+      `(Fn () Bool ()
+           (Let (x const Bool) (Return (Construct true (Types)))
+             (NarrativeExpr
+              (Eliminate ,scrutinee
+                         ((true () -> (Construct true (Types)))
+                          (false () -> (Construct false (Types))))))))))))
 
 (test-case "Record の枝は helper で合流する"
   (match-define (list _ type _)

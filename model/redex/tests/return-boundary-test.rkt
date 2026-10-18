@@ -473,11 +473,16 @@
      2)))
 
 (test-case "[REQ: RET-001] 合成位置の部分式にある全枝returnはE-TYP-010"
-  (check-equal?
-   (code (string-append
-          "fn get_flag() -> Bool { return true }\n"
-          "fn f() -> Int {\n"
-          "  { let value = when get_flag() { true => return 1\n"
-          "      false => return 2 }\n    () }\n"
-          "  return 3\n}\nf()"))
-   "E-TYP-010"))
+  (for ([scrutinee (in-list '("flag" "get_flag()"))])
+    (define prefix
+      (if (string=? scrutinee "flag")
+          ""
+          "fn get_flag() -> Bool { return true }\n"))
+    (check-equal?
+     (code (string-append
+            prefix
+            "fn f(flag: Bool) -> Int {\n"
+            "  { let value = when " scrutinee
+            " { true => return 1\n      false => return 2 }\n    () }\n"
+            "  return 3\n}\nf(true)"))
+     "E-TYP-010")))

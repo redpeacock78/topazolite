@@ -3511,6 +3511,7 @@
        (λ ()
          (define candidate-box (box '()))
          (define unresolved-leave-box (box #f))
+         (define body-expression (peel-node body))
          (define deferred
            (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
          (define boundary (fresh-boundary))
@@ -3543,6 +3544,12 @@
                           (merge-branch-types candidates span)])
               type)]
            [failure (raise failure)]
+           [(and body-result
+                 (match body-expression [`(Eliminate ,_ ,_) #t] [_ #f])
+                 (eq? (judgment-core-type body-result) 'Never)
+                 (null? candidates)
+                 (not unresolved-leave?))
+            (reject span 'narrative-expression-needs-expected-type)]
            [(and body-result
                  (eq? (judgment-type body-result) 'Never)
                  (not unresolved-leave?))
@@ -5036,7 +5043,12 @@
                             environment delta propositions boundaries
                             #:defer-fallthroughs
                             (deferred-when-fallthroughs expression)))
-         (when (eq? (judgment-core-type result) 'Never)
+         (when (and (eq? (judgment-core-type result) 'Never)
+                    (andmap
+                     (λ (branch)
+                       (define body (last (peel-branch branch)))
+                       (and (pair? body) (eq? (first body) 'NarrativeExpr)))
+                     branches))
            (reject s 'narrative-expression-needs-expected-type))
          result]
 
