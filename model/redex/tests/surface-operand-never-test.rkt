@@ -181,6 +181,16 @@
           " return ok(()) }\nf()"))
    'ok))
 
+(test-case "関数境界への Return 後の通常 let の本体も検査できる"
+  (define result
+    (compile (string-append
+              "fn id(x: Option<Int>) -> Option<Int> { return x }\n"
+              "fn f() -> Option<Int> { let y = id(some(return none))\n"
+              " return none }\nf()")))
+  (check-true (compiled? result))
+  (when (compiled? result)
+    (check-equal? (run-value result) '(Construct (Option Int) none))))
+
 (test-case "if の枝の被演算子の Return は合流から除かれる"
   (check-equal?
    (code (string-append

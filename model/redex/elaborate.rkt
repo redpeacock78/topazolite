@@ -3040,12 +3040,20 @@
          (try-bind-boundary bind-span kind data-type right-normal-type boundaries)
          (define branches
            (try-bind-branches s name name-span body data-type kind))
-         (if expected
-             (check-eliminate right branches expected s environment delta
-                              propositions boundaries
-                              #:scrutinee-result right-result)
-             (synth-eliminate right-result branches s environment delta
-                              propositions boundaries))]))
+         (define result
+           (if expected
+               (check-eliminate right branches expected s environment delta
+                                propositions boundaries
+                                #:scrutinee-result right-result)
+               (synth-eliminate right-result branches s environment delta
+                                propositions boundaries)))
+         (if right-never?
+             ;; Never の RHS では枝を検査するが、Core に残すと実行不能な枝の
+             ;; dead Return が payload 値へ消えた後も、末尾 Unit が型付けされる。
+             (judgment (judgment-core right-result) 'Never
+                       (judgment-row result) 'Never
+                       (judgment-normal-type result))
+             result)]))
 
     ;; SUR-012。UCore+ の型欄が省略の標識かを返す。
     (define (inferred? type)

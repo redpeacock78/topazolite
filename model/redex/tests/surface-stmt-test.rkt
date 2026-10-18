@@ -142,7 +142,7 @@
                                            "run(ng(\"x\"))"))
                 0))
 
-(test-case "文位置の if は return を関数へ伝播し、値位置の when は局所化する"
+(test-case "文位置 if は return、値位置 when は leave の宛先に従う"
   (define statement-source
     (string-append
      "fn choose(c: Bool) -> Int {\n"
@@ -154,7 +154,7 @@
   (define value-source
     (string-append
      "fn choose(c: Bool) -> Int {\n"
-     " let ignored = when c { true => return 1\n false => 2 }\n"
+     " let ignored = when c { true => leave 1\n false => 2 }\n"
      " return 3\n"
      "}\n"
      "choose(true)"))
@@ -177,13 +177,13 @@
                                            "choose(true, false)"))
                 2))
 
-(test-case "式文の引数、条件、scrutinee にある when の return は各境界で止まる"
+(test-case "式文の引数、条件、scrutinee にある when の leave は各境界で止まる"
   (check-equal?
    (run-source
     (string-append
      "fn take(o: Option<Int>) -> Unit { () }\n"
      "fn f() -> Int {\n"
-     " take(when true { true => return none\n false => some(1) })\n"
+     " take(when true { true => leave none\n false => some(1) })\n"
      " return 2\n"
      "}\n"
      "f()"))
@@ -193,7 +193,7 @@
     (string-append
      "fn identity(x: Bool) -> Bool { return x }\n"
      "fn f() -> Int {\n"
-     " if identity(when true { true => return true\n false => false }) { () } else { () }\n"
+     " if identity(when true { true => leave true\n false => false }) { () } else { () }\n"
      " return 2\n"
      "}\n"
      "f()"))
@@ -202,7 +202,7 @@
    (run-source
     (string-append
      "fn f() -> Int {\n"
-     " when (when true { true => return false\n false => true }) {\n"
+     " when (when true { true => leave false\n false => true }) {\n"
      "  true => ()\n"
      "  false => ()\n"
      " }\n"
@@ -210,6 +210,26 @@
      "}\n"
      "f()"))
    2))
+
+(test-case "値位置 when の return は関数境界へ届く"
+  (define source
+    (string-append
+     "fn take(o: Option<Int>) -> Unit { () }\n"
+     "fn f(b: Bool) -> Option<Int> {\n"
+     " take(when b { true => return none\n false => some(1) })\n"
+     " return some(2)\n"
+     "}\n"
+     "f(true)"))
+  (define result (compile source))
+  (check-true (compiled? result))
+  (when (compiled? result)
+    (check-equal? (run-value result) '(Construct (Option Int) none)))
+  (check-equal?
+   (compile-code (string-append
+                 "fn take(o: Option<Int>) -> Unit { () }\n"
+                 "fn f() -> Int { take(when true { true => return none\n"
+                 " false => some(1) })\n return 2 }\nf()"))
+   "E-DAT-002"))
 
 (test-case "文位置の非変数 scrutinee は葉を破棄する Eliminate に直接下ろす"
   (define source

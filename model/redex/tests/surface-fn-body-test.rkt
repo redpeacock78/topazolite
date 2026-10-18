@@ -138,12 +138,19 @@
       [other (fail-check (format "Int member の UnionVal を期待したが ~s"
                                  other))])))
 
-(test-case "9. when の局所境界で捕まる return は関数候補にならない"
+(test-case "9. when の局所境界で捕まる leave は関数候補にならない"
   (define result
     (compile
-     "fn f(b: Bool) { let ignored = when b { true => return 1\n false => return 2 }\n 0 }\nf(true)"))
+     "fn f(b: Bool) { let ignored = when b { true => leave 1\n false => leave 2 }\n 0 }\nf(true)"))
   (check-true (compiled? result))
   (when (compiled? result) (check-equal? (compiled-type result) 'Unit)))
+
+(test-case "when の値位置にある return は関数境界へ届く"
+  (define result
+    (compile
+     "fn f(b: Bool) -> Int { let ignored = when b { true => return 1\n false => 2 }\n return 3 }\nf(true)"))
+  (check-true (compiled? result))
+  (when (compiled? result) (check-equal? (run-value result) 1)))
 
 (test-case "10. arrow の block 本体だけを関数本体として扱う"
   (for ([source (in-list
