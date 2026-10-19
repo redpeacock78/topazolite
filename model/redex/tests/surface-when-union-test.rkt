@@ -183,6 +183,23 @@
   (when (compiled? result)
     (check-match (run-value result) `(UnionVal ,_ Int 1))))
 
+(test-case "Union member arm の文を持つブロックの落ち抜けは E-RET-005"
+  (define source
+    (string-append
+     "fn choose(value: Int | String) -> Int {\n"
+     "  let answer = when value {\n"
+     "    (x: Int) => { let y = x\n y }\n"
+     "    (s: String) => { leave 0 }\n"
+     "  }\n  return answer\n}\nchoose(1)"))
+  (define result (compile source))
+  (check-true (diagnostic? result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-RET-005")
+    (match-define `(#:span src ,_ ,end)
+      (source-span source "(x: Int) => { let y = x\n y }"))
+    (check-equal? (diagnostic-primary-span result)
+                  `(#:span src ,(sub1 end) ,end))))
+
 (test-case "Union の constructor group 内の落ち抜けを when の E-RET-005 へ伝える"
   (for ([scrutinee (in-list '("value" "g()"))])
     (define variable? (equal? scrutinee "value"))

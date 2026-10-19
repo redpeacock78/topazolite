@@ -174,16 +174,18 @@
       (check-equal? (run-value result) 1))))
 
 (test-case "when の文を持つ本体ブロック arm の leave 落ち抜けは閉じ波括弧を指す"
-  (for ([scrutinee (in-list '("a" "g()"))])
+  (for* ([scrutinee (in-list '("a" "g()"))]
+         [annotation (in-list '(#f #t))])
     (define variable? (equal? scrutinee "a"))
     (define source
       (string-append
        (if variable? "" "fn g() -> Bool { return true }\n")
        "fn choose(" (if variable? "a: Bool" "") ") -> Int {\n"
-       "  return when " scrutinee " {\n"
+       (if annotation "  let result: Int = when " "  let result = when ")
+       scrutinee " {\n"
        "    true => { let x = 1\n x }\n"
        "    false => { leave 2 }\n"
-       "  }\n}\n"
+       "  }\n  return result\n}\n"
        (if variable? "choose(true)" "choose()")))
     (define result (compile source))
     (check-true (diagnostic? result))

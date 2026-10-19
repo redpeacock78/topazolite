@@ -88,6 +88,26 @@
     "f(false, true)")
    "E-RET-005" "if b { let y = 2\n y }"))
 
+(test-case "合成位置の文を持つ if ブロックの落ち抜けは E-RET-005"
+  (check-rejected
+   (string-append
+    "fn noop() -> Unit { () }\n"
+    "fn f(c: Bool, d: Bool) -> Int { let a = if c { if d { leave 1 }\n noop() }\n return a }\n"
+    "f(true, false)")
+   "E-RET-005" "if c { if d { leave 1 }\n noop() }")
+  (check-rejected
+   (string-append
+    "fn noop() -> Unit { () }\n"
+    "fn f(c: Bool, d: Bool) -> Int { let a = if c { 1 } else if d { noop()\n 2 }\n return a }\n"
+    "f(false, true)")
+   "E-RET-005" "if d { noop()\n 2 }")
+  (check-accepted
+   (string-append
+    "fn noop() -> Unit { () }\n"
+    "fn f(c: Bool) -> Option<Unit> { let a = if c { noop()\n 1 }\n return a }\n"
+    "f(true)")
+   '(Option Unit) '(Construct (Option Unit) some unit)))
+
 (test-case "値位置の if の落ち抜けは Unit payload となり、非 Unit payload と混ぜない"
   (check-accepted
    (string-append
