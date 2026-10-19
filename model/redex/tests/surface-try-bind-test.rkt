@@ -167,6 +167,43 @@
                                          "some(5), some(9)"))
                 '(Construct (Option Int) some 4)))
 
+(test-case "?= の失敗は when と Scope を越えて関数へ伝播し token を一度だけ cleanup する"
+  (define source
+    (string-append
+     "fn f(a: Option<Int>, b: Option<Int>, fallback: Option<Int>) -> Option<Int> ! Own {\n"
+     "  acquire(8)\n"
+     "  let r: Option<Int> = when a {\n"
+     "    some x => { let y ?= b\n let r2: Option<Int> = some(x)\n leave r2 }\n"
+     "    none => fallback\n"
+     "  }\n"
+     "  return r\n"
+     "}\n"
+     "f(some(4), none, some(9))"))
+  (define result (compile source))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  "compiled result expected"))
+  (when (compiled? result)
+    (define-values (configs rules) (trace-result result))
+    (check-not-false (member 'R-HandleSkip rules))
+    (check-not-false (member 'R-ScopeAbort rules))
+    (check-not-false (member 'R-HandleReturn rules))
+    (check-equal? (config-control (last configs))
+                  '(Construct (Option Int) none))
+    (define final-tokens (config-tokens (last configs)))
+    (check-equal? (length final-tokens) 1)
+    (check-equal? (map second final-tokens) '(Dropped))
+    (define token (first (first final-tokens)))
+    (check-equal?
+     (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+       (if (and (equal? (config-tokens before) (list (list token 'Available)))
+                (equal? (config-tokens after) (list (list token 'Dropped))))
+           1
+           0))
+     1)))
+
 (test-case "無名関数内の ?= は無名関数へ返る"
   (define source
     (string-append

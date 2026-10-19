@@ -72,6 +72,49 @@
   (check-true (compiled? result))
   (when (compiled? result) (check-equal? (run-value result) 2)))
 
+(test-case "[REQ: RET-001, RET-002] 文位置 when の leave は外側の式境界へ届く"
+  (for ([scrutinee (in-list '("flag" "get_flag(c)"))])
+    (define variable? (string=? scrutinee "flag"))
+    (define source
+      (string-append
+       (if variable? "" "fn get_flag(x: Bool) -> Bool { return x }\n")
+       "fn choose(c: Bool" (if variable? ", flag: Bool" "") ") -> Int {\n"
+       "  let answer = if c {\n"
+       "    when " scrutinee " { true => leave 5\n false => leave 6 }\n"
+       "  } else { leave 3 }\n"
+       "  return add(answer, 100)\n"
+       "}\n"
+       (if variable? "choose(true, true)" "choose(true)")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "compiled result expected: ~s" source)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) 'Int)
+      (check-equal? (run-value result) 105))))
+
+(test-case "[REQ: RET-001, RET-002] leave の operand の when は leave を捕まえない"
+  (define source
+    (string-append
+     "fn get_flag() -> Bool { return true }\n"
+     "fn f() -> Int {\n"
+     "  let answer = if true {\n"
+     "    leave when get_flag() { true => 5\n false => 6 }\n"
+     "  } else { leave 30 }\n"
+     "  return add(answer, 100)\n"
+     "}\nf()"))
+  (define result (compile source))
+  (check-true (compiled? result)
+              (if (diagnostic? result)
+                  (format "~a: ~a" (diagnostic-id result)
+                          (diagnostic-message result))
+                  "compiled result expected"))
+  (when (compiled? result)
+    (check-equal? (compiled-type result) 'Int)
+    (check-equal? (run-value result) 105)))
+
 (test-case "非変数 scrutinee の return は when の境界を越える"
   (define result
     (compile (string-append

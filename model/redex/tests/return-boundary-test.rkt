@@ -67,6 +67,16 @@
 (define (config-tokens configuration)
   (match configuration [`(cfg ,_control ,_heap ,_states ,tokens ,_events) tokens]))
 
+(define (available-token-ids configuration)
+  (for/list ([entry (in-list (config-tokens configuration))]
+             #:when (eq? (second entry) 'Available))
+    (first entry)))
+
+(define (token-state-in configuration token)
+  (match (assoc token (config-tokens configuration))
+    [(list _ state) state]
+    [_ #f]))
+
 (define (config-events configuration)
   (match configuration [`(cfg ,_control ,_heap ,_states ,_tokens ,events) events]))
 
@@ -77,6 +87,13 @@
      [`(Return ,boundary ,_) (list boundary)]
      [_ '()])
    (if (list? tree) (append-map return-boundaries tree) '())))
+
+(define (perform-boundaries tree)
+  (append
+   (match tree
+     [`(Perform (Return ,boundary ,_) ,_) (list boundary)]
+     [_ '()])
+   (if (list? tree) (append-map perform-boundaries tree) '())))
 
 (define (return-handler-boundaries tree)
   (append
@@ -393,6 +410,65 @@
   (define leave-final (last leave-configs))
   (check-equal? (config-control leave-final) `(Construct ,option-owned none))
   (check-equal? (map second (config-tokens leave-final)) '(Dropped)))
+
+(test-case "[REQ: RET-001, RET-002] Scope からの return と leave は Owned payload を移送する"
+  (define owned '(Owned Res))
+  (define acquire '(PrimVal (Reserved o-acquire) acquire))
+  (define (scope-return boundary)
+    `(Scope ()
+       (Let (carried let ,owned) (Apply ,acquire 71)
+         (Let (discarded let ,owned) (Apply ,acquire 72)
+           (Perform (Return ,boundary ,owned) (Move carried))))))
+  (define return-core
+    `(Handle (Return function-boundary ,owned) (returned -> returned)
+       ,(scope-return 'function-boundary)))
+  (define leave-core
+    `(Handle (Return function-boundary ,owned) (returned -> returned)
+       (Handle (Return expression-boundary ,owned) (left -> left)
+         ,(scope-return 'expression-boundary))))
+  (for ([core (in-list (list return-core leave-core))]
+        [target (in-list '(function-boundary expression-boundary))]
+        [handlers (in-list '((function-boundary)
+                             (function-boundary expression-boundary)))])
+    (check-equal? (core-type-of core '() '()) `(,owned (Own)))
+    (check-equal? (perform-boundaries core) (list target))
+    (check-equal? (return-handler-boundaries core) handlers)
+    (define-values (configs rules) (trace-core core '() owned))
+    (check-not-false (member 'R-ScopeAbort rules))
+    (check-not-false (member 'R-HandleReturn rules))
+    (check-false (member 'R-HandleSkip rules))
+    (define final (last configs))
+    (define final-value (config-control final))
+    (define carried (collect-tokens final-value))
+    (check-equal? (length carried) 1)
+    (check-equal? (available-token-ids final) carried)
+    (define token-ids
+      (remove-duplicates
+       (append-map (lambda (configuration)
+                     (map first (config-tokens configuration)))
+                   configs)
+       equal?))
+    (for ([token (in-list token-ids)])
+      (define drops
+        (for/sum ([before (in-list configs)] [after (in-list (cdr configs))])
+          (if (and (eq? (token-state-in before token) 'Available)
+                   (eq? (token-state-in after token) 'Dropped))
+              1
+              0)))
+      (check-equal? drops (if (member token carried equal?) 0 1)
+                    (format "~s は移送または一度だけ破棄される" token)))))
+
+(test-case "[REQ: RET-001] return は二つ以上の式境界を越えて関数へ届く"
+  (define expression
+    '(Handle (Return function-boundary Int) (returned -> returned)
+       (Handle (Return expression-one Int) (one -> one)
+         (Handle (Return expression-two Int) (two -> two)
+           (Perform (Return function-boundary Int) 47)))))
+  (check-equal? (core-type-of expression '() '()) '(Int ()))
+  (define-values (configs rules) (trace-core expression '() 'Int))
+  (check-equal? (count (lambda (rule) (eq? rule 'R-HandleSkip)) rules) 2)
+  (check-not-false (member 'R-HandleReturn rules))
+  (check-equal? (config-control (last configs)) 47))
 
 (test-case "[REQ: RET-001, RET-002] ?= の失敗枝は途中の式境界を越えて関数へ戻り Scope を cleanup する"
   ;; TryBind の失敗枝の Return が式境界を飛び越えて関数境界へ届く Core を trace する。

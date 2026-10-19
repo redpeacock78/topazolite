@@ -296,7 +296,8 @@
                 (format "~s は Available から Dropped へ高々一度遷移する"
                         token))))
 
-(define (check-interrupted-case test-case [additional-rules '()])
+(define (check-interrupted-case test-case [additional-rules '()]
+                                #:allow-terminal-available? [allow-terminal-available? #f])
   (define core (interrupted-case-core test-case))
   (define callables (interrupted-case-callables test-case))
   (define places (interrupted-case-places test-case))
@@ -330,10 +331,20 @@
    "終端の Available token は終端値か Perform 引数だけにある")
   (check-equal? (length (configuration-tokens (last configs)))
                 (interrupted-case-token-count test-case))
-  (check-true
-   (andmap (lambda (entry) (eq? (second entry) 'Dropped))
-           (configuration-tokens (last configs)))
-   "外へ渡す値が無いので全 token が Dropped")
+  (if allow-terminal-available?
+      (begin
+        (check-equal? (interrupted-case-shape test-case) 'owned-leave)
+        (check-equal? expected-type owned)
+        (check-equal? (length (available-token-ids (last configs))) 1)
+        (check-equal? (length (terminal-carried-token-ids terminal)) 1)
+        (check-equal?
+         (count (lambda (entry) (eq? (second entry) 'Dropped))
+                (configuration-tokens (last configs)))
+         1))
+      (check-true
+       (andmap (lambda (entry) (eq? (second entry) 'Dropped))
+               (configuration-tokens (last configs)))
+       "外へ渡す値が無いので全 token が Dropped"))
   (check-token-drop-once configs)
   (when (eq? (interrupted-case-shape test-case) 'discharge-mid)
     (check-false (member 'R-DischargeRemainder rules)
@@ -364,6 +375,17 @@
         #t]
        [_ #f])
      "中断直前の Open は処理済み欄に根 token を持つ")))
+
+(test-case "leave の Owned payload は Scope token を Dropped にせず移送する"
+  (define body
+    `(Scope ()
+       (Let (payload let ,owned) ,(root-owned 191)
+         (Perform (Return interrupted-boundary ,owned) (Move payload)))))
+  (define test-case
+    (interrupted-case 'owned-leave 'scope-abort
+                      (wrap-interruption 'scope-abort body owned)
+                      '() '() '() '() owned 2))
+  (check-interrupted-case test-case #:allow-terminal-available? #t))
 
 (define expected-typed-counts
   '((scope-abort 5 1)
