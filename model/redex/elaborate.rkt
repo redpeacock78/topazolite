@@ -2707,7 +2707,9 @@
                             ,(map fifth branch-group))))
           (define body-deferred
             (and (not member-pattern?)
-                 (match body-expression [`(Eliminate ,_ ,_) #t] [_ #f])
+                 (match (peel-node body-expression)
+                   [`(Eliminate ,_ ,_) #t]
+                   [_ #f])
                  (box '())))
           (define body-result
             (begin
@@ -3513,7 +3515,8 @@
          (define unresolved-leave-box (box #f))
          (define body-expression (peel-node body))
          (define deferred
-           (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
+           (and (match (peel-node body) [`(Eliminate ,_ ,_) #t] [_ #f])
+                (box '())))
          (define boundary (fresh-boundary))
          (define failure #f)
          (define body-result
@@ -3598,17 +3601,28 @@
       (call-with-restored-state
        (λ ()
          (define candidates (box '()))
+         (define fallthroughs (box '()))
          (define boundary (fresh-boundary))
          (define failure #f)
          (define result
            (with-handlers ([exn:fail:elab?
                             (λ (error) (set! failure error) #f)])
-             (synth expression environment delta propositions
-                    (cons `(ExpressionBoundary ,boundary
-                                               (#:probe ,candidates)
-                                               ,boundary-span option-payload)
-                          boundaries))))
-         (list result (unbox candidates) failure))))
+             (parameterize ([current-when-arm-fallthroughs fallthroughs])
+               (synth expression environment delta propositions
+                      (cons `(ExpressionBoundary ,boundary
+                                                 (#:probe ,candidates)
+                                                 ,boundary-span option-payload)
+                            boundaries)))))
+         (list result (unbox candidates) failure (unbox fallthroughs)))))
+
+    (define (check-if-some-explicit clauses s s_0 T expected
+                                    environment delta propositions boundaries)
+      (define fallthroughs (box '()))
+      (define result
+        (parameterize ([current-when-arm-fallthroughs fallthroughs])
+          (check (if-some-explicit clauses s s_0 T) expected
+                 environment delta propositions boundaries)))
+      (finish-when-fallthroughs result (unbox fallthroughs) T s #f))
 
     (define (if-some-result-type clauses s environment delta
                                  propositions boundaries)
@@ -3636,8 +3650,11 @@
       (define successful-live
         (for/list ([probe (in-list then-results)]
                    #:when (and (first probe)
-                               (not (eq? (judgment-type (first probe)) 'Never))))
+                               (not (eq? (judgment-type (first probe)) 'Never))
+                               (null? (fourth probe))))
           (first probe)))
+      (define fallthroughs
+        (append* (map fourth then-results)))
       (define raw-candidates
         (append* (map second observations)))
       (define leave-payload-types
@@ -3669,6 +3686,7 @@
                           (map judgment-type successful-live)
                           s propositions)])
              type)]
+          [(pair? fallthroughs) 'Unit]
           [else #f]))
       (define candidates return-candidates)
       (define failure
@@ -5057,8 +5075,8 @@
            (if-some-result-type clauses s environment delta
                                propositions boundaries))
          (match-define `(Option ,T) expected)
-         (check (if-some-explicit clauses s s_0 T)
-                expected environment delta propositions boundaries)]
+         (check-if-some-explicit clauses s s_0 T expected
+                                 environment delta propositions boundaries)]
 
         [`(TryBind (#:bind ,name ,name-span) ,right ,body)
          (define scrutinee-result
@@ -5585,8 +5603,8 @@
         [`(IfSome (,clauses ...) ,s_0)
          (match (normalize-type expected)
            [`(Option ,T)
-            (check (if-some-explicit clauses s s_0 T)
-                   expected environment delta propositions boundaries)]
+            (check-if-some-explicit clauses s s_0 T expected
+                                    environment delta propositions boundaries)]
            [_
             (check-against-expected
              (synth expression environment delta propositions boundaries)
@@ -5606,7 +5624,8 @@
          (define boundary-keys (live-flow-keys environment))
          (define escapes (make-hasheq))
          (define deferred
-           (and (match body [`(Eliminate ,_ ,_) #t] [_ #f]) (box '())))
+           (and (match (peel-node body) [`(Eliminate ,_ ,_) #t] [_ #f])
+                (box '())))
          (define body-result
            (parameterize
                ([current-boundary-escapes escapes]
@@ -5617,9 +5636,11 @@
                                                ,leave-adapter)
                           boundaries))))
          (define normal-exit (flow-snapshot))
+         (define fallthrough-result-type
+           (or (option-adapter-payload-type leave-adapter) expected))
          (when (and deferred
                     (pair? (unbox deferred))
-                    (not (equal? (normalize-type expected) 'Unit)))
+                    (not (equal? (normalize-type fallthrough-result-type) 'Unit)))
            (reject (first-when-fallthrough (unbox deferred))
                    'when-arm-missing-return))
          (define pending (hash-ref escapes boundary '()))

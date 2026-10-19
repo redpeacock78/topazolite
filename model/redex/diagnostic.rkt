@@ -330,7 +330,7 @@
 
 (define elaborate-entries-v38
   '(("E-RET-005" when-arm-missing-return
-                 "when の本体ブロック arm が全経路で値を返さない")))
+                 "式位置の if/when 分岐ブロックが Unit 以外の結果型で落ち抜ける")))
 
 (define elaborate-entries-v40
   '(("E-RET-006" leave-outside-expression-boundary

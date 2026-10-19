@@ -1,6 +1,6 @@
 #lang racket
 
-;; P2m3a。when の式境界が return を局所化し、型を合成する。
+;; P2m3a。when の式境界、return の脱出、枝の型合成を検査する。
 (require rackunit
          racket/match
          "../diagnostic.rkt"
@@ -151,7 +151,29 @@
                     (format "unexpected result: ~s" result)))
     (when (compiled? result) (check-equal? (run-value result) 1))))
 
-(test-case "when の本体ブロック arm の leave 落ち抜けは閉じ波括弧を指す"
+(test-case "when の単一式本体ブロック arm の値は leave 候補と合流する"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return true }\n")
+       "fn choose(" (if variable? "a: Bool" "") ") -> Int {\n"
+       "  let result = when " scrutinee " {\n"
+       "    true => { 1 }\n"
+       "    false => { leave 2 }\n"
+       "  }\n  return result\n}\n"
+       (if variable? "choose(true)" "choose()")))
+    (define result (compile source))
+    (check-true (compiled? result)
+                (if (diagnostic? result)
+                    (format "~a: ~a" (diagnostic-id result)
+                            (diagnostic-message result))
+                    (format "unexpected result: ~s" result)))
+    (when (compiled? result)
+      (check-equal? (compiled-type result) 'Int)
+      (check-equal? (run-value result) 1))))
+
+(test-case "when の文を持つ本体ブロック arm の leave 落ち抜けは閉じ波括弧を指す"
   (for ([scrutinee (in-list '("a" "g()"))])
     (define variable? (equal? scrutinee "a"))
     (define source
@@ -159,7 +181,7 @@
        (if variable? "" "fn g() -> Bool { return true }\n")
        "fn choose(" (if variable? "a: Bool" "") ") -> Int {\n"
        "  return when " scrutinee " {\n"
-       "    true => { 1 }\n"
+       "    true => { let x = 1\n x }\n"
        "    false => { leave 2 }\n"
        "  }\n}\n"
        (if variable? "choose(true)" "choose()")))
@@ -168,14 +190,15 @@
     (when (diagnostic? result)
       (check-equal? (diagnostic-id result) "E-RET-005")
       (check-equal? (diagnostic-primary-span result)
-                    (block-close-span source "true => { 1 }")))))
+                    (block-close-span source "true => { let x = 1\n x }")))))
 
-(test-case "when の本体ブロックの部分 leave は合成位置と検査位置で拒否する"
+(test-case "when の単一式 if some は Int arm と合流せず E-TYP-012 になる"
   (for* ([scrutinee (in-list '("a" "g()"))]
          [annotation (in-list '(#f #t))])
     (define variable? (equal? scrutinee "a"))
     (define source
       (string-append
+       "fn noop() -> Unit { () }\n"
        (if variable? "" "fn g() -> Bool { return false }\n")
        "fn choose(" (if variable? "a: Bool, " "") "b: Bool) -> Int {\n"
        (if annotation "  let result: Int = when " "  let result = when ")
@@ -187,9 +210,24 @@
     (define result (compile source))
     (check-true (diagnostic? result))
     (when (diagnostic? result)
-      (check-equal? (diagnostic-id result) "E-RET-005")
-      (check-equal? (diagnostic-primary-span result)
-                    (block-close-span source "true => { if b { leave 1 } }")))))
+      (check-equal? (diagnostic-id result) "E-TYP-012"))))
+
+(test-case "when の単一式 if arm と leave arm の候補無し合流は E-TYP-010 になる"
+  (for ([scrutinee (in-list '("a" "g()"))])
+    (define variable? (equal? scrutinee "a"))
+    (define source
+      (string-append
+       (if variable? "" "fn g() -> Bool { return true }\n")
+       "fn choose(" (if variable? "a: Bool, " "") "b: Bool) -> Int {\n"
+       "  let result = when " scrutinee " {\n"
+       "    true => { if b { return 1 } }\n"
+       "    false => { leave 2 }\n"
+       "  }\n  return result\n}\n"
+       (if variable? "choose(true, false)" "choose(false)")))
+    (define result (compile source))
+    (check-true (diagnostic? result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-TYP-010"))))
 
 (test-case "Unit の when は落ち抜ける本体ブロック arm を受理する"
   (for* ([scrutinee (in-list '("a" "g()"))]
@@ -197,12 +235,13 @@
     (define variable? (equal? scrutinee "a"))
     (define source
       (string-append
+       "fn noop() -> Unit { () }\n"
        (if variable? "" "fn g() -> Bool { return false }\n")
        "fn choose(" (if variable? "a: Bool" "") ") -> Unit {\n"
        (if annotation "  let result: Unit = when " "  let result = when ")
        scrutinee " {\n"
-       "    true => { 1 }\n"
-       "    false => { 2 }\n"
+       "    true => { noop()\n 1 }\n"
+       "    false => { noop()\n 2 }\n"
        "  }\n"
        "  return result\n}\n"
        (if variable? "choose(true)" "choose()")))

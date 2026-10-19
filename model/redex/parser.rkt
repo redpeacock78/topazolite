@@ -424,10 +424,14 @@
       [else
        (define else-span (span-at ts then-j))
        (define else-start (add1 then-j))
-       (define-values (else-part end-j)
+       (define-values (else-part end-j else-kind)
          (cond
-           [(punct? ts else-start '|{|) (parse-block ts fail else-start)]
-           [(kw? ts else-start 'if) (parse-if ts fail else-start)]
+           [(punct? ts else-start '|{|)
+            (define-values (body next) (parse-block ts fail else-start))
+            (values body next 'block)]
+           [(kw? ts else-start 'if)
+            (define-values (body next) (parse-if ts fail else-start))
+            (values body next 'expr)]
            [else (fail-at ts fail else-start)]))
        (match else-part
          [`(SIfSome ,inner-span ,clauses ,s_0)
@@ -443,9 +447,9 @@
               ((SBind ,whole const (SName ,condition-span %ifcond)
                       (TName ,if-span Bool) ,condition))
               (SMatch ,whole (SVar ,condition-span %ifcond)
-                ((SArm ,then-span (SName ,then-span true) () expr ,then)
+                ((SArm ,then-span (SName ,then-span true) () block ,then)
                  (SArm ,(hull else-span (node-span else-part))
-                       (SName ,else-span false) () expr ,else-part))))
+                       (SName ,else-span false) () ,else-kind ,else-part))))
            end-j)])])))
 
 ;; 原文の先頭 token も使う。if 式は parse 後に SBlock になる。

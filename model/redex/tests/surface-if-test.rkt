@@ -340,7 +340,7 @@
   (define (source c d)
     (string-append
      "fn choose(c: Bool, d: Bool) -> Option<Int> {\n"
-     " let answer = if c { if d { leave 1 }\n 2 }\n"
+     " let answer = if c { if d { leave 1 }\n leave 2 }\n"
      " return answer\n}\nchoose(" c ", " d ")"))
   (check-equal? (run-source (source "true" "true"))
                 '(Construct (Option Int) some 1))

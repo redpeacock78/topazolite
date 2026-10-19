@@ -170,22 +170,18 @@
       [other (fail-check (format "Int member の UnionVal を期待した: ~s"
                                  other))])))
 
-(test-case "Union member の本体ブロック arm の leave 落ち抜けは E-RET-005"
+(test-case "Union member の単一式本体ブロック arm は式の値を返す"
   (define source
     (string-append
-     "fn choose(value: Int | String) -> Int {\n"
+     "fn choose(value: Int | String) -> Int | String {\n"
      "  let answer = when value {\n"
      "    (x: Int) => { x }\n"
      "    (s: String) => { leave 0 }\n"
      "  }\n  return answer\n}\nchoose(1)"))
   (define result (compile source))
-  (check-true (diagnostic? result))
-  (when (diagnostic? result)
-    (check-equal? (diagnostic-id result) "E-RET-005")
-    (match-define `(#:span src ,_ ,end)
-      (source-span source "(x: Int) => { x }"))
-    (check-equal? (diagnostic-primary-span result)
-                  `(#:span src ,(sub1 end) ,end))))
+  (check-compiled result)
+  (when (compiled? result)
+    (check-match (run-value result) `(UnionVal ,_ Int 1))))
 
 (test-case "Union の constructor group 内の落ち抜けを when の E-RET-005 へ伝える"
   (for ([scrutinee (in-list '("value" "g()"))])
@@ -195,12 +191,13 @@
        (if variable?
            ""
            "fn g() -> Option<Int> | String { return \"s\" }\n")
+       "fn noop() -> Unit { () }\n"
        "fn choose(" (if variable? "value: Option<Int> | String" "")
        ") -> Int {\n"
        "  let result = when " scrutinee " {\n"
-      "    some x => { leave 0 }\n"
-       "    none => { () }\n"
-      "    (s: String) => { leave 1 }\n"
+       "    some x => { leave 0 }\n"
+       "    none => { noop()\n () }\n"
+       "    (s: String) => { leave 1 }\n"
        "  }\n  return result\n}\n"
        (if variable? "choose(none)" "choose()")))
     (define result (compile source))
@@ -208,7 +205,7 @@
     (when (diagnostic? result)
       (check-equal? (diagnostic-id result) "E-RET-005")
       (match-define `(#:span src ,_ ,end)
-        (source-span source "none => { () }"))
+        (source-span source "none => { noop()\n () }"))
       (check-equal? (diagnostic-primary-span result)
                     `(#:span src ,(sub1 end) ,end)))))
 

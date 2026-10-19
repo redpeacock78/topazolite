@@ -855,6 +855,12 @@
               (#:bind ,x ,s_x)
               -> ,(lower-body s_a body-kind body))])))
 
+(define (lower-arm-block-body body env fail)
+  (match body
+    [`(SBlock ,_ () ,_) (lower-sexpr body env fail)]
+    [`(SBlock ,_ ,_ ,_) (lower-block-body body env fail)]
+    [_ (lower-sexpr body env fail)]))
+
 (define (lower-sexpr e env fail)
   (match e
     [`(SInt ,s ,n) `(#:lit ,n ,s)]
@@ -893,7 +899,7 @@
      (define (lower-body s_a body-kind body)
        (define body*
          (if (eq? body-kind 'block)
-             (lower-block-body body env fail)
+             (lower-arm-block-body body env fail)
              (lower-sexpr body env fail)))
        (if variable-scrutinee? body* `(NarrativeExpr ,s_a ,body*)))
      (define lowered-arms
@@ -907,7 +913,7 @@
                  (match clause
                    [`(,s_i ,condition ,body)
                     (list s_i (node-span body) (lower-sexpr condition env fail)
-                          (lower-sexpr body env fail))]))
+                          (lower-arm-block-body body env fail))]))
               ,s_0)]
     ;; P2l2b2 spec §9.3.5。型仮引数の無い型だけが (Types) を持つ。
     ;; 組み込みの constructor と不正な手組み AST は期待型から型を決める。

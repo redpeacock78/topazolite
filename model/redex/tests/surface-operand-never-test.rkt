@@ -116,34 +116,38 @@
   (define result
     (compile (string-append
               "fn f(c: Bool) -> Option<Int> { return if c {"
-              " let y = return some(1)\n none } else { none } }\n"
+              " let y = return some(1)\n leave none } else { none } }\n"
               "f(true)")))
   (check-true (compiled? result))
   (when (compiled? result)
     (check-equal? (run-value result) '(Construct (Option Int) some 1))
     (check-match (find-let-body (compiled-core result) 'y)
-                 `(Construct ,_ (#:ty (Option Int) ,_) none))))
+                 `(Let ,_ ((#:bind ,_ ,_) const
+                           (#:ty (Option Int) ,_))
+                    (Construct ,_ (#:ty (Option Int) ,_) none)
+                    (#:lit unit ,_)))))
 
 (test-case "検査位置の E-Let-Never は不一致時に synth へ戻る"
   (define result
     (compile (string-append
               "fn f(c: Bool) -> Option<Int> { return if c {"
-              " let y = return some(1)\n \"s\" } else { none } }\n"
+              " let y = return some(1)\n leave \"s\" } else { none } }\n"
               "f(true)")))
   (check-true (compiled? result))
   (when (compiled? result)
     (check-equal? (run-value result) '(Construct (Option Int) some 1))
     (check-match (find-let-body (compiled-core result) 'y)
-                 `(#:lit "s" ,_))))
+                 `(Let ,_ ((#:bind ,_ ,_) const (#:ty String ,_))
+                    (#:lit "s" ,_) (#:lit unit ,_)))))
 
 (test-case "失敗した検査の TryBind 印を synth に持ち越さない"
   (define result
     (compile (string-append
               "fn id(x: Option<Int>) -> Option<Int> { return x }\n"
-              "fn f(c: Bool) -> Option<Int> { return if c {"
-              " let y = return some(1)\n"
-              " let x ?= id(some(2))\n \"s\" } else { none } }\n"
-              "f(true)")))
+              "fn f(c: Bool, d: Bool) -> Option<Int> { return if c {"
+              " let y = if d { return some(1) } else { 0 }\n"
+              " let x ?= id(some(2))\n return some(1) } else { none } }\n"
+              "f(true, false)")))
   (check-true (compiled? result))
   (when (compiled? result)
     (check-equal? (run-value result) '(Construct (Option Int) some 1))))
@@ -155,7 +159,7 @@
   (when (compiled? result) (check-equal? (run-value result) 3)))
 
 (test-case "検査位置の TryBind bottom は期待型を先に試し、失敗時は synth へ戻る"
-  (for ([tail (in-list '("none" "\"s\""))])
+  (for ([tail (in-list '("leave none" "leave \"s\""))])
     (define result
       (compile (string-append
                 "fn f(c: Bool) -> Option<Int> { return if c {"

@@ -632,29 +632,29 @@
      ((SBind ,(sp 0 21) const (SName ,(sp 3 4) %ifcond)
              (TName ,(sp 0 2) Bool) (SVar ,(sp 3 4) c)))
      (SMatch ,(sp 0 21) (SVar ,(sp 3 4) %ifcond)
-        ((SArm ,(sp 5 10) (SName ,(sp 5 10) true) () expr
+        ((SArm ,(sp 5 10) (SName ,(sp 5 10) true) () block
               (SBlock ,(sp 5 10) () (SInt ,(sp 7 8) 1)))
-        (SArm ,(sp 11 21) (SName ,(sp 11 15) false) () expr
+        (SArm ,(sp 11 21) (SName ,(sp 11 15) false) () block
               (SBlock ,(sp 16 21) () (SInt ,(sp 18 19) 2)))))))
  (check-match
   (p-expr "if c { 1 } else if d { 2 } else { 3 }")
   `(SBlock ,_
      ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ c)))
      (SMatch ,_ (SVar ,_ %ifcond)
-       ((SArm ,_ (SName ,_ true) () expr (SBlock ,_ () (SInt ,_ 1)))
+       ((SArm ,_ (SName ,_ true) () block (SBlock ,_ () (SInt ,_ 1)))
         (SArm ,_ (SName ,_ false) () expr
               (SBlock ,_
                 ((SBind ,_ const (SName ,_ %ifcond) (TName ,_ Bool) (SVar ,_ d)))
                 (SMatch ,_ (SVar ,_ %ifcond)
-                  ((SArm ,_ (SName ,_ true) () expr (SBlock ,_ () (SInt ,_ 2)))
-                   (SArm ,_ (SName ,_ false) () expr (SBlock ,_ () (SInt ,_ 3)))))))))))
+                  ((SArm ,_ (SName ,_ true) () block (SBlock ,_ () (SInt ,_ 2)))
+                   (SArm ,_ (SName ,_ false) () block (SBlock ,_ () (SInt ,_ 3)))))))))))
  (check-match
   (p-expr "if a { 1 } else { if b { 2 } }")
   `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
-           (SMatch ,_ ,_
-             ((SArm ,_ (SName ,_ true) () expr ,_)
-              (SArm ,_ (SName ,_ false) () expr
-                    (SBlock ,_ ()
+     (SMatch ,_ ,_
+       ((SArm ,_ (SName ,_ true) () block ,_)
+        (SArm ,_ (SName ,_ false) () block
+              (SBlock ,_ ()
                             (SIfSome ,_ ((,_ ,_ ,_)) ,_)))))))
 )
 
@@ -766,8 +766,8 @@
   (p-expr "if c { 1 } else { 2 }")
   `(SBlock ,_ ((SBind ,_ const (SName ,_ %ifcond) ,_ ,_))
      (SMatch ,_ ,_
-       ((SArm ,_ (SName ,_ true) () expr ,_)
-        (SArm ,_ (SName ,_ false) () expr ,_))))))
+       ((SArm ,_ (SName ,_ true) () block ,_)
+        (SArm ,_ (SName ,_ false) () block ,_))))))
 
 (test-case
  "when の不正な枝は E-SUR-005 になる"

@@ -1328,22 +1328,40 @@ and lower_arms (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   | SConstructorArm sa (_, k) bs BExpr b :: tl ->
       CConstructorBranch sa k (map fst bs) (lower_expr b) :: lower_arms tl
   | SConstructorArm sa (_, k) bs BBlock b :: tl ->
-      CConstructorBranch sa k (map fst bs) (lower_stmt b) :: lower_arms tl
+      CConstructorBranch sa k (map fst bs)
+        (match b with
+         | SBlock _ [] tail -> lower_expr tail
+         | SBlock _ ds tail -> lower_block ds (lower_stmt tail)
+         | _ -> lower_expr b) :: lower_arms tl
   | SMemberArm sa _ (sx, x) ty BExpr b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (lower_expr b) :: lower_arms tl
   | SMemberArm sa _ (sx, x) ty BBlock b :: tl ->
-      CMemberBranch sa sx x (lower_core_ty ty) (lower_stmt b) :: lower_arms tl
+      CMemberBranch sa sx x (lower_core_ty ty)
+        (match b with
+         | SBlock _ [] tail -> lower_expr tail
+         | SBlock _ ds tail -> lower_block ds (lower_stmt tail)
+         | _ -> lower_expr b) :: lower_arms tl
 and lower_arms_bounded (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
   | SConstructorArm sa (_, k) bs BExpr b :: tl ->
       CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
   | SConstructorArm sa (_, k) bs BBlock b :: tl ->
-      CConstructorBranch sa k (map fst bs) (CNarrativeExpr sa (lower_stmt b)) :: lower_arms_bounded tl
+      CConstructorBranch sa k (map fst bs)
+        (CNarrativeExpr sa
+          (match b with
+           | SBlock _ [] tail -> lower_expr tail
+           | SBlock _ ds tail -> lower_block ds (lower_stmt tail)
+           | _ -> lower_expr b)) :: lower_arms_bounded tl
   | SMemberArm sa _ (sx, x) ty BExpr b :: tl ->
       CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_expr b)) :: lower_arms_bounded tl
   | SMemberArm sa _ (sx, x) ty BBlock b :: tl ->
-      CMemberBranch sa sx x (lower_core_ty ty) (CNarrativeExpr sa (lower_stmt b)) :: lower_arms_bounded tl
+      CMemberBranch sa sx x (lower_core_ty ty)
+        (CNarrativeExpr sa
+          (match b with
+           | SBlock _ [] tail -> lower_expr tail
+           | SBlock _ ds tail -> lower_block ds (lower_stmt tail)
+           | _ -> lower_expr b)) :: lower_arms_bounded tl
 and lower_ifsome_expr (s: span) (clauses: list sifclause)
     (s0: span) : Tot core (decreases clauses) =
   match clauses with
@@ -1359,8 +1377,12 @@ and lower_ifsome_expr (s: span) (clauses: list sifclause)
       CLet chain_span condition_span (lower_expr condition)
         (CNarrativeExpr chain_span
           (CEliminate chain_span (CVar condition_span)
-            [CConstructorBranch body_span "true" []
-               (CConstruct body_span "some" [lower_expr body]);
+             [CConstructorBranch body_span "true" []
+               (CConstruct body_span "some"
+                 [match body with
+                  | SBlock _ [] tail -> lower_expr tail
+                  | SBlock _ ds tail -> lower_block ds (lower_stmt tail)
+                  | _ -> lower_expr body]);
              CConstructorBranch false_span "false" []
                (lower_ifsome_expr s tl s0)]))
 and lower_block (ds: list sdecl) (tail: core) : Tot core (decreases ds) =
