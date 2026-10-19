@@ -13,7 +13,7 @@
  "3 つのリストの要素数が spec §10.2 と一致する"
  (check-equal? (length racket-surface-constructors) 41)
  (check-equal? (length racket-ucore-constructors) 18)
- (check-equal? (length fstar-constructors) 38))
+ (check-equal? (length fstar-constructors) 40))
 
 (test-case
  "対応表に違反が無い"
@@ -100,9 +100,9 @@
  (check-equal? (row-kind 'SReassign) 'many-to-one)
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
- (check-equal? (row-kind 'SLeave) 'none)
+ (check-equal? (row-kind 'SLeave) 'one-to-one)
  (check-equal? (row-kind 'Reassign) 'one-to-one)
- (check-equal? (row-kind 'Leave) 'none)
+ (check-equal? (row-kind 'Leave) 'one-to-one)
  (check-equal? (row-kind 'TryBind) 'one-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
  (check-equal? (row-kind 'SEffLabel) 'one-to-one))

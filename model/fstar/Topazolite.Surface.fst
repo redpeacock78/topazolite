@@ -727,6 +727,7 @@ type sexpr =
   | SBool     : span -> bool -> sexpr
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
+  | SLeave    : span -> sexpr -> sexpr
   | SMatch    : span -> sexpr -> list sarm -> sexpr
   | SIfSome   : span -> list sifclause -> span -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sbodykind -> sexpr -> sexpr
@@ -772,6 +773,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SBool s _     -> s
   | SVar s _      -> s
   | SReturn s _   -> s
+  | SLeave s _    -> s
   | SMatch s _ _  -> s
   | SIfSome s _ _ -> s
   | SFn s _ _ _ _ _ -> s
@@ -832,6 +834,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SBool _ _     -> []
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
+  | SLeave _ e    -> [NExpr e]
   | SMatch _ e arms -> NExpr e :: arm_children arms
   | SIfSome _ clauses _ -> ifsome_children clauses
   | SFn _ ps r row _ b ->
@@ -973,6 +976,7 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SBool _ _     -> true
   | SVar _ _      -> true
   | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
+  | SLeave s e    -> contains s (span_of_expr e) && wf_expr e
   | SFn s ps r row _ b ->
       spans_in s (map fst ps)
       && wf_tys s (option_stys (map snd ps))
@@ -1152,6 +1156,7 @@ let parse_span_containment n c =
   | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
   | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
+  | NExpr (SLeave s e) -> wf_exprs_elim s [e] c
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SMatch s e arms) ->
@@ -1225,6 +1230,7 @@ and core =
   | CTryBind  : span -> span -> string -> core -> core -> core
   | CReassign : span -> span -> core -> core
   | CReturn   : span -> core -> core
+  | CLeave    : span -> core -> core
   | CRecur    : span -> span -> list span -> seffrow -> core -> core -> core
 
 let span_of_core (c: core) : Tot span =
@@ -1242,6 +1248,7 @@ let span_of_core (c: core) : Tot span =
   | CTryBind s _ _ _ _ -> s
   | CReassign s _ _  -> s
   | CReturn s _      -> s
+  | CLeave s _       -> s
   | CRecur s _ _ _ _ _ -> s
 
 let rec lower_core_ty (t: sty) : Tot core_ty (decreases t) =
@@ -1266,6 +1273,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SBool _ _    -> true
   | SVar _ _     -> true
   | SReturn _ _  -> true
+  | SLeave _ _   -> true
   | SMatch _ _ _ -> true
   | SIfSome _ _ _ -> false
   | SFn _ _ _ _ _ _ -> true
@@ -1299,6 +1307,7 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
   | SVar s _      -> CVar s
   | SReturn s e   -> CReturn s (lower_expr e)
+  | SLeave s e    -> CLeave s (lower_expr e)
   | SFn s ps _ row kind b ->
       CFn s (map fst ps) row
         (match kind with BExpr -> lower_expr b | BBlock -> lower_stmt b)
@@ -1415,6 +1424,7 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   | SBool s b -> discard_stmt s (CConstruct s (if b then "true" else "false") [])
   | SVar s _ -> discard_stmt s (CVar s)
   | SReturn s e -> discard_stmt s (CReturn s (lower_expr e))
+  | SLeave s e -> discard_stmt s (CLeave s (lower_expr e))
   | SFn s ps _ row kind b ->
       discard_stmt s
         (CFn s (map fst ps) row
@@ -1462,6 +1472,7 @@ let lower_preserves_span e =
   | SBool _ _    -> ()
   | SVar _ _     -> ()
   | SReturn _ _  -> ()
+  | SLeave _ _   -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ _ -> ()
@@ -1508,6 +1519,7 @@ let lower_stmt_preserves_span e =
   | SBool _ _ -> ()
   | SVar _ _ -> ()
   | SReturn _ _ -> ()
+  | SLeave _ _ -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ _ -> ()
