@@ -81,6 +81,7 @@
        "fn choose(c: Bool" (if variable? ", flag: Bool" "") ") -> Int {\n"
        "  let answer = if c {\n"
        "    when " scrutinee " { true => leave 5\n false => leave 6 }\n"
+       "    leave 7\n"
        "  } else { leave 3 }\n"
        "  return add(answer, 100)\n"
        "}\n"
