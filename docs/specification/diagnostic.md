@@ -296,6 +296,8 @@ registry version 37 で elaborate に `E-RET-004` `function-body-missing-return`
 
 registry version 38 で elaborate に `E-RET-005` `when-arm-missing-return` を 1 行足した。
 
+`E-RET-005` の title は「式位置の if/when 分岐ブロックが Unit 以外の結果型で落ち抜ける」とし、同じ不変条件を `if` に広げても registry version と凍結 fixture を変更しないため、`when` で導入した key `when-arm-missing-return` を維持する。
+
 registry version 39 で typing に `E-BOR-027` `borrow-hidden-by-narrowing` を 1 行足した。
 
 registry version 40 で elaborate に `E-RET-006` `leave-outside-expression-boundary` を 1 行足した。

@@ -107,8 +107,9 @@ UCore+ では `(IfSome s ((s_i t_i c_i b_i) ...) s_0)` とし、`t_i` は then b
 
 UCore の `BlockBody` は spanless な `(BlockBody e)` で表す。
 UCore+ では `(BlockBody s e)` とし、`s` は Surface 本体 block の閉じ波括弧 1 byte の span、`e` は文の mode で lowering した項である。
-`BlockBody` は `SFn` の block 本体と `SFnDecl` の本体だけに置き、elaboration が関数本体の検査前に剥がす。
-式位置の `when` の本体ブロック arm の本体にも置き、elaboration が `Eliminate` の枝の検査時に剥がす。
+`BlockBody` は `SFn` の block 本体と `SFnDecl` の本体に置き、elaboration が関数本体の検査前に剥がす。
+式位置の `if` と `when` の文を持つ分岐ブロックの本体にも置き、elaboration が `Eliminate` の枝または `IfSome` の節の検査時に剥がす。
+文を持たない単一式の分岐ブロックには置かない。
 これら以外の位置にある `BlockBody` は不変条件の違反として拒否する。
 Typed Core と Core の文法および簡約規則には `BlockBody` は現れない。
 
@@ -851,10 +852,15 @@ E-Lambda は捕捉した値を `Move` で `Curry` の固定引数 `(Move x)` へ
 候補の無い `Never` 本体は `E-TYP-024` とし、下見中に候補を得て診断が起きた場合は候補から戻り型を決めて本検査で同じ診断を報告する。
 この下見と本検査の間で本体を再 elaboration することは、戻り型省略の規則の一部である。
 
-式位置の `when` の本体ブロック arm も `BlockBody` へ下ろすが、関数本体のような戻り型の検査は行わない。
-その arm は落ち抜ければ `Unit`、脱出だけで終われば `Never` となる。
-arm の `return` は関数境界へ届き、`leave` は式位置の `when` が作る arm の式境界へ届く。
-落ち抜けの有無は `when` ごとに記録し、`when` 全体の結果型が確定した後、結果型が `Unit` 以外なら原文順で最初に落ち抜けた arm の閉じ波括弧を primary とする `E-RET-005` を報告する。
+式位置の `if` と `when` の文を持つ分岐ブロックも `BlockBody` へ下ろすが、関数本体のような戻り型の検査は行わない。
+文を持たない `{ e }` は `BlockBody` ではなく単一式として下ろし、`e` の値が分岐の値になる。
+文を持つ分岐ブロックは末尾式を値にせず、落ち抜ければ `Unit`、脱出だけで終われば `Never` となる。
+分岐の `return` は関数境界へ届き、`leave` は対応する式境界へ値を渡す。
+else を持つ `if` と `when` では、分岐ブロックの落ち抜けを式境界ごとに記録し、結果型が `Unit` 以外なら `E-RET-005` とする。
+else の無い `if` では then の payload 型 `T` に対して落ち抜けの `Unit` を候補とし、`T` が `Unit` なら `Option<Unit>` を返す。
+else の無い `if` で非 `Unit` の `leave` payload と落ち抜けが混在するときは `E-RET-005` とし、`Unit` と `T` を合流させない。
+`E-RET-005` の primary span は、式境界ごとに原文順で最初に落ち抜けた分岐ブロックの閉じ波括弧である。
+`else if` は内側の式として扱い、その分岐ブロックに同じ規則を適用する。
 この marker は UCore+ の elaboration で消費され、Core の型付け規則は増やさない。
 
 **(E-Lambda)** [REQ: EFF-001]

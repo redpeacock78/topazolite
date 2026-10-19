@@ -403,11 +403,21 @@ record literal の field の区切りと同じ規則である。
 drop する側を書く構文は置かない。
 残す label を列挙すれば残余は一意に決まるため、2 通りの綴りを持つ必要が無い。
 
-### 3.6 式文と when の境界
+### 3.6 式文と分岐の境界
 
 **式文**は、改行で終わる式を後続の束縛または式の前に置き、その値を使わない構文である。
 block の末尾式と program の最終式は式文ではなく、値位置のままである。
 block と program の式文は、束縛と交互に置ける。
+
+値位置の `if` の分岐と `when` の arm では、文を持たない `{ e }` は単一式の分岐であり、`e` の値を分岐の値とする。
+文を持つ分岐ブロックは `BlockBody` へ下ろし、末尾式を値にせず、明示的な `leave` で値を与える。
+文を持つ分岐ブロックが末尾まで到達する経路の値は `Unit` である。
+else を持つ `if` と `when` では、結果型が `Unit` 以外なのに分岐ブロックが落ち抜ける場合を `E-RET-005` とする。
+else の無い `if` では then の payload 型 `T` を基準とし、落ち抜けは `Unit` の候補になるため、`if c { f(); 1 }` の結果型は `Option<Unit>` である。
+else の無い `if` で `leave` の非 `Unit` payload と落ち抜けが混在する場合は、`T` と `Unit` を合流させず `E-RET-005` とする。
+`E-RET-005` の primary span は、各式境界で原文順に最初に落ち抜ける分岐ブロックの閉じ波括弧であり、related span は無い。
+`else if` は式として扱い、その `if` 自身の分岐ブロックに同じ規則を適用する。
+これらの規則は式位置に限り、関数本体と文位置の lowering は変えない。
 
 式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、`leave` のローカルな式境界を作る。
 scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` へ lowering し、各枝の本体を枝の span `s_arm` の `(NarrativeExpr s_arm body')` で包む。
@@ -422,11 +432,10 @@ scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` �
 直接 `Owned` を成分に持つ Union は既存の gate で拒否する。
 検査位置では合流を推論せず、`return` の値を関数の戻り型で、`leave` の値を式境界の期待型で検査する。
 
-式位置の `when` で本体ブロックの arm は `BlockBody` へ下ろし、末尾値を返さない。
+式位置の `when` で文を持つ本体ブロック arm は `BlockBody` へ下ろし、末尾値を返さない。
 正常に落ち抜ける arm の結果は `Unit` であり、その arm の `leave` は §4.5 の `when` 境界へ届く。
 その arm の `return` は `when` の境界を越えて最寄りの関数境界へ届く。
 落ち抜けは `when` ごとに記録し、`when` 全体の結果型が `Unit` 以外なら `E-RET-005` とする。
-primary は原文順で最初に落ち抜けた arm の閉じ波括弧であり、related span は無い。
 scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごとの `NarrativeExpr` という既存の境界配置を保ち、判定はいずれも `when` 全体の型が決まった後に行う。
 
 文位置の `when` は、scrutinee を通常の値位置で下ろし、枝の本体を文の mode で下ろした `Eliminate` を、`%stmt` に束縛する `Unit` 注釈付きの `const Let` の右辺に置く。
@@ -449,6 +458,7 @@ scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごと
 
 式位置の `if` に `else` が無い場合、parser は字面上の `else if` の連鎖を Surface の `SIfSome` にする。
 値位置の `SIfSome` は UCore+ の `IfSome` へ下ろし、elaborate が then の型 `T` を既存の枝合流で決めて `Option<T>` を返す明示的な `if` へ展開する。
+then が文を持たない block ならその末尾式を分岐値とし、文を持つ block なら `BlockBody` へ下ろして末尾式を値にしない。
 明示形は各 then の値を `some` で包み、最後の false 枝を `none` にする。
 then の型が `Option<U>` なら結果型は `Option<Option<U>>` となり、平坦化しない。
 この展開は通常の値位置の `if` と同じ `leave` の式境界を各節に作る。
@@ -747,7 +757,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
-  `body-kind` が `expr` の本体は通常の mode で下ろし、`block` の本体は `(BlockBody s_close (lower-stmt body))` とする。
+  `body-kind` が `expr` の本体は通常の mode で下ろす。
+  `body-kind` が `block` で本体が `(SBlock s () e)` なら `e` を通常の mode で下ろし、文を持つ block なら `(BlockBody s_close (lower-stmt body))` とする。
   `s_close` は本体 block の閉じ波括弧 1 byte の span である。
   文の mode では `body-kind` に依らず、scrutinee を通常の mode で下ろし、枝の本体を文の mode で下ろした `(Eliminate s e' arms')` へ落とす。
   文の mode の枝に `NarrativeExpr` を置かないため、`leave` は周囲の式境界へ届く。
@@ -756,7 +767,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   Union member pattern の枝 `(SArm s_a (SParam s_p (SName s_x x) τ) () body-kind body)` は `(s_a (#:ty τ' s_p) (#:bind x s_x) -> body')` へ下ろし、型と束縛子を保持する。
   Union と data 型の分類および Core の枝への割り当ては、型環境を得た elaborate が行う。
   枝の `NarrativeExpr` は式位置の `when` の `leave` 境界を枝の本体だけに与える（§4.5）。
-  `BlockBody` は式位置の本体ブロック arm に限って使い、elaboration が落ち抜けと `E-RET-005` を検査する前に剥がす。
+  `BlockBody` は関数本体と式位置の `if` または `when` の文を持つ分岐ブロックに限って使い、elaboration が落ち抜けと `E-RET-005` を検査する前に剥がす。
 - `(SConstruct s (SName s_K K) (e ...))` は constructor `K` の所有 data 型の型仮引数の個数に応じて lowering する。
   型仮引数が無い場合は `(Construct s K (Types) e' ...)` とし、期待型が無い位置でも合成できる。
   型仮引数がある場合は `(Construct s K e' ...)` とし、検査位置の期待型から型引数を決める。
@@ -769,7 +780,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body-kind body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
   `body-kind` が `expr` なら本体を通常の mode で下ろす。
   `body-kind` が `block` なら `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
-  `BlockBody` は関数本体と式位置の `when` の本体ブロック arm で使う elaboration marker であり、Typed Core へは残らない。
+  `BlockBody` は関数本体と式位置の `if` または `when` の文を持つ分岐ブロックで使う elaboration marker であり、Typed Core へは残らない。
   row が省略されていれば `(#:ef #:infer s)` を置き、`s` は関数全体の span である。
   `=>` と block の両形の無名関数でこの印を使う。
   検査位置では期待型から `Owned` を 1 層剥がして `NFn` を得た場合に、その出口 row を継承し、合成位置または `NFn` でない期待型では空 row になる（core-calculus.md §4.2、§4.3）。
@@ -1076,7 +1087,7 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Return`、`FnDecl` の 17 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Reassign` に対応する `CReassign`、`Return` に対応する `CReturn` を置き、ほかの構成子には `CRecur` などの対応を置く。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
-`BlockBody` は elaboration が関数本体または式位置の `when` の本体ブロック arm を検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
+`BlockBody` は elaboration が関数本体または式位置の `if` と `when` の文を持つ分岐ブロックを検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 UCore+ の対象構成子リストは 17 個、F* 側の `core` の構成子リストは 14 個であり、F* 側の全対象構成子は 38 個（`sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 14 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
