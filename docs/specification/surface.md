@@ -1071,11 +1071,12 @@ P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 `SExprStmt` は Racket Surface の構成子であり、F* では `DExpr` を持つ既存の `SDecl` へ対応する。
 `SExprStmt` を加えた後の parity 件数は、Racket Surface が 38 個、UCore+ が 14 個、F* が 36 個である。
-F* の Surface 構成子一覧は `sexpr` 15 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 24 個を含む。
+F* の Surface 構成子一覧は `sexpr` 16 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 25 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
-L1b は Surface の `SLeave` と UCore+ の `Leave` を F* の `SLeave` と `CLeave` に一対一で対応させ、現在の parity 件数を 41/18/40 とする。
+L1b は Surface の `SLeave` と UCore+ の `Leave` を加え、parity 表で対応なしとした（41/18/38）。
+L3 はそれらを F* の `SLeave` と `CLeave` に一対一で対応させ、現在の parity 件数を 41/18/40 とする。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 17 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
