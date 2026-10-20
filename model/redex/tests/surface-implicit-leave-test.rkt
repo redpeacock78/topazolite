@@ -74,7 +74,7 @@
    "fn f(flag: Bool) -> Int { return when flag { true => { let x = 7\n leave x }\n false => { leave 2 } } }\nf(true)"
    'Int 7))
 
-(test-case "else if は式として lowering され、文を持つ分岐の leave が値になる"
+(test-case "[REQ: SUR-014] else if は式として lowering され、文を持つ分岐の leave が値になる"
   (check-accepted
    (string-append
     "fn noop() -> Unit { () }\n"

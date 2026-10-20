@@ -58,7 +58,7 @@
 
 (define color "type Color =\n  | red\n  | green\n")
 
-(test-case "枝の leave は when の値になり関数の残りが実行される"
+(test-case "[REQ: SUR-014] 枝の leave は when の値になり関数の残りが実行される"
   (define result
     (compile (string-append
               "fn f(b: Bool) -> Int {\n"

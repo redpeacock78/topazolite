@@ -702,8 +702,9 @@ trait 合成の表層構文は、二項の `intersect` の入れ子へ lowering 
 
 ### SUR-014
 
-- **状態**：Phase 2 以降（PAT-001）
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
+- **正典**：`docs/specification/surface.md` §3.1、§3.6、§6.1
 
 Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ意味論を保って lowering されなければならない。
 

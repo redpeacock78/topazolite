@@ -66,7 +66,7 @@
 (define list-123 "cons(1, cons(2, cons(3, nil)))")
 (define list-12 "cons(1, cons(2, nil))")
 
-(test-case "S1 文の位置の for が本体を要素ごとに実行し mut の累積を更新する"
+(test-case "[REQ: SUR-014] S1 文の位置の for が本体を要素ごとに実行し mut の累積を更新する"
   (check-accepted
    (string-append
     "fn main() -> Int ! Mutation {\n"

@@ -85,7 +85,7 @@
         (values configs rules)]
        [other (fail-check (format "UCore を elaborate できなかった: ~s" other))]))))
 
-(test-case "if は条件に応じて選んだ枝を評価する"
+(test-case "[REQ: SUR-014] if は条件に応じて選んだ枝を評価する"
   (check-equal? (run-source "fn choose(b: Bool) -> Int { return if b { 11 } else { 22 } }\nchoose(true)") 11)
   (check-equal? (run-source "fn choose(b: Bool) -> Int { return if b { 11 } else { 22 } }\nchoose(false)") 22))
 

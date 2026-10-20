@@ -291,7 +291,7 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 `while` は予約語ではなく `ident` になる。
 `if` に `else` が無ければ入力末尾で `E-SUR-006` となり、then block の後に改行があればその改行で `E-SUR-005` となる。
 `return expr` と `leave expr` は最も弱く結合する前置式であり、それぞれ `expr` 全体を関数の戻り値と式境界への脱出値とする。
-`for x in e { body }` は list の要素を順に束縛して本体を実行する反復式である。
+`for x in e { body }` は list の要素を順に束縛して本体を実行する反復式である。 [REQ: SUR-014]
 `in` は予約語ではなく、束縛名の直後に現れる場合だけ `for` の区切りとして読む。
 走査対象の型は `List<T>` でなければならず、それ以外は `E-TYP-012` になる。
 
@@ -431,7 +431,7 @@ else の無い `if` で `leave` の非 `Unit` payload と落ち抜けが混在�
 `else if` は式として扱い、その `if` 自身の分岐ブロックに同じ規則を適用する。
 これらの規則は式位置に限り、関数本体と文位置の lowering は変えない。
 
-式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、`leave` のローカルな式境界を作る。
+式位置の `when` は、scrutinee が変数なら `(NarrativeExpr s (Eliminate ...))` へ lowering し、`leave` のローカルな式境界を作る。 [REQ: SUR-014]
 scrutinee が変数でない式位置の `when` は `(Eliminate s e' arms'')` へ lowering し、各枝の本体を枝の span `s_arm` の `(NarrativeExpr s_arm body')` で包む。
 `return` はどちらの形でも最寄りの関数境界へ届き、`when` の式境界へ値を返すのは `leave` である。
 非変数 scrutinee は arm の `NarrativeExpr` の外で評価されるため、その中の `leave` は外側の式境界へ届く。
@@ -748,7 +748,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true (Types))` と `(Construct s false (Types))` へ落とす。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
 - `(SVar s x)` は `(#:var x s)` へ落とす。
-- `(SFor s (SName s_x x) e body)` は、走査対象 `e` を一度 `%for-list` に束縛し、その変数を初回実引数とする `Loop` へ落とす。
+- `(SFor s (SName s_x x) e body)` は、走査対象 `e` を一度 `%for-list` に束縛し、その変数を初回実引数とする `Loop` へ落とす。 [REQ: SUR-014]
   `Loop` は型引数と row を推論し、`%for-rest` の `nil` / `cons` を `Eliminate` で分け、cons 枝で要素 `x` と `%for-tail` を束縛する。
   cons 枝の本体は `%stmt` に束縛され、その後 `%for-tail` で再帰する。
   式位置では `Loop` を `NarrativeExpr` と `Option` adapter で包み、文位置では `%stmt` の `Unit` 束縛で包む。

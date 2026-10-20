@@ -118,7 +118,7 @@
   (string-append
    "fn mk() -> List<Owned<Res>> ! Own { return cons(acquire(1), cons(acquire(2), nil())) }\n"))
 
-(test-case "S3 本体が要素を使わずに正常完了すると全 token が一度だけ drop される"
+(test-case "[REQ: SUR-014] S3 本体が要素を使わずに正常完了すると全 token が一度だけ drop される"
   (define source
     (string-append mk
                    "fn f() -> Unit ! {Own, Partial} { for x in mk() { () }\n () }\n"

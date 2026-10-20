@@ -95,7 +95,7 @@
 (define option-string
   "let option: Option<Int> = some(7)\nlet value: Option<Int> | String = option\n")
 
-(test-case "Int | String の member pattern は tag ごとに枝を選ぶ"
+(test-case "[REQ: SUR-014] Int | String の member pattern は tag ごとに枝を選ぶ"
   (for ([source+expected (in-list
                           (list (list "let value: Int | String = 42\n"
                                       42)
