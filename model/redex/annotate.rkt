@@ -177,7 +177,10 @@
              (list argument ...))
        (list 'Loop (next) (bind f)
              (for/list ([name (in-list x)] [t_a (in-list type)])
-               (list (bind name) (ty t_a)))
+               (list (bind name)
+                     (if (eq? t_a '#:infer)
+                         (list '#:infer (next))
+                         (ty t_a))))
              (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
              (list '#:ef row (next)) (ann body) (map ann argument))]
       [(list 'FnDecl f (list (list x type) ...) result row e_1 e_2)

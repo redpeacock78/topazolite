@@ -113,12 +113,15 @@ UCore+ では `(BlockBody s e)` とし、`s` は Surface 本体 block の閉じ�
 これら以外の位置にある `BlockBody` は不変条件の違反として拒否する。
 Typed Core と Core の文法および簡約規則には `BlockBody` は現れない。
 
-UCore は `for` の lowering だけが作る loop 印 `(Loop f ((x uτ) ...) uret uεloop e (a ...))` を持つ。
-UCore+ では `(Loop s xs ((xs ts) ...) tr esloop e (a+ ...))` とし、`s` は印の span、`xs` と `ts` は関数名と仮引数の binder および型の注釈、`tr` と `esloop` は結果型と Loop 専用 Effect row の注釈である。
+UCore は `for` の lowering だけが作る loop 印 `(Loop f ((x uτloop) ...) uret uεloop e (a ...))` を持つ。
+UCore+ では `(Loop s xs ((xs tsloop) ...) tr esloop e (a+ ...))` とし、`s` は印の span、`xs` と `tsloop` は関数名と仮引数の binder および Loop 専用の型注釈、`tr` と `esloop` は結果型と Loop 専用 Effect row の注釈である。
 `uεloop` は通常の宣言 row label に Loop 専用 label `Leave` を加えた row であり、span 付きの `esloop` も同じ label 集合を表す。
+`uτloop` は `uτ` または `#:infer`、`uεloop` は通常の row または `#:infer` を許す。
+`tsloop` は通常の `ts` または `(#:infer s)`、`esloop` は通常の Loop row または `(#:ef #:infer s)` である。
+仮引数型と row の `#:infer` は Loop 印だけに許し、`Recur`、`Fn`、`FnDecl` の文法は変えない。
 通常の `fn`、`fnDecl`、`recur` の宣言 row は `Leave` を受け付けない。
 最後の欄は初回呼出しの実引数であり、loop 印の本体と宣言は `Recur` と同じ意味を持つ。
-elaboration は loop 印を固定点の下で検査し、必要な `Reassign` の後ろに既存の `Recur` と初回 `Apply` を出力する。
+elaboration は loop 印の row と `mut` view の固定点を求め、必要な `Reassign` の後ろに既存の `Recur` と初回 `Apply` を出力する。
 loop 印は Typed Core と Core には残らない（§5.1）。
 
 `recur` はユーザーへ `fix` を露出しない内部 marker である。
@@ -1737,10 +1740,40 @@ config 再型付けで実値の型 σ を静的な view τ として受理する
 
 loop 印は、`Recur` と、その継続に置く初回の自己呼出しを一つにまとめた UCore の中間形である。
 宣言する結果型は明示しなければならず、`#:infer` は loop 印の形の違反となる。
+仮引数型の `#:infer` は対応する初回実引数の合成型を正規化して決め、その型が `List<T>` であることを要求する。
+`List<T>` でなければ `E-TYP-012` で拒否する。
+Loop row の `#:infer` は本体 row の固定点を推論する。
 この印は `for` の lowering だけが生成するため、形の違反は Surface 診断ではなく内部不変条件の違反として扱う。
 loop 印は Surface の関数境界を作らない。
 `Return` label は loop 印の位置にある最寄りの関数境界へ、`Leave` label は最寄りの式境界へ解決し、いずれも本体が loop 印を越えて実際に脱出する場合にだけ row に置く。
 そのため、Loop 本体からの `Return` は loop の再帰呼出しで捕まえず、`Leave` は式境界を使って `for` の値を返す。
+
+row が `#:infer` のとき、`R0 = ()` とする。
+`R(i+1)` は、loop 関数の潜在 row を `R(i)` として本体を elaborate し、安定した `mut` view の下で得た本体 row を正規化したものである。
+各 `R(i)` の row 試行では、`mut` の view 固定点を Loop の入口状態から回し、本体 row を採取する。
+本体の正常型が `Never` であっても row は採取するが、flow snapshot を `judgment-completes?` のときだけ記録する既存の条件は変えない。
+`mut` の追跡対象が無い場合にも、本体 row を採取するために試行を一度行う。
+試行中の `E-EFF-003` と Recur 分類 gate の拒否は row 推論の試行内だけで保留し、採取した row と分類を使う。
+この保留は row が `#:infer` の Loop に限り、明示 row と最終の通常の elaborate では包含検査と分類 gate を行う。
+
+固定点は `R(i+1) ⊆ R(i)` となったときに停止し、そのときの `R(i)` を `R*` とする。
+row の変換は包含について単調である。
+自己呼び出しの各経路 `p` は、構文で定まる固定集合 `H_p` に含まれる label を除いて `R(i)` を本体 row に加える。
+`C` を自己呼び出し以外から来る row とすると、変換は `f(R) = C ∪ ⋃_p (R ∖ H_p) = C ∪ (R ∖ ⋂_p H_p)` と表せる。
+handler が取り除く label は `R` に依存せず、row の和と重複除去も包含について単調なので `f` は単調である。
+自己呼び出しを持たない場合は経路 `p` がなく `f(R) = C` となり、一回の更新後に停止する。
+正規化済みの label は本体の効果位置、呼び先の潜在 row、脱出先の境界型、または自己呼び出しによる既存 label の伝播から得られるため有限であり、固定点反復は有限回で停止する。
+任意の反復上限による打ち切りは行わない。
+
+停止時に `R*` の下で分類が `Unknown` なら、`Partial` を加えた `Rfinal = R* ∪ {Partial}` を loop row とする。
+分類が `Finite` または `Productive` なら `Rfinal = R*` とする。
+`Partial` の追加は固定点の途中では行わない。
+途中で加えると、`Yield` の型が固定される前の分類に基づく余分な `Partial` が row に残るためである。
+`Partial` は `Yield` label を追加しないので分類 gate の結果を変えず、`Unknown` の gate は `Rfinal` の `Partial` によって満たされる。
+自己呼び出しがある場合、追加した `Partial` は自己呼び出しを通じて本体 row にも伝播する。
+自己呼び出しが無い場合、`Rfinal` が本体 row より `Partial` の分だけ広くなることがあるが、これは保守的な row の過大近似として許す。
+最終の通常の elaborate は `Rfinal` を潜在 row として本体を再検査し、包含検査と分類 gate を通常どおり適用する。
+`Rfinal` は外側の式の row に伝わるため、外側関数の宣言 row が必要な label を含まなければ既存の row 検査で拒否する。
 
 elaboration は、loop 印の本体が自由に参照する mut binder を**対象**とする。
 本体の中で導入された mut binder は対象に含めない。

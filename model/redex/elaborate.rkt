@@ -624,8 +624,8 @@
 (define (row-member? label row)
   (term (row-∈ ,label ,row)))
 
-(define (check-recur-body-gate s function parameters body environment
-                               callables declared-row)
+(define (classify-recur-body-for-gate function parameters body environment
+                                      callables)
   ;; block scrutinee の Reassign を分類器が型検査できるよう mut mode は保つ。
   (define classifier-environment
     (for/list ([entry (in-list environment)])
@@ -633,8 +633,12 @@
         [(list name type 'mut _ ...) (list name type 'mut)]
         [(list name type _ ...) (list name type)]
         [_ entry])))
-  (when (and (eq? (classify-recur-body function parameters body
-                                       classifier-environment callables)
+  (classify-recur-body function parameters body classifier-environment callables))
+
+(define (check-recur-body-gate s function parameters body environment
+                               callables declared-row)
+  (when (and (eq? (classify-recur-body-for-gate function parameters body
+                                                  environment callables)
                   'Unknown)
              (not (row-member? 'Partial declared-row)))
     (reject s 'unknown-recur-requires-partial)))
@@ -3769,6 +3773,7 @@
              #:return-span [return-span #f]
              #:on-body-result [on-body-result #f]
              #:exclude-loop-trial [exclude-loop-trial #f]
+             #:row-trial [row-trial #f]
              #:loop-row? [loop-row? #f])
       (when (and (block-body? body) (not allow-block-body?))
         (reject (block-body-span body) 'invalid-syntax))
@@ -3827,13 +3832,22 @@
                (check-function-body body return-type return-span body-environment
                                     delta propositions body-boundaries))
              (when on-body-result (on-body-result result))
+             (when row-trial
+               (set-box! row-trial
+                         (list (judgment-row result)
+                               (classify-recur-body-for-gate
+                                function parameters
+                                (classification-view (judgment-core result))
+                                body-environment
+                                (reverse reversed-callables)))))
              result)
            #:preserve-escapes? #t)))
-      (if boundary
-          (check-function-body-row s body-result return-type boundary declared-row)
-          (unless (row-subset? (judgment-row body-result) declared-row)
-            (reject s 'undeclared-recur-effect
-                    declared-row (judgment-row body-result))))
+      (unless row-trial
+        (if boundary
+            (check-function-body-row s body-result return-type boundary declared-row)
+            (unless (row-subset? (judgment-row body-result) declared-row)
+              (reject s 'undeclared-recur-effect
+                      declared-row (judgment-row body-result)))))
       (define continuation-result
         (parameterize
             ([current-loop-trials
@@ -3864,12 +3878,13 @@
         `(Recur ,s ,callable ,raw-function ,core-binders
                 ,wrapped-body
                 ,(judgment-core continuation-result)))
-      (check-recur-body-gate s function parameters
-                             (classification-view
-                              (judgment-core body-result))
-                             body-environment
-                             (reverse reversed-callables)
-                             declared-row)
+      (unless row-trial
+        (check-recur-body-gate s function parameters
+                               (classification-view
+                                (judgment-core body-result))
+                               body-environment
+                               (reverse reversed-callables)
+                               declared-row))
       (judgment recur-core
                 (judgment-type continuation-result)
                 (judgment-row continuation-result)))
@@ -4504,6 +4519,28 @@
                             boundaries)
       (define function (peel-bind raw-function))
       (define parameters (map peel-bind parameter-binders))
+      (when (and (ormap inferred? raw-parameter-types)
+                 (not (= (length raw-parameter-types) (length arguments))))
+        (reject s 'arity-mismatch (length raw-parameter-types) (length arguments)))
+      (define loop-parameter-types
+        (for/list ([raw-type (in-list raw-parameter-types)]
+                   [argument (in-list arguments)])
+          (if (inferred? raw-type)
+              (let* ([argument-type
+                      (call-with-loop-trial-rollback
+                       boundaries
+                       (λ ()
+                         (judgment-type
+                          (synth argument environment delta propositions
+                                 boundaries))))]
+                     [actual
+                      (or (normalize-type argument-type)
+                          (reject s 'non-normalizable-type argument-type))])
+                (match actual
+                  [`(List ,_) (list '#:ty actual (span-of argument))]
+                  [_ (reject s 'type-mismatch '(List _) actual)]))
+              raw-type)))
+      (define inferred-loop-row? (inferred-row? raw-row))
       (define free-names
         (set-subtract (free-vars body)
                       (list->set (cons function parameters))))
@@ -4523,13 +4560,15 @@
         (for/fold ([updated state]) ([(key type) (in-hash views)])
           (define entry (hash-ref updated key))
           (hash-set updated key (flow-entry type (flow-entry-pins entry)))))
-      (define (trial-on views)
+      (define (trial-on views [inherited-row #f] [collect-row? #f])
         (define trial-state (with-views initial-state views))
         (define entry-views
           (for/hash ([key (in-list keys)])
             (values key (hash-ref views key))))
         (define trial (loop-trial function keys entry-views (box '())))
-        (with-handlers ([exn:fail:elab? (λ (_) (void))])
+        (define row-result (and collect-row? (box #f)))
+        (define trial-failure #f)
+        (with-handlers ([exn:fail:elab? (λ (failure) (set! trial-failure failure))])
           (call-with-loop-trial-rollback
            boundaries
            (λ ()
@@ -4538,22 +4577,26 @@
                             [current-loop-trials
                              (cons trial (current-loop-trials))])
                (elaborate-recur-annotated
-                s raw-function parameter-binders raw-parameter-types
+                s raw-function parameter-binders loop-parameter-types
                 (λ () (resolve-annotation raw-return-type delta s))
                 raw-row body
                 `(Apply ,s (#:var ,function ,s) ,@arguments)
                 environment delta propositions boundaries
                 #:boundary? #f
+                #:inherited-row inherited-row
                 #:on-body-result
                 (λ (result)
                   (when (judgment-completes? result)
                     (set-box! (loop-trial-log trial)
                               (append (unbox (loop-trial-log trial))
                                       (list (flow-snapshot))))))
+                #:row-trial row-result
                 #:exclude-loop-trial trial
                 #:loop-row? #t)))))
-        (unbox (loop-trial-log trial)))
-      (define (fixed-point)
+        (values (unbox (loop-trial-log trial))
+                (and row-result (unbox row-result))
+                trial-failure))
+      (define (fixed-point [inherited-row #f] [collect-row? #f])
         (let iterate ([views initial-views]
                       [history (for/hash ([key (in-list keys)])
                                  (values key (list (hash-ref initial-views key))))]
@@ -4561,7 +4604,10 @@
                                  (values key (set)))]
                       [fixed-at-declared (set)])
           (define trial-entry (with-views initial-state views))
-          (define records (trial-on views))
+          (define-values (records row-facts trial-failure)
+            (trial-on views inherited-row collect-row?))
+          (when (and collect-row? trial-failure (not row-facts))
+            (raise trial-failure))
           (define-values (next-views next-removed next-fixed)
             (for/fold ([next-views (hasheq)]
                        [next-removed removed]
@@ -4619,7 +4665,9 @@
                              next-fixed))])))
           (if (for/and ([key (in-list keys)])
                 (type-equiv? (hash-ref views key) (hash-ref next-views key)))
-              next-views
+              (if collect-row?
+                  (values next-views row-facts)
+                  next-views)
               (iterate next-views
                        (for/fold ([next-history history])
                                  ([key (in-list keys)])
@@ -4627,8 +4675,22 @@
                                    (append (hash-ref history key)
                                            (list (hash-ref next-views key)))))
                        next-removed next-fixed))))
-      (define final-views
-        (if (null? targets) initial-views (fixed-point)))
+      (define-values (final-loop-row final-views)
+        (if inferred-loop-row?
+            (let iterate-row ([row '()])
+              ;; row trial は targets が空でも 1 回実行し、本体の row を採取する。
+              (define-values (views row-facts) (fixed-point row #t))
+              (unless row-facts
+                (error 'elaborate-loop "#:infer loop の本体 row を採取できなかった" s))
+              (match-define (list body-row classification) row-facts)
+              (define next-row (normalize-row body-row))
+              (if (row-subset? next-row row)
+                  (values (if (eq? classification 'Unknown)
+                              (normalize-row (cons 'Partial row))
+                              row)
+                          views)
+                  (iterate-row next-row)))
+            (values #f (if (null? targets) initial-views (fixed-point)))))
       (define prefix-assignments
         (for/list ([target (in-list targets)]
                    #:do [(define name (first target))
@@ -4646,12 +4708,13 @@
       ;; 外側 trial 中なら、入れ子 loop の本検査もその trial の一部として catch を継承する。
       (define recur-result
         (elaborate-recur-annotated
-         s raw-function parameter-binders raw-parameter-types
+         s raw-function parameter-binders loop-parameter-types
          (λ () (resolve-annotation raw-return-type delta s))
          raw-row body
          `(Apply ,s (#:var ,function ,s) ,@arguments)
          environment delta propositions boundaries
          #:boundary? #f
+         #:inherited-row final-loop-row
          #:loop-row? #t))
       (if (null? prefix-assignments)
           recur-result
