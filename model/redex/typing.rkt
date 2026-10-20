@@ -921,6 +921,9 @@
 (define (core-mentions? core name)
   (let walk ([t (erase-core core)])
     (cond
+      [(match t [`(RecurVal ,_ ,_ ,_ ,_) #t] [_ #f])
+       ;; 展開後の再帰値は、その内部の lexical binder だけを除いて capture を数える。
+       (set-member? (core-free-vars t) name)]
       [(eq? t name) #t]
       [(pair? t) (or (walk (car t)) (walk (cdr t)))]
       [else #f])))
@@ -979,11 +982,8 @@
               (fail (missing-key declared) node))
             (loop (cdr pending) next (cons binder seen))]
            [_ (fail (missing-key declared) node)])])))
-  ;; 生名は対応する Let の右辺にちょうど 1 回だけ現れる。外したあとの本体
-  ;; に 1 度でも現れれば符号化が壊れている。自由出現だけを数えると、内側の
-  ;; Let が生名を shadow する形を見逃す。束縛の位置も数える。
-  ;; elab 全体で共有する連番と生成側の予約集合が本体の記号を避けるため、
-  ;; 正しく生成した Core がこの検査に当たることはない。
+  ;; RecurVal 内では展開が同じ名前を埋め込むため、自身の lexical binder に
+  ;; 束縛された出現を除き、それ以外では従来どおり束縛位置も数える。
   (for ([entry (in-list resource-positions)])
     (when (core-mentions? body (first entry))
       (fail (raw-key (second entry)) node)))
