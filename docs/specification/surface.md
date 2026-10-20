@@ -754,7 +754,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   式位置では `Loop` を `NarrativeExpr` と `Option` adapter で包み、文位置では `%stmt` の `Unit` 束縛で包む。
   elaborate は `%for-list`、`%for-tail`、`%for-rest` が資源型のとき `Move` を生成する。
   要素型が資源型の cons 枝では、`%stmt` の右辺に要素と本体を囲む内側の `Scope` を作り、tail への再帰 `Apply` はその `Scope` の外に置く。
-  本体が要素を `Move` しない限り、内側の `Scope` を出る時点で drop される。正常完了では本体の終わり、`for` から早期に脱出する場合は脱出の時点である。
+  本体が要素を `Move` しない限り、内側の `Scope` を出る時点で drop される。
+  正常完了では本体の終わり、`for` から早期に脱出する場合は脱出の時点である。
 - `if c { a } else { b }` は、条件に `Bool` を注釈した合成 `SBlock` と `true` / `false` の枝を持つ `SMatch` へ parser が組み替える。
   その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () expr a) (SArm s_else (SName s_kw false) () expr b))))` である。
   `s` は `if` から最後の token までの span である。
@@ -993,7 +994,7 @@ primary は違反する出現を含む欄の型、related は欄を持つ data �
 
 注釈の無い位置の `when` も枝を合成できれば受理する。
 scrutinee が data 型の `when` では、枝を合成する前に各枝の結果位置（入れ子の `when` と `else` を持つ `if` の枝、`let` の後の末尾の式）をたどり、期待型が必要で合成できない式があれば `E-TYP-004` とする。
-arm の本体ブロック、`else` の無い `if` の内部、scrutinee、関数呼び出しの引数はたどらない。
+arm の本体ブロック、`else` の無い `if` の内部、scrutinee、関数呼び出しの引数、`?=` の右辺はたどらない。
 `some(1)` と `none` のように型引数を決められない constructor がその例であり、入れ子の `when` と `if` そのものは、結果位置がすべて合成できれば受理する。
 scrutinee が Union の `when` は枝を個別に合成するので、型引数を決められない constructor の枝は `E-TYP-003` になり、primary span はその constructor である。
 合成位置では、全ての arm 本体が `NarrativeExpr` である `Eliminate` の枝の合流型が `Never` の場合、`E-TYP-010` で拒む。

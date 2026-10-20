@@ -16,7 +16,7 @@
 (require racket/match
          "span-core.rkt")
 
-;; error code の書式。ホワイトペーパー §13.4 の error[E-RET-003] を継承する。
+;; error code の書式。ホワイトペーパー §13.4 の診断例の書式（E- に続く 3 文字の分類と 3 桁の番号）を継承する。
 (define diagnostic-code-rx #px"^E-[A-Z]{3}-[0-9]{3}$")
 
 ;; code 集合に付ける版。code を足すか廃止するサイクルごとに上げる。
