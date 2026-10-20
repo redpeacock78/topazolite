@@ -14,18 +14,18 @@
   '(SProgram
     SBind STryBind SReassign SExprStmt SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SDataDecl
-    SInt SStr SUnit SBool SVar SReturn SLeave SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
+    SInt SStr SUnit SBool SVar SReturn SLeave SFor SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SName SArm SParam SField SLabel TField SEffRow SEffLabel))
 
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
 (define racket-ucore-constructors
-  '(#:lit #:var Apply Proj Eliminate IfSome BlockBody NarrativeExpr Rec Fn Construct Let TryBind Reassign Recur Return Leave FnDecl))
+  '(#:lit #:var Apply Proj Eliminate IfSome BlockBody NarrativeExpr Rec Fn Construct Let TryBind Reassign Recur Loop Return Leave FnDecl))
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
-  '(SInt SStr SUnit SBool SVar SReturn SLeave SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
+  '(SInt SStr SUnit SBool SVar SReturn SLeave SFor SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
     TName TRec TFn TUnion TInter TApp
     SDecl SEffRow SEffLabel
     CLit CVar CApply CProj CEliminate CNarrativeExpr CRec CFn CConstruct CLet CTryBind CReassign CRecur CReturn CLeave))
@@ -54,6 +54,7 @@
    (one-to-one 'SVar 'SVar)
    (one-to-one 'SReturn 'SReturn)
    (one-to-one 'SLeave 'SLeave)
+   (one-to-one 'SFor 'SFor)
    (one-to-one 'SMatch 'SMatch)
    (one-to-one 'SIfSome 'SIfSome)
    (one-to-one 'SFn 'SFn)
@@ -98,7 +99,7 @@
    (one-to-one 'Let 'CLet)
    (one-to-one 'TryBind 'CTryBind)
    (one-to-one 'Reassign 'CReassign)
-   (corr-row '(Recur FnDecl) '(CRecur) 'many-to-one)
+   (corr-row '(Recur FnDecl Loop) '(CRecur) 'many-to-one)
    (one-to-one 'Return 'CReturn)
    (one-to-one 'Leave 'CLeave)
    (excluded 'stok)

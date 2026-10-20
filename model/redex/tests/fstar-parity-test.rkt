@@ -10,10 +10,10 @@
 (define s0 '(#:span src 0 1))
 
 (test-case
- "3 つのリストの要素数が spec §10.2 と一致する"
- (check-equal? (length racket-surface-constructors) 41)
- (check-equal? (length racket-ucore-constructors) 18)
- (check-equal? (length fstar-constructors) 40))
+ "3 つのリストの要素数が spec §8 と一致する"
+ (check-equal? (length racket-surface-constructors) 42)
+ (check-equal? (length racket-ucore-constructors) 19)
+ (check-equal? (length fstar-constructors) 41))
 
 (test-case
  "対応表に違反が無い"
@@ -101,8 +101,10 @@
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
  (check-equal? (row-kind 'SLeave) 'one-to-one)
+ (check-equal? (row-kind 'SFor) 'one-to-one)
  (check-equal? (row-kind 'Reassign) 'one-to-one)
  (check-equal? (row-kind 'Leave) 'one-to-one)
+ (check-equal? (row-kind 'Loop) 'many-to-one)
  (check-equal? (row-kind 'TryBind) 'one-to-one)
  (check-equal? (row-kind 'SEffRow) 'one-to-one)
  (check-equal? (row-kind 'SEffLabel) 'one-to-one))
@@ -132,6 +134,9 @@
    (cons 'SVar      (redex-match? Surface sexpr `(SVar ,s0 x)))
    (cons 'SReturn   (redex-match? Surface sexpr `(SReturn ,s0 (SInt ,s0 1))))
    (cons 'SLeave    (redex-match? Surface sexpr `(SLeave ,s0 (SInt ,s0 1))))
+   (cons 'SFor      (redex-match? Surface sexpr
+                                  `(SFor ,s0 (SName ,s0 x) (SVar ,s0 xs)
+                                         (SBlock ,s0 () (SUnit ,s0)))))
    (cons 'SMatch    (redex-match? Surface sexpr
                                   `(SMatch ,s0 (SVar ,s0 c)
                                            ((SArm ,s0
@@ -196,6 +201,15 @@
    (cons 'Reassign (redex-match? UCore+ e `(Reassign ,s0 (#:var x ,s0) (#:lit 1 ,s0))))
    (cons 'Recur    (redex-match? UCore+ e `(Recur ,s0 (#:bind f ,s0) (((#:bind x ,s0) (#:ty Int ,s0)))
                                                   (#:ty Int ,s0) (#:ef () ,s0) (#:var x ,s0) (#:var f ,s0))))
+   (cons 'Loop     (redex-match? UCore+ e
+                                  `(Loop ,s0 (#:bind loop ,s0)
+                                         (((#:bind rest ,s0) (#:infer ,s0)))
+                                         (#:ty Unit ,s0) (#:ef #:infer ,s0)
+                                         (Eliminate ,s0 (#:var rest ,s0)
+                                           ((,s0 nil () -> (#:lit unit ,s0))
+                                            (,s0 cons ((#:bind x ,s0) (#:bind tail ,s0))
+                                             -> (Apply ,s0 (#:var loop ,s0) (#:var tail ,s0)))))
+                                         ((#:var xs ,s0)))))
    (cons 'Return   (redex-match? UCore+ e `(Return ,s0 (#:lit 1 ,s0))))
    (cons 'Leave    (redex-match? UCore+ e `(Leave ,s0 (#:lit 1 ,s0))))
    (cons 'FnDecl   (redex-match? UCore+ e `(FnDecl ,s0 (#:bind f ,s0) ()

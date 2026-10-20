@@ -728,6 +728,7 @@ type sexpr =
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
   | SLeave    : span -> sexpr -> sexpr
+  | SFor      : span -> (span & string) -> sexpr -> sexpr -> sexpr
   | SMatch    : span -> sexpr -> list sarm -> sexpr
   | SIfSome   : span -> list sifclause -> span -> sexpr
   | SFn       : span -> list (span & option sty) -> option sty -> option seffrow -> sbodykind -> sexpr -> sexpr
@@ -774,6 +775,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SVar s _      -> s
   | SReturn s _   -> s
   | SLeave s _    -> s
+  | SFor s _ _ _  -> s
   | SMatch s _ _  -> s
   | SIfSome s _ _ -> s
   | SFn s _ _ _ _ _ -> s
@@ -835,6 +837,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
   | SLeave _ e    -> [NExpr e]
+  | SFor _ _ iterable body -> [NExpr iterable; NExpr body]
   | SMatch _ e arms -> NExpr e :: arm_children arms
   | SIfSome _ clauses _ -> ifsome_children clauses
   | SFn _ ps r row _ b ->
@@ -977,6 +980,9 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SVar _ _      -> true
   | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
   | SLeave s e    -> contains s (span_of_expr e) && wf_expr e
+  | SFor s (sx, _) iterable body ->
+      contains s sx && contains s (span_of_expr iterable) && wf_expr iterable
+      && contains s (span_of_expr body) && wf_expr body
   | SFn s ps r row _ b ->
       spans_in s (map fst ps)
       && wf_tys s (option_stys (map snd ps))
@@ -1157,6 +1163,11 @@ let parse_span_containment n c =
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
   | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
   | NExpr (SLeave s e) -> wf_exprs_elim s [e] c
+  | NExpr (SFor s (sx, _) iterable body) ->
+      FStar.List.Tot.Properties.append_memP
+        [NExpr iterable] [NExpr body] c;
+      wf_exprs_elim s [iterable] c;
+      wf_exprs_elim s [body] c
   | NExpr (SProj _ _ _) -> ()
   | NExpr (SProjRec _ _ _) -> ()
   | NExpr (SMatch s e arms) ->
@@ -1274,6 +1285,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SVar _ _     -> true
   | SReturn _ _  -> true
   | SLeave _ _   -> true
+  | SFor _ _ _ _ -> true
   | SMatch _ _ _ -> true
   | SIfSome _ _ _ -> false
   | SFn _ _ _ _ _ _ -> true
@@ -1299,6 +1311,14 @@ let rec proj_fields (s_recv: span) (ls: list (span & string))
 let discard_stmt (s: span) (value: core) : Tot core =
   CLet s s value (CConstruct s "unit" [])
 
+let lower_for_recur (s item_span list_span body_span: span) (body: core) : Tot core =
+  CRecur s s [list_span] (SEffRow s [])
+    (CEliminate s (CVar list_span)
+      [CConstructorBranch s "nil" [] (CConstruct s "unit" []);
+       CConstructorBranch s "cons" [item_span; body_span]
+         (CLet s s body (CApply s (CVar s) [CVar body_span]))])
+    (CApply s (CVar s) [CVar list_span])
+
 let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   match e with
   | SInt s _      -> CLit s
@@ -1308,6 +1328,13 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SVar s _      -> CVar s
   | SReturn s e   -> CReturn s (lower_expr e)
   | SLeave s e    -> CLeave s (lower_expr e)
+  | SFor s (sx, _) iterable body ->
+      let list_span = span_of_expr iterable in
+      CLet s list_span (lower_expr iterable)
+        (CNarrativeExpr s
+          (CLet s s
+            (lower_for_recur s sx list_span (span_of_expr body) (lower_stmt body))
+            (CConstruct s "none" [])))
   | SFn s ps _ row kind b ->
       CFn s (map fst ps) row
         (match kind with BExpr -> lower_expr b | BBlock -> lower_stmt b)
@@ -1425,6 +1452,11 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   | SVar s _ -> discard_stmt s (CVar s)
   | SReturn s e -> discard_stmt s (CReturn s (lower_expr e))
   | SLeave s e -> discard_stmt s (CLeave s (lower_expr e))
+  | SFor s (sx, _) iterable body ->
+      let list_span = span_of_expr iterable in
+      CLet s list_span (lower_expr iterable)
+        (discard_stmt s
+          (lower_for_recur s sx list_span (span_of_expr body) (lower_stmt body)))
   | SFn s ps _ row kind b ->
       discard_stmt s
         (CFn s (map fst ps) row
@@ -1473,6 +1505,7 @@ let lower_preserves_span e =
   | SVar _ _     -> ()
   | SReturn _ _  -> ()
   | SLeave _ _   -> ()
+  | SFor _ _ _ _ -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ _ -> ()
@@ -1520,6 +1553,7 @@ let lower_stmt_preserves_span e =
   | SVar _ _ -> ()
   | SReturn _ _ -> ()
   | SLeave _ _ -> ()
+  | SFor _ _ _ _ -> ()
   | SMatch _ _ _ -> ()
   | SIfSome _ _ _ -> ()
   | SFn _ _ _ _ _ _ -> ()

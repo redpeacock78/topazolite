@@ -713,7 +713,8 @@ Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ�
 被演算子位置の `return` による `Never` の伝播と、`?=` の右辺が `Never` の場合の受理も実装済みである。
 式位置の `when` の arm の本体ブロックと落ち抜け検査も実装済みである。
 合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` を置く形も実装済みである。
-`for` は未実装であり、後続で扱う。
+`for` は `List<T>` を構造的に走査し、文の位置では `Unit`、式の位置では `Option<T>` を返す形で実装済みである。
+014c1b では、`Owned` の List の spine、資源型の要素の移送、早期脱出時に残る要素の後始末、`Owned` の List を loop 印へ渡す経路（初回実引数の `Move` を含む）と Surface から資源型の要素を持つ List を作る経路を決める。
 
 ### SUR-015
 
@@ -985,9 +986,11 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。式位置の `when` arm の本体ブロックと落ち抜け検査、被演算子位置の `return` による `Never` の伝播、および `?=` の右辺が `Never` の場合の受理も回収済み。合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` も回収済み。`leave` は最寄りの式境界へ解決される。式位置の `if` と `when` の分岐ブロックは共通に、文を持たない `{ e }` は単一式として `e` を値にし、文を持つブロックは `leave` で値を与え、末尾まで到達すれば `Unit` で落ち抜ける。結果型が `Unit` 以外で落ち抜ける経路があれば `E-RET-005` となる。残るのは `for` の境界、明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提） | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。式位置の `when` arm の本体ブロックと落ち抜け検査、被演算子位置の `return` による `Never` の伝播、および `?=` の右辺が `Never` の場合の受理も回収済み。合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` も回収済み。`leave` は最寄りの式境界へ解決される。式位置の `for` は走査対象を自身の式境界の外で評価し、本体の `leave` はその境界の `Option` adapter を通して `some` へ写す。式位置の `if` と `when` の分岐ブロックは共通に、文を持たない `{ e }` は単一式として `e` を値にし、文を持つブロックは `leave` で値を与え、末尾まで到達すれば `Unit` で落ち抜ける。結果型が `Unit` 以外で落ち抜ける経路があれば `E-RET-005` となる。残る `for` の課題は `Owned` List の spine、資源型要素の移送、早期脱出時に残る要素の後始末、`Owned` List を loop 印へ渡す初回実引数の `Move` と Surface から資源型要素の List を作る経路である。ほかに残るのは明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提である。 | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | 利用者 effect を捕まえる `Handle` の T-Ctx-Never 条件（Return 以外の op は G1 の構文に存在せず未検証。本体の row に op が含まれる場合は `Never` を伝播せず、利用者 effect の導入時に確認する） | `core-calculus.md` §5.1 | 利用者 effect の導入時 | §5.2 |
 | Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
+| 遅延列の `for` 分類（C-Structural が遅延欄由来の変数を減少根拠にせず、Finite Proof の無い走査を `Partial` または `Unknown` に分類する） | `core-calculus.md` §6.2 | Phase 4 以降 | §16 |
+| `Yield` 呼び出しを使う再帰の分類精度（C-Structural が `Yield` 呼び出しを減少根拠に使えるようにする） | `core-calculus.md` §6.2 | Phase 4 以降 | §16 |
 | data 型への derive Sizable（`PAT-001` の後に着手する。値ごとに変わる大きさの測定規則は未決で、それまで `E-SUR-019` を維持する） | `trait.md` §9 | Phase 2 以降（`PAT-001` の後） | §4.5、§8.1 |
 | 合成 Proof 値と primitive | `trait.md` §9 | Phase 4 以降 | §8.1 |
 | 合成 Proof 値の入れ子と直接実装 | `trait.md` §9 | Phase 4 以降 | §8.1 |
