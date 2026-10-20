@@ -768,6 +768,9 @@
       [`(SConstruct ,s ,k ,args) `(SConstruct ,s ,k ,(map r args))]
       [`(SReturn ,s ,v) `(SReturn ,s ,(r v))]
       [`(SLeave ,s ,v) `(SLeave ,s ,(r v))]
+      [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
+       `(SFor ,s (SName ,s_x ,x) ,(r iterable)
+              ,(expr body (set-add bound x)))]
       [`(SFn ,s ,params ,ty ,row ,body-kind ,body)
        `(SFn ,s ,params ,ty ,row ,body-kind
              ,(expr body (set-union bound (list->seteq (param-names params)))))]
@@ -861,6 +864,38 @@
     [`(SBlock ,_ ,_ ,_) (lower-block-body body env fail)]
     [_ (lower-sexpr body env fail)]))
 
+(define (for-generated-name prefix span)
+  (string->symbol (format "%for-~a-~a" prefix (third span))))
+
+(define (lower-for-loop s s_x x iterable-core body env fail #:expression? expression?)
+  (define list-name (for-generated-name 'list s))
+  (define loop-name (for-generated-name 'loop s))
+  (define rest-name (for-generated-name 'rest s))
+  (define tail-name (for-generated-name 'tail s))
+  (define lowered-body (lower-block-body body env fail))
+  (define loop-core
+    `(Loop ,s (#:bind ,loop-name ,s)
+       (((#:bind ,rest-name ,s) (#:infer ,s)))
+       (#:ty Unit ,s) (#:ef #:infer ,s)
+       (Eliminate ,s (#:var ,rest-name ,s)
+         ((,s nil () -> (#:lit unit ,s))
+          (,s cons ((#:bind ,x ,s_x) (#:bind ,tail-name ,s)) ->
+             (Let ,s ((#:bind %stmt ,s) const (#:ty Unit ,s))
+               ,lowered-body
+               (Apply ,s (#:var ,loop-name ,s) (#:var ,tail-name ,s))))))
+       ((#:var ,list-name ,s))))
+  `(Let ,s ((#:bind ,list-name ,s) const)
+     ,iterable-core
+     ,(if expression?
+          `(NarrativeExpr ,s
+             (Let ,s ((#:bind ,(for-generated-name 'option s) ,s)
+                      const (#:ty Unit ,s))
+               ,loop-core
+               (Construct ,s none)))
+          `(Let ,s ((#:bind %stmt ,s) const (#:ty Unit ,s))
+             ,loop-core
+             (#:lit unit ,s)))))
+
 (define (lower-sexpr e env fail)
   (match e
     [`(SInt ,s ,n) `(#:lit ,n ,s)]
@@ -873,6 +908,9 @@
     ;; SUR-015。
     [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]
     [`(SLeave ,s ,value) `(Leave ,s ,(lower-sexpr value env fail))]
+    [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
+     (lower-for-loop s s_x x (lower-sexpr iterable env fail) body env fail
+                     #:expression? #t)]
     [`(SFn ,s ,params ,result-ty ,row ,body-kind ,body)
      (define result-core
        (if (eq? result-ty '#:none)
@@ -965,6 +1003,9 @@
   (match e
     [`(SBlock ,_ ,binds ,tail)
      (fold-items binds tail env (hasheq) fail #:lower-tail lower-stmt)]
+    [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
+     (lower-for-loop s s_x x (lower-sexpr iterable env fail) body env fail
+                     #:expression? #f)]
     [`(SMatch ,s ,scrutinee ,arms)
      ;; 文の when は結果を捨てる注釈付き束縛にし、式位置の合成規則と分ける。
      (lower-statement-match s s s scrutinee arms env fail `(#:lit unit ,s))]

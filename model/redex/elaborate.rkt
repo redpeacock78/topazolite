@@ -3518,6 +3518,13 @@
          (define candidate-box (box '()))
          (define unresolved-leave-box (box #f))
          (define body-expression (peel-node body))
+         (define for-option? (for-option-boundary? body))
+         (define for-option-none-span
+           (and for-option?
+                (match body
+                  [`(Let ,_ ,_ ,_ (Construct ,none-span none)) none-span]
+                  [_ #f])))
+         (define leave-adapter (and for-option? 'option-payload))
          (define deferred
            (and (match (peel-node body) [`(Eliminate ,_ ,_) #t] [_ #f])
                 (box '())))
@@ -3533,7 +3540,7 @@
                       (cons `(ExpressionBoundary ,boundary
                                                  (#:probe ,candidate-box
                                                   ,unresolved-leave-box)
-                                                 ,span #f)
+                                                 ,span ,leave-adapter)
                             boundaries)))))
          (define normal-type
            (and body-result (judgment-normal-type body-result)))
@@ -3544,12 +3551,21 @@
                 (list normal-type)
                 '())
             (filter (λ (type) (not (eq? type 'Never)))
-                    (unbox candidate-box))))
+                    (map (λ (candidate)
+                           (leave-probe-candidate-type candidate leave-adapter))
+                         (unbox candidate-box)))))
          (cond
            [(pair? candidates)
             (let-values ([(type _record-join?)
                           (merge-branch-types candidates span)])
-              type)]
+              (if for-option? `(Option ,type) type))]
+           [(and for-option? failure
+                 (eq? (exn:fail:elab-reason failure)
+                      'constructor-needs-expected-type)
+                 for-option-none-span
+                 (equal? (exn:fail:elab-primary-span failure)
+                         for-option-none-span))
+            (reject span 'narrative-expression-needs-expected-type)]
            [failure (raise failure)]
            [(and body-result
                  (match body-expression [`(Eliminate ,_ ,_) #t] [_ #f])
@@ -3587,8 +3603,20 @@
                    (,false-span false () -> ,false-body)))))]))
       (expand clauses))
 
+    (define (for-option-boundary? body)
+      (match (peel-node body)
+        [`(Let ((#:bind ,name ,_) const (#:ty Unit ,_)) ,_ ,_)
+         ;; Surface では % 始まりの名前を書けない。%for-option を変える場合は、この判定も更新する。
+         (regexp-match? #rx"^%for-option" (symbol->string name))]
+        [_ #f]))
+
     (define (if-some-boundary-adapter body expected environment)
       (match (peel-node body)
+        [`(Let ((#:bind ,name ,_) const (#:ty Unit ,_)) ,_ ,_)
+         #:when (regexp-match? #rx"^%for-option" (symbol->string name))
+         (match (normalize-type expected)
+           [`(Option ,payload-type) `(Option ,payload-type)]
+           [_ #f])]
         [`(Eliminate (#:var ,condition-name ,_) ,_)
          (and (assoc condition-name environment)
               ;; Surface では % 始まりの名前を書けないため、%ifcond-option 接頭辞で if-some-explicit の合成 binder（else のない if）を識別する。

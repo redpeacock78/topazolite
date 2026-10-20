@@ -347,6 +347,7 @@
      (values `(SBool ,(span-at ts i) false) (add1 i))]
     [(kw? ts i 'when) (parse-match ts fail i)]
     [(kw? ts i 'if) (parse-if ts fail i)]
+    [(kw? ts i 'for) (parse-for ts fail i)]
     [(eq? (kind-at ts i) 'ident)
      (values `(SVar ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(punct? ts i '|(|)
@@ -362,6 +363,19 @@
     [(punct? ts i '|{|) (parse-block-or-record ts fail i)]
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail-at ts fail i)]))
+
+;; SUR-014c1a。`in` は for の束縛名の直後だけで区切り語として読む。
+(define (parse-for ts fail i)
+  (define start (span-at ts i))
+  (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))])
+    (unless (and (eq? (kind-at ts name-j) 'ident)
+                 (eq? (value-at ts name-j) 'in))
+      (fail-at ts fail name-j))
+    (let*-values ([(iterable iterable-j) (parse-expr ts fail (add1 name-j))]
+                  [(body body-j) (parse-block ts fail iterable-j)])
+      (values `(SFor ,(hull start (node-span body))
+                     (SName ,name-span ,name) ,iterable ,body)
+              body-j))))
 
 ;; SUR-002b。断片を式へ写し、string-concat の左畳み込みへ組み替える。
 ;; 専用の節点を作らないのは pipe と同じ理由である（surface.md §3）。

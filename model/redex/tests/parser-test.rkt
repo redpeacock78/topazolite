@@ -788,10 +788,12 @@
  (check-true (surface-prog? `(SProgram ,s0 () (SRec ,s0 ((SField ,s0 (SLabel ,s0 match) (SInt ,s0 0))))))))
 
 (test-case
- "予約語 for は式の頭に置けず E-SUR-005 である"
+ "for は束縛名 in 走査対象 block の式になり in が無ければ拒否される"
+ (check-match (p "for x in xs { x }")
+              `(SProgram ,_ () (SFor ,_ (SName ,_ x) (SVar ,_ xs) (SBlock ,_ () ,_))))
  (check-equal? (p-code "for x { 1 }") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "for x { 1 }"))
-               '(#:span src 0 3)))
+               '(#:span src 6 7)))
 
 (test-case
  "SUR-015: return は最も弱く結合する前置の式である"

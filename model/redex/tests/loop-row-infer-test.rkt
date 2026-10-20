@@ -172,3 +172,27 @@
 (test-case "#:infer Loop の仮引数数と初回実引数数の不一致は E-ARI-001"
   (check-equal? (elab-error-id '(Loop loop ((rest #:infer)) Unit #:infer unit ()))
                 "E-ARI-001"))
+
+(test-case "S14b 014c1b で反転する Move の初回実引数は既存の loop shape gate で拒否する"
+  (define loop
+    '(Loop loop ((rest #:infer)) Unit #:infer
+       (Eliminate rest
+         ((nil () -> unit)
+          (cons (x tail) -> (Apply loop tail))))
+       ((Move xs))))
+  (check-exn loop-shape-error?
+             (λ ()
+               (elab `(Fn ((xs (List (Owned Res)))) Unit () ,loop)))))
+
+(test-case "S14b 014c1b で反転する Let の Move 値を変数経由で渡すと E-OWN-010"
+  (define loop
+    '(Loop loop ((rest #:infer)) Unit #:infer
+       (Eliminate rest
+         ((nil () -> unit)
+          (cons (x tail) -> (Apply loop tail))))
+       (ys)))
+  (check-equal?
+   (elab-error-id
+    `(Fn ((xs (List (Owned Res)))) Unit ()
+       (Let (ys let (List (Owned Res))) (Move xs) ,loop)))
+   "E-OWN-010"))

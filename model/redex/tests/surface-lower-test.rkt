@@ -260,6 +260,17 @@
               `(Leave ,_ (Construct ,_ red (Types)))))
 
 (test-case
+ "SUR-014c1a: 式位置の for は走査対象を Leave の境界外で束縛する"
+ (define lowered (low "for x in xs { leave x }"))
+ (check-true (redex-match? UCore+ e lowered))
+ (match lowered
+   [`(Let ,_ ((#:bind ,_ ,_) const) (#:var xs ,_)
+       (NarrativeExpr ,_
+                     (Let ,_ ((#:bind ,option-name ,_) const (#:ty Unit ,_)) ,_ ,_)))
+    (check-true (regexp-match? #rx"^%for-option" (symbol->string option-name)))]
+   [_ (fail-check "式位置の for は %for-option の境界 marker を持つ")]))
+
+(test-case
  "落とした program は UCore+ の e に合う"
  (for ([src (in-list (list "{ let x = 1\n x }"
                            "{ let x: Int = 1\n x }"
