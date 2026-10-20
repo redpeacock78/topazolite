@@ -54,9 +54,12 @@
  (define low (lower (string-append sizable-bool "0")))
  (check-equal? (lowered-impl-rows low) (list user-sizable-bool))
  (match (lowered-term low)
-   [`(Let ,_ ((#:bind %impl-Sizable-1 ,_) const)
-          (Apply ,_ (#:var impl-user-Sizable-1 ,_) (Rec ,_ ,_))
-          ,_)
+   [`(Let ,_ ((#:bind %impl-rec-Sizable-1 ,_) const (#:ty ,_ ,_))
+          (Rec ,_ ,_)
+          (Let ,_ ((#:bind %impl-Sizable-1 ,_) const)
+               (Apply ,_ (#:var impl-user-Sizable-1 ,_)
+                      (#:var %impl-rec-Sizable-1 ,_))
+               ,_))
     (void)]
    [other (fail (format "unexpected term ~s" other))]))
 
@@ -193,9 +196,11 @@
     [`(cfg ,result () () () ()) result]
     [other (fail-check (format "unexpected run-g2 result: ~s" other))]))
 
-;; 宣言 1 つ分の Let が束縛する項、つまり impl primitive の適用を返す。
+;; 実装 record を束縛した状態で impl primitive の適用を返す。
 (define (bound-of core)
   (match core
+    [`(Let ,binding ,record-value (Let ,_ ,bound ,_))
+     `(Let ,binding ,record-value ,bound)]
     [`(Let ,_ ,bound ,_) bound]
     [other (fail-check (format "not a Let: ~s" other))]))
 

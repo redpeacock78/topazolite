@@ -35,6 +35,7 @@
 
 (provide UCore
          elab
+         current-trait-providers
          mentions-return?
          identity-conversion?
          ;; c2b1 spec §4.1 の欄の型の合流とその単体試験に使う。
@@ -61,6 +62,7 @@
 
 (define current-when-arm-fallthroughs (make-parameter #f))
 (define current-deferred-when-fallthroughs (make-parameter #f))
+(define current-trait-providers (make-parameter (hasheq)))
 
 ;; 既存の三引数の構築は judgment の型を Core の型として使う。
 ;; check の一部だけ、実際に生成した Core の型を明示する。

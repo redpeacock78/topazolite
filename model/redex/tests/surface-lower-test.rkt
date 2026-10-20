@@ -215,7 +215,13 @@
    (low "trait Local { size: fn(Self) -> Int }\nimpl Local for Int { size: fn(x: Int) -> Int { 0 } }\n0"))
  (check-true
   (match t
-    [`(Let ,_ ,_ (Apply ,_ ,_ (Rec ,_ ,_)) ,_) #t]
+    [`(Let ,_ ((#:bind %impl-rec-Local-1 ,_) const (#:ty ,_ ,_))
+           (Rec ,_ ,_)
+           (Let ,_ ((#:bind %impl-Local-1 ,_) const)
+                (Apply ,_ (#:var impl-user-Local-1 ,_)
+                       (#:var %impl-rec-Local-1 ,_))
+                ,_))
+     #t]
     [_ #f])))
 
 (test-case

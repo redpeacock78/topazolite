@@ -89,19 +89,20 @@
     (call-with-trait-ledger
      ledger
      (λ ()
-       (match (elab (lowered-term low) #:expansion-context ctx)
-         [`(err ,d) d]
-         [(list core type row callables)
-          (define executable (execution-core core callables))
-          (compiled core type row callables ledger executable)]))))
+       (parameterize ([current-trait-providers (lowered-providers low)])
+         (match (elab (lowered-term low) #:expansion-context ctx)
+           [`(err ,d) d]
+           [(list core type row callables)
+            (define executable (execution-core core callables))
+            (compiled core type row callables ledger executable)])))))
   (cond
     [(diagnostic? low) low]
     [(and (null? (lowered-trait-rows low))
           (null? (lowered-impl-rows low))
           (null? (lowered-intersect-rows low))
           (null? (lowered-data-decls low)))
-     ;; 宣言が無ければ外側の台帳を eq? のまま使い、キャッシュを止めない（spec §6.6）。
-     (elab-under base-ledger)]
+     ;; 宣言が無ければ surface-ledger は外側の台帳と eq? なので、キャッシュを止めない。
+     (elab-under surface-ledger)]
     [else
      (define fail (make-ledger-fail low))
      (define base-data

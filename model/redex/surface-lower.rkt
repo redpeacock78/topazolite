@@ -21,7 +21,7 @@
 
 (provide lower-surface lift-template-type (struct-out lowered))
 
-(struct lowered (term trait-rows impl-rows intersect-rows data-decls spans) #:transparent)
+(struct lowered (term trait-rows impl-rows intersect-rows data-decls providers spans) #:transparent)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
 ;; ucore.rkt の A の Int、Bool、Unit、String、Res と綴りが一致する。
@@ -563,6 +563,15 @@
     [(? list?) (map lift-template-type t)]
     [_ t]))
 
+;; Trait template は Typed Core の型、UCore の #:ty は NFn を 4 欄で書く。
+(define (lower-provider-type t)
+  (match t
+    [`(NFn ,args ,ret ,_ ,out-row ,obligations ,_)
+     `(NFn ,(map lower-provider-type args) ,(lower-provider-type ret)
+           ,out-row ,obligations)]
+    [(? list?) (map lower-provider-type t)]
+    [_ t]))
+
 ;; spec §6.6 手順 3。基底へ行を重ねて trait-env を作り直す。
 ;; 衝突した鍵は必ず新しい行の鍵である。基底どうしの衝突は基底を
 ;; 作った時点で落ちており、新しい trait 名どうしの衝突は E-SUR-013 が
@@ -663,8 +672,9 @@
 ;; あり、lower-item が行と同じ番号の項を作るために使う。derive の値は
 ;; (binder prim uτ generated-value) である。
 (define (lower-impl-decls items staged spans env outputs fail)
-  (for/fold ([tenv staged] [rows '()] [spans spans] [info (hasheq)]
-             #:result (values (reverse rows) spans info))
+  (for/fold ([tenv staged] [rows '()] [spans spans]
+             [info (hasheq)] [providers (hasheq)]
+             #:result (values (reverse rows) spans info providers))
             ([item (in-list items)])
     (match item
       [`(SImplDecl ,s (SName ,s_n ,trait) ,ty (SRec ,s_b ,fields))
@@ -688,11 +698,17 @@
        (define oid (string->symbol (format "o-impl-user-~a-~a" trait* n)))
        (define prim (string->symbol (format "impl-user-~a-~a" trait* n)))
        (define binder (string->symbol (format "%impl-~a-~a" trait* n)))
+       (define rec-binder (string->symbol (format "%impl-rec-~a-~a" trait* n)))
+       (define record-type
+         `(Record ,(lower-provider-type
+                    (instantiate-requirements (trait-template trait-row) target))))
        (define row (list oid prim 'impl trait* target 'root))
        (define spans* (hash-set* spans (cons 'origin-id oid) s
                                  (cons 'primitive-name prim) s))
        (values (extend-env tenv '() (list row) '() spans* fail)
-               (cons row rows) spans* (hash-set info item (list binder prim)))]
+               (cons row rows) spans*
+               (hash-set info item (list binder prim rec-binder record-type))
+               (hash-set providers oid rec-binder))]
       [`(SDeriveDecl ,s (SName ,s_n ,trait) ,ty)
        (define trait* (hash-ref outputs trait trait))
        (define trait-row (or (trait-row-by-name trait* tenv)
@@ -714,13 +730,15 @@
        (define oid (string->symbol (format "o-derive-user-~a-~a" trait* n)))
        (define prim (string->symbol (format "derive-user-~a-~a" trait* n)))
        (define binder (string->symbol (format "%derive-~a-~a" trait* n)))
+       (define rec-binder (string->symbol (format "%derive-rec-~a-~a" trait* n)))
        (define row (list oid prim 'derive trait* target 'root))
        (define spans* (hash-set* spans (cons 'origin-id oid) s
                                  (cons 'primitive-name prim) s))
        (values (extend-env tenv '() (list row) '() spans* fail)
                (cons row rows) spans*
-               (hash-set info item (list binder prim uτ leaves)))]
-      [_ (values tenv rows spans info)])))
+               (hash-set info item (list binder prim uτ leaves rec-binder))
+               (hash-set providers oid rec-binder))]
+      [_ (values tenv rows spans info providers)])))
 
 ;; spec §7.2。Fn と Recur が同じ形の引数欄を取るので、ここへ切り出す。
 ;; 型注釈の span は sty の使用箇所のものであり、別名を展開しても動かない。
@@ -1070,19 +1088,25 @@
     [`(SImplDecl ,s ,_ ,_ ,body)
      ;; spec §6.6。生成した primitive を Let の束縛名にしない。elab は局所の
      ;; environment を Γ0 より先に引くので、同名の Let は Proof の経路を隠す。
-     (match-define (list binder prim) (hash-ref core-info item))
+     (match-define (list binder prim rec-binder record-type) (hash-ref core-info item))
      (define body-core (lower-sexpr body env fail))
-     (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
-                     (Apply ,s (#:var ,prim ,s) ,body-core) ,rest))]
+     (λ (rest) `(Let ,s_tail ((#:bind ,rec-binder ,s) const (#:ty ,record-type ,s))
+                     ,body-core
+                     (Let ,s_tail ((#:bind ,binder ,s) const)
+                          (Apply ,s (#:var ,prim ,s) (#:var ,rec-binder ,s))
+                          ,rest)))]
     [`(SDeriveDecl ,s ,_ ,_)
      ;; spec §6.7。生成した節点の span はすべて宣言のものである。
-     (match-define (list binder prim uτ n) (hash-ref core-info item))
+     (match-define (list binder prim uτ n rec-binder) (hash-ref core-info item))
      (define rec-core
        `(Rec ,s (((#:lbl size ,s) imm
                   (Fn ,s (((#:bind %self ,s) (#:ty ,uτ ,s)))
                       (#:ty Int ,s) (#:ef () ,s) (#:lit ,n ,s))))))
-     (λ (rest) `(Let ,s_tail ((#:bind ,binder ,s) const)
-                     (Apply ,s (#:var ,prim ,s) ,rec-core) ,rest))]
+     (λ (rest) `(Let ,s_tail ((#:bind ,rec-binder ,s) const)
+                     ,rec-core
+                     (Let ,s_tail ((#:bind ,binder ,s) const)
+                          (Apply ,s (#:var ,prim ,s) (#:var ,rec-binder ,s))
+                          ,rest)))]
     [`(SBind ,_ ,bmode (SName ,s_x ,x) ,ty-or-none ,bound)
      (define binder
        (if (eq? ty-or-none '#:none)
@@ -1196,10 +1220,10 @@
               (for/fold ([h decl-spans]) ([(k v) (in-hash composite-spans)])
                 (hash-set h k v)))
             (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
-            (define-values (impl-rows spans core-info)
+            (define-values (impl-rows spans core-info providers)
               (lower-impl-decls items* staged trait-spans env outputs fail))
             (lowered (fold-items items* e* env core-info fail)
-                     trait-rows impl-rows intersect-rows data-decls
+                     trait-rows impl-rows intersect-rows data-decls providers
                      (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
                        (hash-set h k v))))
           (if (eq? all-index empty-data-index)

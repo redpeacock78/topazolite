@@ -39,9 +39,9 @@
 (define (derive-size src)
   (match (lowered-term (lower src))
     [`(Let ,_ ,_
-           (Apply ,_ ,_ (Rec ,_ (((#:lbl size ,_) imm
-                                  (Fn ,_ ,_ ,_ ,_ (#:lit ,n ,_))))))
-           ,_)
+           (Rec ,_ (((#:lbl size ,_) imm
+                     (Fn ,_ ,_ ,_ ,_ (#:lit ,n ,_)))))
+           (Let ,_ ,_ (Apply ,_ ,_ (#:var ,_ ,_)) ,_))
      n]
     [other (fail-check (format "unexpected derive term ~s" other))]))
 
@@ -87,18 +87,22 @@
    (match (parse-src src)
      [`(SProgram ,_ ((SDeriveDecl ,s ,_ ,_)) (SInt ,s0 0)) (values s s0)]))
  (match (lowered-term low)
-   [`(Let ,s_tail ((#:bind %derive-Sizable-1 ,binder-span) const)
-          (Apply ,apply-span (#:var derive-user-Sizable-1 ,var-span)
-                 (Rec ,rec-span (((#:lbl size ,label-span) imm
-                                  (Fn ,fn-span
-                                      (((#:bind %self ,self-span)
-                                        (#:ty Bool ,self-type-span)))
-                                      (#:ty Int ,result-span) (#:ef () ,effect-span)
-                                      (#:lit 1 ,literal-span))))))
-          (#:lit 0 ,tail-literal-span))
+   [`(Let ,s_tail ((#:bind %derive-rec-Sizable-1 ,rec-binder-span) const)
+          (Rec ,rec-span (((#:lbl size ,label-span) imm
+                           (Fn ,fn-span
+                               (((#:bind %self ,self-span)
+                                 (#:ty Bool ,self-type-span)))
+                               (#:ty Int ,result-span) (#:ef () ,effect-span)
+                               (#:lit 1 ,literal-span)))))
+          (Let ,s_tail2 ((#:bind %derive-Sizable-1 ,binder-span) const)
+               (Apply ,apply-span (#:var derive-user-Sizable-1 ,var-span)
+                      (#:var %derive-rec-Sizable-1 ,rec-var-span))
+               (#:lit 0 ,tail-literal-span)))
     (check-equal? s_tail (list '#:span 'src (third decl-span) (fourth tail-span)))
-    (for ([span (in-list (list binder-span apply-span var-span rec-span label-span
-                               fn-span self-span self-type-span result-span
+    (check-equal? s_tail2 s_tail)
+    (for ([span (in-list (list rec-binder-span binder-span apply-span var-span
+                               rec-var-span rec-span label-span fn-span self-span
+                               self-type-span result-span
                                effect-span literal-span))])
       (check-equal? span decl-span))
     (check-equal? tail-literal-span tail-span)]))
@@ -187,6 +191,8 @@
 
 (define (bound-of core)
   (match core
+    [`(Let ,binding ,record-value (Let ,_ ,bound ,_))
+     `(Let ,binding ,record-value ,bound)]
     [`(Let ,_ ,bound ,_) bound]
     [other (fail-check (format "not a Let: ~s" other))]))
 
