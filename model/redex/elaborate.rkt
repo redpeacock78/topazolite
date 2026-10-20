@@ -18,6 +18,7 @@
          "schema.rkt"
          "search.rkt"
          "span-core.rkt"
+         "span-subst.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
          "uniquify.rkt"
@@ -1242,6 +1243,7 @@
     (define current-escape-reachable? (make-parameter #t))
     (define current-loop-trials (make-parameter '()))
     (define current-loop-trial-catching? (make-parameter #f))
+    (define current-generated-for-loop (make-parameter #f))
     (define flow-state (box (hasheq)))
     (define (flow-snapshot) (unbox flow-state))
     (define (flow-restore! snapshot) (set-box! flow-state snapshot))
@@ -2611,6 +2613,77 @@
          (reject (first-when-fallthrough spans) 'when-arm-missing-return)]
         [else result]))
 
+    ;; Surface から % 始まりは書けない。lowering の接頭辞を変えるときはここも更新する。
+    (define (for-generated-name? name prefix)
+      (and (symbol? name)
+           (string-prefix? (symbol->string name) prefix)))
+
+    (define (variable-reference-name expression)
+      (match expression
+        [`(#:var ,name ,_) name]
+        [`(Move ,_ (#:var ,name ,_)) name]
+        [_ #f]))
+
+    ;; 生成 for の資源 head だけ、本体の scope を再帰 Apply の外へ切り出す。
+    (define (scope-generated-for-branch clause branch-core)
+      (define loop-name (current-generated-for-loop))
+      (match clause
+        [(list raw-branch 'cons (list raw-head raw-tail) _body _environment
+               (list head-type _tail-type) _resource-names _core-parameters)
+         (define shape
+           (match (peel-branch raw-branch)
+             [(list 'cons (list _ _) '->
+                    (list 'Let _
+                          (list (list '#:bind statement _) 'const
+                                (list '#:ty 'Unit _))
+                          _bound
+                          (list 'Apply _ (list '#:var callee _) argument)))
+              (and loop-name
+                   (for-generated-name? loop-name "%for-loop")
+                   (resource-type? head-type)
+                   (for-generated-name? statement "%stmt")
+                   (eq? callee loop-name)
+                   (for-generated-name? (variable-reference-name argument)
+                                        "%for-tail")
+                   (eq? (variable-reference-name argument)
+                        (peel-bind raw-tail))
+                   statement)]
+             [_ #f]))
+         (if (not shape)
+             branch-core
+             (match branch-core
+               [`(Let ,statement-span
+                      ((#:bind ,core-statement ,binder-span)
+                       const (#:ty Unit ,unit-span))
+                      ,body
+                      ,continuation)
+                #:when (and (eq? core-statement shape)
+                            (match continuation
+                              [`(Apply ,_ (#:var ,callee ,_) ,argument)
+                               (and (eq? callee loop-name)
+                                    (eq? (variable-reference-name argument)
+                                         (peel-bind raw-tail)))]
+                              [_ #f]))
+                (define head-name (peel-bind raw-head))
+                (define element-name
+                  (fresh-owned-name
+                   (set-union (form-symbols branch-core)
+                              (set head-name (peel-bind raw-tail) loop-name))))
+                (define element-span (wrapper-span raw-head))
+                `(Let ,statement-span
+                      ((#:bind ,core-statement ,binder-span)
+                       const (#:ty Unit ,unit-span))
+                      (Scope ,element-span ()
+                        (Let ,element-span
+                             ((#:bind ,element-name ,element-span)
+                              let (#:ty ,head-type ,element-span))
+                             (Move ,element-span
+                                   (#:var ,head-name ,element-span))
+                             ,(span-rename body head-name element-name)))
+                      ,continuation)]
+               [_ branch-core]))]
+        [_ branch-core]))
+
     (define (union-eliminate scrutinee-result branches expected eliminate-span
                              environment delta propositions boundaries
                              #:defer-fallthroughs [deferred #f])
@@ -2872,13 +2945,15 @@
                         (list raw-branch constructor raw-parameters _ _ field-types
                               resource-names core-parameters)
                         clause)
+                      (define scoped-for-core
+                        (scope-generated-for-branch clause branch-core))
                       (define core
                         (if (ormap values resource-names)
                             `(Scope ,eliminate-span ()
                                     ,(wrap-resource-lets
                                       raw-parameters field-types resource-names
-                                      branch-core))
-                            branch-core))
+                                      scoped-for-core))
+                            scoped-for-core))
                       `(,(branch-span raw-branch) ,constructor ,core-parameters
                         -> ,core)))
        (if (or (eq? (judgment-type scrutinee-result) 'Never)
@@ -2951,20 +3026,22 @@
                                (map judgment-core-type results)
                                eliminate-span propositions))
              (judgment
-          `(Eliminate ,eliminate-span ,(judgment-core checked-scrutinee)
+             `(Eliminate ,eliminate-span ,(judgment-core checked-scrutinee)
                       ,(for/list ([clause (in-list clauses)]
                                   [core (in-list branch-cores)])
                          (match-define
                            (list raw-branch constructor raw-parameters _ _
                                  field-types resource-names core-parameters)
                            clause)
+                         (define scoped-for-core
+                           (scope-generated-for-branch clause core))
                          (define wrapped-core
                            (if (ormap values resource-names)
                                `(Scope ,eliminate-span ()
                                        ,(wrap-resource-lets
                                          raw-parameters field-types
-                                         resource-names core))
-                               core))
+                                         resource-names scoped-for-core))
+                               scoped-for-core))
                          `(,(branch-span raw-branch) ,constructor
                            ,core-parameters -> ,wrapped-core)))
           (if (eq? (judgment-type scrutinee-result) 'Never)
@@ -4617,23 +4694,27 @@
              (parameterize ([current-loop-trial-catching? #t]
                             [current-loop-trials
                              (cons trial (current-loop-trials))])
-               (elaborate-recur-annotated
-                s raw-function parameter-binders loop-parameter-types
-                (λ () (resolve-annotation raw-return-type delta s))
-                raw-row body
-                `(Apply ,s (#:var ,function ,s) ,@arguments)
-                environment delta propositions boundaries
-                #:boundary? #f
-                #:inherited-row inherited-row
-                #:on-body-result
-                (λ (result)
-                  (when (judgment-completes? result)
-                    (set-box! (loop-trial-log trial)
-                              (append (unbox (loop-trial-log trial))
-                                      (list (flow-snapshot))))))
-                #:row-trial row-result
-                #:exclude-loop-trial trial
-                #:loop-row? #t)))))
+               (parameterize
+                   ([current-generated-for-loop
+                     (and (for-generated-name? function "%for-loop")
+                          function)])
+                 (elaborate-recur-annotated
+                  s raw-function parameter-binders loop-parameter-types
+                  (λ () (resolve-annotation raw-return-type delta s))
+                  raw-row body
+                  `(Apply ,s (#:var ,function ,s) ,@arguments)
+                  environment delta propositions boundaries
+                  #:boundary? #f
+                  #:inherited-row inherited-row
+                  #:on-body-result
+                  (λ (result)
+                    (when (judgment-completes? result)
+                      (set-box! (loop-trial-log trial)
+                                (append (unbox (loop-trial-log trial))
+                                        (list (flow-snapshot))))))
+                  #:row-trial row-result
+                  #:exclude-loop-trial trial
+                  #:loop-row? #t))))))
         (values (unbox (loop-trial-log trial))
                 (and row-result (unbox row-result))
                 trial-failure))
@@ -4748,15 +4829,18 @@
                         (hash-ref final-views (second target))))
       ;; 外側 trial 中なら、入れ子 loop の本検査もその trial の一部として catch を継承する。
       (define recur-result
-        (elaborate-recur-annotated
-         s raw-function parameter-binders loop-parameter-types
-         (λ () (resolve-annotation raw-return-type delta s))
-         raw-row body
-         `(Apply ,s (#:var ,function ,s) ,@arguments)
-         environment delta propositions boundaries
-         #:boundary? #f
-         #:inherited-row final-loop-row
-         #:loop-row? #t))
+        (parameterize
+            ([current-generated-for-loop
+              (and (for-generated-name? function "%for-loop") function)])
+          (elaborate-recur-annotated
+           s raw-function parameter-binders loop-parameter-types
+           (λ () (resolve-annotation raw-return-type delta s))
+           raw-row body
+           `(Apply ,s (#:var ,function ,s) ,@arguments)
+           environment delta propositions boundaries
+           #:boundary? #f
+           #:inherited-row final-loop-row
+           #:loop-row? #t)))
       (if (null? prefix-assignments)
           recur-result
           (let ([core

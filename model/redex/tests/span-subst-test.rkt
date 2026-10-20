@@ -262,3 +262,34 @@
   (define fixed (span-subst t (list (cons 'x u))))
   (check-true (redex-match? G2+ c fixed))
   (check-equal? fixed u))
+
+(test-case "span-rename は各出現位置の span を保つ"
+  (check-equal?
+   (span-rename (term (Apply ,s0 (#:var x ,s1) (#:var x ,s2))) 'x 'y)
+   (term (Apply ,s0 (#:var y ,s1) (#:var y ,s2))))
+  (check-true
+   (redex-match? G2+ c
+                 (span-rename (term (Apply ,s0 (#:var x ,s1) (#:var x ,s2)))
+                              'x 'y))))
+
+(test-case "span-rename は y の束縛を改名して捕捉を避ける"
+  (define out
+    (span-rename
+     (term (Let ,s0 ((#:bind y ,s1) (#:ty Int ,s1))
+                 (#:lit 0 ,s1) (#:var x ,s2)))
+     'x 'y))
+  (check-true (redex-match? G2+ c out))
+  (match out
+    [`(Let ,_ ((#:bind ,binder ,binder-span) ,_type)
+            ,_bound (#:var ,use ,use-span))
+     (check-not-equal? binder 'y)
+     (check-equal? use 'y)
+     (check-equal? binder-span s1)
+     (check-equal? use-span s2)]
+    [_ (fail (format "捕捉回避後の形が違う: ~s" out))]))
+
+(test-case "span-rename は x を束縛し直す内側では改名しない"
+  (define inner
+    (term (Let ,s0 ((#:bind x ,s1) (#:ty Int ,s1))
+                (#:lit 0 ,s1) (#:var x ,s2))))
+  (check-equal? (span-rename inner 'x 'y) inner))

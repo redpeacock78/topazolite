@@ -8,7 +8,7 @@
 (require redex/reduction-semantics
          "span-core.rkt")
 
-(provide span-free-vars span-free-var-nodes span-subst)
+(provide span-free-vars span-free-var-nodes span-subst span-rename)
 
 ;; (#:bind x s_b) から束縛名を取り出す。
 (define (bind-name b)
@@ -177,3 +177,7 @@
          (for/list ([p (in-list σ-alist)])
            (define img (cdr p))
            (repl (car p) (span-free-vars img) (lambda (_s) img)))))
+
+;; 既存の出現位置 span を保ったまま束縛変数名だけを捕捉回避で改める。
+(define (span-rename t x y)
+  (subst t (list (repl x (list y) (lambda (s) `(#:var ,y ,s))))))

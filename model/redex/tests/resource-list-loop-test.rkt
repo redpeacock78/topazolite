@@ -3,6 +3,7 @@
 (require rackunit
          racket/list
          racket/match
+         racket/string
          "../diagnostic.rkt"
          "../borrow.rkt"
          "../erase.rkt"
@@ -565,3 +566,165 @@
                     (config-core baseline)))
       (check-equal? (resource-branch-encoding-failure-key mutated-control)
                     'resource-binder-raw-misuse))))
+
+(define generated-loop-name '%for-loop-resource-test)
+(define generated-head-name '%for-head-resource-test)
+(define generated-tail-name '%for-tail-resource-test)
+
+(define (generated-resource-loop branch-body)
+  `(Loop ,generated-loop-name ((%for-rest-resource-test #:infer)) Unit #:infer
+     (Eliminate (Move %for-rest-resource-test)
+       ((nil () -> unit)
+        (cons (,generated-head-name ,generated-tail-name) ->
+          (Let (%stmt const Unit)
+            ,branch-body
+            (Apply ,generated-loop-name (Move ,generated-tail-name))))))
+     ((Move items))))
+
+(define (find-let-binding core name)
+  (let walk ([term (erase-core core)])
+    (match term
+      [`(Let (,binder ,_mode ,_type) ,bound ,body)
+       (or (and (symbol? binder)
+                (string-prefix? (symbol->string binder)
+                                (symbol->string name))
+                term)
+           (walk bound)
+           (walk body))]
+      [(? pair? parts) (for/or ([part (in-list parts)]) (walk part))]
+      [_ #f])))
+
+(test-case "U1 生成形の for の cons 枝は本体だけを内側の Scope で包む"
+  (define loop
+    (generated-resource-loop
+     '(Let (body-result const Unit) unit unit)))
+  (define-values (_configs _type _callables core)
+    (run-program (resource-loop-program loop)))
+  (define statement (find-let-binding core '%stmt))
+  (check-not-false statement)
+  (when statement
+    (match statement
+      [`(Let (,stmt const Unit)
+             (Scope () (Let (,element let (Owned Res))
+                            (Move ,head) ,_body))
+             (Apply ,callee (Move ,tail)))
+       (check-true (string-prefix? (symbol->string stmt) "%stmt"))
+       (check-true (string-prefix? (symbol->string head)
+                                  (symbol->string generated-head-name)))
+       (check-true (string-prefix? (symbol->string tail)
+                                  (symbol->string generated-tail-name)))
+       (check-true (string-prefix? (symbol->string callee)
+                                  (symbol->string generated-loop-name)))
+       (check-not-equal? element head)]
+      [_ (fail (format "生成 for の cons 枝が想定形でない: ~s" statement))])))
+
+(test-case "U2 生成した for の Core は資源 branch encoding を通る"
+  (define loop
+    (generated-resource-loop
+     '(Let (body-result const Unit) unit unit)))
+  (define-values (_configs expected callables core)
+    (run-program (resource-loop-program loop)))
+  (check-not-false (core-type-of (erase-core core) '() callables))
+  (check-equal? expected 'Unit))
+
+(test-case "U3 生成形の for の正常完了で要素の fin は反復順に出る"
+  (define loop (generated-resource-loop 'unit))
+  (define-values (configs _type _callables _core)
+    (run-program (resource-loop-program loop)))
+  (define terminal (last configs))
+  (check-equal? (length (config-tokens terminal)) 4)
+  (check-all-dropped terminal 4)
+  (check-dropped-once configs (map first (config-tokens terminal)))
+  (check-equal? (map second (finish-events terminal))
+                '(4 8)))
+
+(test-case "U4 %for-loop 接頭辞でも本体が生成形でなければ内側の Scope を作らない"
+  (define loop
+    `(Loop ,generated-loop-name ((%for-rest-resource-test #:infer)) Unit #:infer
+       (Eliminate (Move %for-rest-resource-test)
+         ((nil () -> unit)
+          (cons (,generated-head-name ,generated-tail-name) -> unit)))
+       ((Move items))))
+  (define-values (_configs _type _callables core)
+    (run-program (resource-loop-program loop)))
+  (check-false (find-let-binding core '%stmt)))
+
+(test-case "U4b %stmt の Let でも継続が loop の再帰でなければ内側の Scope を作らない"
+  (define loop
+    `(Loop ,generated-loop-name ((%for-rest-resource-test #:infer)) Unit #:infer
+       (Eliminate (Move %for-rest-resource-test)
+         ((nil () -> unit)
+          (cons (,generated-head-name ,generated-tail-name) ->
+            (Let (%stmt const Unit) unit unit))))
+       ((Move items))))
+  (define-values (_configs _type _callables core)
+    (run-program (resource-loop-program loop)))
+  (define statement (find-let-binding core '%stmt))
+  (check-not-false statement)
+  (when statement
+    (match statement
+      [`(Let (,stmt const Unit) ,body ,_continuation)
+       (check-true (string-prefix? (symbol->string stmt) "%stmt"))
+       (check-false (match body [`(Scope . ,_) #t] [_ #f]))]
+      [_ (fail (format "非生成形の %stmt が想定外: ~s" statement))])))
+
+(test-case "U5 接頭辞の無い手書き Loop は fin の逆順と Core が変わらない"
+  (define loop (resource-loop '(Apply walk (Move tail))))
+  (define-values (configs _type _callables _core)
+    (run-program (resource-loop-program loop)))
+  (define terminal (last configs))
+  (check-equal? (length (config-tokens terminal)) 2)
+  (check-all-dropped terminal 2)
+  (check-equal? (map second (finish-events terminal))
+                '(5 2)))
+
+(test-case "U6 生成形の本体が要素を Move すると置換後の Core は elem を Move する"
+  (define loop
+    (generated-resource-loop '(Drop (Move %for-head-resource-test))))
+  (define-values (configs _type _callables core)
+    (run-program (resource-loop-program loop)))
+  (define statement (find-let-binding core '%stmt))
+  (check-not-false statement)
+  (when statement
+    (match statement
+      [`(Let (,stmt const Unit)
+             (Scope () (Let (,element let (Owned Res))
+                            (Move ,head) (Drop (Move ,used))))
+             (Apply ,_callee (Move ,tail)))
+       (check-true (string-prefix? (symbol->string stmt) "%stmt"))
+       (check-true (string-prefix? (symbol->string head)
+                                  (symbol->string generated-head-name)))
+       (check-true (string-prefix? (symbol->string tail)
+                                  (symbol->string generated-tail-name)))
+       (check-not-equal? element head)
+       (check-equal? used element)]
+      [_ (fail (format "elem の Move が想定形でない: ~s" statement))]))
+  (define terminal (last configs))
+  (check-equal? (length (config-tokens terminal)) 6)
+  (check-terminal-ledger configs))
+
+(test-case "U7 List<Owned<Res>> 要素も反復ごとの内側 Scope で後始末する"
+  (define nested-items
+    `(Construct cons (Types (List (Owned Res)))
+       ,(owned-list-value '(1))
+       (Construct cons (Types (List (Owned Res)))
+         ,(owned-list-value '(2))
+         (Construct nil (Types (List (Owned Res)))))))
+  (define loop (generated-resource-loop 'unit))
+  (define program
+    `(Apply
+      (Fn ((items (List (List (Owned Res))))) Unit (Partial Own) ,loop)
+      ,nested-items))
+  (define-values (configs _type _callables _core) (run-program program))
+  (define terminal (last configs))
+  (check-equal? (length (config-tokens terminal)) 2)
+  (check-terminal-ledger configs)
+  (define unfold-indices
+    (for/list ([configuration (in-list configs)] [index (in-naturals)]
+               #:when (member 'R-RecurUnfold (trace-rules (list configuration))))
+      index))
+  (check-true (>= (length unfold-indices) 2))
+  (when (>= (length unfold-indices) 2)
+    (define first-token (first (map first (config-tokens terminal))))
+    (check-equal? (token-state (list-ref configs (second unfold-indices)) first-token)
+                  'Dropped)))
