@@ -729,7 +729,7 @@ config 再型付けの資源 binder 検査は `RecurVal` 自身の lexical binde
 資源型の変数を走査対象にする `for x in xs` は Surface の所有権使用モード推論を扱う既存の申し送り行に残す。
 利用者 effect の operation による handler escape の後始末は、申し送り表の利用者 effect を捕まえる `Handle` の行と同じく、利用者 effect の導入時に確認する。
 `Owned<List<T>>` の spine を走査する `for`、遅延列の `for` の分類、および到達しない本体で期待型を要する式の合成は、この要件の完了範囲の外にあり、§4 の申し送り表の各行で扱う。
-`&&` と `||` は SUR-013 の論理演算子であり、この要件に含めない。
+`and`、`or`、`not` は SUR-013 の論理演算子であり、この要件に含めない。
 
 ### SUR-015
 
