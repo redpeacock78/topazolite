@@ -528,7 +528,7 @@
   ;; 型構成子の名前も TApp の頭を隠すため、trait 名に使えない。
   (for ([row (in-list trait-rows)])
     (define name (trait-name row))
-    (when (memq name '(Int Bool Unit String))
+    (when (memq name '(Int Bool Unit String Res))
       (error 'traits "trait ~s is named after a primitive type" name))
     (when (memq name '(List Option Result Owned))
       (error 'traits "trait ~s is named after a built-in type constructor" name)))

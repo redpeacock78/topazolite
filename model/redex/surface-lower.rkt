@@ -24,8 +24,8 @@
 (struct lowered (term trait-rows impl-rows intersect-rows data-decls spans) #:transparent)
 
 ;; spec §7.2.1。別名の表を引かずにそのまま uτ になる名前である。
-;; ucore.rkt:13 の A の先頭 4 つと綴りが一致する。
-(define primitive-type-names '(Int Bool Unit String))
+;; ucore.rkt の A の Int、Bool、Unit、String、Res と綴りが一致する。
+(define primitive-type-names '(Int Bool Unit String Res))
 (define type-params (make-parameter '()))
 
 ;; spec §9.2。Surface の型構成子の名前と引数の個数である。

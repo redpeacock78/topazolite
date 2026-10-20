@@ -576,8 +576,9 @@ UCore+ には型別名を置く欄が無いため、`STypeDecl` は節点を生�
 - 型の名前が基底の trait または原文中の trait と衝突するときは `E-SUR-023` とする。primary span は型の `SName` であり、原文中の trait との衝突ではその `SName` を `trait-declaration` の related にする。
 - 基本型名を trait 名として宣言したときも `E-SUR-023` とし、primary span は trait の `SName` とする。
 
-基本型は `Int`、`Bool`、`Unit`、`String` の 4 つである。
-これらは `ucore.rkt` の `A` の先頭 4 つと同じ綴りを使う。
+基本型は `Int`、`Bool`、`Unit`、`String`、`Res` の 5 つである。
+`Res` は `acquire` が返す `Owned<Res>` の成分型である。
+これらは `ucore.rkt` の `A` と同じ綴りを使う。
 
 循環は、いま展開している別名の名前を積んだ stack で判定する。
 `TName` を展開するとき、同じ名前が stack にあれば循環とし、定義を展開し終えた名前は stack から外す。
@@ -630,7 +631,7 @@ record と record 型の field は左から右へ走査し、最初に見つか�
 
 trait 名は基底環境の trait 名と原文の trait 宣言名である。
 型別名と trait 名は一つの宣言名前空間を共有する。
-型宣言と trait 宣言の名前が衝突すれば `E-SUR-023` とし、基本型名 `Int`、`Bool`、`Unit`、`String` の trait 宣言も同じ診断にする。
+型宣言と trait 宣言の名前が衝突すれば `E-SUR-023` とし、基本型名 `Int`、`Bool`、`Unit`、`String`、`Res` の trait 宣言も同じ診断にする。
 型位置にある trait 名は `E-SUR-021` とする。
 
 合成宣言右辺の各葉と `TInter` に、括弧の形を保つ構造鍵を与える。
@@ -851,7 +852,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 F* 側の `SProjRec` は Surface 欄に label の綴りと span を持つが、`proj_fields` は綴りを Core へ渡さず、各 field の label span を `Rec` と `Proj` に保持する。
 受け側の綴り `%projrec` は、`lexer.rkt` の `ident-start?` が `%` を受理しないため入力の識別子と衝突しない。
 
-`TName` のうち `Int`、`Bool`、`Unit`、`String` は同綴りの `uτ` へ写す。
+`TName` のうち `Int`、`Bool`、`Unit`、`String`、`Res` は同綴りの `uτ` へ写す。
 それ以外は §5 の別名環境から解決し、未登録なら `E-SUR-008` とする。
 `TRec` は field mode を `imm` とする `(Record ((l uτ imm) ...))` へ写す。
 `?` を付けた欄は `(l uτ imm opt)` へ写す。

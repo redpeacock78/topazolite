@@ -246,14 +246,14 @@
 (test-case "S13 for の外では in を識別子として使える"
   (check-accepted "let in = 1\nin" 'Int 1))
 
-(test-case "S14a 014c1b で反転する Owned<List<Int>> の現行診断は E-OWN-010"
+(test-case "S14a 対象外の Owned<List<Int>> の反復対象は E-OWN-010"
   (check-rejected
    "fn f(xs: Owned<List<Int>>) -> Unit { for x in xs { () }\n () }\n()"
    "E-OWN-010"))
 
-(test-case "S14a 014c1b で反転する List<Owned<Int>> の現行診断は E-OWN-010"
+(test-case "S14a 資源型の変数を反復対象にする for は E-OWN-010"
   (check-rejected
-   "fn f(xs: List<Owned<Int>>) -> Unit { for x in xs { () }\n () }\n()"
+   "fn f(xs: List<Owned<Res>>) -> Unit { for x in xs { () }\n () }\n()"
    "E-OWN-010"))
 
 (test-case "S15 式位置 for の走査対象は for の境界の外で評価される"

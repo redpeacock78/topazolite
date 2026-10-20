@@ -193,15 +193,19 @@
 
 (test-case
  "a trait named after a primitive type is rejected"
- (check-exn
-  #rx"is named after a primitive type"
-  (λ ()
-    (make-trait-env
-     #:trait (append trait-table (list '(o-trait-user-Int Int root ())))
-     #:impl impl-table
-     #:intersect intersect-table
-     #:scope scope-parent-table
-     #:fail no-fail))))
+ (for ([name (in-list '(Int Res))])
+   (check-exn
+    #rx"is named after a primitive type"
+    (λ ()
+      (make-trait-env
+       #:trait
+       (append trait-table
+               (list (list (string->symbol (format "o-trait-user-~a" name))
+                           name 'root '())))
+       #:impl impl-table
+       #:intersect intersect-table
+       #:scope scope-parent-table
+       #:fail no-fail)))))
 
 (test-case
  "a trait named after a built-in type constructor is rejected"
