@@ -1365,9 +1365,17 @@
     (define (wrap-leave-payload span result adapter)
       (match adapter
         [`(Option ,payload-type)
+         (define payload-core (judgment-core result))
+         (define field-core
+           (if (and (owned-type? payload-type)
+                    (not (match (peel-node payload-core)
+                           [`(OwnLeaf ,_) #t]
+                           [_ #f])))
+               `(OwnLeaf ,span ,payload-core)
+               payload-core))
          (judgment
           `(Construct ,span (#:ty ,adapter ,span) some
-                      ,(judgment-core result))
+                      ,field-core)
           adapter (judgment-row result) adapter adapter)]
         [_ result]))
 
