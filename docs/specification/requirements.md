@@ -720,7 +720,8 @@ config 再型付けの資源 binder 検査は `RecurVal` 自身の lexical binde
 式境界の `some` adapter は root `Owned` payload を `OwnLeaf` で包む。
 `Owned<List<T>>` の spine は対象外である。
 現在の閉じたプログラムで root `Owned` を生成するのは `Owned<Res>` を返す `acquire` だけであり、`Owned<List<T>>` の値を作る経路がないためである。
-014c1b2 では、Surface の組み込み型名 `Res`、式から生成する `for` の `%for-list`、`%for-tail`、loop 本体の `%for-rest` を資源型のとき `Move` で渡すこと、資源型要素を各反復の本体の終わりで後始末すること、および Surface から資源型要素を持つ List を作る経路を実装済みである。
+014c1b2 では、Surface の組み込み型名 `Res`、式から生成する `for` の `%for-list`、`%for-tail`、loop 本体の `%for-rest` を資源型のとき `Move` で渡すこと、および Surface から資源型要素を持つ List を作る経路を実装済みである。
+資源型要素は、本体がその要素を `Move` しない限り、各反復の内側の `Scope` を出る時点で drop される。正常完了では本体の終わり、`for` から早期に脱出する場合は脱出の時点である。
 資源型の変数を走査対象にする `for x in xs` は Surface の所有権使用モード推論を扱う既存の申し送り行に残す。
 利用者 effect の operation による handler escape の後始末は、申し送り表の利用者 effect を捕まえる `Handle` の行と同じく、利用者 effect の導入時に確認する。
 
@@ -994,7 +995,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 
 | 項目 | 記載元 | 行き先 | ホワイトペーパー |
 |---|---|---|---|
-| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。式位置の `when` arm の本体ブロックと落ち抜け検査、被演算子位置の `return` による `Never` の伝播、および `?=` の右辺が `Never` の場合の受理も回収済み。合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` も回収済み。`leave` は最寄りの式境界へ解決される。式位置の `for` は走査対象を自身の式境界の外で評価し、本体の `leave` はその境界の `Option` adapter を通して `some` へ写す。式位置の `if` と `when` の分岐ブロックは共通に、文を持たない `{ e }` は単一式として `e` を値にし、文を持つブロックは `leave` で値を与え、末尾まで到達すれば `Unit` で落ち抜ける。結果型が `Unit` 以外で落ち抜ける経路があれば `E-RET-005` となる。残る `for` の課題は `Owned` List の spine、資源型要素の移送、早期脱出時に残る要素の後始末、`Owned` List を loop 印へ渡す初回実引数の `Move` と Surface から資源型要素の List を作る経路である。ほかに残るのは明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提である。 | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
+| Surface の return 境界（式位置と文位置の `when` と `if`、`else` の無い `if`（文位置と式位置の `Option<T>`）は回収済み。非変数 `when` の scrutinee は返却境界の外で評価する。関数宣言と block 本体の無名関数の明示的な `return`、全経路の返却検査、および本体ブロックは回収済み。式位置の `when` arm の本体ブロックと落ち抜け検査、被演算子位置の `return` による `Never` の伝播、および `?=` の右辺が `Never` の場合の受理も回収済み。合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` も回収済み。`leave` は最寄りの式境界へ解決される。式位置の `for` は走査対象を自身の式境界の外で評価し、本体の `leave` はその境界の `Option` adapter を通して `some` へ写す。式位置の `if` と `when` の分岐ブロックは共通に、文を持たない `{ e }` は単一式として `e` を値にし、文を持つブロックは `leave` で値を与え、末尾まで到達すれば `Unit` で落ち抜ける。結果型が `Unit` 以外で落ち抜ける経路があれば `E-RET-005` となる。回収済みの `for` の範囲は、資源型要素の移送、内側の `Scope` を用いた反復ごとの後始末、早期脱出時の後始末、loop 印の初回実引数の `Move`、`Res` と Surface から資源型要素の List を作る経路である。残る `for` の課題は `Owned<List<T>>` の spine だけであり、Surface からその値を作る producer が無いため、今回の Surface の対象外である。ほかに残るのは明示的な `return to`、`E-RET-003`、到達しない本体で期待型を要する式が合成の位置で型を決められないこと（検査の位置は回収済み。lint と診断のサイクルで到達不能な文の警告と合わせて扱う）。`E-RET-003` と `return to` は、正典に規則と構文が無く、非致命の診断の経路（severity を取る診断の生成、registry の severity の欄、警告を蓄える compile の結果）が前提である。 | `surface.md` §3 | Phase 2 以降 | §11.5.4 |
 | 利用者 effect を捕まえる `Handle` の T-Ctx-Never 条件（Return 以外の op は G1 の構文に存在せず未検証。本体の row に op が含まれる場合は `Never` を伝播せず、利用者 effect の導入時に確認する） | `core-calculus.md` §5.1 | 利用者 effect の導入時 | §5.2 |
 | Surface の所有権使用モード推論と明示的 move | `surface.md` §3.8 | Phase 2 以降（Surface の所有権推論の設計サイクル） | §4.7 |
 | 遅延列の `for` 分類（C-Structural が遅延欄由来の変数を減少根拠にせず、Finite Proof の無い走査を `Partial` または `Unknown` に分類する） | `core-calculus.md` §6.2 | Phase 4 以降 | §16 |
