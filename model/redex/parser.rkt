@@ -454,8 +454,6 @@
 
 (define (parse-primary ts fail i)
   (cond
-    ;; return と leave も演算子の被演算子位置で式として使える。
-    [(or (kw? ts i 'return) (kw? ts i 'leave)) (parse-expr ts fail i)]
     [(eq? (kind-at ts i) 'int)
      (values `(SInt ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(eq? (kind-at ts i) 'str)

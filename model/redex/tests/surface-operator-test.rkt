@@ -52,7 +52,9 @@
 (test-case "P2 比較は結合しない"
   (check-equal? (compile-code "1 < 2 < 3") "E-SUR-005")
   (check-equal? (diagnostic-primary-span (compile "1 < 2 < 3")) '(#:span src 6 7))
-  (check-equal? (compile-code "1 == 2 >= 3") "E-SUR-005"))
+  (check-equal? (compile-code "1 == 2 >= 3") "E-SUR-005")
+  (check-equal? (compile-code "1 + return 2") "E-SUR-005")
+  (check-equal? (compile-primary "1 + return 2") '(#:span src 4 10)))
 
 (test-case "P2b 空白を挟んだ > = は >= にならない"
   (check-equal? (compile-code "1 > = 2") "E-SUR-005")
@@ -133,7 +135,7 @@
 
 (test-case "S2 and の中の leave は外側の境界へ届く"
   (check-equal? (run-source
-                 "fn f(c: Bool) -> Option<Bool> { let result = if c { true and leave false\n leave true }\n return result }\nf(true)")
+                 "fn f(c: Bool) -> Option<Bool> { let result = if c { true and (leave false)\n leave true }\n return result }\nf(true)")
                 '(Construct (Option Bool) some (Construct Bool false))))
 
 (test-case "T1 型の拒否"
@@ -159,4 +161,6 @@
   (check-equal? (run-source "not false") '(Construct Bool true)))
 
 (test-case "I1 文字列補間の中の演算式"
-  (check-true (compiled? (compile "let a = 1\n\"#{a + 1}\""))))
+  (check-equal? (run-source "let a = 1\n\"${if a + 1 == 2 { \"y\" } else { \"n\" }}\"") "y")
+  (check-equal? (compile-code "let a = 1\n\"${a + 1}\"") "E-TYP-012")
+  (check-equal? (compile-primary "let a = 1\n\"${a + 1}\"") '(#:span src 13 18)))
