@@ -4640,9 +4640,20 @@
       (when (and (ormap inferred? raw-parameter-types)
                  (not (= (length raw-parameter-types) (length arguments))))
         (reject s 'arity-mismatch (length raw-parameter-types) (length arguments)))
+      (define initial-arguments
+        (for/list ([argument (in-list arguments)])
+          (define name (variable-reference-name argument))
+          (if (and name
+                   (for-generated-name? name "%for-list")
+                   (resource-type? (flow-view environment name))
+                   (not (match (peel-node argument)
+                          [`(Move ,_) #t]
+                          [_ #f])))
+              `(Move ,(span-of argument) ,argument)
+              argument)))
       (define loop-parameter-types
         (for/list ([raw-type (in-list raw-parameter-types)]
-                   [argument (in-list arguments)])
+                   [argument (in-list initial-arguments)])
           (if (inferred? raw-type)
               (let* ([argument-type
                       (call-with-loop-trial-rollback
@@ -4658,9 +4669,24 @@
                   [`(List ,_) (list '#:ty actual (span-of argument))]
                   [_ (reject s 'type-mismatch '(List _) actual)]))
               raw-type)))
+      (define loop-body
+        (match body
+          [`(Eliminate ,eliminate-span (#:var ,rest ,rest-span) ,branches)
+           #:when (and (for-generated-name? function "%for-loop")
+                       (for-generated-name? rest "%for-rest")
+                       (= (length parameters) 1)
+                       (eq? rest (first parameters))
+                       (= (length loop-parameter-types) 1)
+                       (resource-type?
+                        (resolve-annotation (first loop-parameter-types)
+                                            delta s)))
+           `(Eliminate ,eliminate-span
+                       (Move ,rest-span (#:var ,rest ,rest-span))
+                       ,branches)]
+          [_ body]))
       (define inferred-loop-row? (inferred-row? raw-row))
       (define free-names
-        (set-subtract (free-vars body)
+        (set-subtract (free-vars loop-body)
                       (list->set (cons function parameters))))
       (define targets
         (for/list ([name (in-list (remove-duplicates (map first environment)))]
@@ -4701,8 +4727,8 @@
                  (elaborate-recur-annotated
                   s raw-function parameter-binders loop-parameter-types
                   (λ () (resolve-annotation raw-return-type delta s))
-                  raw-row body
-                  `(Apply ,s (#:var ,function ,s) ,@arguments)
+                  raw-row loop-body
+                  `(Apply ,s (#:var ,function ,s) ,@initial-arguments)
                   environment delta propositions boundaries
                   #:boundary? #f
                   #:inherited-row inherited-row
@@ -4835,8 +4861,8 @@
           (elaborate-recur-annotated
            s raw-function parameter-binders loop-parameter-types
            (λ () (resolve-annotation raw-return-type delta s))
-           raw-row body
-           `(Apply ,s (#:var ,function ,s) ,@arguments)
+           raw-row loop-body
+           `(Apply ,s (#:var ,function ,s) ,@initial-arguments)
            environment delta propositions boundaries
            #:boundary? #f
            #:inherited-row final-loop-row
@@ -5063,12 +5089,30 @@
                (initial-candidate-context propositions)))
             (when (memq #f proofs)
               (reject s 'unsatisfied-proof-obligation obligations))
+            (define loop-callee (variable-reference-name function))
+            (define checked-arguments
+              (for/list ([argument (in-list arguments)]
+                         [index (in-naturals)])
+                (define name (variable-reference-name argument))
+                (define expected
+                  (and (< index (length parameter-types))
+                       (list-ref parameter-types index)))
+                (if (and (eq? loop-callee (current-generated-for-loop))
+                         name
+                         (for-generated-name? name "%for-tail")
+                         expected
+                         (resource-type? expected)
+                         (not (match (peel-node argument)
+                                [`(Move ,_) #t]
+                                [_ #f])))
+                    `(Move ,(span-of argument) ,argument)
+                    argument)))
             (define argument-results
               (parameterize
                   ([current-escape-reachable?
                     (and (current-escape-reachable?)
                          (judgment-completes? function-result))])
-                (check-many arguments parameter-types
+                (check-many checked-arguments parameter-types
                             environment delta propositions boundaries s)))
             (define applied
               `(Apply ,s ,(judgment-core function-result)
