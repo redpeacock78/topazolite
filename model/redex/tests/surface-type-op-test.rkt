@@ -23,10 +23,10 @@
 
 (define (derive-size src)
   (match (lowered-term (lower src))
-    [`(Let ,_ ,_
-           (Apply ,_ ,_ (Rec ,_ (((#:lbl size ,_) imm
-                                  (Fn ,_ ,_ ,_ ,_ (#:lit ,n ,_))))))
-           ,_)
+    [`(Let ,_ ((#:bind %derive-rec-Sizable-1 ,_) const)
+           (Rec ,_ (((#:lbl size ,_) imm
+                     (Fn ,_ ,_ ,_ ,_ (#:lit ,n ,_)))))
+           (Let ,_ ,_ (Apply ,_ ,_ (#:var %derive-rec-Sizable-1 ,_)) ,_))
      n]
     [other (fail-check (format "unexpected derive term ~s" other))]))
 
