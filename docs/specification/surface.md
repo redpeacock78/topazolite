@@ -300,7 +300,8 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 式の位置の `for` に期待型 `Option<U>` があれば、本体の `leave` の payload を `U` に対して検査する。
 合成位置では `leave` の payload の型から `T` を決め、payload が無ければ `E-TYP-010` になる。
 走査対象は `for` 自身の式境界の外で評価するため、その中の `leave` は外側の式境界へ届く。
-反復対象の要素型が資源型なら、その要素は本体の終わりで drop される。
+反復対象の要素型が資源型なら、本体がその要素を `Move` しない限り、各反復の内側の `Scope` を出る時点で drop される。
+正常完了では本体の終わり、`for` から早期に脱出する場合は脱出の時点である。
 反復対象が式なら、elaborate は生成名 `%for-list`、`%for-tail`、および loop 本体の scrutinee `%for-rest` を、型が資源型のときに限り `Move` で渡す。
 反復対象が資源型の変数なら、Surface の所有権使用モード推論（§3.8）までは `E-OWN-010` で拒否する。
 
@@ -752,7 +753,8 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   cons 枝の本体は `%stmt` に束縛され、その後 `%for-tail` で再帰する。
   式位置では `Loop` を `NarrativeExpr` と `Option` adapter で包み、文位置では `%stmt` の `Unit` 束縛で包む。
   elaborate は `%for-list`、`%for-tail`、`%for-rest` が資源型のとき `Move` を生成する。
-  要素型が資源型の cons 枝では、`%stmt` の右辺に要素と本体を囲む内側の `Scope` を作り、tail への再帰 `Apply` はその `Scope` の外に置くため、各反復の本体の終わりで要素を drop する。
+  要素型が資源型の cons 枝では、`%stmt` の右辺に要素と本体を囲む内側の `Scope` を作り、tail への再帰 `Apply` はその `Scope` の外に置く。
+  本体が要素を `Move` しない限り、内側の `Scope` を出る時点で drop される。正常完了では本体の終わり、`for` から早期に脱出する場合は脱出の時点である。
 - `if c { a } else { b }` は、条件に `Bool` を注釈した合成 `SBlock` と `true` / `false` の枝を持つ `SMatch` へ parser が組み替える。
   その形は `(SBlock s ((SBind s const (SName s_c %ifcond) (TName s_if Bool) c)) (SMatch s (SVar s_c %ifcond) ((SArm s_then (SName s_then true) () expr a) (SArm s_else (SName s_kw false) () expr b))))` である。
   `s` は `if` から最後の token までの span である。
