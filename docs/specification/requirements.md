@@ -714,7 +714,15 @@ Surface の `if`、`when`、`for` 制御構文は、対応する Core の形へ�
 式位置の `when` の arm の本体ブロックと落ち抜け検査も実装済みである。
 合成位置の data の `when` と `else` を持つ `if` の枝に、結果位置がすべて合成できる入れ子の `when` と `if` を置く形も実装済みである。
 `for` は `List<T>` を構造的に走査し、文の位置では `Unit`、式の位置では `Option<T>` を返す形で実装済みである。
-014c1b では、`Owned` の List の spine、資源型の要素の移送、早期脱出時に残る要素の後始末、`Owned` の List を loop 印へ渡す経路（初回実引数の `Move` を含む）と Surface から資源型の要素を持つ List を作る経路を決める。
+014c1b1 では、UCore の loop 印が `List<Owned<T>>` を走査する契約を実装済みである。
+loop 印の初回実引数には変数の `Move` を使え、資源型の loop 仮引数は `Scope` と資源型の `Let` で管理する。
+config 再型付けの資源 binder 検査は `RecurVal` 自身の lexical binder に束縛される出現を数えず、外側の binder を自由に capture する出現は `E-OWN-035` で拒否する。
+式境界の `some` adapter は root `Owned` payload を `OwnLeaf` で包む。
+`Owned<List<T>>` の spine は対象外である。
+現在の閉じたプログラムで root `Owned` を生成するのは `Owned<Res>` を返す `acquire` だけであり、`Owned<List<T>>` の値を作る経路がないためである。
+014c1b2 では、Surface の型名 `Res`、式から生成する `for` で資源型の走査対象と tail を `Move` すること、各反復で要素を後始末すること、および Surface から資源型要素を持つ List を作る経路を扱う。
+資源型の変数を走査対象にする `for x in xs` は Surface の所有権使用モード推論を扱う既存の申し送り行に残す。
+利用者 effect の operation による handler escape の後始末は、申し送り表の利用者 effect を捕まえる `Handle` の行と同じく、利用者 effect の導入時に確認する。
 
 ### SUR-015
 

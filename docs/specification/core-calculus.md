@@ -1073,6 +1073,7 @@ nearestFunction(B) = FunctionBoundary(b, τ)
 この仕様で使う adapter は恒等変換 `identity` と `some<T>` に限る。
 adapter を省略した `ExpressionBoundary(b, τ)` は恒等 adapter を持つものとする。
 `some<T>` adapter を持つ境界は `τ = Option<T>` であり、Leave の被演算子の検査型を T、境界へ渡す値を `Construct(Option<T>, some, c)` とする。
+payload 型 T が root `Owned` なら、`some<T>` adapter は `Construct(Option<T>, some, OwnLeaf(c))` を生成し、他の型では c をそのまま欄に置く。
 else のない値位置 `if` が作る `Option<T>` の式境界は `some<T>` adapter を持つ。
 下見では Leave の被演算子の型を包む前の候補として合流し、境界を確定した後の検査で `some` を一度だけ構成する。
 
@@ -1747,6 +1748,12 @@ Loop row の `#:infer` は本体 row の固定点を推論する。
 loop 印は Surface の関数境界を作らない。
 `Return` label は loop 印の位置にある最寄りの関数境界へ、`Leave` label は最寄りの式境界へ解決し、いずれも本体が loop 印を越えて実際に脱出する場合にだけ row に置く。
 そのため、Loop 本体からの `Return` は loop の再帰呼出しで捕まえず、`Leave` は式境界を使って `for` の値を返す。
+loop 印の初回実引数は変数、literal、または変数を operand とする `Move` に限る。
+`Move` の operand が変数でない形は文法違反として `E-SYN-003` で拒否し、変数、literal、変数の `Move` のいずれでもない初回実引数は `loop-shape-error` とする。
+資源型の loop 仮引数がある場合、elaboration は `Recur` と同じ `ResourceScope` を本体に適用し、`Scope` と資源型の `Let` で各呼出しの仮引数 place を管理する。
+この encoding では `R-LetOwnedB` が資源値を place に束縛し、正常完了時の `R-ScopeValue` が scope exit を行うため、資源型要素の token は性質 7(d) に従って `fin` を伴い `Dropped` になる。
+明示的な `drop(x)` は `R-Drop` により token を `Dropped` にするが、`fin` イベントを記録しない。
+`F_inner` を捨てる `R-ScopeAbort`、`R-ScopeError`、`R-HandleReturn`、`R-HandleSkip`、`R-HandleError` も性質 7(f) に従って token を `Dropped` にし、event を記録しない。
 
 row が `#:infer` のとき、`R0 = ()` とする。
 `R(i+1)` は、loop 関数の潜在 row を `R(i)` として本体を elaborate し、安定した `mut` view の下で得た本体 row を正規化したものである。
@@ -1857,6 +1864,9 @@ T の構造外に残る余剰欄は、型の深さが増えた段で除かれる
 初期 view C0 と C* が等価でない対象には、C0 の値を C* へ作り直す `Reassign` を loop 印の前に挿入する。
 C0 が C* に幅の狭い型として収まるだけの場合も挿入する。
 挿入しなければ、elaboration が使う C* と Core の loop 入口に残る C0 が異なり、本体の再代入を Core が検査できないためである。
+
+configuration の再型付けが資源型 binder の encoding を検査するとき、`RecurVal` の本体では `RecurVal` 自身の lexical binder（関数名、仮引数、内部の `Let` と枝 binder）に束縛される出現を数えない。
+`R-RecurUnfold` が同じ binder 名を再帰本体へ複製するためであり、現在の枝 binder を自由に参照する capture は引き続き `E-OWN-035` で拒否する。
 
 その後、elaboration は対象の view を C* に置き、通常の `Recur` として本体を検査し、初回 `Apply` を継続として検査する。
 loop 印は出力から消え、Core の型付け規則は増えない。
