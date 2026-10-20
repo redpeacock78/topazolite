@@ -48,13 +48,43 @@
                 (λ () (error 'compile-source "span の無い衝突: ~s ~s" kind key))))
     (diagnostic-of 'surface reason #:primary-span span)))
 
+;; impl / derive を宣言する Surface program では R0 の impl 行を fixture として除く。
+;; 宣言が無い場合は canonical ledger の同一性を保ち Redex cache を有効にする。
+(define (surface-base-ledger base items)
+  (if (for/or ([item (in-list items)])
+        (match item
+          [`(SImplDecl ,_ ...) #t]
+          [`(SDeriveDecl ,_ ...) #t]
+          [_ #f]))
+      (let* ([env (trait-ledger-env base)]
+             [fail (λ (reason kind key)
+                     (error 'surface-base-ledger
+                            "有効な基底台帳から impl 行を除いた構築が失敗: ~s ~s ~s"
+                            reason kind key))]
+             [surface-env
+              (make-trait-env #:trait (trait-env-trait-rows env)
+                              #:impl '()
+                              #:intersect (trait-env-intersect-rows env)
+                              #:scope (trait-env-scope-rows env)
+                              #:fail fail)]
+             [data (sort (hash-values (data-index-decls (trait-ledger-data base)))
+                         symbol<? #:key first)])
+        (make-trait-ledger surface-env #:data data #:fail fail))
+      base))
+
 (define (compile-source source-id bytes #:expansion-context [ctx (hash)])
   (define base-ledger (current-trait-ledger))
-  (define base (trait-ledger-env base-ledger))
-  (define base-index (trait-ledger-data base-ledger))
-  (define low (lower-surface (parse (lex source-id bytes)) base
+  (define parsed (parse (lex source-id bytes)))
+  (define items
+    (match parsed
+      [`(SProgram ,_ (,items ...) ,_) items]
+      [_ '()]))
+  (define surface-ledger (surface-base-ledger base-ledger items))
+  (define base (trait-ledger-env surface-ledger))
+  (define base-index (trait-ledger-data surface-ledger))
+  (define low (lower-surface parsed base
                              #:data-index base-index
-                             #:gamma0-names (map first (trait-ledger-gamma0 base-ledger))))
+                             #:gamma0-names (map first (trait-ledger-gamma0 surface-ledger))))
   (define (elab-under ledger)
     (call-with-trait-ledger
      ledger
