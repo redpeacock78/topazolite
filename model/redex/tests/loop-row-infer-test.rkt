@@ -173,18 +173,26 @@
   (check-equal? (elab-error-id '(Loop loop ((rest #:infer)) Unit #:infer unit ()))
                 "E-ARI-001"))
 
-(test-case "S14b 014c1b で反転する Move の初回実引数は既存の loop shape gate で拒否する"
+(test-case "S14b Move var は受理し Move 式は UCore の文法で拒否する"
   (define loop
     '(Loop loop ((rest #:infer)) Unit #:infer
        (Eliminate rest
          ((nil () -> unit)
-          (cons (x tail) -> (Apply loop tail))))
+          (cons (x tail) -> (Apply loop (Move tail)))))
        ((Move xs))))
-  (check-exn loop-shape-error?
-             (λ ()
-               (elab `(Fn ((xs (List (Owned Res)))) Unit () ,loop)))))
+  (check-not-exn
+   (λ () (elab `(Fn ((xs (List (Owned Res)))) Unit (Partial Own) ,loop))))
+  (define expression-loop
+    '(Loop loop ((rest #:infer)) Unit #:infer
+       (Eliminate rest
+         ((nil () -> unit)
+          (cons (x tail) -> (Apply loop (Move tail)))))
+       ((Move (Apply make-list)))))
+  (check-equal?
+   (elab-error-id `(Fn ((xs (List (Owned Res)))) Unit () ,expression-loop))
+   "E-SYN-003"))
 
-(test-case "S14b 014c1b で反転する Let の Move 値を変数経由で渡すと E-OWN-010"
+(test-case "S14b Let の Move 値を変数経由で渡すと E-OWN-010"
   (define loop
     '(Loop loop ((rest #:infer)) Unit #:infer
        (Eliminate rest

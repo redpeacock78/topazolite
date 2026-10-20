@@ -4098,10 +4098,15 @@
       (when (inferred? raw-result-type)
         (violation 'inferred-result-type))
       (for ([argument (in-list arguments)])
-        (unless (match argument
+        (unless
+            (or (match argument
                   [`(#:var ,_ ,_) #t]
                   [`(#:lit ,_ ,_) #t]
                   [_ #f])
+                (match (peel-node argument)
+                  [`(Move ,place)
+                   (symbol? (peel-node place))]
+                  [_ #f]))
           (violation 'non-atomic-initial-argument)))
       (when (for/or ([argument (in-list arguments)])
               (set-member? (free-vars argument) function))

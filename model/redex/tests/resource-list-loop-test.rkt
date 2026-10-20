@@ -4,6 +4,7 @@
          racket/list
          racket/match
          "../diagnostic.rkt"
+         "../borrow.rkt"
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
@@ -12,6 +13,140 @@
          "../elaborate.rkt")
 
 (define resource-list '(List (Owned Res)))
+
+(define (owned-list-value numbers)
+  (foldr (λ (number tail)
+           `(Construct cons (Types (Owned Res))
+             (Apply acquire ,number) ,tail))
+         '(Construct nil (Types (Owned Res)))
+         numbers))
+
+(define (loop-source branch-body [numbers '(1 2)])
+  `(Apply
+    (Fn ((items ,resource-list)) Unit (Partial Own)
+      (Loop walk ((rest #:infer)) Unit #:infer
+        (Eliminate (Move rest)
+          ((nil () -> unit)
+           (cons (head tail) -> ,branch-body)))
+        ((Move items))))
+    ,(owned-list-value numbers)))
+
+(define (resource-loop branch-body [extra-parameters '()]
+                       [extra-arguments '()] [numbers '(1 2)]
+                       [nil-body 'unit])
+  `(Loop walk ((rest #:infer) ,@extra-parameters) Unit #:infer
+     (Eliminate (Move rest)
+       ((nil () -> ,nil-body)
+        (cons (head tail) -> ,branch-body)))
+     ((Move items) ,@extra-arguments)))
+
+(define (resource-loop-program loop [result-type 'Unit]
+                               [fn-row '(Partial Own)]
+                               [body-prefix #f] [numbers '(1 2)])
+  `(Apply
+    (Fn ((items ,resource-list)) ,result-type ,fn-row
+      ,(if body-prefix
+           (body-prefix loop)
+           loop))
+    ,(owned-list-value numbers)))
+
+(define (for-option-loop loop payload-type)
+  `(NarrativeExpr
+    (Let (%for-option-resource-test const Unit)
+      ,loop
+      (Construct none (Types ,payload-type)))) )
+
+(define (run-program program)
+  (match (elab program)
+    [(list core expected _row callables)
+     (define executable (execution-core (erase-core core) callables))
+     (define run (bounded-trace-g2 (inject-g2m executable) 1000))
+     (check-equal? (execution-outcome run) 'terminal)
+     (define configs (execution-configs run))
+     (for ([configuration (in-list configs)] [index (in-naturals)])
+       (define row (runtime-row configuration callables expected))
+       (check-not-false row
+                        (format "config ~a に runtime-row がある: ~s"
+                                index configuration))
+       (check-true (and row (config-ok? configuration callables expected row))
+                   (format "config ~a が config-ok? を満たす: ~s"
+                           index configuration)))
+     (values configs expected callables core)]
+    [`(err ,diagnostic)
+     (fail-check (format "UCore を elaborate できない: ~a: ~a"
+                         (diagnostic-id diagnostic)
+                         (diagnostic-message diagnostic)))]
+    [other (fail-check (format "UCore を elaborate できない: ~s" other))]))
+
+(define (finish-events configuration)
+  (filter (λ (event) (match event [`(fin ,_) #t] [`(finLeaf ,_ ,_) #t] [_ #f]))
+          (config-events configuration)))
+
+(define (check-all-dropped configuration token-count)
+  (check-equal? (map second (config-tokens configuration))
+                (make-list token-count 'Dropped)))
+
+(define (rule-between before after)
+  (define named (raw-steps-g2/named before))
+  (or (for/or ([step (in-list named)])
+        (and (equal? (second step) after) (first step)))
+      (let ([rules (remove-duplicates (map first named))])
+        (and (= (length rules) 1) (first rules)))))
+
+(define (token-drop-transitions configurations)
+  (append*
+   (for/list ([before (in-list configurations)]
+              [after (in-list (cdr configurations))])
+     (for/list ([entry (in-list (config-tokens after))]
+                #:when (and (eq? (second entry) 'Dropped)
+                            (eq? (token-state before (first entry)) 'Available)))
+       (list (first entry) (rule-between before after))))))
+
+(define (token-state configuration token)
+  (define entry (assoc token (config-tokens configuration)))
+  (and entry (second entry)))
+
+(define (check-dropped-once configurations tokens)
+  (define drops (token-drop-transitions configurations))
+  (for ([token (in-list tokens)])
+    (define token-drops
+      (filter (λ (drop) (equal? (first drop) token)) drops))
+    (check-equal? (length token-drops) 1
+                  (format "~s は Available から Dropped へ一度だけ遷移する" token))
+    (when (= (length token-drops) 1)
+      (check-not-false (second (first token-drops))
+                       (format "~s の drop 規則を trace から特定できる" token)))))
+
+(define (trace-rules configurations)
+  (remove-duplicates
+   (append*
+    (for/list ([configuration (in-list configurations)])
+      (map first (raw-steps-g2/named configuration))))))
+
+(define (check-terminal-ledger configurations [carried '()])
+  (define terminal (last configurations))
+  (define tokens (config-tokens terminal))
+  (for ([entry (in-list tokens)])
+    (check-equal? (second entry)
+                  (if (member (first entry) carried) 'Available 'Dropped)))
+  (check-dropped-once
+   configurations
+   (map first (filter (λ (entry) (eq? (second entry) 'Dropped)) tokens))))
+
+(define (check-finish-counts configurations token-count)
+  (define terminal (last configurations))
+  (check-equal? (length (finish-events terminal)) token-count)
+  (check-equal? (length (remove-duplicates (finish-events terminal) equal?))
+                token-count))
+
+(define (loop-shape-error? failure)
+  (and (exn:fail? failure)
+       (regexp-match? #rx"loop 印の形の違反" (exn-message failure))))
+
+(define (elab-error-id expression)
+  (match (elab expression)
+    [`(err ,diagnostic) (diagnostic-id diagnostic)]
+    [_ #f]))
 
 (define source
   `(Apply
@@ -28,15 +163,15 @@
         (Apply acquire 2)
         (Construct nil (Types (Owned Res)))))))
 
-(define (elaborated-source)
-  (match (elab source)
+(define (elaborated-source [program source])
+  (match (elab program)
     [(list core expected _row callables)
      (values (execution-core (erase-core core) callables)
              expected callables)]
     [other (fail-check (format "UCore を elaborate できない: ~s" other))]))
 
-(define (run-source)
-  (define-values (core expected callables) (elaborated-source))
+(define (run-source [program source])
+  (define-values (core expected callables) (elaborated-source program))
   (define run (bounded-trace-g2 (inject-g2m core) 500))
   (check-equal? (execution-outcome run) 'terminal)
   (values (execution-configs run) expected callables core))
@@ -165,6 +300,44 @@
     [`(cfg ,_ ,heap ,places ,tokens ,trace)
      `(cfg ,control ,heap ,places ,tokens ,trace)]))
 
+(test-case "B6 loop 印の初回実引数 Move var を受理し Move 式を拒否する"
+  (check-not-exn (λ () (elab (loop-source '(Apply walk (Move tail)))))
+                 "Move xs は初回実引数として受理する")
+  (check-exn
+   loop-shape-error?
+   (λ ()
+     (elab '(Loop walk ((rest #:infer)) Unit #:infer unit ((Apply make-list)))))
+   "初回実引数の Apply は既存の shape gate で拒否する")
+  (check-equal?
+   (elab-error-id
+    '(Fn ((items (List (Owned Res)))) Unit (Partial Own)
+       (Loop walk ((rest #:infer)) Unit #:infer
+         (Eliminate (Move rest)
+           ((nil () -> unit)
+            (cons (head tail) -> (Apply walk (Move tail)))))
+         ((Move (Apply make-list))))))
+   "E-SYN-003"))
+
+(test-case "B6b 初回実引数の Move 後の裸読みは拒否し二度目の Move は実行時に失敗する"
+  (define (continued-loop continuation)
+    `(Apply
+      (Fn ((items ,resource-list)) Unit (Partial Own)
+        (Let (ignored const Unit)
+          ,(resource-loop '(Apply walk (Move tail)))
+          ,continuation))
+      ,(owned-list-value '(1))))
+  (check-equal? (elab-error-id (continued-loop 'items)) "E-OWN-010")
+  (match (elab (continued-loop '(Let (again const (List (Owned Res)))
+                                     (Move items) unit)))
+    [(list core _expected _row callables)
+     (define run (bounded-trace-g2
+                  (inject-g2m (execution-core (erase-core core) callables)) 300))
+     (check-not-false
+      (for/or ([configuration (in-list (execution-configs run))])
+        (for/or ([step (in-list (raw-steps-g2/named configuration))])
+          (eq? (first step) 'R-MoveError))))]
+    [other (fail-check (format "二度目の Move は静的に受理する: ~s" other))]))
+
 (test-case "B5 資源 List の再帰走査の全中間 config が型付く"
   (define-values (configs expected callables _core) (run-source))
   (check-not-false
@@ -180,6 +353,198 @@
                 (format "config ~a が型付く: ~s" index configuration)))
   (define terminal (last configs))
   (check-equal? (map second (config-tokens terminal)) '(Dropped Dropped)))
+
+(test-case "B7 Loop の正常完了で各要素を一度だけ drop する"
+  (define loop (resource-loop '(Apply walk (Move tail))))
+  (define-values (configs _type _callables _core)
+    (run-program (resource-loop-program loop)))
+  (define terminal (last configs))
+  (check-all-dropped terminal 2)
+  (check-finish-counts configs 2))
+
+(test-case "B8 本体の Drop と反復 Scope は同じ要素を二重 drop しない"
+  (define body
+    '(Let (dropped const Unit) (Drop (Move head))
+       (Apply walk (Move tail))))
+  (define loop (resource-loop body))
+  (define-values (configs _type _callables _core)
+    (run-program (resource-loop-program loop)))
+  (define terminal (last configs))
+  (check-all-dropped terminal 4)
+  (define drops (token-drop-transitions configs))
+  (check-equal? (sort (map first drops) < #:key second)
+                (sort (map first (config-tokens terminal)) < #:key second))
+  (check-equal? (sort (map second drops) string<? #:key symbol->string)
+                '(R-Drop R-Drop R-LetOwnedB R-LetOwnedB))
+  (check-equal? (finish-events terminal) '()))
+
+(test-case "B9 Leave (Move head) は token を payload に移し未訪問 tail を drop する"
+  (define loop (resource-loop '(Leave (Move head))))
+  (define program
+    (resource-loop-program
+     loop '(Option (Owned Res)) '(Partial Own)
+     (λ (body) (for-option-loop body '(Owned Res))) '(1 2)))
+  (define-values (configs _type _callables _core) (run-program program))
+  (define terminal (last configs))
+  (define carried (collect-tokens (config-core terminal)))
+  (check-equal? (length carried) 1)
+  (for ([entry (in-list (config-tokens terminal))])
+    (check-equal? (second entry)
+                  (if (member (first entry) carried) 'Available 'Dropped)))
+  (define dropped
+    (map first (filter (λ (entry) (eq? (second entry) 'Dropped))
+                       (config-tokens terminal))))
+  (check-dropped-once configs dropped)
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs)))
+  (check-finish-counts configs 2))
+
+(test-case "B10 2 要素目の return は今の head と直前の head を drop する"
+  (define loop
+    '(Loop walk ((rest #:infer)) Unit #:infer
+       (Eliminate (Move rest)
+         ((nil () -> unit)
+          (cons (head tail) ->
+            (Eliminate (Move tail)
+              ((nil () -> unit)
+               (cons (second rest) -> (Return unit)))))))
+       ((Move items))))
+  (define-values (configs _type _callables _core)
+    (run-program (resource-loop-program loop 'Unit '(Partial Own) #f '(1 2))))
+  (check-terminal-ledger configs)
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs))))
+
+(test-case "B11 1 要素目の leave は未訪問 tail も一度だけ drop する"
+  (define loop (resource-loop '(Leave 0) '() '() '(1 2 3)))
+  (define program
+    (resource-loop-program
+     loop '(Option Int) '(Partial Own)
+     (λ (body) (for-option-loop body 'Int)) '(1 2 3)))
+  (define-values (configs _type _callables _core) (run-program program))
+  (check-terminal-ledger configs)
+  (check-equal? (config-core (last configs))
+                '(Construct (Option Int) some 0))
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs))))
+
+(test-case "B12 内側 Loop の leave は外側の式境界へ届き両方の tail を drop する"
+  (define outer-loop
+    `(Loop outer ((rest #:infer) (inner-rest #:infer)) Unit #:infer
+       (Eliminate (Move rest)
+         ((nil () -> unit)
+          (cons (outer-head outer-tail) ->
+            (Loop inner ((inner-rest #:infer)) Unit #:infer
+              (Eliminate (Move inner-rest)
+                ((nil () -> unit)
+                 (cons (inner-head inner-tail) -> (Leave 0))))
+              ((Move inner-rest))))))
+       ((Move items) (Move inner-items))))
+  (define program
+    `(Apply
+      (Fn ((items ,resource-list) (inner-items ,resource-list))
+          (Option Int) (Partial Own)
+        (NarrativeExpr
+         (Let (%for-option-nested-test const Unit)
+           ,outer-loop (Construct none (Types Int)))))
+      ,(owned-list-value '(1 2))
+      ,(owned-list-value '(3 4))))
+  (define-values (configs _type _callables _core) (run-program program))
+  (check-equal? (config-core (last configs))
+                '(Construct (Option Int) some 0))
+  (check-terminal-ledger configs)
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs))))
+
+(test-case "B13 Return (Move head) は token を移送し残りを一度だけ drop する"
+  (define loop
+    '(Loop walk ((rest #:infer)) (Owned Res) #:infer
+       (Eliminate (Move rest)
+         ((nil () -> (Return (Apply acquire 0)))
+          (cons (head tail) ->
+            (Eliminate (Move tail)
+              ((nil () -> (Return (Move head)))
+               (cons (second rest) -> (Return (Move second))))))))
+       ((Move items))))
+  (define program
+    `(Apply
+      (Fn ((items ,resource-list)) (Owned Res) (Partial Own) ,loop)
+      ,(owned-list-value '(1 2 3))))
+  (define-values (configs _type _callables _core) (run-program program))
+  (define terminal (last configs))
+  (define carried (collect-tokens (config-core terminal)))
+  (check-equal? (length carried) 1)
+  (check-terminal-ledger configs carried)
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs))))
+
+(define (mut-loop-program loop result-type #:option? [option? #f])
+  `(Apply
+    (Fn ((items ,resource-list)) ,result-type (Partial Mutation Own)
+      (Let (n mut Int) 0
+        ,(if option?
+             `(NarrativeExpr
+               (Let (%for-option-mut-test const Unit)
+                 ,loop (Construct none (Types Int))))
+             `(Let (result const Unit) ,loop n))))
+    ,(owned-list-value '(1 2))))
+
+(test-case "B14 mut accumulator は正常完了で要素数に達する"
+  (define loop
+    '(Loop walk ((rest #:infer)) Unit #:infer
+       (Eliminate (Move rest)
+         ((nil () -> unit)
+          (cons (head tail) ->
+            (Let (incremented const Unit)
+              (Reassign n (Apply add n 1))
+              (Apply walk (Move tail))))))
+       ((Move items))))
+  (define-values (configs _type _callables _core)
+    (run-program (mut-loop-program loop 'Int)))
+  (check-equal? (config-core (last configs)) 2)
+  (check-terminal-ledger configs))
+
+(test-case "B14 mut accumulator は 2 要素目の leave で 2 になり全 token を drop する"
+  (define loop
+    '(Loop walk ((rest #:infer)) Unit #:infer
+       (Eliminate (Move rest)
+         ((nil () -> unit)
+          (cons (head tail) ->
+            (Let (incremented const Unit)
+              (Reassign n (Apply add n 1))
+              (Eliminate (Move tail)
+                ((nil () -> (Leave n))
+                 (cons (next rest) ->
+                   (Let (incremented-again const Unit)
+                     (Reassign n (Apply add n 1))
+                     (Leave n)))))))))
+       ((Move items))))
+  (define-values (configs _type _callables _core)
+    (run-program (mut-loop-program loop '(Option Int) #:option? #t)))
+  (check-equal? (config-core (last configs))
+                '(Construct (Option Int) some 2))
+  (check-terminal-ledger configs)
+  (check-not-false (member 'R-ScopeAbort (trace-rules configs)))
+  (check-not-false (member 'R-HandleReturn (trace-rules configs))))
+
+(test-case "B15 #:infer の資源仮引数は Typed Core で Scope と Let に包まれる"
+  (define-values (_core _type _callables typed-core)
+    (run-program (resource-loop-program
+                  (resource-loop '(Apply walk (Move tail))))))
+  (define recur-body
+    (let walk ([term (erase-core typed-core)])
+      (match term
+        [`(Recur ,_ ,_ ,_ ,body ,_) body]
+        [(? list? parts)
+         (for/or ([part (in-list parts)]) (walk part))]
+        [_ #f])))
+  (check-not-false recur-body)
+  (check-not-false
+   (let walk ([term recur-body])
+     (match term
+       [`(Scope ,_ (Let (,_ ,_ (Owned Res)) ,_ ,_)) #t]
+       [(? list? parts) (for/or ([part (in-list parts)]) (walk part))]
+       [_ #f]))))
 
 (test-case "B5n RecurVal 内の free capture は E-OWN-035 で拒否する"
   (define-values (configs expected callables _core) (run-source))
