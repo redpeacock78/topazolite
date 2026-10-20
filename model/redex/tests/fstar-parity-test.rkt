@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
- (check-equal? (length racket-surface-constructors) 42)
+ (check-equal? (length racket-surface-constructors) 43)
  (check-equal? (length racket-ucore-constructors) 19)
- (check-equal? (length fstar-constructors) 41))
+ (check-equal? (length fstar-constructors) 42))
 
 (test-case
  "対応表に違反が無い"
@@ -64,7 +64,7 @@
  "F* の予約語の一覧が lexer.rkt の予約語と一致する"
  (check-equal? (sort fstar-keywords symbol<?)
                (sort keywords symbol<?))
- (check-equal? (length fstar-keywords) 17))
+ (check-equal? (length fstar-keywords) 20))
 
 (test-case
  "kind と欄の数が食い違うと違反になる"
@@ -101,6 +101,7 @@
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
  (check-equal? (row-kind 'SLeave) 'one-to-one)
+ (check-equal? (row-kind 'SBoolIf) 'one-to-one)
  (check-equal? (row-kind 'SFor) 'one-to-one)
  (check-equal? (row-kind 'Reassign) 'one-to-one)
  (check-equal? (row-kind 'Leave) 'one-to-one)
@@ -131,6 +132,9 @@
    (cons 'SStr      (redex-match? Surface sexpr `(SStr ,s0 "a")))
    (cons 'SUnit     (redex-match? Surface sexpr `(SUnit ,s0)))
    (cons 'SBool     (redex-match? Surface sexpr `(SBool ,s0 true)))
+   (cons 'SBoolIf   (redex-match? Surface sexpr
+                                   `(SBoolIf ,s0 (SBool ,s0 true)
+                                            (SBool ,s0 false) (SBool ,s0 true))))
    (cons 'SVar      (redex-match? Surface sexpr `(SVar ,s0 x)))
    (cons 'SReturn   (redex-match? Surface sexpr `(SReturn ,s0 (SInt ,s0 1))))
    (cons 'SLeave    (redex-match? Surface sexpr `(SLeave ,s0 (SInt ,s0 1))))

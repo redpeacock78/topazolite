@@ -254,6 +254,23 @@
  (check-match (p-expr "x |> r.g")
               `(SApply ,_ (SProj ,_ ,_ ,_) ((SVar ,_ x)))))
 
+(test-case "L5 型引数の閉じの直後の = は受理する"
+ (check-match (p "let x: List<Int>= nil()\nx")
+              `(SProgram ,_ ((SBind ,_ let (SName ,_ x)
+                                      (TApp ,_ (SName ,_ List) ((TName ,_ Int))) ,_)) ,_))
+ (check-match (p "type Foo<T>=\n | foo<T>\n0")
+              `(SProgram ,_ ((SDataDecl ,_ (SName ,_ Foo) ,_ ,_)) ,_)))
+
+(test-case "整数の + は演算子 alias の適用へ下りる"
+ (check-match (p-expr "1 + 2")
+              `(SApply ,_ (SVar ,_ %op-add) ((SInt ,_ 1) (SInt ,_ 2)))))
+
+(test-case "P4b 括弧で包んだ pipe の右辺には差し込まない"
+ (check-match (p-expr "x |> (g(a))")
+              `(SApply ,_ (SApply ,_ (SVar ,_ g) ((SVar ,_ a))) ((SVar ,_ x))))
+ (check-match (p-expr "x |> (y |> f)")
+              `(SApply ,_ (SApply ,_ (SVar ,_ f) ((SVar ,_ y))) ((SVar ,_ x)))))
+
 (test-case
  "SUR-002a: pipe は式全体の span と左辺の span を保つ"
  (define tree (p-expr "x |> f(a)"))
@@ -562,8 +579,8 @@
 (test-case
  "未対応の記号は字句または構文で拒否される"
  (check-equal? (p-code "List<Int>") "E-SUR-005")
- (check-equal? (diagnostic-primary-span (p "List<Int>")) (sp 4 5))
- (check-equal? (p-code "1 + 2") "E-SUR-002")
+ (check-equal? (diagnostic-primary-span (p "List<Int>")) (sp 8 9))
+ (check-equal? (p-code "1 / 2") "E-SUR-002")
  ;; 式位置の ?= は未対応の束縛構文なので拒否する。
  (check-equal? (p-code "x ?= y") "E-SUR-005")
  (check-equal? (diagnostic-primary-span (p "x ?= y")) (sp 2 4)))

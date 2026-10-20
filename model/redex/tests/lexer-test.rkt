@@ -82,17 +82,13 @@
                '(if else ifx elsewhere eof)))
 
 (test-case
- "SUR-011: -> は 2 byte の記号であり、不完全な形は字句エラーになる"
+ "SUR-011: -> は 2 byte の記号で、単独の - は演算子 token になる"
  (check-equal? (kinds "fn() -> Int") '(kw punct punct punct ident eof))
  ;; a は 0-1、-> は 1-3、b は 3-4。
  (check-equal? (take (spans "a->b") 3)
                '((#:span src 0 1) (#:span src 1 3) (#:span src 3 4)))
- (for ([src (in-list '("- >" "-"))]
-       [at  (in-list '(0 0))])
-   (define d (lex/string 'src src))
-   (check-equal? (diagnostic-id d) "E-SUR-002")
-   (check-equal? (diagnostic-primary-span d)
-                 `(#:span src ,at ,(add1 at)))))
+ (check-equal? (map stok-value (lex/string 'src "- >")) '(- > eof))
+ (check-equal? (map stok-value (lex/string 'src "-")) '(- eof)))
 
 (test-case
  "SUR-012: => は一つの punct token である"
@@ -222,12 +218,32 @@
 
 (test-case
  "字句にならない文字は E-SUR-002 であり、span は code point の byte 列を覆う"
- (check-equal? (lex-code 'src #"a + b") "E-SUR-002")
- (check-equal? (lex-primary 'src #"a + b") '(#:span src 2 3))
+ (check-equal? (lex-code 'src #"a / b") "E-SUR-002")
+ (check-equal? (lex-primary 'src #"a / b") '(#:span src 2 3))
  ;; U+FFFD は正しい UTF-8 なので E-SUR-001 ではない。3 byte を覆う。
  (check-equal? (lex-code 'src (string->bytes/utf-8 "�")) "E-SUR-002")
  (check-equal? (lex-primary 'src (string->bytes/utf-8 "�"))
                '(#:span src 0 3)))
+
+(test-case "L1 演算子の token"
+ (check-equal? (map stok-value (drop-right (lex/string 'src "a+b-c*d") 1))
+               '(a + b - c * d))
+ (check-equal? (map stok-value (drop-right (lex/string 'src "a==b!=c<=d>=e") 1))
+               '(a == b != c <= d > = e)))
+
+(test-case "L2 既存の複合記号は変わらない"
+ (check-equal? (map stok-value (drop-right (lex/string 'src "-> => ?= |>") 1))
+               '(-> => ?= \|>)))
+
+(test-case "L3 and or not は予約語"
+ (check-equal? (map stok-kind (drop-right (lex/string 'src "and or not") 1))
+               '(kw kw kw)))
+
+(test-case "L4 >= の二 token は隣接した span を持つ"
+ (define tokens (lex/string 'src "1>=2"))
+ (check-equal? (map stok-value (drop-right tokens 1)) '(1 > = 2))
+ (check-equal? (stok-span (second tokens)) '(#:span src 1 2))
+ (check-equal? (stok-span (third tokens)) '(#:span src 2 3)))
 
 (test-case
  "復帰文字は字句にならない"

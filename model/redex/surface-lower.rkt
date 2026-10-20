@@ -904,6 +904,13 @@
     ;; true と false は構成子であり literal ではない。
     ;; Bool は型引数を持たない。空の Types が E-Construct-Synth の型引数注釈になる。
     [`(SBool ,s ,b) `(Construct ,s ,b (Types))]
+    ;; SUR-013a。注釈つき Let で Bool の Eliminate を検査し、新しい境界を作らない。
+    [`(SBoolIf ,s ,condition ,then ,else)
+     `(Let ,s ((#:bind %bool ,s) const (#:ty Bool ,s))
+        (Eliminate ,s ,(lower-sexpr condition env fail)
+          ((,s true () -> ,(lower-sexpr then env fail))
+           (,s false () -> ,(lower-sexpr else env fail))))
+        (#:var %bool ,s))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
     ;; SUR-015。
     [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]

@@ -42,6 +42,14 @@ let next_byte_is (rest: list FStar.UInt8.t) (n: nat) : bool =
   | b :: _ -> byte_is b n
   | [] -> false
 
+let compound_operator (b: FStar.UInt8.t) (rest: list FStar.UInt8.t) : bool =
+  match rest with
+  | next :: _ ->
+      (byte_is b 61 && byte_is next 61) ||
+      (byte_is b 33 && byte_is next 61) ||
+      (byte_is b 60 && byte_is next 61)
+  | [] -> false
+
 let is_space (b: FStar.UInt8.t) : bool =
   byte_is b 32 || byte_is b 9
 
@@ -182,7 +190,8 @@ let punctuation (b: FStar.UInt8.t) : bool =
   byte_is b 123 || byte_is b 125 || byte_is b 40 || byte_is b 41 ||
   byte_is b 44 || byte_is b 58 || byte_is b 61 || byte_is b 46 ||
   byte_is b 124 || byte_is b 38 || byte_is b 33 ||
-  byte_is b 60 || byte_is b 62 || byte_is b 63
+  byte_is b 60 || byte_is b 62 || byte_is b 63 ||
+  byte_is b 43 || byte_is b 45 || byte_is b 42
 
 type string_scan =
   | StringOk : bool -> nat -> list FStar.UInt8.t -> string_scan
@@ -280,12 +289,15 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
   match word with
   | [a; b] ->
       if (byte_is a 102 && byte_is b 110) ||
-         (byte_is a 105 && byte_is b 102) then TkKw
+         (byte_is a 105 && byte_is b 102) ||
+         (byte_is a 111 && byte_is b 114) then TkKw
       else TkIdent
   | [a; b; c] ->
       if (byte_is a 108 && byte_is b 101 && byte_is c 116) ||
          (byte_is a 109 && byte_is b 117 && byte_is c 116) ||
-         (byte_is a 102 && byte_is b 111 && byte_is c 114) then TkKw
+         (byte_is a 102 && byte_is b 111 && byte_is c 114) ||
+         (byte_is a 97 && byte_is b 110 && byte_is c 100) ||
+         (byte_is a 110 && byte_is b 111 && byte_is c 116) then TkKw
       else TkIdent
   | [a; b; c; d] ->
       if (byte_is a 116 && byte_is b 114 && byte_is c 117 && byte_is d 101) ||
@@ -313,10 +325,13 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
       else TkIdent
   | _ -> TkIdent
 
-// 命題 5。Racket の lexer.rkt が予約する 17 語のそれぞれに TkKw を返す。
+// 命題 5。Racket の lexer.rkt が予約する 20 語のそれぞれに TkKw を返す。
 // 予約語を接頭辞に持つ語と、予約語より短い語は TkIdent のままである。
 val keyword_word_reserved : unit -> Lemma
-  (keyword_word [102uy; 110uy] == TkKw /\
+  (keyword_word [97uy; 110uy; 100uy] == TkKw /\
+   keyword_word [110uy; 111uy; 116uy] == TkKw /\
+   keyword_word [111uy; 114uy] == TkKw /\
+   keyword_word [102uy; 110uy] == TkKw /\
    keyword_word [105uy; 102uy] == TkKw /\
    keyword_word [108uy; 101uy; 116uy] == TkKw /\
    keyword_word [109uy; 117uy; 116uy] == TkKw /\
@@ -368,6 +383,13 @@ let rec scan_fuel
              scan_fuel id n j r.remaining
                ({ kind = keyword_word r.taken; span = bounded_span id n i j } :: acc)
                (fuel - 1)
+           else if compound_operator b tl then
+             (match tl with
+              | _ :: tl2 ->
+                  scan_fuel id n (i + 2) tl2
+                    ({ kind = TkPunct; span = bounded_span id n i (i + 2) } :: acc)
+                    (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
            else if byte_is b 63 && next_byte_is tl 61 then
              (match tl with
               | _ :: tl2 ->
@@ -469,6 +491,13 @@ let rec scan_fuel_span_sound id n i rest acc fuel =
              let t = { kind = keyword_word r.taken; span = bounded_span id n i j } in
              all_tokens_ok_cons id n t acc;
              scan_fuel_span_sound id n j r.remaining (t :: acc) (fuel - 1)
+           else if compound_operator b tl then
+             (match tl with
+              | _ :: tl2 ->
+                  let t = { kind = TkPunct; span = bounded_span id n i (i + 2) } in
+                  all_tokens_ok_cons id n t acc;
+                  scan_fuel_span_sound id n (i + 2) tl2 (t :: acc) (fuel - 1)
+              | [] -> FStar.Pervasives.false_elim ())
            else if byte_is b 63 && next_byte_is tl 61 then
              (match tl with
               | _ :: tl2 ->
@@ -646,6 +675,34 @@ let lex_try_pipe_ok () : Lemma
             z.span.startByte == 10 && z.span.endByte == 10
        | _ -> false))
 
+(* SUR-013a。==、!=、<= は各 1 token、>= は隣接する 2 token である。 *)
+let lex_operator_tokens_ok () : Lemma
+  (match lex SyntheticSid [61uy; 61uy; 32uy; 33uy; 61uy; 32uy;
+                           60uy; 61uy; 32uy; 62uy; 61uy] with
+   | LexOk [eq; ne; le; gt; ge; eof] ->
+       eq.kind = TkPunct && ne.kind = TkPunct && le.kind = TkPunct &&
+       gt.kind = TkPunct && ge.kind = TkPunct && eof.kind = TkEof &&
+       eq.span.startByte == 0 && eq.span.endByte == 2 &&
+       ne.span.startByte == 3 && ne.span.endByte == 5 &&
+       le.span.startByte == 6 && le.span.endByte == 8 &&
+       gt.span.startByte == 9 && gt.span.endByte == 10 &&
+       ge.span.startByte == 10 && ge.span.endByte == 11 &&
+       eof.span.startByte == 11 && eof.span.endByte == 11
+   | _ -> false)
+  = assert_norm
+      (match lex SyntheticSid [61uy; 61uy; 32uy; 33uy; 61uy; 32uy;
+                               60uy; 61uy; 32uy; 62uy; 61uy] with
+       | LexOk [eq; ne; le; gt; ge; eof] ->
+           eq.kind = TkPunct && ne.kind = TkPunct && le.kind = TkPunct &&
+           gt.kind = TkPunct && ge.kind = TkPunct && eof.kind = TkEof &&
+           eq.span.startByte == 0 && eq.span.endByte == 2 &&
+           ne.span.startByte == 3 && ne.span.endByte == 5 &&
+           le.span.startByte == 6 && le.span.endByte == 8 &&
+           gt.span.startByte == 9 && gt.span.endByte == 10 &&
+           ge.span.startByte == 10 && ge.span.endByte == 11 &&
+           eof.span.startByte == 11 && eof.span.endByte == 11
+       | _ -> false)
+
 (* SUR-002b。interpolated string, escape, nested string, and error spans. *)
 let lex_interpolation_ok () : Lemma
   (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 120uy; 125uy; 98uy; 34uy] with
@@ -725,6 +782,7 @@ type sexpr =
   | SStr      : span -> string -> sexpr
   | SUnit     : span -> sexpr
   | SBool     : span -> bool -> sexpr
+  | SBoolIf   : span -> sexpr -> sexpr -> sexpr -> sexpr
   | SVar      : span -> string -> sexpr
   | SReturn   : span -> sexpr -> sexpr
   | SLeave    : span -> sexpr -> sexpr
@@ -772,6 +830,7 @@ let span_of_expr (e: sexpr) : Tot span =
   | SStr s _      -> s
   | SUnit s       -> s
   | SBool s _     -> s
+  | SBoolIf s _ _ _ -> s
   | SVar s _      -> s
   | SReturn s _   -> s
   | SLeave s _    -> s
@@ -834,6 +893,7 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SStr _ _      -> []
   | SUnit _       -> []
   | SBool _ _     -> []
+  | SBoolIf _ condition yes no -> [NExpr condition; NExpr yes; NExpr no]
   | SVar _ _      -> []
   | SReturn _ e   -> [NExpr e]
   | SLeave _ e    -> [NExpr e]
@@ -977,6 +1037,10 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
   | SStr _ _      -> true
   | SUnit _       -> true
   | SBool _ _     -> true
+  | SBoolIf s condition yes no ->
+      contains s (span_of_expr condition) && wf_expr condition &&
+      contains s (span_of_expr yes) && wf_expr yes &&
+      contains s (span_of_expr no) && wf_expr no
   | SVar _ _      -> true
   | SReturn s e   -> contains s (span_of_expr e) && wf_expr e
   | SLeave s e    -> contains s (span_of_expr e) && wf_expr e
@@ -1161,6 +1225,12 @@ let parse_span_containment n c =
   match n with
   | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
   | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
+  | NExpr (SBoolIf s condition yes no) ->
+      FStar.List.Tot.Properties.append_memP [NExpr condition] [NExpr yes; NExpr no] c;
+      FStar.List.Tot.Properties.append_memP [NExpr yes] [NExpr no] c;
+      wf_exprs_elim s [condition] c;
+      wf_exprs_elim s [yes] c;
+      wf_exprs_elim s [no] c
   | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
   | NExpr (SLeave s e) -> wf_exprs_elim s [e] c
   | NExpr (SFor s (sx, _) iterable body) ->
@@ -1282,6 +1352,7 @@ let one_to_one (e: sexpr) : Tot bool =
   | SStr _ _     -> true
   | SUnit _      -> true
   | SBool _ _    -> true
+  | SBoolIf _ _ _ _ -> true
   | SVar _ _     -> true
   | SReturn _ _  -> true
   | SLeave _ _   -> true
@@ -1325,6 +1396,12 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
   | SStr s _      -> CLit s
   | SUnit s       -> CConstruct s "unit" []
   | SBool s b     -> CConstruct s (if b then "true" else "false") []
+  | SBoolIf s condition yes no ->
+      CLet s s
+        (CEliminate s (lower_expr condition)
+          [CConstructorBranch s "true" [] (lower_expr yes);
+           CConstructorBranch s "false" [] (lower_expr no)])
+        (CVar s)
   | SVar s _      -> CVar s
   | SReturn s e   -> CReturn s (lower_expr e)
   | SLeave s e    -> CLeave s (lower_expr e)
@@ -1449,6 +1526,13 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
   | SStr s _ -> discard_stmt s (CLit s)
   | SUnit s -> discard_stmt s (CConstruct s "unit" [])
   | SBool s b -> discard_stmt s (CConstruct s (if b then "true" else "false") [])
+  | SBoolIf s condition yes no ->
+      discard_stmt s
+        (CLet s s
+          (CEliminate s (lower_expr condition)
+            [CConstructorBranch s "true" [] (lower_expr yes);
+             CConstructorBranch s "false" [] (lower_expr no)])
+          (CVar s))
   | SVar s _ -> discard_stmt s (CVar s)
   | SReturn s e -> discard_stmt s (CReturn s (lower_expr e))
   | SLeave s e -> discard_stmt s (CLeave s (lower_expr e))
@@ -1502,6 +1586,7 @@ let lower_preserves_span e =
   | SStr _ _     -> ()
   | SUnit _      -> ()
   | SBool _ _    -> ()
+  | SBoolIf _ _ _ _ -> ()
   | SVar _ _     -> ()
   | SReturn _ _  -> ()
   | SLeave _ _   -> ()
@@ -1550,6 +1635,7 @@ let lower_stmt_preserves_span e =
   | SStr _ _ -> ()
   | SUnit _ -> ()
   | SBool _ _ -> ()
+  | SBoolIf _ _ _ _ -> ()
   | SVar _ _ -> ()
   | SReturn _ _ -> ()
   | SLeave _ _ -> ()

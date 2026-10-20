@@ -11,7 +11,7 @@
 ;; variable-not-otherwise-mentioned を使わないのは、それが言語の literal に
 ;; 現れる記号をすべて除くからである。SInt や TName は構成子名であると同時に
 ;; 変数名や label 名として書ける必要があり、lexer もそれらを ident として
-;; 字句化する。variable-except なら除く記号を §2 の予約語 17 語と
+;; 字句化する。variable-except なら除く記号を §2 の予約語 20 語と
 ;; ちょうど一致させられる。
 ;; usid の上書きは spec §5.4 である。Span の usid は
 ;; variable-not-otherwise-mentioned なので、Surface へ拡張すると Surface の
@@ -19,8 +19,8 @@
 ;; source-id は任意の symbol なので variable へ広げる。
 (define-extended-language Surface Span
   (usid ::= variable)
-  (ident ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure))
-  (label ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure))
+  (ident ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not))
+  (label ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not))
   (sbool ::= true false)
   (sbmode ::= const let mut)
   (sname ::= (SName s ident))
@@ -49,6 +49,8 @@
              (SStr s string)
              (SUnit s)
              (SBool s sbool)
+             ;; SUR-013a。境界を作らない Bool の分岐である。
+             (SBoolIf s sexpr sexpr sexpr)
              (SVar s ident)
              (SReturn s sexpr)
              (SLeave s sexpr)

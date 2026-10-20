@@ -284,12 +284,15 @@
     [(kw? ts i 'fn)
      (let-values ([(node j arrow?) (parse-anon-fn ts fail i)])
        ;; => の本体は expr なので、後続の postfix は本体の側で読む。
-       (if arrow? (values node j) (parse-postfix-tail ts fail node j)))]
+       (if arrow?
+           (values node j)
+           (let-values ([(postfix end _insert?) (parse-postfix-tail ts fail node j)])
+             (values postfix end))))]
     [else (parse-pipe ts fail i)]))
 
-;; SUR-002a。pipe ::= postfix ("|>" postfix)*。左結合で SApply へ組み替える。
+;; SUR-013a。pipe は演算子より弱く、差し込み可否は右辺の構文情報で決める。
 (define (parse-pipe ts fail i)
-  (let-values ([(left j) (parse-postfix ts fail i)])
+  (let-values ([(left j _insert?) (parse-or ts fail i)])
     (parse-pipe-tail ts fail left j)))
 
 (define (parse-pipe-tail ts fail left j)
@@ -297,27 +300,143 @@
       (let ([right-start (add1 j)])
         (when (eof? ts right-start)
           (fail 'surface-unexpected-token (span-at ts j)))
-        (let-values ([(right k) (parse-postfix ts fail right-start)])
-          (parse-pipe-tail ts fail (pipe-insert left right) k)))
+        (let-values ([(right k insert?) (parse-or ts fail right-start)])
+          (parse-pipe-tail ts fail (pipe-insert left right insert?) k)))
       (values left j)))
 
-(define (pipe-insert left right)
+(define (pipe-insert left right insert?)
   (define s (hull (node-span left) (node-span right)))
-  (match right
-    [`(SApply ,_ ,callee ,args) `(SApply ,s ,callee ,(cons left args))]
-    [_ `(SApply ,s ,right (,left))]))
+  (match* (insert? right)
+    [(#t `(SApply ,_ ,callee ,args)) `(SApply ,s ,callee ,(cons left args))]
+    [(_ _) `(SApply ,s ,right (,left))]))
+
+(define (parse-or ts fail i)
+  (let-values ([(left j insert?) (parse-and ts fail i)])
+    (let loop ([left left] [j j] [insert? insert?])
+      (if (kw? ts j 'or)
+          (let-values ([(right k _right-insert?) (parse-and ts fail (operator-rhs ts fail j))])
+            (loop `(SBoolIf ,(hull (node-span left) (node-span right))
+                            ,left (SBool ,(span-at ts j) true) ,right)
+                  k #f))
+          (values left j insert?)))))
+
+(define (parse-and ts fail i)
+  (let-values ([(left j insert?) (parse-not ts fail i)])
+    (let loop ([left left] [j j] [insert? insert?])
+      (if (kw? ts j 'and)
+          (let-values ([(right k _right-insert?) (parse-not ts fail (operator-rhs ts fail j))])
+            (loop `(SBoolIf ,(hull (node-span left) (node-span right))
+                            ,left ,right (SBool ,(span-at ts j) false))
+                  k #f))
+          (values left j insert?)))))
+
+(define (operator-rhs ts fail i)
+  (define next (add1 i))
+  (when (eq? (kind-at ts next) 'nl) (fail-at ts fail next))
+  next)
+
+(define (parse-not ts fail i)
+  (if (kw? ts i 'not)
+      (let-values ([(operand j _insert?) (parse-not ts fail (operator-rhs ts fail i))])
+        (values `(SBoolIf ,(hull (span-at ts i) (node-span operand))
+                          ,operand (SBool ,(span-at ts i) false) (SBool ,(span-at ts i) true))
+                j #f))
+      (parse-cmp ts fail i)))
+
+(define (comparison-at ts i)
+  (cond
+    [(punct? ts i '==) (list 'eq 1 (span-at ts i))]
+    [(punct? ts i '!=) (list 'ne 1 (span-at ts i))]
+    [(punct? ts i '<=) (list 'le 1 (span-at ts i))]
+    [(punct? ts i '<) (list 'lt 1 (span-at ts i))]
+    [(punct? ts i '>)
+     (if (and (punct? ts (add1 i) '=)
+              (= (span-hi (span-at ts i)) (span-lo (span-at ts (add1 i))))
+              (eq? (span-id (span-at ts i)) (span-id (span-at ts (add1 i)))))
+         (list 'ge 2 (span-at ts i))
+         (list 'gt 1 (span-at ts i)))]
+    [else #f]))
+
+(define (parse-cmp ts fail i)
+  (let-values ([(left j insert?) (parse-add ts fail i)])
+    (define comparison (comparison-at ts j))
+    (if (not comparison)
+        (values left j insert?)
+        (let* ([kind (first comparison)]
+               [width (second comparison)]
+               [operator-span (third comparison)]
+               [right-start (+ j width)])
+          (when (eq? (kind-at ts right-start) 'nl) (fail-at ts fail right-start))
+          (let-values ([(right k _right-insert?) (parse-add ts fail right-start)])
+            (when (comparison-at ts k) (fail-at ts fail k))
+            (define whole (hull (node-span left) (node-span right)))
+            (define result
+              (case kind
+                [(eq) (op-apply whole operator-span '%op-eq left right)]
+                [(ne) `(SBoolIf ,whole ,(op-apply whole operator-span '%op-eq left right)
+                                (SBool ,operator-span false) (SBool ,operator-span true))]
+                [(lt) (op-apply whole operator-span '%op-lt left right)]
+                [(le) (op-apply whole operator-span '%op-le left right)]
+                [(gt) (flipped-compare whole operator-span '%op-lt left right)]
+                [(ge) (flipped-compare whole operator-span '%op-le left right)]))
+            (values result k #f))))))
+
+(define (op-apply s s-op name left right)
+  `(SApply ,s (SVar ,s-op ,name) (,left ,right)))
+
+(define (flipped-compare s s-op name left right)
+  (define left-span (node-span left))
+  (define right-span (node-span right))
+  `(SBlock ,s
+           ((SBind ,left-span const (SName ,left-span %cmp-l) #:none ,left)
+            (SBind ,right-span const (SName ,right-span %cmp-r) #:none ,right))
+           (SApply ,s (SVar ,s-op ,name)
+                   ((SVar ,right-span %cmp-r) (SVar ,left-span %cmp-l)))))
+
+(define (parse-add ts fail i)
+  (let-values ([(left j insert?) (parse-mul ts fail i)])
+    (let loop ([left left] [j j] [insert? insert?])
+      (define op (and (eq? (kind-at ts j) 'punct)
+                      (memq (value-at ts j) '(+ -))
+                      (value-at ts j)))
+      (if op
+          (let-values ([(right k _right-insert?) (parse-mul ts fail (operator-rhs ts fail j))])
+            (loop (op-apply (hull (node-span left) (node-span right))
+                            (span-at ts j) (if (eq? op '+) '%op-add '%op-sub)
+                            left right)
+                  k #f))
+          (values left j insert?)))))
+
+(define (parse-mul ts fail i)
+  (let-values ([(left j insert?) (parse-unary ts fail i)])
+    (let loop ([left left] [j j] [insert? insert?])
+      (if (punct? ts j '*)
+          (let-values ([(right k _right-insert?) (parse-unary ts fail (operator-rhs ts fail j))])
+            (loop (op-apply (hull (node-span left) (node-span right))
+                            (span-at ts j) '%op-mul left right)
+                  k #f))
+          (values left j insert?)))))
+
+(define (parse-unary ts fail i)
+  (if (punct? ts i '-)
+      (let-values ([(operand j _insert?) (parse-unary ts fail (operator-rhs ts fail i))])
+        (values `(SApply ,(hull (span-at ts i) (node-span operand))
+                          (SVar ,(span-at ts i) %op-sub)
+                          ((SInt ,(span-at ts i) 0) ,operand))
+                j #f))
+      (parse-postfix ts fail i)))
 
 (define (parse-postfix ts fail i)
   (let-values ([(base i0) (parse-primary ts fail i)])
     (parse-postfix-tail ts fail base i0)))
 
 (define (parse-postfix-tail ts fail base i0)
-  (let loop ([node base] [j i0])
+  (let loop ([node base] [j i0] [last-call? #f])
     (cond
       [(punct? ts j '|(|)
        (let*-values ([(args j0) (parse-args ts fail (add1 j))]
                      [(close close-j) (expect-punct ts fail j0 '|)|)])
-         (loop `(SApply ,(hull (node-span node) close) ,node ,args) close-j))]
+         (loop `(SApply ,(hull (node-span node) close) ,node ,args) close-j #t))]
       [(punct? ts j '|.|)
        (define dot-j (add1 j))
        (cond
@@ -326,15 +445,17 @@
           (let-values ([(labels close-j) (parse-proj-labels ts fail dot-j)])
             (loop `(SProjRec ,(hull (node-span node) (span-at ts close-j))
                              ,node ,labels)
-                  (add1 close-j)))]
+                  (add1 close-j) #f))]
          [else
           (let-values ([(name s label-j) (expect-ident ts fail dot-j)])
             (define label `(SLabel ,s ,name))
-            (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j))])]
-      [else (values node j)])))
+            (loop `(SProj ,(hull (node-span node) s) ,node ,label) label-j #f))])]
+      [else (values node j last-call?)])))
 
 (define (parse-primary ts fail i)
   (cond
+    ;; return と leave も演算子の被演算子位置で式として使える。
+    [(or (kw? ts i 'return) (kw? ts i 'leave)) (parse-expr ts fail i)]
     [(eq? (kind-at ts i) 'int)
      (values `(SInt ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(eq? (kind-at ts i) 'str)

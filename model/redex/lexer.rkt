@@ -8,10 +8,18 @@
 (struct stok (kind value span) #:transparent)
 (struct scan-result (tokens end) #:transparent)
 
-(define keywords '(const let mut fn type true false trait impl for derive return when if else leave pure))
+(define keywords '(const let mut fn type true false trait impl for derive return when if else leave pure and or not))
 (define puncts (hash 123 '|{| 125 '|}| 40 '|(| 41 '|)|
                      44 '|,| 58 '|:| 61 '|=| 46 '|.|
-                     124 '\| 38 '& 33 '! 60 '< 62 '> 63 '?))
+                     124 '\| 38 '& 33 '! 60 '< 62 '> 63 '? 43 '+ 45 '- 42 '*))
+
+(define (compound-at bs n i)
+  (and (< (add1 i) n)
+       (case (bytes-ref bs i)
+         [(61) (and (= (bytes-ref bs (add1 i)) 61) '==)]
+         [(33) (and (= (bytes-ref bs (add1 i)) 61) '!=)]
+         [(60) (and (= (bytes-ref bs (add1 i)) 61) '<=)]
+         [else #f])))
 
 (define (span id a b) `(#:span ,id ,a ,b))
 
@@ -84,6 +92,11 @@
             (< (add1 i) n)
             (= (bytes-ref bs (add1 i)) 62))
        (loop (+ i 2) (cons (stok 'punct '=> (span id i (+ i 2))) acc) depth)]
+      ;; SUR-013a。==、!=、<= は 2 byte の最長一致にする。>= は型引数の
+      ;; 閉じと隣の = を分離するため parser が隣接 span で読む。
+      [(compound-at bs n i)
+       => (lambda (p)
+            (loop (+ i 2) (cons (stok 'punct p (span id i (+ i 2))) acc) depth))]
       ;; SUR-002a。複合記号を単独の ? と | より先に切る。
       [(and (= (bytes-ref bs i) 63)
             (< (add1 i) n)

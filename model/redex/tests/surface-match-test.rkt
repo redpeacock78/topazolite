@@ -93,7 +93,7 @@
                                   "fn pred(n: Nat) -> Nat {\n"
                                   "  return when n {\n    zero => zero\n    succ m => m\n  }\n"
                                   "}\npred(succ(zero))")))
-  (check-true (ok? "fn not(b: Bool) -> Bool {\n  return when b {\n    true => false\n    false => true\n  }\n}\nnot(true)")))
+  (check-true (ok? "fn invert(b: Bool) -> Bool {\n  return when b {\n    true => false\n    false => true\n  }\n}\ninvert(true)")))
 
 (test-case "注釈付き束縛は when を check し、注釈なし when は synth する"
   (check-true (ok? (string-append color

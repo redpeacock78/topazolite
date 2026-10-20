@@ -41,7 +41,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else`、`leave`、`pure` の 17 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else`、`leave`、`pure`、`and`、`or`、`not` の 20 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 `match` は予約語ではなく、束縛名と関数名に使える識別子である。
 
@@ -69,13 +69,18 @@ Surface の経路は展開表を生成しない。
 `str` の値はエスケープを展開した文字列であり、囲みの `"` は含まない。
 既存の文字列に `${` を文字として含める場合は、`$` を `\$` に書き換える。
 
-記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`?=`、`|>`、`|`、`&`、`!`、`<`、`>`、`?` の 18 種である。
+記号は `{`、`}`、`(`、`)`、`,`、`:`、`=`、`.`、`->`、`=>`、`?=`、`|>`、`|`、`&`、`!`、`<`、`>`、`?`、`+`、`-`、`*`、`==`、`!=`、`<=` の 24 種である。
 `->` は `-` と `>` の 2 byte からなる 1 個の `punct` token である。
 `=>` は `=` と `>` の 2 byte からなる 1 個の `punct` token である。
 `?=` は `?` と `=` の 2 byte からなる 1 個の `punct` token である。
 `|>` は `|` と `>` の 2 byte からなる 1 個の `punct` token である。
-lexer はこれら 4 種の複合記号を、各 byte の単独記号より先に照合する。
-`!`、`<`、`>`、`?` はそれぞれ 1 byte の `punct` token である。
+`==`、`!=`、`<=` はそれぞれ 2 byte の 1 個の `punct` token である。
+lexer はこれら 7 種の複合記号を、各 byte の単独記号より先に照合する。
+`>=` は 1 token ではなく、`>` と `=` の 2 token である。
+式の parser は二つの span が隙間なく隣接する場合にだけ `>=` と読む。
+これにより `let x: List<Int>= e` と `type Foo<T>= ...` で型引数の閉じ `>` と後続の `=` を保つ。
+`> =` のように空白を挟んだ二 token は `>=` にならない。
+`!`、`<`、`>`、`?`、`+`、`-`、`*` はそれぞれ 1 byte の `punct` token である。
 
 トークンの種別は `int`、`str`、`istr`、`ident`、`kw`、`punct`、`nl`、`eof` の 8 種である。
 `int` の値は符号なしの整数である。
@@ -106,7 +111,15 @@ fndecl   ::= "fn" ident "(" params ")" ["->" ty] ["!" row] block NL+
 expr     ::= "return" expr | "leave" expr | lambda | pipe
 lambda   ::= ident "=>" expr
            | "fn" "(" lparams ")" ["!" row] "=>" expr
-pipe     ::= postfix ("|>" postfix)*
+pipe     ::= orexpr ("|>" orexpr)*
+orexpr   ::= andexpr ("or" andexpr)*
+andexpr  ::= notexpr ("and" notexpr)*
+notexpr  ::= "not" notexpr | cmpexpr
+cmpexpr  ::= addexpr (cmpop addexpr)?
+cmpop    ::= "==" | "!=" | "<" | "<=" | ">" | ">="
+addexpr  ::= mulexpr (("+" | "-") mulexpr)*
+mulexpr  ::= unary ("*" unary)*
+unary    ::= "-" unary | postfix
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
@@ -147,6 +160,19 @@ label    ::= ident ["<" ty ">"]
 ```
 
 `&` は `|` より強く結合し、どちらも左結合である。
+上の文法は優先順位の低い段から高い段へ順に列挙している。
+`|>`、`or`、`and`、`+`、`-`、`*` は左結合する。
+比較は非結合であり、`a < b < c` のように比較演算子を続けると、二つ目の比較演算子の token の位置で `E-SUR-005` になる。
+`not` は比較より弱く `and` より強いため、`not a < b` は `not (a < b)` と読む。
+単項 `-` は `*` より強く、負数 literal は無く、`-1` は `0 - 1` に相当する。
+二項演算子と `|>` の前後に改行は置けない。
+行頭の `-x` は直前の式の続きではなく、新しい式の単項 `-` である。
+`>=` は字句上の `>` と `=` が隣接する場合だけ比較演算子として読み、`> =` は `E-SUR-005` になる。
+算術と比較の被演算子は `Int` に限る。
+`==` と `!=` も現段階では `Int` 専用であり、他の型の比較の契約は別途定める。
+算術と比較は `%op-add`、`%op-sub`、`%op-mul`、`%op-lt`、`%op-le`、`%op-eq` という Surface から書けない Γ0 alias を呼ぶ。
+`>` と `>=` は左右を原文順に一度ずつ束縛してから `lt` または `le` に逆順で渡す。
+`!=`、`and`、`or`、`not` は `SBoolIf` へ下ろし、境界を作らず短絡する Bool 分岐を表す。
 `?` を付けた欄は optional であり、`?` と `:` の間に空白を置いてよい。
 `when` の枝は constructor pattern または Union member pattern で始まり、枝の先頭に `|` を置かない。
 枝は改行で区切る。
@@ -281,8 +307,9 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 ### 3.1 式構文の制約と `for`
 
 字句に無い記号は lexer が `E-SUR-002` を返す。
-単独の `-`、`+`、`*`、`/`、`%`、`[`、`]`、`;` は字句にならない。
-算術演算子を含む式と式位置の `?=` は、最初の未対応記号または構文に合わない token の位置で拒否する。
+`/`、`%`、`[`、`]`、`;`、`~` は字句にならず、現時点では `E-SUR-002` になる。
+算術、比較、論理演算子を含む式は §3 の文法で受理する。
+式位置の `?=` は、最初の未対応記号または構文に合わない token の位置で拒否する。
 式位置の `?=` は、複合 token 全体の span で `E-SUR-005` になる。
 `List<>` は `>` の位置で `E-SUR-005` になる。
 `|` は型位置と data 型宣言の variant の区切りで受理し、`&` は型位置だけで受理する。
@@ -377,15 +404,18 @@ block の束縛と item は改行で区切る。
 pipe は `|>` で左辺の値を右辺の関数適用へ渡す。
 pipe は `return`、`leave`、無名関数を除く式で最も弱く結合し、左結合する。
 `|>` の前後に改行は置けない。
-右辺は `postfix` であり、無名関数を右辺に置くには括弧で囲む。
+括弧で囲まない無名関数を右辺に置くことはできない。
 括弧で囲まない無名関数は pipe の左辺にならない。
 
-右辺の最後の suffix が呼び出しなら、左辺の値をその引数列の先頭に入れる。
+右辺が括弧で包まれず、最上位に演算子を持たず、最後の suffix が呼び出しである postfix の場合に限り、左辺の値をその引数列の先頭に入れる。
 `x |> f(a, b)` は `f(x, a, b)` になり、`x |> g(1)(2)` は `g(1)(x, 2)` になる。
-最後の suffix が呼び出しでなければ、右辺を関数として左辺だけを引数に渡す。
+それ以外は右辺を関数値として左辺だけを引数に渡す。
 `x |> f` は `f(x)` になり、`x |> r.g` は `r.g(x)` になる。
 この規則では `x |> f()` も `f(x)` になる。
 `x |> f |> g` は左結合により `g(f(x))` になる。
+`x |> f + 1` は `x |> (f + 1)` と同じく `(f + 1)(x)` になる。
+`x |> (g(a))` は `g(a)(x)` であり、括弧付きの右辺には引数を差し込まない。
+`x |> (y |> f)` は内側で `f(y)` となり、外側では `f(y)(x)` になる。
 
 parser は pipe 専用の節点を作らず、既存の `SApply` へ組み替える。
 生成する `SApply` の span は pipe 式全体を覆い、挿入した左辺は自身の span を保つ。
@@ -1031,8 +1061,8 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
-4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 14 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
-5. **予約語**：Racket の `lexer.rkt` が予約する 17 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SBoolIf`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 15 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+5. **予約語**：Racket の `lexer.rkt` が予約する 20 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
 6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
 7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
 
@@ -1063,6 +1093,7 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFor`、`SMatch`、`SIfSome`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `SLeave` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SBoolIf` は、同名の F* 構成子と 1 対 1 で対応する。F* の lowering は既存の `CLet` と `CEliminate` を生成する。
 - `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBind`、`STryBind`、`SReassign`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
@@ -1092,15 +1123,16 @@ P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 `SExprStmt` は Racket Surface の構成子であり、F* では `DExpr` を持つ既存の `SDecl` へ対応する。
 `SExprStmt` を加えた後の parity 件数は、Racket Surface が 38 個、UCore+ が 14 個、F* が 36 個である。
-F* の Surface 構成子一覧は `sexpr` 17 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 26 個を含む。
+F* の Surface 構成子一覧は `sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 27 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
 L1b は Surface の `SLeave` と UCore+ の `Leave` を加え、parity 表で対応なしとした（41/18/38）。
 L3 はそれらを F* の `SLeave` と `CLeave` に一対一で対応させ、当時の parity 件数を 41/18/40 とする。
-014c1a は Surface の `SFor` と UCore+ の `Loop` を加え、F* の `SFor` と `CRecur` へ対応させた。現在の parity 件数は 42/19/41 である。
+014c1a は Surface の `SFor` と UCore+ の `Loop` を加え、F* の `SFor` と `CRecur` へ対応させた（42/19/41）。
+SUR-013a は `SBoolIf` を Racket と F* の Surface に加え、一対一で対応させる。現在の parity 件数は 43/19/42 である。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
-F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 17 語を予約し、`match` を識別子として扱う。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 20 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
 UCore+ の `Eliminate` は constructor 枝と member 枝を持ち、F* の `CEliminate` も補助型 `core_branch` の tag で区別する。
 `fstar-parity-test.rkt` は Surface の `SMatch` と UCore+ の member 枝の witness を検査する。
@@ -1114,7 +1146,7 @@ F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対�
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
 `BlockBody` は elaboration が関数本体または式位置の `if` と `when` の文を持つ分岐ブロックを検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 19 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 41 個（`sexpr` 17 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
+UCore+ の対象構成子リストは 19 個、F* 側の `core` の構成子リストは 15 個であり、SUR-013a 後の F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。

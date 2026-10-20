@@ -111,7 +111,7 @@
 (define non-positive-data-source "type Bad =\n  | mk<fn(Bad) -> Int>\n0")
 (define producers
   (list (list 'surface-invalid-byte        (lambda () (lex 'src (bytes 255)))            1)
-        (list 'surface-unknown-character   (lambda () (lex 'src #"+"))                   1)
+        (list 'surface-unknown-character   (lambda () (lex 'src #"/"))                   1)
         (list 'surface-unterminated-string (lambda () (lex 'src #"\"a"))                 2)
         (list 'surface-invalid-escape      (lambda () (lex 'src #"\"a\\q\""))            5)
         (list 'surface-unexpected-eof      (lambda () (parse (lex/string 'src "if x { 1 } else"))) 15)
