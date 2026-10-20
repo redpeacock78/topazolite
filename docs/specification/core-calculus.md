@@ -456,7 +456,16 @@ le  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-le)>       値 PrimVal(Re
 eq  : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-eq)>       値 PrimVal(Reserved(o-eq), eq)
 acquire : NFn<(Int), Owned<Res>, (), {}, ⟨⟩, Reserved(o-acquire)>  値 PrimVal(Reserved(o-acquire), acquire)
 string-concat : NFn<(String, String), String, (), {}, ⟨⟩, Reserved(o-string-concat)>  値 PrimVal(Reserved(o-string-concat), string-concat)
+%op-add : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-add)>  値 PrimVal(Reserved(o-add), add)
+%op-sub : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-sub)>  値 PrimVal(Reserved(o-sub), sub)
+%op-mul : NFn<(Int, Int), Int, (), {}, ⟨⟩, Reserved(o-mul)>  値 PrimVal(Reserved(o-mul), mul)
+%op-lt : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-lt)>  値 PrimVal(Reserved(o-lt), lt)
+%op-le : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-le)>  値 PrimVal(Reserved(o-le), le)
+%op-eq : NFn<(Int, Int), Bool, (), {}, ⟨⟩, Reserved(o-eq)>  値 PrimVal(Reserved(o-eq), eq)
 ```
+
+`%op-add` から `%op-eq` は Surface の演算子が使う alias であり、Surface の識別子としては綴れない。
+各 alias の値は既存 primitive の `PrimVal` であり、R0、δ、T-Prim の対象は増えない。
 
 Γ0 は elaboration の初期 Γ ではなく、E-Prim（§4.2）と T-Prim（§5.1）だけが引く固定表である。
 プログラムの elaboration は Γ = ∅ から始める（§4.1）。
@@ -597,12 +606,13 @@ place にある資源型の値を消費するときは `move x`（E-Move）を�
 
 ```text
 x ∉ dom(Γ)        Γ0(x) = τ        resource-type?(τ) が偽
-                  Γ0 の x の値が PrimVal(Reserved(o), x)
+                  Γ0 の x の値が PrimVal(Reserved(o), p)
 --------------------------------
-Γ; Δ; Π; B ⊢ x ⇒ τ ! {} ⟹ PrimVal(Reserved(o), x)
+Γ; Δ; Π; B ⊢ x ⇒ τ ! {} ⟹ PrimVal(Reserved(o), p)
 ```
 
 primitive 名は elaboration がその PrimVal へ解決する。
+alias でない primitive では `p = x` である。
 machine は値環境を持たず、簡約は PrimVal に直接 R-Delta（§5.3）を適用する。
 局所束縛が同名の場合は `x ∈ dom(Γ)` なので E-Var が適用され、primitive を隠す。
 

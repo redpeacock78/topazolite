@@ -13,8 +13,9 @@
 
 (test-case "NAR-001/TYP-001: initial origin environments"
   ;; string-concat が kernel の origin と Γ0 に 1 行ずつ加わる。
+  ;; 演算子用の alias 6 行も Γ0 の件数に含む。
   (check-equal? (length R0) 38)
-  (check-equal? (length Γ0) 32)
+  (check-equal? (length Γ0) 38)
   (check-equal? (length Δ0) 9)
   (check-equal? (length Π0) 1)
   (check-equal? (assoc 'o-type-narrative R0)
