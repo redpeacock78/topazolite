@@ -720,7 +720,7 @@ config 再型付けの資源 binder 検査は `RecurVal` 自身の lexical binde
 式境界の `some` adapter は root `Owned` payload を `OwnLeaf` で包む。
 `Owned<List<T>>` の spine は対象外である。
 現在の閉じたプログラムで root `Owned` を生成するのは `Owned<Res>` を返す `acquire` だけであり、`Owned<List<T>>` の値を作る経路がないためである。
-014c1b2 では、Surface の型名 `Res`、式から生成する `for` で資源型の走査対象と tail を `Move` すること、各反復で要素を後始末すること、および Surface から資源型要素を持つ List を作る経路を扱う。
+014c1b2 では、Surface の組み込み型名 `Res`、式から生成する `for` の `%for-list`、`%for-tail`、loop 本体の `%for-rest` を資源型のとき `Move` で渡すこと、資源型要素を各反復の本体の終わりで後始末すること、および Surface から資源型要素を持つ List を作る経路を実装済みである。
 資源型の変数を走査対象にする `for x in xs` は Surface の所有権使用モード推論を扱う既存の申し送り行に残す。
 利用者 effect の operation による handler escape の後始末は、申し送り表の利用者 effect を捕まえる `Handle` の行と同じく、利用者 effect の導入時に確認する。
 

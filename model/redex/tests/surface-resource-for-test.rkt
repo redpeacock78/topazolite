@@ -170,6 +170,7 @@
                    "}\nf()"))
   (define configs
     (check-accepted source '(Option Int) '(Construct (Option Int) some 7)))
+  ;; 6 = 2 回の mk() の acquire token 4 個 + 各回の head Move で作る root token 2 個。
   (check-terminal-ledger configs 6))
 
 (test-case "S7 資源型の変数を反復対象にする for は E-OWN-010"
