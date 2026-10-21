@@ -183,6 +183,11 @@ constructor pattern の束縛子は空白で区切って括弧で囲まず、Uni
 `{}` と `{ a: 1 }` は record 式なので `expr` であり、`if` の合成が作る枝も `expr` である。
 `true` と `false` は Bool の constructor 名として枝の頭に書ける。
 `when` の後ろには閉じ波括弧の直後に呼び出しや射影の suffix を続けられる。
+`T.l(e1, …, en)` は trait `T` の要求欄 `l` を呼び出す形であり、`T` は基底環境または原文の宣言で解決される trait 名である。
+この形は既存の射影と適用の構文を使い、trait 名と同じ綴りの値束縛があっても trait 修飾として解決する。
+trait 名として解決できない `T` は通常の値名として扱う。
+括弧付きの適用が無い `T.l` は通常の値の射影であり、`x.l()` も値 `x` の欄 `l` の呼び出しである。
+`x |> T.l` は pipe の規則により `T.l(x)` となり、要求欄の呼び出しとして解決する。
 `if` は条件と then block の後に必ず `else` と block または `else if` を続ける。
 `else` は then block の閉じ波括弧と同じ行に置く。
 `else` を次の行まで探さないのは、改行が block の式を区切る意味を持つためである。
@@ -684,7 +689,8 @@ kernel の `Printable & Sizable` と `Printable & Sizable & Taggable` は、そ�
 最初の鍵に名前付き出力がなければ内側に `%compose-1` を作り、外側の行はその名前を成分として持つ。
 合成宣言の鍵をすべて先に求めてから出力名を決めるため、`type X = (A & B) & C` が `type AB = A & B` より先にあっても、内側の出力は後続する `AB` になる。
 
-trait 名は合成宣言右辺の `TInter` の葉と、`impl` または `derive` の trait 名としてだけ使える。
+trait 名は合成宣言右辺の `TInter` の葉、`impl` または `derive` の trait 名、要求欄の呼び出し `T.l(...)` の修飾子として使える。
+要求欄の呼び出しでは trait 名前空間を優先し、同じ綴りの値束縛で修飾子を隠さない。
 通常の型別名、`let` 注釈、関数型、record 型の欄、trait template の欄、impl と derive の対象型では型名として解決し、trait または合成宣言名なら `E-SUR-021` とする。
 型位置の `TName` は、`Self`、型仮引数、基本型、型構成子の単独使用、展開中の型別名、環境中の型別名・data 型・trait、未知名の順で解決する。
 `TApp` の頭は、型仮引数、`Self`、展開中の型別名、trait、型構成子でない既知の型、組み込み型構成子と data 型、未知名の順で解決する。
@@ -730,8 +736,8 @@ regularity の違反は `E-SUR-033`、positivity の違反は `E-SUR-034` とす
 ## 6. UCore+ への lowering
 
 lowering の入口は `(lower-surface sprog trait-env)` である。
-返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows intersect-rows data-decls spans))` のいずれかである。
-`term` は UCore+ の項、`trait-rows`、`impl-rows`、`intersect-rows` は宣言から作った行、`data-decls` は data 型宣言の並び、`spans` は宣言由来の鍵から原文 span への対応表である。
+返り値は Diagnostic 1 件か `(struct lowered (term trait-rows impl-rows intersect-rows data-decls providers spans))` のいずれかである。
+`term` は UCore+ の項、`trait-rows`、`impl-rows`、`intersect-rows` は宣言から作った行、`data-decls` は data 型宣言の並び、`providers` は impl/derive の origin から実装 record の束縛名への対応、`spans` は宣言由来の鍵から原文 span への対応表である。
 各 data 型宣言は `(T (X ...) ((K (σ ...)) ...))` の形であり、`T` は型名、`X ...` は型仮引数、各 `K` は constructor 名、各 `σ ...` はその欄の型である。
 合成 trait 行は `trait-rows` に、合成で作った intersect 行は `intersect-rows` に含める。
 呼び側はこれらの行を基底の `trait-env` へ重ね、`data-decls` を基底の data 宣言と合わせて台帳を作る。
@@ -805,7 +811,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   then の型が `Option<U>` のときも平坦化せず、結果型は `Option<Option<U>>` となる。
   文の mode では既存の `SBlock` と `SMatch` の連鎖へ下ろし、false 枝を `Unit` にするため `Option` の構築子を生成しない。
   `IfSome` は elaborate が消費する UCore+ の中間 marker であり、Core の構成子と計算規則には加えない。
-- `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
+- `(SApply s (SProj s_p (SVar s_t T) (SLabel s_l l)) (a ...))` で `T` が trait 名なら、`(TraitCall s T (#:lbl l s_l) (a' ...))` へ落とす。
+  合成 trait の別名はその出力 trait 名へ解決する。
+  elaborate は可視な impl/derive の provider を用いて解決し、`TraitCall` を `(Apply s (Proj s (#:var p s) (#:lbl l s_l)) a' ...)` へ消す。
+  `p` は provider の束縛名であり、結果の Typed Core に `TraitCall` は残らない。
+- その他の `(SApply s f (a ...))` は `(Apply s f' a' ...)` へ落とす。
 - `(SMatch s e arms)` は scrutinee が変数なら `(NarrativeExpr s (Eliminate s e' arms'))` へ落とす。
   それ以外は `(Eliminate s e' arms'')` へ落とし、各枝の本体をその枝の span の `NarrativeExpr` で包む。
   `body-kind` が `expr` の本体は通常の mode で下ろす。
@@ -931,16 +941,34 @@ block の i 番目の束縛は `[startByte(b_i), endByte(block の末尾式))`�
 この span は元の `SBind`、`STryBind`、`SFnDecl` の span とは一致しない。
 `SDataDecl` は項へ畳まず、`data-decls` に宣言を残す。
 
-impl 宣言の lowering は次の形であり、`Apply` は impl 宣言全体の span、`Let` は尾部 span を持つ。
+impl 宣言の lowering は実装 record を一度だけ評価して先に束縛し、その同じ値を impl primitive へ渡す。
+`ρ_T` は `Record(instantiate-requirements(template-of(T), τ))` であり、provider 表に impl row の origin から `%impl-rec-T-n` への対応を記録する。
+`Apply` は impl 宣言全体の span、`Let` は尾部 span を持つ。
 
 ```text
 (SImplDecl s (SName s_n T) ty (SRec s_b fields))
-  ⟶ (Let s_tail ((#:bind %impl-T-n s) const)
-          (Apply s (#:var impl-user-T-n s) body_core) rest)
+  ⟶ (Let s_tail ((#:bind %impl-rec-T-n s) const (#:ty ρ_T s))
+          body_core
+          (Let s_tail ((#:bind %impl-T-n s) const)
+               (Apply s (#:var impl-user-T-n s) (#:var %impl-rec-T-n s))
+               rest))
 ```
 
-`%impl-T-n` は局所の束縛名であり、`impl-user-T-n` は台帳から得る impl primitive 名である。
-impl の実装 record はこの primitive へ渡す。
+`%impl-T-n` は Proof の局所束縛名であり、`impl-user-T-n` は台帳から得る impl primitive 名である。
+derive 宣言は recipe が生成した record を `%derive-rec-T-n` に束縛し、同じ値を derive primitive へ渡す。
+provider 表にも derive row の origin から `%derive-rec-T-n` への対応を記録する。
+その後に `%derive-T-n` を Proof の束縛として作る。
+
+```text
+(SDeriveDecl s (SName s_n T) ty)
+  ⟶ (Let s_tail ((#:bind %derive-rec-T-n s) const)
+          rec_core
+          (Let s_tail ((#:bind %derive-T-n s) const)
+               (Apply s (#:var derive-user-T-n s) (#:var %derive-rec-T-n s))
+               rest))
+```
+
+`rec_core` は trait の recipe が作る record であり、`Sizable` の規則は trait.md §4.6 に定める。
 
 尾部 span を使うと、`Let` と `Recur` の親 span が後続の項を包含する。
 生成した span は入力の token 位置から決まり、`#:synthetic` は使わない。
@@ -965,6 +993,13 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 
 `surface` 相は registry v15 で登録した。
 字句、構文、型別名、lowering を 1 つの相にまとめ、区別は code で付ける。
+
+Surface driver は、トップレベルに `impl` または `derive` 宣言があるプログラムでは、基底台帳から R0 の impl 表だけを除いた台帳を使う。
+trait、intersect、scope の表は保ち、この台帳を重複検査、lowering、elaboration、実行に一貫して渡す。
+`impl` と `derive` が無い場合は受け取った基底台帳を lowering の基底としてそのまま使う。
+宣言が一つも無いプログラムでは台帳を再構築しないため、canonical 台帳のもとで Redex の cache を維持する（trait のみなど他の宣言があれば、その宣言行を加えた台帳を作る）。
+要求欄の呼び出しは、実装 record の束縛が現在の lexical 環境にある impl/derive だけを候補とするため、束縛の無い R0 fixture は呼び出せない。
+宣言の右畳みにより、impl より前に定義した関数からはその impl の provider が見えず、impl より後の関数からは見える。
 
 - `E-SUR-001` `surface-invalid-byte`：UTF-8 として解釈できない byte 列
 - `E-SUR-002` `surface-unknown-character`：字句にならない文字。`\r` を含む
@@ -1000,6 +1035,9 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-032` `surface-constructor-value-name-collision`：constructor の名前が top-level の関数、基底の constructor、または kernel の `Γ0` の名前と重なった。組み込み constructor と top-level 関数の重なりも含む
 - `E-SUR-033` `surface-irregular-data-recursion`：data 型の再帰的な出現の型引数が宣言の型仮引数の並びと一致しない
 - `E-SUR-034` `surface-non-positive-data-recursion`：data 型の再帰的な出現が関数型の引数の側にある
+
+要求欄の呼び出しでは、Surface が trait 名として認識した `T.l(...)` の label が存在しなければ `E-RCD-004`、`Implements` の proof search が `Absent` または `Ambiguous` になる場合は `E-PRF-004` とする。
+UCore+ の `TraitCall` が存在しない trait を参照した場合は `E-SUR-015` となる。
 
 `E-SUR-022` の primary span は、失敗した `TInter` 全体を指す。
 related は `composition-left` と `composition-right` の 2 件で、原文に書かれた左右の operand の span と表示名を持つ。

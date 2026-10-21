@@ -1034,8 +1034,11 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `Untrusted` を包む Record の `mut` Union 欄の拡幅 | `structural-row.md` §7 | Phase 4 以降 | §4.6 |
 | `Refined` を包む Record の `mut` Union 欄の拡幅 | `structural-row.md` §7 | Phase 4 以降 | §4.6 |
-| trait の要求欄の実行時呼出し（impl 本体の値の保持と、解決した impl の欄の参照） | `trait.md` §9 | Phase 2 以降 | §8.1、§10.3 |
-| interpolation の穴の `Printable` による文字列への変換（上の行を前提とする） | `surface.md` §3 | Phase 2 以降 | §2.1.4、§8.1 |
+| `Self` を含む仮引数型からの要求欄の受け手型の推論 | `trait.md` §9 | Phase 4 以降 | §8.1、§10.3 |
+| 戻り値だけに `Self` を持つ要求欄の受け手型の推論 | `trait.md` §9 | Phase 4 以降 | §8.1、§10.3 |
+| method-call sugar `x.l()` による要求欄の呼出し | `trait.md` §9 | Phase 未定 | §10.3 |
+| 借用の署名を持つ要求欄の呼出し（射影した関数値への適用が `E-BOR-012` になる制限。Surface の借用注釈の導入時に回収する） | `trait.md` §9 | Phase 2 以降 | §8.1 |
+| interpolation の穴の `Printable` による文字列への変換 | `surface.md` §3 | Phase 2 以降 | §2.1.4、§8.1 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |

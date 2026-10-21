@@ -161,6 +161,11 @@ G2f の正典表は、次の七行を持つ。
 `Taggable` の trait scope は `s-kernel`、`Int` の target scope は `s-user` であるため、`(root)` からは見えず `(root s-user)` からは見える。
 `Bool` を対象型にした `Taggable` の行は、`search-trait-integration-test.rkt` の `finite-absent-reject` が反転するため、この fixture では追加しない。
 
+この七行は G2f の proof search を検査する fixture であり、Surface の既定実装ではない。
+Surface program に `impl` または `derive` 宣言がある場合、driver は基底台帳から impl 表だけを除き、その台帳へ原文の宣言を加える。
+宣言の無い Surface program は基底台帳をそのまま使うが、要求欄呼び出しの候補は実装 record の束縛が lexical environment にある行に限るため、provider を持たない R0 fixture は呼び出されない。
+UCore の proof-search 試験は、従来どおり R0 の行を使う。
+
 ### 4.3 intersect-table
 
 `intersect-table` の行は、次の五要素を持つ。
@@ -550,9 +555,15 @@ witness を型や成果物へ保存せず、別の merge の goal へ流用し�
   これは既存の「priority の下流利用」とは別の事項であり、Phase 4 以降で扱う。
 - **trait 水準の Effect 制約と impl の適合**：trait declaration は Effect row 表記を持たず、impl が trait 水準の Effect 制約を満たすかも検査しない。
   Surface の Effect row 表記とは別の適合検査であり、Phase 2 以降で扱う。
-- **要求欄の実行時呼出し**：実装 record の値は表に保存せず、impl primitive は `Implements` の Proof を返すだけである。
-  要求欄（たとえば `Printable` の `print`）を実行時に呼ぶ経路（辞書渡し、method 呼出し）は無い。
-  ホワイトペーパーは method 呼出しの綴りも辞書の渡し方も定めていないため、Phase 2 以降へ送る。
+- **`Self` を含む仮引数型からの受け手型の推論**：Surface の要求欄呼出しは、型がちょうど `Self` の仮引数を受け手型の anchor とする。
+  `List<Self>` など `Self` を含む仮引数型から τ を逆向きに推論する機能は無く、Phase 4 以降で扱う。
+- **戻り値だけに `Self` を持つ要求欄の受け手型の推論**：受け手型は実引数の anchor から決め、戻り値の型と呼出し位置の期待型から逆向きに推論する機能は無い。
+  Phase 4 以降で扱う。
+- **method-call sugar による要求欄の呼出し**：要求欄は `T.l(x)` のように trait 名で修飾して呼び出せるが、`x.l()` は通常の欄の呼び出しとして扱う。
+  `x` が record でなければ `E-RCD-003`、`x` の record に欄 `l` が無ければ `E-RCD-004` とする。
+  method-call sugar は欄の射影との優先順位と、同じ label を持つ複数の trait からの選択規則を定める段階で扱う。
+- **借用の署名を持つ要求欄の呼出し**：要求欄から射影した関数値を callee とする `Apply` は、borrow.md §8 の規則により具体的な借用署名を `E-BOR-012` で拒否する。
+  Surface の借用注釈を導入する段階で回収する。
 - **data 型への derive Sizable**：Surface は data 型への `derive Sizable` を `E-SUR-019` で拒否する。
   `sizable-leaves` は型から決まる固定個数の葉を数える規則であり、data 型の constructor ごとに欄の数が異なるためである。
   最短の着手条件は `PAT-001` の後とする。
