@@ -106,6 +106,39 @@
          (provider-oid-for-label right label))]
     [_ #f]))
 
+;; spec §5.2。可視な実装値の行だけで Implements を解き、label の provider を返す。
+(define (resolve-trait-provider target-type trait label obligations
+                                propositions environment)
+  (call-with-trait-ledger
+   (provider-visible-trait-ledger environment)
+   (λ ()
+     (define-values (accepted? _class search-result)
+       (discharge/proof (initial-candidate-context propositions)
+                        default-classifier default-oracle
+                        (make-goal `(Implements ,target-type ,trait))))
+     (define proof
+       (and accepted? (resolved? search-result)
+            (resolved-proof search-result)))
+     (define origin
+       (match proof
+         [(list 'ProofRep (list '#:span _ _ _) origin _) origin]
+         [(list 'ProofRep origin _) origin]
+         [_ #f]))
+     (define oid (and origin (provider-oid-for-label origin label)))
+     (define provider
+       (and oid (hash-ref (current-trait-providers) oid #f)
+            (assoc (hash-ref (current-trait-providers) oid) environment)
+            (hash-ref (current-trait-providers) oid)))
+     (define proofs
+       (and provider
+            (obligation-proofs
+             obligations (initial-candidate-context propositions))))
+     (cond
+       [(ambiguous? search-result) (values 'ambiguous #f #f)]
+       [(and provider proofs (not (memq #f proofs)))
+        (values 'resolved provider proofs)]
+       [else (values 'absent #f #f)]))))
+
 ;; 既存の三引数の構築は judgment の型を Core の型として使う。
 ;; check の一部だけ、実際に生成した Core の型を明示する。
 (define judgment
@@ -3516,6 +3549,47 @@
                  boxes))]
           [_ boxes])))
 
+    (define (elaboration-snapshot boundaries)
+      (define saved-state (elaboration-state))
+      (define saved-flow (flow-snapshot))
+      (define saved-escapes (boundary-escape-snapshot))
+      (define deferred (current-deferred-when-fallthroughs))
+      (define boxes
+        (remove-duplicates
+         (append (probe-candidate-boxes boundaries)
+                 (if (box? (current-when-arm-fallthroughs))
+                     (list (current-when-arm-fallthroughs))
+                     '())
+                 (if (and (pair? deferred) (box? (cdr deferred)))
+                     (list (cdr deferred))
+                     '()))
+         eq?))
+      (define saved-boxes
+        (for/list ([candidate-box (in-list boxes)])
+          (list candidate-box (unbox candidate-box))))
+      (define failure-returns (current-failure-returns))
+      (define saved-failure-returns (set->list failure-returns))
+      (λ ()
+        (restore-elaboration-state! saved-state)
+        (flow-restore! saved-flow)
+        (boundary-escape-restore! saved-escapes)
+        (for ([saved-box (in-list saved-boxes)])
+          (set-box! (first saved-box) (second saved-box)))
+        (for ([returned (in-list (set->list failure-returns))])
+          (set-remove! failure-returns returned))
+        (for ([returned (in-list saved-failure-returns)])
+          (set-add! failure-returns returned))))
+
+    (define (hole-trial-snapshot boundaries)
+      (define restore! (elaboration-snapshot boundaries))
+      (define saved-logs
+        (for/list ([trial (in-list (current-loop-trials))])
+          (cons (loop-trial-log trial) (unbox (loop-trial-log trial)))))
+      (λ ()
+        (restore!)
+        (for ([saved (in-list saved-logs)])
+          (set-box! (car saved) (cdr saved)))))
+
     (define (call-with-loop-trial-catch boundaries thunk on-catch)
       (if (not (current-loop-trial-catching?))
           (thunk)
@@ -3553,37 +3627,10 @@
               (thunk)))))
 
     (define (call-with-loop-trial-rollback boundaries thunk)
-      (define saved-state (elaboration-state))
-      (define saved-flow (flow-snapshot))
-      (define saved-escapes (boundary-escape-snapshot))
-      (define deferred (current-deferred-when-fallthroughs))
-      (define boxes
-        (remove-duplicates
-         (append (probe-candidate-boxes boundaries)
-                 (if (box? (current-when-arm-fallthroughs))
-                     (list (current-when-arm-fallthroughs))
-                     '())
-                 (if (and (pair? deferred) (box? (cdr deferred)))
-                     (list (cdr deferred))
-                     '()))
-         eq?))
-      (define saved-boxes
-        (for/list ([candidate-box (in-list boxes)])
-          (list candidate-box (unbox candidate-box))))
-      (define failure-returns (current-failure-returns))
-      (define saved-failure-returns (set->list failure-returns))
+      (define restore! (elaboration-snapshot boundaries))
       (dynamic-wind
        void thunk
-       (λ ()
-         (restore-elaboration-state! saved-state)
-         (flow-restore! saved-flow)
-         (boundary-escape-restore! saved-escapes)
-         (for ([saved-box (in-list saved-boxes)])
-           (set-box! (first saved-box) (second saved-box)))
-         (for ([returned (in-list (set->list failure-returns))])
-           (set-remove! failure-returns returned))
-         (for ([returned (in-list saved-failure-returns)])
-           (set-add! failure-returns returned)))))
+       restore!))
 
     ;; 失敗した検査の fresh 名、implicit Return 印、外側 probe の候補を戻す。
     (define (call-with-elaboration-rollback-on-error boundaries thunk)
@@ -5019,10 +5066,52 @@
         [(? string? literal) (judgment `(#:lit ,literal ,s) 'String '())]
         ['unit (judgment `(#:lit unit ,s) 'Unit '())]
 
-        ;; SUR-002c2 Task 2。Task 3 で Printable の解決に置き換える。
+        ;; SUR-002c2。文字列をまず試し、必要なら可視な Printable provider で変換する。
         [`(StrHole ,u)
-         (check u 'String environment delta propositions boundaries)]
-
+         (define restore! (hole-trial-snapshot boundaries))
+         (define (attempt thunk)
+           (with-handlers ([exn:fail:elab? (λ (_) (restore!) #f)])
+             (call-with-elaboration-rollback-on-error boundaries thunk)))
+         (define (check-string)
+           (check u 'String environment delta propositions boundaries))
+         (or (attempt check-string)
+             (let ([synthesized
+                    (attempt (λ () (synth u environment delta propositions boundaries)))])
+               (define target-type
+                 (and synthesized (normalize-type (type-for-context synthesized))))
+               (define trait-row (trait-row-by-name 'Printable (current-trait-env)))
+               (define field (and trait-row (assq 'print (trait-template trait-row))))
+               (define signature
+                 (and target-type field
+                      (second (first (instantiate-requirements (list field) target-type)))))
+               (define-values (status provider proofs)
+                 (if (equal? target-type 'String)
+                     ;; 現行 check は合成 String を同じ検査で受理するが、String 自体は lookup を迂回する。
+                     (values 'absent #f #f)
+                     (match signature
+                       [`(NFn ,_ ,_ ,_ ,_ ,obligations ,_)
+                        (resolve-trait-provider target-type 'Printable 'print obligations
+                                                propositions environment)]
+                       [_ (values 'absent #f #f)])))
+               (case status
+                 [(resolved)
+                  (match signature
+                    [`(NFn ,_ ,return-type ,_ ,latent-row ,_ ,_)
+                     (define applied
+                       `(Apply ,s (Proj ,s (#:var ,provider ,s) (#:lbl print ,s))
+                               ,(judgment-core synthesized)))
+                     (define core
+                       (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
+                         `(Discharge ,s ,proof ,core)))
+                     (propagate-context-never
+                      (judgment core return-type
+                                (rows-union (list (judgment-row synthesized) latent-row)))
+                      (list synthesized))])]
+                 [(ambiguous)
+                  (restore!)
+                  (reject s 'unsatisfied-proof-obligation
+                          `(Implements ,target-type Printable))]
+                 [else (restore!) (check-string)])))]
         [(? symbol? name)
          (define local-type (flow-view environment name))
          (cond
@@ -5173,35 +5262,10 @@
                 [`(NFn (,parameters ...) ,result ,_latent-in ,row ,qs ,_origin)
                  (values parameters result row qs)]
                 [_ (error 'elaborate "trait 要求欄の型が NFn でなくなった")]))
-            (define visible-ledger (provider-visible-trait-ledger environment))
-            (define-values (provider proofs)
-              (call-with-trait-ledger
-               visible-ledger
-               (λ ()
-                 (define goal `(Implements ,target-type ,trait))
-                 (define-values (accepted? _class search-result)
-                   (discharge/proof (initial-candidate-context propositions)
-                                    default-classifier default-oracle
-                                    (make-goal goal)))
-                 (define proof
-                   (and accepted? (resolved? search-result)
-                        (resolved-proof search-result)))
-                 (define origin
-                   (match proof
-                     [(list 'ProofRep (list '#:span _ _ _) origin _) origin]
-                     [(list 'ProofRep origin _) origin]
-                     [_ #f]))
-                 (define oid (and origin (provider-oid-for-label origin label)))
-                 (define bound-provider
-                   (and oid (hash-ref (current-trait-providers) oid #f)
-                        (assoc (hash-ref (current-trait-providers) oid) environment)
-                        (hash-ref (current-trait-providers) oid)))
-                 (define call-proofs
-                   (and bound-provider
-                        (obligation-proofs
-                         obligations (initial-candidate-context propositions))))
-                 (values bound-provider call-proofs))))
-            (unless (and provider proofs (not (memq #f proofs)))
+            (define-values (provider-status provider proofs)
+              (resolve-trait-provider target-type trait label obligations
+                                      propositions environment))
+            (unless (eq? provider-status 'resolved)
               (reject s 'unsatisfied-proof-obligation
                       `(Implements ,target-type ,trait)))
             (define applied
