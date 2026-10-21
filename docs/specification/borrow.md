@@ -273,28 +273,27 @@ scope 終了では leaf を走査して `Dropped` にし、`finLeaf(w, fp)` を 
 
 ## 10. 所有者の注釈
 
-借用を作る項は、その借用の所有者を **`own` の欄** として運ぶ。 [REQ: BOR-006]
+直接の借用を作る `BorrowAt` と `BorrowMutAt` は、その借用の所有者を **`own` の欄** として運ぶ。 [REQ: BOR-006]
 `own` の形は `(Own w fp)` であり、9 節の capability と同じ組である。
+再借用と field 射影は own 欄を持たず、入力の借用値から root と path を受け継ぐ。
 
-`own` は region の注釈と同じ経路で入る。
+`own` は region の注釈と同じ経路で `BorrowAt` と `BorrowMutAt` に入る。
 注釈を入れる走査が 3 節の `owners` から所有者を決め、項の欄へ書き込む。
 書き込んだ直後と、実体化の前後で、欄の値と走査が決めた designator が一致することを検査する。
 一致しなければ `E-BOR-023` で落とす。
+この照合は直接の借用の欄に限る。
 
 G5b の `borrow-token-key` は、所有者を辿れない designator を自分自身とみなす近似を持っていた。
 書き込み操作が入ると、この近似は真の所有者への可変借用を停止させない経路を作る。
 近似を消し、所有者を辿れない designator は `E-BOR-020` で落とす。
 
-簡約の側は `own` を読まない。
-規則の側条件として `own-agrees?` を置き、成功の規則と `Error` の規則の両方へ同じ側条件を張る。
-どちらの側条件も満たさない構成は stuck になる。
-stuck を許せるのは、段 1 の借用検査が `E-BOR-023` で同じ不一致を静的に捕まえるためである。
-型検査を通った項が stuck になることはない。
+簡約の側は `BorrowAt` と `BorrowMutAt` の `own` だけを読み、規則の側条件 `own-agrees?` で照合する。
+再借用と射影の結果は入力の実行時借用値から作るので、型検査を通った項が own の不一致を理由に stuck になることはない。
 
 ## 11. field 射影
 
 `(ProjBorrow c label)` は、借用 `c` が指す record の field `label` への借用を作る。 [REQ: BOR-005]
-`(ProjBorrowAt c label ρ)` は寿命を明示する形である。
+`(ProjBorrowAt ρ c label)` は寿命を明示する形である。
 
 親の借用の capability が `(w fp)` なら、子の capability は `(w (fp ... label))` である。
 

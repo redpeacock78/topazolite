@@ -158,7 +158,7 @@
     (run-borrowed-source
      (make-source)
      `(Borrowed ,narrow-union 17)
-     '(ProjBorrowAt 17 (Own 0 (a)) (BorrowAt 17 (Own 0 ()) 0) a)))
+     '(ProjBorrowAt 17 (BorrowAt 17 (Own 0 ()) 0) a)))
   (check-not-false (member 'R-RecRewrite-Open rules))
   (check-not-false
    (for/or ([cfg (in-list configs)])
@@ -170,8 +170,7 @@
     (run-borrowed-source
      (make-source #t)
      `(BorrowedMut ,narrow-union 17)
-     '(ProjBorrowAt 17 (Own 0 (a))
-        (BorrowMutAt 17 (Own 0 ()) 0) a)))
+     '(ProjBorrowAt 17 (BorrowMutAt 17 (Own 0 ()) 0) a)))
   (check-not-false (member 'R-RecRewrite-Open rules))
   (check-not-false
    (for/or ([cfg (in-list configs)])

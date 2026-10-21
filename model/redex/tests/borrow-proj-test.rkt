@@ -20,27 +20,27 @@
 (check-equal? (proj-borrow-mode 'BorrowedMut 'mut) 'BorrowedMut)
 (check-equal? (proj-borrow-mode 'BorrowedMut 'imm) 'Borrowed)
 
-;; 注釈は親の own の末尾へ label を足す（spec §4.2、§5.1）。
+;; 射影は own 欄を持たず、親の capability から path を導く。
 (let ()
   (define core '(Scope (1) (ProjBorrow (Borrow 1) a)))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (check-equal?
    (match annotated
-     [`(Scope (1) (ProjBorrowAt ,_ ,own ,_ ,_)) own]
-     [_ 'no-match])
-   '(Own 1 (a))))
+     [`(Scope (1) (ProjBorrowAt ,_ (BorrowAt ,_ (Own 1 ()) 1) a)) #t]
+     [_ #f])
+   #t))
 
 ;; 2 段の射影で path が 2 要素になる。
 (let ()
   (define core '(Scope (1) (ProjBorrow (ProjBorrow (Borrow 1) a) b)))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
-  (check-equal?
-   (match annotated
-     [`(Scope (1) (ProjBorrowAt ,_ ,own ,_ ,_)) own]
-     [_ 'no-match])
-   '(Own 1 (a b))))
+  (check-equal? annotated
+                '(Scope (1)
+                   (ProjBorrowAt 3
+                     (ProjBorrowAt 3 (BorrowAt 3 (Own 1 ()) 1) a)
+                     b))))
 
 ;; borrow-token-key は子の capability を返す。親のものではない。
 (let ()
@@ -125,8 +125,7 @@
 ;; 機械は射影で H と Ω を変更しない（spec §5.3）。
 (let ()
   (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 1 (a))
-                             (BorrowRef 1 () 1) a)
+    (term (cfg (ProjBorrowAt 0 (BorrowRef 1 () 1) a)
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
@@ -135,8 +134,7 @@
 
 (let ()
   (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 1 (a))
-                             (BorrowMutRef 1 () 1) a)
+    (term (cfg (ProjBorrowAt 0 (BorrowMutRef 1 () 1) a)
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
@@ -145,8 +143,7 @@
 
 (let ()
   (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 1 (b))
-                             (BorrowMutRef 1 () 1) b)
+    (term (cfg (ProjBorrowAt 0 (BorrowMutRef 1 () 1) b)
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
@@ -156,37 +153,12 @@
 (test-case "ProjBorrowAt の注釈欄は結果の region を決めない"
   (for ([annotation (in-list '(0 1 7))])
     (define conf
-      (term (cfg (ProjBorrowAt ,annotation (Own 1 (a))
-                               (BorrowMutRef 1 () 1) a)
+      (term (cfg (ProjBorrowAt ,annotation (BorrowMutRef 1 () 1) a)
                  ,(proj-heap) ,(proj-omega) () ())))
     (check-equal?
      (apply-reduction-relation -->g2 conf)
      (list (term (cfg (BorrowMutRef 1 (a) 1)
                       ,(proj-heap) ,(proj-omega) () ()))))))
-
-;; own の root だけが射影結果と食い違う configuration は stuck にする。
-(let ()
-  (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 2 (a))
-                             (BorrowRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) () ())))
-  (check-equal? (apply-reduction-relation -->g2 conf) '()))
-
-;; own の path だけが射影結果と食い違う configuration は stuck にする。
-(let ()
-  (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 1 (wrong))
-                             (BorrowRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) () ())))
-  (check-equal? (apply-reduction-relation -->g2 conf) '()))
-
-;; 可変借用の射影も own の root を検査し、proj-borrow-mut より先に stuck にする。
-(let ()
-  (define conf
-    (term (cfg (ProjBorrowAt 0 (Own 2 (a))
-                             (BorrowMutRef 1 () 1) a)
-               ,(proj-heap) ,(proj-omega) () ())))
-  (check-equal? (apply-reduction-relation -->g2 conf) '()))
 
 ;; 拒否 2。row に無い label を射影する。
 (let ()
@@ -196,16 +168,14 @@
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'projborrow-unknown-field))
 
-;; 借用でない operand には capability が無いため、冗長な own 欄を
-;; fail-closed で拒む。
+;; 借用でない operand は ProjBorrowAt の型規則で拒む。
 (let ()
-  (define core '(Scope (1) (ProjBorrowAt 0 (Own 1 (a))
-                                         (Rec ((a mut 0))) a)))
+  (define core '(Scope (1) (ProjBorrowAt 0 (Rec ((a mut 0))) a)))
   (define ir (build-region-ir core))
   (define result
     (type-of/raw core (list (list 1 'Res)) '() '()
                  (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
-  (check-equal? (second result) 'own-designator-mismatch))
+  (check-equal? (second result) 'projborrow-non-record))
 
 (test-case "借用の path は label だけを受理する"
   (check-true (record-path? (term (a b))))

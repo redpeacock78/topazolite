@@ -135,7 +135,7 @@
  (define Λ (region-ctx-add-token (empty-region-ctx) 'b (set '(1))))
  (check-equal? (borrow-token-key Λ '(Reborrow b)) (set '(1)))
  (check-equal? (borrow-token-key (empty-region-ctx)
-                                 '(ProjBorrowAt (RVar 0) (RVar 1) (Borrow 1) a))
+                                 '(ProjBorrowAt (RVar 0) (Borrow 1) a))
                (set '(1 a)))
  (check-equal? (borrow-token-key
                 (empty-region-ctx)

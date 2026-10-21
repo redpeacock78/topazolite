@@ -37,7 +37,7 @@
     (match t
       [`(BorrowAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
       [`(BorrowMutAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
-      [`(ReborrowAt ,ρ ,_ ,_) (cons (list point ρ) acc)]
+      [`(ReborrowAt ,ρ ,_) (cons (list point ρ) acc)]
       [_ acc]))
   (for/fold ([acc acc2]) ([k (in-list (core-children t))] [i (in-naturals)])
     (collect k (append point (list i)) acc)))
@@ -84,7 +84,7 @@
 ;; place も natural である（lang.rkt）。記号の ρ0 や p0 は文法に無い。
 (check-true (core-types-normal? '(BorrowAt 1 (Own x ()) x)))
 (check-true (core-types-normal? '(BorrowMutAt 1 (Own x ()) x)))
-(check-true (core-types-normal? '(ReborrowAt 2 (Own x ()) (BorrowMutAt 1 (Own x ()) x))))
+(check-true (core-types-normal? '(ReborrowAt 2 (BorrowMutAt 1 (Own x ()) x))))
 (check-true (core-types-normal? '(BorrowRef 0 () 1)))
 (check-true (core-types-normal? '(BorrowMutRef 0 () 1)))
 

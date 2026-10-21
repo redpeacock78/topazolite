@@ -20,12 +20,13 @@
   (match-define `(Scope (1) (BorrowAt ,_ ,own 1)) (annotate-regions core ir))
   (check-equal? own '(Own 1 ())))
 
-;; 借用の型を持つ束縛名は、右辺の capability をそのまま引き継ぐ。
+;; 再借用は own 欄を持たず、直接の借用の own 欄は維持する。
 (let ()
   (define core
     '(Scope (1) (Let (b let (Borrowed Res 0)) (Borrow 1) (Reborrow b))))
   (define ir (build-region-ir core))
-  (match-define `(Scope (1) (Let (b let ,_) ,_ (ReborrowAt ,_ ,own ,_)))
+  (match-define `(Scope (1) (Let (b let ,_) (BorrowAt ,_ ,own 1)
+                         (ReborrowAt ,_ b)))
     (annotate-regions core ir))
   (check-equal? own '(Own 1 ())))
 
@@ -37,23 +38,21 @@
     (annotate-regions core ir))
   (check-equal? own '(Own b ())))
 
-;; Reborrow は operand の own をそのまま引き継ぐ。
+;; ReborrowAt は operand の実行時 capability をそのまま引き継ぐ。
 (let ()
   (define core '(Scope (1) (Reborrow (BorrowMut 1))))
   (define ir (build-region-ir core))
-  (match-define `(Scope (1) (ReborrowAt ,_ ,own (BorrowMutAt ,_ ,own-inner 1)))
+  (match-define `(Scope (1) (ReborrowAt ,_ (BorrowMutAt ,_ ,own-inner 1)))
     (annotate-regions core ir))
-  (check-equal? own '(Own 1 ()))
   (check-equal? own-inner '(Own 1 ())))
 
-;; Scope を operand に持つ Reborrow も body の own を引き継ぐ。
+;; Scope を operand に持つ Reborrow も直接の借用の own だけを持つ。
 (let ()
   (define core '(Scope (1) (Reborrow (Scope () (BorrowMut 1)))))
   (define ir (build-region-ir core))
   (match-define
-    `(Scope (1) (ReborrowAt ,_ ,own (Scope () (BorrowMutAt ,_ ,own-inner 1))))
+    `(Scope (1) (ReborrowAt ,_ (Scope () (BorrowMutAt ,_ ,own-inner 1))))
     (annotate-regions core ir))
-  (check-equal? own '(Own 1 ()))
   (check-equal? own-inner '(Own 1 ())))
 
 ;; own の root が designator と食い違う注釈済みの木は入口で落ちる。

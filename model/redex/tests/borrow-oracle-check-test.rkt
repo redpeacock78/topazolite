@@ -71,7 +71,7 @@
   ;; 親の可変借用を静的側の要求に持たない config を手で組み、
   ;; R-Reborrow が根として発火したときに静的側と照合できないことを見る。
   (define config
-    '(cfg (Scope (0) (ReborrowAt 0 (Own 0 ()) (BorrowMutRef 0 () 0)))
+    '(cfg (Scope (0) (ReborrowAt 0 (BorrowMutRef 0 () 0)))
           ((0 (resource 1000))) ((0 Available)) () ()))
   (define empty-sidecar (borrow-sidecar '() (hash)))
   (match (check-borrow-execution config empty-sidecar #f 200

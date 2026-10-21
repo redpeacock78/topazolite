@@ -2444,8 +2444,9 @@ path が辿れない場合、Payload の位置が `UnionVal` でない場合、�
 
 構成検査は `BorrowAt`、`BorrowMutAt`、`ReborrowAt`、`FromRawPtr` の注釈 `ρ` を実行時の寿命として結果の型へ置く。
 この再型付けでは注釈と point の照合、所有者の outlives 制約、borrow request の生成を行わない。
-構成の入口 `config-ok?` は own 注釈の整合性も検査し、実行時の `BorrowRef(p, fp, ρ)` と `BorrowMutRef(p, fp, ρ)` から `(Own p fp)` を導いて `ReborrowAt` と `ProjBorrowAt` の欄を照合する。
-own が一致しない構成は `own-designator-mismatch` として拒否する。
+構成の入口 `config-ok?` は `BorrowAt` と `BorrowMutAt` の own 注釈の整合性を検査する。
+実行時の `BorrowRef(p, fp, ρ)` と `BorrowMutRef(p, fp, ρ)` から作る `ReborrowAt` と `ProjBorrowAt` の結果は、入力の借用値から root と path を導くため、own 欄の照合を行わない。
+直接の借用の own が一致しない構成は `own-designator-mismatch` として拒否する。
 `ProjBorrowAt` の結果の型には親の実行時借用値の region を置く。
 `RegionApp` は具体的な `ρ` の生存を検査しないが、形、実引数の個数、置換後の型、関数型との照合を行う。
 `Apply` の借用実引数では、region が異なる場合に所有者の region を引かず、payload と借用 mode を照合する。

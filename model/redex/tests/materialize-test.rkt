@@ -32,7 +32,7 @@
     (match (core-node out point)
       [`(BorrowAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
       [`(BorrowMutAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
-      [`(ReborrowAt ,ρ ,_ ,_) (check-true (exact-nonnegative-integer? ρ))]
+      [`(ReborrowAt ,ρ ,_) (check-true (exact-nonnegative-integer? ρ))]
       [_ (void)]))
   ;; 2 件の注釈が別々に置き換わっている。
   (check-equal? (hash-count tbl) 2)

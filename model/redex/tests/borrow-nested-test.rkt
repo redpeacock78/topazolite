@@ -354,5 +354,5 @@
   (check-equal? (borrow-token-key
                  (region-ctx #f '() (hash) (hash))
                  '(Eliminate (BorrowMut x)
-                             ((cons (h t) -> (ProjBorrowAt (RVar 0) imm h f)))))
+                             ((cons (h t) -> (ProjBorrowAt (RVar 0) h f)))))
                 (set (list 'x 0 'f))))

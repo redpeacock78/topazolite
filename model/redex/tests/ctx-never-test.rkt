@@ -452,7 +452,7 @@
    'ill-typed))
 
 (test-case "Reborrow と Read は正常型 bottom の receiver を拒否する"
-  (check-equal? (core-type-of `(ReborrowAt rho own ,ret1) '() '()) 'ill-typed)
+  (check-equal? (core-type-of `(ReborrowAt rho ,ret1) '() '()) 'ill-typed)
   (check-equal? (core-type-of `(Read ,ret1) '() '()) 'ill-typed))
 
 (test-case "Assign は正常型 bottom の target を拒否する"
@@ -468,7 +468,7 @@
   (check-equal? (core-type-of `(RegionApp ,ret1 ()) '() '()) 'ill-typed))
 
 (test-case "borrow と pointer の各 shape 位置は bottom を拒否する"
-  (check-equal? (core-type-of `(ProjBorrowAt rho own ,ret1 a) '() '())
+  (check-equal? (core-type-of `(ProjBorrowAt rho ,ret1 a) '() '())
                 'ill-typed)
   (check-equal? (core-type-of `(AddressOf ,ret1) '() '()) 'ill-typed)
   (check-equal? (core-type-of `(PtrOffset ,ret1 1) '() '()) 'ill-typed)

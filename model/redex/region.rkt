@@ -67,9 +67,9 @@
     [`(OwnedTransit ,_ ,payload) (list payload)]
     [`(OwnLeaf ,c) (list c)]
     [`(Reborrow ,c) (list c)]
-    [`(ReborrowAt ,_ ,_ ,c) (list c)]
+    [`(ReborrowAt ,_ ,c) (list c)]
     [`(ProjBorrow ,c ,_) (list c)]
-    [`(ProjBorrowAt ,_ ,_ ,c ,_) (list c)]
+    [`(ProjBorrowAt ,_ ,c ,_) (list c)]
     [`(Read ,c) (list c)]
     [`(Assign ,target ,value) (list target value)]
     [`(Reassign ,_ ,_flow-type ,value) (list value)]
@@ -165,10 +165,10 @@
     [`(OwnedTransit ,p ,_) `(OwnedTransit ,p ,(first-child))]
     [`(OwnLeaf ,_) `(OwnLeaf ,(first-child))]
     [`(Reborrow ,_) `(Reborrow ,(first-child))]
-    [`(ReborrowAt ,ρ ,own ,_) `(ReborrowAt ,ρ ,own ,(first-child))]
+    [`(ReborrowAt ,ρ ,_) `(ReborrowAt ,ρ ,(first-child))]
     [`(ProjBorrow ,_ ,label) `(ProjBorrow ,(first-child) ,label)]
-    [`(ProjBorrowAt ,ρ ,own ,_ ,label)
-     `(ProjBorrowAt ,ρ ,own ,(first-child) ,label)]
+    [`(ProjBorrowAt ,ρ ,_ ,label)
+     `(ProjBorrowAt ,ρ ,(first-child) ,label)]
     [`(Read ,_) `(Read ,(first-child))]
     [`(Assign ,_ ,_) `(Assign ,(first children) ,(second children))]
     [`(Reassign ,target ,flow-type ,_)
@@ -251,12 +251,8 @@
       [`(BorrowMutAt ,_ (Own ,w-own ,_) ,w)
        (set-union (if (symbol? w) (set w) (set))
                   (if (symbol? w-own) (set w-own) (set)))]
-      [`(ReborrowAt ,_ (Own ,w-own ,_) ,c)
-       (set-union (walk c)
-                  (if (symbol? w-own) (set w-own) (set)))]
-      [`(ProjBorrowAt ,_ (Own ,w-own ,_) ,c ,_)
-       (set-union (walk c)
-                  (if (symbol? w-own) (set w-own) (set)))]
+      [`(ReborrowAt ,_ ,c) (walk c)]
+      [`(ProjBorrowAt ,_ ,c ,_) (walk c)]
       [`(Move ,w) (if (symbol? w) (set w) (set))]
       [`(Forward ,w) (if (symbol? w) (set w) (set))]
       [`(Reassign ,target ,_flow-type ,value)
@@ -596,23 +592,20 @@
       (hash-ref env designator (lambda () `(Own ,designator ())))
       `(Own ,designator ())))
 
-;; 注釈済みの operand から own を引く。単純な借用だけでなく、型の結果を
-;; そのまま返す Scope / Let / Yield / Suspend / Recur / Eliminate も辿る。
-;; それ以外はこの段の境界制限では借用の結果にならないため落とす。
+;; 注釈済みの operand から、直接借用の own 欄に書ける単一 capability を引く。
 (define (own-of-operand env t)
   (define (same-branch-own owns)
     (cond
       [(null? owns) (error 'annotate-regions "所有者を辿れない operand である: ~s" t)]
       [(andmap (lambda (own) (equal? own (first owns))) (rest owns))
        (first owns)]
-      [else (error 'annotate-regions "分岐ごとの所有者が一致しない operand である: ~s" t)]))
+      [else
+       (error 'annotate-regions "分岐ごとの所有者が一致しない operand である: ~s" t)]))
   (define (walk node env*)
     (match node
       [`(BorrowAt ,_ ,own ,_) own]
       [`(BorrowMutAt ,_ ,own ,_) own]
-      [`(ReborrowAt ,_ ,own ,_) own]
-      [`(ProjBorrowAt ,_ ,own ,_ ,_) own]
-      ;; 構成検査の実行時借用値から、R-Reborrow / R-ProjBorrow と同じ own を返す。
+      ;; 構成検査の実行時借用値から capability を回復する。
       [`(BorrowRef ,p ,fp ,_) `(Own ,p ,fp)]
       [`(BorrowMutRef ,p ,fp ,_) `(Own ,p ,fp)]
       [(? symbol? s) (own-of-designator env* s)]
@@ -647,7 +640,7 @@
       [_ (error 'annotate-regions "所有者を辿れない operand である: ~s" node)]))
   (walk t env))
 
-;; 注釈前の core を 1 回走査し、借用の 3 形へ region と own を注入する。
+;; 注釈前の core を 1 回走査し、直接の借用へ region と own を注入する。
 ;; point の数え方は core-children を使うため region.md §3 と自動的に一致する。
 ;; ρ は region->rho で natural へ落とし、own は capability の root/path を保つ。
 (define (annotate-regions core ir)
@@ -658,25 +651,20 @@
     (define (down k i [env* env])
       (walk k (append point (list i)) env*))
     (match t
-      [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_ ,_))
+      [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
-      [`(ProjBorrowAt ,_ ,_ ,_ ,_)
+      [`(ProjBorrowAt ,_ ,_ ,_)
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(Borrow ,w) `(BorrowAt ,(here) ,(own-of-designator env w) ,w)]
       [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,(own-of-designator env w) ,w)]
       [`(Reborrow ,c)
        (define annotated (down c 0))
-       `(ReborrowAt ,(here) ,(own-of-operand env annotated) ,annotated)]
+       `(ReborrowAt ,(here) ,annotated)]
       [`(ProjBorrow ,c_1 ,label)
        (define annotated (down c_1 0))
-       (define own_parent (own-of-operand env annotated))
-       (match own_parent
-         [`(Own ,w ,fp)
-          (define child-fp (append fp (list label)))
-          (unless (symbol? label)
-            (error 'annotate-regions "field label の形ではない: ~s" label))
-          `(ProjBorrowAt ,(here) (Own ,w ,child-fp) ,annotated ,label)]
-         [_ (error 'annotate-regions "所有者の形ではない: ~s" own_parent)])]
+       (unless (symbol? label)
+         (error 'annotate-regions "field label の形ではない: ~s" label))
+       `(ProjBorrowAt ,(here) ,annotated ,label)]
       [`(Let (,x ,bmode ,τ) ,c_1 ,c_2)
        (define a_1 (down c_1 0))
        (define bound-own
@@ -709,16 +697,6 @@
        (and (not (equal? own (own-of-designator env w))) t)]
       [`(BorrowMutAt ,_ ,own ,w)
        (and (not (equal? own (own-of-designator env w))) t)]
-      [`(ReborrowAt ,_ ,own ,c)
-       (or (walk c env)
-           (and (not (equal? own (own-of-operand/checked env c))) t))]
-      [`(ProjBorrowAt ,_ ,own ,c ,label)
-       (or (walk c env)
-           (let ([parent-own (own-of-operand/checked env c)])
-             (match parent-own
-               [`(Own ,w ,fp)
-                (and (not (equal? own `(Own ,w ,(append fp (list label))))) t)]
-               [_ t])))]
       [`(Let (,x ,_ ,τ) ,c_1 ,c_2)
        (define child-violation (walk c_1 env))
        (or child-violation
@@ -756,9 +734,9 @@
       (match node
         [`(BorrowAt ,ρ ,own ,w) `(BorrowAt ,(resolve ρ point) ,own ,w)]
         [`(BorrowMutAt ,ρ ,own ,w) `(BorrowMutAt ,(resolve ρ point) ,own ,w)]
-        [`(ReborrowAt ,ρ ,own ,c) `(ReborrowAt ,(resolve ρ point) ,own ,c)]
-        [`(ProjBorrowAt ,ρ ,own ,c ,label)
-         `(ProjBorrowAt ,(resolve ρ point) ,own ,c ,label)]
+        [`(ReborrowAt ,ρ ,c) `(ReborrowAt ,(resolve ρ point) ,c)]
+        [`(ProjBorrowAt ,ρ ,c ,label)
+         `(ProjBorrowAt ,(resolve ρ point) ,c ,label)]
         [`(RegionApp ,c_function (,ρs ...))
          `(RegionApp ,c_function ,(map resolve-region-argument ρs))]
         [`(FromRawPtr ,c ,ρ)

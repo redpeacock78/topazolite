@@ -66,23 +66,24 @@
 
 (test-case "構成検査は ReborrowAt の注釈を共有借用の寿命として型へ置く"
   (define cfg
-    `(cfg (Read (ReborrowAt 4 (Own 0 ()) (BorrowMutRef 0 () 2)))
+    `(cfg (Read (ReborrowAt 4 (BorrowMutRef 0 () 2)))
           ,int-heap ,int-states () ()))
   (check-false (config-type-failure-key cfg))
   (check-not-false (runtime-row cfg '() 'Int))
   (check-true (config-ok? cfg '() 'Int '())))
 
-(test-case "構成検査の ReborrowAt は own と capability の不一致を拒否する"
+(test-case "構成検査の ReborrowAt は入力 capability から owner を得る"
   (define cfg
-    '(cfg (Read (ReborrowAt 4 (Own 1 ()) (BorrowMutRef 0 () 2)))
+    '(cfg (Read (ReborrowAt 4 (BorrowMutRef 0 () 2)))
           ((0 7 (declared Int)) (1 8 (declared Int)))
           ((0 Available) (1 Available)) () ()))
-  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch)
-  (check-false (config-ok? cfg '() 'Int '())))
+  (check-false (config-type-failure-key cfg))
+  (check-not-false (runtime-row cfg '() 'Int))
+  (check-true (config-ok? cfg '() 'Int '())))
 
-(test-case "構成検査は ProjBorrowAt の親 capability から own を引く"
+(test-case "構成検査は ProjBorrowAt の親 capability から結果を作る"
   (define cfg
-    '(cfg (Read (ProjBorrowAt 10 (Own 0 (a)) (BorrowMutRef 0 () 9) a))
+    '(cfg (Read (ProjBorrowAt 10 (BorrowMutRef 0 () 9) a))
           ((0 (Rec ((a mut 7)))
               (declared (Owned (Record ((a Int mut)))))))
           ((0 Available)) () ()))
@@ -90,14 +91,15 @@
   (check-not-false (runtime-row cfg '() 'Int))
   (check-true (config-ok? cfg '() 'Int '())))
 
-(test-case "構成検査の ProjBorrowAt は誤った label の own を拒否する"
+(test-case "構成検査の ProjBorrowAt は独立した owner 注釈を要求しない"
   (define cfg
-    '(cfg (Read (ProjBorrowAt 10 (Own 0 (wrong)) (BorrowMutRef 0 () 9) a))
+    '(cfg (Read (ProjBorrowAt 10 (BorrowMutRef 0 () 9) a))
           ((0 (Rec ((a mut 7)))
               (declared (Owned (Record ((a Int mut)))))))
           ((0 Available)) () ()))
-  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch)
-  (check-false (config-ok? cfg '() 'Int '())))
+  (check-false (config-type-failure-key cfg))
+  (check-not-false (runtime-row cfg '() 'Int))
+  (check-true (config-ok? cfg '() 'Int '())))
 
 (test-case "構成検査も自由な RParam を持つ関数境界を拒否する"
   (define callables
@@ -115,7 +117,7 @@
           ((1 Available)) () ()))
   (check-equal? (config-type-failure-key cfg) 'type-mismatch))
 
-(test-case "複数 capability の Reborrow は own の入口検査で先に拒否される"
+(test-case "複数 capability の ReborrowAt は入口で own の照合をしない"
   (define operand
     '(Eliminate (Construct (Option Int) some 1)
        ((none () -> (BorrowMutRef 0 () 0))
@@ -123,10 +125,12 @@
   (check-equal? (borrow-token-key (empty-region-ctx) operand)
                 (set (cons 0 '()) (cons 1 '())))
   (define cfg
-    `(cfg (ReborrowAt 4 (Own 0 ()) ,operand)
+    `(cfg (Read (ReborrowAt 4 ,operand))
           ((0 7 (declared Int)) (1 8 (declared Int)))
           ((0 Available) (1 Available)) () ()))
-  (check-equal? (config-type-failure-key cfg) 'own-designator-mismatch))
+  (check-false (config-type-failure-key cfg))
+  (check-not-false (runtime-row cfg '() 'Int))
+  (check-true (config-ok? cfg '() 'Int '())))
 
 (test-case "UnionEliminate の別 owner を束ねる Reborrow は source 検査で拒否される"
   (define source

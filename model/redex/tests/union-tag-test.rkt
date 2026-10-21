@@ -1006,7 +1006,7 @@
     (machine-config
      `(UnionEliminate (BorrowRef 0 () 0)
         ((,record-type record ->
-          (Read (ProjBorrowAt 0 (Own 0 ((Payload) a)) record a)))
+          (Read (ProjBorrowAt 0 record a)))
          (String text -> 0)))
      `((0 ,union-value)) '((0 Available))))
   (tagged (check-equal? (machine-run config) `(cfg 31 ((0 ,union-value))

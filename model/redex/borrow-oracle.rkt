@@ -184,26 +184,23 @@
            `(BorrowMutRef ,p2 ,fp2 ,ρ2))
      #:when (and (equal? p p2) (equal? fp fp2) (equal? ρ ρ2))
      (list (list 'root 'mut p fp ρ w))]
-    [(list `(ReborrowAt ,ρ (Own ,p ,fp)
-                         (BorrowMutRef ,pp ,fpp ,ρp))
+    [(list `(ReborrowAt ,ρ (BorrowMutRef ,pp ,fpp ,ρp))
            `(BorrowRef ,p2 ,fp2 ,ρ2))
-     #:when (and (equal? p p2) (equal? fp fp2) (equal? ρ ρ2)
-                 (equal? p pp) (equal? fp fpp))
-     (list (list 'reborrow p fp ρ ρp))]
-    [(list `(ProjBorrowAt ,ρ (Own ,p ,fp-result)
-                           (,tag ,pp ,fpp ,ρp) ,label)
+     #:when (and (equal? ρ ρ2)
+                 (equal? pp p2) (equal? fpp fp2))
+     (list (list 'reborrow p2 fp2 ρ ρp))]
+    [(list `(ProjBorrowAt ,ρ (,tag ,pp ,fpp ,ρp) ,label)
            `(,tag2 ,p2 ,fp2 ,ρ2))
      #:when (and (memq tag '(BorrowRef BorrowMutRef))
                  (memq tag2 '(BorrowRef BorrowMutRef))
                  (not (and (eq? tag 'BorrowRef)
                            (eq? tag2 'BorrowMutRef)))
-                 (equal? p pp) (equal? p p2)
-                 (equal? fp-result (append fpp (list label)))
-                 (equal? fp2 fp-result)
+                 (equal? pp p2)
+                 (equal? fp2 (append fpp (list label)))
                  (equal? ρp ρ2))
      (list (list 'derived
                  (if (eq? tag2 'BorrowMutRef) 'mut 'shared)
-                 p fp2 ρ2 pp fpp ρp))]
+                 p2 fp2 ρ2 pp fpp ρp))]
     ;; Eliminate は scrutinee と各 child の tag を同じものとして一般化する。
     ;; 共有・可変の片側だけを承認すると、規則名と借用 mode の不一致を隠す。
     [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)

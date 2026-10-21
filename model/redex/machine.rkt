@@ -1157,23 +1157,21 @@
              H Ω Λtok θ)
         R-RecRewrite-Close)
 
-   (--> (cfg (in-hole E (ReborrowAt ρ (Own p fp) (BorrowMutRef p fp ρ_parent))) H Ω Λtok θ)
+   (--> (cfg (in-hole E (ReborrowAt ρ (BorrowMutRef p fp ρ_parent))) H Ω Λtok θ)
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         R-Reborrow)
 
    ;; spec §5.3。射影先は親と同じ貸出しに属し、結果の寿命も親に従う。
    ;; ProjBorrowAt の注釈は point を示すため結果へ移さない。
    ;; H、Ω、θ は射影で変更しない。
-   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowRef p fp ρ_parent) label)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (ProjBorrowAt ρ (BorrowRef p fp ρ_parent) label)) H Ω Λtok θ)
         (cfg (in-hole E (BorrowRef p fp_result ρ_parent)) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
-        (where (Own p fp_result) own)
         R-ProjBorrow)
 
-   (--> (cfg (in-hole E (ProjBorrowAt ρ own (BorrowMutRef p fp ρ_parent) label)) H Ω Λtok θ)
+   (--> (cfg (in-hole E (ProjBorrowAt ρ (BorrowMutRef p fp ρ_parent) label)) H Ω Λtok θ)
         (cfg (in-hole E v_result) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
-        (where (Own p fp_result) own)
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
                                           (term ρ_parent) (term H)))
         R-ProjBorrowMut)

@@ -313,9 +313,9 @@
          [`(BorrowRef ,_ ,_ ,_) #t]
          [`(BorrowMutRef ,_ ,_ ,_) #t]
          [`(Reborrow ,operand) (walk operand)]
-         [`(ReborrowAt ,_ ,_ ,operand) (walk operand)]
+         [`(ReborrowAt ,_ ,operand) (walk operand)]
          [`(ProjBorrow ,operand ,_) (walk operand)]
-         [`(ProjBorrowAt ,_ ,_ ,operand ,_) (walk operand)]
+         [`(ProjBorrowAt ,_ ,operand ,_) (walk operand)]
          [`(Read ,operand) (walk operand)]
          [`(Assign ,target ,value) (and (walk target) (walk value))]
          [`(Reassign ,target ,flow-type ,value)

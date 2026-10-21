@@ -3260,8 +3260,8 @@
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
-;; 構成検査では親の可変 capability が own と一致する場合だけ共有へ落とす。
-(define (infer-reborrow/config core own operand ρ Λ Ψ environment
+;; 構成検査では入力の実行時借用値から capability を得て、注釈 ρ の共有借用へ落とす。
+(define (infer-reborrow/config core operand ρ Λ Ψ environment
                                places callables fail)
   (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
@@ -3274,13 +3274,6 @@
      (define tokens (borrow-token-key Λ operand #:fail fail))
      (when (set-empty? tokens)
        (fail 'unresolved-borrow-owner core))
-     (match own
-       [`(Own ,p ,fp)
-        #:when (for/and ([cap (in-set tokens)])
-                 (exact-nonnegative-integer? (car cap)))
-        (unless (equal? tokens (set (cons p fp)))
-          (fail 'unresolved-borrow-owner core))]
-       [_ (void)])
      (list `(Borrowed ,τ ,ρ) ε_operand Ψ_1)]
     [_ (fail 'reborrow-non-mutable core)]))
 
@@ -5310,14 +5303,14 @@
      (if type (list type '() Ψ) (fail 'ill-typed core))]
     [`(Reborrow ,c_operand)
      (infer-reborrow core c_operand Λ Ψ environment places callables fail)]
-    [`(ReborrowAt ,ρ ,own ,c_operand)
+    [`(ReborrowAt ,ρ ,c_operand)
      (if (deriving-config?)
-         (infer-reborrow/config core own c_operand ρ
+         (infer-reborrow/config core c_operand ρ
                                 Λ Ψ environment places callables fail)
          (begin
            (check-region-annotation Λ ρ core fail)
            (infer-reborrow core c_operand Λ Ψ environment places callables fail)))]
-    [`(ProjBorrowAt ,_ ,_ ,operand ,label)
+    [`(ProjBorrowAt ,_ ,operand ,label)
      (infer-projborrow core operand label Λ Ψ environment places callables fail)]
     [`(Read ,operand)
      (infer-read core operand Λ Ψ environment places callables fail)]

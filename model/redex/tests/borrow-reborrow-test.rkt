@@ -26,9 +26,9 @@
                                         (BorrowMut x)
                                         (Reborrow y)))
                 (set (list 'x)))
-  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (Own 7 ()) (BorrowMutAt 0 (Own 7 ()) 7)))
+  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutAt 0 (Own 7 ()) 7)))
                 (set (list 7)))
-  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (Own 7 ()) (BorrowMutRef 7 () 0)))
+  (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutRef 7 () 0)))
                 (set (list 7))))
 
 ;; 内側の項の型をそのまま運ぶ形も全欄を合併する。

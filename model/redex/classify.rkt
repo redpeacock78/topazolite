@@ -154,9 +154,9 @@
        [`(BorrowedMut ,payload ,_) payload]
        [_ #f])]
     [`(Reborrow ,inner) (recur inner)]
-    [`(ReborrowAt ,_ ,_ ,inner) (recur inner)]
+    [`(ReborrowAt ,_ ,inner) (recur inner)]
     [`(ProjBorrow ,inner ,label) (project-borrow-type (recur inner) label)]
-    [`(ProjBorrowAt ,_ ,_ ,inner ,label)
+    [`(ProjBorrowAt ,_ ,inner ,label)
      (project-borrow-type (recur inner) label)]
     [_ #f]))
 
@@ -347,11 +347,11 @@
        (walk argument environment target-visible?)]
       [`(Reborrow ,argument)
        (walk argument environment target-visible?)]
-      [`(ReborrowAt ,_ ,_ ,argument)
+      [`(ReborrowAt ,_ ,argument)
        (walk argument environment target-visible?)]
       [`(ProjBorrow ,argument ,_)
        (walk argument environment target-visible?)]
-      [`(ProjBorrowAt ,_ ,_ ,argument ,_)
+      [`(ProjBorrowAt ,_ ,argument ,_)
        (walk argument environment target-visible?)]
       [`(AddressOf ,argument)
        (walk argument environment target-visible?)]
@@ -521,9 +521,9 @@
                            (walk value target-visible?)))]
       [`(Read ,argument) (walk argument target-visible?)]
       [`(Reborrow ,argument) (walk argument target-visible?)]
-      [`(ReborrowAt ,_ ,_ ,argument) (walk argument target-visible?)]
+      [`(ReborrowAt ,_ ,argument) (walk argument target-visible?)]
       [`(ProjBorrow ,argument ,_) (walk argument target-visible?)]
-      [`(ProjBorrowAt ,_ ,_ ,argument ,_) (walk argument target-visible?)]
+      [`(ProjBorrowAt ,_ ,argument ,_) (walk argument target-visible?)]
       [`(AddressOf ,argument) (walk argument target-visible?)]
       [`(PtrOffset ,pointer ,offset)
        (combine-uses (list (walk pointer target-visible?)

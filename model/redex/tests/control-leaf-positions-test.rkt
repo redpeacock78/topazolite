@@ -54,9 +54,9 @@
     (Proj operand type-unreachable "Record 射影の入力")
     (ProjOpt operand type-unreachable "optional Record 射影の入力")
     (ReborrowAt operand type-unreachable
-                "借用 capability の入力（root OwnedLeaf は owner を辿れず拒否）")
+                "BorrowMut capability の入力")
     (ProjBorrowAt operand type-unreachable
-                  "借用 Record の入力（root OwnedLeaf は owner を辿れず拒否）")
+                  "借用 Record の入力")
     (Read operand type-unreachable "Borrowed payload")
     (Assign target type-unreachable "BorrowedMut target")
     (Assign value pending-code "target 評価後の値" reject)
@@ -584,12 +584,7 @@
               [control-result (case-core-type rc (row-case-control-cfg rc))])
           (if (memq (first row) '(ReborrowAt ProjBorrowAt))
               (begin
-                (check-true
-                 (match leaf-result
-                   [`(region-rejected ,message)
-                    (regexp-match? #rx"所有者を辿れない operand" message)]
-                   [_ #f])
-                 label)
+                (check-eq? leaf-result 'ill-typed label)
                 (let ([owned-place-core
                        (if (eq? (first row) 'ReborrowAt)
                            '(Scope ()

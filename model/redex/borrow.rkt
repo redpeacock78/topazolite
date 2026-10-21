@@ -579,8 +579,8 @@
     [`(BorrowRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
     [`(BorrowMutRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
     [`(Reborrow ,c_1) (only (ws-of c_1))]
-    [`(ReborrowAt ,_ ,_ ,c_1) (only (ws-of c_1))]
-    [`(ProjBorrowAt ,_ ,_ ,c_1 ,label)
+    [`(ReborrowAt ,_ ,c_1) (only (ws-of c_1))]
+    [`(ProjBorrowAt ,_ ,c_1 ,label)
      (define child-caps
        (for/set ([k (in-set (ws-of c_1))])
          (cons (car k) (append (cdr k) (list label)))))

@@ -39,7 +39,7 @@
   (match annotated
     [`(Scope ,_ (Let (borrowed const ,_)
                       (UnionEliminate ,_ ,_)
-                      (ReborrowAt ,_ (Own 1 ()) borrowed)))
+                      (ReborrowAt ,_ borrowed)))
      (void)]
     [_ (fail (format "unexpected annotated UnionEliminate: ~s" annotated))]))
 
@@ -558,11 +558,11 @@
 (check-equal? (core-free-vars '(Borrow (#:var y (#:span src 1 2)))) (set 'y))
 (check-equal? (core-free-vars '(BorrowMutAt 0 (Own y ()) (#:var y (#:span src 1 2))))
               (set 'y))
-(check-equal? (core-free-vars '(ReborrowAt 0 (Own z ()) (BorrowMutAt 0 (Own y ()) y)))
-              (set 'y 'z))
-(check-equal? (core-free-vars '(ProjBorrowAt 0 (Own z (a))
+(check-equal? (core-free-vars '(ReborrowAt 0 (BorrowMutAt 0 (Own y ()) y)))
+              (set 'y))
+(check-equal? (core-free-vars '(ProjBorrowAt 0
                                (BorrowMutAt 0 (Own y ()) y) a))
-              (set 'y 'z))
+              (set 'y))
 (check-equal? (core-free-vars '(Let (y let Int) 1 (Borrow y))) (set))
 (check-equal? (core-free-vars '(Lam () c0 (y) (BorrowMut y))) (set))
 (check-equal? (core-free-vars '(Let (y let Int) 1 (BorrowAt 0 (Own y ()) y))) (set))
