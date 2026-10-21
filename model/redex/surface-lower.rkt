@@ -954,6 +954,8 @@
           ,(if (eq? body-kind 'block)
                (lower-block-body body env fail)
                (lower-sexpr body env fail)))]
+    [`(SApply ,s (SVar ,_ %interp) (,e))
+     `(StrHole ,s ,(lower-sexpr e env fail))]
     [`(SApply ,s ,f ,arguments)
      (define trait-call
        (match f

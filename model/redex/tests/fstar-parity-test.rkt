@@ -12,7 +12,7 @@
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
  (check-equal? (length racket-surface-constructors) 43)
- (check-equal? (length racket-ucore-constructors) 20)
+ (check-equal? (length racket-ucore-constructors) 21)
  (check-equal? (length fstar-constructors) 42))
 
 (test-case
@@ -101,6 +101,7 @@
  (check-equal? (row-kind 'SExprStmt) 'many-to-one)
  (check-equal? (row-kind 'SFnDecl) 'many-to-one)
  (check-equal? (row-kind 'SLeave) 'one-to-one)
+ (check-equal? (row-kind 'StrHole) 'none)
  (check-equal? (row-kind 'SBoolIf) 'one-to-one)
  (check-equal? (row-kind 'SFor) 'one-to-one)
  (check-equal? (row-kind 'Reassign) 'one-to-one)
@@ -188,6 +189,7 @@
    (cons 'TraitCall (redex-match? UCore+ e
                                   `(TraitCall ,s0 Printable (#:lbl print ,s0)
                                               ((#:lit 1 ,s0)))))
+   (cons 'StrHole (redex-match? UCore+ e `(StrHole ,s0 (#:lit 1 ,s0))))
    (cons 'Eliminate (redex-match? UCore+ e
                                   `(Eliminate ,s0 (#:var c ,s0)
                                               ((,s0 (#:ty Int ,s0) (#:bind item ,s0)

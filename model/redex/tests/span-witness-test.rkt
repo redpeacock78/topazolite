@@ -145,7 +145,7 @@
     (check-equal? (and (redex-match? G2+ φ prop) #t)
                   (and (redex-match? G2 φ prop) #t))))
 
-(test-case "UCore+ の e は 25 production すべてに証人を持つ"
+(test-case "UCore+ の e は 26 production すべてに証人を持つ"
   (for ([expr (in-list
                (list (term (#:lit 1 ,s0))
                      (term (#:var x ,s0))
@@ -154,6 +154,7 @@
                      (term (Apply ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
                      (term (TraitCall ,s0 Printable (#:lbl print ,s1)
                                       ((#:lit 1 ,s1))))
+                     (term (StrHole ,s0 (#:lit 1 ,s1)))
                      (term (Let ,s0 (#:bind x ,s1) (#:lit 1 ,s1) (#:var x ,s1)))
                      (term (Let ,s0 ((#:bind x ,s1) const (#:ty Int ,s1))
                                 (#:lit 1 ,s1) (#:var x ,s1)))

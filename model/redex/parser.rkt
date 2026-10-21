@@ -497,7 +497,6 @@
               body-j))))
 
 ;; SUR-002b。断片を式へ写し、string-concat の左畳み込みへ組み替える。
-;; 専用の節点を作らないのは pipe と同じ理由である（surface.md §3）。
 (define (parse-interpolation ts fail i)
   (define s (span-at ts i))
   (define fragments (value-at ts i))
@@ -505,7 +504,11 @@
     (for/list ([fragment (in-list fragments)])
       (match fragment
         [`(text ,str ,fs) `(SStr ,fs ,str)]
-        [`(hole ,tokens ,_) (parse-hole tokens fail)])))
+        [`(hole ,tokens ,_)
+         (define e (parse-hole tokens fail))
+         (define s_e (node-span e))
+         ;; %interp は Surface で綴れないので、利用者の束縛は穴を捕獲しない。
+         `(SApply ,s_e (SVar ,s_e %interp) (,e))])))
   (define head
     (if (eq? (first (first fragments)) 'hole)
         (cons `(SStr (#:span ,(span-id s) ,(span-lo s) ,(add1 (span-lo s))) "")

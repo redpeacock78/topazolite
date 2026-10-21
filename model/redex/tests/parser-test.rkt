@@ -950,7 +950,9 @@
  (check-equal? (p-expr "\"a${x}b\"")
                `(SApply ,s (SVar ,s string-concat)
                         ((SApply ,s (SVar ,s string-concat)
-                                 ((SStr ,(sp 1 2) "a") (SVar ,(sp 4 5) x)))
+                                 ((SStr ,(sp 1 2) "a")
+                                  (SApply ,(sp 4 5) (SVar ,(sp 4 5) %interp)
+                                          ((SVar ,(sp 4 5) x)))))
                          (SStr ,(sp 6 7) "b")))))
 
 (test-case
@@ -958,7 +960,9 @@
  (define s (sp 0 6))
  (check-equal? (p-expr "\"${x}\"")
                `(SApply ,s (SVar ,s string-concat)
-                        ((SStr ,(sp 0 1) "") (SVar ,(sp 3 4) x)))))
+                        ((SStr ,(sp 0 1) "")
+                         (SApply ,(sp 3 4) (SVar ,(sp 3 4) %interp)
+                                 ((SVar ,(sp 3 4) x)))))))
 
 (test-case
  "SUR-002b: 穴の式は 1 個の expr であり、空と余分な token は E-SUR-005 である"
@@ -970,9 +974,13 @@
 (test-case
  "SUR-002b: 穴の中で pipe、関数適用、複数行の block を読む"
  (check-match (p-expr "\"${x |> f}\"")
-              `(SApply ,_ ,_ ((SStr ,_ "") (SApply ,_ (SVar ,_ f) ((SVar ,_ x))))))
+              `(SApply ,_ ,_ ((SStr ,_ "")
+                              (SApply ,_ (SVar ,_ %interp)
+                                      ((SApply ,_ (SVar ,_ f) ((SVar ,_ x))))))))
  (check-match (p-expr "\"${ {\n let y = x\n y\n} }\"")
-              `(SApply ,_ ,_ ((SStr ,_ "") (SBlock ,_ ,_ ,_))))
+              `(SApply ,_ ,_ ((SStr ,_ "")
+                              (SApply ,_ (SVar ,_ %interp)
+                                      ((SBlock ,_ ,_ ,_))))))
  (check-equal? (p-code "\"${x\n}\"") "E-SUR-005"))
 
 (test-case

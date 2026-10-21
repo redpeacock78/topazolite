@@ -1135,6 +1135,7 @@
      (sets-union (map free-vars/erased terms))]
     [`(TraitCall ,_ ,_ (,arguments ...))
      (sets-union (map free-vars/erased arguments))]
+    [`(StrHole ,body) (free-vars/erased body)]
     [`(Let (,name ,_ ,_) ,bound ,body)
      (set-union (free-vars/erased bound)
                 (set-remove (free-vars/erased body) name))]
@@ -4261,6 +4262,7 @@
            (for-each (λ (argument) (walk argument delayed?)) arguments)]
           [`(TraitCall ,_ ,_ (,arguments ...))
            (for-each (λ (argument) (walk argument delayed?)) arguments)]
+          [`(StrHole ,body) (walk body delayed?)]
           [`(Fn ((,binders ,_) ...) ,_ ,_ ,body)
            (check-parameter-binders! binders)
            (walk body #t)]
@@ -5016,6 +5018,10 @@
         [(? integer? literal) (judgment `(#:lit ,literal ,s) 'Int '())]
         [(? string? literal) (judgment `(#:lit ,literal ,s) 'String '())]
         ['unit (judgment `(#:lit unit ,s) 'Unit '())]
+
+        ;; SUR-002c2 Task 2。Task 3 で Printable の解決に置き換える。
+        [`(StrHole ,u)
+         (check u 'String environment delta propositions boundaries)]
 
         [(? symbol? name)
          (define local-type (flow-view environment name))

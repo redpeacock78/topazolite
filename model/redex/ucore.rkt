@@ -61,6 +61,7 @@
   (e ::= l
          x
          (TraitCall T label (e ...))
+         (StrHole e)
          (Fn ((x uret) ...) uret uεr e)
          (Apply e e ...)
          (Let x e e)
@@ -121,6 +122,7 @@
   (e ::= lt
          vr
          (TraitCall s T ls (e ...))
+         (StrHole s e)
          (Fn s ((xs tr) ...) tr esr e)
          (Apply s e e ...)
          (Let s xs e e)

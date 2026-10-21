@@ -10,6 +10,7 @@
 (define g1-terms
   (term ((Apply 1 2)
          (TraitCall Printable print (1))
+         (StrHole "x")
          (Let (x Int) 1 x)
          (Construct (Option Int) some 1)
          (Eliminate (Construct (Option Int) some 1) ((some (x) -> x)))
@@ -37,7 +38,7 @@
 (test-case "annotate-core は G1 の全 production を spanful へ持ち上げる"
   (for ([core (in-list g1-terms)])
     (define lifted (annotate-core core))
-    (check-true (if (match core [`(TraitCall ,_ ,_ ,_) #t] [_ #f])
+    (check-true (if (match core [(or `(TraitCall ,_ ,_ ,_) `(StrHole ,_)) #t] [_ #f])
                     (redex-match? UCore+ e lifted)
                     (or (and (redex-match? G1+ c lifted) #t)
                         (and (redex-match? G1+ v lifted) #t)))
@@ -95,6 +96,7 @@
 (define ucore-terms
   (term ((Fn ((x Int)) Int () x)
          (Apply 1 2)
+         (StrHole "x")
          (Let x 1 x)
          (Let (x const Int) 1 x)
          (Rec ((a imm 1)))
@@ -138,6 +140,11 @@
       (andmap span-ok? (list call-span label-span argument-span))]
      [_ #f]))
   (check-equal? (erase-surface annotated) '(TraitCall Printable print (1))))
+
+(test-case "StrHole の span を付けて往復する"
+  (define annotated (annotate-surface '(StrHole 1)))
+  (check-match annotated `(StrHole (#:span ,_ ,_ ,_) (#:lit 1 (#:span ,_ ,_ ,_))))
+  (check-equal? (erase-surface annotated) '(StrHole 1)))
 
 (test-case "annotate-surface は Union member 枝へ型と束縛子の span を振る"
   (define annotated
