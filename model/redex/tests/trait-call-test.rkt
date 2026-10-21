@@ -8,9 +8,11 @@
          "../elaborate.rkt"
          "../erase.rkt"
          "../lexer.rkt"
+         (prefix-in backend: "../lowering.rkt")
          "../machine.rkt"
          "../origins.rkt"
          "../parser.rkt"
+         "../pr-machine.rkt"
          "../search.rkt"
          "../surface-lower.rkt"
          "../traits.rkt")
@@ -49,6 +51,41 @@
    (compiled-ledger artifact)
    (λ () (impl-oid (first (impl-rows-by-trait name (current-trait-env)))))))
 
+(define (run-backend-value artifact backend-name)
+  (call-with-trait-ledger
+   (compiled-ledger artifact)
+   (λ ()
+     (define-values (status target)
+       (backend:lower (compiled-execution-core artifact) backend-name))
+     (unless (eq? status 'ok)
+       (fail-check (format "backend lowering failed: ~s" target)))
+     (match (run-pr (inject-pr target) 10000)
+       [`(pcfg ,value () () ()) value]
+       [other (fail-check (format "unexpected backend result ~s" other))]))))
+
+(define t1-source
+  (string-append
+   "type User = { name: String }\n"
+   "impl Printable for User { print: fn(u: User) -> String { return u.name } }\n"
+   "let u: User = { name: \"a\" }\n"
+   "Printable.print(u)"))
+
+(define t2-source
+  (string-append
+   "type Pair = { left: Int, right: Bool }\n"
+   "derive Sizable for Pair\n"
+   "let p: Pair = { left: 1, right: true }\n"
+   "Sizable.size(p)"))
+
+(define t4-source
+  (string-append
+   "type N = { n: Int }\n"
+   "type PS = Printable & Sizable\n"
+   "impl Printable for N { print: fn(x: N) -> String { return \"n\" } }\n"
+   "derive Sizable for N\n"
+   "let n: N = { n: 1 }\n"
+   "PS.print(n)"))
+
 (define (nth-span source text [index 0])
   (define positions (regexp-match-positions* (regexp (regexp-quote text)) source))
   (define position (list-ref positions index))
@@ -69,13 +106,7 @@
   (find term))
 
 (test-case "T1 利用者の impl の欄を呼んで Apply-Proj へ消去し実行値を得る"
-  (define source
-    (string-append
-     "type User = { name: String }\n"
-     "impl Printable for User { print: fn(u: User) -> String { return u.name } }\n"
-     "let u: User = { name: \"a\" }\n"
-     "Printable.print(u)"))
-  (define artifact (compile source))
+  (define artifact (compile t1-source))
   (check-true (compiled? artifact) (format "compile failed: ~s" artifact))
   (when (compiled? artifact)
     (check-false (contains-form? (compiled-execution-core artifact) 'TraitCall))
@@ -83,12 +114,7 @@
     (check-equal? (run-value artifact) "a")))
 
 (test-case "T2 derive の後の Sizable.size は recipe の葉の数を返す"
-  (define artifact
-    (compile (string-append
-              "type Pair = { left: Int, right: Bool }\n"
-              "derive Sizable for Pair\n"
-              "let p: Pair = { left: 1, right: true }\n"
-              "Sizable.size(p)")))
+  (define artifact (compile t2-source))
   (check-true (compiled? artifact) (format "compile failed: ~s" artifact))
   (when (compiled? artifact)
     (check-equal? (run-value artifact) 2)))
@@ -111,14 +137,7 @@
   (when (compiled? after) (check-equal? (run-value after) "i")))
 
 (test-case "T4 合成 trait の呼出しは成分の実装値を呼ぶ"
-  (define artifact
-    (compile (string-append
-              "type N = { n: Int }\n"
-              "type PS = Printable & Sizable\n"
-              "impl Printable for N { print: fn(x: N) -> String { return \"n\" } }\n"
-              "derive Sizable for N\n"
-              "let n: N = { n: 1 }\n"
-              "PS.print(n)")))
+  (define artifact (compile t4-source))
   (check-true (compiled? artifact) (format "compile failed: ~s" artifact))
   (when (compiled? artifact) (check-equal? (run-value artifact) "n")))
 
@@ -245,3 +264,25 @@
   (check-true (diagnostic? rejected))
   (when (diagnostic? rejected)
     (check-equal? (diagnostic-id rejected) "E-TYP-012")))
+
+(test-case "C1 利用者の impl と derive は backend でも interpreter と同じ値を返す"
+  (for ([source (in-list (list t1-source t2-source t4-source))])
+    (define artifact (compile source))
+    (check-true (compiled? artifact) (format "compile failed: ~s" artifact))
+    (when (compiled? artifact)
+      (define expected (run-value artifact))
+      (for ([backend-name (in-list '(racket-cs racketscript))])
+        (check-equal? (run-backend-value artifact backend-name) expected
+                      (format "~a disagrees with interpreter" backend-name))))))
+
+(test-case "C2 R0 の trait impl と intersect primitive は E-LOW-002 のままである"
+  (for ([name (in-list '(impl-printable-int intersect-printable-sizable))]
+        [oid (in-list '(o-impl-printable-int o-intersect-print-size))])
+    (define-values (status result)
+      (call-with-trait-ledger
+       canonical-trait-ledger
+       (λ ()
+         (backend:lower-value `(PrimVal (Reserved ,oid) ,name) 'racket-cs))))
+    (check-eq? status 'capability)
+    (check-true (diagnostic? result))
+    (check-equal? (diagnostic-id result) "E-LOW-002")))

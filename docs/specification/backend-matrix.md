@@ -493,6 +493,10 @@ backend を差し替えても結果が変わらないことの根拠は、この
 頭に算術の feature を割り当てると、算術を `unsupported` と宣言したときに、kernel primitive と trait primitive と資源取得の診断まで巻き込んで閉じてしまう。
 `primitive-value` を閉じた対応表では 8 件すべての写しが診断になるが、粗い側へ倒れるだけであり、部分的な出力は返らない（§8）。
 
+Surface の `impl` と `derive` が生成した trait primitive は別の feature `surface-trait-primitive` で扱う。
+`PrimVal` の `Reserved` oid を impl 行へ戻し、その oid が Surface 生成行のものと確認できた場合に限り、backend は引数を厳密に評価する closure から不透明な `(PTagged proof)` を返す。
+それ以外の trait primitive、特に R0 の impl と intersect primitive は引き続き `trait-primitive` として `E-LOW-002` を返す。
+
 ### 10.3 予約する feature
 
 固定幅整数と `Bits<N>` は feature-id として表に予約する。
@@ -545,7 +549,7 @@ gate の `deferred-tests` が BAK-002 を 0 件と数えるのはこのためで
 - **型の保存**：表現規約への適合は型保存の必要条件でしかない。型の違う 2 つの関数型は同じ closure 表現へ落ちる。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち型の保存を完全に回収したことを意味しない（`BAK-001`）。
 - **Effect の保存**：`Return` は境界名と型符号の両方が残るが、`Yield` の型は `yield` へ潰れる。写し先の runtime 呼び出しが型符号を担がないためである。等号が言えるのは、適用先が構文上の closure であり、かつ宣言 latent row が本体の実効果と等しい範囲に限られる。全域では包含しか言えない。これはホワイトペーパー §15 の「型・Effect・評価順を保存する」のうち Effect の保存を完全に回収したことを意味しない（`BAK-001`）。
 - **Effect の dispatch tag**：目標側の operation 名は型由来の符号を担ぐ。源の handler 選択が operation 全体を比べるため、境界名だけでは選択が一致しないためである。型に由来する情報が目標項に残る点は §1 の不変条件に対する擦り寄りであり、符号には単射性しか要求しない。これは Phase 0 で固定した決定であり、後続 phase へ送る先を持たない。
-- **kernel primitive と trait primitive**：`Γ0` の 8 件以外の primitive は Phase 0 では診断を返す。源の δ を目標側の値表現の上で書き直すと、独立に検査できない二重定義になるためである。これはこれらの primitive が backend で動かないことを意味せず、Phase 0 の模型が写さないだけである（`BAK-008`）。
+- **kernel primitive と R0 の trait primitive**：Surface が生成した impl/derive primitive を除き、`Γ0` の 8 件以外の primitive は Phase 0 では診断を返す。源の δ を目標側の値表現の上で書き直すと、独立に検査できない二重定義になるためである。Surface 生成 primitive の限定的な Proof shim は §10.2 に定める。その他の primitive は backend で動かないという意味ではなく、Phase 0 の模型が写さないだけである（`BAK-008`）。
 - **評価順の保存の測定範囲**：目標側の fuel を段階的に増やしても終端に届かない項は discard する。再帰を含む項は展開に静的な上界を持たないため、有限の試行で全項を測り切ることはできない。discard した項について保存は主張しない（`BAK-001`）。
 - **lowering 形集合の完全検査**：`lower` が源のすべての形を写すことは証明していない。形ごとの fixture と生成器の到達範囲で確かめているだけであり、源の形集合との一致は §7 の対応表が源の形を漏れなく並べていることに依存する（`BAK-009`）。
 - **backend の実体**：`racket-cs` と `racketscript` の support 値は表の宣言であり、実際の runtime で確かめていない。確認は BAK-002 と BAK-003 の検証欄が指す Phase 3 以降の成果物で行う。

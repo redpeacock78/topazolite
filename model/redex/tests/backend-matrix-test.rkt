@@ -108,7 +108,11 @@
 (test-case
  "feature-support reads the declared value"
  (check-eq? (feature-support 'kernel-primitive 'racket-cs) 'unsupported)
- (check-eq? (feature-support 'kernel-primitive 'racketscript) 'unsupported))
+ (check-eq? (feature-support 'kernel-primitive 'racketscript) 'unsupported)
+ (check-eq? (feature-support 'trait-primitive 'racket-cs) 'unsupported)
+ (check-eq? (feature-support 'trait-primitive 'racketscript) 'unsupported)
+ (check-eq? (feature-support 'surface-trait-primitive 'racket-cs) 'native)
+ (check-eq? (feature-support 'surface-trait-primitive 'racketscript) 'native))
 
 (test-case
  "capability-diagnostic carries the feature id, backend, node, and reason"

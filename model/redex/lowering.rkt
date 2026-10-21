@@ -13,6 +13,7 @@
          "resource-type.rkt"
          "schema.rkt"
          "span-core.rkt"
+         "traits.rkt"
          (only-in "type-equiv.rkt" normalize-type union-members))
 
 (provide lower
@@ -169,13 +170,27 @@
                node
                (format "op の形が (Return b τ) でない: ~s" (erase-core op)))]))
 
-  ;; prim-body。名前で 3 つに分ける（backend-matrix.md §7）。PrimVal の頭が指す
+  ;; prim-body。Γ0 の primitive と Surface が生成した impl primitive を起源で分ける
+  ;; （backend-matrix.md §7）。PrimVal の頭が指す
   ;; primitive-value は η 展開の closure を作るだけの feature なので、shim へ写す
   ;; 名前の可否はここでもう一度、名前ごとの feature で引く
   ;; （backend-matrix.md §7）。頭に算術
   ;; の feature を割り当てると、算術を unsupported と宣言したときに kernel と
   ;; trait と acquire の診断まで巻き込んで閉じてしまう。
-  (define (prim-body nm node)
+  (define (surface-impl-row origin nm)
+    (match origin
+      [`(Reserved ,oid)
+       (define row (impl-row-by-oid oid (current-trait-env)))
+       (and row
+            (eq? nm (impl-name row))
+            (case (impl-kind row)
+              [(impl) (regexp-match? #rx"^o-impl-user-" (symbol->string oid))]
+              [(derive) (regexp-match? #rx"^o-derive-user-" (symbol->string oid))]
+              [else #f])
+            row)]
+      [_ #f]))
+
+  (define (prim-body nm origin node)
     (cond
       [(primitive-feature nm)
        => (lambda (feature-id)
@@ -184,9 +199,14 @@
       [(assq nm kernel-gamma0-entries)
        (fail 'kernel-primitive node
              (format "Typed Core の kernel primitive は写し先を持たない: ~a" nm))]
+      [(surface-impl-row origin nm)
+       (require-feature-id! 'surface-trait-primitive node)
+       ;; PApp は引数を左から厳密に評価する。record の値は実行時には不要で、
+       ;; ProofRep と同じ不透明な proof 値だけを返す。
+       '(PTagged proof)]
       [(assq nm (current-trait-gamma0-entries))
        (fail 'trait-primitive node
-             (format "trait primitive は Phase 2 以降の emitter を待つ: ~a" nm))]
+             (format "R0 の trait primitive は写し先を持たない: ~a" nm))]
       [else
        (fail 'unknown-core-form node (format "Γ0 に無い primitive の名前: ~a" nm))]))
 
@@ -299,10 +319,10 @@
       [`(Lam ,_ ,_ (,formals ...) ,body)
        `(PClosure () ,(map (lambda (formal) (var-code (peel-bind formal))) formals)
                   ,(lower-core body))]
-      [`(PrimVal ,_ ,nm)
+      [`(PrimVal ,origin ,nm)
        ;; primitive の名前を先に検査してから arity を読む。diagnostic で閉じる経路を
        ;; primitive-arity の #f に渡して例外化しないためである。
-       (define body (prim-body nm value))
+       (define body (prim-body nm origin value))
        `(PClosure () ,(primitive-formals (primitive-arity nm)) ,body)]
       [`(CurryVal ,_ ,function ,argument)
        (curry-closure (lower-val function) (lower-val argument) function)]

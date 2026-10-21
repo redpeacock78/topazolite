@@ -70,8 +70,10 @@
                        "Bits<N> に対応する Typed Core の型が無い")
     (kernel-primitive unsupported unsupported #f #f
                       "Phase 0 の Typed Core は kernel primitive を持たない")
+    (surface-trait-primitive native native #f 'tests/trait-call-test.rkt
+                      "Surface の impl/derive primitive は不透明な Proof 値へ写す")
     (trait-primitive  unsupported unsupported #f #f
-                      "trait primitive の写しは Phase 2 以降の emitter を待つ")))
+                      "R0 の trait impl と intersect primitive は写し先を持たない")))
 
 ;; 診断 ID 一覧。feature に対応する ID と、対応しない ID の 2 種類がある。
 ;; unknown-core-form は対応表に無い形、unknown-core-type は op-code が τ でない
