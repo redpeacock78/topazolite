@@ -507,7 +507,8 @@ scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごと
 その束縛の本体は `unit` である。
 このため `Int` を含む非 `Unit` の値も式文に置ける。
 資源値は式文の直後に drop されず、最寄りの Core `Scope` の finalization で `Dropped` になる。
-`SBlock` は `Scope` を追加しないため、その token は後続の式の実行中も `Available` のまま残る。
+すべての `SBlock` は `LexicalScope` へ下ろされ、elaboration が Core の `(Scope s () c)` にする。
+block 内で束縛された affine resource は、`Move` されずに残れば、その block の出口で逆順に drop される。
 
 文位置の `when` の枝の値を `Unit` に揃えるのは、枝の型を合流する必要をなくすためである。
 枝全体を一度に破棄すると、異なる型の枝が合流され、資源型の枝を含むと `E-TYP-012` になりうる。
@@ -802,6 +803,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   `Loop` は型引数と row を推論し、`%for-rest` の `nil` / `cons` を `Eliminate` で分け、cons 枝で要素 `x` と `%for-tail` を束縛する。
   cons 枝の本体は `%stmt` に束縛され、その後 `%for-tail` で再帰する。
   式位置では `Loop` を `NarrativeExpr` と `Option` adapter で包み、文位置では `%stmt` の `Unit` 束縛で包む。
+  block 本体の Scope は cons 枝の `%stmt` の右辺にあり、tail への再帰 `Apply` より前に閉じるため、各反復で閉じる。
   elaborate は `%for-list`、`%for-tail`、`%for-rest` が資源型のとき `Move` を生成する。
   要素型が資源型の cons 枝では、`%stmt` の右辺に要素と本体を囲む内側の `Scope` を作り、tail への再帰 `Apply` はその `Scope` の外に置く。
   本体が要素を `Move` しない限り、内側の `Scope` を出る時点で drop される。
@@ -855,6 +857,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 - `(SFn s ((SParam s_p (SName s_x x) sty-or-none) ...) return-sty-or-none row-or-none body-kind body)` は、span を持つ binder、戻り型、Effect row を持つ `(Fn ...)` へ落とす。row が明示されていれば、その label を lower-row した row と row 節の span `s_row` を `(#:ef labels s_row)` として置く。
   `body-kind` が `expr` なら本体を通常の mode で下ろす。
   `body-kind` が `block` なら `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
+  `lower-stmt` は関数本体の `SBlock` を `LexicalScope` にするため、関数本体は `BlockBody` の内側に block の `Scope` を持つ。
   `BlockBody` は関数本体と式位置の `if` または `when` の文を持つ分岐ブロックで使う elaboration marker であり、Typed Core へは残らない。
   row が省略されていれば `(#:ef #:infer s)` を置き、`s` は関数全体の span である。
   `=>` と block の両形の無名関数でこの印を使う。
@@ -862,7 +865,11 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   row が明示されていれば、空の row も期待型から継承せず、宣言 row と期待 row の照合は既存の検査規則で行う。
   仮引数型が `#:none` なら型欄は `(#:infer s_x)` となり、`s_x` は binder の span である。
   戻り型が `#:none` なら戻り型欄は `(#:infer s)` となる。
-- `(SBlock s (sbind ...) e)` は、束縛と式文を原文順に走査し、右から畳んだ `Let` の入れ子へ落とす。
+- `(SBlock s (sbind ...) e)` は、束縛と式文を原文順に走査し、右から畳んだ `Let` の入れ子を `LexicalScope` で包む。
+  elaboration はこれを Core の `(Scope s () c)` にし、型と row は内側の項のまま保つ。
+  期待型の要否の判定と、全枝が `Never` の `NarrativeExpr` を拒否する判定は `LexicalScope` を透過するため、包む前後で型と診断は変わらない。
+  関数本体は `BlockBody` の内側にこの Scope を持ち、入れ子 block の Scope はそれぞれの出口で閉じる。
+  Scope 内の未消費 affine resource は出口で逆順に drop される。
   末尾式は通常の mode で下ろし、文位置に限り文の mode で下ろす。
 - `(STryBind s (SName s_x x) e)` は `(TryBind s_tail (#:bind x s_x) e' rest)` へ落とす。
   右辺 `e` は束縛前の環境で下ろし、後続の項 `rest` では `x` を束縛する。
@@ -881,6 +888,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
   資源値は最寄りの Core `Scope` の finalization で drop される。
 - `(SFnDecl s (SName s_f f) ... return-sty-or-none row-or-none body)` は、関数本体と後続の項を持つ `Recur` へ落とす。明示 row は lower-row の結果を row 節の span `s_row` とともに置く。
   本体は `(BlockBody s_close (lower-stmt body))` へ下ろし、`s_close` は本体の閉じ波括弧 1 byte の span である。
+  関数本体の `SBlock` は `LexicalScope` へ下ろすため、`BlockBody` の内側に Core の `Scope` がある。
   row が省略されていれば Recur の row は空であり、その row 欄の span は関数宣言全体の span `s` である。
   戻り型が `#:none` なら `Recur` の戻り型欄は `(#:infer s)` となり、`s` は関数宣言全体の span である。
 - `(STypeDecl s (SName s_n T) ty)` は別名環境へ入れるだけで、節点を生成しない。
