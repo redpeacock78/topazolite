@@ -52,7 +52,7 @@
     [_ #f]))
 
 (test-case
- "SUR-002b: 穴の値を連結した文字列へ評価する"
+ "[REQ: SUR-002] SUR-002b: 穴の値を連結した文字列へ評価する"
  (check-equal? (run-main "let s = \"x\"\n\"a${s}b\"") "axb")
  (check-equal? (run-main "let s = \"x\"\n\"${s}\"") "x")
  (check-equal? (run-main "let a = \"p\"\nlet b = \"q\"\n\"${a}${b}\"") "pq")

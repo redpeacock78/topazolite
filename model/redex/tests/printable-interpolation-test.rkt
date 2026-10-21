@@ -146,7 +146,7 @@
    "  false => { let ignored = 2\n ignored }\n"
    "} }\nf(true)"))
 
-(test-case "P1 impl Printable for Int の後の Int の穴は print の結果へ連結する"
+(test-case "[REQ: SUR-002] P1 impl Printable for Int の後の Int の穴は print の結果へ連結する"
   (define source (string-append int-impl "\"a${1}\""))
   (check-equal? (run-main source) "ai")
   (define artifact (compile source))

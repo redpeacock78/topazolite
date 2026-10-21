@@ -606,11 +606,11 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 ### SUR-002
 
-- **状態**：Phase 2 以降
+- **状態**：P2
 - **由来**：ホワイトペーパー §15
 
 `?=`、pipe、interpolation は、対応する Core の制御または値の形へ意味論を保って lowering されなければならない。
-現状では、`?=`、pipe、String の穴を持つ interpolation は実装済みであり、穴の `Printable` による変換は未実装である。
+現状では、`?=`、pipe、String の穴を持つ interpolation、および可視な `Printable` 実装値による String 以外の穴の変換が実装済みである。
 
 ### SUR-003
 
@@ -1038,7 +1038,6 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 戻り値だけに `Self` を持つ要求欄の受け手型の推論 | `trait.md` §9 | Phase 4 以降 | §8.1、§10.3 |
 | method-call sugar `x.l()` による要求欄の呼出し | `trait.md` §9 | Phase 未定 | §10.3 |
 | 借用の署名を持つ要求欄の呼出し（射影した関数値への適用が `E-BOR-012` になる制限。Surface の借用注釈の導入時に回収する） | `trait.md` §9 | Phase 2 以降 | §8.1 |
-| interpolation の穴の `Printable` による文字列への変換 | `surface.md` §3 | Phase 2 以降 | §2.1.4、§8.1 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |

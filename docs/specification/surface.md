@@ -11,7 +11,7 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 
 この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、**Printable** による補間値の変換、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+この版は、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -212,16 +212,29 @@ parser は各文字断片を `SStr` にし、各式断片を 1 個の `expr` と
 `string-concat` は Surface の識別子として綴れないため、利用者の束縛による捕獲は起きない。
 この名前の保証は、原文を lexer と parser に通す経路に限り、手組み Surface AST や UCore には及ばない。
 生成された適用は通常の評価順を使い、文字断片と式断片を原文の左から右へ評価する。
-穴の式は `String` と互換でなければならない。
-合成できる不一致は `E-TYP-012` となり、expected は `String`、found は穴の式の型である。
+parser は各穴の式 `e` を、Surface で綴れない `%interp` の適用 `(SApply s_e (SVar s_e %interp) (e))` で包む。
+この生成名が利用者の束縛に捕獲されない保証は、原文を lexer と parser に通す経路に限る。
+
+elaborate は穴をまず `String` に対して試行で check する。
+試行が失敗した場合は、fresh counter、flow、境界の escape と probe、failure-return、loop の row 試行記録、when の current と deferred の box を試行前の状態へ戻す。
+試行が成功すればその結果を使い、失敗すれば穴の式を合成する。
+合成に失敗した場合は、穴を通常の `String` check にかけ直し、その診断を出す。
+
+合成した型を正規化した結果が `String` なら、`Printable` を探索せず Absent と同じく扱う。
+それ以外では、現在の elaboration 環境から見える `Printable` 実装を解決する。
+実装が見つかればその `print` の実装値を呼び、穴を文字列にする。
+Absent なら通常の `String` check を再実行し、現行の `E-TYP-012` を保つ。
+Ambiguous なら `E-PRF-004` とする。 [REQ: SUR-002]
+
+穴の式が `String` と互換なら、最初の check が受理し、`Printable` は探索しない。
+合成できる非 `String` の式に実装が無い場合、`E-TYP-012` の expected は `String`、found は穴の式の型である。
 この診断の primary span は穴の式の節点であり、括弧は節点を作らないため括弧内を指す。
 `Never` は `String` と互換であり、穴の式の合成失敗はその診断を保つ。
-`Printable` による `String` 以外の値の変換は未実装であり、`String` 以外の穴は拒否する。
 
-**Why not（`SInterp` 節点を追加する案）**：既存の `SApply` と `SStr` で意味を保てるため採らない。
+**Why not（Surface に補間専用の節点を追加する案）**：既存の `SApply` で穴を識別できるため採らない。
 **Why not（利用者が書ける `concat` の名前を使う案）**：束縛による捕獲を避ける保証を持てないため採らない。
-**Why not（UCore+ に補間専用の節点を追加する案）**：連結 primitive の適用へ組み替えられ、型検査や実行に別の規則を要しないため採らない。
-**Why not（`Int` と `Bool` の変換 primitive を追加する案）**：`Printable` による trait 解決が未実装の段階で、型ごとの ad hoc な変換を固定するため採らない。
+**Why not（UCore+ に `StrHole` を追加しない案）**：穴の型を合成してから `Printable` を解決するため、型付け時まで穴を識別する `StrHole` が要る。
+**Why not（`Int` と `Bool` の変換 primitive を追加する案）**：変換は `Printable` の実装値で行うため、型ごとの primitive は要らない。
 
 トップレベルにも束縛を置ける。
 トップレベルの束縛は block の中の束縛と同じ規則で扱う。
@@ -780,6 +793,7 @@ Surface の span は、下表で `s` と書いた欄へそのまま渡す。
 
 - `(SInt s n)` は `(#:lit n s)` へ落とす。
 - `(SStr s str)` は `(#:lit str s)` へ落とす。
+- `(SApply s_e (SVar _ %interp) (e))` は `(StrHole s_e e')` へ落とす。
 - `(SUnit s)` は `(#:lit unit s)` へ落とす。
 - `(SBool s true)` と `(SBool s false)` は、それぞれ `(Construct s true (Types))` と `(Construct s false (Types))` へ落とす。
   `Bool` は型引数を持たないので、空の `(Types)` が core-calculus.md §4 の E-Construct-Synth の型引数注釈を与え、合成位置でも型が定まる。 [REQ: SUR-007]
@@ -1149,7 +1163,9 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
   `TApp` の頭の名前は、F* 側で頭の span と名前の組として欄に残る。
   Racket の `Construct` に付く `(Types)` の有無は、F* の `CConstruct` へ写すと保持されない。
 
-文字列補間は `istr` token から既存の `SApply` と `SStr` へ組み替えるため、Surface AST と UCore+ の構成子を増やさない。
+文字列補間は `istr` token から既存の `SApply` と `SStr` へ組み替えるため、Surface AST の構成子を増やさない。
+elaborate は穴を識別する UCore+ の `StrHole` を消費し、型を合成した後に `Printable` を解決する。
+F* に `StrHole` の対応構成子は無い。
 F* は **`TkIstr`** の認識と span の正当性を検査する。
 文字断片の値と左畳み込みの形は Racket の parser と Surface の試験で固定する。
 `SExprStmt` を加えた後の parity の件数は 38/14/36 である。
@@ -1170,6 +1186,7 @@ L3 はそれらを F* の `SLeave` と `CLeave` に一対一で対応させ、�
 014c1a は Surface の `SFor` と UCore+ の `Loop` を加え、F* の `SFor` と `CRecur` へ対応させた（42/19/41）。
 SUR-013a は `SBoolIf` を Racket と F* の Surface に加え、当時の parity 件数を 43/19/42 とした。
 SUR-002c1 は UCore+ に `TraitCall` を加え、F* に対応構成子を持たないため parity 件数を 43/20/42 とする。
+SUR-002c2 は UCore+ に `StrHole` を加え、F* に対応構成子を持たないため parity 件数を 43/21/42 とする。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 20 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
