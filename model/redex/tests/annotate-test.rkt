@@ -9,6 +9,7 @@
 
 (define g1-terms
   (term ((Apply 1 2)
+         (TraitCall Printable print (1))
          (Let (x Int) 1 x)
          (Construct (Option Int) some 1)
          (Eliminate (Construct (Option Int) some 1) ((some (x) -> x)))
@@ -36,8 +37,10 @@
 (test-case "annotate-core は G1 の全 production を spanful へ持ち上げる"
   (for ([core (in-list g1-terms)])
     (define lifted (annotate-core core))
-    (check-true (or (and (redex-match? G1+ c lifted) #t)
-                    (and (redex-match? G1+ v lifted) #t))
+    (check-true (if (match core [`(TraitCall ,_ ,_ ,_) #t] [_ #f])
+                    (redex-match? UCore+ e lifted)
+                    (or (and (redex-match? G1+ c lifted) #t)
+                        (and (redex-match? G1+ v lifted) #t)))
                 (format "~a -> ~a" core lifted))))
 
 (test-case "annotate-core と erase-core は往復する"
@@ -125,6 +128,16 @@
 (test-case "annotate-surface と erase-surface は往復する"
   (for ([expr (in-list ucore-terms)])
     (check-equal? (erase-surface (annotate-surface expr)) expr (format "~a" expr))))
+
+(test-case "TraitCall の label span を保持して往復する"
+  (define annotated (annotate-surface '(TraitCall Printable print (1))))
+  (check-true
+   (match annotated
+     [`(TraitCall ,call-span Printable (#:lbl print ,label-span)
+                  ((#:lit 1 ,argument-span)))
+      (andmap span-ok? (list call-span label-span argument-span))]
+     [_ #f]))
+  (check-equal? (erase-surface annotated) '(TraitCall Printable print (1))))
 
 (test-case "annotate-surface は Union member 枝へ型と束縛子の span を振る"
   (define annotated

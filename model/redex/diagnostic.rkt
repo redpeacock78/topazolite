@@ -458,7 +458,7 @@
 (define surface-entries-v19
   '(("E-SUR-013" surface-duplicate-trait-decl "同じ名前の trait を 2 度宣言した")
     ("E-SUR-014" surface-duplicate-impl-decl "同じ trait と対象型の組へ impl または derive を 2 度宣言した")
-    ("E-SUR-015" surface-unknown-trait-name "宣言の無い trait の名前を impl または derive が参照した")
+    ("E-SUR-015" surface-unknown-trait-name "宣言の無い trait の名前を impl、derive または要求欄の呼出しが参照した")
     ("E-SUR-016" surface-trait-name-collision "宣言が作る名前が trait 環境の既存の名前と衝突した")
     ("E-SUR-017" surface-impl-requirement-mismatch "impl の本体のラベルが trait の要求と合わない")
     ("E-SUR-018" surface-impl-composite-trait "合成 trait へ impl または derive を宣言した")))

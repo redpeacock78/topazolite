@@ -12,7 +12,7 @@
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
  (check-equal? (length racket-surface-constructors) 43)
- (check-equal? (length racket-ucore-constructors) 19)
+ (check-equal? (length racket-ucore-constructors) 20)
  (check-equal? (length fstar-constructors) 42))
 
 (test-case
@@ -185,6 +185,9 @@
    (cons '#:var    (redex-match? UCore+ e `(#:var x ,s0)))
    (cons 'Apply    (redex-match? UCore+ e `(Apply ,s0 (#:var f ,s0) (#:lit 1 ,s0))))
    (cons 'Proj     (redex-match? UCore+ e `(Proj ,s0 (#:var x ,s0) (#:lbl a ,s0))))
+   (cons 'TraitCall (redex-match? UCore+ e
+                                  `(TraitCall ,s0 Printable (#:lbl print ,s0)
+                                              ((#:lit 1 ,s0)))))
    (cons 'Eliminate (redex-match? UCore+ e
                                   `(Eliminate ,s0 (#:var c ,s0)
                                               ((,s0 (#:ty Int ,s0) (#:bind item ,s0)

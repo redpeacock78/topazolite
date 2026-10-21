@@ -19,6 +19,7 @@
          "search.rkt"
          "span-core.rkt"
          "span-subst.rkt"
+         "traits.rkt"
          "type-equiv.rkt"
          "type-shape.rkt"
          "uniquify.rkt"
@@ -63,6 +64,47 @@
 (define current-when-arm-fallthroughs (make-parameter #f))
 (define current-deferred-when-fallthroughs (make-parameter #f))
 (define current-trait-providers (make-parameter (hasheq)))
+
+(define (provider-visible-trait-ledger environment)
+  (define ledger (current-trait-ledger))
+  (define env (trait-ledger-env ledger))
+  (define impls
+    (filter (λ (row)
+              (define provider (hash-ref (current-trait-providers)
+                                         (impl-oid row) #f))
+              (and provider (assoc provider environment)))
+            (trait-env-impl-rows env)))
+  (define fail
+    (λ (reason kind key)
+      (error 'provider-visible-trait-ledger
+             "既存の整合した trait 台帳の再構築が失敗: ~s ~s ~s"
+             reason kind key)))
+  (define visible-env
+    (make-trait-env #:trait (trait-env-trait-rows env)
+                    #:impl impls
+                    #:intersect (trait-env-intersect-rows env)
+                    #:scope (trait-env-scope-rows env)
+                    #:fail fail))
+  (make-trait-ledger
+   visible-env
+   #:data (sort (hash-values (data-index-decls (trait-ledger-data ledger)))
+                symbol<? #:key first)
+   #:fail fail))
+
+(define (type-mentions-self? type)
+  (or (eq? type 'Self)
+      (and (pair? type) (ormap type-mentions-self? type))))
+
+(define (provider-oid-for-label origin label)
+  (match origin
+    [`(Derived ,_ (Impl ,oid ,_ ,_ ,trait))
+     (and (assq label
+                (trait-template (trait-row-by-name trait (current-trait-env))))
+          oid)]
+    [`(Derived ,_ (Compose ,_ ,left ,right))
+     (or (provider-oid-for-label left label)
+         (provider-oid-for-label right label))]
+    [_ #f]))
 
 ;; 既存の三引数の構築は judgment の型を Core の型として使う。
 ;; check の一部だけ、実際に生成した Core の型を明示する。
@@ -1091,6 +1133,8 @@
      (set-subtract (free-vars/erased body) (list->set names))]
     [`(Apply ,terms ...)
      (sets-union (map free-vars/erased terms))]
+    [`(TraitCall ,_ ,_ (,arguments ...))
+     (sets-union (map free-vars/erased arguments))]
     [`(Let (,name ,_ ,_) ,bound ,body)
      (set-union (free-vars/erased bound)
                 (set-remove (free-vars/erased body) name))]
@@ -4215,6 +4259,8 @@
               (when delayed? (violation 'delayed-self-call))]
              [_ (walk callee delayed?)])
            (for-each (λ (argument) (walk argument delayed?)) arguments)]
+          [`(TraitCall ,_ ,_ (,arguments ...))
+           (for-each (λ (argument) (walk argument delayed?)) arguments)]
           [`(Fn ((,binders ,_) ...) ,_ ,_ ,body)
            (check-parameter-binders! binders)
            (walk body #t)]
@@ -5058,6 +5104,114 @@
 
         [`(BlockBody ,_)
          (reject s 'invalid-syntax)]
+
+        [`(TraitCall ,trait ,raw-label (,arguments ...))
+         (define trait-row (trait-row-by-name trait (current-trait-env)))
+         (unless trait-row
+           (reject s 'surface-unknown-trait-name #:phase 'surface trait))
+         (define label (peel-lbl raw-label))
+         (define label-span (wrapper-span raw-label))
+         (define field (assq label (trait-template trait-row)))
+         (unless field
+           (reject label-span 'unknown-record-label label))
+         (define signature (second field))
+         (match signature
+           [`(NFn (,parameter-types ...) ,_return-type ,_latent-in
+                  ,_latent-row ,_obligations ,_origin)
+            (unless (= (length parameter-types) (length arguments))
+              (reject s 'arity-mismatch (length parameter-types) (length arguments)))
+            (define anchor
+              (for/first ([type (in-list parameter-types)]
+                          [index (in-naturals)]
+                          #:when (eq? type 'Self))
+                index))
+            (unless anchor
+              (reject s 'cannot-synthesize raw-label))
+            (define target-type #f)
+            (define specialized-signature #f)
+            (define reachable? (current-escape-reachable?))
+            (define argument-results
+              (for/list ([argument (in-list arguments)]
+                         [index (in-naturals)])
+                (define result
+                  (parameterize ([current-escape-reachable? reachable?])
+                    (cond
+                      [(< index anchor)
+                       (define parameter-type (list-ref parameter-types index))
+                       (when (type-mentions-self? parameter-type)
+                         (reject (span-of argument) 'cannot-synthesize argument))
+                       (check argument parameter-type environment delta
+                              propositions boundaries)]
+                      [(= index anchor)
+                       (define synthesized
+                         (synth argument environment delta propositions boundaries))
+                       (set! target-type
+                             (or (normalize-type (type-for-context synthesized))
+                                 (reject (span-of argument) 'non-normalizable-type
+                                         (type-for-context synthesized))))
+                       (set! specialized-signature
+                             (second
+                              (first (instantiate-requirements
+                                      (list field) target-type))))
+                       synthesized]
+                      [else
+                       (match specialized-signature
+                         [`(NFn (,specialized-parameters ...) ,_ ,_ ,_ ,_ ,_)
+                          (check argument (list-ref specialized-parameters index)
+                                 environment delta propositions boundaries)]
+                         [_ (error 'elaborate "trait 要求欄の型が NFn でなくなった")])])))
+                (set! reachable? (and reachable? (judgment-completes? result)))
+                result))
+            (define-values (_arguments return-type latent-row obligations)
+              (match specialized-signature
+                [`(NFn (,parameters ...) ,result ,_latent-in ,row ,qs ,_origin)
+                 (values parameters result row qs)]
+                [_ (error 'elaborate "trait 要求欄の型が NFn でなくなった")]))
+            (define visible-ledger (provider-visible-trait-ledger environment))
+            (define-values (provider proofs)
+              (call-with-trait-ledger
+               visible-ledger
+               (λ ()
+                 (define goal `(Implements ,target-type ,trait))
+                 (define-values (accepted? _class search-result)
+                   (discharge/proof (initial-candidate-context propositions)
+                                    default-classifier default-oracle
+                                    (make-goal goal)))
+                 (define proof
+                   (and accepted? (resolved? search-result)
+                        (resolved-proof search-result)))
+                 (define origin
+                   (match proof
+                     [(list 'ProofRep (list '#:span _ _ _) origin _) origin]
+                     [(list 'ProofRep origin _) origin]
+                     [_ #f]))
+                 (define oid (and origin (provider-oid-for-label origin label)))
+                 (define bound-provider
+                   (and oid (hash-ref (current-trait-providers) oid #f)
+                        (assoc (hash-ref (current-trait-providers) oid) environment)
+                        (hash-ref (current-trait-providers) oid)))
+                 (define call-proofs
+                   (and bound-provider
+                        (obligation-proofs
+                         obligations (initial-candidate-context propositions))))
+                 (values bound-provider call-proofs))))
+            (unless (and provider proofs (not (memq #f proofs)))
+              (reject s 'unsatisfied-proof-obligation
+                      `(Implements ,target-type ,trait)))
+            (define applied
+              `(Apply ,s
+                      (Proj ,s (#:var ,provider ,s) ,raw-label)
+                      ,@(map judgment-core argument-results)))
+            (define core
+              (for/fold ([core applied]) ([proof (in-list (reverse proofs))])
+                `(Discharge ,s ,proof ,core)))
+            (propagate-context-never
+             (judgment core return-type
+                       (rows-union
+                        (append (map judgment-row argument-results)
+                                (list latent-row))))
+             argument-results)]
+           [_ (reject s 'apply-non-function signature)])]
 
         [`(Apply ,function ,arguments ...)
          (define raw-function-result

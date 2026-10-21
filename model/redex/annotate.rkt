@@ -23,6 +23,8 @@
       [(? literal?) (list '#:lit t (next))]
       [(? symbol?) (list '#:var t (next))]
       [(list 'Apply c ...) (list* 'Apply (next) (map ann c))]
+      [(list 'TraitCall T label (list arguments ...))
+       `(TraitCall ,(next) ,T ,(list '#:lbl label (next)) ,(map ann arguments))]
       ;; spec §8。2 欄の束縛子は (x bmode) である。直後の節の (x uτ) と
       ;; 欄数が同じなので、bmode の 3 語（ucore.rkt:16）で振り分ける。
       [(list 'Let (list x bmode) c_1 c_2)
@@ -135,6 +137,8 @@
              (if (eq? result '#:infer) (list '#:infer (next)) (ty result))
              (ef row) (ann e))]
       [(list 'Apply e ...) (list* 'Apply (next) (map ann e))]
+      [(list 'TraitCall T label (list arguments ...))
+       `(TraitCall ,(next) ,T ,(lbl label) ,(map ann arguments))]
       [(list 'Let (? symbol? x) e_1 e_2)
        (list 'Let (next) (bind x) (ann e_1) (ann e_2))]
       ;; spec §8。annotate-core と同じ節を surface 側にも持つ。

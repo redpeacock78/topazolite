@@ -980,7 +980,7 @@ Intersection は正規化後の Record として扱い、Record に対する葉�
 - `E-SUR-012` `surface-projection-labels`：多 field 射影の label 列が空か重複している
 - `E-SUR-013` `surface-duplicate-trait-decl`：同じ名前の trait を 2 度宣言した
 - `E-SUR-014` `surface-duplicate-impl-decl`：同じ trait と型同値な対象型の組へ impl または derive を 2 度宣言した
-- `E-SUR-015` `surface-unknown-trait-name`：宣言の無い trait の名前を impl または derive が参照した
+- `E-SUR-015` `surface-unknown-trait-name`：宣言の無い trait の名前を impl、derive または要求欄の呼出しが参照した
 - `E-SUR-016` `surface-trait-name-collision`：宣言から作る鍵が基底の trait 環境または kernel の `R0`・`Γ0` と衝突した
 - `E-SUR-017` `surface-impl-requirement-mismatch`：impl 本体のラベル集合が trait の要求と合わない
 - `E-SUR-018` `surface-impl-composite-trait`：合成 trait へ impl または derive を宣言した
@@ -1130,7 +1130,8 @@ P2k1 は `SReturn` と F* の `CReturn` を加える。
 L1b は Surface の `SLeave` と UCore+ の `Leave` を加え、parity 表で対応なしとした（41/18/38）。
 L3 はそれらを F* の `SLeave` と `CLeave` に一対一で対応させ、当時の parity 件数を 41/18/40 とする。
 014c1a は Surface の `SFor` と UCore+ の `Loop` を加え、F* の `SFor` と `CRecur` へ対応させた（42/19/41）。
-SUR-013a は `SBoolIf` を Racket と F* の Surface に加え、一対一で対応させる。現在の parity 件数は 43/19/42 である。
+SUR-013a は `SBoolIf` を Racket と F* の Surface に加え、当時の parity 件数を 43/19/42 とした。
+SUR-002c1 は UCore+ に `TraitCall` を加え、F* に対応構成子を持たないため parity 件数を 43/20/42 とする。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 20 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
@@ -1141,12 +1142,13 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Loop`、`Return`、`Leave`、`FnDecl` の 19 構成子を parity の対象とする。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`TraitCall`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Loop`、`Return`、`Leave`、`FnDecl` の 20 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Reassign` に対応する `CReassign`、`Return` に対応する `CReturn`、`Leave` に対応する `CLeave` を置き、`Recur`、`FnDecl`、`Loop` は `CRecur` へ多対 1 で対応する。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
 `BlockBody` は elaboration が関数本体または式位置の `if` と `when` の文を持つ分岐ブロックを検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
-UCore+ の対象構成子リストは 19 個、F* 側の `core` の構成子リストは 15 個であり、SUR-013a 後の F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
+`TraitCall` は elaboration が実装を解決して `Apply` と `Proj` へ消去する中間節点であり、F* に対応する構成子は無い。
+UCore+ の対象構成子リストは 20 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。

@@ -40,6 +40,8 @@
 ;; span-core.rkt の span-of は #:lit と #:var の形も見るので名前を分ける。
 (define (node-span n) (second n))
 
+(define current-trait-outputs (make-parameter (hasheq)))
+
 (define (span-through-end start end)
   (list '#:span (second start) (third start) (fourth end)))
 
@@ -953,8 +955,19 @@
                (lower-block-body body env fail)
                (lower-sexpr body env fail)))]
     [`(SApply ,s ,f ,arguments)
-     `(Apply ,s ,(lower-sexpr f env fail)
-             ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail)))]
+     (define trait-call
+       (match f
+         [`(SProj ,_ (SVar ,_ ,trait-name) (SLabel ,s_l ,label))
+          (and (eq? (hash-ref env trait-name #f) 'trait)
+               `(TraitCall ,s
+                           ,(hash-ref (current-trait-outputs) trait-name trait-name)
+                           (#:lbl ,label ,s_l)
+                           ,(for/list ([a (in-list arguments)])
+                              (lower-sexpr a env fail))))]
+         [_ #f]))
+     (or trait-call
+         `(Apply ,s ,(lower-sexpr f env fail)
+                 ,@(for/list ([a (in-list arguments)]) (lower-sexpr a env fail))))]
     ;; P2m spec §7.1。枝の束縛子は UCore+ の xs へ写す。
     [`(SMatch ,s ,scrutinee ,arms)
      (define scrutinee-core (lower-sexpr scrutinee env fail))
@@ -1222,7 +1235,10 @@
             (define staged (extend-env base trait-rows '() intersect-rows trait-spans fail))
             (define-values (impl-rows spans core-info providers)
               (lower-impl-decls items* staged trait-spans env outputs fail))
-            (lowered (fold-items items* e* env core-info fail)
+            (define term
+              (parameterize ([current-trait-outputs outputs])
+                (fold-items items* e* env core-info fail)))
+            (lowered term
                      trait-rows impl-rows intersect-rows data-decls providers
                      (for/fold ([h spans]) ([(k v) (in-hash data-spans)])
                        (hash-set h k v))))

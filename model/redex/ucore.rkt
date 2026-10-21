@@ -60,6 +60,7 @@
   (uifclause ::= (e e))
   (e ::= l
          x
+         (TraitCall T label (e ...))
          (Fn ((x uret) ...) uret uεr e)
          (Apply e e ...)
          (Let x e e)
@@ -119,6 +120,7 @@
            (s ts xs -> e))
   (e ::= lt
          vr
+         (TraitCall s T ls (e ...))
          (Fn s ((xs tr) ...) tr esr e)
          (Apply s e e ...)
          (Let s xs e e)
