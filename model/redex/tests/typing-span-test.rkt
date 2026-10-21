@@ -205,7 +205,7 @@
 (define reach-projborrow-optional-core
   (reach-node 'Scope 1760 1790 '(1)
               (reach-node 'ProjBorrowAt 1766 1788
-                          reach-projborrow-optional-rho '(Own 1 (b))
+                          reach-projborrow-optional-rho
                           (reach-node 'BorrowAt 1770 1781
                                       reach-projborrow-optional-rho '(Own 1 ()) 1)
                           'b)))
