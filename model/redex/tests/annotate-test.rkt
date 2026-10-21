@@ -108,6 +108,7 @@
          (Return 1)
          (Leave 1)
          (NarrativeExpr 1)
+         (LexicalScope 1)
          (Recur f ((x Int)) Int () x (Apply f 0))
          (Loop f ((x Int)) Int () x (x))
          (Loop f ((x Int)) Int (Leave) x (x))

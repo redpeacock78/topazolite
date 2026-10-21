@@ -1187,6 +1187,7 @@ L3 はそれらを F* の `SLeave` と `CLeave` に一対一で対応させ、�
 SUR-013a は `SBoolIf` を Racket と F* の Surface に加え、当時の parity 件数を 43/19/42 とした。
 SUR-002c1 は UCore+ に `TraitCall` を加え、F* に対応構成子を持たないため parity 件数を 43/20/42 とする。
 SUR-002c2 は UCore+ に `StrHole` を加え、F* に対応構成子を持たないため parity 件数を 43/21/42 とする。
+SUR-004a1a は UCore+ に `LexicalScope` を加え、F* に対応構成子を持たないため parity 件数を 43/22/42 とする。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 20 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
@@ -1197,13 +1198,14 @@ F* の補題 `keyword_word_reserved` と `fstar-keywords` の対応は手で保�
 
 ### 8.2 UCore+ の対応
 
-UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`TraitCall`、`Eliminate`、`IfSome`、`BlockBody`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Loop`、`Return`、`Leave`、`FnDecl` の 20 構成子を parity の対象とする。
+UCore+ では `#:lit`、`#:var`、`Apply`、`Proj`、`TraitCall`、`Eliminate`、`IfSome`、`BlockBody`、`LexicalScope`、`NarrativeExpr`、`Rec`、`Fn`、`Construct`、`Let`、`TryBind`、`Reassign`、`Recur`、`Loop`、`Return`、`Leave`、`FnDecl` の 21 構成子を parity の対象とする。
 F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対応する `CNarrativeExpr`、`TryBind` に対応する `CTryBind`、`Reassign` に対応する `CReassign`、`Return` に対応する `CReturn`、`Leave` に対応する `CLeave` を置き、`Recur`、`FnDecl`、`Loop` は `CRecur` へ多対 1 で対応する。
 `IfSome` は elaboration が既存の `Let`、`NarrativeExpr`、`Eliminate`、`Construct` へ展開する中間 marker であり、F* の `core` に対応する構成子は無い。
 `BlockBody` は elaboration が関数本体または式位置の `if` と `when` の文を持つ分岐ブロックを検査する前に剥がす中間 marker であり、F* の `core` に対応する構成子は無い。
+`LexicalScope` は Surface の block 境界を表し、elaboration が中身の型と row を保って Core の `Scope` へ移す中間節点である。F* Surface に Scope の形は無いため、対応構成子は無い。
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 `TraitCall` は elaboration が実装を解決して `Apply` と `Proj` へ消去する中間節点であり、F* に対応する構成子は無い。
-UCore+ の対象構成子リストは 20 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
+UCore+ の対象構成子リストは 21 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。

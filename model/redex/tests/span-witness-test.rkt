@@ -145,7 +145,7 @@
     (check-equal? (and (redex-match? G2+ φ prop) #t)
                   (and (redex-match? G2 φ prop) #t))))
 
-(test-case "UCore+ の e は 26 production すべてに証人を持つ"
+(test-case "UCore+ の e は 27 production すべてに証人を持つ"
   (for ([expr (in-list
                (list (term (#:lit 1 ,s0))
                      (term (#:var x ,s0))
@@ -166,6 +166,7 @@
                                       ((,s1 some ((#:bind y ,s1)) -> (#:var y ,s1)))))
                      (term (Return ,s0 (#:lit 1 ,s1)))
                      (term (Leave ,s0 (#:lit 1 ,s1)))
+                     (term (LexicalScope ,s0 (#:lit 1 ,s1)))
                      (term (NarrativeExpr ,s0 (#:lit 1 ,s1)))
                      (term (TryBind ,s0 (#:bind x ,s1) (#:lit 1 ,s1) (#:var x ,s1)))
                      (term (Recur ,s0 (#:bind f ,s1) (((#:bind x ,s1) (#:ty Int ,s1)))
@@ -197,6 +198,7 @@
                               (Construct some 1)
                               (Return 1)
                               (Leave 1)
+                              (LexicalScope 1)
                               (TryBind x 1 x)
                               (TypeMake (Spec Nat Nat))
                               1

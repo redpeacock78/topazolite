@@ -1218,6 +1218,7 @@
                       (free-vars/erased body))])))]
     [`(BlockBody ,body) (free-vars/erased body)]
     [`(BlockBody ,_ ,body) (free-vars/erased body)]
+    [`(LexicalScope ,body) (free-vars/erased body)]
     [`(Return ,body) (free-vars/erased body)]
     [`(Leave ,body) (free-vars/erased body)]
     [`(NarrativeExpr ,body) (free-vars/erased body)]
@@ -4335,6 +4336,7 @@
                 (walk branch-body delayed?)]
                [_ (violation 'unknown-if-some-shape)]))]
           [`(BlockBody ,body) (walk body delayed?)]
+          [`(LexicalScope ,body) (walk body delayed?)]
           [`(Return ,body) (walk body delayed?)]
           [`(Leave ,body) (walk body delayed?)]
           [`(NarrativeExpr ,body) (walk body delayed?)]
@@ -5200,6 +5202,12 @@
         [`(BlockBody ,_)
          (reject s 'invalid-syntax)]
 
+        [`(LexicalScope ,body)
+         (define result (synth body environment delta propositions boundaries))
+         (judgment `(Scope ,s () ,(judgment-core result))
+                   (judgment-type result) (judgment-row result)
+                   (judgment-core-type result) (judgment-normal-type result))]
+
         [`(TraitCall ,trait ,raw-label (,arguments ...))
          (define trait-row (trait-row-by-name trait (current-trait-env)))
          (unless trait-row
@@ -5955,6 +5963,13 @@
     (define (check expression expected environment delta propositions boundaries)
       (define s (span-of expression))
       (match (peel-node expression)
+        [`(LexicalScope ,body)
+         (define result
+           (check body expected environment delta propositions boundaries))
+         (judgment `(Scope ,s () ,(judgment-core result))
+                   (judgment-type result) (judgment-row result)
+                   (judgment-core-type result) (judgment-normal-type result))]
+
         [`(BlockBody ,inner)
          (check-when-arm-block-body (block-body-span expression) inner expected environment delta
                                     propositions boundaries)]

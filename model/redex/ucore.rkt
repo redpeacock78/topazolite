@@ -76,6 +76,8 @@
          (IfSome (uifclause uifclause ...))
          ;; SUR-014b2a。関数本体の文の mode を elaborate へ伝える印である。
          (BlockBody e)
+         ;; SUR-004a1a。Surface の block scope 境界を elaborate へ伝える印である。
+         (LexicalScope e)
          (Return e)
          (Leave e)
          (NarrativeExpr e)
@@ -135,6 +137,7 @@
          (Eliminate s e (ubr ...))
          (IfSome s (uifclause+ uifclause+ ...) s)
          (BlockBody s e)
+         (LexicalScope s e)
          (Return s e)
          (Leave s e)
          (NarrativeExpr s e)

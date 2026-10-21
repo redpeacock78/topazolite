@@ -12,7 +12,7 @@
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
  (check-equal? (length racket-surface-constructors) 43)
- (check-equal? (length racket-ucore-constructors) 21)
+ (check-equal? (length racket-ucore-constructors) 22)
  (check-equal? (length fstar-constructors) 42))
 
 (test-case
@@ -95,6 +95,7 @@
  (check-equal? (row-kind 'Eliminate) 'one-to-one)
  (check-equal? (row-kind 'IfSome) 'none)
  (check-equal? (row-kind 'BlockBody) 'none)
+ (check-equal? (row-kind 'LexicalScope) 'none)
  (check-equal? (row-kind 'SBind) 'many-to-one)
  (check-equal? (row-kind 'STryBind) 'many-to-one)
  (check-equal? (row-kind 'SReassign) 'many-to-one)
@@ -199,6 +200,7 @@
                                           ((,s0 ,s0 (Construct ,s0 true) (#:lit 1 ,s0)))
                                           ,s0)))
    (cons 'BlockBody (redex-match? UCore+ e `(BlockBody ,s0 (#:lit 1 ,s0))))
+   (cons 'LexicalScope (redex-match? UCore+ e `(LexicalScope ,s0 (#:lit 1 ,s0))))
    (cons 'NarrativeExpr (redex-match? UCore+ e
                                       `(NarrativeExpr ,s0 (#:lit 1 ,s0))))
    (cons 'Rec      (redex-match? UCore+ e `(Rec ,s0 (((#:lbl a ,s0) imm (#:lit 1 ,s0))))))
