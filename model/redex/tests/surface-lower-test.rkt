@@ -17,6 +17,11 @@
   (if (lowered? r) (lowered-term r) r))
 (define (low str) (lower-term (parse (lex/string 'src str))))
 
+(define (block-body source)
+  (match (low source)
+    [`(LexicalScope ,_ ,body) body]
+    [other (fail-check (format "LexicalScope の block を期待したが ~s" other))]))
+
 ;; Surface の項を手で組む側の道具である。parser が SBlock を作る形
 ;; （SFn の本体）を、SBlock を落とせないこの段で確かめるために使う。
 (define s0 '(#:span src 0 1))
@@ -154,25 +159,28 @@
  ;; spec §7.3。Let の span は尾部の span であり、束縛の始まりから
  ;; 末尾式の終わりまでである。
  (check-equal? (low "{ let x = 1\n x }")
-               '(Let (#:span src 2 14)
-                     ((#:bind x (#:span src 6 7)) let)
-                     (#:lit 1 (#:span src 10 11))
-                     (#:var x (#:span src 13 14)))))
+               '(LexicalScope (#:span src 0 16)
+                  (Let (#:span src 2 14)
+                       ((#:bind x (#:span src 6 7)) let)
+                       (#:lit 1 (#:span src 10 11))
+                       (#:var x (#:span src 13 14))))))
 
 (test-case
  "const と let mut も 2 欄の Let になる"
- (check-equal? (third (low "{ const x = 1\n x }")) '((#:bind x (#:span src 8 9)) const))
- (check-equal? (third (low "{ let mut x = 1\n x }")) '((#:bind x (#:span src 10 11)) mut)))
+ (check-equal? (third (block-body "{ const x = 1\n x }"))
+               '((#:bind x (#:span src 8 9)) const))
+ (check-equal? (third (block-body "{ let mut x = 1\n x }"))
+               '((#:bind x (#:span src 10 11)) mut)))
 
 (test-case
  "注釈ありの束縛は 3 欄の Let になる"
- (check-equal? (third (low "{ let x: Int = 1\n x }"))
+ (check-equal? (third (block-body "{ let x: Int = 1\n x }"))
                '((#:bind x (#:span src 6 7)) let (#:ty Int (#:span src 9 12)))))
 
 (test-case
  "複数の束縛は右へ入れ子にする"
  ;; spec §7.2。lower [b1 b2] e = L(b1, L(b2, lower e)) である。
- (define t (low "{ let x = 1\n let y = 2\n x }"))
+ (define t (block-body "{ let x = 1\n let y = 2\n x }"))
  (check-equal? (first t) 'Let)
  (check-equal? (second (first (third t))) 'x)
  (check-equal? (first (fifth t)) 'Let)
@@ -182,24 +190,26 @@
  "SUR-002a: TryBind は尾部 span と束縛名の span を保つ"
  (check-equal?
   (low "{ let x ?= f(y)\n x }")
-  '(TryBind (#:span src 2 18) (#:bind x (#:span src 6 7))
-            (Apply (#:span src 11 15)
-                   (#:var f (#:span src 11 12))
-                   (#:var y (#:span src 13 14)))
-            (#:var x (#:span src 17 18))))
+  '(LexicalScope (#:span src 0 20)
+     (TryBind (#:span src 2 18) (#:bind x (#:span src 6 7))
+              (Apply (#:span src 11 15)
+                     (#:var f (#:span src 11 12))
+                     (#:var y (#:span src 13 14)))
+              (#:var x (#:span src 17 18)))))
  (check-match (low "let x ?= 1\nx")
               `(TryBind ,_ (#:bind x ,_) (#:lit 1 ,_) (#:var x ,_))))
 
 (test-case
  "束縛の尾部 span は末尾式の終わりまで伸びる"
  ;; spec §7.3。2 つの Let の始まりは別だが、終わりは同じである。
- (define t (low "{ let x = 1\n let y = 2\n x }"))
+ (define t (block-body "{ let x = 1\n let y = 2\n x }"))
  (check-equal? (second t) '(#:span src 2 25))
  (check-equal? (second (fifth t)) '(#:span src 13 25)))
 
 (test-case
- "束縛の無い block は末尾式そのものになる"
- (check-equal? (low "{ x }") '(#:var x (#:span src 2 3))))
+ "束縛の無い block は末尾式を Scope で囲む"
+ (check-equal? (low "{ x }")
+               '(LexicalScope (#:span src 0 5) (#:var x (#:span src 2 3)))))
 
 (test-case
  "型宣言は節点を作らない"
@@ -240,9 +250,10 @@
  (check-match with-return
               `(FnDecl ,_ (#:bind f ,_) () (#:ty Int ,_) ,_
                        (BlockBody ,_
-                         (Let ,_ ((#:bind %stmt ,_) const)
-                              (Return ,_ (#:lit 1 ,_))
-                              (#:lit unit ,_)))
+                         (LexicalScope ,_
+                           (Let ,_ ((#:bind %stmt ,_) const)
+                                (Return ,_ (#:lit 1 ,_))
+                                (#:lit unit ,_))))
                        ,_))
  (define t (low "fn f(a: Int) -> Int { a }\nf(1)"))
  (check-equal? (first t) 'FnDecl)
@@ -253,9 +264,10 @@
  ;; 関数本体 block は marker を持ち、末尾値を文として破棄する。
  (check-match (seventh t)
               `(BlockBody ,_
-                 (Let ,_ ((#:bind %stmt ,_) const)
-                      (#:var a ,_)
-                      (#:lit unit ,_))))
+                 (LexicalScope ,_
+                   (Let ,_ ((#:bind %stmt ,_) const)
+                        (#:var a ,_)
+                        (#:lit unit ,_)))))
  ;; 尾部は program の末尾式まで伸びる
  (check-equal? (second t) '(#:span src 0 30)))
 

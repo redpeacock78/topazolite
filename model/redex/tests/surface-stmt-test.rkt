@@ -387,9 +387,10 @@
       (match fn
         [`(FnDecl run ,_ ,_ ,_
                    (BlockBody
-                    (Let (%stmt const Unit)
-                         (Eliminate (Apply g) ,arms)
-                         ,_))
+                    (LexicalScope
+                     (Let (%stmt const Unit)
+                          (Eliminate (Apply g) ,arms)
+                          ,_)))
                    ,_)
          (check-equal?
           arms

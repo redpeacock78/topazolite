@@ -27,7 +27,7 @@
 
 (define (binding-type source)
   (match (low source)
-    [`(Let ,_ ((#:bind ,_ ,_) let (#:ty ,type ,_)) ,_ ,_) type]
+    [`(LexicalScope ,_ (Let ,_ ((#:bind ,_ ,_) let (#:ty ,type ,_)) ,_ ,_)) type]
     [other (fail-check (format "注釈付き Let の lowering を期待したが ~s" other))]))
 
 (define (fn-effect-row term)

@@ -87,10 +87,10 @@
 (test-case "局所の束縛子で隠した名前への適用は constructor にならない"
   (check-match (term (string-append color "fn f(red: fn(Int) -> Int) -> Int { return red(1) }\n0"))
                `(FnDecl ,_ ,_ ,_ ,_ ,_
-                        (BlockBody ,_
+                        (BlockBody ,_ (LexicalScope ,_
                           (Let ,_ ((#:bind %stmt ,_) const)
                                (Return ,_ (Apply ,_ (#:var red ,_) ,_))
-                               (#:lit unit ,_)))
+                               (#:lit unit ,_))))
                         ,_)))
 
 (test-case "台帳に無い名前は constructor にならず、未束縛の変数の診断になる"

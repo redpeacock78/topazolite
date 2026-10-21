@@ -2699,6 +2699,16 @@
       (and (symbol? name)
            (string-prefix? (symbol->string name) prefix)))
 
+    (define (peel-lexical-scopes expression)
+      (match (peel-node expression)
+        [`(LexicalScope ,body) (peel-lexical-scopes body)]
+        [_ expression]))
+
+    (define (narrative-expression-head? expression)
+      (match (peel-node (peel-lexical-scopes expression))
+        [`(NarrativeExpr ,_) #t]
+        [_ #f]))
+
     (define (variable-reference-name expression)
       (match expression
         [`(#:var ,name ,_) name]
@@ -3255,6 +3265,7 @@
         ;; P2m spec §7.2。Eliminate は結果型の期待型を必要とする。
         [`(Eliminate ,_ ,_) #t]
         [`(IfSome ,_ ,_) if-some?]
+        [`(LexicalScope ,body) (needs-expected-type? body #:if-some? if-some?)]
         ;; Surface block は Let の列なので、末尾まで期待型の必要性を伝える。
         [`(Let ,_ ,_ ,body) (needs-expected-type? body #:if-some? if-some?)]
         [`(NarrativeExpr ,body) (needs-expected-type? body #:if-some? if-some?)]
@@ -3277,6 +3288,7 @@
         [`(Eliminate ,_ (,branches ...))
          (for/or ([branch (in-list branches)])
            (branch-needs-expected-type? (last (peel-branch branch))))]
+        [`(LexicalScope ,body) (branch-needs-expected-type? body)]
         [`(Let ,_ ,_ ,body) (branch-needs-expected-type? body)]
         [`(NarrativeExpr ,body) (branch-needs-expected-type? body)]
         [_ (needs-expected-type? expression)]))
@@ -3697,7 +3709,8 @@
        (λ ()
          (define candidate-box (box '()))
          (define unresolved-leave-box (box #f))
-         (define body-expression (peel-node body))
+         (define deferred-expression (peel-lexical-scopes body))
+         (define body-expression (peel-node deferred-expression))
          (define for-option? (for-option-boundary? body))
          (define for-option-none-span
            (and for-option?
@@ -3706,14 +3719,14 @@
                   [_ #f])))
          (define leave-adapter (and for-option? 'option-payload))
          (define deferred
-           (and (match (peel-node body) [`(Eliminate ,_ ,_) #t] [_ #f])
+           (and (match body-expression [`(Eliminate ,_ ,_) #t] [_ #f])
                 (box '())))
          (define boundary (fresh-boundary))
          (define failure #f)
          (define body-result
            (parameterize
                ([current-deferred-when-fallthroughs
-                 (and deferred (cons body deferred))])
+                 (and deferred (cons deferred-expression deferred))])
              (with-handlers ([exn:fail:elab?
                               (λ (error) (set! failure error) #f)])
                (synth body environment delta propositions
@@ -5531,7 +5544,7 @@
                     (andmap
                      (λ (branch)
                        (define body (last (peel-branch branch)))
-                       (and (pair? body) (eq? (first body) 'NarrativeExpr)))
+                       (narrative-expression-head? body))
                      branches))
            (reject s 'narrative-expression-needs-expected-type))
          result]
@@ -6096,14 +6109,16 @@
          (define entry-flow (flow-snapshot))
          (define boundary-keys (live-flow-keys environment))
          (define escapes (make-hasheq))
+         (define deferred-expression (peel-lexical-scopes body))
          (define deferred
-           (and (match (peel-node body) [`(Eliminate ,_ ,_) #t] [_ #f])
+           (and (match (peel-node deferred-expression)
+                  [`(Eliminate ,_ ,_) #t] [_ #f])
                 (box '())))
          (define body-result
            (parameterize
                ([current-boundary-escapes escapes]
                 [current-deferred-when-fallthroughs
-                 (and deferred (cons body deferred))])
+                 (and deferred (cons deferred-expression deferred))])
              (check body expected environment delta propositions
                     (cons `(ExpressionBoundary ,boundary ,expected ,s
                                                ,leave-adapter)

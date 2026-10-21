@@ -1024,9 +1024,10 @@
                  ,(project-fields receiver))])]
     [`(SRec ,s ,fields)
      `(Rec ,s ,(lower-rec-fields fields env fail))]
-    [`(SBlock ,_ ,binds ,tail)
-     ;; spec §7.2。block 自身は節点を作らず、束縛の入れ子と末尾式になる。
-     (fold-items binds tail env (hasheq) fail)]))
+    [`(SBlock ,s ,binds ,tail)
+     ;; SUR-004a1 §6。すべての Surface block は lexical region の境界であり、
+     ;; Core の Scope へ下ろす。
+     `(LexicalScope ,s ,(fold-items binds tail env (hasheq) fail))]))
 
 ;; SUR-014b spec §5.2。文の mode は block の末尾式と枝本体へだけ伝わり、
 ;; 文位置の Narrative は返却境界を作らない。
@@ -1041,8 +1042,9 @@
 
 (define (lower-stmt e env fail)
   (match e
-    [`(SBlock ,_ ,binds ,tail)
-     (fold-items binds tail env (hasheq) fail #:lower-tail lower-stmt)]
+    [`(SBlock ,s ,binds ,tail)
+     `(LexicalScope ,s
+        ,(fold-items binds tail env (hasheq) fail #:lower-tail lower-stmt))]
     [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
      (lower-for-loop s s_x x (lower-sexpr iterable env fail) body env fail
                      #:expression? #f)]
