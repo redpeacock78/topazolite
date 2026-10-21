@@ -127,18 +127,18 @@
     (check-equal? (length (config-tokens terminal)) 1)
     (check-equal? (length (fin-leaf-events terminal)) 1)))
 
-(test-case "B4 非資源の leave の実行 Core は HEAD と同じ"
+(test-case "B4 非資源の leave の実行 Core 形を固定"
   (for ([source+expected
          (in-list
           (list
            (list
             "fn f(xs: List<Int>) -> Option<Int> { return for x in xs { leave 1 } }\nf(cons(1, nil))"
             (string-append
-             "(Recur callable0 f⟨1⟩ (xs⟨2⟩) (Handle (Return boundary0 (Option Int)) (return-value⟨3⟩ -> return-value⟨3⟩) (Scope () (Let (%stmt⟨13⟩ const Never) (Perform (Return boundary0 (Option Int)) (Let (%for-list-44⟨4⟩ const (List Int)) xs⟨2⟩ (Handle (Return boundary1 (Option Int)) (return-value⟨5⟩ -> return-value⟨5⟩) (Scope () (Let (%for-option-44⟨12⟩ const Unit) (Recur callable1 %for-loop-44⟨6⟩ (%for-rest-44⟨7⟩) (Eliminate %for-rest-44⟨7⟩ ((nil () -> unit) (cons (x⟨8⟩ %for-tail-44⟨9⟩) -> (Let (%stmt⟨11⟩ const Unit) (Let (%stmt⟨10⟩ const Never) (Perform (Return boundary1 (Option Int)) (Construct (Option Int) some 1)) unit) (Apply %for-loop-44⟨6⟩ %for-tail-44⟨9⟩))))) (Apply %for-loop-44⟨6⟩ %for-list-44⟨4⟩)) (Construct (Option Int) none)))))) unit))) (Apply f⟨1⟩ (Construct (List Int) cons 1 (Construct (List Int) nil))))"))
+             "(Recur callable0 f⟨1⟩ (xs⟨2⟩) (Handle (Return boundary0 (Option Int)) (return-value⟨3⟩ -> return-value⟨3⟩) (Scope () (Scope () (Let (%stmt⟨13⟩ const Never) (Perform (Return boundary0 (Option Int)) (Let (%for-list-44⟨4⟩ const (List Int)) xs⟨2⟩ (Handle (Return boundary1 (Option Int)) (return-value⟨5⟩ -> return-value⟨5⟩) (Scope () (Let (%for-option-44⟨12⟩ const Unit) (Recur callable1 %for-loop-44⟨6⟩ (%for-rest-44⟨7⟩) (Eliminate %for-rest-44⟨7⟩ ((nil () -> unit) (cons (x⟨8⟩ %for-tail-44⟨9⟩) -> (Let (%stmt⟨11⟩ const Unit) (Scope () (Let (%stmt⟨10⟩ const Never) (Perform (Return boundary1 (Option Int)) (Construct (Option Int) some 1)) unit)) (Apply %for-loop-44⟨6⟩ %for-tail-44⟨9⟩))))) (Apply %for-loop-44⟨6⟩ %for-list-44⟨4⟩)) (Construct (Option Int) none)))))) unit)))) (Apply f⟨1⟩ (Construct (List Int) cons 1 (Construct (List Int) nil))))"))
            (list
             "fn f(c: Bool) -> Option<Int> { return if c { leave 1 } }\nf(true)"
             (string-append
-             "(Recur callable0 f⟨1⟩ (c⟨2⟩) (Handle (Return boundary0 (Option Int)) (return-value⟨3⟩ -> return-value⟨3⟩) (Scope () (Let (%stmt⟨6⟩ const Never) (Perform (Return boundary0 (Option Int)) (Let (%ifcond-option⟨4⟩ const Bool) c⟨2⟩ (Handle (Return boundary1 (Option Int)) (return-value⟨5⟩ -> return-value⟨5⟩) (Scope () (Eliminate %ifcond-option⟨4⟩ ((true () -> (Construct (Option Int) some (Perform (Return boundary1 (Option Int)) (Construct (Option Int) some 1)))) (false () -> (Construct (Option Int) none)))))))) unit))) (Apply f⟨1⟩ (Construct Bool true)))"))))])
+             "(Recur callable0 f⟨1⟩ (c⟨2⟩) (Handle (Return boundary0 (Option Int)) (return-value⟨3⟩ -> return-value⟨3⟩) (Scope () (Scope () (Let (%stmt⟨6⟩ const Never) (Perform (Return boundary0 (Option Int)) (Let (%ifcond-option⟨4⟩ const Bool) c⟨2⟩ (Handle (Return boundary1 (Option Int)) (return-value⟨5⟩ -> return-value⟨5⟩) (Scope () (Eliminate %ifcond-option⟨4⟩ ((true () -> (Construct (Option Int) some (Scope () (Perform (Return boundary1 (Option Int)) (Construct (Option Int) some 1))))) (false () -> (Construct (Option Int) none)))))))) unit)))) (Apply f⟨1⟩ (Construct Bool true)))"))))])
     (define compiled (compile-accepted (first source+expected)))
     (when compiled
       (check-equal? (format "~s" (compiled-execution-core compiled))
