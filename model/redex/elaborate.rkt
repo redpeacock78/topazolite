@@ -30,6 +30,7 @@
                   tag-bound-failure?
                   branch-types-upper-bound
                   merge-record-types/impl
+                  owned-lift-compatible?
                   borrow-bearing-core?
                   core-type-of/regions
                   core-type-of
@@ -4532,10 +4533,36 @@
                                             environment delta propositions
                                             boundaries
                                             #:mismatch-key [mismatch-key #f])
-      (define result
-        (if (expected-type-checkable? value declared-type)
-            (check value declared-type environment delta propositions boundaries)
+      (define owned-binding-payload
+        (match* (binding-mode declared-type)
+          [('let `(Owned ,payload)) payload]
+          [(_ _) #f]))
+      (define (elaborate-at expected)
+        (if (expected-type-checkable? value expected)
+            (check value expected environment delta propositions boundaries)
             (synth value environment delta propositions boundaries)))
+      (define (trial expected)
+        (with-handlers ([exn:fail:elab? (lambda (_) #f)])
+          (define restore! (hole-trial-snapshot boundaries))
+          (dynamic-wind void (lambda () (elaborate-at expected)) restore!)))
+      (define declared-check
+        (and owned-binding-payload
+             (expected-type-checkable? value declared-type)
+             (trial declared-type)))
+      (define lift-check
+        (and owned-binding-payload
+             (not declared-check)
+             (let ([candidate (trial owned-binding-payload)])
+               (and candidate
+                    (judgment-completes? candidate)
+                    (let ([actual (judgment-core-type candidate)])
+                      (and (not (owned-type? actual))
+                           (owned-lift-compatible? actual declared-type)))))))
+      (define result
+        (elaborate-at
+         (if (or declared-check (not lift-check))
+             declared-type
+             owned-binding-payload)))
       (define (with-mismatch-key thunk actual-type)
         (if mismatch-key
             (with-handlers
@@ -4555,53 +4582,63 @@
                   #t)
           (let ()
             (define source-core-type (judgment-core-type result))
-            ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
-            ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
-            (define remainder-target
-              (match* (binding-mode source-core-type declared-type)
-                [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-                 `(Record ,(append declared-row
-                                   (field-row-residual actual-row declared-row)))]
-                [(_ _ _) declared-type]))
-            (define-values (discharged-core discharged-type)
-              (discharge-remainder (judgment-core result)
-                                   source-core-type remainder-target s propositions))
-            (define-values (bound-core actual-type)
-              (with-mismatch-key
-               (lambda ()
-                 (if (and (memq binding-mode '(let mut))
-                          (tag-compat? discharged-type declared-type
-                                       (initial-candidate-context propositions))
-                          (match (narrowing-kind discharged-type declared-type
-                                                propositions)
-                            [`(drop-obligation ,_ ,_) #t]
-                            [_ #f]))
-                     ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
-                     (values discharged-core discharged-type)
-                     (convert discharged-core discharged-type declared-type s
-                              propositions)))
-               source-core-type))
-            ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
-            (with-mismatch-key
-             (lambda ()
-               (match (narrowing-kind discharged-type actual-type propositions)
-                 ['ok (void)]
-                 [`(drop-obligation ,_ ,_)
-                  (reject s 'owned-narrowing-needs-proof actual-type
-                          discharged-type)]
-                 [_ (unless (mut-union-rebuildable?
-                             discharged-type actual-type
-                             (initial-candidate-context propositions) propositions)
-                      (reject s 'owned-narrowing-rejected actual-type
-                              discharged-type))]))
-             source-core-type)
-            (define binding-type
-              (with-mismatch-key
-               (lambda ()
-                 (bind-with-mode s binding-mode declared-type actual-type
-                                 propositions))
-               actual-type))
-            (values result bound-core declared-type binding-type #f))))
+            (define owned-lift?
+              (and owned-binding-payload
+                   (not (owned-type? source-core-type))
+                   (owned-lift-compatible? source-core-type declared-type)))
+            (if owned-lift?
+                (values result (judgment-core result) declared-type
+                        (bind-with-mode s binding-mode declared-type
+                                        declared-type propositions)
+                        #f)
+                (let ()
+                  ;; let/mut は最上位の Record 残余を束縛型へ戻すため、その残余は
+                  ;; RSD の対象から除く。const と Record 以外は宣言型まで回収する。
+                  (define remainder-target
+                    (match* (binding-mode source-core-type declared-type)
+                      [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
+                       `(Record ,(append declared-row
+                                         (field-row-residual actual-row declared-row)))]
+                      [(_ _ _) declared-type]))
+                  (define-values (discharged-core discharged-type)
+                    (discharge-remainder (judgment-core result)
+                                         source-core-type remainder-target s propositions))
+                  (define-values (bound-core actual-type)
+                    (with-mismatch-key
+                     (lambda ()
+                       (if (and (memq binding-mode '(let mut))
+                                (tag-compat? discharged-type declared-type
+                                             (initial-candidate-context propositions))
+                                (match (narrowing-kind discharged-type declared-type
+                                                      propositions)
+                                  [`(drop-obligation ,_ ,_) #t]
+                                  [_ #f]))
+                           ;; let/mut は最上位の Owned 残余を束縛型へ戻す。
+                           (values discharged-core discharged-type)
+                           (convert discharged-core discharged-type declared-type s
+                                    propositions)))
+                     source-core-type))
+                  ;; OWN-004 は変換前の Core の型と変換後の型の間でも検査する。
+                  (with-mismatch-key
+                   (lambda ()
+                     (match (narrowing-kind discharged-type actual-type propositions)
+                       ['ok (void)]
+                       [`(drop-obligation ,_ ,_)
+                        (reject s 'owned-narrowing-needs-proof actual-type
+                                discharged-type)]
+                       [_ (unless (mut-union-rebuildable?
+                                   discharged-type actual-type
+                                   (initial-candidate-context propositions) propositions)
+                            (reject s 'owned-narrowing-rejected actual-type
+                                    discharged-type))]))
+                   source-core-type)
+                  (define binding-type
+                    (with-mismatch-key
+                     (lambda ()
+                       (bind-with-mode s binding-mode declared-type actual-type
+                                       propositions))
+                     actual-type))
+                  (values result bound-core declared-type binding-type #f))))))
 
     (define (rebuild-flow-value s core actual target propositions)
       (if (reassign-narrowing? actual target)

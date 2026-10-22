@@ -82,6 +82,7 @@
          field-type-binding-name
          merge-record-types/impl
          merge-record-types
+         owned-lift-compatible?
          check-merge-return
          curry-payload-erase
          merge-witnesses-dischargeable?
