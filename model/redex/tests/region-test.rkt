@@ -5,7 +5,8 @@
          racket/set
          "../elaborate.rkt"
          "../erase.rkt"
-         "../region.rkt")
+         "../region.rkt"
+         "../resource-type.rkt")
 
 ;; [REQ: BOR-003] point は意味的な子の添字の列である。
 ;; 生の位置で数えると、spanful な項と spanless な項で同じ部分項が別の添字に来る。
@@ -189,8 +190,11 @@
                  #:owners [owners (hash ρ0 '() ρ1 '() ρ2 '())]
                  #:parents [parents (hash ρ1 ρ0 ρ2 ρ1)]
                  #:at-table [at-table (hash '(1) ρ1 '(1 0 1) ρ2)]
+                 #:exit-table [exit-table at-table]
+                 #:owner-body-table [owner-body-table (hash)]
                  #:points [points nested-points])
-  (lexical-region-ir regions outlives owners parents at-table points))
+  (lexical-region-ir regions outlives owners parents at-table exit-table
+                     owner-body-table points))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
@@ -223,7 +227,7 @@
 (test-case "問い合わせの返値を検査する"
   ;; 7. regions-exiting-at が Core のどの point でも regions の部分集合を返す。
   (check-false (region-ir-ok?
-                (hand-ir #:at-table (hash '(1) ρ1 '(1 0 1) (region 9)))
+                (hand-ir #:exit-table (hash '(1) ρ1 '(1 0 1) (region 9)))
                 nested))
   ;; 8. region-at が Core のどの point でも regions の元を返す。
   ;;    parents を循環させると親を持たない region が無くなり、lexical-root が
@@ -264,6 +268,32 @@
   (check-equal? (regions-exiting-at ir '(1 0 1)) (set ρ2))
   (check-equal? (regions-exiting-at ir '()) (set))
   (check-equal? (regions-exiting-at ir '(1 0)) (set)))
+
+(define owner-let-scope '(Let (owner let (Owned Int)) 1 (Scope () owner)))
+(define owner-let-value '(Let (owner let (Owned Int)) 1 0))
+
+(test-case "owner Let body と直下 Scope の region と退場を区別する"
+  (define ir (build-region-ir owner-let-scope))
+  (define λ (owner-let-body-region ir '()))
+  (define σ (region-at ir '(1)))
+  (check-not-equal? λ σ)
+  (check-equal? (region-parent ir σ) λ)
+  (check-equal? (region-at ir '(1 0)) σ)
+  (check-equal? (regions-exiting-at ir '(1)) (set σ))
+  (check-false (set-member? (regions-exiting-at ir '(1)) λ))
+  (check-equal? (regions-exiting-at ir '()) (set))
+  (check-true (region-ir-ok? ir owner-let-scope))
+  (check-true (lexical-region-ir-ok? ir)))
+
+(test-case "Scope の無い owner Let は body point に region を持ち退場を作らない"
+  (define ir (build-region-ir owner-let-value))
+  (define λ (owner-let-body-region ir '()))
+  (check-equal? (region-at ir '(1)) λ)
+  (check-equal? (region-at ir '(0)) (region-at ir '()))
+  (check-equal? (regions-exiting-at ir '()) (set))
+  (check-equal? (regions-exiting-at ir '(1)) (set))
+  (check-true (region-ir-ok? ir owner-let-value))
+  (check-true (lexical-region-ir-ok? ir)))
 
 ;; Core の節点を指さない point に対しては、#f や空集合ではなく error を出す。
 ;; #f を返すと、呼び出し側が「point が無効である」と「その位置に region が
@@ -369,24 +399,35 @@
       [`(Scope ,_ ,_) 1]
       [_ 0])))
 
-(test-case "C3: Core の Scope の個数と root 以外の region の個数が一致する"
-  (for ([core (in-list (list '(Apply f 1) nested sibling-core))])
+(define (count-owner-lets core)
+  (for/sum ([point (in-list (core-points core))])
+    (match (core-node core point)
+      [`(Let (,_ ,_ ,type) ,_ ,_)
+       (if (resource-type? type) 1 0)]
+      [`(Let (,_ ,type) ,_ ,_)
+       (if (resource-type? type) 1 0)]
+      [_ 0])))
+
+(test-case "C3: Scope と owner Let の個数が root 以外の region の個数と一致する"
+  (for ([core (in-list (list '(Apply f 1) nested sibling-core
+                             owner-let-scope owner-let-value))])
     (define ir (build-region-ir core))
     (check-equal? (sub1 (set-count (region-ir-regions ir)))
-                  (count-scopes core)
+                  (+ (count-scopes core) (count-owner-lets core))
                   (format "~s" core))))
 
 (test-case "C4: 退場は Scope の point でちょうど 1 件、それ以外で空である"
-  (define ir (build-region-ir sibling-core))
-  (define root (region-at ir '()))
-  (for ([point (in-list (core-points sibling-core))])
-    (define exiting (regions-exiting-at ir point))
-    (match (core-node sibling-core point)
-      [`(Scope ,_ ,_)
-       (check-equal? exiting (set (region-at ir point)) (format "~s" point))]
-      [_ (check-true (set-empty? exiting) (format "~s" point))])
-    ;; root region はどの point でも返らない。
-    (check-false (set-member? exiting root) (format "~s" point))))
+  (for ([core (in-list (list sibling-core owner-let-scope owner-let-value))])
+    (define ir (build-region-ir core))
+    (define root (region-at ir '()))
+    (for ([point (in-list (core-points core))])
+      (define exiting (regions-exiting-at ir point))
+      (match (core-node core point)
+        [`(Scope ,_ ,_)
+         (check-equal? exiting (set (region-at ir point)) (format "~s" point))]
+        [_ (check-true (set-empty? exiting) (format "~s" point))])
+      ;; root region はどの point でも返らない。
+      (check-false (set-member? exiting root) (format "~s" point)))))
 
 ;; C6: spanful な Core と erase-core を通した項が、外延的に同型な IR を作る。
 ;; region 識別子は不透明なので equal? では比べられない。

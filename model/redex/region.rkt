@@ -7,6 +7,7 @@
          "lang.rkt"
          "erase.rkt"
          "span-core.rkt"
+         "resource-type.rkt"
          "type-equiv.rkt")
 
 (provide core-children core-with-children core-points core-node core-free-vars
@@ -18,7 +19,7 @@
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
-         region-parent region-contains?
+         region-parent region-contains? owner-let-body-region
          region-ir-ok? lexical-region-ir-ok? build-region-ir annotate-regions
          own-annotation-violation
          materialize-regions
@@ -316,6 +317,13 @@
 (define (region-parent ir ρ)
   (hash-ref (lexical-region-ir-parents ir) ρ #f))
 
+(define (owner-let-body-region ir point)
+  (check-point ir point)
+  (hash-ref (lexical-region-ir-owner-body-table ir) point
+            (lambda ()
+              (error 'owner-let-body-region
+                     "owner Let ではない point: ~s" point))))
+
 ;; 反射的である。ρ は自身を包む。
 ;; 反射でないと、region がそれ自身と重ならないことになり C2 の意味が壊れる。
 (define (region-contains? ir ρ_outer ρ_inner)
@@ -365,9 +373,10 @@
             (region-constraint-kind c))]))
 
 ;; lexical adapter が持つ内部の表。IR の接点には出さない。
-;; parents は Scope の入れ子から読んだ親子関係、at-table は Scope の point から
-;; その Scope が開く region への写像、points は Core の全 point である。
-(struct lexical-region-ir region-ir (parents at-table points)
+;; at-table は point で有効な最内の region、exit-table は Scope の退場先、
+;; owner-body-table は owner Let の body region を持つ。
+(struct lexical-region-ir region-ir
+  (parents at-table exit-table owner-body-table points)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -399,7 +408,7 @@
    ;; R-ScopeValue、R-ScopeAbort、R-ScopeError が発火する地点と一致する。
    (define (regions-exiting-at ir point)
      (check-point ir point)
-     (match (hash-ref (lexical-region-ir-at-table ir) point #f)
+     (match (hash-ref (lexical-region-ir-exit-table ir) point #f)
        [#f (set)]
        [ρ (set ρ)]))
    ;; core API の 5 本目（docs/specification/region.md §4.1）。
@@ -531,7 +540,16 @@
 (define (lexical-region-ir-ok? ir)
   (define regions (region-ir-regions ir))
   (define parents (lexical-region-ir-parents ir))
+  (define points (lexical-region-ir-points ir))
   (and
+   (for/and ([(point ρ) (in-hash (lexical-region-ir-at-table ir))])
+     (and (set-member? points point) (set-member? regions ρ)))
+   (for/and ([(point ρ) (in-hash (lexical-region-ir-exit-table ir))])
+     (and (set-member? points point) (set-member? regions ρ)))
+   (for/and ([(point ρ) (in-hash (lexical-region-ir-owner-body-table ir))])
+     (and (set-member? points point)
+          (set-member? regions ρ)
+          (hash-has-key? parents ρ)))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -554,29 +572,57 @@
   (define root (fresh-region!))
   (define parents (make-hash))
   (define at-table (make-hash))
+  (define exit-table (make-hash))
+  (define owner-body-table (make-hash))
   (define owners (make-hash (list (cons root '()))))
   (define outlives (mutable-set))
-  (let walk ([t erased] [prefix '()] [current root])
-    (define point (reverse prefix))
-    (define inner
-      (match t
-        [`(Scope ,π ,_)
-         (define ρ (fresh-region!))
-         (hash-set! parents ρ current)
-         (hash-set! at-table point ρ)
-         (hash-set! owners ρ π)
-         ;; 親が子より長生きする。直接の制約だけを入れ、推移閉包は入れない。
-         (set-add! outlives (list current ρ))
-         ρ]
-        [_ current]))
-    (for ([k (in-list (core-children t))] [i (in-naturals)])
-      (walk k (cons i prefix) inner)))
+  (letrec ([walk
+            (lambda (t prefix current)
+              (define point (reverse prefix))
+              (match t
+                [`(Scope ,managed-places ,body)
+                 (define ρ (fresh-region!))
+                 (hash-set! parents ρ current)
+                 (hash-set! at-table point ρ)
+                 (hash-set! exit-table point ρ)
+                 (hash-set! owners ρ managed-places)
+                 ;; 親が子より長生きする。直接の制約だけを入れ、推移閉包は入れない。
+                 (set-add! outlives (list current ρ))
+                 (walk body (cons 0 prefix) ρ)]
+                [`(Let (,_ ,_ ,binding-type) ,bound ,body)
+                 (walk-let prefix current binding-type bound body)]
+                [`(Let (,_ ,binding-type) ,bound ,body)
+                 (walk-let prefix current binding-type bound body)]
+                [_
+                 (for ([k (in-list (core-children t))] [i (in-naturals)])
+                   (walk k (cons i prefix) current))]))]
+           [walk-let
+            (lambda (prefix current binding-type bound body)
+              (define point (reverse prefix))
+              (define owner?
+                (resource-type? (normalize-type (peel-ty binding-type))))
+              (walk bound (cons 0 prefix) current)
+              (let ([body-region
+                     (if owner?
+                         (let ([ρ (fresh-region!)])
+                           (hash-set! parents ρ current)
+                           (hash-set! owners ρ '())
+                           (hash-set! owner-body-table point ρ)
+                           ;; 先に λ を at-table へ書き、後続の Scope walk が同じ point を σ で上書きする。
+                           (hash-set! at-table (append point '(1)) ρ)
+                           (set-add! outlives (list current ρ))
+                           ρ)
+                         current)])
+                (walk body (cons 1 prefix) body-region)))])
+    (walk erased '() root))
   (lexical-region-ir
    (list->set (cons root (hash-keys parents)))
    (list->set (set->list outlives))
    (freeze owners)
    (freeze parents)
    (freeze at-table)
+   (freeze exit-table)
+   (freeze owner-body-table)
    (list->set (core-points erased))))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。

@@ -288,7 +288,7 @@
 (define (region-app-trace depth)
   (define skeleton (make-region-app-core depth 0 0))
   (define ir (build-region-ir skeleton))
-  (define owner-rho (region->rho ir (region-at ir '(0))))
+  (define owner-rho (region->rho ir (owner-let-body-region ir '(0))))
   (define borrow-path
     (find-core-path skeleton (lambda (node) (equal? node '(Borrow x)))))
   (define borrow-rho (region->rho ir (region-at ir borrow-path)))

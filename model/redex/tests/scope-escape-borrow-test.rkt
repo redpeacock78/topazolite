@@ -79,6 +79,33 @@
                  (Perform (Return boundary ,borrowed-option)
                           (Construct ,borrowed-option some (Borrow owner))))))))
 
+(define let-body-escape
+  '(Let (owner let (Owned Int)) 1
+     (Scope () (Borrow owner))))
+
+(define let-body-option-escape
+  `(Let (owner let (Owned Int)) 1
+     (Scope ()
+       (Construct ,borrowed-option some (Borrow owner)))))
+
+(define let-body-return-escape
+  `(Handle (Return boundary ,borrowed)
+           (returned -> returned)
+           (Let (owner let (Owned Int)) 1
+             (Perform (Return boundary ,borrowed) (Borrow owner)))))
+
+(define let-body-read
+  `(Let (owner let (Owned Int)) 41
+     (Let (borrowed-value let ,borrowed)
+          (Borrow owner)
+       (Read borrowed-value))))
+
+(define let-body-scope-read
+  `(Let (owner let (Owned Int)) 41
+     (Let (borrowed-value let ,borrowed)
+          (Scope () (Borrow owner))
+       (Read borrowed-value))))
+
 (define scoped-read
   '(Scope ()
      (Let (owner let (Owned Int)) 41
@@ -213,6 +240,15 @@
 (test-case "捕捉される Return と Leave の payload は Scope を越えられない"
   (check-escape return-escape "Return payload")
   (check-escape leave-escape "Leave payload"))
+
+(test-case "owner Let の body から借用を外へ出すのを拒否する"
+  (check-escape let-body-escape "owner Let body result")
+  (check-escape let-body-option-escape "owner Let Option payload")
+  (check-escape let-body-return-escape "owner Let Return payload"))
+
+(test-case "owner Let の body 内では借用を作って読める"
+  (trace-and-check let-body-read 'Int)
+  (trace-and-check let-body-scope-read 'Int))
 
 (test-case "外側 owner の借用は block を出て読める"
   (trace-and-check scoped-read 'Int))

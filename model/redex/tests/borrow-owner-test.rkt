@@ -21,13 +21,15 @@
 
 ;; region-owning は gen:region-solver の method であるため、素の region-ir では
 ;; 呼べない。手組みの fixture も lexical adapter として組む。
-;; parents は 2 つの子を root へ結び、at-table は空、points は根だけである。
-;; region-at と regions-exiting-at をこの fixture で呼ばないため、この 2 つで足りる。
+;; parents は 2 つの子を root へ結び、各 point の表は空、points は根だけである。
+;; region-at と regions-exiting-at をこの fixture で呼ばないため、この形で足りる。
 (define (hand-ir owners)
   (lexical-region-ir (list->set (list ρroot ρa ρb))
                      (list->set (list (list ρroot ρa) (list ρroot ρb)))
                      owners
                      (hash ρa ρroot ρb ρroot)
+                     (hash)
+                     (hash)
                      (hash)
                      (set '())))
 
@@ -169,8 +171,10 @@
                (region-ctx ir '() (hash) (hash))))
 
 (define (typed-owner-borrow [owner-type aggregate-owner-type])
+  (define borrowed-type `(Borrowed ,owner-type (RParam %omitted)))
   (define core
-    `(Let (x let ,owner-type) (Apply borrow-owner-source unit) (Borrow x)))
+    `(Let (x let ,owner-type) (Apply borrow-owner-source unit)
+       (Let (borrowed let ,borrowed-type) (Borrow x) 0)))
   (define ir (build-region-ir core))
   (type-of/raw core '() '()
                `((borrow-owner-source
@@ -188,12 +192,9 @@
     [_ #f]))
 
 (test-case "仮引数の transfer encoding は Borrow の payload 全体を保持する"
-  (define result (core-result-type (typed-owner-borrow)))
-  (check-true
-   (match result
-     [`(Borrowed ,actual ,_region)
-      (equal? actual aggregate-owner-type)]
-     [_ #f]))
+  (define result (typed-owner-borrow))
+  (check-equal? (core-result-key result) #f)
+  (check-equal? (core-result-type result) 'Int)
   (check-equal?
     (core-result-key
     (typed-owner-body '(ProjBorrow (Borrow x) owned) 'Unit

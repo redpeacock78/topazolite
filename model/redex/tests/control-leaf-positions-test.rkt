@@ -610,7 +610,7 @@
                                                   (b Bool mut)))))
                          (Rec ((a imm 1)
                                (b mut (Construct Bool true))))
-                         (Scope () (ProjBorrow (BorrowMut x) a)))
+                         (Scope () (Read (ProjBorrow (BorrowMut x) a))))
                       (row-case-places rc)
                       (row-case-callables rc)
                       (row-case-environment rc))

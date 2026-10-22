@@ -23,22 +23,24 @@
          (Scope () (Let (y let (Owned Int)) 2 (Borrow x))))))
   (define ir (build-region-ir core))
   (define (Λ-at point) (region-ctx ir point (hash) (hash)))
-  (define Λ_x (register-owner (Λ-at '(0)) 'x '(Owned Int)))
-  (check-equal? (region-ctx-owner Λ_x 'x) (region-at ir '(0)))
-  (define Λ_y (register-owner (Λ-at '(0 1 0)) 'y '(Owned Int)))
-  (check-equal? (region-ctx-owner Λ_y 'y) (region-at ir '(0 1 0)))
+  (define Λ_x (register-owner (Λ-at '(0)) 'x '(Owned Int) #:let-place? #t))
+  (check-equal? (region-ctx-owner Λ_x 'x) (owner-let-body-region ir '(0)))
+  (define Λ_y
+    (register-owner (Λ-at '(0 1 0)) 'y '(Owned Int) #:let-place? #t))
+  (check-equal? (region-ctx-owner Λ_y 'y)
+                (owner-let-body-region ir '(0 1 0)))
   (check-not-equal? (region-ctx-owner Λ_x 'x) (region-ctx-owner Λ_y 'y))
   (check-equal?
    (region-ctx-owner (register-owner (Λ-at '(0)) 'b '(Borrowed Int 0)) 'b)
    #f))
 
 (define ok-core
-  `(Let (x let (Owned Res)) (resource 1) (Borrow x)))
+  `(Let (x let (Owned Res)) (resource 1)
+     (Let (borrowed let (Borrowed Res (RParam %omitted))) (Borrow x) 0)))
 (define ok-ir (build-region-ir ok-core))
-(define ok-ρ (region->rho ok-ir (region-at ok-ir '(1))))
 
 (check-equal? (type-of/raw ok-core '() '() '() (Λ-of ok-ir))
-              (list 'ok (list `(Borrowed Res ,ok-ρ) '())))
+              (list 'ok (list 'Int '())))
 
 (define shared-twice
   `(Scope ()

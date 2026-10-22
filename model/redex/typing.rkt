@@ -3400,7 +3400,11 @@
     [(not ir) Λ]
     [(or (match normalized [`(Owned ,_) #t] [_ #f])
          resource-let?)
-     (region-ctx-add-owner Λ w (region-at ir (region-ctx-point Λ)))]
+     (region-ctx-add-owner
+      Λ w
+      (if resource-let?
+          (owner-let-body-region ir (region-ctx-point Λ))
+          (region-at ir (region-ctx-point Λ))))]
     [else Λ]))
 
 ;; 借用の対象の payload を引く。p は places が直接 τ を与え、
