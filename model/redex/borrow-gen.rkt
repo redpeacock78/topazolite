@@ -53,9 +53,15 @@
 
 (define (gen-borrow-term depth #:include-union? [include-union? #f])
   (set-box! binder-counter 0)
-  (if include-union?
-      (gen-union-borrow-term)
-      (gen-scope depth empty-genv)))
+  (cond
+    [include-union? (gen-union-borrow-term)]
+    ;; 二つの異なる owner を用いる形を、深い生成経路だけに依存させない。
+    [(>= depth 5)
+     (case (random 20)
+       [(0) (gen-merged-owner-term 'projection)]
+       [(1) (gen-merged-owner-term 'reborrow)]
+       [else (gen-scope depth empty-genv)])]
+    [else (gen-scope depth empty-genv)]))
 
 (define (gen-scope depth env)
   `(Scope () ,(gen-core depth env)))
@@ -83,6 +89,14 @@
          (list (lambda () (gen-rec-let depth env))
                (lambda () (gen-data-let depth env))
                (lambda () (gen-int-let depth env)))
+         '())
+     (if (and (>= depth 3)
+              (>= (length (genv-recs env)) 2)
+              (pair? (genv-datas env))
+              (null? (genv-shared env))
+              (null? (genv-muts env)))
+         (list (lambda () (gen-merged-projection-let env))
+               (lambda () (gen-merged-reborrow-let env)))
          '())
      (if (and (positive? depth) (pair? (genv-recs env)))
          (list (lambda () (gen-proj-borrow-let depth env))
@@ -201,6 +215,62 @@
 ;; Option、Result だけであり、Res には構成子が無い。some の欄は Int なので
 ;; 所有の欄にはならず、check-construct の OwnLeaf 要求もかからない。
 (define data-τ '(Option Int))
+
+(define (gen-merged-projection-let env)
+  (define owners (genv-recs env))
+  (define left (first owners))
+  (define right (second owners))
+  (define discriminator (pick (genv-datas env)))
+  (define payload (fresh-binder! 'merge-payload))
+  (define merged (fresh-binder! 'merge-projection))
+  (define field (fresh-binder! 'merge-field))
+  `(Let (,merged let (Borrowed ,rec-τ ph))
+     (Eliminate (Borrow ,discriminator)
+                ((none () -> (Borrow ,left))
+                 (some (,payload) -> (Borrow ,right))))
+     (Let (,field let (Borrowed Int ph))
+          (ProjBorrow ,merged ,(pick '(f0 f1)))
+          (Read ,field))))
+
+(define (gen-merged-reborrow-let env)
+  (define owners (genv-recs env))
+  (define left (first owners))
+  (define right (second owners))
+  (define discriminator (pick (genv-datas env)))
+  (define payload (fresh-binder! 'merge-mut-payload))
+  (define merged (fresh-binder! 'merge-mut))
+  (define reborrowed (fresh-binder! 'merge-reborrow))
+  `(Let (,merged let (BorrowedMut ,rec-τ ph))
+     (Eliminate (BorrowMut ,discriminator)
+                ((none () -> (BorrowMut ,left))
+                 (some (,payload) -> (BorrowMut ,right))))
+     (Let (,reborrowed let (Borrowed ,rec-τ ph))
+          (Reborrow ,merged)
+          (Read ,reborrowed))))
+
+(define (gen-merged-owner-term kind)
+  (define left (fresh-binder! 'merge-left))
+  (define right (fresh-binder! 'merge-right))
+  (define discriminator (fresh-binder! 'merge-option))
+  (define discriminator-value
+    (if (zero? (random 2))
+        `(Construct ,data-τ none)
+        `(Construct ,data-τ some ,(gen-literal))))
+  (define env
+    (struct-copy genv empty-genv
+                 [recs (list left right)]
+                 [datas (list discriminator)]))
+  `(Scope ()
+     (Let (,left let (Owned ,rec-τ))
+          (Rec ((f0 mut ,(gen-literal)) (f1 imm ,(gen-literal))))
+       (Let (,right let (Owned ,rec-τ))
+            (Rec ((f0 mut ,(gen-literal)) (f1 imm ,(gen-literal))))
+         (Let (,discriminator let (Owned ,data-τ))
+              ,discriminator-value
+              ,((if (eq? kind 'projection)
+                   gen-merged-projection-let
+                   gen-merged-reborrow-let)
+                env))))))
 
 (define (gen-data-let depth env)
   (define x (fresh-binder! 'd))

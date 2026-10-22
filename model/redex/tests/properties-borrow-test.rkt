@@ -2,6 +2,7 @@
 
 (require rackunit
          racket/match
+         racket/string
          "../gen.rkt"
          "../borrow.rkt"
          "../borrow-gen.rkt"
@@ -9,6 +10,104 @@
          "../typing.rkt")
 
 (define limits (read-bounds))
+
+(define borrow-shapes
+  '(shared mut reborrow projection mut-projection
+    eliminate-shared eliminate-mut assign
+    merged-projection merged-reborrow))
+(define merged-borrow-shapes '(merged-projection merged-reborrow))
+
+(define (contains-core-node? tree pred?)
+  (or (pred? tree)
+      (and (list? tree)
+           (ormap (lambda (part) (contains-core-node? part pred?)) tree))))
+
+(define (find-core-node tree pred?)
+  (cond
+    [(pred? tree) tree]
+    [(list? tree)
+     (for/or ([part (in-list tree)]) (find-core-node part pred?))]
+    [else #f]))
+
+(define (merged-choice term)
+  (define merged-node
+    (find-core-node
+     term
+     (lambda (node)
+       (match node
+         [`(Let (,x let (Borrowed ,_ ,_))
+             (Eliminate (Borrow ,d)
+               ((none () -> (Borrow ,left))
+                (some ,_ -> (Borrow ,right))))
+             (Let (,q let (Borrowed Int ,_))
+               (ProjBorrow ,x ,_) (Read ,q)))
+          (not (equal? left right))]
+         [`(Let (,x let (BorrowedMut ,_ ,_))
+             (Eliminate (BorrowMut ,d)
+               ((none () -> (BorrowMut ,left))
+                (some ,_ -> (BorrowMut ,right))))
+             (Let (,_ let (Borrowed ,_ ,_)) (Reborrow ,x) ,_))
+          (not (equal? left right))]
+         [_ #f]))))
+  (and merged-node
+       (let* ([discriminator
+               (match merged-node
+                 [`(Let (,_ let ,_) (Eliminate ,scrutinee ,_) ,_)
+                  (second scrutinee)])]
+              [value
+               (let find-value ([tree term])
+                 (match tree
+                   [`(Let (,name let ,_) ,bound ,body)
+                    (if (equal? name discriminator)
+                        bound
+                        (or (find-value bound) (find-value body)))]
+                   [(? list?)
+                    (for/or ([part (in-list tree)]) (find-value part))]
+                   [_ #f]))])
+         (match value
+           [`(Construct ,_ none) 'none]
+           [`(Construct ,_ some ,_) 'some]
+           [_ #f]))))
+
+(define (root-merged-owner-term? term)
+  (match term
+    [`(Scope () (Let (,name let ,_) ,_ ,_))
+     (string-prefix? (symbol->string name) "merge-left")]
+    [_ #f]))
+
+(define (borrow-shape? shape term)
+  (define (node? pattern)
+    (contains-core-node? term (lambda (node) (pattern node))))
+  (case shape
+    [(shared) (node? (match-lambda [`(Borrow ,_) #t] [_ #f]))]
+    [(mut) (node? (match-lambda [`(BorrowMut ,_) #t] [_ #f]))]
+    [(reborrow) (node? (match-lambda [`(Reborrow ,_) #t] [_ #f]))]
+    [(projection)
+     (or (node? (match-lambda [`(ProjBorrow (Borrow ,_) ,_) #t] [_ #f]))
+         (node? (match-lambda [`(ProjBorrow (BorrowMut ,_) ,_) #t] [_ #f])))]
+    [(mut-projection)
+     (node? (match-lambda [`(ProjBorrow (BorrowMut ,_) ,_) #t] [_ #f]))]
+    [(eliminate-shared)
+     (node? (match-lambda [`(Eliminate (Borrow ,_) ,_) #t] [_ #f]))]
+    [(eliminate-mut)
+     (node? (match-lambda [`(Eliminate (BorrowMut ,_) ,_) #t] [_ #f]))]
+    [(assign) (node? (match-lambda [`(Assign ,_ ,_) #t] [_ #f]))]
+    [(merged-projection)
+     (node? (match-lambda [`(Let (,x let (Borrowed ,_ ,_))
+                               (Eliminate ,_ ((none () -> (Borrow ,left))
+                                              (some ,_ -> (Borrow ,right))))
+                               (Let (,q let (Borrowed Int ,_))
+                                 (ProjBorrow ,x ,_) (Read ,q)))
+                             (not (equal? left right))]
+                            [_ #f]))]
+    [(merged-reborrow)
+     (node? (match-lambda [`(Let (,x let (BorrowedMut ,_ ,_))
+                               (Eliminate ,_ ((none () -> (BorrowMut ,left))
+                                              (some ,_ -> (BorrowMut ,right))))
+                               (Let (,y let (Borrowed ,_ ,_)) (Reborrow ,x) ,_))
+                             (not (equal? left right))]
+                            [_ #f]))]
+    [else #f]))
 
 (test-case "R-Yield が continuation 内の借用を新規生成と誤認しない"
   (check-equal?
@@ -54,6 +153,22 @@
   (define accepted 0)
   (define union-attempted 0)
   (define union-reached 0)
+  (define shape-counts
+    (make-hash (append (for/list ([shape (in-list borrow-shapes)])
+                         (cons (list shape 'generated) 0))
+                       (for/list ([shape (in-list borrow-shapes)])
+                         (cons (list shape 'accepted) 0))
+                       (for*/list ([shape (in-list merged-borrow-shapes)]
+                                   [branch (in-list '(none some))]
+                                   [field (in-list '(generated accepted))])
+                         (cons (list shape branch field) 0))
+                       (list (cons '(gen-core-merged accepted) 0)))))
+  (define (bump-shape! shape field)
+    (define key (list shape field))
+    (hash-set! shape-counts key (add1 (hash-ref shape-counts key))))
+  (define (bump-branch! shape branch field)
+    (define key (list shape branch field))
+    (hash-set! shape-counts key (add1 (hash-ref shape-counts key))))
   (call-with-search-seed
    limits
    (lambda ()
@@ -61,9 +176,34 @@
        (define union? (zero? (random 10)))
        (define term (gen-borrow-term (bounds-term-depth limits)
                                      #:include-union? union?))
+       (define present-merged-shapes
+         (filter (lambda (shape) (borrow-shape? shape term))
+                 merged-borrow-shapes))
+       (define present-shapes
+         (if (pair? present-merged-shapes)
+             present-merged-shapes
+             (filter (lambda (shape) (borrow-shape? shape term))
+                     (filter (lambda (shape)
+                               (not (memq shape merged-borrow-shapes)))
+                             borrow-shapes))))
+       (define merged-branch
+         (and (pair? present-merged-shapes)
+              (merged-choice term)))
+       (for ([shape (in-list present-shapes)])
+         (bump-shape! shape 'generated))
+       (when merged-branch
+         (for ([shape (in-list present-merged-shapes)])
+           (bump-branch! shape merged-branch 'generated)))
        (when union? (set! union-attempted (add1 union-attempted)))
        (match (prepare-borrow-term term)
          [(list 'ok config sidecar ir)
+          (for ([shape (in-list present-shapes)])
+            (bump-shape! shape 'accepted))
+          (when merged-branch
+            (for ([shape (in-list present-merged-shapes)])
+              (bump-branch! shape merged-branch 'accepted))
+            (unless (root-merged-owner-term? term)
+              (bump-shape! 'gen-core-merged 'accepted)))
           (define outcome
             (check-borrow-execution config sidecar ir
                                     (bounds-fuel limits) counters))
@@ -78,7 +218,8 @@
             [(list 'fail reason detail)
              (set! failures (cons (list reason detail term) failures))])]
          ['discard (set! discarded (add1 discarded))]))))
-  (list accepted discarded failures counters union-attempted union-reached))
+  (list accepted discarded failures counters union-attempted union-reached
+        shape-counts))
 
 (define search-result (run-borrow-search))
 
@@ -145,6 +286,61 @@
   (check-true (positive? (sixth search-result)))
   (printf "Borrow search: Union attempted=~a UnionEliminate=~a\n"
           (fifth search-result) (sixth search-result)))
+
+(define shape-counts (seventh search-result))
+(define accepted-minima
+  '((shared . 140) (mut . 99) (reborrow . 1) (projection . 47)
+    (mut-projection . 22) (eliminate-shared . 34)
+    (eliminate-mut . 35) (assign . 7)))
+
+(test-case "生成器は既存8形の受理下限を保つ"
+  (for ([shape (in-list (filter (lambda (shape)
+                                 (not (memq shape merged-borrow-shapes)))
+                               borrow-shapes))])
+    (define generated (hash-ref shape-counts (list shape 'generated)))
+    (define accepted (hash-ref shape-counts (list shape 'accepted)))
+    (check-true (positive? generated) (format "~a was generated" shape))
+    (check-true (>= accepted (cdr (assq shape accepted-minima)))
+                (format "~a accepted >= ~a (actual ~a)"
+                        shape (cdr (assq shape accepted-minima)) accepted))
+    (printf "Borrow generator ~a: generated=~a accepted=~a\n"
+            shape generated accepted)))
+
+(test-case "異なる owner の借用を合流した後の射影を生成して型検査する"
+  (define generated (hash-ref shape-counts '(merged-projection generated)))
+  (define accepted (hash-ref shape-counts '(merged-projection accepted)))
+  (check-true (positive? generated))
+  (check-true (positive? accepted))
+  (printf "Borrow generator merged-projection: generated=~a accepted=~a\n"
+          generated accepted)
+  (for ([branch (in-list '(none some))])
+    (define branch-generated
+      (hash-ref shape-counts (list 'merged-projection branch 'generated)))
+    (define branch-accepted
+      (hash-ref shape-counts (list 'merged-projection branch 'accepted)))
+    (check-true (positive? branch-accepted)
+                (format "merged-projection ~a accepted" branch))
+    (printf "Borrow generator merged-projection/~a: generated=~a accepted=~a\n"
+            branch branch-generated branch-accepted)))
+
+(test-case "異なる owner の可変借用を合流した後の再借用を生成して型検査する"
+  (define generated (hash-ref shape-counts '(merged-reborrow generated)))
+  (define accepted (hash-ref shape-counts '(merged-reborrow accepted)))
+  (check-true (positive? generated))
+  (check-true (positive? accepted))
+  (printf "Borrow generator merged-reborrow: generated=~a accepted=~a\n"
+          generated accepted)
+  (for ([branch (in-list '(none some))])
+    (define branch-generated
+      (hash-ref shape-counts (list 'merged-reborrow branch 'generated)))
+    (define branch-accepted
+      (hash-ref shape-counts (list 'merged-reborrow branch 'accepted)))
+    (check-true (positive? branch-accepted)
+                (format "merged-reborrow ~a accepted" branch))
+    (printf "Borrow generator merged-reborrow/~a: generated=~a accepted=~a\n"
+            branch branch-generated branch-accepted))
+  (printf "Borrow generator gen-core merged accepted=~a\n"
+          (hash-ref shape-counts '(gen-core-merged accepted))))
 
 (define (contains-form? tree form)
   (or (and (pair? tree) (eq? (first tree) form))
