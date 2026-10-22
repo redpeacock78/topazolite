@@ -429,7 +429,7 @@
     `(Scope (1)
        (Let (borrow let (Borrowed Res (RVar 0))) (Borrow 1)
          (Let (wide let ,borrow-narrow-at-rp) ,borrow-wide-value
-           (Proj wide hidden)))))
+           (Yield (Proj wide hidden) 0)))))
   (check-equal? (typing-key (typed core borrow-place '())) 'ok))
 
 (test-case "mut の借用 view は既存 key、Reassign wide RHS は E-VAR-013"

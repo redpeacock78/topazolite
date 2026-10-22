@@ -24,27 +24,35 @@
 (define borrow-regression-cases
   (list
    (list "共有借用は通る"
-         `(Scope () (Let (x let (Owned Res)) (resource 1) (Borrow x)))
+         `(Scope () (Let (x let (Owned Res)) (resource 1)
+                    (Let (borrow let (Borrowed Res (RVar 0)))
+                         (Borrow x) 0)))
          'ok)
    (list "共有借用の 2 本は通る"
          `(Scope ()
             (Let (x let (Owned Res)) (resource 1)
-              (Yield (Borrow x) (Borrow x))))
+              (Let (left let (Borrowed Res (RVar 0))) (Borrow x)
+                (Let (right let (Borrowed Res (RVar 0))) (Borrow x) 0))))
          'ok)
    (list "内側 Scope の借用が閉じた後の Move は通る"
          `(Scope ()
             (Let (x let (Owned Res)) (resource 1)
-              (Yield (Scope () (Borrow x)) (Move x))))
+              (Yield (Scope ()
+                       (Let (borrow let (Borrowed Res (RVar 0))) (Borrow x) 0))
+                     (Move x))))
          'ok)
    (list "可変借用の 2 本は衝突する"
          `(Scope ()
             (Let (x let (Owned Res)) (resource 1)
-              (Yield (BorrowMut x) (BorrowMut x))))
+              (Let (left let (BorrowedMut Res (RVar 0))) (BorrowMut x)
+                (Let (right let (BorrowedMut Res (RVar 0)))
+                     (BorrowMut x) 0))))
          'borrow-conflicting-alias)
    (list "可変借用と共有借用は衝突する"
          `(Scope ()
             (Let (x let (Owned Res)) (resource 1)
-              (Yield (BorrowMut x) (Borrow x))))
+              (Let (mutable let (BorrowedMut Res (RVar 0))) (BorrowMut x)
+                (Let (shared let (Borrowed Res (RVar 0))) (Borrow x) 0))))
          'borrow-conflicting-alias)
    (list "借用中の Move は拒む"
          `(Scope ()

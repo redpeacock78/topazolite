@@ -33,31 +33,36 @@
    #f))
 
 (define ok-core
-  `(Scope ()
-     (Let (x let (Owned Res)) (resource 1) (Borrow x))))
+  `(Let (x let (Owned Res)) (resource 1) (Borrow x)))
 (define ok-ir (build-region-ir ok-core))
-(define ok-ρ (region->rho ok-ir (region-at ok-ir '(0 1))))
+(define ok-ρ (region->rho ok-ir (region-at ok-ir '(1))))
 
 (check-equal? (type-of/raw ok-core '() '() '() (Λ-of ok-ir))
               (list 'ok (list `(Borrowed Res ,ok-ρ) '())))
 
 (define shared-twice
   `(Scope ()
-     (Let (x let (Owned Res)) (resource 1) (Yield (Borrow x) (Borrow x)))))
+     (Let (x let (Owned Res)) (resource 1)
+       (Let (left let (Borrowed Res (RVar 0))) (Borrow x)
+         (Let (right let (Borrowed Res (RVar 0))) (Borrow x) 0)))))
 (define shared-ir (build-region-ir shared-twice))
 (check-equal? (first (type-of/raw shared-twice '() '() '() (Λ-of shared-ir)))
               'ok)
 
 (define mut-twice
   `(Scope ()
-     (Let (x let (Owned Res)) (resource 1) (Yield (BorrowMut x) (BorrowMut x)))))
+     (Let (x let (Owned Res)) (resource 1)
+       (Let (left let (BorrowedMut Res (RVar 0))) (BorrowMut x)
+         (Let (right let (BorrowedMut Res (RVar 0))) (BorrowMut x) 0)))))
 (define mut-ir (build-region-ir mut-twice))
 (check-equal? (key-of (type-of/raw mut-twice '() '() '() (Λ-of mut-ir)))
               'borrow-conflicting-alias)
 
 (define mut-then-shared
   `(Scope ()
-     (Let (x let (Owned Res)) (resource 1) (Yield (BorrowMut x) (Borrow x)))))
+     (Let (x let (Owned Res)) (resource 1)
+       (Let (mutable let (BorrowedMut Res (RVar 0))) (BorrowMut x)
+         (Let (shared let (Borrowed Res (RVar 0))) (Borrow x) 0)))))
 (define mts-ir (build-region-ir mut-then-shared))
 (check-equal? (key-of (type-of/raw mut-then-shared '() '() '() (Λ-of mts-ir)))
               'borrow-conflicting-alias)
@@ -108,7 +113,9 @@
 (define borrow-then-move
   `(Scope ()
      (Let (x let (Owned Res)) (resource 1)
-       (Yield (Scope () (Borrow x)) (Move x)))))
+       (Yield (Scope ()
+                (Let (borrow let (Borrowed Res (RVar 0))) (Borrow x) 0))
+              (Move x)))))
 (define btm-ir (build-region-ir borrow-then-move))
 (check-equal? (first (type-of/raw borrow-then-move '() '() '() (Λ-of btm-ir)))
               'ok)

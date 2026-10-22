@@ -13,17 +13,17 @@
 
 ;; 借用 1 件の形で σ が引ける。
 (let ()
-  (define core '(Scope (1) (Borrow 1)))
+  (define core '(Borrow 1))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (match-define (list _type tbl cs _rs _ras _summaries)
     (typing-inference annotated (list (list 1 'Res)) '() '()
                       (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
   (match-define (list 'ok σ) (typing-solve ir cs))
-  (define α (hash-ref tbl '(0)))
+  (define α (hash-ref tbl '()))
   (check-true (region? (sigma-ref σ α)))
-  ;; 借用の値が外へ出ないので、解は起点の region である。
-  (check-equal? (sigma-ref σ α) (region-at ir '(0))))
+  ;; owner と Borrow は root にあり、解はその region である。
+  (check-equal? (sigma-ref σ α) (region-at ir '())))
 
 ;; 具体的な region はそのまま返る。
 (let ()

@@ -44,7 +44,7 @@
 
 ;; 4。mut の field の ProjBorrow。
 (let ()
-  (define core '(Scope (1) (ProjBorrow (BorrowMut 1) a)))
+  (define core '(Scope (1) (Yield (ProjBorrow (BorrowMut 1) a) 0)))
   (check-equal? (status core (build-region-ir core) REC2) 'ok))
 
 ;; 5。共有借用が 2 つ生きているとき、片方を通した Read が通る。

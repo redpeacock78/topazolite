@@ -553,19 +553,27 @@
 
 (test-case "Eliminate と UnionEliminate は枝の借用寿命を合流する"
   (define cores
-    (list
+   (list
      '(Scope (1)
-        (Eliminate (Construct Bool true)
-          ((true () -> (Borrow 1)) (false () -> (Borrow 1)))))
+        (Let (joined let (Borrowed Int (RVar 0)))
+          (Eliminate (Construct Bool true)
+            ((true () -> (Borrow 1)) (false () -> (Borrow 1))))
+          0))
      '(Scope (1) (Scope (2)
-        (Eliminate (Construct Bool true)
-          ((true () -> (Borrow 1)) (false () -> (Borrow 2))))))
+        (Let (joined let (Borrowed Int (RVar 0)))
+          (Eliminate (Construct Bool true)
+            ((true () -> (Borrow 1)) (false () -> (Borrow 2))))
+          0)))
      `(Scope (1)
-        (UnionEliminate (UnionInject ,IS Int 1)
-          ((Int i -> (Borrow 1)) (String s -> (Borrow 1)))))
+        (Yield
+         (UnionEliminate (UnionInject ,IS Int 1)
+           ((Int i -> (Borrow 1)) (String s -> (Borrow 1))))
+         0))
      `(Scope (1) (Scope (2)
-        (UnionEliminate (UnionInject ,IS Int 1)
-          ((Int i -> (Borrow 1)) (String s -> (Borrow 2))))))))
+        (Yield
+         (UnionEliminate (UnionInject ,IS Int 1)
+           ((Int i -> (Borrow 1)) (String s -> (Borrow 2))))
+         0)))))
   (for ([core (in-list cores)])
     (define has-second-place
       (match core [`(Scope (1) (Scope (2) ,_)) #t] [_ #f]))
@@ -1520,22 +1528,30 @@
 ;; P2m2b spec §4。elaborate が生成する形（全ての枝を同じ Union へ inject した形）で、
 ;; Core typing が枝の借用の寿命を合わせる。
 (test-case "同じ Union へ inject した枝の借用寿命を合流する"
+  (define joined-record-type
+    `(Record ((r (Borrowed Int (RVar 0)) imm) (u ,IS imm))))
   (define bool-core
-    `(Scope (1) (Scope (2)
-       (Eliminate (Construct Bool true)
-         ((true () -> (Rec ((r imm (Borrow 1))
-                            (u imm (UnionInject ,IS Int 1)))))
-          (false () -> (Rec ((r imm (Borrow 2))
-                             (u imm (UnionInject ,IS String "s")))))))))
-  )
+    `(Scope (1)
+       (Scope (2)
+         (Let (joined let ,joined-record-type)
+           (Eliminate (Construct Bool true)
+             ((true () -> (Rec ((r imm (Borrow 1))
+                                (u imm (UnionInject ,IS Int 1)))))
+              (false () ->
+                (Rec ((r imm (Borrow 2))
+                      (u imm (UnionInject ,IS String "s")))))))
+           0))))
   (define option-core
-    `(Scope (1) (Scope (2)
-       (Eliminate (Construct (Option Int) some 1)
-         ((some (y) -> (Rec ((r imm (Borrow 1))
-                             (u imm (UnionInject ,IS Int y)))))
-          (none () -> (Rec ((r imm (Borrow 2))
-                            (u imm (UnionInject ,IS String "s")))))))))
-  )
+    `(Scope (1)
+       (Scope (2)
+         (Let (joined let ,joined-record-type)
+           (Eliminate (Construct (Option Int) some 1)
+             ((some (y) -> (Rec ((r imm (Borrow 1))
+                                 (u imm (UnionInject ,IS Int y)))))
+              (none () ->
+                (Rec ((r imm (Borrow 2))
+                      (u imm (UnionInject ,IS String "s")))))))
+           0))))
   (for ([core (list bool-core option-core)])
     (define result
       (tagged (type-of/in-regions core '((1 Int) (2 Int))

@@ -31,19 +31,19 @@
                         (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
    'move-borrowed))
 
-;; 兄弟の Scope に置いた 2 つの可変借用は偽の衝突を起こさない。
-;; 兄弟を作る形は Yield である。G2 に Seq は無い。
-;; borrow-test.rkt の shared-twice と mut-twice が同じ形で対を作っている。
-;; 借用は 2 つとも Yield の observed 側へ置き、next は Int で閉じる。
-;; Yield の結果型は next の型なので、借用を next へ置くと、その α が
-;; 外側の Scope の出口でも収集され、下限が外側の region まで広がる。
-;; そうなると兄弟どうしが regions-overlap? で真になり、偽の衝突が出る。
+;; 兄弟 Scope の中で作って捨てる可変借用は重ならない。
 (let ()
-  (define core
-    '(Scope (1) (Yield (Scope () (BorrowMut 1))
-                       (Yield (Scope () (BorrowMut 1)) 0))))
-  (define ir (build-region-ir core))
-  (define annotated (annotate-regions core ir))
+  (define (make ρ-a ρ-b)
+    `(Scope (1)
+       (Yield
+        (Scope () (Let (a let (BorrowedMut Res ,ρ-a)) (BorrowMut 1) 0))
+        (Yield
+         (Scope () (Let (b let (BorrowedMut Res ,ρ-b)) (BorrowMut 1) 0))
+         0))))
+  (define ir (build-region-ir (make 0 0)))
+  (define annotated
+    (annotate-regions
+     (make (rho-at ir '(0 0 0 0)) (rho-at ir '(0 1 0 0 0))) ir))
   (check-equal?
    (first (type-of/raw annotated (list (list 1 'Res)) '() '()
                        (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))

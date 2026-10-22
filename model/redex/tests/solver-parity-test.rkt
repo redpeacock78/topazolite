@@ -28,28 +28,29 @@
 (define (solver-parity-cases)
   (list
    (list "共有借用"
-         (lambda (rho) '(Scope (1) (Borrow 1)))
+         (lambda (_rho) '(Scope (1) (Yield (Borrow 1) 0)))
          (list (list 1 'Res))
          'ok)
    (list "可変借用"
-         (lambda (rho) '(Scope (1) (BorrowMut 1)))
+         (lambda (_rho) '(Scope (1) (Yield (BorrowMut 1) 0)))
          (list (list 1 'Res))
          'ok)
    (list "衝突する別名"
          ;; Borrow は Scope の子 0 の Let の子 0 で '(0 0) に居る。
          (lambda (rho)
-           `(Scope (1) (Let (a let (Borrowed Res ,(rho '(0 0)))) (Borrow 1)
-                            (BorrowMut 1))))
+           `(Scope (1)
+              (Let (a let (Borrowed Res ,(rho '(0 0)))) (Borrow 1)
+                (Yield (BorrowMut 1) 0))))
          (list (list 1 'Res))
          'borrow-conflicting-alias)
    (list "兄弟の可変借用"
          ;; 兄弟を作る形は Yield である。G2 に Seq は無い。
-         ;; 借用は 2 つとも observed 側へ置き、next は Int で閉じる。
-         ;; 寿命が兄弟の region に留まるため regions-overlap? は偽であり、
-         ;; 同じ所有者の可変借用でも衝突しない。
+         ;; 各借用は兄弟 Scope の Yield の観測値に置き、Scope の値を Int にする。
          (lambda (rho)
-           '(Scope (1) (Yield (Scope () (BorrowMut 1))
-                              (Yield (Scope () (BorrowMut 1)) 0))))
+           '(Scope (1)
+              (Yield
+               (Scope () (Yield (BorrowMut 1) 0))
+               (Yield (Scope () (Yield (BorrowMut 1) 0)) 0))))
          (list (list 1 'Res))
          'ok)))
 

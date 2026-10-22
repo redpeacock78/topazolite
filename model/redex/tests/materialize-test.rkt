@@ -15,13 +15,13 @@
 
 ;; 同じ起点を共有する借用 2 件が、point で区別されて別の σ へ置き換わる。
 (let ()
-  (define (make ρ)
-    `(Scope (1) (Let (a let (Borrowed Res ,ρ)) (Borrow 1)
-                     (Scope () (Yield (Borrow 1) 0)))))
-  (define ir (build-region-ir (make 0)))
-  ;; 外側の Borrow は Let の子 0 で '(0 0)、内側は Yield の observed 側で
-  ;; '(0 1 0 0) に居る。next を 0 に閉じ、内側の寿命を外へ流さない。
-  (define annotated (annotate-regions (make (rho-at ir '(0 0))) ir))
+  (define (make ρ-a ρ-b)
+    `(Let (a let (Borrowed Res ,ρ-a)) (Borrow 1)
+          (Scope () (Let (b let (Borrowed Res ,ρ-b)) (Borrow 1) 0))))
+  (define ir (build-region-ir (make 0 0)))
+  ;; 外側の Borrow は Let の値、内側の Borrow は Scope 内で束縛して捨てる。
+  (define annotated
+    (annotate-regions (make (rho-at ir '(0)) (rho-at ir '(1 0 0))) ir))
   (define Λ (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
   (match-define (list _type tbl cs _rs _ras _summaries)
     (typing-inference annotated (list (list 1 'Res)) '() '() Λ))
@@ -39,13 +39,13 @@
   ;; 鍵が point であることは、出力の 2 つの ρ が異なることで初めて確かめられる。
   ;; 数だけを見ると、両者が同じ ρ へ落ちても試験は通ってしまう。
   ;; 外側の Borrow は外の Scope の region、内側は内の Scope の region を得る。
-  (define ρ-outer (match (core-node out '(0 0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
-  (define ρ-inner (match (core-node out '(0 1 0 0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
+  (define ρ-outer (match (core-node out '(0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
+  (define ρ-inner (match (core-node out '(1 0 0)) [`(BorrowAt ,ρ ,_ ,_) ρ]))
   (check-not-equal? ρ-outer ρ-inner))
 
 ;; type-of の返す型に RVar が残らない。
 (let ()
-  (define core '(Scope (1) (Borrow 1)))
+  (define core '(Borrow 1))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (match-define (list 'ok (list type _row))
@@ -61,7 +61,7 @@
 ;; materialize した注釈を、機械が BorrowRef の ρ へそのまま運ぶ。
 ;; R-Borrow は BorrowAt の ρ を写すだけなので、両者は一致しなければならない。
 (let ()
-  (define core '(Scope (1) (Scope () (Borrow 1))))
+  (define core '(Borrow 1))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (define Λ (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
@@ -96,9 +96,11 @@
   (define core
     '(Scope (1)
        (Let (x let (Owned Res)) (resource 1)
-         (Eliminate (Construct (Option Int) some 0)
-           ((none () -> (Borrow x))
-            (some (y) -> (Borrow x)))))))
+         (Let (joined let (Borrowed Res (RVar 0)))
+           (Eliminate (Construct (Option Int) some 0)
+             ((none () -> (Borrow x))
+              (some (y) -> (Borrow x))))
+           0))))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (define Λ (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
@@ -110,7 +112,7 @@
       [(? list? ts) (apply append (map borrow-at-rhos ts))]
       [_ '()]))
   (define rhos (borrow-at-rhos out))
-  (define branch-points '((0 1 1) (0 1 2)))
+  (define branch-points '((0 1 0 1) (0 1 0 2)))
   (define expected-rhos
     (for/list ([point (in-list branch-points)])
       (region->rho ir (region-at ir point))))
