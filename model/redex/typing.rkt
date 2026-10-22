@@ -2528,6 +2528,12 @@
                (set-member? free (first entry)))
       (fail 'borrowed-function-capture node))))
 
+;; 関数本体の借用要求は外側で解決するため、停止集合だけを外へ返す。
+(define (psi-with-suspended base body)
+  (struct-copy psi base
+               [suspended (set-union (psi-suspended base)
+                                     (psi-suspended body))]))
+
 (define (infer-lam callable parameters body Λ Ψ
                    environment places callables node fail)
   (define raw-signature (callable-signature callables callable))
@@ -2619,7 +2625,7 @@
                         (forwarding-indices parameter-types return-type)
                         (hash))
       fail)
-     (list expanded '() closure-psi)]
+     (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
     ;; 囲う RegionLam があるはずという仮定を置かず、表に無い場合と key を
     ;; 共有して fail-closed にする（spec §5.7）。
@@ -2740,7 +2746,7 @@
   ;; §4.4。RecurVal は継続を持たないので、剥がした本体の要約を自身の
   ;; 出現へ登録する。RegionApp がこの節点を直接参照できるようにする。
   (record-callable-summary! Λ node (recur-frame->summary frame) fail)
-  (list signature '() closure-psi))
+  (list signature '() (psi-with-suspended closure-psi Ψ_body)))
 
 (define (recur-context callable function parameters body Λ Ψ
                        environment places callables node fail)
