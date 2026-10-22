@@ -116,7 +116,8 @@
 ;; box の生参照ではなく呼び出し終了時に確定した不変の値であり、alpha は未解決のまま持つ。
 ;; 消費側が sigma で解いて静的側の借用集合を作る。
 (struct borrow-sidecar (requests sigma) #:transparent)
-(struct use-request (w fp operation source point-region node kind otherwise) #:transparent)
+(struct use-request (w fp operation source point-region point node kind otherwise)
+  #:transparent)
 
 (define (empty-psi) (psi (set) (set) (set) (flow-state (hash) (hash))))
 
@@ -130,15 +131,20 @@
 ;; Reborrow で親の可変借用を子 region の間だけ停止する。
 ;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
-;; suspended の末尾には停止を始めた Reborrow の節点を持つ。
-(define (psi-suspend Ψ w fp α_parent α_child node)
-  (define held? (set-member? (psi-mut Ψ) (list w fp α_parent)))
+;; suspended の末尾に Reborrow の節点と構文上の位置を持つ。
+(define (psi-suspend Ψ w fp α_parent α_child node [point #f])
+  (define held?
+    (for/or ([entry (in-set (psi-mut Ψ))])
+      (and (equal? (first entry) w)
+           (equal? (third entry) α_parent)
+           (path-prefix? (second entry) fp))))
   (psi (set-add (psi-shared Ψ) (list w fp α_child))
-       (if held?
+       (if (set-member? (psi-mut Ψ) (list w fp α_parent))
            (set-remove (psi-mut Ψ) (list w fp α_parent))
            (psi-mut Ψ))
        (if held?
-           (set-add (psi-suspended Ψ) (list w fp α_parent α_child node))
+           (set-add (psi-suspended Ψ)
+                    (list w fp α_parent α_child node point))
            (psi-suspended Ψ))
        (psi-flow Ψ)))
 
@@ -294,6 +300,21 @@
     [(equal? (car fp_1) (car fp_2)) (path-prefix? (cdr fp_1) (cdr fp_2))]
     [else #f]))
 
+;; Core の point は core-children の評価順に並ぶ木の path である。
+;; Reborrow の operand（子 0）の評価は停止開始より前に終わる。
+(define (point-after-reborrow? reborrow-point use-point)
+  (cond
+    [(equal? reborrow-point use-point) #f]
+    [(path-prefix? reborrow-point use-point)
+     (not (zero? (list-ref use-point (length reborrow-point))))]
+    [(path-prefix? use-point reborrow-point) #f]
+    [else
+     (let loop ([left reborrow-point] [right use-point])
+       (cond
+         [(equal? (car left) (car right))
+          (loop (cdr left) (cdr right))]
+         [else (< (car left) (car right))]))]))
+
 ;; spec §3.2。root が同じで、一方の path が他方の接頭辞のときだけ重なる。
 (define (capability-overlap? w_1 fp_1 w_2 fp_2)
   (and (equal? w_1 w_2)
@@ -382,8 +403,14 @@
   (define (source-suspended? u)
     (for/or ([e (in-set (psi-suspended Ψ))])
       (and (set-member? (use-request-source u) (third e))
+           (capability-overlap? (first e) (second e)
+                                (use-request-w u) (use-request-fp u))
            (region-outlives? ir (sigma-ref σ (fourth e))
-                             (use-request-point-region u)))))
+                             (use-request-point-region u))
+           ;; use-request に alpha は無い。構文 point で停止開始より後かを判定する。
+           (if (and (sixth e) (use-request-point u))
+               (point-after-reborrow? (sixth e) (use-request-point u))
+               #t))))
 
   ;; 条件 2。α_o が source の要素の親として suspended に入っているか。
   (define (parent-of-source? r u)

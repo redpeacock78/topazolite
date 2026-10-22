@@ -467,18 +467,25 @@
   (define (actual-caps w)
     (hash-ref subst w
               (lambda () (fail 'unresolved-borrow-owner node))))
-  ;; 遅延した共有借用は Reborrow から来ている。定義時の親は formal capability
-  ;; なので通常の infer-reborrow 経路では呼出し側の可変借用をまだ停止できない。
-  ;; formal 鍵を実体化した後、対応する遅延制約から親を復元する。
-  (define (reborrow-parent-term w)
+  (define (reborrow-constraint w)
     (for/first ([item (in-list deferred)]
                 #:when (and (deferred-constraint? item)
                             (equal? (deferred-constraint-w item) w)
                             (eq? (region-constraint-kind
                                   (deferred-constraint-constraint item))
                                  'reborrow)))
-      (region-constraint-left
-       (deferred-constraint-constraint item))))
+      (deferred-constraint-constraint item)))
+  ;; 遅延した共有借用は Reborrow から来ている。定義時の親は formal capability
+  ;; なので通常の infer-reborrow 経路では呼出し側の可変借用をまだ停止できない。
+  ;; formal 鍵を実体化した後、対応する遅延制約から親を復元する。
+  (define (reborrow-parent-term w)
+    (define constraint (reborrow-constraint w))
+    (and constraint (region-constraint-left constraint)))
+  ;; 遅延要求は呼出し位置の下に置く。関数本体の point はそのまま保つ。
+  (define (deferred-point body-point)
+    (append point
+            (list (length (core-children (peel-node node))))
+            body-point))
   (for ([item (in-list deferred)])
     (cond
       [(borrow-request? item)
@@ -498,6 +505,9 @@
          (when (and (eq? (borrow-request-mode item) 'shared)
                     parent-template)
            (define parent-term (subst-term parent-template))
+           (define suspension-point
+             (deferred-point
+              (region-constraint-point (reborrow-constraint w))))
            (define parent-alphas
              (for/list ([entry (in-set (psi-mut current-psi))]
                         #:when (and (equal? (first entry) (car cap))
@@ -509,13 +519,14 @@
                       (psi-add-mut current-psi (car cap) (cdr cap)
                                    parent-term)
                       (car cap) (cdr cap) parent-term child-alpha
-                      (borrow-request-node item)))
+                      (borrow-request-node item) suspension-point))
                (for ([parent-alpha (in-list parent-alphas)])
                  (set! current-psi
                        (psi-suspend current-psi
                                     (car cap) (cdr cap)
                                     parent-alpha child-alpha
-                                    (borrow-request-node item)))))))]
+                                    (borrow-request-node item)
+                                    suspension-point))))))]
       [(use-request? item)
        (define w (use-request-w item))
        ;; 遅延した Reborrow が作った局所 alpha を保つ。全ての use source を
@@ -535,6 +546,7 @@
                        (use-request-operation item)
                        source
                        (region-at (region-ctx-ir Λ) point)
+                       (deferred-point (use-request-point item))
                        node
                        (use-request-kind item)
                        (use-request-otherwise item))
@@ -596,7 +608,8 @@
   (when ir
     (define r
       (use-request w fp operation source
-                   (region-at ir (region-ctx-point Λ)) node kind otherwise))
+                   (region-at ir (region-ctx-point Λ))
+                   (region-ctx-point Λ) node kind otherwise))
     (if fail (route-request! r node fail) (emit-request! r))))
 
 ;; spec §5.6。RegionApp の実引数は借用の使用要求とは別に集め、段 3 で
@@ -3219,7 +3232,7 @@
        (define matches
          (for/list ([entry (in-set (psi-mut Ψ_1))]
                     #:when (and (equal? (first entry) (car cap))
-                                (equal? (second entry) (cdr cap))))
+                                (path-prefix? (second entry) (cdr cap))))
            entry))
        (define exact
          ;; ρ の親は IR region term へ変換済みなので Ψ と同じ表現で照合する。
@@ -3288,7 +3301,8 @@
                         (cdr cap)
                         α_parent
                         α_child
-                        core))))
+                        core
+                        point))))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
