@@ -264,6 +264,13 @@ segment は b3b の positional producer 用に予約する。segment の種類�
 `fp` の空の列は place そのものを指す。
 `(Rec ((a ...) (b ...)))` を束縛した place `1` に対し、`(1 ())` は record 全体を、`(1 (a))` は field `a` を、`(1 (a x))` は field `a` の中の field `x` を指す。
 
+型検査が使う capability 表は、`Rec` の各 field を `(record-field . label)` の鍵で保持する。
+field に借用が無い場合も空の capability を記録し、record 全体の集合は全 field の集合の合併とする。
+`Proj` は表があるとき対象 field の組だけを返し、鍵が無ければ空の組を返す。
+表自体が無い式に限り、従来どおり式全体の集合を使う。
+`ProjOpt` は対象 field の組を `Option` の `some` 欄 `(some . 0)` の下に包むため、`Eliminate` が payload の capability を分岐束縛子へ渡せる。
+`RecRewrite` と `RecRewriteOpen` も出力 field ごとの表を保持し、書き換えた field は書換え後の値から、通過する field は入力表の同じ label から capability を得る。
+
 値の内部に入った所有資源は `(OwnedLeaf tk v)` として leaf token `tk` を持つ。
 同じ token の複製を許さず、`Available`/`Moved` の token は live value に一度だけ現れ、
 `Dropped` の token は live value に現れないことを構成検査で確認する。 [REQ: OWN-009]

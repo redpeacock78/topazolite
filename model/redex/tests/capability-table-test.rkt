@@ -1,6 +1,6 @@
 #lang racket
 
-;; [REQ: BOR-006] 構築子の label ごとの capability 表。
+;; [REQ: BOR-006] 構築子と record field ごとの capability 表。
 
 (require rackunit
          racket/set
@@ -112,9 +112,11 @@
  (check-equal? (borrow-token-key (empty-region-ctx) c) (set '(1))))
 
 (test-case
- "値が構築子であるとは限らない式の表は #f である"
+ "Rec は空の欄を含む field 表を作り、表を持たない式は #f のまま"
  (check-false (capability-field-table (empty-region-ctx) '(Proj (Rec ((a const 0))) a)))
- (check-false (capability-field-table (empty-region-ctx) '(Rec ((a const 0)))))
+ (define record-table
+   (capability-field-table (empty-region-ctx) '(Rec ((a const 0)))))
+ (check-equal? (car (hash-ref record-table (cons 'record-field 'a))) (set))
  (check-false (capability-field-table (empty-region-ctx) '(Suspend 0)))
  (check-false (capability-field-table (empty-region-ctx) '(Borrow 1))))
 

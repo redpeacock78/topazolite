@@ -557,7 +557,8 @@
 
 ;; capability の集合と表を同時に返す 1 本の走査である。
 ;; 返り値は (cons ws tbl) の組であり、ws は capability の集合、
-;; tbl は (cons K i) から同じ組への hash か #f である。
+;; tbl は data の (cons K i)、Union の member 型、または record-field label
+;; から同じ組への hash か #f である。
 ;;
 ;; #:fail は現行の borrow-token-key がすでに辿っている枝、すなわち ws を
 ;; 運ぶ枝だけに伝える。表だけを取るための再帰（Let の非借用の束縛、
@@ -571,6 +572,13 @@
   (define (table-of c* [locals* locals])
     (cdr (capability-of Λ c* locals*)))
   (define (member-key type) (normalize-type (peel-ty type)))
+  (define (field-key label) (cons 'record-field (peel-lbl label)))
+  (define (field-entry c* label)
+    ;; Record の束縛は自身の ws が空でも field 表に借用を持てる。
+    (define table (table-of c*))
+    (if (hash? table)
+        (hash-ref table (field-key label) (only (set)))
+        (only (ws-of c*))))
   (match (peel-node c)
     [`(Borrow ,w) (only (set (cons (peel-node w) '())))]
     [`(BorrowMut ,w) (only (set (cons (peel-node w) '())))]
@@ -656,8 +664,11 @@
            (cons (set-union (car acc) (car r))
                  (table-join (cdr acc) (cdr r)))))]
     [`(Scope ,_ ,body) (recur body)]
-    [`(Proj ,c_1 ,_) (only (ws-of c_1))]
-    [`(ProjOpt ,_ ,c_1 ,_) (only (ws-of c_1))]
+    [`(Proj ,c_1 ,label)
+     (field-entry c_1 label)]
+    [`(ProjOpt ,_ ,c_1 ,label)
+     (define field (field-entry c_1 label))
+     (cons (car field) (hash (cons 'some 0) field))]
     [`(Suspend ,c_1) (only (ws-of c_1))]
     [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
@@ -666,8 +677,12 @@
                       (ws-of c_h (hash-set locals (peel-bind name)
                                            (cons (set) #f)))))]
     [`(Rec (,fields ...))
-     (only (for/fold ([acc (set)]) ([field (in-list fields)])
-             (set-union acc (ws-of (third field)))))]
+     (define entries (for/list ([field (in-list fields)])
+                       (recur (third field))))
+     (cons (for/fold ([acc (set)]) ([entry (in-list entries)])
+             (set-union acc (car entry)))
+           (for/hash ([field (in-list fields)] [entry (in-list entries)])
+             (values (field-key (first field)) entry)))]
     [`(Absent ,_) (only (set))]
     [`(Construct ,_ ,K ,fields ...)
      (define entries (for/list ([field (in-list fields)]) (recur field)))
@@ -682,25 +697,44 @@
      (define entry (recur payload))
      (cons (car entry) (hash (member-key member-type) entry))]
     [`(RecRewriteOpen (,fields ...))
-     (only (for/fold ([acc (set)]) ([field (in-list fields)])
-             (set-union acc (ws-of (last field)))))]
+     (define entries (for/list ([field (in-list fields)])
+                       (recur (last field))))
+     (cons (for/fold ([acc (set)]) ([entry (in-list entries)])
+             (set-union acc (car entry)))
+           (for/hash ([field (in-list fields)] [entry (in-list entries)])
+             (values (field-key (first field)) entry)))]
     [`(RecRewrite ,input ,entries)
      (define input-entry (recur input))
      (define input-ws (car input-entry))
-     ;; RecRewriteOpen は入力の borrow capability を各 entry の一時 binder へ
-     ;; 保守的に伝え、出力側で作る capability と合併する。record の欄別表は
-     ;; Rec の既存契約どおり作らない。
-     (define entry-ws
+     (define input-table (cdr input-entry))
+     ;; 非対象欄は入力 entry、対象欄は書換え後の entry を出力する。
+     (define (source-entry label)
+       (if (hash? input-table)
+           (hash-ref input-table (field-key label) (only (set)))
+           (only input-ws)))
+     (define rewritten
        (for/list ([entry (in-list entries)])
          (match entry
-           [(list _ binder _ _ _ body)
+           [(list label binder _ _ _ body)
+            (define source (source-entry label))
             (define name (peel-bind binder))
-            (if (eq? (peel-node body) name)
-                (set)
-                (car (recur body (hash-set locals name (only input-ws)))))])))
-     (cons (for/fold ([all input-ws]) ([ws (in-list entry-ws)])
-             (set-union all ws))
-           #f)]
+            (define result
+              (if (eq? (peel-node body) name)
+                  source
+                  (recur body (hash-set locals name source))))
+            (list (field-key label) result
+                  (not (eq? (peel-node body) name)))])))
+     (cons
+      (for/fold ([all input-ws]) ([entry (in-list rewritten)]
+                                  #:when (third entry))
+        (set-union all (car (second entry))))
+      (and (hash? input-table)
+           (for/hash ([(key input-field) (in-hash input-table)])
+             (values key
+                     (or (for/first ([entry (in-list rewritten)]
+                                     #:when (equal? (first entry) key))
+                           (second entry))
+                         input-field)))))]
     ;; RegionLam は本体へ置き換わるので本体の表を通す。
     ;; RecurVal は関数値のままなので関数値自身の表を通す。
     [`(RegionApp ,f ,_)
