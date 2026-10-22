@@ -30,8 +30,13 @@
                   tag-bound-failure?
                   branch-types-upper-bound
                   merge-record-types/impl
+                  borrow-bearing-core?
+                  core-type-of/regions
                   core-type-of
-                  core-type-of/diagnostic)
+                  core-type-of/diagnostic
+                  region-typed?
+                  region-typed-type
+                  region-typed-row)
          "validators.rkt")
 
 (provide UCore
@@ -2019,9 +2024,19 @@
                       '() '() capture-raw-names raw-names capture-binders
                       core-binders expected-return boundary body-result
                       signature callable reserved-with-formals))
-         (match (core-type-of/diagnostic
-                 (judgment-core adapter-lambda) '()
-                 (reverse reversed-callables))
+         (define adapter-core (judgment-core adapter-lambda))
+         (define adapter-result
+           (if (borrow-bearing-core? adapter-core)
+               (let ([checked
+                      (core-type-of/regions
+                       adapter-core '() (reverse reversed-callables)
+                       #:expansion-context expansion-context)])
+                 (if (region-typed? checked)
+                     (list (region-typed-type checked) (region-typed-row checked))
+                     checked))
+               (core-type-of/diagnostic
+                adapter-core '() (reverse reversed-callables))))
+         (match adapter-result
            [(list adapter-type _row)
             (unless (type-equiv? adapter-type signature)
               (reject s 'type-mismatch signature adapter-type))]

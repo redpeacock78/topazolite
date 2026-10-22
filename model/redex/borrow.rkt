@@ -591,7 +591,7 @@
     [`(ProjBorrowAt ,_ ,c_1 ,label)
      (define child-caps
        (for/set ([k (in-set (ws-of c_1))])
-         (cons (car k) (append (cdr k) (list label)))))
+         (cons (car k) (append (cdr k) (list (peel-lbl label))))))
      ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
      ;; record-path? の定義域（複数要素の列）を実際には検査できない。
      ;; Eliminate の束縛子が位置の segment を積むため、label だけを許す

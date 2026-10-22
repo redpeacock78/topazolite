@@ -4,7 +4,12 @@
          "parser.rkt"
          "surface-lower.rkt"
          "elaborate.rkt"
-         (only-in "typing.rkt" execution-core)
+         (only-in "typing.rkt"
+                  borrow-bearing-core?
+                  core-type-of/regions
+                  execution-core
+                  region-execution-core
+                  region-typed?)
          "diagnostic.rkt"
          "data-env.rkt"
          (only-in redex/reduction-semantics caching-enabled?)
@@ -93,8 +98,16 @@
          (match (elab (lowered-term low) #:expansion-context ctx)
            [`(err ,d) d]
            [(list core type row callables)
-            (define executable (execution-core core callables))
-            (compiled core type row callables ledger executable)])))))
+            (if (borrow-bearing-core? core)
+                (let ([typed
+                       (core-type-of/regions
+                        core '() callables #:expansion-context ctx)])
+                  (if (region-typed? typed)
+                      (compiled core type row callables ledger
+                                (region-execution-core typed))
+                      typed))
+                (compiled core type row callables ledger
+                          (execution-core core callables)))])))))
   (cond
     [(diagnostic? low) low]
     [(and (null? (lowered-trait-rows low))

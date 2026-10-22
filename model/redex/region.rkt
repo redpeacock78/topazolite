@@ -644,43 +644,57 @@
 ;; point の数え方は core-children を使うため region.md §3 と自動的に一致する。
 ;; ρ は region->rho で natural へ落とし、own は capability の root/path を保つ。
 (define (annotate-regions core ir)
-  ;; 注釈は spanless Core へ行う。入口で一度だけ包みを外すことで、
-  ;; node だけ peel して子で span を残す中途半端な扱いを避ける。
-  (let walk ([t (erase-core core)] [point '()] [env (hash)])
+  ;; 判断は spanless な node で行い、注釈を加えた node に元の span を戻す。
+  (let walk ([t core] [point '()] [env (hash)])
+    (define span
+      (match t
+        [(list _ (and s (list '#:span _ _ _)) _ ...) s]
+        [_ #f]))
+    (define node (peel-node t))
     (define (here) (region->rho ir (region-at ir point)))
     (define (down k i [env* env])
       (walk k (append point (list i)) env*))
-    (match t
+    (define (restore-span result)
+      (if (and span (pair? result))
+          (cons (first result) (cons span (rest result)))
+          result))
+    (match node
       [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(ProjBorrowAt ,_ ,_ ,_)
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
-      [`(Borrow ,w) `(BorrowAt ,(here) ,(own-of-designator env w) ,w)]
-      [`(BorrowMut ,w) `(BorrowMutAt ,(here) ,(own-of-designator env w) ,w)]
+      [`(Borrow ,w)
+       (restore-span `(BorrowAt ,(here) ,(own-of-designator env w) ,w))]
+      [`(BorrowMut ,w)
+       (restore-span `(BorrowMutAt ,(here) ,(own-of-designator env w) ,w))]
       [`(Reborrow ,c)
        (define annotated (down c 0))
-       `(ReborrowAt ,(here) ,annotated)]
+       (restore-span `(ReborrowAt ,(here) ,annotated))]
       [`(ProjBorrow ,c_1 ,label)
        (define annotated (down c_1 0))
-       (unless (symbol? label)
+       (unless (symbol? (peel-lbl label))
          (error 'annotate-regions "field label の形ではない: ~s" label))
-       `(ProjBorrowAt ,(here) ,annotated ,label)]
+       (restore-span `(ProjBorrowAt ,(here) ,annotated ,label))]
       [`(Let (,x ,bmode ,τ) ,c_1 ,c_2)
        (define a_1 (down c_1 0))
        (define bound-own
-         (and (annotation-borrow-type? τ)
+         (and (annotation-borrow-type? (peel-ty τ))
               (with-handlers ([exn:fail? (lambda (_) #f)])
-                (own-of-operand env a_1))))
+                (own-of-operand env (erase-core a_1)))))
        (define env*
          (if bound-own
              (hash-set env (peel-bind x) bound-own)
              env))
-       `(Let (,x ,bmode ,τ) ,a_1 ,(down c_2 1 env*))]
+       (restore-span `(Let (,x ,bmode ,τ) ,a_1 ,(down c_2 1 env*)))]
       [_
-       (core-with-children
-        t
-        (for/list ([k (in-list (core-children t))] [i (in-naturals)])
-          (down k i)))])))
+       (if (not (list? node))
+           t
+           (let ([children (core-children node)])
+             (restore-span
+              (core-with-children
+               node
+               (for/list ([k (in-list children)] [i (in-naturals)])
+                 (down k i))))))])))
 
 ;; 注釈済み core を走り、own の欄が designator と食い違う最初の節点を返す。
 ;; annotate-regions と同じ環境規則を使い、冗長な欄を fail-closed で検査する。

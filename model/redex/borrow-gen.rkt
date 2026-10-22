@@ -400,33 +400,18 @@
 (define (prepare-borrow-term* core #:callables [callables '()])
   (define ir (build-region-ir core))
   (define filled (fill-region-placeholders core ir))
-  ;; typing.rkt の raw 入口は G2m core を受け取るため、注釈を先に注入する。
-  ;; surface 形の Borrow / ProjBorrow を直接渡すと not-core-term になる。
-  (define annotated
-    (with-handlers ([exn:fail? (lambda (_e) #f)])
-      (annotate-regions filled ir)))
-  (define mut-types (box (hash)))
-  (define callable-contexts (box (hash)))
-  (define result
-    (if annotated
-        (with-handlers ([exn:fail? (lambda (_e) 'discard)])
-          (type-of/raw*+borrows annotated '() callables
-                                '() (region-ctx ir '() (hash) (hash))
-                                #:mut-types mut-types
-                                #:callable-contexts callable-contexts))
-        'discard))
-  (match result
-    [(list 'ok (list type _row table σ renamed sidecar))
-     (define materialized (materialize-regions ir renamed table σ))
-     (define machine-core
-       (annotate-callable-contexts
-        (annotate-mut-binding-types materialized (unbox mut-types))
-        (unbox callable-contexts) 'renamed))
+  (define typed
+    (with-handlers ([exn:fail? (lambda (_e) 'discard)])
+      (core-type-of/regions filled '() callables #:ir ir)))
+  (match typed
+    [(? region-typed?)
+     (define machine-core (region-execution-core typed))
      (define config (inject-g2m machine-core))
      ;; spec §4.6。初期 config に借用値が現れる項は入口の制限に反する。
      (if (initial-has-borrow? config)
          'discard
-         (list 'ok config sidecar ir type))]
+         (list 'ok config (region-typed-sidecar typed)
+               (region-typed-ir typed) (region-typed-type typed)))]
     [_ 'discard]))
 
 (define (prepare-borrow-term core #:callables [callables '()])

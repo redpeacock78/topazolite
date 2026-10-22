@@ -35,6 +35,10 @@
          type-of/raw*+normal
          type-of/raw*+borrows
          type-of/raw*+ptr
+         (struct-out region-typed)
+         borrow-bearing-core?
+         core-type-of/regions
+         region-execution-core
          annotate-mut-binding-types
          annotate-callable-contexts
          callable-signature
@@ -3328,6 +3332,7 @@
 ;; [REQ: BOR-004] 借用の field 射影。親の α をそのまま使い、
 ;; 新しい α と borrow-request は作らない（spec §5.1）。
 (define (infer-projborrow core operand label Λ Ψ environment places callables fail)
+  (define field-label (peel-lbl label))
   (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
   (define τ_operand
@@ -3344,7 +3349,7 @@
       [`(Record ,r) r]
       [_ (fail 'projborrow-non-record core)]))
   (define field
-    (or (assoc label row)
+    (or (assoc field-label row)
         (fail 'projborrow-unknown-field core)))
   (when (field-optional? field)
     (fail 'projborrow-optional-field core))
@@ -3354,7 +3359,7 @@
     (fail 'borrowed-owned-payload core))
   (define source (use-source Λ operand τ_operand))
   (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
-    (emit-use-request! Λ (car cap) (append (cdr cap) (list label)) 'read source
+    (emit-use-request! Λ (car cap) (append (cdr cap) (list field-label)) 'read source
                        core 'borrow-conflicting-use #f fail))
   (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
 
@@ -6127,6 +6132,55 @@
       (unbox contexts) 'source)]
     [failure
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
+
+(struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts)
+  #:transparent)
+
+(define region-bearing-forms
+  '(Borrow BorrowMut Reborrow ProjBorrow Read Assign
+    BorrowAt BorrowMutAt ReborrowAt ProjBorrowAt BorrowRef BorrowMutRef
+    Borrowed BorrowedMut))
+
+(define (borrow-bearing-core? core)
+  (let walk ([node (erase-core core)])
+    (or (and (pair? node) (memq (first node) region-bearing-forms) #t)
+        (and (list? node) (ormap walk node)))))
+
+(define (core-type-of/regions core places callables [environment '()]
+                              #:expansion-context [expansion-context (hash)]
+                              #:ir [provided-ir #f])
+  ;; placeholder を埋めた caller は、その同じ IR で型付けする。
+  (define ir (or provided-ir (build-region-ir core)))
+  (define owners
+    (for/hash ([entry (in-list places)])
+      (values (first entry) (region-at ir '()))))
+  (define annotated (annotate-regions core ir))
+  (define mut-types (box (hash)))
+  (define callable-contexts (box (hash)))
+  (match (type-of/raw*+borrows
+          annotated places callables environment
+          (region-ctx ir '() owners (hash))
+          #:mut-types mut-types
+          #:callable-contexts callable-contexts)
+    [(list 'ok (list type row table σ renamed sidecar))
+     (region-typed type row ir table σ renamed sidecar
+                   (unbox mut-types) (unbox callable-contexts))]
+    [(list 'fail key node details)
+     (typing-diagnostic key node details expansion-context)]
+    [other (error 'core-type-of/regions "typing の結果が不正である: ~s" other)]))
+
+(define (region-execution-core typed)
+  (unless (region-typed? typed)
+    (raise-argument-error 'region-execution-core "region-typed?" typed))
+  (define core
+    (materialize-regions (region-typed-ir typed)
+                         (erase-core (region-typed-renamed typed))
+                         (region-typed-table typed)
+                         (region-typed-σ typed)))
+  (annotate-callable-contexts
+   (annotate-mut-binding-types core (region-typed-mut-types typed))
+   (region-typed-callable-contexts typed)
+   'renamed))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
 (define (core-type-of/materialized core-in places callables
