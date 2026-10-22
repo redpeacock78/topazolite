@@ -95,6 +95,8 @@
 
 (define ucore-terms
   (term ((Fn ((x Int)) Int () x)
+         (Fn ((x (Borrowed Int Omitted))) Int () (Read x))
+         (Fn ((x (BorrowedMut Int Omitted))) Int () (Read x))
          (Apply 1 2)
          (StrHole "x")
          (Let x 1 x)
@@ -108,6 +110,7 @@
          (Return 1)
          (Leave 1)
          (NarrativeExpr 1)
+         (BlockBody 1)
          (LexicalScope 1)
          (Recur f ((x Int)) Int () x (Apply f 0))
          (Loop f ((x Int)) Int () x (x))
@@ -116,6 +119,11 @@
          (Yield 1 2)
          (Suspend 1)
          (Move x)
+         (Borrow x)
+         (BorrowMut x)
+         (Read x)
+         (Reborrow x)
+         (Assign x 1)
          (Drop 1)
          (Curry 1 2)
          (TypeMake (Spec Nat Nat))
