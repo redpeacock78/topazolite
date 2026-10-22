@@ -1594,6 +1594,167 @@
          [`(OwnedTransit ,_ ,_) #t]
          [_ #f])))
 
+(define (constructor-parameter-info data-type constructor)
+  (match data-type
+    [`(Option ,_) `(,(list 'A) ,(case constructor
+                                  [(none) '()]
+                                  [(some) '((Param A))]
+                                  [else #f]))]
+    [`(List ,_) `(,(list 'A) ,(case constructor
+                                [(nil) '()]
+                                [(cons) '((Param A) (List (Param A)))]
+                                [else #f]))]
+    [`(Result ,_ ,_) `(,(list 'A 'B) ,(case constructor
+                                       [(ok) '((Param A))]
+                                       [(ng) '((Param B))]
+                                       [else #f]))]
+    [`(Data ,name ,_)
+     (match (data-decl name)
+       [`(,_ (,parameters ...) (,constructors ...))
+        (match (assoc constructor constructors)
+          [(list _ field-types) (list parameters field-types)]
+          [_ #f])]
+       [_ #f])]
+    [_ #f]))
+
+(define (collect-constructor-parameter-types! template actual instances
+                                              [invariant? #f])
+  (match template
+    [`(Param ,name)
+     (hash-update! instances name
+                   (lambda (types) (cons (list actual invariant?) types))
+                   '())]
+    [(? list? templates)
+     (when (and (list? actual) (= (length templates) (length actual)))
+       (for ([template-child (in-list templates)]
+             [actual-child (in-list actual)]
+             [index (in-naturals)])
+         (collect-constructor-parameter-types!
+          template-child actual-child instances
+          (or invariant?
+              (and (eq? (first templates) 'BorrowedMut)
+                   (= index 1))))))]
+    [_ (void)]))
+
+(define (merge-constructor-parameter-types types node fail)
+  (define normalized (map normalize-type types))
+  (unless (andmap values normalized)
+    (fail 'type-mismatch node (first types) (last types)))
+  (match (first normalized)
+    [`(Borrowed ,_ ,_)
+     ;; 空の constructor が運ぶ Omitted は寿命の source ではない。
+     (define sources
+       (filter (lambda (type)
+                 (not (match type
+                        [`(Borrowed ,_ (RParam %omitted)) #t]
+                        [_ #f])))
+               normalized))
+     (cond
+       [(null? sources)
+        (if (andmap (lambda (type) (type-equiv? type (first normalized)))
+                    (rest normalized))
+            (first normalized)
+            (fail 'type-mismatch node (first types) (last types)))]
+       [(ormap (lambda (type) (rparam-term? (third type))) sources)
+        (if (andmap (lambda (type) (type-equiv? type (first sources)))
+                    (rest sources))
+            (first sources)
+            (fail 'type-mismatch node (first types) (last types)))]
+       [else
+        (define unified (unify-borrow-lifetimes sources #:force? #t))
+        (if (= (length unified) 1)
+            (first unified)
+            (fail 'type-mismatch node (first types) (last types)))])]
+    [`(BorrowedMut ,_ ,_)
+     ;; BorrowedMut's own lifetime may shorten; a parameter occurring in its
+     ;; payload is kept invariant by collect-constructor-parameter-types!.
+     (define sources
+       (filter (lambda (type)
+                 (not (match type
+                        [`(BorrowedMut ,_ (RParam %omitted)) #t]
+                        [_ #f])))
+               normalized))
+     (cond
+       [(null? sources)
+        (if (andmap (lambda (type) (type-equiv? type (first normalized)))
+                    (rest normalized))
+            (first normalized)
+            (fail 'type-mismatch node (first types) (last types)))]
+       [(ormap (lambda (type) (rparam-term? (third type))) sources)
+        (if (andmap (lambda (type) (type-equiv? type (first sources)))
+                    (rest sources))
+            (first sources)
+            (fail 'type-mismatch node (first types) (last types)))]
+       [else
+        (define unified (unify-borrow-lifetimes sources #:force? #t))
+        (if (= (length unified) 1)
+            (first unified)
+            (fail 'type-mismatch node (first types) (last types)))])]
+    [(? list? first-type)
+     (unless (andmap (lambda (type)
+                       (and (list? type)
+                            (= (length type) (length first-type))))
+                     (rest normalized))
+       (fail 'type-mismatch node (first types) (last types)))
+     (for/list ([index (in-range (length first-type))])
+       (merge-constructor-parameter-types
+        (map (lambda (type) (list-ref type index)) normalized) node fail))]
+    [_
+     (if (andmap (lambda (type) (type-equiv? type (first normalized)))
+                 (rest normalized))
+         (first normalized)
+         (fail 'type-mismatch node (first types) (last types)))]))
+
+(define (construct-result-type data-type constructor actual-field-types
+                               Λ node fail)
+  (match (constructor-parameter-info data-type constructor)
+    [(list parameters template-field-types)
+     (unless (= (length template-field-types) (length actual-field-types))
+       (fail 'ill-typed node))
+     (define instances (make-hash))
+     (for ([template (in-list template-field-types)]
+           [actual (in-list actual-field-types)])
+       (collect-constructor-parameter-types! template actual instances))
+     (define arguments
+       (match data-type
+         [`(List ,element) (list element)]
+         [`(Option ,element) (list element)]
+         [`(Result ,ok-type ,error-type) (list ok-type error-type)]
+         [`(Data ,_ (,arguments ...)) arguments]
+         [_ '()]))
+     (define adopted-arguments
+       (for/list ([parameter (in-list parameters)]
+                  [declared (in-list arguments)])
+         (define occurrences (reverse (hash-ref instances parameter '())))
+         (define actuals (map first occurrences))
+         (if (null? actuals)
+             declared
+             (let ([actual
+                    (if (ormap second occurrences)
+                        (if (andmap (lambda (type)
+                                      (type-equiv? type (first actuals)))
+                                    (rest actuals))
+                            (first actuals)
+                            (fail 'type-mismatch node (first actuals)
+                                  (last actuals)))
+                        (parameterize
+                            ([merge-position
+                              (list (region-ctx-ir Λ)
+                                    (region-ctx-point Λ) node)])
+                          (with-lifetime-unify
+                           (lambda ()
+                             (merge-constructor-parameter-types
+                              actuals node fail)))))])
+               (adopt-inferred-lifetimes declared actual)))))
+     (match data-type
+       [`(List ,_) `(List ,(first adopted-arguments))]
+       [`(Option ,_) `(Option ,(first adopted-arguments))]
+       [`(Result ,_ ,_) `(Result ,(first adopted-arguments)
+                                  ,(second adopted-arguments))]
+       [`(Data ,name ,_) `(Data ,name ,adopted-arguments)]
+       [_ data-type])]
+    [_ data-type]))
+
 (define (check-construct constructor fields data-type
                          Λ Ψ environment places callables node fail)
   ;; 呼び出し側は G2+ の ts、つまり (#:ty τ s) を包みのまま渡す。
@@ -1614,9 +1775,12 @@
         (require-ownleaf-root field 'owned-constructor-field node fail))
       field))
   (match (parameterize ([ownleaf-permitted permitted])
-           (check-many fields field-types Λ Ψ environment places callables node fail))
-    [(list rows next-psi)
-     (list (rows-union rows) next-psi)]))
+           (check-many/full fields field-types Λ Ψ environment places callables
+                            node fail))
+    [(list rows next-psi actual-field-types)
+     (list (rows-union rows) next-psi
+           (construct-result-type actual-type constructor actual-field-types
+                                  Λ node fail))]))
 
 (define (branch-contexts branches data-type Λ environment node scrutinee fail)
   (define-values (data-core rewrap) (peel-eliminate-wrapper data-type))
@@ -1929,32 +2093,71 @@
 ;; 各枝の束縛子へ payload path を引き継ぐ。
 (define (union-branch-contexts branches union-type wrapper Λ environment
                                node scrutinee fail)
-  (define plain-branches
+  (define peeled-branches
     (for/list ([branch (in-list branches)])
       (match branch
         [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
          (list type binder '-> body)]
         [_ branch])))
-  (for ([branch (in-list plain-branches)])
+  (for ([branch (in-list peeled-branches)])
     (unless (redex-match? G2m ubr (erase-core branch))
       (fail 'ill-typed node)))
+  (define (contains-omitted-region? type)
+    (let walk ([value type])
+      (match value
+        [`(RParam %omitted) #t]
+        [(? pair? values) (ormap walk values)]
+        [_ #f])))
+  (define members (union-members union-type))
+  (define branch-members
+    (for/list ([branch (in-list peeled-branches)])
+      (match-define `(,declared ,_binder -> ,_) branch)
+      (or (for/first ([member (in-list members)]
+                      #:when (type-equiv? declared member))
+            member)
+          (and (contains-omitted-region? declared)
+               (for/first ([member (in-list members)]
+                           #:when
+                           (type-equiv?
+                            (normalize-type
+                             (adopt-inferred-lifetimes declared member))
+                            member))
+                 member))
+          declared)))
+  (define plain-branches
+    (for/list ([branch (in-list peeled-branches)]
+               [member (in-list branch-members)])
+      (match-define `(,_declared ,binder -> ,body) branch)
+      (list member binder '-> body)))
   (define branch-types (map first plain-branches))
   (let check-duplicates ([remaining branch-types] [seen '()])
     (unless (null? remaining)
       (when (ormap (lambda (prior) (type-equiv? (first remaining) prior)) seen)
         (fail 'non-exhaustive-union-eliminate node))
       (check-duplicates (rest remaining) (cons (first remaining) seen))))
-  (for ([member (in-list (union-members union-type))])
+  (for ([member (in-list members)])
     (unless (= (for/sum ([type (in-list branch-types)]
                          #:when (type-equiv? type member))
                 1)
                1)
       (fail 'non-exhaustive-union-eliminate node)))
   (define borrowed? (pair? wrapper))
+  (define field-table (capability-field-table Λ scrutinee))
   (define scrutinee-ws
     (and borrowed? (borrow-token-key Λ scrutinee)))
   (when (and borrowed? (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
     (fail 'unresolved-borrow-owner scrutinee))
+  (define (member-capability member)
+    (and (hash? field-table)
+         (or (hash-ref field-table member #f)
+             (for/first ([(key entry) (in-hash field-table)]
+                         #:when
+                         (and (contains-omitted-region? key)
+                              (type-equiv?
+                               (normalize-type
+                                (adopt-inferred-lifetimes key member))
+                               member)))
+               entry))))
   (for/list ([branch (in-list plain-branches)]
              [i (in-naturals 1)])
     (match-define `(,member ,binder -> ,body) branch)
@@ -1966,14 +2169,16 @@
           (values body #f '())
           (check-resource-branch-encoding
            (list x) (list member) body node fail)))
-    (define token
-      (if borrowed?
-          (for/set ([cap (in-set scrutinee-ws)])
-            (cons (car cap) (append (cdr cap) '(Payload))))
-          (set)))
+    (define capability
+      (or (member-capability member)
+          (and borrowed?
+               (cons (for/set ([cap (in-set scrutinee-ws)])
+                       (cons (car cap) (append (cdr cap) '(Payload))))
+                     #f))
+          (cons (set) #f)))
     (define Λ_branch
       (region-ctx-add-token (register-owner Λ x binding-type)
-                            x token #f #f #f))
+                            x (car capability) #f #f (cdr capability)))
     (list checked-body
           (extend environment
                   (list x)
@@ -2100,8 +2305,19 @@
     (fail 'union-inject-not-member node))
   (match (check-as/full payload member-type* (enter-child Λ 0) Ψ
                         environment places callables fail)
-    [(list row next-psi _actual)
-     (list union-type* row next-psi)]))
+    [(list row next-psi actual)
+     (define members (union-members union-type*))
+     (define result-member
+       (adopt-inferred-lifetimes member-type* actual))
+     (define adopted-members
+       (for/list ([member (in-list members)])
+         (if (type-equiv? member member-type*) result-member member)))
+     (define result-type
+       (normalize-type
+        (foldr (lambda (member tail) `(Union ,member ,tail))
+               (last adopted-members)
+               (drop-right adopted-members 1))))
+     (list result-type row next-psi)]))
 
 (define (infer-union-value union-type member-type payload Λ Ψ
                            environment places callables node fail)
@@ -2259,14 +2475,15 @@
 
 ;; 借用の寿命だけを合流する。payload が一致する借用が 2 つ以上あるときに働く。
 ;; 文脈が無いとき（合流の外から呼ばれたとき）は何もしない。
-(define (unify-borrow-lifetimes types)
+(define (unify-borrow-lifetimes types #:force? [force? #f])
   (define memo (lifetime-unify-context))
+  (define key (list force? types))
   (cond
     [(not memo) types]
-    [(hash-ref (unbox memo) types #f) => values]
+    [(hash-ref (unbox memo) key #f) => values]
     [else
-     (define result (unify-borrow-lifetimes/fresh types))
-     (set-box! memo (hash-set (unbox memo) types result))
+     (define result (unify-borrow-lifetimes/fresh types force?))
+     (set-box! memo (hash-set (unbox memo) key result))
      result]))
 
 (define (borrow-shape t)
@@ -2275,18 +2492,57 @@
     [`(BorrowedMut ,payload ,ρ) (list 'BorrowedMut payload ρ)]
     [_ #f]))
 
-(define (unify-borrow-lifetimes/fresh types)
+(define (nested-type-arguments type)
+  (match type
+    [`(Option ,element) (list 'Option (list element))]
+    [`(List ,element) (list 'List (list element))]
+    [`(Result ,ok ,error) (list 'Result (list ok error))]
+    [`(Data ,name (,arguments ...)) (list (list 'Data name) arguments)]
+    [_ #f]))
+
+(define (rebuild-nested-type constructor arguments)
+  (match constructor
+    ['Option `(Option ,(first arguments))]
+    ['List `(List ,(first arguments))]
+    ['Result `(Result ,(first arguments) ,(second arguments))]
+    [(list 'Data name) `(Data ,name ,arguments)]))
+
+(define (unify-nested-borrow-lifetimes types)
+  (define decomposed (map nested-type-arguments types))
+  (and (andmap values decomposed)
+       (andmap (lambda (parts)
+                 (equal? (first parts) (first (first decomposed))))
+               (rest decomposed))
+       (let* ([arguments (map second decomposed)]
+              [merged-arguments
+               (for/list ([index (in-range (length (first arguments)))])
+                 (define candidates
+                   (map (lambda (args) (list-ref args index)) arguments))
+                 (define unified (unify-borrow-lifetimes candidates))
+                 (cond
+                   [(= (length unified) 1) (first unified)]
+                   [(andmap (lambda (type)
+                              (type-equiv? type (first candidates)))
+                            (rest candidates))
+                    (first candidates)]
+                   [else #f]))])
+         (and (andmap values merged-arguments)
+              (list (rebuild-nested-type (first (first decomposed))
+                                         merged-arguments))))))
+
+(define (unify-borrow-lifetimes/fresh types [force? #f])
   (define shapes (map borrow-shape types))
   (cond
     ;; 全てが借用であり、構築子と payload が一致し、
     ;; かつ少なくとも 1 つの枝が寿命変数を持つときだけ合流する。
     ;; 全ての枝が具体的な region のときは G5b のままにする（§3.1）。
     [(and (andmap values shapes)
-          (> (length shapes) 1)
+          (or force? (> (length shapes) 1))
           (for/and ([s (in-list (rest shapes))])
             (and (eq? (first s) (first (first shapes)))
                  (equal? (second s) (second (first shapes)))))
-          (for/or ([s (in-list shapes)]) (lifetime-var? (third s))))
+          (or force?
+              (for/or ([s (in-list shapes)]) (lifetime-var? (third s)))))
      (define ctor (first (first shapes)))
      (define payload (second (first shapes)))
      (define α_m (fresh-lifetime! (list 'merge (length shapes))))
@@ -2314,6 +2570,7 @@
               (region-constraint 'contains α_m (rho->region ir ρ)
                                  point node)))))
      (list (list ctor payload α_m))]
+    [(unify-nested-borrow-lifetimes types) => values]
     [else types]))
 
 ;; CMP-001/ROW-005: 同じ label を持つ field を合わせる。
@@ -4406,7 +4663,7 @@
        (check-construct constructor fields data-type Λ
                         Ψ
                         environment places callables core fail))
-     (list (peel-ty data-type) (first result) (second result))]
+     (list (third result) (first result) (second result))]
 
     ;; Move 後に H に残る値を宣言型 Owned τ と結び付ける構成専用の印である。
     [`(OwnedTransit ,place ,payload)
@@ -5477,22 +5734,24 @@
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
      (define actual (peel-ty data-type))
-     (unless (compatible? actual expected)
+     ;; Construct は payload の実際の借用から結果寿命を推論するため、
+     ;; 型注釈の寿命だけを check 位置の期待型へ採る。
+     (define expected* (adopt-inferred-lifetimes expected actual))
+     (unless (compatible? actual expected*)
        (fail 'type-mismatch core expected actual))
-     (check-borrow-hiding! actual expected core fail compatible?)
-     ;; 現行の Bool/List/Option/Result schema は type-equiv? へ落ちるため
-     ;; narrowing はここへ届かない。Record を持つ nominal data type の追加時に生きる。
+     (check-borrow-hiding! actual expected* core fail compatible?)
      ;; OWN-004。互換だと判断した組に対してだけ narrowing の損失を見る。
-     (match (owned-narrowing-kind actual expected compatible?)
+     (match (owned-narrowing-kind actual expected* compatible?)
        ['ok (void)]
        [`(drop-obligation ,_ ,_)
-        (fail 'owned-narrowing-needs-proof core expected actual)]
-       [_ (fail 'owned-narrowing-rejected core expected actual)])
+        (fail 'owned-narrowing-needs-proof core expected* actual)]
+       [_ (fail 'owned-narrowing-rejected core expected* actual)])
      (match (check-construct constructor fields data-type
                               Λ
                               Ψ
                               environment places callables core fail)
-       [(list row psi) (list row psi actual)])]
+       [(list row psi constructed-type)
+        (list row psi constructed-type)])]
 
     [`(Rec ,fields)
      #:when (match (normalize-type (peel-ty expected))
