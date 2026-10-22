@@ -8,11 +8,11 @@
          "../borrow.rkt"
          "../typing.rkt")
 
-;; 内側 Scope が外側の所有値を借りて結果に返す形は通る。
-;; borrow.md §9 が退けた「Scope の結果型を制限する案」で弾かれていた形である。
-;; fixture は注釈前の形で書き、annotate-regions を 1 度だけ通す。
+;; 内側 Scope の結果は外側 owner の生存中に消費できる。
+;; borrow.md §9 が退けたのは内側の出口だけで拒否する案であり、
+;; owner の Scope を越える借用の拒否は維持する。
 (let ()
-  (define core '(Scope (1) (Scope () (Borrow 1))))
+  (define core '(Scope (1) (Read (Scope () (Borrow 1)))))
   (define ir (build-region-ir core))
   (define annotated (annotate-regions core ir))
   (check-equal?

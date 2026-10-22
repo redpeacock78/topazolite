@@ -65,12 +65,16 @@
   '(Record ((f (Borrowed Int (RVar 0)) imm))))
 
 (test-case "所有者を追える借用を含む payload の複製は通る"
+  (define core '(Scope (1) (Read (Proj (Read (Borrow 1)) f))))
+  (define ir (build-region-ir core))
+  (define Λ
+    (region-ctx ir '() (hash 1 (region-at ir '())) (hash)))
   (define result
-    (type-of/raw (annotate-regions nested-read-core nested-read-ir)
+    (type-of/raw (annotate-regions core ir)
                  (list (list 1 nested-read-type))
                  '()
                  '()
-                 nested-read-Λ))
+                 Λ))
   (check-equal? (first result) 'ok))
 
 (define fnbound-read-type

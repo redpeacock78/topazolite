@@ -5,6 +5,7 @@
          racket/set
          "../region.rkt"
          "../borrow.rkt"
+         "../diagnostic.rkt"
          "../typing.rkt")
 
 ;; [REQ: BOR-002] reborrow による親の停止と復帰。
@@ -166,8 +167,9 @@
   (define skeleton
     '(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Scope ()
-           (Reborrow (Let (y let (BorrowedMut Res 0)) (BorrowMut x) y))))))
+         (Read
+          (Scope ()
+            (Reborrow (Let (y let (BorrowedMut Res 0)) (BorrowMut x) y)))))))
   (define ir (build-region-ir skeleton))
   (define ρ_inner (region->rho ir (region-at ir '(0 1))))
   (define core
@@ -188,33 +190,88 @@
   (define core
     '(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Scope () (Reborrow (BorrowMut x))))))
+         (Read (Scope () (Reborrow (BorrowMut x)))))))
   (define ir (build-region-ir core))
-  (define ρ_outer (region->rho ir (region-at ir '())))
   (check-equal? (type-of/raw core '() '() '() (Λ-of ir))
-                (list 'ok (list `(Borrowed Res ,ρ_outer) '()))))
+                (list 'ok (list 'Res '()))))
 
-;; Reborrow の子寿命へ完全に含まれる共有借用は、停止中の親との
-;; 対を除いて許す。Reborrow 自身の shared request が別の可変借用との
-;; 衝突を見落とさないことも同時に固定する。
+;; Reborrow の結果を捨てた後なら、owner から共有借用を作れる。
 (let ()
-  (define core
+  (define skeleton
     '(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Yield (Reborrow (BorrowMut x)) (Borrow x)))))
-  (define ir (build-region-ir core))
+         (Let (b let (Borrowed Res 0))
+              (Yield (Reborrow (BorrowMut x)) (Borrow x))
+           0))))
+  (define ir (build-region-ir skeleton))
+  (define ρ
+    (region->rho ir (region-at ir '(0 1 0 1))))
+  (define core
+    (let fill ([t skeleton])
+      (cond [(equal? t '(Borrowed Res 0)) `(Borrowed Res ,ρ)]
+            [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
+            [else t])))
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
-;; 子寿命の外へはみ出す共有借用は、親が復帰する区間で衝突するため
-;; 停止窓から除かず、borrow-conflicting-alias を残す。
+;; Yield の値を捨てるなら、その子借用は後続の Borrow x と衝突しない。
 (let ()
-  (define core
+  (define skeleton
     '(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Yield (Scope () (Reborrow (BorrowMut x))) (Borrow x)))))
-  (define ir (build-region-ir core))
-  (check-equal? (key-of (type-of/raw core '() '() '() (Λ-of ir)))
-                'borrow-conflicting-alias))
+         (Let (b let (Borrowed Res 0))
+              (Yield (Scope () (Reborrow (BorrowMut x))) (Borrow x))
+           0))))
+  (define ir (build-region-ir skeleton))
+  (define ρ
+    (region->rho ir (region-at ir '(0 1 0 1))))
+  (define core
+    (let fill ([t skeleton])
+      (cond [(equal? t '(Borrowed Res 0)) `(Borrowed Res ,ρ)]
+            [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
+            [else t])))
+  (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
+
+;; 親の再開後まで共有借用を使うと、親の可変 loan と衝突する。
+(let ()
+  (define (skeleton resume-parent?)
+    `(Scope ()
+       (Let (x let (Owned Res)) (resource 1)
+         (Let (p let (BorrowedMut Res 0)) (BorrowMut x)
+           (Let (r let (Borrowed Res 1)) (Reborrow p)
+             (Let (s let (Borrowed Res 2)) (Borrow (#:span src 60 69) x)
+               (Let (_a let Res) (Read r)
+                 (Let (_b let ,(if resume-parent? 'Res 'Int))
+                      ,(if resume-parent? '(Read (#:span src 80 87) p) 0)
+                   (Read (#:span src 70 78) s)))))))))
+  (define (prepare resume-parent?)
+    (define core* (skeleton resume-parent?))
+    (define ir (build-region-ir core*))
+    (define ρ_p
+      (region->rho ir
+                   (region-at ir
+                              (if resume-parent?
+                                  '(0 1 1 1 1 1 0)
+                                  '(0 1 1 0)))))
+    (define ρ_r (region->rho ir (region-at ir '(0 1 1 1 1 0))))
+    (define ρ_s (region->rho ir (region-at ir '(0 1 1 1 1 1 1))))
+    (define core
+      (let fill ([t core*])
+        (cond [(equal? t '(BorrowedMut Res 0)) `(BorrowedMut Res ,ρ_p)]
+              [(equal? t '(Borrowed Res 1)) `(Borrowed Res ,ρ_r)]
+              [(equal? t '(Borrowed Res 2)) `(Borrowed Res ,ρ_s)]
+              [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
+              [else t])))
+    (values core ir))
+  (define-values (with-resumption _ir-resumption) (prepare #t))
+  (define diagnostic (core-type-of/regions with-resumption '() '()))
+  (check-true (diagnostic? diagnostic))
+  (check-equal? (diagnostic-id diagnostic) "E-BOR-025")
+  (check-equal? (diagnostic-primary-span diagnostic) '(#:span src 80 87))
+  (define-values (without-resumption _ir-without) (prepare #f))
+  (define control (core-type-of/regions without-resumption '() '()))
+  (check-true (diagnostic? control))
+  (check-equal? (diagnostic-id control) "E-BOR-025")
+  (check-equal? (diagnostic-primary-span control) '(#:span src 70 78)))
 
 ;; Let 経由で停止、子退場後の復帰、Drop の拒否を通す。
 (let ()
@@ -231,8 +288,9 @@
     (define core (core-with n-parent body))
     (check-equal? (core-points core) (core-points skeleton))
     (values core ir))
-  (define-values (core-plain ir-plain) (prepare '(Scope () (Reborrow y))))
-  (define n-child (region->rho ir-plain (region-at ir-plain '(0 1 0 1))))
+  (define-values (core-plain ir-plain)
+    (prepare '(Read (Scope () (Reborrow y)))))
+  (define n-child (region->rho ir-plain (region-at ir-plain '(0 1 0 1 0))))
   (check-not-equal? n-child (region->rho ir-plain (region-at ir-plain '(0 1))))
   (check-equal? (first (type-of/raw core-plain '() '() '() (Λ-of ir-plain))) 'ok)
   (define-values (core-inner ir-inner) (prepare '(Scope () (Yield (Reborrow y) (Move x)))))
@@ -247,18 +305,17 @@
 
 ;; 親の region まで退場したあとなら Move できる。
 (let ()
-  (define (core-with ρ_num)
+  (define (core-with ρ_inner)
     `(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Yield
-          (Scope ()
-            (Let (y let (BorrowedMut Res ,ρ_num)) (BorrowMut x)
-              (Yield (Scope () (Reborrow y)) 1)))
-          (Move x)))))
+         (Let (unused let Int)
+              (Scope ()
+                (Let (p let (BorrowedMut Res ,ρ_inner)) (BorrowMut x)
+                  (Let (child let (Borrowed Res ,ρ_inner)) (Reborrow p) 0)))
+           (Move x)))))
   (define skeleton (core-with 0))
   (define ir (build-region-ir skeleton))
-  (define n-parent (region->rho ir (region-at ir '(0 1 0))))
-  (define core (core-with n-parent))
+  (define core (core-with (region->rho ir (region-at ir '(0 1 0)))))
   (check-equal? (core-points core) (core-points skeleton))
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
@@ -290,11 +347,18 @@
 
 ;; 親子が同時に退場する場合は復帰後の Move が通る。
 (let ()
-  (define core
-    '(Scope ()
+  (define (core-with ρ)
+    `(Scope ()
        (Let (x let (Owned Res)) (resource 1)
-         (Yield (Scope () (Reborrow (BorrowMut x))) (Move x)))))
-  (define ir (build-region-ir core))
+         (Let (unused let Int)
+              (Scope ()
+                (Let (p let (BorrowedMut Res ,ρ)) (BorrowMut x)
+                  (Let (child let (Borrowed Res ,ρ)) (Reborrow p) 0)))
+           (Move x)))))
+  (define skeleton (core-with 0))
+  (define ir (build-region-ir skeleton))
+  (define core (core-with (region->rho ir (region-at ir '(0 1 0)))))
+  (check-equal? (core-points core) (core-points skeleton))
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
 ;; token が複数なら全要素を停止する。

@@ -842,16 +842,25 @@
                 (define ir (build-region-ir (erase-core core)))
                 (region-ctx ir '() (hash) (hash))))
    (reach-row 'borrow-conflicting-alias
-              (reach-node 'Scope 1031 1070 '()
-                          (reach-node 'Let 1032 1069
+              (reach-node 'Scope 1031 1072 '()
+                          (reach-node 'Let 1032 1071
                                       (list (reach-bind 'x 1033 1034) 'let
                                             (reach-ty '(Owned Res) 1035 1036))
                                       (reach-node 'resource 1037 1038 1)
-                                      (reach-node 'Yield 1039 1068
-                                                  (reach-node 'BorrowMut 1040 1050
-                                                              (reach-var 'x 1045 1046))
-                                                  (reach-node 'BorrowMut 1051 1067
-                                                              (reach-var 'x 1060 1061)))))
+                                      (reach-node 'Let 1039 1070
+                                                  (list (reach-bind 'alias 1040 1041)
+                                                        'let
+                                                        (reach-ty
+                                                         '(BorrowedMut Res
+                                                                       (RParam %omitted))
+                                                         1042 1043))
+                                                  (reach-node 'Scope 1044 1069 '()
+                                                              (reach-node 'Yield 1045 1068
+                                                                          (reach-node 'BorrowMut 1046 1050
+                                                                                      (reach-var 'x 1048 1049))
+                                                                          (reach-node 'BorrowMut 1051 1067
+                                                                                      (reach-var 'x 1060 1061))))
+                                                  (reach-lit 0 1068 1069))))
               '() '() '() (reach-span 1051 1067)
               reach-region-ctx)
    (reach-row 'borrow-escapes-owner

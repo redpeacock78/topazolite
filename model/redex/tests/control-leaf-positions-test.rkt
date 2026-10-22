@@ -409,12 +409,13 @@
          '() '() '())
    (list 'ReborrowAt 'operand
          `(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow ,leaf))))
+                     (Read (Scope () (Reborrow ,leaf)))))
          '(Scope () (Let (x let (Owned Res)) (resource 1)
-                     (Scope () (Reborrow (Scope () (BorrowMut x)))))) '() '() '())
+                     (Read (Scope ()
+                             (Reborrow (Scope () (BorrowMut x))))))) '() '() '())
    (list 'ProjBorrowAt 'operand
          `(Scope (1) (ProjBorrow (Scope () ,leaf) a))
-         '(Scope (1) (ProjBorrow (BorrowMut 1) a))
+         '(Scope (1) (Read (ProjBorrow (BorrowMut 1) a)))
          '((1 (Record ((a Int imm) (b Bool mut))))) '() '())
    (list 'Read 'operand
          `(Scope (1) (Read ,leaf))

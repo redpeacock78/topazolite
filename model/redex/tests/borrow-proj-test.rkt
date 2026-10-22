@@ -63,40 +63,46 @@
                (list (list 1 τ_place)) '() '()
                (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
 
-;; 受理。可変借用から mut の field を射影すると可変借用が返る。
+;; mut field の射影結果は可変借用として代入に使える。
 (let ()
-  (define core '(Scope (1) (ProjBorrow (BorrowMut 1) a)))
+  (define core '(Assign (ProjBorrow (BorrowMut 1) a) 2))
   (define ir (build-region-ir core))
   (define result (run core ir))
-  (check-equal? (first result) 'ok)
-  (check-equal? (match (first (second result)) [`(BorrowedMut ,τ ,_) τ] [_ 'no-match])
-                'Int))
+  (check-equal? result '(ok (Unit (Mutation)))))
 
 ;; 可変借用から imm の field を射影すると共有借用へ落ちる（spec §5.2）。
 (let ()
-  (define core '(Scope (1) (ProjBorrow (BorrowMut 1) b)))
+  (define core '(Read (ProjBorrow (BorrowMut 1) b)))
   (define ir (build-region-ir core))
   (define result (run core ir))
   (check-equal? (first result) 'ok)
-  (check-equal? (match (first (second result)) [`(Borrowed ,τ ,_) τ] [_ 'no-match])
-                'Bool))
+  (check-equal? (first (second result)) 'Bool))
+
+;; imm field の射影結果は共有借用であり、代入先にはできない。
+(let ()
+  (define core '(Assign (ProjBorrow (BorrowMut 1) b) true))
+  (define ir (build-region-ir core))
+  (define result (run core ir))
+  (check-equal? (first result) 'fail)
+  (check-equal? (second result) 'assign-through-shared))
 
 ;; 射影の結果の region は親と同じである。新しい α を採らない（spec §5.1）。
 (let ()
-  (define core '(Scope (1) (ProjBorrow (BorrowMut 1) a)))
+  (define core '(ProjBorrow (BorrowMut 1) a))
   (define ir (build-region-ir core))
   (define result (run core ir))
-  (define α_child (match (first (second result)) [`(BorrowedMut ,_ ,α) α]))
-  ;; 同じ IR の operand point と比べる。別の IR は region 識別子の採番が
-  ;; 独立なので、同値な region でも natural が一致するとは限らない。
+  (define α_child
+    (match (first (second result)) [`(BorrowedMut ,_ ,α) α]))
+  (define annotated (annotate-regions core ir))
   (define α_parent
-    (region->rho ir (region-at ir '(0 0))))
+    (match annotated
+      [`(ProjBorrowAt ,_ (BorrowMutAt ,ρ ,_ ,_) ,_) ρ]))
   (check-equal? α_child α_parent))
 
 ;; 所有値を内側に含む field の射影は通る（spec §5.4）。
 (let ()
   (define nested '(Record ((c (Owned Res) imm))))
-  (define core '(Scope (1) (ProjBorrow (BorrowMut 1) a)))
+  (define core '(ProjBorrow (BorrowMut 1) a))
   (define ir (build-region-ir core))
   (define result (run core ir `(Record ((a ,nested mut)))))
   (check-equal? (first result) 'ok)

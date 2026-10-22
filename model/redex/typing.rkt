@@ -139,6 +139,9 @@
 ;; および Discharge の層を降りる loop の 3 箇所に限る。
 (define typing-point-probe (make-parameter void))
 
+;; Return payload の借用寿命を制約するため、型付け中の捕捉境界と Handle point を保持する。
+(define return-handler-regions (make-parameter '()))
+
 ;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
 ;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
 (define deriving-config? (make-parameter #f))
@@ -677,9 +680,8 @@
 ;; 型が運び手である（spec §5.1）。
 ;; point π で推論した型の中に α が現れるなら region-at ir π は α の下限である。
 ;; 値の流れを別に追う解析を書くと、型の側と二重に管理することになる。
-(define (collect-use-regions! type ir point)
-  (when (and ir (lifetime-collector))
-    (define ρ (region-at ir point))
+(define (collect-use-regions-at! type ir ρ point)
+  (when (and ir ρ (lifetime-collector))
     (let walk ([t type])
       (match t
         [`(RVar ,k)
@@ -687,6 +689,9 @@
           (region-constraint 'contains `(RVar ,k) ρ point #f))]
         [(? list? ts) (for-each walk ts)]
         [_ (void)]))))
+
+(define (collect-use-regions! type ir point)
+  (collect-use-regions-at! type ir (and ir (region-at ir point)) point))
 
 ;; 寿命変数の採番（spec §3.2）。借用の項 1 つにつき 1 つ作る。
 ;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない
@@ -2874,6 +2879,8 @@
      ;; region-free-params が署名の自由な RParam だけを返す。
      (define body-result
        (parameterize ([region-binder-context #f]
+                      ;; 閉包本体は定義位置で検査し、外側 Handle の捕捉境界を引き継がない。
+                      [return-handler-regions '()]
                       ;; formal の RParam はこの Lam の境界に属する。
                       ;; 内側の Lam が外側の RegionLam の束縛をそのまま
                       ;; 引き継ぐと、formal 借用の capture を見逃す。
@@ -2991,6 +2998,7 @@
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
     (match (parameterize ([region-binder-context #f]
+                          [return-handler-regions '()]
                           ;; RecurVal の本体も呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
@@ -3071,6 +3079,7 @@
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector))
     (match (parameterize ([region-binder-context #f]
+                          [return-handler-regions '()]
                           ;; Recur の定義本体は呼出しまで遅延する。
                           [bound-region-params region-params]
                           [template-collectors
@@ -5225,6 +5234,15 @@
      (define argument-result
        (check-as/full argument type* (enter-child Λ 0)
                       Ψ environment places callables fail))
+     (define ir (region-ctx-ir Λ))
+     (define handler-point
+       (for/first ([entry (in-list (return-handler-regions))]
+                   #:when (equal? boundary (first entry)))
+         (second entry)))
+     (when (and ir handler-point)
+       (collect-use-regions-at!
+        (third argument-result) ir (region-at ir handler-point)
+        (region-ctx-point Λ)))
      (define argument-psi (second argument-result))
      (list 'Never
            (row-union (first argument-result)
@@ -5234,8 +5252,12 @@
     [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
      (define body-result
-       (check-as/full body type* (enter-child Λ 1)
-                 Ψ environment places callables fail))
+       (parameterize
+           ([return-handler-regions
+             (cons (list boundary (region-ctx-point Λ))
+                   (return-handler-regions))])
+         (check-as/full body type* (enter-child Λ 1)
+                        Ψ environment places callables fail)))
      (define body-psi (second body-result))
      (define body-flow (psi-flow body-psi))
      (define caught-state
@@ -5336,7 +5358,15 @@
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (infer body (enter-child Λ 0) Ψ environment places callables fail)]
+     (define point (region-ctx-point Λ))
+     (define ir (region-ctx-ir Λ))
+     (define body-result
+       (infer body (enter-child Λ 0) Ψ environment places callables fail))
+     (when ir
+       (collect-use-regions-at!
+        (first body-result) ir
+        (region-parent ir (region-at ir point)) point))
+     body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment
@@ -5981,8 +6011,16 @@
      (unless (andmap (λ (place) (assoc place places))
                      managed-places)
        (fail 'unmanaged-place core))
-     (check-as/full body expected (enter-child Λ 0)
-                    Ψ environment places callables fail compatible?)]
+     (define point (region-ctx-point Λ))
+     (define ir (region-ctx-ir Λ))
+     (define body-result
+       (check-as/full body expected (enter-child Λ 0)
+                      Ψ environment places callables fail compatible?))
+     (when ir
+       (collect-use-regions-at!
+        (third body-result) ir
+        (region-parent ir (region-at ir point)) point))
+     body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
      (define continuation-environment

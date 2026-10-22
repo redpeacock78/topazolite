@@ -23,7 +23,7 @@
 ;; (Reborrow (BorrowMut b)) と同じく Reborrow の子は core である。
 (let ()
   (define (make ρ_p) `(Scope (1) (Let (p let (BorrowedMut Res ,ρ_p)) (BorrowMut 1)
-                                      (Scope () (Reborrow p)))))
+                                      (Read (Scope () (Reborrow p))))))
   (define ir (build-region-ir (make 0)))
   ;; BorrowMut は Let の子 0 に居る。
   (define annotated (annotate-regions (make (rho-at ir '(0 0))) ir))
