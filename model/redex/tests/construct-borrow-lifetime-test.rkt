@@ -69,6 +69,17 @@
   (check-true (diagnostic? result) (format "診断結果: ~s" result))
   (check-equal? (diagnostic-id result) id (format "diagnostic: ~s" result)))
 
+(define (check-elaborated-result-type source expected)
+  (define result (elaborated-type source))
+  (check-accepted result)
+  (check-equal? (region-typed-type result) expected))
+
+(define (core-normal-type core)
+  (match (type-of/raw*+normal core '() '())
+    [(list 'ok (list _type _row _table _sigma _renamed normal-type))
+     normal-type]
+    [other (error 'core-normal-type "unexpected typing result: ~s" other)]))
+
 (define (core-option-escape)
   `(Scope ()
      (Let (container let (Option ,core-borrow))
@@ -622,3 +633,56 @@
                 (Construct ,(box-type core-borrow) box p)
              (Eliminate box ((box (value) -> (Read value)))))))))
   (check-accepted (core-type core callables)))
+
+(test-case "Never payload は constructor の型引数を Never に狭めない"
+  (check-accepted
+   (elaborated-type
+    '(Apply
+      (Fn () Int ()
+          (NarrativeExpr
+           (Let x
+                (Construct cons (Types Int)
+                           (Leave 1)
+                           (Leave (Construct nil (Types Int))))
+             1)))))))
+
+(test-case "Never payload の Option some は宣言型を保つ"
+  (check-elaborated-result-type
+   '(Apply
+     (Fn () (Option Int) ()
+         (NarrativeExpr
+          (Let value
+               (Construct some (Types Int)
+                          (Leave (Construct none (Types Int))))
+            value))))
+   '(Option Int)))
+
+(test-case "Never payload の List cons は宣言型を保つ"
+  (check-elaborated-result-type
+   '(Apply
+     (Fn () (List Int) ()
+         (NarrativeExpr
+          (Let value
+               (Construct cons (Types Int)
+                          (Leave (Construct nil (Types Int)))
+                          (Leave (Construct nil (Types Int))))
+            value))))
+   '(List Int)))
+
+(test-case "Never payload の利用者 data constructor は宣言型を保つ"
+  (check-elaborated-result-type
+   '(Apply
+     (Fn () (Data BorrowBox (Int)) ()
+         (NarrativeExpr
+          (Let value
+               (Construct box (Types Int)
+                          (Leave (Construct box (Types Int) 1)))
+            value))))
+   '(Data BorrowBox (Int))))
+
+(test-case "Never payload の UnionInject は宣言型を保つ"
+  (check-equal?
+   (core-normal-type
+    '(UnionInject (Union Int String) Int
+                  (Perform (Return boundary Int) 1)))
+   '(Union Int String)))

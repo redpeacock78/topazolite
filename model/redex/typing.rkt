@@ -1619,22 +1619,23 @@
 
 (define (collect-constructor-parameter-types! template actual instances
                                               [invariant? #f])
-  (match template
-    [`(Param ,name)
-     (hash-update! instances name
-                   (lambda (types) (cons (list actual invariant?) types))
-                   '())]
-    [(? list? templates)
-     (when (and (list? actual) (= (length templates) (length actual)))
-       (for ([template-child (in-list templates)]
-             [actual-child (in-list actual)]
-             [index (in-naturals)])
-         (collect-constructor-parameter-types!
-          template-child actual-child instances
-          (or invariant?
-              (and (eq? (first templates) 'BorrowedMut)
-                   (= index 1))))))]
-    [_ (void)]))
+  (unless (eq? actual 'Never)
+    (match template
+      [`(Param ,name)
+       (hash-update! instances name
+                     (lambda (types) (cons (list actual invariant?) types))
+                     '())]
+      [(? list? templates)
+       (when (and (list? actual) (= (length templates) (length actual)))
+         (for ([template-child (in-list templates)]
+               [actual-child (in-list actual)]
+               [index (in-naturals)])
+           (collect-constructor-parameter-types!
+            template-child actual-child instances
+            (or invariant?
+                (and (eq? (first templates) 'BorrowedMut)
+                     (= index 1))))))]
+      [_ (void)])))
 
 (define (merge-constructor-parameter-types types node fail)
   (define normalized (map normalize-type types))
