@@ -126,6 +126,35 @@
                'unresolved-borrow-owner))
 
 (test-case
+ "要約の無い具体 NFn の結果位置が複数なら落とす"
+ (define core
+   '(Scope (1 2)
+      (RegionLam (a)
+        (Lam User outer (p q)
+          (Let (r let (BorrowedMut Int (RParam a)))
+               (Apply plain-pair p q)
+               (Read r))))))
+ (define borrowed '(BorrowedMut Int (RParam a)))
+ ;; RegionLam の α-renaming 後の binder と一致させた外部 NFn の型。
+ (define plain-borrowed '(BorrowedMut Int (RParam a.0)))
+ (define callables
+   `((outer
+      (ForallRegion (a)
+        (NFn (,borrowed ,borrowed) Int () () () User)))))
+ (define environment
+   `((plain-pair
+      (NFn (,plain-borrowed ,plain-borrowed) ,plain-borrowed () () () User))))
+ (define ir (build-region-ir core))
+ (define result
+   (type-of/raw (annotate-regions core ir)
+                (place-types '(1 2) 'Int) callables environment
+                (region-ctx ir '() (place-owners ir '(1 2)) (hash))))
+ (check-equal? (match result
+                 [(list 'fail key _node _details ...) key]
+                 [_ #f])
+               'unresolved-borrow-owner))
+
+(test-case
  "capability を運ばない実引数を落とす"
  (define (core ρ)
    `(Scope (1)

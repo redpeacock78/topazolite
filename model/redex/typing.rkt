@@ -217,7 +217,7 @@
 (define template-collectors (make-parameter '()))
 
 ;; §4.2。再帰専用の重ね。template-collectors と同じ形の parameter である。
-;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、forwarding-index、
+;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、転送候補の位置、
 ;; 雛形を集める箱、仮と確定のどちらかを示す印を持つ。
 (struct recur-frame (bindings formals result-index collector state)
   #:transparent)
@@ -313,10 +313,8 @@
 ;; designator が混ざる形を任意の 1 要素で代表させると、制約の行き先が集合の
 ;; 反復順で変わる。formal 鍵どうしも別の frame に属するなら同じ問題なので、
 ;; その形を unresolved-borrow-owner で閉じる。
-;; 同じ frame の formal が複数ある場合は許すが、返す代表鍵は frame の同一性を
-;; 示す routing 専用であり、呼出し側の実引数 capability の選択には使わない。
-;; 実体化では token 集合全体と formal の位置対応から選ぶ。
-(define (uniform-token-designator tokens node fail)
+;; 同じ frame の formal が複数ある場合も、各鍵へ遅延制約を送る。
+(define (uniform-token-designators tokens node fail)
   (define caps (set->list tokens))
   (define first-w (car (first caps)))
   (define first-frame (and (formal-key? first-w)
@@ -332,11 +330,13 @@
           (not (formal-key? (car cap))))))
   (unless uniform?
     (fail 'unresolved-borrow-owner node))
-  first-w)
+  (sort (set->list (for/set ([cap (in-list caps)]) (car cap)))
+        string<?
+        #:key (lambda (w) (format "~s" w))))
 
 ;; §5.4。関数の出現ごとの要約。formals は仮引数の位置に対応する formal
 ;; designator の並びであり、借用でない位置は #f である。deferred は本体で
-;; 集めた雛形、result-index は結果の借用が対応する仮引数の位置または #f、
+;; 集めた雛形、result-index は結果の借用を転送する候補位置の並び、
 ;; region-subst は RegionApp が解いた rp から ρ への写像である。
 (struct callable-summary (formals deferred result-index region-subst)
   #:transparent)
@@ -386,17 +386,22 @@
 (define (borrowed-type-anywhere? type)
   (unbound-borrowed-type? type (set)))
 
-;; §5.4。結果の借用と同じ region を持つ仮引数の位置を 1 つに定める。
-;; 位置が無いときも 2 つ以上あるときも所有者が定まらないので #f を返す。
-(define (forwarding-index parameter-types return-type)
+;; §5.4。定義時の formal region で、結果の借用と同じ region を持つ
+;; 仮引数の位置を集める。RegionApp 後に数え直すと異なる formal が潰れる。
+(define (forwarding-indices parameter-types return-type)
   (define ρ-result (borrow-region return-type))
-  (and ρ-result
-       (match (for/list ([τ (in-list parameter-types)]
-                         [i (in-naturals)]
-                         #:when (equal? (borrow-region τ) ρ-result))
-                i)
-         [(list i) i]
-         [_ #f])))
+  (if ρ-result
+      (for/list ([τ (in-list parameter-types)]
+                 [i (in-naturals)]
+                 #:when (equal? (borrow-region τ) ρ-result))
+        i)
+      '()))
+
+;; 要約の無い concrete function は候補が一つの場合だけ転送できる。
+(define (forwarding-index parameter-types return-type)
+  (match (forwarding-indices parameter-types return-type)
+    [(list i) i]
+    [_ #f]))
 
 ;; §5.4。呼出しの結果が運ぶ借用が、どの実引数の capability を指すのかを表す。
 (struct forwarding-summary (index keys source) #:transparent)
@@ -2607,7 +2612,7 @@
      (record-callable-summary!
       Λ node
       (callable-summary formals (reverse (unbox collector))
-                        (forwarding-index parameter-types return-type)
+                        (forwarding-indices parameter-types return-type)
                         (hash))
       fail)
      (list expanded '() closure-psi)]
@@ -2698,7 +2703,7 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame (list recur-binding) formals
-                        (forwarding-index parameter-types return-type)
+                        (forwarding-indices parameter-types return-type)
                         collector 'tentative 1))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
@@ -2777,7 +2782,7 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame bindings formals
-                        (forwarding-index parameter-types return-type)
+                        (forwarding-indices parameter-types return-type)
                         collector 'tentative
                         (if (null? binder-params) 1 2)))
     (define template
@@ -3191,42 +3196,52 @@
        (error 'infer-reborrow
               "親の token を特定できない operand: ~s"
               operand))
-     (define parent-designator
-       (uniform-token-designator tokens core fail))
-     ;; concrete な親でも、core 内の BorrowMut がすでに同じ capability の
-     ;; mut 項目を Ψ へ登録している場合がある。そこでは元の α を使い、
-     ;; 外部由来の親だけを synthetic request として補う。
+     (define parent-designators
+       (uniform-token-designators tokens core fail))
+     ;; 合流後は operand の全実起点だけを停止し、同じ capability の古い要求を拾わない。
+     (define parent-sources (capability-source τ_operand))
      (define (existing-mut cap)
-       (for/first ([entry (in-set (psi-mut Ψ_1))]
-                   #:when (and (equal? (first entry) (car cap))
-                               (equal? (second entry) (cdr cap))))
-         entry))
+       (define matches
+         (for/list ([entry (in-set (psi-mut Ψ_1))]
+                    #:when (and (equal? (first entry) (car cap))
+                                (equal? (second entry) (cdr cap))))
+           entry))
+       (define exact
+         ;; ρ の親は IR region term へ変換済みなので Ψ と同じ表現で照合する。
+         (filter (lambda (entry) (equal? (third entry) parent-term)) matches))
+       (cond
+         [(pair? exact) exact]
+         [(not (set-empty? parent-sources))
+          (filter (lambda (entry)
+                    (set-member? parent-sources (third entry)))
+                  matches)]
+         [(= (length matches) 1) matches]
+         [else '()]))
      (define parent-terms
        (for/hash ([cap (in-set tokens)])
          (define existing (existing-mut cap))
          (values cap
-                 (if (and existing
-                          (not (lifetime-var? α_parent))
-                          (not (rparam-term? α_parent)))
-                     (third existing)
-                     parent-term))))
-     (route-constraint!
-      (region-constraint 'contains α_child (region-at ir point) point core)
-      parent-designator core fail)
+                 (if (pair? existing)
+                     (map third existing)
+                     (list parent-term)))))
+     (for ([w (in-list parent-designators)])
+       (route-constraint!
+        (region-constraint 'contains α_child (region-at ir point) point core)
+        w core fail))
      (for ([cap (in-set tokens)])
        (define w (car cap))
        (define fp (cdr cap))
-       (route-constraint!
-        (region-constraint 'reborrow (hash-ref parent-terms cap)
-                           α_child point core)
-        parent-designator core fail)
+       (for ([α_parent (in-list (hash-ref parent-terms cap))])
+         (route-constraint!
+          (region-constraint 'reborrow α_parent α_child point core)
+          w core fail))
        ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
        ;; 生成していない。各 token を親の要求として記録し、境界の先でも
        ;; Move/Drop の判定へ届かせる。core 内ですでに Ψ にある要求は
        ;; synthetic request を重ねない。
        (unless (or (lifetime-var? α_parent)
                    (rparam-term? α_parent)
-                   (existing-mut cap))
+                   (pair? (existing-mut cap)))
          (route-request! (borrow-request w fp 'mut parent-term parent-term core)
                          core fail)))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
@@ -3246,17 +3261,19 @@
                (rparam-term? α_parent))
            Ψ_1
            (for/fold ([Ψ_acc Ψ_1]) ([cap (in-set tokens)])
-             (if (existing-mut cap)
+             (if (pair? (existing-mut cap))
                  Ψ_acc
                  (psi-add-mut Ψ_acc (car cap) (cdr cap) parent-term)))))
      (define Ψ_2
        (for/fold ([Ψ_acc Ψ_seed]) ([cap (in-set tokens)])
-         (psi-suspend Ψ_acc
-                      (car cap)
-                      (cdr cap)
-                      (hash-ref parent-terms cap)
-                      α_child
-                      core)))
+         (for/fold ([Ψ_inner Ψ_acc])
+                   ([α_parent (in-list (hash-ref parent-terms cap))])
+           (psi-suspend Ψ_inner
+                        (car cap)
+                        (cdr cap)
+                        α_parent
+                        α_child
+                        core))))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
 
@@ -4691,17 +4708,29 @@
                                         call-psi fail)))
         (unless summary (set! next-psi call-psi))
         (when (borrow-region return-type)
-          (define i (forwarding-index parameter-types return-type))
-          (unless i (fail 'unresolved-borrow-owner core))
-          (define keys (list-ref argument-caps i))
+          (define positions
+            (cond
+              [summary (callable-summary-result-index summary)]
+              ;; 仮の再帰呼出しは確定要約がまだ無いので、frame の宣言時候補を使う。
+              [frame (recur-frame-result-index frame)]
+              [else
+               (let ([i (forwarding-index parameter-types return-type)])
+                 (if i (list i) '()))]))
+          (unless (pair? positions) (fail 'unresolved-borrow-owner core))
+          (define keys
+            (for/fold ([caps (set)]) ([i (in-list positions)])
+              (set-union caps (list-ref argument-caps i))))
           (when (set-empty? keys)
             (fail 'unresolved-borrow-owner core))
+          (define source
+            (for/fold ([sources (set)]) ([i (in-list positions)])
+              (set-union
+               sources
+               (argument-source Λ (list-ref arguments i)
+                               (list-ref actuals i) (add1 i)))))
           (record-forwarding-summary!
            Λ core
-           (forwarding-summary i keys
-                               (argument-source Λ (list-ref arguments i)
-                                                (list-ref actuals i)
-                                                (add1 i)))
+           (forwarding-summary positions keys source)
            fail))
         (unless (obligations-dischargeable? obligations (current-Γ-pc0))
           (fail 'unsatisfied-proof-obligation core))
