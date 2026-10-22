@@ -31,7 +31,7 @@
   (check-equal? (borrow-token-key Λ_0 '(ReborrowAt 1 (BorrowMutRef 7 () 0)))
                 (set (list 7))))
 
-;; 内側の項の型をそのまま運ぶ形も全欄を合併する。
+;; record の射影は選択した欄の capability だけを返す。
 (let ()
   (define Λ_0 (empty-region-ctx))
   (check-equal? (borrow-token-key Λ_0 '(Proj (Rec ((a imm (BorrowMut x)))) a))
@@ -54,7 +54,7 @@
                  Λ_0
                  '(Proj (Rec ((a imm (BorrowMut x))
                               (b imm (BorrowMut y)))) b))
-                (set (list 'x) (list 'y)))
+                (set (list 'y)))
   (check-equal? (borrow-token-key Λ_0
                                   '(Construct (Option Int) some (BorrowMut x)))
                 (set (list 'x)))
