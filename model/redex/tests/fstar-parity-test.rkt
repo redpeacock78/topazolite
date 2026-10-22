@@ -12,7 +12,7 @@
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
  (check-equal? (length racket-surface-constructors) 43)
- (check-equal? (length racket-ucore-constructors) 22)
+ (check-equal? (length racket-ucore-constructors) 29)
  (check-equal? (length fstar-constructors) 42))
 
 (test-case
@@ -225,7 +225,15 @@
    (cons 'Leave    (redex-match? UCore+ e `(Leave ,s0 (#:lit 1 ,s0))))
    (cons 'FnDecl   (redex-match? UCore+ e `(FnDecl ,s0 (#:bind f ,s0) ()
                                                    (#:ty Int ,s0) (#:ef () ,s0)
-                                                   (#:lit 1 ,s0) (#:lit unit ,s0))))))
+                                                   (#:lit 1 ,s0) (#:lit unit ,s0))))
+   (cons 'Borrowed (redex-match? UCore+ uτ '(Borrowed Int Omitted)))
+   (cons 'BorrowedMut (redex-match? UCore+ uτ '(BorrowedMut Int Omitted)))
+   (cons 'Borrow (redex-match? UCore+ e `(Borrow ,s0 (#:var x ,s0))))
+   (cons 'BorrowMut (redex-match? UCore+ e `(BorrowMut ,s0 (#:var x ,s0))))
+   (cons 'Read (redex-match? UCore+ e `(Read ,s0 (#:var x ,s0))))
+   (cons 'Reborrow (redex-match? UCore+ e `(Reborrow ,s0 (#:var x ,s0))))
+   (cons 'Assign (redex-match? UCore+ e
+                                 `(Assign ,s0 (#:var x ,s0) (#:lit 1 ,s0))))))
 
 (test-case
  "リスト 1 の名前がすべて Surface の項として組める"

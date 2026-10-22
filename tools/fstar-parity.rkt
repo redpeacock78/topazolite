@@ -21,7 +21,7 @@
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
 ;; Surface の落とし込みが生成する形である。#:lit と #:var は keyword である。
 (define racket-ucore-constructors
-  '(#:lit #:var Apply Proj TraitCall StrHole Eliminate IfSome BlockBody LexicalScope NarrativeExpr Rec Fn Construct Let TryBind Reassign Recur Loop Return Leave FnDecl))
+  '(#:lit #:var Apply Proj TraitCall StrHole Eliminate IfSome BlockBody LexicalScope NarrativeExpr Rec Fn Construct Let TryBind Reassign Recur Loop Return Leave FnDecl Borrowed BorrowedMut Borrow BorrowMut Read Reborrow Assign))
 
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
@@ -92,6 +92,13 @@
    (one-to-one 'Proj 'CProj)
    (no-counterpart 'TraitCall)
    (no-counterpart 'StrHole)
+   (no-counterpart 'Borrowed)
+   (no-counterpart 'BorrowedMut)
+   (no-counterpart 'Borrow)
+   (no-counterpart 'BorrowMut)
+   (no-counterpart 'Read)
+   (no-counterpart 'Reborrow)
+   (no-counterpart 'Assign)
    (one-to-one 'Eliminate 'CEliminate)
    (no-counterpart 'IfSome)
    (no-counterpart 'BlockBody)

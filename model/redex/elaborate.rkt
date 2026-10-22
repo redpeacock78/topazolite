@@ -63,6 +63,19 @@
 (define (default-normal-type type)
   (if (eq? type 'Never) '⊥ type))
 
+;; UCore の省略寿命は型付けの間だけ Omitted として保ち、Core 注釈へ出す
+;; 位置で予約済みの region parameter にする。
+(define (omitted-regions->core term)
+  (match term
+    [`(Borrowed ,payload Omitted)
+     `(Borrowed ,(omitted-regions->core payload) (RParam %omitted))]
+    [`(BorrowedMut ,payload Omitted)
+     `(BorrowedMut ,(omitted-regions->core payload) (RParam %omitted))]
+    [(? pair?)
+     (cons (omitted-regions->core (car term))
+           (omitted-regions->core (cdr term)))]
+    [_ term]))
+
 ;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
 (struct resolved-type-argument (type) #:transparent)
 
@@ -687,11 +700,13 @@
          (values type #f))]))
 
 (define (type? value)
-  (and (redex-match? G2 τ value)
+  (and (or (redex-match? G2 τ value)
+           (redex-match? UCore uτ value))
        (type-shape-ok? value)))
 
 (define (row-union left right)
-  (term (row-∪ ,left ,right)))
+  (term (row-∪ ,(omitted-regions->core left)
+               ,(omitted-regions->core right))))
 
 (define (rows-union rows)
   (for/fold ([combined '()])
@@ -699,10 +714,12 @@
     (row-union combined row)))
 
 (define (row-difference row removed)
-  (term (row-\\ ,row ,removed)))
+  (term (row-\\ ,(omitted-regions->core row)
+                 ,(omitted-regions->core removed))))
 
 (define (row-subset? left right)
-  (term (row-⊆ ,left ,right)))
+  (term (row-⊆ ,(omitted-regions->core left)
+               ,(omitted-regions->core right))))
 
 (define (row-member? label row)
   (term (row-∈ ,label ,row)))
@@ -937,6 +954,10 @@
                           arguments))]
       [`(Owned ,inner)
        `(Owned ,(resolve-annotation inner delta span))]
+      [`(Borrowed ,inner Omitted)
+       `(Borrowed ,(resolve-annotation inner delta span) Omitted)]
+      [`(BorrowedMut ,inner Omitted)
+       `(BorrowedMut ,(resolve-annotation inner delta span) Omitted)]
       [`(Untrusted ,inner)
        `(Untrusted ,(resolve-annotation inner delta span))]
       [`(Refined ,inner ,proposition)
@@ -1248,6 +1269,12 @@
     [`(Reassign ,name ,value)
      (set-union (free-vars/erased name) (free-vars/erased value))]
     [`(Move ,name) (set name)]
+    [`(Borrow ,name) (set name)]
+    [`(BorrowMut ,name) (set name)]
+    [`(Read ,body) (free-vars/erased body)]
+    [`(Reborrow ,body) (free-vars/erased body)]
+    [`(Assign ,target ,value)
+     (set-union (free-vars/erased target) (free-vars/erased value))]
     [`(Drop ,body) (free-vars/erased body)]
     [`(Curry ,function ,argument)
      (set-union (free-vars/erased function) (free-vars/erased argument))]
@@ -2029,7 +2056,9 @@
            (if (borrow-bearing-core? adapter-core)
                (let ([checked
                       (core-type-of/regions
-                       adapter-core '() (reverse reversed-callables)
+                       (omitted-regions->core adapter-core)
+                       '()
+                       (omitted-regions->core (reverse reversed-callables))
                        #:expansion-context expansion-context)])
                  (if (region-typed? checked)
                      (list (region-typed-type checked) (region-typed-row checked))
@@ -4396,6 +4425,13 @@
            (walk next delayed?)]
           [`(Suspend ,body) (walk body delayed?)]
           [`(Move ,place) (walk place delayed?)]
+          [`(Borrow ,place) (walk place delayed?)]
+          [`(BorrowMut ,place) (walk place delayed?)]
+          [`(Read ,operand) (walk operand delayed?)]
+          [`(Reborrow ,operand) (walk operand delayed?)]
+          [`(Assign ,target ,value)
+           (walk target delayed?)
+           (walk value delayed?)]
           [`(Reassign ,place ,value)
            (walk place delayed?)
            (walk value delayed?)]
@@ -5459,6 +5495,31 @@
                  ['Never
                   (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
                             'Never (judgment-row record-result) 'Never '⊥)]
+                 [(list (and borrow-kind (or 'Borrowed 'BorrowedMut))
+                        payload _)
+                  (match payload
+                    [`(Record ,row)
+                     (define field (assoc label row))
+                     (unless field
+                       (reject s 'projborrow-unknown-field
+                               #:phase 'typing))
+                     (when (field-optional? field)
+                       (reject s 'projborrow-optional-field
+                               #:phase 'typing))
+                     (match (field-row-lookup row label)
+                       [(list field-type mutability)
+                        (propagate-context-never
+                         (judgment
+                          `(ProjBorrow ,s ,(judgment-core record-result)
+                                       ,raw-label)
+                          `(,(proj-borrow-mode borrow-kind mutability)
+                            ,field-type Omitted)
+                          (judgment-row record-result))
+                         (list record-result))]
+                       [_ (reject s 'projborrow-unknown-field
+                                  #:phase 'typing)])]
+                    [_ (reject s 'projborrow-non-record
+                               #:phase 'typing)])]
                  [`(Record ,row)
                   (define field (assoc label row))
                   (cond
@@ -5659,6 +5720,73 @@
                    (row-union (judgment-row result) '(Suspend))
                    (judgment-core-type result)
                    (judgment-normal-type result))]
+
+        [`(Borrow ,raw-name)
+         (define name (peel-node raw-name))
+         (define binding-type (flow-view environment name))
+         (unless binding-type (reject s 'unbound-variable name))
+         (define payload
+           (match (normalize-type binding-type)
+             [`(Owned ,inner) inner]
+             [type type]))
+         (judgment `(Borrow ,s ,raw-name) `(Borrowed ,payload Omitted) '())]
+
+        [`(BorrowMut ,raw-name)
+         (define name (peel-node raw-name))
+         (define binding-type (flow-view environment name))
+         (unless binding-type (reject s 'unbound-variable name))
+         (define payload
+           (match (normalize-type binding-type)
+             [`(Owned ,inner) inner]
+             [type type]))
+         (judgment `(BorrowMut ,s ,raw-name)
+                   `(BorrowedMut ,payload Omitted) '())]
+
+        [`(Read ,operand)
+         (define result
+           (synth operand environment delta propositions boundaries))
+         (define payload
+           (match (type-for-context result)
+             [`(Borrowed ,inner ,_) inner]
+             [`(BorrowedMut ,inner ,_) inner]
+             [_ (reject s 'read-non-borrow #:phase 'typing)]))
+         (propagate-context-never
+          (judgment `(Read ,s ,(judgment-core result)) payload
+                    (judgment-row result))
+          (list result))]
+
+        [`(Reborrow ,operand)
+         (define result
+           (synth operand environment delta propositions boundaries))
+         (define payload
+           (match (type-for-context result)
+             [`(BorrowedMut ,inner ,_) inner]
+             [_ (reject s 'reborrow-non-mutable #:phase 'typing)]))
+         (propagate-context-never
+          (judgment `(Reborrow ,s ,(judgment-core result))
+                    `(Borrowed ,payload Omitted) (judgment-row result))
+          (list result))]
+
+        [`(Assign ,target ,value)
+         (define target-result
+           (synth target environment delta propositions boundaries))
+         (define payload
+           (match (type-for-context target-result)
+             [`(BorrowedMut ,inner ,_) inner]
+             [`(Borrowed ,_ ,_)
+              (reject s 'assign-through-shared #:phase 'typing)]
+             [_ (reject s 'assign-non-borrow #:phase 'typing)]))
+         (define value-result
+           (check value payload environment delta propositions boundaries))
+         (propagate-context-never
+          (judgment `(Assign ,s ,(judgment-core target-result)
+                             ,(judgment-core value-result))
+                    'Unit
+                    (rows-union
+                     (list (judgment-row target-result)
+                           (judgment-row value-result)
+                           '(Mutation))))
+          (list target-result value-result))]
 
         [`(Move ,raw-name)
          (define name (peel-node raw-name))
@@ -6309,10 +6437,11 @@
           expected s propositions)]))
 
     (define result (synth expression '() Δ0 Π0 '()))
-    (list (uniquify-binders (judgment-core result))
+    (list (omitted-regions->core
+           (uniquify-binders (judgment-core result)))
           (judgment-type result)
           (judgment-row result)
-          (reverse reversed-callables)))))
+          (omitted-regions->core (reverse reversed-callables))))))
 
 ;; reject は primary-span を必須の第 1 引数に取る。渡し忘れと引数の逆順、
 ;; registry に無い reason を、どれも実行時に落として fail-loud にする。

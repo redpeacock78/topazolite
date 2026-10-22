@@ -199,6 +199,12 @@
       [(list 'Yield e_1 e_2) (list 'Yield (next) (ann e_1) (ann e_2))]
       [(list 'Suspend e) (list 'Suspend (next) (ann e))]
       [(list 'Move x) (list 'Move (next) (ann x))]
+      [(list 'Borrow x) (list 'Borrow (next) (ann x))]
+      [(list 'BorrowMut x) (list 'BorrowMut (next) (ann x))]
+      [(list 'Read e) (list 'Read (next) (ann e))]
+      [(list 'Reborrow e) (list 'Reborrow (next) (ann e))]
+      [(list 'Assign target value)
+       (list 'Assign (next) (ann target) (ann value))]
       [(list 'Reassign target value)
        (list 'Reassign (next) (ann target) (ann value))]
       [(list 'Drop e) (list 'Drop (next) (ann e))]

@@ -145,7 +145,7 @@
     (check-equal? (and (redex-match? G2+ φ prop) #t)
                   (and (redex-match? G2 φ prop) #t))))
 
-(test-case "UCore+ の e は 27 production すべてに証人を持つ"
+(test-case "UCore+ の e は 34 production すべてに証人を持つ"
   (for ([expr (in-list
                (list (term (#:lit 1 ,s0))
                      (term (#:var x ,s0))
@@ -166,6 +166,7 @@
                                       ((,s1 some ((#:bind y ,s1)) -> (#:var y ,s1)))))
                      (term (Return ,s0 (#:lit 1 ,s1)))
                      (term (Leave ,s0 (#:lit 1 ,s1)))
+                     (term (BlockBody ,s0 (#:lit 1 ,s1)))
                      (term (LexicalScope ,s0 (#:lit 1 ,s1)))
                      (term (NarrativeExpr ,s0 (#:lit 1 ,s1)))
                      (term (TryBind ,s0 (#:bind x ,s1) (#:lit 1 ,s1) (#:var x ,s1)))
@@ -182,6 +183,11 @@
                      (term (Yield ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
                      (term (Suspend ,s0 (#:lit 1 ,s1)))
                      (term (Move ,s0 (#:var x ,s1)))
+                     (term (Borrow ,s0 (#:var x ,s1)))
+                     (term (BorrowMut ,s0 (#:var x ,s1)))
+                     (term (Read ,s0 (#:var x ,s1)))
+                     (term (Reborrow ,s0 (#:var x ,s1)))
+                     (term (Assign ,s0 (#:var x ,s1) (#:lit 1 ,s1)))
                      (term (Drop ,s0 (#:lit 1 ,s1)))
                      (term (Curry ,s0 (#:lit 1 ,s1) (#:lit 2 ,s1)))
                      (term (TypeMake ,s0 (#:ty (Spec Nat Nat) ,s1)))

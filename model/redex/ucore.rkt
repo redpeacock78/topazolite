@@ -25,6 +25,8 @@
           (Implements uτ tn)
           (RequiresBoth tn tn))
   (uQ ::= (uφ ...))
+  ;; SUR-004a1。region は a1b では省略のみを表す。
+  (uω ::= Omitted)
   (uτ ::= Int Bool Unit String Never Res
           T
           (Data T (uτ ...))
@@ -39,7 +41,9 @@
           (Proof uφ)
           (Record ur)
           (Union uτ uτ)
-          (Intersection uτ uτ))
+          (Intersection uτ uτ)
+          (Borrowed uτ uω)
+          (BorrowedMut uτ uω))
   ;; Fn の仮引数と戻り型は、型か #:infer のどちらかで表す。
   (uret ::= uτ #:infer)
   ;; Fn の宣言 row は、省略時に空と区別する。
@@ -93,6 +97,11 @@
          (Reassign x e)
          (Drop e)
          (Curry e e)
+         (Borrow x)
+         (BorrowMut x)
+         (Read e)
+         (Reborrow e)
+         (Assign e e)
          (TypeMake spec)
          (LetType T (TypeMake spec) e)))
 
@@ -151,5 +160,10 @@
          (Reassign s vr e)
          (Drop s e)
          (Curry s e e)
+         (Borrow s vr)
+         (BorrowMut s vr)
+         (Read s e)
+         (Reborrow s e)
+         (Assign s e e)
          (TypeMake s sps)
          (LetType s T (TypeMake s sps) e)))
