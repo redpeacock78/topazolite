@@ -247,6 +247,36 @@
      (fail (format "elaboration が先に拒否した: ~a"
                    (diagnostic-id diagnostic)))]))
 
+(test-case "004a2: Fn の借用仮引数は E-BOR-012 で関数節点を指す"
+  (check-typed-rejection
+   '(Fn ((b (Borrowed Int Omitted))) Int () (Read b))
+   'Fn "E-BOR-012"))
+
+(test-case "004a2: Recur の借用仮引数は E-BOR-012 で宣言節点を指す"
+  (check-typed-rejection
+   '(Recur f ((b (Borrowed Int Omitted))) Int () (Read b) 0)
+   'Recur "E-BOR-012"))
+
+(test-case "004a2: FnDecl の借用仮引数は E-BOR-012 で宣言節点を指す"
+  (check-typed-rejection
+   '(FnDecl f ((b (Borrowed Int Omitted))) Int () (Read b) 0)
+   'FnDecl "E-BOR-012"))
+
+(test-case "004a2: Loop の借用仮引数は E-BOR-012 で宣言節点を指す"
+  (check-typed-rejection
+   '(Fn ((p (Owned Int))) Int (Own)
+      (LexicalScope
+       (Let (x let (Owned Int)) (Move p)
+         (Let (borrowed let (Borrowed Int Omitted)) (Borrow x)
+           (Loop loop ((b (Borrowed Int Omitted))) Int ()
+                 (Read b) (borrowed))))))
+   'Loop "E-BOR-012"))
+
+(test-case "004a2: 明示戻り値の借用は E-BOR-013 で関数節点を指す"
+  (check-typed-rejection
+   '(Fn ((x (Owned Int))) (Borrowed Int Omitted) (Own) (Borrow x))
+   'Fn "E-BOR-013"))
+
 (test-case "借用を含む元関数の adapter は region-aware 型付けを通る"
   (define source
     `(Let (adapted const
