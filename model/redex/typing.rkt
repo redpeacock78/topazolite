@@ -2906,40 +2906,45 @@
     ;; 拒む。これにより借用の所有者検査より mut の契約を先に報告できる。
     (fail 'mut-binding-unsupported-type node))
   (match declared-type
-    [`(Record ,declared-row)
+    [`(Record ,_declared-row)
      (match (infer bound (enter-child Λ 0) Ψ environment places callables fail)
        [(list 'Never bound-row bound-psi)
         (list bound-row declared-type bound-psi #t)]
        [(list `(Record ,actual-row) bound-row bound-psi)
-        (unless (tag-compat? `(Record ,actual-row) `(Record ,declared-row)
+        ;; 束縛の型には推論した寿命を持つ宣言型を使う。宣言型を先に比較すると、
+        ;; 借用欄の (RParam %omitted) と実際の region が異なるため拒否される。
+        (define adopted-type
+          (adopt-inferred-lifetimes declared-type `(Record ,actual-row)))
+        (define adopted-row (second adopted-type))
+        (unless (tag-compat? `(Record ,actual-row) adopted-type
                              (current-Γ-pc0)
                              (current-region-relation))
           (fail 'record-binding-incompatible bound))
         (define residual
-          (field-row-residual actual-row declared-row))
+          (field-row-residual actual-row adopted-row))
         (define binding-row
           (case binding-mode
             [(const)
              (if (or (null? residual)
                      (and (deriving-config?)
                           (config-view-compatible? `(Record ,actual-row)
-                                                   declared-type)))
-                 declared-row
+                                                   adopted-type)))
+                 adopted-row
                  (fail 'const-record-residual bound residual))]
             ;; P1c2b。mut は残余を落とさない。落とすと const と同じ制約になる。
             [(let)
-             (field-row-⊕ declared-row residual)]
+             (field-row-⊕ adopted-row residual)]
             [(mut)
              ;; mut の再代入は古い値を捨てるため、affine な値と借用を
              ;; mutable な環境へ入れない。既存の再帰的な述語で欄の内側も見る。
-             (define row (field-row-⊕ declared-row residual))
+             (define row (field-row-⊕ adopted-row residual))
              (for ([field (in-list row)])
                (define type (second field))
                (when (not (mut-slot-type-supported? type))
                  (fail 'mut-binding-unsupported-type node)))
              row]
             [else (fail 'ill-typed node)]))
-        ;; field-row-residual は declared-row のラベルを除いた残余を返すため、
+        ;; field-row-residual は adopted-row のラベルを除いた残余を返すため、
         ;; field-row-⊕ の重複検査はここでは破れない。表の整合を保つため、
         ;; 到達しないこの位置は先の compat? 検査と key を共有する。
         (unless binding-row (fail 'record-binding-incompatible bound))
