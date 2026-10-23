@@ -356,7 +356,7 @@
        (define entry (hash-ref env (peel-node place) #f))
        (and entry (eq? (first entry) 'borrow) (scalar-value? value))]
       [value (scalar-value? value)]))
-  ;; shortcut: only scalar reads/writes are windowed; widen when the checker tracks escapes.
+  ;; shortcut: scalar の読み書きだけ窓を付ける。escape を追跡できる段階で対象を広げる。
   (and (pair? (template-frame-parameter-types frame))
        (scalar-window-type? (template-frame-return-type frame))
        (not (borrowed-type-anywhere? (template-frame-return-type frame)))

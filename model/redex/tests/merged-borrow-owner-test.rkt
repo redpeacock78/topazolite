@@ -307,13 +307,17 @@
     ['live-left
      `(Let (r let ,borrowed-type) ,call
         (Let (read const Int)
-             (Scope () ,(observe read-observed))
-          (Assign p 7)))]
+             (Scope ()
+               ,(observe `(Let (written const Unit) (Assign p 7)
+                            ,read-observed)))
+          unit))]
     ['live-right
      `(Let (r let ,borrowed-type) ,call
         (Let (read const Int)
-             (Scope () ,(observe read-observed))
-          (Assign s 7)))]
+             (Scope ()
+               ,(observe `(Let (written const Unit) (Assign s 7)
+                            ,read-observed)))
+          unit))]
     ['after-left
      `(Let (r let ,borrowed-type) ,call
         (Let (read const Int)
@@ -483,7 +487,7 @@
    (failure-key (stale-reborrow-core #f (merged-reborrow-parent-write)))
    'borrow-conflicting-use))
 
-(test-case "単一位置の転送は保ち、合流と RegionApp 後の候補位置を保持する"
+(test-case "生存中の左右と退場後の観測で候補位置を保つ"
   (check-true
    (match (formal-forwarding-definition-result 'forward-id)
      [`(ok (,type ,_row))
@@ -506,6 +510,20 @@
   (check-equal? (formal-forwarding-key 'left-of 'live-left)
                 'borrow-conflicting-use)
   (check-false (formal-forwarding-key 'left-of 'live-right))
+  ;; 外側の r は RParam q の lexical loan のまま残るため、対象位置への
+  ;; 退場後の書込みは現状 E-BOR-025。非候補位置は受理する。
+  (for ([case (in-list
+               '((forward-id after-left borrow-conflicting-use)
+                 (forward-id after-right #f)
+                 (choose after-left borrow-conflicting-use)
+                 (choose after-right borrow-conflicting-use)
+                 (choose-reborrow after-left borrow-conflicting-use)
+                 (choose-reborrow after-right borrow-conflicting-use)
+                 (left-of after-left borrow-conflicting-use)
+                 (left-of after-right #f)))])
+    (match-define (list kind use expected) case)
+    (check-equal? (formal-forwarding-key kind use) expected
+                  (format "~a / ~a" kind use)))
   (check-equal? (formal-forwarding-borrow-positions 'choose)
                 (set (cons 1 '()) (cons 2 '())))
   (check-equal? (formal-forwarding-borrow-positions 'left-of)

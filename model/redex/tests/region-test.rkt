@@ -192,14 +192,25 @@
                  #:at-table [at-table (hash '(1) ρ1 '(1 0 1) ρ2)]
                  #:exit-table [exit-table at-table]
                  #:owner-body-table [owner-body-table (hash)]
-                 #:points [points nested-points])
+                 #:points [points nested-points]
+                 #:control-order-barriers [control-order-barriers (set)])
   (lexical-region-ir regions outlives owners parents at-table exit-table
-                     owner-body-table points))
+                     owner-body-table points control-order-barriers))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
   (check-true (lexical-region-ir-ok? (hand-ir)))
   (check-true (region-solver? (hand-ir))))
+
+(test-case "Handle と Recur の制御境界を point に記録する"
+  (define handle-ir (build-region-ir '(Handle (Return b Int) (k -> k) 0)))
+  (define recur-ir (build-region-ir '(Recur c0 f () 0 1)))
+  (check-equal? (lexical-region-ir-control-order-barriers handle-ir)
+                (set (list '() 'handle)))
+  (check-equal? (lexical-region-ir-control-order-barriers recur-ir)
+                (set (list '() 'recur)))
+  (check-true (lexical-region-ir-ok? handle-ir))
+  (check-true (lexical-region-ir-ok? recur-ir)))
 
 (test-case "3 成分の器の形を検査する"
   ;; 1. regions が region の集合である。

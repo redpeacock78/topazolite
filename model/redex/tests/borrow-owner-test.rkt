@@ -31,7 +31,8 @@
                      (hash)
                      (hash)
                      (hash)
-                     (set '())))
+                     (set '())
+                     (set)))
 
 ;; 一意に定まるとき、その region を返す。
 (check-equal? (region-owning (hand-ir (hash ρroot '() ρa '(0 1) ρb '(2)))

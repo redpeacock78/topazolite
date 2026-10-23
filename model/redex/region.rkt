@@ -198,6 +198,21 @@
                       [i (in-naturals)])
              (walk k (cons i prefix)))))))
 
+;; Handle の body/handler と Recur の本体/継続は、構文上の並びを
+;; 実行順として比較できない制御境界である。
+(define (core-control-order-barriers core)
+  (let walk ([t (erase-core core)] [prefix '()])
+    (define point (reverse prefix))
+    (append
+     (match t
+       [`(Handle ,_ ,_ ,_) (list (list point 'handle))]
+       [`(Recur ,_ ,_ ,_ ,_ ,_) (list (list point 'recur))]
+       [_ '()])
+     (append*
+      (for/list ([child (in-list (core-children t))]
+                 [index (in-naturals)])
+        (walk child (cons index prefix)))))))
+
 ;; point が Core の節点を指さないとき、#f を返さず error を出す。
 ;; #f を返すと、呼び出し側が「point が無効である」と「その位置に region が
 ;; 無い」を区別できない。
@@ -376,7 +391,7 @@
 ;; at-table は point で有効な最内の region、exit-table は Scope の退場先、
 ;; owner-body-table は owner Let の body region を持つ。
 (struct lexical-region-ir region-ir
-  (parents at-table exit-table owner-body-table points)
+  (parents at-table exit-table owner-body-table points control-order-barriers)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -550,6 +565,11 @@
      (and (set-member? points point)
           (set-member? regions ρ)
           (hash-has-key? parents ρ)))
+   (for/and ([entry (in-set (lexical-region-ir-control-order-barriers ir))])
+     (match entry
+       [(list point kind)
+        (and (set-member? points point) (memq kind '(handle recur)))]
+       [_ #f]))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -623,7 +643,8 @@
    (freeze at-table)
    (freeze exit-table)
    (freeze owner-body-table)
-   (list->set (core-points erased))))
+   (list->set (core-points erased))
+   (list->set (core-control-order-barriers erased))))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
 (define (annotation-borrow-type? τ)

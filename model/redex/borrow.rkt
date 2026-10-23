@@ -377,7 +377,25 @@
     (for/or ([entry (in-set (psi-suspended Ψ))])
       (and (equal? (borrow-request-alpha request) (fourth entry))
            (seventh entry))))
-  ;; Scope で終わる実引数 loan は、退場後の point と重ならない。
+  ;; Handle の枝と Recur の本体・継続をまたぐ構文順には実行順の意味が無い。
+  (define (linear-point-order? earlier later)
+    (or (not (lexical-region-ir? ir))
+        (for/and ([entry (in-set (lexical-region-ir-control-order-barriers ir))])
+          (match entry
+            [(list barrier 'recur)
+             (not (and (> (length earlier) (length barrier))
+                       (> (length later) (length barrier))
+                       (path-prefix? barrier earlier)
+                       (path-prefix? barrier later)))]
+            [(list barrier 'handle)
+             (or (not (and (> (length earlier) (length barrier))
+                           (> (length later) (length barrier))
+                           (path-prefix? barrier earlier)
+                           (path-prefix? barrier later)))
+                 (equal? (list-ref earlier (length barrier))
+                         (list-ref later (length barrier))))]
+            [_ #t]))))
+  ;; Scope で終わる loan は、退場後の point と重ならない。
   (define (scope-ended-before? request later-point)
     (and (lexical-region-ir? ir)
          (borrow-request-point request)
@@ -386,6 +404,7 @@
            (and (set-member? (regions-exiting-at ir scope-point)
                              (ρ-of request))
                 (path-prefix? scope-point (borrow-request-point request))
+                (linear-point-order? scope-point later-point)
                 (point-after-reborrow? scope-point later-point)))))
   (define (borrow-pair-overlaps? a b)
     (define a-window? (borrow-windows? a))
@@ -458,9 +477,12 @@
   (define (overlapping? r u)
     (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
                               (use-request-w u) (use-request-fp u))
-         ;; 借用は生成 point より前の使用とは重ならない。
+         (not (scope-ended-before? r (use-request-point u)))
+         ;; 制御境界をまたがない線形順で、生成前の使用を重複扱いしない。
          (not (and (borrow-request-point r)
                    (use-request-point u)
+                   (linear-point-order? (borrow-request-point r)
+                                        (use-request-point u))
                    (point-after-reborrow? (use-request-point u)
                                           (borrow-request-point r))))
          (let ([windowed

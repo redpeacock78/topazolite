@@ -24,10 +24,17 @@
     (nested (NFn () Int () () () User))))
 
 (define test-callables
-  (cons '(inner-scope
+  (cons '(recur-reader
           (ForallRegion (a)
             (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
-        sink-callables))
+        (cons '(return-child
+                (ForallRegion (a)
+                  (NFn ((BorrowedMut Int (RParam a)))
+                       (Borrowed Int (RParam a)) () (Mutation) () User)))
+              (cons '(inner-scope
+                      (ForallRegion (a)
+                        (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+                    sink-callables))))
 
 (define yield-callables
   (cons '(inner-scope-yield
@@ -175,6 +182,17 @@
                 (format "wrapped=~s: ~s; core=~s" wrapped? typed _filled))
     (check-live-trace typed 'Unit)))
 
+(test-case "Scope の再借用を関数結果へ返す形は窓を付けず親 Assign を拒む"
+  (define body
+    '(Scope ()
+       (Let (child let (Borrowed Int (RVar 0))) (Reborrow p)
+         (Let (written const Unit) (Assign p 7) child))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         ,(inner-scope-call body '(BorrowMut owner) 'owner-ph 'return-child))))
+  (check-equal? (failure-code core) "E-BOR-025"))
+
 (test-case "最内の nested Scope を抜けた後の親の書込みは窓の外"
   (define body
     '(Scope ()
@@ -318,6 +336,35 @@
        (Assign p 7)))
   (check-equal? (window-failure-code (inner-scope-core body #t)) "E-BOR-011"))
 
+(test-case "Handle と Recur をまたぐ point 順は実行順として誤用しない"
+  (define handle-core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (handled let (BorrowedMut Int owner-ph))
+              (Handle (Return boundary (BorrowedMut Int owner-ph))
+                (captured ->
+                  (Let (moved let (Owned Int)) (Move owner) captured))
+                (Perform (Return boundary (BorrowedMut Int owner-ph))
+                         (BorrowMut owner)))
+           (Read handled)))))
+  (define recur-core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Recur recur-reader f (p)
+             (Assign p 7)
+             (Scope ()
+               (Let (child let (Borrowed Int (RParam %omitted)))
+                    (Reborrow parent)
+                 (Let (called const Unit)
+                      (Apply (RegionApp f (owner-ph)) parent)
+                   (Read child)))))))))
+  (define-values (_hir _hfilled handle-result) (type-core handle-core))
+  (define-values (_rir _rfilled recur-result)
+    (type-core recur-core '() test-callables))
+  (check-equal? (diagnostic-id handle-result) "E-BOR-008")
+  (check-equal? (diagnostic-id recur-result) "E-BOR-025"))
+
 (test-case "裸の呼出しを同じ lexical Scope で続けると二度目の BorrowMut は E-BOR-003"
   (define core
     `(Scope ()
@@ -345,6 +392,23 @@
   (check-true (region-typed? typed) (format "region typing: ~s" typed))
   (check-equal? (region-typed-type typed) '(Owned Int))
   (check-live-trace typed '(Owned Int)))
+
+(test-case "包んだ呼出しの Scope 後は裸の二つ目の借用を取れる"
+  (define core
+    `(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (first const Int) ,(scoped-sink-call 'x)
+           ,(sink-call '(BorrowMut x))))))
+  (define-values (_ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "region typing: ~s" typed)))
+
+(test-case "裸の呼出しを先に置くと後の Scope 包みも E-BOR-003"
+  (define core
+    `(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (first const Int) ,(sink-call '(BorrowMut x))
+           ,(scoped-sink-call 'x)))))
+  (check-equal? (failure-code core) "E-BOR-003"))
 
 (test-case "包んだ呼出しの後は裸の借用が Move を妨げる"
   (define core
