@@ -281,53 +281,65 @@
   (define result-is-mut?
     (memq kind '(forward-id choose left-of)))
   (define arg-names (if single-argument? '(p) '(p s)))
-  (define region-args (if (eq? kind 'left-of)
-                          '((RParam q) (RParam q))
-                          '((RParam q))))
-  (define call
-    `(Apply (RegionApp ,(formal-forwarding-callable kind) ,region-args)
-            ,@arg-names))
-  (define borrowed-type
+  (define (region-args region)
+    (if (eq? kind 'left-of)
+        (list region region)
+        (list region)))
+  (define (call-at region arguments)
+    `(Apply (RegionApp ,(formal-forwarding-callable kind)
+                       ,(region-args region))
+            ,@arguments))
+  (define call (call-at '(RParam q) arg-names))
+  (define (borrowed-type region)
     (if result-is-mut?
-        '(BorrowedMut Int (RParam q))
-        '(Borrowed Int (RParam q))))
+        `(BorrowedMut Int ,region)
+        `(Borrowed Int ,region)))
   (define observed-name (if result-is-mut? 'c 'r))
   (define read-observed `(Read ,observed-name))
   (define (observe body)
     (if result-is-mut?
         `(Let (c let (Borrowed Int (RVar 0))) (Reborrow r) ,body)
         body))
+  (define (after-local target)
+    `(Let (done const Unit)
+       (Scope ()
+         (Let (r let ,(borrowed-type 'local-ph))
+              ,(call-at 'local-ph arg-names)
+           (Let (read const Int) ,(observe '(Read r)) unit)))
+       (Assign ,target 7)))
   (match use
     ['discard
-     `(Let (r let ,borrowed-type) ,call unit)]
+     `(Let (r let ,(borrowed-type '(RParam q))) ,call unit)]
     ['consume
      `(Scope ()
-        (Let (r let ,borrowed-type) ,call
+        (Let (r let ,(borrowed-type '(RParam q))) ,call
           ,(observe `(Let (read const Int) ,read-observed unit))))]
     ['live-left
-     `(Let (r let ,borrowed-type) ,call
+     `(Let (r let ,(borrowed-type '(RParam q))) ,call
         (Let (read const Int)
              (Scope ()
                ,(observe `(Let (written const Unit) (Assign p 7)
                             ,read-observed)))
           unit))]
     ['live-right
-     `(Let (r let ,borrowed-type) ,call
+     `(Let (r let ,(borrowed-type '(RParam q))) ,call
         (Let (read const Int)
              (Scope ()
                ,(observe `(Let (written const Unit) (Assign s 7)
                             ,read-observed)))
           unit))]
     ['after-left
-     `(Let (r let ,borrowed-type) ,call
+     `(Let (r let ,(borrowed-type '(RParam q))) ,call
         (Let (read const Int)
              (Scope () ,(observe read-observed))
           (Assign p 7)))]
     ['after-right
-     `(Let (r let ,borrowed-type) ,call
+     `(Let (r let ,(borrowed-type '(RParam q))) ,call
         (Let (read const Int)
              (Scope () ,(observe read-observed))
-          (Assign s 7)))]))
+          (Assign s 7)))]
+    ['after-left-local (after-local 'p)]
+    ['after-right-local (after-local 's)]))
 
 (define (formal-forwarding-result kind use)
   (define skeleton
@@ -340,9 +352,22 @@
          (ph))
         (BorrowMut 1) (BorrowMut 2))))
   (define ir (build-region-ir skeleton))
-  (define ρ (region->rho ir (region-at ir '(0))))
+  (define local-region-point
+    (for/first ([point (in-list (core-points skeleton))]
+                #:when (match (core-node skeleton point)
+                         [`(RegionApp ,_ ,regions)
+                          (and (list? regions) (member 'local-ph regions))]
+                         [_ #f]))
+      point))
+  (define local-ρ
+    (and local-region-point
+         (region->rho ir (region-at ir local-region-point))))
+  (define annotated
+    (replace-symbol
+     (if local-ρ (replace-symbol skeleton 'local-ph local-ρ) skeleton)
+     'ph (region->rho ir (region-at ir '(0)))))
   (type-of/raw*+borrows
-   (annotate-regions (replace-symbol skeleton 'ph ρ) ir)
+   (annotate-regions annotated ir)
    '((1 Int) (2 Int)) forwarding-callables '()
    (region-ctx ir '() (hash 1 (region-at ir '()) 2 (region-at ir '())) (hash))))
 
@@ -487,7 +512,7 @@
    (failure-key (stale-reborrow-core #f (merged-reborrow-parent-write)))
    'borrow-conflicting-use))
 
-(test-case "生存中の左右と退場後の観測で候補位置を保つ"
+(test-case "生存中と退場後の候補位置および局所 region の拒否を保つ"
   (check-true
    (match (formal-forwarding-definition-result 'forward-id)
      [`(ok (,type ,_row))
@@ -523,6 +548,12 @@
                  (left-of after-right #f)))])
     (match-define (list kind use expected) case)
     (check-equal? (formal-forwarding-key kind use) expected
+                  (format "~a / ~a" kind use)))
+  ;; RParam q を局所 region へ短縮する試みは、argument-owner-rhos が具体的 owner を
+  ;; 解けず E-BOR-020 で閉じるため、σ/Ψ の退場後判定には到達しない。
+  (for* ([kind (in-list '(forward-id choose choose-reborrow left-of))]
+         [use (in-list '(after-left-local after-right-local))])
+    (check-equal? (formal-forwarding-key kind use) 'unresolved-borrow-owner
                   (format "~a / ~a" kind use)))
   (check-equal? (formal-forwarding-borrow-positions 'choose)
                 (set (cons 1 '()) (cons 2 '())))

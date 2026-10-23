@@ -336,6 +336,20 @@
        (Assign p 7)))
   (check-equal? (window-failure-code (inner-scope-core body #t)) "E-BOR-011"))
 
+(test-case "Owned の capture を許さない Lam は後続借用との順序判定に入らない"
+  (define core
+    '(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (f let (NFn () Unit () (Mutation) () User))
+              (Lam User delayed () (Assign x 7))
+           (Let (b let (BorrowedMut Int (RParam %omitted))) (BorrowMut x)
+             (Let (ran const Unit) (Apply f) (Read b)))))))
+  (define-values (_ir _filled result)
+    (type-core core '() '((delayed (NFn () Unit () (Mutation) () User)))))
+  ;; function-body-environment は Owned を捕捉環境から除くため、順序判定の前に拒否する。
+  (check-true (diagnostic? result))
+  (check-equal? (diagnostic-id result) "E-VAR-006"))
+
 (test-case "Handle と Recur をまたぐ point 順は実行順として誤用しない"
   (define handle-core
     `(Scope ()
