@@ -774,13 +774,22 @@
      `(drop-obligation ,actual ,expected)]
     [else 'ok]))
 
+(define (borrow-hiding-ok? actual expected propositions)
+  (eq? (borrow-hiding-kind/for-elaboration
+        (omitted-regions->core actual)
+        (omitted-regions->core expected)
+        (lambda (a e) (type-compatible? a e propositions)))
+       'ok))
+
 ;; c3b。NFn 内側の損失は tag 互換でも恒等変換ではない。
 (define (identity-conversion? actual expected context propositions)
   (and (tag-compat? actual expected context)
+       ;; OWN-004 の旧い厳密な判定を保ち、別途借用の残余も素通しさせない。
        (eq? (owned-narrowing-kind
              actual expected
              (lambda (a e) (type-compatible? a e propositions)))
-            'ok)))
+            'ok)
+       (borrow-hiding-ok? actual expected propositions)))
 
 (define (identity-fit? actual expected context propositions)
   (and (identity-conversion? actual expected context propositions)
@@ -2319,7 +2328,9 @@
                                     member-type expected
                                     (lambda (a e)
                                       (type-compatible? a e propositions)))
-                              [`(drop-obligation ,_ ,_) #t]
+                              [`(drop-obligation ,_ ,_)
+                               (borrow-hiding-ok? member-type expected
+                                                  propositions)]
                               [_ #f])))
                      ;; OWN-004 は残余を除いた実型で再確認する。
                      (match (narrowing-kind member-type wrapped-type propositions)
@@ -4677,8 +4688,16 @@
                      actual-type))
                   (values result bound-core declared-type binding-type #f))))))
 
+    (define (reassign-flow-compatible? actual target propositions)
+      (and (reassign-narrowing? actual target)
+           (eq? (owned-narrowing-kind
+                 actual target
+                 (lambda (a e) (type-compatible? a e propositions)))
+                'ok)
+           (borrow-hiding-ok? actual target propositions)))
+
     (define (rebuild-flow-value s core actual target propositions)
-      (if (reassign-narrowing? actual target)
+      (if (reassign-flow-compatible? actual target propositions)
           core
           (let-values ([(converted converted-type)
                         (with-handlers
@@ -4747,7 +4766,7 @@
              (define (rebuildable? actual target)
                (define branch (list-ref live-branches branch-index))
                (set! branch-index (add1 branch-index))
-               (or (reassign-narrowing? actual target)
+               (or (reassign-flow-compatible? actual target propositions)
                    (with-handlers ([exn:fail:elab? (λ (_) #f)])
                      (call-with-restored-state
                       (λ ()
@@ -4778,12 +4797,12 @@
                                    #:do [(match-define (list key target _pins)
                                            joined)]
                                    #:unless
-                                   (reassign-narrowing?
+                                   (reassign-flow-compatible?
                                     (flow-entry-type
                                      (flow-entry-at
                                       (flow-branch-snapshot branch) key
                                       (hash-ref entry key)))
-                                    target))
+                                    target propositions))
                           (list key
                                 (flow-name-for-key environment key)
                                 (flow-entry-type
@@ -5022,7 +5041,8 @@
                         boundaries
                         (λ ()
                           (flow-restore! snapshot)
-                          (or (reassign-narrowing? actual candidate)
+                          (or (reassign-flow-compatible? actual candidate
+                                                          propositions)
                               (begin
                                 (rebuild-flow-value
                                  s `(#:var ,name ,s) actual candidate propositions)

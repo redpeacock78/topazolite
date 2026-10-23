@@ -87,6 +87,101 @@
     (check-equal? (count-form (compiled-core result) 'RemainderSafelyDropped) 1)
     (check-equal? (trace-value result) 1)))
 
+(test-case "identity-conversion? は借用残余の narrowing を恒等扱いしない"
+  (define actual
+    '(Record ((a Int imm)
+              (b (Borrowed Int (RParam %omitted)) imm))))
+  (define expected '(Record ((a Int imm))))
+  (check-true (compat? actual expected))
+  (check-match (borrow-hiding-kind/for-elaboration actual expected compat?)
+    `(drop-obligation ,_ ,_))
+  ;; Surface の let/if/when/reassign probe はすべて RSD を挿入したため、直接の判定契約を固定する。
+  (check-false (identity-conversion? actual expected '() '())))
+
+(test-case "if の一方だけにある借用残余を merge で RSD し実行する"
+  (define result
+    (compile-accepted
+     (string-append
+      "let owner: Owned<Int> = 41\n"
+      "let borrowed = &owner\n"
+      "let result = if true { {a: 1, b: borrowed} } else { {a: 2} }\n"
+      "result.a")))
+  (when (compiled? result)
+    (check-equal? (count-form (compiled-core result) 'RemainderSafelyDropped) 1)
+    (check-equal? (trace-value result) 1)))
+
+(test-case "when の一方だけにある借用残余を decompose で RSD し実行する"
+  (define result
+    (compile-accepted
+     (string-append
+      "let owner: Owned<Int> = 41\n"
+      "let borrowed = &owner\n"
+      "let condition: Option<Bool> = some(true)\n"
+      "let result = when condition { some flag => {a: 1, b: borrowed}\n"
+      " none => {a: 2} }\n"
+      "result.a")))
+  (when (compiled? result)
+    (check-equal? (count-form (compiled-core result) 'RemainderSafelyDropped) 1)
+    (check-equal? (trace-value result) 1)))
+
+(test-case "再代入の narrowing は RSD を挿入し借用を隠さない"
+  (define result
+    (compile-accepted
+     (string-append
+      "let owner: Owned<Int> = 41\n"
+      "let borrowed = &owner\n"
+      "let mut result: {a: Int} = {a: 0}\n"
+      "result = {a: 2, b: borrowed}\n"
+      "result.a")))
+  (when (compiled? result)
+    (check-equal? (count-form (compiled-core result) 'RemainderSafelyDropped) 1)
+    (check-equal? (trace-value result) 2)))
+
+(test-case "reassign-narrowing? は借用残余を除く Record 対を通さない"
+  (define actual
+    '(Record ((a Int imm)
+              (b (Borrowed Int (RParam %omitted)) imm))))
+  (define expected '(Record ((a Int imm))))
+  (check-false (reassign-narrowing? actual expected))
+  (check-match (borrow-hiding-kind actual expected compat?)
+    `(drop-obligation ,_ ,_)))
+
+(test-case "借用型の mut slot は再代入 flow より先に E-VAR-012 で拒否する"
+  (define source
+    (string-append
+     "let owner: Owned<Int> = 41\n"
+     "let borrowed = &owner\n"
+     "let mut result: {a: Int, b: &Int} = {a: 1, b: borrowed}\n"
+     "result = {a: 2, b: borrowed}\n"
+     "0"))
+  (compile-rejected source "E-VAR-012"
+                   (string-append
+                    "let mut result: {a: Int, b: &Int} = {a: 1, b: borrowed}\n"
+                    "result = {a: 2, b: borrowed}\n"
+                    "0")))
+
+(test-case "if merge の不適格な借用残余は E-TYP-012 と operand span を保つ"
+  (define source
+    (string-append
+     "let owner: Owned<Int> = 7\n"
+     "let borrowed = &owner\n"
+     "let broad: Option<{a: Int, b: &Int}> = some({a: 1, b: borrowed})\n"
+     "let narrow: {u: Option<{a: Int}>} = if true { {u: broad} } else { {u: some({a: 2})} }\n"
+     "0"))
+  (compile-rejected source "E-TYP-012" "broad" 1))
+
+(test-case "when decompose の不適格な借用残余は E-TYP-012 と operand span を保つ"
+  (define source
+    (string-append
+     "let owner: Owned<Int> = 7\n"
+     "let borrowed = &owner\n"
+     "let broad: Option<{a: Int, b: &Int}> = some({a: 1, b: borrowed})\n"
+     "let condition: Option<Bool> = some(true)\n"
+     "let narrow: {u: Option<{a: Int}>} = when condition { some flag => {u: broad}\n"
+     " none => {u: some({a: 2})} }\n"
+     "0"))
+  (compile-rejected source "E-TYP-012" "broad" 1))
+
 (test-case "check-against-expected は借用残余だけを RSD で除き非借用欄を保つ"
   (define result
     (compile-accepted
@@ -295,7 +390,7 @@
   (check-eq? (borrow-hiding-kind/for-elaboration actual expected compat?)
              'reject))
 
-(test-case "借用拒否でも非互換な Union 候補は選ばず既存の診断を保つ"
+(test-case "decompose は借用拒否でも非互換な Union 候補を選ばず E-TYP-012 と span を保つ"
   (define source
     (string-append
      "let owner: Owned<Int> = 1\n"
