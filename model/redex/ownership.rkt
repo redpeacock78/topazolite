@@ -23,7 +23,7 @@
          "validators.rkt")
 
 (provide owned-narrowing-kind owned-narrowing-kind/for-elaboration
-         borrow-hiding-kind
+         borrow-hiding-kind borrow-hiding-kind/for-elaboration
          check-narrowing-return rsd-eligible? rsd-proof-pair-ok?
          remainder-removal-shape remainder-target-type)
 
@@ -250,6 +250,13 @@
   (define kind (borrow-hiding-kind/impl actual expected compatible? 'top))
   (if (eq? kind 'nested-drop)
       `(drop-obligation ,actual ,expected)
+      kind))
+
+(define (borrow-hiding-kind/for-elaboration actual expected compatible?)
+  (define kind (borrow-hiding-kind actual expected compatible?))
+  (if (and (drop-obligation? kind)
+           (not (rsd-eligible? actual expected)))
+      'reject
       kind))
 
 ;; RemainderSafelyDropped が実行時に除去する欄を型対から得る。

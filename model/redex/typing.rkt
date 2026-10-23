@@ -4373,6 +4373,92 @@
       [_ (for/or ([child (in-list (core-children term))])
            (walk child))])))
 
+(define (retained-lifetime-shape type)
+  (define (walk type)
+    (match type
+      [`(Borrowed ,payload ,_) `(Borrowed ,(walk payload) retained-region)]
+      [`(BorrowedMut ,payload ,_) `(BorrowedMut ,(walk payload) retained-region)]
+      [(? list?) (map walk type)]
+      [_ type]))
+  (normalize-type (walk type)))
+
+(define (adopt-retained-union-lifetimes expected actual)
+  (define expected-members (union-members expected))
+  (define actual-members (union-members actual))
+  (define expected-shapes (map retained-lifetime-shape expected-members))
+  (define actual-shapes (map retained-lifetime-shape actual-members))
+  (define adopted
+    (for/list ([member (in-list expected-members)]
+               [shape (in-list expected-shapes)])
+      (define expected-matches
+        (for/list ([candidate (in-list expected-members)]
+                   [candidate-shape (in-list expected-shapes)]
+                   #:when (and shape candidate-shape
+                               (type-equiv? shape candidate-shape)))
+          candidate))
+      (define actual-matches
+        (for/list ([candidate (in-list actual-members)]
+                   [candidate-shape (in-list actual-shapes)]
+                   #:when (and shape candidate-shape
+                               (type-equiv? shape candidate-shape)))
+          candidate))
+      (if (and (= (length expected-matches) 1)
+               (= (length actual-matches) 1))
+          (adopt-retained-lifetimes member (car actual-matches))
+          member)))
+  (normalize-type
+   (foldr (lambda (member rest)
+            (if rest `(Union ,member ,rest) member))
+          #f adopted)))
+
+(define (adopt-retained-lifetimes expected actual)
+  (match* (expected actual)
+    [(`(Union ,_ ,_) _)
+     (or (adopt-retained-union-lifetimes expected actual) expected)]
+    [(`(Borrowed ,expected-payload ,_)
+      `(Borrowed ,actual-payload ,actual-region))
+     `(Borrowed ,(adopt-retained-lifetimes expected-payload actual-payload)
+                ,actual-region)]
+    [(`(BorrowedMut ,expected-payload ,_)
+      `(BorrowedMut ,actual-payload ,actual-region))
+     `(BorrowedMut ,(adopt-retained-lifetimes expected-payload actual-payload)
+                   ,actual-region)]
+    [(`(Record ,expected-row) `(Record ,actual-row))
+     `(Record
+       ,(for/list ([field (in-list expected-row)])
+          (define actual-field (field-row-lookup actual-row (first field)))
+          (if actual-field
+              (list* (first field)
+                     (adopt-retained-lifetimes (second field)
+                                               (first actual-field))
+                     (cddr field))
+              field)))]
+    [(`(Option ,expected-payload) `(Option ,actual-payload))
+     `(Option ,(adopt-retained-lifetimes expected-payload actual-payload))]
+    [(`(List ,expected-payload) `(List ,actual-payload))
+     `(List ,(adopt-retained-lifetimes expected-payload actual-payload))]
+    [(`(Owned ,expected-payload) `(Owned ,actual-payload))
+     `(Owned ,(adopt-retained-lifetimes expected-payload actual-payload))]
+    [(`(Untrusted ,expected-payload) `(Untrusted ,actual-payload))
+     `(Untrusted ,(adopt-retained-lifetimes expected-payload actual-payload))]
+    [(`(Refined ,expected-payload ,proposition)
+      `(Refined ,actual-payload ,_))
+     `(Refined ,(adopt-retained-lifetimes expected-payload actual-payload)
+               ,proposition)]
+    [(`(Result ,expected-ok ,expected-error)
+      `(Result ,actual-ok ,actual-error))
+     `(Result ,(adopt-retained-lifetimes expected-ok actual-ok)
+              ,(adopt-retained-lifetimes expected-error actual-error))]
+    [(`(Data ,name (,expected-arguments ...))
+      `(Data ,name (,actual-arguments ...)))
+     #:when (= (length expected-arguments) (length actual-arguments))
+     `(Data ,name
+            ,(for/list ([expected-argument (in-list expected-arguments)]
+                        [actual-argument (in-list actual-arguments)])
+               (adopt-retained-lifetimes expected-argument actual-argument)))]
+    ;; Union/Intersection の成員順や NFn の row 順は寿命の対応を表さない。
+    [(_ _) expected]))
+
 (define (infer-remainder-discharge core phi base base-Λ Ψ
                                   environment places callables fail)
   (define origin
@@ -4394,7 +4480,7 @@
        [_
         (match (check-as/full base tau-actual base-Λ
                               Ψ environment places callables fail)
-          [(list row result-psi _)
+          [(list row result-psi actual*)
            (unless (rsd-proof-pair-ok? tau-actual tau-expected
                                        type-compatible?)
              (define target-type
@@ -4406,7 +4492,8 @@
                  (fail 'borrow-hidden-by-narrowing core)
                  (fail 'owned-narrowing-rejected core
                        tau-expected tau-actual)))
-           (list tau-expected row result-psi)])])]))
+           ;; 証明の row 形は保ち、残る欄の寿命だけを推論結果から採る。
+           (list (adopt-retained-lifetimes tau-expected actual*) row result-psi)])])]))
 
 (define (infer-rec-rewrite core input entries Λ Ψ environment places callables fail)
   (define input-result
@@ -7172,4 +7259,30 @@
     '(Curry (Lam User callable (fixed next) unit) (Forward captured))
     'static))
   (check-false
-   (forward-transfer-form? '(Curry callable captured) 'static)))
+   (forward-transfer-form? '(Curry callable captured) 'static))
+
+  (check-true
+   (type-equiv?
+    (adopt-retained-lifetimes
+     '(Union (Borrowed Int (RParam %omitted))
+             (Borrowed Bool (RParam %omitted)))
+     '(Union (Borrowed Bool ρ-bool)
+             (Borrowed Int ρ-int)))
+    '(Union (Borrowed Int ρ-int)
+            (Borrowed Bool ρ-bool))))
+  (check-true
+   (type-equiv?
+    (adopt-retained-lifetimes
+     '(Union (Borrowed Int (RParam %omitted))
+             (Borrowed Bool (RParam %omitted)))
+     '(Borrowed Int ρ-int))
+    '(Union (Borrowed Int ρ-int)
+            (Borrowed Bool (RParam %omitted)))))
+  (define ambiguous-expected
+    '(Union (Borrowed Int (RParam omitted-a))
+            (Borrowed Int (RParam omitted-b))))
+  (check-equal?
+   (adopt-retained-lifetimes
+    ambiguous-expected
+    '(Union (Borrowed Int ρ-a) (Borrowed Int ρ-b)))
+   ambiguous-expected))

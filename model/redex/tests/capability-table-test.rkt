@@ -121,6 +121,43 @@
  (check-false (capability-field-table (empty-region-ctx) '(Borrow 1))))
 
 (test-case
+ "Discharge は残る record 欄だけを再帰的に capability 表へ残す"
+ (define borrowed '(Borrowed Int (RVar 0)))
+ (define actual
+   `(Record ((a (Record ((x ,borrowed imm) (y ,borrowed imm))) imm)
+             (b ,borrowed imm))))
+ (define target `(Record ((a (Record ((x ,borrowed imm))) imm))))
+ (define core
+   `(Discharge (ProofRep (Reserved o-narrow)
+                        (RemainderSafelyDropped ,actual ,target))
+               (Rec ((a const (Rec ((x const (Borrow 1))
+                                    (y const (Borrow 2)))))
+                    (b const (Borrow 3))))))
+ (define table (capability-field-table (empty-region-ctx) core))
+ (define a-entry (hash-ref table (cons 'record-field 'a)))
+ (define inner-table (cdr a-entry))
+ (check-equal? (car a-entry) (set '(1)))
+ (check-equal? (hash-keys table) (list (cons 'record-field 'a)))
+ (check-equal? (hash-keys inner-table) (list (cons 'record-field 'x)))
+ (check-equal? (borrow-token-key (empty-region-ctx)
+                                 '(Proj (Proj ignored a) x)
+                                 (hash 'ignored (cons (set) table)))
+               (set '(1))))
+
+(test-case
+ "Discharge は欄表のない値の capability を保守的に保つ"
+ (define borrowed '(Borrowed Int (RVar 0)))
+ (define actual `(Record ((a ,borrowed imm) (b ,borrowed imm))))
+ (define target `(Record ((a ,borrowed imm))))
+ (define Λ (region-ctx-add-token (empty-region-ctx) 'x (set '(1)) #f #f #f))
+ (define core
+   `(Discharge (ProofRep (Reserved o-narrow)
+                        (RemainderSafelyDropped ,actual ,target))
+               x))
+ (check-equal? (borrow-token-key Λ core) (set '(1)))
+ (check-false (capability-field-table Λ core)))
+
+(test-case
  "RecRewriteOpen は各作業 Let の shadowing を欄ごとに保つ"
  (define core
    '(Let (x let (Borrowed Res (RVar 0))) (Borrow 1)

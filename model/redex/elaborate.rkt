@@ -758,9 +758,21 @@
 ;; type-compatible? は命題文脈を第 3 引数に取るため、その位置の文脈を
 ;; 捕らえた閉包を渡す。互換性の判定と Union の候補選択が同じ述語で行われる。
 (define (narrowing-kind actual expected propositions)
-  (owned-narrowing-kind/for-elaboration
-   actual expected
-   (lambda (a e) (type-compatible? a e propositions))))
+  (define actual-core (omitted-regions->core actual))
+  (define expected-core (omitted-regions->core expected))
+  (define compatible? (lambda (a e) (type-compatible? a e propositions)))
+  (define borrow
+    (borrow-hiding-kind/for-elaboration actual-core expected-core compatible?))
+  (define owned
+    (owned-narrowing-kind/for-elaboration actual-core expected-core compatible?))
+  (define (obligation? kind)
+    (match kind [`(drop-obligation ,_ ,_) #t] [_ #f]))
+  (cond
+    [(eq? borrow 'reject) 'borrow-reject]
+    [(eq? owned 'reject) 'reject]
+    [(or (obligation? borrow) (obligation? owned))
+     `(drop-obligation ,actual ,expected)]
+    [else 'ok]))
 
 ;; c3b。NFn 内側の損失は tag 互換でも恒等変換ではない。
 (define (identity-conversion? actual expected context propositions)
@@ -1177,6 +1189,7 @@
   ;; binding-type を expected 側に使う。これで入れ子の欄だけを検査する。
   (match (narrowing-kind actual-type binding-type propositions)
     ['ok (void)]
+    ['borrow-reject (void)]
     [`(drop-obligation ,_ ,_)
      (reject s 'owned-narrowing-needs-proof binding-type actual-type)]
     [_ (unless (mut-union-rebuildable?
@@ -1911,6 +1924,13 @@
               [_ (reject s 'ambiguous-union-member expected actual
                          selected-tier)])]
            [else
+            ;; Core は互換性を借用残余の判定より先に検査するため、互換な候補だけを選ぶ。
+            (define borrow-rejection
+              (for/first ([member (in-list members)]
+                          #:when (and (type-compatible? actual member propositions)
+                                      (eq? (narrowing-kind actual member propositions)
+                                           'borrow-reject)))
+                member))
             (define owned-rejection?
               (for/or ([member (in-list members)])
                 (define kind (narrowing-kind actual member propositions))
@@ -1919,10 +1939,12 @@
                         (match kind
                            [`(drop-obligation ,_ ,_) #t]
                            [_ #f])))))
-            (reject s (if owned-rejection?
-                          'owned-narrowing-rejected
-                          no-member-key)
-                    expected actual)])]))
+            (if borrow-rejection
+                borrow-rejection
+                (reject s (if owned-rejection?
+                              'owned-narrowing-rejected
+                              no-member-key)
+                        expected actual))])]))
 
     (define (union-inject core actual expected s propositions
                           #:no-member-key [no-member-key 'type-mismatch]
@@ -1931,16 +1953,19 @@
         (choose-union-member actual expected s propositions
                              #:no-member-key no-member-key
                              #:transfer transfer))
-      (define context (initial-candidate-context propositions))
-      (define-values (discharged actual*)
-        (discharge-remainder core actual member s propositions))
       (define payload
-        (if (conversion-noop? actual* member context propositions)
-            discharged
-            (let-values ([(converted _type)
-                          (convert discharged actual* member s propositions
-                                   #:transfer transfer)])
-              converted)))
+        (if (eq? (narrowing-kind actual member propositions) 'borrow-reject)
+            core
+            (let ()
+              (define context (initial-candidate-context propositions))
+              (define-values (discharged actual*)
+                (discharge-remainder core actual member s propositions))
+              (if (conversion-noop? actual* member context propositions)
+                  discharged
+                  (let-values ([(converted _type)
+                                (convert discharged actual* member s propositions
+                                         #:transfer transfer)])
+                    converted)))))
       `(UnionInject ,s (#:ty ,expected ,s) (#:ty ,member ,s) ,payload))
 
     ;; 関数値の引数と結果は、同じ OWN-004 の順で変換してから通常の convert
@@ -1953,6 +1978,7 @@
         (discharge-remainder core actual expected s propositions))
       (match (narrowing-kind actual* expected propositions)
         ['ok (void)]
+        ['borrow-reject (void)]
         [_ (reject s 'owned-narrowing-rejected expected actual*)])
       (define-values (converted converted-type)
         (convert discharged actual* expected s propositions
@@ -2184,6 +2210,7 @@
              (when record-join?
                (match (narrowing-kind type-after-discharge target propositions)
                  ['ok (void)]
+                 ['borrow-reject (void)]
                  [`(drop-obligation ,_ ,_)
                   (reject s 'owned-narrowing-needs-proof target
                           type-after-discharge)]
@@ -2297,6 +2324,7 @@
                      ;; OWN-004 は残余を除いた実型で再確認する。
                      (match (narrowing-kind member-type wrapped-type propositions)
                        ['ok (void)]
+                       ['borrow-reject (void)]
                        [`(drop-obligation ,_ ,_)
                         (reject s 'owned-narrowing-needs-proof wrapped-type
                                 member-type)]
@@ -2326,6 +2354,7 @@
                          (match (narrowing-kind wrapped-type-after upper
                                                 propositions)
                            ['ok (void)]
+                           ['borrow-reject (void)]
                            [`(drop-obligation ,_ ,_)
                             (reject s 'owned-narrowing-needs-proof upper
                                     wrapped-type-after)]
@@ -4599,8 +4628,13 @@
                   (define remainder-target
                     (match* (binding-mode source-core-type declared-type)
                       [((or 'let 'mut) `(Record ,actual-row) `(Record ,declared-row))
-                       `(Record ,(append declared-row
-                                         (field-row-residual actual-row declared-row)))]
+                       (define residual
+                         (field-row-residual actual-row declared-row))
+                       `(Record ,(append
+                                  declared-row
+                                  (filter (lambda (field)
+                                            (borrow-free? (second field)))
+                                          residual)))]
                       [(_ _ _) declared-type]))
                   (define-values (discharged-core discharged-type)
                     (discharge-remainder (judgment-core result)
@@ -4625,6 +4659,7 @@
                    (lambda ()
                      (match (narrowing-kind discharged-type actual-type propositions)
                        ['ok (void)]
+                       ['borrow-reject (void)]
                        [`(drop-obligation ,_ ,_)
                         (reject s 'owned-narrowing-needs-proof actual-type
                                 discharged-type)]
@@ -6007,6 +6042,7 @@
                                    expected s propositions))
             (match (narrowing-kind actual-type expected propositions)
               ['ok (void)]
+              ['borrow-reject (void)]
               [`(drop-obligation ,_ ,_)
                (reject s 'owned-narrowing-needs-proof expected
                        actual-type)]
@@ -6232,6 +6268,7 @@
                               (judgment-core-type result) expected s propositions)])
                  (match (narrowing-kind actual-type expected propositions)
                    ['ok (void)]
+                   ['borrow-reject (void)]
                    [`(drop-obligation ,_ ,_)
                     (reject s 'owned-narrowing-needs-proof expected
                             actual-type)]

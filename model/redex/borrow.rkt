@@ -835,6 +835,24 @@
     (if (hash? table)
         (hash-ref table (field-key label) (only (set)))
         (only (ws-of c*))))
+  (define (retain-entry entry type)
+    (match (peel-ty type)
+      [`(Record ,row)
+       (define table (cdr entry))
+       (if (hash? table)
+           (let ([retained
+                  (for/hash ([field (in-list row)])
+                    (define key (field-key (first field)))
+                    (values key
+                            (retain-entry
+                             (hash-ref table key (only (set)))
+                             (second field))))])
+             (cons (for/fold ([ws (set)]) ([field (in-hash-values retained)])
+                     (set-union ws (car field)))
+                   retained))
+           ;; 欄表のない値は、どの capability が除去欄由来か判別できない。
+           entry)]
+      [_ entry]))
   (match (peel-node c)
     [`(Borrow ,w) (only (set (cons (peel-node w) '())))]
     [`(BorrowMut ,w) (only (set (cons (peel-node w) '())))]
@@ -1017,6 +1035,12 @@
            (recur bound)
            (cons (set) (table-of bound))))
      (recur body (hash-set locals (peel-bind name) entry))]
+    [`(Discharge ,proof ,inner)
+     (define entry (recur inner))
+     (match (peel-node proof)
+       [`(ProofRep ,_ (RemainderSafelyDropped ,_ ,expected))
+        (retain-entry entry expected)]
+       [_ entry])]
     [_ (only (set))]))
 
 (define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
