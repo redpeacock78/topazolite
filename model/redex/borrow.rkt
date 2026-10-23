@@ -113,7 +113,7 @@
 (struct psi (shared mut suspended flow) #:transparent)
 
 ;; 段 1 が立てる判定の要求。段 3 が σ の上で判定する。spec §7.3。
-(struct borrow-request (w fp mode alpha rho-borrow node) #:transparent)
+(struct borrow-request (w fp mode alpha rho-borrow node point) #:transparent)
 ;; spec §4.4。型検査が段 3 で受理した借用要求と、それを解く σ の組。
 ;; box の生参照ではなく呼び出し終了時に確定した不変の値であり、alpha は未解決のまま持つ。
 ;; 消費側が sigma で解いて静的側の借用集合を作る。
@@ -134,19 +134,21 @@
 ;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
 ;; suspended の末尾に Reborrow の節点と構文上の位置を持つ。
-(define (psi-suspend Ψ w fp α_parent α_child node [point #f])
+(define (psi-suspend Ψ w fp α_parent α_child node [point #f] [window #f])
   (define held?
     (for/or ([entry (in-set (psi-mut Ψ))])
       (and (equal? (first entry) w)
            (equal? (third entry) α_parent)
            (path-prefix? (second entry) fp))))
   (psi (set-add (psi-shared Ψ) (list w fp α_child))
-       (if (set-member? (psi-mut Ψ) (list w fp α_parent))
+       ;; 窓の後で親を再開できるよう、窓付き停止では親の候補を残す。
+       (if (and (not window)
+                (set-member? (psi-mut Ψ) (list w fp α_parent)))
            (set-remove (psi-mut Ψ) (list w fp α_parent))
            (psi-mut Ψ))
        (if held?
            (set-add (psi-suspended Ψ)
-                    (list w fp α_parent α_child node point))
+                    (list w fp α_parent α_child node point window))
            (psi-suspended Ψ))
        (psi-flow Ψ)))
 
@@ -351,6 +353,57 @@
   (define borrows (remove-duplicates (filter borrow-request? requests)))
   (define uses (filter use-request? requests))
   (define (ρ-of r) (sigma-ref σ (borrow-request-alpha r)))
+  (define (inside-window? window start point include-start?)
+    (and window point
+         (path-prefix? window point)
+         (or (and include-start? (equal? start point))
+             (point-after-reborrow? start point))))
+  (define (request-in-window? request other)
+    (define entries
+      (for/list ([entry (in-set (psi-suspended Ψ))]
+                 #:when (and (equal? (borrow-request-alpha request)
+                                     (fourth entry))
+                             (seventh entry)))
+        entry))
+    (or (null? entries)
+        (not (and (borrow-request-point request)
+                  (borrow-request-point other)))
+        (for/or ([entry (in-list entries)])
+          (and (inside-window? (seventh entry) (sixth entry)
+                              (borrow-request-point request) #t)
+               (inside-window? (seventh entry) (sixth entry)
+                               (borrow-request-point other) #f)))))
+  (define (borrow-windows? request)
+    (for/or ([entry (in-set (psi-suspended Ψ))])
+      (and (equal? (borrow-request-alpha request) (fourth entry))
+           (seventh entry))))
+  ;; Scope で終わる実引数 loan は、退場後の point と重ならない。
+  (define (scope-ended-before? request later-point)
+    (and (lexical-region-ir? ir)
+         (borrow-request-point request)
+         later-point
+         (for/or ([scope-point (in-set (lexical-region-ir-points ir))])
+           (and (set-member? (regions-exiting-at ir scope-point)
+                             (ρ-of request))
+                (path-prefix? scope-point (borrow-request-point request))
+                (point-after-reborrow? scope-point later-point)))))
+  (define (borrow-pair-overlaps? a b)
+    (define a-window? (borrow-windows? a))
+    (define b-window? (borrow-windows? b))
+    (define points-known?
+      (and (borrow-request-point a) (borrow-request-point b)))
+    (define regions? (regions-overlap? ir (ρ-of a) (ρ-of b)))
+    (cond
+      [(and points-known?
+            (or (scope-ended-before? a (borrow-request-point b))
+                (scope-ended-before? b (borrow-request-point a))))
+       #f]
+      [(and a-window? b-window? points-known?)
+       (or (request-in-window? a b) (request-in-window? b a))]
+      [(and a-window? b-window?) regions?]
+      [a-window? (and regions? (request-in-window? a b))]
+      [b-window? (and regions? (request-in-window? b a))]
+      [else regions?]))
   ;; 停止中の親は、その子の寿命に完全に含まれる要求との対だけを
   ;; BOR-002 から除く。子の外へはみ出す要求は親が復帰する区間で
   ;; 衝突し得るため、通常どおり判定する。
@@ -362,11 +415,16 @@
       (define α-child (fourth e))
       (define reborrow-node (fifth e))
       (define ρ-child (sigma-ref σ α-child))
+      (define window (seventh e))
       (define (inside-child? r)
         (define ρ (ρ-of r))
-        (and (or (>= (alpha-order r) (alpha-term-order α-child))
-                 (equal? (borrow-request-node r) reborrow-node))
-             ρ-child ρ (region-outlives? ir ρ-child ρ)))
+        (if (and window (borrow-request-point r))
+            (and (equal? (borrow-request-alpha r) α-child)
+                 (inside-window? window (sixth e)
+                                 (borrow-request-point r) #t))
+            (and (or (>= (alpha-order r) (alpha-term-order α-child))
+                     (equal? (borrow-request-node r) reborrow-node))
+                 ρ-child ρ (region-outlives? ir ρ-child ρ))))
       (and (capability-overlap? w-parent fp-parent
                                 (borrow-request-w a)
                                 (borrow-request-fp a))
@@ -387,18 +445,40 @@
          [j (in-range (add1 i) (length ordered))])
     (define a (list-ref ordered i))
     (define b (list-ref ordered j))
-    (when (and (capability-overlap? (borrow-request-w a) (borrow-request-fp a)
-                                   (borrow-request-w b) (borrow-request-fp b))
-               (or (eq? (borrow-request-mode a) 'mut)
-                   (eq? (borrow-request-mode b) 'mut))
-               (not (suspended-pair? a b))
-               (regions-overlap? ir (ρ-of a) (ρ-of b)))
+    (define conflict?
+      (and (capability-overlap? (borrow-request-w a) (borrow-request-fp a)
+                                (borrow-request-w b) (borrow-request-fp b))
+           (or (eq? (borrow-request-mode a) 'mut)
+               (eq? (borrow-request-mode b) 'mut))
+           (not (suspended-pair? a b))
+           (borrow-pair-overlaps? a b)))
+    (when conflict?
       (fail 'borrow-conflicting-alias (borrow-request-node b))))
   ;; §8.2。所有者への直接の操作と、capability を通した操作を分ける。
   (define (overlapping? r u)
     (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
                               (use-request-w u) (use-request-fp u))
-         (region-outlives? ir (ρ-of r) (use-request-point-region u))))
+         ;; 借用は生成 point より前の使用とは重ならない。
+         (not (and (borrow-request-point r)
+                   (use-request-point u)
+                   (point-after-reborrow? (use-request-point u)
+                                          (borrow-request-point r))))
+         (let ([windowed
+                (for/list ([e (in-set (psi-suspended Ψ))]
+                           #:when (and (equal? (borrow-request-alpha r)
+                                               (fourth e))
+                                       (seventh e)))
+                  e)])
+           (if (and (pair? windowed)
+                    (borrow-request-point r)
+                    (use-request-point u))
+               (for/or ([e (in-list windowed)])
+                 (and (inside-window? (seventh e) (sixth e)
+                                     (borrow-request-point r) #t)
+                      (inside-window? (seventh e) (sixth e)
+                                     (use-request-point u) #f)))
+               (region-outlives? ir (ρ-of r)
+                                 (use-request-point-region u))))))
 
   ;; 起点そのものが停止しているか。停止した親を通した使用は
   ;; operation と mode によらず拒む。条件 3 より先に見る。
@@ -407,12 +487,15 @@
       (and (set-member? (use-request-source u) (third e))
            (capability-overlap? (first e) (second e)
                                 (use-request-w u) (use-request-fp u))
-           (region-outlives? ir (sigma-ref σ (fourth e))
-                             (use-request-point-region u))
-           ;; use-request に alpha は無い。構文 point で停止開始より後かを判定する。
-           (if (and (sixth e) (use-request-point u))
-               (point-after-reborrow? (sixth e) (use-request-point u))
-               #t))))
+           (if (and (seventh e) (use-request-point u))
+               (inside-window? (seventh e) (sixth e)
+                               (use-request-point u) #f)
+               (and (region-outlives? ir (sigma-ref σ (fourth e))
+                                      (use-request-point-region u))
+                    ;; use-request に alpha は無い。point で停止開始より後を判定する。
+                    (if (and (sixth e) (use-request-point u))
+                        (point-after-reborrow? (sixth e) (use-request-point u))
+                        #t))))))
 
   ;; 条件 2。α_o が source の要素の親として suspended に入っているか。
   (define (parent-of-source? r u)
@@ -441,8 +524,9 @@
   ;; 使用。覆う借用が 1 つも無いとき、otherwise を持つ要求だけがその key
   ;; で落ちる。§7.4-7.5。
   (for ([u (in-list uses)])
+    (define blocked? (use-blocked? u))
     (cond
-      [(use-blocked? u) (fail (use-kind u) (use-request-node u))]
+      [blocked? (fail (use-kind u) (use-request-node u))]
       [(use-request-otherwise u)
        (fail (use-request-otherwise u) (use-request-node u))]
       [else (void)])))

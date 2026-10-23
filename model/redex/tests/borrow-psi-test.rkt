@@ -41,7 +41,7 @@
                            'x '() ρ2 ρ1 '(Reborrow x))
               (psi (set (list 'x '() ρ1))
                    (set)
-                   (set (list 'x '() ρ2 ρ1 '(Reborrow x) #f))
+                   (set (list 'x '() ρ2 ρ1 '(Reborrow x) #f #f))
                    flow-a))
 
 ;; mut に無いときは共有借用だけを張り、退場時に mut を新規作成しない。
@@ -56,4 +56,4 @@
        [suspended (psi-suspend Ψ 'x '(a) ρ2 ρ1 '(Reborrow field) point)])
   (check-equal? (psi-mut suspended) (set parent))
   (check-equal? (psi-suspended suspended)
-                (set (list 'x '(a) ρ2 ρ1 '(Reborrow field) point))))
+                (set (list 'x '(a) ρ2 ρ1 '(Reborrow field) point #f))))

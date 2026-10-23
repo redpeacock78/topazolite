@@ -287,7 +287,7 @@
     (let/ec escape
       (check-borrows
        ir (hash) (empty-psi)
-       (cons (borrow-request 'x path 'mut root root core) requests)
+       (cons (borrow-request 'x path 'mut root root core #f) requests)
        (lambda (_sigma rho) rho)
        (lambda (key _node) (escape key)))
       'ok))
@@ -307,7 +307,7 @@
       (let/ec escape
         (check-borrows
          ir (hash) (empty-psi)
-         (cons (borrow-request 'x path 'mut root root core) requests)
+         (cons (borrow-request 'x path 'mut root root core #f) requests)
          (lambda (_sigma rho) rho)
          (lambda (key _node) (escape key)))
         'ok))

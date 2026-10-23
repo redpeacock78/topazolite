@@ -221,7 +221,9 @@
 ;; 鍵の持ち主は最も内側から順に探す。積みの先頭へ無条件に入れてはならない。
 ;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
-(struct template-frame (formals box) #:transparent)
+(struct template-frame
+  (formals box body parameters parameter-types return-type latent-row)
+  #:transparent)
 (define template-collectors (make-parameter '()))
 
 ;; §4.2。再帰専用の重ね。template-collectors と同じ形の parameter である。
@@ -282,6 +284,106 @@
               #:when (set-member? (template-frame-formals f) w))
     f))
 
+(define (point-prefix? prefix point)
+  (and (<= (length prefix) (length point))
+       (equal? prefix (take point (length prefix)))))
+
+(define (template-relative-point w point)
+  (define frame (owning-frame w))
+  (match w
+    [`(formal ,lambda-point ,_ ,_)
+     (define body-root (append lambda-point '(0)))
+     (and frame (point-prefix? body-root point)
+          (drop point (length body-root)))]
+    [_ point]))
+
+(define (core-at-point core point)
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (for/fold ([node core]) ([index (in-list point)])
+      (list-ref (core-children (peel-node node)) index))))
+
+(define (scalar-window-type? type)
+  (memq (normalize-type (peel-ty type)) '(Int Bool Unit String)))
+
+(define (window-scope-safe? frame scope)
+  (define (borrow-entry type)
+    (match (normalize-type (peel-ty type))
+      [`(Borrowed ,payload ,_)
+       (and (scalar-window-type? payload) (list 'borrow payload))]
+      [`(BorrowedMut ,payload ,_)
+       (and (scalar-window-type? payload) (list 'borrow payload))]
+      [_ #f]))
+  (define parameters
+    (for/hash ([name (in-list (template-frame-parameters frame))]
+               [type (in-list (template-frame-parameter-types frame))]
+               #:when (or (borrow-entry type) (scalar-window-type? type)))
+      (values name (or (borrow-entry type) (list 'scalar type)))))
+  (define (scalar-value? value)
+    (or (exact-integer? value) (string? value)
+        (memq value '(unit #t #f))))
+  (define (safe-reborrow? place name borrowed mode env body)
+    (define parent (hash-ref env (peel-node place) #f))
+    (and (memq mode '(const let)) borrowed
+         parent (eq? (first parent) 'borrow)
+         (equal? (second parent) (second borrowed))
+         (safe? body (hash-set env name borrowed))))
+  (define (safe? term env)
+    (match (peel-node term)
+      [`(Scope ,_ ,body) (safe? body env)]
+      [`(Let (,binder ,mode ,type) ,bound ,body)
+       (define name (peel-bind binder))
+       (define borrowed (borrow-entry type))
+       (match (peel-node bound)
+         [`(Reborrow ,place)
+          (safe-reborrow? place name borrowed mode env body)]
+         [`(ReborrowAt ,_ρ ,place)
+          (safe-reborrow? place name borrowed mode env body)]
+         [_
+          (and (memq mode '(const let))
+               (not borrowed) (scalar-window-type? type)
+               (safe? bound env)
+               (safe? body (hash-set env name (list 'scalar type))))])]
+      [`(Read (Reborrow ,place))
+       (define entry (hash-ref env (peel-node place) #f))
+       (and entry (eq? (first entry) 'borrow)
+            (scalar-window-type? (second entry)))]
+      [`(Read ,place)
+       (define entry (hash-ref env (peel-node place) #f))
+       (and entry
+            (or (eq? (first entry) 'scalar)
+                (scalar-window-type? (second entry))))]
+      [`(Assign ,place ,value)
+       (define entry (hash-ref env (peel-node place) #f))
+       (and entry (eq? (first entry) 'borrow) (scalar-value? value))]
+      [value (scalar-value? value)]))
+  ;; shortcut: only scalar reads/writes are windowed; widen when the checker tracks escapes.
+  (and (pair? (template-frame-parameter-types frame))
+       (scalar-window-type? (template-frame-return-type frame))
+       (not (borrowed-type-anywhere? (template-frame-return-type frame)))
+       (not (borrowed-type-anywhere? (template-frame-latent-row frame)))
+       (match (peel-node scope)
+         [`(Scope ,_ ,body) (safe? body parameters)]
+         [_ #f])))
+
+(define (reborrow-window-point w point)
+  (define frame (owning-frame w))
+  (define relative (template-relative-point w point))
+  (define window
+    (and frame relative (template-frame-body frame)
+         (let ([body (template-frame-body frame)])
+           (define candidate
+             (for/first ([length (in-range (length relative) -1 -1)]
+                         #:do [(define prefix (take relative length))
+                               (define term (core-at-point body prefix))]
+                         #:when (match (peel-node term)
+                                  [`(Scope ,_ ,_) #t]
+                                  [_ #f]))
+               (cons prefix term)))
+           (and candidate
+                (window-scope-safe? frame (cdr candidate))
+                (append (append (second w) '(0)) (car candidate))))))
+  window)
+
 ;; §5.4。要求と制約を出す唯一の窓口。formal 鍵が残っていれば、関数の本体を
 ;; 型付けしている最中である。そのまま出さず雛形として溜め、Apply が実引数の
 ;; capability と RegionApp が受けた region 項で置き換えてから出す。
@@ -300,7 +402,20 @@
 (define (route-request! r node fail)
   (define w
     (if (borrow-request? r) (borrow-request-w r) (use-request-w r)))
-  (unless (route-deferred! r w node fail)
+  (define deferred-r
+    (cond
+      [(and (borrow-request? r) (formal-key? w))
+       (struct-copy borrow-request r
+                    [point (and (borrow-request-point r)
+                                (template-relative-point
+                                 w (borrow-request-point r)))])]
+      [(and (use-request? r) (formal-key? w))
+       (struct-copy use-request r
+                    [point (and (use-request-point r)
+                                (template-relative-point
+                                 w (use-request-point r)))])]
+      [else r]))
+  (unless (route-deferred! deferred-r w node fail)
     (emit-request! r)))
 
 ;; 本体の Reborrow は親が (RParam rp) であり、呼出し位置で RegionApp が
@@ -311,10 +426,20 @@
 ;; §5.4。region-constraint は所有者の designator を欄に持たない。
 ;; 雛形として溜めるときは、振り分けに使った鍵を添える。
 ;; 実体化した後にもう一段外の雛形へ回すかどうかを、この鍵で決める。
-(struct deferred-constraint (w constraint) #:transparent)
+(struct deferred-constraint (w constraint window-point) #:transparent)
 
-(define (route-constraint! c w node fail)
-  (unless (route-deferred! (deferred-constraint w c) w node fail)
+(define (route-constraint! c w node fail [window-point #f])
+  (define deferred-c
+    (if (formal-key? w)
+        (struct-copy region-constraint c
+                     [point (and (region-constraint-point c)
+                                 (template-relative-point
+                                  w (region-constraint-point c)))])
+        c))
+  (define deferred-window
+    (and window-point (template-relative-point w window-point)))
+  (unless (route-deferred! (deferred-constraint w deferred-c deferred-window)
+                           w node fail)
     (emit-constraint! c)))
 
 ;; Reborrow の token 集合は 1 つの収集先へしか送れない。formal 鍵と通常の
@@ -478,20 +603,20 @@
   (define (actual-caps w)
     (hash-ref subst w
               (lambda () (fail 'unresolved-borrow-owner node))))
-  (define (reborrow-constraint w)
+  (define (reborrow-constraint w child-alpha)
     (for/first ([item (in-list deferred)]
                 #:when (and (deferred-constraint? item)
                             (equal? (deferred-constraint-w item) w)
                             (eq? (region-constraint-kind
                                   (deferred-constraint-constraint item))
-                                 'reborrow)))
-      (deferred-constraint-constraint item)))
+                                 'reborrow)
+                            (equal? (region-constraint-right
+                                     (deferred-constraint-constraint item))
+                                    child-alpha)))
+      item))
   ;; 遅延した共有借用は Reborrow から来ている。定義時の親は formal capability
   ;; なので通常の infer-reborrow 経路では呼出し側の可変借用をまだ停止できない。
   ;; formal 鍵を実体化した後、対応する遅延制約から親を復元する。
-  (define (reborrow-parent-term w)
-    (define constraint (reborrow-constraint w))
-    (and constraint (region-constraint-left constraint)))
   ;; 遅延要求は呼出し位置の下に置く。関数本体の point はそのまま保つ。
   (define (deferred-point body-point)
     (append point
@@ -503,7 +628,12 @@
        (define w (borrow-request-w item))
        (define caps (actual-caps w))
        (define child-alpha (subst-term (borrow-request-alpha item)))
-       (define parent-template (reborrow-parent-term w))
+       (define reborrow-item
+         (reborrow-constraint w (borrow-request-alpha item)))
+       (define parent-template
+         (and reborrow-item
+              (region-constraint-left
+               (deferred-constraint-constraint reborrow-item))))
        (for ([cap (in-set caps)])
          (route-request!
           (borrow-request (car cap)
@@ -511,14 +641,23 @@
                           (borrow-request-mode item)
                           child-alpha
                           (borrow-request-rho-borrow item)
-                          node)
+                          node
+                          (and (borrow-request-point item)
+                               (deferred-point
+                                (borrow-request-point item))))
           node fail)
          (when (and (eq? (borrow-request-mode item) 'shared)
                     parent-template)
            (define parent-term (subst-term parent-template))
+           (define constraint
+             (deferred-constraint-constraint reborrow-item))
            (define suspension-point
              (deferred-point
-              (region-constraint-point (reborrow-constraint w))))
+              (region-constraint-point constraint)))
+           (define window-point
+             (deferred-constraint-window-point reborrow-item))
+           (define suspension-window
+             (and window-point (deferred-point window-point)))
            (define parent-alphas
              (for/list ([entry (in-set (psi-mut current-psi))]
                         #:when (and (equal? (first entry) (car cap))
@@ -530,14 +669,16 @@
                       (psi-add-mut current-psi (car cap) (cdr cap)
                                    parent-term)
                       (car cap) (cdr cap) parent-term child-alpha
-                      (borrow-request-node item) suspension-point))
+                      (borrow-request-node item) suspension-point
+                      suspension-window))
                (for ([parent-alpha (in-list parent-alphas)])
                  (set! current-psi
                        (psi-suspend current-psi
                                     (car cap) (cdr cap)
                                     parent-alpha child-alpha
                                     (borrow-request-node item)
-                                    suspension-point))))))]
+                                    suspension-point
+                                    suspension-window))))))]
       [(use-request? item)
        (define w (use-request-w item))
        ;; 遅延した Reborrow が作った局所 alpha を保つ。全ての use source を
@@ -575,8 +716,12 @@
                                 (subst-term (region-constraint-left c))
                                 (subst-term (region-constraint-right c))
                                 point node)))
+       (define window-point
+         (deferred-constraint-window-point item))
        (for ([cap (in-set (actual-caps w))])
-         (route-constraint! c-new (car cap) node fail))]))
+         (route-constraint!
+          c-new (car cap) node fail
+          (and window-point (deferred-point window-point))))]))
   current-psi)
 
 ;; §5.5。呼出しの結果に付く要約を出現ごとに溜める表。
@@ -2896,7 +3041,8 @@
      (define collector (box '()))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                       collector))
+                       collector body parameters parameter-types return-type
+                       latent-row))
      ;; Lam が転送できるのは自身の署名に自由に現れる region parameter だけ。
      ;; 外側の callable にしか属さない parameter を境界の外へ出すと、閉包の
      ;; ような Lam が証明の終わった lexical region を保持できてしまう。
@@ -3021,7 +3167,8 @@
                         collector 'tentative 1))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                      collector))
+                      collector body parameters parameter-types return-type
+                      latent-row))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; RecurVal の本体も呼出しまで遅延する。
@@ -3102,7 +3249,8 @@
                         (if (null? binder-params) 1 2)))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                      collector))
+                      collector body parameters parameter-types return-type
+                      latent-row))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; Recur の定義本体は呼出しまで遅延する。
@@ -3475,7 +3623,8 @@
   (emit-constraint!
    (region-constraint 'outlives ρ_owner α point core))
   (emit-request!
-   (borrow-request key '() (if mutable? 'mut 'shared) α ρ_borrow core))
+   (borrow-request key '() (if mutable? 'mut 'shared)
+                   α ρ_borrow core point))
   (define Ψ_out
     (if mutable?
         (psi-add-mut Ψ key '() α)
@@ -3497,8 +3646,9 @@
 ;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
 ;; 親 capability を子の生存期間だけ停止する。判定は段 3 で行う。
 (define (infer-reborrow core operand Λ Ψ environment places callables fail)
+  (define operand-Λ (enter-child Λ 0))
   (define operand-result
-    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+    (infer operand operand-Λ Ψ environment places callables fail))
   (define τ_operand
     (typing-normal-child-type core Λ 0 (first operand-result)))
   (define ε_operand (second operand-result))
@@ -3525,6 +3675,9 @@
        (uniform-token-designators tokens core fail))
      ;; 合流後は operand の全実起点だけを停止し、同じ capability の古い要求を拾わない。
      (define parent-sources (capability-source τ_operand))
+     ;; Reborrow 自体も親可変 capability の使用である。二つ目の Reborrow が
+     ;; 窓の中で親を使うことを、停止中の親への通常の使用として判定する。
+     ;; 窓なしの経路は従来どおり σ だけで判定する。
      (define (existing-mut cap)
        (define matches
          (for/list ([entry (in-set (psi-mut Ψ_1))]
@@ -3556,10 +3709,15 @@
      (for ([cap (in-set tokens)])
        (define w (car cap))
        (define fp (cdr cap))
+       (define reborrow-window (reborrow-window-point w point))
+       (when reborrow-window
+         ;; operand は Reborrow の停止開始より先に評価される。
+         (emit-use-request! operand-Λ w fp 'read parent-sources
+                           core 'borrow-conflicting-use #f fail))
        (for ([α_parent (in-list (hash-ref parent-terms cap))])
          (route-constraint!
-          (region-constraint 'reborrow α_parent α_child point core)
-          w core fail))
+         (region-constraint 'reborrow α_parent α_child point core)
+          w core fail reborrow-window))
        ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
        ;; 生成していない。各 token を親の要求として記録し、境界の先でも
        ;; Move/Drop の判定へ届かせる。core 内ですでに Ψ にある要求は
@@ -3567,7 +3725,8 @@
        (unless (or (lifetime-var? α_parent)
                    (rparam-term? α_parent)
                    (pair? (existing-mut cap)))
-         (route-request! (borrow-request w fp 'mut parent-term parent-term core)
+         (route-request! (borrow-request w fp 'mut parent-term parent-term
+                                         core point)
                          core fail)))
      ;; Reborrow の結果そのものも共有借用として判定要求へ記録する。
      ;; 親を停止窓から除いたあとも、子と別の可変借用との衝突は残す必要がある。
@@ -3576,7 +3735,7 @@
        (define fp (cdr cap))
        (route-request! (borrow-request w fp 'shared α_child
                                        (region-at ir point)
-                                       core)
+                                       core point)
                        core fail))
      ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
      ;; synthetic request と親子除外を同じ規則へ揃えるため、判定用の

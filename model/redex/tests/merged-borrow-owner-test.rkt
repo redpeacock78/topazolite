@@ -306,16 +306,14 @@
           ,(observe `(Let (read const Int) ,read-observed unit))))]
     ['live-left
      `(Let (r let ,borrowed-type) ,call
-        (Scope ()
-          ,(observe
-            `(Let (written const Unit) (Assign p 7)
-               (Let (read const Int) ,read-observed unit)))))]
+        (Let (read const Int)
+             (Scope () ,(observe read-observed))
+          (Assign p 7)))]
     ['live-right
      `(Let (r let ,borrowed-type) ,call
-        (Scope ()
-          ,(observe
-            `(Let (written const Unit) (Assign s 7)
-               (Let (read const Int) ,read-observed unit)))))]
+        (Let (read const Int)
+             (Scope () ,(observe read-observed))
+          (Assign s 7)))]
     ['after-left
      `(Let (r let ,borrowed-type) ,call
         (Let (read const Int)

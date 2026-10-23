@@ -20,7 +20,41 @@
                   (BorrowedMut Int (RParam a)))
                  Int () () () User)))
     (sink-shared (ForallRegion (a)
-                   (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
+                   (NFn ((Borrowed Int (RParam a))) Int () () () User)))
+    (nested (NFn () Int () () () User))))
+
+(define test-callables
+  (cons '(inner-scope
+          (ForallRegion (a)
+            (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+        sink-callables))
+
+(define yield-callables
+  (cons '(inner-scope-yield
+          (ForallRegion (a)
+            (NFn ((BorrowedMut Int (RParam a))) Unit ()
+                 ((Yield Int) Mutation) () User)))
+        test-callables))
+
+(define borrowed-row-callables
+  (cons '(inner-scope-latent-borrow
+          (ForallRegion (a)
+            (NFn ((BorrowedMut Int (RParam a))) Unit ()
+                 ((Yield (Borrowed Int (RParam a))) Mutation) () User)))
+        test-callables))
+
+(define (inner-scope-call body argument [region 'owner-ph]
+                          [callable 'inner-scope])
+  `(Apply
+    (RegionApp
+     (RegionLam (a) (Lam User ,callable (p) ,body))
+     (,region))
+    ,argument))
+
+(define (scoped-inner-scope-call body owner)
+  `(Scope ()
+     (Let (temporary let (BorrowedMut Int ph)) (BorrowMut ,owner)
+       ,(inner-scope-call body 'temporary))))
 
 (define (sink-call argument [region 'owner-ph])
   `(Apply (RegionApp (RegionLam (a) (Lam User sink (p) 0)) (,region))
@@ -41,7 +75,7 @@
           (BorrowMut ,owner)
        ,(sink-call 'temporary))))
 
-(define (type-core core [places '()])
+(define (type-core core [places '()] [callables test-callables])
   (define ir (build-region-ir core))
   (define (contains-marker? term marker)
     (or (eq? term marker)
@@ -60,7 +94,7 @@
         [(pair? term) (cons (replace (car term)) (replace (cdr term)))]
         [else term])))
   (values ir filled
-          (core-type-of/regions filled places sink-callables #:ir ir)))
+          (core-type-of/regions filled places callables #:ir ir)))
 
 (define (failure-code core)
   (define-values (_ir _filled typed) (type-core core))
@@ -81,7 +115,7 @@
   (define configs (trace-g2 start))
   (define rows
     (for/list ([config (in-list configs)])
-      (runtime-row config sink-callables expected)))
+      (runtime-row config test-callables expected)))
   (define first-live
     (for/first ([row (in-list rows)] [index (in-naturals)] #:when row) index))
   (check-not-false first-live "trace に runtime-row がある config がある")
@@ -89,11 +123,200 @@
         [row (in-list (drop rows first-live))]
         [index (in-naturals first-live)])
     (check-not-false row (format "config ~a の runtime-row" index))
-    (check-true (config-ok? config sink-callables expected row)
+    (check-true (config-ok? config test-callables expected row)
                 (format "config ~a の config-ok?" index)))
   (check-true (redex-match? G2m v (match (last configs)
                                    [`(cfg ,value ,_ ...) value]))
               "trace の終端が値"))
+
+(define (window-function-body post-scope)
+  `(Let (read const Int)
+        (Scope ()
+          (Let (child let (Borrowed Int ph)) (Reborrow p)
+            (Read child)))
+     ,post-scope))
+
+(define (inner-scope-core body [wrapped? #f] [continuation 'unit])
+  `(Scope ()
+     (Let (owner let (Owned Int)) 1
+       (Let (called const Unit)
+            ,(if wrapped?
+                 (scoped-inner-scope-call body 'owner)
+                 (inner-scope-call body '(BorrowMut owner)))
+         ,continuation))))
+
+(define (window-failure-code core [callables test-callables])
+  (define result (window-result core callables))
+  (and (diagnostic? result) (diagnostic-id result)))
+
+(define (window-type core [callables test-callables])
+  (define ir (build-region-ir core))
+  (define owner-rho
+    (region->rho ir (owner-let-body-region ir '(0))))
+  (define filled
+    (let replace ([term (fill-region-placeholders core ir)])
+      (cond
+        [(eq? term 'owner-ph) owner-rho]
+        [(pair? term) (cons (replace (car term)) (replace (cdr term)))]
+        [else term])))
+  (values ir filled
+          (core-type-of/regions filled '() callables #:ir ir)))
+
+(define (window-result core [callables test-callables])
+  (define-values (_ir _filled result) (window-type core callables))
+  result)
+
+(test-case "窓のある関数を裸と Scope 包みの双方で呼べる"
+  (define body (window-function-body '(Assign p 7)))
+  (for ([wrapped? (in-list '(#f #t))])
+    (define-values (_ir _filled typed)
+      (window-type (inner-scope-core body wrapped?)))
+    (check-true (region-typed? typed)
+                (format "wrapped=~s: ~s; core=~s" wrapped? typed _filled))
+    (check-live-trace typed 'Unit)))
+
+(test-case "最内の nested Scope を抜けた後の親の書込みは窓の外"
+  (define body
+    '(Scope ()
+       (Let (read const Int)
+            (Scope ()
+              (Scope ()
+                (Let (child let (Borrowed Int ph)) (Reborrow p)
+                  (Read child))))
+         (Assign p 7))))
+  (check-false (window-failure-code (inner-scope-core body #t))))
+
+(test-case "兄弟 Scope の後でそれぞれ親を書き込める"
+  (define body
+    '(Let (first const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p)
+              (Read child)))
+       (Let (first-write const Unit) (Assign p 7)
+         (Let (second const Int)
+              (Scope ()
+                (Let (child2 let (Borrowed Int ph)) (Reborrow p)
+                  (Read child2)))
+           (Assign p 8)))))
+  (check-false (window-failure-code (inner-scope-core body #t))))
+
+(test-case "包んだ呼出し後は再借用でき、裸の呼出し後は lexical loan が残る"
+  (define body (window-function-body '(Assign p 7)))
+  (define wrapped
+    (inner-scope-core
+     body #t '(Let (again let (BorrowedMut Int ph)) (BorrowMut owner) unit)))
+  (check-false (window-failure-code wrapped)
+               (format "~s" (window-result wrapped)))
+  (define bare
+    (inner-scope-core
+     body #f '(Let (again let (BorrowedMut Int ph)) (BorrowMut owner) unit)))
+  (check-equal? (window-failure-code bare) "E-BOR-003"))
+
+(test-case "子が生きている Scope 内の二つ目の Reborrow は拒否"
+  (define body
+    '(Scope ()
+       (Let (first let (Borrowed Int ph)) (Reborrow p)
+         (Let (second let (Borrowed Int ph)) (Reborrow p)
+           (Let (read-first const Int) (Read first)
+             (Let (read-second const Int) (Read second) unit))))))
+  (define core (inner-scope-core body #t))
+  (check-equal? (window-failure-code core) "E-BOR-025"
+                (format "~s" (window-result core))))
+
+(test-case "先行する親の書込みは Reborrow の開始窓に止められない"
+  (define body
+    '(Scope ()
+       (Let (written const Unit) (Assign p 7)
+         (Let (child let (Borrowed Int ph)) (Reborrow p)
+           (Let (read const Int) (Read child) unit)))))
+  (define core (inner-scope-core body #t))
+  (check-false (window-failure-code core) (format "~s" (window-result core))))
+
+(test-case "Scope の結果へ逃がす子には停止窓を付けず、親の書込みを拒否"
+  (define body
+    '(Let (escaped let (Borrowed Int ph))
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p) child))
+       (Assign p 7)))
+  (define core (inner-scope-core body #t))
+  (check-equal? (window-failure-code core) "E-BOR-025"
+                (format "~s" (window-result core))))
+
+(test-case "Yield を含む窓の Scope では親停止を保つ"
+  (define body
+    '(Let (read const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int (RParam a))) (Reborrow p)
+              (Yield (Read child) (Read child))))
+       (Assign p 7)))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (called const Unit)
+              ,(inner-scope-call body '(BorrowMut owner) 'owner-ph
+                                 'inner-scope-yield)
+           unit))))
+  (check-equal? (window-failure-code core yield-callables) "E-BOR-025"
+                (let-values ([(_ir _filled result)
+                              (window-type core yield-callables)])
+                  (format "~s" result))))
+
+(test-case "借用 payload の latent row を持つ関数では窓を付けない"
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (called const Unit)
+              ,(inner-scope-call (window-function-body '(Assign p 7))
+                                 '(BorrowMut owner) 'owner-ph
+                                 'inner-scope-latent-borrow)
+           unit))))
+  (check-equal? (window-failure-code core borrowed-row-callables) "E-BOR-025"
+                (let-values ([(_ir _filled result)
+                              (window-type core borrowed-row-callables)])
+                  (format "~s" result))))
+
+(test-case "Handle を含む Scope では窓なしの親停止を保つ"
+  (define body
+    '(Let (read const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p)
+              (Handle (Return boundary Int)
+                (captured -> captured)
+                (Perform (Return boundary Int) (Read child)))))
+       (Assign p 7)))
+  (check-equal? (window-failure-code (inner-scope-core body #t))
+                "E-BOR-025"))
+
+(test-case "Apply を含む窓の Scope では窓なしの親停止を保つ"
+  (define body
+    `(Let (read const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p)
+              (Let (called const Int)
+                   (Apply (PrimVal (Reserved o-add) add) (Read child) 2)
+                (Read child))))
+       (Assign p 7)))
+  (check-equal? (window-failure-code (inner-scope-core body #t))
+                "E-BOR-025"))
+
+(test-case "Unsafe を含む Scope は窓なしにして親停止を保つ"
+  (define body
+    '(Let (read const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p)
+              (Unsafe (Read child))))
+       (Assign p 7)))
+  (check-equal? (window-failure-code (inner-scope-core body #t))
+                "E-BOR-025"))
+
+(test-case "子を捕捉する Lam は E-BOR-011 で拒否され、窓外へ逃がさない"
+  (define body
+    '(Let (callback let (NFn () Int () () () User))
+          (Scope ()
+            (Let (child let (Borrowed Int ph)) (Reborrow p)
+              (Lam User nested () (Read child))))
+       (Assign p 7)))
+  (check-equal? (window-failure-code (inner-scope-core body #t)) "E-BOR-011"))
 
 (test-case "裸の呼出しを同じ lexical Scope で続けると二度目の BorrowMut は E-BOR-003"
   (define core
@@ -123,13 +346,14 @@
   (check-equal? (region-typed-type typed) '(Owned Int))
   (check-live-trace typed '(Owned Int)))
 
-(test-case "一つ目だけ呼出しを包むと裸の二つ目は E-BOR-003"
+(test-case "包んだ呼出しの後は裸の借用が Move を妨げる"
   (define core
     `(Scope ()
        (Let (x let (Owned Int)) 1
          (Let (first const Int) ,(scoped-sink-call 'x)
-           ,(sink-call '(BorrowMut x))))))
-  (check-equal? (failure-code core) "E-BOR-003"))
+           (Let (second const Int) ,(sink-call '(BorrowMut x))
+             (Move x))))))
+  (check-equal? (failure-code core) "E-BOR-008"))
 
 (define (two-argument-core right-owner)
   `(Scope (1 2)
