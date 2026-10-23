@@ -757,7 +757,7 @@ F = Handle(op, h, □) なら op ∉ ε0
 E-Ctx-Never は Core の T-Ctx-Never と同じ正格な位置で、通常の elaboration と同じ順に全ての被演算子を検査する。
 row は `Never` の被演算子を含む全ての被演算子の row を合併する。
 `Handle` の健全性の根拠は Core の T-Ctx-Never の節を参照する。
-E-Ctx-Never の `Handle` の副条件は row による判定であり、Core の脱出状態 E[b] の不在による判定より保守的である（Core が `Never` に型付けする形を elaboration が `Never` としないことがある）。
+E-Ctx-Never の `Handle` の副条件は row による判定であり、Core の脱出状態 E[Return<b, τ>] の不在による判定より保守的である（Core が `Never` に型付けする形を elaboration が `Never` としないことがある）。
 
 **(E-Construct-Check)**
 
@@ -1127,7 +1127,7 @@ B' = push(B, ExpressionBoundary(b, τ))
 その中の `leave` は E-Leave を通じて境界の型 τ、すなわち当該式の返り値型と unify する（RET-002）。
 その式境界自身への Return Effect は handler が処理するため、式の外へは漏れない。
 `return` はこの式境界を越えて最寄りの関数境界へ届き、式の値として使われない。
-この handler の `Never` 伝播は、自身の境界 ID b への到達可能な脱出が無いことを条件とし、T-Ctx-Never の `Handle(Return<b, τ>, …)` と同じ判定を使う。
+この handler の `Never` 伝播は、自身の operation `Return<b, τ>` への到達可能な脱出が無いことを条件とし、T-Ctx-Never と同じ判定を使う。
 
 **(E-NarrativeExpr-Synth)** [REQ: RET-002]
 
@@ -1612,7 +1612,7 @@ c = F[c0]        F は下表の一段の正格評価文脈
 Γ; Δ; Π; Ξ; Φ ⊢core c0 : Never ! ε0
 S ⊢flow c0 : Never ! ε0 ⇒ (⊥, E0)        c0 の正常型 τ0°
 F の通常の規則は、c0 を τ0° の項として c を τ ! ε で型付けする
-F = Handle(Return<b, τ>, h, □) なら E0[b] は未定義
+F = Handle(Return<b, τ>, h, □) なら E0[Return<b, τ>] は未定義
 F = Handle(op, h, □) かつ op が Return 以外なら op ∉ ε0
 -------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core c : Never ! ε           c の正常型 τ°
@@ -1623,8 +1623,8 @@ F = Handle(op, h, □) かつ op が Return 以外なら op ∉ ε0
 被演算子の型を他の部分項の検査や副条件に使う位置では、`τ0° = ⊥` のとき通常の規則を適用せず、既存の診断で拒否する。
 `Never` の後ろにある被演算子も省略せず通常どおり検査する。
 結果の row は通常の規則が全ての被演算子から得る row の和である。
-`Handle(Return<b, τ>, h, c0)` は、c0 の出力脱出状態 E0 に b がない場合に限り `Never` を外へ伝播する。
-E0 は `Perform` と latent row から保守的に記録される脱出の上界なので、E0[b] があっても実行時に b へ脱出するとは限らない。
+`Handle(Return<b, τ>, h, c0)` は、c0 の出力脱出状態 E0 に `Return<b, τ>` がない場合に限り `Never` を外へ伝播する。
+E0 は `Perform` と latent row から保守的に記録される脱出の上界なので、E0[`Return<b, τ>`] があっても実行時にその operation で脱出するとは限らない。
 この条件の健全性は、`R-HandleReturn` が境界 ID と型の一致する `Return` だけを捕まえ、`R-HandleSkip` が対象外の op を同じ op のまま伝播し、`Scope` が `Return` を消費せず、G1 の `Handle` が中断型で再開しないことに基づく。
 それ以外の op には従来の row 条件 `op ∉ ε0` を適用するが、G1 の文法 `op ::= (Return b τ)` には Return 以外の op はなく、この分岐は利用者 effect を導入する段階に向けた規則である。
 
@@ -1639,7 +1639,7 @@ E0 は `Perform` と latent row から保守的に記録される脱出の上界
 | `Yield` | observed | 要する。`next` は逐次の継続なので一覧に含めない | `next` の正常型。`next` の型が `Never` なら `⊥` |
 | `Curry` | 関数、実引数 | 関数には要する、実引数には要しない | 部分適用後の関数型 |
 | `Scope` | 本体 | 要しない | 本体の正常型 |
-| `Handle` | 本体 | 要しない。op が Return なら E[b] の不在、それ以外なら `op ∉ ε0` の場合だけ適用 | 本体の正常型 |
+| `Handle` | 本体 | 要しない。op が Return なら E[op] の不在、それ以外なら `op ∉ ε0` の場合だけ適用 | 本体の正常型 |
 | `OwnLeaf` | 被演算子 | 要しない。payload の型をそのまま返す | payload の正常型 |
 | `Rec` | 欄 | 合成と期待外欄の検査では要する。正常型 `⊥` は伝える。期待欄の検査では要しない | 合成では欄の正常型から作る Record 型。欄が `⊥` なら `⊥`。検査では期待型 |
 | `Discharge` | 被演算子 | 要する | 既存規則の結果型 |
@@ -1673,7 +1673,7 @@ T-Ctx-Never は簡約規則や G2 の機械規則を追加せず、既存の Ret
 Core の型付けは型と Effect row に加え、flow 状態 `(N, E)` を評価順に運ぶ。
 `N` は正常に評価を続ける位置の状態であり、各 mut binder に宣言型 T、現在の flow 型 C、pin 集合 P を対応させる。
 正常な継続が無い状態は `⊥` である。
-`E` は Return boundary ごとの脱出状態の表である。
+`E` は Return operation ごとの脱出状態の表である。
 状態を比較する位置では、その scope にある binder だけを比べる。
 `Let` の scope を出るときはその binder を N と各 E の状態から除く。
 以下では、通常の型付け導出に flow 入力と出力を添えたものを `S ⊢flow c : τ ! ε ⇒ S'` と略記する。
@@ -1681,12 +1681,12 @@ Core の型付けは型と Effect row に加え、flow 状態 `(N, E)` を評価
 
 逐次に評価される部分項は左から右へ状態を渡す。
 入口の N が `⊥` なら後続項は通常の型検査を受けるが、評価されないため、その N と E は全体の結果へ加えない。
-`Perform(Return<b, τ>, c)` は引数が正常に完了した後の状態を E[b] に記録し、N を `⊥` にする。
+`Perform(Return<b, τ>, c)` は引数が正常に完了した後の状態を E[Return<b, τ>] に記録し、N を `⊥` にする。
 引数が正常に完了しなければ発行地点は作らない。
-callee の latent row に `Return<b, τ>` がある `Apply` も、callee と引数の評価後の状態を E[b] に記録する。
+callee の latent row に `Return<b, τ>` がある `Apply` も、callee と引数の評価後の状態を E[Return<b, τ>] に記録する。
 閉包本体の脱出は閉包の生成位置へ伝えず、呼び出し位置で扱う。
 
-`Eliminate`、`UnionEliminate` などの分岐では、N は正常に完了する枝の状態を合流し、E は同じ boundary の脱出状態を合流する。
+`Eliminate`、`UnionEliminate` などの分岐では、N は正常に完了する枝の状態を合流し、E は同じ Return operation の脱出状態を合流する。
 合流する状態の T と C は `type-equiv?` で一致しなければならず、不一致は `reassign-type-mismatch` で拒否する。
 P は枝の集合和をとる。
 型付けは合流型を計算せず、各枝の C は elaboration が決めた型で一致させる。
@@ -1696,12 +1696,12 @@ elaboration は同じ flow 状態を式の評価順に受け渡し、`Reassign` 
 分岐では正常に完了する枝の view を §3.5 の `merge-row` と T への補正で合流し、pin があればその pin を優先する。
 合流した view と異なる枝は既存の値変換と `RecRewrite`、必要なら `UnionInject` で変換した後、`RemainderSafelyDropped` の Proof を持つ `Discharge` で view を狭め、枝の末尾で `Reassign` する。
 Return boundary への脱出も同じ規則で合流し、発行 operand の評価後、発行の直前に view を作り直す。
-`Never` の右辺と正常に完了しない枝は正常出口の合流に加えず、脱出状態は boundary ごとに保つ。
+`Never` の右辺と正常に完了しない枝は正常出口の合流に加えず、脱出状態は Return operation ごとに保つ。
 
-`Handle(Return<b, τ>, x -> c_h, c_body)` では、E[b] があるとき c_h をその脱出状態から型付けする。
-E[b] が無い場合も c_h は入口状態で検査するが、その結果の N と E は全体へ加えない。
-全体の N は c_body と到達可能な handler の正常出口の合流、E は E_body から b を除いたものと handler の脱出の和である。
-handler の中から同じ boundary へ Return する脱出は外側へ伝わる。
+`Handle(Return<b, τ>, x -> c_h, c_body)` では、E[Return<b, τ>] があるとき c_h をその脱出状態から型付けする。
+E[Return<b, τ>] が無い場合も c_h は入口状態で検査するが、その結果の N と E は全体へ加えない。
+全体の N は c_body と到達可能な handler の正常出口の合流、E は E_body から `Return<b, τ>` を除いたものと handler の脱出の和である。
+handler の中から同じ Return operation へ脱出する場合は外側へ伝わる。
 
 `Lam`、`RegionLam`、`Fn`、`FnDecl` の本体、および `Recur` の定義（その値 `RecurVal`）が mut binder を捕捉すると、その値を作る位置の C を P に加え、閉包本体は P の下で検査する。
 捕捉後の再代入は P のすべての型と一致しなければならず、C を変えない。

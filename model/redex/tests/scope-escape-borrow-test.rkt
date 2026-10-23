@@ -115,22 +115,30 @@
 
 (define handled-return-control
   `(Let (owner let (Owned Int)) 41
-     (Yield
-      (Handle (Return boundary ,borrowed)
-              (returned -> returned)
-              (Scope ()
-                (Perform (Return boundary ,borrowed) (Borrow owner))))
-      0)))
+     (Let (r let ,borrowed)
+       (Handle (Return boundary ,borrowed)
+               (returned ->
+                 (Let (observed let Int) (Read returned) returned))
+               (Scope ()
+                 (Perform (Return boundary ,borrowed) (Borrow owner))))
+       (Read r))))
 
 (define handled-leave-control
   `(Let (owner let (Owned Int)) 41
      (Let (r let ,borrowed-option)
           (Handle (Return boundary ,borrowed-option)
-                  (returned -> returned)
+                  (returned ->
+                    (Let (observed let Int)
+                         (Eliminate returned
+                           ((none () -> 0)
+                            (some (item) -> (Read item))))
+                      returned))
                   (Scope ()
                     (Perform (Return boundary ,borrowed-option)
                              (Construct ,borrowed-option some (Borrow owner)))))
-       0)))
+       (Eliminate r
+         ((none () -> 0)
+          (some (item) -> (Read item)))))))
 
 (define closure-return-under-unrelated-handler
   `(Handle (Return boundary Int)

@@ -5,6 +5,7 @@
          "region.rkt"
          "region-param.rkt"
          "span-core.rkt"
+         "erase.rkt"
          "data-env.rkt"
          "type-equiv.rkt")
 
@@ -33,6 +34,7 @@
          unbound-borrowed-type?
          borrow-designator?
          borrow-token-key capability-field-table capability-branch-bindings
+         capability-flow-of handle-return-capability
          capability-projection-bindings
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
@@ -560,6 +562,233 @@
                              (table-join (cdr prev) (cdr v)))
                        v)))))
 
+(struct capability-flow (normal effects) #:transparent)
+
+(define (capability-entry-join entries)
+  (define present (filter values entries))
+  (and (pair? present)
+       (for/fold ([result (car present)]) ([entry (in-list (cdr present))])
+         (cons (set-union (car result) (car entry))
+               (table-join (cdr result) (cdr entry))))))
+
+(define (capability-effects-join flows)
+  (for/fold ([effects (hash)]) ([flow (in-list flows)])
+    (for/fold ([effects effects]) ([(boundary entry)
+                                   (in-hash (capability-flow-effects flow))])
+      (hash-update effects boundary
+                   (lambda (previous)
+                     (capability-entry-join (list previous entry)))
+                   (lambda () entry)))))
+
+(define (capability-operation-key operation)
+  (erase-core operation))
+
+(define (handle-return-capability flow operation)
+  (define captured
+    (hash-ref (capability-flow-effects flow)
+              (capability-operation-key operation)
+              (cons (set) #f)))
+  (match (peel-node operation)
+    [`(Return ,_ ,type)
+     (if (borrow-typed? (peel-ty type))
+         captured
+         (cons (set) (cdr captured)))]
+    [_ (cons (set) #f)]))
+
+;; 各 operation の payload capability と、通常完了の capability を別々に保つ。
+;; Handle は通常値をそのまま返し、捕捉した payload だけを handler へ渡す。
+(define (capability-flow-of Λ c [locals (hash)])
+  (define (walk c* [locals* locals])
+    (define (child-flow child) (capability-flow-of Λ child locals*))
+    (define (join-branches flows)
+      (capability-flow
+       (capability-entry-join (map capability-flow-normal flows))
+       (capability-effects-join flows)))
+    (define (sequence children [build (lambda ()
+                                       (capability-of Λ c* locals*))])
+      (let loop ([remaining children] [effects (hash)])
+        (cond
+          [(null? remaining) (capability-flow (build) effects)]
+          [else
+           (define next (child-flow (car remaining)))
+           (define effects*
+             (capability-effects-join
+              (list (capability-flow #f effects) next)))
+           (if (capability-flow-normal next)
+               (loop (cdr remaining) effects*)
+               (capability-flow #f effects*))])))
+    (define (sequence-entries children build)
+      (let loop ([remaining children] [entries '()] [effects (hash)])
+        (cond
+          [(null? remaining)
+           (capability-flow (build (reverse entries)) effects)]
+          [else
+           (define next (child-flow (car remaining)))
+           (define effects*
+             (capability-effects-join
+              (list (capability-flow #f effects) next)))
+           (if (capability-flow-normal next)
+               (loop (cdr remaining)
+                     (cons (capability-flow-normal next) entries)
+                     effects*)
+               (capability-flow #f effects*))])))
+    (define (branch-flow scrutinee-entry branches union?)
+      (define ws (car scrutinee-entry))
+      (define table (cdr scrutinee-entry))
+      (join-branches
+       (for/list ([branch (in-list branches)])
+         (if union?
+             (let* ([plain
+                     (match branch
+                       [(list (list '#:span _ _ _) _ ...) (peel-ubr branch)]
+                       [_ branch])])
+               (match-define `(,member ,binder -> ,body) plain)
+               (define binding
+                 (if (hash? table)
+                     (hash-ref table (normalize-type (peel-ty member))
+                               (cons (set) #f))
+                     (cons (for/set ([cap (in-set ws)])
+                             (cons (car cap) (append (cdr cap) '(Payload))))
+                           #f)))
+               (walk body (hash-set locals* (peel-bind binder) binding)))
+             (let ()
+               (match-define `(,constructor (,binders ...) -> ,body)
+                 (peel-branch branch))
+               (define bindings
+                 (if (hash? table)
+                     (capability-branch-bindings table constructor binders)
+                     (capability-projection-bindings ws binders)))
+               (define branch-locals
+                 (for/fold ([current locals*])
+                           ([binder (in-list binders)]
+                            [binding (in-list bindings)])
+                   (hash-set current (peel-bind binder) binding)))
+               (walk body branch-locals))))))
+    (match (peel-node c*)
+      [`(Perform ,operation ,payload)
+       (define payload-flow (child-flow payload))
+       (define effects (capability-flow-effects payload-flow))
+       (define key (capability-operation-key operation))
+       (define effects*
+         (if (capability-flow-normal payload-flow)
+             (hash-update effects key
+                          (lambda (previous)
+                            (capability-entry-join
+                             (list previous
+                                   (capability-flow-normal payload-flow))))
+                          (lambda ()
+                            (capability-flow-normal payload-flow)))
+             effects))
+       (capability-flow #f effects*)]
+      [`(Handle ,operation ,handler ,body)
+       (define body-flow (child-flow body))
+       (define key (capability-operation-key operation))
+       (define captured? (hash-has-key? (capability-flow-effects body-flow) key))
+       (define captured (handle-return-capability body-flow operation))
+       (define handler-flow
+         (if captured?
+             (match (peel-branch handler)
+               [`(,binder -> ,handler-body)
+                (walk handler-body
+                      (hash-set locals* (peel-bind binder) captured))])
+             (capability-flow #f (hash))))
+       (define propagated
+         (hash-remove (capability-flow-effects body-flow) key))
+       (define effects
+         (capability-effects-join
+          (list (capability-flow #f propagated) handler-flow)))
+       (capability-flow
+        (capability-entry-join
+         (list (capability-flow-normal body-flow)
+               (capability-flow-normal handler-flow)))
+        effects)]
+      [`(Let (,binder ,rest ...) ,bound ,body)
+       (define bound-flow (child-flow bound))
+       (define body-flow
+         (if (capability-flow-normal bound-flow)
+             (let* ([entry (capability-flow-normal bound-flow)]
+                    [binding
+                     (if (borrow-typed? (peel-ty (last rest)))
+                         entry
+                         (cons (set) (cdr entry)))])
+               (walk body (hash-set locals* (peel-bind binder) binding)))
+             (capability-flow #f (hash))))
+       (capability-flow
+        (capability-flow-normal body-flow)
+        (capability-effects-join (list bound-flow body-flow)))]
+      [`(Eliminate ,scrutinee (,branches ...))
+       (define scrutinee-flow (child-flow scrutinee))
+       (if (capability-flow-normal scrutinee-flow)
+           (let ([branches-flow
+                  (branch-flow (capability-flow-normal scrutinee-flow)
+                               branches #f)])
+             (capability-flow
+              (capability-flow-normal branches-flow)
+              (capability-effects-join (list scrutinee-flow branches-flow))))
+           scrutinee-flow)]
+      [`(UnionEliminate ,scrutinee ,branches)
+       (define scrutinee-flow (child-flow scrutinee))
+       (if (capability-flow-normal scrutinee-flow)
+           (let ([branches-flow
+                  (branch-flow (capability-flow-normal scrutinee-flow)
+                               branches #t)])
+             (capability-flow
+              (capability-flow-normal branches-flow)
+              (capability-effects-join (list scrutinee-flow branches-flow))))
+           scrutinee-flow)]
+      [`(Scope ,_ ,body) (child-flow body)]
+      [`(Yield ,first ,next)
+       (define first-flow (child-flow first))
+       (if (capability-flow-normal first-flow)
+           (let ([next-flow (child-flow next)])
+             (capability-flow
+              (capability-flow-normal next-flow)
+              (capability-effects-join (list first-flow next-flow))))
+           first-flow)]
+      [`(Construct ,_ ,constructor ,fields ...)
+       (sequence-entries
+        fields
+        (lambda (entries)
+          (cons (for/fold ([all (set)]) ([entry (in-list entries)])
+                  (set-union all (car entry)))
+                (for/hash ([entry (in-list entries)] [index (in-naturals)])
+                  (values (cons constructor index) entry)))))]
+      [`(Rec (,fields ...))
+       (define field-labels (map first fields))
+       (sequence-entries
+        (map third fields)
+        (lambda (entries)
+          (cons (for/fold ([all (set)]) ([entry (in-list entries)])
+                  (set-union all (car entry)))
+                (for/hash ([label (in-list field-labels)]
+                           [entry (in-list entries)])
+                  (values (cons 'record-field (peel-lbl label)) entry)))))]
+      [`(UnionInject ,_ ,member-type ,payload)
+       (sequence-entries
+        (list payload)
+        (lambda (entries)
+          (define entry (first entries))
+          (cons (car entry)
+                (hash (normalize-type (peel-ty member-type)) entry))))]
+      [`(UnionVal ,_ ,member-type ,payload)
+       (sequence-entries
+        (list payload)
+        (lambda (entries)
+          (define entry (first entries))
+          (cons (car entry)
+                (hash (normalize-type (peel-ty member-type)) entry))))]
+      ;; Function bodies are definitions, while Recur's continuation executes now.
+      [`(Lam ,_ ...) (capability-flow (capability-of Λ c* locals*) (hash))]
+      [`(Recur ,_ ,_ ,_ ,_ ,continuation) (child-flow continuation)]
+      [`(RecurVal ,_ ,_ ,_ ,_)
+       (capability-flow (capability-of Λ c* locals*) (hash))]
+      [`(RegionLam ,_ ,_)
+       (capability-flow (capability-of Λ c* locals*) (hash))]
+      [`(RegionApp ,_ ,_)
+       (capability-flow (capability-of Λ c* locals*) (hash))]
+      [_ (sequence (core-children (peel-node c*))) ]))
+  (walk c))
+
 ;; scrutinee の表から分岐 K の束縛子へ張る値を並べる。
 ;; 表が無い、または鍵が無い束縛子へは空の token と #f を張る。
 ;; capability-of と branch-contexts がこの 1 つの規則を共有する。
@@ -699,10 +928,8 @@
     [`(Suspend ,c_1) (only (ws-of c_1))]
     [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
-     (match-define `(,name -> ,c_h) (peel-branch handler))
-     (only (set-union (ws-of body)
-                      (ws-of c_h (hash-set locals (peel-bind name)
-                                           (cons (set) #f)))))]
+     (define flow (capability-flow-of Λ c locals))
+     (or (capability-flow-normal flow) (only (set)))]
     [`(Rec (,fields ...))
      (define entries (for/list ([field (in-list fields)])
                        (recur (third field))))

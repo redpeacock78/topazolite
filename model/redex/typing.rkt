@@ -139,7 +139,7 @@
 ;; および Discharge の層を降りる loop の 3 箇所に限る。
 (define typing-point-probe (make-parameter void))
 
-;; Return payload の借用寿命を制約するため、型付け中の捕捉境界と Handle point を保持する。
+;; Return payload の寿命と実型を対応する Handle へ返す。関数本体へは引き継がない。
 (define return-handler-regions (make-parameter '()))
 
 ;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
@@ -393,6 +393,13 @@
 ;; 借用の所有者をこの型から復元できない位置で使う。
 (define (borrowed-type-anywhere? type)
   (unbound-borrowed-type? type (set)))
+
+(define (contains-omitted-region? type)
+  (let walk ([value type])
+    (match value
+      [`(RParam %omitted) #t]
+      [(? pair? values) (ormap walk values)]
+      [_ #f])))
 
 ;; §5.4。定義時の formal region で、結果の借用と同じ region を持つ
 ;; 仮引数の位置を集める。RegionApp 後に数え直すと異なる formal が潰れる。
@@ -1981,7 +1988,7 @@
   (struct-copy psi body-psi
                [flow (flow-state (flow-state-normal body-state) escapes)]))
 
-(define (flow-record-escape Ψ boundary fail node)
+(define (flow-record-escape Ψ operation fail node)
   (define state (psi-flow Ψ))
   (if (eq? (flow-state-normal state) 'bottom)
       Ψ
@@ -1991,8 +1998,11 @@
                                        (escape-union
                                         fail node
                                         (flow-state-escapes state)
-                                        (hash boundary
+                                        (hash operation
                                               (flow-state-normal state)))])])))
+
+(define (return-operation-key boundary type)
+  (erase-core `(Return ,boundary ,(peel-ty type))))
 
 (define (mut-slots-in core)
   (let walk ([term (peel-node core)])
@@ -2109,12 +2119,6 @@
   (for ([branch (in-list peeled-branches)])
     (unless (redex-match? G2m ubr (erase-core branch))
       (fail 'ill-typed node)))
-  (define (contains-omitted-region? type)
-    (let walk ([value type])
-      (match value
-        [`(RParam %omitted) #t]
-        [(? pair? values) (ormap walk values)]
-        [_ #f])))
   (define members (union-members union-type))
   (define branch-members
     (for/list ([branch (in-list peeled-branches)])
@@ -4195,11 +4199,12 @@
 
 (define (typing-handle-propagates-never? core Λ)
   (match (peel-node core)
-    [`(Handle (Return ,boundary ,_) ,_ ,_)
+    [`(Handle (Return ,boundary ,type) ,_ ,_)
+     (define operation (return-operation-key boundary type))
      (match (typing-child-result Λ 1)
-       ;; E は latent row の上界なので、鍵の不在だけを Never 判定に使う。
-       [(list 'Never _ _ escape-boundaries)
-        (not (memq boundary escape-boundaries))]
+       ;; E は latent row の上界なので、operation 鍵の不在だけを Never 判定に使う。
+       [(list 'Never _ _ escape-operations)
+        (not (member operation escape-operations equal?))]
        [_ #f])]
     [`(Handle ,operation ,_ ,_)
      (match (typing-child-result Λ 1)
@@ -4265,13 +4270,13 @@
             expected)]
        [_ '⊥])]))
 
-(define (record-typing-result! Λ actual-type normal-type row escape-boundaries)
+(define (record-typing-result! Λ actual-type normal-type row escape-operations)
   (define table (typing-normal-results))
   (when table
     (hash-set! table (region-ctx-point Λ)
-               (list actual-type normal-type row escape-boundaries))))
+               (list actual-type normal-type row escape-operations))))
 
-(define (psi-escape-boundaries Ψ)
+(define (psi-escape-operations Ψ)
   ;; wrapper は入口で E を消すため、restore 前の Ψ に局所 E だけが残る。
   (hash-keys (flow-state-escapes (psi-flow Ψ))))
 
@@ -4292,7 +4297,7 @@
              [result (list result-type (second raw-result) result-psi)])
         ((typing-point-probe) (region-ctx-point Λ))
         (record-typing-result! Λ result-type normal-type (second result)
-                               (psi-escape-boundaries (third raw-result)))
+                               (psi-escape-operations (third raw-result)))
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))
@@ -4988,7 +4993,10 @@
         (define call-psi
           (for/fold ([state next-psi]) ([effect (in-list latent-out)])
             (match effect
-              [`(Return ,boundary ,_) (flow-record-escape state boundary fail core)]
+              [`(Return ,boundary ,type)
+               (flow-record-escape state
+                                   (return-operation-key boundary type)
+                                   fail core)]
               [_ state])))
         (when summary
           (define formals (callable-summary-formals summary))
@@ -5235,37 +5243,56 @@
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
+     (define operation* (erase-core `(Return ,boundary ,type*)))
      (define argument-result
        (check-as/full argument type* (enter-child Λ 0)
                       Ψ environment places callables fail))
      (define ir (region-ctx-ir Λ))
-     (define handler-point
+     (define handler-entry
        (for/first ([entry (in-list (return-handler-regions))]
-                   #:when (equal? boundary (first entry)))
-         (second entry)))
+                   #:when (equal? operation* (third entry)))
+         entry))
+     (define handler-point (and handler-entry (second handler-entry)))
      (when (and ir handler-point)
        (collect-use-regions-at!
         (third argument-result) ir (region-at ir handler-point)
         (region-ctx-point Λ)))
+     (when (and handler-entry (not (eq? (third argument-result) 'Never)))
+       (define payload-types (fourth handler-entry))
+       (set-box! payload-types
+                 (cons (third argument-result) (unbox payload-types))))
      (define argument-psi (second argument-result))
      (list 'Never
            (row-union (first argument-result)
-                      `((Return ,boundary ,type*)))
-           (flow-record-escape argument-psi boundary fail core))]
+              `((Return ,boundary ,type*)))
+           (flow-record-escape argument-psi operation* fail core))]
 
     [`(Handle (Return ,boundary ,type) ,handler-clause ,body)
      (define type* (peel-ty type))
+     (define operation* (erase-core `(Return ,boundary ,type*)))
+     (define captured-types-box (box '()))
      (define body-result
        (parameterize
            ([return-handler-regions
-             (cons (list boundary (region-ctx-point Λ))
+             (cons (list boundary (region-ctx-point Λ)
+                         operation* captured-types-box)
                    (return-handler-regions))])
          (check-as/full body type* (enter-child Λ 1)
                         Ψ environment places callables fail)))
      (define body-psi (second body-result))
      (define body-flow (psi-flow body-psi))
      (define caught-state
-       (hash-ref (flow-state-escapes body-flow) boundary #f))
+       (hash-ref (flow-state-escapes body-flow) operation* #f))
+     (define captured-types (remove-duplicates (unbox captured-types-box)))
+     (define handler-payload-type
+       (cond
+         [(or (null? captured-types)
+              (not (borrowed-type-anywhere? type*)))
+          type*]
+         [(null? (rest captured-types)) (first captured-types)]
+         [else
+          (tagged-branch-upper-bound captured-types
+                                     (enter-child Λ 0) core fail)]))
      (define handler-base
        (psi-join Ψ body-psi))
      (define handler-input
@@ -5274,6 +5301,19 @@
                            (or caught-state
                                (flow-state-normal (psi-flow Ψ)))
                            (hash))]))
+     (define handler-binder
+       (match (peel-branch handler-clause)
+         [`(,name -> ,_) (peel-bind name)]
+         [_ #f]))
+     (define captured-capability
+       (handle-return-capability
+        (capability-flow-of (enter-child Λ 1) body) operation*))
+     (define handler-Λ
+       (region-ctx-add-token
+        (enter-child Λ 0) handler-binder
+        (car captured-capability)
+        (capability-source handler-payload-type)
+        #f (cdr captured-capability)))
      (define handler-result
        (match (peel-branch handler-clause)
          [`(,name -> ,handler)
@@ -5282,7 +5322,7 @@
                         [`(#:var ,x ,_) x]
                         [_ #f])
                       (peel-bind name))
-          (list '() handler-input type*)]
+          (list '() handler-input handler-payload-type)]
          [`(,name -> ,handler)
           #:when (resource-type? type*)
           (define binder (peel-bind name))
@@ -5311,7 +5351,7 @@
               (lambda ()
                 (check-as/full handler
                                type*
-                               (enter-child Λ 0)
+                               handler-Λ
                                handler-input
                                (extend environment
                                        (list binder)
@@ -5325,9 +5365,11 @@
            (lambda ()
              (check-as/full handler
                             type*
-                            (enter-child Λ 0)
+                            handler-Λ
                             handler-input
-                            (extend environment (list (peel-bind name)) (list type*))
+                            (extend environment
+                                    (list (peel-bind name))
+                                    (list handler-payload-type))
                             places
                             callables
                             fail)))]
@@ -5338,7 +5380,7 @@
      (define body-escapes (flow-state-escapes body-flow))
      (define output-escapes
        (escape-union fail core
-                     (hash-remove body-escapes boundary)
+                     (hash-remove body-escapes operation*)
                      (if caught-state
                          (flow-state-escapes handler-flow)
                          (hash))))
@@ -5351,7 +5393,39 @@
      (define output-psi
        (struct-copy psi (psi-join body-psi handler-psi)
                     [flow (flow-state output-normal output-escapes)]))
-     (list type*
+     (define normal-result-type
+       (and (not (eq? (flow-state-normal body-flow) 'bottom))
+            (third body-result)))
+     (define handled-result-type
+       (and caught-state (third handler-result)))
+     (define result-types
+       (filter values (list normal-result-type handled-result-type)))
+     (define merge-anchor
+       (for/first ([result-type (in-list result-types)]
+                   #:unless (contains-omitted-region? result-type))
+         result-type))
+     (define merge-types
+       (cond
+         [(and merge-anchor
+               (ormap contains-omitted-region? result-types))
+          (map (lambda (result-type)
+                 (if (contains-omitted-region? result-type)
+                     (adopt-inferred-lifetimes result-type merge-anchor)
+                     result-type))
+               result-types)]
+         [(and (pair? result-types)
+               (andmap contains-omitted-region? result-types))
+          (list type*)]
+         [else result-types]))
+     (define result-type
+       (if (borrowed-type-anywhere? type*)
+           (match merge-types
+             ['() type*]
+             [(list only-type) only-type]
+             [multiple-types
+              (tagged-branch-upper-bound multiple-types Λ core fail)])
+           type*))
+     (list result-type
            (row-union
             (row-difference (first body-result)
                             `((Return ,boundary ,type*)))
@@ -6124,7 +6198,7 @@
               (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
              [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
         (record-typing-result! Λ result-type normal-type row
-                               (psi-escape-boundaries raw-psi))
+                               (psi-escape-operations raw-psi))
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))

@@ -172,20 +172,20 @@
     '() test-callables '((c Bool)))
    '(Int ((Return outer Int)) Int)))
 
-(test-case "同じ境界の型違いの到達する Return は E に鍵を残し Handle を Never にしない"
+(test-case "同じ境界で型の違う Return は捕まえず Handle を Never にする"
   (check-equal?
    (typed-with-normal
     '(Handle (Return b Int) (x -> x)
        (Perform (Return b Bool) (Construct Bool true))))
-   '(Int ((Return b Bool)) Int)))
+   '(Never ((Return b Bool)) ⊥)))
 
-(test-case "Apply の実引数の型違い Return も E に鍵を残し Handle を Never にしない"
+(test-case "Apply の実引数の型違い Return も捕まえず Handle を Never にする"
   (check-equal?
    (typed-with-normal
     '(Handle (Return b Int) (x -> x)
        (Apply (Lam User g (v w) v) 1
               (Perform (Return b Bool) (Construct Bool true)))))
-   '(Int ((Return b Bool)) Int)))
+   '(Never ((Return b Bool)) Int)))
 
 (test-case "Apply の関数位置は Never の正常型で呼出し型を決める"
   (define function-type '(NFn (Int) Int () () () User))
