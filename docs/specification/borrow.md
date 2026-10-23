@@ -6,6 +6,17 @@
 region IR と Core API は `docs/specification/region.md` が定める。
 raw pointer と Proof は本文書の対象外である。
 
+### 1.1 借用を含む Core の型付け
+
+借用を含む Core は region IR を作り、span を保った Core に region 注釈を付けて、region context の下で一度型付けする。
+`core-type-of/regions` は型、row、region IR、解決表、寿命解 `σ` などをまとめた結果を返し、失敗時は元の Core 節点を使って診断を作る。
+実行用 Core は同じ型付け結果から `region-execution-core` で materialize し、別の型検査は行わない。
+
+Surface driver は `borrow-bearing-core?` で借用の式または型を含む Core を判定し、該当する項にこの経路を使う。
+elaborate が生成する adapter も借用を含む場合は同じ経路で検査する。
+借用を含まない Core は従来の `execution-core` と `core-type-of/diagnostic` を使う。
+これらの従来入口は空の region context で型付けするため、借用を含む Core の型付けには使わない。
+
 ## 2. 借用の型
 
 型 τ へ次の 2 つを足す。

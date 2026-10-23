@@ -1,17 +1,20 @@
 # Topazolite Surface 構文
 
-**状態**：P2m3c 改訂版
+**状態**：SUR-004a1b 改訂版
 **参照**：`draft/topazolite_whitepaper_draft_0.4.md` §15（以下、ホワイトペーパー）
-**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/requirements.md`
+**関連文書**：`docs/specification/core-calculus.md`、`docs/specification/structural-row.md`、`docs/specification/span.md`、`docs/specification/diagnostic.md`、`docs/specification/borrow.md`、`docs/specification/region.md`、`docs/specification/requirements.md`
 
 ## 1. 範囲
 
 本書は Surface 構文の正典である。
 lexer と parser は canonical source span を保持し、Surface 構文から未型付き縮小 Core への lowering はその span を引き継ぐ。 [REQ: SUR-001]
 
-この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
+この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、局所借用の型注釈 `&T` と `&mut T`、借用の式 `&x`、`&mut x`、`deref(e)`、`reborrow(e)`、`deref(e) = v` の書込み、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
-この版は、borrow 表記（`SUR-004`）、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）を受理しない。
+局所借用は `SUR-004` の部分達成範囲として受理する。
+関数署名の借用型と明示の region、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）は受理しない。
+関数署名の借用型は 004a2 で扱う。
+型別名と data の欄に書いた借用型は拒否し、`SUR-004` の完了前に再判定する。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -41,7 +44,7 @@ Surface の経路は展開表を生成しない。
 改行そのものは `nl` として残る。
 
 識別子は `[A-Za-z_][A-Za-z0-9_]*` である。
-予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else`、`leave`、`pure`、`and`、`or`、`not` の 20 語である。
+予約語は `const`、`let`、`mut`、`fn`、`type`、`true`、`false`、`trait`、`impl`、`for`、`derive`、`return`、`when`、`if`、`else`、`leave`、`pure`、`and`、`or`、`not`、`deref`、`reborrow` の 22 語である。
 予約語は識別子の規則に合っていても、`ident` として扱わない。
 `match` は予約語ではなく、束縛名と関数名に使える識別子である。
 
@@ -119,13 +122,14 @@ cmpexpr  ::= addexpr (cmpop addexpr)?
 cmpop    ::= "==" | "!=" | "<" | "<=" | ">" | ">="
 addexpr  ::= mulexpr (("+" | "-") mulexpr)*
 mulexpr  ::= unary ("*" unary)*
-unary    ::= "-" unary | postfix
+unary    ::= "-" unary | "&" ident | "&" "mut" ident | postfix
 postfix  ::= primary suffix*
 suffix   ::= "(" args ")" | "." ident | "." "{" labels "}"
 labels   ::= NL* ident (sep ident)* sep? NL*
 sep      ::= ("," | NL) NL*
 primary  ::= int | string | istr | "true" | "false" | "(" ")"
            | ident | anonfn | record | block | "(" expr ")" | when | ifexpr
+           | "deref" "(" expr ")" | "reborrow" "(" expr ")"
 when     ::= "when" expr "{" NL* arm (NL+ arm)* NL* "}"
 ifexpr   ::= "if" expr block ("else" (block | ifexpr))?
 arm      ::= ctor ident* "=>" expr
@@ -141,7 +145,7 @@ block    ::= "{" NL* (sbind NL+)* (expr | reassign) NL* "}"
 binding  ::= bmode ident (":" ty)? "=" expr
            | "let" ident "?=" expr
 sbind    ::= binding | reassign | expr-stmt
-reassign ::= ident "=" expr
+reassign ::= ident "=" expr | "deref" "(" expr ")" "=" expr
 expr-stmt ::= expr
 bmode    ::= "const" | "let" | "let" "mut"
 record   ::= "{" NL* "}"
@@ -150,7 +154,9 @@ field    ::= ident ":" expr
 fsep     ::= "," NL* | NL+
 ty       ::= tyand ("|" tyand)*                         [REQ: BIT-003]
 tyand    ::= tyatom ("&" tyatom)*
-tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"  [REQ: SUR-016]
+tyatom   ::= ident ["<" ty ("," ty)* ">"] | tyrec | borrowty | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"  [REQ: SUR-016]
+borrowty ::= "&" borrowinner | "&" "mut" borrowinner
+borrowinner ::= ident ["<" ty ("," ty)* ">"] | tyrec | "fn" "(" tys ")" "->" ty ["!" row] | "(" ty ")"
 tyrec    ::= "{" NL* "}"
            | "{" NL* tyfield (fsep tyfield)* fsep? NL* "}"
 tyfield  ::= ident "?"? ":" ty
@@ -159,7 +165,12 @@ row      ::= label | "{" [label ("," label)*] "}"          [REQ: SUR-003]
 label    ::= ident ["<" ty ">"]
 ```
 
-`&` は `|` より強く結合し、どちらも左結合である。
+前置の借用記号 `&` は、中置の Intersection を表す `&` より強く結合する。
+中置の `&` と `|` は左結合である。
+借用型は let の型注釈だけで許し、型適用の引数と record の欄では再帰的に許す。
+ただし、function type の仮引数と戻り値の内部では許さない。
+`&&T` と `&mut &T` は二つ目の `&` の位置で `E-SUR-005` になる。
+`&T & U` は `(&T) & U` と読む。
 上の文法は優先順位の低い段から高い段へ順に列挙している。
 `|>`、`or`、`and`、`+`、`-`、`*` は左結合する。
 比較は非結合であり、`a < b < c` のように比較演算子を続けると、二つ目の比較演算子の token の位置で `E-SUR-005` になる。
@@ -509,6 +520,7 @@ scrutinee が変数なら全体の `NarrativeExpr`、それ以外なら枝ごと
 資源値は式文の直後に drop されず、最寄りの Core `Scope` の finalization で `Dropped` になる。
 すべての `SBlock` は `LexicalScope` へ下ろされ、elaboration が Core の `(Scope s () c)` にする。
 block 内で束縛された affine resource は、`Move` されずに残れば、その block の出口で逆順に drop される。
+借用値を block の出口から返せるかは、§3.9 の owner 生存条件で検査する。
 
 文位置の `when` の枝の値を `Unit` に揃えるのは、枝の型を合流する必要をなくすためである。
 枝全体を一度に破棄すると、異なる型の枝が合流され、資源型の枝を含むと `E-TYP-012` になりうる。
@@ -572,6 +584,31 @@ Surface には利用者が書く `Move` 構文がないため、所有値を消�
 引数型から `move`、shared use、borrow を推論する規則は未設計である。
 closure capture、FFI 境界、曖昧な overload で使う明示的な `move` も未設計である。
 elaborate は資源型の枝 binder を消費する encoding などで UCore の `Move` を生成するが、これは利用者が書く構文とは別である。
+
+### 3.9 局所借用
+
+Surface の借用型は `&T` と `&mut T` であり、`let` の型注釈だけに書ける。
+型適用の引数と record の欄では再帰的に書けるが、function type の仮引数と戻り値の内部には書けない。
+型別名と data の欄も現在は借用型を受理しない。
+これらの位置で借用型を書くと `E-SUR-005` になる。
+region 名は Surface に書けず、借用型の region 欄は省略する。
+
+`&x` と `&mut x` は識別子 `x` を共有または可変に借りる。
+対象は `Owned` の束縛であり、`let mut` が作る `MutSlot` は対象にならない。
+`deref(e)` は safe な借用の読み出し、`reborrow(e)` は可変借用から共有借用を作る。
+借用した record の `b.l` は欄の借用を返し、欄の値を読む式は `deref(b.l)` である。
+書込み文は `deref(e) = v` に限り、左辺は `deref(e)` だけを許す。
+
+借用型の省略された region は Core では `(RParam %omitted)` となる。
+Core の typing は束縛子の型で推論した寿命を採用して検査し、実行用 Core の注釈には `(RParam %omitted)` が残りうる。
+注釈付き `let` の宣言型が `Owned<T>` の場合、右辺の型が宣言型に直接適合しないときは、Core の `owned-lift-compatible?` が許す非 `Owned` 値を `Owned<T>` へ持ち上げる。
+この持ち上げは注釈付き `let` だけに適用し、関数の実引数や分岐合流、汎用の型変換には適用しない。
+
+借用の region と owner の生存期間は Core の借用規則で検査する。
+`Scope` の出口と `Owned` を束縛する `let` の body の出口では、通常の結果だけでなく、その出口を越えて捕捉される `return` または `leave` の payload も検査する。
+借用の region は出口の親側まで生きることを要求し、owner がそこで終わる場合は `E-BOR-004` になる。
+したがって内側の block から外側 owner の借用を返すことはできるが、owner が終わる境界を越えて借用を返すことはできない。
+この lexical region 判定は最後の使用位置に基づく NLL ではない。
 
 ## 4. span
 
@@ -1023,6 +1060,10 @@ trait、intersect、scope の表は保ち、この台帳を重複検査、loweri
 要求欄の呼び出しは、実装 record の束縛が現在の lexical 環境にある impl/derive だけを候補とするため、束縛の無い R0 fixture は呼び出せない。
 宣言の右畳みにより、impl より前に定義した関数からはその impl の provider が見えず、impl より後の関数からは見える。
 
+借用を含む項の Core typing は `borrow.md` §1.1 の region-aware 経路を使い、失敗時は元の Core 節点の source span を持つ診断を返す。
+Surface から到達する借用規則の違反には `E-BOR-003`、`E-BOR-004`、`E-BOR-005`、`E-BOR-009`、`E-BOR-011`、`E-BOR-013`、`E-BOR-015`、`E-BOR-017`、`E-BOR-018`、`E-BOR-019`、`E-BOR-021`、`E-BOR-027` などがある。
+`E-BOR-006` は Surface から到達しない Core 側の診断である。
+
 - `E-SUR-001` `surface-invalid-byte`：UTF-8 として解釈できない byte 列
 - `E-SUR-002` `surface-unknown-character`：字句にならない文字。`\r` を含む
 - `E-SUR-003` `surface-unterminated-string`：閉じない文字列リテラルまたは閉じない補間穴
@@ -1247,8 +1288,8 @@ span はこの 4 段のいずれでも落とさない。
 `erase-core` は成果物を受けた側が必要に応じて掛ける。
 経路の途中で span を落とすと、診断の primary span が指す位置を呼び手が復元できない。
 
-成功の成果物は `(struct compiled (core type row callables ledger))` である。
-先頭 4 欄は `elab` の返り値と同じ順で並び、`ledger` はその compilation で使った trait 台帳である。
+成功の成果物は `(struct compiled (core type row callables ledger execution-core))` である。
+先頭 4 欄は `elab` の返り値と同じ順で並び、`ledger` はその compilation で使った trait 台帳、`execution-core` は実行用に region などを materialize した Core である。
 成果物を実行するときは、`compiled-ledger` を `call-with-trait-ledger` へ渡して台帳を揃える。
 
 失敗の返り値は Diagnostic 1 件である。
