@@ -13,6 +13,7 @@
          "../machine.rkt"
          "../origins.rkt"
          "../ownership.rkt"
+         "../region.rkt"
          "../typing.rkt")
 
 (define (compile source) (compile-source/string 'src source))
@@ -305,3 +306,32 @@
      "0"))
   (compile-rejected source "E-TYP-012"
                    "let bad: { u: { x: Int } | Bool } | Int = actual\n0"))
+
+(test-case "RSD の retained 欄は outlive しない concrete region へ置き換えない"
+  (define skeleton
+    '(Scope ()
+       (Scope ()
+         (Discharge
+          (ProofRep (Reserved o-narrow)
+                    (RemainderSafelyDropped
+                     (Record ((a (Borrowed Int 0) imm) (z Int imm)))
+                     (Record ((a (Borrowed Int 0) imm)))))
+          (Rec ((a imm borrowed) (z imm 1)))))))
+  (define ir (build-region-ir skeleton))
+  (define long (region->rho ir (region-at ir '())))
+  (define short (region->rho ir (region-at ir '(0))))
+  (check-false (region-outlives? ir (rho->region ir short)
+                                (rho->region ir long)))
+  (define actual `(Record ((a (Borrowed Int ,short) imm) (z Int imm))))
+  (define expected `(Record ((a (Borrowed Int ,long) imm))))
+  (define core
+    `(Scope ()
+       (Scope ()
+         (Discharge
+          (ProofRep (Reserved o-narrow)
+                    (RemainderSafelyDropped ,actual ,expected))
+          (Rec ((a imm borrowed) (z imm 1)))))))
+  (define result
+    (type-of/raw core '() '() `((borrowed (Borrowed Int ,short)))
+                 (region-ctx ir '() (hash) (hash))))
+  (check-match result `(fail owned-narrowing-rejected ,_ ,_ ...)))

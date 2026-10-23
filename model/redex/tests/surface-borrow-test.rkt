@@ -245,6 +245,45 @@
    "fn bad() -> Unit { let mut x = 1\n let b = &mut x\n () }\n0"
    "E-BOR-005" "&mut x"))
 
+(test-case "異なる owner の共有借用を if で合流して読み取る"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn choose(c: Bool) -> Int ! {Own, Partial} {\n"
+      " let x: Owned<Int> = 41\n"
+      " let y: Owned<Int> = 42\n"
+      " let borrowed = if c { &x } else { &y }\n"
+      " return deref(borrowed)\n"
+      "}\nchoose(true)")))
+  (when (compiled? result)
+    (check-equal? (trace-value result) 41)))
+
+(test-case "Option の Borrowed Union member に some(bx) を入れ全 config を検査する"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn read() -> Int ! {Own, Partial} {\n"
+      " let x: Owned<Int> = 43\n"
+      " let bx = &x\n"
+      " let value: Option<&Int | &Bool> = some(bx)\n"
+      " return when value { some borrowed => 43\n none => 0 }\n"
+      "}\nread()")))
+  (when (compiled? result)
+    (check-equal? (trace-value result) 43)))
+
+(test-case "Option の BorrowedMut Union member を trace の config で検査する"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn read() -> Int ! {Own, Partial} {\n"
+      " let x: Owned<Int> = 47\n"
+      " let bx = &mut x\n"
+      " let value: Option<&mut Int | &mut Bool> = some(bx)\n"
+      " return when value { some borrowed => 47\n none => 0 }\n"
+      "}\nread()")))
+  (when (compiled? result)
+    (check-equal? (trace-value result) 47)))
+
 (test-case "Option と利用者 data の constructor payload に借用を保持する"
   (define option-read
     (compile-accepted

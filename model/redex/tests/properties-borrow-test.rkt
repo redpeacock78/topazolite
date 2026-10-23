@@ -284,7 +284,9 @@
 (test-case "借用探索の Union 項が分解規則へ到達する"
   (check-true (positive? (fifth search-result)))
   (check-true (positive? (sixth search-result)))
-  (printf "Borrow search: Union attempted=~a UnionEliminate=~a\n"
+  (printf "Borrow search: accepted=~a discarded=~a failures=~a Union attempted=~a UnionEliminate=~a\n"
+          (first search-result) (second search-result)
+          (length (third search-result))
           (fifth search-result) (sixth search-result)))
 
 (define shape-counts (seventh search-result))

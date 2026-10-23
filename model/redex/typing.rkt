@@ -2345,11 +2345,32 @@
   (match (infer payload (enter-child Λ 0) Ψ
                 environment places callables fail)
     [(list payload-type row next-psi)
-     (unless (tag-compat? payload-type member-type*
+     (define matching-members
+       (filter (lambda (member)
+                 (type-equiv? (retained-lifetime-shape member)
+                              (retained-lifetime-shape payload-type)))
+               (union-members union-type*)))
+     (define adopted-member
+       (and (= (length matching-members) 1)
+            (type-equiv? (first matching-members) member-type*)
+            (adopt-retained-lifetimes member-type* payload-type)))
+     (define checked-member (or adopted-member member-type*))
+     (unless (tag-compat? payload-type checked-member
                           (current-Γ-pc0) (current-region-relation))
        (fail 'ill-typed node))
      (check-borrow-hiding! payload-type member-type* node fail)
-     (list union-type* row next-psi)]))
+     (define result-type
+       (if adopted-member
+           (normalize-type
+            (foldr (lambda (member tail)
+                     (if tail `(Union ,member ,tail) member))
+                   #f
+                   (for/list ([member (in-list (union-members union-type*))])
+                     (if (type-equiv? member member-type*)
+                         adopted-member
+                         member))))
+           union-type*))
+     (list result-type row next-psi)]))
 
 (define (check-eliminate scrutinee branches expected
                          Λ Ψ environment places callables node fail
@@ -4415,14 +4436,18 @@
   (match* (expected actual)
     [(`(Union ,_ ,_) _)
      (or (adopt-retained-union-lifetimes expected actual) expected)]
-    [(`(Borrowed ,expected-payload ,_)
+    [(`(Borrowed ,expected-payload ,expected-region)
       `(Borrowed ,actual-payload ,actual-region))
      `(Borrowed ,(adopt-retained-lifetimes expected-payload actual-payload)
-                ,actual-region)]
-    [(`(BorrowedMut ,expected-payload ,_)
+                ,(if (equal? expected-region '(RParam %omitted))
+                     actual-region
+                     expected-region))]
+    [(`(BorrowedMut ,expected-payload ,expected-region)
       `(BorrowedMut ,actual-payload ,actual-region))
      `(BorrowedMut ,(adopt-retained-lifetimes expected-payload actual-payload)
-                   ,actual-region)]
+                   ,(if (equal? expected-region '(RParam %omitted))
+                        actual-region
+                        expected-region))]
     [(`(Record ,expected-row) `(Record ,actual-row))
      `(Record
        ,(for/list ([field (in-list expected-row)])

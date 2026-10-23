@@ -392,6 +392,45 @@
             ((Int i -> (Read i)) (String s -> 0))))))
    'Int))
 
+(test-case "UnionVal の借用 payload は実行時型を使って全 config を検査する"
+  (define borrowed '(Borrowed Int (RParam %omitted)))
+  (define union `(Union ,borrowed String))
+  (prepared-trace
+   "borrowed UnionVal"
+   `(Scope ()
+      (Let (owner let (Owned Int)) 7
+        (Let (value let ,union)
+             (UnionInject ,union ,borrowed (Borrow owner))
+          (UnionEliminate value
+            ((,borrowed borrowed -> (Read borrowed))
+             (String text -> 0))))))
+   'Int))
+
+(test-case "UnionVal は region 以外が異なる payload を ill-typed のまま拒否する"
+  (define result
+    (type-of/raw
+     '(UnionVal (Union Int String) Int "not an Int") '() '()))
+  (check-match result `(fail ill-typed ,_ ,_ ...)))
+
+(test-case "UnionVal の region だけ同形な候補が複数あると旧照合へ戻る"
+  (define union '(Union (Borrowed Int 2)
+                        (Union (Borrowed Int 3) String)))
+  (define value `(UnionVal ,union (Borrowed Int 2) (BorrowRef 0 () 3)))
+  (define cfg `(cfg ,value ((0 7 (declared (Owned Int))))
+                    ((0 Available)) () ()))
+  (check-equal? (config-type-failure-key cfg '()) 'ill-typed)
+  (check-false (runtime-row cfg '() union)))
+
+(test-case "UnionVal の concrete tag を outlive しない payload は拒否する"
+  (define member '(Borrowed Int 10))
+  (define union `(Union ,member String))
+  (define value `(UnionVal ,union ,member (BorrowRef 0 () 11)))
+  (define cfg `(cfg ,value ((0 7 (declared (Owned Int))))
+                    ((0 Available)) () ()))
+  (check-equal? (config-type-failure-key cfg '()) 'ill-typed)
+  (check-false (runtime-row cfg '() union))
+  (check-false (config-ok? cfg '() union '())))
+
 (test-case "Record の欄の借用は合流した表で読み取れる"
   (define-values (configs _rules)
     (prepared-trace "Record borrow merge" (record-borrow-source) 'Unit))
