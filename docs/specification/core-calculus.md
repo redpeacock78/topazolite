@@ -1739,6 +1739,10 @@ config 再型付けで実値の型 σ を静的な view τ として受理する
 この判定は `deriving-config?` が真の再型付けだけに使い、静的型付けの条件は変えない。
 `σ ⊑cfg τ` で受理した `const` の束縛、`RecRewrite` entry binder、または `Reassign` の view を持つ位置の型は τ のままとする。
 `const` の config 再型付けでは、値の型 σ と宣言型 τ に `σ ⊑cfg τ` を要求し、束縛型は τ のままとする。
+config 内の `UnionVal(τU, τm, v)` は、payload `v` の推論型 `σp` と member tag `τm` を region を除いた型構造で照合する。
+対応する成員が一意なら、`τm` の省略された借用 region だけを `σp` の対応する region で置き換えて Union の実型を再構成する。`τm` の具体的な region は置き換えない。
+対応が一意でなければ従来の `tag-compat?` による照合へ戻り、それが通れば受理する。region 以外の型構造が合わない場合は再型付けに失敗する。
+これは config の値から実行時型を復元する規則であり、静的な `UnionInject` の型検査は変えない。
 この関係は各位置の `check-borrow-hiding!` と storage 条件を置き換えない。
 `RemainderSafelyDropped` を消費した後に `Owned` と借用を含まない余剰欄が物理値へ残る場合は、型対が上記の `Record` 条件を満たす限り `σ ⊑cfg τ` として受理する。
 この場合も config の型と heap の `declared` view は τ のままであり、物理値の型へ広げない。

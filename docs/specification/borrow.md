@@ -162,6 +162,7 @@ key と番号は `docs/specification/diagnostic.md` の registry に従う。
 `E-BOR-027` `borrow-hidden-by-narrowing` は、borrow-hiding-kind が拒否を返す narrowing、または RSD の義務があるのに有効な `Discharge` が無い Core を拒否する。
 `RegionLam` が自由変数として捕捉する可視環境項目の型に、bound set で束縛されない借用 region が含まれる場合も同じ診断で拒否する。
 その bound set は当該 `RegionLam` の alpha-renamed binder と、捕捉する環境項目自身の `ForallRegion` binder だけから作り、外側の region binder は引き継がない。
+現在の Surface の lowering と narrowing 経路では `E-BOR-027` に到達しない。
 この診断は owner と借用 region の outlives 関係違反を報告する `E-BOR-004` とは異なり、borrowed value を narrowing で view から隠す根拠が無いことを示す。
 
 ## 8. 関数境界の受け渡し
@@ -281,6 +282,8 @@ field に借用が無い場合も空の capability を記録し、record 全体�
 表自体が無い式に限り、従来どおり式全体の集合を使う。
 `ProjOpt` は対象 field の組を `Option` の `some` 欄 `(some . 0)` の下に包むため、`Eliminate` が payload の capability を分岐束縛子へ渡せる。
 `RecRewrite` と `RecRewriteOpen` も出力 field ごとの表を保持し、書き換えた field は書換え後の値から、通過する field は入力表の同じ label から capability を得る。
+RSD の `Discharge` は、欄表がある値では expected に残る欄だけを再帰的に残し、record 全体の capability 集合を残った欄の集合から作り直す。
+欄表が無い値は除去された欄と capability の対応を復元できないため、従来の集合をそのまま透過する。
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` として leaf token `tk` を持つ。
 同じ token の複製を許さず、`Available`/`Moved` の token は live value に一度だけ現れ、

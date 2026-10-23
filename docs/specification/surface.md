@@ -610,6 +610,19 @@ Core の typing は束縛子の型で推論した寿命を採用して検査し�
 したがって内側の block から外側 owner の借用を返すことはできるが、owner が終わる境界を越えて借用を返すことはできない。
 この lexical region 判定は最後の使用位置に基づく NLL ではない。
 
+narrowing で view から借用を含む残余欄を隠す場合も、OWN-004 の `Owned` 残余とは別に BOR-001 の判定を行う。
+両方の残余を除く場合も `RemainderSafelyDropped` の `Discharge` は一つである。
+RSD は最上位と expected が `imm` の共通 `Record` 欄の連鎖でだけ借用欄を物理的に除ける。
+候補型との互換性検査が先に失敗する経路では、`E-RCD-008` や `E-TYP-023` など既存の code が返る。
+Core typing が RSD を検査する位置では、`E-BOR-027` の gate が `Owned` の narrowing gate より先に評価される。
+したがって、その位置で借用と `Owned` の両方が拒否される場合は `E-BOR-027` が返る。
+現在調べた Surface の mutable remainder、入れ子 record、Union member、Scope 結果の narrowing では、RSD 可能な残余は RSD され、不適格な形は互換性または elaboration の既存診断が先に返るため、`E-BOR-027` には到達しない。
+この診断は Core の直接入力に対する拒否として残る。
+
+RSD は値から借用欄を除くが、その借用を作った時点の loan request を静的な `Ψ` から解放しない。
+その欄だけが借りていた owner を外側の record が生きている間に使う形は、現状では `E-BOR-003` になることがある。
+これは実行値に残らない借用まで静的に生存するとみなす過剰な拒否であり、SUR-004 の残りで借用の寿命を region の制約として扱う際に、`Discharge` を loan の終わりとして扱って回収する。
+
 ## 4. span
 
 span は `(#:span sid lo hi)` の 4 要素である。
@@ -1061,8 +1074,8 @@ trait、intersect、scope の表は保ち、この台帳を重複検査、loweri
 宣言の右畳みにより、impl より前に定義した関数からはその impl の provider が見えず、impl より後の関数からは見える。
 
 借用を含む項の Core typing は `borrow.md` §1.1 の region-aware 経路を使い、失敗時は元の Core 節点の source span を持つ診断を返す。
-Surface から到達する借用規則の違反には `E-BOR-003`、`E-BOR-004`、`E-BOR-005`、`E-BOR-009`、`E-BOR-011`、`E-BOR-013`、`E-BOR-015`、`E-BOR-017`、`E-BOR-018`、`E-BOR-019`、`E-BOR-021`、`E-BOR-027` などがある。
-`E-BOR-006` は Surface から到達しない Core 側の診断である。
+Surface から到達する借用規則の違反には `E-BOR-003`、`E-BOR-004`、`E-BOR-005`、`E-BOR-009`、`E-BOR-011`、`E-BOR-013`、`E-BOR-015`、`E-BOR-017`、`E-BOR-018`、`E-BOR-019`、`E-BOR-021` などがある。
+`E-BOR-006` と `E-BOR-027` は Surface から到達しない Core 側の診断である。
 
 - `E-SUR-001` `surface-invalid-byte`：UTF-8 として解釈できない byte 列
 - `E-SUR-002` `surface-unknown-character`：字句にならない文字。`\r` を含む

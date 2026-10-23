@@ -624,12 +624,16 @@ Surface の Effect row 表記は、宣言と式の Effect 制約を保った Cor
 
 - **状態**：Phase 2 以降
 - **由来**：ホワイトペーパー §15
-- **正典**：`docs/specification/surface.md` §3.9、`docs/specification/borrow.md` §1.1
+- **正典**：`docs/specification/surface.md` §3.9、`docs/specification/borrow.md` §1.1、§9、`docs/specification/structural-row.md` §3.1、`docs/specification/core-calculus.md` §5.1
 
 shared borrow と lexical region の Surface 表記は、既存の borrow と region の境界を保つ Core の規則へ lowering されなければならない。
-narrowing で view から隠れる借用残余は、Core と同じ RemainderSafelyDropped の義務か拒否として lowering されなければならない。
-現状は局所の借用型注釈と借用式、読み出し、再借用、射影、書込みを受理し、region によって owner より長く生きる借用を拒否する部分実装である。
-関数署名の借用型と明示の region は未対応である。
+narrowing で view から隠れる借用残余は、Core と同じ RemainderSafelyDropped の義務を満たすか、既存の診断または Core typing の拒否を保って lowering されなければならない。
+RSD が残余を除く場合、推論結果の型は expected の row と field mode を保ち、残る欄の省略された借用 region だけを actual の推論結果から採る。
+実行時の Union 値は member tag と payload の型を region を除いた形で照合し、対応する member が一意なときに限り payload の借用 region をその member の型へ反映して config を再型付けする。
+現状は局所の借用型注釈と借用式、読み出し、再借用、射影、書込み、および適格な借用残余の RSD を受理し、region によって owner より長く生きる借用を拒否する部分実装である。
+RSD で値から除かれた借用の loan は静的な記録に残るため、同じ owner の再利用を `E-BOR-003` で過剰に拒否する形がある。
+現在の Surface 経路から `E-BOR-027` には到達しない。
+関数署名の借用型と明示の region は未対応であり、型別名と data の欄に借用型を許すかどうかは SUR-004 の完了前に再判定する。
 
 ### SUR-005
 

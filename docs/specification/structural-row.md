@@ -151,18 +151,29 @@ label1, ..., labeln は互いに相異なる
 Γ; Δ; Π; Ξ; Φ ⊢core c : τ_actual ! ε
 narrow(τ_actual, τ_expected) ≠ 'reject
 issuer(O) = o-narrow
+borrow-hiding-kind(τ_actual, τ_expected) ≠ 'reject
 rsd-proof-pair-ok?(τ_actual, τ_expected)
+τ_rsd = adopt-retained-lifetimes(τ_expected, τ_actual)
 ---------------------------------------------------------------
 Γ; Δ; Π; Ξ; Φ ⊢core
   (Discharge (ProofRep O (RemainderSafelyDropped τ_actual τ_expected)) c)
-  : τ_expected ! ε
+  : τ_rsd ! ε
 ```
 
 `rsd-proof-pair-ok?(τ_actual, τ_expected)` は、`R = remainder-target-type(τ_actual, τ_expected)` としたとき、`R` が存在し、`compat?(R, τ_expected)` が真で、Core mode の `owned-narrowing-kind` が `R` から `τ_expected` へ `ok` を返すことを要求する。
 これは T-Discharge の RSD 分岐、すなわち T-Drop-Remainder が使う Proof の型対の条件である。
-Proof の発行者、既存の Core narrowing、基底項の型検査を先に行い、その後にこの条件を検査する。
+Proof 発行者の検査後、`borrow-hiding-kind(τ_actual, τ_expected) = 'reject` なら、T-Drop-Remainder は Proof の型対や基底項を検査する前に `E-BOR-027` で拒否する。
+この gate は OWN-004 の narrowing gate より先に評価される。
+Proof 発行者、既存の Core narrowing、基底項の型検査を行った後に `rsd-proof-pair-ok?` を検査する。
 除去の形が空であることだけでは拒否しない。
 したがって、値を変えない Proof もこの関係を満たせば受理される。
+
+`adopt-retained-lifetimes(τ_expected, τ_actual)` は expected の型構造、record の欄集合、欄の mode と presence を保ち、RSD 後に残る欄の借用 region だけを actual の推論型から採る。
+expected の借用 region が省略を表す `(RParam %omitted)` の場合に限り actual の対応する region へ置き換える。
+具体的な expected region は変更せず、通常の互換性検査に委ねる。
+record は欄名で対応させ、Union は region を除いた成員の形が expected と actual の双方で一意に対応するときだけその成員へ降りる。
+一意に対応しない成員の region は expected のままにする。
+この操作は RSD の除去対象や Proof の型対を変えず、残る借用の推論型だけを補う。
 
 `Discharge` は δ-Discharge で剥がれるため、T-Drop-Remainder は新しい簡約規則を足さない。
 
