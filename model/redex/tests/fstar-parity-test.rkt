@@ -11,9 +11,9 @@
 
 (test-case
  "3 つのリストの要素数が spec §8 と一致する"
- (check-equal? (length racket-surface-constructors) 43)
+ (check-equal? (length racket-surface-constructors) 50)
  (check-equal? (length racket-ucore-constructors) 29)
- (check-equal? (length fstar-constructors) 42))
+ (check-equal? (length fstar-constructors) 49))
 
 (test-case
  "対応表に違反が無い"
@@ -61,10 +61,10 @@
                '("対象外の行の SInt がリスト 1 から 3 のどれかに在る")))
 
 (test-case
- "F* の予約語の一覧が lexer.rkt の予約語と一致する"
+ "F* の 22 予約語が lexer.rkt の予約語と一致する"
  (check-equal? (sort fstar-keywords symbol<?)
                (sort keywords symbol<?))
- (check-equal? (length fstar-keywords) 20))
+ (check-equal? (length fstar-keywords) 22))
 
 (test-case
  "kind と欄の数が食い違うと違反になる"
@@ -165,12 +165,20 @@
    (cons 'SRec      (redex-match? Surface sexpr `(SRec ,s0 ((SField ,s0 (SLabel ,s0 a) (SInt ,s0 1))))))
    (cons 'SBlock    (redex-match? Surface sexpr `(SBlock ,s0 ((SBind ,s0 let (SName ,s0 x) #:none (SInt ,s0 1)))
                                                          (SVar ,s0 x))))
+   (cons 'SBorrow   (redex-match? Surface sexpr `(SBorrow ,s0 (SName ,s0 x))))
+   (cons 'SBorrowMut (redex-match? Surface sexpr `(SBorrowMut ,s0 (SName ,s0 x))))
+   (cons 'SDeref    (redex-match? Surface sexpr `(SDeref ,s0 (SVar ,s0 x))))
+   (cons 'SReborrow (redex-match? Surface sexpr `(SReborrow ,s0 (SVar ,s0 x))))
    (cons 'TName     (redex-match? Surface sty `(TName ,s0 Int)))
    (cons 'TRec      (redex-match? Surface sty `(TRec ,s0 ((TField ,s0 (SLabel ,s0 a) (TName ,s0 Int))))))
    (cons 'TFn       (redex-match? Surface sty `(TFn ,s0 ((TName ,s0 Int)) (TName ,s0 Int) #:none)))
    (cons 'TUnion    (redex-match? Surface sty `(TUnion ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TInter    (redex-match? Surface sty `(TInter ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TApp      (redex-match? Surface sty `(TApp ,s0 (SName ,s0 List) ((TName ,s0 Int)))))
+   (cons 'TBorrow   (redex-match? Surface sty `(TBorrow ,s0 (TName ,s0 Int))))
+   (cons 'TBorrowMut (redex-match? Surface sty `(TBorrowMut ,s0 (TName ,s0 Int))))
+   (cons 'SDerefAssign (redex-match? Surface spitem
+                                    `(SDerefAssign ,s0 (SDeref ,s0 (SVar ,s0 x)) (SInt ,s0 1))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
    (cons 'SArm      (redex-match? Surface sarm
                                   `(SArm ,s0 (SName ,s0 red) () expr (SInt ,s0 1))))

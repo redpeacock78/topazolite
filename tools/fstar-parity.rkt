@@ -15,7 +15,9 @@
     SBind STryBind SReassign SExprStmt SFnDecl STypeDecl STraitDecl SImplDecl SDeriveDecl
     SDataDecl
     SInt SStr SUnit SBool SBoolIf SVar SReturn SLeave SFor SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
-    TName TRec TFn TUnion TInter TApp
+    SBorrow SBorrowMut SDeref SReborrow
+    TName TRec TFn TUnion TInter TApp TBorrow TBorrowMut
+    SDerefAssign
     SName SArm SParam SField SLabel TField SEffRow SEffLabel))
 
 ;; spec §10.2 のリスト 2。model/redex/ucore.rkt の UCore+ のうち、
@@ -26,14 +28,15 @@
 ;; spec §10.2 のリスト 3。model/fstar/Topazolite.Surface.fst の構成子名である。
 (define fstar-constructors
   '(SInt SStr SUnit SBool SBoolIf SVar SReturn SLeave SFor SMatch SIfSome SFn SApply SConstruct SProj SProjRec SRec SBlock
-    TName TRec TFn TUnion TInter TApp
-    SDecl SEffRow SEffLabel
+    SBorrow SBorrowMut SDeref SReborrow
+    TName TRec TFn TUnion TInter TApp TBorrow TBorrowMut
+    SDecl SDerefAssign SEffRow SEffLabel
     CLit CVar CApply CProj CEliminate CNarrativeExpr CRec CFn CConstruct CLet CTryBind CReassign CRecur CReturn CLeave))
 
 ;; P2k2 spec §7 / P2m spec §5.1。model/fstar/Topazolite.Surface.fst の keyword_word が
 ;; TkKw を返す語である。F* の補題 keyword_word_reserved と手で対応させる。
 (define fstar-keywords
-  '(fn let mut for true type impl const false trait derive return when if else leave pure and or not))
+  '(fn let mut for true type impl const false trait derive return when if else leave pure and or not deref reborrow))
 
 ;; 対応表の 1 行。lefts は Racket 側の名前、rights は F* 側の名前である。
 ;; kind は 'one-to-one と 'many-to-one と 'none と 'excluded を採る。
@@ -65,12 +68,19 @@
    (one-to-one 'SProjRec 'SProjRec)
    (one-to-one 'SRec 'SRec)
    (one-to-one 'SBlock 'SBlock)
+   (one-to-one 'SBorrow 'SBorrow)
+   (one-to-one 'SBorrowMut 'SBorrowMut)
+   (one-to-one 'SDeref 'SDeref)
+   (one-to-one 'SReborrow 'SReborrow)
    (one-to-one 'TName 'TName)
    (one-to-one 'TRec 'TRec)
    (one-to-one 'TFn 'TFn)
    (one-to-one 'TUnion 'TUnion)
    (one-to-one 'TInter 'TInter)
    (one-to-one 'TApp 'TApp)
+   (one-to-one 'TBorrow 'TBorrow)
+   (one-to-one 'TBorrowMut 'TBorrowMut)
+   (one-to-one 'SDerefAssign 'SDerefAssign)
    (one-to-one 'SEffRow 'SEffRow)
    (one-to-one 'SEffLabel 'SEffLabel)
    (corr-row '(SBind STryBind SReassign SExprStmt SFnDecl) '(SDecl) 'many-to-one)

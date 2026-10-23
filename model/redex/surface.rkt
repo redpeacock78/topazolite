@@ -11,7 +11,7 @@
 ;; variable-not-otherwise-mentioned を使わないのは、それが言語の literal に
 ;; 現れる記号をすべて除くからである。SInt や TName は構成子名であると同時に
 ;; 変数名や label 名として書ける必要があり、lexer もそれらを ident として
-;; 字句化する。variable-except なら除く記号を §2 の予約語 20 語と
+;; 字句化する。variable-except なら除く記号を §2 の予約語 22 語と
 ;; ちょうど一致させられる。
 ;; usid の上書きは spec §5.4 である。Span の usid は
 ;; variable-not-otherwise-mentioned なので、Surface へ拡張すると Surface の
@@ -19,8 +19,8 @@
 ;; source-id は任意の symbol なので variable へ広げる。
 (define-extended-language Surface Span
   (usid ::= variable)
-  (ident ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not))
-  (label ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not))
+  (ident ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not deref reborrow))
+  (label ::= (variable-except const let mut fn type true false trait impl for derive return when if else leave pure and or not deref reborrow))
   (sbool ::= true false)
   (sbmode ::= const let mut)
   (sname ::= (SName s ident))
@@ -40,10 +40,13 @@
            (TFn s (sty ...) sty srow-or-none)
            (TUnion s sty sty)
            (TInter s sty sty)
-           (TApp s sname (sty sty ...)))
+           (TApp s sname (sty sty ...))
+           (TBorrow s sty)
+           (TBorrowMut s sty))
   (sbind ::= (SBind s sbmode sname sty-or-none sexpr)
              (STryBind s sname sexpr)
              (SReassign s sname sexpr)
+             (SDerefAssign s sexpr sexpr)
              (SExprStmt s sexpr))
   (sexpr ::= (SInt s natural)
              (SStr s string)
@@ -66,6 +69,10 @@
              (SProj s sexpr slabel)
              (SProjRec s sexpr (slabel ...))
              (SRec s (sfield ...))
+             (SBorrow s sname)
+             (SBorrowMut s sname)
+             (SDeref s sexpr)
+             (SReborrow s sexpr)
              (SBlock s (sbind ...) sexpr))
   ;; P2m spec §5.3。Bool も constructor 名として使える。
   (sarm ::= (SArm s sctor (sname ...) body-kind sexpr)

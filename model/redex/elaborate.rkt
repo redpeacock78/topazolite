@@ -1615,18 +1615,20 @@
 
     (define (classification-view core)
       ;; 脱出直前の再構成は payload 評価後で再帰呼出しを含まず、分類事実を変えない。
-      (cond
-        [(pending-escape? core)
-         (define span (pending-escape-span core))
-         `(Perform ,span
-                   (Return ,(pending-escape-boundary core)
-                           (#:ty ,(pending-escape-return-type core) ,span))
-                   ,(classification-view
-                     (pending-escape-payload-core core)))]
-        [(pair? core)
-         (cons (classification-view (car core))
-               (classification-view (cdr core)))]
-        [else core]))
+      (define (walk core)
+        (cond
+          [(pending-escape? core)
+           (define span (pending-escape-span core))
+           `(Perform ,span
+                     (Return ,(pending-escape-boundary core)
+                             (#:ty ,(pending-escape-return-type core) ,span))
+                     ,(walk (pending-escape-payload-core core)))]
+          [(pair? core)
+           (cons (walk (car core)) (walk (cdr core)))]
+          [else core]))
+      ;; 分類器は Λ を持たない。分類専用の型 view では、省略寿命を予約済み
+      ;; の region parameter に写して、枝 schema の core-type-of を通す。
+      (omitted-regions->core (walk core)))
 
     (define (fresh-callable signature)
       (define callable

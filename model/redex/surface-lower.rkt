@@ -521,6 +521,10 @@
        [else (fail 'surface-unknown-type-name s_h)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
+    [`(TBorrow ,_ ,inner)
+     `(Borrowed ,(lower-sty inner env fail stack #:self? self?) Omitted)]
+    [`(TBorrowMut ,_ ,inner)
+     `(BorrowedMut ,(lower-sty inner env fail stack #:self? self?) Omitted)]
     [`(TFn ,_ ,arguments ,result ,row)
      `(NFn ,(for/list ([a (in-list arguments)])
               (lower-sty a env fail stack #:self? self?))
@@ -785,6 +789,12 @@
        #:when (ctor? k bound)
        `(SConstruct ,s (SName ,s_k ,k) ,(map r args))]
       [`(SApply ,s ,f ,args) `(SApply ,s ,(r f) ,(map r args))]
+      [`(SBorrow ,s ,name) `(SBorrow ,s ,name)]
+      [`(SBorrowMut ,s ,name) `(SBorrowMut ,s ,name)]
+      [`(SDeref ,s ,inner) `(SDeref ,s ,(r inner))]
+      [`(SReborrow ,s ,inner) `(SReborrow ,s ,(r inner))]
+      [`(SDerefAssign ,s ,target ,value)
+       `(SDerefAssign ,s ,(r target) ,(r value))]
       [`(SConstruct ,s ,k ,args) `(SConstruct ,s ,k ,(map r args))]
       [`(SReturn ,s ,v) `(SReturn ,s ,(r v))]
       [`(SLeave ,s ,v) `(SLeave ,s ,(r v))]
@@ -843,6 +853,10 @@
                    (set-add scope x))]
           [`(SReassign ,s (SName ,s_x ,x) ,value)
            (values (cons `(SReassign ,s (SName ,s_x ,x) ,(expr value scope))
+                         reversed)
+                   scope)]
+          [`(SDerefAssign ,s ,target ,value)
+           (values (cons `(SDerefAssign ,s ,(expr target scope) ,(expr value scope))
                          reversed)
                    scope)]
           [`(SExprStmt ,s ,value)
@@ -932,6 +946,10 @@
            (,s false () -> ,(lower-sexpr else env fail))))
         (#:var %bool ,s))]
     [`(SVar ,s ,x) `(#:var ,x ,s)]
+    [`(SBorrow ,s (SName ,s_x ,x)) `(Borrow ,s (#:var ,x ,s_x))]
+    [`(SBorrowMut ,s (SName ,s_x ,x)) `(BorrowMut ,s (#:var ,x ,s_x))]
+    [`(SDeref ,s ,value) `(Read ,s ,(lower-sexpr value env fail))]
+    [`(SReborrow ,s ,value) `(Reborrow ,s ,(lower-sexpr value env fail))]
     ;; SUR-015。
     [`(SReturn ,s ,value) `(Return ,s ,(lower-sexpr value env fail))]
     [`(SLeave ,s ,value) `(Leave ,s ,(lower-sexpr value env fail))]
@@ -1141,6 +1159,11 @@
      (define value-core (lower-sexpr value env fail))
      (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
                      (Reassign ,s (#:var ,x ,s_x) ,value-core) ,rest))]
+    [`(SDerefAssign ,s (SDeref ,s_deref ,target) ,value)
+     (define target-core (lower-sexpr target env fail))
+     (define value-core (lower-sexpr value env fail))
+     (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
+                     (Assign ,s_deref ,target-core ,value-core) ,rest))]
     [`(SExprStmt ,s ,value)
      ;; SUR-014b1 spec §5.2。Unit 注釈は文の mode の結果型を固定し、捨てる値の型は制限しない。
      (match value

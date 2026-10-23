@@ -67,7 +67,18 @@
       (and (kw? ts i 'fn) (eq? (kind-at ts (add1 i)) 'ident))))
 
 (define (reassign-ahead? ts i)
-  (and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=)))
+  (or (and (eq? (kind-at ts i) 'ident) (punct? ts (add1 i) '=))
+      (and (kw? ts i 'deref)
+           (punct? ts (add1 i) '|(|)
+           (let loop ([j (+ i 2)] [depth 1])
+             (cond
+               [(eof? ts j) #f]
+               [(punct? ts j '|(|) (loop (add1 j) (add1 depth))]
+               [(punct? ts j '|)|)
+                (if (= depth 1)
+                    (punct? ts (add1 j) '=)
+                    (loop (add1 j) (sub1 depth)))]
+               [else (loop (add1 j) depth)])))))
 
 ;; spec §3.2。pitem の後には NL+ が要る。ここを緩めると、宣言と次の式の
 ;; 境界が消えて曖昧になる。
@@ -147,7 +158,7 @@
   (define start (span-at ts i))
   (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
                 [(_open _open-j) (expect-punct ts fail name-j '|{|)]
-                [(ty ty-j) (parse-type-record ts fail name-j)])
+                [(ty ty-j) (parse-type-record ts fail name-j #f)])
     (values `(STraitDecl ,(hull start (node-span ty))
                          (SName ,name-span ,name)
                          ,(third ty))
@@ -418,13 +429,24 @@
           (values left j insert?)))))
 
 (define (parse-unary ts fail i)
-  (if (punct? ts i '-)
-      (let-values ([(operand j _insert?) (parse-unary ts fail (operator-rhs ts fail i))])
-        (values `(SApply ,(hull (span-at ts i) (node-span operand))
-                          (SVar ,(span-at ts i) %op-sub)
-                          ((SInt ,(span-at ts i) 0) ,operand))
-                j #f))
-      (parse-postfix ts fail i)))
+  (cond
+    [(punct? ts i '&)
+     (define mutable? (kw? ts (add1 i) 'mut))
+     (define name-index (+ i (if mutable? 2 1)))
+     (unless (eq? (kind-at ts name-index) 'ident) (fail-at ts fail name-index))
+     (define name-span (span-at ts name-index))
+     (define name `(SName ,name-span ,(value-at ts name-index)))
+     (values (if mutable?
+                 `(SBorrowMut ,(hull (span-at ts i) name-span) ,name)
+                 `(SBorrow ,(hull (span-at ts i) name-span) ,name))
+             (add1 name-index) #f)]
+    [(punct? ts i '-)
+     (let-values ([(operand j _insert?) (parse-unary ts fail (operator-rhs ts fail i))])
+       (values `(SApply ,(hull (span-at ts i) (node-span operand))
+                         (SVar ,(span-at ts i) %op-sub)
+                         ((SInt ,(span-at ts i) 0) ,operand))
+               j #f))]
+    [else (parse-postfix ts fail i)]))
 
 (define (parse-postfix ts fail i)
   (let-values ([(base i0) (parse-primary ts fail i)])
@@ -467,6 +489,8 @@
     [(kw? ts i 'when) (parse-match ts fail i)]
     [(kw? ts i 'if) (parse-if ts fail i)]
     [(kw? ts i 'for) (parse-for ts fail i)]
+    [(kw? ts i 'deref) (parse-borrow-call ts fail i 'SDeref)]
+    [(kw? ts i 'reborrow) (parse-borrow-call ts fail i 'SReborrow)]
     [(eq? (kind-at ts i) 'ident)
      (values `(SVar ,(span-at ts i) ,(value-at ts i)) (add1 i))]
     [(punct? ts i '|(|)
@@ -482,6 +506,15 @@
     [(punct? ts i '|{|) (parse-block-or-record ts fail i)]
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail-at ts fail i)]))
+
+(define (parse-borrow-call ts fail i constructor)
+  (define open-j (add1 i))
+  (unless (punct? ts open-j '|(|) (fail-at ts fail open-j))
+  (let*-values ([(arguments close-j) (parse-args ts fail (add1 open-j))]
+                [(close end-j) (expect-punct ts fail close-j '|)|)])
+    (unless (= (length arguments) 1) (fail-at ts fail close-j))
+    (values `(,constructor ,(hull (span-at ts i) close) ,(first arguments))
+            end-j)))
 
 ;; SUR-014c1a。`in` は for の束縛名の直後だけで区切り語として読む。
 (define (parse-for ts fail i)
@@ -787,7 +820,7 @@
     (define name-node `(SName ,name-span ,name))
     (define-values (annotation annotation-j)
       (if (punct? ts name-j '|:|)
-          (let-values ([(ty ty-j) (parse-ty ts fail (add1 name-j))])
+          (let-values ([(ty ty-j) (parse-ty ts fail (add1 name-j) #:borrow? #t)])
             (values ty ty-j))
           (values '#:none name-j)))
     (cond
@@ -805,35 +838,42 @@
                  value-j))])))
 
 (define (parse-reassign ts fail i)
-  (let*-values ([(name name-span name-j) (expect-ident ts fail i)]
-                [(_equal equal-j) (expect-punct ts fail name-j '=)]
-                [(value value-j) (parse-expr ts fail equal-j)])
-    (values `(SReassign ,(hull name-span (node-span value))
-                        (SName ,name-span ,name) ,value)
-            value-j)))
+  (if (kw? ts i 'deref)
+      (let*-values ([(target target-j) (parse-expr ts fail i)]
+                    [(_equal equal-j) (expect-punct ts fail target-j '=)]
+                    [(value value-j) (parse-expr ts fail equal-j)])
+        (values `(SDerefAssign ,(hull (node-span target) (node-span value))
+                               ,target ,value)
+                value-j))
+      (let*-values ([(name name-span name-j) (expect-ident ts fail i)]
+                    [(_equal equal-j) (expect-punct ts fail name-j '=)]
+                    [(value value-j) (parse-expr ts fail equal-j)])
+        (values `(SReassign ,(hull name-span (node-span value))
+                            (SName ,name-span ,name) ,value)
+                value-j))))
 
 ;; BIT-003。ty ::= tyand ("|" tyand)*。どちらの演算子も左結合である。
-(define (parse-ty ts fail i)
-  (let-values ([(left j) (parse-tyand ts fail i)])
+(define (parse-ty ts fail i #:borrow? [borrow? #f])
+  (let-values ([(left j) (parse-tyand ts fail i borrow?)])
     (let loop ([left left] [j j])
       (if (punct? ts j '\|)
-          (let-values ([(right k) (parse-tyand ts fail (add1 j))])
+          (let-values ([(right k) (parse-tyand ts fail (add1 j) borrow?)])
             (loop `(TUnion ,(hull (node-span left) (node-span right)) ,left ,right) k))
           (values left j)))))
 
 ;; tyand ::= tyatom ("&" tyatom)*。& は | より強く結合する。
-(define (parse-tyand ts fail i)
-  (let-values ([(left j) (parse-tyatom ts fail i)])
+(define (parse-tyand ts fail i borrow?)
+  (let-values ([(left j) (parse-tyatom ts fail i borrow?)])
     (let loop ([left left] [j j])
       (if (punct? ts j '&)
-          (let-values ([(right k) (parse-tyatom ts fail (add1 j))])
+          (let-values ([(right k) (parse-tyatom ts fail (add1 j) borrow?)])
             (loop `(TInter ,(hull (node-span left) (node-span right)) ,left ,right) k))
           (values left j)))))
 
 ;; spec §9.2。Name<τ, ...> を読む。引数の無い Name<> は構文として受理しない。
-(define (parse-type-application ts fail i head)
+(define (parse-type-application ts fail i head borrow?)
   (let loop ([j (+ i 2)] [args '()])
-    (let*-values ([(ty k) (parse-ty ts fail j)])
+    (let*-values ([(ty k) (parse-ty ts fail j #:borrow? borrow?)])
       (cond
         [(punct? ts k '|,|) (loop (add1 k) (cons ty args))]
         [else
@@ -843,25 +883,35 @@
 
 ;; 括弧は内側の sty をそのまま返す。式の括弧と同じ扱いである。
 ;; () は型の位置では書けない。単位型は Unit と書く。
-(define (parse-tyatom ts fail i)
+(define (parse-tyatom ts fail i borrow?)
   (cond
     [(eq? (kind-at ts i) 'ident)
      (define head `(SName ,(span-at ts i) ,(value-at ts i)))
      (if (punct? ts (add1 i) '<)
-         (parse-type-application ts fail i head)
+         (parse-type-application ts fail i head borrow?)
          (values `(TName ,(span-at ts i) ,(value-at ts i)) (add1 i)))]
-    [(punct? ts i '|{|) (parse-type-record ts fail i)]
+    [(punct? ts i '|{|) (parse-type-record ts fail i borrow?)]
+    [(punct? ts i '&)
+     (unless borrow? (fail 'surface-unexpected-token (span-at ts i)))
+     (define mutable? (kw? ts (add1 i) 'mut))
+     (define inner-index (+ i (if mutable? 2 1)))
+     (when (punct? ts inner-index '&)
+       (fail 'surface-unexpected-token (span-at ts inner-index)))
+     (let-values ([(inner end-j) (parse-tyatom ts fail inner-index borrow?)])
+       (values `(,(if mutable? 'TBorrowMut 'TBorrow)
+                 ,(hull (span-at ts i) (node-span inner)) ,inner)
+               end-j))]
     [(kw? ts i 'fn) (parse-function-type ts fail i)]
     [(punct? ts i '|(|)
      (when (punct? ts (add1 i) '|)|)
        (fail 'surface-unexpected-token (span-at ts (add1 i))))
-     (let*-values ([(ty j) (parse-ty ts fail (add1 i))]
+     (let*-values ([(ty j) (parse-ty ts fail (add1 i) #:borrow? borrow?)]
                    [(_ k) (expect-punct ts fail j '|)|)])
        (values ty k))]
     [(eof? ts i) (fail 'surface-unexpected-eof (span-at ts i))]
     [else (fail 'surface-unexpected-token (span-at ts i))]))
 
-(define (parse-type-record ts fail i)
+(define (parse-type-record ts fail i borrow?)
   (define open (span-at ts i))
   (define j0 (skip-nl ts (add1 i)))
   (if (punct? ts j0 '|}|)
@@ -874,7 +924,7 @@
                           (values #t (add1 label-j))
                           (values #f label-j))]
                      [(colon colon-j) (expect-punct ts fail colon-start '|:|)]
-                     [(ty ty-j) (parse-ty ts fail colon-j)])
+                     [(ty ty-j) (parse-ty ts fail colon-j #:borrow? borrow?)])
           (define field
             `(TField ,(hull label-span (node-span ty))
                      (SLabel ,label-span ,label) ,ty

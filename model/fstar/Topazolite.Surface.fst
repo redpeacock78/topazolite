@@ -315,7 +315,9 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
          (byte_is a 116 && byte_is b 114 && byte_is c 97 &&
           byte_is d 105 && byte_is e 116) ||
          (byte_is a 108 && byte_is b 101 && byte_is c 97 &&
-          byte_is d 118 && byte_is e 101) then TkKw
+          byte_is d 118 && byte_is e 101) ||
+         (byte_is a 100 && byte_is b 101 && byte_is c 114 &&
+          byte_is d 101 && byte_is e 102) then TkKw
       else TkIdent
   | [a; b; c; d; e; f] ->
       if (byte_is a 100 && byte_is b 101 && byte_is c 114 &&
@@ -323,9 +325,14 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
          (byte_is a 114 && byte_is b 101 && byte_is c 116 &&
           byte_is d 117 && byte_is e 114 && byte_is f 110) then TkKw
       else TkIdent
+  | [a; b; c; d; e; f; g; h] ->
+      if (byte_is a 114 && byte_is b 101 && byte_is c 98 &&
+          byte_is d 111 && byte_is e 114 && byte_is f 114 &&
+          byte_is g 111 && byte_is h 119) then TkKw
+      else TkIdent
   | _ -> TkIdent
 
-// 命題 5。Racket の lexer.rkt が予約する 20 語のそれぞれに TkKw を返す。
+// 命題 5。Racket の lexer.rkt が予約する 22 語のそれぞれに TkKw を返す。
 // 予約語を接頭辞に持つ語と、予約語より短い語は TkIdent のままである。
 val keyword_word_reserved : unit -> Lemma
   (keyword_word [97uy; 110uy; 100uy] == TkKw /\
@@ -348,6 +355,8 @@ val keyword_word_reserved : unit -> Lemma
    keyword_word [100uy; 101uy; 114uy; 105uy; 118uy; 101uy] == TkKw /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy] == TkKw /\
    keyword_word [108uy; 101uy; 97uy; 118uy; 101uy] == TkKw /\
+   keyword_word [100uy; 101uy; 114uy; 101uy; 102uy] == TkKw /\
+   keyword_word [114uy; 101uy; 98uy; 111uy; 114uy; 114uy; 111uy; 119uy] == TkKw /\
    keyword_word [109uy; 97uy; 116uy; 99uy; 104uy] == TkIdent /\
    keyword_word [114uy; 101uy; 116uy; 117uy; 114uy; 110uy; 115uy] == TkIdent /\
    keyword_word [108uy; 101uy; 97uy; 118uy; 101uy; 115uy] == TkIdent /\
@@ -796,6 +805,10 @@ type sexpr =
   | SProjRec  : span -> sexpr -> list (span & string) -> sexpr
   | SRec      : span -> list (span & sexpr) -> sexpr
   | SBlock    : span -> list sdecl -> sexpr -> sexpr
+  | SBorrow   : span -> (span & string) -> sexpr
+  | SBorrowMut : span -> (span & string) -> sexpr
+  | SDeref    : span -> sexpr -> sexpr
+  | SReborrow : span -> sexpr -> sexpr
 and sarm =
   | SConstructorArm : span -> (span & string) -> list (span & string) -> sbodykind -> sexpr -> sarm
   | SMemberArm      : span -> span -> (span & string) -> sty -> sbodykind -> sexpr -> sarm
@@ -808,8 +821,11 @@ and sty =
   | TUnion    : span -> sty -> sty -> sty
   | TInter    : span -> sty -> sty -> sty
   | TApp      : span -> span -> string -> list sty -> sty
+  | TBorrow   : span -> sty -> sty
+  | TBorrowMut : span -> sty -> sty
 and sdecl =
   | SDecl     : span -> dkind -> span -> list (span & sty) -> option sty -> option seffrow -> sexpr -> sdecl
+  | SDerefAssign : span -> sexpr -> sexpr -> sdecl
 and seffrow =
   | SEffRow   : span -> list sefflabel -> seffrow
 and sefflabel =
@@ -844,6 +860,10 @@ let span_of_expr (e: sexpr) : Tot span =
   | SProjRec s _ _ -> s
   | SRec s _      -> s
   | SBlock s _ _  -> s
+  | SBorrow s _ -> s
+  | SBorrowMut s _ -> s
+  | SDeref s _ -> s
+  | SReborrow s _ -> s
 
 let span_of_ty (t: sty) : Tot span =
   match t with
@@ -853,10 +873,13 @@ let span_of_ty (t: sty) : Tot span =
   | TUnion s _ _ -> s
   | TInter s _ _ -> s
   | TApp s _ _ _ -> s
+  | TBorrow s _ -> s
+  | TBorrowMut s _ -> s
 
 let span_of_decl (d: sdecl) : Tot span =
   match d with
   | SDecl s _ _ _ _ _ _ -> s
+  | SDerefAssign s _ _ -> s
 
 let span_of_row (r: seffrow) : Tot span =
   match r with
@@ -910,6 +933,10 @@ let kids_of_expr (e: sexpr) : Tot (list node) =
   | SProjRec _ e1 _ -> [NExpr e1]
   | SRec _ fs     -> map NExpr (map snd fs)
   | SBlock _ ds t -> map NDecl ds @ [NExpr t]
+  | SBorrow _ _ -> []
+  | SBorrowMut _ _ -> []
+  | SDeref _ e -> [NExpr e]
+  | SReborrow _ e -> [NExpr e]
 
 let kids_of_ty (t: sty) : Tot (list node) =
   match t with
@@ -920,6 +947,8 @@ let kids_of_ty (t: sty) : Tot (list node) =
   | TUnion _ l r -> [NTy l; NTy r]
   | TInter _ l r -> [NTy l; NTy r]
   | TApp _ _ _ args -> map NTy args
+  | TBorrow _ inner -> [NTy inner]
+  | TBorrowMut _ inner -> [NTy inner]
 
 let kids_of_decl (d: sdecl) : Tot (list node) =
   match d with
@@ -927,6 +956,7 @@ let kids_of_decl (d: sdecl) : Tot (list node) =
       map NTy (map snd ps) @
       (match r with None -> [] | Some t -> [NTy t]) @
       (match row with None -> [] | Some eff -> [NRow eff]) @ [NExpr v]
+  | SDerefAssign _ target value -> [NExpr target; NExpr value]
 
 let kids_of_node (n: node) : Tot (list node) =
   match n with
@@ -1010,6 +1040,8 @@ let rec wf_ty (t: sty) : Tot bool (decreases t) =
   | TUnion s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
   | TInter s l r -> contains s (span_of_ty l) && wf_ty l && contains s (span_of_ty r) && wf_ty r
   | TApp s h _ args -> contains s h && wf_tys s args
+  | TBorrow s inner -> contains s (span_of_ty inner) && wf_ty inner
+  | TBorrowMut s inner -> contains s (span_of_ty inner) && wf_ty inner
 and wf_tys (s: span) (ts: list sty) : Tot bool (decreases ts) =
   match ts with
   | []      -> true
@@ -1063,6 +1095,10 @@ let rec wf_expr (e: sexpr) : Tot bool (decreases e) =
       s0.endByte = s.endByte && contains s s0 && wf_ifsome_clauses s clauses
   | SRec s fs     -> wf_fields s fs
   | SBlock s ds t -> wf_decls s ds && contains s (span_of_expr t) && wf_expr t
+  | SBorrow s (sx, _) -> contains s sx
+  | SBorrowMut s (sx, _) -> contains s sx
+  | SDeref s e -> contains s (span_of_expr e) && wf_expr e
+  | SReborrow s e -> contains s (span_of_expr e) && wf_expr e
 and wf_exprs (s: span) (es: list sexpr) : Tot bool (decreases es) =
   match es with
   | []      -> true
@@ -1114,6 +1150,9 @@ and wf_decl (d: sdecl) : Tot bool (decreases d) =
       && (match r with None -> true | Some t -> contains s (span_of_ty t) && wf_ty t)
       && wf_opt_row s row
       && contains s (span_of_expr v) && wf_expr v
+  | SDerefAssign s target value ->
+      contains s (span_of_expr target) && wf_expr target &&
+      contains s (span_of_expr value) && wf_expr value
 and wf_decls (s: span) (ds: list sdecl) : Tot bool (decreases ds) =
   match ds with
   | []      -> true
@@ -1218,35 +1257,36 @@ let rec wf_decls_elim s ds c =
   | []      -> ()
   | d :: tl -> wf_decls_elim s tl c
 
-val parse_span_containment : n:node -> c:node -> Lemma
-  (requires wf_node n /\ memP c (kids_of_node n))
-  (ensures contains (span_of_node n) (span_of_node c) /\ wf_node c)
-let parse_span_containment n c =
-  match n with
-  | NExpr (SInt _ _) | NExpr (SStr _ _) | NExpr (SUnit _)
-  | NExpr (SBool _ _) | NExpr (SVar _ _) | NTy (TName _ _) -> ()
-  | NExpr (SBoolIf s condition yes no) ->
+val parse_span_expr_children : e:sexpr -> c:node -> Lemma
+  (requires wf_expr e /\ memP c (kids_of_expr e))
+  (ensures contains (span_of_expr e) (span_of_node c) /\ wf_node c)
+let parse_span_expr_children e c =
+  match e with
+  | SInt _ _ | SStr _ _ | SUnit _ | SBool _ _ | SVar _ _
+  | SBorrow _ _ | SBorrowMut _ _ -> ()
+  | SBoolIf s condition yes no ->
       FStar.List.Tot.Properties.append_memP [NExpr condition] [NExpr yes; NExpr no] c;
       FStar.List.Tot.Properties.append_memP [NExpr yes] [NExpr no] c;
       wf_exprs_elim s [condition] c;
       wf_exprs_elim s [yes] c;
       wf_exprs_elim s [no] c
-  | NExpr (SReturn s e) -> wf_exprs_elim s [e] c
-  | NExpr (SLeave s e) -> wf_exprs_elim s [e] c
-  | NExpr (SFor s (sx, _) iterable body) ->
+  | SReturn s e -> wf_exprs_elim s [e] c
+  | SLeave s e -> wf_exprs_elim s [e] c
+  | SFor s (sx, _) iterable body ->
       FStar.List.Tot.Properties.append_memP
         [NExpr iterable] [NExpr body] c;
       wf_exprs_elim s [iterable] c;
       wf_exprs_elim s [body] c
-  | NExpr (SProj _ _ _) -> ()
-  | NExpr (SProjRec _ _ _) -> ()
-  | NExpr (SMatch s e arms) ->
+  | SProj _ _ _ | SProjRec _ _ _ -> ()
+  | SDeref s e -> wf_exprs_elim s [e] c
+  | SReborrow s e -> wf_exprs_elim s [e] c
+  | SMatch s e arms ->
       FStar.List.Tot.Properties.append_memP
         [NExpr e] (arm_children arms) c;
       wf_exprs_elim s [e] c;
       wf_arms_elim s arms c
-  | NExpr (SIfSome s clauses _) -> wf_ifsome_clauses_elim s clauses c
-  | NExpr (SFn s ps r row _ b) ->
+  | SIfSome s clauses _ -> wf_ifsome_clauses_elim s clauses c
+  | SFn s ps r row _ b ->
       FStar.List.Tot.Properties.append_memP
         (map NTy (option_stys (map snd ps)))
         ((match r with None -> [] | Some t -> [NTy t]) @
@@ -1257,22 +1297,34 @@ let parse_span_containment n c =
       FStar.List.Tot.Properties.append_memP
         (match row with None -> [] | Some eff -> [NRow eff]) [NExpr b] c;
       wf_tys_elim s (option_stys (map snd ps)) c
-  | NExpr (SApply s f a) -> wf_exprs_elim s a c
-  | NExpr (SConstruct s _ a) -> wf_exprs_elim s a c
-  | NExpr (SRec s fs) -> wf_fields_elim s fs c
-  | NExpr (SBlock s ds t) ->
+  | SApply s f a -> wf_exprs_elim s a c
+  | SConstruct s _ a -> wf_exprs_elim s a c
+  | SRec s fs -> wf_fields_elim s fs c
+  | SBlock s ds t ->
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
       wf_decls_elim s ds c
-  | NTy (TRec s fs) -> wf_tys_elim s fs c
-  | NTy (TApp s _ _ args) -> wf_tys_elim s args c
-  | NTy (TFn s ps r row) ->
+val parse_span_ty_children : t:sty -> c:node -> Lemma
+  (requires wf_ty t /\ memP c (kids_of_ty t))
+  (ensures contains (span_of_ty t) (span_of_node c) /\ wf_node c)
+let parse_span_ty_children t c =
+  match t with
+  | TName _ _ -> ()
+  | TRec s fs -> wf_tys_elim s fs c
+  | TApp s _ _ args -> wf_tys_elim s args c
+  | TFn s ps r row ->
       FStar.List.Tot.Properties.append_memP
         (map NTy ps) ([NTy r] @ (match row with None -> [] | Some eff -> [NRow eff])) c;
       FStar.List.Tot.Properties.append_memP
         [NTy r] (match row with None -> [] | Some eff -> [NRow eff]) c;
       wf_tys_elim s ps c
-  | NTy (TUnion _ _ _) | NTy (TInter _ _ _) -> ()
-  | NDecl (SDecl s _ _ ps r row v) ->
+  | TUnion _ _ _ | TInter _ _ _ -> ()
+  | TBorrow s inner | TBorrowMut s inner -> wf_tys_elim s [inner] c
+val parse_span_decl_children : d:sdecl -> c:node -> Lemma
+  (requires wf_decl d /\ memP c (kids_of_decl d))
+  (ensures contains (span_of_decl d) (span_of_node c) /\ wf_node c)
+let parse_span_decl_children d c =
+  match d with
+  | SDecl s _ _ ps r row v ->
       FStar.List.Tot.Properties.append_memP
         (map NTy (map snd ps))
         ((match r with None -> [] | Some t -> [NTy t]) @
@@ -1283,8 +1335,35 @@ let parse_span_containment n c =
       FStar.List.Tot.Properties.append_memP
         (match row with None -> [] | Some eff -> [NRow eff]) [NExpr v] c;
       wf_tys_elim s (map snd ps) c
-  | NRow (SEffRow s labels) -> wf_labels_elim s labels c
-  | NLabel (SEffLabel _ _ _) -> ()
+  | SDerefAssign s target value ->
+      FStar.List.Tot.Properties.append_memP [NExpr target] [NExpr value] c;
+      FStar.List.Tot.Properties.append_memP [NExpr value] [] c;
+      wf_exprs_elim s [target] c;
+      wf_exprs_elim s [value] c
+val parse_span_row_children : r:seffrow -> c:node -> Lemma
+  (requires wf_row r /\ memP c (map NLabel (match r with SEffRow _ labels -> labels)))
+  (ensures contains (span_of_row r) (span_of_node c) /\ wf_node c)
+let parse_span_row_children r c =
+  match r with
+  | SEffRow s labels -> wf_labels_elim s labels c
+val parse_span_label_children : l:sefflabel -> c:node -> Lemma
+  (requires wf_label l /\ memP c (match l with SEffLabel _ _ arg ->
+                                      match arg with None -> [] | Some t -> [NTy t]))
+  (ensures contains (span_of_label l) (span_of_node c) /\ wf_node c)
+let parse_span_label_children l c =
+  match l with
+  | SEffLabel _ _ _ -> ()
+
+val parse_span_containment : n:node -> c:node -> Lemma
+  (requires wf_node n /\ memP c (kids_of_node n))
+  (ensures contains (span_of_node n) (span_of_node c) /\ wf_node c)
+let parse_span_containment n c =
+  match n with
+  | NExpr e -> parse_span_expr_children e c
+  | NTy t -> parse_span_ty_children t c
+  | NDecl d -> parse_span_decl_children d c
+  | NRow r -> parse_span_row_children r c
+  | NLabel l -> parse_span_label_children l c
 
 type core_ty =
   | CTName  : string -> core_ty
@@ -1341,6 +1420,8 @@ let rec lower_core_ty (t: sty) : Tot core_ty (decreases t) =
   | TUnion _ left right -> CTUnion (lower_core_ty left) (lower_core_ty right)
   | TInter _ left right -> CTInter (lower_core_ty left) (lower_core_ty right)
   | TApp _ _ name args -> CTApp name (lower_core_tys args)
+  | TBorrow _ inner -> lower_core_ty inner
+  | TBorrowMut _ inner -> lower_core_ty inner
 and lower_core_tys (types: list sty) : Tot (list core_ty) (decreases types) =
   match types with
   | [] -> []
@@ -1366,6 +1447,10 @@ let one_to_one (e: sexpr) : Tot bool =
   | SProjRec _ _ _ -> false
   | SRec _ _     -> true
   | SBlock _ _ _ -> false
+  | SBorrow _ _ -> true
+  | SBorrowMut _ _ -> true
+  | SDeref _ _ -> true
+  | SReborrow _ _ -> true
 
 let row_or_empty (s: span) (row: option seffrow) : Tot seffrow =
   match row with
@@ -1427,6 +1512,10 @@ let rec lower_expr (e: sexpr) : Tot core (decreases e) =
       CLet s (span_of_expr e1) (lower_expr e1) (CRec s (proj_fields (span_of_expr e1) ls))
   | SRec s fs     -> CRec s (lower_fields fs)
   | SBlock _ ds t -> lower_block ds (lower_expr t)
+  | SBorrow s _ -> CVar s
+  | SBorrowMut s _ -> CVar s
+  | SDeref s e -> CNarrativeExpr s (lower_expr e)
+  | SReborrow s e -> CNarrativeExpr s (lower_expr e)
 and lower_exprs (es: list sexpr) : Tot (list core) (decreases es) =
   match es with
   | []      -> []
@@ -1510,6 +1599,10 @@ and lower_decl (d: sdecl) (rest: core) : Tot core (decreases d) =
       CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest
   | SDecl s DReassign sx _ _ _ v ->
       CLet (hull s (span_of_core rest)) s (CReassign s sx (lower_expr v)) rest
+  | SDerefAssign s target value ->
+      CLet (hull s (span_of_core rest)) s
+        (CLet s (span_of_expr target) (lower_expr target)
+          (CReassign s (span_of_expr target) (lower_expr value))) rest
   | SDecl s DExpr sx _ _ _ v ->
       CLet (hull s (span_of_core rest)) sx (lower_stmt v) rest
   | SDecl s DFnDecl sx ps _ row v ->
@@ -1552,6 +1645,10 @@ and lower_stmt (e: sexpr) : Tot core (decreases e) =
       discard_stmt s (CLet s (span_of_expr e1) (lower_expr e1)
                         (CRec s (proj_fields (span_of_expr e1) ls)))
   | SRec s fs -> discard_stmt s (CRec s (lower_fields fs))
+  | SBorrow s _ -> discard_stmt s (CVar s)
+  | SBorrowMut s _ -> discard_stmt s (CVar s)
+  | SDeref s e -> discard_stmt s (CNarrativeExpr s (lower_expr e))
+  | SReborrow s e -> discard_stmt s (CNarrativeExpr s (lower_expr e))
 and lower_arms_stmt (arms: list sarm) : Tot (list core_branch) (decreases arms) =
   match arms with
   | [] -> []
@@ -1600,6 +1697,10 @@ let lower_preserves_span e =
   | SProjRec _ _ _ -> ()
   | SRec _ _     -> ()
   | SBlock _ _ _ -> ()
+  | SBorrow _ _ -> ()
+  | SBorrowMut _ _ -> ()
+  | SDeref _ _ -> ()
+  | SReborrow _ _ -> ()
 
 val lower_ifsome_root_spans : s:span -> clauses:list sifclause
   -> s0:span -> Lemma
@@ -1623,6 +1724,7 @@ let lower_block_root_span d ds tail =
   | SDecl _ DBind _ _ _ _ _ -> ()
   | SDecl _ (DTryBind _) _ _ _ _ _ -> ()
   | SDecl _ DReassign _ _ _ _ _ -> ()
+  | SDerefAssign _ _ _ -> ()
   | SDecl _ DExpr _ _ _ _ _ -> ()
   | SDecl _ DFnDecl _ _ _ _ _ -> ()
 
@@ -1649,6 +1751,10 @@ let lower_stmt_preserves_span e =
   | SProjRec _ _ _ -> ()
   | SRec _ _ -> ()
   | SBlock _ _ _ -> ()
+  | SBorrow _ _ -> ()
+  | SBorrowMut _ _ -> ()
+  | SDeref _ _ -> ()
+  | SReborrow _ _ -> ()
 
 val lower_stmt_block_root_span : s:span -> d:sdecl -> ds:list sdecl -> tail:sexpr -> Lemma
   (span_of_core (lower_stmt (SBlock s (d :: ds) tail))

@@ -567,8 +567,11 @@
    (check-equal? (p-code src) "E-SUR-005")))
 
 (test-case
- "the three new keywords are no longer identifiers"
- (for ([src (in-list '("let trait = 0\n0" "let impl = 0\n0" "let for = 0\n0"))])
+ "予約語は識別子やラベルに使えない"
+ (for ([src (in-list '("let trait = 0\n0" "let impl = 0\n0" "let for = 0\n0"
+                       "let deref = 0\n0" "let reborrow = 0\n0"
+                       "fn deref() { () }\n0" "r.deref"
+                       "fn reborrow() { () }\n0" "r.reborrow"))])
    (check-true (diagnostic? (parse (lex/string 'src src))))))
 
 (test-case
@@ -1022,3 +1025,86 @@
  (check-match (p "x => x") `(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr ,_)))
  (check-match (p "let x ?= some(1)\n0")
               `(SProgram ,_ ((STryBind ,_ (SName ,_ x) ,_)) (SInt ,_ 0))))
+
+(define (p-binding-type source)
+  (match (p source)
+    [`(SProgram ,_ ((SBind ,_ ,_ ,_ ,ty ,_)) ,_) ty]
+    [other other]))
+
+(define (source-span-of-char source char [occurrence 0])
+  (define matches
+    (for/list ([index (in-range (string-length source))]
+               #:when (char=? (string-ref source index) char))
+      index))
+  (define index (list-ref matches occurrence))
+  (sp index (add1 index)))
+
+(define (check-parse-error-at source expected-id expected-span)
+  (define result (p source))
+  (check-true (diagnostic? result) (format "診断を期待したが ~s" result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) expected-id)
+    (check-equal? (diagnostic-primary-span result) expected-span)))
+
+(test-case "借用型は let 注釈の再帰位置で読み、中置 Intersection より強く結合する"
+  (check-match (p-binding-type "let b: &Int = x\n0")
+               `(TBorrow ,_ (TName ,_ Int)))
+  (check-match (p-binding-type "let b: &mut Res = x\n0")
+               `(TBorrowMut ,_ (TName ,_ Res)))
+  (check-match (p-binding-type "let b: &(T & U) = x\n0")
+               `(TBorrow ,_ (TInter ,_ (TName ,_ T) (TName ,_ U))))
+  (check-match (p-binding-type "let b: &(&T) = x\n0")
+               `(TBorrow ,_ (TBorrow ,_ (TName ,_ T))))
+  (check-match (p-binding-type "let b: { n: &Int } = x\n0")
+               `(TRec ,_ ((TField ,_ (SLabel ,_ n) (TBorrow ,_ (TName ,_ Int))))))
+  (check-match (p-binding-type "let b: Option<&Int> = x\n0")
+               `(TApp ,_ (SName ,_ Option) ((TBorrow ,_ (TName ,_ Int)))))
+  (check-match (p-binding-type "let b: &Int & Unit = x\n0")
+               `(TInter ,_ (TBorrow ,_ (TName ,_ Int)) (TName ,_ Unit))))
+
+(test-case "借用型の二重 prefix は二つ目の ampersand で拒否する"
+  (for ([source (in-list '("let x: &&Int = y\n0"
+                           "let x: &mut &Int = y\n0"))])
+    (check-parse-error-at source "E-SUR-005"
+                          (source-span-of-char source #\& 1))))
+
+(test-case "let 注釈以外の借用型と入れ子の関数型内の借用型は拒否する"
+  (for ([source (in-list
+                 '("fn f(x: &Int) { () }\n0"
+                   "fn f() -> &Int { () }\n0"
+                   "fn(x: &Int) => x"
+                   "fn() -> &Int { () }"
+                   "type Borrow = &Int\n0"
+                   "type BorrowBox =\n | box<&Int>\n0"
+                   "let f: fn(&Int) -> Int = x\n0"
+                   "let f: fn(Int) -> &Int = x\n0"))])
+    (check-parse-error-at source "E-SUR-005"
+                          (source-span-of-char source #\&))))
+
+(define (p-block-statement source)
+  (match (p (format "fn f() {\n  ~a\n  ()\n}\n0" source))
+    [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_ (SBlock ,_ (,statement) ,_))) ,_)
+     statement]
+    [other other]))
+
+(test-case "借用式は所定の Surface 構成子になり射影へ連結する"
+  (check-match (p-expr "&x") `(SBorrow ,_ (SName ,_ x)))
+  (check-match (p-expr "&mut x") `(SBorrowMut ,_ (SName ,_ x)))
+  (check-match (p-expr "deref(b)") `(SDeref ,_ (SVar ,_ b)))
+  (check-match (p-expr "reborrow(b)") `(SReborrow ,_ (SVar ,_ b)))
+  (check-match (p-expr "(&x).l")
+               `(SProj ,_ (SBorrow ,_ (SName ,_ x)) (SLabel ,_ l)))
+  (check-match (p-expr "deref(b.l)")
+               `(SDeref ,_ (SProj ,_ (SVar ,_ b) (SLabel ,_ l)))))
+
+(test-case "deref の代入先だけを SDerefAssign にし、式文や右辺を誤認しない"
+  (check-match (p-block-statement "deref(b) = v")
+               `(SDerefAssign ,_ (SDeref ,_ (SVar ,_ b)) (SVar ,_ v)))
+  (check-match (p-block-statement "deref(f(g(b))) = v")
+               `(SDerefAssign ,_ (SDeref ,_ (SApply ,_ (SVar ,_ f) ,_)) (SVar ,_ v)))
+  (check-match (p-block-statement "deref(b)")
+               `(SExprStmt ,_ (SDeref ,_ (SVar ,_ b))))
+  (check-match (p-block-statement "deref(b) == v")
+               `(SExprStmt ,_ (SApply ,_ (SVar ,_ %op-eq) ,_)))
+  (check-match (p-block-statement "x = deref(b)")
+               `(SReassign ,_ (SName ,_ x) (SDeref ,_ (SVar ,_ b)))))

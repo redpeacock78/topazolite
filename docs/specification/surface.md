@@ -1121,8 +1121,8 @@ F* 側では、Redex の有限例では示せない Surface の全域性と span
 1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
 2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
 3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
-4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SBoolIf`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn` の 15 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
-5. **予約語**：Racket の `lexer.rkt` が予約する 20 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SBoolIf`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow` の 19 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+5. **予約語**：Racket の `lexer.rkt` が予約する 22 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
 6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
 7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
 
@@ -1150,12 +1150,12 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 
 ### 8.1 Surface AST の対応
 
-- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFor`、`SMatch`、`SIfSome`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SInt`、`SStr`、`SUnit`、`SBool`、`SVar`、`SFor`、`SMatch`、`SIfSome`、`SFn`、`SApply`、`SConstruct`、`SProj`、`SProjRec`、`SRec`、`SBlock`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SReturn` は、同名の F* 構成子と 1 対 1 で対応する。 [REQ: SUR-015]
 - `SLeave` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SBoolIf` は、同名の F* 構成子と 1 対 1 で対応する。F* の lowering は既存の `CLet` と `CEliminate` を生成する。
-- `TName`、`TRec`、`TFn`、`TApp` は、同名の F* 構成子と 1 対 1 で対応する。
-- `SBind`、`STryBind`、`SReassign`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。
+- `TName`、`TRec`、`TFn`、`TApp`、`TBorrow`、`TBorrowMut` は、同名の F* 構成子と 1 対 1 で対応する。
+- `SBind`、`STryBind`、`SReassign`、`SExprStmt`、`SFnDecl` は、F* 側の `SDecl` へ多対 1 で対応する。`SDerefAssign` は同名の F* 構成子と 1 対 1 で対応する。
 - `TUnion` と `TInter` は、同名の F* 構成子と 1 対 1 で対応する。
 - `SEffRow` と `SEffLabel` は、同名の F* 構成子と 1 対 1 で対応する。
 - `STypeDecl` と `SProgram` は、型別名の環境と宣言の並びへ消費されるため、対応する F* 構成子を持たない。
@@ -1185,7 +1185,7 @@ P2m3b 後の parity 件数は、Racket Surface が 36 個、UCore+ が 13 個、
 `STryBind` と `TryBind` を加えた後の parity 件数は、Racket Surface が 37 個、UCore+ が 14 個、F* が 36 個である。
 `SExprStmt` は Racket Surface の構成子であり、F* では `DExpr` を持つ既存の `SDecl` へ対応する。
 `SExprStmt` を加えた後の parity 件数は、Racket Surface が 38 個、UCore+ が 14 個、F* が 36 個である。
-F* の Surface 構成子一覧は `sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個の計 27 個を含む。
+F* の Surface 構成子一覧は `sexpr` 22 個、`sty` 8 個、`sdecl` 2 個、Effect row 2 個の計 34 個を含む。
 P2h1 で加えた `STraitDecl` と `SImplDecl`、P2h2 で加えた `SDeriveDecl`、P2l2b1 で加えた `SDataDecl` は Racket 側だけにあり、parity 表で「対応なし」とする。
 P2i2 は `SFn` の仮引数欄を拡張するが、新しい Surface 構成子を加えないため、構成子の一覧と件数は変わらない。
 P2k1 は `SReturn` と F* の `CReturn` を加える。
@@ -1197,8 +1197,9 @@ SUR-002c1 は UCore+ に `TraitCall` を加え、F* に対応構成子を持た�
 SUR-002c2 は UCore+ に `StrHole` を加え、F* に対応構成子を持たないため parity 件数を 43/21/42 とする。
 SUR-004a1a は UCore+ に `LexicalScope` を加え、F* に対応構成子を持たないため parity 件数を 43/22/42 とする。
 SUR-004a1b は UCore+ に借用の型と式の 7 構成子を加え、F* に対応構成子を持たないため parity 件数を 43/29/42 とする。
+SUR-004a1b Task 5 は Surface と F* に `TBorrow`、`TBorrowMut`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow`、`SDerefAssign` の 7 構成子を加え、`deref` と `reborrow` を予約語へ加えたため、parity 件数を 50/29/49、予約語数を 22 とする。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
-F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 20 語を予約し、`match` を識別子として扱う。
+F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 22 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。
 UCore+ の `Eliminate` は constructor 枝と member 枝を持ち、F* の `CEliminate` も補助型 `core_branch` の tag で区別する。
 `fstar-parity-test.rkt` は Surface の `SMatch` と UCore+ の member 枝の witness を検査する。
@@ -1215,7 +1216,7 @@ F* 側では `Eliminate` に対応する `CEliminate`、`NarrativeExpr` に対�
 `FnDecl` と `Recur` から `CRecur` への行は多対 1 の対応であり、F* の lowering は関数宣言を `CLet` で包まず直接 `CRecur` へ写す。
 `TraitCall` は elaboration が実装を解決して `Apply` と `Proj` へ消去する中間節点であり、F* に対応する構成子は無い。
 `Borrowed` と `BorrowedMut` は region を省略した借用型、`Borrow`、`BorrowMut`、`Read`、`Reborrow`、`Assign` はそれぞれ借用、可変借用、読み出し、再借用、書込みを表す中間形であり、elaboration が Core の既存の借用形へ下ろす。F* に対応する構成子は無い。
-UCore+ の対象構成子リストは 29 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 42 個（`sexpr` 18 個、`sty` 6 個、`sdecl` 1 個、Effect row 2 個、`core` 15 個）である。
+UCore+ の対象構成子リストは 29 個、F* 側の `core` の構成子リストは 15 個であり、F* 側の全対象構成子は 49 個（`sexpr` 22 個、`sty` 8 個、`sdecl` 2 個、Effect row 2 個、`core` 15 個）である。
 P2m3b は枝の形を広げるが、これらの parity 対象構成子リストの件数は増やさない。
 
 `Suspend`、`Move`、`TypeMake`、`LetType`、`MacroCall` など、lowering が生成しない UCore+ 構成子は対象外とする。
