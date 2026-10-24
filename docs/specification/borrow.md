@@ -280,9 +280,17 @@ Core の `Apply` に専用の呼出し region は無い。
 `Borrow` または `BorrowMut` で新たに作る実引数の loan は、その式を包む最も内側の Scope の region に入り、その Scope の退場まで生きる。
 `Apply` 自体は loan を短くしないため、直接の借用式を渡す裸の `Apply` では、loan は呼出しを含む外側の Scope の残りの範囲にも重なる。
 
-Surface の lowering が借用を作る実引数を持つ呼出しを生成するときは、借用の実引数を一時の束縛へ置き、同じ一つの Scope の中に全実引数と `Apply` を入れる。
-実引数ごとに別の Scope へ分けると、同じ呼出しに渡す借用どうしの重なりを判定できない。
-`RegionApp` に渡す region は借用した owner の region のままとし、実引数を包む Scope の region へ置き換えない。
+次の条件をすべて満たす Core では、呼出しのために新たに作った実引数の loan は、`Apply` を含む Scope の退場で終わる。
+
+1. 借用を作るすべての実引数を同じ一つの Scope の中で作り、その Scope の中に `Apply` を置く。
+   実引数ごとに別の Scope へ分けると、同じ呼出しへ渡す借用どうしの重なりを判定できない。
+2. `RegionApp` に渡す region は借用した owner の region とする。
+   Scope 内の point に対応する region を渡す形は `E-TYP-023` で拒否される。
+3. 呼出しの結果型は再帰的に借用を含まない。
+4. latent row の `Return` operation の payload は再帰的に借用を含まない。
+   `Option` で包まれた payload も同じである。
+5. 借用済みの値を包んでも、その値の loan は短くならない。
+   呼出しの間だけ有効にするには、Scope の中で `Reborrow` してから渡す。
 
 ```text
 (Scope ()
@@ -290,12 +298,8 @@ Surface の lowering が借用を作る実引数を持つ呼出しを生成す�
     (Apply sink t)))
 ```
 
-呼出しの結果型を再帰的に調べ、借用を含む場合は呼出しを Scope で包まない。
-同じく latent row の `Return` または `Leave` の payload が借用を含み、外側の handler へ届く呼出しも包まない。
-これらの値は Scope の出口を越えるためである。
-
-すでに借用である値を Scope で包んでも、その値の loan は短くならない。
-呼出しの間だけ有効な loan が必要な場合は、その Scope の中で `Reborrow` してから渡す。
+上の 3 または 4 を満たさず、Scope 内で新たに作った借用が呼出し結果または `Return` payload として Scope の外へ届く形は、loan を Scope の退場で短縮せず、`E-BOR-020` で拒否する。
+結果型に借用を含む呼出しと、借用を含む `Return` payload を持つ呼出しを、それぞれこの形で型検査すると `E-BOR-020` になる。
 
 部分適用は借用が現れる署名を運べない。
 置き換えは呼出しの出現に結び付いており、部分適用が作る関数値には出現の情報が残らない。
