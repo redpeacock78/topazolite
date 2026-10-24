@@ -1948,6 +1948,14 @@
   (define schema
     (for/list ([row (in-list schema-core)])
       (list (first row) (map rewrap (second row)))))
+  (define borrowed-view?
+    (match (normalize-type data-type)
+      [`(Borrowed ,_ ,_) #t]
+      [`(BorrowedMut ,_ ,_) #t]
+      [_ #f]))
+  (define variant-view? (and borrowed-view? (> (length schema) 1)))
+  (define inherited-variants
+    (capability-variant-views Λ scrutinee))
   (unless (= (length branches) (length schema))
     (fail 'non-exhaustive-eliminate node))
   (define plain-branches (map peel-branch branches))
@@ -1983,7 +1991,7 @@
   ;; 期待型を与える check-eliminate は診断も受け渡しも無しに受理していた。
   ;; この 3 分岐を branch-contexts へ置くことで、その非対称が消える。
   (define field-table
-    (and carries? (capability-field-table Λ scrutinee)))
+    (and carries? (capability-field-entries Λ scrutinee)))
   ;; 表が無い scrutinee でも、借用そのものが所有者を運んでいれば欄へ辿れる。
   ;; その場合は capability の path の末尾へ欄の位置を積む。
   (define scrutinee-ws
@@ -2004,21 +2012,27 @@
     (define bindings
       (cond
         [field-table
-         (capability-branch-bindings field-table constructor binders)]
-        [carries?
-         (capability-projection-bindings scrutinee-ws binders)]
+         (capability-branch-bindings field-table constructor binders
+                                     variant-view? borrowed-view? (set))]
+         [carries?
+         (capability-projection-bindings scrutinee-ws binders
+                                         variant-view? borrowed-view?
+                                         inherited-variants)]
         [else
-         (capability-branch-bindings #f constructor binders)]))
+         (capability-branch-bindings #f constructor binders
+                                     variant-view? borrowed-view? (set))]))
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
                 ([x (in-list binders)] [τ (in-list field-types)]
                  [entry (in-list bindings)])
         (region-ctx-add-token (register-owner Λ_acc x τ)
                               x
-                              (car entry)
+                              (capability-entry-keys entry)
                               #f
                               #f
-                              (cdr entry))))
+                              (capability-entry-fields entry)
+                              (capability-entry-variants entry)
+                              (capability-entry-borrowed-view? entry))))
     (list checked-body
           (extend environment
                   binders
@@ -2298,7 +2312,9 @@
                1)
       (fail 'non-exhaustive-union-eliminate node)))
   (define borrowed? (pair? wrapper))
-  (define field-table (capability-field-table Λ scrutinee))
+  (define field-table (capability-field-entries Λ scrutinee))
+  (define inherited-variants
+    (capability-variant-views Λ scrutinee))
   (define scrutinee-ws
     (and borrowed? (borrow-token-key Λ scrutinee)))
   (when (and borrowed? (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
@@ -2326,15 +2342,21 @@
           (check-resource-branch-encoding
            (list x) (list member) body node fail)))
     (define capability
-      (or (member-capability member)
-          (and borrowed?
-               (cons (for/set ([cap (in-set scrutinee-ws)])
-                       (cons (car cap) (append (cdr cap) '(Payload))))
-                     #f))
-          (cons (set) #f)))
+      (capability-union-binding
+       field-table member scrutinee-ws borrowed?
+       (or (member-capability member)
+           (and borrowed?
+                (capability-union-binding #f member scrutinee-ws borrowed?
+                                          #f borrowed? inherited-variants)))
+       borrowed? inherited-variants))
     (define Λ_branch
       (region-ctx-add-token (register-owner Λ x binding-type)
-                            x (car capability) #f #f (cdr capability)))
+                            x
+                            (capability-entry-keys capability)
+                            #f #f
+                            (capability-entry-fields capability)
+                            (capability-entry-variants capability)
+                            (capability-entry-borrowed-view? capability)))
     (list checked-body
           (extend environment
                   (list x)
@@ -3035,7 +3057,8 @@
      (define body-context
        (for/fold ([Λ_body (enter-child Λ 0)])
                  ([x (in-list parameters)] [w (in-list formals)] #:when w)
-         (region-ctx-add-token Λ_body x (set (cons w '())))))
+         (region-ctx-add-token Λ_body x (set (cons w '()))
+                               #f #f #f (set) #t)))
      (define closure-psi
        (flow-pin-captures Ψ body body-environment parameters))
      (define collector (box '()))
@@ -3158,7 +3181,8 @@
   (define body-context
     (for/fold ([Λ_b (enter-child Λ 0)])
               ([x (in-list parameters)] [w (in-list formals)] #:when w)
-      (region-ctx-add-token Λ_b x (set (cons w '())))))
+      (region-ctx-add-token Λ_b x (set (cons w '()))
+                            #f #f #f (set) #t)))
   (define (fixpoint Ψ_in)
     (define collector (box '()))
     (define tentative
@@ -3238,7 +3262,8 @@
   (define body-context
     (for/fold ([Λ_b (enter-child Λ 0)])
               ([x (in-list parameters)] [w (in-list formals)] #:when w)
-      (region-ctx-add-token Λ_b x (set (cons w '())))))
+      (region-ctx-add-token Λ_b x (set (cons w '()))
+                            #f #f #f (set) #t)))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in)
     (define collector (box '()))
@@ -3944,7 +3969,15 @@
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
-  (for ([cap (in-set (borrow-token-key Λ target #:fail fail))])
+  (define target-capabilities (borrow-token-key Λ target #:fail fail))
+  (when
+      (for/or ([target-cap (in-set target-capabilities)])
+        (for/or ([view (in-set (region-ctx-variant-views Λ))])
+          (and (equal? (car target-cap) (car view))
+               (path-prefix? (cdr target-cap) (cdr view))
+               (not (equal? (cdr target-cap) (cdr view))))))
+    (fail 'borrow-conflicting-use core))
+  (for ([cap (in-set target-capabilities)])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
                        core 'borrow-conflicting-use #f fail))
   (list 'Unit (rows-union (list ε_target ε_value '(Mutation))) Ψ_2))
@@ -5413,12 +5446,14 @@
         ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
         ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-        (define fields (capability-field-table Λ bound))
+        (define fields (capability-field-entries Λ bound))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
                                 callable
-                                fields))
+                                fields
+                                (capability-variant-views Λ bound)
+                                borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
           (flow-enter-let bound-psi x binding-mode (peel-ty type) binding-type))
@@ -5475,12 +5510,14 @@
      ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
      ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-     (define fields (capability-field-table Λ bound))
+     (define fields (capability-field-entries Λ bound))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
                              callable
-                             fields))
+                             fields
+                             (capability-variant-views Λ bound)
+                             borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)
        (flow-enter-let (second bound-result) x 'let binding-type binding-type))
@@ -5587,9 +5624,12 @@
      (define handler-Λ
        (region-ctx-add-token
         (enter-child Λ 0) handler-binder
-        (car captured-capability)
+        (capability-entry-keys captured-capability)
         (capability-source handler-payload-type)
-        #f (cdr captured-capability)))
+        #f
+        (capability-entry-fields captured-capability)
+        (capability-entry-variants captured-capability)
+        (borrow-typed? (normalize-type handler-payload-type))))
      (define handler-result
        (match (peel-branch handler-clause)
          [`(,name -> ,handler)
@@ -6245,12 +6285,14 @@
         ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
         ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-        (define fields (capability-field-table Λ bound))
+        (define fields (capability-field-entries Λ bound))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
                                 callable
-                                fields))
+                                fields
+                                (capability-variant-views Λ bound)
+                                borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
           (flow-enter-let bound-psi x binding-mode (peel-ty type) binding-type))
@@ -6306,12 +6348,14 @@
      ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
      ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-     (define fields (capability-field-table Λ bound))
+     (define fields (capability-field-entries Λ bound))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
                              callable
-                             fields))
+                             fields
+                             (capability-variant-views Λ bound)
+                             borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)
        (flow-enter-let (second bound-result) x 'let binding-type binding-type))

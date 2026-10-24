@@ -14,8 +14,10 @@
          enter-child
          region-ctx-add-owner region-ctx-owner
          region-ctx-add-token region-ctx-token region-ctx-field-table
+         region-ctx-variant-views capability-variant-views
          region-ctx-source region-ctx-summary
          (struct-out borrow-capability)
+         (struct-out capability-entry)
          (struct-out flow-entry)
          (struct-out flow-state)
          (struct-out psi)
@@ -33,7 +35,9 @@
          borrow-typed?
          unbound-borrowed-type?
          borrow-designator?
-         borrow-token-key capability-field-table capability-branch-bindings
+         borrow-token-key capability-field-table capability-field-entries
+         capability-branch-bindings
+         capability-union-binding
          capability-flow-of handle-return-capability
          capability-projection-bindings
          path-wf? record-path? owner-path?
@@ -56,9 +60,12 @@
 ;; §5.4。tokens の値。keys は capability の集合、source は §8.1 の起点の
 ;; α 集合である。summary は関数の値を束ねた名前が運ぶ出現局所の要約であり、
 ;; 借用でない束縛にも付く。fields は構築子の label と欄の位置ごとの
-;; capability 表である。いずれも #f のときは、読む側が今までどおり
-;; 型から取り直す。
-(struct borrow-capability (keys source summary fields) #:transparent)
+;; capability 表、variants は variant に依存する view の集合である。
+;; borrowed-view? は借用を含む値ではなく、借用 view 自体かを示す。
+(struct borrow-capability (keys source summary fields variants borrowed-view?) #:transparent)
+
+;; variant に依存する印は、通常の path と混同しないよう別欄に保持する。
+(struct capability-entry (keys variants fields borrowed-view?) #:transparent)
 
 (define (empty-region-ctx)
   (region-ctx #f '() (hash) (hash)))
@@ -76,10 +83,12 @@
 (define (region-ctx-owner Λ w)
   (hash-ref (region-ctx-owners Λ) w #f))
 
-(define (region-ctx-add-token Λ x ws [source #f] [summary #f] [fields #f])
+(define (region-ctx-add-token Λ x ws [source #f] [summary #f] [fields #f]
+                              [variants (set)] [borrowed-view? #f])
   (struct-copy region-ctx Λ
                [tokens (hash-set (region-ctx-tokens Λ) x
-                                 (borrow-capability ws source summary fields))]))
+                                 (borrow-capability ws source summary fields
+                                                    variants borrowed-view?))]))
 
 (define (region-ctx-token Λ x)
   (define entry (hash-ref (region-ctx-tokens Λ) x #f))
@@ -103,6 +112,12 @@
 (define (region-ctx-field-table Λ x)
   (define entry (hash-ref (region-ctx-tokens Λ) x #f))
   (and (borrow-capability? entry) (borrow-capability-fields entry)))
+
+(define (region-ctx-variant-views Λ)
+  (for/fold ([views (set)]) ([entry (in-hash-values (region-ctx-tokens Λ))])
+    (if (borrow-capability? entry)
+        (set-union views (borrow-capability-variants entry))
+        views)))
 
 ;; Ψ は評価順に流れる permission 状態である。Λ と違い、木を下る向きだけでは
 ;; 足りない。(Let (y τ) (Reborrow x) c_body) の c_body は (Reborrow x) の
@@ -647,12 +662,46 @@
 (define (capability-set keys)
   (for/set ([key (in-set keys)]) (capability-key key)))
 
-(define (only ws) (cons ws #f))
+(define (only ws [variants (set)] [borrowed-view? #f])
+  (capability-entry ws variants #f borrowed-view?))
+
+(define (entry-ws entry)
+  (if (capability-entry? entry) (capability-entry-keys entry) (car entry)))
+
+(define (entry-variants entry)
+  (if (capability-entry? entry) (capability-entry-variants entry) (set)))
+
+(define (entry-borrowed-view? entry)
+  (and (capability-entry? entry)
+       (capability-entry-borrowed-view? entry)))
+
+(define (entry-table entry)
+  (if (capability-entry? entry) (capability-entry-fields entry) (cdr entry)))
+
+(define (entry-add-variant-view entry variant? [borrowed-view? #f]
+                                [inherited-variants (set)])
+  (struct-copy capability-entry entry
+               [variants
+                (set-union (entry-variants entry)
+                           inherited-variants
+                           (if variant? (entry-ws entry) (set)))]
+               [borrowed-view?
+                (or (entry-borrowed-view? entry) borrowed-view?)]))
+
+(define (entry-with-keys entry keys)
+  (struct-copy capability-entry entry [keys keys]))
+
+(define (entry-with-parts keys variants fields [borrowed-view? #f])
+  (capability-entry keys variants fields borrowed-view?))
+
+(define (entry-with-view entry borrowed-view?)
+  (struct-copy capability-entry entry [borrowed-view? borrowed-view?]))
 
 ;; locals には移行前の生の集合が入りうる。組の形へ揃える。
 (define (capability-value entry)
   (cond
-    [(pair? entry) entry]
+    [(capability-entry? entry) entry]
+    [(pair? entry) (entry-with-parts (car entry) (set) (cdr entry))]
     [(set? entry) (only entry)]
     [else (only (set))]))
 
@@ -664,18 +713,21 @@
          (define prev (hash-ref acc k #f))
          (hash-set acc k
                    (if prev
-                       (cons (set-union (car prev) (car v))
-                             (table-join (cdr prev) (cdr v)))
+                       (capability-entry-join (list prev v))
                        v)))))
 
 (struct capability-flow (normal effects) #:transparent)
 
 (define (capability-entry-join entries)
-  (define present (filter values entries))
+  (define present (map capability-value (filter values entries)))
   (and (pair? present)
        (for/fold ([result (car present)]) ([entry (in-list (cdr present))])
-         (cons (set-union (car result) (car entry))
-               (table-join (cdr result) (cdr entry))))))
+         (entry-with-parts
+          (set-union (entry-ws result) (entry-ws entry))
+          (set-union (entry-variants result) (entry-variants entry))
+          (table-join (entry-table result) (entry-table entry))
+          (or (entry-borrowed-view? result)
+              (entry-borrowed-view? entry))))))
 
 (define (capability-effects-join flows)
   (for/fold ([effects (hash)]) ([flow (in-list flows)])
@@ -693,13 +745,13 @@
   (define captured
     (hash-ref (capability-flow-effects flow)
               (capability-operation-key operation)
-              (cons (set) #f)))
+              (only (set))))
   (match (peel-node operation)
     [`(Return ,_ ,type)
      (if (borrow-typed? (peel-ty type))
-         captured
-         (cons (set) (cdr captured)))]
-    [_ (cons (set) #f)]))
+         (entry-with-view captured #t)
+         (entry-with-view (entry-with-keys captured (set)) #f))]
+    [_ (only (set))]))
 
 ;; 各 operation の payload capability と、通常完了の capability を別々に保つ。
 ;; Handle は通常値をそのまま返し、捕捉した payload だけを handler へ渡す。
@@ -739,8 +791,9 @@
                      effects*)
                (capability-flow #f effects*))])))
     (define (branch-flow scrutinee-entry branches union?)
-      (define ws (car scrutinee-entry))
-      (define table (cdr scrutinee-entry))
+      (define ws (entry-ws scrutinee-entry))
+      (define table (entry-table scrutinee-entry))
+      (define borrowed-view? (entry-borrowed-view? scrutinee-entry))
       (join-branches
        (for/list ([branch (in-list branches)])
          (if union?
@@ -750,20 +803,26 @@
                        [_ branch])])
                (match-define `(,member ,binder -> ,body) plain)
                (define binding
-                 (if (hash? table)
-                     (hash-ref table (normalize-type (peel-ty member))
-                               (cons (set) #f))
-                     (cons (for/set ([cap (in-set ws)])
-                             (cons (car cap) (append (cdr cap) '(Payload))))
-                           #f)))
+                 (capability-union-binding table member ws borrowed-view? #f
+                                           borrowed-view?
+                                           (entry-variants scrutinee-entry)))
                (walk body (hash-set locals* (peel-bind binder) binding)))
              (let ()
                (match-define `(,constructor (,binders ...) -> ,body)
                  (peel-branch branch))
                (define bindings
                  (if (hash? table)
-                     (capability-branch-bindings table constructor binders)
-                     (capability-projection-bindings ws binders)))
+                     (capability-branch-bindings
+                      table constructor binders
+                      (and borrowed-view?
+                           (variant-constructor? constructor))
+                      borrowed-view?
+                      (set))
+                     (capability-projection-bindings
+                      ws binders
+                      (and borrowed-view? (variant-constructor? constructor))
+                      borrowed-view?
+                      (entry-variants scrutinee-entry))))
                (define branch-locals
                  (for/fold ([current locals*])
                            ([binder (in-list binders)]
@@ -815,8 +874,8 @@
              (let* ([entry (capability-flow-normal bound-flow)]
                     [binding
                      (if (borrow-typed? (peel-ty (last rest)))
-                         entry
-                         (cons (set) (cdr entry)))])
+                         (entry-with-view entry #t)
+                         (entry-with-view (entry-with-keys entry (set)) #f))])
                (walk body (hash-set locals* (peel-bind binder) binding)))
              (capability-flow #f (hash))))
        (capability-flow
@@ -855,34 +914,42 @@
        (sequence-entries
         fields
         (lambda (entries)
-          (cons (for/fold ([all (set)]) ([entry (in-list entries)])
-                  (set-union all (car entry)))
-                (for/hash ([entry (in-list entries)] [index (in-naturals)])
-                  (values (cons constructor index) entry)))))]
+          (entry-with-parts
+           (for/fold ([all (set)]) ([entry (in-list entries)])
+             (set-union all (entry-ws entry)))
+           (for/fold ([all (set)]) ([entry (in-list entries)])
+             (set-union all (entry-variants entry)))
+           (for/hash ([entry (in-list entries)] [index (in-naturals)])
+             (values (cons constructor index) entry)))))]
       [`(Rec (,fields ...))
        (define field-labels (map first fields))
        (sequence-entries
         (map third fields)
         (lambda (entries)
-          (cons (for/fold ([all (set)]) ([entry (in-list entries)])
-                  (set-union all (car entry)))
-                (for/hash ([label (in-list field-labels)]
-                           [entry (in-list entries)])
-                  (values (cons 'record-field (peel-lbl label)) entry)))))]
+          (entry-with-parts
+           (for/fold ([all (set)]) ([entry (in-list entries)])
+             (set-union all (entry-ws entry)))
+           (for/fold ([all (set)]) ([entry (in-list entries)])
+             (set-union all (entry-variants entry)))
+           (for/hash ([label (in-list field-labels)]
+                      [entry (in-list entries)])
+             (values (cons 'record-field (peel-lbl label)) entry)))))]
       [`(UnionInject ,_ ,member-type ,payload)
        (sequence-entries
         (list payload)
         (lambda (entries)
           (define entry (first entries))
-          (cons (car entry)
-                (hash (normalize-type (peel-ty member-type)) entry))))]
+          (entry-with-parts
+           (entry-ws entry) (entry-variants entry)
+           (hash (normalize-type (peel-ty member-type)) entry))))]
       [`(UnionVal ,_ ,member-type ,payload)
        (sequence-entries
         (list payload)
         (lambda (entries)
           (define entry (first entries))
-          (cons (car entry)
-                (hash (normalize-type (peel-ty member-type)) entry))))]
+          (entry-with-parts
+           (entry-ws entry) (entry-variants entry)
+           (hash (normalize-type (peel-ty member-type)) entry))))]
       ;; Function bodies are definitions, while Recur's continuation executes now.
       [`(Lam ,_ ...) (capability-flow (capability-of Λ c* locals*) (hash))]
       [`(Recur ,_ ,_ ,_ ,_ ,continuation) (child-flow continuation)]
@@ -896,13 +963,17 @@
   (walk c))
 
 ;; scrutinee の表から分岐 K の束縛子へ張る値を並べる。
-;; 表が無い、または鍵が無い束縛子へは空の token と #f を張る。
+;; variant が複数ある data の分解では、各欄の path を variant view として記録する。
 ;; capability-of と branch-contexts がこの 1 つの規則を共有する。
-(define (capability-branch-bindings tbl K binders)
+(define (capability-branch-bindings tbl K binders [variant? #f]
+                                   [borrowed-view? #f]
+                                   [inherited-variants (set)])
   (for/list ([_ (in-list binders)] [i (in-naturals 0)])
-    (if (hash? tbl)
-        (hash-ref tbl (cons K i) (cons (set) #f))
-        (cons (set) #f))))
+    (entry-add-variant-view
+     (if (hash? tbl)
+         (capability-value (hash-ref tbl (cons K i) (only (set))))
+         (only (set)))
+     variant? borrowed-view? inherited-variants)))
 
 ;; 借用した data 値を Eliminate したとき、束縛子へ張る capability。
 ;; scrutinee の capability の path の末尾へ 0 起点の欄の位置を積む。
@@ -911,16 +982,49 @@
 ;; core-calculus.md §6.2 の leaf の path も位置だけで欄を指すためである。
 ;; ws が空なら空の token を張る。表も capability も無い場合の結果は
 ;; capability-branch-bindings が表を持たないときと同じである。
-(define (capability-projection-bindings ws binders)
+(define (capability-projection-bindings ws binders [variant? #f]
+                                       [borrowed-view? #f]
+                                       [inherited-variants (set)])
   (for/list ([_ (in-list binders)] [i (in-naturals 0)])
-    (cons (for/set ([k (in-set ws)])
-            (cons (car k) (append (cdr k) (list i))))
-          #f)))
+    (define keys
+      (for/set ([k (in-set ws)])
+        (cons (car k) (append (cdr k) (list i)))))
+    (entry-add-variant-view (only keys inherited-variants)
+                            variant? borrowed-view? inherited-variants)))
+
+(define (capability-union-binding tbl member ws [variant? #f] [fallback #f]
+                                  [borrowed-view? #f]
+                                  [inherited-variants (set)])
+  (define entry
+    (cond
+      [fallback (capability-value fallback)]
+      [(hash? tbl)
+       (capability-value
+        (hash-ref tbl (normalize-type (peel-ty member)) (only (set))))]
+      [else
+       (only (if (set? ws)
+                 (for/set ([cap (in-set ws)])
+                   (cons (car cap) (append (cdr cap) '(Payload))))
+                 (set)))]))
+  (entry-add-variant-view
+   entry variant? borrowed-view?
+   (if (or fallback (hash? tbl)) (set) inherited-variants)))
+
+(define (capability-variant-views Λ c [locals (hash)])
+  (entry-variants (capability-of Λ c locals)))
+
+(define (variant-constructor? constructor)
+  (or (memq constructor '(true false nil cons none some ok ng))
+      (match (data-constructor constructor)
+        [(list name _)
+         (match (data-decl name)
+           [`(,_ (,parameters ...) (,constructors ...))
+            (> (length constructors) 1)]
+           [_ #f])]
+        [_ #f])))
 
 ;; capability の集合と表を同時に返す 1 本の走査である。
-;; 返り値は (cons ws tbl) の組であり、ws は capability の集合、
-;; tbl は data の (cons K i)、Union の member 型、または record-field label
-;; から同じ組への hash か #f である。
+;; 返り値は集合、欄表、variant 印、借用 view の有無を持つ capability-entry。
 ;;
 ;; #:fail は現行の borrow-token-key がすでに辿っている枝、すなわち ws を
 ;; 運ぶ枝だけに伝える。表だけを取るための再帰（Let の非借用の束縛、
@@ -929,48 +1033,63 @@
 (define (capability-of Λ c [locals (hash)] #:fail [fail #f])
   (define (recur c* [locals* locals])
     (capability-of Λ c* locals* #:fail fail))
-  (define (ws-of c* [locals* locals]) (car (recur c* locals*)))
+  (define (ws-of c* [locals* locals]) (entry-ws (recur c* locals*)))
   ;; 表だけを取る再帰。fail を伝えない。
   (define (table-of c* [locals* locals])
-    (cdr (capability-of Λ c* locals*)))
+    (entry-table (capability-of Λ c* locals*)))
   (define (member-key type) (normalize-type (peel-ty type)))
   (define (field-key label) (cons 'record-field (peel-lbl label)))
   (define (field-entry c* label)
     ;; Record の束縛は自身の ws が空でも field 表に借用を持てる。
-    (define table (table-of c*))
+    (define table-parent (capability-of Λ c* locals))
+    (define table (entry-table table-parent))
     (if (hash? table)
-        (hash-ref table (field-key label) (only (set)))
-        (only (ws-of c*))))
+        (capability-value (hash-ref table (field-key label) (only (set))))
+        (let ([parent (recur c*)])
+          (entry-with-keys parent (entry-ws parent)))))
   (define (retain-entry entry type)
     (match (peel-ty type)
       [`(Record ,row)
-       (define table (cdr entry))
+       (define table (entry-table entry))
        (if (hash? table)
            (let ([retained
                   (for/hash ([field (in-list row)])
                     (define key (field-key (first field)))
                     (values key
                             (retain-entry
-                             (hash-ref table key (only (set)))
+                             (capability-value
+                              (hash-ref table key (only (set))))
                              (second field))))])
-             (cons (for/fold ([ws (set)]) ([field (in-hash-values retained)])
-                     (set-union ws (car field)))
-                   retained))
+             (entry-with-parts
+              (for/fold ([ws (set)]) ([field (in-hash-values retained)])
+                (set-union ws (entry-ws field)))
+              (for/fold ([views (set)]) ([field (in-hash-values retained)])
+                (set-union views (entry-variants field)))
+              retained))
            ;; 欄表のない値は、どの capability が除去欄由来か判別できない。
            entry)]
       [_ entry]))
   (match (peel-node c)
-    [`(Borrow ,w) (only (set (cons (peel-node w) '())))]
-    [`(BorrowMut ,w) (only (set (cons (peel-node w) '())))]
-    [`(BorrowAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())))]
-    [`(BorrowMutAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())))]
-    [`(BorrowRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
-    [`(BorrowMutRef ,p ,fp ,_) (only (set (cons (peel-node p) fp)))]
-    [`(Reborrow ,c_1) (only (ws-of c_1))]
-    [`(ReborrowAt ,_ ,c_1) (only (ws-of c_1))]
+    [`(Borrow ,w) (only (set (cons (peel-node w) '())) (set) #t)]
+    [`(BorrowMut ,w) (only (set (cons (peel-node w) '())) (set) #t)]
+    [`(BorrowAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())) (set) #t)]
+    [`(BorrowMutAt ,_ ,_ ,w) (only (set (cons (peel-node w) '())) (set) #t)]
+    [`(BorrowRef ,p ,fp ,_)
+     (only (set (cons (peel-node p) fp)) (set) #t)]
+    [`(BorrowMutRef ,p ,fp ,_)
+     (only (set (cons (peel-node p) fp)) (set) #t)]
+    [`(Reborrow ,c_1)
+     (define entry (recur c_1))
+     (only (entry-ws entry) (entry-variants entry)
+           (entry-borrowed-view? entry))]
+    [`(ReborrowAt ,_ ,c_1)
+     (define entry (recur c_1))
+     (only (entry-ws entry) (entry-variants entry)
+           (entry-borrowed-view? entry))]
     [`(ProjBorrowAt ,_ ,c_1 ,label)
+     (define parent (recur c_1))
      (define child-caps
-       (for/set ([k (in-set (ws-of c_1))])
+       (for/set ([k (in-set (entry-ws parent))])
          (cons (car k) (append (cdr k) (list (peel-lbl label))))))
      ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
      ;; record-path? の定義域（複数要素の列）を実際には検査できない。
@@ -982,34 +1101,53 @@
          (if fail
              (fail 'unresolved-borrow-owner c)
              (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
-     (only child-caps)]
+     (only child-caps (entry-variants parent) #t)]
     [(? borrow-designator? w)
      (define designator (peel-node w))
      (define entry
        (cond
          [(hash-ref locals designator #f) => capability-value]
-         [else (cons (region-ctx-token Λ designator)
-                     (region-ctx-field-table Λ designator))]))
-     (define ws (car entry))
+         [else
+          (define token (hash-ref (region-ctx-tokens Λ) designator #f))
+          (entry-with-parts
+           (region-ctx-token Λ designator)
+           (if (borrow-capability? token)
+               (borrow-capability-variants token)
+               (set))
+           (region-ctx-field-table Λ designator)
+           (and (borrow-capability? token)
+                (borrow-capability-borrowed-view? token)))]))
+     (define ws (entry-ws entry))
      (cond
-       [(not (set-empty? ws)) (cons (capability-set ws) (cdr entry))]
+       [(not (set-empty? ws))
+        (entry-with-keys entry (capability-set ws))]
        [fail (fail 'unresolved-borrow-owner c)]
-       [else (cons (set) (cdr entry))])]
+       [else (entry-with-keys entry (set))])]
     [`(Eliminate ,scrutinee ,brs)
      ;; scrutinee を辿るのは表と capability を得るためだけである。Eliminate
      ;; 全体の値は分岐の本体の値であって scrutinee の値ではないため、ws は
      ;; 合併しない。表が無ければ欄の位置を ws の path へ積む。
      (define entry_s (capability-of Λ scrutinee locals))
-     (define tbl_s (cdr entry_s))
-     (define ws_s (car entry_s))
+     (define tbl_s (entry-table entry_s))
+     (define ws_s (entry-ws entry_s))
      (define results
        (for/list ([br (in-list brs)])
          (match-define `(,K (,parameters ...) -> ,body) (peel-branch br))
          (define binders (map peel-bind parameters))
          (define bindings
            (if (hash? tbl_s)
-               (capability-branch-bindings tbl_s K binders)
-               (capability-projection-bindings ws_s binders)))
+               (capability-branch-bindings
+                tbl_s K binders
+                (and (entry-borrowed-view? entry_s)
+                     (variant-constructor? K))
+                (entry-borrowed-view? entry_s)
+                (set))
+               (capability-projection-bindings
+                ws_s binders
+                (and (entry-borrowed-view? entry_s)
+                     (variant-constructor? K))
+                (entry-borrowed-view? entry_s)
+                (entry-variants entry_s))))
          (define locals_branch
            (for/fold ([acc_l locals]) ([x (in-list binders)]
                                        [entry (in-list bindings)])
@@ -1018,12 +1156,11 @@
      (if (null? results)
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
-           (cons (set-union (car acc) (car r))
-                 (table-join (cdr acc) (cdr r)))))]
+           (capability-entry-join (list acc r))))]
     [`(UnionEliminate ,scrutinee ,branches)
      (define entry_s (recur scrutinee))
-     (define tbl_s (cdr entry_s))
-     (define ws_s (car entry_s))
+     (define tbl_s (entry-table entry_s))
+     (define ws_s (entry-ws entry_s))
      (define results
        (for/list ([branch (in-list branches)])
          (define plain
@@ -1032,24 +1169,27 @@
              [_ branch]))
          (match-define `(,member ,binder -> ,body) plain)
          (define binding
-           (if (hash? tbl_s)
-               (hash-ref tbl_s (member-key member) (cons (set) #f))
-               (cons (for/set ([cap (in-set ws_s)])
-                       (cons (car cap) (append (cdr cap) '(Payload))))
-                     #f)))
+           (capability-union-binding tbl_s member ws_s
+                                     (entry-borrowed-view? entry_s)
+                                     #f
+                                     (entry-borrowed-view? entry_s)
+                                     (entry-variants entry_s)))
          (recur body (hash-set locals (peel-bind binder) binding))))
      (if (null? results)
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
-           (cons (set-union (car acc) (car r))
-                 (table-join (cdr acc) (cdr r)))))]
+           (capability-entry-join (list acc r))))]
     [`(Scope ,_ ,body) (recur body)]
     [`(Proj ,c_1 ,label)
      (field-entry c_1 label)]
     [`(ProjOpt ,_ ,c_1 ,label)
      (define field (field-entry c_1 label))
-     (cons (car field) (hash (cons 'some 0) field))]
-    [`(Suspend ,c_1) (only (ws-of c_1))]
+     (entry-with-parts
+      (entry-ws field) (entry-variants field) (hash (cons 'some 0) field))]
+    [`(Suspend ,c_1)
+     (define entry (recur c_1))
+     (only (entry-ws entry) (entry-variants entry)
+           (entry-borrowed-view? entry))]
     [`(Yield ,_ ,c_next) (recur c_next)]
     [`(Handle ,_ ,handler ,body)
      (define flow (capability-flow-of Λ c locals))
@@ -1057,34 +1197,47 @@
     [`(Rec (,fields ...))
      (define entries (for/list ([field (in-list fields)])
                        (recur (third field))))
-     (cons (for/fold ([acc (set)]) ([entry (in-list entries)])
-             (set-union acc (car entry)))
-           (for/hash ([field (in-list fields)] [entry (in-list entries)])
-             (values (field-key (first field)) entry)))]
+     (entry-with-parts
+      (for/fold ([acc (set)]) ([entry (in-list entries)])
+        (set-union acc (entry-ws entry)))
+      (for/fold ([all (set)]) ([entry (in-list entries)])
+        (set-union all (entry-variants entry)))
+      (for/hash ([field (in-list fields)] [entry (in-list entries)])
+        (values (field-key (first field)) entry)))]
     [`(Absent ,_) (only (set))]
     [`(Construct ,_ ,K ,fields ...)
      (define entries (for/list ([field (in-list fields)]) (recur field)))
-     (cons (for/fold ([acc (set)]) ([e (in-list entries)])
-             (set-union acc (car e)))
-           (for/hash ([e (in-list entries)] [i (in-naturals 0)])
-             (values (cons K i) e)))]
+     (entry-with-parts
+      (for/fold ([acc (set)]) ([e (in-list entries)])
+        (set-union acc (entry-ws e)))
+      (for/fold ([all (set)]) ([e (in-list entries)])
+        (set-union all (entry-variants e)))
+      (for/hash ([e (in-list entries)] [i (in-naturals 0)])
+        (values (cons K i) e)))]
     [`(UnionInject ,_ ,member-type ,payload)
      (define entry (recur payload))
-     (cons (car entry) (hash (member-key member-type) entry))]
+     (entry-with-parts
+      (entry-ws entry) (entry-variants entry)
+      (hash (member-key member-type) entry))]
     [`(UnionVal ,_ ,member-type ,payload)
      (define entry (recur payload))
-     (cons (car entry) (hash (member-key member-type) entry))]
+     (entry-with-parts
+      (entry-ws entry) (entry-variants entry)
+      (hash (member-key member-type) entry))]
     [`(RecRewriteOpen (,fields ...))
      (define entries (for/list ([field (in-list fields)])
                        (recur (last field))))
-     (cons (for/fold ([acc (set)]) ([entry (in-list entries)])
-             (set-union acc (car entry)))
-           (for/hash ([field (in-list fields)] [entry (in-list entries)])
-             (values (field-key (first field)) entry)))]
+     (entry-with-parts
+      (for/fold ([acc (set)]) ([entry (in-list entries)])
+        (set-union acc (entry-ws entry)))
+      (for/fold ([all (set)]) ([entry (in-list entries)])
+        (set-union all (entry-variants entry)))
+      (for/hash ([field (in-list fields)] [entry (in-list entries)])
+        (values (field-key (first field)) entry)))]
     [`(RecRewrite ,input ,entries)
      (define input-entry (recur input))
-     (define input-ws (car input-entry))
-     (define input-table (cdr input-entry))
+     (define input-ws (entry-ws input-entry))
+     (define input-table (entry-table input-entry))
      ;; 非対象欄は入力 entry、対象欄は書換え後の entry を出力する。
      (define (source-entry label)
        (if (hash? input-table)
@@ -1100,32 +1253,40 @@
               (if (eq? (peel-node body) name)
                   source
                   (recur body (hash-set locals name source))))
-            (list (field-key label) result
+           (list (field-key label) result
                   (not (eq? (peel-node body) name)))])))
-     (cons
+     (define output-table
+       (and (hash? input-table)
+            (for/hash ([(key input-field) (in-hash input-table)])
+              (values key
+                      (or (for/first ([entry (in-list rewritten)]
+                                      #:when (equal? (first entry) key))
+                            (second entry))
+                          input-field)))))
+     (entry-with-parts
       (for/fold ([all input-ws]) ([entry (in-list rewritten)]
                                   #:when (third entry))
-        (set-union all (car (second entry))))
-      (and (hash? input-table)
-           (for/hash ([(key input-field) (in-hash input-table)])
-             (values key
-                     (or (for/first ([entry (in-list rewritten)]
-                                     #:when (equal? (first entry) key))
-                           (second entry))
-                         input-field)))))]
+        (set-union all (entry-ws (second entry))))
+      (if output-table
+          (for/fold ([all (set)]) ([entry (in-hash-values output-table)])
+            (set-union all (entry-variants entry)))
+          (for/fold ([all (entry-variants input-entry)])
+                    ([entry (in-list rewritten)] #:when (third entry))
+            (set-union all (entry-variants (second entry)))))
+      output-table)]
     ;; RegionLam は本体へ置き換わるので本体の表を通す。
     ;; RecurVal は関数値のままなので関数値自身の表を通す。
     [`(RegionApp ,f ,_)
      (define parts (region-lam-parts f))
-     (define tbl
+     (define entry
        (cond
-         [parts (table-of (third parts))]
+         [parts (capability-of Λ (third parts) locals)]
          [(match (peel-node f)
             [`(RecurVal ,_cid ,_f ,_xs ,_c_body) #t]
             [_ #f])
-          (table-of f)]
-         [else #f]))
-     (cons (set) tbl)]
+          (capability-of Λ f locals)]
+         [else (only (set))]))
+     (entry-with-parts (set) (entry-variants entry) (entry-table entry))]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
     ;; 宣言型はどちらの形でも最後の要素である。
     ;; 束縛子へ張る token は、宣言型が借用のときだけ bound から計算する。
@@ -1136,10 +1297,11 @@
     ;; 表の側にこの制限は要らない。整数リテラルからは表が作れず #f になる。
     [`(Let (,name ,rest ...) ,bound ,body)
      (define borrowed? (borrow-typed? (peel-ty (last rest))))
+     (define bound-entry (capability-of Λ bound locals))
      (define entry
        (if borrowed?
            (recur bound)
-           (cons (set) (table-of bound))))
+           (entry-with-keys bound-entry (set))))
      (recur body (hash-set locals (peel-bind name) entry))]
     [`(Discharge ,proof ,inner)
      (define entry (recur inner))
@@ -1150,7 +1312,19 @@
     [_ (only (set))]))
 
 (define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
-  (car (capability-of Λ c locals #:fail fail)))
+  (entry-ws (capability-of Λ c locals #:fail fail)))
+
+(define (capability-field-entries Λ c [locals (hash)] #:fail [fail #f])
+  (entry-table (capability-of Λ c locals #:fail fail)))
+
+(define (legacy-capability-table table)
+  (and (hash? table)
+       (for/hash ([(key raw-entry) (in-hash table)])
+         (define entry (capability-value raw-entry))
+         (values key
+                 (cons (entry-ws entry)
+                       (legacy-capability-table (entry-table entry)))))))
 
 (define (capability-field-table Λ c [locals (hash)] #:fail [fail #f])
-  (cdr (capability-of Λ c locals #:fail fail)))
+  (legacy-capability-table
+   (entry-table (capability-of Λ c locals #:fail fail))))
