@@ -691,10 +691,14 @@
              (hash-ref sources w '())
              (for/set ([α (in-set template-source)])
                (if (lifetime-var? α) (fresh-local α) α))))
-       (for ([cap (in-set (actual-caps w))])
+       (define mapped-caps
+         (for/set ([cap (in-set (actual-caps w))])
+           (cons (car cap) (append (cdr cap) (use-request-fp item)))))
+       (when (eq? (use-request-operation item) 'assign)
+         (reject-variant-view-write! Λ mapped-caps node fail))
+       (for ([cap (in-set mapped-caps)])
          (route-request!
-          (use-request (car cap)
-                       (append (cdr cap) (use-request-fp item))
+          (use-request (car cap) (cdr cap)
                        (use-request-operation item)
                        source
                        (region-at (region-ctx-ir Λ) point)
@@ -767,6 +771,16 @@
                    (region-at ir (region-ctx-point Λ))
                    (region-ctx-point Λ) node kind otherwise))
     (if fail (route-request! r node fail) (emit-request! r))))
+
+;; §3.2。親の書込みが variant segment より手前なら、その view が生きる間は拒む。
+(define (reject-variant-view-write! Λ target-capabilities node fail)
+  (when
+      (for/or ([target-cap (in-set target-capabilities)])
+        (for/or ([view (in-set (region-ctx-variant-views Λ))])
+          (and (equal? (car target-cap) (car view))
+               (path-prefix? (cdr target-cap) (cdr view))
+               (not (equal? (cdr target-cap) (cdr view))))))
+    (fail 'borrow-conflicting-use node)))
 
 ;; spec §5.6。RegionApp の実引数は借用の使用要求とは別に集め、段 3 で
 ;; σ を解いた後に生存を検査する。
@@ -3970,13 +3984,7 @@
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
   (define target-capabilities (borrow-token-key Λ target #:fail fail))
-  (when
-      (for/or ([target-cap (in-set target-capabilities)])
-        (for/or ([view (in-set (region-ctx-variant-views Λ))])
-          (and (equal? (car target-cap) (car view))
-               (path-prefix? (cdr target-cap) (cdr view))
-               (not (equal? (cdr target-cap) (cdr view))))))
-    (fail 'borrow-conflicting-use core))
+  (reject-variant-view-write! Λ target-capabilities core fail)
   (for ([cap (in-set target-capabilities)])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
                        core 'borrow-conflicting-use #f fail))

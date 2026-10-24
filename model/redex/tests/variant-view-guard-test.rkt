@@ -3,11 +3,13 @@
 (require rackunit
          racket/list
          racket/match
+         "../borrow-gen.rkt"
          "../diagnostic.rkt"
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
          "../origins.rkt"
+         "../region.rkt"
          "../traits.rkt"
          "../typing.rkt")
 
@@ -17,14 +19,31 @@
 (define union-int-string '(Union Int String))
 (define union-borrowed-mut
   `(BorrowedMut ,union-int-string (RParam %omitted)))
+(define borrowed-mut-int-rvar0 '(BorrowedMut Int (RVar 0)))
+(define option-borrowed-mut-rvar0
+  `(BorrowedMut ,option-int (RVar 0)))
+(define option-borrowed-mut-int
+  `(Option ,borrowed-mut-int-rvar0))
 
 (define data-ledger
   (make-trait-ledger canonical-trait-env
                      #:data '((GuardCell (A) ((guard-cell ((Param A))))))
                      #:fail (lambda args (error 'test "unexpected ledger failure: ~s" args))))
 
-(define (typed core)
-  (core-type-of/regions core '() '()))
+(define (typed core [callables #f])
+  (if callables
+      (let* ([ir (build-region-ir core)]
+             [owner-rho
+              (region->rho ir (owner-let-body-region ir '()))]
+             [filled
+              (let replace ([term (fill-region-placeholders core ir)])
+                (cond
+                  [(eq? term 'owner-ph) owner-rho]
+                  [(pair? term)
+                   (cons (replace (car term)) (replace (cdr term)))]
+                  [else term]))])
+        (core-type-of/regions filled '() callables #:ir ir))
+      (core-type-of/regions core '() '())))
 
 (define (trace-g2 start)
   (let loop ([current start] [configs (list start)] [fuel 200])
@@ -35,24 +54,24 @@
        (loop next (append configs (list next)) (sub1 fuel))]
       [steps (error 'trace-g2 "一意な次状態でない: ~s" steps)])))
 
-(define (check-rejected core expected-id)
-  (define result (typed core))
+(define (check-rejected core expected-id [callables #f])
+  (define result (typed core callables))
   (check-true (diagnostic? result) (format "拒否を期待、実測: ~s" result))
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) expected-id)))
 
-(define (check-trace core expected-type)
-  (define result (typed core))
+(define (check-trace core expected-type [callables '()])
+  (define result (typed core (and (pair? callables) callables)))
   (check-true (region-typed? result) (format "受理を期待、実測: ~s" result))
   (when (region-typed? result)
     (check-equal? (region-typed-type result) expected-type)
     (define configs
       (trace-g2 (inject-g2m (erase-core (region-execution-core result)))))
     (for ([config (in-list configs)] [index (in-naturals)])
-      (define row (runtime-row config '() expected-type))
+      (define row (runtime-row config callables expected-type))
       (check-not-false row (format "config ~a に runtime-row がある" index))
       (when row
-        (check-true (config-ok? config '() expected-type row)
+        (check-true (config-ok? config callables expected-type row)
                     (format "config ~a が config-ok? を通る" index))))
     (check-true (null? (raw-steps-g2/named (last configs)))
                 "trace が終端まで進む")))
@@ -222,6 +241,140 @@
                 (Read suspended))))
           (none () -> 0))))))
 
+(define union-record-type
+  `(Record ((value ,union-int-string mut))))
+(define union-record-value
+  `(Rec ((value mut (UnionInject ,union-int-string Int 1)))))
+(define borrowed-mut-union '(BorrowedMut (Union Int String) ph))
+
+(define replace-union-callables
+  `((replace-union
+     (ForallRegion (a)
+       (NFn ((BorrowedMut ,union-int-string (RParam a)))
+            Unit () (Mutation) () User)))
+    (keep-union
+     (ForallRegion (a)
+       (NFn ((BorrowedMut ,union-int-string (RParam a)))
+            Unit () () () User)))))
+
+(define (replace-union-lambda writing?)
+  `(RegionApp
+    (RegionLam (a)
+      (Lam User ,(if writing? 'replace-union 'keep-union) (target)
+        ,(if writing?
+             `(Assign target
+                      (UnionInject ,union-int-string String "s"))
+             'unit)))
+    (owner-ph)))
+
+(define (function-call-variant-core writing?)
+  `(Let (owner let (Owned ,union-record-type)) ,union-record-value
+     (Let (p let (BorrowedMut ,union-record-type ph)) (BorrowMut owner)
+       (Let (u let ,borrowed-mut-union) (ProjBorrow p value)
+         (UnionEliminate u
+           ((Int b ->
+              (Let (called let Unit)
+                   (Apply ,(replace-union-lambda writing?) u)
+                (Let (observed const Int) (Read b) unit)))
+            (String other -> unit)))))))
+
+(define (function-body-variant-core writing?)
+  `(Let (owner let (Owned ,option-int)) (Construct ,option-int some 1)
+     (Apply
+      (RegionApp
+       (RegionLam (a)
+         (Lam User rewrite-option (p)
+           (Eliminate p
+             ((some (child) ->
+                (Let (observed const Int) (Read child)
+                  ,(if writing?
+                       `(Assign p (Construct ,option-int none))
+                       'unit)))
+              (none () -> unit)))))
+       (owner-ph))
+      (BorrowMut owner))))
+
+(define option-rewrite-callables
+  `((rewrite-option
+    (ForallRegion (a)
+      (NFn ((BorrowedMut ,option-int (RParam a)))
+            Unit () (Mutation) () User)))))
+
+(define (return-payload-core writing?)
+  `(Let (owner let (Owned ,option-int)) (Construct ,option-int some 1)
+     (Let (other let (Owned Int)) 8
+       (Let (fallback let ,borrowed-mut-int-rvar0) (BorrowMut other)
+         (Let (p let ,option-borrowed-mut-rvar0) (BorrowMut owner)
+           (Let (result let ,borrowed-mut-int-rvar0)
+                (Handle (Return boundary ,borrowed-mut-int-rvar0)
+                  (returned ->
+                    (Let (changed let Unit)
+                         ,(if writing?
+                              `(Assign p (Construct ,option-int none))
+                              'unit)
+                      returned))
+                  (Eliminate p
+                    ((some (child) ->
+                       (Perform (Return boundary ,borrowed-mut-int-rvar0)
+                                child))
+                     (none () ->
+                       (Perform (Return boundary ,borrowed-mut-int-rvar0)
+                                fallback)))))
+             (Read result)))))))
+
+(define (leave-payload-core writing?)
+  ;; Leave は Core で Return<Option τ> の payload に some を包む。
+  `(Let (owner let (Owned ,option-int)) (Construct ,option-int some 1)
+     (Let (other let (Owned Int)) 8
+       (Let (fallback let ,borrowed-mut-int-rvar0) (BorrowMut other)
+         (Let (p let ,option-borrowed-mut-rvar0) (BorrowMut owner)
+           (Let (result let ,option-borrowed-mut-int)
+                (Handle (Return boundary ,option-borrowed-mut-int)
+                  (returned ->
+                    (Eliminate returned
+                      ((some (captured) ->
+                         (Let (changed let Unit)
+                              ,(if writing?
+                                   `(Assign p (Construct ,option-int none))
+                                   'unit)
+                           returned))
+                       (none () -> returned))))
+                  (Eliminate p
+                    ((some (child) ->
+                       (Perform
+                        (Return boundary ,option-borrowed-mut-int)
+                        (Construct ,option-borrowed-mut-int some child)))
+                     (none () ->
+                       (Perform
+                        (Return boundary ,option-borrowed-mut-int)
+                        (Construct ,option-borrowed-mut-int some fallback))))))
+             (Eliminate result
+               ((some (value) -> (Read value))
+                (none () -> 0)))))))))
+
+(define record-payload-type '(Record ((field Int mut))))
+(define option-record-type `(Option ,record-payload-type))
+(define option-record-owner
+  `(Construct ,option-record-type some (Rec ((field mut 1)))))
+
+(define (record-grandchild-core action)
+  `(Let (owner let (Owned ,option-record-type)) ,option-record-owner
+     (Let (p let (BorrowedMut ,option-record-type (RVar 0)))
+          (BorrowMut owner)
+       (Eliminate p
+         ((some (child) ->
+            (Let (grandchild let (BorrowedMut Int (RVar 0)))
+                 (ProjBorrow child field)
+              (Let (changed let Unit)
+                   ,(case action
+                      [(parent-variant)
+                       `(Assign p (Construct ,option-record-type none))]
+                      [(child-same-shape)
+                       `(Assign child (Rec ((field mut 2))))]
+                      [else 'unit])
+                (Read grandchild))))
+          (none () -> 0))))))
+
 (test-case "Some の欄の子が生きる間に None を書くと E-BOR-025"
   (check-rejected option-assign-core "E-BOR-025")
   (check-rejected option-read-core "E-BOR-025"))
@@ -263,3 +416,30 @@
 
 (test-case "可変借用の子自身への Assign は受理される"
   (check-trace child-self-assign-core 'Unit))
+
+(test-case "Apply へ移した親の variant 書換えも生きた孫との衝突で E-BOR-025"
+  (check-rejected (function-call-variant-core #t) "E-BOR-025"
+                  replace-union-callables)
+  (check-trace (function-call-variant-core #f) 'Unit
+               replace-union-callables))
+
+(test-case "関数本体で variant に依存する子が生きる間の親書換えを E-BOR-025"
+  (check-rejected (function-body-variant-core #t) "E-BOR-025"
+                  option-rewrite-callables)
+  (check-trace (function-body-variant-core #f) 'Unit
+               option-rewrite-callables))
+
+(test-case "Perform Return payload の handler 子が生きる間の親書換えを E-BOR-025"
+  (check-rejected (return-payload-core #t) "E-BOR-025")
+  (check-trace (return-payload-core #f) 'Int))
+
+(test-case "Leave の Option adapter payload の handler 子が生きる間の親書換えを E-BOR-025"
+  (check-rejected (leave-payload-core #t) "E-BOR-025")
+  (check-trace (leave-payload-core #f) 'Int))
+
+(test-case "record payload の孫が生きる間も同じ形の子 Assign は受理される"
+  (check-trace (record-grandchild-core 'child-same-shape) 'Int))
+
+(test-case "record payload の孫について親を通す variant 書換えだけ E-BOR-025"
+  (check-rejected (record-grandchild-core 'parent-variant) "E-BOR-025")
+  (check-trace (record-grandchild-core 'read-only) 'Int))
