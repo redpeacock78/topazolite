@@ -279,17 +279,13 @@
      (check-equal? place 0)]
     [other (fail (format "unexpected: ~e" other))]))
 
-(test-case "重なる可変借用が同時に生きている config は fail になる"
-  ;; 条件 2。同じ place と欄 path を指す可変借用が 2 箇所に現れる制御項。
-  ;; normalize-borrow が出現ごとに新しい 4 つ組を作るので、
-  ;; for*/or の eq? による自己対の除外には掛からない。
+(test-case "同じ可変借用値の二つの出現は check-mut-exclusive で失敗しない"
+  ;; 同じ 4 つ組の二つの出現は一つの借用の複製である（borrow.md §4）。
   (define config
     '(cfg (Scope (0) (Assign (BorrowMutRef 0 () 0)
                              (Read (BorrowMutRef 0 () 0))))
           ((0 (resource 1000))) ((0 Available)) () ()))
-  (match (check-mut-exclusive config)
-    [(list 'fail reason _detail) (check-equal? reason 'mut-not-exclusive)]
-    [other (fail (format "unexpected: ~e" other))]))
+  (check-false (check-mut-exclusive config)))
 
 (test-case "reborrow の子が生きている間に親が現れると fail になる"
   ;; 条件 3。update-parents が積む (子 親) の対をそのまま渡す。

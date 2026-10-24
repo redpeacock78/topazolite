@@ -435,8 +435,8 @@
 (test-case "同じ place の可変借用が 2 つ生きると落ちる"
   (check-true
    (fails-with
-    '(cfg (Scope (0) (Assign (BorrowMutRef 0 () 0)
-                             (Read (BorrowMutRef 0 () 0))))
+    '(cfg (Scope (0 1) (Assign (BorrowMutRef 0 () 0)
+                               (Read (BorrowMutRef 0 () 1))))
           ((0 (resource 1000))) ((0 Available)) () ())
     'mut-not-exclusive)))
 

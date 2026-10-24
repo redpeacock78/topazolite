@@ -645,11 +645,12 @@
          (list 'fail 'move-of-live-borrow p))))
 
 ;; 条件 2。可変借用が他の借用と重なって同時に生きていない。
+;; 同じ正規化借用の複数の出現は、取得ではなく同じ loan の複製である。
 (define (check-mut-exclusive config)
   (define live (live-borrows config))
   (for*/or ([a (in-list live)]
             [b (in-list live)]
-            #:unless (eq? a b))
+            #:unless (equal? a b))
     (and (borrows-overlap? a b)
          (or (eq? (first a) 'mut) (eq? (first b) 'mut))
          (list 'fail 'mut-not-exclusive (list a b)))))
@@ -661,6 +662,18 @@
     (and (set-member? live (first pair))
          (set-member? live (second pair))
          (list 'fail 'reborrow-parent-live pair))))
+
+;; R-BorrowMut の step 前に同じ可変 loan が生きていれば、別取得として拒否する。
+(define (reacquired-live-mut name candidates pre)
+  (and (eq? name 'R-BorrowMut)
+       (let ([live (live-borrows pre)])
+         (for/or ([candidate (in-list candidates)])
+           (match candidate
+             [(list 'root 'mut p fp ρ _w)
+              (define b (list 'mut p fp ρ))
+              (and (member b live)
+                   (list 'fail 'mut-not-exclusive (list b b)))]
+             [_ #f])))))
 
 ;; spec §4.6。static request の designator が動的な place へ解けるかを調べる。
 ;; 解が無いときは #f、全てが p のときは #t、複数の place へ散るときは
@@ -764,6 +777,7 @@
                    '()
                    raw-candidates))
              (cond
+               [(reacquired-live-mut name candidates current) => values]
                [(for/or ([candidate (in-list candidates)])
                   (equal? candidate (list 'unverified)))
                 (list 'fail 'unverified-borrow-form diff)]

@@ -266,7 +266,7 @@
      'Unit))
   (void))
 
-(test-case "可変借用の二重置換は性質 8 の bounded 検査範囲外である"
+(test-case "一度取得した可変借用を二度 Read する形は性質 8 の oracle を通る"
   (define source
     '(Scope ()
        (Let (x let (Owned Int)) 7
@@ -278,11 +278,9 @@
      (define-values (configs rules) (trace-g2 start))
      (check-configs "BorrowMut duplicated reference" start configs rules '()
                     expected)
-     (match (check-borrow-execution start sidecar ir 200 (make-bcounters))
-       [`(fail mut-not-exclusive ,occurrences)
-        (check-equal? (length occurrences) 2)
-        (check-equal? (first occurrences) (second occurrences))]
-       [other (fail (format "期待する oracle 縮約の鍵と異なる: ~s" other))])]
+     (check-equal?
+      (check-borrow-execution start sidecar ir 200 (make-bcounters))
+      'ok)]
     [other (fail (format "source の準備に失敗: ~s" other))]))
 
 (test-case "ReborrowAt の trace は再借用と Read を保つ"
