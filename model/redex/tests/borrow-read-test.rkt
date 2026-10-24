@@ -127,12 +127,11 @@
     (term (cfg (Read (BorrowRef 1 () 0)) ,read-heap ,moved-omega () ())))
   (check-equal? (length (apply-reduction-relation -->g2 conf)) 0))
 
-;; 拒否 2 の 2 件目。payload の可変借用の lifetime を追えない。
-;; owned-free? を流用していれば通ってしまう形である。
+;; 可変借用を含む payload は、owner の region を引けても複製しない。
 (let ()
   (define core '(Scope (1) (Read (Borrow 1))))
   (define ir (build-region-ir core))
   (define result
     (run core ir '(Record ((a (BorrowedMut Res 0) mut)))))
   (check-equal? (first result) 'fail)
-  (check-equal? (second result) 'borrow-unknown-owner-region))
+  (check-equal? (second result) 'read-uncopyable-payload))

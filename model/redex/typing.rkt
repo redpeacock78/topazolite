@@ -3848,14 +3848,14 @@
                           (equal? (region-constraint-right c) alpha)))
     (region-constraint-left c)))
 
-;; Read は外側の借用の payload を新しい値として払い出すが、
-;; payload 内の lifetime-bearing reference を複製して再束縛する規則を定めないため、
-;; 内側に別の借用を持つ payload は複製を拒否する。
-(define (borrow-payload-borrow-free? type)
+;; Read には内側の可変 loan を再借用する規則がなく、複製は排他参照を二つにする。
+(define (borrow-payload-borrow-free? type #:reject-borrowed-mut? [reject-borrowed-mut? #t])
   (let walk ([t type] [visited (set)])
     (match t
       [`(Borrowed ,payload ,_) (not (borrowed-type-anywhere? payload))]
-      [`(BorrowedMut ,payload ,_) (not (borrowed-type-anywhere? payload))]
+      [`(BorrowedMut ,payload ,_)
+       (and (not reject-borrowed-mut?)
+            (not (borrowed-type-anywhere? payload)))]
       [`(Data ,name (,arguments ...))
        (define key (cons name arguments))
        (define schema (data-schema name arguments))
@@ -3871,10 +3871,12 @@
 ;; 借用以外の複製できない構成子は reason で落とす。
 ;; 所有者が引けない借用は関数の境界を越えて入ってきたものであり、
 ;; borrow.md 14 節 1 項により本サイクルでは受け取らない。
-(define (payload-borrows-traceable? type reason core fail)
+(define (payload-borrows-traceable? type reason core fail
+                                    #:reject-borrowed-mut? [reject-borrowed-mut? #t])
   (define scanned (copy-out-scan type))
   (unless scanned (fail reason core))
-  (unless (borrow-payload-borrow-free? type)
+  (unless (borrow-payload-borrow-free?
+           type #:reject-borrowed-mut? reject-borrowed-mut?)
     (fail reason core))
   (for ([alpha (in-list scanned)])
     (unless (lifetime-owner-region alpha)
@@ -3923,13 +3925,16 @@
       [`(BorrowedMut ,τ ,α) (values τ α)]
       [`(Borrowed ,_ ,_) (fail 'assign-through-shared core)]
       [_ (fail 'assign-non-borrow core)]))
-  (payload-borrows-traceable? τ_payload 'assign-owned-payload core fail)
+  ;; Assign は lifetime を追跡するが、Read の copy-out 判定は適用しない。
+  (payload-borrows-traceable? τ_payload 'assign-owned-payload core fail
+                               #:reject-borrowed-mut? #f)
   (match-define (list τ_value ε_value Ψ_2)
     (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
   ;; 書き込む値の借用は、書き込み先の view より長く生きなければならない。
   ;; 短ければ view を通じて解放済みの借用を読み出せる。
   (define α_value
-    (payload-borrows-traceable? τ_value 'assign-owned-payload core fail))
+    (payload-borrows-traceable? τ_value 'assign-owned-payload core fail
+                                 #:reject-borrowed-mut? #f))
   (for ([α (in-list α_value)])
     (emit-constraint!
      (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
