@@ -483,3 +483,82 @@
              (Assign parent 7)))))
   (define-values (_ir _filled typed) (type-core core '((1 Int))))
   (check-true (region-typed? typed) (format "region typing: ~s" typed)))
+
+(test-case "Scope で包んだ呼出しの借用結果が外へ届く形は E-BOR-020"
+  (define callables
+    '((borrow-result
+       (ForallRegion (a)
+         (NFn ((Borrowed Int (RParam a)))
+              (Borrowed Int (RParam a)) () () () User)))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (borrowed let (Borrowed Int ph))
+              (Scope ()
+                (Let (argument let (Borrowed Int ph)) (Borrow owner)
+                  (Apply
+                   (RegionApp
+                    (RegionLam (a) (Lam User borrow-result (p) p))
+                    (owner-ph))
+                   argument)))
+           (Read borrowed)))))
+  (define-values (_ir _filled typed) (type-core core '() callables))
+  (check-true (diagnostic? typed) (format "typed: ~s" typed))
+  (check-equal? (diagnostic-id typed) "E-BOR-020"))
+
+(test-case "Scope で包んだ呼出しの借用 Return payload が外へ届く形は E-BOR-020"
+  (define callables
+    '((return-borrow
+       (ForallRegion (a)
+         (NFn ((BorrowedMut Int (RParam a))) Never ()
+              ((Return boundary (Borrowed Int (RParam a)))) () User)))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Handle (Return boundary (Borrowed Int owner-ph))
+           (captured -> (Read captured))
+           (Scope ()
+             (Let (argument let (BorrowedMut Int ph)) (BorrowMut owner)
+               (Apply
+                (RegionApp
+                 (RegionLam
+                  (a)
+                  (Lam User return-borrow (p)
+                    (Perform (Return boundary (Borrowed Int (RParam a)))
+                             (Reborrow p))))
+                 (owner-ph))
+                argument)))))))
+  (define-values (_ir _filled typed) (type-core core '() callables))
+  (check-true (diagnostic? typed) (format "typed: ~s" typed))
+  (check-equal? (diagnostic-id typed) "E-BOR-020"))
+
+(test-case "Scope で包んだ呼出しの借用 Option Return payload が外へ届く形は E-BOR-020"
+  (define callables
+    '((return-option-borrow
+       (ForallRegion (a)
+         (NFn ((BorrowedMut Int (RParam a))) Never ()
+              ((Return boundary (Option (Borrowed Int (RParam a))))) () User)))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Handle (Return boundary (Option (Borrowed Int owner-ph)))
+           (captured ->
+             (Eliminate captured
+               ((none () -> 0)
+                (some (payload) -> (Read payload)))))
+           (Scope ()
+             (Let (argument let (BorrowedMut Int ph)) (BorrowMut owner)
+               (Apply
+                (RegionApp
+                 (RegionLam
+                  (a)
+                  (Lam User return-option-borrow (p)
+                    (Perform
+                     (Return boundary (Option (Borrowed Int (RParam a))))
+                     (Construct (Option (Borrowed Int (RParam a))) some
+                                (Reborrow p)))))
+                 (owner-ph))
+                argument)))))))
+  (define-values (_ir _filled typed) (type-core core '() callables))
+  (check-true (diagnostic? typed) (format "typed: ~s" typed))
+  (check-equal? (diagnostic-id typed) "E-BOR-020"))
