@@ -76,9 +76,8 @@
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir REC2)
                 'ok))
 
-;; 8。射影は新しい α を採らないため、同じ根から派生した親 field の
-;; capability と子 field の使用は競合しない。ProjBorrow が新しい α を
-;; 採る実装へ変われば、この回帰が fail へ転ぶ。
+;; 8。値位置の可変射影は新しい α を採るため、子が生きている間に
+;; 親を通して同じ欄の内側を読む使用は競合する。
 (let ()
   (define (make ρ_b ρ_a)
     `(Scope (1)
@@ -87,7 +86,7 @@
                       (Read (ProjBorrow (ProjBorrow b a) x))))))
   (define ir (build-region-ir (make 0 0)))
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir NEST)
-                'ok))
+                'fail))
 
 ;; 9。子が生きているあいだ、親を通した Read を拒む。
 (let ()

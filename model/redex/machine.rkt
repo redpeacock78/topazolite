@@ -1161,8 +1161,8 @@
         (cfg (in-hole E (BorrowRef p fp ρ)) H Ω Λtok θ)
         R-Reborrow)
 
-   ;; spec §5.3。射影先は親と同じ貸出しに属し、結果の寿命も親に従う。
-   ;; ProjBorrowAt の注釈は point を示すため結果へ移さない。
+   ;; mutable parent からの値位置の射影は独立した子 region を持つ。
+   ;; place 位置も machine は同じ注釈を使い、型検査が一時値を再型付けする。
    ;; H、Ω、θ は射影で変更しない。
    (--> (cfg (in-hole E (ProjBorrowAt ρ (BorrowRef p fp ρ_parent) label)) H Ω Λtok θ)
         (cfg (in-hole E (BorrowRef p fp_result ρ_parent)) H Ω Λtok θ)
@@ -1173,7 +1173,7 @@
         (cfg (in-hole E v_result) H Ω Λtok θ)
         (where fp_result ,(append (term fp) (list (term label))))
         (where v_result ,(proj-borrow-mut (term p) (term fp_result)
-                                          (term ρ_parent) (term H)))
+                                          (term ρ) (term H)))
         R-ProjBorrowMut)
 
    ;; spec §6.3。H、Ω、θ は読み出しで変更しない。

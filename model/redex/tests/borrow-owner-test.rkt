@@ -32,6 +32,7 @@
                      (hash)
                      (hash)
                      (set '())
+                     (set)
                      (set)))
 
 ;; 一意に定まるとき、その region を返す。

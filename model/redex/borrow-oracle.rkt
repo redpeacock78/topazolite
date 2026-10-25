@@ -189,15 +189,21 @@
      #:when (and (equal? ρ ρ2)
                  (equal? pp p2) (equal? fpp fp2))
      (list (list 'reborrow p2 fp2 ρ ρp))]
-    [(list `(ProjBorrowAt ,ρ (,tag ,pp ,fpp ,ρp) ,label)
+    [(list `(ProjBorrowAt ,ρ (BorrowRef ,pp ,fpp ,ρp) ,label)
            `(,tag2 ,p2 ,fp2 ,ρ2))
-     #:when (and (memq tag '(BorrowRef BorrowMutRef))
-                 (memq tag2 '(BorrowRef BorrowMutRef))
-                 (not (and (eq? tag 'BorrowRef)
-                           (eq? tag2 'BorrowMutRef)))
+     #:when (and (eq? tag2 'BorrowRef)
                  (equal? pp p2)
                  (equal? fp2 (append fpp (list label)))
                  (equal? ρp ρ2))
+     (list (list 'derived
+                 'shared
+                 p2 fp2 ρ2 pp fpp ρp))]
+    [(list `(ProjBorrowAt ,ρ (BorrowMutRef ,pp ,fpp ,ρp) ,label)
+           `(,tag2 ,p2 ,fp2 ,ρ2))
+     #:when (and (memq tag2 '(BorrowRef BorrowMutRef))
+                 (equal? pp p2)
+                 (equal? fp2 (append fpp (list label)))
+                 (equal? ρ ρ2))
      (list (list 'derived
                  (if (eq? tag2 'BorrowMutRef) 'mut 'shared)
                  p2 fp2 ρ2 pp fpp ρp))]
@@ -646,22 +652,62 @@
 
 ;; 条件 2。可変借用が他の借用と重なって同時に生きていない。
 ;; 同じ正規化借用の複数の出現は、取得ではなく同じ loan の複製である。
-(define (check-mut-exclusive config)
+(define (parent-edge-pair edge)
+  (match edge
+    [(list 'derived child parent) (list child parent)]
+    [(list 'reborrow child parent) (list child parent)]
+    [(list child parent) (list child parent)]
+    [_ #f]))
+
+(define (loan-ancestor? descendant ancestor edges)
+  (let loop ([pending (list descendant)] [seen (set)])
+    (match pending
+      ['() #f]
+      [(cons loan rest)
+       (cond
+         [(equal? loan ancestor) #t]
+         [(set-member? seen loan) (loop rest seen)]
+         [else
+          (define parents
+            (for/list ([edge (in-list edges)]
+                       #:when (equal? (first edge) loan))
+              (second edge)))
+          (loop (append rest parents) (set-add seen loan))])])))
+
+(define (check-mut-exclusive config [parent-edges '()])
   (define live (live-borrows config))
+  (define edges (filter values (map parent-edge-pair parent-edges)))
+  (define (related? a b)
+    (or (loan-ancestor? a b edges) (loan-ancestor? b a edges)))
   (for*/or ([a (in-list live)]
             [b (in-list live)]
             #:unless (equal? a b))
     (and (borrows-overlap? a b)
          (or (eq? (first a) 'mut) (eq? (first b) 'mut))
+         (not (related? a b))
          (list 'fail 'mut-not-exclusive (list a b)))))
 
 ;; 条件 3。reborrow の子が生きている間、親の可変借用は現れない。
 (define (check-reborrow-parents config parents)
   (define live (list->set (live-borrows config)))
-  (for/or ([pair (in-list parents)])
-    (and (set-member? live (first pair))
-         (set-member? live (second pair))
-         (list 'fail 'reborrow-parent-live pair))))
+  (define projection-children
+    (for/set ([edge (in-list parents)]
+              #:when (match edge [(list 'derived _ _) #t] [_ #f]))
+      (second edge)))
+  (for/or ([edge (in-list parents)])
+    (match edge
+      [(list 'reborrow child parent)
+       ;; 射影からの再借用では、parent の後続出現だけで拒否しない。
+       ;; 実際に親を消費した step は derived-parent-use-failure で判定する。
+       (and (not (set-member? projection-children parent))
+            (set-member? live child)
+            (set-member? live parent)
+            (list 'fail 'reborrow-parent-live (list child parent)))]
+      [(list child parent)
+       (and (set-member? live child)
+            (set-member? live parent)
+            (list 'fail 'reborrow-parent-live edge))]
+      [_ #f])))
 
 ;; R-BorrowMut の step 前に同じ可変 loan が生きていれば、別取得として拒否する。
 (define (reacquired-live-mut name candidates pre)
@@ -674,6 +720,33 @@
               (and (member b live)
                    (list 'fail 'mut-not-exclusive (list b b)))]
              [_ #f])))))
+
+;; 親は出現しているだけでは停止違反にならないが、子の生存中に消費はできない。
+(define (derived-parent-use-failure candidates pre parents)
+  (define live (list->set (live-borrows pre)))
+  (define edges (filter values (map parent-edge-pair parents)))
+  (define (source candidate)
+    (match candidate
+      [(list 'use 'mut p fp ρ)
+       (list (list 'mut p fp ρ) (list 'mut p fp ρ))]
+      [(list 'derived _mode p fp _ρ pp pfp pρ)
+       (list (list 'mut pp pfp pρ) (list 'mut p fp pρ))]
+      [(list 'reborrow p fp _ρ ρ-parent)
+       (list (list 'mut p fp ρ-parent) (list 'mut p fp ρ-parent))]
+      [_ #f]))
+  (for/or ([candidate (in-list candidates)])
+    (define source-pair (source candidate))
+    (define parent (and source-pair (first source-pair)))
+    (define operation (and source-pair (second source-pair)))
+    (and parent
+         (set-member? live parent)
+         (for/or ([edge (in-list edges)])
+           (define child (first edge))
+           (and (not (equal? child parent))
+                (set-member? live child)
+                (loan-ancestor? child parent edges)
+                (borrows-overlap? child operation)
+                (list 'fail 'reborrow-parent-live (list child parent)))))))
 
 ;; spec §4.6。static request の designator が動的な place へ解けるかを調べる。
 ;; 解が無いときは #f、全てが p のときは #t、複数の place へ散るときは
@@ -744,10 +817,9 @@
     (cond
       [(obs-only-borrow? current) 'discard]
       ;; 条件 3 を条件 2 より先に見る。reborrow の子と親は place も欄 path も
-      ;; 同じなので borrows-overlap? が必ず真になり、条件 2 を先に見ると
-      ;; 条件 3 は到達しなくなる。より限定的な reborrow-parent-live を先に出す。
+      ;; 同じなので通常の直接の reborrow では従来の診断順を保つ。
       [(check-reborrow-parents current parents) => values]
-      [(check-mut-exclusive current) => values]
+      [(check-mut-exclusive current parents) => values]
       [(zero? remaining) 'discard]
       [else
        (define steps (raw-steps-g2/named current))
@@ -788,6 +860,7 @@
                                       current counters)))
                 (cond
                   [(and verdict (eq? (first verdict) 'fail)) verdict]
+                  [(derived-parent-use-failure candidates current parents) => values]
                   [else
                    (define next-scopes (count-scopes next))
                    (when (and (< next-scopes scopes)
@@ -797,7 +870,7 @@
                    (loop next next-prov
                          (for/fold ([updated parents])
                                    ([candidate (in-list candidates)])
-                           (update-parents updated candidate))
+                           (update-parents updated candidate current))
                          (sub1 remaining) next-scopes)])])])])])))
 
 ;; 候補を分類し、照合してカウンタを進める。fail なら理由を返す。
@@ -840,8 +913,19 @@
   (define after (list->set (live-borrows post)))
   (for/or ([b (in-list before)]) (set-member? after b)))
 
-(define (update-parents parents candidate)
+(define (update-parents parents candidate pre)
   (match candidate
     [(list 'reborrow p fp ρ ρ-parent)
-     (cons (list (list 'shared p fp ρ) (list 'mut p fp ρ-parent)) parents)]
+     (cons (list 'reborrow
+                 (list 'shared p fp ρ)
+                 (list 'mut p fp ρ-parent))
+           parents)]
+    [(list 'derived mode p fp ρ pp pfp pρ)
+     (append
+      (for/list ([parent (in-list (live-borrows pre))]
+                 #:when (and (equal? (second parent) pp)
+                             (equal? (third parent) pfp)
+                             (equal? (fourth parent) pρ)))
+        (list 'derived (list mode p fp ρ) parent))
+      parents)]
     [_ parents]))

@@ -38,14 +38,14 @@
 
 ;; mut に (x ρ2) があるときは、退避と子の共有借用の両方を行う。
 (check-equal? (psi-suspend (psi (set) (set (list 'x '() ρ2)) (set) flow-a)
-                           'x '() ρ2 ρ1 '(Reborrow x))
+                           'x '() ρ2 ρ1 'shared '(Reborrow x))
               (psi (set (list 'x '() ρ1))
                    (set)
                    (set (list 'x '() ρ2 ρ1 '(Reborrow x) #f #f))
                    flow-a))
 
 ;; mut に無いときは共有借用だけを張り、退場時に mut を新規作成しない。
-(check-equal? (psi-suspend (empty-psi) 'x '() ρ2 ρ1 '(Reborrow x))
+(check-equal? (psi-suspend (empty-psi) 'x '() ρ2 ρ1 'shared '(Reborrow x))
               (psi (set (list 'x '() ρ1)) (set) (set)
                    (flow-state (hash) (hash))))
 
@@ -53,7 +53,7 @@
 (let* ([parent (list 'x '() ρ2)]
        [Ψ (psi (set) (set parent) (set) (flow-state (hash) (hash)))]
        [point '(3 1)]
-       [suspended (psi-suspend Ψ 'x '(a) ρ2 ρ1 '(Reborrow field) point)])
+       [suspended (psi-suspend Ψ 'x '(a) ρ2 ρ1 'shared '(Reborrow field) point)])
   (check-equal? (psi-mut suspended) (set parent))
   (check-equal? (psi-suspended suspended)
                 (set (list 'x '(a) ρ2 ρ1 '(Reborrow field) point #f))))

@@ -149,18 +149,26 @@
 ;; mut に実在する項目だけを suspended へ退避する。親が共有借用の
 ;; designator は mut に無いので、退場時に項目を新規作成しない。
 ;; suspended の末尾に Reborrow の節点と構文上の位置を持つ。
-(define (psi-suspend Ψ w fp α_parent α_child node [point #f] [window #f])
+(define (psi-suspend Ψ w fp α_parent α_child child-mode node
+                     [point #f] [window #f])
+  (unless (memq child-mode '(shared mut))
+    (raise-argument-error 'psi-suspend "(or/c 'shared 'mut)" child-mode))
   (define held?
     (for/or ([entry (in-set (psi-mut Ψ))])
       (and (equal? (first entry) w)
            (equal? (third entry) α_parent)
            (path-prefix? (second entry) fp))))
-  (psi (set-add (psi-shared Ψ) (list w fp α_child))
+  (define child-entry (list w fp α_child))
+  (psi (if (eq? child-mode 'shared)
+           (set-add (psi-shared Ψ) child-entry)
+           (psi-shared Ψ))
        ;; 窓の後で親を再開できるよう、窓付き停止では親の候補を残す。
        (if (and (not window)
                 (set-member? (psi-mut Ψ) (list w fp α_parent)))
            (set-remove (psi-mut Ψ) (list w fp α_parent))
-           (psi-mut Ψ))
+           (if (eq? child-mode 'mut)
+               (set-add (psi-mut Ψ) child-entry)
+               (psi-mut Ψ)))
        (if held?
            (set-add (psi-suspended Ψ)
                     (list w fp α_parent α_child node point window))
@@ -475,6 +483,21 @@
             (if (string=? wa wb)
                 (< (alpha-order a) (alpha-order b))
                 (string<? wa wb)))))
+  ;; source を持つ使用では、停止違反を個別の BOR-002 競合より先に調べる。
+  ;; source が空の owner 使用はこの判定に当たらず、overlapping? で調べる。
+  (define (source-suspended? u)
+    (for/or ([e (in-set (psi-suspended Ψ))])
+      (and (set-member? (use-request-source u) (third e))
+           (capability-overlap? (first e) (second e)
+                                (use-request-w u) (use-request-fp u))
+           (if (and (seventh e) (use-request-point u))
+               (inside-window? (seventh e) (sixth e)
+                               (use-request-point u) #f)
+               (and (region-outlives? ir (sigma-ref σ (fourth e))
+                                      (use-request-point-region u))
+                    (if (and (sixth e) (use-request-point u))
+                        (point-after-reborrow? (sixth e) (use-request-point u))
+                        #t))))))
   (for* ([i (in-range (length ordered))]
          [j (in-range (add1 i) (length ordered))])
     (define a (list-ref ordered i))
@@ -492,6 +515,15 @@
   (define (overlapping? r u)
     (and (capability-overlap? (borrow-request-w r) (borrow-request-fp r)
                               (use-request-w u) (use-request-fp u))
+         ;; ProjBorrow の Read 要求は借用を作る同じ節点で先に評価される。
+         (not (and (match (peel-node (borrow-request-node r))
+                    [`(ProjBorrow ,_ ,_) #t]
+                    [`(ProjBorrowAt ,_ ,_ ,_) #t]
+                    [_ #f])
+                   (borrow-request-point r)
+                   (use-request-point u)
+                   (equal? (borrow-request-point r)
+                           (use-request-point u))))
          (not (scope-ended-before? r (use-request-point u)))
          ;; 制御境界をまたがない線形順で、生成前の使用を重複扱いしない。
          (not (and (borrow-request-point r)
@@ -517,28 +549,22 @@
                (region-outlives? ir (ρ-of r)
                                  (use-request-point-region u))))))
 
-  ;; 起点そのものが停止しているか。停止した親を通した使用は
-  ;; operation と mode によらず拒む。条件 3 より先に見る。
-  (define (source-suspended? u)
-    (for/or ([e (in-set (psi-suspended Ψ))])
-      (and (set-member? (use-request-source u) (third e))
-           (capability-overlap? (first e) (second e)
-                                (use-request-w u) (use-request-fp u))
-           (if (and (seventh e) (use-request-point u))
-               (inside-window? (seventh e) (sixth e)
-                               (use-request-point u) #f)
-               (and (region-outlives? ir (sigma-ref σ (fourth e))
-                                      (use-request-point-region u))
-                    ;; use-request に alpha は無い。point で停止開始より後を判定する。
-                    (if (and (sixth e) (use-request-point u))
-                        (point-after-reborrow? (sixth e) (use-request-point u))
-                        #t))))))
-
   ;; 条件 2。α_o が source の要素の親として suspended に入っているか。
   (define (parent-of-source? r u)
-    (for/or ([e (in-set (psi-suspended Ψ))])
-      (and (equal? (borrow-request-alpha r) (third e))
-           (set-member? (use-request-source u) (fourth e)))))
+    (let loop ([parents (list (borrow-request-alpha r))] [seen (set)])
+      (match parents
+        ['() #f]
+        [(cons parent rest)
+         (cond
+           [(set-member? seen parent) (loop rest seen)]
+           [else
+            (define children
+              (for/list ([e (in-set (psi-suspended Ψ))]
+                         #:when (equal? parent (third e)))
+                (fourth e)))
+            (or (for/or ([child (in-list children)])
+                  (set-member? (use-request-source u) child))
+                (loop (append rest children) (set-add seen parent)))])])))
 
   ;; 条件 3。read は mut とだけ競合する。assign と move は両方と競合する。
   (define (mode-conflict? operation mode)

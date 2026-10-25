@@ -616,7 +616,7 @@
     '(cfg (ProjBorrowAt 0 (BorrowMutRef 7 () 1) n)
           ((7 (Rec ((n mut 1))) (declared (Owned (Record ((n Int mut)))))))
           ((7 Available)) () ()))
-   '((cfg (BorrowMutRef 7 (n) 1)
+   '((cfg (BorrowMutRef 7 (n) 0)
           ((7 (Rec ((n mut 1))) (declared (Owned (Record ((n Int mut)))))))
           ((7 Available)) () ()))))
 

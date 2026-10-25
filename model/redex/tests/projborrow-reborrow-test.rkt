@@ -70,7 +70,7 @@
     `(Let (moved let (Owned ,owner-type)) (Move x) (Read child)))
    "E-BOR-008"))
 
-(test-case "再借用の子が死んだ後は親の同じ欄へ書き込める"
+(test-case "再借用の子が死んでも値位置の射影は外側 Scope まで親を止める"
   (define core
     `(Scope ()
        (Let (x let (Owned ,owner-type)) (Rec ((a mut 1) (b mut 2)))
@@ -84,7 +84,7 @@
                               (Read child)))
                (Assign (ProjBorrow root a) 3)))))))
   (define result (core-type-of/regions core '() '()))
-  (check-true (region-typed? result) (format "region 型付け: ~s" result)))
+  (check-rejected result "E-BOR-025"))
 
 (test-case "Loop の借用仮引数は E-BOR-012 で止まり再借用を次反復へ持ち越せない"
   (define source

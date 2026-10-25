@@ -153,6 +153,10 @@
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
 
+;; config retyping has no region IR in Λ, so retain the place-projection points
+;; for the complete Core being checked.
+(define config-projborrow-place-points (make-parameter #f))
+
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
 (define (with-config-typing thunk)
   (parameterize ([deriving-config? #t])
@@ -424,11 +428,11 @@
   (match t [`(RParam ,_) #t] [_ #f]))
 
 ;; §5.4。region-constraint は所有者の designator を欄に持たない。
-;; 雛形として溜めるときは、振り分けに使った鍵を添える。
-;; 実体化した後にもう一段外の雛形へ回すかどうかを、この鍵で決める。
-(struct deferred-constraint (w constraint window-point) #:transparent)
+;; formal capability の欄 path は、呼出しで親と子の停止を結ぶため一緒に保持する。
+(struct deferred-constraint (w constraint window-point parent-fp child-fp) #:transparent)
 
-(define (route-constraint! c w node fail [window-point #f])
+(define (route-constraint! c w node fail [window-point #f]
+                           [parent-fp '()] [child-fp '()])
   (define deferred-c
     (if (formal-key? w)
         (struct-copy region-constraint c
@@ -438,8 +442,10 @@
         c))
   (define deferred-window
     (and window-point (template-relative-point w window-point)))
-  (unless (route-deferred! (deferred-constraint w deferred-c deferred-window)
-                           w node fail)
+  (unless (route-deferred!
+           (deferred-constraint w deferred-c deferred-window
+                                parent-fp child-fp)
+           w node fail)
     (emit-constraint! c)))
 
 ;; Reborrow の token 集合は 1 つの収集先へしか送れない。formal 鍵と通常の
@@ -603,16 +609,18 @@
   (define (actual-caps w)
     (hash-ref subst w
               (lambda () (fail 'unresolved-borrow-owner node))))
-  (define (reborrow-constraint w child-alpha)
-    (for/first ([item (in-list deferred)]
-                #:when (and (deferred-constraint? item)
-                            (equal? (deferred-constraint-w item) w)
-                            (eq? (region-constraint-kind
-                                  (deferred-constraint-constraint item))
-                                 'reborrow)
-                            (equal? (region-constraint-right
-                                     (deferred-constraint-constraint item))
-                                    child-alpha)))
+  (define (reborrow-constraints w child-alpha child-fp)
+    (for/list ([item (in-list deferred)]
+               #:when (and (deferred-constraint? item)
+                           (equal? (deferred-constraint-w item) w)
+                           (eq? (region-constraint-kind
+                                 (deferred-constraint-constraint item))
+                                'reborrow)
+                           (equal? (region-constraint-right
+                                    (deferred-constraint-constraint item))
+                                   child-alpha)
+                           (equal? (deferred-constraint-child-fp item)
+                                   child-fp)))
       item))
   ;; 遅延した共有借用は Reborrow から来ている。定義時の親は formal capability
   ;; なので通常の infer-reborrow 経路では呼出し側の可変借用をまだ停止できない。
@@ -628,32 +636,33 @@
        (define w (borrow-request-w item))
        (define caps (actual-caps w))
        (define child-alpha (subst-term (borrow-request-alpha item)))
-       (define reborrow-item
-         (reborrow-constraint w (borrow-request-alpha item)))
-       (define parent-template
-         (and reborrow-item
-              (region-constraint-left
-               (deferred-constraint-constraint reborrow-item))))
+       (define reborrow-items
+         (reborrow-constraints w (borrow-request-alpha item)
+                               (borrow-request-fp item)))
        (for ([cap (in-set caps)])
+         (define child-fp
+           (append (cdr cap) (borrow-request-fp item)))
          (route-request!
           (borrow-request (car cap)
-                          (append (cdr cap) (borrow-request-fp item))
+                          child-fp
                           (borrow-request-mode item)
                           child-alpha
                           (borrow-request-rho-borrow item)
-                          node
+                          (borrow-request-node item)
                           (and (borrow-request-point item)
                                (deferred-point
                                 (borrow-request-point item))))
           node fail)
-         (when (and (eq? (borrow-request-mode item) 'shared)
-                    parent-template)
-           (define parent-term (subst-term parent-template))
+         (for ([reborrow-item (in-list reborrow-items)])
            (define constraint
              (deferred-constraint-constraint reborrow-item))
+           (define parent-term
+             (subst-term (region-constraint-left constraint)))
+           (define parent-fp
+             (append (cdr cap)
+                     (deferred-constraint-parent-fp reborrow-item)))
            (define suspension-point
-             (deferred-point
-              (region-constraint-point constraint)))
+             (deferred-point (region-constraint-point constraint)))
            (define window-point
              (deferred-constraint-window-point reborrow-item))
            (define suspension-window
@@ -661,24 +670,21 @@
            (define parent-alphas
              (for/list ([entry (in-set (psi-mut current-psi))]
                         #:when (and (equal? (first entry) (car cap))
-                                    (equal? (second entry) (cdr cap))))
+                                    (equal? (second entry) parent-fp)))
                (third entry)))
-           (if (null? parent-alphas)
-               (set! current-psi
-                     (psi-suspend
-                      (psi-add-mut current-psi (car cap) (cdr cap)
-                                   parent-term)
-                      (car cap) (cdr cap) parent-term child-alpha
-                      (borrow-request-node item) suspension-point
-                      suspension-window))
-               (for ([parent-alpha (in-list parent-alphas)])
-                 (set! current-psi
-                       (psi-suspend current-psi
-                                    (car cap) (cdr cap)
-                                    parent-alpha child-alpha
-                                    (borrow-request-node item)
-                                    suspension-point
-                                    suspension-window))))))]
+           (when (null? parent-alphas)
+             (set! current-psi
+                   (psi-add-mut current-psi (car cap) parent-fp parent-term))
+             (set! parent-alphas (list parent-term)))
+           (for ([parent-alpha (in-list parent-alphas)])
+             (set! current-psi
+                   (psi-suspend current-psi
+                                 (car cap) child-fp
+                                 parent-alpha child-alpha
+                                 (borrow-request-mode item)
+                                 (borrow-request-node item)
+                                 suspension-point
+                                 suspension-window)))))]
       [(use-request? item)
        (define w (use-request-w item))
        ;; 遅延した Reborrow が作った局所 alpha を保つ。全ての use source を
@@ -725,7 +731,11 @@
        (for ([cap (in-set (actual-caps w))])
          (route-constraint!
           c-new (car cap) node fail
-          (and window-point (deferred-point window-point))))]))
+          (and window-point (deferred-point window-point))
+          (append (cdr cap)
+                  (deferred-constraint-parent-fp item))
+          (append (cdr cap)
+                  (deferred-constraint-child-fp item))))]))
   current-psi)
 
 ;; §5.5。呼出しの結果に付く要約を出現ごとに溜める表。
@@ -2526,31 +2536,21 @@
   (match (infer payload (enter-child Λ 0) Ψ
                 environment places callables fail)
     [(list payload-type row next-psi)
-     (define matching-members
-       (filter (lambda (member)
-                 (type-equiv? (retained-lifetime-shape member)
-                              (retained-lifetime-shape payload-type)))
-               (union-members union-type*)))
      (define adopted-member
-       (and (= (length matching-members) 1)
-            (type-equiv? (first matching-members) member-type*)
-            (adopt-retained-lifetimes member-type* payload-type)))
-     (define checked-member (or adopted-member member-type*))
-     (unless (tag-compat? payload-type checked-member
+       (adopt-retained-lifetimes member-type* payload-type))
+     (unless (tag-compat? payload-type adopted-member
                           (current-Γ-pc0) (current-region-relation))
        (fail 'ill-typed node))
      (check-borrow-hiding! payload-type member-type* node fail)
      (define result-type
-       (if adopted-member
-           (normalize-type
-            (foldr (lambda (member tail)
-                     (if tail `(Union ,member ,tail) member))
-                   #f
-                   (for/list ([member (in-list (union-members union-type*))])
-                     (if (type-equiv? member member-type*)
-                         adopted-member
-                         member))))
-           union-type*))
+       (normalize-type
+        (foldr (lambda (member tail)
+                 (if tail `(Union ,member ,tail) member))
+               #f
+               (for/list ([member (in-list (union-members union-type*))])
+                 (if (type-equiv? member member-type*)
+                     adopted-member
+                     member)))))
      (list result-type row next-psi)]))
 
 (define (check-eliminate scrutinee branches expected
@@ -3328,6 +3328,16 @@
      `(Borrowed ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
     [(`(BorrowedMut ,d-payload ,_) `(BorrowedMut ,a-payload ,a-rho))
      `(BorrowedMut ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
+    [(`(Record ,declared-row) `(Record ,actual-row))
+     `(Record
+       ,(for/list ([field (in-list declared-row)])
+          (define actual-field (field-row-lookup actual-row (first field)))
+          (if actual-field
+              (list* (first field)
+                     (adopt-inferred-lifetimes (second field)
+                                               (first actual-field))
+                     (cddr field))
+              field)))]
     [((? list?) (? list?))
      #:when (= (length declared) (length actual))
      (for/list ([d (in-list declared)] [a (in-list actual)])
@@ -3551,6 +3561,15 @@
   (define ras (box '()))
   (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
+  (define erased-core (erase-core core))
+  (define config-place-points
+    (and (deriving-config?)
+         (let walk ([node erased-core])
+           (or (match node [`(ProjBorrowAt ,_ ,_ ,_) #t] [_ #f])
+               (for/or ([child (in-list (core-children node))])
+                 (walk child))))
+         (lexical-region-ir-projborrow-place-points
+          (build-region-ir erased-core))))
   (match (parameterize ([lifetime-collector cs]
                         [request-collector rs]
                         [region-arg-collector ras]
@@ -3564,7 +3583,8 @@
                         [callable-summaries (make-hash)]
                         [forwarding-summaries (make-hash)]
                         [template-collectors '()]
-                        [recur-overlay '()])
+                        [recur-overlay '()]
+                        [config-projborrow-place-points config-place-points])
            (with-typing
             (lambda (fail)
               ;; 束縛名を入口で 1 度だけ付け替える。関係の表も同じ項から作る。
@@ -3755,8 +3775,8 @@
                            core 'borrow-conflicting-use #f fail))
        (for ([α_parent (in-list (hash-ref parent-terms cap))])
          (route-constraint!
-         (region-constraint 'reborrow α_parent α_child point core)
-          w core fail reborrow-window))
+          (region-constraint 'reborrow α_parent α_child point core)
+          w core fail reborrow-window fp fp))
        ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
        ;; 生成していない。各 token を親の要求として記録し、境界の先でも
        ;; Move/Drop の判定へ届かせる。core 内ですでに Ψ にある要求は
@@ -3796,6 +3816,7 @@
                         (cdr cap)
                         α_parent
                         α_child
+                        'shared
                         core
                         point))))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
@@ -3844,10 +3865,18 @@
     [`(BorrowedMut ,_ ,ρ) (alpha-set ρ)]
     [_ (set)]))
 
-;; [REQ: BOR-004] 借用の field 射影。親の α をそのまま使い、
-;; 新しい α と borrow-request は作らない（spec §5.1）。
+;; [REQ: BOR-004] 値位置の可変親射影は新しい α と停止を作る。
+;; Read/Assign の place 位置と共有親射影は親の α を使う（spec §3.1, §3.7）。
 (define (infer-projborrow core operand label Λ Ψ environment places callables fail)
   (define field-label (peel-lbl label))
+  (define point (region-ctx-point Λ))
+  (define ir (region-ctx-ir Λ))
+  (define place?
+    (cond
+      [ir (region-projborrow-place? ir point)]
+      [(deriving-config?)
+       (set-member? (or (config-projborrow-place-points) (set)) point)]
+      [else #f]))
   (define operand-result
     (infer operand (enter-child Λ 0) Ψ environment places callables fail))
   (define τ_operand
@@ -3873,10 +3902,121 @@
   (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
     (fail 'borrowed-owned-payload core))
   (define source (use-source Λ operand τ_operand))
-  (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
+  (define tokens (borrow-token-key Λ operand #:fail fail))
+  (for ([cap (in-set tokens)])
     (emit-use-request! Λ (car cap) (append (cdr cap) (list field-label)) 'read source
                        core 'borrow-conflicting-use #f fail))
-  (list `(,(proj-borrow-mode m_parent m_f) ,τ_f ,α) ε_operand Ψ_1))
+  (define projected-name (proj-borrow-mode m_parent m_f))
+  (define child-mode (if (eq? projected-name 'BorrowedMut) 'mut 'shared))
+  (cond
+    [(deriving-config?)
+     ;; 現在の machine 値は注釈 ρ を持つ一時 view である。place mark はこの
+     ;; 節点を source 型検査の place/value 分岐へ誤って流さないために読む。
+     (define ρ
+       (match (peel-node core)
+         [`(ProjBorrowAt ,annotated-ρ ,_ ,_) annotated-ρ]
+         [_ (fail 'ill-typed core)]))
+     (list `(,projected-name ,τ_f ,ρ) ε_operand Ψ_1)]
+    [(and ir
+          (eq? m_parent 'BorrowedMut)
+          (not place?)
+          (for/or ([cap (in-set tokens)]) (formal-key? (car cap))))
+     (when (set-empty? tokens) (fail 'unresolved-borrow-owner core))
+     (define parent-designators (uniform-token-designators tokens core fail))
+     (define α_child (fresh-lifetime! point))
+     (define ρ_child (region-at ir point))
+     (define parent-term
+       (if (or (lifetime-var? α) (rparam-term? α))
+           α
+           (rho->region ir α)))
+     (for ([w (in-list parent-designators)])
+       (route-constraint!
+        (region-constraint 'contains α_child ρ_child point core)
+        w core fail))
+     (for ([cap (in-set tokens)])
+       (define w (car cap))
+       (define parent-fp (cdr cap))
+       (define child-fp (append parent-fp (list field-label)))
+       (route-constraint!
+        (region-constraint 'reborrow parent-term α_child point core)
+        w core fail #f parent-fp child-fp)
+       (route-request!
+        (borrow-request w child-fp child-mode α_child ρ_child core point)
+        core fail))
+     (list `(,projected-name ,τ_f ,α_child) ε_operand Ψ_1)]
+    [(and ir
+          (eq? m_parent 'BorrowedMut)
+          (not place?)
+          (not (for/or ([cap (in-set tokens)]) (formal-key? (car cap)))))
+     (when (set-empty? tokens) (fail 'unresolved-borrow-owner core))
+     (define parent-designators (uniform-token-designators tokens core fail))
+     (define α_child (fresh-lifetime! point))
+     (define ρ_child (region-at ir point))
+     (define parent-term
+       (if (or (lifetime-var? α) (rparam-term? α))
+           α
+           (rho->region ir α)))
+     (define parent-sources (capability-source τ_operand))
+     (define (existing-mut cap)
+       (define matches
+         (for/list ([entry (in-set (psi-mut Ψ_1))]
+                    #:when (and (equal? (first entry) (car cap))
+                                (path-prefix? (second entry) (cdr cap))))
+           entry))
+       (define exact
+         (filter (lambda (entry) (equal? (third entry) parent-term)) matches))
+       (cond
+         [(pair? exact) exact]
+         [(not (set-empty? parent-sources))
+          (filter (lambda (entry)
+                    (set-member? parent-sources (third entry)))
+                  matches)]
+         [else '()]))
+     (define parent-terms
+       (for/hash ([cap (in-set tokens)])
+         (define existing (existing-mut cap))
+         (values cap (if (pair? existing)
+                         (map third existing)
+                         (list parent-term)))))
+     (for ([w (in-list parent-designators)])
+       (route-constraint!
+        (region-constraint 'contains α_child ρ_child point core)
+        w core fail))
+     (for ([cap (in-set tokens)])
+       (define w (car cap))
+       (define fp (cdr cap))
+       (for ([α_parent (in-list (hash-ref parent-terms cap))])
+         (route-constraint!
+          (region-constraint 'reborrow α_parent α_child point core)
+          w core fail))
+       (unless (or (lifetime-var? α)
+                   (rparam-term? α)
+                   (pair? (existing-mut cap)))
+         (route-request!
+          (borrow-request w fp 'mut parent-term parent-term core point)
+          core fail)))
+     (for ([cap (in-set tokens)])
+       (route-request!
+        (borrow-request (car cap)
+                        (append (cdr cap) (list field-label))
+                        child-mode α_child ρ_child core point)
+        core fail))
+     (define Ψ_seed
+       (for/fold ([Ψ_acc Ψ_1]) ([cap (in-set tokens)])
+         (if (pair? (existing-mut cap))
+             Ψ_acc
+             ;; 内側の Reborrow が除いた親項目を戻し、次の停止関係を記録する。
+             (psi-add-mut Ψ_acc (car cap) (cdr cap) parent-term))))
+     (define Ψ_child
+       (for/fold ([Ψ_acc Ψ_seed]) ([cap (in-set tokens)])
+         (for/fold ([Ψ_inner Ψ_acc])
+                   ([α_parent (in-list (hash-ref parent-terms cap))])
+           (psi-suspend Ψ_inner
+                        (car cap)
+                        (append (cdr cap) (list field-label))
+                        α_parent α_child child-mode core point))))
+     (list `(,projected-name ,τ_f ,α_child) ε_operand Ψ_child)]
+    [else (list `(,projected-name ,τ_f ,α) ε_operand Ψ_1)]))
 
 ;; spec §4 分岐 2。α から所有者の region を引く。
 ;; 借用の生成は BOR-001 の上限制約 (outlives ρ_owner α) を必ず出すため、

@@ -17,6 +17,7 @@
          (struct-out region-constraint)
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
+         region-projborrow-place?
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
          region-parent region-contains? owner-let-body-region
@@ -358,6 +359,10 @@
   (unless (set-member? (lexical-region-ir-points ir) point)
     (error 'region-query "Core の節点を指さない point: ~s" point)))
 
+(define (region-projborrow-place? ir point)
+  (check-point ir point)
+  (set-member? (lexical-region-ir-projborrow-place-points ir) point))
+
 (define (lexical-root ir)
   (for/first ([ρ (in-set (region-ir-regions ir))]
               #:unless (hash-has-key? (lexical-region-ir-parents ir) ρ))
@@ -391,7 +396,8 @@
 ;; at-table は point で有効な最内の region、exit-table は Scope の退場先、
 ;; owner-body-table は owner Let の body region を持つ。
 (struct lexical-region-ir region-ir
-  (parents at-table exit-table owner-body-table points control-order-barriers)
+  (parents at-table exit-table owner-body-table points control-order-barriers
+           projborrow-place-points)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -570,6 +576,8 @@
        [(list point kind)
         (and (set-member? points point) (memq kind '(handle recur)))]
        [_ #f]))
+   (and (set? (lexical-region-ir-projborrow-place-points ir))
+        (subset? (lexical-region-ir-projborrow-place-points ir) points))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -596,6 +604,21 @@
   (define owner-body-table (make-hash))
   (define owners (make-hash (list (cons root '()))))
   (define outlives (mutable-set))
+  (define projborrow-place-points (mutable-set))
+  (define (mark-projborrow-chain node point)
+    (match node
+      [`(ProjBorrow ,operand ,_)
+       (set-add! projborrow-place-points point)
+       (mark-projborrow-chain operand (append point '(0)))]
+      [_ (void)]))
+  (define (walk-place-projborrows node point)
+    (match node
+      [`(Read ,operand) (mark-projborrow-chain operand (append point '(0)))]
+      [`(Assign ,target ,_) (mark-projborrow-chain target (append point '(0)))]
+      [_ (void)])
+    (for ([child (in-list (core-children node))] [i (in-naturals)])
+      (walk-place-projborrows child (append point (list i)))))
+  (walk-place-projborrows erased '())
   (letrec ([walk
             (lambda (t prefix current)
               (define point (reverse prefix))
@@ -644,7 +667,8 @@
    (freeze exit-table)
    (freeze owner-body-table)
    (list->set (core-points erased))
-   (list->set (core-control-order-barriers erased))))
+   (list->set (core-control-order-barriers erased))
+   (list->set (set->list projborrow-place-points))))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
 (define (annotation-borrow-type? τ)

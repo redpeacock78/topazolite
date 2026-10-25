@@ -44,7 +44,7 @@
         (Let assigned (Assign b 18) 0))))
   (check-true (region-typed? typed) (format "region 型付け: ~s" typed)))
 
-(test-case "ProjBorrow の欄を読んだ後も関数本体の親を書ける"
+(test-case "ProjBorrow の子が生きている間は関数本体の親を書けない"
   (define expression
     '(Fn ((p (Owned (Record ((n Int mut)))))) Unit (Own Mutation)
          (LexicalScope
@@ -56,7 +56,8 @@
   (match (elab expression)
     [(list core _type _row callables)
      (define result (core-type-of/regions core '() callables))
-     (check-true (region-typed? result) (format "region 型付け: ~s" result))]
+     (check-true (diagnostic? result) (format "診断を期待: ~s" result))
+     (check-equal? (diagnostic-id result) "E-BOR-025")]
     [`(err ,diagnostic) (fail (format "elaboration: ~s" diagnostic))]))
 
 (test-case "合流した可変借用を再借用して関数本体で読める"

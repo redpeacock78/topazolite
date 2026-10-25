@@ -193,9 +193,11 @@
                  #:exit-table [exit-table at-table]
                  #:owner-body-table [owner-body-table (hash)]
                  #:points [points nested-points]
-                 #:control-order-barriers [control-order-barriers (set)])
+                 #:control-order-barriers [control-order-barriers (set)]
+                 #:projborrow-place-points [projborrow-place-points (set)])
   (lexical-region-ir regions outlives owners parents at-table exit-table
-                     owner-body-table points control-order-barriers))
+                     owner-body-table points control-order-barriers
+                     projborrow-place-points))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
@@ -211,6 +213,19 @@
                 (set (list '() 'recur)))
   (check-true (lexical-region-ir-ok? handle-ir))
   (check-true (lexical-region-ir-ok? recur-ir)))
+
+(test-case "Read/Assign の place 射影 chain だけを IR に記録する"
+  (define ir
+    (build-region-ir
+     '(Scope ()
+        (Let (a let Int) (Read (ProjBorrow (#:span src 0 1) (ProjBorrow p f) h))
+          (Assign (ProjBorrow p g) 1)))))
+  (check-true (region-projborrow-place? ir '(0 0 0)))
+  (check-true (region-projborrow-place? ir '(0 0 0 0)))
+  (check-true (region-projborrow-place? ir '(0 1 0)))
+  (check-true (lexical-region-ir-ok? ir))
+  (define value-ir (build-region-ir '(Eliminate (ProjBorrow p f) ())))
+  (check-false (region-projborrow-place? value-ir '(0))))
 
 (test-case "3 成分の器の形を検査する"
   ;; 1. regions が region の集合である。

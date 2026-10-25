@@ -404,8 +404,8 @@
 (test-case "Some の枝を出た後の親更新は受理される"
   (check-trace (option-after-branch) 'Unit))
 
-(test-case "形の変わらない record の親更新後も欄の子を読める"
-  (check-trace record-p7-core 'Int))
+(test-case "形の変わらない record でも子が生きている間の親更新を拒む"
+  (check-rejected record-p7-core "E-BOR-025"))
 
 (test-case "一構成子 data の欄は variant 印で保護しない"
   (call-with-trait-ledger data-ledger
@@ -437,8 +437,8 @@
   (check-rejected (leave-payload-core #t) "E-BOR-025")
   (check-trace (leave-payload-core #f) 'Int))
 
-(test-case "record payload の孫が生きる間も同じ形の子 Assign は受理される"
-  (check-trace (record-grandchild-core 'child-same-shape) 'Int))
+(test-case "record payload の孫が生きる間は同じ形の子 Assign も拒む"
+  (check-rejected (record-grandchild-core 'child-same-shape) "E-BOR-025"))
 
 (test-case "record payload の孫について親を通す variant 書換えだけ E-BOR-025"
   (check-rejected (record-grandchild-core 'parent-variant) "E-BOR-025")

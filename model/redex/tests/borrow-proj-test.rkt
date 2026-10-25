@@ -86,8 +86,8 @@
   (check-equal? (first result) 'fail)
   (check-equal? (second result) 'assign-through-shared))
 
-;; 射影の結果の region は親と同じである。新しい α を採らない（spec §5.1）。
-(let ()
+;; 同じ lexical Scope にある parent/child は region 解決後に同じ場所を指す。
+(test-case "一時型付けで解決した親と射影の region が同じ場合がある"
   (define core '(ProjBorrow (BorrowMut 1) a))
   (define ir (build-region-ir core))
   (define result (run core ir))
@@ -98,6 +98,26 @@
     (match annotated
       [`(ProjBorrowAt ,_ (BorrowMutAt ,ρ ,_ ,_) ,_) ρ]))
   (check-equal? α_child α_parent))
+
+(test-case "同じ Scope の ProjBorrow も親と別の alpha を採る"
+  (define core
+    '(Scope ()
+       (Let (x let (Owned (Record ((n Int mut))))) (Rec ((n mut 1)))
+         (Let (p let (BorrowedMut (Record ((n Int mut)))
+                                   (RParam %omitted)))
+              (BorrowMut x)
+           (Let (c let (BorrowedMut Int (RParam %omitted)))
+                (ProjBorrow p n)
+             unit)))))
+  (define typed (core-type-of/regions core '() '()))
+  (check-true (region-typed? typed) (format "region 型付け: ~s" typed))
+  (when (region-typed? typed)
+    (define alpha-table (region-typed-table typed))
+    (define parent-alpha (hash-ref alpha-table '(0 1 0)))
+    (define child-alpha (hash-ref alpha-table '(0 1 1 0)))
+    (check-not-equal? parent-alpha child-alpha)
+    (check-equal? (hash-ref (region-typed-σ typed) 0)
+                  (hash-ref (region-typed-σ typed) 1))))
 
 ;; 所有値を内側に含む field の射影は通る（spec §5.4）。
 (let ()
@@ -144,7 +164,7 @@
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg (BorrowMutRef 1 (a) 1)
+   (list (term (cfg (BorrowMutRef 1 (a) 0)
                     ,(proj-heap) ,(proj-omega) () ())))))
 
 (let ()
@@ -153,17 +173,17 @@
                ,(proj-heap) ,(proj-omega) () ())))
   (check-equal?
    (apply-reduction-relation -->g2 conf)
-   (list (term (cfg (BorrowRef 1 (b) 1)
+   (list (term (cfg (BorrowRef 1 (b) 0)
                     ,(proj-heap) ,(proj-omega) () ())))))
 
-(test-case "ProjBorrowAt の注釈欄は結果の region を決めない"
+(test-case "可変親からの ProjBorrowAt は注釈の region を結果に使う"
   (for ([annotation (in-list '(0 1 7))])
     (define conf
       (term (cfg (ProjBorrowAt ,annotation (BorrowMutRef 1 () 1) a)
                  ,(proj-heap) ,(proj-omega) () ())))
     (check-equal?
      (apply-reduction-relation -->g2 conf)
-     (list (term (cfg (BorrowMutRef 1 (a) 1)
+     (list (term (cfg (BorrowMutRef 1 (a) ,annotation)
                       ,(proj-heap) ,(proj-omega) () ()))))))
 
 ;; 拒否 2。row に無い label を射影する。
