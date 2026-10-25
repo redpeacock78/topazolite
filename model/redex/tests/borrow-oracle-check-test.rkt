@@ -264,6 +264,26 @@
          (UnionEliminate (Move u) ((Int n -> n) (String s -> 0))))))
   (check-equal? (first (run skeleton)) 'ok))
 
+(test-case "Union payload binder の reborrow は oracle を通る"
+  (define skeleton
+    '(Scope ()
+       (Let (x let (Owned (Record ((u (Union Int String) mut)))))
+            (Rec ((u mut (UnionInject (Union Int String) Int 1000))))
+         (Scope ()
+           (Let (p let (BorrowedMut (Record ((u (Union Int String) mut))) ph))
+                (BorrowMut x)
+             (UnionEliminate (ProjBorrow p u)
+               ((Int c ->
+                  (Let (r let (Borrowed Int ph)) (Reborrow c)
+                    (Let (value let Int) (Read r) unit)))
+                (String text -> unit))))))))
+  (match (prepare-borrow-term* skeleton)
+    [(list 'ok config sidecar ir _type)
+     (check-equal? (check-borrow-execution config sidecar ir 200
+                                           (make-bcounters))
+                   'ok)]
+    [other (fail (format "Core が型検査されなかった: ~s" other))]))
+
 (test-case "生きている借用の place を move する遷移は fail になる"
   ;; 条件 1。Ω が Available から Moved へ変わる前後の config を手で組む。
   ;; place 0 を指す共有借用が制御項に生きているので落ちる。

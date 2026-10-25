@@ -175,7 +175,7 @@
  (borrow-token-key (region-ctx #f '() (hash) (hash))
                    '(UnionEliminate (Borrow 1)
                       ((Int i -> i) (String s -> s))))
- (set (list 1 'Payload)))
+ (set (list 1 '(Payload))))
 (check-equal?
  (borrow-token-key (region-ctx #f '() (hash) (hash))
                    '(UnionEliminate
@@ -191,7 +191,7 @@
                         ((Int i -> 0)
                          (String s -> 0)
                          (Bool b -> (Reborrow b)))))
-   (set (list 1 'Payload))))
+   (set (list 1 '(Payload)))))
 
 (test-case "RecRewrite は入力の capability を書き換え後も保つ"
   (check-equal?

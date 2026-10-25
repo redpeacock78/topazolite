@@ -1043,7 +1043,7 @@
       [else
        (only (if (set? ws)
                  (for/set ([cap (in-set ws)])
-                   (cons (car cap) (append (cdr cap) '(Payload))))
+                   (cons (car cap) (append (cdr cap) '((Payload)))))
                  (set)))]))
   (entry-add-variant-view
    entry variant? borrowed-view?
