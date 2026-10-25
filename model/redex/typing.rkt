@@ -153,8 +153,8 @@
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
 
-;; config retyping has no region IR in Λ, so retain the place-projection points
-;; for the complete Core being checked.
+;; config の再型付けでは Λ に region IR が無いので、検査する Core 全体の
+;; place 位置の射影の point を保持する。
 (define config-projborrow-place-points (make-parameter #f))
 
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
@@ -679,12 +679,12 @@
            (for ([parent-alpha (in-list parent-alphas)])
              (set! current-psi
                    (psi-suspend current-psi
-                                 (car cap) child-fp
-                                 parent-alpha child-alpha
-                                 (borrow-request-mode item)
-                                 (borrow-request-node item)
-                                 suspension-point
-                                 suspension-window)))))]
+                                (car cap) child-fp
+                                parent-alpha child-alpha
+                                (borrow-request-mode item)
+                                (borrow-request-node item)
+                                suspension-point
+                                suspension-window)))))]
       [(use-request? item)
        (define w (use-request-w item))
        ;; 遅延した Reborrow が作った局所 alpha を保つ。全ての use source を
@@ -3921,7 +3921,6 @@
           (eq? m_parent 'BorrowedMut)
           (not place?)
           (for/or ([cap (in-set tokens)]) (formal-key? (car cap))))
-     (when (set-empty? tokens) (fail 'unresolved-borrow-owner core))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
      (define ρ_child (region-at ir point))
