@@ -194,10 +194,13 @@
                  #:owner-body-table [owner-body-table (hash)]
                  #:points [points nested-points]
                  #:control-order-barriers [control-order-barriers (set)]
-                 #:projborrow-place-points [projborrow-place-points (set)])
+                 #:projborrow-place-points [projborrow-place-points (set)]
+                 #:eliminate-table [eliminate-table (hash)]
+                 #:callable-body-points [callable-body-points (set)])
   (lexical-region-ir regions outlives owners parents at-table exit-table
                      owner-body-table points control-order-barriers
-                     projborrow-place-points))
+                     projborrow-place-points eliminate-table
+                     callable-body-points))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
@@ -226,6 +229,103 @@
   (check-true (lexical-region-ir-ok? ir))
   (define value-ir (build-region-ir '(Eliminate (ProjBorrow p f) ())))
   (check-false (region-projborrow-place? value-ir '(0))))
+
+(test-case "分解の region は Scope の子で region-at には現れない"
+  (define core
+    '(Scope ()
+       (Let (x let Int) 1
+         (Eliminate y ((none () -> unit) (some (v) -> unit))))))
+  (define ir (build-region-ir core))
+  (define scope-region (region-at ir '(0)))
+  (define elim-point '(0 1))
+  (define elim-region (region-at/eliminate ir '(0 1 0)))
+  (check-equal? (region-at ir '(0 1 0)) scope-region)
+  (check-not-equal? elim-region scope-region)
+  (check-true (region-decomposition-point? ir elim-point))
+  (check-equal? (regions-exiting-at ir elim-point) (set elim-region))
+  (check-true (region-outlives? ir scope-region elim-region))
+  (check-equal? (region->rho ir elim-region) (region->rho ir scope-region))
+  (check-true
+   (region-decomposition-scrutinee?
+    (build-region-ir '(Scope () (Eliminate (ProjBorrow p f) ()))) '(0 0)))
+  (check-true (lexical-region-ir-ok? ir)))
+
+(test-case "owner 型の Let の本体にある分解の親は owner-body の region"
+  (define core
+    '(Let (x let (Owned Int)) 1
+       (Eliminate y ((none () -> unit) (some (v) -> unit)))))
+  (define ir (build-region-ir core))
+  (define body-region (region-at ir '(1)))
+  (define elim-region (region-at/eliminate ir '(1 0)))
+  (check-not-equal? elim-region body-region)
+  (check-true (region-outlives? ir body-region elim-region))
+  (check-true (lexical-region-ir-ok? ir)))
+
+(test-case "枝の中の Scope の親の鎖は分解の region を経由する"
+  (define core
+    '(Scope ()
+       (Eliminate y ((none () -> (Scope () unit)) (some (v) -> unit)))))
+  (define ir (build-region-ir core))
+  (define elim-region (region-at/eliminate ir '(0 0)))
+  (define inner (region-at ir '(0 1 0)))
+  (check-true (region-outlives? ir elim-region inner))
+  (check-equal? (region-at/eliminate ir '(0 1 0)) inner))
+
+(test-case "入れ子の分解の region の親は外側の分解の region"
+  (define core
+    '(Scope ()
+       (Eliminate y
+         ((none () -> (Eliminate z ((none () -> unit) (some (w) -> unit))))
+          (some (v) -> unit)))))
+  (define ir (build-region-ir core))
+  (define outer (region-at/eliminate ir '(0 0)))
+  (define inner (region-at/eliminate ir '(0 1 0)))
+  (check-not-equal? inner outer)
+  (check-equal? (region-parent ir inner) outer)
+  (check-equal? (region-parent ir outer) (region-at ir '(0)))
+  (check-equal? (region->rho ir inner) (region->rho ir (region-at ir '(0))))
+  (check-true (lexical-region-ir-ok? ir)))
+
+(test-case "閉包の本体の境界の外の分解は数えない"
+  (define core
+    '(Scope ()
+       (Eliminate y
+         ((none () -> (Lam User c0 ()
+                        (Eliminate z ((none () -> unit) (some (w) -> unit)))))
+          (some (v) -> unit)))))
+  (define ir (build-region-ir core))
+  (check-equal? (region-enclosing-decompositions ir '(0 1 0 1))
+                '((0 1 0)))
+  (check-equal? (region-enclosing-decompositions ir '(0 2)) '((0))))
+
+(test-case "RecurVal と Recur の本体は境界、Recur の継続は境界でない"
+  (define inner-eliminate
+    '(Eliminate z ((none () -> unit) (some (w) -> unit))))
+  (define outer '(0))
+  (define core/recurval
+    `(Scope ()
+       (Eliminate y
+         ((none () -> (RecurVal c0 f () ,inner-eliminate))
+          (some (v) -> unit)))))
+  (define inner/recurval '(0 1 0))
+  (define point/recurval-inner '(0 1 0 1))
+  (define ir-recurval (build-region-ir core/recurval))
+  (check-equal? (region-enclosing-decompositions ir-recurval point/recurval-inner)
+                (list inner/recurval))
+  (define core/recur
+    `(Scope ()
+       (Eliminate y
+         ((none () -> (Recur c1 f () ,inner-eliminate ,inner-eliminate))
+          (some (v) -> unit)))))
+  (define inner/recur-body '(0 1 0))
+  (define inner/recur-continuation '(0 1 1))
+  (define ir-recur (build-region-ir core/recur))
+  (check-equal? (region-enclosing-decompositions ir-recur
+                                                  '(0 1 0 1))
+                (list inner/recur-body))
+  (check-equal? (region-enclosing-decompositions ir-recur
+                                                  '(0 1 1 1))
+                (list inner/recur-continuation outer)))
 
 (test-case "3 成分の器の形を検査する"
   ;; 1. regions が region の集合である。
@@ -434,32 +534,46 @@
        (if (resource-type? type) 1 0)]
       [_ 0])))
 
-(test-case "C3: Scope と owner Let の個数が root 以外の region の個数と一致する"
+(test-case "C3: Scope、owner Let、分解の個数が root 以外の region と一致する"
   (for ([core (in-list (list '(Apply f 1) nested sibling-core
-                             owner-let-scope owner-let-value))])
+                             owner-let-scope owner-let-value
+                             '(Scope () (Eliminate y ((none () -> unit)
+                                                       (some (v) -> unit))))
+                             '(Scope () (UnionEliminate x ((Int i -> unit))))))])
     (define ir (build-region-ir core))
     (check-equal? (sub1 (set-count (region-ir-regions ir)))
-                  (+ (count-scopes core) (count-owner-lets core))
+                  (+ (count-scopes core) (count-owner-lets core)
+                     (for/sum ([point (in-list (core-points core))])
+                       (match (core-node core point)
+                         [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_) 1]
+                         [_ 0])))
                   (format "~s" core))))
 
-(test-case "C4: 退場は Scope の point でちょうど 1 件、それ以外で空である"
-  (for ([core (in-list (list sibling-core owner-let-scope owner-let-value))])
+(test-case "C4: 退場は Scope と分解の point でちょうど 1 件、それ以外で空である"
+  (for ([core (in-list (list sibling-core owner-let-scope owner-let-value
+                             '(Scope () (Eliminate y ((none () -> unit)
+                                                       (some (v) -> unit))))
+                             '(Scope () (UnionEliminate x ((Int i -> unit))))))])
     (define ir (build-region-ir core))
-    (define root (region-at ir '()))
+    (define root
+      (for/first ([ρ (in-set (region-ir-regions ir))]
+                  #:unless (region-parent ir ρ))
+        ρ))
     (for ([point (in-list (core-points core))])
       (define exiting (regions-exiting-at ir point))
       (match (core-node core point)
         [`(Scope ,_ ,_)
          (check-equal? exiting (set (region-at ir point)) (format "~s" point))]
+        [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
+         (check-equal? exiting (set (region-at/eliminate ir point))
+                       (format "~s" point))]
         [_ (check-true (set-empty? exiting) (format "~s" point))])
       ;; root region はどの point でも返らない。
       (check-false (set-member? exiting root) (format "~s" point)))))
 
 ;; C6: spanful な Core と erase-core を通した項が、外延的に同型な IR を作る。
 ;; region 識別子は不透明なので equal? では比べられない。
-;; region-at が返す region の対応から写像 σ を作り、親の鎖で root まで延ばす。
-;; region-at は root Scope を持つ Core で root を返さないため、parents を辿らないと
-;; σ が root を覆えない。
+;; region-at と region-at/eliminate が返す region の対応を親の鎖で root まで延ばす。
 (define (build-σ ir-a ir-b core)
   (define σ (make-hash))
   (define (link! a b)
@@ -471,7 +585,9 @@
          [(#f #f) #t]
          [(pa pb) (and pa pb (link! pa pb))])]))
   (and (for/and ([point (in-list (core-points core))])
-         (link! (region-at ir-a point) (region-at ir-b point)))
+         (and (link! (region-at ir-a point) (region-at ir-b point))
+              (link! (region-at/eliminate ir-a point)
+                     (region-at/eliminate ir-b point))))
        σ))
 
 (define (extensionally-isomorphic? ir-a ir-b core)
@@ -565,8 +681,15 @@
                       [_ #f]))
     point))
 
-;; 親は、自身より真に短い Scope の point のうち最長の接頭辞である。
-(define (scope-parent points point)
+(define (decomposition-points core)
+  (for/list ([point (in-list (core-points core))]
+             #:when (match (core-node core point)
+                      [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_) #t]
+                      [_ #f]))
+    point))
+
+;; 親は、自身より真に短い region point のうち最長の接頭辞である。
+(define (region-parent-point points point)
   (for/fold ([best #f]) ([other (in-list points)])
     (if (and (< (length other) (length point))
              (equal? other (take point (length other)))
@@ -578,31 +701,30 @@
   (match-define (list raw-core _ _ _) (elab source))
   (define core (erase-core raw-core))
   (define ir (build-region-ir core))
-  (define points (scope-points core))
+  (define scope-points* (scope-points core))
+  (define points (append scope-points* (decomposition-points core)))
   ;; Scope を 1 つも含まない golden では、以下の走査が空回りする。
-  (check-true (pair? points) (format "~a: Scope を 1 つも含まない" name))
+  (check-true (pair? scope-points*) (format "~a: Scope を 1 つも含まない" name))
   (check-true (region-ir-ok? ir core) name)
   (check-true (lexical-region-ir-ok? ir) name)
-  (check-equal? (sub1 (set-count (region-ir-regions ir))) (length points) name)
+  (check-equal? (sub1 (set-count (region-ir-regions ir)))
+                (+ (length points) (count-owner-lets core)) name)
   (define root (region-at ir '()))
   (for ([point (in-list points)])
-    (define ρ (region-at ir point))
-    ;; 退場は自身の point でちょうど 1 件である。
+    (define ρ (region-at/eliminate ir point))
     (check-equal? (regions-exiting-at ir point) (set ρ) name)
-    ;; 親子関係が一致する。
-    (define parent-point (scope-parent points point))
+    (define parent-point (region-parent-point points point))
     (define parent-region
-      (if parent-point (region-at ir parent-point) root))
+      (if parent-point (region-at/eliminate ir parent-point) root))
     (check-equal? (region-parent ir ρ) parent-region name)
-    ;; 親が子より長生きし、同時に生きる。
     (check-true (region-outlives? ir parent-region ρ) name)
     (check-true (regions-overlap? ir parent-region ρ) name))
-  ;; Scope でない point では退場が無い。
   (for ([point (in-list (core-points core))]
-        #:unless (member point points))
+        #:unless (or (member point scope-points*)
+                    (member point (decomposition-points core))))
     (check-true (set-empty? (regions-exiting-at ir point)) name)))
 
-(test-case "C5: golden program 2 本の region を問い合わせだけで再構成できる"
+(test-case "C5: golden program の Scope と分解の region を問い合わせだけで再構成できる"
   (check-golden-region "findPositive" golden-find-positive)
   (check-golden-region "map" golden-doubled))
 

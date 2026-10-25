@@ -18,6 +18,8 @@
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
          region-projborrow-place?
+         region-at/eliminate region-decomposition-point?
+         region-enclosing-decompositions region-decomposition-scrutinee?
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
          region-parent region-contains? owner-let-body-region
@@ -397,7 +399,7 @@
 ;; owner-body-table は owner Let の body region を持つ。
 (struct lexical-region-ir region-ir
   (parents at-table exit-table owner-body-table points control-order-barriers
-           projborrow-place-points)
+           projborrow-place-points eliminate-table callable-body-points)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -520,13 +522,70 @@
    (define (region->rho self ρ)
      (unless (set-member? (region-ir-regions self) ρ)
        (error 'region->rho "この ir に属さない region である: ~s" ρ))
-     (region-id ρ))
+     (define eliminate-table (lexical-region-ir-eliminate-table self))
+     (let loop ([current ρ] [fuel (set-count (region-ir-regions self))])
+       (if (for/or ([candidate (in-hash-values eliminate-table)])
+             (equal? current candidate))
+           (match (region-parent self current)
+             [#f (error 'region->rho "分解の region に親が無い: ~s" current)]
+             [parent
+              (if (zero? fuel)
+                  (error 'region->rho "分解の region の親を辿れない: ~s" current)
+                  (loop parent (sub1 fuel)))])
+           (region-id current))))
 
    (define (rho->region self n)
      (define ρ (region n))
      (unless (set-member? (region-ir-regions self) ρ)
        (error 'rho->region "この ir に属さない ρ である: ~s" n))
      ρ)])
+
+;; region-at は Scope と owner-body だけを返し、分解の region はこの問いで読む。
+(define (region-at/eliminate ir point)
+  (if (lexical-region-ir? ir)
+      (begin
+        (check-point ir point)
+        (or (for/or ([n (in-range (length point) -1 -1)])
+              (define prefix (take point n))
+              (or (hash-ref (lexical-region-ir-eliminate-table ir) prefix #f)
+                  (hash-ref (lexical-region-ir-at-table ir) prefix #f)))
+            (lexical-root ir)))
+      (region-at ir point)))
+
+(define (region-decomposition-point? ir point)
+  (and (lexical-region-ir? ir)
+       (hash-has-key? (lexical-region-ir-eliminate-table ir) point)))
+
+(define (region-enclosing-decompositions ir point)
+  (if (not (lexical-region-ir? ir))
+      '()
+      (begin
+        (check-point ir point)
+        (let loop ([n (length point)] [found '()])
+          (cond
+            [(negative? n) (reverse found)]
+            [else
+             (define prefix (take point n))
+             (define next
+               (if (and (< n (length point))
+                        (hash-has-key? (lexical-region-ir-eliminate-table ir) prefix))
+                   (cons prefix found)
+                   found))
+             (if (set-member? (lexical-region-ir-callable-body-points ir) prefix)
+                 (reverse next)
+                 (loop (sub1 n) next))])))))
+
+(define (point-prefix? prefix point)
+  (and (<= (length prefix) (length point))
+       (equal? prefix (take point (length prefix)))))
+
+(define (region-decomposition-scrutinee? ir point)
+  (match (region-enclosing-decompositions ir point)
+    [(cons decomposition _)
+     (and (point-prefix? (append decomposition '(0)) point)
+          (equal? (region-at/eliminate ir point)
+                  (hash-ref (lexical-region-ir-eliminate-table ir) decomposition)))]
+    [_ #f]))
 
 (define (place-list? v)
   (and (list? v) (andmap exact-nonnegative-integer? v)))
@@ -578,6 +637,14 @@
        [_ #f]))
    (and (set? (lexical-region-ir-projborrow-place-points ir))
         (subset? (lexical-region-ir-projborrow-place-points ir) points))
+   (and (hash? (lexical-region-ir-eliminate-table ir))
+        (for/and ([(point ρ) (in-hash (lexical-region-ir-eliminate-table ir))])
+          (and (set-member? points point)
+               (set-member? regions ρ)
+               (equal? (hash-ref (lexical-region-ir-exit-table ir) point #f) ρ)
+               (region-contains? ir (region-at ir point) ρ))))
+   (and (set? (lexical-region-ir-callable-body-points ir))
+        (subset? (lexical-region-ir-callable-body-points ir) points))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -602,9 +669,11 @@
   (define at-table (make-hash))
   (define exit-table (make-hash))
   (define owner-body-table (make-hash))
+  (define eliminate-table (make-hash))
   (define owners (make-hash (list (cons root '()))))
   (define outlives (mutable-set))
   (define projborrow-place-points (mutable-set))
+  (define callable-body-points (mutable-set))
   (define (mark-projborrow-chain node point)
     (match node
       [`(ProjBorrow ,operand ,_)
@@ -632,6 +701,27 @@
                  ;; 親が子より長生きする。直接の制約だけを入れ、推移閉包は入れない。
                  (set-add! outlives (list current ρ))
                  (walk body (cons 0 prefix) ρ)]
+                [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
+                 (define ρ (fresh-region!))
+                 (hash-set! parents ρ current)
+                 (hash-set! owners ρ '())
+                 (hash-set! eliminate-table point ρ)
+                 (hash-set! exit-table point ρ)
+                 (set-add! outlives (list current ρ))
+                 (for ([k (in-list (core-children t))] [i (in-naturals)])
+                   (walk k (cons i prefix) ρ))]
+                [`(Lam ,_ ,_ ,_ ,body)
+                 (define body-point (append point '(0)))
+                 (set-add! callable-body-points body-point)
+                 (walk body (cons 0 prefix) current)]
+                [`(RecurVal ,_ ,_ ,_ ,body)
+                 (define body-point (append point '(0)))
+                 (set-add! callable-body-points body-point)
+                 (walk body (cons 0 prefix) current)]
+                [`(Recur ,_ ,_ ,_ ,body ,continuation)
+                 (set-add! callable-body-points (append point '(0)))
+                 (for ([k (in-list (core-children t))] [i (in-naturals)])
+                   (walk k (cons i prefix) current))]
                 [`(Let (,_ ,_ ,binding-type) ,bound ,body)
                  (walk-let prefix current binding-type bound body)]
                 [`(Let (,_ ,binding-type) ,bound ,body)
@@ -668,7 +758,9 @@
    (freeze owner-body-table)
    (list->set (core-points erased))
    (list->set (core-control-order-barriers erased))
-   (list->set (set->list projborrow-place-points))))
+   (list->set (set->list projborrow-place-points))
+   (freeze eliminate-table)
+   (list->set (set->list callable-body-points))))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
 (define (annotation-borrow-type? τ)

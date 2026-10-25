@@ -33,6 +33,7 @@
          psi-add-shared
          psi-add-mut
          borrow-typed?
+         point-after-decomposition?
          unbound-borrowed-type?
          borrow-designator?
          borrow-token-key capability-field-table capability-field-entries
@@ -342,6 +343,34 @@
           (loop (cdr left) (cdr right))]
          [else (< (car left) (car right))]))]))
 
+;; Handle と Recur の制御境界を跨ぐ point は線形順に比較できない。
+(define (linear-point-order? ir earlier later)
+  (or (not (lexical-region-ir? ir))
+      (for/and ([entry (in-set (lexical-region-ir-control-order-barriers ir))])
+        (match entry
+          [(list barrier 'recur)
+           (not (and (> (length earlier) (length barrier))
+                     (> (length later) (length barrier))
+                     (path-prefix? barrier earlier)
+                     (path-prefix? barrier later)))]
+          [(list barrier 'handle)
+           (or (not (and (> (length earlier) (length barrier))
+                         (> (length later) (length barrier))
+                         (path-prefix? barrier earlier)
+                         (path-prefix? barrier later)))
+               (equal? (list-ref earlier (length barrier))
+                       (list-ref later (length barrier))))]
+          [_ #t]))))
+
+(define (point-after-decomposition? ir decomposition later)
+  (and (not (path-prefix? decomposition later))
+       (linear-point-order? ir decomposition later)
+       (let loop ([left decomposition] [right later])
+         (cond
+           [(or (null? left) (null? right)) #f]
+           [(equal? (car left) (car right)) (loop (cdr left) (cdr right))]
+           [else (< (car left) (car right))]))))
+
 ;; spec §3.2。root が同じで、一方の path が他方の接頭辞のときだけ重なる。
 (define (capability-overlap? w_1 fp_1 w_2 fp_2)
   (and (equal? w_1 w_2)
@@ -400,24 +429,6 @@
     (for/or ([entry (in-set (psi-suspended Ψ))])
       (and (equal? (borrow-request-alpha request) (fourth entry))
            (seventh entry))))
-  ;; Handle の枝と Recur の本体・継続をまたぐ構文順には実行順の意味が無い。
-  (define (linear-point-order? earlier later)
-    (or (not (lexical-region-ir? ir))
-        (for/and ([entry (in-set (lexical-region-ir-control-order-barriers ir))])
-          (match entry
-            [(list barrier 'recur)
-             (not (and (> (length earlier) (length barrier))
-                       (> (length later) (length barrier))
-                       (path-prefix? barrier earlier)
-                       (path-prefix? barrier later)))]
-            [(list barrier 'handle)
-             (or (not (and (> (length earlier) (length barrier))
-                           (> (length later) (length barrier))
-                           (path-prefix? barrier earlier)
-                           (path-prefix? barrier later)))
-                 (equal? (list-ref earlier (length barrier))
-                         (list-ref later (length barrier))))]
-            [_ #t]))))
   ;; Scope で終わる loan は、退場後の point と重ならない。
   (define (scope-ended-before? request later-point)
     (and (lexical-region-ir? ir)
@@ -427,8 +438,10 @@
            (and (set-member? (regions-exiting-at ir scope-point)
                              (ρ-of request))
                 (path-prefix? scope-point (borrow-request-point request))
-                (linear-point-order? scope-point later-point)
-                (point-after-reborrow? scope-point later-point)))))
+                (if (region-decomposition-point? ir scope-point)
+                    (point-after-decomposition? ir scope-point later-point)
+                    (and (linear-point-order? ir scope-point later-point)
+                         (point-after-reborrow? scope-point later-point)))))))
   (define (borrow-pair-overlaps? a b)
     (define a-window? (borrow-windows? a))
     (define b-window? (borrow-windows? b))
@@ -528,7 +541,7 @@
          ;; 制御境界をまたがない線形順で、生成前の使用を重複扱いしない。
          (not (and (borrow-request-point r)
                    (use-request-point u)
-                   (linear-point-order? (borrow-request-point r)
+                   (linear-point-order? ir (borrow-request-point r)
                                         (use-request-point u))
                    (point-after-reborrow? (use-request-point u)
                                           (borrow-request-point r))))
