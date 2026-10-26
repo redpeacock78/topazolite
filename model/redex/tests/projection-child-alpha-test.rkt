@@ -571,3 +571,26 @@
       (check-equal? (region-typed-type typed) '(Option Int))
       (check-runtime typed ir (compiled-callables compiled) '(Option Int)
                      "Eliminate scrutinee 射影の出口"))))
+
+(define (surface-leave-probe payload)
+  (string-append
+   "fn main() -> Unit ! {Own, Mutation, Partial} {\n"
+   " let owner: Owned<{ f: Option<Int> }> = { f: some(1) }\n"
+   " let p = &mut owner\n"
+   " let xs: List<Int> = cons(1, nil())\n"
+   " let result = for item in xs {\n"
+   "  when p.f { some child => leave " payload "\n none => () }\n"
+   " }\n"
+   " deref(p.f)\n"
+   " ()\n"
+   "}\nmain()"))
+
+(test-case "Surface for の leave 借用 payload と Read 対照は E-BOR-011 で先に拒否"
+  (for ([label (in-list '("escape-leave-child" "escape-leave-read-control"))]
+        [payload (in-list '("child" "deref(child)"))])
+    (define result
+      (compile-source/string 'probe (surface-leave-probe payload)))
+    (check-true (diagnostic? result) (format "~a: ~s" label result))
+    (when (diagnostic? result)
+      (check-equal? (diagnostic-id result) "E-BOR-011"
+                    (format "~a: diagnostic" label)))))

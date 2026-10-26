@@ -433,6 +433,199 @@
    `((capture ,callable-type) (plain ,callable-type))
    "escape-lam"))
 
+(define shared-borrowed-int '(Borrowed Int (RParam %omitted)))
+(define shared-return-op `(Return boundary ,shared-borrowed-int))
+
+(test-case "escape-return: 関数結果へ分解の子を Return すると E-BOR-004"
+  (define return-type '(Borrowed Int (RParam a)))
+  (define return-op `(Return boundary ,return-type))
+  (define returner-type
+    `(ForallRegion (a) (NFn () ,return-type () () () User)))
+  (define callables `((returner ,returner-type)))
+  (check-rejected
+   `(RegionLam (a)
+      (Lam User returner ()
+        (Handle ,return-op (returned -> returned)
+          ,(with-shared-view-parent
+            (elim-i `(Perform ,return-op c)
+                    `(Perform ,return-op
+                              (Reborrow (ProjBorrow p g))))))))
+   "E-BOR-004" callables "escape-return"))
+
+(test-case "分解の枝内で matching Return handler が借用 payload を消費する"
+  (check-accepted
+   (with-shared-view-parent
+    (then/as 'Int
+     (elim-i
+      `(Handle (Return boundary Int) (answer -> answer)
+        (Perform (Return boundary Int) (Read c)))
+      0)
+     shared-sibling-write))
+   'Unit '() "escape-return-control"))
+
+(test-case "escape-handle: 分解の外の Return handler へ子を逃がすと E-BOR-025"
+  (check-rejected
+   (with-shared-view-parent
+    `(Let (returned let ,shared-borrowed-int)
+          (Handle ,shared-return-op (answer -> answer)
+            ,(elim-i
+              `(Perform ,shared-return-op c)
+              `(Perform ,shared-return-op (Reborrow (ProjBorrow p g)))))
+       ,(then shared-parent-write '(Read returned))))
+   "E-BOR-025" '() "escape-handle"))
+
+(test-case "分解の枝の matching Return handler が payload を消費する"
+  (check-accepted
+   (with-shared-view-parent
+    (then/as 'Int
+     (elim-i
+      `(Read
+        (Handle ,shared-return-op (answer -> answer)
+          (Perform ,shared-return-op c)))
+      0)
+     shared-sibling-write))
+   'Unit '() "escape-handle-control"))
+
+(test-case "escape-handle-mismatch: 操作の異なる内側 handler を越える"
+  (define inner-return-op `(Return inner-boundary ,shared-borrowed-int))
+  (check-rejected
+   (with-shared-view-parent
+    `(Let (returned let ,shared-borrowed-int)
+          (Handle ,shared-return-op (outer -> outer)
+            ,(elim-i
+              `(Handle ,inner-return-op (inner -> inner)
+                (Perform ,shared-return-op c))
+              `(Reborrow (ProjBorrow p g))))
+       ,(then shared-parent-write '(Read returned))))
+   "E-BOR-025" '() "escape-handle-mismatch"))
+
+(test-case "一致する内側 handler は分解の枝で payload を消費する"
+  (check-accepted
+   (with-shared-view-parent
+    (then/as 'Int
+     (elim-i
+      `(Read
+        (Handle ,shared-return-op (answer -> answer)
+          (Perform ,shared-return-op c)))
+      0)
+     shared-parent-write))
+   'Unit '() "escape-handle-matching-control"))
+
+(test-case "借用型を mutable Let へ Reassign する形は E-VAR-009 で先に拒否"
+  (check-rejected
+   (with-shared-view-parent
+    `(Let (y let (Owned Int)) 3
+       (Let (r mut ,shared-borrowed-int) (Borrow y)
+         ,(elim-i `(Reassign r ,shared-borrowed-int c) 'unit))))
+   "E-VAR-009" '() "escape-assign-reassign-unrepresentable"))
+
+(test-case "Assign の値を Read c にすれば分解の後も受理"
+  (check-accepted
+   (with-shared-view-parent
+    `(Let (y let (Owned Int)) 3
+       (Let (r let (BorrowedMut Int (RParam %omitted))) (BorrowMut y)
+         ,(elim-i `(Let (updated let Unit) (Assign r (Read c)) 1) 0))))
+   'Int '() "escape-assign-read-control"))
+
+(define borrowed-slot-owner-type
+  `(Record ((g Int mut)
+            (i ,opt-int imm)
+            (slot (Borrowed Int (RParam a)) mut))))
+(define borrowed-slot-parameter-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,borrowed-slot-owner-type (RParam a)))
+          Unit () (Mutation) () User)))
+(define borrowed-slot-callables `((slot-writer ,borrowed-slot-parameter-type)))
+
+(test-case "escape-assign: Owned root に借用欄を持たせる形は E-OWN-022 で先に拒否"
+  (define borrowed-slot-owner-value
+    `(Rec ((g mut 2)
+           (i imm (Construct ,opt-int some 1))
+           (slot mut (Borrow y)))))
+  (check-rejected
+   `(Scope ()
+      (Let (y let (Owned Int)) 3
+        (Let (x let (Owned ,borrowed-slot-owner-type))
+             ,borrowed-slot-owner-value
+          (Let (p let (BorrowedMut ,borrowed-slot-owner-type
+                                   (RParam %omitted)))
+               (BorrowMut x)
+            ,(then/as
+              'Int
+              `(Eliminate (ProjBorrow p i)
+                 ((some (c) -> (Assign (ProjBorrow p slot) c))
+                  (none () -> unit)))
+              `(Assign p ,borrowed-slot-owner-value))))))
+   "E-OWN-022" '() "escape-assign-borrowed-field-precheck"))
+
+(test-case "借用 root の nested Borrowed slot は E-BOR-006 で escape guard より先に止まる"
+  (check-rejected
+   `(RegionLam (a)
+      (Lam User slot-writer (p)
+        (Eliminate (ProjBorrow p i)
+          ((some (c) -> (Assign (ProjBorrow p slot) c))
+           (none () -> unit)))))
+   "E-BOR-006" borrowed-slot-callables "escape-assign-borrowed-root-precheck"))
+
+(test-case "escape-curry: borrowed parameter を固定する Curry は E-BOR-020"
+  (define curry-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a)) Int) Int () () () User)))
+  (define callables `((borrowed-curry ,curry-type)))
+  (check-rejected
+   (with-eparent
+    (elim-o
+     '(Curry
+       (RegionApp
+        (RegionLam (a)
+          (Lam User borrowed-curry (argument more) 0))
+        (child-ph))
+       c)
+     'unit))
+   "E-BOR-020" callables "escape-curry"))
+
+(test-case "Curry の固定値が Read c なら受理"
+  (define curry-type '(NFn (Int Int) Int () () () User))
+  (define callables `((plain-curry ,curry-type)))
+  (check-accepted
+   (with-eparent
+    (elim-o
+     '(Apply (Curry (Lam User plain-curry (argument more) argument)
+                    (Read c))
+             7)
+     0))
+   'Int callables "escape-curry-control"))
+
+(define param-parent-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,eowner-type (RParam a)))
+          Int () (Mutation) () User)))
+(define param-parent-callables `((param-parent ,param-parent-type)))
+(define (param-parent-call body)
+  `(Apply
+    (RegionApp
+     (RegionLam (a) (Lam User param-parent (p) ,body))
+     (owner-ph))
+    p))
+
+(test-case "param-parent: 逃げない枝の後の formal parent 書込みも E-BOR-025"
+  (check-rejected
+   (with-eparent
+    (param-parent-call
+     (then/as 'Int (elim-o '(Read c) 0)
+              (then `(Assign p ,eowner-value) 1))))
+   "E-BOR-025" param-parent-callables "param-parent-nonescape"))
+
+(test-case "param-parent: formal projection の子を結果へ逃がす形は E-BOR-025"
+  (check-rejected
+   (with-eparent
+    (param-parent-call
+     `(Let (escaped let (BorrowedMut Int (RParam a)))
+           ,(elim-o 'c '(ProjBorrow p g))
+       (Let (written let Unit) (Assign p ,eowner-value)
+         (Read escaped)))))
+   "E-BOR-025" param-parent-callables "param-parent-escape"))
+
 (test-case "escape-apply: identity の結果を分解の外へ出すと E-BOR-025"
   (define identity-type
     '(ForallRegion (a)
