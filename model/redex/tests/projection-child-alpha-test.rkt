@@ -559,10 +559,15 @@
    "when p.f { some child => 0\n none => 0 }\n"
    "deref(p.f)"))
 
-(test-case "0b0b1b で受理へ戻す Eliminate scrutinee の射影後の同欄 Read"
+(test-case "Eliminate scrutinee の射影の子は分解の出口で終わる"
   (define compiled (compile-source/string 'probe eliminate-projection-source))
-  ;; compile-source は lowering/elaboration 後の Core 型検査で失敗する。
-  (check-true (diagnostic? compiled)
-              (format "Core 型検査の診断を期待: ~s" compiled))
-  (when (diagnostic? compiled)
-    (check-equal? (diagnostic-id compiled) "E-BOR-025")))
+  (check-true (compiled? compiled)
+              (format "Surface compile: ~s" compiled))
+  (when (compiled? compiled)
+    (define-values (ir _filled typed)
+      (type-core (compiled-core compiled) (compiled-callables compiled)))
+    (check-true (region-typed? typed) (format "Surface type: ~s" typed))
+    (when (region-typed? typed)
+      (check-equal? (region-typed-type typed) '(Option Int))
+      (check-runtime typed ir (compiled-callables compiled) '(Option Int)
+                     "Eliminate scrutinee 射影の出口"))))

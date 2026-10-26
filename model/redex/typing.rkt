@@ -142,6 +142,12 @@
 ;; Return payload の寿命と実型を対応する Handle へ返す。関数本体へは引き継がない。
 (define return-handler-regions (make-parameter '()))
 
+;; 分解の scrutinee から派生した借用 α を同じ型付け走査内で追う。
+(define scrutinee-child-alphas (make-parameter #f))
+
+;; lexical binder ごとの本体 point。出口の型がどの束縛へ届くかを判定する。
+(define binder-points (make-parameter (hash)))
+
 ;; config-ok? が heap の値を再型付けするときだけ、OwnedLeaf を持つ Rec 欄を
 ;; 通す。通常の Core 型検査では従来どおり owned-record-field を拒否する。
 (define deriving-config? (make-parameter #f))
@@ -707,7 +713,7 @@
           (use-request (car cap) (cdr cap)
                        (use-request-operation item)
                        source
-                       (region-at (region-ctx-ir Λ) point)
+                       (region-at/eliminate (region-ctx-ir Λ) point)
                        (deferred-point (use-request-point item))
                        node
                        (use-request-kind item)
@@ -778,9 +784,165 @@
   (when ir
     (define r
       (use-request w fp operation source
-                   (region-at ir (region-ctx-point Λ))
+                   (region-at/eliminate ir (region-ctx-point Λ))
                    (region-ctx-point Λ) node kind otherwise))
     (if fail (route-request! r node fail) (emit-request! r))))
+
+(define (binder-points+ names point)
+  (for/fold ([points (binder-points)]) ([name (in-list names)]
+                                         #:when (symbol? name))
+    (hash-set points (peel-bind name) point)))
+
+(define (with-binder-points names point thunk)
+  (parameterize ([binder-points (binder-points+ names point)])
+    (thunk)))
+
+(define (lifetime-vars-in type)
+  (let walk ([value type])
+    (match value
+      [`(RVar ,_) (set value)]
+      [(? pair? pair)
+       (set-union (walk (car pair)) (walk (cdr pair)))]
+      [_ (set)])))
+
+(define (tracked-child-alphas-in type)
+  (define tracked (scrutinee-child-alphas))
+  (if tracked
+      (for*/set ([variable (in-set (lifetime-vars-in type))]
+                 [alpha (in-set (alpha-set variable))]
+                 #:when (set-member? tracked alpha))
+        alpha)
+      (set)))
+
+(define (tracked-child-alpha? alpha)
+  (define tracked (scrutinee-child-alphas))
+  (and tracked
+       (for/or ([member (in-set (alpha-set alpha))])
+         (set-member? tracked member))))
+
+(define (track-child-alpha! alpha)
+  (define tracked (scrutinee-child-alphas))
+  (when tracked
+    (for ([member (in-set (alpha-set alpha))])
+      (set-add! tracked member))))
+
+(define (decomposition-outer-region ir decomposition)
+  (region-parent ir (region-at/eliminate ir decomposition)))
+
+(define (emit-decomposition-result! ir decomposition type node fail)
+  (when ir
+    (define outer (decomposition-outer-region ir decomposition))
+    (for ([alpha (in-set (tracked-child-alphas-in type))])
+      (emit-constraint!
+       (region-constraint 'contains alpha outer decomposition node)))))
+
+(define (emit-decomposition-exit! ir point dest type node fail)
+  (when ir
+    (for ([decomposition (in-list (region-enclosing-decompositions ir point))]
+          #:unless (and dest (path-prefix? decomposition dest)))
+      (define outer (decomposition-outer-region ir decomposition))
+      (for ([alpha (in-set (tracked-child-alphas-in type))])
+        (emit-constraint!
+         (region-constraint 'contains alpha outer point node))))))
+
+(define (return-handler-destination boundary type)
+  (define operation (erase-core `(Return ,boundary ,type)))
+  (for/first ([entry (in-list (return-handler-regions))]
+              #:when (equal? operation (third entry)))
+    (second entry)))
+
+(define (emit-latent-decomposition-exits! ir point effects node fail)
+  (for ([effect (in-list effects)])
+    (match effect
+      [`(Return ,boundary ,type)
+       (emit-decomposition-exit!
+        ir point (return-handler-destination boundary type) type node fail)]
+      [`(Yield ,type)
+       (emit-decomposition-exit! ir point #f type node fail)]
+      [_ (void)])))
+
+(define (assign-exit-destination target-capabilities environment)
+  (define roots (remove-duplicates (map car (set->list target-capabilities))))
+  (match roots
+    [(list (? symbol? root))
+     (define type (lookup environment root))
+     (and type
+          (not (borrow-typed? type))
+          (hash-ref (binder-points) root #f))]
+    [_ #f]))
+
+(define (typing-child-type Λ index)
+  (match (typing-child-result Λ index)
+    [(list type _normal-type _row _escapes) type]
+    [_ #f]))
+
+(define (callable-latent-effects type)
+  (match (normalize-type type)
+    [`(Owned ,inner) (callable-latent-effects inner)]
+    [`(ForallRegion (,_ ...) ,inner) (callable-latent-effects inner)]
+    [`(NFn ,_ ,_ ,_ ,effects ,_ ,_) effects]
+    [_ '()]))
+
+(define (emit-captured-decomposition-exits! ir point body bound-names
+                                            environment node fail)
+  (for ([name (in-set (set-subtract (core-free-vars body)
+                                    (list->set bound-names)))])
+    (define type (lookup environment name))
+    (when type
+      (emit-decomposition-exit! ir point #f type node fail))))
+
+(define (emit-expression-decomposition-exits! core Λ environment places
+                                              callables result-type fail)
+  (define ir (region-ctx-ir Λ))
+  (when ir
+    (define point (region-ctx-point Λ))
+    (define (child-type index) (typing-child-type Λ index))
+    (match (peel-node core)
+      [`(Eliminate ,_ ,_)
+       (emit-decomposition-result! ir point result-type core fail)]
+      [`(UnionEliminate ,_ ,_)
+       (emit-decomposition-result! ir point result-type core fail)]
+      [`(Perform (Return ,boundary ,type) ,_)
+       (emit-decomposition-exit!
+        ir point (return-handler-destination boundary type)
+        (child-type 0) core fail)]
+      [`(Yield ,_ ,_)
+       (emit-decomposition-exit! ir point #f (child-type 0) core fail)]
+      [`(Reassign ,target ,_ ,_)
+       (emit-decomposition-exit!
+        ir point (hash-ref (binder-points) (peel-bind target) #f)
+        (child-type 0) core fail)]
+      [`(Assign ,target ,_)
+       (define caps (borrow-token-key Λ target #:fail fail))
+       (emit-decomposition-exit!
+        ir point (assign-exit-destination caps environment)
+        (child-type 1) core fail)]
+      [`(AddressOf ,_)
+       (emit-decomposition-exit! ir point #f (child-type 0) core fail)]
+      [`(Curry ,_ ,_)
+       (emit-decomposition-exit! ir point #f (child-type 1) core fail)]
+      [`(Lam ,_ ,_ (,parameters ...) ,body)
+       (emit-captured-decomposition-exits!
+        ir point body parameters environment core fail)]
+      [`(RecurVal ,_ ,function (,parameters ...) ,body)
+       (emit-captured-decomposition-exits!
+        ir point body (cons function parameters) environment core fail)]
+      [`(Apply ,function ,arguments ...)
+       (define function-type (child-type 0))
+       (emit-latent-decomposition-exits!
+        ir point (callable-latent-effects function-type) core fail)
+       (for ([index (in-range 1 (add1 (length arguments)))])
+         (emit-decomposition-exit!
+          ir point #f (child-type index) core fail))]
+      [`(RegionApp ,_ ,_)
+       (emit-latent-decomposition-exits!
+        ir point (callable-latent-effects result-type) core fail)]
+      [`(Recur ,callable ,_ ,_ ,_ ,_)
+       (emit-latent-decomposition-exits!
+        ir point (callable-latent-effects
+                  (callable-signature callables callable))
+        core fail)]
+      [_ (void)])))
 
 ;; §3.2。親の書込みが variant segment より手前なら、その view が生きる間は拒む。
 (define (reject-variant-view-write! Λ target-capabilities node fail)
@@ -856,18 +1018,24 @@
 ;; 型が運び手である（spec §5.1）。
 ;; point π で推論した型の中に α が現れるなら region-at ir π は α の下限である。
 ;; 値の流れを別に追う解析を書くと、型の側と二重に管理することになる。
-(define (collect-use-regions-at! type ir ρ point)
+(define (collect-use-regions-at! type ir ρ point [scrutinee-child-ρ #f])
   (when (and ir ρ (lifetime-collector))
     (let walk ([t type])
       (match t
-        [`(RVar ,k)
-         (emit-constraint!
-          (region-constraint 'contains `(RVar ,k) ρ point #f))]
+       [`(RVar ,k)
+        (define alpha `(RVar ,k))
+        (define lower-bound
+          (if (tracked-child-alpha? alpha)
+              (or scrutinee-child-ρ (region-at/eliminate ir point))
+              ρ))
+        (emit-constraint!
+         (region-constraint 'contains alpha lower-bound point #f))]
         [(? list? ts) (for-each walk ts)]
         [_ (void)]))))
 
 (define (collect-use-regions! type ir point)
-  (collect-use-regions-at! type ir (and ir (region-at ir point)) point))
+  (collect-use-regions-at! type ir (and ir (region-at ir point)) point
+                           (and ir (region-at/eliminate ir point))))
 
 ;; 寿命変数の採番（spec §3.2）。借用の項 1 つにつき 1 つ作る。
 ;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない
@@ -1731,7 +1899,10 @@
          ([resource-identity-transfers
            (set-union (resource-identity-transfers)
                      (list->set (fifth context)))])
-       (thunk)))))
+       (with-binder-points
+        (fourth context)
+        (region-ctx-point (third context))
+        thunk)))))
 
 (define (check-many/full cores types Λ Ψ environment places callables node fail
                          [start-index 0]
@@ -3094,7 +3265,11 @@
                       ;; 引き継ぐと、formal 借用の capture を見逃す。
                       [bound-region-params signature-region-params]
                       [template-collectors
-                       (cons frame (template-collectors))])
+                       (cons frame (template-collectors))]
+                      [scrutinee-child-alphas (mutable-set)]
+                      [binder-points
+                       (binder-points+ parameters
+                                       (region-ctx-point body-context))])
          (with-place-shadowing
           parameters
           (lambda ()
@@ -3214,7 +3389,11 @@
                           [template-collectors
                            (cons template (template-collectors))]
                           [recur-overlay
-                           (cons tentative (recur-overlay))])
+                           (cons tentative (recur-overlay))]
+                          [scrutinee-child-alphas (mutable-set)]
+                          [binder-points
+                           (binder-points+ (cons function parameters)
+                                           (region-ctx-point body-context))])
               (with-place-shadowing
               (cons function parameters)
               (lambda ()
@@ -3297,7 +3476,11 @@
                           [template-collectors
                            (cons template (template-collectors))]
                           [recur-overlay
-                           (cons tentative (recur-overlay))])
+                           (cons tentative (recur-overlay))]
+                          [scrutinee-child-alphas (mutable-set)]
+                          [binder-points
+                           (binder-points+ (cons function parameters)
+                                           (region-ctx-point body-context))])
             (with-place-shadowing
              (cons function parameters)
              (lambda ()
@@ -3579,12 +3762,14 @@
                         [alpha-table (box (hash))]
                         [resource-place-set (set)]
                         [resource-identity-transfers (set)]
-                        [merge-alpha-sources (make-hash)]
-                        [callable-summaries (make-hash)]
-                        [forwarding-summaries (make-hash)]
-                        [template-collectors '()]
-                        [recur-overlay '()]
-                        [config-projborrow-place-points config-place-points])
+        [merge-alpha-sources (make-hash)]
+        [callable-summaries (make-hash)]
+        [forwarding-summaries (make-hash)]
+        [template-collectors '()]
+        [recur-overlay '()]
+        [scrutinee-child-alphas (mutable-set)]
+        [binder-points (hash)]
+        [config-projborrow-place-points config-place-points])
            (with-typing
             (lambda (fail)
               ;; 束縛名を入口で 1 度だけ付け替える。関係の表も同じ項から作る。
@@ -3725,6 +3910,12 @@
        (if (or (lifetime-var? α_parent) (rparam-term? α_parent))
            α_parent
            (rho->region ir α_parent)))
+     (define derived? (tracked-child-alpha? α_parent))
+     (define ρ_child
+       (if derived?
+           (region-at/eliminate ir point)
+           (region-at ir point)))
+     (when derived? (track-child-alpha! α_child))
      (define tokens (borrow-token-key Λ operand #:fail fail))
      (when (set-empty? tokens)
        (error 'infer-reborrow
@@ -3763,7 +3954,7 @@
                      (list parent-term)))))
      (for ([w (in-list parent-designators)])
        (route-constraint!
-        (region-constraint 'contains α_child (region-at ir point) point core)
+        (region-constraint 'contains α_child ρ_child point core)
         w core fail))
      (for ([cap (in-set tokens)])
        (define w (car cap))
@@ -3793,7 +3984,7 @@
        (define w (car cap))
        (define fp (cdr cap))
        (route-request! (borrow-request w fp 'shared α_child
-                                       (region-at ir point)
+                                       ρ_child
                                        core point)
                        core fail))
      ;; concrete な親は Ψ に元の mut 項目が無い環境由来の借用である。
@@ -3950,7 +4141,15 @@
      (when (set-empty? tokens) (fail 'unresolved-borrow-owner core))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
-     (define ρ_child (region-at ir point))
+     (define scrutinee-child?
+       (region-decomposition-scrutinee? ir point))
+     (define derived? (tracked-child-alpha? α))
+     (define ρ_child
+       (if (or scrutinee-child? derived?)
+           (region-at/eliminate ir point)
+           (region-at ir point)))
+     (when (or scrutinee-child? derived?)
+       (track-child-alpha! α_child))
      (define parent-term
        (if (or (lifetime-var? α) (rparam-term? α))
            α
@@ -4663,6 +4862,8 @@
         ((typing-point-probe) (region-ctx-point Λ))
         (record-typing-result! Λ result-type normal-type (second result)
                                (psi-escape-operations (third raw-result)))
+        (emit-expression-decomposition-exits!
+         core Λ environment places callables normal-type fail)
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))
@@ -5607,27 +5808,30 @@
         (set! body-psi (flow-clear-escapes body-psi))
         (define identity? (eq? (peel-node body) x))
         (define body-result
-          (with-let-place
-           x binding-type
+          (with-binder-points
+           (list x) (region-ctx-point Λ_body)
            (lambda ()
-             (if identity?
-                 (with-identity-transfer
-                  x
-                  (lambda ()
-                    (infer body
-                           Λ_body
-                           body-psi
-                           (extend environment (list x)
-                                   (list binding-type)
-                                   (and (eq? binding-mode 'mut) '(mut)))
-                           places callables fail)))
-                (infer body
-                       Λ_body
-                        body-psi
-                        (extend environment (list x)
-                                (list binding-type)
-                                (and (eq? binding-mode 'mut) '(mut)))
-                        places callables fail)))))
+             (with-let-place
+              x binding-type
+              (lambda ()
+                (if identity?
+                    (with-identity-transfer
+                     x
+                     (lambda ()
+                       (infer body
+                              Λ_body
+                              body-psi
+                              (extend environment (list x)
+                                      (list binding-type)
+                                      (and (eq? binding-mode 'mut) '(mut)))
+                              places callables fail)))
+                   (infer body
+                          Λ_body
+                          body-psi
+                          (extend environment (list x)
+                                  (list binding-type)
+                                  (and (eq? binding-mode 'mut) '(mut)))
+                          places callables fail)))))))
         (record-effective-let-type! Λ binding-type (eq? binding-mode 'mut))
         (match body-result
           [(list body-type body-row body-psi)
@@ -5671,19 +5875,22 @@
      (set! body-psi (flow-clear-escapes body-psi))
      (define identity? (eq? (peel-node body) x))
      (define body-result
-       (with-let-place
-        x binding-type
+       (with-binder-points
+        (list x) (region-ctx-point Λ_body)
         (lambda ()
-          (if (and identity? (resource-type? binding-type))
-              (with-identity-transfer
-               x
-               (lambda ()
+          (with-let-place
+           x binding-type
+           (lambda ()
+             (if (and identity? (resource-type? binding-type))
+                 (with-identity-transfer
+                  x
+                  (lambda ()
+                    (infer body Λ_body body-psi
+                           (extend environment (list x) (list binding-type))
+                           places callables fail)))
                  (infer body Λ_body body-psi
                         (extend environment (list x) (list binding-type))
-                        places callables fail)))
-              (infer body Λ_body body-psi
-                     (extend environment (list x) (list binding-type))
-                     places callables fail)))))
+                        places callables fail)))))))
      (record-effective-let-type! Λ binding-type)
      (match body-result
         [(list body-type body-row body-psi)
@@ -5716,7 +5923,8 @@
      (when (and ir handler-point)
        (collect-use-regions-at!
         (third argument-result) ir (region-at ir handler-point)
-        (region-ctx-point Λ)))
+        (region-ctx-point Λ)
+        (region-at/eliminate ir handler-point)))
      (when (and handler-entry (not (eq? (third argument-result) 'Never)))
        (define payload-types (fourth handler-entry))
        (set-box! payload-types
@@ -5806,36 +6014,42 @@
               #:missing-key missing-key
               #:raw-key raw-key)]
             [_ (fail (missing-key type*) core)])
-          (with-place-shadowing
-           (list binder)
+          (with-binder-points
+           (list binder) (region-ctx-point handler-Λ)
            (lambda ()
-             (with-identity-transfer
-              binder
+             (with-place-shadowing
+              (list binder)
+              (lambda ()
+                (with-identity-transfer
+                 binder
+                 (lambda ()
+                   (check-as/full handler
+                                  type*
+                                  handler-Λ
+                                  handler-input
+                                  (extend environment
+                                          (list binder)
+                                          (list (resource-branch-binding-type type*)))
+                                  places
+                                  callables
+                                  fail)))))))]
+         [`(,name -> ,handler)
+          (with-binder-points
+           (list (peel-bind name)) (region-ctx-point handler-Λ)
+           (lambda ()
+             (with-place-shadowing
+              (list (peel-bind name))
               (lambda ()
                 (check-as/full handler
                                type*
                                handler-Λ
                                handler-input
                                (extend environment
-                                       (list binder)
-                                       (list (resource-branch-binding-type type*)))
+                                       (list (peel-bind name))
+                                       (list handler-payload-type))
                                places
                                callables
                                fail)))))]
-         [`(,name -> ,handler)
-          (with-place-shadowing
-           (list (peel-bind name))
-           (lambda ()
-             (check-as/full handler
-                            type*
-                            handler-Λ
-                            handler-input
-                            (extend environment
-                                    (list (peel-bind name))
-                                    (list handler-payload-type))
-                            places
-                            callables
-                            fail)))]
          [_ (fail 'ill-typed core)]))
      (define handler-psi (second handler-result))
      (define handler-row (first handler-result))
@@ -5906,7 +6120,8 @@
      (when ir
        (collect-use-regions-at!
         (first body-result) ir
-        (region-parent ir (region-at ir point)) point))
+        (region-parent ir (region-at ir point)) point
+        (region-parent ir (region-at/eliminate ir point))))
      body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -5922,7 +6137,11 @@
      ;; 継続の検査全体をここで包む。
      (parameterize ([recur-overlay
                      (cons (third continuation-environment)
-                           (recur-overlay))])
+                           (recur-overlay))]
+                    [binder-points
+                     (binder-points+
+                      (list (peel-bind function))
+                      (region-ctx-point (enter-child Λ 1)))])
        (with-place-shadowing
         (list (peel-bind function))
         (lambda ()
@@ -6247,7 +6466,9 @@
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
                    [template-collectors '()]
-                   [recur-overlay '()])
+                   [recur-overlay '()]
+                   [scrutinee-child-alphas (mutable-set)]
+                   [binder-points (hash)])
       (with-typing
        (lambda (fail)
          (define renamed
@@ -6564,7 +6785,8 @@
      (when ir
        (collect-use-regions-at!
         (third body-result) ir
-        (region-parent ir (region-at ir point)) point))
+        (region-parent ir (region-at ir point)) point
+        (region-parent ir (region-at/eliminate ir point))))
      body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -6578,7 +6800,11 @@
                       environment places callables core fail))
      (parameterize ([recur-overlay
                      (cons (third continuation-environment)
-                           (recur-overlay))])
+                           (recur-overlay))]
+                    [binder-points
+                     (binder-points+
+                      (list (peel-bind function))
+                      (region-ctx-point (enter-child Λ 1)))])
        (check-as/full continuation
                       expected
                       (enter-child Λ 1)
@@ -6666,6 +6892,8 @@
              [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
         (record-typing-result! Λ result-type normal-type row
                                (psi-escape-operations raw-psi))
+        (emit-expression-decomposition-exits!
+         core Λ environment places callables normal-type fail)
         (collect-use-regions! result-type
                               (region-ctx-ir Λ)
                               (region-ctx-point Λ))
@@ -6758,7 +6986,9 @@
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
                    [template-collectors '()]
-                   [recur-overlay '()])
+                   [recur-overlay '()]
+                   [scrutinee-child-alphas (mutable-set)]
+                   [binder-points (hash)])
       (with-typing
        (lambda (fail)
          ;; span.md §7.3: 入口検査だけ投影し、走査は spanful な項へ行う。
