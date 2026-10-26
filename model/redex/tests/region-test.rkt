@@ -196,11 +196,12 @@
                  #:control-order-barriers [control-order-barriers (set)]
                  #:projborrow-place-points [projborrow-place-points (set)]
                  #:eliminate-table [eliminate-table (hash)]
+                 #:branch-table [branch-table (hash)]
                  #:callable-body-points [callable-body-points (set)])
   (lexical-region-ir regions outlives owners parents at-table exit-table
                      owner-body-table points control-order-barriers
                      projborrow-place-points eliminate-table
-                     callable-body-points))
+                     callable-body-points branch-table))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
@@ -242,7 +243,10 @@
   (check-equal? (region-at ir '(0 1 0)) scope-region)
   (check-not-equal? elim-region scope-region)
   (check-true (region-decomposition-point? ir elim-point))
-  (check-equal? (regions-exiting-at ir elim-point) (set elim-region))
+  (check-equal? (regions-exiting-at ir elim-point)
+                (set elim-region
+                     (branch-region-of ir elim-point 0)
+                     (branch-region-of ir elim-point 1)))
   (check-true (region-outlives? ir scope-region elim-region))
   (check-equal? (region->rho ir elim-region) (region->rho ir scope-region))
   (check-true
@@ -271,7 +275,7 @@
   (check-true (region-outlives? ir elim-region inner))
   (check-equal? (region-at/eliminate ir '(0 1 0)) inner))
 
-(test-case "入れ子の分解の region の親は外側の分解の region"
+(test-case "入れ子の分解の region の親は外側の枝 region"
   (define core
     '(Scope ()
        (Eliminate y
@@ -280,8 +284,10 @@
   (define ir (build-region-ir core))
   (define outer (region-at/eliminate ir '(0 0)))
   (define inner (region-at/eliminate ir '(0 1 0)))
+  (define outer-branch (branch-region-of ir '(0) 0))
   (check-not-equal? inner outer)
-  (check-equal? (region-parent ir inner) outer)
+  (check-equal? (region-parent ir inner) outer-branch)
+  (check-equal? (region-parent ir outer-branch) outer)
   (check-equal? (region-parent ir outer) (region-at ir '(0)))
   (check-equal? (region->rho ir inner) (region->rho ir (region-at ir '(0))))
   (check-true (lexical-region-ir-ok? ir)))
@@ -452,6 +458,135 @@
   (check-true (regions-overlap? ir ρ2 ρ0))
   (check-true (regions-overlap? ir ρ1 ρ1)))
 
+(test-case "Eliminate と UnionEliminate は枝ごとの region を持ち退場時に全て閉じる"
+  (for ([core (in-list
+               (list '(Scope () (Eliminate s
+                                ((some (x) -> x)
+                                 (none () -> unit))))
+                     '(UnionEliminate s
+                        ((Int x -> x)
+                         (String y -> y)))))])
+    (define ir (build-region-ir core))
+    (define eliminate-point (if (eq? (first core) 'Scope) '(0) '()))
+    (define eliminate-region (region-at/eliminate ir eliminate-point))
+    (define branch-0 (branch-region-of ir eliminate-point 0))
+    (define branch-1 (branch-region-of ir eliminate-point 1))
+    (define branch-0-point (append eliminate-point '(1)))
+    (define branch-1-point (append eliminate-point '(2)))
+    (check-not-equal? branch-0 branch-1)
+    (check-equal? (region-parent ir branch-0) eliminate-region)
+    (check-equal? (region-parent ir branch-1) eliminate-region)
+    (check-false (regions-overlap? ir branch-0 branch-1))
+    (check-equal? (region-at/branch ir branch-0-point) branch-0)
+    (check-equal? (region-at/branch ir branch-1-point) branch-1)
+    (check-equal? (region-at/branch ir (append eliminate-point '(0)))
+                  eliminate-region)
+    (check-equal? (region-at/eliminate ir branch-0-point) eliminate-region)
+    (check-equal? (regions-exiting-at ir eliminate-point)
+                  (set eliminate-region branch-0 branch-1))
+    (check-equal? (region->rho ir branch-0)
+                  (region->rho ir (region-at ir '())))
+    (check-equal? (region->rho ir eliminate-region)
+                  (region->rho ir (region-at ir '())))
+    (check-true (lexical-region-ir-ok? ir)))
+  (define owner-core
+    '(Let (owner let (Owned Int)) 1
+       (Eliminate s ((some (x) -> x) (none () -> unit)))))
+  (define owner-ir (build-region-ir owner-core))
+  (define owner-body (owner-let-body-region owner-ir '()))
+  (define owner-eliminate (region-at/eliminate owner-ir '(1)))
+  (define owner-branch (branch-region-of owner-ir '(1) 0))
+  (check-equal? (region-parent owner-ir owner-eliminate) owner-body)
+  (check-equal? (region-parent owner-ir owner-branch) owner-eliminate)
+  (check-equal? (region->rho owner-ir owner-eliminate)
+                (region->rho owner-ir owner-body))
+  (check-equal? (region->rho owner-ir owner-branch)
+                (region->rho owner-ir owner-body)))
+
+(define (region-ancestor-list ir ρ)
+  (let loop ([current ρ] [ancestors '()])
+    (if current
+        (loop (region-parent ir current) (cons current ancestors))
+        ancestors)))
+
+(test-case "callable 本体は最外の分解 region の親から始まり Recur 継続は枝に残る"
+  (define lam-core
+    '(Scope ()
+       (Eliminate s
+         ((some (x) ->
+            (Scope ()
+              (Lam User c0 ()
+                (Let (owner let (Owned Int)) 1 (Scope () unit)))))
+          (none () -> unit)))))
+  (define lam-ir (build-region-ir lam-core))
+  (define outer-scope (region-at lam-ir '()))
+  (define lam-eliminate (region-at/eliminate lam-ir '(0)))
+  (define lam-branch (branch-region-of lam-ir '(0) 0))
+  (define branch-scope (region-at lam-ir '(0 1)))
+  (define owner-body (owner-let-body-region lam-ir '(0 1 0 0)))
+  (define callable-scope (region-at/branch lam-ir '(0 1 0 0 1)))
+  (define callable-ancestors (region-ancestor-list lam-ir callable-scope))
+  (check-equal? (region-parent lam-ir owner-body) outer-scope)
+  (check-equal? (region-parent lam-ir callable-scope) owner-body)
+  (check-false (member lam-eliminate callable-ancestors))
+  (check-false (member lam-branch callable-ancestors))
+  (check-false (member branch-scope callable-ancestors))
+
+  (define recur-core
+    '(Eliminate s
+       ((some (x) ->
+          (Recur c0 f () (Scope () unit) (Scope () unit)))
+        (none () -> unit))))
+  (define recur-ir (build-region-ir recur-core))
+  (define recur-branch (branch-region-of recur-ir '() 0))
+  (define recur-body-scope (region-at/branch recur-ir '(1 0)))
+  (define recur-cont-scope (region-at/branch recur-ir '(1 1)))
+  (check-false
+   (member recur-branch (region-ancestor-list recur-ir recur-body-scope)))
+  (check-not-false
+   (member recur-branch (region-ancestor-list recur-ir recur-cont-scope)))
+
+  (define recurval-ir
+    (build-region-ir
+     '(Eliminate s
+        ((some (x) -> (RecurVal c0 f () (Scope () unit)))
+         (none () -> unit)))))
+  (define recurval-branch (branch-region-of recurval-ir '() 0))
+  (define recurval-scope (region-at/branch recurval-ir '(1 0)))
+  (check-false
+   (member recurval-branch (region-ancestor-list recurval-ir recurval-scope)))
+
+  (define nested-ir
+    (build-region-ir
+     '(Eliminate outer
+        ((some (x) ->
+           (Eliminate inner
+             ((yes () -> (Lam User c1 () (Scope () unit)))
+              (no () -> unit))))
+         (none () -> unit)))))
+  (define nested-outer (region-at/eliminate nested-ir '()))
+  (define nested-outer-branch (branch-region-of nested-ir '() 0))
+  (define nested-inner (region-at/eliminate nested-ir '(1)))
+  (define nested-inner-branch (branch-region-of nested-ir '(1) 0))
+  (define nested-lam-scope (region-at/branch nested-ir '(1 1 0)))
+  (define nested-ancestors (region-ancestor-list nested-ir nested-lam-scope))
+  (check-false (member nested-outer nested-ancestors))
+  (check-false (member nested-outer-branch nested-ancestors))
+  (check-false (member nested-inner nested-ancestors))
+  (check-false (member nested-inner-branch nested-ancestors))
+
+  (define non-overlap-ir
+    (build-region-ir
+     '(Eliminate s
+        ((some (x) ->
+           (Let (b let Int) (BorrowMut x)
+             (Lam User c0 () (Scope () unit))))
+         (none () -> unit)))))
+  (check-false
+   (regions-overlap? non-overlap-ir
+                     (region-at/branch non-overlap-ir '(1 0))
+                     (region-at/branch non-overlap-ir '(1 1 0)))))
+
 ;; [REQ: BOR-003] builder は Scope ごとに region を開く。
 ;; 手で組んだ IR と外延的に同じものを作ることを確かめる。
 (test-case "build-region-ir は手組みの IR と同じ答えを返す"
@@ -534,6 +669,13 @@
        (if (resource-type? type) 1 0)]
       [_ 0])))
 
+(define (count-decomposition-branches core)
+  (for/sum ([point (in-list (core-points core))])
+    (match (core-node core point)
+      [`(,(or 'Eliminate 'UnionEliminate) ,_ (,branches ...))
+       (length branches)]
+      [_ 0])))
+
 (test-case "C3: Scope、owner Let、分解の個数が root 以外の region と一致する"
   (for ([core (in-list (list '(Apply f 1) nested sibling-core
                              owner-let-scope owner-let-value
@@ -543,6 +685,7 @@
     (define ir (build-region-ir core))
     (check-equal? (sub1 (set-count (region-ir-regions ir)))
                   (+ (count-scopes core) (count-owner-lets core)
+                     (count-decomposition-branches core)
                      (for/sum ([point (in-list (core-points core))])
                        (match (core-node core point)
                          [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_) 1]
@@ -565,7 +708,15 @@
         [`(Scope ,_ ,_)
          (check-equal? exiting (set (region-at ir point)) (format "~s" point))]
         [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
-         (check-equal? exiting (set (region-at/eliminate ir point))
+         (define branch-count
+           (match (core-node core point)
+             [`(,(or 'Eliminate 'UnionEliminate) ,_ (,branches ...))
+              (length branches)]))
+         (check-equal?
+          exiting
+          (for/fold ([regions (set (region-at/eliminate ir point))])
+                    ([index (in-range branch-count)])
+            (set-add regions (branch-region-of ir point index)))
                        (format "~s" point))]
         [_ (check-true (set-empty? exiting) (format "~s" point))])
       ;; root region はどの point でも返らない。
@@ -688,14 +839,72 @@
                       [_ #f]))
     point))
 
-;; 親は、自身より真に短い region point のうち最長の接頭辞である。
-(define (region-parent-point points point)
-  (for/fold ([best #f]) ([other (in-list points)])
-    (if (and (< (length other) (length point))
-             (equal? other (take point (length other)))
-             (or (not best) (> (length other) (length best))))
-        other
-        best)))
+(define (golden-parent-map core ir)
+  (define expected (make-hash))
+  (define (walk t point current enclosing-decompositions)
+    (match t
+      [`(Scope ,_ ,body)
+       (define ρ (region-at ir point))
+       (hash-set! expected ρ current)
+       (walk body (append point '(0)) ρ enclosing-decompositions)]
+      [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
+       (define ρ (region-at/eliminate ir point))
+       (hash-set! expected ρ current)
+       (define children (core-children t))
+       (define nested-decompositions (append enclosing-decompositions (list ρ)))
+       (walk (first children) (append point '(0)) ρ nested-decompositions)
+       (for ([body (in-list (rest children))] [index (in-naturals)])
+         (define branch (branch-region-of ir point index))
+         (hash-set! expected branch ρ)
+         (walk body (append point (list (add1 index))) branch
+               nested-decompositions))]
+      [`(Lam ,_ ,_ ,_ ,body)
+       (define base
+         (if (null? enclosing-decompositions)
+             current
+             (region-parent ir (first enclosing-decompositions))))
+       (walk body (append point '(0)) base '())]
+      [`(RecurVal ,_ ,_ ,_ ,body)
+       (define base
+         (if (null? enclosing-decompositions)
+             current
+             (region-parent ir (first enclosing-decompositions))))
+       (walk body (append point '(0)) base '())]
+      [`(Recur ,_ ,_ ,_ ,body ,continuation)
+       (define base
+         (if (null? enclosing-decompositions)
+             current
+             (region-parent ir (first enclosing-decompositions))))
+       (walk body (append point '(0)) base '())
+       (walk continuation (append point '(1)) current enclosing-decompositions)]
+      [`(Let (,_ ,_ ,binding-type) ,bound ,body)
+       (define body-region
+         (if (resource-type? binding-type)
+             (owner-let-body-region ir point)
+             current))
+       (walk bound (append point '(0)) current enclosing-decompositions)
+       (when (not (equal? body-region current))
+         (hash-set! expected body-region current))
+       (walk body (append point '(1)) body-region enclosing-decompositions)]
+      [`(Let (,_ ,binding-type) ,bound ,body)
+       (define body-region
+         (if (resource-type? binding-type)
+             (owner-let-body-region ir point)
+             current))
+       (walk bound (append point '(0)) current enclosing-decompositions)
+       (when (not (equal? body-region current))
+         (hash-set! expected body-region current))
+       (walk body (append point '(1)) body-region enclosing-decompositions)]
+      [_
+       (for ([child (in-list (core-children t))] [index (in-naturals)])
+         (walk child (append point (list index)) current
+               enclosing-decompositions))]))
+  (define root
+    (for/first ([ρ (in-set (region-ir-regions ir))]
+                #:unless (region-parent ir ρ))
+      ρ))
+  (walk core '() root '())
+  expected)
 
 (define (check-golden-region name source)
   (match-define (list raw-core _ _ _) (elab source))
@@ -708,21 +917,32 @@
   (check-true (region-ir-ok? ir core) name)
   (check-true (lexical-region-ir-ok? ir) name)
   (check-equal? (sub1 (set-count (region-ir-regions ir)))
-                (+ (length points) (count-owner-lets core)) name)
-  (define root (region-at ir '()))
-  (for ([point (in-list points)])
-    (define ρ (region-at/eliminate ir point))
-    (check-equal? (regions-exiting-at ir point) (set ρ) name)
-    (define parent-point (region-parent-point points point))
-    (define parent-region
-      (if parent-point (region-at/eliminate ir parent-point) root))
-    (check-equal? (region-parent ir ρ) parent-region name)
-    (check-true (region-outlives? ir parent-region ρ) name)
-    (check-true (regions-overlap? ir parent-region ρ) name))
-  (for ([point (in-list (core-points core))]
-        #:unless (or (member point scope-points*)
-                    (member point (decomposition-points core))))
-    (check-true (set-empty? (regions-exiting-at ir point)) name)))
+                (+ (length points) (count-owner-lets core)
+                   (count-decomposition-branches core)) name)
+  (define expected-parents (golden-parent-map core ir))
+  (define root
+    (for/first ([ρ (in-set (region-ir-regions ir))]
+                #:unless (region-parent ir ρ))
+      ρ))
+  (check-equal? (list->set (hash-keys expected-parents))
+                (set-remove (region-ir-regions ir) root) name)
+  (for ([(child parent) (in-hash expected-parents)])
+    (check-equal? (region-parent ir child) parent name)
+    (check-true (region-outlives? ir parent child) name)
+    (check-true (regions-overlap? ir parent child) name))
+  (for ([point (in-list (core-points core))])
+    (define expected-exits
+      (match (core-node core point)
+        [`(Scope ,_ ,_) (set (region-at ir point))]
+        [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
+         (for/fold ([exiting (set (region-at/eliminate ir point))])
+                   ([index (in-range
+                            (match (core-node core point)
+                              [`(,(or 'Eliminate 'UnionEliminate) ,_ (,branches ...))
+                               (length branches)]))])
+           (set-add exiting (branch-region-of ir point index)))]
+        [_ (set)]))
+    (check-equal? (regions-exiting-at ir point) expected-exits name)))
 
 (test-case "C5: golden program の Scope と分解の region を問い合わせだけで再構成できる"
   (check-golden-region "findPositive" golden-find-positive)

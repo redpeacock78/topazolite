@@ -22,6 +22,9 @@ region 識別子は不透明である。
 root region は Scope に対応せず、プログラム全体の寿命を表す。
 root region の `owners` の値は空の π である。
 
+lexical adapter は `Eliminate` と `UnionEliminate` の各枝にも、所有者を持たない枝 region を置く。
+枝 region は分解 region の子であり、実行時の ρ へは独立に写さない。
+
 ## 3. Point
 
 point は Core の根から目的の節点までの意味的な子の添字の列である。
@@ -102,7 +105,7 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 
 ### 4.2 Inspection API
 
-次の 3 つは lexical adapter の検査で使う。
+次の問い合わせは lexical adapter の検査で使う。
 将来の solver の利用側はこれらを読まない。
 
 - `region-parent ir ρ`：`ρ` の親 region を返す。
@@ -110,12 +113,19 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 - `region-contains? ir ρ_outer ρ_inner`：`ρ_outer` が `ρ_inner` を構造として包むかを返す。
   反射的かつ推移的である。
 - `region-ir-regions ir`：region の集合を返す。
+- `region-at/branch ir point`：枝 region を含めた point の最も内側の region を返す。
+  callable の本体では、その本体の境界における基点を使い、外側の枝 region を越える。
+- `branch-region-of ir decomposition-point branch-index`：分解 point と 0 始まりの枝番号に対応する枝 region を返す。
+- `branch-region? ir ρ`：`ρ` が枝 region なら真を返す。
 
 `region-at/eliminate ir point` は lexical adapter が提供する補助問合せであり、型検査が分解の region を含む下限を求めるときに使う。
-lexical adapter では、point とその祖先のうち最も長い prefix に対応する `Scope`、owner-body、または分解の region を返す。
+lexical adapter では、point とその祖先のうち最も長い prefix に対応する `Scope`、owner-body、または分解の region を返し、枝 region は飛ばす。
 同じ point に現行の region と分解の region がある場合は、分解の region を返す。
 対応する prefix が無い場合は root region を返す。
 非 lexical solver では `region-at` の結果を返すため、solver に新しい method は要求しない。
+
+`region-at/branch`、`branch-region-of`、`branch-region?` は lexical adapter の補助問い合わせである。
+非 lexical solver で `region-at/branch` を使う場合は `region-at` の結果を使う。
 
 ### 4.3 Materialize API
 
@@ -128,6 +138,10 @@ lexical adapter では、point とその祖先のうち最も長い prefix に�
   解決によって型が変わった箇所だけを正規化する。
   σ が複数の寿命変数を同じ region へ写すと、正規化により `Union` の同じ member が併合されることがある。
   point の数え方は §3 に従う。
+
+`region->rho ir ρ` は IR の region を実行時の ρ へ写し、`rho->region ir n` は実行時の ρ に対応する materialized region を返す。
+lexical adapter では分解 region と枝 region は独立した実行時 ρ を持たず、最も近い `Scope`、owner-body、または root の ρ へ畳む。
+したがって複数の IR region が同じ実行時 ρ へ写り得て、`rho->region` は元の region を復元する逆写像ではない。
 
 `check-region-annotation` は materialize の前だけで走る。
 構成検査は materialize 後の項を扱うため、この検査を通さない。
@@ -149,11 +163,15 @@ materialize 後の注釈欄は起点ではなく寿命なので、寿命が起�
 `outlives` の循環は許す。
 同じ寿命を持つ region 間の制約を禁止しないためである。
 
-`lexical-region-ir-ok? ir` は次の 3 条件を加えて検査する。
+`lexical-region-ir-ok? ir` は次の 4 条件を加えて検査する。
 
 1. `parents` の定義域と値域が `regions` に含まれる。
 2. 親を持たない region がちょうど 1 つあり、親の連鎖に循環がない。
-3. 分解の point ごとに対応する region があり、その region は当該 point の `region-at` が返す現行の region の子孫であり、`regions-exiting-at` がその分解の region を返す。
+3. 分解の point ごとに対応する region があり、その region は当該 point の `region-at/eliminate` が返す region である。
+   その region は、通常は当該 point の `region-at` が返す現行の region の子孫であり、callable 本体の内側では §6 の基点の子孫である。
+   `regions-exiting-at` はその分解 region と全ての枝 region を返す。
+4. 枝 region 表の各項目は分解 point と非負の枝番号を鍵に持ち、対応する分解が存在する。
+   枝 region はその分解 region の直接の子であり、分解 point の退場集合に含まれる。
 
 これらの条件は lexical adapter 固有であり、region IR の共通契約ではない。
 いずれかの検査が偽になる IR は adapter または solver の実装誤りであり、入力診断ではない。
@@ -161,34 +179,45 @@ materialize 後の注釈欄は起点ではなく寿命なので、寿命が起�
 ## 6. Lexical adapter
 
 lexical adapter は Core を `erase-core` へ通し、その像を 1 回走査して IR を作る。
-root region を走査の開始時に作り、各 `Scope`、owner 型を束縛する `Let` の本体、`Eliminate`、`UnionEliminate` にそれぞれ 1 つの region を割り当てる。
+root region を走査の開始時に作り、各 `Scope`、owner 型を束縛する `Let` の本体、`Eliminate`、`UnionEliminate`、および分解の各枝にそれぞれ 1 つの region を割り当てる。
 Scope へ入るとき、現在の region を親として新しい region を作り、`outlives` へ親から子への直接の対を加える。
 Scope の π を新しい region の `owners` の値にする。
 Scope から出るとき、現在の region を親へ戻す。
 owner 型を束縛する `Let` の本体へ入るとき、現在の region を親とする owner-body region を作り、`outlives` に親から子への直接の対を加える。
 owner-body region の `owners` は空であり、その `Let` の本体だけで現在の region とする。
-分解の point に入るとき、現在の region を親として owners が空の region を作り、`outlives` に親から分解 region への直接の対を加える。
-その分解の scrutinee と各枝の point は分解 region の下に置き、分解節点の評価完了時にその region を退場させる。
+分解の point に入るとき、現在の region を親として owners が空の分解 region を作り、`outlives` に親から分解 region への直接の対を加える。
+scrutinee は分解 region の下に置く。
+各枝には分解 region を親とする owners が空の枝 region を作り、枝本体をその枝 region の下に置く。
+分解節点の評価完了時には分解 region と全ての枝 region を退場させる。
 
-`region-at` は、point の接頭辞のうち `Scope` または owner-body を指す最も長いものの region を返す。
+`Lam`、`RecurVal`、`Recur` の本体へ入るときは、現在の region の祖先に分解 region が無ければ現在の region を基点とする。
+祖先に分解 region がある場合は、最も外側の分解 region の親を基点として本体を歩く。
+これにより callable の本体内に作る Scope、owner-body、分解、枝 region は、構文的に callable を囲んでいた分解 region と枝 region の子孫にならない。
+`Recur` の継続は callable 本体ではないため、現在の region のまま歩く。
+
+`region-at` は、point の接頭辞のうち `Scope` または owner-body を指す最も長いものの region を返し、分解 region と枝 region を飛ばす。
 分解の region は `region-at` から除外し、`region-at/eliminate` で調べる。
 `region-at/eliminate` は `region-at` の現行 region と分解の region の表を併せ、point の接頭辞のうち最も長いものに対応する region を返す。
 同じ長さの prefix が両方の表にあるときは分解の region を選ぶ。
+`region-at/branch` は分解 region、Scope／owner-body region、枝 region を含め、point の接頭辞のうち最も長いものを返す。
+ただし callable の本体の point では §6 の基点へ戻り、外側の分解 region と枝 region を検索対象から外す。
 `region-outlives?` は直接制約の到達可能性で答える。
 `region-contains?` は親の連鎖で答える。
 `regions-overlap?` は一方が他方を構造として包むときに真である。
-`regions-exiting-at` は `Scope` 自身の point でその `Scope` の region 1 件を返し、`Eliminate` と `UnionEliminate` 自身の point でその分解の region 1 件を返す。
+`regions-exiting-at` は `Scope` 自身の point でその `Scope` の region 1 件を返し、`Eliminate` と `UnionEliminate` 自身の point でその分解 region と全ての枝 region を返す。
 それ以外では空集合を返す。
 
 lexical adapter は次の性質を満たす。
 
 - **C1**：`region-contains?` が真なら `region-outlives?` も真である。
 - **C2**：兄弟の region は互いを包まず、同時に生きない。
-  分解の region は分解 point を囲む最も内側の現行 region（外側の分解の region を含む）の子であり、その分解の部分木にある `Scope`、owner-body、入れ子の分解の region はその分解 region の子孫である。
-- **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数の和に一致する。
-- **C4**：`regions-exiting-at` は `Scope`、`Eliminate`、`UnionEliminate` の point でそれぞれ対応する region 1 件を返し、それ以外の point で空集合を返す。
+  分解 region はその point を囲む最も内側の現行 region の子であり、各枝 region はその分解 region の子である。
+  callable の本体の境界を越えない枝の部分木にある Scope、owner-body、入れ子の分解、枝 region は、その枝 region の子孫である。
+  callable 本体の region は §6 の基点から始まるため、構文的に囲む分解や枝を祖先に持たない。
+- **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数、および全分解の枝数の合計に一致する。
+- **C4**：`regions-exiting-at` は `Scope` の point で対応する Scope region を返し、`Eliminate` と `UnionEliminate` の point で分解 region と全ての枝 region を返す。それ以外の point で空集合を返す。
   root region はどの point でも返さず、owner-body の point では空集合を返す。
-- **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、`Scope`、owner-body、分解の入れ子から読み取れる親子関係、outlives、退場を問い合わせだけで再構成できる。
+- **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、`Scope`、owner-body、分解、枝 region の親子関係、outlives、退場を問い合わせだけで再構成できる。
 - **C6**：spanful な Core と `erase-core` 済みの Core から作った IR は、point ごとの `region-at`、退場、`region-outlives?`、`regions-overlap?` が一致する外延的同型を持つ。
 
 C5 の検査は IR の内部表を直接読まず、Core の `Scope`、owner-body、分解の木から独立に期待値を作る。
@@ -201,8 +230,8 @@ C6 は region 識別子の採番や内部鍵の一致を要求しない。
 1. 新しい solver は 3 成分を埋め、`region-ir-ok?` の 8 条件を満たす IR を返す。
 2. 新しい solver は Core API の 6 つを実装する。`region-owning` と `region-solve` を含む。
 3. 新しい solver は per-IR bridge の `region->rho ir ρ` と `rho->region ir n` を実装する。
-   両者は `gen:region-solver` の method であり、1 つの IR の中で互いの逆写像である。
    その IR に属さない region や `ρ` に対しては `error` にする。
+   lexical adapter では複数の分解／枝 region を最も近い materialized region の ρ へ畳むため、`rho->region` は逆写像ではなく materialized representative を返す。
 4. 新しい solver は region 識別子を、その solver のすべての実行を通じて fresh に採番する。
    採番の順序、大小、連番は契約に含めない。
 5. 利用側は region 識別子の同一性と Core API の結果だけを見る。

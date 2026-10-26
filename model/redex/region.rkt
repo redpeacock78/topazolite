@@ -18,7 +18,8 @@
          gen:region-solver region-solver?
          region-at region-outlives? regions-overlap? regions-exiting-at region-owning
          region-projborrow-place?
-         region-at/eliminate region-decomposition-point?
+         region-at/eliminate region-at/branch branch-region-of branch-region?
+         region-decomposition-point?
          region-enclosing-decompositions region-decomposition-scrutinee?
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
@@ -399,7 +400,8 @@
 ;; owner-body-table は owner Let の body region を持つ。
 (struct lexical-region-ir region-ir
   (parents at-table exit-table owner-body-table points control-order-barriers
-           projborrow-place-points eliminate-table callable-body-points)
+           projborrow-place-points eliminate-table callable-body-points
+           branch-table)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -433,6 +435,7 @@
      (check-point ir point)
      (match (hash-ref (lexical-region-ir-exit-table ir) point #f)
        [#f (set)]
+       [(? set? regions) regions]
        [ρ (set ρ)]))
    ;; core API の 5 本目（docs/specification/region.md §4.1）。
    ;; 実行時の config で place から owner region を引く（spec §7.2）。
@@ -522,9 +525,11 @@
    (define (region->rho self ρ)
      (unless (set-member? (region-ir-regions self) ρ)
        (error 'region->rho "この ir に属さない region である: ~s" ρ))
-     (define eliminate-table (lexical-region-ir-eliminate-table self))
+     (define special-regions
+       (append (hash-values (lexical-region-ir-eliminate-table self))
+               (hash-values (lexical-region-ir-branch-table self))))
      (let loop ([current ρ] [fuel (set-count (region-ir-regions self))])
-       (if (for/or ([candidate (in-hash-values eliminate-table)])
+       (if (for/or ([candidate (in-list special-regions)])
              (equal? current candidate))
            (match (region-parent self current)
              [#f (error 'region->rho "分解の region に親が無い: ~s" current)]
@@ -551,6 +556,62 @@
                   (hash-ref (lexical-region-ir-at-table ir) prefix #f)))
             (lexical-root ir)))
       (region-at ir point)))
+
+;; 枝本体の point は分解の child 0 が scrutinee であるため、1 から始まる。
+(define (branch-body-point decomposition-point branch-index)
+  (append decomposition-point (list (add1 branch-index))))
+
+(define (branch-region-of ir decomposition-point branch-index)
+  (unless (lexical-region-ir? ir)
+    (error 'branch-region-of "lexical adapter 以外に枝 region は無い"))
+  (check-point ir decomposition-point)
+  (unless (exact-nonnegative-integer? branch-index)
+    (error 'branch-region-of "枝の番号は非負整数でなければならない: ~s"
+           branch-index))
+  (hash-ref (lexical-region-ir-branch-table ir)
+            (list decomposition-point branch-index)
+            (lambda ()
+              (error 'branch-region-of "分解の枝が IR に無い: ~s / ~s"
+                     decomposition-point branch-index))))
+
+(define (branch-region? ir ρ)
+  (and (lexical-region-ir? ir)
+       (for/or ([candidate (in-hash-values
+                            (lexical-region-ir-branch-table ir))])
+         (equal? candidate ρ))))
+
+(define (branch-region-at-point ir point)
+  (for/or ([(key ρ) (in-hash (lexical-region-ir-branch-table ir))])
+    (match key
+      [(list decomposition-point branch-index)
+       (and (equal? point (branch-body-point decomposition-point branch-index)) ρ)]
+      [_ #f])))
+
+(define (callable-base-at ir body-point)
+  (define callable-point (drop-right body-point 1))
+  (define enclosing (region-enclosing-decompositions ir callable-point))
+  (if (pair? enclosing)
+      (region-parent
+       ir (hash-ref (lexical-region-ir-eliminate-table ir) (last enclosing)))
+      (region-at/branch ir callable-point)))
+
+;; Scope/owner-body/decomposition は同じ point の branch より内側である。
+;; callable 本体では付け直した基点を返し、外側の枝を越えて検索しない。
+(define (region-at/branch ir point)
+  (if (not (lexical-region-ir? ir))
+      (region-at ir point)
+      (begin
+        (check-point ir point)
+        (let loop ([n (length point)])
+          (define prefix (take point n))
+          (or (hash-ref (lexical-region-ir-eliminate-table ir) prefix #f)
+              (hash-ref (lexical-region-ir-at-table ir) prefix #f)
+              (branch-region-at-point ir prefix)
+              (if (set-member? (lexical-region-ir-callable-body-points ir) prefix)
+                  (callable-base-at ir prefix)
+                  (if (zero? n)
+                      (lexical-root ir)
+                      (loop (sub1 n)))))))))
 
 (define (region-decomposition-point? ir point)
   (and (lexical-region-ir? ir)
@@ -625,7 +686,9 @@
    (for/and ([(point ρ) (in-hash (lexical-region-ir-at-table ir))])
      (and (set-member? points point) (set-member? regions ρ)))
    (for/and ([(point ρ) (in-hash (lexical-region-ir-exit-table ir))])
-     (and (set-member? points point) (set-member? regions ρ)))
+     (and (set-member? points point)
+          (let ([exits (if (set? ρ) ρ (set ρ))])
+            (subset? exits regions))))
    (for/and ([(point ρ) (in-hash (lexical-region-ir-owner-body-table ir))])
      (and (set-member? points point)
           (set-member? regions ρ)
@@ -641,10 +704,35 @@
         (for/and ([(point ρ) (in-hash (lexical-region-ir-eliminate-table ir))])
           (and (set-member? points point)
                (set-member? regions ρ)
-               (equal? (hash-ref (lexical-region-ir-exit-table ir) point #f) ρ)
-               (region-contains? ir (region-at ir point) ρ))))
+               (set-member? (regions-exiting-at ir point) ρ)
+               (or (region-contains? ir (region-at ir point) ρ)
+                   (let ([body-point
+                          (for/fold ([best #f])
+                                    ([candidate
+                                      (in-set
+                                       (lexical-region-ir-callable-body-points ir))]
+                                     #:when (point-prefix? candidate point))
+                            (if (or (not best)
+                                    (> (length candidate) (length best)))
+                                candidate
+                                best))])
+                     (and body-point
+                          (region-contains?
+                           ir (callable-base-at ir body-point) ρ)))))))
    (and (set? (lexical-region-ir-callable-body-points ir))
         (subset? (lexical-region-ir-callable-body-points ir) points))
+   (and (hash? (lexical-region-ir-branch-table ir))
+        (for/and ([(key ρ) (in-hash (lexical-region-ir-branch-table ir))])
+          (match key
+            [(list point branch-index)
+             (and (set-member? points point)
+                  (exact-nonnegative-integer? branch-index)
+                  (hash-has-key? (lexical-region-ir-eliminate-table ir) point)
+                  (set-member? regions ρ)
+                  (equal? (region-parent ir ρ)
+                          (hash-ref (lexical-region-ir-eliminate-table ir) point))
+                  (set-member? (regions-exiting-at ir point) ρ))]
+            [_ #f])))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -670,6 +758,7 @@
   (define exit-table (make-hash))
   (define owner-body-table (make-hash))
   (define eliminate-table (make-hash))
+  (define branch-table (make-hash))
   (define owners (make-hash (list (cons root '()))))
   (define outlives (mutable-set))
   (define projborrow-place-points (mutable-set))
@@ -688,6 +777,19 @@
     (for ([child (in-list (core-children node))] [i (in-naturals)])
       (walk-place-projborrows child (append point (list i)))))
   (walk-place-projborrows erased '())
+  (define (callable-base current)
+    (define ancestors
+      (let loop ([ρ current] [found '()])
+        (if ρ
+            (loop (hash-ref parents ρ #f) (cons ρ found))
+            found)))
+    (define outermost-decomposition
+      (for/first ([ρ (in-list ancestors)]
+                  #:when (member ρ (hash-values eliminate-table)))
+        ρ))
+    (if (not outermost-decomposition)
+        current
+        (hash-ref parents outermost-decomposition #f)))
   (letrec ([walk
             (lambda (t prefix current)
               (define point (reverse prefix))
@@ -701,27 +803,45 @@
                  ;; 親が子より長生きする。直接の制約だけを入れ、推移閉包は入れない。
                  (set-add! outlives (list current ρ))
                  (walk body (cons 0 prefix) ρ)]
-                [`(,(or 'Eliminate 'UnionEliminate) ,_ ,_)
+                [`(,(or 'Eliminate 'UnionEliminate) ,_ (,branches ...))
                  (define ρ (fresh-region!))
+                 (define children (core-children t))
+                 (define branch-regions
+                   (for/list ([body (in-list (rest children))])
+                     (fresh-region!)))
                  (hash-set! parents ρ current)
                  (hash-set! owners ρ '())
                  (hash-set! eliminate-table point ρ)
-                 (hash-set! exit-table point ρ)
+                 (for ([branch-ρ (in-list branch-regions)]
+                       [branch-index (in-naturals)])
+                     (hash-set! parents branch-ρ ρ)
+                     (hash-set! owners branch-ρ '())
+                     (hash-set! branch-table (list point branch-index) branch-ρ)
+                     (set-add! outlives (list ρ branch-ρ)))
                  (set-add! outlives (list current ρ))
-                 (for ([k (in-list (core-children t))] [i (in-naturals)])
-                   (walk k (cons i prefix) ρ))]
+                 (hash-set! exit-table point
+                            (list->set (cons ρ branch-regions)))
+                 (walk (first children) (cons 0 prefix) ρ)
+                 (for ([body (in-list (rest children))]
+                       [branch-ρ (in-list branch-regions)]
+                       [branch-index (in-naturals)])
+                   (walk body (cons (add1 branch-index) prefix) branch-ρ))]
                 [`(Lam ,_ ,_ ,_ ,body)
                  (define body-point (append point '(0)))
+                 (define body-region (callable-base current))
                  (set-add! callable-body-points body-point)
-                 (walk body (cons 0 prefix) current)]
+                 (walk body (cons 0 prefix) body-region)]
                 [`(RecurVal ,_ ,_ ,_ ,body)
                  (define body-point (append point '(0)))
+                 (define body-region (callable-base current))
                  (set-add! callable-body-points body-point)
-                 (walk body (cons 0 prefix) current)]
+                 (walk body (cons 0 prefix) body-region)]
                 [`(Recur ,_ ,_ ,_ ,body ,continuation)
-                 (set-add! callable-body-points (append point '(0)))
-                 (for ([k (in-list (core-children t))] [i (in-naturals)])
-                   (walk k (cons i prefix) current))]
+                 (define body-point (append point '(0)))
+                 (define body-region (callable-base current))
+                 (set-add! callable-body-points body-point)
+                 (walk body (cons 0 prefix) body-region)
+                 (walk continuation (cons 1 prefix) current)]
                 [`(Let (,_ ,_ ,binding-type) ,bound ,body)
                  (walk-let prefix current binding-type bound body)]
                 [`(Let (,_ ,binding-type) ,bound ,body)
@@ -760,7 +880,8 @@
    (list->set (core-control-order-barriers erased))
    (list->set (set->list projborrow-place-points))
    (freeze eliminate-table)
-   (list->set (set->list callable-body-points))))
+   (list->set (set->list callable-body-points))
+   (freeze branch-table)))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
 (define (annotation-borrow-type? τ)
