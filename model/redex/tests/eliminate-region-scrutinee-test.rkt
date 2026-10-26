@@ -11,7 +11,9 @@
          "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
+         "../origins.rkt"
          "../region.rkt"
+         "../traits.rkt"
          "../typing.rkt")
 
 (define opt-int '(Option Int))
@@ -69,6 +71,13 @@
 (define (elim-i some-body [none-body 'unit])
   `(Eliminate (ProjBorrow p i)
      ((some (c) -> ,some-body) (none () -> ,none-body))))
+
+(define probe-a-ledger
+  (make-trait-ledger
+   canonical-trait-env
+   #:data '((ProbeBox () ((box ((Record ((value Int mut))))))))
+   #:fail (lambda (reason kind key)
+            (error 'probe-a-ledger "~s ~s ~s" reason kind key))))
 
 (define (type-core core [callables '()])
   (define ir (build-region-ir core))
@@ -373,6 +382,22 @@
                  (lifetime-var-index (borrow-request-alpha request)))
        (region-at ir point)
        "非子の借用の下限は分解を含まない通常の region-at"))))
+
+(test-case "probe a: 枝内 binder へ書いた後は親全体を再代入できる"
+  (define box-type '(Data ProbeBox ()))
+  (define box-value
+    `(Construct ,box-type box (Rec ((value mut 1)))))
+  (define core
+    `(Scope ()
+       (Let (x let (Owned ,box-type)) ,box-value
+         (Let (p let (BorrowedMut ,box-type (RParam %omitted))) (BorrowMut x)
+           (Let (ignored let Unit)
+               (Eliminate p
+                 ((box (c) -> (Assign c (Rec ((value mut 2)))))))
+             (Assign p ,box-value))))))
+  (call-with-trait-ledger
+   probe-a-ledger
+   (lambda () (check-accepted core 'Unit '() "probe-a"))))
 
 (test-case "分解の子を Record に格納して外へ出すと E-BOR-025"
   (define record-type `(Record ((payload ,borrowed-mut-int imm))))
