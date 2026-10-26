@@ -471,7 +471,7 @@
             ,(elim-i
               `(Perform ,shared-return-op c)
               `(Perform ,shared-return-op (Reborrow (ProjBorrow p g)))))
-       ,(then shared-parent-write '(Read returned))))
+       ,shared-parent-write))
    "E-BOR-025" '() "escape-handle"))
 
 (test-case "分解の枝の matching Return handler が payload を消費する"
@@ -490,13 +490,11 @@
   (define inner-return-op `(Return inner-boundary ,shared-borrowed-int))
   (check-rejected
    (with-shared-view-parent
-    `(Let (returned let ,shared-borrowed-int)
-          (Handle ,shared-return-op (outer -> outer)
-            ,(elim-i
-              `(Handle ,inner-return-op (inner -> inner)
-                (Perform ,shared-return-op c))
-              `(Reborrow (ProjBorrow p g))))
-       ,(then shared-parent-write '(Read returned))))
+    (then
+     (elim-i
+      `(Handle ,inner-return-op (inner -> inner)
+         (Perform ,shared-return-op c)))
+     shared-parent-write))
    "E-BOR-025" '() "escape-handle-mismatch"))
 
 (test-case "一致する内側 handler は分解の枝で payload を消費する"
