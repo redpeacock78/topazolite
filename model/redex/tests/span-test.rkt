@@ -78,4 +78,20 @@
 (check-equal? (peel-ef '(#:ef (Own) (#:span src 0 3))) '(Own))
 (check-equal? (branch-span '((#:span src 1 9) K () -> 1)) '(#:span src 1 9))
 (check-equal? (peel-branch '((#:span src 1 9) K () -> 1)) '(K () -> 1))
+
+(test-case "注釈付き分解の枝を剥がしても span と binder の意味を保つ"
+  (define data-span '(#:span src 10 20))
+  (define bind-span '(#:span src 11 12))
+  (define union-span '(#:span src 30 40))
+  (define-values (data-branches data-regions)
+    (peel-annotated-data-branches
+     `((,data-span some ((#:bind x ,bind-span)) (%parent) -> x))))
+  (check-equal? data-branches `((,data-span some (x) -> x)))
+  (check-equal? data-regions '((%parent)))
+  (define-values (union-branches union-regions)
+    (peel-annotated-union-branches
+     `((,union-span (#:ty Int ,bind-span) (#:bind y ,bind-span)
+                    %parent -> y))))
+  (check-equal? union-branches `((,union-span Int y -> y)))
+  (check-equal? union-regions '(%parent)))
 (check-equal? (wrapper-span '(#:ty Int (#:span src 0 3))) '(#:span src 0 3))

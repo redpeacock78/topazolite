@@ -78,6 +78,9 @@
   (w ::= x)
   (π ::= ())
   (br ::= (K (x ...) -> c))
+  (ρm ::= ρ %parent)
+  (abr ::= (K (x ...) (ρm ...) -> c))
+  (aubr ::= (τ x ρm -> c))
   (h ::= (x -> c))
 
   (c ::= v
@@ -86,6 +89,7 @@
          (Let (x τ) c c)
          (Construct τ K c ...)
          (Eliminate c (br ...))
+         (EliminateAt c (abr ...))
          (Perform op c)
          (Handle op h c)
          (Scope π c)
@@ -112,6 +116,7 @@
   (Lam O cid (x ...) c #:refers-to (shadow x ...))
   (Let (x τ) c_1 c_2 #:refers-to x)
   (K (x ...) -> c #:refers-to (shadow x ...))
+  (K (x ...) (ρm ...) -> c #:refers-to (shadow x ...))
   (x -> c #:refers-to x)
   (Recur cid f (x ...)
          c_1 #:refers-to (shadow f x ...)
@@ -154,6 +159,7 @@
          (Discharge (ProofRep O φ) c)
          (UnionInject τ τ c)
          (UnionEliminate c (ubr ...))
+         (UnionEliminateAt c (aubr ...))
          (RecRewrite c ((label x τ m τ c) ...))
          (RecRewriteOpen (rrfield ...))
          (Borrow w)
@@ -184,7 +190,8 @@
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x)
   (label x τ m τ c #:refers-to x)
-  (τ x -> c #:refers-to x))
+  (τ x -> c #:refers-to x)
+  (τ x ρm -> c #:refers-to x))
 
 (define-extended-language G1m G1
   (p ::= natural)
@@ -290,6 +297,8 @@
          (Discharge (ProofRep O φ) c)
          (UnionInject τ τ c)
          (UnionEliminate c (ubr ...))
+         (EliminateAt c (abr ...))
+         (UnionEliminateAt c (aubr ...))
          (RecRewrite c ((label x τ m τ c) ...))
          (RecRewriteOpen (rrfield ...))
          (Borrow w)
@@ -332,6 +341,8 @@
          (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) F)
          (UnionInject τ τ F)
          (UnionEliminate F (ubr ...))
+         (EliminateAt F (abr ...))
+         (UnionEliminateAt F (aubr ...))
          (RecRewrite F ((label x τ m τ c) ...))
          (RecRewriteOpen (rrvfield ... (label m F) rrfield ...))
          (RecRewriteOpen (rrvfield ... (label m τ F) rrfield ...))
@@ -358,6 +369,8 @@
          (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) E)
          (UnionInject τ τ E)
          (UnionEliminate E (ubr ...))
+         (EliminateAt E (abr ...))
+         (UnionEliminateAt E (aubr ...))
          (RecRewrite E ((label x τ m τ c) ...))
          (RecRewriteOpen (rrvfield ... (label m E) rrfield ...))
          (RecRewriteOpen (rrvfield ... (label m τ E) rrfield ...))
@@ -384,6 +397,8 @@
          (Discharge (ProofRep O (RemainderSafelyDropped τ τ)) G)
          (UnionInject τ τ G)
          (UnionEliminate G (ubr ...))
+         (EliminateAt G (abr ...))
+         (UnionEliminateAt G (aubr ...))
          (RecRewrite G ((label x τ m τ c) ...))
          (RecRewriteOpen (rrvfield ... (label m G) rrfield ...))
          (RecRewriteOpen (rrvfield ... (label m τ G) rrfield ...))
@@ -409,7 +424,8 @@
   #:binding-forms
   (Let (x bmode τ) c_1 c_2 #:refers-to x)
   (label x τ m τ c #:refers-to x)
-  (τ x -> c #:refers-to x))
+  (τ x -> c #:refers-to x)
+  (τ x ρm -> c #:refers-to x))
 
 (define-metafunction G2
   row-∈ : ℓ ε -> boolean

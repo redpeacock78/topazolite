@@ -1,6 +1,6 @@
 #lang racket
 
-(provide erase-core erase-surface erase-origin-core
+(provide erase-core erase-core/region-annotations erase-surface erase-origin-core
          metadata-form? check-spanless! check-spanless/deep!)
 
 ;; span 機構の包みかどうかを head だけで判定する。
@@ -36,14 +36,45 @@
 ;; 再帰は閉世界である。head が keyword の list は、上の 8 節のいずれかに
 ;; 一致しなければ誤りとして落とす。head を将来足したときに、span が出力へ残る、
 ;; あるいは意図せず落ちる境界を、黙って通さずここで検出する。
-(define (erase-term t)
+(define (erase-term t preserve-region-annotations?)
   (match t
+    [`(EliminateAt ,scrutinee (,branches ...))
+     (define branches*
+       (for/list ([branch (in-list branches)])
+         (match (erase-term branch preserve-region-annotations?)
+           [`(,tag (,binders ...) (,regions ...) -> ,body)
+            (if preserve-region-annotations?
+                `(,tag ,binders ,regions -> ,body)
+                `(,tag ,binders -> ,body))]
+           [other
+            (error 'erase-term "注釈付き Eliminate の枝が不正: ~s" other)])))
+     (if preserve-region-annotations?
+         `(EliminateAt ,(erase-term scrutinee preserve-region-annotations?)
+                       ,branches*)
+         `(Eliminate ,(erase-term scrutinee preserve-region-annotations?)
+                     ,branches*))]
+    [`(UnionEliminateAt ,scrutinee (,branches ...))
+     (define branches*
+       (for/list ([branch (in-list branches)])
+         (match (erase-term branch preserve-region-annotations?)
+           [`(,type ,binder ,region -> ,body)
+            (if preserve-region-annotations?
+                `(,type ,binder ,region -> ,body)
+                `(,type ,binder -> ,body))]
+           [other
+            (error 'erase-term "注釈付き UnionEliminate の枝が不正: ~s"
+                   other)])))
+     (if preserve-region-annotations?
+         `(UnionEliminateAt ,(erase-term scrutinee preserve-region-annotations?)
+                            ,branches*)
+         `(UnionEliminate ,(erase-term scrutinee preserve-region-annotations?)
+                          ,branches*))]
     [(list '#:var x _) x]
     [(list '#:lit l _) l]
     [(list '#:bind x _) x]
     [(list '#:lbl label _) label]
-    [(list '#:ty type _) (erase-term type)]
-    [(list '#:ef row _) (erase-term row)]
+    [(list '#:ty type _) (erase-term type preserve-region-annotations?)]
+    [(list '#:ef row _) (erase-term row preserve-region-annotations?)]
     ;; SUR-008。省略した戻り型は span を落とし、裸の標識として残す。
     [(list '#:infer _) '#:infer]
     [(list '#:span _ _ _)
@@ -51,11 +82,13 @@
     [(? pair?)
      #:when (keyword? (car t))
      (error 'erase-term "span 機構が知らない keyword head である: ~a" t)]
-    [(? list?) (map erase-term (filter (λ (u) (not (span-element? u))) t))]
+    [(? list?) (map (lambda (u) (erase-term u preserve-region-annotations?))
+                    (filter (λ (u) (not (span-element? u))) t))]
     [_ t]))
 
-(define (erase-core t) (erase-term t))
-(define (erase-surface t) (erase-term t))
+(define (erase-core t) (erase-term t #f))
+(define (erase-core/region-annotations t) (erase-term t #t))
+(define (erase-surface t) (erase-term t #f))
 
 ;; Curry の origin payload は erased core の比較キーである。
 ;; uniquify-binders と substitute が付ける ⟨N⟩ / «N» は実装上の識別子なので

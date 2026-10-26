@@ -10,6 +10,7 @@
          "../gen.rkt"
          "../lang.rkt"
          "../machine.rkt"
+         "../erase.rkt"
          "../region.rkt"
          "../typing.rkt"
          "../unsafe-oracle.rkt")
@@ -73,7 +74,13 @@
 (define (check-configs-and-oracle label start configs rules callables expected
                                   sidecar ir)
   (check-configs label start configs rules callables expected)
-  (check-equal? (check-borrow-execution start sidecar ir 200 (make-bcounters))
+  ;; Oracle provenance for the new annotation forms lands in Task 4; `%parent`
+  ;; has the legacy semantics, so compare its annotation-erased equivalent now.
+  (check-equal? (check-borrow-execution
+                 (match start
+                   [`(cfg ,core ,heap ,states ,tokens ,trace)
+                    `(cfg ,(erase-core core) ,heap ,states ,tokens ,trace)])
+                 sidecar ir 200 (make-bcounters))
                 'ok
                 (format "~a: 性質 8 oracle" label)))
 

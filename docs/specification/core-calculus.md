@@ -210,6 +210,9 @@ kind が `Type` の TypeRep は monotype τ を持ち、kind が矢印の TypeRe
 ```text
 mw ::= w | MutSlot(p)                            Reassign の target
 ubr ::= (τm x -> c)                              UnionEliminate の枝
+ρm ::= ρ | %parent                                分解 binder の実行時 region 指定
+abr ::= (K (x̄) (ρm̄) -> c)                       注釈付き data 分解の枝
+aubr ::= (τm x ρm -> c)                          注釈付き Union 分解の枝
 rwf ::= (ℓ, m, c) | (ℓ, m, τout, c)              RecRewriteOpen の作業欄
 rwv ::= (ℓ, m, v) | (ℓ, m, τout, v)              値になった作業欄
 
@@ -219,8 +222,10 @@ c ::= v                                          値
     | Let(x : τ, c1, c2)                         束縛（型注釈付き）
     | Construct(D, K, c1, …, ck)                 constructor 適用（D は具体化されたデータ型）
     | Eliminate(c0, (K1(x̄1) -> c1), …, (Kn(x̄n) -> cn))   場合分け
+    | EliminateAt(c0, (K1(x̄1)(ρm̄1) -> c1), …, (Kn(x̄n)(ρm̄n) -> cn)) 注釈付き場合分け
     | UnionInject(τU, τm, c)                     Union 成分の注入
     | UnionEliminate(c, (τm1 x1 -> c1), …, (τmn xn -> cn)) Union の tag による場合分け
+    | UnionEliminateAt(c, (τm1 x1 ρm1 -> c1), …) 注釈付き Union の場合分け
     | RecRewrite(e, ((ℓ1, x1, τ1, m'1, τ'1, c1), …)) Record の欄の再構成
     | RecRewriteOpen((ℓ1, m1, c1), …)            entry 未適用欄
     | RecRewriteOpen((ℓ1, m1, τout, c1), …)      entry 適用欄。τout は Close までの metadata
@@ -282,6 +287,12 @@ Surface と UCore には現れず、c1b の生成器も作らない。
 `RecRewriteOpen` は簡約が生成する machine 専用の中間形であり、初期の Typed Core には書けない。
 `Forward` は elaboration だけが生成する Typed Core 専用形であり、Surface と UCore には現れない。
 これは adapter の資源型仮引数と、その変換が転送形 `T` の中で作る資源型 `Let` の binder を一度だけ転送する形であり、通常の `Move` と異なり OwnershipError を生成しない。
+
+`EliminateAt` と `UnionEliminateAt` は `annotate-regions` が実行 Core にだけ加える機械注釈形であり、利用者が書く Typed Core と elaboration の出力には現れない。
+各枝の binder と `ρm` は位置ごとに対応し、個数が一致しなければ不正である。
+`%parent` は借用された scrutinee の参照が持つ region をその binder の参照へ引き継ぎ、明示した `ρ` はその値を使う。
+binder に通常の値を渡す分岐ではこの注釈は値を変えない。
+`erase-core` は注釈形を通常の `Eliminate` または `UnionEliminate` に戻して注釈を捨てる。
 
 #### 3.3.1 binding mode
 
@@ -2497,8 +2508,8 @@ Phase 4 以降で扱う。
 ```text
 F ::= []                                          純粋文脈（Scope と Handle を含まない）
     | Apply(v̄, F, c̄) | Let(x : τ, F, c)
-    | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄)
-    | UnionInject(τU, τm, F) | UnionEliminate(F, ubr̄)
+    | Construct(D, K, v̄, F, c̄) | Eliminate(F, br̄) | EliminateAt(F, abr̄)
+    | UnionInject(τU, τm, F) | UnionEliminate(F, ubr̄) | UnionEliminateAt(F, aubr̄)
     | RecRewrite(F, entries)
     | RecRewriteOpen(rwv̄, (ℓ, m, F), rwf̄)
     | RecRewriteOpen(rwv̄, (ℓ, m, τout, F), rwf̄)
@@ -2707,6 +2718,34 @@ E[Eliminate(Construct(D, Ki, v1, …, vk), …, (Ki(x̄i) -> ci), …)]
   → E[ci[v1/xi1, …, vk/xik]]
 ```
 
+注釈形では `ρm` ごとに child reference の region を定める。
+`child-region(ρ, %parent) = ρ`、`child-region(ρ, ρchild) = ρchild` とする。
+通常の値を分解する規則は binder ごとの印を使わず、借用参照を分解するときだけ対応する child reference に適用する。
+
+**(R-EliminateAt)**
+
+```text
+E[EliminateAt(Construct(D, Ki, v1, …, vk), …,
+              (Ki(x̄i)(ρm̄i) -> ci), …)]
+  → E[ci[v1/xi1, …, vk/xik]]
+```
+
+**(R-EliminateAtRef)** と **(R-EliminateAtMutRef)**
+
+```text
+H(p)[fp] = Construct(D, Ki, v1, …, vk)    Ω(p) = Available
+(Ki(x1, …, xk)(ρm1, …, ρmk) -> ci) が選ばれる
+--------------------------------------------------------------------------
+⟨E[EliminateAt(BorrowRef(p, fp, ρ), abr̄)], H, Ω, Λtok, θ⟩
+  → ⟨E[ci[BorrowRef(p, fp ++ [0], child-region(ρm1, ρ))/x1, …,
+             BorrowRef(p, fp ++ [k−1], child-region(ρmk, ρ))/xk]],
+       H, Ω, Λtok, θ⟩
+```
+
+`R-EliminateAtMutRef` はこの規則の `BorrowRef` を `BorrowMutRef` に置き換える。
+枝と field の個数が一致しない場合、または注釈の個数が binder の個数と一致しない場合は規則を適用しない。
+手組みの構成に含まれる個数不一致も構成検査が拒否する。
+
 **(R-EliminateTransit)**
 
 ```text
@@ -2746,6 +2785,29 @@ E[UnionEliminate(UnionVal(τU, τm, v), ubr̄)] → E[ci[v/xi]]
 
 UnionEliminate は値の成分型と type-equiv? な型を持つ枝を選ぶ。
 該当する枝が無い場合は簡約しない。
+
+**(R-UnionEliminateAt)**
+
+```text
+τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi ρmi -> ci) がある
+-----------------------------------------------------------------------
+E[UnionEliminateAt(UnionVal(τU, τm, v), aubr̄)] → E[ci[v/xi]]
+```
+
+**(R-UnionEliminateAtRef)** と **(R-UnionEliminateAtMutRef)**
+
+```text
+H(p)[fp] = UnionVal(τU, τm, v)    Ω(p) = Available
+τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi ρmi -> ci) がある
+------------------------------------------------------------------------------------
+⟨E[UnionEliminateAt(BorrowRef(p, fp, ρ), aubr̄)], H, Ω, Λtok, θ⟩
+  → ⟨E[ci[BorrowRef(p, fp ++ [(Payload)], child-region(ρmi, ρ))/xi]],
+       H, Ω, Λtok, θ⟩
+```
+
+`R-UnionEliminateAtMutRef` はこの規則の `BorrowRef` を `BorrowMutRef` に置き換える。
+`ρmi` が `%parent` なら child reference は scrutinee と同じ region を持ち、明示 `ρ` ならその region を持つ。
+借用されていない値を分解する場合、binder の値は通常の規則と同じであり、region 印は参照を変更しない。
 
 **(R-UnionEliminateRef)** と **(R-UnionEliminateMutRef)**
 

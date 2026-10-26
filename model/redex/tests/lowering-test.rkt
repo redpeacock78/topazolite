@@ -84,6 +84,11 @@
 ;; 衝突の対象から外す。
 (define collision-names '(PLet return yield drop curry |a:b|))
 
+(define-metafunction G2
+  substitute-eliminate-at : any x any -> any
+  [(substitute-eliminate-at any_1 x any_2)
+   (substitute any_1 x any_2)])
+
 (test-case
  "the five symbol encoders never collide with each other"
  (for ([name (in-list collision-names)])
@@ -477,8 +482,10 @@
     (Let       core  (Let (a Int) 1 a))
     (Construct core  (Construct (Option Int) Some x))
     (Eliminate core  (Eliminate x ((Some (a) -> a))))
+    (EliminateAt core (EliminateAt x ((Some (a) (%parent) -> a))))
     (UnionInject core (UnionInject (Union Int String) Int 1))
     (UnionEliminate core (UnionEliminate x ((Int i -> i))))
+    (UnionEliminateAt core (UnionEliminateAt x ((Int i %parent -> i))))
     (Perform   core  (Perform (Return io Int) 1))
     (Handle    core  (Handle (Return io Int) (a -> a) 1))
     (Scope     core  (Scope (0) x))
@@ -510,6 +517,18 @@
     (UVal      value (UVal 1))
     (RVal      value (RVal (ProofRep User TypeNarrativeCap) 1))
     (UnionVal  value (UnionVal (Union Int String) Int 1))))
+
+(test-case
+ "annotated branch binding avoids capture during substitution"
+ (define source-form
+   '(EliminateAt x ((Some (binder) (%parent) -> free))))
+ (define substituted
+   (term (substitute-eliminate-at ,source-form free binder)))
+ (check-true
+  (alpha-equivalent?
+   G2
+   substituted
+   '(EliminateAt x ((Some (renamed) (%parent) -> binder))))))
 
 (test-case
  "the form table's left-hand side matches the fixture roster"

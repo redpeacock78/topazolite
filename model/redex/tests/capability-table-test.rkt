@@ -112,6 +112,27 @@
  (check-equal? (borrow-token-key (empty-region-ctx) c) (set '(1))))
 
 (test-case
+ "注釈付き分解の capability は旧形と一致する"
+ (define Λ (empty-region-ctx))
+ (define old-data
+   '(Eliminate (BorrowMutRef 1 () 0)
+               ((some (x) -> (Reborrow x)))))
+ (define annotated-data
+   '(EliminateAt (BorrowMutRef 1 () 0)
+                 ((some (x) (%parent) -> (Reborrow x)))))
+ (define old-union
+   '(UnionEliminate (BorrowMutRef 1 () 0)
+                    ((Int x -> (Reborrow x)))))
+ (define annotated-union
+   '(UnionEliminateAt (BorrowMutRef 1 () 0)
+                      ((Int x %parent -> (Reborrow x)))))
+ (for ([old (in-list (list old-data old-union))]
+       [annotated (in-list (list annotated-data annotated-union))])
+   (check-equal? (borrow-token-key Λ annotated) (borrow-token-key Λ old))
+   (check-equal? (capability-field-entries Λ annotated)
+                 (capability-field-entries Λ old))))
+
+(test-case
  "Rec は空の欄を含む field 表を作り、表を持たない式は #f のまま"
  (check-false (capability-field-table (empty-region-ctx) '(Proj (Rec ((a const 0))) a)))
  (define record-table

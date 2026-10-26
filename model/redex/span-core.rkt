@@ -5,6 +5,7 @@
 
 (provide Span span-ok? span-of entry-span G1+ G2+
          peel-node peel-branch branch-span
+         peel-annotated-data-branches peel-annotated-union-branches
          peel-ubr ubr-span
          peel-ty peel-bind peel-lbl peel-ef
          wrapper-span)
@@ -68,6 +69,35 @@
   (match branch
     [(list (list '#:span _ _ _) rest ...) rest]
     [_ branch]))
+
+(define (restore-branch-span original branch)
+  (define span
+    (match original
+      [(list (and span (list '#:span _ _ _)) _ ...) span]
+      [_ #f]))
+  (if span (cons span branch) branch))
+
+(define (peel-annotated-data-branches branches)
+  (define parsed
+    (for/list ([branch (in-list branches)])
+      (match (peel-branch branch)
+        [`(,constructor (,binders ...) (,regions ...) -> ,body)
+         (list (restore-branch-span
+                branch `(,constructor ,(map peel-bind binders) -> ,body))
+               regions)]
+        [_ (list #f #f)])))
+  (values (map first parsed) (map second parsed)))
+
+(define (peel-annotated-union-branches branches)
+  (define parsed
+    (for/list ([branch (in-list branches)])
+      (match (peel-branch branch)
+        [`(,type ,binder ,region -> ,body)
+         (list (restore-branch-span
+                branch `(,(peel-ty type) ,(peel-bind binder) -> ,body))
+               region)]
+        [_ (list #f #f)])))
+  (values (map first parsed) (map second parsed)))
 
 ;; 型注釈・束縛・label・作用 row の包み。spanless な入力にも使えるよう、
 ;; 包みでない値はそのまま返す。resolve-annotation は入れ子の型からも呼ばれ、

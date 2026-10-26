@@ -741,27 +741,29 @@
   ;; Runtime heap entries may contain callable values whose root type is not
   ;; Res.  Reconstruct the same Ξ and configuration-only typing scope used by
   ;; config-ok? before checking the row.
-  (with-config-typing
-   (lambda ()
-     (define places
-       (derive-places (config-heap configuration)
-                      callables
-                      #:declared (config-declared-types configuration)))
-     (define borrow-types
-       (and places
-            (recover-runtime-borrow-types (config-core configuration)
-                                          (config-heap configuration)
-                                          (config-states configuration)
-                                          places)))
-     (and borrow-types
-          (parameterize ([config-runtime-borrow-types borrow-types])
-            (core-check-row (config-core configuration)
-                            places
-                            callables
-                            type
-                            #:declared (config-declared-types configuration)
-                            #:states (config-states configuration)
-                            #:heap (config-heap configuration)))))))
+  (and (elimination-annotations-well-formed?
+        (list (config-core configuration) (config-heap configuration) callables))
+       (with-config-typing
+        (lambda ()
+          (define places
+            (derive-places (config-heap configuration)
+                           callables
+                           #:declared (config-declared-types configuration)))
+          (define borrow-types
+            (and places
+                 (recover-runtime-borrow-types (config-core configuration)
+                                               (config-heap configuration)
+                                               (config-states configuration)
+                                               places)))
+          (and borrow-types
+               (parameterize ([config-runtime-borrow-types borrow-types])
+                 (core-check-row (config-core configuration)
+                                 places
+                                 callables
+                                 type
+                                 #:declared (config-declared-types configuration)
+                                 #:states (config-states configuration)
+                                 #:heap (config-heap configuration))))))))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))

@@ -178,6 +178,52 @@
               (loop rest))]
          [_ (loop rest)])])))
 
+(define (annotated-rho annotation parent)
+  (if (eq? annotation '%parent) parent annotation))
+
+(define (set-borrow-ref-region value region)
+  (match value
+    [`(BorrowRef ,place ,path ,old-region)
+     `(BorrowRef ,place ,path ,(or region old-region))]
+    [`(BorrowMutRef ,place ,path ,old-region)
+     `(BorrowMutRef ,place ,path ,(or region old-region))]
+    [_ value]))
+
+(define (select-annotated-data-branch constructor values branches parent-region)
+  (let loop ([remaining branches])
+    (match remaining
+      ['() #f]
+      [(cons branch rest)
+       (match branch
+         [`(,tag (,binders ...) (,annotations ...) -> ,body)
+          (cond
+            [(not (eq? constructor tag)) (loop rest)]
+            [(not (= (length binders) (length annotations))) #f]
+            [(not (= (length binders) (length values))) #f]
+            [else
+             (define values*
+               (for/list ([value (in-list values)]
+                          [annotation (in-list annotations)])
+                 (set-borrow-ref-region value
+                                        (annotated-rho annotation parent-region))))
+             (term (substitute*/g2 ,body ,binders ,values*))])]
+         [_ (loop rest)])])))
+
+(define (select-annotated-union-branch member-type payload branches parent-region)
+  (let loop ([remaining branches])
+    (match remaining
+      ['() #f]
+      [(cons branch rest)
+       (match branch
+         [`(,branch-type ,binder ,annotation -> ,body)
+          (if (type-equiv? member-type branch-type)
+              (term
+               (substitute*/g2 ,body (,binder)
+                               (,(set-borrow-ref-region
+                                  payload (annotated-rho annotation parent-region)))))
+              (loop rest))]
+         [_ (loop rest)])])))
+
 (define-metafunction G2m
   proj-lookup : ((label v) ...) label -> any
   [(proj-lookup ((label_target v_target)
@@ -1307,6 +1353,12 @@
         (cfg (in-hole E (Eliminate v_scrutinee (br ...))) H Ω Λtok θ)
         R-EliminateTransit)
 
+   (--> (cfg (in-hole E (EliminateAt (OwnedTransit p v_scrutinee)
+                                     (abr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (EliminateAt v_scrutinee (abr ...))) H Ω Λtok θ)
+        R-EliminateAtTransit)
+
    ;; UnionEliminate の移送 marker は UnionVal に限って外す。
    (--> (cfg (in-hole E (UnionEliminate
                          (OwnedTransit p (UnionVal τ_union τ_member v_payload))
@@ -1316,6 +1368,15 @@
                                         (ubr ...)))
              H Ω Λtok θ)
         R-UnionEliminateTransit)
+
+   (--> (cfg (in-hole E (UnionEliminateAt
+                         (OwnedTransit p (UnionVal τ_union τ_member v_payload))
+                         (aubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E (UnionEliminateAt
+                         (UnionVal τ_union τ_member v_payload)
+                         (aubr ...))) H Ω Λtok θ)
+        R-UnionEliminateAtTransit)
 
    ;; OwnLeaf producer が移送済み Owned 値を受けるときは token を増やさない。
    (--> (cfg (in-hole E (OwnLeaf (OwnedTransit p v_payload)))
@@ -1371,6 +1432,16 @@
                (select-branch/g2 K (v_arg ...) (br ...)))
         R-Eliminate)
 
+   (--> (cfg (in-hole E
+                      (EliminateAt (Construct τ K v_arg ...)
+                                   (abr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where c_result
+               ,(select-annotated-data-branch
+                 (term K) (term (v_arg ...)) (term (abr ...)) #f))
+        R-EliminateAt)
+
    ;; UnionInject は値へ正規化済みの Union tag を付ける。
    (--> (cfg (in-hole E (UnionInject τ_union τ_member v_payload))
              H Ω Λtok θ)
@@ -1391,6 +1462,16 @@
                                      (term (ubr ...))))
         R-UnionEliminate)
 
+   (--> (cfg (in-hole E
+                      (UnionEliminateAt (UnionVal τ_union τ_member v_payload)
+                                        (aubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where c_result
+               ,(select-annotated-union-branch
+                 (term τ_member) (term v_payload) (term (aubr ...)) #f))
+        R-UnionEliminateAt)
+
    ;; 借用の枝束縛子は UnionVal 全体ではなく payload を指す。
    (--> (cfg (in-hole E (UnionEliminate (BorrowRef p fp ρ) (ubr ...)))
              H Ω Λtok θ)
@@ -1407,6 +1488,22 @@
                  (term (ubr ...))))
         R-UnionEliminateRef)
 
+   (--> (cfg (in-hole E (UnionEliminateAt (BorrowRef p fp ρ) (aubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (UnionVal τ_union τ_member v_payload)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where c_result
+               ,(select-annotated-union-branch
+                 (term τ_member)
+                 `(BorrowRef ,(term p)
+                             ,(append (term fp) '((Payload)))
+                             ,(term ρ))
+                 (term (aubr ...))
+                 (term ρ)))
+        R-UnionEliminateAtRef)
+
    (--> (cfg (in-hole E (UnionEliminate (BorrowMutRef p fp ρ) (ubr ...)))
              H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
@@ -1421,6 +1518,22 @@
                                 ,(term ρ))
                  (term (ubr ...))))
         R-UnionEliminateMutRef)
+
+   (--> (cfg (in-hole E (UnionEliminateAt (BorrowMutRef p fp ρ) (aubr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (UnionVal τ_union τ_member v_payload)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where c_result
+               ,(select-annotated-union-branch
+                 (term τ_member)
+                 `(BorrowMutRef ,(term p)
+                                ,(append (term fp) '((Payload)))
+                                ,(term ρ))
+                 (term (aubr ...))
+                 (term ρ)))
+        R-UnionEliminateAtMutRef)
 
    ;; 借用参照の Eliminate。H の値の構成子で分岐を選び、束縛子へは欄の値では
    ;; なく欄を指す借用参照を渡す。位置は R-ProjBorrow と同じ 0 起点であり、
@@ -1440,6 +1553,23 @@
         (where c_result (select-branch/g2 K (v_ref ...) (br ...)))
         R-EliminateRef)
 
+   (--> (cfg (in-hole E (EliminateAt (BorrowRef p fp ρ) (abr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Construct τ K v_field ...)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where (v_ref ...)
+               ,(for/list ([i (in-naturals 0)]
+                           [_ (in-list (term (v_field ...)))])
+                  `(BorrowRef ,(term p)
+                              ,(append (term fp) (list i))
+                              ,(term ρ))))
+        (where c_result
+               ,(select-annotated-data-branch
+                 (term K) (term (v_ref ...)) (term (abr ...)) (term ρ)))
+        R-EliminateAtRef)
+
    ;; 可変借用参照の Eliminate。R-EliminateRef と同じ採番で欄を指す参照を作る。
    ;; 構成子の欄には mode が無いため、親が可変なら子もすべて可変になる。
    ;; 型付け側は schema.rkt の peel-eliminate-wrapper が同じ規約で欄の型を包む。
@@ -1456,6 +1586,23 @@
                                  ,(term ρ))))
         (where c_result (select-branch/g2 K (v_ref ...) (br ...)))
         R-EliminateMutRef)
+
+   (--> (cfg (in-hole E (EliminateAt (BorrowMutRef p fp ρ) (abr ...)))
+             H Ω Λtok θ)
+        (cfg (in-hole E c_result) H Ω Λtok θ)
+        (where Available ,(table-ref (term Ω) (term p)))
+        (where (Construct τ K v_field ...)
+               ,(path-lookup (term H) (term p) (term fp)))
+        (where (v_ref ...)
+               ,(for/list ([i (in-naturals 0)]
+                           [_ (in-list (term (v_field ...)))])
+                  `(BorrowMutRef ,(term p)
+                                 ,(append (term fp) (list i))
+                                 ,(term ρ))))
+        (where c_result
+               ,(select-annotated-data-branch
+                 (term K) (term (v_ref ...)) (term (abr ...)) (term ρ)))
+        R-EliminateAtMutRef)
 
    (--> (cfg (in-hole E
                       (Apply (RecurVal cid_recur f (x ...) c_body)

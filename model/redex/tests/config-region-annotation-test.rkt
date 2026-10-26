@@ -9,6 +9,7 @@
          "../lang.rkt"
          "../region.rkt"
          "../machine.rkt"
+         "../erase.rkt"
          "../borrow-oracle.rkt"
          "../borrow-gen.rkt"
          "../region-param.rkt"
@@ -16,6 +17,17 @@
 
 (define int-heap '((0 7 (declared Int))))
 (define int-states '((0 Available)))
+
+(define result-heap
+  '((0 (Construct (Result Int Int) ok 7)
+       (declared (Owned (Result Int Int))))))
+(define result-states '((0 Available)))
+
+(define (annotated-result-config child-region)
+  `(cfg (EliminateAt (BorrowMutRef 0 () 9)
+          ((ok (value) (,child-region) -> value)
+           (ng (error) (,child-region) -> error)))
+        ,result-heap ,result-states () ()))
 
 (define (config-type-result cfg callables)
   (match cfg
@@ -51,6 +63,39 @@
   (define cfg `(cfg ,core ,int-heap ,int-states () ()))
   (check-true (config-ok? cfg '() 'Int '()))
   (check-equal? (raw-failure-key core '((0 Int))) 'borrow-region-mismatch))
+
+(test-case "注釈付き分解は binder の子 rho を型と実行時値へ反映する"
+  (define cfg (annotated-result-config 3))
+  (define expected '(BorrowedMut Int 3))
+  (define row (runtime-row cfg '() expected))
+  (check-not-false row)
+  (check-true (config-ok? cfg '() expected row))
+  (match (raw-steps-g2/named cfg)
+    [(list (list 'R-EliminateAtMutRef next))
+     (check-equal? (match next [`(cfg ,core ,_ ...) core])
+                   '(BorrowMutRef 0 (0) 3))
+     (check-not-false (runtime-row next '() expected))
+     (check-true (config-ok? next '() expected row))]
+    [steps (fail (format "注釈付き分解は一歩進む: ~s" steps))])
+  (define mismatched (annotated-result-config 4))
+  (check-false (runtime-row mismatched '() expected))
+  (check-false (config-ok? mismatched '() expected '()))
+  (match (raw-steps-g2/named mismatched)
+    [(list (list 'R-EliminateAtMutRef next))
+     (check-false (runtime-row next '() expected))
+     (check-false (config-ok? next '() expected '()))]
+    [steps (fail (format "ずれた注釈の分解は一歩進む: ~s" steps))]))
+
+(test-case "注釈付き分解の binder 数不一致は両構成検査で拒否する"
+  (for ([regions (in-list '(() (3 4)))])
+    (define cfg
+      `(cfg (EliminateAt (BorrowMutRef 0 () 9)
+              ((ok (value) ,regions -> value)
+               (ng (error) (3) -> error)))
+            ,result-heap ,result-states () ()))
+    (check-false (runtime-row cfg '() '(BorrowedMut Int 3)))
+    (check-false (config-ok? cfg '() '(BorrowedMut Int 3) '()))
+    (check-equal? (raw-steps-g2/named cfg) '())))
 
 (test-case "構成検査の BorrowAt は存在しない place を拒否する"
   (define cfg '(cfg (Read (BorrowAt 3 (Own 5 ()) 5))
@@ -627,7 +672,13 @@
     (trace-with-initial-int-place source callables))
   (check-config-trace configs callables expected)
   (check-equal?
-   (check-borrow-execution (first configs) #f #f 200 (make-bcounters))
+   ;; The oracle learns annotation-form provenance in Task 4; Task 3 checks
+   ;; its unchanged semantics through the annotation-erased equivalent.
+   (check-borrow-execution
+    (match (first configs)
+      [`(cfg ,core ,heap ,states ,tokens ,trace)
+       `(cfg ,(erase-core core) ,heap ,states ,tokens ,trace)])
+    #f #f 200 (make-bcounters))
    'ok)
   (check-not-false (index-of rules 'R-RegionAppRecur))
   (check-true (>= (count (lambda (rule) (eq? rule 'R-RecurUnfold)) rules) 2))

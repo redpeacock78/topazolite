@@ -930,6 +930,10 @@
               (capability-flow-normal branches-flow)
               (capability-effects-join (list scrutinee-flow branches-flow))))
            scrutinee-flow)]
+      [`(EliminateAt ,scrutinee (,branches ...))
+       (define-values (plain-branches _regions)
+         (peel-annotated-data-branches branches))
+       (walk `(Eliminate ,scrutinee ,plain-branches) locals*)]
       [`(UnionEliminate ,scrutinee ,branches)
        (define scrutinee-flow (child-flow scrutinee))
        (if (capability-flow-normal scrutinee-flow)
@@ -940,6 +944,10 @@
               (capability-flow-normal branches-flow)
               (capability-effects-join (list scrutinee-flow branches-flow))))
            scrutinee-flow)]
+      [`(UnionEliminateAt ,scrutinee ,branches)
+       (define-values (plain-branches _regions)
+         (peel-annotated-union-branches branches))
+       (walk `(UnionEliminate ,scrutinee ,plain-branches) locals*)]
       [`(Scope ,_ ,body) (child-flow body)]
       [`(Yield ,first ,next)
        (define first-flow (child-flow first))
@@ -1196,6 +1204,10 @@
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
            (capability-entry-join (list acc r))))]
+    [`(EliminateAt ,scrutinee ,brs)
+     (define-values (plain-branches _regions)
+       (peel-annotated-data-branches brs))
+     (recur `(Eliminate ,scrutinee ,plain-branches) locals)]
     [`(UnionEliminate ,scrutinee ,branches)
      (define entry_s (recur scrutinee))
      (define tbl_s (entry-table entry_s))
@@ -1218,6 +1230,10 @@
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
            (capability-entry-join (list acc r))))]
+    [`(UnionEliminateAt ,scrutinee ,branches)
+     (define-values (plain-branches _regions)
+       (peel-annotated-union-branches branches))
+     (recur `(UnionEliminate ,scrutinee ,plain-branches) locals)]
     [`(Scope ,_ ,body) (recur body)]
     [`(Proj ,c_1 ,label)
      (field-entry c_1 label)]

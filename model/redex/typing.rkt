@@ -45,6 +45,7 @@
          execution-core
          typing-visited-points
          config-ok?
+         elimination-annotations-well-formed?
          config-view-compatible?
          config-runtime-borrow-types
          recover-runtime-borrow-types
@@ -900,7 +901,11 @@
     (match (peel-node core)
       [`(Eliminate ,_ ,_)
        (emit-decomposition-result! ir point result-type core fail)]
+      [`(EliminateAt ,_ ,_)
+       (emit-decomposition-result! ir point result-type core fail)]
       [`(UnionEliminate ,_ ,_)
+       (emit-decomposition-result! ir point result-type core fail)]
+      [`(UnionEliminateAt ,_ ,_)
        (emit-decomposition-result! ir point result-type core fail)]
       [`(Perform (Return ,boundary ,type) ,_)
        (emit-decomposition-exit!
@@ -1396,6 +1401,11 @@
                        (forward-transfer-form? body mode)]
                       [_ #f]))
                   branches))]
+    [`(UnionEliminateAt ,scrutinee (,branches ...))
+     (define-values (plain-branches _regions)
+       (peel-annotated-union-branches branches))
+     (forward-transfer-form? `(UnionEliminate ,scrutinee ,plain-branches)
+                             mode)]
     [`(Let (,_ let ,_) ,bound ,body)
      (and (forward-transfer-form? bound mode)
           (forward-transfer-form? body mode))]
@@ -1406,13 +1416,9 @@
     [_ (redex-match? G2m v (erase-core core))]))
 
 (define (peel-forward-union-branch branch)
-  (match branch
-    [`(,_ ,_ -> ,_) branch]
-    [(list (list '#:span _ _ _)
-           (list '#:ty member _)
-           (list '#:bind binder _)
-           '-> body)
-     (list member binder '-> body)]
+  (match (peel-branch branch)
+    [`(,member ,binder -> ,body)
+     (list (peel-ty member) (peel-bind binder) '-> body)]
     [_ #f]))
 
 (define (forward-containing-now? core)
@@ -1643,6 +1649,11 @@
         (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
           (usage-max usage branch))
         term)]
+      [`(UnionEliminateAt ,scrutinee (,branches ...))
+       (define-values (plain-branches _regions)
+         (peel-annotated-union-branches branches))
+       (scan-result-tail `(UnionEliminate ,scrutinee ,plain-branches)
+                         env allowed tail-allowed pending mode)]
       [`(Apply ,_function ,_arguments ...)
        ;; Apply 自体が結果でも、Forward はその引数位置の条件で検査する。
        (scan term env result-allowed #f #t '() mode)]
@@ -1788,6 +1799,11 @@
                   (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
                     (usage-max usage branch))
                   term)]
+      [`(UnionEliminateAt ,scrutinee (,branches ...))
+       (define-values (plain-branches _regions)
+         (peel-annotated-union-branches branches))
+       (scan `(UnionEliminate ,scrutinee ,plain-branches)
+             env allowed in-transfer? local-lets? pending mode result-root?)]
       [`(Eliminate ,scrutinee (,branches ...))
        (define branch-children (rest (core-children node)))
        (define branch-usages
@@ -1804,6 +1820,11 @@
                   (for/fold ([usage (hash)]) ([branch (in-list branch-usages)])
                     (usage-max usage branch))
                   term)]
+      [`(EliminateAt ,scrutinee (,branches ...))
+       (define-values (plain-branches _regions)
+         (peel-annotated-data-branches branches))
+       (scan `(Eliminate ,scrutinee ,plain-branches)
+             env allowed in-transfer? local-lets? pending mode result-root?)]
       [`(RecRewrite ,input (,entries ...))
        (define entry-children (rest (core-children node)))
        (define entry-usage
@@ -2136,7 +2157,16 @@
            (construct-result-type actual-type constructor actual-field-types
                                   Λ node fail))]))
 
-(define (branch-contexts branches data-type Λ environment node scrutinee fail)
+(define (type-with-branch-region type annotation)
+  (if (or (not annotation) (eq? annotation '%parent))
+      type
+      (match type
+        [`(Borrowed ,payload ,_) `(Borrowed ,payload ,annotation)]
+        [`(BorrowedMut ,payload ,_) `(BorrowedMut ,payload ,annotation)]
+        [_ type])))
+
+(define (branch-contexts branches data-type Λ environment node scrutinee fail
+                          [branch-regions #f])
   (define-values (data-core rewrap) (peel-eliminate-wrapper data-type))
   (define schema-core (constructor-schema data-core))
   (unless schema-core (fail 'non-data-eliminate scrutinee))
@@ -2154,8 +2184,19 @@
   (unless (= (length branches) (length schema))
     (fail 'non-exhaustive-eliminate node))
   (define plain-branches (map peel-branch branches))
+  (when (and branch-regions
+             (or (not (= (length branch-regions) (length branches)))
+                 (for/or ([branch (in-list plain-branches)]
+                          [regions (in-list branch-regions)])
+                   (match branch
+                     [`(,_ (,binders ...) -> ,_)
+                      (not (= (length binders) (length regions)))]
+                     [_ #t]))))
+    (fail 'ill-typed node))
   (for ([branch (in-list branches)]
-        [plain (in-list plain-branches)])
+        [plain (in-list plain-branches)]
+        [regions (in-list (or branch-regions
+                              (make-list (length branches) #f)))])
     ;; 枝の形だけを spanless な文法で検査し、本文は spanful のまま子へ渡す。
     ;; 本文までそのまま G2m へ照合すると、子の span が理由なく不一致になる。
     (unless (redex-match? G2m br (erase-core plain))
@@ -2196,9 +2237,15 @@
              (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
     (fail 'unresolved-borrow-owner scrutinee))
   (for/list ([branch (in-list plain-branches)]
+             [regions (in-list (or branch-regions
+                                   (make-list (length branches) #f)))]
              [i (in-naturals 1)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (define field-types (lookup schema constructor))
+    (define typed-field-types
+      (for/list ([type (in-list field-types)]
+                 [ρm (in-list (or regions (make-list (length field-types) #f)))])
+        (type-with-branch-region type ρm)))
     (define binders (map peel-bind parameters))
     (define-values (checked-body encoded? identity-transfers)
       (check-resource-branch-encoding binders field-types body node fail))
@@ -2218,7 +2265,7 @@
                                      variant-view? borrowed-view? (set))]))
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
-                ([x (in-list binders)] [τ (in-list field-types)]
+                ([x (in-list binders)] [τ (in-list typed-field-types)]
                  [entry (in-list bindings)])
         (region-ctx-add-token (register-owner Λ_acc x τ)
                               x
@@ -2232,8 +2279,8 @@
           (extend environment
                   binders
                   (if encoded?
-                      (map resource-branch-binding-type field-types)
-                      field-types))
+                      (map resource-branch-binding-type typed-field-types)
+                      typed-field-types))
           (enter-child Λ_branch i)
           binders
           identity-transfers)))
@@ -2463,13 +2510,16 @@
 ;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
 ;; 各枝の束縛子へ payload path を引き継ぐ。
 (define (union-branch-contexts branches union-type wrapper Λ environment
-                               node scrutinee fail)
+                               node scrutinee fail [branch-regions #f])
   (define peeled-branches
     (for/list ([branch (in-list branches)])
       (match branch
         [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
          (list type binder '-> body)]
         [_ branch])))
+  (when (and branch-regions
+             (not (= (length branch-regions) (length peeled-branches))))
+    (fail 'ill-typed node))
   (for ([branch (in-list peeled-branches)])
     (unless (redex-match? G2m ubr (erase-core branch))
       (fail 'ill-typed node)))
@@ -2526,11 +2576,15 @@
                                member)))
                entry))))
   (for/list ([branch (in-list plain-branches)]
+             [region-mark (in-list (or branch-regions
+                                       (make-list (length plain-branches) #f)))]
              [i (in-naturals 1)])
     (match-define `(,member ,binder -> ,body) branch)
     (define x (peel-bind binder))
     (define binding-type
       (if borrowed? `(,(first wrapper) ,member ,(second wrapper)) member))
+    (define typed-binding-type
+      (type-with-branch-region binding-type region-mark))
     (define-values (checked-body encoded? identity-transfers)
       (if borrowed?
           (values body #f '())
@@ -2545,7 +2599,7 @@
                                           #f borrowed? inherited-variants)))
        borrowed? inherited-variants))
     (define Λ_branch
-      (region-ctx-add-token (register-owner Λ x binding-type)
+      (region-ctx-add-token (register-owner Λ x typed-binding-type)
                             x
                             (capability-entry-keys capability)
                             #f #f
@@ -2556,44 +2610,45 @@
           (extend environment
                   (list x)
                   (list (if borrowed?
-                            binding-type
+                            typed-binding-type
                             (if encoded?
-                                (resource-branch-binding-type member)
-                                member))))
+                                (resource-branch-binding-type typed-binding-type)
+                                typed-binding-type))))
           (enter-child Λ_branch i)
           (list x)
           identity-transfers)))
 
 (define (union-eliminate-branches scrutinee-type branches Λ environment
-                                  node scrutinee fail)
+                                  node scrutinee fail [branch-regions #f])
   (match (normalize-type scrutinee-type)
     [`(Union ,_ ,_)
      (union-branch-contexts branches (normalize-type scrutinee-type) #f
-                            Λ environment node scrutinee fail)]
+                            Λ environment node scrutinee fail branch-regions)]
     [`(Owned (Union ,_ ,_))
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type)) #f
-                            Λ environment node scrutinee fail)]
+                            Λ environment node scrutinee fail branch-regions)]
     [`(Borrowed (Union ,_ ,_) ,ρ)
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type))
-                            (list 'Borrowed ρ) Λ environment node scrutinee fail)]
+                            (list 'Borrowed ρ) Λ environment node scrutinee fail
+                            branch-regions)]
     [`(BorrowedMut (Union ,_ ,_) ,ρ)
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type))
-                            (list 'BorrowedMut ρ) Λ environment node scrutinee fail)]
+                            (list 'BorrowedMut ρ) Λ environment node scrutinee fail
+                            branch-regions)]
     [_ (fail 'non-union-eliminate scrutinee)]))
 
 (define (check-union-eliminate scrutinee branches expected
                                Λ Ψ environment places callables node fail
-                               compatible?)
+                               compatible? [branch-regions #f])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define contexts
     (union-eliminate-branches
      (typing-normal-child-type node Λ 0 (first scrutinee-result))
-     branches Λ environment
-                              node scrutinee fail))
+     branches Λ environment node scrutinee fail branch-regions))
   (define branch-results
     (for/list ([context (in-list contexts)])
       (with-branch-context
@@ -2626,14 +2681,13 @@
         merged))
 
 (define (infer-union-eliminate scrutinee branches Λ Ψ environment
-                               places callables node fail)
+                               places callables node fail [branch-regions #f])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define contexts
     (union-eliminate-branches
      (typing-normal-child-type node Λ 0 (first scrutinee-result))
-     branches Λ environment
-                              node scrutinee fail))
+     branches Λ environment node scrutinee fail branch-regions))
   (define attempts
     (for/list ([context (in-list contexts)])
       (with-branch-context
@@ -2726,13 +2780,15 @@
 
 (define (check-eliminate scrutinee branches expected
                          Λ Ψ environment places callables node fail
-                         [compatible? type-compatible?])
+                         [compatible? type-compatible?]
+                         [branch-regions #f])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type
     (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
-    (branch-contexts branches data-type Λ environment node scrutinee fail))
+    (branch-contexts branches data-type Λ environment node scrutinee fail
+                     branch-regions))
   (define branch-results
     (for/list ([context (in-list contexts)])
       (with-branch-context
@@ -3097,13 +3153,15 @@
   (and merged
        (obligations-dischargeable? obligations witnesses)))
 
-(define (infer-eliminate scrutinee branches Λ Ψ environment places callables node fail)
+(define (infer-eliminate scrutinee branches Λ Ψ environment places callables node fail
+                         [branch-regions #f])
   (define scrutinee-result
     (infer scrutinee (enter-child Λ 0) Ψ environment places callables fail))
   (define data-type
     (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
-    (branch-contexts branches data-type Λ environment node scrutinee fail))
+    (branch-contexts branches data-type Λ environment node scrutinee fail
+                     branch-regions))
   (define attempts
     (for/list ([context (in-list contexts)])
       (with-branch-context
@@ -3503,14 +3561,22 @@
 
 ;; spec §3.1。宣言型の借用の region 欄は書き手が書いた起点であり、
 ;; 推論した型のそれは寿命である。語彙が違うので照合しない。
+;; config の BorrowedMut は不変なので、具体化済みの期待 region を実行値で上書きしない。
 ;; 両方が同じ構成子の借用である位置だけ、宣言型の欄を推論した欄へ写す。
 ;; 形が食い違う位置は宣言型のまま残し、後段の type-compatible? に落とさせる。
 (define (adopt-inferred-lifetimes declared actual)
+  (define (adopt-region declared-region actual-region)
+    (if (and (deriving-config?)
+             (not (contains-omitted-region? declared-region))
+             (not (lifetime-var? declared-region)))
+        declared-region
+        actual-region))
   (match* (declared actual)
     [(`(Borrowed ,d-payload ,_) `(Borrowed ,a-payload ,a-rho))
      `(Borrowed ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
-    [(`(BorrowedMut ,d-payload ,_) `(BorrowedMut ,a-payload ,a-rho))
-     `(BorrowedMut ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
+    [(`(BorrowedMut ,d-payload ,d-rho) `(BorrowedMut ,a-payload ,a-rho))
+     `(BorrowedMut ,(adopt-inferred-lifetimes d-payload a-payload)
+                   ,(adopt-region d-rho a-rho))]
     [(`(Record ,declared-row) `(Record ,actual-row))
      `(Record
        ,(for/list ([field (in-list declared-row)])
@@ -5904,9 +5970,21 @@
                       Ψ
                       environment places callables core fail)]
 
+    [`(EliminateAt ,scrutinee (,branches ...))
+     (define-values (plain-branches branch-regions)
+       (peel-annotated-data-branches branches))
+     (infer-eliminate scrutinee plain-branches Λ Ψ
+                      environment places callables core fail branch-regions)]
+
     [`(UnionEliminate ,scrutinee (,branches ...))
      (infer-union-eliminate scrutinee branches Λ Ψ
                              environment places callables core fail)]
+
+    [`(UnionEliminateAt ,scrutinee (,branches ...))
+     (define-values (plain-branches branch-regions)
+       (peel-annotated-union-branches branches))
+     (infer-union-eliminate scrutinee plain-branches Λ Ψ
+                            environment places callables core fail branch-regions)]
 
     [`(Perform (Return ,boundary ,type) ,argument)
      (define type* (peel-ty type))
@@ -6766,12 +6844,26 @@
      (check-union-eliminate scrutinee branches expected Λ Ψ
                             environment places callables core fail compatible?)]
 
+    [`(UnionEliminateAt ,scrutinee (,branches ...))
+     (define-values (plain-branches branch-regions)
+       (peel-annotated-union-branches branches))
+     (check-union-eliminate scrutinee plain-branches expected Λ Ψ
+                            environment places callables core fail
+                            compatible? branch-regions)]
+
     [`(Eliminate ,scrutinee (,branches ...))
      (check-eliminate scrutinee branches expected
                       Λ
                       Ψ
                       environment places callables core fail
                       compatible?)]
+
+    [`(EliminateAt ,scrutinee (,branches ...))
+     (define-values (plain-branches branch-regions)
+       (peel-annotated-data-branches branches))
+     (check-eliminate scrutinee plain-branches expected
+                      Λ Ψ environment places callables core fail
+                      compatible? branch-regions)]
 
     [`(Scope (,managed-places ...) ,body)
      (unless (andmap (λ (place) (assoc place places))
@@ -7158,7 +7250,7 @@
 (define (annotate-mut-binding-types core table)
   (unless (hash? table)
     (raise-argument-error 'annotate-mut-binding-types "hash?" table))
-  (define spanless (erase-core core))
+  (define spanless (erase-core/region-annotations core))
   (define (walk node point)
     (define replaced
       (match node
@@ -7184,7 +7276,7 @@
   (unless (memq namespace '(renamed source))
     (raise-argument-error 'annotate-callable-contexts
                           "'renamed or 'source" namespace))
-  (define spanless (erase-core core))
+  (define spanless (erase-core/region-annotations core))
   (define (instantiated-cid cid point)
     (match (hash-ref table point #f)
       [(list renamed-pairs source-pairs poly)
@@ -7268,7 +7360,8 @@
     (raise-argument-error 'region-execution-core "region-typed?" typed))
   (define core
     (materialize-regions (region-typed-ir typed)
-                         (erase-core (region-typed-renamed typed))
+                         (erase-core/region-annotations
+                          (region-typed-renamed typed))
                          (region-typed-table typed)
                          (region-typed-σ typed)))
   (annotate-callable-contexts
@@ -7611,6 +7704,14 @@
                       ;; 文法上は br 形しか来ないが、未知の枝も厳格側へ落とす。
                       [_ (control-leaf-positions-ok? branch)]))
                   branches))]
+    [`(EliminateAt ,scrutinee (,branches ...))
+     (and (transit-position-ok? scrutinee)
+          (andmap (lambda (branch)
+                    (match (peel-branch branch)
+                      [`(,_constructor (,_names ...) (,_regions ...) -> ,body)
+                       (deferred-code-ok? body)]
+                      [_ #f]))
+                  branches))]
     [`(UnionEliminate ,scrutinee (,branches ...))
      (and (transit-position-ok? scrutinee)
           (andmap (lambda (branch)
@@ -7618,6 +7719,14 @@
                       [`(,_member ,_binder -> ,body)
                        (deferred-code-ok? body)]
                       [_ (control-leaf-positions-ok? branch)]))
+                  branches))]
+    [`(UnionEliminateAt ,scrutinee (,branches ...))
+     (and (transit-position-ok? scrutinee)
+          (andmap (lambda (branch)
+                    (match (peel-branch branch)
+                      [`(,_member ,_binder ,_region -> ,body)
+                       (deferred-code-ok? body)]
+                      [_ #f]))
                   branches))]
     [`(Recur ,_id ,_function (,_arguments ...) ,body ,next)
      (and (deferred-code-ok? body)
@@ -7700,6 +7809,43 @@
     (visit (second entry)))
   (and valid? recovered))
 
+(define (elimination-annotations-well-formed? core)
+  (letrec ([walk
+            (lambda (term)
+              (define node (peel-node term))
+              (match node
+                [`(EliminateAt ,scrutinee (,branches ...))
+                 (and (walk scrutinee)
+                      (andmap
+                       (lambda (branch)
+                         (match (peel-branch branch)
+                           [`(,_ (,binders ...) (,regions ...) -> ,body)
+                            (and (= (length binders) (length regions))
+                                 (andmap (lambda (region)
+                                           (redex-match? G2m ρm region))
+                                         regions)
+                                 (walk body))]
+                           [_ #f]))
+                       branches))]
+                [`(UnionEliminateAt ,scrutinee (,branches ...))
+                 (and (walk scrutinee)
+                      (andmap
+                       (lambda (branch)
+                         (match (peel-branch branch)
+                           [`(,member ,binder ,region -> ,body)
+                            (and (redex-match? G2m τ (peel-ty member))
+                                 (redex-match? G2m x (peel-bind binder))
+                                 (redex-match? G2m ρm region)
+                                 (walk body))]
+                           [_ #f]))
+                       branches))]
+                [(? pair?)
+                 #:when (memq (first node) '(EliminateAt UnionEliminateAt))
+                 #f]
+                [(? list? terms) (andmap walk terms)]
+                [_ #t]))])
+    (walk core)))
+
 (define (config-ok? configuration callables expected row)
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
   ;; root/leaf 位置と token 状態も検査する。places は heap から導出するが、
@@ -7712,7 +7858,9 @@
          (row? row)
          (match configuration
            [`(cfg ,core ,heap ,states ,token-states ,trace)
-            (and (not (own-annotation-violation core))
+         (and (not (own-annotation-violation core))
+                 (elimination-annotations-well-formed?
+                  (list core heap callables))
                  (unique-heap? heap)
                  (unique-table? states)
                  (equal? (sort (map first heap) <)

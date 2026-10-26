@@ -6,6 +6,7 @@
          "../diagnostic.rkt"
          "../elaborate.rkt"
          "../erase.rkt"
+         "../region.rkt"
          "../typing.rkt")
 
 (define (classify-ucore source)
@@ -27,6 +28,27 @@
                      ((nil () -> 0)
                       (cons (head tail) -> (Apply loop tail))))
           (Apply loop (Construct (List Int) nil))))
+
+(test-case "classify は注釈付き分解を旧形と同じに分類する"
+  (define annotated
+    (annotate-regions structural-loop (build-region-ir structural-loop)))
+  (check-equal? (classify annotated '() structural-callables)
+                (classify structural-loop '() structural-callables))
+  (define annotated-body
+    (match annotated
+      [`(Recur ,_ ,_ ,_ ,body ,_) body]
+      [_ (fail-check "Recur の注釈 Core が見つからない")]))
+  (define environment
+    '((xs (List Int))
+      (loop (NFn ((List Int)) Int () () () User))))
+  (check-equal? (classify-recur-body 'loop '(xs) annotated-body
+                                     environment structural-callables)
+                (classify-recur-body 'loop '(xs)
+                                     '(Eliminate xs
+                                       ((nil () -> 0)
+                                        (cons (head tail) ->
+                                          (Apply loop tail))))
+                                     environment structural-callables)))
 
 (test-case "REC-001: no recursion and structural descent are Finite"
   (check-equal? (classify '(Apply (PrimVal (Reserved o-add) add) 1 2)

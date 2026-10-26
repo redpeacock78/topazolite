@@ -381,10 +381,14 @@
           `(PTagged ,(tag-code tag) ,@(map lower-core arguments))]
          [`(Eliminate ,scrutinee (,branches ...))
           `(PMatch ,(lower-core scrutinee) ,(map branch branches))]
+         [`(EliminateAt ,_ ,_)
+          (lower-core (erase-core node))]
          [`(UnionInject ,_ ,member-type ,payload)
           `(PTagged ,(union-tag-code member-type) ,(lower-core payload))]
          [`(UnionEliminate ,scrutinee (,branches ...))
           `(PMatch ,(lower-core scrutinee) ,(map union-branch branches))]
+         [`(UnionEliminateAt ,_ ,_)
+          (lower-core (erase-core node))]
          [`(Perform ,op ,argument)
           `(PEffect ,(op-code op core) ,(lower-core argument))]
          ;; spec §18: G1+ の h は (s xs -> c) であり span を先頭へ持つため、

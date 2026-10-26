@@ -44,11 +44,15 @@
     [`(UnionVal ,_ ,_ ,payload) (list payload)]
     [`(UnionEliminate ,scrutinee ,branches)
      (cons scrutinee (map last branches))]
+    [`(UnionEliminateAt ,scrutinee ,branches)
+     (cons scrutinee (map last branches))]
     [`(RecRewrite ,input (,entries ...))
      (cons input (map last entries))]
     [`(RecRewriteOpen (,fields ...)) (map last fields)]
     [`(Eliminate ,c ,brs)
      (cons c (for/list ([br (in-list brs)]) (last br)))]
+    [`(EliminateAt ,c ,branches)
+     (cons c (for/list ([branch (in-list branches)]) (last branch)))]
     [`(Perform ,_ ,c) (list c)]
     [`(Handle ,_ ,h ,c) (list (last h) c)]
     [`(Scope ,_ ,c) (list c)]
@@ -132,6 +136,11 @@
                       ,(for/list ([branch (in-list branches)]
                                   [body (in-list (rest children))])
                          (append (drop-right branch 1) (list body))))]
+    [`(UnionEliminateAt ,_ ,branches)
+     `(UnionEliminateAt ,(first children)
+                        ,(for/list ([branch (in-list branches)]
+                                    [body (in-list (rest children))])
+                           (append (drop-right branch 1) (list body))))]
     [`(RecRewrite ,_ (,entries ...))
      `(RecRewrite ,(first children)
                   ,(for/list ([entry (in-list entries)]
@@ -145,6 +154,11 @@
      `(Eliminate ,(first children)
                  ,(for/list ([br (in-list brs)] [c (in-list (rest children))])
                     (append (drop-right br 1) (list c))))]
+    [`(EliminateAt ,_ ,branches)
+     `(EliminateAt ,(first children)
+                   ,(for/list ([branch (in-list branches)]
+                               [body (in-list (rest children))])
+                      (append (drop-right branch 1) (list body))))]
     [`(Perform ,op ,_) `(Perform ,op ,(first-child))]
     [`(Handle ,op ,h ,_)
      `(Handle ,op
@@ -963,9 +977,50 @@
           (cons (first result) (cons span (rest result)))
           result))
     (match node
+      [`(Eliminate ,scrutinee (,branches ...))
+       (define annotated-scrutinee (down scrutinee 0))
+       (define annotated-branches
+         (for/list ([branch (in-list branches)] [index (in-naturals 1)])
+           (define branch-span*
+             (match branch
+               [(list (and s (list '#:span _ _ _)) _ ...) s]
+               [_ #f]))
+           (match (peel-branch branch)
+             [`(,constructor (,binders ...) -> ,body)
+              (define output
+                `(,constructor ,binders
+                               ,(make-list (length binders) '%parent)
+                               -> ,(down body index)))
+              (if branch-span* (cons branch-span* output) output)]
+             [_ (error 'annotate-regions "Eliminate の枝が不正: ~s" branch)])))
+       (restore-span `(EliminateAt ,annotated-scrutinee ,annotated-branches))]
+      [`(UnionEliminate ,scrutinee (,branches ...))
+       (define annotated-scrutinee (down scrutinee 0))
+       (define annotated-branches
+         (for/list ([branch (in-list branches)] [index (in-naturals 1)])
+           (define branch-span*
+             (match branch
+               [(list (and s (list '#:span _ _ _)) _ ...) s]
+               [_ #f]))
+           (match branch
+             [(list _ (list '#:ty type type-span)
+                    (list '#:bind binder binder-span) '-> body)
+              (define output
+                (list (list '#:ty type type-span)
+                      (list '#:bind binder binder-span)
+                      '%parent '-> (down body index)))
+              (if branch-span* (cons branch-span* output) output)]
+             [`(,type ,binder -> ,body)
+              `(,type ,binder %parent -> ,(down body index))]
+             [_ (error 'annotate-regions
+                       "UnionEliminate の枝が不正: ~s" branch)])))
+       (restore-span
+        `(UnionEliminateAt ,annotated-scrutinee ,annotated-branches))]
       [(or `(BorrowAt ,_ ,_ ,_) `(BorrowMutAt ,_ ,_ ,_) `(ReborrowAt ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(ProjBorrowAt ,_ ,_ ,_)
+       (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
+      [(or `(EliminateAt ,_ ,_) `(UnionEliminateAt ,_ ,_))
        (error 'annotate-regions "注釈済みの core を再び受けた: ~s" t)]
       [`(Borrow ,w)
        (restore-span `(BorrowAt ,(here) ,(own-of-designator env w) ,w))]

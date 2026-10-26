@@ -132,6 +132,49 @@
                                          300 (make-bcounters))
                 'ok (format "~a: borrow oracle" label)))
 
+(define (config-borrow-mut-refs cfg)
+  (define (walk term)
+    (match term
+      [`(BorrowMutRef ,_place ,_path ,_region) (list term)]
+      [(? list? parts) (append-map walk parts)]
+      [_ '()]))
+  (match cfg
+    [`(cfg ,core ,_ ...) (walk core)]
+    [_ '()]))
+
+(define (contains-form? term head)
+  (or (and (pair? term) (eq? (car term) head))
+      (and (pair? term)
+           (or (contains-form? (car term) head)
+               (contains-form? (cdr term) head)))))
+
+(define (check-parent-rho-trace core label [form 'EliminateAt])
+  (define-values (ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
+  (when (region-typed? typed)
+    (define annotated-core (region-execution-core typed))
+    (check-true (contains-form? annotated-core form)
+                (format "~a: annotate-regions が ~a を出す" label form))
+    (define annotated-start (inject-g2m annotated-core))
+    (define plain-start (inject-g2m (erase-core annotated-core)))
+    (define annotated-configs (trace-g2 annotated-start))
+    (define annotated-refs
+      (append-map config-borrow-mut-refs annotated-configs))
+    (define plain-configs (trace-g2 plain-start))
+    (define plain-refs
+      (append-map config-borrow-mut-refs plain-configs))
+    (check-equal? annotated-refs plain-refs
+                  (format "~a: %parent 注釈が child BorrowMutRef を変えない" label))
+    (check-equal? (last annotated-configs) (last plain-configs)
+                  (format "~a: 終端 config は注釈の有無で一致する" label))
+    (for ([cfg (in-list annotated-configs)] [index (in-naturals)])
+      (define expected (region-typed-type typed))
+      (define row (runtime-row cfg '() expected))
+      (check-not-false row
+                       (format "~a config ~a の runtime-row" label index))
+      (check-true (config-ok? cfg '() expected row)
+                  (format "~a config ~a の config-ok?" label index)))))
+
 (define (check-accepted core expected [callables '()] [label "fixture"])
   (define-values (ir _filled typed) (type-core core callables))
   (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
@@ -154,6 +197,23 @@
         (for/or ([child (in-list (core-children node))]
                  [index (in-naturals)])
           (walk child (append point (list index)))))))
+
+(test-case "注釈付き分解を erase-core が素の形へ戻す"
+  (check-equal?
+   (erase-core
+    '(EliminateAt (Move p) ((some (x) (3) -> x))))
+   '(Eliminate (Move p) ((some (x) -> x))))
+  (check-equal?
+   (erase-core
+    '(UnionEliminateAt (Move p) ((Int x %parent -> x))))
+   '(UnionEliminate (Move p) ((Int x -> x)))))
+
+(test-case "Data の %parent 注釈は child BorrowMutRef の値を変えない"
+  (check-parent-rho-trace (with-eparent (elim-o '(Read c) 0)) "eliminate-parent-rho"))
+
+(test-case "Union の %parent 注釈は child BorrowMutRef の値を変えない"
+  (check-parent-rho-trace (with-eparent (elim-u '(Read c) 0))
+                          "union-parent-rho" 'UnionEliminateAt))
 
 (test-case "分解の退場は部分木の外の後続 point だけ"
   (define ir
