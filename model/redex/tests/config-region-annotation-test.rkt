@@ -97,6 +97,26 @@
     (check-false (config-ok? cfg '() '(BorrowedMut Int 3) '()))
     (check-equal? (raw-steps-g2/named cfg) '())))
 
+(test-case "所有値の注釈付き分解は内側の可変借用 region を変更しない"
+  (define (check-preserved core expected-rule)
+    (match (raw-steps-g2/named `(cfg ,core () () () ()))
+      [(list (list rule `(cfg ,result () () () ())))
+       (check-eq? rule expected-rule)
+       (check-equal? result '(BorrowMutRef 4 () 7))]
+      [steps (fail (format "所有値の注釈付き分解が一歩進む: ~s" steps))]))
+  (check-preserved
+   '(EliminateAt
+     (Construct (Option (BorrowedMut Int 7)) some (BorrowMutRef 4 () 7))
+      ((some (value) (2) -> value)))
+   'R-EliminateAt)
+  (check-preserved
+   '(UnionEliminateAt
+     (UnionVal (Union (BorrowedMut Int 7) Int)
+               (BorrowedMut Int 7)
+               (BorrowMutRef 4 () 7))
+     (((BorrowedMut Int 7) value 2 -> value)))
+   'R-UnionEliminateAt))
+
 (test-case "構成検査の BorrowAt は存在しない place を拒否する"
   (define cfg '(cfg (Read (BorrowAt 3 (Own 5 ()) 5))
                     ((0 7 (declared Int))) ((0 Available)) () ()))

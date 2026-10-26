@@ -2737,8 +2737,8 @@ H(p)[fp] = Construct(D, Ki, v1, …, vk)    Ω(p) = Available
 (Ki(x1, …, xk)(ρm1, …, ρmk) -> ci) が選ばれる
 --------------------------------------------------------------------------
 ⟨E[EliminateAt(BorrowRef(p, fp, ρ), abr̄)], H, Ω, Λtok, θ⟩
-  → ⟨E[ci[BorrowRef(p, fp ++ [0], child-region(ρm1, ρ))/x1, …,
-             BorrowRef(p, fp ++ [k−1], child-region(ρmk, ρ))/xk]],
+  → ⟨E[ci[BorrowRef(p, fp ++ [0], child-region(ρ, ρm1))/x1, …,
+             BorrowRef(p, fp ++ [k−1], child-region(ρ, ρmk))/xk]],
        H, Ω, Λtok, θ⟩
 ```
 
@@ -2778,7 +2778,7 @@ UnionInject は Union 型と成分型を正規化し、値に成分型の tag �
 **(R-UnionEliminate)**
 
 ```text
-τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi -> ci) がある
+τm と type-equiv? な型 τmi を持つ枝 (τmi xi -> ci) が選ばれる
 -------------------------------------------------------------------
 E[UnionEliminate(UnionVal(τU, τm, v), ubr̄)] → E[ci[v/xi]]
 ```
@@ -2789,7 +2789,7 @@ UnionEliminate は値の成分型と type-equiv? な型を持つ枝を選ぶ。
 **(R-UnionEliminateAt)**
 
 ```text
-τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi ρmi -> ci) がある
+τm と type-equiv? な型 τmi を持つ枝 (τmi xi ρmi -> ci) が選ばれる
 -----------------------------------------------------------------------
 E[UnionEliminateAt(UnionVal(τU, τm, v), aubr̄)] → E[ci[v/xi]]
 ```
@@ -2798,16 +2798,18 @@ E[UnionEliminateAt(UnionVal(τU, τm, v), aubr̄)] → E[ci[v/xi]]
 
 ```text
 H(p)[fp] = UnionVal(τU, τm, v)    Ω(p) = Available
-τm と type-equiv? な型 τmi を持つ唯一の枝 (τmi xi ρmi -> ci) がある
+τm と type-equiv? な型 τmi を持つ枝 (τmi xi ρmi -> ci) が選ばれる
 ------------------------------------------------------------------------------------
 ⟨E[UnionEliminateAt(BorrowRef(p, fp, ρ), aubr̄)], H, Ω, Λtok, θ⟩
-  → ⟨E[ci[BorrowRef(p, fp ++ [(Payload)], child-region(ρmi, ρ))/xi]],
+  → ⟨E[ci[BorrowRef(p, fp ++ [(Payload)], child-region(ρ, ρmi))/xi]],
        H, Ω, Λtok, θ⟩
 ```
 
 `R-UnionEliminateAtMutRef` はこの規則の `BorrowRef` を `BorrowMutRef` に置き換える。
 `ρmi` が `%parent` なら child reference は scrutinee と同じ region を持ち、明示 `ρ` ならその region を持つ。
 借用されていない値を分解する場合、binder の値は通常の規則と同じであり、region 印は参照を変更しない。
+型検査は重複する成分型の枝を拒否し、各成分型に対応する枝がちょうど一つあることを要求する。
+したがって型検査を通る Core では枝が一意であり、機械は実行時 tag と一致する最初の枝を選ぶ。
 
 **(R-UnionEliminateRef)** と **(R-UnionEliminateMutRef)**
 

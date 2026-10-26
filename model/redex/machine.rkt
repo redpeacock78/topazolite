@@ -189,6 +189,7 @@
      `(BorrowMutRef ,place ,path ,(or region old-region))]
     [_ value]))
 
+;; #f の parent-region は通常値の分解を表し、region 印は値へ適用しない。
 (define (select-annotated-data-branch constructor values branches parent-region)
   (let loop ([remaining branches])
     (match remaining
@@ -202,10 +203,12 @@
             [(not (= (length binders) (length values))) #f]
             [else
              (define values*
-               (for/list ([value (in-list values)]
-                          [annotation (in-list annotations)])
-                 (set-borrow-ref-region value
-                                        (annotated-rho annotation parent-region))))
+               (if parent-region
+                   (for/list ([value (in-list values)]
+                              [annotation (in-list annotations)])
+                     (set-borrow-ref-region
+                      value (annotated-rho annotation parent-region)))
+                   values))
              (term (substitute*/g2 ,body ,binders ,values*))])]
          [_ (loop rest)])])))
 
@@ -219,8 +222,11 @@
           (if (type-equiv? member-type branch-type)
               (term
                (substitute*/g2 ,body (,binder)
-                               (,(set-borrow-ref-region
-                                  payload (annotated-rho annotation parent-region)))))
+                               (,(if parent-region
+                                     (set-borrow-ref-region
+                                      payload
+                                      (annotated-rho annotation parent-region))
+                                     payload))))
               (loop rest))]
          [_ (loop rest)])])))
 
