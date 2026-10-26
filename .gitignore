@@ -7,6 +7,9 @@ docs/superpowers/
 # Racket
 compiled/
 
+# Node
+node_modules/
+
 # macOS
 .DS_Store
 

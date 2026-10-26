@@ -1,0 +1,14 @@
+{
+  "name": "topazolite",
+  "private": true,
+  "scripts": {
+    "fmt": "dprint fmt",
+    "fmt:check": "dprint check"
+  },
+  "devDependencies": {
+    "dprint": "0.64.3"
+  },
+  "engines": {
+    "node": "23.7.0"
+  }
+}

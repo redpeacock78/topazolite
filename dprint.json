@@ -1,0 +1,10 @@
+{
+  "lineWidth": 100,
+  "includes": ["package.json", "dprint.json", ".textlintrc.json"],
+  "markdown": { "textWrap": "maintain" },
+  "json": {},
+  "plugins": [
+    "https://plugins.dprint.dev/markdown-0.28.1.wasm@a2d1c7317cd47255cffd9dea5586dc923c3fd0c1fcdf9ffb210e94256882b17d",
+    "https://plugins.dprint.dev/json-0.25.2.wasm@811ca4c6f732bcd6f707bc2f42d42395bb4127cdf829960cf628a18fc149777e"
+  ]
+}
