@@ -2,6 +2,8 @@
 
 (require racket/match
          racket/set
+         redex/reduction-semantics
+         "lang.rkt"
          "borrow.rkt"
          "borrow-gen.rkt"
          "machine.rkt"
@@ -27,6 +29,11 @@
          check-mut-exclusive
          check-reborrow-parents
          check-borrow-execution)
+
+(define-metafunction G2m
+  oracle-substitute : c x v -> any
+  [(oracle-substitute c_body x v_arg)
+   (substitute c_body (x v_arg))])
 
 ;; spec §4.5。oracle は typing.rkt と borrow.rkt の判定を一切呼ばない。
 ;; 呼ぶと静的な借用検査の言い換えになり、独立な照合の意味が消える。
@@ -93,6 +100,21 @@
                        (list-ref post (first differing)))
          (cons pre post))]
     [else (cons pre post)]))
+
+(define (substitution-produced-borrow-values redex contractum rule-name)
+  (define pairs (substitution-pairs rule-name redex contractum))
+  (and pairs
+       (let ([introduced
+              (for/list ([pair (in-list pairs)]
+                         #:when (borrow-value? (cdr pair)))
+                (cdr pair))])
+         (filter (lambda (value) (member value introduced equal?))
+                 (collect-borrow-values contractum)))))
+
+(define (borrowed-eliminate-children redex contractum rule-name)
+  ;; 規則名なしの直接 probe は既存の構造判定を保つ。実 trace では規則名を渡す。
+  (or (substitution-produced-borrow-values redex contractum rule-name)
+      (and (not rule-name) (collect-borrow-values contractum))))
 
 ;; spec §4.6。承認済みの redex と contractum の対の表。
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
@@ -211,9 +233,10 @@
     ;; 共有・可変の片側だけを承認すると、規則名と借用 mode の不一致を隠す。
     [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
-     (define children (collect-borrow-values contractum))
+     (define children
+       (borrowed-eliminate-children redex contractum rule-name))
      (define expected
-       (for/list ([child (in-list children)])
+       (for/list ([child (in-list (or children '()))])
          (match child
            [(list (== tag) cp cfp cρ)
             #:when (and (equal? cp p) (equal? cρ ρ)
@@ -224,12 +247,14 @@
                   (if (eq? tag 'BorrowMutRef) 'mut 'shared)
                   p cfp ρ p fp ρ)]
            [_ (list 'unverified)])))
-     (if (null? expected) (list (list 'unverified)) expected)]
+     (if children expected (list (list 'unverified)))]
     [(list `(UnionEliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (define expected-path (append fp '((Payload))))
+     (define children
+       (borrowed-eliminate-children redex contractum rule-name))
      (define expected
-       (for/list ([child (in-list (collect-borrow-values contractum))])
+       (for/list ([child (in-list (or children '()))])
          (match child
            [(list (== tag) cp cfp cρ)
             #:when (and (equal? cp p) (equal? cfp expected-path)
@@ -238,7 +263,7 @@
                   (if (eq? tag 'BorrowMutRef) 'mut 'shared)
                   p cfp ρ p fp ρ)]
            [_ (list 'unverified)])))
-     (if (null? expected) (list (list 'unverified)) expected)]
+     (if children expected (list (list 'unverified)))]
     [(list `(Read (,tag ,p ,fp ,ρ)) _)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (list (list 'use (if (eq? tag 'BorrowMutRef) 'mut 'shared) p fp ρ))]
@@ -413,12 +438,12 @@
                                (list? (second b))
                                (eq? (third b) '->))
                   #:do [(define binders (second b))]
-                  #:when (equal? (substitute-branch-body
-                                  (fourth b)
-                                  binders
-                                  (for/list ([i (in-range (length binders))])
-                                    (child-ref i)))
-                                contractum))
+                  #:when (branch-substitution-matches?
+                          (fourth b)
+                          binders
+                          (for/list ([i (in-range (length binders))])
+                            (child-ref i))
+                          contractum))
          (for/list ([x (in-list (second b))]
                     [i (in-naturals 0)])
            (cons x (child-ref i)))))
@@ -437,9 +462,8 @@
         (for/list ([branch (in-list branches)])
           (match (plain-ubr branch)
             [`(,_member ,binder -> ,body)
-             (and (equal? (substitute-branch-body
-                           body (list binder) (list child-ref))
-                          contractum)
+             (and (branch-substitution-matches?
+                   body (list binder) (list child-ref) contractum)
                   (list (cons binder child-ref)))]
             [_ #f]))))
      (if (null? matching) #f (apply append matching))]
@@ -456,32 +480,36 @@
 ;; F の走査を再現すると値の内部の Perform を誤って拾うため、redex 内の
 ;; handler 本体と contractum を逆向きに照合して実際の payload を復元する。
 (define (infer-substituted-value body binder contractum)
-  (define found? (box #f))
-  (define payload (box #f))
-  (define (walk source result)
-    (cond
-      [(and (symbol? source) (eq? source binder))
-       (cond
-         [(unbox found?) (equal? (unbox payload) result)]
-         [else (set-box! found? #t) (set-box! payload result) #t])]
-      [(and (pair? source) (pair? result)
-            (= (length source) (length result)))
-       (andmap walk source result)]
-      [else (equal? source result)]))
-  (and (walk body contractum)
-       (if (unbox found?) (list (unbox payload)) '())))
+  (define (substitute-payload value)
+    (term (oracle-substitute ,body ,binder ,value)))
+  (if (alpha-equivalent? G2m body (substitute-payload 'unit))
+      '()
+      (let ([candidates
+             (let walk ([current contractum])
+               (append (if (redex-match? G2m v current) (list current) '())
+                       (if (pair? current)
+                           (append (walk (car current)) (walk (cdr current)))
+                           '())))])
+        (define matches
+          (for/list ([candidate (in-list (remove-duplicates candidates))]
+                     #:when (alpha-equivalent?
+                             G2m (substitute-payload candidate) contractum))
+            candidate))
+        (and (pair? matches)
+             (andmap (lambda (candidate)
+                       (alpha-equivalent? G2m (first matches) candidate))
+                     (rest matches))
+             (list (first matches))))))
 
-;; 枝本体の束縛子を同じ位置の借用参照へ置き換える。
-;; 生成域は unique binders を満たすため、ここでは構文木の全ての葉を
-;; 走査する。未知の枝形は呼び出し側の候補から除外される。
+;; 枝本体の束縛子を、機械と同じ束縛を考慮する置換で借用参照へ置き換える。
 (define (substitute-branch-body body binders values)
-  (define substitutions (make-hash (map cons binders values)))
-  (define (walk t)
-    (cond
-      [(symbol? t) (hash-ref substitutions t t)]
-      [(pair? t) (map walk t)]
-      [else t]))
-  (walk body))
+  ;; G2m の Core 外の合成 fixture は候補不一致として扱う。
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (term (substitute*/g2 ,body (,@binders) (,@values)))))
+
+(define (branch-substitution-matches? body binders values contractum)
+  (define substituted (substitute-branch-body body binders values))
+  (and substituted (alpha-equivalent? G2m substituted contractum)))
 
 ;; spec §4.6。規則名で仕分け、置換規則なら記号と place の対応を足す。
 ;; 未知の規則、形が取り出せない置換規則、R-LetOwned 系の増分が想定外の場合は

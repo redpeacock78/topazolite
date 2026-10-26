@@ -39,6 +39,122 @@
      (list (check-borrow-execution config sidecar ir 200 counters) counters)]
     [other (list other #f)]))
 
+(define nested-owner-type
+  '(Record ((g Int mut)
+            (o (Option Int) mut)
+            (ro (Option (Record ((h Int mut)))) mut)
+            (u (Union Int String) mut))))
+(define nested-owner-value
+  '(Rec ((g mut 2)
+         (o mut (Construct (Option Int) some 1))
+         (ro mut (Construct (Option (Record ((h Int mut))))
+                            some (Rec ((h mut 1)))))
+         (u mut (UnionInject (Union Int String) Int 1)))))
+
+(define (with-nested-mut-parent body)
+  `(Scope ()
+     (Let (x let (Owned ,nested-owner-type)) ,nested-owner-value
+       (Let (p let (BorrowedMut ,nested-owner-type ph)) (BorrowMut x)
+         ,body))))
+
+(define (with-nested-shared-parent body)
+  `(Scope ()
+     (Let (x let (Owned ,nested-owner-type)) ,nested-owner-value
+       (Let (p let (Borrowed ,nested-owner-type ph)) (Borrow x)
+         ,body))))
+
+(define (check-typed-oracle-ok skeleton label)
+  (match (prepare-borrow-term* skeleton)
+    [(list 'ok config sidecar ir _type)
+     (check-equal?
+      (check-borrow-execution config sidecar ir 300 (make-bcounters))
+      'ok label)]
+    [other (fail (format "~a: type check did not accept: ~s" label other))]))
+
+(define nested-mut-eliminate
+  (with-nested-mut-parent
+   '(Eliminate (ProjBorrow p ro)
+      ((some (c) ->
+              (Scope ()
+                (Let (d let (BorrowedMut Int ph))
+                     (Eliminate (ProjBorrow p o)
+                       ((some (c) -> c)
+                        (none () -> (ProjBorrow p g))))
+                  (Assign d 1))))
+       (none () -> unit)))))
+
+(test-case "R-EliminateMutRef の置換照合は入れ子の binder を区別する"
+  (check-typed-oracle-ok nested-mut-eliminate
+                         "nested-binder-eliminate-mut-ref"))
+
+(test-case "R-EliminateRef の置換照合は入れ子の binder を区別する"
+  (check-typed-oracle-ok
+   (with-nested-shared-parent
+    '(Eliminate (ProjBorrow p ro)
+       ((some (c) ->
+               (Let (d let (Borrowed Int ph))
+                    (Eliminate (ProjBorrow p o)
+                      ((some (c) -> c)
+                       (none () -> (ProjBorrow p g))))
+                 (Read d)))
+        (none () -> 0))))
+   "nested-binder-eliminate-ref"))
+
+(test-case "R-UnionEliminateMutRef の置換照合は入れ子の binder を扱う"
+  (check-typed-oracle-ok
+   (with-nested-mut-parent
+    '(UnionEliminate (ProjBorrow p u)
+       ((Int c -> (Let (c let Int) (Read c) unit))
+        (String text -> unit))))
+   "nested-binder-union-eliminate"))
+
+(test-case "R-EliminateMutRef の照合は使用される同名内側 binder を shadow として扱う"
+  (check-typed-oracle-ok
+   (with-nested-mut-parent
+    '(Eliminate (ProjBorrow p ro)
+       ((some (c) -> (Let (c let Int) 1
+                       (Assign (ProjBorrow p g) c)))
+        (none () -> unit))))
+   "shadowed-binder-eliminate"))
+
+(test-case "Eliminate は枝本体で運ぶ親の借用を新規生成と誤認しない"
+  (check-typed-oracle-ok
+   (with-nested-mut-parent
+    '(Eliminate (ProjBorrow p o)
+       ((some (n) -> (Read (ProjBorrow p g)))
+        (none () -> 0))))
+   "branch-carries-parent-borrow/eliminate"))
+
+(test-case "UnionEliminate は枝本体で運ぶ親の借用を新規生成と誤認しない"
+  (check-typed-oracle-ok
+   (with-nested-mut-parent
+    '(UnionEliminate (ProjBorrow p u)
+       ((Int n -> (Read (ProjBorrow p g)))
+        (String text -> 0))))
+   "branch-carries-parent-borrow/union-eliminate"))
+
+(test-case "Eliminate の置換で生じない借用は未検証のままにする"
+  (check-equal?
+   (borrow-form-candidates
+    '(Eliminate (BorrowMutRef 0 () 2) ((some (c) -> c)))
+    '(BorrowMutRef 0 (1) 2)
+    #:rule 'R-EliminateMutRef)
+   '((unverified))))
+
+(test-case "R-HandleReturn の照合は alpha-equivalent な binder を同一視する"
+  (define op '(Return answer Int))
+  (define pre
+    `(cfg (Handle ,op (x -> (Let (k let Int) 0 x))
+                  (Perform ,op (BorrowRef 0 () 0)))
+          ((0 (resource 1))) ((0 Available)) () ()))
+  (define post
+    '(cfg (Let (k«oracle» let Int) 0 (BorrowRef 0 () 0))
+          ((0 (resource 1))) ((0 Available)) () ()))
+  (define result
+    (provenance-extend (empty-provenance) 'R-HandleReturn pre post))
+  (check-true (provenance? result))
+  (check-equal? (resolve-designator result 'x) '(0)))
+
 (test-case "共有借用の実行は ok になる"
   (check-equal? (first (run shared-skeleton)) 'ok))
 
