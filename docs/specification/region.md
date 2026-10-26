@@ -76,7 +76,7 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 次の 6 つは、すべての region solver が実装する。
 
 - `region-at ir point`：point で有効な最も内側の region を返す。
-  Scope に包まれない節点では root region を返す。
+  lexical adapter では、point が `Scope` にも owner-body にも包まれないとき root region を返す。
 - `region-outlives? ir ρ_long ρ_short`：`ρ_long` の寿命が `ρ_short` の寿命を含むかを返す。
   反射的かつ推移的である。
 - `regions-overlap? ir ρ_1 ρ_2`：2 つの region が同時に生きる瞬間を持つかを返す。
@@ -111,6 +111,12 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
   反射的かつ推移的である。
 - `region-ir-regions ir`：region の集合を返す。
 
+`region-at/eliminate ir point` は lexical adapter が提供する補助問合せであり、型検査が分解の region を含む下限を求めるときに使う。
+lexical adapter では、point とその祖先のうち最も長い prefix に対応する `Scope`、owner-body、または分解の region を返す。
+同じ point に現行の region と分解の region がある場合は、分解の region を返す。
+対応する prefix が無い場合は root region を返す。
+非 lexical solver では `region-at` の結果を返すため、solver に新しい method は要求しない。
+
 ### 4.3 Materialize API
 
 - `materialize-regions ir core table σ`
@@ -143,39 +149,49 @@ materialize 後の注釈欄は起点ではなく寿命なので、寿命が起�
 `outlives` の循環は許す。
 同じ寿命を持つ region 間の制約を禁止しないためである。
 
-`lexical-region-ir-ok? ir` は次の 2 条件を加えて検査する。
+`lexical-region-ir-ok? ir` は次の 3 条件を加えて検査する。
 
 1. `parents` の定義域と値域が `regions` に含まれる。
 2. 親を持たない region がちょうど 1 つあり、親の連鎖に循環がない。
+3. 分解の point ごとに対応する region があり、その region は当該 point の `region-at` が返す現行の region の子孫であり、`regions-exiting-at` がその分解の region を返す。
 
-この 2 条件は lexical adapter 固有であり、region IR の共通契約ではない。
+これらの条件は lexical adapter 固有であり、region IR の共通契約ではない。
 いずれかの検査が偽になる IR は adapter または solver の実装誤りであり、入力診断ではない。
 
 ## 6. Lexical adapter
 
 lexical adapter は Core を `erase-core` へ通し、その像を 1 回走査して IR を作る。
-root region を走査の開始時に作り、Scope 1 つへ region 1 つを割り当てる。
+root region を走査の開始時に作り、各 `Scope`、owner 型を束縛する `Let` の本体、`Eliminate`、`UnionEliminate` にそれぞれ 1 つの region を割り当てる。
 Scope へ入るとき、現在の region を親として新しい region を作り、`outlives` へ親から子への直接の対を加える。
 Scope の π を新しい region の `owners` の値にする。
 Scope から出るとき、現在の region を親へ戻す。
+owner 型を束縛する `Let` の本体へ入るとき、現在の region を親とする owner-body region を作り、`outlives` に親から子への直接の対を加える。
+owner-body region の `owners` は空であり、その `Let` の本体だけで現在の region とする。
+分解の point に入るとき、現在の region を親として owners が空の region を作り、`outlives` に親から分解 region への直接の対を加える。
+その分解の scrutinee と各枝の point は分解 region の下に置き、分解節点の評価完了時にその region を退場させる。
 
-`region-at` は、point の接頭辞のうち Scope を指す最も長いものの region を返す。
+`region-at` は、point の接頭辞のうち `Scope` または owner-body を指す最も長いものの region を返す。
+分解の region は `region-at` から除外し、`region-at/eliminate` で調べる。
+`region-at/eliminate` は `region-at` の現行 region と分解の region の表を併せ、point の接頭辞のうち最も長いものに対応する region を返す。
+同じ長さの prefix が両方の表にあるときは分解の region を選ぶ。
 `region-outlives?` は直接制約の到達可能性で答える。
 `region-contains?` は親の連鎖で答える。
 `regions-overlap?` は一方が他方を構造として包むときに真である。
-`regions-exiting-at` は Scope 自身の point でその Scope の region 1 件を返し、それ以外では空集合を返す。
+`regions-exiting-at` は `Scope` 自身の point でその `Scope` の region 1 件を返し、`Eliminate` と `UnionEliminate` 自身の point でその分解の region 1 件を返す。
+それ以外では空集合を返す。
 
 lexical adapter は次の性質を満たす。
 
 - **C1**：`region-contains?` が真なら `region-outlives?` も真である。
 - **C2**：兄弟の region は互いを包まず、同時に生きない。
-- **C3**：Core の Scope の個数と root 以外の region の個数が一致する。
-- **C4**：`regions-exiting-at` は Scope の point でちょうど 1 件を返し、それ以外の point で空集合を返す。
-  root region はどの point でも返さない。
-- **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、Scope の入れ子から読み取れる親子関係、outlives、退場を問い合わせだけで再構成できる。
+  分解の region は分解 point を囲む最も内側の現行 region（外側の分解の region を含む）の子であり、その分解の部分木にある `Scope`、owner-body、入れ子の分解の region はその分解 region の子孫である。
+- **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数の和に一致する。
+- **C4**：`regions-exiting-at` は `Scope`、`Eliminate`、`UnionEliminate` の point でそれぞれ対応する region 1 件を返し、それ以外の point で空集合を返す。
+  root region はどの point でも返さず、owner-body の退場の扱いは HEAD のままとする。
+- **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、`Scope`、owner-body、分解の入れ子から読み取れる親子関係、outlives、退場を問い合わせだけで再構成できる。
 - **C6**：spanful な Core と `erase-core` 済みの Core から作った IR は、point ごとの `region-at`、退場、`region-outlives?`、`regions-overlap?` が一致する外延的同型を持つ。
 
-C5 の検査は IR の内部表を直接読まず、Core の Scope の木から独立に期待値を作る。
+C5 の検査は IR の内部表を直接読まず、Core の `Scope`、owner-body、分解の木から独立に期待値を作る。
 C6 は region 識別子の採番や内部鍵の一致を要求しない。
 
 ## 7. NLL solver への置換条件
