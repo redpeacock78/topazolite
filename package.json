@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "fmt": "dprint fmt",
-    "fmt:check": "dprint check"
+    "fmt:check": "dprint check",
+    "check:fstar": "sh tools/check-fstar.sh"
   },
   "devDependencies": {
     "dprint": "0.64.3"
