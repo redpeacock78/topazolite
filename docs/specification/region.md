@@ -187,7 +187,7 @@ lexical adapter は次の性質を満たす。
   分解の region は分解 point を囲む最も内側の現行 region（外側の分解の region を含む）の子であり、その分解の部分木にある `Scope`、owner-body、入れ子の分解の region はその分解 region の子孫である。
 - **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数の和に一致する。
 - **C4**：`regions-exiting-at` は `Scope`、`Eliminate`、`UnionEliminate` の point でそれぞれ対応する region 1 件を返し、それ以外の point で空集合を返す。
-  root region はどの point でも返さず、owner-body の退場の扱いは HEAD のままとする。
+  root region はどの point でも返さず、owner-body の point では空集合を返す。
 - **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、`Scope`、owner-body、分解の入れ子から読み取れる親子関係、outlives、退場を問い合わせだけで再構成できる。
 - **C6**：spanful な Core と `erase-core` 済みの Core から作った IR は、point ごとの `region-at`、退場、`region-outlives?`、`regions-overlap?` が一致する外延的同型を持つ。
 

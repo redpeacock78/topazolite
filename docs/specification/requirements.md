@@ -1037,6 +1037,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 5 以降 | §13.4 |
 | 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
+| variant に依存する view の保護が束縛の lexical scope の終わりまで続く制約 | `borrow.md` §14 | Phase 4 以降（control-flow と last-use による region 推論を導入する段階） | §15 |
 | 射影または共有 `Reborrow` の子が生きている間に親を通す `Read` を拒む制約 | `borrow.md` §14 | SUR-004 完了前（派生した借用の mode と使用の種類に応じて親の停止を判定） | §4.8 |
 | 直ちに消費する `Reborrow` の一時式が `Scope` の退場まで生存する制約 | `borrow.md` §14 | SUR-004 完了前（暗黙の再借用と使用位置に応じた寿命を扱う） | §4.8 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
@@ -1072,8 +1073,9 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | `Const` の raw pointer を作る式 | `unsafe.md` §6 | Phase 3 以降 | §4.10 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
-borrow.md §14 の未回収 7 項目のうち 4 項目は本表に対応する行を持つ。
+borrow.md §14 の未回収 7 項目のうち 5 項目は本表に対応する行を持つ。
 残る性質 8 の bounded 検査範囲は BOR-003、BOR-007、VAR-004 が覆うため、重複する行を置かない。
+借用規則の backend 写し先は BAK-010 が覆うため、重複する行を置かない。
 余剰 Owned field の救済策は構造 row の制限に属するため、`structural-row.md` §3.3 へ三行で記載している。
 
 再帰欄を `Owned` で宣言する data 型を provenance の行と同じ段へ含めないのは、data 型の宣言の手段が無いという文法側の制限であり、provenance の行が扱う region と借用の追跡とは別の機構だからである。
