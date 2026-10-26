@@ -38,4 +38,6 @@ if (cd "$tmp/dirty" && dprint check >/dev/null 2>&1); then
   echo "未整形の package.json を dprint check が検出しない" >&2
   exit 1
 fi
+(cd "$tmp/dirty" && dprint fmt >/dev/null)
+(cd "$tmp/dirty" && dprint check >/dev/null)
 echo "fmt-scope OK"
