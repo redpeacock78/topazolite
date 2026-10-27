@@ -6,7 +6,9 @@
     "fmt:check": "dprint check",
     "check:fstar": "sh tools/check-fstar.sh",
     "lint:text": "sh tools/lint-text.sh",
-    "lint:text:report": "textlint --config .textlintrc.json --format json docs/specification > textlint-report.json || :"
+    "lint:text:report": "textlint --config .textlintrc.json --format json docs/specification > textlint-report.json || :",
+    "test:redex": "sh tools/test-redex.sh",
+    "verify": "nub run fmt:check && nub run lint:text && nub run check:fstar && nub run test:redex"
   },
   "devDependencies": {
     "@textlint-ja/textlint-rule-preset-ai-writing": "1.7.0",
