@@ -71,6 +71,89 @@
       'ok label)]
     [other (fail (format "~a: type check did not accept: ~s" label other))]))
 
+(define (annotated-eliminate-config parent-path)
+  `(cfg
+    (EliminateAt
+     (BorrowMutRef 0 (0) 7)
+     ((Pair (child other) (11 %parent) ->
+            (Construct (Record ((first Int imm) (second Int imm))) Pair
+                       (Read (BorrowMutRef 0 ,parent-path 7))
+                       (Read child)))))
+    ((0 (Construct (Record ((left (Record ((first Int mut)
+                                           (second Int mut))) mut)
+                            (right Int mut)))
+                   Outer
+                   (Construct (Record ((first Int mut) (second Int mut)))
+                              Pair 1 2)
+                   3)))
+    ((0 Available)) () ()))
+
+(test-case "注釈付き分解は binder ごとの path と ρ で派生辺を作る"
+  (check-equal?
+   (borrow-form-candidates
+    '(EliminateAt (BorrowMutRef 0 () 7)
+       ((Pair (left right) (11 %parent) -> (Read left))))
+    '(Read (BorrowMutRef 0 (0) 11))
+    #:rule 'R-EliminateAtMutRef)
+   '((derived mut 0 (0) 11 0 () 7)))
+  (check-equal?
+   (borrow-form-candidates
+    '(EliminateAt (BorrowMutRef 0 () 7)
+       ((Pair (left) (%parent) -> (Read left))))
+    '(Read (BorrowMutRef 0 (0) 7))
+    #:rule 'R-EliminateAtMutRef)
+   '((derived mut 0 (0) 7 0 () 7)))
+  (check-equal?
+   (borrow-form-candidates
+    '(UnionEliminateAt (BorrowMutRef 0 (2) 7)
+       ((Int payload 11 -> (Read payload))))
+    '(Read (BorrowMutRef 0 (2 (Payload)) 11))
+    #:rule 'R-UnionEliminateAtMutRef)
+   '((derived mut 0 (2 (Payload)) 11 0 (2) 7)))
+  (check-equal?
+   (borrow-form-candidates
+    '(UnionEliminateAt (BorrowMutRef 0 (2) 7)
+       ((Int payload %parent -> (Read payload))))
+    '(Read (BorrowMutRef 0 (2 (Payload)) 7))
+    #:rule 'R-UnionEliminateAtMutRef)
+   '((derived mut 0 (2 (Payload)) 7 0 (2) 7))))
+
+(test-case "派生 binder の生存中は親の同じ path の消費だけを拒否する"
+  (define (run-parent-use path)
+    (check-borrow-execution (annotated-eliminate-config path)
+                            #f #f 20 (make-bcounters)))
+  (match (run-parent-use '(0))
+    [(list 'fail 'reborrow-parent-live _) (void)]
+    [other (fail (format "same-path parent use was not rejected: ~s" other))])
+  (check-equal? (run-parent-use '(1)) 'ok))
+
+(test-case "注釈付き Owned 分解の transit は内側の借用値をそのまま運ぶ"
+  (check-equal?
+   (borrow-form-candidates
+    '(EliminateAt (OwnedTransit 0
+                    (Construct (Record ((left (Borrowed Int 7) mut))) Pair
+                               (BorrowRef 1 () 7)))
+       ((Pair (left) (9) -> left)))
+    '(EliminateAt
+      (Construct (Record ((left (Borrowed Int 7) mut))) Pair
+                 (BorrowRef 1 () 7))
+      ((Pair (left) (9) -> left)))
+    #:rule 'R-EliminateAtTransit)
+   '())
+  (check-equal?
+   (borrow-form-candidates
+    '(UnionEliminateAt (OwnedTransit 0
+                           (UnionVal (Union (Borrowed Int 7) String)
+                                     (Borrowed Int 7)
+                                     (BorrowRef 1 () 7)))
+       (((Borrowed Int 7) payload 9 -> payload)))
+    '(UnionEliminateAt
+      (UnionVal (Union (Borrowed Int 7) String)
+                (Borrowed Int 7) (BorrowRef 1 () 7))
+      (((Borrowed Int 7) payload 9 -> payload)))
+    #:rule 'R-UnionEliminateAtTransit)
+   '()))
+
 (define nested-mut-eliminate
   (with-nested-mut-parent
    '(Eliminate (ProjBorrow p ro)

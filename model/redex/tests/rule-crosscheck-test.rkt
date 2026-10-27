@@ -33,7 +33,7 @@
     (R-Eliminate    . R-PR-Match)
     (R-EliminateRef . #f)
     (R-EliminateMutRef . #f)
-    (R-EliminateAt . #f)
+    (R-EliminateAt . R-PR-Match)
     (R-EliminateAtRef . #f)
     (R-EliminateAtMutRef . #f)
     (R-EliminateAtTransit . #f)
@@ -149,6 +149,13 @@
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
  (check-equal? (length rule-correspondence) 80))
+
+(test-case
+ "注釈付き分解は通常の分解と同じ対象規則へ対応する"
+ (check-equal? (cdr (assq 'R-EliminateAt rule-correspondence))
+               (cdr (assq 'R-Eliminate rule-correspondence)))
+ (check-equal? (cdr (assq 'R-UnionEliminateAt rule-correspondence))
+               (cdr (assq 'R-UnionEliminate rule-correspondence))))
 
 (test-case
  "目標側は支援規則を含む 26 規則を持つ"

@@ -2760,9 +2760,25 @@ E[UnionEliminate(OwnedTransit(p, UnionVal(τU, τm, v)), ubr̄)]
   → E[UnionEliminate(UnionVal(τU, τm, v), ubr̄)]
 ```
 
-この規則は marker だけを外し、heap、place 状態、token、trace を変えない。
-marker の内側を `UnionVal` に限るのは、Union でない値の型誤りを簡約の進行で隠さないためである。
-枝の選択と payload の代入は、続く `R-UnionEliminate` が行う。
+**(R-EliminateAtTransit)**
+
+```text
+E[EliminateAt(OwnedTransit(p, v), abr̄)]
+  → E[EliminateAt(v, abr̄)]
+```
+
+**(R-UnionEliminateAtTransit)**
+
+```text
+E[UnionEliminateAt(OwnedTransit(p, UnionVal(τU, τm, v)), aubr̄)]
+  → E[UnionEliminateAt(UnionVal(τU, τm, v), aubr̄)]
+```
+
+注釈版の二規則も marker だけを外し、枝と binder ごとの region 印は保つ。
+
+これらの規則は marker だけを外し、heap、place 状態、token、trace を変えない。
+Union 版の marker の内側を `UnionVal` に限るのは、Union でない値の型誤りを簡約の進行で隠さないためである。
+枝の選択と binder への代入は、続く `R-Eliminate`、`R-UnionEliminate`、または注釈版の対応規則が行う。
 
 **(R-UnionInject)**
 

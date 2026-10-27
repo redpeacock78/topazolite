@@ -74,12 +74,9 @@
 (define (check-configs-and-oracle label start configs rules callables expected
                                   sidecar ir)
   (check-configs label start configs rules callables expected)
-  ;; Oracle provenance for the new annotation forms lands in Task 4; `%parent`
-  ;; has the legacy semantics, so compare its annotation-erased equivalent now.
+  ;; Task 4 classifies annotated elimination steps directly in the oracle.
   (check-equal? (check-borrow-execution
-                 (match start
-                   [`(cfg ,core ,heap ,states ,tokens ,trace)
-                    `(cfg ,(erase-core core) ,heap ,states ,tokens ,trace)])
+                 start
                  sidecar ir 200 (make-bcounters))
                 'ok
                 (format "~a: 性質 8 oracle" label)))

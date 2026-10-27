@@ -8,6 +8,7 @@
          "borrow-gen.rkt"
          "machine.rkt"
          "region.rkt"
+         "span-core.rkt"
          "type-equiv.rkt")
 
 (provide control-diff
@@ -45,10 +46,32 @@
     [_ #f]))
 
 (define (plain-ubr branch)
-  (match branch
-    [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
-     (list type binder '-> body)]
-    [_ branch]))
+  (peel-ubr branch))
+
+(define (annotated-data-branch-parts branches)
+  (define-values (plain annotations)
+    (peel-annotated-data-branches branches))
+  (for/list ([branch (in-list plain)]
+             [regions (in-list annotations)])
+    (match (peel-branch branch)
+      [`(,constructor (,binders ...) -> ,body)
+       (and (list? regions)
+            (= (length binders) (length regions))
+            (list constructor binders regions body))]
+      [_ #f])))
+
+(define (annotated-union-branch-parts branches)
+  (define-values (plain regions)
+    (peel-annotated-union-branches branches))
+  (for/list ([branch (in-list plain)]
+             [region (in-list regions)])
+    (match (peel-branch branch)
+      [`(,member ,binder -> ,body)
+       (and region (list (peel-ty member) (peel-bind binder) region body))]
+      [_ #f])))
+
+(define (annotation-rho annotation parent-rho)
+  (if (eq? annotation '%parent) parent-rho annotation))
 
 (define (matching-union-branch member-type branches)
   (for/first ([branch (in-list branches)]
@@ -116,6 +139,35 @@
   (or (substitution-produced-borrow-values redex contractum rule-name)
       (and (not rule-name) (collect-borrow-values contractum))))
 
+(define (data-elimination-approved tag place path rho children)
+  (define expected
+    (for/list ([child (in-list (or children '()))])
+      (match child
+        [(list (== tag) child-place child-path child-rho)
+         #:when (and (equal? child-place place)
+                     (= (length child-path) (add1 (length path)))
+                     (equal? (take child-path (length path)) path)
+                     (exact-nonnegative-integer? (last child-path)))
+         (list 'derived
+               (if (eq? tag 'BorrowMutRef) 'mut 'shared)
+               place child-path child-rho place path rho)]
+        [_ (list 'unverified)])))
+  (if children expected (list (list 'unverified))))
+
+(define (union-elimination-approved tag place path rho children)
+  (define expected-path (append path '((Payload))))
+  (define expected
+    (for/list ([child (in-list (or children '()))])
+      (match child
+        [(list (== tag) child-place child-path child-rho)
+         #:when (and (equal? child-place place)
+                     (equal? child-path expected-path))
+         (list 'derived
+               (if (eq? tag 'BorrowMutRef) 'mut 'shared)
+               place child-path child-rho place path rho)]
+        [_ (list 'unverified)])))
+  (if children expected (list (list 'unverified))))
+
 ;; spec §4.6。承認済みの redex と contractum の対の表。
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
 (define (approved-forms redex contractum rule-name)
@@ -161,6 +213,23 @@
            `(UnionVal ,τu2 ,τm2 ,v2))
      #:when (and (eq? rule-name 'R-UnionEliminateTransit)
                  (equal? τu τu2) (equal? τm τm2) (equal? v v2))
+     '()]
+    [(list `(Eliminate (OwnedTransit ,_p ,value) ,branches)
+           `(Eliminate ,value2 ,branches2))
+     #:when (and (eq? rule-name 'R-EliminateTransit)
+                 (equal? value value2) (equal? branches branches2))
+     '()]
+    [(list `(EliminateAt (OwnedTransit ,_p ,value) ,branches)
+           `(EliminateAt ,value2 ,branches2))
+     #:when (and (eq? rule-name 'R-EliminateAtTransit)
+                 (equal? value value2) (equal? branches branches2))
+     '()]
+    [(list `(UnionEliminateAt
+             (OwnedTransit ,_p (UnionVal ,τu ,τm ,v)) ,branches)
+           `(UnionEliminateAt (UnionVal ,τu2 ,τm2 ,v2) ,branches2))
+     #:when (and (eq? rule-name 'R-UnionEliminateAtTransit)
+                 (equal? τu τu2) (equal? τm τm2) (equal? v v2)
+                 (equal? branches branches2))
      '()]
     ;; R-RecurBind で再帰関数を使わない継続は、そのまま contractum になる。
     [(list `(Recur ,_ ,_ ,_ ,_ ,continuation) contractum)
@@ -233,37 +302,20 @@
     ;; 共有・可変の片側だけを承認すると、規則名と借用 mode の不一致を隠す。
     [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
-     (define children
-       (borrowed-eliminate-children redex contractum rule-name))
-     (define expected
-       (for/list ([child (in-list (or children '()))])
-         (match child
-           [(list (== tag) cp cfp cρ)
-            #:when (and (equal? cp p) (equal? cρ ρ)
-                        (= (length cfp) (add1 (length fp)))
-                        (equal? (take cfp (length fp)) fp)
-                        (exact-nonnegative-integer? (last cfp)))
-            (list 'derived
-                  (if (eq? tag 'BorrowMutRef) 'mut 'shared)
-                  p cfp ρ p fp ρ)]
-           [_ (list 'unverified)])))
-     (if children expected (list (list 'unverified)))]
+     (data-elimination-approved
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
+    [(list `(EliminateAt (,tag ,p ,fp ,ρ) ,_ ...) contractum)
+     #:when (memq tag '(BorrowRef BorrowMutRef))
+     (data-elimination-approved
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
     [(list `(UnionEliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
-     (define expected-path (append fp '((Payload))))
-     (define children
-       (borrowed-eliminate-children redex contractum rule-name))
-     (define expected
-       (for/list ([child (in-list (or children '()))])
-         (match child
-           [(list (== tag) cp cfp cρ)
-            #:when (and (equal? cp p) (equal? cfp expected-path)
-                        (equal? cρ ρ))
-            (list 'derived
-                  (if (eq? tag 'BorrowMutRef) 'mut 'shared)
-                  p cfp ρ p fp ρ)]
-           [_ (list 'unverified)])))
-     (if children expected (list (list 'unverified)))]
+     (union-elimination-approved
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
+    [(list `(UnionEliminateAt (,tag ,p ,fp ,ρ) ,_ ...) contractum)
+     #:when (memq tag '(BorrowRef BorrowMutRef))
+     (union-elimination-approved
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
     [(list `(Read (,tag ,p ,fp ,ρ)) _)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (list (list 'use (if (eq? tag 'BorrowMutRef) 'mut 'shared) p fp ρ))]
@@ -297,12 +349,14 @@
   (seteq 'R-Beta 'R-Let 'R-LetB 'R-LetIdentity 'R-LetIdentityB
          'R-LetOwned 'R-LetOwnedB 'R-LetMutB
          'R-Eliminate 'R-EliminateRef 'R-EliminateMutRef 'R-UnionEliminate
+         'R-EliminateAt 'R-EliminateAtRef 'R-EliminateAtMutRef
          'R-UnionEliminateRef 'R-UnionEliminateMutRef
+         'R-UnionEliminateAt 'R-UnionEliminateAtRef 'R-UnionEliminateAtMutRef
          'R-RecurUnfold 'R-HandleReturn))
 
 ;; spec §4.6。置換を行わない規則。名前が増えたときに黙って取りこぼさないよう
 ;; 明示的に挙げ、どちらにも無い名前は unknown として検査を失敗させる。
-;; 二つの集合の和は -->g2/rules の 72 名と一致する。Step の回帰がこれを検査する。
+;; 二つの集合の和は -->g2/rules の 80 名と一致する。Step の回帰がこれを検査する。
 (define non-substituting-rule-names
   (seteq 'R-Delta 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
          'R-Drop 'R-Borrow 'R-BorrowError
@@ -318,6 +372,7 @@
          'R-DischargeRemainder 'R-OwnLeaf 'R-OwnLeafPass
          'R-CurryVal 'R-ApplyCurry
          'R-ApplyTransit 'R-EliminateTransit 'R-UnionEliminateTransit
+         'R-EliminateAtTransit 'R-UnionEliminateAtTransit
          'R-CurryTransit 'R-OwnLeafTransit
          'R-HandleValue 'R-HandleSkip 'R-HandleError
          'R-RetireValue 'R-RetireError 'R-RetirePerform))
@@ -414,12 +469,28 @@
     [(list 'R-Eliminate `(Eliminate (Construct ,_τ ,K ,v ...) ,branches))
      (define binders (branch-binders K branches))
      (and binders (= (length binders) (length v)) (map cons binders v))]
+    [(list 'R-EliminateAt
+           `(EliminateAt (Construct ,_τ ,K ,v ...) ,branches))
+     (define binders
+       (for/first ([parts (in-list (annotated-data-branch-parts branches))]
+                   #:when (and parts (eq? K (first parts))))
+         (second parts)))
+     (and binders (= (length binders) (length v)) (map cons binders v))]
     [(list 'R-UnionEliminate
            `(UnionEliminate (UnionVal ,_union-type ,member-type ,payload)
                            ,branches))
      (define binders (union-branch-bindings member-type branches))
      (and binders (= (length binders) 1)
           (list (cons (first binders) payload)))]
+    [(list 'R-UnionEliminateAt
+           `(UnionEliminateAt
+             (UnionVal ,_union-type ,member-type ,payload) ,branches))
+     (define branch
+       (for/first ([parts
+                    (in-list (annotated-union-branch-parts branches))]
+                   #:when (and parts (type-equiv? member-type (first parts))))
+         parts))
+     (and branch (list (cons (second branch) payload)))]
     [(list (and rule (or 'R-EliminateRef 'R-EliminateMutRef))
            `(Eliminate (,tag ,p ,fp ,ρ) ,branches))
      #:when (equal? tag
@@ -448,6 +519,35 @@
                     [i (in-naturals 0)])
            (cons x (child-ref i)))))
      (if (null? matching) #f (apply append matching))]
+    [(list (and rule (or 'R-EliminateAtRef 'R-EliminateAtMutRef))
+           `(EliminateAt (,tag ,p ,fp ,ρ) ,branches))
+     #:when (equal? tag
+                    (if (eq? rule 'R-EliminateAtMutRef)
+                        'BorrowMutRef
+                        'BorrowRef))
+     (define matching
+       (for/list ([parts (in-list (annotated-data-branch-parts branches))]
+                  #:when
+                  (and parts
+                       (let* ([binders (second parts)]
+                              [annotations (third parts)]
+                              [body (fourth parts)]
+                              [child-refs
+                               (for/list ([i (in-range (length binders))]
+                                          [annotation
+                                           (in-list annotations)])
+                                 (list tag p (append fp (list i))
+                                       (annotation-rho annotation ρ)))])
+                         (branch-substitution-matches?
+                          body binders child-refs contractum))))
+         (define binders (second parts))
+         (define annotations (third parts))
+         (for/list ([x (in-list binders)]
+                    [i (in-naturals)]
+                    [annotation (in-list annotations)])
+           (cons x (list tag p (append fp (list i))
+                         (annotation-rho annotation ρ))))))
+     (if (null? matching) #f (apply append matching))]
     [(list (and rule (or 'R-UnionEliminateRef 'R-UnionEliminateMutRef))
            `(UnionEliminate (,tag ,p ,fp ,ρ) ,branches))
      #:when (equal? tag
@@ -465,6 +565,28 @@
              (and (branch-substitution-matches?
                    body (list binder) (list child-ref) contractum)
                   (list (cons binder child-ref)))]
+            [_ #f]))))
+     (if (null? matching) #f (apply append matching))]
+    [(list (and rule
+                (or 'R-UnionEliminateAtRef 'R-UnionEliminateAtMutRef))
+           `(UnionEliminateAt (,tag ,p ,fp ,ρ) ,branches))
+     #:when (equal? tag
+                    (if (eq? rule 'R-UnionEliminateAtMutRef)
+                        'BorrowMutRef
+                        'BorrowRef))
+     (define child-ref
+       (lambda (annotation)
+         (list tag p (append fp '((Payload)))
+               (annotation-rho annotation ρ))))
+     (define matching
+       (filter
+        values
+        (for/list ([parts (in-list (annotated-union-branch-parts branches))])
+          (match parts
+            [(list _member binder annotation body)
+             (and (branch-substitution-matches?
+                   body (list binder) (list (child-ref annotation)) contractum)
+                  (list (cons binder (child-ref annotation))))]
             [_ #f]))))
      (if (null? matching) #f (apply append matching))]
     [(list 'R-HandleReturn

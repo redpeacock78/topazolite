@@ -692,12 +692,9 @@
     (trace-with-initial-int-place source callables))
   (check-config-trace configs callables expected)
   (check-equal?
-   ;; The oracle learns annotation-form provenance in Task 4; Task 3 checks
-   ;; its unchanged semantics through the annotation-erased equivalent.
+   ;; Task 4 classifies annotated elimination steps directly in the oracle.
    (check-borrow-execution
-    (match (first configs)
-      [`(cfg ,core ,heap ,states ,tokens ,trace)
-       `(cfg ,(erase-core core) ,heap ,states ,tokens ,trace)])
+    (first configs)
     #f #f 200 (make-bcounters))
    'ok)
   (check-not-false (index-of rules 'R-RegionAppRecur))
