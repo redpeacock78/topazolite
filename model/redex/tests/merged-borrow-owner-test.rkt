@@ -405,7 +405,10 @@
 (define (formal-forwarding-result-positions kind)
   (define inference
     (typing-inference (formal-forwarding-callable kind) '() forwarding-callables))
-  (append-map callable-summary-result-index (sixth inference)))
+  (append-map
+   (lambda (summary)
+     (map car (hash-ref (callable-summary-result-index summary) '() '())))
+   (sixth inference)))
 
 (define (formal-forwarding-borrow-keys kind)
   (match (formal-forwarding-direct-result kind)

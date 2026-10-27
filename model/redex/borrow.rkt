@@ -43,6 +43,7 @@
          capability-union-binding
          capability-flow-of handle-return-capability
          capability-projection-bindings
+         table-join capability-entry-join
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
          owned-transit? contains-owned-transit? transit-places

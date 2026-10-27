@@ -612,8 +612,210 @@
     [(list i) i]
     [_ #f]))
 
+;; §5.4。署名の各 borrowed leaf について候補 (formal index . formal path) を作る。
+(define (forwarding-leaf-candidates parameter-types return-type)
+  (define-values (_result-root result-leaves)
+    (formal-capability-entry return-type '(result)))
+  (define parameter-leaves
+    (for/list ([type (in-list parameter-types)])
+      (define-values (_root leaves)
+        (formal-capability-entry type '(formal)))
+      leaves))
+  (for/hash ([(result-path result-leaf) (in-hash result-leaves)])
+    (values
+     result-path
+     (append-map
+      (lambda (index leaves)
+        (for/list ([(formal-path formal-leaf) (in-hash leaves)]
+                   #:when (and (capability-entry-declared-lifetime formal-leaf)
+                               (equal?
+                                (capability-entry-declared-lifetime result-leaf)
+                                (capability-entry-declared-lifetime formal-leaf))))
+          (cons index formal-path)))
+      (range (length parameter-leaves)) parameter-leaves))))
+
+;; RegionApp が Union member を潰す場合だけ π の member segment を実体化後の
+;; 鍵から除く。Record と constructor の segment は型引数を含まない。
+(define (instantiate-capability-path type path region-subst)
+  (let loop ([current type] [remaining path] [result '()])
+    (define normalized (normalize-type (peel-ty current)))
+    (cond
+      [(null? remaining) result]
+      [else
+       (define segment (car remaining))
+       (match normalized
+         [`(Owned ,inner)
+          (loop inner remaining result)]
+         [`(Untrusted ,inner)
+          (loop inner remaining result)]
+         [`(Refined ,inner ,_)
+          (loop inner remaining result)]
+         [`(Record ,row)
+          (match segment
+            [(cons 'record-field label)
+             (define field
+               (for/first ([field (in-list row)]
+                           #:when (equal? (first field) label))
+                 field))
+             (and field
+                  (loop (second field) (cdr remaining)
+                        (append result (list segment))))]
+            [_ #f])]
+         [`(Union ,_ ,_)
+          (define member-type
+            (normalize-type (subst-region-params segment region-subst)))
+          (and (member member-type (union-members normalized) equal?)
+               (loop member-type (cdr remaining)
+                     (append result (list member-type))))]
+         [_
+          (cond
+            [(and (pair? segment)
+                  (not (eq? (car segment) 'record-field))
+                  (exact-nonnegative-integer? (cdr segment)))
+             (define constructor
+               (for/first ([constructor (in-list (constructor-schema normalized))]
+                           #:when (equal? (first constructor) (car segment)))
+                 constructor))
+             (define field-types (and constructor (second constructor)))
+             (and field-types
+                  (< (cdr segment) (length field-types))
+                  (loop (list-ref field-types (cdr segment)) (cdr remaining)
+                        (append result (list segment))))]
+            [else
+             ;; Union が member 1 個へ正規化された場合、その segment は消える。
+             (define member-type
+               (normalize-type (subst-region-params segment region-subst)))
+             (and (equal? normalized member-type)
+                  (loop normalized (cdr remaining) result))])])])))
+
+(define (capability-entry-at-path entry path)
+  (let loop ([current entry] [remaining path])
+    (cond
+      [(not current) #f]
+      [(null? remaining) current]
+      [else
+       (define fields (capability-entry-fields current))
+       (and (hash? fields)
+            (loop (hash-ref fields (car remaining) #f) (cdr remaining)))])))
+
+(define (actual-leaf-entry Λ expression actual-type actual-path fail)
+  (define root-entry
+    (capability-entry
+     (borrow-token-key Λ expression)
+     (capability-variant-views Λ expression)
+     (capability-field-entries Λ expression)
+     (borrow-typed? actual-type)
+     (capability-source actual-type)
+     (borrow-region actual-type)))
+  (define-values (_actual-root actual-leaves)
+    (formal-capability-entry actual-type '(actual)))
+  (define metadata (hash-ref actual-leaves actual-path #f))
+  (define lifetime
+    (and metadata (capability-entry-declared-lifetime metadata)))
+  (unless lifetime (fail 'unresolved-borrow-owner expression))
+  (define field-entry (capability-entry-at-path root-entry actual-path))
+  (when (and (pair? actual-path)
+             (hash? (capability-entry-fields root-entry))
+             (not field-entry))
+    (fail 'unresolved-borrow-owner expression))
+  ;; 表が無い実引数は全体の capability を使うが、α は選んだ leaf の型だけから得る。
+  (define selected (or field-entry root-entry))
+  (define sources
+    (if field-entry
+        (let ([existing (capability-entry-source-alphas field-entry)])
+          (if (set-empty? existing)
+              (capability-source `(Borrowed Unit ,lifetime))
+              existing))
+        (capability-source `(Borrowed Unit ,lifetime))))
+  (struct-copy capability-entry selected
+               [source-alphas sources]
+               [declared-lifetime lifetime]))
+
+(define (result-capability-entry summary result-type arguments actuals Λ node fail)
+  (define region-subst (callable-summary-region-subst summary))
+  (define candidates-by-path
+    (for/fold ([result (hash)])
+              ([(path candidates)
+                (in-hash (callable-summary-result-index summary))])
+      (define actual-path
+        (instantiate-capability-path result-type path region-subst))
+      (unless actual-path (fail 'unresolved-borrow-owner node))
+      (hash-update result actual-path
+                   (lambda (previous) (append previous candidates))
+                   candidates)))
+  (define (leaf-entry type path lifetime)
+    (define candidates (hash-ref candidates-by-path path '()))
+    (unless (pair? candidates) (fail 'unresolved-borrow-owner node))
+    (capability-entry-join
+     (for/list ([candidate (in-list candidates)])
+       (define index (car candidate))
+       (define formal-path (cdr candidate))
+       (define actual-type (list-ref actuals index))
+       (define actual-path
+         (instantiate-capability-path actual-type formal-path region-subst))
+       (unless actual-path (fail 'unresolved-borrow-owner node))
+       (define actual-entry
+         (actual-leaf-entry Λ (list-ref arguments index) actual-type
+                            actual-path fail))
+       (define-values (_formal-lifetime sources)
+         (with-handlers ([exn:fail?
+                          (lambda (_error)
+                            (fail 'unresolved-borrow-owner node))])
+           (formal-leaf-info summary index formal-path actual-entry)))
+       (when (set-empty? (capability-entry-keys actual-entry))
+         (fail 'unresolved-borrow-owner node))
+       (struct-copy capability-entry actual-entry
+                    [fields #f]
+                    [borrowed-view? #t]
+                    [source-alphas sources]
+                    [declared-lifetime lifetime]))))
+  (define (aggregate fields)
+    (define entries (hash-values fields))
+    (capability-entry
+     (for/fold ([keys (set)]) ([entry (in-list entries)])
+       (set-union keys (capability-entry-keys entry)))
+     (for/fold ([variants (set)]) ([entry (in-list entries)])
+       (set-union variants (capability-entry-variants entry)))
+     fields #f
+     (for/fold ([sources (set)]) ([entry (in-list entries)])
+       (set-union sources (capability-entry-source-alphas entry)))
+     #f))
+  (define (walk type path seen)
+    (define normalized (normalize-type (peel-ty type)))
+    (match normalized
+      [`(Borrowed ,_ ,lifetime) (leaf-entry normalized path lifetime)]
+      [`(BorrowedMut ,_ ,lifetime) (leaf-entry normalized path lifetime)]
+      [`(Record ,row)
+       (aggregate
+        (for/hash ([field (in-list row)])
+          (define key (cons 'record-field (first field)))
+          (values key (walk (second field) (append path (list key)) seen))))]
+      [`(Union ,_ ,_)
+       (aggregate
+        (for/hash ([member (in-list (union-members normalized))])
+          (values member (walk member (append path (list member)) seen))))]
+      [`(Owned ,inner) (walk inner path seen)]
+      [`(Untrusted ,inner) (walk inner path seen)]
+      [`(Refined ,inner ,_) (walk inner path seen)]
+      [_
+       (define schema (constructor-schema normalized))
+       (cond
+         [(or (not schema) (set-member? seen normalized))
+          (capability-entry (set) (set) #f #f (set) #f)]
+         [else
+          (aggregate
+           (for/fold ([fields (hash)]) ([constructor (in-list schema)])
+             (for/fold ([fields fields])
+                       ([field-type (in-list (second constructor))]
+                        [index (in-naturals)])
+               (define key (cons (first constructor) index))
+               (hash-set fields key
+                         (walk field-type (append path (list key))
+                               (set-add seen normalized))))))])]))
+  (walk result-type '() (set)))
+
 ;; §5.4。呼出しの結果が運ぶ借用が、どの実引数の capability を指すのかを表す。
-(struct forwarding-summary (index keys source) #:transparent)
+(struct forwarding-summary (index keys source fields variants) #:transparent)
 
 ;; §5.4。起点を解く 3 段。第 1 段は region-ctx の token を designator で引き、
 ;; 第 2 段は関数を通った結果に付く要約を引き、第 3 段は型が運ぶ capability を
@@ -635,7 +837,26 @@
         (lookup-forwarding-summary (enter-child Λ index) core)))
   (if summary
       (forwarding-summary-keys summary)
-      (borrow-token-key Λ core #:fail fail)))
+      (let ([keys (borrow-token-key Λ core)]
+            [fields (capability-field-entries Λ core)])
+        (define (entry-keys entry)
+          (if (capability-entry? entry)
+              (set-union
+               (capability-entry-keys entry)
+               (for/fold ([keys (set)])
+                         ([child (in-hash-values
+                                  (or (capability-entry-fields entry) (hash)))])
+                 (set-union keys (entry-keys child))))
+              (if (set? entry) entry (set))))
+        (define all-keys
+          (set-union
+           keys
+           (if (hash? fields)
+               (for/fold ([all (set)]) ([entry (in-hash-values fields)])
+                 (set-union all (entry-keys entry)))
+               (set))))
+        (when (set-empty? all-keys) (fail 'unresolved-borrow-owner core))
+        all-keys)))
 
 ;; §8.1。使用の要求へ載せる起点。使用の被演算子はいずれも 0 番目の子である。
 (define (use-source Λ operand type)
@@ -3525,7 +3746,7 @@
      (record-callable-summary!
       Λ node
       (callable-summary formals (reverse (unbox collector))
-                        (forwarding-indices parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type)
                         (hash) formal-fields)
       fail)
      (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
@@ -3610,7 +3831,7 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame (list recur-binding) formals
-                        (forwarding-indices parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type)
                         collector 'tentative 1 formal-fields))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
@@ -3688,7 +3909,7 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame bindings formals
-                        (forwarding-indices parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type)
                         collector 'tentative
                         (if (null? binder-params) 1 2)
                         formal-fields))
@@ -5922,30 +6143,39 @@
                 (instantiate-deferred! summary Λ core subst sources
                                         call-psi fail)))
         (unless summary (set! next-psi call-psi))
-        (when (borrow-region return-type)
-          (define positions
+        (when (formal-capability-type? return-type)
+          (define result-summary
+            (or summary (and frame (recur-frame->summary frame))))
+          (define result-entry
             (cond
-              [summary (callable-summary-result-index summary)]
-              ;; 仮の再帰呼出しは確定要約がまだ無いので、frame の宣言時候補を使う。
-              [frame (recur-frame-result-index frame)]
-              [else
-               (let ([i (forwarding-index parameter-types return-type)])
-                 (if i (list i) '()))]))
-          (unless (pair? positions) (fail 'unresolved-borrow-owner core))
-          (define keys
-            (for/fold ([caps (set)]) ([i (in-list positions)])
-              (set-union caps (list-ref argument-caps i))))
-          (when (set-empty? keys)
-            (fail 'unresolved-borrow-owner core))
-          (define source
-            (for/fold ([sources (set)]) ([i (in-list positions)])
-              (set-union
-               sources
-               (argument-source Λ (list-ref arguments i)
-                               (list-ref actuals i) (add1 i)))))
+              [result-summary
+               (result-capability-entry result-summary return-type arguments
+                                        actuals Λ core fail)]
+              [(borrow-region return-type)
+               (define index (forwarding-index parameter-types return-type))
+               (unless index (fail 'unresolved-borrow-owner core))
+               (define actual-type (list-ref actuals index))
+               (define entry
+                 (actual-leaf-entry Λ (list-ref arguments index) actual-type
+                                    '() fail))
+               (when (set-empty? (capability-entry-keys entry))
+                 (fail 'unresolved-borrow-owner core))
+               (struct-copy capability-entry entry
+                            [borrowed-view? #t]
+                            [declared-lifetime (borrow-region return-type)])]
+              [else (fail 'unresolved-borrow-owner core)]))
           (record-forwarding-summary!
            Λ core
-           (forwarding-summary positions keys source)
+           (forwarding-summary
+            (if result-summary
+                (callable-summary-result-index result-summary)
+                (hash '() (list (cons (forwarding-index parameter-types
+                                                        return-type)
+                                      '()))))
+            (capability-entry-keys result-entry)
+            (capability-entry-source-alphas result-entry)
+            (capability-entry-fields result-entry)
+            (capability-entry-variants result-entry))
            fail))
         (unless (obligations-dischargeable? obligations (current-Γ-pc0))
           (fail 'unsatisfied-proof-obligation core))
@@ -6042,13 +6272,17 @@
         ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
         ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-        (define fields (capability-field-entries Λ bound))
+        (define fields
+          (or (and summary (forwarding-summary-fields summary))
+              (capability-field-entries Λ bound)))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
                                 callable
                                 fields
-                                (capability-variant-views Λ bound)
+                                (or (and summary
+                                         (forwarding-summary-variants summary))
+                                    (capability-variant-views Λ bound))
                                 borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
@@ -6109,13 +6343,17 @@
      ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
      ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-     (define fields (capability-field-entries Λ bound))
+     (define fields
+       (or (and summary (forwarding-summary-fields summary))
+           (capability-field-entries Λ bound)))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
                              callable
                              fields
-                             (capability-variant-views Λ bound)
+                             (or (and summary
+                                      (forwarding-summary-variants summary))
+                                 (capability-variant-views Λ bound))
                              borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)
@@ -6914,13 +7152,17 @@
         ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
         ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-        (define fields (capability-field-entries Λ bound))
+        (define fields
+          (or (and summary (forwarding-summary-fields summary))
+              (capability-field-entries Λ bound)))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
                                 callable
                                 fields
-                                (capability-variant-views Λ bound)
+                                (or (and summary
+                                         (forwarding-summary-variants summary))
+                                    (capability-variant-views Λ bound))
                                 borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
@@ -6977,13 +7219,17 @@
      ;; designator の枝へ落ち、表を引くだけの呼出しが E-BOR-020 を出す。
      ;; ws の側は同じ位置で borrow-token-key が #:fail fail 付きに計算している
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
-     (define fields (capability-field-entries Λ bound))
+     (define fields
+       (or (and summary (forwarding-summary-fields summary))
+           (capability-field-entries Λ bound)))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
                              callable
                              fields
-                             (capability-variant-views Λ bound)
+                             (or (and summary
+                                      (forwarding-summary-variants summary))
+                                 (capability-variant-views Λ bound))
                              borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)

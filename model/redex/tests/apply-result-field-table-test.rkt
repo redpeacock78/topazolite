@@ -3,8 +3,12 @@
 (require rackunit
          racket/list
          racket/match
+         "../borrow-gen.rkt"
+         "../borrow-oracle.rkt"
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../gen.rkt"
+         "../machine.rkt"
          "../region.rkt"
          "../typing.rkt")
 
@@ -24,6 +28,66 @@
   (match result
     [(list 'fail key _ _) key]
     [_ #f]))
+
+(define (replace-symbol term target replacement)
+  (cond
+    [(eq? term target) replacement]
+    [(pair? term)
+     (cons (replace-symbol (car term) target replacement)
+           (replace-symbol (cdr term) target replacement))]
+    [else term]))
+
+(define (raw-result/places core callables places)
+  (define ir (build-region-ir core))
+  (define filled
+    (replace-symbol (fill-region-placeholders core ir) 'ph
+                    (region->rho ir (region-at ir '()))))
+  (type-of/raw (annotate-regions filled ir) places callables '()
+               (region-ctx ir '() (for/hash ([place (in-list places)])
+                                   (values (first place) (region-at ir '())))
+                           (hash))))
+
+(define (prepare-execution core callables)
+  (match (prepare-borrow-term* core #:callables callables)
+    [(list 'ok start sidecar ir type)
+     (values start sidecar ir type)]
+    [other
+     (fail (format "Core が実行用に型付けされなかった: ~s" other))]))
+
+(define (trace-g2 start)
+  (let loop ([current start] [configs (list start)] [fuel 300])
+    (when (zero? fuel)
+      (error 'trace-g2 "評価 fuel を使い切った: ~s" current))
+    (match (raw-steps-g2/named current)
+      ['() configs]
+      [(list (list _rule next))
+       (loop next (append configs (list next)) (sub1 fuel))]
+      [steps (error 'trace-g2 "一意な次状態を期待した: ~s" steps)])))
+
+(define (check-live-trace configs callables expected)
+  (define rows
+    (for/list ([config (in-list configs)])
+      (runtime-row config callables expected)))
+  (define start-index
+    (for/first ([row (in-list rows)] [index (in-naturals)] #:when row) index))
+  (check-not-false start-index
+                   (format "trace に runtime-row がある config がある: ~s"
+                           rows))
+  (for ([config (in-list (drop configs start-index))]
+        [row (in-list (drop rows start-index))]
+        [index (in-naturals start-index)])
+    (check-not-false row (format "config ~a の runtime-row: ~s" index config))))
+
+(define (contains-core-form? core name)
+  (or (match core
+        [(list head _ ...) (eq? head name)]
+        [_ #f])
+      (and (pair? core)
+           (or (contains-core-form? (car core) name)
+               (contains-core-form? (cdr core) name)))))
+
+(define (configuration-core config)
+  (match config [`(cfg ,core ,_ ...) core]))
 
 (define (formal-callable name parameter-type return-type body effects)
   (formal-callable/regions '(a) name parameter-type return-type body effects))
@@ -92,6 +156,90 @@
              (NFn ((BorrowedMut Int (RParam a))) Unit
                   () (Mutation) () User)))))
   (check-equal? (failure-key (raw-result core callables)) #f))
+
+(test-case "結果の借用 leaf ごとに対応する formal path を候補に持つ"
+  (define parameter-type
+    '(Record ((inner (BorrowedMut Int (RParam a)) imm)
+              (other (BorrowedMut Int (RParam b)) imm))))
+  (define signature
+    `(ForallRegion (a b)
+       (NFn (,parameter-type) ,parameter-type () () () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a b)
+         (Lam User identity-record (x) x))))
+  (define summaries
+    (callable-summaries core `((identity-record ,signature))))
+  (define summary (first summaries))
+  (check-equal?
+   (callable-summary-result-index summary)
+   (hash '((record-field . inner))
+         (list (cons 0 '((record-field . inner))))
+         '((record-field . other))
+         (list (cons 0 '((record-field . other)))))))
+
+(test-case "Apply の結果欄は候補の実引数だけを保つ"
+  (define parameter-type
+    '(Record ((inner (BorrowedMut Int (RParam a)) mut)
+              (other (BorrowedMut Int (RParam b)) mut))))
+  (define actual-type
+    '(Record ((inner (BorrowedMut Int (RVar 0)) mut)
+              (other (BorrowedMut Int (RVar 1)) mut))))
+  (define callables
+    `((identity-record
+       (ForallRegion (a b)
+         (NFn (,parameter-type) ,parameter-type () () () User)))))
+  (define (core write-target)
+    `(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (y let (Owned Int)) 2
+           (Scope ()
+             (Let (source-inner let (BorrowedMut Int (RVar 0)))
+                  (BorrowMut x)
+               (Scope ()
+                 (Let (source-other let (BorrowedMut Int (RVar 1)))
+                      (BorrowMut y)
+                   (Let (pair let ,actual-type)
+                        (Rec ((inner mut source-inner)
+                              (other mut source-other)))
+                     (Let (r let ,actual-type)
+                          (Apply
+                           (RegionApp
+                            (RegionLam (a b)
+                              (Lam User identity-record (x) x))
+                            ((RVar 0) (RVar 1)))
+                           pair)
+                       (Let (inner let (BorrowedMut Int (RVar 0))) (Proj r inner)
+                         (Let (other-ref let (BorrowedMut Int (RVar 1)))
+                              (Proj r other)
+                           (Let (child let (Borrowed Int ph)) (Reborrow inner)
+                             (Let (written const Unit)
+                                  (Assign ,(if (eq? write-target 'inner)
+                                               'inner
+                                               'other-ref)
+                                           7)
+                               (Read child)))))))))))))))
+  (define source-core (core 'other))
+  (define source-ir (build-region-ir source-core))
+  (check-false
+   (equal? (region-at source-ir '(0 1 1 0 0))
+           (region-at source-ir '(0 1 1 0 1 0 0)))
+   "二つの実引数 borrow は異なる Scope region にある")
+  (check-equal?
+   (failure-key (raw-result/places (core 'inner) callables '()))
+   'borrow-conflicting-use)
+  (define-values (start sidecar ir expected)
+    (prepare-execution source-core callables))
+  (define configs (trace-g2 start))
+  (define post-apply
+    (for/first ([config (in-list configs)] [index (in-naturals)]
+                #:unless (contains-core-form? (configuration-core config) 'Apply))
+      index))
+  (check-not-false post-apply "trace に Apply 完了後の config がある")
+  (check-live-trace (drop configs post-apply) '() expected)
+  (check-equal? (configuration-core (last configs)) 1)
+  (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
+                'ok))
 
 (test-case "formal leaf API は宣言寿命と渡された source alpha を分ける"
   (define parameter-type
