@@ -627,13 +627,19 @@ Phase 未定である。
 その精度を上げるには使用区間の解析が要る。
 これは §4 の借用 region を最も内側の Scope にする lexical な近似とは別の近似である。
 回収時期は、BOR-003 の置換先として想定する control-flow と last-use による region 推論を導入する段階と同じとする。
+分解 binder 由来の借用も、binder の最後の使用後を含めて枝 region 全体で親の対応する欄を停止する lexical な近似である。
+最後の使用で停止を終える精度は control-flow と last-use による region 推論を導入する段階で回収する。
+停止は binder の path に限るため、親の別の欄はこの近似の対象にならない。
 6. 共有の子が生きている間に親を通して `Read` する形を拒む過剰な制約。
 可変の親からの射影や共有 `Reborrow` の子が生きている間、現行の停止判定は子の mode によらず親を通す `Read` を拒む。
 子の mode と使用の種類を考慮して停止中の親の使用を判定する段階で、許可条件を精密化する。
+分解 binder の停止も親の対応する欄を通す `Read` を拒むため、この過剰な制約は分解 binder にも及ぶ。
 7. 一時式の `Reborrow` を同じ `Scope` 内で直ちに使い切っても、`Scope` の退場まで生存させる過剰な制約。
 暗黙の短い再借用を扱い、first-class な借用値の region を実際の使用範囲に合わせて定める段階で回収する。
 8. 仮引数を親とする分解 binder の寿命変数と、実引数・仮引数の escape 精度。
 callable summary が分解 binder の親、相対 path、寿命および escape 条件を呼出し側へ運び、仮引数を親とする binder を実体化する必要がある（BOR-001、BOR-002、BOR-007）。
+`RegionLam` 本体で局所 owner を region 仮引数で借り、その分解 binder を `Reborrow` して読み切る形では、局所射影の借用と region 仮引数の借用が deferred summary を経て最終の `check-borrows` で衝突し、`E-BOR-003` になる。
+この形も callable summary で親、相対 path、寿命および escape 条件を呼出し側へ運ぶ段階で回収する。
 9. `E-BOR-006` のうち、仮引数の入れ子の path が呼出し時に確定する形。
 所有者と path を呼出し側で確定できるようにする必要がある（BOR-006、BOR-007）。
 10. `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形。

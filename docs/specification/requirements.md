@@ -1037,10 +1037,10 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | Unknown の有限化と termination Proof | `proof-search.md` §7 | Phase 4 以降 | §6.4 |
 | Diagnostic の `fixes` | `diagnostic.md` §3 | Phase 5 以降 | §13.4 |
 | 閉包と部分適用が運ぶ region と借用の provenance | `borrow.md` §14 | Phase 4 以降 | §15 |
-| variant に依存する view の保護が束縛の lexical scope の終わりまで続く制約 | `borrow.md` §14 | Phase 4 以降（control-flow と last-use による region 推論を導入する段階） | §15 |
-| 射影または共有 `Reborrow` の子が生きている間に親を通す `Read` を拒む制約 | `borrow.md` §14 | SUR-004 完了前（派生した借用の mode と使用の種類に応じて親の停止を判定） | §4.8 |
+| variant に依存する view と分解 binder 由来の借用の保護が束縛の lexical scope の終わりまで続く制約 | `borrow.md` §14 | Phase 4 以降（control-flow と last-use による region 推論を導入する段階） | §15 |
+| 射影または共有 `Reborrow` の子、または分解 binder の借用が生きている間に親を通す `Read` を拒む制約 | `borrow.md` §14 | SUR-004 完了前（派生した借用の mode と使用の種類に応じて親の停止を判定） | §4.8 |
 | 直ちに消費する `Reborrow` の一時式が `Scope` の退場まで生存する制約 | `borrow.md` §14 | SUR-004 完了前（暗黙の再借用と使用位置に応じた寿命を扱う） | §4.8 |
-| 仮引数を親とする分解 binder の寿命変数と、実引数・仮引数の escape 精度（BOR-001、BOR-002、BOR-007） | `borrow.md` §14 | SUR-004 完了前（callable summary が分解 binder の親、相対 path、寿命、escape 条件を呼出し側へ運ぶ） | §4.8 |
+| 仮引数を親とする分解 binder の寿命変数と、実引数・仮引数の escape 精度（BOR-001、BOR-002、BOR-007）。`RegionLam` 本体の局所 owner と region 仮引数の借用が deferred summary 後に衝突する形を含む | `borrow.md` §14 | SUR-004 完了前（callable summary が分解 binder の親、相対 path、寿命、escape 条件を呼出し側へ運ぶ） | §4.8 |
 | `E-BOR-006` のうち仮引数の入れ子の path が呼出し時に確定する形（BOR-006、BOR-007） | `borrow.md` §14 | SUR-004 完了前（呼出し側で仮引数の入れ子の path と所有者を確定する） | §4.8 |
 | `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形（OWN-005、BOR-001、BOR-006） | `borrow.md` §14 | Phase 未定（OWN-005 の計算値 place 化を借用を含む値へ広げる段階） | §4.8 |
 | `E-VAR-009`：借用型を持つ `mut` 束縛への再代入（SCP-001、BOR-002） | `borrow.md` §14 | Phase 未定（旧借用の終了と再代入後の新しい所有者の寿命を扱う段階） | §4.8 |
