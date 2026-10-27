@@ -2930,7 +2930,7 @@
       (with-branch-context
        context
        (lambda ()
-        (check-as/full (first context)
+         (check-as/full (first context)
                         expected
                         (third context)
                         (sixth context)
@@ -4322,12 +4322,12 @@
           (for/or ([cap (in-set tokens)]) (formal-key? (car cap))))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
+     (define branch-born? (branch-region-enclosing? ir point))
      (define ρ_child
-       (if (branch-region-enclosing? ir point)
+       (if branch-born?
            (region-at/branch ir point)
            (region-at ir point)))
-     (when (branch-region-enclosing? ir point)
-       (track-child-alpha! α_child))
+     (when branch-born? (track-child-alpha! α_child))
      (define parent-term
        (if (or (lifetime-var? α) (rparam-term? α))
            α
@@ -6346,7 +6346,7 @@
        (infer body (enter-child Λ 0) Ψ environment places callables fail))
      (when ir
        (collect-use-regions-at!
-       (first body-result) ir
+        (first body-result) ir
         (region-parent ir (region-at ir point)) point
         (region-parent ir (region-at/branch ir point))))
      body-result]
