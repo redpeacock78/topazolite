@@ -4,10 +4,23 @@
   "scripts": {
     "fmt": "dprint fmt",
     "fmt:check": "dprint check",
-    "check:fstar": "sh tools/check-fstar.sh"
+    "check:fstar": "sh tools/check-fstar.sh",
+    "lint:text": "sh tools/lint-text.sh",
+    "lint:text:report": "textlint --config .textlintrc.json --format json docs/specification > textlint-report.json || :"
   },
   "devDependencies": {
-    "dprint": "0.64.3"
+    "@textlint-ja/textlint-rule-preset-ai-writing": "1.7.0",
+    "dprint": "0.64.3",
+    "textlint": "15.8.0",
+    "textlint-filter-rule-allowlist": "4.0.0",
+    "textlint-filter-rule-comments": "1.3.0",
+    "textlint-rule-ja-no-redundant-expression": "4.0.1",
+    "textlint-rule-ja-unnatural-alphabet": "2.0.1",
+    "textlint-rule-no-doubled-joshi": "5.1.1",
+    "textlint-rule-preset-ai-words-ja": "1.2.1",
+    "textlint-rule-preset-ja-spacing": "3.0.4",
+    "textlint-rule-preset-ja-technical-writing": "12.0.2",
+    "textlint-rule-preset-japanese": "10.0.4"
   },
   "engines": {
     "node": "23.7.0"

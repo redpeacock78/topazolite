@@ -9,6 +9,7 @@ compiled/
 
 # Node
 node_modules/
+textlint-report.json
 
 # macOS
 .DS_Store

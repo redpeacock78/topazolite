@@ -1,1 +1,95 @@
-{}
+{
+  "filters": {
+    "allowlist": {
+      "allow": [
+        "/[ \\t　]*\\[REQ:[^\\]]+\\][ \\t　]*/",
+        "/E[0-9]*[ \\t　]*\\[[^\\]]+\\][ \\t　]*/",
+        "package / module",
+        "`nil` / `cons`",
+        "`true` / `false`",
+        "readonly / mutable field",
+        "LanguageNarrative / TypeNarrative",
+        "kernel kind / Proof / Core invariant",
+        "`impl` / `derive`",
+        "provenance / capability identity",
+        "return / Effect escape",
+        "fixed-width integer / bit conformance",
+        "Union / Intersection",
+        "lifetime / alias guarantee",
+        "Finite / Productive / Unknown",
+        "move / drop",
+        "move / drop / finalization",
+        "Move / Drop",
+        "R-Move / R-Drop",
+        "`(ℓ, NFn<(τ1, …, τk), τ, (), εdecl', ⟨⟩, User>)` / `(r, NFn<(τ1, …, τk), τ, (), ε', ⟨⟩, User>)`",
+        "`Moved` / `Dropped`",
+        "/\\*\\*(?:R0|Γ0|Δ0|Π0|C0)（[^\\n]*?）\\*\\*：/",
+        "/\\*\\*δ規則\\*\\*（[^\\n]*?）：/",
+        "/\\*\\*状態\\*\\*：G2f 執筆版/",
+        "/(?:tag-compat|reassign-narrowing|linear-hole|type-equiv)\\?/",
+        "性質 7（f）、（g）"
+      ]
+    },
+    "comments": true
+  },
+  "rules": {
+    "preset-ja-spacing": {
+      "ja-space-between-half-and-full-width": {
+        "space": "always"
+      },
+      "ja-space-around-code": {
+        "before": true,
+        "after": true
+      }
+    },
+    "preset-japanese": {
+      "no-doubled-joshi": false,
+      "sentence-length": {
+        "max": 200,
+        "skipPatterns": [
+          "/`[^`]+`/",
+          "/\\s\\|\\s.*/",
+          "/(?:src|docs)\\/[A-Za-z0-9_.-]+(?:\\/[A-Za-z0-9_.-]+)*/",
+          "/[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+/"
+        ]
+      },
+      "max-ten": {
+        "max": 4
+      }
+    },
+    "@textlint-ja/preset-ai-writing": {
+      "ai-tech-writing-guideline": {
+        "severity": "info"
+      },
+      "no-ai-list-formatting": false
+    },
+    "preset-ai-words-ja": {
+      "no-ai-words": {
+        "allows": [
+          "/検査|経路|正典|照合|穴|入口|部品|走る|突き合わせる|漏れ|実測/"
+        ]
+      }
+    },
+    "preset-ja-technical-writing": {
+      "sentence-length": {
+        "max": 200,
+        "skipPatterns": [
+          "/`[^`]+`/",
+          "/\\s\\|\\s.*/",
+          "/(?:src|docs)\\/[A-Za-z0-9_.-]+(?:\\/[A-Za-z0-9_.-]+)*/",
+          "/[A-Za-z0-9]+(?:_[A-Za-z0-9]+)+/"
+        ]
+      },
+      "max-ten": {
+        "max": 4
+      },
+      "ja-no-redundant-expression": true,
+      "ja-unnatural-alphabet": true,
+      "no-doubled-joshi": true,
+      "no-mix-dearu-desumasu": {
+        "preferInBody": "である",
+        "preferInList": "である"
+      }
+    }
+  }
+}
