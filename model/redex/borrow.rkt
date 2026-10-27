@@ -39,6 +39,7 @@
          unbound-borrowed-type?
          borrow-designator?
          borrow-token-key capability-field-table capability-field-entries
+         capability-of
          capability-branch-bindings
          capability-union-binding
          capability-flow-of handle-return-capability
@@ -1191,9 +1192,11 @@
 ;; 運ぶ枝だけに伝える。表だけを取るための再帰（Let の非借用の束縛、
 ;; RegionApp の本体、Eliminate の scrutinee）へは渡さない。渡すと、いま
 ;; 診断を出さずに通っている programme が E-BOR-020 で落ちる。
-(define (capability-of Λ c [locals (hash)] #:fail [fail #f])
+(define (capability-of Λ c [locals (hash)] #:fail [fail #f]
+                       #:allow-empty-keys? [allow-empty-keys? #f])
   (define (recur c* [locals* locals])
-    (capability-of Λ c* locals* #:fail fail))
+    (capability-of Λ c* locals* #:fail fail
+                   #:allow-empty-keys? allow-empty-keys?))
   (define (ws-of c* [locals* locals]) (entry-ws (recur c* locals*)))
   ;; 表だけを取る再帰。fail を伝えない。
   (define (table-of c* [locals* locals])
@@ -1282,7 +1285,8 @@
      (cond
        [(not (set-empty? ws))
         (entry-with-keys entry (capability-set ws))]
-       [fail (fail 'unresolved-borrow-owner c)]
+       [(and fail (not allow-empty-keys?))
+        (fail 'unresolved-borrow-owner c)]
        [else (entry-with-keys entry (set))])]
     [`(Eliminate ,scrutinee ,brs)
      ;; scrutinee を辿るのは表と capability を得るためだけである。Eliminate

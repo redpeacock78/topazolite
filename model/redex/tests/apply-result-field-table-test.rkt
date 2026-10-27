@@ -3,13 +3,16 @@
 (require rackunit
          racket/list
          racket/match
+         racket/set
          "../borrow-gen.rkt"
          "../borrow-oracle.rkt"
          "../borrow.rkt"
          "../diagnostic.rkt"
          "../gen.rkt"
          "../machine.rkt"
+         "../origins.rkt"
          "../region.rkt"
+         "../traits.rkt"
          "../typing.rkt")
 
 (define (raw-result core callables)
@@ -225,9 +228,27 @@
    (equal? (region-at source-ir '(0 1 1 0 0))
            (region-at source-ir '(0 1 1 0 1 0 0)))
    "二つの実引数 borrow は異なる Scope region にある")
-  (check-equal?
-   (failure-key (raw-result/places (core 'inner) callables '()))
-   'borrow-conflicting-use)
+  (define inner-write-result
+    (raw-result/places (core 'inner) callables '()))
+  (check-equal? (failure-key inner-write-result) 'borrow-conflicting-use
+                (format "inner write の失敗: ~s" inner-write-result))
+  (define observed-forwarding (box #f))
+  (typing-inference
+   (annotate-regions source-core source-ir)
+   '((1 Int)) callables '()
+   (region-ctx source-ir '() (hash 1 (region-at source-ir '())) (hash))
+   #:forwarding-summaries observed-forwarding)
+  (define result-forwarding (first (hash-values (unbox observed-forwarding))))
+  (define result-fields (forwarding-summary-fields result-forwarding))
+  (define inner-sources
+    (capability-entry-source-alphas
+     (hash-ref result-fields '(record-field . inner))))
+  (define other-sources
+    (capability-entry-source-alphas
+     (hash-ref result-fields '(record-field . other))))
+  (check-equal? inner-sources (set '(RVar 0)))
+  (check-equal? other-sources (set '(RVar 1)))
+  (check-true (set-empty? (set-intersect inner-sources other-sources)))
   (define-values (start sidecar ir expected)
     (prepare-execution source-core callables))
   (define configs (trace-g2 start))
@@ -240,6 +261,69 @@
   (check-equal? (configuration-core (last configs)) 1)
   (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
                 'ok))
+
+(test-case "要約のない関数値も署名から借用欄の転送を記録する"
+  (define leaf-a '(BorrowedMut Int (RParam a)))
+  (define record-type `(Record ((inner ,leaf-a mut))))
+  (define function-type `(NFn (,record-type) ,record-type () () () User))
+  (define wrapper-signature
+    `(ForallRegion (a)
+       (NFn (,function-type ,record-type) ,record-type () () () User)))
+  (define core
+    `(Scope (1)
+       (RegionLam (a)
+         (Lam User apply-unknown-summary (f x) (Apply f x)))))
+  (define callables `((apply-unknown-summary ,wrapper-signature)))
+  (check-false (failure-key (raw-result core callables))))
+
+(test-case "再帰する借用 data の結果は未追跡の tail を fail closed にする"
+  (define list-type '(List (BorrowedMut Int (RParam a))))
+  (define signature
+    `(ForallRegion (a)
+       (NFn (,list-type) ,list-type () () () User)))
+  (define identity
+    `(Scope (1)
+       (RegionLam (a)
+         (Lam User identity-borrow-list (xs) xs))))
+  (define callables `((identity-borrow-list ,signature)))
+  (define actual-type '(List (BorrowedMut Int (RVar 0))))
+  (define core
+    `(Scope (1)
+       (Let (x let (Owned Int)) 1
+         (Let (y let (Owned Int)) 2
+           (Let (first-ref let (BorrowedMut Int (RVar 0))) (BorrowMut y)
+             (Let (second-ref let (BorrowedMut Int (RVar 0))) (BorrowMut x)
+               (Let (items let ,actual-type)
+                 (Construct ,actual-type cons first-ref
+                   (Construct ,actual-type cons second-ref
+                     (Construct ,actual-type nil)))
+                 (Let (result let ,actual-type)
+                   (Apply (RegionApp (RegionLam (a)
+                                    (Lam User identity-borrow-list (xs) xs))
+                                    ((RVar 3)))
+                          items)
+                   (Eliminate result
+                     ((nil () -> unit)
+                      (cons (first tail) ->
+                        (Eliminate tail
+                          ((nil () -> unit)
+                           (cons (second rest) ->
+                             (Let (written let Unit) (Assign (BorrowMut x) 9)
+                               (Read second))))))))))))))))
+  (define result (raw-result/places core callables '((1 Int) (2 Int))))
+  (check-equal?
+   (failure-key result) 'unresolved-borrow-owner
+   (format "再帰的な借用欄を追跡できない呼出しを拒む: ~s" result)))
+
+(test-case "空の root keys を許しても不正な借用 path は拒む"
+  (define failure
+    (with-handlers ([exn:fail? exn-message])
+      (capability-of (empty-region-ctx)
+                     '(ProjBorrowAt 0 (BorrowMutRef 1 ((bad . path)) 0) invalid)
+                     #:fail (lambda (key _node) (error 'probe "~a" key))
+                     #:allow-empty-keys? #t)
+      #f))
+  (check-regexp-match #rx"unresolved-borrow-owner" failure))
 
 (test-case "formal leaf API は宣言寿命と渡された source alpha を分ける"
   (define parameter-type

@@ -108,6 +108,7 @@
          collected-region-args
          check-region-args
          (struct-out callable-summary)
+         (struct-out forwarding-summary)
          formal-leaf-info
          lookup-binding
          make-recur-frame
@@ -613,26 +614,47 @@
     [_ #f]))
 
 ;; §5.4。署名の各 borrowed leaf について候補 (formal index . formal path) を作る。
-(define (forwarding-leaf-candidates parameter-types return-type)
+(define (forwarding-leaf-candidates parameter-types return-type node fail)
+  (define (checked-leaves type)
+    (define-values (_root leaves)
+      (formal-capability-entry type '(formal)))
+    (for ([entry (in-hash-values leaves)])
+      (unless (capability-entry? entry)
+        (fail 'unresolved-borrow-owner node)))
+    leaves)
   (define-values (_result-root result-leaves)
     (formal-capability-entry return-type '(result)))
   (define parameter-leaves
-    (for/list ([type (in-list parameter-types)])
-      (define-values (_root leaves)
-        (formal-capability-entry type '(formal)))
-      leaves))
+    (map checked-leaves parameter-types))
   (for/hash ([(result-path result-leaf) (in-hash result-leaves)])
+    (define result-lifetime
+      (and (capability-entry? result-leaf)
+           (capability-entry-declared-lifetime result-leaf)))
+    (unless result-lifetime (fail 'unresolved-borrow-owner node))
     (values
      result-path
      (append-map
       (lambda (index leaves)
         (for/list ([(formal-path formal-leaf) (in-hash leaves)]
-                   #:when (and (capability-entry-declared-lifetime formal-leaf)
-                               (equal?
-                                (capability-entry-declared-lifetime result-leaf)
-                                (capability-entry-declared-lifetime formal-leaf))))
+                   #:when (and (capability-entry? formal-leaf)
+                               (capability-entry-declared-lifetime formal-leaf)
+                               (equal? result-lifetime
+                                       (capability-entry-declared-lifetime
+                                        formal-leaf))))
           (cons index formal-path)))
       (range (length parameter-leaves)) parameter-leaves))))
+
+;; 要約がない関数値でも、署名が示す leaf の転送だけは照合できる。
+(define (signature-forwarding-summary parameter-types return-type node fail)
+  (callable-summary
+   (make-list (length parameter-types) #f)
+   '()
+   (forwarding-leaf-candidates parameter-types return-type node fail)
+   (hash)
+   (for/list ([type (in-list parameter-types)])
+     (define-values (_root leaves)
+       (formal-capability-entry type '(formal)))
+     leaves)))
 
 ;; RegionApp が Union member を潰す場合だけ π の member segment を実体化後の
 ;; 鍵から除く。Record と constructor の segment は型引数を含まない。
@@ -700,26 +722,25 @@
 
 (define (actual-leaf-entry Λ expression actual-type actual-path fail)
   (define root-entry
-    (capability-entry
-     (borrow-token-key Λ expression)
-     (capability-variant-views Λ expression)
-     (capability-field-entries Λ expression)
-     (borrow-typed? actual-type)
-     (capability-source actual-type)
-     (borrow-region actual-type)))
+    (capability-of Λ expression #:fail fail #:allow-empty-keys? #t))
+  (define root-entry*
+    (struct-copy capability-entry root-entry
+                 [borrowed-view? (borrow-typed? actual-type)]
+                 [source-alphas (capability-source actual-type)]
+                 [declared-lifetime (borrow-region actual-type)]))
   (define-values (_actual-root actual-leaves)
     (formal-capability-entry actual-type '(actual)))
   (define metadata (hash-ref actual-leaves actual-path #f))
   (define lifetime
     (and metadata (capability-entry-declared-lifetime metadata)))
   (unless lifetime (fail 'unresolved-borrow-owner expression))
-  (define field-entry (capability-entry-at-path root-entry actual-path))
+  (define field-entry (capability-entry-at-path root-entry* actual-path))
   (when (and (pair? actual-path)
-             (hash? (capability-entry-fields root-entry))
+             (hash? (capability-entry-fields root-entry*))
              (not field-entry))
     (fail 'unresolved-borrow-owner expression))
   ;; 表が無い実引数は全体の capability を使うが、α は選んだ leaf の型だけから得る。
-  (define selected (or field-entry root-entry))
+  (define selected (or field-entry root-entry*))
   (define sources
     (if field-entry
         (let ([existing (capability-entry-source-alphas field-entry)])
@@ -801,6 +822,8 @@
        (define schema (constructor-schema normalized))
        (cond
          [(or (not schema) (set-member? seen normalized))
+          (when (and schema (type-carries-capability? normalized))
+            (fail 'unresolved-borrow-owner node))
           (capability-entry (set) (set) #f #f (set) #f)]
          [else
           (aggregate
@@ -837,8 +860,9 @@
         (lookup-forwarding-summary (enter-child Λ index) core)))
   (if summary
       (forwarding-summary-keys summary)
-      (let ([keys (borrow-token-key Λ core)]
-            [fields (capability-field-entries Λ core)])
+      (let ([entry
+             (capability-of
+              Λ core #:fail fail #:allow-empty-keys? #t)])
         (define (entry-keys entry)
           (if (capability-entry? entry)
               (set-union
@@ -850,12 +874,15 @@
               (if (set? entry) entry (set))))
         (define all-keys
           (set-union
-           keys
-           (if (hash? fields)
-               (for/fold ([all (set)]) ([entry (in-hash-values fields)])
+           (capability-entry-keys entry)
+           (if (hash? (capability-entry-fields entry))
+               (for/fold ([all (set)])
+                         ([entry (in-hash-values
+                                  (capability-entry-fields entry))])
                  (set-union all (entry-keys entry)))
                (set))))
-        (when (set-empty? all-keys) (fail 'unresolved-borrow-owner core))
+        (when (set-empty? all-keys)
+          (fail 'unresolved-borrow-owner core))
         all-keys)))
 
 ;; §8.1。使用の要求へ載せる起点。使用の被演算子はいずれも 0 番目の子である。
@@ -3746,7 +3773,8 @@
      (record-callable-summary!
       Λ node
       (callable-summary formals (reverse (unbox collector))
-                        (forwarding-leaf-candidates parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type
+                                                     node fail)
                         (hash) formal-fields)
       fail)
      (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
@@ -3831,7 +3859,8 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame (list recur-binding) formals
-                        (forwarding-leaf-candidates parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type
+                                                     node fail)
                         collector 'tentative 1 formal-fields))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
@@ -3909,7 +3938,8 @@
     (define collector (box '()))
     (define tentative
       (make-recur-frame bindings formals
-                        (forwarding-leaf-candidates parameter-types return-type)
+                        (forwarding-leaf-candidates parameter-types return-type
+                                                     node fail)
                         collector 'tentative
                         (if (null? binder-params) 1 2)
                         formal-fields))
@@ -6145,7 +6175,11 @@
         (unless summary (set! next-psi call-psi))
         (when (formal-capability-type? return-type)
           (define result-summary
-            (or summary (and frame (recur-frame->summary frame))))
+            (or summary
+                (and frame (recur-frame->summary frame))
+                (and (not (borrow-region return-type))
+                     (signature-forwarding-summary parameter-types
+                                                   return-type core fail))))
           (define result-entry
             (cond
               [result-summary
@@ -6945,11 +6979,17 @@
 ;; 返すのは裸の 6 つ組で、末尾は RegionApp の実引数要求と callable 要約である。
 ;; 段 1 で棄却されたときは error を上げる。
 (define (typing-inference core-in places callables [environment '()]
-                          [Λ (empty-region-ctx)])
+                          [Λ (empty-region-ctx)]
+                          #:forwarding-summaries [forwarding-summaries-box #f])
+  (when forwarding-summaries-box
+    (unless (box? forwarding-summaries-box)
+      (raise-argument-error 'typing-inference "box?" forwarding-summaries-box))
+    (set-box! forwarding-summaries-box (hash)))
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
   (define tbl (box (hash)))
+  (define forwarding-table (make-hash))
   (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
   (define result
@@ -6963,7 +7003,7 @@
                    [branch-binder-alphas (make-hash)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
-                   [forwarding-summaries (make-hash)]
+                   [forwarding-summaries forwarding-table]
                    [template-collectors '()]
                    [recur-overlay '()]
                    [scrutinee-child-alphas (mutable-set)]
@@ -6983,7 +7023,10 @@
                  (collected-region-args)
                  (collected-callable-summaries)))))))
   (match result
-    [(list 'ok value) value]
+    [(list 'ok value)
+     (when forwarding-summaries-box
+       (set-box! forwarding-summaries-box (hash-copy forwarding-table)))
+     value]
     [(list 'fail key _node details)
      (error 'typing-inference "段 1 が棄却した: ~a ~a" key details)]))
 
