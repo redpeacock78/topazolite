@@ -224,6 +224,20 @@
     #:rule 'R-EliminateMutRef)
    '((unverified))))
 
+(test-case "規則名なしの未注釈分解は親子の寿命が異なる借用を承認しない"
+  (check-equal?
+   (borrow-form-candidates
+    '(Eliminate (BorrowMutRef 0 () 7)
+       ((Pair (left right) -> (Read left))))
+    '(Read (BorrowMutRef 0 (0) 11)))
+   '((unverified)))
+  (check-equal?
+   (borrow-form-candidates
+    '(UnionEliminate (BorrowMutRef 0 () 7)
+       ((Int payload -> (Read payload))))
+    '(Read (BorrowMutRef 0 ((Payload)) 11)))
+   '((unverified))))
+
 (test-case "R-HandleReturn の照合は alpha-equivalent な binder を同一視する"
   (define op '(Return answer Int))
   (define pre

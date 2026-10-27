@@ -139,7 +139,8 @@
   (or (substitution-produced-borrow-values redex contractum rule-name)
       (and (not rule-name) (collect-borrow-values contractum))))
 
-(define (data-elimination-approved tag place path rho children)
+(define (data-elimination-approved tag place path rho children
+                                   #:same-rho? [same-rho? #f])
   (define expected
     (for/list ([child (in-list (or children '()))])
       (match child
@@ -147,21 +148,24 @@
          #:when (and (equal? child-place place)
                      (= (length child-path) (add1 (length path)))
                      (equal? (take child-path (length path)) path)
-                     (exact-nonnegative-integer? (last child-path)))
+                     (exact-nonnegative-integer? (last child-path))
+                     (or (not same-rho?) (equal? child-rho rho)))
          (list 'derived
                (if (eq? tag 'BorrowMutRef) 'mut 'shared)
                place child-path child-rho place path rho)]
         [_ (list 'unverified)])))
   (if children expected (list (list 'unverified))))
 
-(define (union-elimination-approved tag place path rho children)
+(define (union-elimination-approved tag place path rho children
+                                    #:same-rho? [same-rho? #f])
   (define expected-path (append path '((Payload))))
   (define expected
     (for/list ([child (in-list (or children '()))])
       (match child
         [(list (== tag) child-place child-path child-rho)
          #:when (and (equal? child-place place)
-                     (equal? child-path expected-path))
+                     (equal? child-path expected-path)
+                     (or (not same-rho?) (equal? child-rho rho)))
          (list 'derived
                (if (eq? tag 'BorrowMutRef) 'mut 'shared)
                place child-path child-rho place path rho)]
@@ -303,7 +307,8 @@
     [(list `(Eliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (data-elimination-approved
-      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name)
+      #:same-rho? #t)]
     [(list `(EliminateAt (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (data-elimination-approved
@@ -311,7 +316,8 @@
     [(list `(UnionEliminate (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (union-elimination-approved
-      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
+      tag p fp ρ (borrowed-eliminate-children redex contractum rule-name)
+      #:same-rho? #t)]
     [(list `(UnionEliminateAt (,tag ,p ,fp ,ρ) ,_ ...) contractum)
      #:when (memq tag '(BorrowRef BorrowMutRef))
      (union-elimination-approved
