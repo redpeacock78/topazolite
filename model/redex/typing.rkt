@@ -108,6 +108,7 @@
          collected-region-args
          check-region-args
          (struct-out callable-summary)
+         formal-leaf-info
          lookup-binding
          make-recur-frame
          recur-check-roots
@@ -225,6 +226,53 @@
 (define (formal-designator Λ node index)
   (list 'formal (region-ctx-point Λ) (peel-node node) index))
 
+(define (formal-parameter-context Λ node parameters parameter-types)
+  (define entries
+    (for/list ([type (in-list parameter-types)] [index (in-naturals)])
+      (define root (formal-designator Λ node index))
+      (define-values (capability leaves) (formal-capability-entry type root))
+      (and (not (set-empty? (capability-entry-keys capability)))
+           (list root capability leaves))))
+  (define formals
+    (map (lambda (entry) (and entry (first entry))) entries))
+  (define formal-fields
+    (map (lambda (entry) (and entry (third entry))) entries))
+  (define body-context
+    (for/fold ([Λ_body (enter-child Λ 0)])
+              ([name (in-list parameters)] [entry (in-list entries)]
+               #:when entry)
+      (define capability (second entry))
+      (region-ctx-add-token Λ_body name
+                            (capability-entry-keys capability)
+                            #f #f
+                            (capability-entry-fields capability)
+                            (capability-entry-variants capability)
+                            (capability-entry-borrowed-view? capability))))
+  (values formals formal-fields body-context))
+
+(define (formal-capability-type? type)
+  (define-values (entry _leaves)
+    (formal-capability-entry type '(formal-capability-probe)))
+  (not (set-empty? (capability-entry-keys entry))))
+
+(define (formal-leaf-info summary index path actual-entry)
+  (unless (callable-summary? summary)
+    (raise-argument-error 'formal-leaf-info "callable-summary?" summary))
+  (unless (and (exact-nonnegative-integer? index)
+               (< index (length (callable-summary-formal-fields summary))))
+    (raise-arguments-error 'formal-leaf-info "formal index is out of range"
+                           "index" index))
+  (unless (capability-entry? actual-entry)
+    (raise-argument-error 'formal-leaf-info "capability-entry?" actual-entry))
+  (define leaves (list-ref (callable-summary-formal-fields summary) index))
+  (define formal-entry (and (hash? leaves) (hash-ref leaves path #f)))
+  (unless (and (capability-entry? formal-entry)
+               (capability-entry-declared-lifetime formal-entry))
+    (raise-arguments-error 'formal-leaf-info "formal leaf path is missing or ambiguous"
+                           "index" index "path" path))
+  (values (capability-entry-declared-lifetime formal-entry)
+          (capability-entry-source-alphas actual-entry)))
+
 (define (formal-key? w)
   (match w
     [(list 'formal _point _node (? exact-nonnegative-integer?)) #t]
@@ -243,18 +291,22 @@
 ;; §4.2。再帰専用の重ね。template-collectors と同じ形の parameter である。
 ;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、転送候補の位置、
 ;; 雛形を集める箱、仮と確定のどちらかを示す印を持つ。
-(struct recur-frame (bindings formals result-index collector state)
+(struct recur-frame (bindings formals formal-fields result-index collector state)
   #:transparent)
 (define recur-overlay (make-parameter '()))
 
 ;; §4.6。束縛の並びの長さは形ごとに決まる。形 i の Recur と RecurVal は 1、
 ;; 形 ii の Recur は 2 である。外れたら実装の誤りなので、黙って受理しない。
-(define (make-recur-frame bindings formals result-index collector state
-                          expected)
+(define (make-recur-frame bindings formals result-index collector state expected
+                          [formal-fields (make-list (length formals) #f)])
   (unless (= (length bindings) expected)
     (error 'make-recur-frame
            "束縛の並びの長さが ~a、期待は ~a" (length bindings) expected))
-  (recur-frame bindings formals result-index collector state))
+  (unless (= (length formals) (length formal-fields))
+    (error 'make-recur-frame
+           "formal の並びの長さが ~a、欄表の並びは ~a"
+           (length formals) (length formal-fields)))
+  (recur-frame bindings formals formal-fields result-index collector state))
 
 ;; §4.2。環境から引いた対が、重ねが保つ束縛の並びのいずれかと eq? で
 ;; 一致する枠を返す。名前で引くと、本体の中の Let が影にした同名の束縛を
@@ -291,7 +343,8 @@
   (callable-summary (recur-frame-formals frame)
                     (reverse (unbox (recur-frame-collector frame)))
                     (recur-frame-result-index frame)
-                    (hash)))
+                    (hash)
+                    (recur-frame-formal-fields frame)))
 
 (define (owning-frame w)
   (for/first ([f (in-list (template-collectors))]
@@ -487,7 +540,7 @@
 ;; designator の並びであり、借用でない位置は #f である。deferred は本体で
 ;; 集めた雛形、result-index は結果の借用を転送する候補位置の並び、
 ;; region-subst は RegionApp が解いた rp から ρ への写像である。
-(struct callable-summary (formals deferred result-index region-subst)
+(struct callable-summary (formals deferred result-index region-subst formal-fields)
   #:transparent)
 
 ;; 要約を出現ごとに溜める表。既定の #f は「収集の外」であり、書き込みを
@@ -3427,17 +3480,11 @@
        (function-body-environment environment parameters parameter-types))
      ;; §5.4。借用の仮引数の位置ごとに文脈局所の formal 鍵を採る。
      ;; 借用でない位置は #f を置き、位置の対応を崩さない。
-     (define formals
-       (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
-         (and (borrow-typed? τ) (formal-designator Λ node i))))
+     (define-values (formals formal-fields body-context)
+       (formal-parameter-context Λ node parameters parameter-types))
      ;; formal 鍵は token へ登録する。本体の Reborrow と使用はこの登録を
      ;; 通じて親を引く。普通の借用の要求へは入れない。仮引数は呼出し側の
      ;; 借用の別名であり、定義位置で新しい借用を立てるわけではない。
-     (define body-context
-       (for/fold ([Λ_body (enter-child Λ 0)])
-                 ([x (in-list parameters)] [w (in-list formals)] #:when w)
-         (region-ctx-add-token Λ_body x (set (cons w '()))
-                               #f #f #f (set) #t)))
      (define closure-psi
        (flow-pin-captures Ψ body body-environment parameters))
      (define collector (box '()))
@@ -3479,7 +3526,7 @@
       Λ node
       (callable-summary formals (reverse (unbox collector))
                         (forwarding-indices parameter-types return-type)
-                        (hash))
+                        (hash) formal-fields)
       fail)
      (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
@@ -3556,22 +3603,15 @@
   (define closure-psi
     (flow-pin-captures Ψ body body-environment (cons function parameters)))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
-  (define formals
-    (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
-      (and (borrow-typed? τ) (formal-designator Λ node i))))
+  (define-values (formals formal-fields body-context)
+    (formal-parameter-context Λ node parameters parameter-types))
   (define recur-binding (lookup-binding body-function-environment function))
-  ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
-  (define body-context
-    (for/fold ([Λ_b (enter-child Λ 0)])
-              ([x (in-list parameters)] [w (in-list formals)] #:when w)
-      (region-ctx-add-token Λ_b x (set (cons w '()))
-                            #f #f #f (set) #t)))
   (define (fixpoint Ψ_in)
     (define collector (box '()))
     (define tentative
       (make-recur-frame (list recur-binding) formals
                         (forwarding-indices parameter-types return-type)
-                        collector 'tentative 1))
+                        collector 'tentative 1 formal-fields))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
@@ -3636,21 +3676,13 @@
   (define closure-psi
     (flow-pin-captures Ψ body body-environment (cons function parameters)))
   ;; §4.2。借用の仮引数の位置ごとの鍵。
-  (define formals
-    (for/list ([τ (in-list parameter-types)] [i (in-naturals)])
-      (and (borrow-typed? τ) (formal-designator Λ node i))))
+  (define-values (formals formal-fields body-context)
+    (formal-parameter-context Λ node parameters parameter-types))
   (define bindings
     (if (null? binder-params)
         (list (lookup-binding function-environment function))
         (list (lookup-binding body-function-environment function)
               (lookup-binding function-environment function))))
-  ;; §3.1。仮引数は owners へ入れず、鍵を根とする capability だけを置く。
-  ;; infer-lam の body-context と同じ形にそろえる。
-  (define body-context
-    (for/fold ([Λ_b (enter-child Λ 0)])
-              ([x (in-list parameters)] [w (in-list formals)] #:when w)
-      (region-ctx-add-token Λ_b x (set (cons w '()))
-                            #f #f #f (set) #t)))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in)
     (define collector (box '()))
@@ -3658,7 +3690,8 @@
       (make-recur-frame bindings formals
                         (forwarding-indices parameter-types return-type)
                         collector 'tentative
-                        (if (null? binder-params) 1 2)))
+                        (if (null? binder-params) 1 2)
+                        formal-fields))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
@@ -5844,7 +5877,7 @@
                            #:adopt? #f))
         (define actuals (third argument-result))
         (define borrow-parameters?
-          (ormap borrow-typed? parameter-types))
+          (ormap formal-capability-type? parameter-types))
         ;; 既存の concrete NFn は本体の出現要約を持たないため、従来の
         ;; unbound 診断を保つ。ForallRegion の要約欠落だけを fail-closed にする。
         (when (and (not summary) (not frame) borrow-parameters?)
@@ -5855,7 +5888,7 @@
           (for/list ([a (in-list arguments)]
                      [τ (in-list parameter-types)]
                      [i (in-naturals 1)])
-            (if (borrow-typed? τ)
+            (if (formal-capability-type? τ)
                 (argument-capabilities Λ a i fail)
                 (set))))
         ;; §4.2。仮の状態の再帰呼出しは、雛形の実体化ではなく根の制約で受ける。

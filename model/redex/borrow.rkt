@@ -7,6 +7,7 @@
          "span-core.rkt"
          "erase.rkt"
          "data-env.rkt"
+         "schema.rkt"
          "type-equiv.rkt")
 
 (provide (struct-out region-ctx)
@@ -18,6 +19,7 @@
          region-ctx-source region-ctx-summary
          (struct-out borrow-capability)
          (struct-out capability-entry)
+         formal-capability-entry
          (struct-out flow-entry)
          (struct-out flow-state)
          (struct-out psi)
@@ -66,7 +68,9 @@
 (struct borrow-capability (keys source summary fields variants borrowed-view?) #:transparent)
 
 ;; variant に依存する印は、通常の path と混同しないよう別欄に保持する。
-(struct capability-entry (keys variants fields borrowed-view?) #:transparent)
+(struct capability-entry
+  (keys variants fields borrowed-view? source-alphas declared-lifetime)
+  #:transparent)
 
 (define (empty-region-ctx)
   (region-ctx #f '() (hash) (hash)))
@@ -702,7 +706,7 @@
   (for/set ([key (in-set keys)]) (capability-key key)))
 
 (define (only ws [variants (set)] [borrowed-view? #f])
-  (capability-entry ws variants #f borrowed-view?))
+  (capability-entry ws variants #f borrowed-view? (set) #f))
 
 (define (entry-ws entry)
   (if (capability-entry? entry) (capability-entry-keys entry) (car entry)))
@@ -730,8 +734,10 @@
 (define (entry-with-keys entry keys)
   (struct-copy capability-entry entry [keys keys]))
 
-(define (entry-with-parts keys variants fields [borrowed-view? #f])
-  (capability-entry keys variants fields borrowed-view?))
+(define (entry-with-parts keys variants fields [borrowed-view? #f]
+                          [source-alphas (set)] [declared-lifetime #f])
+  (capability-entry keys variants fields borrowed-view?
+                    source-alphas declared-lifetime))
 
 (define (entry-with-view entry borrowed-view?)
   (struct-copy capability-entry entry [borrowed-view? borrowed-view?]))
@@ -766,7 +772,111 @@
           (set-union (entry-variants result) (entry-variants entry))
           (table-join (entry-table result) (entry-table entry))
           (or (entry-borrowed-view? result)
-              (entry-borrowed-view? entry))))))
+              (entry-borrowed-view? entry))
+          (set-union (capability-entry-source-alphas result)
+                     (capability-entry-source-alphas entry))
+          (and (equal? (capability-entry-declared-lifetime result)
+                       (capability-entry-declared-lifetime entry))
+               (capability-entry-declared-lifetime result))))))
+
+;; 仮引数の型から、formal root の capability 表と leaf ごとの metadata を作る。
+;; 表は実行時の分岐 lookup 用、leaf-map は canonical な relative path 用である。
+(define (formal-capability-entry type root)
+  (define leaf-map (make-hash))
+  (define (remember-leaf path entry)
+    (define previous (hash-ref leaf-map path #f))
+    (hash-set! leaf-map path
+               (cond
+                 [(not previous) entry]
+                 [(equal? (capability-entry-declared-lifetime previous)
+                          (capability-entry-declared-lifetime entry))
+                  (capability-entry-join (list previous entry))]
+                 [else #f])))
+  (define (add-root entry path lifetime [borrowed-view? #f])
+    (define added
+      (entry-with-parts
+       (set-add (entry-ws entry) (cons root path))
+       (entry-variants entry)
+       (entry-table entry)
+       (or borrowed-view? (entry-borrowed-view? entry))
+       (capability-entry-source-alphas entry)
+       lifetime))
+    (remember-leaf path added)
+    added)
+  (define (assemble entries fields)
+    (entry-with-parts
+     (for/fold ([keys (set)]) ([entry (in-list entries)])
+       (set-union keys (entry-ws entry)))
+     (for/fold ([variants (set)]) ([entry (in-list entries)])
+       (set-union variants (entry-variants entry)))
+     fields
+     (ormap entry-borrowed-view? entries)
+     (for/fold ([sources (set)]) ([entry (in-list entries)])
+       (set-union sources (capability-entry-source-alphas entry)))))
+  (define (walk type path projected? projected-lifetime seen)
+    (define normalized (normalize-type (peel-ty type)))
+    (match normalized
+      [`(Borrowed ,payload ,lifetime)
+       (add-root (only (set)) path lifetime #t)]
+      [`(BorrowedMut ,payload ,lifetime)
+       (add-root (only (set)) path lifetime #t)]
+      [`(Record ,row)
+       (define fields
+         (for/list ([field (in-list row)])
+           (define label (first field))
+           (define child-path (append path (list label)))
+           (cons (cons 'record-field label)
+                 (walk (second field) child-path projected?
+                       projected-lifetime seen))))
+       (assemble (map cdr fields)
+                 (for/hash ([field (in-list fields)])
+                   (values (car field) (cdr field))))]
+      [`(Union ,_ ,_)
+       (define members (union-members normalized))
+       (define fields
+         (for/list ([member (in-list members)])
+           (define child-path (append path '(Payload)))
+           (cons (normalize-type member)
+                 (walk member child-path projected? projected-lifetime seen))))
+       (assemble (map cdr fields)
+                 (for/hash ([field (in-list fields)])
+                   (values (car field) (cdr field))))]
+      [`(Owned ,inner) (walk inner path projected? projected-lifetime seen)]
+      [`(Untrusted ,inner) (walk inner path projected? projected-lifetime seen)]
+      [`(Refined ,inner ,_) (walk inner path projected? projected-lifetime seen)]
+      [_
+       (define schema (constructor-schema normalized))
+       (cond
+         [(not schema)
+          (if projected?
+              (add-root (only (set)) path projected-lifetime)
+              (only (set)))]
+         [(set-member? seen normalized)
+          (if (or projected? (unbound-borrowed-type? normalized (set)))
+              (add-root (only (set)) path projected-lifetime)
+              (only (set)))]
+         [else
+          (define fields
+            (append-map
+             (lambda (constructor)
+               (for/list ([field-type (in-list (second constructor))]
+                          [index (in-naturals)])
+                 (define child-path (append path (list index)))
+                 (cons (cons (first constructor) index)
+                       (walk field-type child-path projected?
+                             projected-lifetime (set-add seen normalized)))))
+             schema))
+          (define result
+            (assemble (map cdr fields)
+                      (for/hash ([field (in-list fields)])
+                        (values (car field) (cdr field)))))
+          (if projected?
+              (add-root result path projected-lifetime)
+              result)])]))
+  (define entry (walk type '() #f #f (set)))
+  (values entry
+          (for/hash ([(path leaf) (in-hash leaf-map)])
+            (values path leaf))))
 
 (define (capability-effects-join flows)
   (for/fold ([effects (hash)]) ([flow (in-list flows)])
