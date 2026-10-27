@@ -39,7 +39,7 @@
   (define annotated (annotate-regions core (build-region-ir core)))
   (match annotated
     [`(Scope ,_ (Let (borrowed const ,_)
-                      (UnionEliminate ,_ ,_)
+                      (UnionEliminateAt ,_ ,_)
                       (ReborrowAt ,_ borrowed)))
      (void)]
     [_ (fail (format "unexpected annotated UnionEliminate: ~s" annotated))]))

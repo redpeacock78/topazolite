@@ -33,10 +33,18 @@
     (R-Eliminate    . R-PR-Match)
     (R-EliminateRef . #f)
     (R-EliminateMutRef . #f)
+    (R-EliminateAt . #f)
+    (R-EliminateAtRef . #f)
+    (R-EliminateAtMutRef . #f)
+    (R-EliminateAtTransit . #f)
     (R-UnionInject . #f)
     (R-UnionEliminate . #f)
     (R-UnionEliminateRef . #f)
     (R-UnionEliminateMutRef . #f)
+    (R-UnionEliminateAt . #f)
+    (R-UnionEliminateAtRef . #f)
+    (R-UnionEliminateAtMutRef . #f)
+    (R-UnionEliminateAtTransit . #f)
     (R-RecRewrite-Open . R-PR-RecRewrite)
     (R-RecRewrite-Close . R-PR-RecRewrite)
     (R-Proj         . R-PR-Proj)
@@ -109,7 +117,7 @@
  (check-equal? (set-count g1-rule-names) 28))
 
 (test-case
- "-->g2/rules adds exactly forty-four names to -->g1/rules"
+ "-->g2/rules adds exactly fifty-two names to -->g1/rules"
  ;; R-LetIdentity は G1 と G2 の双方に属するため、差分には含めない。
  (check-equal? (set-subtract g2-rule-names g1-rule-names)
                (set 'R-Proj 'R-ProjOpt 'R-ProjPlace 'R-ProjOptPlace
@@ -122,6 +130,10 @@
                     'R-UnionInject 'R-UnionEliminate
                     'R-RecRewrite-Open 'R-RecRewrite-Close
                     'R-UnionEliminateRef 'R-UnionEliminateMutRef
+                    'R-EliminateAt 'R-EliminateAtRef 'R-EliminateAtMutRef
+                    'R-EliminateAtTransit
+                    'R-UnionEliminateAt 'R-UnionEliminateAtRef
+                    'R-UnionEliminateAtMutRef 'R-UnionEliminateAtTransit
                     'R-Read 'R-ReadMut 'R-Assign 'R-ReadMutSlot 'R-Reassign
                     'R-RegionApp 'R-RegionAppRecur
                     'R-EliminateRef 'R-EliminateMutRef 'R-AddressOf 'R-PtrOffset
@@ -131,12 +143,12 @@
                     'R-UnionEliminateTransit
                     'R-CurryTransit 'R-OwnLeafTransit))
  (check-equal? (set-subtract g1-rule-names g2-rule-names) (set))
- (check-equal? (set-count g2-rule-names) 72))
+ (check-equal? (set-count g2-rule-names) 80))
 
 (test-case
  "the correspondence table covers exactly the source rule names"
  (check-equal? (list->set (map car rule-correspondence)) g2-rule-names)
- (check-equal? (length rule-correspondence) 72))
+ (check-equal? (length rule-correspondence) 80))
 
 (test-case
  "目標側は支援規則を含む 26 規則を持つ"

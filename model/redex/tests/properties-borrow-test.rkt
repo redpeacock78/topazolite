@@ -141,7 +141,9 @@
 (define (contains-ready-borrowed-union-eliminate? tree)
   (match tree
     [(or `(UnionEliminate (BorrowRef ,_ ,_ ,_) ,_)
-         `(UnionEliminate (BorrowMutRef ,_ ,_ ,_) ,_)) #t]
+         `(UnionEliminate (BorrowMutRef ,_ ,_ ,_) ,_)
+         `(UnionEliminateAt (BorrowRef ,_ ,_ ,_) ,_)
+         `(UnionEliminateAt (BorrowMutRef ,_ ,_ ,_) ,_)) #t]
     [(? list?) (ormap contains-ready-borrowed-union-eliminate? tree)]
     [_ #f]))
 

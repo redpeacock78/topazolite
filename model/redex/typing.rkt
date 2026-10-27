@@ -2513,9 +2513,9 @@
                                node scrutinee fail [branch-regions #f])
   (define peeled-branches
     (for/list ([branch (in-list branches)])
-      (match branch
-        [(list _ (list '#:ty type _) (list '#:bind binder _) '-> body)
-         (list type binder '-> body)]
+      (match (peel-branch branch)
+        [`(,type ,binder -> ,body)
+         (list (peel-ty type) (peel-bind binder) '-> body)]
         [_ branch])))
   (when (and branch-regions
              (not (= (length branch-regions) (length peeled-branches))))
@@ -3568,7 +3568,8 @@
   (define (adopt-region declared-region actual-region)
     (if (and (deriving-config?)
              (not (contains-omitted-region? declared-region))
-             (not (lifetime-var? declared-region)))
+             (not (lifetime-var? declared-region))
+             (not (rparam-term? declared-region)))
         declared-region
         actual-region))
   (match* (declared actual)

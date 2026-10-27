@@ -231,7 +231,7 @@
 (define (ubr-span branch) (branch-span branch))
 
 (define (peel-ubr branch)
-  (match branch
-    [(list _ (list '#:ty type _) (list '#:bind x _) '-> body)
-     (list type x '-> body)]
+  (match (peel-branch branch)
+    [`(,type ,binder -> ,body)
+     (list (peel-ty type) (peel-bind binder) '-> body)]
     [_ (error 'peel-ubr "span 付き ubr の形が不正である: ~s" branch)]))
