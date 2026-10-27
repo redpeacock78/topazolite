@@ -190,6 +190,42 @@
     (check-equal? (diagnostic-id result) expected-id
                   (format "~a: 診断 id" label))))
 
+(define (requests-with-path typed path)
+  (filter (lambda (request)
+            (and (borrow-request? request)
+                 (equal? (borrow-request-fp request) path)))
+          (borrow-sidecar-requests (region-typed-sidecar typed))))
+
+(define (check-binder-alpha core label)
+  (define-values (ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
+  (when (region-typed? typed)
+    (check-equal? (region-typed-type typed) 'Unit)
+    (check-runtime typed ir '() 'Unit label)
+    (define binder-requests (requests-with-path typed '(ro 0)))
+    (define child-requests (requests-with-path typed '(ro 0 h)))
+    (check-equal? (length binder-requests) 1
+                  (format "~a: 可変 binder ごとに一つの要求" label))
+    (check-equal? (length child-requests) 1
+                  (format "~a: binder 内 ProjBorrow が別の要求を持つ" label))
+    (when (and (= (length binder-requests) 1)
+               (= (length child-requests) 1))
+      (define binder-alpha (borrow-request-alpha (first binder-requests)))
+      (define child-alpha (borrow-request-alpha (first child-requests)))
+      (check-not-equal? binder-alpha child-alpha
+                        (format "~a: binder と本体先頭の借用は別 alpha" label))
+      (define decomposition
+        (find-core-point core
+                         (lambda (node)
+                           (match node
+                             [`(Eliminate (ProjBorrow p ro) ,_) #t]
+                             [_ #f]))))
+      (check-equal?
+       (hash-ref (region-typed-σ typed)
+                 (lifetime-var-index binder-alpha))
+       (branch-region-of ir decomposition 0)
+       (format "~a: binder alpha の下限は枝 region" label)))))
+
 (define (find-core-point core predicate)
   (let walk ([node (erase-core core)] [point '()])
     (if (predicate node)
@@ -349,7 +385,7 @@
   (check-accepted (with-eparent/no-scope (nested-consumed #t)) 'Unit '()
                   "nested-consumed/owner-parent/branch-scope"))
 
-(test-case "枝内 Scope の結果が運ぶ scrutinee 子は分解 region まで生きる"
+(test-case "枝内 Scope の結果が運ぶ scrutinee 子は Scope の親 region まで生きる"
   (define scope-result
     `(Let (d let (BorrowedMut Int (RParam %omitted)))
        (Scope () ,(elim-o 'c '(ProjBorrow p g)))
@@ -364,11 +400,11 @@
     (check-runtime typed ir '() 'Unit "scope-result")
     (define child-point
       (find-core-point core (lambda (node) (equal? node '(ProjBorrow p o)))))
-    (define outer-point
+    (define scope-point
       (find-core-point
        core
        (lambda (node)
-         (match node [`(Eliminate (ProjBorrow p ro) ,_) #t] [_ #f]))))
+         (match node [`(Scope () (Eliminate (ProjBorrow p o) ,_)) #t] [_ #f]))))
     (define child-request
       (for/first ([request
                    (in-list
@@ -380,7 +416,7 @@
       (check-equal?
        (hash-ref (region-typed-σ typed)
                  (lifetime-var-index (borrow-request-alpha child-request)))
-       (region-at/eliminate ir outer-point)))))
+       (region-parent ir (region-at/branch ir scope-point))))))
 
 (test-case "内側結果を外側の結果へも逃がすと E-BOR-025"
   (check-rejected
@@ -390,8 +426,8 @@
        ,(then write-o '(Read escaped))))
    "E-BOR-025" '() "escape-nested"))
 
-(test-case "兄弟の枝で同じ欄を直接借りる HEAD の E-BOR-003 を維持"
-  (check-rejected
+(test-case "兄弟の枝で同じ欄を直接借りても借用期間が重ならない"
+  (check-accepted
    (with-eparent
     `(Eliminate (Construct Bool true)
        ((true () ->
@@ -400,7 +436,7 @@
         (false () ->
           (Let (r2 let (BorrowedMut Int (RParam %omitted))) (ProjBorrow p g)
             (Assign r2 2))))))
-   "E-BOR-003" '() "sibling-borrow"))
+   'Unit '() "sibling-borrow"))
 
 (test-case "兄弟の枝で scrutinee binder から Reborrow する形を受理"
   (check-accepted
@@ -414,7 +450,7 @@
             (Let (value let String) (Read r) unit))))))
    'Unit '() "sibling-binder-reborrow"))
 
-(test-case "枝の別欄借用は通常の Scope 下限を保ち、親欄へ書ける"
+(test-case "枝内の別欄借用は枝 region を下限にし、親欄へ書ける"
   (define core
     (with-eparent
      (then
@@ -440,8 +476,8 @@
       (check-equal?
        (hash-ref (region-typed-σ typed)
                  (lifetime-var-index (borrow-request-alpha request)))
-       (region-at ir point)
-       "非子の借用の下限は分解を含まない通常の region-at"))))
+       (region-at/branch ir point)
+       "枝内の独立した借用の下限は枝 region"))))
 
 (test-case "probe a: 枝内 binder へ書いた後は親全体を再代入できる"
   (define box-type '(Data ProbeBox ()))
@@ -798,7 +834,7 @@
    `(RegionLam (a) ,(with-eparent (elim-o reader-call 0)))
    "E-BOR-003" callables "escape-apply-reborrow-argument"))
 
-(test-case "Apply の無い binder Reborrow を読み出しても E-BOR-003"
+(test-case "Apply の無い局所 owner binder Reborrow は E-BOR-003"
   (check-rejected
    `(RegionLam (a)
       ,(with-eparent
@@ -807,6 +843,47 @@
             (Let (ignored let Int) (Read d) unit))
          'unit)))
    "E-BOR-003" '() "escape-apply-reborrow-without-apply"))
+
+(test-case "formal parent の可変 binder は新しい alpha を作らない"
+  (define core
+    (with-eparent
+     (param-parent-call (elim-o '(Read c) 0))))
+  (define-values (ir _filled typed) (type-core core param-parent-callables))
+  (check-true (region-typed? typed) (format "formal-parent binder: 型検査 ~s" typed))
+  (when (region-typed? typed)
+    (check-equal? (region-typed-type typed) 'Int)
+    (check-equal? (hash-count (region-typed-binder-alphas typed)) 0
+                  "formal parent では binder alpha を生成しない")
+    (check-runtime typed ir param-parent-callables 'Int "formal-parent-binder")))
+
+(test-case "枝内で独立に作った借用は枝の後で同じ欄を書ける"
+  (check-accepted
+   (with-eparent
+    (then
+     (elim-o
+      `(Let (r let ,borrowed-mut-int) (ProjBorrow p g)
+         (Assign r 2))
+      'unit)
+     '(Assign (ProjBorrow p g) 3)))
+   'Unit '() "branch-born-borrow"))
+
+(test-case "infer-eliminate は可変 binder に別 alpha を一度だけ作る"
+  (define body
+    `(Let (r let ,borrowed-mut-int)
+          (ProjBorrow c h)
+       (Assign r 3)))
+  (check-binder-alpha (with-eparent (elim-ro body 'unit))
+   "binder-alpha/infer"))
+
+(test-case "check-eliminate は可変 binder に別 alpha を一度だけ作る"
+  (define body
+    `(Let (r let ,borrowed-mut-int)
+          (ProjBorrow c h)
+       (Assign r 3)))
+  (check-binder-alpha (with-eparent `(Let (checked Unit)
+                                           ,(elim-ro body 'unit)
+                                         unit))
+   "binder-alpha/check"))
 
 (test-case "可変の分解 binder を Record に包んだ実引数は E-TYP-023"
   (define record-reader-type

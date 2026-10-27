@@ -146,6 +146,9 @@
 ;; 分解の scrutinee から派生した借用 α を同じ型付け走査内で追う。
 (define scrutinee-child-alphas (make-parameter #f))
 
+;; 分解 binder の α は check/infer の再走査で共有する。
+(define branch-binder-alphas (make-parameter #f))
+
 ;; lexical binder ごとの本体 point。出口の型がどの束縛へ届くかを判定する。
 (define binder-points (make-parameter (hash)))
 
@@ -714,7 +717,7 @@
           (use-request (car cap) (cdr cap)
                        (use-request-operation item)
                        source
-                       (region-at/eliminate (region-ctx-ir Λ) point)
+                       (region-at/branch (region-ctx-ir Λ) point)
                        (deferred-point (use-request-point item))
                        node
                        (use-request-kind item)
@@ -785,7 +788,7 @@
   (when ir
     (define r
       (use-request w fp operation source
-                   (region-at/eliminate ir (region-ctx-point Λ))
+                   (region-at/branch ir (region-ctx-point Λ))
                    (region-ctx-point Λ) node kind otherwise))
     (if fail (route-request! r node fail) (emit-request! r))))
 
@@ -826,6 +829,20 @@
   (when tracked
     (for ([member (in-set (alpha-set alpha))])
       (set-add! tracked member))))
+
+(define (branch-region-enclosing? ir point)
+  (and ir
+       (let loop ([ρ (region-at/branch ir point)])
+         (and ρ
+              (or (branch-region? ir ρ)
+                  (loop (region-parent ir ρ)))))))
+
+(define (branch-binder-alpha! decomposition branch-index binder-index)
+  (define table (branch-binder-alphas))
+  (unless (hash? table)
+    (error 'branch-binder-alpha! "型検査の binder alpha 表が無い"))
+  (hash-ref! table (list decomposition branch-index binder-index)
+             fresh-local-lifetime!))
 
 (define (decomposition-outer-region ir decomposition)
   (region-parent ir (region-at/eliminate ir decomposition)))
@@ -1031,7 +1048,7 @@
         (define alpha `(RVar ,k))
         (define lower-bound
           (if (tracked-child-alpha? alpha)
-              (or scrutinee-child-ρ (region-at/eliminate ir point))
+              (or scrutinee-child-ρ (region-at/branch ir point))
               ρ))
         (emit-constraint!
          (region-constraint 'contains alpha lower-bound point #f))]
@@ -1039,8 +1056,11 @@
         [_ (void)]))))
 
 (define (collect-use-regions! type ir point)
-  (collect-use-regions-at! type ir (and ir (region-at ir point)) point
-                           (and ir (region-at/eliminate ir point))))
+  (collect-use-regions-at! type ir (and ir (region-at/branch ir point)) point
+                           (and ir
+                                (if (region-decomposition-scrutinee? ir point)
+                                    (region-at/eliminate ir point)
+                                    (region-at/branch ir point)))))
 
 ;; 寿命変数の採番（spec §3.2）。借用の項 1 つにつき 1 つ作る。
 ;; 番号は走査の順に依存するため、診断の本文へ番号を出してはならない
@@ -2165,8 +2185,97 @@
         [`(BorrowedMut ,payload ,_) `(BorrowedMut ,payload ,annotation)]
         [_ type])))
 
+(define (type-with-binder-alpha type alpha)
+  (match type
+    [`(BorrowedMut ,payload ,_) `(BorrowedMut ,payload ,alpha)]
+    [_ type]))
+
+(define (branch-binder-type+psi type region-mark capability parent-type
+                                parent-caps ir decomposition branch-index
+                                binder-index point Ψ node fail)
+  (define marked-type (type-with-branch-region type region-mark))
+  (define parent-alpha
+    (match (normalize-type parent-type)
+      [`(BorrowedMut ,_ ,alpha) alpha]
+      [_ #f]))
+  (define formal-parent?
+    (and parent-caps
+         (for/or ([cap (in-set parent-caps)])
+           (formal-key? (car cap)))))
+  (cond
+    [(or (not parent-alpha)
+         (not (match (normalize-type marked-type)
+                [`(BorrowedMut ,_ ,_) #t]
+                [_ #f]))
+         formal-parent?
+         (and region-mark (not (eq? region-mark '%parent)))
+         (not (lexical-region-ir? ir)))
+     (values marked-type Ψ)]
+    [(or (not (set? parent-caps)) (set-empty? parent-caps))
+     (fail 'unresolved-borrow-owner node)]
+    [else
+     (define alpha
+       (branch-binder-alpha! decomposition branch-index binder-index))
+     (define branch-region (branch-region-of ir decomposition branch-index))
+     (define parent-term
+       (if (or (lifetime-var? parent-alpha) (rparam-term? parent-alpha))
+           parent-alpha
+           (rho->region ir parent-alpha)))
+     (define parent-sources (capability-source parent-type))
+     (define (parent-terms cap)
+       (define matches
+         (for/list ([entry (in-set (psi-mut Ψ))]
+                    #:when (and (equal? (first entry) (car cap))
+                                (path-prefix? (second entry) (cdr cap))))
+           (third entry)))
+       (define exact (filter (lambda (term) (equal? term parent-term)) matches))
+       (define sourced
+         (if (set-empty? parent-sources)
+             '()
+             (filter (lambda (term) (set-member? parent-sources term)) matches)))
+       (cond
+         [(pair? exact) exact]
+         [(pair? sourced) sourced]
+         [(= (length matches) 1) matches]
+         [else (list parent-term)]))
+     (define child-caps
+       (capability-entry-keys capability))
+     (when (set-empty? child-caps)
+       (fail 'unresolved-borrow-owner node))
+     (define next-psi
+       (for/fold ([current Ψ]) ([child-cap (in-set child-caps)])
+         (define parents
+           (for/list ([parent-cap (in-set parent-caps)]
+                      #:when (and (equal? (car parent-cap) (car child-cap))
+                                  (path-prefix? (cdr parent-cap)
+                                                (cdr child-cap))))
+             parent-cap))
+         (when (null? parents)
+           (fail 'unresolved-borrow-owner node))
+         (define next
+           (for/fold ([next current]) ([parent-cap (in-list parents)])
+             (define w (car parent-cap))
+             (define parent-fp (cdr parent-cap))
+             (define child-fp (cdr child-cap))
+             (route-constraint!
+              (region-constraint 'contains alpha branch-region point node)
+              w node fail)
+             (for/fold ([next next])
+                       ([α-parent (in-list (parent-terms parent-cap))])
+               (route-constraint!
+                (region-constraint 'reborrow α-parent alpha point node)
+                w node fail #f parent-fp child-fp)
+               (psi-suspend next w child-fp α-parent alpha 'mut node point))))
+         (route-request!
+          (borrow-request (car child-cap) (cdr child-cap) 'mut
+                          alpha branch-region node point)
+          node fail)
+         next))
+     (track-child-alpha! alpha)
+     (values (type-with-binder-alpha marked-type alpha) next-psi)]))
+
 (define (branch-contexts branches data-type Λ environment node scrutinee fail
-                          [branch-regions #f])
+                          [branch-regions #f] [Ψ (empty-psi)])
   (define-values (data-core rewrap) (peel-eliminate-wrapper data-type))
   (define schema-core (constructor-schema data-core))
   (unless schema-core (fail 'non-data-eliminate scrutinee))
@@ -2232,6 +2341,8 @@
   ;; その場合は capability の path の末尾へ欄の位置を積む。
   (define scrutinee-ws
     (and carries? (not field-table) (borrow-token-key Λ scrutinee)))
+  (define parent-caps
+    (and borrowed-view? (borrow-token-key Λ scrutinee #:fail fail)))
   (when (and carries?
              (not field-table)
              (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
@@ -2242,10 +2353,6 @@
              [i (in-naturals 1)])
     (match-define `(,constructor (,parameters ...) -> ,body) branch)
     (define field-types (lookup schema constructor))
-    (define typed-field-types
-      (for/list ([type (in-list field-types)]
-                 [ρm (in-list (or regions (make-list (length field-types) #f)))])
-        (type-with-branch-region type ρm)))
     (define binders (map peel-bind parameters))
     (define-values (checked-body encoded? identity-transfers)
       (check-resource-branch-encoding binders field-types body node fail))
@@ -2263,6 +2370,19 @@
         [else
          (capability-branch-bindings #f constructor binders
                                      variant-view? borrowed-view? (set))]))
+    (define branch-point (region-ctx-point (enter-child Λ i)))
+    (define-values (typed-field-types branch-psi)
+      (for/fold ([types '()] [current-psi Ψ])
+                ([type (in-list field-types)]
+                 [ρm (in-list (or regions (make-list (length field-types) #f)))]
+                 [capability (in-list bindings)]
+                 [j (in-naturals)])
+        (define-values (typed next-psi)
+          (branch-binder-type+psi type ρm capability data-type parent-caps
+                                  (region-ctx-ir Λ) (region-ctx-point Λ)
+                                  (sub1 i) j
+                                  branch-point current-psi node fail))
+        (values (append types (list typed)) next-psi)))
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
                 ([x (in-list binders)] [τ (in-list typed-field-types)]
@@ -2283,7 +2403,8 @@
                       typed-field-types))
           (enter-child Λ_branch i)
           binders
-          identity-transfers)))
+          identity-transfers
+          branch-psi)))
 
 ;; flow は各式で局所の脱出を集め、子から戻るときに入口の脱出表へ足す。
 (define (flow-clear-escapes Ψ)
@@ -2510,7 +2631,8 @@
 ;; Union branch は成分型で束縛する。借用した Union だけは値を取り出さず、
 ;; 各枝の束縛子へ payload path を引き継ぐ。
 (define (union-branch-contexts branches union-type wrapper Λ environment
-                               node scrutinee fail [branch-regions #f])
+                               node scrutinee fail [branch-regions #f]
+                               [Ψ (empty-psi)])
   (define peeled-branches
     (for/list ([branch (in-list branches)])
       (match (peel-branch branch)
@@ -2558,6 +2680,8 @@
       (fail 'non-exhaustive-union-eliminate node)))
   (define borrowed? (pair? wrapper))
   (define field-table (capability-field-entries Λ scrutinee))
+  (define parent-caps
+    (and borrowed? (borrow-token-key Λ scrutinee #:fail fail)))
   (define inherited-variants
     (capability-variant-views Λ scrutinee))
   (define scrutinee-ws
@@ -2583,8 +2707,6 @@
     (define x (peel-bind binder))
     (define binding-type
       (if borrowed? `(,(first wrapper) ,member ,(second wrapper)) member))
-    (define typed-binding-type
-      (type-with-branch-region binding-type region-mark))
     (define-values (checked-body encoded? identity-transfers)
       (if borrowed?
           (values body #f '())
@@ -2598,6 +2720,16 @@
                 (capability-union-binding #f member scrutinee-ws borrowed?
                                           #f borrowed? inherited-variants)))
        borrowed? inherited-variants))
+    (define branch-point (region-ctx-point (enter-child Λ i)))
+    (define parent-type
+      (if borrowed?
+          (list (first wrapper) union-type (second wrapper))
+          union-type))
+    (define-values (typed-binding-type branch-psi)
+      (branch-binder-type+psi binding-type region-mark capability parent-type
+                              parent-caps (region-ctx-ir Λ)
+                              (region-ctx-point Λ) (sub1 i) 0
+                              branch-point Ψ node fail))
     (define Λ_branch
       (region-ctx-add-token (register-owner Λ x typed-binding-type)
                             x
@@ -2616,28 +2748,30 @@
                                 typed-binding-type))))
           (enter-child Λ_branch i)
           (list x)
-          identity-transfers)))
+          identity-transfers
+          branch-psi)))
 
 (define (union-eliminate-branches scrutinee-type branches Λ environment
-                                  node scrutinee fail [branch-regions #f])
+                                  node scrutinee fail [branch-regions #f]
+                                  [Ψ (empty-psi)])
   (match (normalize-type scrutinee-type)
     [`(Union ,_ ,_)
      (union-branch-contexts branches (normalize-type scrutinee-type) #f
-                            Λ environment node scrutinee fail branch-regions)]
+                            Λ environment node scrutinee fail branch-regions Ψ)]
     [`(Owned (Union ,_ ,_))
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type)) #f
-                            Λ environment node scrutinee fail branch-regions)]
+                            Λ environment node scrutinee fail branch-regions Ψ)]
     [`(Borrowed (Union ,_ ,_) ,ρ)
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type))
                             (list 'Borrowed ρ) Λ environment node scrutinee fail
-                            branch-regions)]
+                            branch-regions Ψ)]
     [`(BorrowedMut (Union ,_ ,_) ,ρ)
      (union-branch-contexts branches
                             (second (normalize-type scrutinee-type))
                             (list 'BorrowedMut ρ) Λ environment node scrutinee fail
-                            branch-regions)]
+                            branch-regions Ψ)]
     [_ (fail 'non-union-eliminate scrutinee)]))
 
 (define (check-union-eliminate scrutinee branches expected
@@ -2648,14 +2782,15 @@
   (define contexts
     (union-eliminate-branches
      (typing-normal-child-type node Λ 0 (first scrutinee-result))
-     branches Λ environment node scrutinee fail branch-regions))
+     branches Λ environment node scrutinee fail branch-regions
+     (third scrutinee-result)))
   (define branch-results
     (for/list ([context (in-list contexts)])
       (with-branch-context
        context
        (lambda ()
          (check-as/full (first context) expected (third context)
-                        (third scrutinee-result) (second context)
+                        (sixth context) (second context)
                         places callables fail compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
@@ -2687,13 +2822,14 @@
   (define contexts
     (union-eliminate-branches
      (typing-normal-child-type node Λ 0 (first scrutinee-result))
-     branches Λ environment node scrutinee fail branch-regions))
+     branches Λ environment node scrutinee fail branch-regions
+     (third scrutinee-result)))
   (define attempts
     (for/list ([context (in-list contexts)])
       (with-branch-context
        context
        (lambda ()
-         (infer (first context) (third context) (third scrutinee-result)
+         (infer (first context) (third context) (sixth context)
                 (second context) places callables fail)))))
   (define non-never
     (filter (lambda (result) (not (eq? (first result) 'Never))) attempts))
@@ -2708,7 +2844,7 @@
        context
        (lambda ()
          (check-as/full (first context) result-type (third context)
-                        (third scrutinee-result) (second context)
+                        (sixth context) (second context)
                         places callables fail type-compatible?)))))
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
@@ -2788,16 +2924,16 @@
     (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail
-                     branch-regions))
+                     branch-regions (third scrutinee-result)))
   (define branch-results
     (for/list ([context (in-list contexts)])
       (with-branch-context
        context
        (lambda ()
-         (check-as/full (first context)
+        (check-as/full (first context)
                         expected
                         (third context)
-                        (third scrutinee-result)
+                        (sixth context)
                         (second context)
                         places
                         callables
@@ -3161,7 +3297,7 @@
     (typing-normal-child-type node Λ 0 (first scrutinee-result)))
   (define contexts
     (branch-contexts branches data-type Λ environment node scrutinee fail
-                     branch-regions))
+                     branch-regions (third scrutinee-result)))
   (define attempts
     (for/list ([context (in-list contexts)])
       (with-branch-context
@@ -3169,7 +3305,7 @@
        (lambda ()
          (infer (first context)
                 (third context)
-                (third scrutinee-result)
+                (sixth context)
                 (second context)
                 places
                 callables
@@ -3191,7 +3327,7 @@
          (check-as (first context)
                    result-type
                    (third context)
-                   (third scrutinee-result)
+                   (sixth context)
                    (second context)
                    places
                    callables
@@ -3827,6 +3963,7 @@
                         [region-param-origins origins]
                         [region-binder-renamings '()]
                         [alpha-table (box (hash))]
+                        [branch-binder-alphas (make-hash)]
                         [resource-place-set (set)]
                         [resource-identity-transfers (set)]
         [merge-alpha-sources (make-hash)]
@@ -3924,8 +4061,11 @@
   ;; 解決を待つ理由が無いため、ここで落とす（spec §8.1）。
   (unless ρ_owner (fail 'borrow-unknown-owner-region core))
   (define point (region-ctx-point Λ))
-  (define ρ_borrow (region-at ir point))
+  (define branch-born? (branch-region-enclosing? ir point))
+  (define ρ_borrow
+    (if branch-born? (region-at/branch ir point) (region-at ir point)))
   (define α (fresh-lifetime! point))
+  (when branch-born? (track-child-alpha! α))
   ;; 借用の起点は α の下限である。使わない借用の解はこの 1 本で決まり、
   ;; G5b の ρ_borrow と一致する（spec §5.3）。
   (emit-constraint!
@@ -3978,11 +4118,12 @@
            α_parent
            (rho->region ir α_parent)))
      (define derived? (tracked-child-alpha? α_parent))
+     (define branch-born? (branch-region-enclosing? ir point))
      (define ρ_child
-       (if derived?
-           (region-at/eliminate ir point)
+       (if (or derived? branch-born?)
+           (region-at/branch ir point)
            (region-at ir point)))
-     (when derived? (track-child-alpha! α_child))
+     (when (or derived? branch-born?) (track-child-alpha! α_child))
      (define tokens (borrow-token-key Λ operand #:fail fail))
      (when (set-empty? tokens)
        (error 'infer-reborrow
@@ -4181,7 +4322,12 @@
           (for/or ([cap (in-set tokens)]) (formal-key? (car cap))))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
-     (define ρ_child (region-at ir point))
+     (define ρ_child
+       (if (branch-region-enclosing? ir point)
+           (region-at/branch ir point)
+           (region-at ir point)))
+     (when (branch-region-enclosing? ir point)
+       (track-child-alpha! α_child))
      (define parent-term
        (if (or (lifetime-var? α) (rparam-term? α))
            α
@@ -4211,11 +4357,13 @@
      (define scrutinee-child?
        (region-decomposition-scrutinee? ir point))
      (define derived? (tracked-child-alpha? α))
+     (define branch-born? (branch-region-enclosing? ir point))
      (define ρ_child
-       (if (or scrutinee-child? derived?)
-           (region-at/eliminate ir point)
-           (region-at ir point)))
-     (when (or scrutinee-child? derived?)
+       (cond
+         [scrutinee-child? (region-at/eliminate ir point)]
+         [(or derived? branch-born?) (region-at/branch ir point)]
+         [else (region-at ir point)]))
+     (when (or scrutinee-child? derived? branch-born?)
        (track-child-alpha! α_child))
      (define parent-term
        (if (or (lifetime-var? α) (rparam-term? α))
@@ -6003,7 +6151,7 @@
        (collect-use-regions-at!
         (third argument-result) ir (region-at ir handler-point)
         (region-ctx-point Λ)
-        (region-at/eliminate ir handler-point)))
+        (region-at/branch ir handler-point)))
      (when (and handler-entry (not (eq? (third argument-result) 'Never)))
        (define payload-types (fourth handler-entry))
        (set-box! payload-types
@@ -6198,9 +6346,9 @@
        (infer body (enter-child Λ 0) Ψ environment places callables fail))
      (when ir
        (collect-use-regions-at!
-        (first body-result) ir
+       (first body-result) ir
         (region-parent ir (region-at ir point)) point
-        (region-parent ir (region-at/eliminate ir point))))
+        (region-parent ir (region-at/branch ir point))))
      body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -6541,6 +6689,7 @@
                    [region-param-origins origins]
                    [region-binder-renamings '()]
                    [alpha-table tbl]
+                   [branch-binder-alphas (make-hash)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
@@ -6879,7 +7028,7 @@
        (collect-use-regions-at!
         (third body-result) ir
         (region-parent ir (region-at ir point)) point
-        (region-parent ir (region-at/eliminate ir point))))
+        (region-parent ir (region-at/branch ir point))))
      body-result]
 
     [`(Recur ,callable ,function (,parameters ...) ,body ,continuation)
@@ -7034,6 +7183,7 @@
 (define (type-of/raw* core-in places callables environment Λ
                       #:sidecar [sidecar-box #f]
                       #:ptr-sidecar [ptr-box #f]
+                      #:binder-alphas [binder-alphas-box #f]
                       #:mut-types [mut-types-box #f]
                       #:callable-contexts [callable-contexts-box #f]
                       #:normal-type [normal-type-box #f])
@@ -7053,6 +7203,7 @@
   (define collected-callable-contexts
     (and callable-contexts-box (box (hash))))
   (define resolved-mut-types (box (hash)))
+  (define collected-binder-alphas (box (hash)))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -7071,6 +7222,7 @@
                    [region-param-origins origins]
                    [region-binder-renamings '()]
                    [alpha-table tbl]
+                   [branch-binder-alphas (make-hash)]
                    [mut-binding-types-table collected-mut-types]
                    [callable-contexts-table collected-callable-contexts]
                    [resource-place-set (set)]
@@ -7173,6 +7325,8 @@
                   (values point normalized-effective))
                     (hash)))
               (set-box! resolved-mut-types effective-mut-types)
+              (set-box! collected-binder-alphas
+                        (branch-binder-alphas))
               ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
               ;; Perform は (Return boundary τ) として row へ入れるため、
               ;; 借用をこれらで返すと row が α を運ぶ。
@@ -7191,6 +7345,11 @@
   (when (and callable-contexts-box
              (match completed [`(ok ,_) #t] [_ #f]))
     (set-box! callable-contexts-box (unbox collected-callable-contexts)))
+  (when (and binder-alphas-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (unless (box? binder-alphas-box)
+      (raise-argument-error 'type-of/raw* "box?" binder-alphas-box))
+    (set-box! binder-alphas-box (unbox collected-binder-alphas)))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
@@ -7218,12 +7377,14 @@
 (define (type-of/raw*+borrows core-in places callables [environment '()]
                               [Λ (empty-region-ctx)]
                               #:mut-types [mut-types-box #f]
-                              #:callable-contexts [callable-contexts-box #f])
+                              #:callable-contexts [callable-contexts-box #f]
+                              #:binder-alphas [binder-alphas-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:sidecar sidecar-box
                        #:mut-types mut-types-box
-                       #:callable-contexts callable-contexts-box)
+                       #:callable-contexts callable-contexts-box
+                       #:binder-alphas binder-alphas-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -7320,7 +7481,8 @@
     [failure
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
-(struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts)
+(struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts
+                           binder-alphas)
   #:transparent)
 
 (define region-bearing-forms
@@ -7344,14 +7506,17 @@
   (define annotated (annotate-regions core ir))
   (define mut-types (box (hash)))
   (define callable-contexts (box (hash)))
+  (define binder-alphas (box (hash)))
   (match (type-of/raw*+borrows
           annotated places callables environment
           (region-ctx ir '() owners (hash))
           #:mut-types mut-types
-          #:callable-contexts callable-contexts)
+          #:callable-contexts callable-contexts
+          #:binder-alphas binder-alphas)
     [(list 'ok (list type row table σ renamed sidecar))
      (region-typed type row ir table σ renamed sidecar
-                   (unbox mut-types) (unbox callable-contexts))]
+                   (unbox mut-types) (unbox callable-contexts)
+                   (unbox binder-alphas))]
     [(list 'fail key node details)
      (typing-diagnostic key node details expansion-context)]
     [other (error 'core-type-of/regions "typing の結果が不正である: ~s" other)]))
@@ -7364,7 +7529,8 @@
                          (erase-core/region-annotations
                           (region-typed-renamed typed))
                          (region-typed-table typed)
-                         (region-typed-σ typed)))
+                         (region-typed-σ typed)
+                         (region-typed-binder-alphas typed)))
   (annotate-callable-contexts
    (annotate-mut-binding-types core (region-typed-mut-types typed))
    (region-typed-callable-contexts typed)
@@ -7375,12 +7541,17 @@
                                    [environment '()]
                                    [Λ (empty-region-ctx)])
   (define contexts (box (hash)))
+  (define binder-alphas (box (hash)))
   (match (type-of/raw* core-in places callables environment Λ
-                       #:callable-contexts contexts)
+                       #:callable-contexts contexts
+                       #:binder-alphas binder-alphas)
     [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
      (define materialized
-       (if ir (materialize-regions ir renamed table σ) renamed))
+       (if ir
+           (materialize-regions ir renamed table σ
+                                (unbox binder-alphas))
+           renamed))
      (list 'ok type
            (annotate-callable-contexts materialized
                                        (unbox contexts) 'renamed))]

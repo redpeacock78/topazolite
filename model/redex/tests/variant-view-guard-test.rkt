@@ -407,9 +407,9 @@
 (test-case "形の変わらない record でも子が生きている間の親更新を拒む"
   (check-rejected record-p7-core "E-BOR-025"))
 
-(test-case "一構成子 data の欄は variant 印で保護しない"
+(test-case "一構成子 data の child が生きる間の親更新も E-BOR-025"
   (call-with-trait-ledger data-ledger
-    (lambda () (check-trace one-cell-core 'Int))))
+    (lambda () (check-rejected one-cell-core "E-BOR-025"))))
 
 (test-case "子と重ならない record 欄への書込みは受理される"
   (check-trace unrelated-field-core 'Int))

@@ -1085,7 +1085,7 @@
 
 ;; spec §3.3。α 表と σ から、注釈欄を解いた寿命へ置き換えた core を返す。
 ;; point の数え方は annotate-regions と同じく core-children に従う。
-(define (materialize-regions ir core table σ)
+(define (materialize-regions ir core table σ [binder-alphas (hash)])
   ;; alpha-table に載る α は fresh-lifetime! と contains 制約を同時に
   ;; 作ったものだけであり、必ず σ の鍵を持つ。既定値で隠さず不変条件を
   ;; 破ったときは hash-ref の error として検出する。
@@ -1102,9 +1102,47 @@
     (if (lifetime-var? ρ)
         (region->rho ir (hash-ref σ (lifetime-var-index ρ)))
         ρ))
+  (define (resolve-binder-region point branch-index binder-index ρm)
+    (define α (hash-ref binder-alphas
+                        (list point branch-index binder-index) #f))
+    (if α
+        (region->rho ir (hash-ref σ (lifetime-var-index α)))
+        ρm))
   (define (walk node point)
     (define replaced
       (match node
+        [`(EliminateAt ,scrutinee (,branches ...))
+         `(EliminateAt ,scrutinee
+                       ,(for/list ([branch (in-list branches)]
+                                   [branch-index (in-naturals 1)])
+                          (match branch
+                            [`(,constructor (,binders ...) (,regions ...) -> ,body)
+                             (unless (= (length binders) (length regions))
+                               (error 'materialize-regions
+                                      "EliminateAt の binder と region 数が不一致: ~s"
+                                      branch))
+                             `(,constructor ,binders
+                                            ,(for/list ([ρm (in-list regions)]
+                                                        [binder-index (in-naturals)])
+                                               (resolve-binder-region
+                                                point (sub1 branch-index)
+                                                binder-index ρm))
+                                            -> ,body)]
+                            [_ (error 'materialize-regions
+                                      "EliminateAt の枝が不正: ~s" branch)])))]
+        [`(UnionEliminateAt ,scrutinee (,branches ...))
+         `(UnionEliminateAt ,scrutinee
+                            ,(for/list ([branch (in-list branches)]
+                                        [branch-index (in-naturals 1)])
+                               (match branch
+                                 [`(,type ,binder ,ρm -> ,body)
+                                  `(,type ,binder
+                                          ,(resolve-binder-region
+                                            point (sub1 branch-index) 0 ρm)
+                                          -> ,body)]
+                                 [_ (error 'materialize-regions
+                                           "UnionEliminateAt の枝が不正: ~s"
+                                           branch)])))]
         [`(BorrowAt ,ρ ,own ,w) `(BorrowAt ,(resolve ρ point) ,own ,w)]
         [`(BorrowMutAt ,ρ ,own ,w) `(BorrowMutAt ,(resolve ρ point) ,own ,w)]
         [`(ReborrowAt ,ρ ,c) `(ReborrowAt ,(resolve ρ point) ,c)]
