@@ -291,15 +291,21 @@ producer の位置で `OwnLeaf` を通して token を割り当て、`OwnedLeaf`
 この制限があるため、再帰呼出しの位置では雛形を実体化しない。
 本体の検査が収束したあと、確定した要約を継続の側の呼出しが使う。
 
-結果が借用の署名を呼ぶと、定義時の署名で結果と同じ formal region を持つ仮引数の位置を
-候補の集合として記録する。
-`RegionApp` の後に具体の region の等値から候補を数え直さない。
-結果の capability と §8.1 の起点は、候補の位置ごとの実引数の capability と起点の和集合である。
-実行時の借用値は、実際に返った一つの `BorrowRef` または `BorrowMutRef` の root と path を保つ。
-本体の出現の要約を持たない concrete な `NFn` では候補を推測せず、結果と同じ region を持つ仮引数の位置が
-一つに定まらない場合、または唯一の実引数が capability を運ばない場合は `E-BOR-020` で落とす。
-要約を持つ署名では、候補位置の集合が空の場合、または候補位置の実引数のいずれかが capability を運ばない場合に、
-`E-BOR-020` で落とす。
+結果型に借用の leaf があるときは、各 leaf を結果型の path `π` で特定し、その宣言 region を `ρπ` とする。
+仮引数 `i` の型にある path `π'` の leaf が `ρπ` と同じ宣言 region を持つとき、`(i, π')` をその結果 leaf の候補とする。
+この組を formal key とし、`i` は 0 起点の仮引数位置、`π'` はその仮引数を根とする入力型の path である。
+path は型の構造をたどり、record 欄、構成子の欄位置、Union member を区別する。
+候補は関数の宣言型に書かれた region の等値で決め、`RegionApp` を適用した後の具体 region から数え直さない。
+
+各結果 leaf の候補は独立に扱う。
+結果と仮引数の最上位が借用型である場合は `π` と `π'` がともに空であり、従来の候補位置の規則になる。
+欄の内側にある借用も、同じ宣言 region を持つ仮引数の欄を候補にできる。
+
+本体の出現の要約を持たない concrete な `NFn` では、各結果 leaf の候補が一つに定まり、その実引数が対応する `π'` の欄に capability を持たなければならない。
+候補が無いか複数ある場合、または唯一の候補の欄が capability を持たない場合は `E-BOR-020` で落とす。
+要約を持つ署名では、各結果 leaf の候補が空の場合、または候補となる実引数のいずれかが対応する欄に capability を持たない場合に `E-BOR-020` で落とす。
+結果の capability 表は、各結果 leaf について候補となる実引数の対応欄の capability を合わせて作る。
+結果値そのものは、実際に返った `BorrowRef` または `BorrowMutRef` の root と path を保つ。
 
 ### 呼出しを Scope で包む借用の実引数
 
@@ -367,6 +373,26 @@ field に借用が無い場合も空の capability を記録し、record 全体�
 `RecRewrite` と `RecRewriteOpen` も出力 field ごとの表を保持し、書き換えた field は書換え後の値から、通過する field は入力表の同じ label から capability を得る。
 RSD の `Discharge` は、欄表がある値では expected に残る欄だけを再帰的に残し、record 全体の capability 集合を残った欄の集合から作り直す。
 欄表が無い値は除去された欄と capability の対応を復元できないため、従来の集合をそのまま透過する。
+
+`Apply` の結果の表は、結果型の各借用 leaf について §8 の候補 `(i, π')` を調べ、実引数 `i` の `π'` にある capability を合わせて作る。
+実引数が欄表を持たない場合は、要求された欄の代わりに実引数全体の capability 集合を用いる。
+この集合には入れ子の leaf の capability も含まれるため、欄の区別は粗くなるが capability を取り落とさない。
+結果全体の capability 集合は、すべての結果 leaf の集合の和である。
+
+欄表の鍵は、record の `(record-field . label)`、構成子 `K` の第 `i` 欄の `(K . i)`、正規化した Union member 型である。
+呼出しに適用した region 引数で Union member 型を置換し、正規化して鍵にする。
+置換後に複数の member が同じ鍵へ潰れた場合は、対応する欄の capability を合わせる。
+Union 自体が一つの型へ潰れた場合は member の segment を path から除き、潰れた欄の capability を Union があった位置に置く。
+
+値位置の `ProjBorrow` は、親の各 capability path に射影した record 欄の label を足す。
+`Read` は operand の各 `(root, path)` capability に対し、その root の token が持つ欄表から `path` の欄を選び、得られた entry を合わせて結果の集合と表を作る。
+この lookup は record 欄、data の構成子と欄位置、Union の `Payload` をたどる。
+したがって、空でない path を持つ `ProjBorrow` の `Read` も、Union payload を読む `Read` も同じ規則で扱う。
+
+`UVal`、`RVal`、`OwnLeaf`、`OwnedLeaf`、`OwnedTransit` は内側の値の capability 集合と表をそのまま保つ。
+`Unsafe` も本体の集合と表を透過する。
+`Recur` は継続の集合と表を結果にする。
+`Suspend` は内側の capability 集合を保つが、欄表を落とす。
 
 値の内部に入った所有資源は `(OwnedLeaf tk v)` として leaf token `tk` を持つ。
 同じ token の複製を許さず、`Available`/`Moved` の token は live value に一度だけ現れ、
@@ -470,10 +496,13 @@ operand が借用でなければ `E-BOR-018` で落とす。
 
 読み出せる型は `Read` の型検査が決める。
 `Owned` を含む型は読み出せず、`E-BOR-014` で落とす。
-`Borrowed` または `BorrowedMut` を含む型は、すべての lifetime から所有者の region を引け、借用の payload がさらに借用を含まない場合に限り読み出せる。
+payload に含まれる借用は、すべての lifetime から所有者の region を引けなければならない。
+payload のどこかに `BorrowedMut` があれば、同じ可変 loan を指す参照を複製するため `E-BOR-014` で落とす。
+共有の `Borrowed` を欄に持つ payload は読み出せる。
 所有者を引けない借用は `E-BOR-006`、view の region を超える借用は `E-BOR-004` で落とす。
-`Read` は外側の借用の payload を新しい値として払い出すが、その値の内部にさらに借用を持つ型については、内側の lifetime-bearing reference を複製して再束縛する規則を定めない。
-その型は `E-BOR-014` で落とす。
+その結果の capability 集合と欄表は、borrowed operand が指す place の token の欄表から、operand の capability path をたどって得る。
+これにより共有参照の capability を保持するが、新しい loan として再束縛することはない。
+借用の payload 自身がさらに借用を含む形は、内側の参照を再束縛する規則が無いため `E-BOR-014` で落とす。
 借用の所有者は lifetime と region の上限制約から引き当てるため、値の側へ新しい token の台帳を置かない。
 
 `(Assign c v)` は capability が指す先へ値を書き込む。 [REQ: BOR-004]
