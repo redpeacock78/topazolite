@@ -105,6 +105,15 @@
   (check-equal? (raw-free-vars (term (BorrowAt 7 (Own x (x)) x)))
                 (set 'x)))
 
+(test-case "ProjBorrow の借用先は置換し label は保つ"
+  (check-equal?
+   (raw-subst* (term (ProjBorrow (Borrow x) x)) '(x) (list (term y)))
+   (term (ProjBorrow (Borrow y) x)))
+  (check-equal?
+   (raw-subst* (term (ProjBorrowAt 7 (BorrowAt 7 (Own x ()) x) x))
+               '(x) (list (term y)))
+   (term (ProjBorrowAt 7 (BorrowAt 7 (Own y ()) y) x))))
+
 (test-case "Lam origin の Curry operand は静的で body の変数だけ置換する"
   (check-equal?
    (raw-subst* (term (Lam (Derived User (Curry x)) f () x))

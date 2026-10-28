@@ -194,18 +194,18 @@
   ;; 逆順は戻らない。
   (check-equal? (normalize-binder (binder-base '|x⟨1⟩«0»|)) '|x⟨1⟩|))
 
-(define-metafunction G2
-  sub : any x any -> any
-  [(sub any_1 x any_2) (substitute any_1 x any_2)])
-
-;; SCP-002。substitute が freshen した記号を正規化すると識別子へ戻る。
-(test-case "freshen した記号が正規化で識別子へ戻る（SCP-002）"
-  (define freshened
-    (term (sub (Let (|y⟨2⟩| let Int) x |y⟨2⟩|) x 7)))
-  (define binder (first (second freshened)))
-  ;; freshen が起きたことそのものを固定する。
-  (check-not-equal? binder '|y⟨2⟩|)
-  (check-equal? (normalize-binder binder) '|y⟨2⟩|))
+;; SCP-002。一意化後の binder も、入力の label と衝突しない。
+(test-case "一意化した binder は label と衝突しない（SCP-002）"
+  (define core
+    `(Let ,fixture-span ((#:bind x ,fixture-span) Int)
+          (#:lit 1 ,fixture-span)
+          (Rec ,fixture-span
+               (((#:lbl |x⟨1⟩| ,fixture-span) imm (#:var x ,fixture-span))))))
+  (match (uniquify-binders core)
+    [`(Let ,_ ((#:bind ,binder ,_) Int) ,_
+           (Rec ,_ (((#:lbl ,label ,_) imm ,_))))
+     (check-not-equal? binder label)]
+    [_ (fail "Let/Rec の一意化結果の形が変わった")]))
 
 (define (let-b binder place)
   (define pre

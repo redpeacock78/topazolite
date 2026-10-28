@@ -5,6 +5,7 @@
          "lang.rkt"
          "borrow.rkt"
          "compat.rkt"
+         "core-binding.rkt"
          "origins.rkt"
          "region-param.rkt"
          "resource-type.rkt"
@@ -64,13 +65,11 @@
    (side-condition (and (string? (term l_1)) (string? (term l_2))))]
   [(δ nm v ...) undefined])
 
-;; Redex's substitute uses the binding forms declared by G1.  Keeping the
-;; simultaneous substitution here also makes arity mismatches non-reducible
-;; instead of raising a metafunction exception.
+;; 同時置換の個数不一致や束縛子の重複は簡約を止める。
 (define-metafunction G1m
   substitute* : c (x ...) (v ...) -> any
   [(substitute* c_body (x ...) (v_arg ...))
-   (substitute c_body (x v_arg) ...)
+   ,(raw-subst* (term c_body) (term (x ...)) (term (v_arg ...)))
    (side-condition
     (and (= (length (term (x ...)))
             (length (term (v_arg ...))))
@@ -280,7 +279,7 @@
                   (list label output-mode output-type `(Absent ,output-type))]
                  [else
                   (list label output-mode output-type
-                        (term (substitute ,body ,binder ,value)))])])))))
+                        (raw-subst* body (list binder) (list value)))])])))))
 
 (define (rec-rewrite-close/proc fields)
   `(Rec
@@ -936,7 +935,9 @@
    (--> (cfg (in-hole E (Let (x τ) v_bound c_body)) H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
         (side-condition (not (runtime-resource-type? (term τ))))
-        (where c_result (substitute c_body x v_bound))
+        (where c_result ,(raw-subst* (term c_body)
+                                     (list (term x))
+                                     (list (term v_bound))))
         R-Let)
 
    (--> (cfg (in-hole E_outer
@@ -953,7 +954,9 @@
         (side-condition (and (runtime-resource-type? (term τ_owned))
                              (not (equal? (term c_body) (term x)))))
         (where p_new ,(fresh-place (term H) (term Ω)))
-        (where c_result (substitute c_body x p_new))
+        (where c_result ,(raw-subst* (term c_body)
+                                     (list (term x))
+                                     (list (term p_new))))
         (where (v_stored Λtok_new)
                ,(let-owned-value (term v_bound) (term Λtok)
                                  (term τ_owned)))
@@ -979,7 +982,9 @@
              H Ω Λtok θ)
         (cfg (in-hole E c_result) H Ω Λtok θ)
         (where v_recur (RecurVal cid_recur f (x ...) c_body))
-        (where c_result (substitute c_next f v_recur))
+        (where c_result ,(raw-subst* (term c_next)
+                                     (list (term f))
+                                     (list (term v_recur))))
         R-RecurBind)
 
    (--> (cfg (in-hole E
@@ -1127,7 +1132,9 @@
         (where Λtok_final
                ,(drop-frame-tokens (term (in-hole F_inner unit))
                                    (term Λtok)))
-        (where c_result (substitute c_handler x v_arg))
+        (where c_result ,(raw-subst* (term c_handler)
+                                     (list (term x))
+                                     (list (term v_arg))))
         R-HandleReturn)
 
    (--> (cfg (in-hole E_outer
@@ -1759,7 +1766,9 @@
         (cfg (in-hole E c_result) H Ω Λtok θ)
         (side-condition (and (not (runtime-resource-type? (term τ)))
                              (not (eq? (term bmode) 'mut))))
-        (where c_result (substitute c_body x v_bound))
+        (where c_result ,(raw-subst* (term c_body)
+                                     (list (term x))
+                                     (list (term v_bound))))
         R-LetB)
 
    (--> (cfg (in-hole E (Let (x bmode τ) v_bound x)) H Ω Λtok θ)
@@ -1783,7 +1792,9 @@
                              (not (eq? (term bmode) 'mut))
                              (not (equal? (term c_body) (term x)))))
         (where p_new ,(fresh-place (term H) (term Ω)))
-        (where c_result (substitute c_body x p_new))
+        (where c_result ,(raw-subst* (term c_body)
+                                     (list (term x))
+                                     (list (term p_new))))
         (where (v_stored Λtok_new)
                ,(let-owned-value (term v_bound) (term Λtok)
                                  (term τ_owned)))
@@ -1812,7 +1823,9 @@
         (side-condition (and (not (owned-type? (term τ)))
                              (eq? (term bmode) 'mut)))
         (where p_new ,(fresh-place (term H) (term Ω)))
-        (where c_result (substitute c_body x (MutSlot p_new)))
+        (where c_result ,(raw-subst* (term c_body)
+                                     (list (term x))
+                                     (list (term (MutSlot p_new)))))
         (where H_new
                ,(record-declared-type
                  (table-set (term H) (term p_new) (term v_bound))

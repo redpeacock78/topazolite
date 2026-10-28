@@ -2,6 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
+         "../core-binding.rkt"
          "../lang.rkt"
          "../machine.rkt"
          "../origins.rkt")
@@ -76,8 +77,7 @@
                          (Lam User inner-id (y) (Apply x y)))
                   (Lam User argument-id (z) y)))))
   (check-true
-   (alpha-equivalent?
-    G1
+   (raw-alpha-equivalent?
     result
     (term (Lam User inner-id (fresh)
                (Apply (Lam User argument-id (z) y) fresh))))))

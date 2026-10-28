@@ -4,6 +4,7 @@
          rackunit
          redex/reduction-semantics
          "../backend-matrix.rkt"
+         "../core-binding.rkt"
          "../diagnostic.rkt"
          "../erase.rkt"
          "../lang.rkt"
@@ -87,7 +88,7 @@
 (define-metafunction G2
   substitute-eliminate-at : any x any -> any
   [(substitute-eliminate-at any_1 x any_2)
-   (substitute any_1 x any_2)])
+   ,(raw-subst* (term any_1) (list (term x)) (list (term any_2)))])
 
 (test-case
  "the five symbol encoders never collide with each other"
@@ -525,8 +526,7 @@
  (define substituted
    (term (substitute-eliminate-at ,source-form free binder)))
  (check-true
-  (alpha-equivalent?
-   G2
+  (raw-alpha-equivalent?
    substituted
    '(EliminateAt x ((Some (renamed) (%parent) -> binder))))))
 

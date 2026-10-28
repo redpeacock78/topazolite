@@ -6,6 +6,7 @@
          "lang.rkt"
          "borrow.rkt"
          "borrow-gen.rkt"
+         "core-binding.rkt"
          "machine.rkt"
          "region.rkt"
          "span-core.rkt"
@@ -34,7 +35,9 @@
 (define-metafunction G2m
   oracle-substitute : c x v -> any
   [(oracle-substitute c_body x v_arg)
-   (substitute c_body (x v_arg))])
+   ,(raw-subst* (term c_body)
+                (list (term x))
+                (list (term v_arg)))])
 
 ;; spec §4.5。oracle は typing.rkt と borrow.rkt の判定を一切呼ばない。
 ;; 呼ぶと静的な借用検査の言い換えになり、独立な照合の意味が消える。
@@ -615,7 +618,7 @@
 (define (infer-substituted-value body binder contractum)
   (define (substitute-payload value)
     (term (oracle-substitute ,body ,binder ,value)))
-  (if (alpha-equivalent? G2m body (substitute-payload 'unit))
+  (if (raw-alpha-equivalent? body (substitute-payload 'unit))
       '()
       (let ([candidates
              (let walk ([current contractum])
@@ -625,12 +628,12 @@
                            '())))])
         (define matches
           (for/list ([candidate (in-list (remove-duplicates candidates))]
-                     #:when (alpha-equivalent?
-                             G2m (substitute-payload candidate) contractum))
+                     #:when (raw-alpha-equivalent?
+                             (substitute-payload candidate) contractum))
             candidate))
         (and (pair? matches)
              (andmap (lambda (candidate)
-                       (alpha-equivalent? G2m (first matches) candidate))
+                       (raw-alpha-equivalent? (first matches) candidate))
                      (rest matches))
              (list (first matches))))))
 
@@ -638,11 +641,11 @@
 (define (substitute-branch-body body binders values)
   ;; G2m の Core 外の合成 fixture は候補不一致として扱う。
   (with-handlers ([exn:fail? (lambda (_) #f)])
-    (term (substitute*/g2 ,body (,@binders) (,@values)))))
+    (raw-subst* body binders values)))
 
 (define (branch-substitution-matches? body binders values contractum)
   (define substituted (substitute-branch-body body binders values))
-  (and substituted (alpha-equivalent? G2m substituted contractum)))
+  (and substituted (raw-alpha-equivalent? substituted contractum)))
 
 ;; spec §4.6。規則名で仕分け、置換規則なら記号と place の対応を足す。
 ;; 未知の規則、形が取り出せない置換規則、R-LetOwned 系の増分が想定外の場合は

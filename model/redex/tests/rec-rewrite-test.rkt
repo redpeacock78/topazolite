@@ -4,6 +4,7 @@
          racket/match
          racket/set
          redex/reduction-semantics
+         "../core-binding.rkt"
          "../borrow.rkt"
          "../gen.rkt"
          "../lang.rkt"
@@ -139,7 +140,8 @@
 
 (define-metafunction G2
   substitute-core : any x any -> any
-  [(substitute-core any_1 x any_2) (substitute any_1 x any_2)])
+  [(substitute-core any_1 x any_2)
+   ,(raw-subst* (term any_1) (list (term x)) (list (term any_2)))])
 
 (define (record-parameter-function-type input-row output-row)
   (define input-type (record-parameter-type input-row))
@@ -280,11 +282,11 @@
                                    (b y Int imm Int x))))
    (set 'x))
   (check-true
-   (alpha-equivalent? G2
+   (raw-alpha-equivalent?
                       '(RecRewrite (Rec ((a imm 1))) ((a x Int imm Int x)))
                       '(RecRewrite (Rec ((a imm 1))) ((a y Int imm Int y)))))
   (check-false
-   (alpha-equivalent? G2
+   (raw-alpha-equivalent?
                       '(RecRewrite (Rec ((a imm 1))) ((a x Int imm Int z)))
                       '(RecRewrite (Rec ((a imm 1))) ((a y Int imm Int w))))))
 

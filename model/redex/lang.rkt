@@ -112,16 +112,7 @@
           (TypeRep O t κ)
           (ProofRep O φ))
 
-  #:binding-forms
-  (Lam O cid (x ...) c #:refers-to (shadow x ...))
-  (Let (x τ) c_1 c_2 #:refers-to x)
-  (K (x ...) -> c #:refers-to (shadow x ...))
-  (K (x ...) (ρm ...) -> c #:refers-to (shadow x ...))
-  (x -> c #:refers-to x)
-  (Recur cid f (x ...)
-         c_1 #:refers-to (shadow f x ...)
-         c_2 #:refers-to f)
-  (RecurVal cid f (x ...) c #:refers-to (shadow f x ...)))
+)
 
 (define-extended-language G2 G1
   (label ::= variable-not-otherwise-mentioned)
@@ -187,11 +178,7 @@
          (RegionLam (rp ...) c))
   (ubr ::= (τ x -> c))
 
-  #:binding-forms
-  (Let (x bmode τ) c_1 c_2 #:refers-to x)
-  (label x τ m τ c #:refers-to x)
-  (τ x -> c #:refers-to x)
-  (τ x ρm -> c #:refers-to x))
+)
 
 (define-extended-language G1m G1
   (p ::= natural)
@@ -421,11 +408,7 @@
          (FromRawPtr G ρ)
          (Unsafe G))
 
-  #:binding-forms
-  (Let (x bmode τ) c_1 c_2 #:refers-to x)
-  (label x τ m τ c #:refers-to x)
-  (τ x -> c #:refers-to x)
-  (τ x ρm -> c #:refers-to x))
+)
 
 (define-metafunction G2
   row-∈ : ℓ ε -> boolean

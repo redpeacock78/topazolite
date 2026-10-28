@@ -89,7 +89,7 @@
            ((0 Moved) (3 Moved) (4 Available))
            () ())))
   (match (apply-reduction-relation -->g1 source)
-    [(list actual) (check-true (alpha-equivalent? G1m actual expected))]
+    [(list actual) (check-equal? actual expected)]
     [actual (fail-check (format "expected one successor, got ~e" actual))])
   (define root-leaf-source
     (term (cfg

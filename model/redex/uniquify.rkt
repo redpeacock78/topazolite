@@ -3,7 +3,9 @@
 (provide uniquify-binders binder-base binder-has-identifier?
          core-binder-symbols (struct-out exn:fail:uniquify))
 
-(require racket/match)
+(require racket/match
+         racket/set
+         "core-binding.rkt")
 
 (struct exn:fail:uniquify exn:fail () #:transparent)
 
@@ -12,7 +14,7 @@
 (define identifier-rx
   (pregexp (format "~a[0-9]+~a$" open-mark close-mark)))
 
-;; 末尾の ⟨N⟩ を 1 つだけ剥がす。substitute が付ける «N» には当たらないので、
+;; 末尾の ⟨N⟩ を 1 つだけ剥がす。raw-subst* が付ける «N» には当たらないので、
 ;; 簡約を通った束縛子へ使うときは borrow-oracle.rkt の normalize-binder を
 ;; 先に通す。表示のための剥がしは diagnostic-render.rkt の strip-identifiers
 ;; が両方を担う。
@@ -26,11 +28,19 @@
 
 (define (uniquify-binders core)
   (define counter 0)
+  (define forbidden (raw-symbols core))
 
   (define (fresh-for symbol)
-    (set! counter (add1 counter))
-    (string->symbol
-     (format "~a~a~a~a" symbol open-mark counter close-mark)))
+    (let loop ()
+      (set! counter (add1 counter))
+      (let ([candidate
+             (string->symbol
+              (format "~a~a~a~a" symbol open-mark counter close-mark))])
+        (if (set-member? forbidden candidate)
+            (loop)
+            (begin
+              (set! forbidden (set-add forbidden candidate))
+              candidate)))))
 
   (define (rename environment symbol)
     (hash-ref environment symbol symbol))

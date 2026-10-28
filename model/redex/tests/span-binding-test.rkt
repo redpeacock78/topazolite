@@ -2,6 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
+         "../core-binding.rkt"
          "../lang.rkt"
          "../span-core.rkt"
          "../span.rkt"
@@ -16,10 +17,6 @@
 (define-metafunction G2+
   sub+ : any x any -> any
   [(sub+ any_1 x any_2) (substitute any_1 x any_2)])
-
-(define-metafunction G2
-  sub : any x any -> any
-  [(sub any_1 x any_2) (substitute any_1 x any_2)])
 
 (test-case "#:refers-to は #:bind の内側の x を binder として解決する"
   ;; 束縛変数の付け替えは alpha 同値を保つ。
@@ -177,23 +174,15 @@
                               (,s1 (#:bind y ,s1) -> (#:var y ,s1)) (#:lit 1 ,s1))))))
   (for ([base (in-list pairs)] [spanful (in-list pairs+)])
     (check-equal? (and (alpha-equivalent? G1+ (car spanful) (cdr spanful)) #t)
-                  (and (alpha-equivalent? G1 (car base) (cdr base)) #t)
+                  (and (raw-alpha-equivalent? (car base) (cdr base)) #t)
                   (format "~a" base))))
 
-(test-case "substitute は erase-core の出力に対して G4b 以前と同じ結果を返す"
+(test-case "役割対応置換は erase-core の結果で label を保つ"
   (define core+
     (term (Let ,s0 ((#:bind y ,s1) (#:ty Int ,s1)) (#:var x ,s1) (#:var y ,s1))))
-  ;; 両辺を同じ substitute で作ると、置換がともに壊れても一致してしまう。
-  ;; 期待値を直に書いて、置換の結果そのものを固定する。
-  ;; substitute は束縛子を常に freshen するので、y は y«0» のような別名になる。
-  ;; したがって直の期待値との比較は check-equal? ではなく alpha 同値で行う。
-  (check-true (alpha-equivalent? G1
-                                 (term (sub ,(erase-core core+) x 7))
-                                 (term (Let (y Int) 7 y))))
-  ;; 束縛子を含まない項では freshen が起きないので、直の期待値と一致する。
-  (check-equal? (term (sub (Apply x 1) x 7)) (term (Apply 7 1)))
-  (check-equal? (term (sub ,(erase-core core+) x 7))
-                (term (sub (Let (y Int) x y) x 7))))
+  (check-equal? (raw-subst* (erase-core core+) '(x) '(7))
+                '(Let (y Int) 7 y))
+  (check-equal? (raw-subst* '(Apply x 1) '(x) '(7)) '(Apply 7 1)))
 
 (test-case "spanful な項へ substitute を掛けると項が壊れる"
   ;; 置換項が (#:var x s) の x の位置へ入り、spanful な項として成立しない。

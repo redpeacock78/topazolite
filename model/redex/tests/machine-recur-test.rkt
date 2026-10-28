@@ -2,6 +2,7 @@
 
 (require rackunit
          redex/reduction-semantics
+         "../core-binding.rkt"
          "../lang.rkt"
          "../machine.rkt"
          "../obs.rkt")
@@ -13,8 +14,8 @@
   (match (run (inject (term (Recur saved-id f (x) x f))) fuel)
     [`(cfg ,result () () () ())
      (check-true
-      (alpha-equivalent?
-       G1 result (term (RecurVal saved-id f (x) x))))]
+      (raw-alpha-equivalent?
+       result (term (RecurVal saved-id f (x) x))))]
     [result (fail (format "unexpected result: ~e" result))]))
 
 (test-case "REC-001: structural recur reaches a value"
