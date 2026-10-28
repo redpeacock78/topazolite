@@ -9,7 +9,9 @@
          default-cycle-descriptors
          default-pending-ids
          main
-         run-coverage)
+         registry-definitions
+         run-coverage
+         test-id-rx)
 
 ;; サブサイクル 1 件分の入力と期待値。
 ;; expected-count と expected-ids は、使わない側へ #f を入れる。
