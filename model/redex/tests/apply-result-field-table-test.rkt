@@ -276,19 +276,72 @@
   (define callables `((apply-unknown-summary ,wrapper-signature)))
   (check-false (failure-key (raw-result core callables))))
 
-(test-case "再帰する借用 data の結果は未追跡の tail を fail closed にする"
+(test-case "要約のない Apply の返却 borrow を Reborrow しても元の親へ書けない"
+  (define leaf-a '(BorrowedMut Int (RParam a)))
+  (define record-type `(Record ((inner ,leaf-a imm))))
+  (define function-type `(NFn (,record-type) ,record-type () () () User))
+  (define wrapper-signature
+    `(ForallRegion (a)
+       (NFn (,function-type ,record-type) ,record-type () () () User)))
+  (define identity-signature
+    `(ForallRegion (a) (NFn (,record-type) ,record-type () () () User)))
+  (define actual-record-type
+    '(Record ((inner (BorrowedMut Int (RVar 0)) imm))))
+  (define wrapper-term
+    `(RegionApp
+      (RegionLam (a)
+        (Lam User apply-unknown-summary (f x) (Apply f x)))
+      ((RVar 0))))
+  (define identity-term
+    '(RegionApp
+      (RegionLam (a) (Lam User identity-borrow (z) z))
+      ((RVar 0))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (source let (BorrowedMut Int (RVar 0))) (BorrowMut owner)
+           (Let (argument let ,actual-record-type)
+                (Rec ((inner imm source)))
+             (Let (result let ,actual-record-type)
+                  (Apply ,wrapper-term ,identity-term argument)
+               (Let (inner let ,leaf-a) (Proj result inner)
+                 (Let (child let (Borrowed Int (RParam %omitted)))
+                      (Reborrow inner)
+                   (Let (write let Unit) (Assign (Proj argument inner) 7)
+                     (Read child))))))))))
+  (define callables
+    `((apply-unknown-summary ,wrapper-signature)
+      (identity-borrow ,identity-signature)))
+  (define direct-core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (source let (BorrowedMut Int (RVar 0))) (BorrowMut owner)
+           (Let (argument let ,actual-record-type) (Rec ((inner imm source)))
+             (Let (result let ,actual-record-type)
+                  (Apply ,identity-term argument)
+               (Let (inner let ,leaf-a) (Proj result inner)
+                 (Let (child let (Borrowed Int (RParam %omitted)))
+                      (Reborrow inner)
+                   (Let (write let Unit) (Assign (Proj argument inner) 7)
+                     (Read child))))))))))
+  (define direct-result (raw-result direct-core callables))
+  (check-equal? (failure-key direct-result) 'borrow-conflicting-use
+                (format "既知の identity summary では親との衝突を検出する: ~s"
+                        direct-result))
+  (define result (raw-result core callables))
+  (check-equal? (failure-key result) 'borrow-conflicting-use
+                (format "要約のない Apply の返却 capability が親 owner へ戻る: ~s"
+                        result)))
+
+(test-case "再帰 data の結果は借用欄を保守的に追跡する"
   (define list-type '(List (BorrowedMut Int (RParam a))))
   (define signature
     `(ForallRegion (a)
        (NFn (,list-type) ,list-type () () () User)))
-  (define identity
-    `(Scope (1)
-       (RegionLam (a)
-         (Lam User identity-borrow-list (xs) xs))))
   (define callables `((identity-borrow-list ,signature)))
   (define actual-type '(List (BorrowedMut Int (RVar 0))))
-  (define core
-    `(Scope (1)
+  (define (core conflict?)
+    `(Scope ()
        (Let (x let (Owned Int)) 1
          (Let (y let (Owned Int)) 2
            (Let (first-ref let (BorrowedMut Int (RVar 0))) (BorrowMut y)
@@ -303,17 +356,32 @@
                                     ((RVar 3)))
                           items)
                    (Eliminate result
-                     ((nil () -> unit)
-                      (cons (first tail) ->
-                        (Eliminate tail
-                          ((nil () -> unit)
-                           (cons (second rest) ->
-                             (Let (written let Unit) (Assign (BorrowMut x) 9)
-                               (Read second))))))))))))))))
-  (define result (raw-result/places core callables '((1 Int) (2 Int))))
-  (check-equal?
-   (failure-key result) 'unresolved-borrow-owner
-   (format "再帰的な借用欄を追跡できない呼出しを拒む: ~s" result)))
+                      ((nil () -> 0)
+                       (cons (first tail) ->
+                        ,(if conflict?
+                             '(Eliminate tail
+                                ((nil () -> 0)
+                                 (cons (second rest) ->
+                                   (Let (written let Unit)
+                                        (Assign (BorrowMut x) 9)
+                                     (Read second)))))
+                             '(Read first)))))))))))))
+  (define read-core (core #f))
+  (define-values (start sidecar ir expected)
+    (prepare-execution read-core callables))
+  (define configs (trace-g2 start))
+  (define post-apply
+    (for/first ([config (in-list configs)] [index (in-naturals)]
+                #:unless (contains-core-form? (configuration-core config) 'Apply))
+      index))
+  (check-not-false post-apply "再帰 List の identity 呼出し後の config がある")
+  (check-live-trace (drop configs post-apply) callables expected)
+  (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters)) 'ok)
+  (define conflict-result
+    (raw-result/places (core #t) callables '((1 Int) (2 Int))))
+  (check-equal? (failure-key conflict-result) 'borrow-conflicting-alias
+                (format "2 番目の借用が生きている間の親への書込み: ~s"
+                        conflict-result)))
 
 (test-case "空の root keys を許しても不正な借用 path は拒む"
   (define failure

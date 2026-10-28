@@ -626,23 +626,28 @@
     (formal-capability-entry return-type '(result)))
   (define parameter-leaves
     (map checked-leaves parameter-types))
-  (for/hash ([(result-path result-leaf) (in-hash result-leaves)])
+  (for/fold ([result (hash)])
+            ([(result-path result-leaf) (in-hash result-leaves)])
+    (unless (capability-entry? result-leaf)
+      (fail 'unresolved-borrow-owner node))
     (define result-lifetime
-      (and (capability-entry? result-leaf)
-           (capability-entry-declared-lifetime result-leaf)))
-    (unless result-lifetime (fail 'unresolved-borrow-owner node))
-    (values
-     result-path
-     (append-map
-      (lambda (index leaves)
-        (for/list ([(formal-path formal-leaf) (in-hash leaves)]
-                   #:when (and (capability-entry? formal-leaf)
-                               (capability-entry-declared-lifetime formal-leaf)
-                               (equal? result-lifetime
-                                       (capability-entry-declared-lifetime
-                                        formal-leaf))))
-          (cons index formal-path)))
-      (range (length parameter-leaves)) parameter-leaves))))
+      (capability-entry-declared-lifetime result-leaf))
+    ;; Recursive schema cutoffs are entries without a leaf lifetime, not ambiguity
+    ;; sentinels. Their runtime upper bound is assembled at the Apply site.
+    (if result-lifetime
+        (hash-set
+         result result-path
+         (append-map
+          (lambda (index leaves)
+            (for/list ([(formal-path formal-leaf) (in-hash leaves)]
+                       #:when (and (capability-entry? formal-leaf)
+                                   (capability-entry-declared-lifetime formal-leaf)
+                                   (equal? result-lifetime
+                                           (capability-entry-declared-lifetime
+                                            formal-leaf))))
+              (cons index formal-path)))
+          (range (length parameter-leaves)) parameter-leaves))
+        result)))
 
 ;; 要約がない関数値でも、署名が示す leaf の転送だけは照合できる。
 (define (signature-forwarding-summary parameter-types return-type node fail)
@@ -801,6 +806,91 @@
      (for/fold ([sources (set)]) ([entry (in-list entries)])
        (set-union sources (capability-entry-source-alphas entry)))
      #f))
+  (define (lifetimes-in type [seen (set)])
+    (define normalized (normalize-type (peel-ty type)))
+    (match normalized
+      [`(Borrowed ,_ ,lifetime) (set lifetime)]
+      [`(BorrowedMut ,_ ,lifetime) (set lifetime)]
+      [`(Record ,row)
+       (for/fold ([lifetimes (set)]) ([field (in-list row)])
+         (set-union lifetimes (lifetimes-in (second field) seen)))]
+      [`(Union ,_ ,_)
+       (for/fold ([lifetimes (set)]) ([member (in-list (union-members normalized))])
+         (set-union lifetimes (lifetimes-in member seen)))]
+      [`(Owned ,inner) (lifetimes-in inner seen)]
+      [`(Untrusted ,inner) (lifetimes-in inner seen)]
+      [`(Refined ,inner ,_) (lifetimes-in inner seen)]
+      [_
+       (define schema (constructor-schema normalized))
+       (if (or (not schema) (set-member? seen normalized))
+           (set)
+           (for*/fold ([lifetimes (set)])
+                       ([constructor (in-list schema)]
+                        [field-type (in-list (second constructor))])
+             (set-union lifetimes
+                        (lifetimes-in field-type
+                                      (set-add seen normalized)))))]))
+  (define (matching-leaf-entries entry lifetimes)
+    (unless (capability-entry? entry)
+      (fail 'unresolved-borrow-owner node))
+    (define fields (capability-entry-fields entry))
+    (define lifetime (capability-entry-declared-lifetime entry))
+    (cond
+      [(hash? fields)
+       (append-map (lambda (child) (matching-leaf-entries child lifetimes))
+                   (hash-values fields))]
+      [(and lifetime (set-member? lifetimes lifetime)
+            (not (set-empty? (capability-entry-keys entry))))
+       (list (struct-copy capability-entry entry
+                          [fields #f]
+                          [borrowed-view? #f]))]
+      ;; shortcut: opaque entries retain every key; refine when leaf lifetimes are available.
+      [(and (not lifetime)
+            (not (set-empty? (capability-entry-keys entry))))
+       (list (struct-copy capability-entry entry
+                          [fields #f]
+                          [borrowed-view? #f]))]
+      [else '()]))
+  (define (recursive-capability-upper-bound type)
+    (define lifetimes (lifetimes-in type))
+    (define-values (_root result-leaves)
+      (formal-capability-entry result-type '(result)))
+    (define candidate-lifetimes (make-hash))
+    (for ([(formal-path candidates)
+           (in-hash (callable-summary-result-index summary))])
+      (define actual-path
+        (instantiate-capability-path result-type formal-path region-subst))
+      (unless actual-path (fail 'unresolved-borrow-owner node))
+      (define result-leaf (hash-ref result-leaves actual-path #f))
+      (unless (capability-entry? result-leaf)
+        (fail 'unresolved-borrow-owner node))
+      (define lifetime
+        (subst-region-params
+         (capability-entry-declared-lifetime result-leaf) region-subst))
+      (when (and lifetime (set-member? lifetimes lifetime))
+        (for ([candidate (in-list candidates)])
+          (hash-update! candidate-lifetimes (car candidate)
+                        (lambda (previous) (set-add previous lifetime))
+                        (set)))))
+    (when (zero? (hash-count candidate-lifetimes))
+      (fail 'unresolved-borrow-owner node))
+    (define candidates
+      (append-map
+       (lambda (index)
+         (define actual-entry
+           (capability-of Λ (list-ref arguments index)
+                          #:fail fail #:allow-empty-keys? #t))
+         (matching-leaf-entries actual-entry
+                                (hash-ref candidate-lifetimes index)))
+       (hash-keys candidate-lifetimes)))
+    (define joined
+      (if (null? candidates)
+          (capability-entry (set) (set) #f #f (set) #f)
+          (capability-entry-join candidates)))
+    (struct-copy capability-entry joined
+                 [fields #f]
+                 [borrowed-view? #f]
+                 [declared-lifetime #f]))
   (define (walk type path seen)
     (define normalized (normalize-type (peel-ty type)))
     (match normalized
@@ -821,10 +911,9 @@
       [_
        (define schema (constructor-schema normalized))
        (cond
-         [(or (not schema) (set-member? seen normalized))
-          (when (and schema (type-carries-capability? normalized))
-            (fail 'unresolved-borrow-owner node))
-          (capability-entry (set) (set) #f #f (set) #f)]
+         [(not schema) (capability-entry (set) (set) #f #f (set) #f)]
+         [(set-member? seen normalized)
+          (recursive-capability-upper-bound normalized)]
          [else
           (aggregate
            (for/fold ([fields (hash)]) ([constructor (in-list schema)])
