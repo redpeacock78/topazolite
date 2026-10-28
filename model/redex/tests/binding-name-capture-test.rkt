@@ -39,6 +39,14 @@
          [else (fail (format "一意な次状態でない: ~s" next))]))]
     [other (fail (format "型付けされない fixture ~s: ~s" core other))]))
 
+(define (check-first-step-core core expected-core #:callables [callables '()])
+  (match (prepare-borrow-term* core #:callables callables)
+    [(list 'ok start _sidecar _ir _type)
+     (match (raw-steps-g2 start)
+       [(list next) (check-equal? (config-core next) expected-core)]
+       [other (fail (format "一意な最初の遷移を期待した: ~s" other))])]
+    [other (fail (format "型付けされない fixture ~s: ~s" core other))]))
+
 (define capture-data-ledger
   (make-trait-ledger
    canonical-trait-env
@@ -93,7 +101,25 @@
   (check-runs-to
    '(Let (p const Int) 0
       (RVal (ProofRep User (Prop p)) 7))
-   '(RVal (ProofRep User (Prop p)) 7)))
+   '(RVal (ProofRep User (Prop p)) 7))
+  (check-first-step-core
+   '(Let (p const Int) 0
+      (RVal (ProofRep User (Prop p)) 7))
+   '(Scope () (RVal (ProofRep User (Prop p)) 7))))
+
+(test-case "Let binder と Lam cid の同名衝突を一歩と終端で防ぐ"
+  (define callables '((f (NFn (Int) Int () () () User))))
+  (define core '(Let (f const Int) 0 (Apply (Lam User f (x) x) 5)))
+  (check-first-step-core
+   core '(Scope () (Apply (Lam User f (x) x) 5)) #:callables callables)
+  (check-runs-to core 5 #:callables callables))
+
+(test-case "Let binder と Recur cid の同名衝突を一歩と終端で防ぐ"
+  (define callables '((cid (NFn (Int) Int () () () User))))
+  (define core '(Let (cid const Int) 0 (Recur cid f (n) n (Apply f 5))))
+  (check-first-step-core
+   core '(Scope () (Recur cid f (n) n (Apply f 5))) #:callables callables)
+  (check-runs-to core 5 #:callables callables))
 
 (test-case "data 名と構成子名を置換しない"
   (with-capture-data

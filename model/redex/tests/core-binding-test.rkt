@@ -105,7 +105,7 @@
   (check-equal? (raw-free-vars (term (BorrowAt 7 (Own x (x)) x)))
                 (set 'x)))
 
-(test-case "ProjBorrow の借用先は置換し label は保つ"
+(test-case "非 owned Record の Borrow は E-BOR-005 のため ProjBorrow label は置換単体で確認"
   (check-equal?
    (raw-subst* (term (ProjBorrow (Borrow x) x)) '(x) (list (term y)))
    (term (ProjBorrow (Borrow y) x)))

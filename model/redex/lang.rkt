@@ -110,9 +110,7 @@
           (CurryVal O v v)
           (RecurVal cid f (x ...) c)
           (TypeRep O t κ)
-          (ProofRep O φ))
-
-)
+          (ProofRep O φ)))
 
 (define-extended-language G2 G1
   (label ::= variable-not-otherwise-mentioned)
@@ -176,9 +174,7 @@
          (UVal v)
          (RVal (ProofRep O φ) v)
          (RegionLam (rp ...) c))
-  (ubr ::= (τ x -> c))
-
-)
+  (ubr ::= (τ x -> c)))
 
 (define-extended-language G1m G1
   (p ::= natural)
@@ -406,9 +402,7 @@
          (RawStore G c)
          (RawStore v G)
          (FromRawPtr G ρ)
-         (Unsafe G))
-
-)
+         (Unsafe G)))
 
 (define-metafunction G2
   row-∈ : ℓ ε -> boolean
