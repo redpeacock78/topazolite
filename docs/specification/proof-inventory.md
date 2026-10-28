@@ -152,7 +152,7 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | BIT-002 | テストのみ | - | - | `model/redex/tests/lowering-arith-test.rkt`::`every shim primitive lowers to an eta expanded shim call` |
 | BIT-003 | テストのみ | - | `lex_bar_amp_ok` | `model/redex/tests/surface-type-op-test.rkt`::`BIT-003: Union の注釈は elaborate と typing を通る`, `model/redex/tests/surface-type-op-test.rkt`::`BIT-003: Record の Intersection は一つの Record に正規化される` |
 | BIT-004 | 未検証 | - | - | - |
-| ADT-001 | テストのみ | - | - | `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。省略した欄の p.age は none を返す`, `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。data 型の constructor の引数に optional の欄を宣言できる`, `model/redex/tests/surface-data-decl-test.rkt`::`ADT-001: 再帰 Owned 欄の data 宣言は data の形を保つ` |
+| ADT-001 | テストのみ | - | - | `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。省略した欄の p.age は none を返す`, `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。data 型の constructor の引数に optional の欄を宣言できる`, `model/redex/tests/surface-data-decl-test.rkt`::`ADT-001: data 型宣言は台帳の宣言の形へ写る` |
 | PAT-001 | テストのみ | - | - | `model/redex/tests/owned-transit-trace-test.rkt`::`Owned Union の UnionEliminate は marker を外して非資源成分を選ぶ` |
 | PRF-005 | テストのみ | - | - | `model/redex/tests/remainder-drop-test.rkt`::`Proof 無しの narrowing は owned-narrowing-needs-proof である` |
 | BAK-001 | テストのみ | - | - | `model/redex/tests/properties-lowering-test.rkt`::`BAK-001: Union の Core の観測が lowering の前後で一致する` |
