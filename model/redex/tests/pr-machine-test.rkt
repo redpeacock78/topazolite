@@ -141,10 +141,23 @@
                3))
 
 (test-case
+ "開いた閉包を PLet の下へ置換しても自由変数を捕獲しない"
+ ;; 外側の z は閉包の中で自由のまま残り、内側の PLet z は改名される。
+ (match (apply-reduction-relation
+         -->pr
+         (inject-pr '(PLet y (PClosure () () z) (PLet z 1 (PApp y)))))
+   [(list `(pcfg (PScopeExit () (PLet ,renamed 1
+                                   (PApp (PClosure () () z))))
+                 ,_ ,_ ,_))
+    (check-not-equal? renamed 'z)]
+   [other (fail (format "改名した PLet を期待した: ~s" other))]))
+
+(test-case
  "PClosure の environment key と仮引数の重複を入口で拒否する"
+ ;; HEAD では外側の PLet が一歩進む。L2 の後は入口の検査が config 全体を拒否し、初期 config の後続が無い。
  (check-equal? (apply-reduction-relation
                 -->pr
-                (inject-pr '(PApp (PClosure ((a 1)) (a) a) 2)))
+                (inject-pr '(PLet z 0 (PApp (PClosure ((a 1)) (a) a) 2))))
                '()))
 
 (test-case
