@@ -502,7 +502,7 @@ payload のどこかに `BorrowedMut` があれば、同じ可変 loan を指す
 所有者を引けない借用は `E-BOR-006`、view の region を超える借用は `E-BOR-004` で落とす。
 その結果の capability 集合と欄表は、borrowed operand が指す place の token の欄表から、operand の capability path をたどって得る。
 これにより共有参照の capability を保持するが、新しい loan として再束縛することはない。
-借用の payload 自身がさらに借用を含む形は、内側の参照を再束縛する規則が無いため `E-BOR-014` で落とす。
+読み出す値の中の共有借用の欄が、その参照先の型にさらに借用を持つ形（借用の入れ子）は、内側の参照を再束縛する規則が無いため `E-BOR-014` で落とす。
 借用の所有者は lifetime と region の上限制約から引き当てるため、値の側へ新しい token の台帳を置かない。
 
 `(Assign c v)` は capability が指す先へ値を書き込む。 [REQ: BOR-004]
