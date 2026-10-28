@@ -308,6 +308,15 @@
     (check-equal? (leaf-exit-destinations (first choice) (second choice))
                   (list (list 'unclassified #f)))))
 
+(test-case "署名だけの要約は記録漏れの印を持つ"
+  (define summary
+    (signature-forwarding-summary
+     (list '(BorrowedMut Int (RParam a)))
+     '(BorrowedMut Int (RParam a))
+     'apply-unknown-summary
+     (lambda (key node) (error 'unexpected-failure "~a at ~a" key node))))
+  (check-true (callable-summary-incomplete? summary)))
+
 (test-case "capability の取得例外は callable summary に記録漏れを残す"
   (define core
     '(Scope (1)

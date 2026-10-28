@@ -118,6 +118,7 @@
          site-position-matches?
          normalize-leaf-exits
          callable-summary-leaf-exits
+         signature-forwarding-summary
          formal-leaf-info
          instantiate-capability-path
          lookup-binding
@@ -946,7 +947,9 @@
    (for/list ([type (in-list parameter-types)])
      (define-values (_root leaves)
        (formal-capability-entry type '(formal)))
-     leaves)))
+     leaves)
+   ;; 本体を見ていない署名要約は出口イベントを欠くため、局所として扱わない。
+   #t))
 
 ;; RegionApp が Union member を潰す場合だけ π の member segment を実体化後の
 ;; 鍵から除く。Record と constructor の segment は型引数を含まない。
