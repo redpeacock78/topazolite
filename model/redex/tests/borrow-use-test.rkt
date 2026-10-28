@@ -99,7 +99,7 @@
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir 'Int)
                 'fail))
 
-(test-case "BOR-004: shared reads and mutable uses are permitted but shared writes are rejected"
+(test-case "BOR-004: 共有 Read と可変借用の利用は許し、共有借用への書込みは拒む"
   (for ([core (in-list '((Scope (1) (Read (Borrow 1)))
                          (Scope (1) (Read (BorrowMut 1)))
                          (Scope (1) (Assign (BorrowMut 1) 7))))])
@@ -108,7 +108,7 @@
                          (Scope (1) (Assign 1 7))))])
     (check-equal? (status core (build-region-ir core) 'Int) 'fail)))
 
-(test-case "BOR-004: a live overlapping loan blocks direct owner reads and writes"
+(test-case "BOR-004: 生存中に重なる借用は owner の直接 Read と Assign を拒む"
   (define (make ρ owner-use)
     `(Scope (1)
             (Let (b let (Borrowed Int ,ρ)) (Borrow 1)

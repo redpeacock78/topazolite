@@ -4,13 +4,13 @@
 (define rec2 '(Rec ((a imm 1) (b imm unit))))  ; (Record ((a Int imm) (b Unit imm)))
 
 ; const: 残余が空でないと型エラー（ROW-001）。
-(test-case "ROW-001: const rejects residual fields"
+(test-case "ROW-001: const 束縛は残余欄を拒否する"
   (check-equal? (core-type-of `(Let (x const (Record ((a Int imm)))) ,rec2 x) '() '()) 'ill-typed)
   ; const: 残余 field が空なら OK、x は必須 field のみ。
   (check-equal? (core-type-of `(Let (x const (Record ((a Int imm) (b Unit imm)))) ,rec2 (Proj x a)) '() '())
                 '(Int ())))
 ; let: 残余 field を保持し、互換な field は contextual type にできる（ROW-002）。
-(test-case "ROW-002: let keeps compatible residual fields and rejects incompatible ones"
+(test-case "ROW-002: let 束縛は互換な残余欄を保ち、非互換な欄を拒否する"
   (check-equal? (core-type-of `(Let (x let (Record ((a Int imm)))) ,rec2 (Proj x b)) '() '())
                 '(Unit ()))
   (check-equal? (core-type-of `(Let (x let (Record ((a Bool imm)))) ,rec2 x) '() '()) 'ill-typed))

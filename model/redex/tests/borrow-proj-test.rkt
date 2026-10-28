@@ -14,7 +14,7 @@
          "../machine.rkt")
 
 ;; spec §5.2 の表。親が共有ならば field の可変性によらず子は共有。
-(test-case "BOR-005: projected borrow mode follows parent and field mutability"
+(test-case "BOR-005: 投影借用の mode は親と欄の可変性に従う"
   (check-equal? (proj-borrow-mode 'Borrowed 'imm) 'Borrowed)
   (check-equal? (proj-borrow-mode 'Borrowed 'mut) 'Borrowed)
   ;; 親が可変で field が mut のときだけ子が可変になる。

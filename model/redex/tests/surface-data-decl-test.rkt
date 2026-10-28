@@ -32,7 +32,7 @@
   (define r (compile str))
   (and (diagnostic? r) (diagnostic-id r)))
 
-(test-case "ADT-001: recursive Owned field declarations preserve their data shape"
+(test-case "ADT-001: 再帰 Owned 欄の data 宣言は data の形を保つ"
   (check-equal? (decls "type Box<A> =\n  | box<A>\n0")
                 '((Box (A) ((box ((Param A)))))))
   (check-equal? (decls "type Tree<A> =\n  | leaf\n  | node<Owned<Tree<A>>, A>\n0")

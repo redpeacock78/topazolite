@@ -249,7 +249,7 @@
   (check-escape return-escape "Return payload")
   (check-escape leave-escape "Leave payload"))
 
-(test-case "BOR-001: owner Let rejects a borrow escaping its body"
+(test-case "BOR-001: owner Let の body から借用を外へ出すのを拒否する"
   (check-escape let-body-escape "owner Let body result")
   (check-escape let-body-option-escape "owner Let Option payload")
   (check-escape let-body-return-escape "owner Let Return payload"))

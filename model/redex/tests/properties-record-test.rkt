@@ -10,13 +10,13 @@
 ; TYP-003: 予約基本型（Int）と予約 Narrative（Proof φ）は structural matching の対象外。
 ; compat? の全域 dispatch で Record 枝に入らず type-equiv? 分岐のみを通るため、compat? は
 ; type-equiv? と一致する（List など閉じた型ではなく、予約型そのもので固定する）。
-(test-case "TYP-003: reserved types use definitional equality rather than record matching"
+(test-case "TYP-003: 予約型は record の構造的照合でなく型同値を使う"
   (check-equal? (compat? 'Int 'Int) (type-equiv? 'Int 'Int))
   (check-equal? (compat? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait))
                 (type-equiv? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait)))
   (check-false (compat? '(Proof ValidNarrativeTrait) '(Proof TypeNarrativeCap)))
-  ;; User records do expose structural rows, but compatibility remains
-  ;; directional: the source may carry residual fields, not lack required ones.
+  ;; 利用者定義の Record は構造的な行を公開するが、互換性は方向を持つ。
+  ;; source は残余欄を持てるが、必須欄を欠いてはならない。
   (check-true
    (compat? '(Record ((a Int imm) (b Bool imm))) '(Record ((a Int imm)))))
   (check-false

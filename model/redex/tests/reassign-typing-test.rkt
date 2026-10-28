@@ -88,7 +88,7 @@
 (define ok-core '(Let (x mut Int) 1 (Reassign x Int 2)))
 
 ;; mut binding への再代入を受理し、Unit を返す。
-(test-case "SCP-001: reassignment requires mut and records Mutation"
+(test-case "SCP-001: 再代入は mut を要求し Mutation を記録する"
   (check-equal? (first (type-row-of ok-core)) 'Unit)
   (check-not-false (memq 'Mutation (second (type-row-of ok-core))))
   (for ([mode (in-list '(const let))])

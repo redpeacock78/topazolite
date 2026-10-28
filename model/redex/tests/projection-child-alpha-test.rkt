@@ -270,7 +270,7 @@
       [other (fail (format "expected reborrow-parent-live for ~s, got ~e"
                            parent-use other))])))
 
-(test-case "BOR-002: oracle rejects two simultaneously live mutable sibling projections"
+(test-case "BOR-002: oracle は同じ可変 loan の兄弟射影を二度生存させない"
   (define config
     '(cfg
       (Scope (0 1)

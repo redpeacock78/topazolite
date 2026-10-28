@@ -179,6 +179,17 @@
 (define (test-req-ids source)
   (regexp-match* test-id-rx source))
 
+;; 根拠名は通常の test-case と、性質生成器の bounded-row-check に限る。
+(define test-definition-forms '("test-case" "bounded-row-check"))
+
+(define (named-test-definition? source case-name)
+  (for/or ([form (in-list test-definition-forms)])
+    (regexp-match?
+     (pregexp (format "\\(~a[[:space:]]+\"~a\""
+                      (regexp-quote form)
+                      (regexp-quote case-name)))
+     source)))
+
 (define (annotation-errors fst-path surface-path registry-path spec-dir repo-root)
   (define definitions (fst-declarations fst-path))
   (define known-reqs (list->set (map car (registry-definitions registry-path))))
@@ -476,10 +487,8 @@
               (unless (member id (test-req-ids source))
                 (report! (format "~a: 根拠の試験 ~a が要件 ID を参照しない"
                                  id (car reference))))
-              (unless (regexp-match? (pregexp (format "\\(test-case[[:space:]]+\"~a\""
-                                                       (regexp-quote case-name)))
-                                     source)
-                (report! (format "~a: 根拠の試験 ~a に test-case ~a が無い"
+              (unless (named-test-definition? source case-name)
+                (report! (format "~a: 根拠の試験 ~a に名前付き試験 ~a が無い"
                                  id (car reference) case-name)))]))]
         [else
          (unless (equal? evidence "-")

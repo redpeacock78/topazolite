@@ -347,7 +347,7 @@
      (hash inventory-path inventory evidence-path (evidence-text #:reqs '()))))
   (check-failure result #px"参照"))
 
-(test-case (string-append req-one ": test source IDs follow req-coverage")
+(test-case (string-append req-one ": 試験ファイル内の ID は req-coverage と同じ基準で数える")
   (define inventory
     (inventory-text
      #:rows (list (inventory-row req-one "テストのみ" "-" "-"
@@ -393,6 +393,32 @@
      (hash inventory-path inventory
            evidence-path (evidence-text #:case "根拠例の続き"))))
   (check-failure result #px"根拠例"))
+
+(test-case "bounded-row-check の名前を根拠として受理する"
+  (define case-name (string-append req-one ": 性質を生成検査する"))
+  (define inventory
+    (inventory-text
+     #:rows (list (inventory-row req-one "テストのみ" "-" "-"
+                                 (format "`~a`::`~a`" evidence-path case-name))
+                  (inventory-row req-two))))
+  (define evidence
+    (format "#lang racket\n(bounded-row-check ~s pattern property)\n" case-name))
+  (check-equal? (first (run-overrides (hash inventory-path inventory
+                                            evidence-path evidence)))
+                0))
+
+(test-case "許可リスト外の my-check だけでは根拠として認めない"
+  (define case-name (string-append req-one ": 性質を検査する"))
+  (define inventory
+    (inventory-text
+     #:rows (list (inventory-row req-one "テストのみ" "-" "-"
+                                 (format "`~a`::`~a`" evidence-path case-name))
+                  (inventory-row req-two))))
+  (define evidence
+    (format "#lang racket\n(my-check ~s pattern property)\n" case-name))
+  (check-failure (run-overrides (hash inventory-path inventory
+                                      evidence-path evidence))
+                 #px"名前付き試験"))
 
 (test-case "SCOPE に admit か assume の語がある注記を報告する"
   (define result
