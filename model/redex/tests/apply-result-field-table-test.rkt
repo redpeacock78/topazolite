@@ -107,6 +107,98 @@
   '(Record ((inner (Borrowed Int (RParam a)) imm)
             (other (Borrowed Int (RParam a)) imm))))
 
+(define transport-pair-formal
+  '(Record ((inner (BorrowedMut Int (RParam a)) mut)
+            (other (BorrowedMut Int (RParam b)) mut))))
+(define transport-pair-actual
+  '(Record ((inner (BorrowedMut Int (RVar 0)) mut)
+            (other (BorrowedMut Int (RVar 1)) mut))))
+(define transport-callables
+  `((identity-record
+     (ForallRegion (a b)
+       (NFn (,transport-pair-formal) ,transport-pair-formal () () () User)))))
+(define transport-discharge-callables
+  `((identity-record
+     (ForallRegion (a b)
+       (NFn (,transport-pair-formal) ,transport-pair-formal
+            () () (TypeNarrativeCap) User)))))
+(define transport-recur-callables
+  (append transport-callables
+          `((loop-id
+             (ForallRegion (a b)
+               (NFn () Unit () () () User))))))
+(define transport-option-formal `(Option ,transport-pair-formal))
+(define transport-option-actual `(Option ,transport-pair-actual))
+(define transport-option-callables
+  `((identity-option
+     (ForallRegion (a b)
+       (NFn (,transport-option-formal) ,transport-option-formal
+            () () () User)))))
+(define (transport-function)
+  `(RegionApp
+    (RegionLam (a b)
+      (Lam User identity-record (argument) argument))
+    ((RVar 0) (RVar 1))))
+(define (transport-apply)
+  `(Apply ,(transport-function) pair))
+(define (transport-option-function)
+  `(RegionApp
+    (RegionLam (a b)
+      (Lam User identity-option (argument) argument))
+    ((RVar 0) (RVar 1))))
+(define (transport-wrapper kind)
+  (define applied (transport-apply))
+  (case kind
+    [(scope) `(Scope () ,applied)]
+    [(yield) `(Yield 0 ,applied)]
+    [(unsafe) `(Unsafe ,applied)]
+    [(discharge)
+     `(Discharge (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
+        ,applied)]
+    [(apply-argument) `(Apply ,(transport-function) ,applied)]
+    [(record) `(Proj (Rec ((wrapped imm ,applied))) wrapped)]
+    [(construct)
+     `(Eliminate (Construct (Option ,transport-pair-actual) some ,applied)
+        ((none () -> pair)
+         (some (unwrapped) -> unwrapped)))]
+    [(union)
+     `(UnionEliminate
+       (UnionInject (Union ,transport-pair-actual Int)
+                    ,transport-pair-actual ,applied)
+       ((,transport-pair-actual unwrapped -> unwrapped)
+        (Int ignored -> pair)))]
+    [(perform)
+     `(Handle (Return boundary ,transport-pair-actual)
+        (returned -> returned)
+        (Perform (Return boundary ,transport-pair-actual) ,applied))]
+    [(recur)
+     `(Recur loop-id loop () unit ,applied)]
+    [else (error 'transport-wrapper "unknown kind: ~s" kind)]))
+
+(define (transport-core kind write-target)
+  `(Scope ()
+     (Let (x let (Owned Int)) 1
+       (Let (y let (Owned Int)) 2
+         (Scope ()
+           (Let (source-inner let (BorrowedMut Int (RVar 0)))
+                (BorrowMut x)
+             (Scope ()
+               (Let (source-other let (BorrowedMut Int (RVar 1)))
+                    (BorrowMut y)
+                 (Let (pair let ,transport-pair-actual)
+                      (Rec ((inner mut source-inner)
+                            (other mut source-other)))
+                   (Let (result let ,transport-pair-actual)
+                        ,(transport-wrapper kind)
+                     (Let (child let (Borrowed Int ph))
+                          (Reborrow (Proj result inner))
+                       (Let (written let Unit)
+                            (Assign ,(if (eq? write-target 'inner)
+                                         'source-inner
+                                         'source-other)
+                                    7)
+                         (Read child)))))))))))))
+
 (test-case "record 仮引数の borrowed field を Read できる"
   (define-values (core callables)
     (formal-callable 'read-inner shared-record 'Int '(Read (Proj x inner)) '()))
@@ -261,6 +353,227 @@
   (check-equal? (configuration-core (last configs)) 1)
   (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
                 'ok))
+
+(test-case "Proj が直接受ける Apply の結果欄を部分式の point から引く"
+  (define parameter-type
+    '(Record ((inner (BorrowedMut Int (RParam a)) mut)
+              (other (BorrowedMut Int (RParam b)) mut))))
+  (define actual-type
+    '(Record ((inner (BorrowedMut Int (RVar 0)) mut)
+              (other (BorrowedMut Int (RVar 1)) mut))))
+  (define callables
+    `((identity-record
+       (ForallRegion (a b)
+         (NFn (,parameter-type) ,parameter-type () () () User)))))
+  (define (core write-target)
+    `(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (y let (Owned Int)) 2
+           (Scope ()
+             (Let (source-inner let (BorrowedMut Int (RVar 0))) (BorrowMut x)
+               (Scope ()
+                 (Let (source-other let (BorrowedMut Int (RVar 1))) (BorrowMut y)
+                   (Let (pair let ,actual-type)
+                     (Rec ((inner mut source-inner)
+                           (other mut source-other)))
+                     (Let (child let (Borrowed Int ph))
+                       (Reborrow
+                        (Proj
+                         (Apply
+                          (RegionApp
+                           (RegionLam (a b)
+                             (Lam User identity-record (arg) arg))
+                           ((RVar 0) (RVar 1)))
+                          pair)
+                         inner))
+                       (Let (written let Unit)
+                         (Assign ,(if (eq? write-target 'inner) 'source-inner
+                                      'source-other) 7)
+                         (Read child))))))))))))
+  (define rejected (raw-result/places (core 'inner) callables '()))
+  (check-equal? (failure-key rejected) 'borrow-conflicting-use
+                (format "candidate field write is E-BOR-025: ~s" rejected))
+  (define accepted-core (core 'other))
+  (check-false (failure-key (raw-result/places accepted-core callables '())))
+  (define-values (start sidecar ir expected)
+    (prepare-execution accepted-core callables))
+  (define configs (trace-g2 start))
+  (check-live-trace configs callables expected)
+  (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
+                'ok))
+
+(test-case "Apply の結果欄は各 Core 経路を通って借用検査へ届く"
+  (for ([kind (in-list '(scope yield unsafe discharge apply-argument
+                         record construct union perform recur))])
+    (define callables
+      (case kind
+        [(discharge) transport-discharge-callables]
+        [(recur) transport-recur-callables]
+        [else transport-callables]))
+    (define rejected (transport-core kind 'inner))
+    (define rejection (raw-result/places rejected callables '()))
+    (check-equal? (failure-key rejection) 'borrow-conflicting-use
+                  (format "~a の候補欄は E-BOR-025: ~s" kind rejection))
+    (define accepted (transport-core kind 'other))
+    (define acceptance (raw-result/places accepted callables '()))
+    (check-false (failure-key acceptance)
+                 (format "~a の非候補欄は受理: ~s" kind acceptance))
+    (when (not (failure-key acceptance))
+      (define-values (start sidecar ir expected)
+        (prepare-execution accepted callables))
+      (define configs (trace-g2 start))
+      (check-live-trace configs callables expected)
+      (when (eq? kind 'unsafe)
+        (check-not-false
+         (for/first ([config (in-list configs)]
+                     #:when (member 'R-UnsafeExit
+                                    (map first (raw-steps-g2/named config))))
+           config)
+         "Unsafe の透過試験が R-UnsafeExit を通る"))
+      (check-equal?
+       (check-borrow-execution start sidecar ir 300 (make-bcounters))
+       'ok
+       (format "~a の非候補欄は oracle も受理" kind)))))
+
+(test-case "Apply を直接 Eliminate の scrutinee に置いても欄表を渡す"
+  (define (core write-target)
+    `(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (y let (Owned Int)) 2
+           (Scope ()
+             (Let (source-inner let (BorrowedMut Int (RVar 0)))
+                  (BorrowMut x)
+               (Scope ()
+                 (Let (source-other let (BorrowedMut Int (RVar 1)))
+                      (BorrowMut y)
+                   (Let (pair let ,transport-pair-actual)
+                        (Rec ((inner mut source-inner)
+                              (other mut source-other)))
+                     (Eliminate
+                      (Apply
+                       (RegionApp
+                        (RegionLam (a b)
+                          (Lam User wrap-option (argument)
+                            (Construct (Option ,transport-pair-formal)
+                                       some argument)))
+                        ((RVar 0) (RVar 1)))
+                      pair)
+                      ((none () -> 0)
+                       (some (unwrapped) ->
+                        (Let (child let (Borrowed Int ph))
+                             (Reborrow (Proj unwrapped inner))
+                          (Let (written let Unit)
+                               (Assign ,(if (eq? write-target 'inner)
+                                            'source-inner
+                                            'source-other)
+                                        7)
+                            (Read child)))))))))))))))
+  (define option-callables
+    (append transport-callables
+            `((wrap-option
+               (ForallRegion (a b)
+                 (NFn (,transport-pair-formal)
+                      (Option ,transport-pair-formal) () () () User))))))
+  (define rejected (raw-result/places (core 'inner) option-callables '()))
+  (check-equal? (failure-key rejected) 'borrow-conflicting-use
+                (format "EliminateAt の候補欄 write は E-BOR-025: ~s" rejected))
+  (define accepted (core 'other))
+  (define acceptance
+    (raw-result/places accepted option-callables '()))
+  (check-false (failure-key acceptance) (format "非候補欄 write: ~s" acceptance))
+  (define-values (start sidecar ir expected)
+    (prepare-execution accepted option-callables))
+  (define (direct-apply-eliminate-at? term)
+    (or (match term [`(EliminateAt (Apply ,_ ...) ,_) #t] [_ #f])
+        (and (pair? term)
+             (or (direct-apply-eliminate-at? (car term))
+                 (direct-apply-eliminate-at? (cdr term))))))
+  (check-true (direct-apply-eliminate-at? (configuration-core start)))
+  (define configs (trace-g2 start))
+  (check-live-trace configs option-callables expected)
+  (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
+                'ok))
+
+(test-case "Read は参照先の欄表を結果へ渡す"
+  (define source-key '(source-owner . ()))
+  (define inner-entry
+    (capability-entry (set source-key) (set) #f #t (set 'source-alpha) #f))
+  (define record-fields (hash '(record-field . inner) inner-entry))
+  (define record-context
+    (region-ctx-add-token (empty-region-ctx) 'owner
+                          (set '(owner . ())) #f #f record-fields))
+  (define read-record
+    (capability-of record-context '(Read (BorrowRef owner () 0))))
+  (check-equal? (capability-entry-keys read-record) (set source-key))
+  (check-equal? (capability-entry-fields read-record) record-fields)
+  (check-false (capability-entry-borrowed-view? read-record))
+  (define read-projected
+    (capability-of record-context
+                   '(Read (ProjBorrowAt 0 (BorrowRef owner () 0) inner))))
+  (check-equal? (capability-entry-keys read-projected) (set source-key))
+  (check-true (capability-entry-borrowed-view? read-projected))
+  (define union-context
+    (region-ctx-add-token
+     (empty-region-ctx) 'owner (set '(owner . ())) #f #f
+     (hash 'Int inner-entry 'String (capability-entry (set) (set) #f #f (set) #f))))
+  (define read-payload
+    (capability-of union-context
+                   '(Read (BorrowRef owner ((Payload)) 0))))
+  (check-equal? (capability-entry-keys read-payload) (set source-key)))
+
+(test-case "Apply capability の走査は各構成子の正確な child point を使う"
+  (define leaf
+    (capability-entry (set '(owner . ())) (set) #f #t (set 'source) #f))
+  (define record-entry
+    (capability-entry
+     (set '(owner . ())) (set)
+     (hash '(record-field . inner) leaf) #f (set 'source) #f))
+  (define (point-of core)
+    (define seen (box #f))
+    (capability-of
+     (empty-region-ctx) core
+     #:apply-entry
+     (lambda (Λ _node)
+       (set-box! seen (region-ctx-point Λ))
+       record-entry))
+    (unbox seen))
+  (for ([case (in-list
+               (list
+                (cons '(Scope () (Apply f x)) '(0))
+                (cons '(Unsafe (Apply f x)) '(0))
+                (cons '(Yield 0 (Apply f x)) '(1))
+                (cons '(Discharge (ProofRep User TypeNarrativeCap) (Apply f x))
+                      '(0))
+                (cons '(Read (Apply f x)) '(0))
+                (cons '(Proj (Apply f x) inner) '(0))
+                (cons '(ProjOpt Int (Apply f x) inner) '(0))
+                (cons '(ReborrowAt 0 (Apply f x)) '(0))
+                (cons '(Let (r let Int) (Apply f x) r) '(0))
+                (cons '(Let (r let Int) 0 (Apply f x)) '(1))
+                (cons '(Rec ((field imm (Apply f x)))) '(0))
+                (cons '(Construct Pair Pair (Apply f x)) '(0))
+                (cons '(UnionInject (Union Pair Int) Pair (Apply f x)) '(0))
+                (cons '(UnionVal (Union Pair Int) Pair (Apply f x)) '(0))
+                (cons '(Eliminate (Apply f x) ((Pair (a) -> a))) '(0))
+                (cons '(UnionEliminate (Apply f x) ((Pair a -> a))) '(0))
+                (cons '(RecRewrite (Rec ((field imm 0)))
+                                   ((field old Int imm Int (Apply f x))))
+                      '(1))
+                (cons '(RecRewriteOpen ((field imm (Apply f x)))) '(0))
+                (cons '(Recur loop-id loop () 0 (Apply f x)) '(1))))])
+    (check-equal? (point-of (car case)) (cdr case)
+                  (format "~s" (car case))))
+  (define flow-points (box '()))
+  (capability-flow-of
+   (empty-region-ctx)
+   '(Handle op (returned -> (Apply handler-f returned))
+      (Perform op (Apply payload-f payload)))
+   #:apply-entry
+   (lambda (Λ _node)
+     (set-box! flow-points
+               (append (unbox flow-points) (list (region-ctx-point Λ))))
+     record-entry))
+  (check-equal? (unbox flow-points) '((1 0) (0))))
 
 (test-case "要約のない関数値も署名から借用欄の転送を記録する"
   (define leaf-a '(BorrowedMut Int (RParam a)))

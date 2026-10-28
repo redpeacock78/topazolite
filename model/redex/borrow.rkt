@@ -781,6 +781,48 @@
                        (capability-entry-declared-lifetime entry))
                (capability-entry-declared-lifetime result))))))
 
+(define (capability-table-entry-at-path table path)
+  (define (select-field fields segment)
+    (cond
+      [(hash-has-key? fields segment) (list (hash-ref fields segment))]
+      [(symbol? segment)
+       (define key (cons 'record-field segment))
+       (if (hash-has-key? fields key) (list (hash-ref fields key)) '())]
+      [(exact-nonnegative-integer? segment)
+       (for/list ([(key entry) (in-hash fields)]
+                  #:when (and (pair? key)
+                              (not (eq? (car key) 'record-field))
+                              (equal? (cdr key) segment)))
+         entry)]
+      [(equal? segment '(Payload)) (hash-values fields)]
+      [else '()]))
+  (define (aggregate fields)
+    (define entries (hash-values fields))
+    (capability-entry
+     (for/fold ([keys (set)]) ([entry (in-list entries)])
+       (set-union keys (entry-ws entry)))
+     (for/fold ([variants (set)]) ([entry (in-list entries)])
+       (set-union variants (entry-variants entry)))
+     fields #f
+     (for/fold ([sources (set)]) ([entry (in-list entries)])
+       (set-union sources (capability-entry-source-alphas entry)))
+     #f))
+  (and (hash? table)
+       (if (null? path)
+           (aggregate table)
+           (let loop ([tables (list table)] [remaining path])
+             (define selected
+               (append-map (lambda (fields)
+                             (select-field fields (car remaining)))
+                           tables))
+             (cond
+               [(null? selected) #f]
+               [(null? (cdr remaining)) (capability-entry-join selected)]
+               [else
+                (loop (filter hash?
+                              (map entry-table selected))
+                      (cdr remaining))])))))
+
 ;; 仮引数の型から、formal root の capability 表と leaf ごとの metadata を作る。
 ;; capability path は射影用、leaf-map path は欄の表と同じ canonical key である。
 (define (formal-capability-entry type root)
@@ -909,38 +951,41 @@
 
 ;; 各 operation の payload capability と、通常完了の capability を別々に保つ。
 ;; Handle は通常値をそのまま返し、捕捉した payload だけを handler へ渡す。
-(define (capability-flow-of Λ c [locals (hash)])
-  (define (walk c* [locals* locals])
-    (define (child-flow child) (capability-flow-of Λ child locals*))
+(define (capability-flow-of Λ c [locals (hash)] #:apply-entry [apply-entry #f])
+  (define (walk Λ* c* locals*)
+    (define (child-flow child index [locals** locals*])
+      (walk (enter-child Λ* index) child locals**))
     (define (join-branches flows)
       (capability-flow
        (capability-entry-join (map capability-flow-normal flows))
        (capability-effects-join flows)))
     (define (sequence children [build (lambda ()
-                                       (capability-of Λ c* locals*))])
-      (let loop ([remaining children] [effects (hash)])
+                                       (capability-of
+                                        Λ* c* locals* #:apply-entry apply-entry))])
+      (let loop ([remaining children] [index 0] [effects (hash)])
         (cond
           [(null? remaining) (capability-flow (build) effects)]
           [else
-           (define next (child-flow (car remaining)))
+           (define next (child-flow (car remaining) index))
            (define effects*
              (capability-effects-join
               (list (capability-flow #f effects) next)))
            (if (capability-flow-normal next)
-               (loop (cdr remaining) effects*)
+               (loop (cdr remaining) (add1 index) effects*)
                (capability-flow #f effects*))])))
     (define (sequence-entries children build)
-      (let loop ([remaining children] [entries '()] [effects (hash)])
+      (let loop ([remaining children] [index 0] [entries '()] [effects (hash)])
         (cond
           [(null? remaining)
            (capability-flow (build (reverse entries)) effects)]
           [else
-           (define next (child-flow (car remaining)))
+           (define next (child-flow (car remaining) index))
            (define effects*
              (capability-effects-join
               (list (capability-flow #f effects) next)))
            (if (capability-flow-normal next)
                (loop (cdr remaining)
+                     (add1 index)
                      (cons (capability-flow-normal next) entries)
                      effects*)
                (capability-flow #f effects*))])))
@@ -949,7 +994,8 @@
       (define table (entry-table scrutinee-entry))
       (define borrowed-view? (entry-borrowed-view? scrutinee-entry))
       (join-branches
-       (for/list ([branch (in-list branches)])
+       (for/list ([branch (in-list branches)]
+                  [branch-index (in-naturals 1)])
          (if union?
              (let* ([plain
                      (match branch
@@ -960,7 +1006,8 @@
                  (capability-union-binding table member ws borrowed-view? #f
                                            borrowed-view?
                                            (entry-variants scrutinee-entry)))
-               (walk body (hash-set locals* (peel-bind binder) binding)))
+               (walk (enter-child Λ* branch-index) body
+                     (hash-set locals* (peel-bind binder) binding)))
              (let ()
                (match-define `(,constructor (,binders ...) -> ,body)
                  (peel-branch branch))
@@ -982,10 +1029,10 @@
                            ([binder (in-list binders)]
                             [binding (in-list bindings)])
                    (hash-set current (peel-bind binder) binding)))
-               (walk body branch-locals))))))
+               (walk (enter-child Λ* branch-index) body branch-locals))))))
     (match (peel-node c*)
       [`(Perform ,operation ,payload)
-       (define payload-flow (child-flow payload))
+       (define payload-flow (child-flow payload 0))
        (define effects (capability-flow-effects payload-flow))
        (define key (capability-operation-key operation))
        (define effects*
@@ -1000,7 +1047,8 @@
              effects))
        (capability-flow #f effects*)]
       [`(Handle ,operation ,handler ,body)
-       (define body-flow (child-flow body))
+       ;; core-children の順は handler=0, body=1。評価順とは異なる。
+       (define body-flow (child-flow body 1))
        (define key (capability-operation-key operation))
        (define captured? (hash-has-key? (capability-flow-effects body-flow) key))
        (define captured (handle-return-capability body-flow operation))
@@ -1008,7 +1056,7 @@
          (if captured?
              (match (peel-branch handler)
                [`(,binder -> ,handler-body)
-                (walk handler-body
+                (walk (enter-child Λ* 0) handler-body
                       (hash-set locals* (peel-bind binder) captured))])
              (capability-flow #f (hash))))
        (define propagated
@@ -1022,7 +1070,7 @@
                (capability-flow-normal handler-flow)))
         effects)]
       [`(Let (,binder ,rest ...) ,bound ,body)
-       (define bound-flow (child-flow bound))
+       (define bound-flow (child-flow bound 0))
        (define body-flow
          (if (capability-flow-normal bound-flow)
              (let* ([entry (capability-flow-normal bound-flow)]
@@ -1030,13 +1078,14 @@
                      (if (borrow-typed? (peel-ty (last rest)))
                          (entry-with-view entry #t)
                          (entry-with-view (entry-with-keys entry (set)) #f))])
-               (walk body (hash-set locals* (peel-bind binder) binding)))
+               (walk (enter-child Λ* 1) body
+                     (hash-set locals* (peel-bind binder) binding)))
              (capability-flow #f (hash))))
        (capability-flow
         (capability-flow-normal body-flow)
         (capability-effects-join (list bound-flow body-flow)))]
       [`(Eliminate ,scrutinee (,branches ...))
-       (define scrutinee-flow (child-flow scrutinee))
+       (define scrutinee-flow (child-flow scrutinee 0))
        (if (capability-flow-normal scrutinee-flow)
            (let ([branches-flow
                   (branch-flow (capability-flow-normal scrutinee-flow)
@@ -1048,9 +1097,9 @@
       [`(EliminateAt ,scrutinee (,branches ...))
        (define-values (plain-branches _regions)
          (peel-annotated-data-branches branches))
-       (walk `(Eliminate ,scrutinee ,plain-branches) locals*)]
+       (walk Λ* `(Eliminate ,scrutinee ,plain-branches) locals*)]
       [`(UnionEliminate ,scrutinee ,branches)
-       (define scrutinee-flow (child-flow scrutinee))
+       (define scrutinee-flow (child-flow scrutinee 0))
        (if (capability-flow-normal scrutinee-flow)
            (let ([branches-flow
                   (branch-flow (capability-flow-normal scrutinee-flow)
@@ -1062,12 +1111,12 @@
       [`(UnionEliminateAt ,scrutinee ,branches)
        (define-values (plain-branches _regions)
          (peel-annotated-union-branches branches))
-       (walk `(UnionEliminate ,scrutinee ,plain-branches) locals*)]
-      [`(Scope ,_ ,body) (child-flow body)]
+       (walk Λ* `(UnionEliminate ,scrutinee ,plain-branches) locals*)]
+      [`(Scope ,_ ,body) (child-flow body 0)]
       [`(Yield ,first ,next)
-       (define first-flow (child-flow first))
+       (define first-flow (child-flow first 0))
        (if (capability-flow-normal first-flow)
-           (let ([next-flow (child-flow next)])
+           (let ([next-flow (child-flow next 1)])
              (capability-flow
               (capability-flow-normal next-flow)
               (capability-effects-join (list first-flow next-flow))))
@@ -1113,16 +1162,21 @@
            (entry-ws entry) (entry-variants entry)
            (hash (normalize-type (peel-ty member-type)) entry))))]
       ;; Function bodies are definitions, while Recur's continuation executes now.
-      [`(Lam ,_ ...) (capability-flow (capability-of Λ c* locals*) (hash))]
-      [`(Recur ,_ ,_ ,_ ,_ ,continuation) (child-flow continuation)]
+      [`(Lam ,_ ...)
+       (capability-flow
+        (capability-of Λ* c* locals* #:apply-entry apply-entry) (hash))]
+      [`(Recur ,_ ,_ ,_ ,_ ,continuation) (child-flow continuation 1)]
       [`(RecurVal ,_ ,_ ,_ ,_)
-       (capability-flow (capability-of Λ c* locals*) (hash))]
+       (capability-flow
+        (capability-of Λ* c* locals* #:apply-entry apply-entry) (hash))]
       [`(RegionLam ,_ ,_)
-       (capability-flow (capability-of Λ c* locals*) (hash))]
+       (capability-flow
+        (capability-of Λ* c* locals* #:apply-entry apply-entry) (hash))]
       [`(RegionApp ,_ ,_)
-       (capability-flow (capability-of Λ c* locals*) (hash))]
+       (capability-flow
+        (capability-of Λ* c* locals* #:apply-entry apply-entry) (hash))]
       [_ (sequence (core-children (peel-node c*))) ]))
-  (walk c))
+  (walk Λ c locals))
 
 ;; scrutinee の表から分岐 K の束縛子へ張る値を並べる。
 ;; variant が複数ある data の分解では、各欄の path を variant view として記録する。
@@ -1172,8 +1226,8 @@
    entry variant? borrowed-view?
    (if (or fallback (hash? tbl)) (set) inherited-variants)))
 
-(define (capability-variant-views Λ c [locals (hash)])
-  (entry-variants (capability-of Λ c locals)))
+(define (capability-variant-views Λ c [locals (hash)] #:apply-entry [apply-entry #f])
+  (entry-variants (capability-of Λ c locals #:apply-entry apply-entry)))
 
 (define (variant-constructor? constructor)
   (or (memq constructor '(true false nil cons none some ok ng))
@@ -1193,24 +1247,42 @@
 ;; RegionApp の本体、Eliminate の scrutinee）へは渡さない。渡すと、いま
 ;; 診断を出さずに通っている programme が E-BOR-020 で落ちる。
 (define (capability-of Λ c [locals (hash)] #:fail [fail #f]
-                       #:allow-empty-keys? [allow-empty-keys? #f])
-  (define (recur c* [locals* locals])
-    (capability-of Λ c* locals* #:fail fail
-                   #:allow-empty-keys? allow-empty-keys?))
+                       #:allow-empty-keys? [allow-empty-keys? #f]
+                       #:apply-entry [apply-entry #f])
+  (define (recur c* [locals* locals] [index #f])
+    (capability-of (if index (enter-child Λ index) Λ) c* locals*
+                   #:fail fail
+                   #:allow-empty-keys? allow-empty-keys?
+                   #:apply-entry apply-entry))
   (define (ws-of c* [locals* locals]) (entry-ws (recur c* locals*)))
   ;; 表だけを取る再帰。fail を伝えない。
-  (define (table-of c* [locals* locals])
-    (entry-table (capability-of Λ c* locals*)))
+  (define (table-of c* [locals* locals] [index #f])
+    (entry-table (capability-of (if index (enter-child Λ index) Λ)
+                                c* locals*)))
   (define (member-key type) (normalize-type (peel-ty type)))
   (define (field-key label) (cons 'record-field (peel-lbl label)))
   (define (field-entry c* label)
     ;; Record の束縛は自身の ws が空でも field 表に借用を持てる。
-    (define table-parent (capability-of Λ c* locals))
+    (define table-parent (capability-of (enter-child Λ 0) c* locals
+                                        #:apply-entry apply-entry))
     (define table (entry-table table-parent))
     (if (hash? table)
         (capability-value (hash-ref table (field-key label) (only (set))))
-        (let ([parent (recur c*)])
+        (let ([parent (recur c* locals 0)])
           (entry-with-keys parent (entry-ws parent)))))
+  (define (field-table-for-root root)
+    (define direct (region-ctx-field-table Λ root))
+    (or (and (hash? direct) direct)
+        (for/fold ([joined #f])
+                  ([(name token) (in-hash (region-ctx-tokens Λ))]
+                   #:when (and (borrow-capability? token)
+                               (hash? (borrow-capability-fields token))
+                               (for/or ([cap (in-set
+                                              (borrow-capability-keys token))])
+                                 (equal? (car cap) root))))
+          (if joined
+              (table-join joined (borrow-capability-fields token))
+              (borrow-capability-fields token)))))
   (define (retain-entry entry type)
     (match (peel-ty type)
       [`(Record ,row)
@@ -1242,16 +1314,18 @@
      (only (set (cons (peel-node p) fp)) (set) #t)]
     [`(BorrowMutRef ,p ,fp ,_)
      (only (set (cons (peel-node p) fp)) (set) #t)]
+    [`(Apply ,_function ,_arguments ...)
+     (or (and apply-entry (apply-entry Λ c)) (only (set)))]
     [`(Reborrow ,c_1)
-     (define entry (recur c_1))
+     (define entry (recur c_1 locals 0))
      (only (entry-ws entry) (entry-variants entry)
            (entry-borrowed-view? entry))]
     [`(ReborrowAt ,_ ,c_1)
-     (define entry (recur c_1))
+     (define entry (recur c_1 locals 0))
      (only (entry-ws entry) (entry-variants entry)
            (entry-borrowed-view? entry))]
     [`(ProjBorrowAt ,_ ,c_1 ,label)
-     (define parent (recur c_1))
+     (define parent (recur c_1 locals 0))
      (define child-caps
        (for/set ([k (in-set (entry-ws parent))])
          (cons (car k) (append (cdr k) (list (peel-lbl label))))))
@@ -1292,11 +1366,13 @@
      ;; scrutinee を辿るのは表と capability を得るためだけである。Eliminate
      ;; 全体の値は分岐の本体の値であって scrutinee の値ではないため、ws は
      ;; 合併しない。表が無ければ欄の位置を ws の path へ積む。
-     (define entry_s (capability-of Λ scrutinee locals))
+     (define entry_s
+       (capability-of (enter-child Λ 0) scrutinee locals
+                      #:apply-entry apply-entry))
      (define tbl_s (entry-table entry_s))
      (define ws_s (entry-ws entry_s))
      (define results
-       (for/list ([br (in-list brs)])
+       (for/list ([br (in-list brs)] [branch-index (in-naturals 1)])
          (match-define `(,K (,parameters ...) -> ,body) (peel-branch br))
          (define binders (map peel-bind parameters))
          (define bindings
@@ -1317,7 +1393,7 @@
            (for/fold ([acc_l locals]) ([x (in-list binders)]
                                        [entry (in-list bindings)])
              (hash-set acc_l x entry)))
-         (recur body locals_branch)))
+         (recur body locals_branch branch-index)))
      (if (null? results)
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
@@ -1327,11 +1403,14 @@
        (peel-annotated-data-branches brs))
      (recur `(Eliminate ,scrutinee ,plain-branches) locals)]
     [`(UnionEliminate ,scrutinee ,branches)
-     (define entry_s (recur scrutinee))
+     (define entry_s
+       (capability-of (enter-child Λ 0) scrutinee locals
+                      #:apply-entry apply-entry))
      (define tbl_s (entry-table entry_s))
      (define ws_s (entry-ws entry_s))
      (define results
-       (for/list ([branch (in-list branches)])
+       (for/list ([branch (in-list branches)]
+                  [branch-index (in-naturals 1)])
          (define plain
            (match branch
              [(list (list '#:span _ _ _) _ ...) (peel-ubr branch)]
@@ -1343,7 +1422,8 @@
                                      #f
                                      (entry-borrowed-view? entry_s)
                                      (entry-variants entry_s)))
-         (recur body (hash-set locals (peel-bind binder) binding))))
+         (recur body (hash-set locals (peel-bind binder) binding)
+                branch-index)))
      (if (null? results)
          (only (set))
          (for/fold ([acc (car results)]) ([r (in-list (cdr results))])
@@ -1352,7 +1432,7 @@
      (define-values (plain-branches _regions)
        (peel-annotated-union-branches branches))
      (recur `(UnionEliminate ,scrutinee ,plain-branches) locals)]
-    [`(Scope ,_ ,body) (recur body)]
+    [`(Scope ,_ ,body) (recur body locals 0)]
     [`(Proj ,c_1 ,label)
      (field-entry c_1 label)]
     [`(ProjOpt ,_ ,c_1 ,label)
@@ -1360,16 +1440,29 @@
      (entry-with-parts
       (entry-ws field) (entry-variants field) (hash (cons 'some 0) field))]
     [`(Suspend ,c_1)
-     (define entry (recur c_1))
+     (define entry (recur c_1 locals 0))
      (only (entry-ws entry) (entry-variants entry)
            (entry-borrowed-view? entry))]
-    [`(Yield ,_ ,c_next) (recur c_next)]
+    [`(Yield ,_ ,c_next) (recur c_next locals 1)]
     [`(Handle ,_ ,handler ,body)
-     (define flow (capability-flow-of Λ c locals))
+     (define flow (capability-flow-of Λ c locals #:apply-entry apply-entry))
      (or (capability-flow-normal flow) (only (set)))]
+    [`(Read ,operand)
+     (define operand-entry (recur operand locals 0))
+     (define entries
+       (for/list ([cap (in-set (entry-ws operand-entry))]
+                  #:do [(define table (field-table-for-root (car cap)))]
+                  #:when (hash? table)
+                  #:do [(define selected
+                          (capability-table-entry-at-path table (cdr cap)))]
+                  #:when selected)
+         selected))
+     (or (and (pair? entries) (capability-entry-join entries))
+         (only (set)))]
     [`(Rec (,fields ...))
-     (define entries (for/list ([field (in-list fields)])
-                       (recur (third field))))
+     (define entries
+       (for/list ([field (in-list fields)] [index (in-naturals)])
+         (recur (third field) locals index)))
      (entry-with-parts
       (for/fold ([acc (set)]) ([entry (in-list entries)])
         (set-union acc (entry-ws entry)))
@@ -1379,7 +1472,9 @@
         (values (field-key (first field)) entry)))]
     [`(Absent ,_) (only (set))]
     [`(Construct ,_ ,K ,fields ...)
-     (define entries (for/list ([field (in-list fields)]) (recur field)))
+     (define entries
+       (for/list ([field (in-list fields)] [index (in-naturals)])
+         (recur field locals index)))
      (entry-with-parts
       (for/fold ([acc (set)]) ([e (in-list entries)])
         (set-union acc (entry-ws e)))
@@ -1388,18 +1483,19 @@
       (for/hash ([e (in-list entries)] [i (in-naturals 0)])
         (values (cons K i) e)))]
     [`(UnionInject ,_ ,member-type ,payload)
-     (define entry (recur payload))
+     (define entry (recur payload locals 0))
      (entry-with-parts
       (entry-ws entry) (entry-variants entry)
       (hash (member-key member-type) entry))]
     [`(UnionVal ,_ ,member-type ,payload)
-     (define entry (recur payload))
+     (define entry (recur payload locals 0))
      (entry-with-parts
       (entry-ws entry) (entry-variants entry)
       (hash (member-key member-type) entry))]
     [`(RecRewriteOpen (,fields ...))
-     (define entries (for/list ([field (in-list fields)])
-                       (recur (last field))))
+     (define entries
+       (for/list ([field (in-list fields)] [index (in-naturals)])
+         (recur (last field) locals index)))
      (entry-with-parts
       (for/fold ([acc (set)]) ([entry (in-list entries)])
         (set-union acc (entry-ws entry)))
@@ -1408,7 +1504,7 @@
       (for/hash ([field (in-list fields)] [entry (in-list entries)])
         (values (field-key (first field)) entry)))]
     [`(RecRewrite ,input ,entries)
-     (define input-entry (recur input))
+     (define input-entry (recur input locals 0))
      (define input-ws (entry-ws input-entry))
      (define input-table (entry-table input-entry))
      ;; 非対象欄は入力 entry、対象欄は書換え後の entry を出力する。
@@ -1417,7 +1513,7 @@
            (hash-ref input-table (field-key label) (only (set)))
            (only input-ws)))
      (define rewritten
-       (for/list ([entry (in-list entries)])
+       (for/list ([entry (in-list entries)] [entry-index (in-naturals 1)])
          (match entry
            [(list label binder _ _ _ body)
             (define source (source-entry label))
@@ -1425,7 +1521,7 @@
             (define result
               (if (eq? (peel-node body) name)
                   source
-                  (recur body (hash-set locals name source))))
+                  (recur body (hash-set locals name source) entry-index)))
            (list (field-key label) result
                   (not (eq? (peel-node body) name)))])))
      (define output-table
@@ -1453,11 +1549,15 @@
      (define parts (region-lam-parts f))
      (define entry
        (cond
-         [parts (capability-of Λ (third parts) locals)]
+         [parts
+          (capability-of (enter-child (enter-child Λ 0) 0)
+                         (third parts) locals
+                         #:apply-entry apply-entry)]
          [(match (peel-node f)
             [`(RecurVal ,_cid ,_f ,_xs ,_c_body) #t]
             [_ #f])
-          (capability-of Λ f locals)]
+          (capability-of (enter-child Λ 0) f locals
+                         #:apply-entry apply-entry)]
          [else (only (set))]))
      (entry-with-parts (set) (entry-variants entry) (entry-table entry))]
     ;; (,name ,rest ...) は bmode 付きの (x bmode τ) と G1 の (x τ) の両方に合う。
@@ -1470,25 +1570,36 @@
     ;; 表の側にこの制限は要らない。整数リテラルからは表が作れず #f になる。
     [`(Let (,name ,rest ...) ,bound ,body)
      (define borrowed? (borrow-typed? (peel-ty (last rest))))
-     (define bound-entry (capability-of Λ bound locals))
+     (define bound-entry
+       (if borrowed?
+           (recur bound locals 0)
+           (capability-of (enter-child Λ 0) bound locals
+                          #:apply-entry apply-entry)))
      (define entry
        (if borrowed?
-           (recur bound)
+           bound-entry
            (entry-with-keys bound-entry (set))))
-     (recur body (hash-set locals (peel-bind name) entry))]
+     (recur body (hash-set locals (peel-bind name) entry) 1)]
     [`(Discharge ,proof ,inner)
-     (define entry (recur inner))
+     (define entry (recur inner locals 0))
      (match (peel-node proof)
        [`(ProofRep ,_ (RemainderSafelyDropped ,_ ,expected))
         (retain-entry entry expected)]
        [_ entry])]
+    [`(Unsafe ,body) (recur body locals 0)]
+    [`(Recur ,_ ,_ ,_ ,_ ,continuation)
+     (recur continuation locals 1)]
     [_ (only (set))]))
 
-(define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f])
-  (entry-ws (capability-of Λ c locals #:fail fail)))
+(define (borrow-token-key Λ c [locals (hash)] #:fail [fail #f]
+                         #:apply-entry [apply-entry #f])
+  (entry-ws (capability-of Λ c locals #:fail fail
+                           #:apply-entry apply-entry)))
 
-(define (capability-field-entries Λ c [locals (hash)] #:fail [fail #f])
-  (entry-table (capability-of Λ c locals #:fail fail)))
+(define (capability-field-entries Λ c [locals (hash)] #:fail [fail #f]
+                                 #:apply-entry [apply-entry #f])
+  (entry-table (capability-of Λ c locals #:fail fail
+                              #:apply-entry apply-entry)))
 
 (define (legacy-capability-table table)
   (and (hash? table)

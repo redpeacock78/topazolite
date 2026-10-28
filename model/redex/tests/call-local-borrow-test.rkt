@@ -5,6 +5,7 @@
          racket/match
          redex/reduction-semantics
          "../borrow-gen.rkt"
+         "../borrow-oracle.rkt"
          "../diagnostic.rkt"
          "../gen.rkt"
          "../lang.rkt"
@@ -484,7 +485,7 @@
   (define-values (_ir _filled typed) (type-core core '((1 Int))))
   (check-true (region-typed? typed) (format "region typing: ~s" typed)))
 
-(test-case "Scope で包んだ呼出しの借用結果が外へ届く形は E-BOR-020"
+(test-case "Scope で包んだ呼出しの借用結果を返して読める"
   (define callables
     '((borrow-result
        (ForallRegion (a)
@@ -502,9 +503,25 @@
                     (owner-ph))
                    argument)))
            (Read borrowed)))))
-  (define-values (_ir _filled typed) (type-core core '() callables))
-  (check-true (diagnostic? typed) (format "typed: ~s" typed))
-  (check-equal? (diagnostic-id typed) "E-BOR-020"))
+  (define-values (ir filled typed) (type-core core '() callables))
+  (check-true (region-typed? typed) (format "typed: ~s" typed))
+  (define start (inject-g2m (region-execution-core typed)))
+  (define expected (region-typed-type typed))
+  (define sidecar (region-typed-sidecar typed))
+  (define configs (trace-g2 start))
+  (define rows (map (lambda (config) (runtime-row config callables expected))
+                    configs))
+  (define first-live
+    (for/first ([row (in-list rows)] [index (in-naturals)] #:when row)
+      index))
+  (check-not-false first-live "trace に runtime-row がある config がある")
+  (for ([config (in-list (drop configs first-live))]
+        [row (in-list (drop rows first-live))])
+    (check-not-false row)
+    (check-true (config-ok? config callables expected row)))
+  (check-equal?
+   (check-borrow-execution start sidecar ir 300 (make-bcounters))
+   'ok))
 
 (test-case "Scope で包んだ呼出しの借用 Return payload が外へ届く形は E-BOR-020"
   (define callables

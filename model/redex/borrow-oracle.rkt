@@ -255,6 +255,11 @@
      '()]
     ;; R-Suspend は継続を unwrap するだけである。
     [(list `(Suspend ,continuation) continuation) '()]
+    ;; R-UnsafeExit は包みだけを外し、内側の借用値をそのまま運ぶ。
+    [(list `(Unsafe ,value) contractum)
+     #:when (and (eq? rule-name 'R-UnsafeExit)
+                 (equal? value contractum))
+     '()]
     ;; R-DischargeRemainder は strip-remainder が残す値をそのまま運ぶ。
     [(list `(Discharge
              (ProofRep ,_ (RemainderSafelyDropped ,actual ,expected)) ,value)

@@ -197,7 +197,7 @@
   (check-not-false (runtime-row cfg '() 'Int))
   (check-true (config-ok? cfg '() 'Int '())))
 
-(test-case "UnionEliminate の別 owner を束ねる Reborrow は source 検査で拒否される"
+(test-case "UnionEliminate の別 owner を束ねる Reborrow は owner escape で拒否される"
   (define source
     '(Scope ()
        (Let (x let (Owned Int)) 7
@@ -215,7 +215,7 @@
    (match result
      [`(fail ,key ,_node ,_details ...) key]
      [_ #f])
-   'unresolved-borrow-owner))
+   'borrow-escapes-owner))
 
 (test-case "構成検査は FromRawPtr の pointer 型検査を保つ"
   (define cfg '(cfg (Unsafe (FromRawPtr 3 7)) () () () ()))

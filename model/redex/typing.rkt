@@ -727,7 +727,7 @@
 
 (define (actual-leaf-entry Λ expression actual-type actual-path fail)
   (define root-entry
-    (capability-of Λ expression #:fail fail #:allow-empty-keys? #t))
+    (typing-capability-of Λ expression #:fail fail #:allow-empty-keys? #t))
   (define root-entry*
     (struct-copy capability-entry root-entry
                  [borrowed-view? (borrow-typed? actual-type)]
@@ -799,7 +799,8 @@
          (instantiate-capability-path actual-type formal-path region-subst))
        (unless actual-path (fail 'unresolved-borrow-owner node))
        (define actual-entry
-         (actual-leaf-entry Λ (list-ref arguments index) actual-type
+         (actual-leaf-entry (enter-child Λ (add1 index))
+                            (list-ref arguments index) actual-type
                             actual-path fail))
        (define-values (_formal-lifetime sources)
          (with-handlers ([exn:fail?
@@ -875,8 +876,9 @@
       (append-map
        (lambda (index)
          (define actual-entry
-           (capability-of Λ (list-ref arguments index)
-                          #:fail fail #:allow-empty-keys? #t))
+           (typing-capability-of (enter-child Λ (add1 index))
+                                 (list-ref arguments index)
+                                 #:fail fail #:allow-empty-keys? #t))
          (recursive-capability-leaf-candidates
           actual-entry fail node))
        (hash-keys candidate-lifetimes)))
@@ -950,8 +952,9 @@
   (if summary
       (forwarding-summary-keys summary)
       (let ([entry
-             (capability-of
-              Λ core #:fail fail #:allow-empty-keys? #t)])
+             (typing-capability-of
+              (enter-child Λ index) core #:fail fail
+              #:allow-empty-keys? #t)])
         (define (entry-keys entry)
           (if (capability-entry? entry)
               (set-union
@@ -1156,6 +1159,36 @@
   (define table (forwarding-summaries))
   (and table (hash-ref table (summary-key Λ node) #f)))
 
+(define (capability-of-typed-point Λ node)
+  (define summary (lookup-forwarding-summary Λ node))
+  (and summary
+       (capability-entry
+        (forwarding-summary-keys summary)
+        (or (forwarding-summary-variants summary) (set))
+        (forwarding-summary-fields summary)
+        (hash-has-key? (forwarding-summary-index summary) '())
+        (or (forwarding-summary-source summary) (set))
+        #f)))
+
+(define (typing-capability-of Λ core [locals (hash)]
+                              #:fail [fail #f]
+                              #:allow-empty-keys? [allow-empty-keys? #f])
+  (capability-of Λ core locals #:fail fail
+                 #:allow-empty-keys? allow-empty-keys?
+                 #:apply-entry capability-of-typed-point))
+
+(define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
+  (borrow-token-key Λ core locals #:fail fail
+                    #:apply-entry capability-of-typed-point))
+
+(define (typing-capability-field-entries Λ core [locals (hash)] #:fail [fail #f])
+  (capability-field-entries Λ core locals #:fail fail
+                            #:apply-entry capability-of-typed-point))
+
+(define (typing-capability-variant-views Λ core [locals (hash)])
+  (capability-variant-views Λ core locals
+                            #:apply-entry capability-of-typed-point))
+
 ;; §5.4。集めた要約の写し。要約は不変な構造体であり、雛形はその欄が持つ
 ;; 不変な並びである。可変の表そのものは外へ出さない。summary-key の文字列表現
 ;; で並べ、hash の走査順を外へ漏らさない。
@@ -1325,7 +1358,8 @@
         ir point (hash-ref (binder-points) (peel-bind target) #f)
         (child-type 0) core fail)]
       [`(Assign ,target ,_)
-       (define caps (borrow-token-key Λ target #:fail fail))
+       (define caps
+         (typing-borrow-token-key (enter-child Λ 0) target #:fail fail))
        (emit-decomposition-exit!
         ir point (assign-exit-destination caps environment)
         (child-type 1) core fail)]
@@ -2679,7 +2713,7 @@
       [_ #f]))
   (define variant-view? (and borrowed-view? (> (length schema) 1)))
   (define inherited-variants
-    (capability-variant-views Λ scrutinee))
+    (typing-capability-variant-views (enter-child Λ 0) scrutinee))
   (unless (= (length branches) (length schema))
     (fail 'non-exhaustive-eliminate node))
   (define plain-branches (map peel-branch branches))
@@ -2726,13 +2760,16 @@
   ;; 期待型を与える check-eliminate は診断も受け渡しも無しに受理していた。
   ;; この 3 分岐を branch-contexts へ置くことで、その非対称が消える。
   (define field-table
-    (and carries? (capability-field-entries Λ scrutinee)))
+    (and carries?
+         (typing-capability-field-entries (enter-child Λ 0) scrutinee)))
   ;; 表が無い scrutinee でも、借用そのものが所有者を運んでいれば欄へ辿れる。
   ;; その場合は capability の path の末尾へ欄の位置を積む。
   (define scrutinee-ws
-    (and carries? (not field-table) (borrow-token-key Λ scrutinee)))
+    (and carries? (not field-table)
+         (typing-borrow-token-key (enter-child Λ 0) scrutinee)))
   (define parent-caps
-    (and borrowed-view? (borrow-token-key Λ scrutinee #:fail fail)))
+    (and borrowed-view?
+         (typing-borrow-token-key (enter-child Λ 0) scrutinee #:fail fail)))
   (when (and carries?
              (not field-table)
              (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
@@ -3069,13 +3106,16 @@
                1)
       (fail 'non-exhaustive-union-eliminate node)))
   (define borrowed? (pair? wrapper))
-  (define field-table (capability-field-entries Λ scrutinee))
+  (define field-table
+    (typing-capability-field-entries (enter-child Λ 0) scrutinee))
   (define parent-caps
-    (and borrowed? (borrow-token-key Λ scrutinee #:fail fail)))
+    (and borrowed?
+         (typing-borrow-token-key (enter-child Λ 0) scrutinee #:fail fail)))
   (define inherited-variants
-    (capability-variant-views Λ scrutinee))
+    (typing-capability-variant-views (enter-child Λ 0) scrutinee))
   (define scrutinee-ws
-    (and borrowed? (borrow-token-key Λ scrutinee)))
+    (and borrowed?
+         (typing-borrow-token-key (enter-child Λ 0) scrutinee)))
   (when (and borrowed? (or (not scrutinee-ws) (set-empty? scrutinee-ws)))
     (fail 'unresolved-borrow-owner scrutinee))
   (define (member-capability member)
@@ -4497,7 +4537,8 @@
            (region-at/branch ir point)
            (region-at ir point)))
      (when (or derived? branch-born?) (track-child-alpha! α_child))
-     (define tokens (borrow-token-key Λ operand #:fail fail))
+     (define tokens
+       (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))
      (when (set-empty? tokens)
        (error 'infer-reborrow
               "親の token を特定できない operand: ~s"
@@ -4605,7 +4646,8 @@
   (define Ψ_1 (third operand-result))
   (match (normalize-type τ_operand)
     [`(BorrowedMut ,τ ,_ρ_parent)
-     (define tokens (borrow-token-key Λ operand #:fail fail))
+     (define tokens
+       (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))
      (when (set-empty? tokens)
        (fail 'unresolved-borrow-owner core))
      (list `(Borrowed ,τ ,ρ) ε_operand Ψ_1)]
@@ -4674,7 +4716,8 @@
   (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
     (fail 'borrowed-owned-payload core))
   (define source (use-source Λ operand τ_operand))
-  (define tokens (borrow-token-key Λ operand #:fail fail))
+  (define tokens
+    (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))
   (for ([cap (in-set tokens)])
     (emit-use-request! Λ (car cap) (append (cdr cap) (list field-label)) 'read source
                        core 'borrow-conflicting-use #f fail))
@@ -4870,7 +4913,8 @@
     (emit-constraint!
      (region-constraint 'outlives α_view α (region-ctx-point Λ) core)))
   (define source (use-source Λ operand τ_operand))
-  (for ([cap (in-set (borrow-token-key Λ operand #:fail fail))])
+  (for ([cap (in-set
+              (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))])
     (emit-use-request! Λ (car cap) (cdr cap) 'read source
                        core 'borrow-conflicting-use #f fail))
   (list τ_payload ε_operand Ψ_1))
@@ -4909,7 +4953,8 @@
   (unless (storage-ok? τ_payload)
     (fail 'mutable-callable-storage-requires-partial core τ_payload))
   (define source (use-source Λ target τ_target))
-  (define target-capabilities (borrow-token-key Λ target #:fail fail))
+  (define target-capabilities
+    (typing-borrow-token-key (enter-child Λ 0) target #:fail fail))
   (reject-variant-view-write! Λ target-capabilities core fail)
   (for ([cap (in-set target-capabilities)])
     (emit-use-request! Λ (car cap) (cdr cap) 'assign source
@@ -6279,8 +6324,9 @@
                (unless index (fail 'unresolved-borrow-owner core))
                (define actual-type (list-ref actuals index))
                (define entry
-                 (actual-leaf-entry Λ (list-ref arguments index) actual-type
-                                    '() fail))
+               (actual-leaf-entry (enter-child Λ (add1 index))
+                                  (list-ref arguments index) actual-type
+                                  '() fail))
                (when (set-empty? (capability-entry-keys entry))
                  (fail 'unresolved-borrow-owner core))
                (struct-copy capability-entry entry
@@ -6388,7 +6434,8 @@
           (cond
             [(not borrowed?) (set)]
             [summary (forwarding-summary-keys summary)]
-            [else (borrow-token-key Λ bound #:fail fail)]))
+            [else (typing-borrow-token-key (enter-child Λ 0) bound
+                                            #:fail fail)]))
         (when (and summary borrowed? (set-empty? token))
           (fail 'unresolved-borrow-owner bound))
         ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
@@ -6397,7 +6444,7 @@
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
         (define fields
           (or (and summary (forwarding-summary-fields summary))
-              (capability-field-entries Λ bound)))
+              (typing-capability-field-entries (enter-child Λ 0) bound)))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
@@ -6405,7 +6452,8 @@
                                 fields
                                 (or (and summary
                                          (forwarding-summary-variants summary))
-                                    (capability-variant-views Λ bound))
+                                    (typing-capability-variant-views
+                                     (enter-child Λ 0) bound))
                                 borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
@@ -6459,7 +6507,8 @@
        (cond
          [(not borrowed?) (set)]
          [summary (forwarding-summary-keys summary)]
-         [else (borrow-token-key Λ bound #:fail fail)]))
+         [else (typing-borrow-token-key (enter-child Λ 0) bound
+                                        #:fail fail)]))
      (when (and summary borrowed? (set-empty? token))
        (fail 'unresolved-borrow-owner bound))
      ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
@@ -6468,7 +6517,7 @@
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
      (define fields
        (or (and summary (forwarding-summary-fields summary))
-           (capability-field-entries Λ bound)))
+           (typing-capability-field-entries (enter-child Λ 0) bound)))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
@@ -6476,7 +6525,8 @@
                              fields
                              (or (and summary
                                       (forwarding-summary-variants summary))
-                                 (capability-variant-views Λ bound))
+                                      (typing-capability-variant-views
+                                       (enter-child Λ 0) bound))
                              borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)
@@ -6596,7 +6646,9 @@
          [_ #f]))
      (define captured-capability
        (handle-return-capability
-        (capability-flow-of (enter-child Λ 1) body) operation*))
+        (capability-flow-of (enter-child Λ 1) body
+                            #:apply-entry capability-of-typed-point)
+        operation*))
      (define handler-Λ
        (region-ctx-add-token
         (enter-child Λ 0) handler-binder
@@ -7277,7 +7329,8 @@
           (cond
             [(not borrowed?) (set)]
             [summary (forwarding-summary-keys summary)]
-            [else (borrow-token-key Λ bound #:fail fail)]))
+            [else (typing-borrow-token-key (enter-child Λ 0) bound
+                                            #:fail fail)]))
         (when (and summary borrowed? (set-empty? token))
           (fail 'unresolved-borrow-owner bound))
         ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
@@ -7286,7 +7339,7 @@
         ;; ため、表の側で fail を落としても未知の designator を見逃さない。
         (define fields
           (or (and summary (forwarding-summary-fields summary))
-              (capability-field-entries Λ bound)))
+              (typing-capability-field-entries (enter-child Λ 0) bound)))
         (define Λ_token
           (region-ctx-add-token Λ_owner x token
                                 (and summary (forwarding-summary-source summary))
@@ -7294,7 +7347,8 @@
                                 fields
                                 (or (and summary
                                          (forwarding-summary-variants summary))
-                                    (capability-variant-views Λ bound))
+                                    (typing-capability-variant-views
+                                     (enter-child Λ 0) bound))
                                 borrowed?))
         (define Λ_body (enter-child Λ_token 1))
         (define-values (body-psi saved-flow)
@@ -7344,7 +7398,8 @@
        (cond
          [(not borrowed?) (set)]
          [summary (forwarding-summary-keys summary)]
-         [else (borrow-token-key Λ bound #:fail fail)]))
+         [else (typing-borrow-token-key (enter-child Λ 0) bound
+                                        #:fail fail)]))
      (when (and summary borrowed? (set-empty? token))
        (fail 'unresolved-borrow-owner bound))
      ;; 表は #:fail なしで取る。fail を渡すと (Let (y let Int) 1 y) の 1 が
@@ -7353,7 +7408,7 @@
      ;; ため、表の側で fail を落としても未知の designator を見逃さない。
      (define fields
        (or (and summary (forwarding-summary-fields summary))
-           (capability-field-entries Λ bound)))
+           (typing-capability-field-entries (enter-child Λ 0) bound)))
      (define Λ_token
        (region-ctx-add-token Λ_owner x token
                              (and summary (forwarding-summary-source summary))
@@ -7361,7 +7416,8 @@
                              fields
                              (or (and summary
                                       (forwarding-summary-variants summary))
-                                 (capability-variant-views Λ bound))
+                                      (typing-capability-variant-views
+                                       (enter-child Λ 0) bound))
                              borrowed?))
      (define Λ_body (enter-child Λ_token 1))
      (define-values (body-psi saved-flow)

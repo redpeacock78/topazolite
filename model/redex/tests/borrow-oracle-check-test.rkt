@@ -408,6 +408,39 @@
    `(Rec ((borrow imm ,borrowed-value)))
    '(Rec ((borrow imm (BorrowRef 3 (a) 8))))))
 
+(test-case "R-UnsafeExit は包みだけを外して借用値を保つ"
+  (check-equal?
+   (borrow-form-candidates `(Unsafe ,borrowed-value) borrowed-value
+                           #:rule 'R-UnsafeExit)
+   '())
+  (check-equal?
+   (borrow-form-candidates `(Unsafe ,borrowed-value) borrowed-value
+                           #:rule 'R-Suspend)
+   '((unverified)))
+  (check-equal?
+   (borrow-form-candidates `(Unsafe ,borrowed-value) '(BorrowRef 3 (a) 8)
+                           #:rule 'R-UnsafeExit)
+   '((unverified))))
+
+(test-case "Unsafe を抜けた借用は生存したまま競合を検出する"
+  (define config
+    '(cfg
+      (Scope (0)
+        (Let (first let (BorrowedMut Int 1))
+             (Unsafe (BorrowMutAt 1 (Own 0 ()) 0))
+          (Let (second let (BorrowedMut Int 2))
+               (BorrowMutAt 2 (Own 0 ()) 0)
+            (Assign first 3))))
+      ((0 1)) ((0 Available)) () ()))
+  (define sidecar
+    (borrow-sidecar
+     (list (borrow-request 0 '() 'mut 1 1 'first '(0))
+           (borrow-request 0 '() 'mut 2 2 'second '(1)))
+     (hash)))
+  (match (check-borrow-execution config sidecar #f 30 (make-bcounters))
+    [(list 'fail 'mut-not-exclusive _) (check-true #t)]
+    [other (fail (format "競合の拒否を期待した: ~s" other))]))
+
 (test-case "R-RegionAppRecur の空の借用 trace は oracle を通る"
   (define config
     '(cfg (Scope ()
