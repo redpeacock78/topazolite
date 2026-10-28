@@ -4,6 +4,7 @@
          racket/set
          redex/reduction-semantics
          "borrow.rkt"
+         "backend-matrix.rkt"
          "compat.rkt"
          "data-env.rkt"
          "diagnostic.rkt"
@@ -109,7 +110,14 @@
          check-region-args
          (struct-out callable-summary)
          (struct-out forwarding-summary)
+         (struct-out deferred-leaf-exit)
+         leaf-exit-sites
+         current-leaf-exit-sites
+         site-position-matches?
+         normalize-leaf-exits
+         callable-summary-leaf-exits
          formal-leaf-info
+         instantiate-capability-path
          lookup-binding
          make-recur-frame
          recur-check-roots
@@ -251,6 +259,130 @@
                             (capability-entry-borrowed-view? capability))))
   (values formals formal-fields body-context))
 
+(define (formal-leaf-mode type path)
+  (let walk ([current (normalize-type (peel-ty type))] [remaining path])
+    (match current
+      [`(Borrowed ,_ ,_) (and (null? remaining) 'shared)]
+      [`(BorrowedMut ,_ ,_) (and (null? remaining) 'mut)]
+      [`(Owned ,inner) (walk inner remaining)]
+      [`(Untrusted ,inner) (walk inner remaining)]
+      [`(Refined ,inner ,_) (walk inner remaining)]
+      [`(Record ,row)
+       (match remaining
+         [(list (cons 'record-field label) rest ...)
+          (define field
+            (for/first ([candidate (in-list row)]
+                        #:when (equal? (first candidate) label))
+              candidate))
+          (and field (walk (second field) rest))]
+         [_ #f])]
+      [`(Union ,_ ,_)
+       (match remaining
+         [(list member-type rest ...)
+          (define normalized-member (normalize-type member-type))
+          (and (member normalized-member
+                       (map normalize-type (union-members current)) equal?)
+               (walk normalized-member rest))]
+         [_ #f])]
+      [_
+       (match remaining
+         [(list (cons constructor (? exact-nonnegative-integer? index)) rest ...)
+          (define schema (constructor-schema current))
+          (define fields
+            (and (list? schema)
+                 (for/first ([candidate (in-list schema)]
+                             #:when (equal? (first candidate) constructor))
+                   (second candidate))))
+          (and fields (< index (length fields))
+               (walk (list-ref fields index) rest))]
+         [_ #f])])))
+
+(define (capability-entry-leaves entry [path '()])
+  (define fields (capability-entry-fields entry))
+  (if (hash? fields)
+      (append-map
+       (lambda (key)
+         (capability-entry-leaves (hash-ref fields key) (append path (list key))))
+       (hash-keys fields))
+      (if (set-empty? (capability-entry-keys entry))
+          '()
+          (list (cons path entry)))))
+
+(define (formal-destination-paths type alpha)
+  (define-values (_entry leaves)
+    (formal-capability-entry type '(formal-destination)))
+  (remove-duplicates
+   (for/list ([(path entry) (in-hash leaves)]
+              #:when (and (capability-entry? entry)
+                          (equal? (capability-entry-declared-lifetime entry)
+                                  alpha)))
+     path)
+   equal?))
+
+(define (record-leaf-exit! event root node fail)
+  (when (owning-frame root)
+    (route-deferred! event root node fail)))
+
+(define (record-formal-source-exits! Λ expression exit-kind destination-for fail)
+  ;; 記録は補助観測であり、capability 表を得られない場合に型検査の診断を変えない。
+  (define actual-entry
+    (with-handlers ([exn:fail? (lambda (_) #f)])
+      (typing-capability-of Λ expression)))
+  (when (capability-entry? actual-entry)
+    (for* ([actual-leaf (in-list (capability-entry-leaves actual-entry))]
+           [cap (in-set (capability-entry-keys (cdr actual-leaf)))]
+           #:when (formal-key? (car cap)))
+      (define root (car cap))
+      (define frame (owning-frame root))
+      (when frame
+        (define index (fourth root))
+        (define formal-fields (template-frame-formal-fields frame))
+        (define leaves
+          (and (< index (length formal-fields)) (list-ref formal-fields index)))
+        (when (hash? leaves)
+          (for ([(formal-path formal-entry) (in-hash leaves)]
+                #:when (and (capability-entry? formal-entry)
+                            (set-member? (capability-entry-keys formal-entry) cap)))
+            (define mode
+              (formal-leaf-mode
+               (list-ref (template-frame-parameter-types frame) index)
+               formal-path))
+            (define alpha
+              (capability-entry-declared-lifetime formal-entry))
+            (when (and mode alpha)
+              (for ([destination
+                     (in-list (destination-for (car actual-leaf) formal-path alpha))])
+                (record-leaf-exit!
+                 (deferred-leaf-exit
+                  (list 'formal index formal-path) index formal-path '() mode alpha
+                  (append (second root) '(0)) exit-kind destination)
+                 root expression fail)))))))))
+
+(define (record-formal-site-exits! core Λ child-index expression exit-kind
+                                   destination-for fail)
+  (define observed-kind (leaf-exit-kind-at core Λ child-index))
+  (if (eq? observed-kind exit-kind)
+      (record-formal-source-exits! (enter-child Λ child-index) expression
+                                   exit-kind destination-for fail)
+      (record-formal-source-exits!
+       (enter-child Λ child-index) expression 'unclassified
+       (lambda (_actual-path _source-path _alpha) (list #f)) fail)))
+
+(define (record-formal-result-exits! Λ expression result-type fail)
+  (record-formal-source-exits!
+   Λ expression 'result
+   (lambda (_actual-path _source-path alpha)
+     (formal-destination-paths result-type alpha))
+   fail))
+
+(define (record-formal-argument-exits! Λ expression parameter-index parameter-type fail)
+  (record-formal-source-exits!
+   Λ expression 'formal
+   (lambda (_actual-path _source-path alpha)
+     (for/list ([path (in-list (formal-destination-paths parameter-type alpha))])
+       (list parameter-index path)))
+   fail))
+
 (define (formal-capability-type? type)
   (define-values (entry _leaves)
     (formal-capability-entry type '(formal-capability-probe)))
@@ -285,7 +417,7 @@
 ;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
 (struct template-frame
-  (formals box body parameters parameter-types return-type latent-row)
+  (formals box body parameters parameter-types return-type latent-row formal-fields)
   #:transparent)
 (define template-collectors (make-parameter '()))
 
@@ -342,7 +474,8 @@
 ;; 形 ii の RegionApp だけが実引数の region で置換するため、置換表は空で置く。
 (define (recur-frame->summary frame)
   (callable-summary (recur-frame-formals frame)
-                    (reverse (unbox (recur-frame-collector frame)))
+                    (normalize-leaf-exits
+                     (reverse (unbox (recur-frame-collector frame))))
                     (recur-frame-result-index frame)
                     (hash)
                     (recur-frame-formal-fields frame)))
@@ -464,7 +597,13 @@
      (define f (owning-frame w))
      (unless f (fail 'unresolved-borrow-owner node))
      (define b (template-frame-box f))
-     (set-box! b (cons item (unbox b)))
+     (if (deferred-leaf-exit? item)
+         (unless (for/or ([previous (in-list (unbox b))])
+                   (and (deferred-leaf-exit? previous)
+                        (equal? (leaf-exit-identity previous)
+                                (leaf-exit-identity item))))
+           (set-box! b (cons item (unbox b))))
+         (set-box! b (cons item (unbox b))))
      #t]))
 
 (define (route-request! r node fail)
@@ -543,6 +682,103 @@
 ;; region-subst は RegionApp が解いた rp から ρ への写像である。
 (struct callable-summary (formals deferred result-index region-subst formal-fields)
   #:transparent)
+
+(struct deferred-leaf-exit
+  (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
+  #:transparent)
+
+;; 借用の起点と七種の行き先へ値を渡す Core の子位置。
+;; descriptor は固定位置、(from k)、または descriptor の列である。
+(define g2-only-leaf-exit-heads
+  '(Absent RecRewriteOpen Borrow BorrowMut Reborrow ProjBorrow Read Assign Reassign
+           RegionLam RegionApp AddressOf PtrOffset RawLoad RawStore FromRawPtr Unsafe
+           MutSlot BorrowAt BorrowMutAt ReborrowAt ProjBorrowAt BorrowRef BorrowMutRef
+           PtrVal))
+
+(define leaf-exit-sites
+  (let ([base
+         (for/fold ([sites (for/hash ([row (in-list core-form-features)])
+                             (values (first row) '()))])
+                   ([head (in-list g2-only-leaf-exit-heads)])
+           (hash-set sites head '()))])
+  (for/fold ([sites base])
+            ([(head entries)
+              (in-hash
+               (hash 'Apply (list (cons '(from 1) 'formal))
+                     'Assign (list (cons 0 'local) (cons 1 'storage))
+                     'AddressOf (list (cons 0 'yield))
+                     'Curry (list (cons 1 'capture))
+                     'Drop (list (cons 0 'local))
+                     'Eliminate (list (cons '(from 1) 'result))
+                     'EliminateAt (list (cons '(from 1) 'result))
+                     'UnionEliminate (list (cons '(from 1) 'result))
+                     'UnionEliminateAt (list (cons '(from 1) 'result))
+                     'Perform (list (cons 0 'handle))
+                     'Lam (list (cons 0 'capture))
+                     'Read (list (cons 0 'local))
+                     'Recur (list (cons 0 'capture))
+                     'RecurVal (list (cons 0 'capture))
+                     'Reassign (list (cons 0 'storage))
+                     'Yield (list (cons 0 'yield))))])
+    (hash-set sites head entries))))
+
+;; 試験で一覧から位置を除き、未分類出口の記録を検査する。
+(define current-leaf-exit-sites (make-parameter leaf-exit-sites))
+
+(define (site-position-matches? descriptor point)
+  (define (match-segments segments remaining)
+    (cond
+      [(null? segments) #t]
+      [(null? remaining) #f]
+      [else
+       (define segment (car segments))
+       (define index (car remaining))
+       (and (or (and (exact-nonnegative-integer? segment)
+                     (= segment index))
+                (match segment
+                  [`(from ,(? exact-nonnegative-integer? start))
+                   (>= index start)]
+                  [_ #f]))
+            (match-segments (cdr segments) (cdr remaining)))]))
+  (match descriptor
+    [(? exact-nonnegative-integer? index)
+     (and (pair? point) (= index (car point)))]
+    [`(from ,(? exact-nonnegative-integer? _))
+     (match-segments (list descriptor) point)]
+    [(list segments ...) (match-segments segments point)]
+    [_ #f]))
+
+(define (leaf-exit-kind-at core Λ child-index)
+  (define point (region-ctx-point Λ))
+  (define child-point (region-ctx-point (enter-child Λ child-index)))
+  (define relative-point (list-tail child-point (length point)))
+  (define head
+    (match (peel-node core)
+      [(list (? symbol? name) _ ...) name]
+      [_ #f]))
+  (for/first ([site (in-list (hash-ref (current-leaf-exit-sites) head '()))]
+              #:when (site-position-matches? (car site) relative-point))
+    (cdr site)))
+
+(define (leaf-exit-identity event)
+  (list (deferred-leaf-exit-source event)
+        (deferred-leaf-exit-alpha event)
+        (deferred-leaf-exit-exit-kind event)
+        (deferred-leaf-exit-destination event)))
+
+(define (normalize-leaf-exits deferred)
+  (define events (filter deferred-leaf-exit? deferred))
+  (define identities (make-hash))
+  (define unique-events
+    (for/list ([event (in-list events)]
+               #:unless (hash-has-key? identities (leaf-exit-identity event)))
+      (hash-set! identities (leaf-exit-identity event) #t)
+      event))
+  (append (filter (lambda (item) (not (deferred-leaf-exit? item))) deferred)
+          (sort unique-events string<? #:key (lambda (event) (format "~s" event)))))
+
+(define (callable-summary-leaf-exits summary)
+  (filter deferred-leaf-exit? (callable-summary-deferred summary)))
 
 ;; 要約を出現ごとに溜める表。既定の #f は「収集の外」であり、書き込みを
 ;; 黙って捨てる位置と区別する。typing の入口 2 つが parameterize する。
@@ -1106,7 +1342,7 @@
        (when (eq? (use-request-operation item) 'assign)
          (reject-variant-view-write! Λ mapped-caps node fail))
        (for ([cap (in-set mapped-caps)])
-         (route-request!
+          (route-request!
           (use-request (car cap) (cdr cap)
                        (use-request-operation item)
                        source
@@ -1116,6 +1352,7 @@
                        (use-request-kind item)
                        (use-request-otherwise item))
           node fail))]
+      [(deferred-leaf-exit? item) (void)]
       [else
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
@@ -1324,6 +1561,14 @@
     [`(NFn ,_ ,_ ,_ ,effects ,_ ,_) effects]
     [_ '()]))
 
+(define (callable-type-parameter-types type)
+  (let loop ([current (normalize-type (peel-ty type))])
+    (match current
+      [`(Owned ,inner) (loop inner)]
+      [`(ForallRegion (,_ ...) ,inner) (loop inner)]
+      [`(NFn ,parameters ,_ ,_ ,_ ,_ ,_) parameters]
+      [_ '()])))
+
 (define (emit-captured-decomposition-exits! ir point body bound-names
                                             environment node fail)
   (for ([name (in-set (set-subtract (core-free-vars body)
@@ -1332,12 +1577,70 @@
     (when type
       (emit-decomposition-exit! ir point #f type node fail))))
 
+(define (record-captured-formal-exits! core Λ body bound-names fail)
+  (for ([name (in-set (set-subtract (core-free-vars body)
+                                    (list->set bound-names)))])
+    (record-formal-site-exits!
+     core Λ 0 name 'capture
+     (lambda (_actual-path _source-path _alpha) (list (peel-node core)))
+     fail)))
+
 (define (emit-expression-decomposition-exits! core Λ environment places
                                               callables result-type fail)
   (define ir (region-ctx-ir Λ))
   (when ir
     (define point (region-ctx-point Λ))
     (define (child-type index) (typing-child-type Λ index))
+    (define head
+      (match (peel-node core)
+        [(list (? symbol? name) _ ...) name]
+        [_ #f]))
+    (define (record-unclassified! child-Λ child)
+      (record-formal-source-exits!
+       child-Λ child 'unclassified
+       (lambda (_actual-path _source-path _alpha) (list #f)) fail))
+    (for ([child (in-list (core-children (peel-node core)))]
+          [index (in-naturals)])
+      (define exit-kind (leaf-exit-kind-at core Λ index))
+      (define child-Λ (enter-child Λ index))
+      (if exit-kind
+          (cond
+            [(and (eq? head 'Apply) (eq? exit-kind 'formal))
+             (define parameter-types
+               (callable-type-parameter-types (child-type 0)))
+             (define parameter-index (sub1 index))
+             (if (< parameter-index (length parameter-types))
+                 (record-formal-argument-exits!
+                  child-Λ child parameter-index
+                  (list-ref parameter-types parameter-index) fail)
+                 (record-unclassified! child-Λ child))]
+            [(eq? exit-kind 'local)
+             (record-formal-source-exits!
+              child-Λ child exit-kind
+              (lambda (_actual _source _alpha) (list #f)) fail)]
+            [(eq? exit-kind 'result)
+             (record-formal-source-exits!
+              child-Λ child exit-kind
+              (lambda (_actual _source alpha)
+                (formal-destination-paths result-type alpha))
+              fail)]
+            [(eq? exit-kind 'handle)
+             (match (peel-node core)
+               [`(Perform (Return ,_ ,payload-type) ,_)
+                (record-formal-source-exits!
+                 child-Λ child exit-kind
+                 (lambda (_actual _source alpha)
+                   (for/list ([path (in-list
+                                     (formal-destination-paths payload-type alpha))])
+                     (list 'Return path)))
+                 fail)]
+               [_ (record-unclassified! child-Λ child)])]
+            [else
+             (record-formal-source-exits!
+              child-Λ child exit-kind
+              (lambda (_actual _source _alpha) (list (peel-node core)))
+              fail)])
+          (record-unclassified! child-Λ child)))
     (match (peel-node core)
       [`(Eliminate ,_ ,_)
        (emit-decomposition-result! ir point result-type core fail)]
@@ -1369,10 +1672,16 @@
        (emit-decomposition-exit! ir point #f (child-type 1) core fail)]
       [`(Lam ,_ ,_ (,parameters ...) ,body)
        (emit-captured-decomposition-exits!
-        ir point body parameters environment core fail)]
+        ir point body parameters environment core fail)
+       (record-captured-formal-exits! core Λ body parameters fail)]
       [`(RecurVal ,_ ,function (,parameters ...) ,body)
        (emit-captured-decomposition-exits!
-        ir point body (cons function parameters) environment core fail)]
+        ir point body (cons function parameters) environment core fail)
+       (record-captured-formal-exits!
+        core Λ body (cons function parameters) fail)]
+      [`(Recur ,_ ,function (,parameters ...) ,body ,_continuation)
+       (record-captured-formal-exits!
+        core Λ body (cons function parameters) fail)]
       [`(Apply ,function ,arguments ...)
        (define function-type (child-type 0))
        (emit-latent-decomposition-exits!
@@ -3868,7 +4177,7 @@
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
                        collector body parameters parameter-types return-type
-                       latent-row))
+                       latent-row formal-fields))
      ;; Lam が転送できるのは自身の署名に自由に現れる region parameter だけ。
      ;; 外側の callable にしか属さない parameter を境界の外へ出すと、閉包の
      ;; ような Lam が証明の終わった lexical region を保持できてしまう。
@@ -3890,18 +4199,21 @@
                                        (region-ctx-point body-context))])
          (with-place-shadowing
           parameters
-          (lambda ()
-            (with-resource-identity-transfers
-             (resource-binder-names parameters parameter-types)
              (lambda ()
-               (check-as body return-type body-context closure-psi body-environment
-                         places callables fail)))))))
+               (with-resource-identity-transfers
+                (resource-binder-names parameters parameter-types)
+                (lambda ()
+                  (define result
+                    (check-as body return-type body-context closure-psi body-environment
+                              places callables fail))
+                  (record-formal-result-exits! body-context body return-type fail)
+                  result))))))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      ;; §5.4。出現局所の要約を登録する。Apply はこの要約を引いて実体化する。
      (record-callable-summary!
       Λ node
-      (callable-summary formals (reverse (unbox collector))
+      (callable-summary formals (normalize-leaf-exits (reverse (unbox collector)))
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
                         (hash) formal-fields)
@@ -3984,8 +4296,8 @@
   (define-values (formals formal-fields body-context)
     (formal-parameter-context Λ node parameters parameter-types))
   (define recur-binding (lookup-binding body-function-environment function))
-  (define (fixpoint Ψ_in)
-    (define collector (box '()))
+  (define (fixpoint Ψ_in [previous-exits '()])
+    (define collector (box previous-exits))
     (define tentative
       (make-recur-frame (list recur-binding) formals
                         (forwarding-leaf-candidates parameter-types return-type
@@ -3994,7 +4306,7 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
-                      latent-row))
+                      latent-row formal-fields))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; RecurVal の本体も呼出しまで遅延する。
@@ -4013,15 +4325,23 @@
                 (with-resource-identity-transfers
                  (resource-binder-names parameters parameter-types)
                  (lambda ()
-                   (check-as body return-type body-context Ψ_in body-environment
-                             places callables fail))))))
+                   (define result
+                     (check-as body return-type body-context Ψ_in body-environment
+                               places callables fail))
+                   (record-formal-result-exits! body-context body return-type fail)
+                   result)))))
       [(list body-row Ψ_1)
        (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
-       (if (equal? Ψ_next Ψ_in)
+       (define exits
+         (filter deferred-leaf-exit? (unbox collector)))
+       (define exits-unchanged?
+         (set=? (list->set (map leaf-exit-identity exits))
+                (list->set (map leaf-exit-identity previous-exits))))
+       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next))]))
+           (fixpoint Ψ_next exits))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -4063,8 +4383,8 @@
         (list (lookup-binding body-function-environment function)
               (lookup-binding function-environment function))))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
-  (define (fixpoint Ψ_in)
-    (define collector (box '()))
+  (define (fixpoint Ψ_in [previous-exits '()])
+    (define collector (box previous-exits))
     (define tentative
       (make-recur-frame bindings formals
                         (forwarding-leaf-candidates parameter-types return-type
@@ -4075,7 +4395,7 @@
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
-                      latent-row))
+                      latent-row formal-fields))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; Recur の定義本体は呼出しまで遅延する。
@@ -4091,18 +4411,26 @@
             (with-place-shadowing
              (cons function parameters)
              (lambda ()
-               (with-resource-identity-transfers
+                (with-resource-identity-transfers
                 (resource-binder-names parameters parameter-types)
                 (lambda ()
-                  (check-as body return-type body-context Ψ_in body-environment
-                            places callables fail))))))
+                  (define result
+                    (check-as body return-type body-context Ψ_in body-environment
+                              places callables fail))
+                  (record-formal-result-exits! body-context body return-type fail)
+                  result)))))
       [(list body-row Ψ_1)
        (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
-       (if (equal? Ψ_next Ψ_in)
+       (define exits
+         (filter deferred-leaf-exit? (unbox collector)))
+       (define exits-unchanged?
+         (set=? (list->set (map leaf-exit-identity exits))
+                (list->set (map leaf-exit-identity previous-exits))))
+       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next))]))
+           (fixpoint Ψ_next exits))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
