@@ -29,6 +29,7 @@ let bounded_span (id: sid) (n: nat) (lo: nat) (hi: nat) : span =
   let end' = if lo' <= hi' then hi' else lo' in
   mk_span id lo' end'
 
+//@ AUX: helper THM-002
 val bounded_span_ok : id:sid -> n:nat -> lo:nat -> hi:nat -> Lemma
   (within n (bounded_span id n lo hi))
 let bounded_span_ok id n lo hi = ()
@@ -334,6 +335,14 @@ let keyword_word (word: list FStar.UInt8.t) : tkind =
 
 // 命題 5。Racket の lexer.rkt が予約する 22 語のそれぞれに TkKw を返す。
 // 予約語を接頭辞に持つ語と、予約語より短い語は TkIdent のままである。
+//@ THM: THM-005
+//@ REQ-FULL: -
+//@ REQ-PART: -
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/lexer-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: lexer.rkt が予約する 22 語を keyword_word に渡した結果と、予約語の接頭辞および短い語の分類。
 val keyword_word_reserved : unit -> Lemma
   (keyword_word [97uy; 110uy; 100uy] == TkKw /\
    keyword_word [110uy; 111uy; 116uy] == TkKw /\
@@ -435,6 +444,14 @@ let scan
   (acc: list stok) : Tot lex_result (decreases rest) =
   scan_fuel id n i rest acc (length rest + 1)
 
+//@ THM: THM-001
+//@ REQ-FULL: -
+//@ REQ-PART: -
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: -
+//@ ASSUMPTIONS: -
+//@ SCOPE: 任意の有限 byte 列。lex の Tot 型が返り値の計算の停止性を保証する。
 val lex : id:sid -> bs:list FStar.UInt8.t -> Tot lex_result
 let lex (id: sid) (bs: list FStar.UInt8.t) : Tot lex_result =
   match utf8_ok bs with
@@ -447,11 +464,13 @@ let token_ok (id: sid) (n: nat) (t: stok) : prop =
 let all_tokens_ok (id: sid) (n: nat) (ts: list stok) : prop =
   forall (t: stok). memP t ts ==> token_ok id n t
 
+//@ AUX: helper THM-002
 val all_tokens_ok_cons : id:sid -> n:nat -> t:stok -> ts:list stok -> Lemma
   (requires token_ok id n t /\ all_tokens_ok id n ts)
   (ensures all_tokens_ok id n (t :: ts))
 let all_tokens_ok_cons id n t ts = ()
 
+//@ AUX: helper THM-002
 val all_tokens_ok_rev : id:sid -> n:nat -> ts:list stok -> Lemma
   (requires all_tokens_ok id n ts)
   (ensures all_tokens_ok id n (rev ts))
@@ -460,6 +479,7 @@ let all_tokens_ok_rev id n ts =
     rev_memP ts t in
   FStar.Classical.forall_intro aux
 
+//@ AUX: helper THM-002
 val scan_fuel_span_sound : id:sid -> n:nat -> i:nat -> rest:list FStar.UInt8.t
                          -> acc:list stok -> fuel:nat{length rest < fuel} -> Lemma
   (requires all_tokens_ok id n acc)
@@ -537,11 +557,13 @@ let rec scan_fuel_span_sound id n i rest acc fuel =
            else
              bounded_span_ok id n i (codepoint_end i rest))
 
+//@ AUX: helper THM-002
 val utf8_ok_offset : bs:list FStar.UInt8.t -> Lemma
   (match utf8_ok bs with
    | Some i -> i < length bs
    | None   -> True)
 
+//@ AUX: helper THM-002
 val utf8_ok_offset_at : i:nat -> bs:list FStar.UInt8.t -> Lemma
   (ensures (match utf8_ok_at i bs with
             | Some j -> i <= j /\ j < i + length bs
@@ -587,6 +609,7 @@ let rec utf8_ok_offset_at i bs =
 
 let utf8_ok_offset bs = utf8_ok_offset_at 0 bs
 
+//@ AUX: helper THM-002
 val scan_span_sound : id:sid -> n:nat -> i:nat -> rest:list FStar.UInt8.t
                     -> acc:list stok -> Lemma
   (requires i <= n /\ i + length rest == n /\
@@ -601,6 +624,14 @@ val scan_span_sound : id:sid -> n:nat -> i:nat -> rest:list FStar.UInt8.t
 let scan_span_sound id n i rest acc =
   scan_fuel_span_sound id n i rest acc (length rest + 1)
 
+//@ THM: THM-002
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/lexer-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: 任意の source id と有限 byte 列に対し、lex が返す各 token の span、または診断の primary span が同じ source id を持ち byte 長の範囲内にある。
 val lex_span_sound : id:sid -> bs:list FStar.UInt8.t -> Lemma
   (match lex id bs with
    | LexOk toks ->
@@ -613,6 +644,7 @@ let lex_span_sound id bs =
   | None -> scan_span_sound id (length bs) 0 bs []
 
 (* BIT-003。| と & は、それぞれ 1 字句の記号になる。 *)
+//@ AUX: example BIT-003
 let lex_bar_amp_ok () : Lemma
   (match lex SyntheticSid [124uy; 38uy] with
    | LexOk [a; b; e] -> a.kind = TkPunct && b.kind = TkPunct && e.kind = TkEof
@@ -623,6 +655,7 @@ let lex_bar_amp_ok () : Lemma
        | _ -> false)
 
 (* P2j。!、<、> はそれぞれ 1 字句の記号になる。 *)
+//@ AUX: example -
 let lex_bang_angle_ok () : Lemma
   (match lex SyntheticSid [33uy; 60uy; 62uy] with
    | LexOk [a; b; c; e] -> a.kind = TkPunct && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
@@ -633,6 +666,7 @@ let lex_bang_angle_ok () : Lemma
        | _ -> false)
 
 (* P2l3c。? は 1 字句の記号になる。 *)
+//@ AUX: example -
 let lex_question_ok () : Lemma
   (match lex SyntheticSid [97uy; 63uy; 58uy] with
    | LexOk [a; b; c; e] -> a.kind = TkIdent && b.kind = TkPunct && c.kind = TkPunct && e.kind = TkEof
@@ -643,6 +677,7 @@ let lex_question_ok () : Lemma
        | _ -> false)
 
 (* SUR-002a。?= と |> は 2 byte の 1 token である。 *)
+//@ AUX: example SUR-002
 let lex_try_pipe_ok () : Lemma
   ((match lex SyntheticSid [120uy; 32uy; 124uy; 62uy; 32uy; 102uy] with
     | LexOk [x; p; f; e] ->
@@ -685,6 +720,7 @@ let lex_try_pipe_ok () : Lemma
        | _ -> false))
 
 (* SUR-013a。==、!=、<= は各 1 token、>= は隣接する 2 token である。 *)
+//@ AUX: example SUR-013
 let lex_operator_tokens_ok () : Lemma
   (match lex SyntheticSid [61uy; 61uy; 32uy; 33uy; 61uy; 32uy;
                            60uy; 61uy; 32uy; 62uy; 61uy] with
@@ -713,6 +749,7 @@ let lex_operator_tokens_ok () : Lemma
        | _ -> false)
 
 (* SUR-002b。interpolated string, escape, nested string, and error spans. *)
+//@ AUX: example SUR-002
 let lex_interpolation_ok () : Lemma
   (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 120uy; 125uy; 98uy; 34uy] with
    | LexOk [s; e] -> s.kind = TkIstr && s.span.startByte == 0 &&
@@ -724,6 +761,7 @@ let lex_interpolation_ok () : Lemma
                         s.span.endByte == 8 && e.kind = TkEof
        | _ -> false)
 
+//@ AUX: example SUR-002
 let lex_escaped_dollar_ok () : Lemma
   (match lex SyntheticSid [34uy; 92uy; 36uy; 123uy; 120uy; 125uy; 34uy] with
    | LexOk [s; e] -> s.kind = TkStr && s.span.startByte == 0 &&
@@ -735,6 +773,7 @@ let lex_escaped_dollar_ok () : Lemma
                         s.span.endByte == 7 && e.kind = TkEof
        | _ -> false)
 
+//@ AUX: example SUR-002
 let lex_nested_string_in_hole_ok () : Lemma
   (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy;
                             125uy; 34uy; 41uy; 125uy; 34uy] with
@@ -748,6 +787,7 @@ let lex_nested_string_in_hole_ok () : Lemma
                         s.span.endByte == 11 && e.kind = TkEof
        | _ -> false)
 
+//@ AUX: example SUR-002
 let lex_nested_interpolation_in_hole_ok () : Lemma
   (match lex SyntheticSid [34uy; 36uy; 123uy; 102uy; 40uy; 34uy; 36uy;
                             123uy; 120uy; 125uy; 34uy; 41uy; 125uy; 34uy] with
@@ -761,6 +801,7 @@ let lex_nested_interpolation_in_hole_ok () : Lemma
                         s.span.endByte == 14 && e.kind = TkEof
        | _ -> false)
 
+//@ AUX: example SUR-002
 let lex_unclosed_hole_span_ok () : Lemma
   (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy] with
    | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 0 &&
@@ -772,6 +813,7 @@ let lex_unclosed_hole_span_ok () : Lemma
                       d.primary.endByte == 6
        | _ -> false)
 
+//@ AUX: example SUR-002
 let lex_nested_unclosed_string_span_ok () : Lemma
   (match lex SyntheticSid [34uy; 97uy; 36uy; 123uy; 102uy; 40uy; 34uy; 98uy] with
    | LexFail d -> d.code = "E-SUR-003" && d.primary.startByte == 6 &&
@@ -995,17 +1037,20 @@ let rec all_span_ok (ks: list node) : Tot bool (decreases ks) =
   | []      -> true
   | k :: tl -> span_ok (span_of_node k) && all_span_ok tl
 
+//@ AUX: helper THM-003
 val hull_mono : a:span -> b:span -> Lemma
   (requires span_ok a /\ span_ok b /\ a.sid = b.sid)
   (ensures span_ok (hull a b) /\ (hull a b).sid = a.sid /\
            contains (hull a b) a /\ contains (hull a b) b)
 let hull_mono a b = ()
 
+//@ AUX: helper THM-003
 val contains_trans : a:span -> b:span -> c:span -> Lemma
   (requires contains a b /\ contains b c)
   (ensures contains a c)
 let contains_trans a b c = ()
 
+//@ AUX: helper THM-003
 val hull_all_grows : s0:span -> ks:list node -> Lemma
   (ensures contains (hull_all s0 ks) s0)
   (decreases ks)
@@ -1017,6 +1062,7 @@ let rec hull_all_grows s0 ks =
       contains_trans (hull_all (hull s0 (span_of_node k)) tl)
                      (hull s0 (span_of_node k)) s0
 
+//@ AUX: helper THM-003
 val hull_all_contains : s0:span -> ks:list node -> Lemma
   (requires span_ok s0 /\ all_sid s0.sid ks /\ all_span_ok ks)
   (ensures forall (c: node). memP c ks ==> contains (hull_all s0 ks) (span_of_node c))
@@ -1167,12 +1213,14 @@ let wf_node (n: node) : Tot bool =
   | NLabel l -> wf_label l
 
 // DBind の SDecl は仮引数と row を持たない。Racket の SBind に対応しない形を拒む。
+//@ AUX: helper THM-003
 val wf_bind_shape : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
   -> row:option seffrow -> v:sexpr -> Lemma
   (requires wf_decl (SDecl s DBind sx ps r row v))
   (ensures ps == [] /\ row == None)
 let wf_bind_shape s sx ps r row v = ()
 
+//@ AUX: helper THM-003
 val wf_tys_elim : s:span -> ts:list sty -> c:node -> Lemma
   (requires wf_tys s ts)
   (ensures memP c (map NTy ts) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -1182,6 +1230,7 @@ let rec wf_tys_elim s ts c =
   | []      -> ()
   | t :: tl -> wf_tys_elim s tl c
 
+//@ AUX: helper THM-003
 val wf_labels_elim : s:span -> labels:list sefflabel -> c:node -> Lemma
   (requires wf_labels s labels)
   (ensures memP c (map NLabel labels) ==>
@@ -1192,6 +1241,7 @@ let rec wf_labels_elim s labels c =
   | [] -> ()
   | label :: rest -> wf_labels_elim s rest c
 
+//@ AUX: helper THM-003
 val wf_exprs_elim : s:span -> es:list sexpr -> c:node -> Lemma
   (requires wf_exprs s es)
   (ensures memP c (map NExpr es) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -1201,6 +1251,7 @@ let rec wf_exprs_elim s es c =
   | []      -> ()
   | e :: tl -> wf_exprs_elim s tl c
 
+//@ AUX: helper THM-003
 val wf_fields_elim : s:span -> fs:list (span & sexpr) -> c:node -> Lemma
   (requires wf_fields s fs)
   (ensures memP c (map NExpr (map snd fs)) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -1210,6 +1261,7 @@ let rec wf_fields_elim s fs c =
   | []      -> ()
   | _ :: tl -> wf_fields_elim s tl c
 
+//@ AUX: helper THM-003
 val wf_arms_elim : s:span -> arms:list sarm
   -> c:node -> Lemma
   (requires wf_arms s arms)
@@ -1233,6 +1285,7 @@ let rec wf_arms_elim s arms c =
       wf_exprs_elim sa [b] c;
       wf_arms_elim s tl c
 
+//@ AUX: helper THM-003
 val wf_ifsome_clauses_elim : s:span -> clauses:list sifclause
   -> c:node -> Lemma
   (requires wf_ifsome_clauses s clauses)
@@ -1248,6 +1301,7 @@ let rec wf_ifsome_clauses_elim s clauses c =
       wf_exprs_elim s [condition; body] c;
       wf_ifsome_clauses_elim s tl c
 
+//@ AUX: helper THM-003
 val wf_decls_elim : s:span -> ds:list sdecl -> c:node -> Lemma
   (requires wf_decls s ds)
   (ensures memP c (map NDecl ds) ==> (contains s (span_of_node c) /\ wf_node c))
@@ -1257,6 +1311,7 @@ let rec wf_decls_elim s ds c =
   | []      -> ()
   | d :: tl -> wf_decls_elim s tl c
 
+//@ AUX: helper THM-003
 val parse_span_expr_children : e:sexpr -> c:node -> Lemma
   (requires wf_expr e /\ memP c (kids_of_expr e))
   (ensures contains (span_of_expr e) (span_of_node c) /\ wf_node c)
@@ -1303,6 +1358,7 @@ let parse_span_expr_children e c =
   | SBlock s ds t ->
       FStar.List.Tot.Properties.append_memP (map NDecl ds) [NExpr t] c;
       wf_decls_elim s ds c
+//@ AUX: helper THM-003
 val parse_span_ty_children : t:sty -> c:node -> Lemma
   (requires wf_ty t /\ memP c (kids_of_ty t))
   (ensures contains (span_of_ty t) (span_of_node c) /\ wf_node c)
@@ -1319,6 +1375,7 @@ let parse_span_ty_children t c =
       wf_tys_elim s ps c
   | TUnion _ _ _ | TInter _ _ _ -> ()
   | TBorrow s inner | TBorrowMut s inner -> wf_tys_elim s [inner] c
+//@ AUX: helper THM-003
 val parse_span_decl_children : d:sdecl -> c:node -> Lemma
   (requires wf_decl d /\ memP c (kids_of_decl d))
   (ensures contains (span_of_decl d) (span_of_node c) /\ wf_node c)
@@ -1340,12 +1397,14 @@ let parse_span_decl_children d c =
       FStar.List.Tot.Properties.append_memP [NExpr value] [] c;
       wf_exprs_elim s [target] c;
       wf_exprs_elim s [value] c
+//@ AUX: helper THM-003
 val parse_span_row_children : r:seffrow -> c:node -> Lemma
   (requires wf_row r /\ memP c (map NLabel (match r with SEffRow _ labels -> labels)))
   (ensures contains (span_of_row r) (span_of_node c) /\ wf_node c)
 let parse_span_row_children r c =
   match r with
   | SEffRow s labels -> wf_labels_elim s labels c
+//@ AUX: helper THM-003
 val parse_span_label_children : l:sefflabel -> c:node -> Lemma
   (requires wf_label l /\ memP c (match l with SEffLabel _ _ arg ->
                                       match arg with None -> [] | Some t -> [NTy t]))
@@ -1354,6 +1413,14 @@ let parse_span_label_children l c =
   match l with
   | SEffLabel _ _ _ -> ()
 
+//@ THM: THM-003
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: -
+//@ ASSUMPTIONS: wf_node
+//@ SCOPE: wf_node を満たす節点 n と kids_of_node n に含まれる子 c。parser の出力が wf_node を満たすことは量化の外。
 val parse_span_containment : n:node -> c:node -> Lemma
   (requires wf_node n /\ memP c (kids_of_node n))
   (ensures contains (span_of_node n) (span_of_node c) /\ wf_node c)
@@ -1674,6 +1741,14 @@ and lower_ifsome_stmt (s: span) (clauses: list sifclause)
            CConstructorBranch false_span "false" []
              (lower_ifsome_stmt s tl s0)])
 
+//@ THM: THM-004
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt
+//@ ASSUMPTIONS: one_to_one
+//@ SCOPE: one_to_one e が真となる 19 構成子。SIfSome、SProjRec、SBlock は対象外である。
 val lower_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
   (ensures span_of_core (lower_expr e) == span_of_expr e)
@@ -1702,6 +1777,7 @@ let lower_preserves_span e =
   | SDeref _ _ -> ()
   | SReborrow _ _ -> ()
 
+//@ AUX: helper THM-004
 val lower_ifsome_root_spans : s:span -> clauses:list sifclause
   -> s0:span -> Lemma
   (requires clauses <> [] /\
@@ -1716,6 +1792,14 @@ let lower_ifsome_root_spans s clauses s0 =
   | SIfClause si _ _ :: _ -> assert (hull si s == s)
 
 // 命題 6。空でない block の根の span は先頭宣言と後続の根の hull である。
+//@ THM: THM-006
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: 空でない宣言列 d :: ds と任意の末尾 Core tail に対する lower_block の根 span。
 val lower_block_root_span : d:sdecl -> ds:list sdecl -> tail:core -> Lemma
   (span_of_core (lower_block (d :: ds) tail)
    == hull (span_of_decl d) (span_of_core (lower_block ds tail)))
@@ -1728,6 +1812,7 @@ let lower_block_root_span d ds tail =
   | SDecl _ DExpr _ _ _ _ _ -> ()
   | SDecl _ DFnDecl _ _ _ _ _ -> ()
 
+//@ AUX: helper THM-004
 val lower_stmt_preserves_span : e:sexpr -> Lemma
   (requires one_to_one e)
   (ensures span_of_core (lower_stmt e) == span_of_expr e)
@@ -1756,6 +1841,7 @@ let lower_stmt_preserves_span e =
   | SDeref _ _ -> ()
   | SReborrow _ _ -> ()
 
+//@ AUX: helper THM-006
 val lower_stmt_block_root_span : s:span -> d:sdecl -> ds:list sdecl -> tail:sexpr -> Lemma
   (span_of_core (lower_stmt (SBlock s (d :: ds) tail))
    == hull (span_of_decl d) (span_of_core (lower_block ds (lower_stmt tail))))
@@ -1763,6 +1849,14 @@ let lower_stmt_block_root_span s d ds tail =
   lower_block_root_span d ds (lower_stmt tail)
 
 // 命題 7。SFn は仮引数名の span と省略を含む row をそのまま運ぶ。
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: SFn の仮引数名の span と省略を含む Effect row が CFn に保持される形。
 val lower_fn_fields : s:span -> ps:list (span & option sty) -> r:option sty
   -> row:option seffrow -> kind:sbodykind -> b:sexpr -> Lemma
   (lower_expr (SFn s ps r row kind b) ==
@@ -1771,11 +1865,27 @@ val lower_fn_fields : s:span -> ps:list (span & option sty) -> r:option sty
 let lower_fn_fields s ps r row kind b = ()
 
 // 命題 7。SProj は label の span を運ぶ。
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: SProj の label span が CProj の span 欄に保持される形。
 val lower_proj_label : s:span -> e1:sexpr -> l:(span & string) -> Lemma
   (lower_expr (SProj s e1 l) == CProj s (fst l) (lower_expr e1))
 let lower_proj_label s e1 l = ()
 
 // 命題 7。SRec の field label の span 列は元の列と等しい。
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: 任意の SRec field 列について、lower_fields が返す欄の label span 列。
 val lower_fields_labels : fs:list (span & sexpr) -> Lemma
   (ensures map fst (lower_fields fs) == map fst fs)
   (decreases fs)
@@ -1784,6 +1894,14 @@ let rec lower_fields_labels fs =
   | []      -> ()
   | _ :: tl -> lower_fields_labels tl
 
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: SRec の lowering 結果と、各 field label span の列の一致。
 val lower_rec_labels : s:span -> fs:list (span & sexpr) -> Lemma
   (lower_expr (SRec s fs) == CRec s (lower_fields fs) /\
    map fst (lower_fields fs) == map fst fs)
@@ -1793,6 +1911,14 @@ let lower_rec_labels s fs = lower_fields_labels fs
 let proj_field_of (s_recv: span) (l: span & string) : Tot (span & core) =
   (fst l, CProj (fst l) (fst l) (CVar s_recv))
 
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: SProjRec の各入力 label span が生成する Proj と Rec field の両方に残る形。
 val proj_fields_spans : s_recv:span -> ls:list (span & string) -> Lemma
   (ensures proj_fields s_recv ls == map (proj_field_of s_recv) ls)
   (decreases ls)
@@ -1801,6 +1927,14 @@ let rec proj_fields_spans s_recv ls =
   | []      -> ()
   | _ :: tl -> proj_fields_spans s_recv tl
 
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: SProjRec の lowering で受け側 span と各 field label span を保持する形。
 val lower_projrec_fields : s:span -> e1:sexpr -> ls:list (span & string) -> Lemma
   (lower_expr (SProjRec s e1 ls)
    == CLet s (span_of_expr e1) (lower_expr e1)
@@ -1808,27 +1942,46 @@ val lower_projrec_fields : s:span -> e1:sexpr -> ls:list (span & string) -> Lemm
 let lower_projrec_fields s e1 ls = proj_fields_spans (span_of_expr e1) ls
 
 // 命題 7。DBind は束縛名の span を持つ CLet になる。
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: DBind の束縛名 span が生成される CLet に保持される形。
 val lower_decl_bind : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
   -> row:option seffrow -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DBind sx ps r row v) rest
    == CLet (hull s (span_of_core rest)) sx (lower_expr v) rest)
 let lower_decl_bind s sx ps r row v rest = ()
 
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: DTryBind の束縛名 span が生成される CTryBind に保持される形。
 val lower_decl_try_bind : s:span -> sx:span -> x:string -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s (DTryBind x) sx [] None None v) rest
    == CTryBind (hull s (span_of_core rest)) sx x (lower_expr v) rest)
 let lower_decl_try_bind s sx x v rest = ()
 
+//@ AUX: helper THM-006
 val lower_decl_reassign : s:span -> sx:span -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DReassign sx [] None None v) rest
    == CLet (hull s (span_of_core rest)) s (CReassign s sx (lower_expr v)) rest)
 let lower_decl_reassign s sx v rest = ()
 
+//@ AUX: helper THM-006
 val lower_decl_expr : s:span -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DExpr s [] None None v) rest
    == CLet (hull s (span_of_core rest)) s (lower_stmt v) rest)
 let lower_decl_expr s v rest = ()
 
+//@ AUX: helper THM-006
 val wf_decl_expr_shape : s:span -> sx:span -> ps:list (span & sty)
   -> r:option sty -> row:option seffrow -> v:sexpr -> Lemma
   (requires wf_decl (SDecl s DExpr sx ps r row v))
@@ -1836,6 +1989,14 @@ val wf_decl_expr_shape : s:span -> sx:span -> ps:list (span & sty)
 let wf_decl_expr_shape s sx ps r row v = ()
 
 // 命題 7。DFnDecl は後続を含む CRecur になる。
+//@ THM: THM-007
+//@ REQ-FULL: -
+//@ REQ-PART: SUR-001
+//@ SPEC: surface.md§8
+//@ RULE: -
+//@ REDEX: model/redex/tests/surface-lower-test.rkt, model/redex/tests/surface-stmt-test.rkt
+//@ ASSUMPTIONS: -
+//@ SCOPE: DFnDecl の関数名 span、仮引数名 span、Effect row が後続を含む CRecur に保持される形。
 val lower_decl_fn : s:span -> sx:span -> ps:list (span & sty) -> r:option sty
   -> row:option seffrow -> v:sexpr -> rest:core -> Lemma
   (lower_decl (SDecl s DFnDecl sx ps r row v) rest

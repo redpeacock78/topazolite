@@ -1172,13 +1172,15 @@ surface の producer 突合は producer のある code だけを対象とする�
 F* 側では、Redex の有限例では示せない Surface の全域性と span の性質を並行して検査する。
 この版で書く命題は 7 つである。
 
-1. **lexer の全域性**：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
-2. **span の健全性**：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
-3. **span の包含**：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
-4. **lowering の span 保存**：`SInt`、`SStr`、`SUnit`、`SBool`、`SBoolIf`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow` の 19 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
-5. **予約語**：Racket の `lexer.rkt` が予約する 22 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
-6. **block の根の span**：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
-7. **欄の保存**：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
+1. **lexer の全域性**（THM-001）：任意の byte 列に対し、`lex` は token 列または診断を返して停止する。
+2. **span の健全性**（THM-002）：`lex` が返す token と診断の primary span が、入力の byte 長の範囲に入る。
+3. **span の包含**（THM-003）：`wf_node` を満たす節点について、その span が子の span をすべて包含する。
+4. **lowering の span 保存**（THM-004）：`SInt`、`SStr`、`SUnit`、`SBool`、`SBoolIf`、`SVar`、`SReturn`、`SLeave`、`SFor`、`SMatch`、`SApply`、`SConstruct`、`SProj`、`SRec`、`SFn`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow` の 19 構成子について、`lower_expr` が生成する節点の span が元の span と等しい。
+5. **予約語**（THM-005）：Racket の `lexer.rkt` が予約する 22 語のそれぞれについて、`keyword_word` がその byte 列に `TkKw` を返す。
+6. **block の根の span**（THM-006）：空でない宣言の列について、`span_of_core (lower_block (d :: ds) tail)` は `hull (span_of_decl d) (span_of_core (lower_block ds tail))` に等しい。
+7. **欄の保存**（THM-007）：`lower_expr` と `lower_block` が作る節点は、元の名前と label の span、Effect row を保持する。
+
+各命題の前提と検証済みの範囲は proof-inventory.md の注記の規約に従って補題に書く。
 
 命題 3 は `wf_node` を前提とする条件付き補題である。
 parser の出力が `wf_node` を満たすことは F* 側からは示さない。
