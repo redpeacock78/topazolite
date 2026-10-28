@@ -28,6 +28,10 @@ jobs:
         if: always()
         run: racket tools/req-coverage.rkt
 
+      - name: proof inventory
+        if: always()
+        run: racket tools/proof-inventory.rkt
+
   fstar:
     runs-on: ubuntu-latest
     timeout-minutes: 30
