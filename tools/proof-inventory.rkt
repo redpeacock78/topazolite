@@ -71,7 +71,8 @@
                #:when match)
       (list index (cadr match) (caddr match))))
   (define ends
-    (append (map car (cdr starts)) (list (length lines))))
+    (if (null? starts) '()
+        (append (map car (cdr starts)) (list (length lines)))))
   (define raw
     (for/list ([entry (in-list starts)] [end (in-list ends)])
       (define start (car entry))
@@ -90,6 +91,9 @@
              #:unless (and (member (declaration-kind item) '("let" "let rec"))
                            (set-member? val-names (declaration-name item))))
     item))
+
+(define (fst-declarations* paths)
+  (append-map fst-declarations paths))
 
 (define (lemma-declaration? item)
   (regexp-match? #px"(?<![A-Za-z0-9_'])Lemma(?![A-Za-z0-9_'])"
@@ -190,8 +194,8 @@
                       (regexp-quote case-name)))
      source)))
 
-(define (annotation-errors fst-path surface-path registry-path spec-dir repo-root)
-  (define definitions (fst-declarations fst-path))
+(define (annotation-errors fst-paths surface-path registry-path spec-dir repo-root)
+  (define definitions (fst-declarations* fst-paths))
   (define known-reqs (list->set (map car (registry-definitions registry-path))))
   (define errors '())
   (define thm-annotations '())
@@ -279,7 +283,6 @@
               (when (and (not (equal? value "-"))
                          (not (set-member? known-reqs value)))
                 (report! (format "~a: AUX example の要件 ID ~a が無い" name value)))])]))))
-  (define declared-thms (sorted-unique (map car thm-annotations)))
   (define surface-values (call-with-values (lambda () (surface-thm-ids surface-path)) list))
   (define surface-thms (first surface-values))
   (unless (second surface-values)
@@ -295,11 +298,7 @@
     (unless (andmap (lambda (signature) (equal? signature (car signatures)))
                     (cdr signatures))
       (report! (format "~a: 同じ THM の SCOPE 以外の欄が一致しない" id))))
-  (for ([id (in-list (set-difference-list surface-thms declared-thms))])
-    (report! (format "surface.md の ~a に命題注記が無い" id)))
-  (for ([id (in-list (set-difference-list declared-thms surface-thms))])
-    (report! (format "命題注記の ~a が surface.md §8 に無い" id)))
-  (define known-thms (list->set declared-thms))
+  (define known-thms (list->set (map car thm-annotations)))
   (for ([entry (in-list aux-annotations)])
     (define name (first entry))
     (define fields (second entry))
@@ -351,9 +350,9 @@
         (values (filter (lambda (row) (and (pair? row) (not (separator-row? row)))) cells)
                 errors))))
 
-(define (thm-declaration-map fst-path)
+(define (thm-declaration-map fst-paths)
   (define mapping (make-hash))
-  (for ([item (in-list (fst-declarations fst-path))])
+  (for ([item (in-list (fst-declarations* fst-paths))])
     (define-values (note _errors) (parse-annotation item))
     (when (and note (eq? (parsed-note-kind note) 'thm))
       (define thm (hash-ref (parsed-note-fields note) "THM" #f))
@@ -362,11 +361,11 @@
   (for/hash ([(thm names) (in-hash mapping)])
     (values thm (sort names string<?))))
 
-(define (list-field-map fst-path)
+(define (list-field-map fst-paths)
   (define full (make-hash))
   (define partial (make-hash))
   (define examples (make-hash))
-  (for ([item (in-list (fst-declarations fst-path))])
+  (for ([item (in-list (fst-declarations* fst-paths))])
     (define-values (note _errors) (parse-annotation item))
     (when note
       (cond
@@ -400,7 +399,21 @@
           [(list _ path case-name) (cons path case-name)]
           [_ #f]))))
 
-(define (inventory-errors inventory-path fst-path registry-path repo-root)
+(define (inventory-referenced-declarations fst-paths)
+  (for*/fold ([references '()]) ([path (in-list fst-paths)]
+                                  [item (in-list (fst-declarations path))])
+    (define-values (note _errors) (parse-annotation item))
+    (if (and note
+             (or (eq? (parsed-note-kind note) 'thm)
+                 (and (eq? (parsed-note-kind note) 'aux)
+                      (equal? (hash-ref (parsed-note-fields note) "AUX-KIND")
+                              "example")))
+             (not (and (eq? (parsed-note-kind note) 'aux)
+                       (equal? (hash-ref (parsed-note-fields note) "AUX-VALUE") "-"))))
+        (cons (cons (declaration-name item) path) references)
+        references)))
+
+(define (inventory-errors inventory-path fst-paths registry-path surface-path repo-root)
   (define errors '())
   (define (report! message) (set! errors (cons message errors)))
   (define known-reqs (map car (registry-definitions registry-path)))
@@ -411,9 +424,21 @@
   (for ([message (in-list (append proof-table-errors requirement-table-errors))])
     (report! message))
   (define proof-ids (for/list ([row (in-list proof-rows)] #:when (pair? row)) (car row)))
+  (define surface-values (call-with-values (lambda () (surface-thm-ids surface-path)) list))
+  (define surface-thms (first surface-values))
+  (for ([id (in-list (set-difference-list surface-thms proof-ids))])
+    (report! (format "surface.md §8 の ~a が命題の表に無い" id)))
   (for ([id (in-list (duplicates proof-ids))])
     (report! (format "命題の表で ~a が重複している" id)))
-  (define thm-map (thm-declaration-map fst-path))
+  (define references (inventory-referenced-declarations fst-paths))
+  (for ([name (in-list (duplicates (map car references)))])
+    (define paths
+      (remove-duplicates
+       (map cdr (filter (lambda (entry) (equal? (car entry) name)) references))
+       equal?))
+    (when (> (length paths) 1)
+      (report! (format "宣言名 ~a が複数の module で重複している" name))))
+  (define thm-map (thm-declaration-map fst-paths))
   (for ([id (in-list (set-difference-list (hash-keys thm-map) proof-ids))])
     (report! (format "命題の表に ~a の宣言が無い: ~a"
                      id (string-join (hash-ref thm-map id) ", "))))
@@ -442,7 +467,7 @@
   (define row-map (make-hash))
   (for ([row (in-list requirement-rows)] #:when (>= (length row) 5))
     (hash-set! row-map (first row) row))
-  (define-values (full partial examples) (list-field-map fst-path))
+  (define-values (full partial examples) (list-field-map fst-paths))
   (for ([id (in-list known-reqs)])
     (define row (hash-ref row-map id #f))
     (when row
@@ -495,7 +520,7 @@
            (report! (format "~a: テストのみ以外の状態は根拠の試験を持たない" id)))])))
   (sort (remove-duplicates errors) string<?))
 
-(define (run-proof-inventory #:fst fst-path
+(define (run-proof-inventory #:fst-paths fst-paths
                              #:surface surface-path
                              #:registry registry-path
                              #:inventory inventory-path
@@ -504,8 +529,9 @@
                              #:output output
                              #:error-output error-output)
   (define errors
-    (append (annotation-errors fst-path surface-path registry-path spec-dir repo-root)
-            (inventory-errors inventory-path fst-path registry-path repo-root)))
+    (append (if (null? fst-paths) (list "F* の module が無い") '())
+            (annotation-errors fst-paths surface-path registry-path spec-dir repo-root)
+            (inventory-errors inventory-path fst-paths registry-path surface-path repo-root)))
   (if (pair? errors)
       (begin
         (for ([message (in-list errors)]) (fprintf error-output "~a\n" message))
@@ -513,13 +539,17 @@
       (begin
         (fprintf output "Proof inventory OK: ~a 件の要件、~a 個の補題\n"
                  (length (registry-definitions registry-path))
-                 (count lemma-declaration? (fst-declarations fst-path)))
+                 (count lemma-declaration? (fst-declarations* fst-paths)))
         0)))
 
 (define (main)
+  (define fst-paths
+    (sort (filter (lambda (path) (path-has-extension? path #".fst"))
+                  (directory-list (build-path project-root "model/fstar") #:build? #t))
+          path<?))
   (exit
    (run-proof-inventory
-    #:fst (build-path project-root "model/fstar/Topazolite.Surface.fst")
+    #:fst-paths fst-paths
     #:surface (build-path project-root "docs/specification/surface.md")
     #:registry (build-path project-root "docs/specification/requirements.md")
     #:inventory (build-path project-root "docs/specification/proof-inventory.md")

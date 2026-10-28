@@ -13,6 +13,7 @@
 (define thm-unknown (string-append "THM" "-903"))
 
 (define fst-path "model/fstar/Example.fst")
+(define fst-path-core "model/fstar/ExampleCore.fst")
 (define surface-path "docs/specification/surface.md")
 (define registry-path "docs/specification/requirements.md")
 (define inventory-path "docs/specification/proof-inventory.md")
@@ -75,6 +76,11 @@
    example-note "\n"
    "let example : Lemma True = ()\n"))
 
+(define (core-module-text #:note [note (theorem-note thm-unknown "-" "-" "borrow.md§1")]
+                          #:name [name "core_inv"])
+  (string-append "module ExampleCore\n\n" note "\n"
+                 "let " name " : Lemma True = ()\n"))
+
 (define (proof-table [rows (list (cons thm-one "`lex`")
                                  (cons thm-two "`left`, `right`") )])
   (string-append
@@ -129,11 +135,17 @@
       (proc root))
     (lambda () (delete-directory/files root))))
 
-(define (run-fixture root)
+(define (run-fixture root #:fst-paths [fst-paths #f])
   (define output (open-output-string))
   (define error-output (open-output-string))
+  (define actual-fst-paths
+    (or fst-paths
+        (append (list (build-path root fst-path))
+                (if (file-exists? (build-path root fst-path-core))
+                    (list (build-path root fst-path-core))
+                    '()))))
   (define status
-    (run-proof-inventory #:fst (build-path root fst-path)
+    (run-proof-inventory #:fst-paths actual-fst-paths
                          #:surface (build-path root surface-path)
                          #:registry (build-path root registry-path)
                          #:inventory (build-path root inventory-path)
@@ -254,16 +266,46 @@
   (define result (run-overrides (hash fst-path fst)))
   (check-failure result #px"plain"))
 
-(test-case "surface.md §8 にあって注記に無い THM を報告する"
-  (define result
-    (run-overrides (hash surface-path (surface-text (list thm-one thm-two thm-unknown)))))
-  (check-failure result #px"surface.md.*注記"))
-
-(test-case "注記にあって surface.md §8 に無い THM を報告する"
+(test-case "§4 の表に登録した Core の THM は surface.md §8 に無くても通る"
   (define result
     (run-overrides
-     (hash fst-path (fst-text #:helper (theorem-note thm-unknown)))))
-  (check-failure result #px"注記.*surface.md"))
+     (hash fst-path-core (core-module-text)
+           inventory-path
+           (inventory-text #:proof
+                           (proof-table (list (cons thm-one "`lex`")
+                                              (cons thm-two "`left`, `right`")
+                                              (cons thm-unknown "`core_inv`")))))))
+  (check-equal? (first result) 0 (third result)))
+
+(test-case "surface.md §8 の THM が §4 の表に無ければ落ちる"
+  (define result
+    (run-overrides (hash surface-path (surface-text (list thm-one thm-two thm-unknown)))))
+  (check-failure result #px"surface.md.*表"))
+
+(test-case "§4 の表に無い THM の注記は落ちる"
+  (define result (run-overrides (hash fst-path-core (core-module-text))))
+  (check-failure result #px"命題の表"))
+
+(test-case "二つの module に同じ宣言名があれば報告する"
+  (define note (theorem-note thm-one))
+  (define result
+    (run-overrides (hash fst-path-core (core-module-text #:note note #:name "lex"))))
+  (check-failure result #px"lex.*重複"))
+
+(test-case "注記の無い補助の宣言は他の module と同名でも重複にしない"
+  (define result
+    (run-overrides
+     (hash fst-path-core
+           "module ExampleCore\n\nlet helper : int = 0\n")))
+  (check-false (regexp-match? #px"helper.*重複" (third result))))
+
+(test-case "F* の module が一つも無ければ報告する"
+  (define status
+    (with-fixture (hash)
+      (lambda (root)
+        (run-fixture root #:fst-paths '()))))
+  (check-equal? (first status) 1)
+  (check-regexp-match #px"F\\* の module が無い" (third status)))
 
 (test-case "AUX helper の複数 THM を受理し、無い THM を報告する"
   (define result
