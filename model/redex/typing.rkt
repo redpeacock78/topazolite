@@ -632,8 +632,8 @@
       (fail 'unresolved-borrow-owner node))
     (define result-lifetime
       (capability-entry-declared-lifetime result-leaf))
-    ;; Recursive schema cutoffs are entries without a leaf lifetime, not ambiguity
-    ;; sentinels. Their runtime upper bound is assembled at the Apply site.
+    ;; 再帰 schema の打ち切り entry は leaf 寿命の無い上界候補であり、曖昧印ではない。
+    ;; 実引数の上界は Apply の位置で組み立てる。
     (if result-lifetime
         (hash-set
          result result-path
@@ -757,6 +757,52 @@
                [source-alphas sources]
                [declared-lifetime lifetime]))
 
+(define (matching-capability-leaf-entries entry lifetimes fail node)
+  (unless (capability-entry? entry)
+    (fail 'unresolved-borrow-owner node))
+  (define fields (capability-entry-fields entry))
+  (define lifetime (capability-entry-declared-lifetime entry))
+  (cond
+    [(hash? fields)
+     (append-map (lambda (child)
+                   (matching-capability-leaf-entries child lifetimes fail node))
+                 (hash-values fields))]
+    [(and lifetime (set-member? lifetimes lifetime)
+          (not (set-empty? (capability-entry-keys entry))))
+     (list (struct-copy capability-entry entry
+                        [fields #f]
+                        [borrowed-view? #f]))]
+    ;; shortcut: 寿命が不透明な entry は全 keys を保持し、leaf 寿命が得られれば絞り込む。
+    [(and (not lifetime)
+          (not (set-empty? (capability-entry-keys entry))))
+     (list (struct-copy capability-entry entry
+                        [fields #f]
+                        [borrowed-view? #f]))]
+    [else '()]))
+
+(define (keyed-capability-leaf-entries entry fail node)
+  (unless (capability-entry? entry)
+    (fail 'unresolved-borrow-owner node))
+  (define fields (capability-entry-fields entry))
+  (if (hash? fields)
+      (append-map (lambda (child) (keyed-capability-leaf-entries child fail node))
+                  (hash-values fields))
+      (if (set-empty? (capability-entry-keys entry))
+          '()
+          (list (struct-copy capability-entry entry
+                             [fields #f]
+                             [borrowed-view? #f])))))
+
+(define (recursive-capability-leaf-candidates entry lifetimes fail node)
+  (define matching
+    (matching-capability-leaf-entries entry lifetimes fail node))
+  (define selected
+    (if (pair? matching)
+        matching
+        (keyed-capability-leaf-entries entry fail node)))
+  (when (null? selected) (fail 'unresolved-borrow-owner node))
+  selected)
+
 (define (result-capability-entry summary result-type arguments actuals Λ node fail)
   (define region-subst (callable-summary-region-subst summary))
   (define candidates-by-path
@@ -830,27 +876,6 @@
              (set-union lifetimes
                         (lifetimes-in field-type
                                       (set-add seen normalized)))))]))
-  (define (matching-leaf-entries entry lifetimes)
-    (unless (capability-entry? entry)
-      (fail 'unresolved-borrow-owner node))
-    (define fields (capability-entry-fields entry))
-    (define lifetime (capability-entry-declared-lifetime entry))
-    (cond
-      [(hash? fields)
-       (append-map (lambda (child) (matching-leaf-entries child lifetimes))
-                   (hash-values fields))]
-      [(and lifetime (set-member? lifetimes lifetime)
-            (not (set-empty? (capability-entry-keys entry))))
-       (list (struct-copy capability-entry entry
-                          [fields #f]
-                          [borrowed-view? #f]))]
-      ;; shortcut: opaque entries retain every key; refine when leaf lifetimes are available.
-      [(and (not lifetime)
-            (not (set-empty? (capability-entry-keys entry))))
-       (list (struct-copy capability-entry entry
-                          [fields #f]
-                          [borrowed-view? #f]))]
-      [else '()]))
   (define (recursive-capability-upper-bound type)
     (define lifetimes (lifetimes-in type))
     (define-values (_root result-leaves)
@@ -880,8 +905,8 @@
          (define actual-entry
            (capability-of Λ (list-ref arguments index)
                           #:fail fail #:allow-empty-keys? #t))
-         (matching-leaf-entries actual-entry
-                                (hash-ref candidate-lifetimes index)))
+         (recursive-capability-leaf-candidates
+          actual-entry (hash-ref candidate-lifetimes index) fail node))
        (hash-keys candidate-lifetimes)))
     (define joined
       (if (null? candidates)
@@ -912,6 +937,9 @@
        (define schema (constructor-schema normalized))
        (cond
          [(not schema) (capability-entry (set) (set) #f #f (set) #f)]
+         [(and (set-member? seen normalized)
+               (not (type-carries-capability? normalized)))
+          (capability-entry (set) (set) #f #f (set) #f)]
          [(set-member? seen normalized)
           (recursive-capability-upper-bound normalized)]
          [else
@@ -8570,6 +8598,34 @@
 
 (module+ test
   (require rackunit)
+
+  (test-case "再帰上界は寿命不一致なら全 keyed leaf を保守的に選ぶ"
+    (define actual-entry
+      (capability-entry
+       (set '(owner first) '(owner second)) (set)
+       (hash
+        'first (capability-entry (set '(owner first)) (set) #f #f
+                                 (set '(RVar 0)) '(RVar 0))
+        'second (capability-entry (set '(owner second)) (set) #f #f
+                                  (set '(RVar 1)) '(RVar 0)))
+       #f (set) #f))
+    (define (probe-fail key node)
+      (error 'recursive-capability-leaf-candidates "~a at ~s" key node))
+    (define selected
+      (recursive-capability-leaf-candidates
+       actual-entry (set '(RVar 3)) probe-fail 'probe))
+    (check-equal?
+     (list->set (map capability-entry-keys selected))
+     (set (set '(owner first)) (set '(owner second))))
+    (check-equal?
+     (list->set (map capability-entry-source-alphas selected))
+     (set (set '(RVar 0)) (set '(RVar 1))))
+    (check-exn
+     #rx"unresolved-borrow-owner"
+     (lambda ()
+       (recursive-capability-leaf-candidates
+        (capability-entry (set) (set) #f #f (set) #f)
+        (set '(RVar 3)) probe-fail 'probe))))
 
   ;; fail は key ill-typed を未登録として error にしない。
   (check-equal? (with-typing (lambda (fail) (fail 'ill-typed 1)))

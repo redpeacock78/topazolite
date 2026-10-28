@@ -512,3 +512,39 @@
   (define-values (borrowed-root _borrowed-leaves)
     (formal-capability-entry '(BorrowedMut Int (RParam a)) 'formal-root))
   (check-true (capability-entry-borrowed-view? borrowed-root)))
+
+(test-case "非借用の再帰 field は Apply の capability 表を空で止める"
+  (define formal-type
+    '(Record ((r (BorrowedMut Int (RParam a)) imm)
+              (xs (List Int) imm))))
+  (define actual-type
+    '(Record ((r (BorrowedMut Int (RVar 0)) imm)
+              (xs (List Int) imm))))
+  (define signature
+    `(ForallRegion (a) (NFn (,formal-type) ,formal-type () () () User)))
+  (define callables `((identity-borrow-record ,signature)))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (source let (BorrowedMut Int (RVar 0))) (BorrowMut owner)
+           (Let (argument let ,actual-type)
+             (Rec ((r imm source)
+                   (xs imm (Construct (List Int) nil))))
+             (Let (result let ,actual-type)
+               (Apply
+                (RegionApp
+                 (RegionLam (a)
+                   (Lam User identity-borrow-record (record) record))
+                 ((RVar 0)))
+                argument)
+               (Read (Proj result r))))))))
+  (define type-result (raw-result core callables))
+  (check-false (failure-key type-result)
+               (format "identity Apply の型検査: ~s" type-result))
+  (when (not (failure-key type-result))
+    (define-values (start sidecar ir expected)
+      (prepare-execution core callables))
+    (define configs (trace-g2 start))
+    (check-live-trace configs callables expected)
+    (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
+                  'ok)))
