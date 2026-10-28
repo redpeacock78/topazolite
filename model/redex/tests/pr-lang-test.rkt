@@ -2,7 +2,8 @@
 
 (require rackunit
          redex/reduction-semantics
-         "../pr-lang.rkt")
+         "../pr-lang.rkt"
+         "../pr-binding.rkt")
 
 ;; [REQ: BAK-001] 目標言語 PR の構文（backend-matrix.md §3）
 
@@ -124,9 +125,8 @@
  ;; 構造化された τ の符号は括弧と空白を含む記号になる。
  (check-true (redex-match? PR ptycode (term |ty:(List Int)|)))
  ;; 符号化した名前は束縛子としても使える。
- (check-true (alpha-equivalent? PR
-                                (term (PLet v:yield 1 v:yield))
-                                (term (PLet v:return 1 v:return)))))
+ (check-true (pr-alpha-equivalent? '(PLet v:yield 1 v:yield)
+                                   '(PLet v:return 1 v:return))))
 
 (test-case
  "pop compares boundary name and type code together"
@@ -138,15 +138,11 @@
  (check-false (equal? pop-a pop-b)))
 
 (test-case
- "binding forms are declared"
- (check-true (alpha-equivalent? PR (term (PLam (a) a)) (term (PLam (b) b))))
- (check-true (alpha-equivalent? PR
-                                (term (PLet a 1 a))
-                                (term (PLet b 1 b))))
- (check-true (alpha-equivalent? PR
-                                (term (PLetrec a (PLam (c) c) a))
-                                (term (PLetrec b (PLam (c) c) b))))
- (check-true (alpha-equivalent? PR
-                                (term (PClosure () (a) a))
-                                (term (PClosure () (b) b))))
- (check-false (alpha-equivalent? PR (term (PLam (a) 1)) (term (PLam (a) 2)))))
+ "束縛子だけを改名した PR の項を α 同値とする"
+ (check-true (pr-alpha-equivalent? '(PLam (a) a) '(PLam (b) b)))
+ (check-true (pr-alpha-equivalent? '(PLet a 1 a) '(PLet b 1 b)))
+ (check-true (pr-alpha-equivalent? '(PLetrec a (PLam (c) c) a)
+                                   '(PLetrec b (PLam (c) c) b)))
+ (check-true (pr-alpha-equivalent? '(PClosure () (a) a)
+                                   '(PClosure () (b) b)))
+ (check-false (pr-alpha-equivalent? '(PLam (a) 1) '(PLam (a) 2))))

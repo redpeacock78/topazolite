@@ -108,6 +108,17 @@ pc   ::= pv | px
 `PRuntime` の評価位置は源の評価文脈 `F` と同じ 4 本に限る。
 総称の `(PRuntime prt pv ... PF pc ...)` を置くと `yield` の継続と `suspend` の本体まで掘れてしまい、後続が 2 つ残って §4 の決定性が壊れる。
 
+PR の束縛形と、束縛子が束縛する範囲は次のとおりである。
+
+- `PLam`：仮引数が本体を束縛する。
+- `PClosure`：environment の key と仮引数が本体を束縛する。environment の値は外側の範囲に置く。
+- `PLet` と `PLetOwned`：束縛子が本体だけを束縛する。束縛する式は外側の範囲に置く。
+- `PLetrec`：束縛子が束縛する式と本体の両方を束縛する。
+- `PMatch` の枝 `(K (px ...) -> pc)`：仮引数がその枝の本体だけを束縛する。
+- `PRecRewrite` の entry `(label px pc)`：`px` が `pc` だけを束縛する。`label` は束縛子ではない。
+
+`PEffect` と `PInstall` は束縛子を持たず、`PInstall` の handler は内側の `PLam` が束縛する。
+
 ## 4. 目標機械と観測
 
 config は源と同じ 5 つ組である。
@@ -126,6 +137,10 @@ pstate ::= Available | Moved | Dropped
 `-->pr` は決定的である。
 観測に基づく評価器は、重複除去後に 2 つ以上の後続 config が残ると error を投げる。
 非決定な遷移を残すと、保存の言明を確かめる装置そのものが使えない。
+
+規則の中の置換は、core-calculus.md §5.3 の置換の契約に従う。
+置換は変数の位置だけに作用し、tag、label、境界名、primitive 名、型の名前を書き換えず、置換する値の自由変数を捕獲しない。
+`PClosure` の environment の key と仮引数の間に同じ名前があると、`R-PR-App` の同時の置換が定まらないので、`-->pr` はそのような項を入口で拒否する。
 
 規則は 26 本である。
 源の `-->g2` の 72 本を基準にする。

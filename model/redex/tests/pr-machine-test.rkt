@@ -4,6 +4,7 @@
          rackunit
          redex/reduction-semantics
          "../pr-lang.rkt"
+         "../pr-binding.rkt"
          "../pr-machine.rkt"
          "rule-crosscheck-test.rkt")
 
@@ -89,9 +90,8 @@
   12)
  ;; penv を持つ closure を引数へ渡しても、その鍵を捕獲しない。
  (check-true
-  (alpha-equivalent?
-   PR
-   (term (PClosure ((e 7)) (a) e))
+  (pr-alpha-equivalent?
+   '(PClosure ((e 7)) (a) e)
    (eval-pr
     (term (PApp (PClosure () (x) x)
                 (PClosure ((e 7)) (a) e))))))
@@ -102,9 +102,8 @@
 (test-case
  "R-PR-Curry extends the environment instead of building an intermediate value"
  (check-true
-  (alpha-equivalent?
-   PR
-   (term (PClosure ((a 4)) (b) (PPrim tz:add a b)))
+  (pr-alpha-equivalent?
+   '(PClosure ((a 4)) (b) (PPrim tz:add a b))
    (eval-pr (term (PRuntime curry (PClosure () (a b) (PPrim tz:add a b)) 4)))))
  ;; 引数を取らない closure への curry は stuck する。
  (check-equal?
@@ -114,6 +113,39 @@
 (test-case
  "R-PR-Let substitutes without consulting a type"
  (check-equal? (eval-pr (term (PLet a 3 (PPrim tz:add a a)))) 6))
+
+(test-case
+ "変数の置換で label、tag、shim 名、Effect 境界名を保つ"
+ (check-equal? (eval-pr '(PLet x 1 (PProj (PRec ((x 2))) x))) 2)
+ (check-equal? (eval-pr '(PLet x 1 (PMatch (PTagged x 5) ((x (y) -> y))))) 5)
+ (check-equal? (eval-pr '(PLet tz:add 0 (PPrim tz:add 1 2))) 3)
+ (check-equal? (eval-pr '(PLet b:e 0
+                            (PInstall (return b:e ty:Int)
+                                      (PLam (a) a)
+                                      (PEffect (return b:e ty:Int) 7))))
+               7)
+ (check-equal? (eval-pr '(PRecRewrite (PRec ((x 2)))
+                                       ((x x (PPrim tz:add x 1)))))
+               '(PRec ((x 3)))))
+
+(test-case
+ "置換規則ごとに PR の静的な名前を保つ"
+ (check-equal? (eval-pr '(PApp (PClosure () (x) (PProj (PRec ((x 3))) x)) 0))
+               3)
+ (check-equal? (eval-pr '(PLetrec x (PLam (n) n) (PProj (PRec ((x 3))) x)))
+               3)
+ (check-equal? (eval-pr '(PLetOwned x 1 (PProj (PRec ((x 3))) x))) 3)
+ (check-equal? (eval-pr '(PInstall (return b:e ty:Int)
+                                    (PLam (x) (PProj (PRec ((x 3))) x))
+                                    (PEffect (return b:e ty:Int) 0)))
+               3))
+
+(test-case
+ "PClosure の environment key と仮引数の重複を入口で拒否する"
+ (check-equal? (apply-reduction-relation
+                -->pr
+                (inject-pr '(PApp (PClosure ((a 1)) (a) a) 2)))
+               '()))
 
 (test-case
  "R-PR-Letrec builds a self-applying closure"

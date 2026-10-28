@@ -597,6 +597,18 @@
  (check-equal? (second source-result) 'value)
  (check-equal? (length (first source-result)) 1))
 
+(test-case
+ "lowering の接頭辞により束縛子と同名の label は PR で衝突しない"
+ (define core
+   '(Let (field const Int) 1
+      (Yield (Proj (Rec ((field imm 2))) field) unit)))
+ (define-values (status target) (lower core 'racket-cs))
+ (check-eq? status 'ok)
+ (check-not-false (memq 'v:field (flatten target)))
+ (check-not-false (memq 'f:field (flatten target)))
+ (check-equal? (obs-eval-g2 core 1 20) (list (list 2) 'observed))
+ (check-equal? (obs-eval-pr target 1 20) (list (list 2) 'observed)))
+
 ;;; backend-matrix.md §7 と backend-matrix.md §8：診断 ID ごとの fixture
 
 (test-case

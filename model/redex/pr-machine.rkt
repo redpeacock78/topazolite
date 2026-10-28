@@ -2,7 +2,8 @@
 
 (require racket/match
          redex/reduction-semantics
-         "pr-lang.rkt")
+         "pr-lang.rkt"
+         "pr-binding.rkt")
 
 ;; 公開面を machine.rkt より広く取る。δpr を出すのは Task 15 の
 ;; lowering-arith-test.rkt が shim 名の意味論を項の簡約を経ずに引くためであり、
@@ -59,15 +60,16 @@
    (side-condition (and (string? (term pl_1)) (string? (term pl_2))))]
   [(δpr pnm pv ...) undefined])
 
-;; machine.rkt の substitute* と同じ理由で、arity 不一致と重複束縛子を #f に
-;; 落として規則を不発火にする。metafunction の例外にしない。
+;; arity 不一致と重複束縛子は pr-subst* の #f を通じて規則を不発火にする。
+;; metafunction の例外にしない。
 (define-metafunction PR
   psubstitute* : pc (px ...) (pv ...) -> any
   [(psubstitute* pc_body (px ...) (pv_arg ...))
-   (substitute pc_body (px pv_arg) ...)
-   (side-condition
-    (and (= (length (term (px ...))) (length (term (pv_arg ...))))
-         (not (check-duplicates (term (px ...))))))]
+   pc_result
+   (where pc_result
+          ,(pr-subst* (term pc_body)
+                      (term (px ...))
+                      (term (pv_arg ...))))]
   [(psubstitute* pc_body (px ...) (pv_arg ...)) #f])
 
 (define-metafunction PR
@@ -113,7 +115,7 @@
       [`(,label ,value)
        (match (assoc label entries)
          [(list _ px body)
-          (list label (term (substitute ,body ,px ,value)))]
+          (list label (pr-subst* body (list px) (list value)))]
          [_ field])])))
 
 ;; 入力順を保ち、指定された欄だけを取り除く。
@@ -216,8 +218,7 @@
   (and (match core
          [`(PLam ,parameters ,_) (not (check-duplicates parameters))]
          [`(PClosure ,environment ,parameters ,_)
-          (not (or (check-duplicates parameters)
-                   (check-duplicates (map first environment))))]
+          (not (check-duplicates (append (map first environment) parameters)))]
          [`(,_ ,parameters -> ,_)
           #:when (list? parameters)
           (not (check-duplicates parameters))]
@@ -261,7 +262,8 @@
    ;; 選ぶ。源の R-Let と R-LetB がここへ畳まれる。
    (--> (pcfg (in-hole PE (PLet px pv_bound pc_body)) PH PΩ θ)
         (pcfg (in-hole PE pc_result) PH PΩ θ)
-        (where pc_result (substitute pc_body px pv_bound))
+        (where pc_result
+               ,(pr-subst* (term pc_body) (list (term px)) (list (term pv_bound))))
         R-PR-Let)
 
    (--> (pcfg (in-hole PE (PLetrec px_f (PLam (px ...) pc_body) pc_next))
@@ -276,7 +278,8 @@
                          (PLetrec px_f
                                   (PLam (px ...) pc_body)
                                   pc_body)))
-        (where pc_result (substitute pc_next px_f pv_recur))
+        (where pc_result
+               ,(pr-subst* (term pc_next) (list (term px_f)) (list (term pv_recur))))
         R-PR-Letrec)
 
    (--> (pcfg (in-hole PE (PMatch (PTagged K pv_arg ...) (pbr ...))) PH PΩ θ)
@@ -386,7 +389,10 @@
                                    (in-hole PG_inner pc_result)))
               PH_new PΩ_new θ)
         (where pp_new ,(pfresh-place (term PH) (term PΩ)))
-        (where pc_result (substitute pc_body px (PPlace pp_new)))
+        (where pc_result
+               ,(pr-subst* (term pc_body)
+                           (list (term px))
+                           (list `(PPlace ,(term pp_new)))))
         (where PH_new ,(ptable-set (term PH) (term pp_new) (term pv_bound)))
         (where PΩ_new ,(ptable-set (term PΩ) (term pp_new) 'Available))
         R-PR-LetOwned)
@@ -461,7 +467,8 @@
                                  (in-hole PF_inner (PEffect pop pv_arg))))
               PH PΩ θ)
         (pcfg (in-hole PE_outer pc_result) PH PΩ θ)
-        (where pc_result (substitute pc_handler px pv_arg))
+        (where pc_result
+               ,(pr-subst* (term pc_handler) (list (term px)) (list (term pv_arg))))
         R-PR-InstallEffect)
 
    (--> (pcfg (in-hole PE_outer
