@@ -1244,8 +1244,8 @@
 ;;
 ;; #:fail は現行の borrow-token-key がすでに辿っている枝、すなわち ws を
 ;; 運ぶ枝だけに伝える。表だけを取るための再帰（Let の非借用の束縛、
-;; RegionApp の本体、Eliminate の scrutinee）へは渡さない。渡すと、いま
-;; 診断を出さずに通っている programme が E-BOR-020 で落ちる。
+;; RegionApp の本体、Eliminate と UnionEliminate の scrutinee）へは渡さない。
+;; 渡すと、いま診断を出さずに通っている programme が E-BOR-020 で落ちる。
 (define (capability-of Λ c [locals (hash)] #:fail [fail #f]
                        #:allow-empty-keys? [allow-empty-keys? #f]
                        #:apply-entry [apply-entry #f])
@@ -1270,6 +1270,17 @@
         (capability-value (hash-ref table (field-key label) (only (set))))
         (let ([parent (recur c* locals 0)])
           (entry-with-keys parent (entry-ws parent)))))
+  (define (projborrow-entry operand label)
+    (define parent (recur operand locals 0))
+    (define child-caps
+      (for/set ([k (in-set (entry-ws parent))])
+        (cons (car k) (append (cdr k) (list (peel-lbl label))))))
+    (for ([cap (in-set child-caps)])
+      (unless (owner-path? (cdr cap))
+        (if fail
+            (fail 'unresolved-borrow-owner c)
+            (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
+    (only child-caps (entry-variants parent) #t))
   (define (field-table-for-root root)
     (define direct (region-ctx-field-table Λ root))
     (or (and (hash? direct) direct)
@@ -1314,6 +1325,8 @@
      (only (set (cons (peel-node p) fp)) (set) #t)]
     [`(BorrowMutRef ,p ,fp ,_)
      (only (set (cons (peel-node p) fp)) (set) #t)]
+    [`(UVal ,value) (recur value locals 0)]
+    [`(RVal ,_proof ,value) (recur value locals 0)]
     [`(Apply ,_function ,_arguments ...)
      (or (and apply-entry (apply-entry Λ c)) (only (set)))]
     [`(Reborrow ,c_1)
@@ -1324,22 +1337,8 @@
      (define entry (recur c_1 locals 0))
      (only (entry-ws entry) (entry-variants entry)
            (entry-borrowed-view? entry))]
-    [`(ProjBorrowAt ,_ ,c_1 ,label)
-     (define parent (recur c_1 locals 0))
-     (define child-caps
-       (for/set ([k (in-set (entry-ws parent))])
-         (cons (car k) (append (cdr k) (list (peel-lbl label))))))
-     ;; 射影を重ねた後の累積 path 全体を検証する。単一 label の検査では
-     ;; record-path? の定義域（複数要素の列）を実際には検査できない。
-     ;; Eliminate の束縛子が位置の segment を積むため、label だけを許す
-     ;; record-path? では通らない。owner-path? は label と 0 起点の位置の
-     ;; 両方を許し、それ以外の segment を拒む。
-     (for ([cap (in-set child-caps)])
-       (unless (owner-path? (cdr cap))
-         (if fail
-             (fail 'unresolved-borrow-owner c)
-             (error 'borrow-token-key "invalid field path: ~s" (cdr cap)))))
-     (only child-caps (entry-variants parent) #t)]
+    [`(ProjBorrow ,c_1 ,label) (projborrow-entry c_1 label)]
+    [`(ProjBorrowAt ,_ ,c_1 ,label) (projborrow-entry c_1 label)]
     [(? borrow-designator? w)
      (define designator (peel-node w))
      (define entry
@@ -1586,6 +1585,9 @@
        [`(ProofRep ,_ (RemainderSafelyDropped ,_ ,expected))
         (retain-entry entry expected)]
        [_ entry])]
+    [`(OwnLeaf ,payload) (recur payload locals 0)]
+    [`(OwnedLeaf ,_ ,payload) (recur payload locals 0)]
+    [`(OwnedTransit ,_ ,payload) (recur payload locals 0)]
     [`(Unsafe ,body) (recur body locals 0)]
     [`(Recur ,_ ,_ ,_ ,_ ,continuation)
      (recur continuation locals 1)]

@@ -3,17 +3,60 @@
 (require rackunit
          racket/list
          racket/match
+         racket/runtime-path
          racket/set
          "../borrow-gen.rkt"
          "../borrow-oracle.rkt"
          "../borrow.rkt"
          "../diagnostic.rkt"
+         "../erase.rkt"
          "../gen.rkt"
          "../machine.rkt"
          "../origins.rkt"
          "../region.rkt"
          "../traits.rkt"
          "../typing.rkt")
+
+(define-runtime-path core-language-source "../lang.rkt")
+
+(define (core-constructor-heads-from-source)
+  (define forms
+    (call-with-input-file core-language-source
+      (lambda (in)
+        (read-line in)
+        (let loop ([forms '()])
+          (define form (read in))
+          (if (eof-object? form) (reverse forms) (loop (cons form forms)))))))
+  (define productions (make-hash))
+  (for ([form (in-list forms)]
+        #:when (and (pair? form)
+                    (memq (car form)
+                          '(define-language define-extended-language))
+                    (memq (cadr form) '(G1 G2 G1m G2m))))
+    (define clauses
+      (if (eq? (car form) 'define-language) (cddr form) (cdddr form)))
+    (for ([clause (in-list clauses)]
+          #:when (and (pair? clause) (pair? (cdr clause))
+                      (eq? (cadr clause) '::=)))
+      (define additions (filter (lambda (item) (not (eq? item '....)))
+                                (cddr clause)))
+      (hash-update! productions (car clause)
+                    (lambda (previous) (append previous additions))
+                    (lambda () additions))))
+  (define visited (mutable-set))
+  (define heads (mutable-set))
+  (define (walk nonterminal)
+    (unless (set-member? visited nonterminal)
+      (set-add! visited nonterminal)
+      (for ([production (in-list (hash-ref productions nonterminal '()))])
+        (cond
+          [(symbol? production)
+           (when (hash-has-key? productions production)
+             (walk production))]
+          [(pair? production) (set-add! heads (car production))]))))
+  (walk 'c)
+  (walk 'v)
+  (list->set (set->list heads)))
 
 (define (raw-result core callables)
   (define ir (build-region-ir core))
@@ -152,6 +195,8 @@
     [(scope) `(Scope () ,applied)]
     [(yield) `(Yield 0 ,applied)]
     [(unsafe) `(Unsafe ,applied)]
+    [(unsafe-let)
+     `(Let (wrapped let ,transport-pair-actual) (Unsafe ,applied) wrapped)]
     [(discharge)
      `(Discharge (ProofRep (Reserved o-type-narrative) TypeNarrativeCap)
         ,applied)]
@@ -198,6 +243,98 @@
                                          'source-other)
                                     7)
                          (Read child)))))))))))))
+
+(define (shared-read-types projected?)
+  (define payload-type
+    '(Record ((f (Borrowed Int (RVar 0)) imm) (g Int imm))))
+  (values payload-type
+          (if projected?
+              `(Record ((g Int imm) (selected ,payload-type imm)))
+              payload-type)))
+
+(define (shared-read-runtime-type type)
+  (match type
+    [`(RVar ,_) 0]
+    [(? list? terms) (map shared-read-runtime-type terms)]
+    [_ type]))
+
+(define (shared-read-core projected? write-place)
+  (define-values (payload-type _root-type) (shared-read-types projected?))
+  (define read-operand
+    (if projected?
+        '(ProjBorrow (Borrow 1) selected)
+        '(Borrow 1)))
+  `(Scope ()
+     (Let (copy let ,payload-type) (Read ,read-operand)
+       (Let (written let Unit) (Assign (BorrowMut ,write-place) 7)
+         (Read (Proj copy f))))))
+
+(define (shared-read-region-context ir root-type)
+  (define inner
+    (capability-entry (set '(2 . ())) (set) #f #t (set '(RVar 0))
+                      '(RVar 0)))
+  (define selected
+    (hash '(record-field . f) inner))
+  (define projected?
+    (match root-type
+      [`(Record ,row) (and (assoc 'selected row) #t)]
+      [_ #f]))
+  (define fields
+    (if projected?
+        (hash '(record-field . g)
+              (capability-entry (set) (set) #f #f (set) #f)
+              '(record-field . selected)
+              (capability-entry (set '(2 . ())) (set) selected #f
+                                (set '(RVar 0)) '(RVar 0)))
+        (hash '(record-field . g)
+              (capability-entry (set) (set) #f #f (set) #f)
+              '(record-field . f) inner)))
+  (define base
+    (region-ctx ir '()
+                (hash 1 (region-at ir '())
+                      2 (region-at ir '())
+                      3 (region-at ir '()))
+                (hash)))
+  (region-ctx-add-token base 1 (set '(1 . ())) #f #f fields))
+
+(define (type-shared-read core places root-type)
+  (define ir (build-region-ir core))
+  (define annotated (annotate-regions core ir))
+  (define Λ (shared-read-region-context ir root-type))
+  (match (type-of/raw*+borrows annotated places '() '() Λ)
+    [(list 'ok (list type row table sigma renamed sidecar))
+     (list 'ok ir type row table sigma renamed sidecar)]
+    [failure failure]))
+
+(test-case "lang.rkt の Core 構成子は capability の扱いに分類されている"
+  (define constructors (core-constructor-heads-from-source))
+  (define capability-of-clauses
+    (set 'Absent 'Apply 'Borrow 'BorrowAt 'BorrowMut 'BorrowMutAt
+         'BorrowMutRef 'BorrowRef 'Construct 'Discharge 'Eliminate
+         'EliminateAt 'Handle 'Let 'OwnLeaf 'OwnedLeaf 'OwnedTransit
+         'Proj 'ProjBorrow 'ProjBorrowAt 'ProjOpt 'Read 'Rec 'RecRewrite
+         'RecRewriteOpen 'Reborrow 'ReborrowAt 'RegionApp 'Recur 'RVal
+         'Scope 'Suspend 'UVal 'UnionEliminate 'UnionEliminateAt
+         'UnionInject 'UnionVal 'Unsafe 'Yield))
+  (define non-borrowing
+    (set 'AddressOf 'Assign 'Curry 'CurryVal 'Drop 'Error 'Forward 'Lam
+         'Move 'MutSlot 'PrimVal 'PtrOffset 'PtrVal 'ProofRep 'RawStore
+         'Reassign 'RecurVal 'RegionLam 'TypeRep 'resource))
+  (define transport
+    (set 'Discharge 'Handle 'Let 'OwnLeaf 'OwnedLeaf 'OwnedTransit
+         'Perform 'Proj 'ProjBorrow 'ProjBorrowAt 'Read 'Rec 'RecRewrite
+         'RecRewriteOpen 'Reborrow 'ReborrowAt 'RegionApp 'Recur 'RVal
+         'Scope 'Suspend 'UVal 'Unsafe 'UnionEliminate 'UnionEliminateAt
+         'UnionInject 'UnionVal 'Yield))
+  (define known-gaps (set 'FromRawPtr 'RawLoad))
+  (define classified
+    (set-union capability-of-clauses non-borrowing transport known-gaps))
+  (check-equal? (set-subtract constructors classified) (set)
+                "lang.rkt に追加された構成子は分類を要する")
+  (check-equal? (set-subtract classified constructors) (set)
+                "分類表に lang.rkt に無い構成子を残さない")
+  (check-equal? (set-intersect constructors known-gaps) known-gaps
+                "既知の穴は FromRawPtr と RawLoad だけ"))
 
 (test-case "record 仮引数の borrowed field を Read できる"
   (define-values (core callables)
@@ -403,7 +540,7 @@
                 'ok))
 
 (test-case "Apply の結果欄は各 Core 経路を通って借用検査へ届く"
-  (for ([kind (in-list '(scope yield unsafe discharge apply-argument
+  (for ([kind (in-list '(scope yield unsafe unsafe-let discharge apply-argument
                          record construct union perform recur))])
     (define callables
       (case kind
@@ -521,6 +658,49 @@
                    '(Read (BorrowRef owner ((Payload)) 0))))
   (check-equal? (capability-entry-keys read-payload) (set source-key)))
 
+(test-case "Read が返す共有借用欄は候補 owner への書込みを拒み sibling を許す"
+  (for ([projected? (in-list '(#f #t))])
+    (define-values (payload-type root-type) (shared-read-types projected?))
+    (define places `((1 ,root-type) (2 Int) (3 Int)))
+    (define rejected-core (shared-read-core projected? 2))
+    (define rejected
+      (type-shared-read rejected-core places root-type))
+    (check-equal? (failure-key rejected) 'borrow-conflicting-use
+                  (format "ProjBorrow operand=~a の候補 owner write: ~s"
+                          projected? rejected))
+    (define accepted-core (shared-read-core projected? 3))
+    (define accepted
+      (type-shared-read accepted-core places root-type))
+    (match-define (list 'ok ir expected row table sigma renamed sidecar) accepted)
+    (check-equal? expected 'Int)
+    (define machine-core
+      (materialize-regions ir
+                           (erase-core/region-annotations renamed)
+                           table sigma))
+    (define start0 (inject-g2m machine-core))
+    (define root-value
+      (if projected?
+          '(Rec ((g imm 0)
+                 (selected imm
+                           (Rec ((g imm 0)
+                                 (f imm (BorrowRef 2 () 0)))))))
+          '(Rec ((f imm (BorrowRef 2 () 0)) (g imm 0)))))
+    (define runtime-root-type (shared-read-runtime-type root-type))
+    (define start
+      (match start0
+        [`(cfg ,core ,_heap ,_states ,tokens ,events)
+         `(cfg ,core
+               ((1 ,root-value (declared ,runtime-root-type))
+                (2 2 (declared Int))
+                (3 3 (declared Int)))
+               ((1 Available) (2 Available) (3 Available))
+               ,tokens ,events)]))
+    (define configs (trace-g2 start))
+    (check-live-trace configs '() expected)
+    (check-equal? (check-borrow-execution start sidecar ir 300
+                                          (make-bcounters))
+                  'ok)))
+
 (test-case "Apply capability の走査は各構成子の正確な child point を使う"
   (define leaf
     (capability-entry (set '(owner . ())) (set) #f #t (set 'source) #f))
@@ -554,6 +734,13 @@
                 (cons '(Construct Pair Pair (Apply f x)) '(0))
                 (cons '(UnionInject (Union Pair Int) Pair (Apply f x)) '(0))
                 (cons '(UnionVal (Union Pair Int) Pair (Apply f x)) '(0))
+                (cons '(UVal (Apply f x)) '(0))
+                (cons '(RVal (ProofRep User TypeNarrativeCap) (Apply f x)) '(0))
+                (cons '(OwnLeaf (Apply f x)) '(0))
+                (cons '(OwnedLeaf (tok 0) (Apply f x)) '(0))
+                (cons '(OwnedTransit 0 (Apply f x)) '(0))
+                (cons '(ProjBorrow (Apply f x) inner) '(0))
+                (cons '(ProjBorrowAt 0 (Apply f x) inner) '(0))
                 (cons '(Eliminate (Apply f x) ((Pair (a) -> a))) '(0))
                 (cons '(UnionEliminate (Apply f x) ((Pair a -> a))) '(0))
                 (cons '(RecRewrite (Rec ((field imm 0)))
@@ -571,9 +758,33 @@
    #:apply-entry
    (lambda (Λ _node)
      (set-box! flow-points
+     (append (unbox flow-points) (list (region-ctx-point Λ))))
+     record-entry))
+  (capability-flow-of
+   (empty-region-ctx)
+   '(Drop (Apply f x))
+   #:apply-entry
+   (lambda (Λ _node)
+     (set-box! flow-points
                (append (unbox flow-points) (list (region-ctx-point Λ))))
      record-entry))
-  (check-equal? (unbox flow-points) '((1 0) (0))))
+  (capability-flow-of
+   (empty-region-ctx)
+   '(Curry (Apply f x) argument)
+   #:apply-entry
+   (lambda (Λ _node)
+     (set-box! flow-points
+               (append (unbox flow-points) (list (region-ctx-point Λ))))
+     record-entry))
+  (capability-flow-of
+   (empty-region-ctx)
+   '(Curry function (Apply f x))
+   #:apply-entry
+   (lambda (Λ _node)
+     (set-box! flow-points
+               (append (unbox flow-points) (list (region-ctx-point Λ))))
+     record-entry))
+  (check-equal? (unbox flow-points) '((1 0) (0) (0) (0) (1))))
 
 (test-case "要約のない関数値も署名から借用欄の転送を記録する"
   (define leaf-a '(BorrowedMut Int (RParam a)))
