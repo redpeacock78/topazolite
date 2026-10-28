@@ -18,7 +18,6 @@
 
 (define leaf-exit-sites-expected
   (set (list 'Apply '(from 1) 'formal)
-       (list 'Apply 0 'transit)
        (list 'Assign 0 'local)
        (list 'Assign 1 'storage)
        (list 'AddressOf 0 'yield)
@@ -71,7 +70,7 @@
        (list 'Yield 0 'yield)
        (list 'Yield 1 'transit)
        (list 'CurryVal 0 'transit)
-       (list 'CurryVal 1 'transit)))
+       (list 'CurryVal 1 'capture)))
 
 (define leaf-exit-heads-expected
   (set-union (list->set (map first core-form-features)) g2-only-heads))
@@ -119,6 +118,11 @@
     (check-not-false (memq (cdr site)
                            '(local result formal handle yield capture storage transit))
                      (format "~a の位置 ~a" head site))))
+
+(test-case "Apply の callee 位置は transit にせず unclassified にする"
+  (check-false
+   (for/or ([site (in-list (hash-ref leaf-exit-sites 'Apply))])
+     (site-position-matches? (car site) '(0)))))
 
 (test-case "一つの head の中で一つの実際の位置に当てはまる記述子は高々一つである"
   (for ([(head sites) (in-hash leaf-exit-sites)])
@@ -267,45 +271,36 @@
   (check-equal? (length results) 1)
   (check-equal? (deferred-leaf-exit-source (first results)) '(formal 0 ())))
 
-(test-case "Lam 本体の根は capture にせず自由変数だけを捕捉として記録する"
+(test-case "入れ子 Lam は自由な仮引数を capture として一度だけ記録する"
   (define inner-type
-    '(NFn ((Borrowed Int (RParam a))) (Borrowed Int (RParam a)) () () () User))
-  (define outer-type
+    '(NFn () (Borrowed Int (RParam a)) () () () User))
+  (define capturing-outer-type
     `(ForallRegion (a)
        (NFn ((Borrowed Int (RParam a))) ,inner-type () () () User)))
+  (define inner-lam '(Lam User inner () x))
   (define core
     '(Scope (1)
        (RegionLam (a)
          (Lam User outer (x)
-           (Lam User inner (y) y)))))
-  (define all-summaries
-    (summaries core `((outer ,outer-type) (inner ,inner-type))))
-  (define inner-summary
-    (for/first ([summary (in-list all-summaries)]
-                #:when
-                (for/or ([event (in-list (callable-summary-leaf-exits summary))])
-                  (eq? (deferred-leaf-exit-exit-kind event) 'result)))
-      summary))
+           (Lam User inner () x)))))
   (define outer-summary
-    (for/first ([summary (in-list all-summaries)]
-                #:unless (equal? (callable-summary-formals summary)
-                                 (callable-summary-formals inner-summary)))
+    (for/first ([summary (in-list
+                          (summaries core
+                                     `((outer ,capturing-outer-type)
+                                       (inner ,inner-type))))]
+                #:when (= (length (callable-summary-formals summary)) 1))
       summary))
-  (check-true (pair? all-summaries))
-  (check-not-false inner-summary)
+  (define captures
+    (filter (lambda (event)
+              (and (equal? (deferred-leaf-exit-source event) '(formal 0 ()))
+                   (eq? (deferred-leaf-exit-exit-kind event) 'capture)))
+            (callable-summary-leaf-exits outer-summary)))
   (check-not-false outer-summary)
-  (check-false
-   (for/or ([summary (in-list all-summaries)])
-     (for/or ([event (in-list (callable-summary-leaf-exits summary))])
-       (eq? (deferred-leaf-exit-exit-kind event) 'capture))))
-  (check-equal? (callable-summary-leaf-exits outer-summary) '())
-  (check-true
-   (for/or ([summary (in-list all-summaries)])
-     (for/or ([event (in-list (callable-summary-leaf-exits summary))])
-       (and (equal? (deferred-leaf-exit-source event) '(formal 0 ()))
-            (eq? (deferred-leaf-exit-exit-kind event) 'result))))))
+  (check-equal? (length captures) 1)
+  (check-equal? (deferred-leaf-exit-destination (first captures)) inner-lam))
 
 (test-case "行き先の表が空のときは unclassified の印を残す"
+  ;; well-typed な値は引数・結果の宣言型と整合するため、空対応は helper で固定する。
   (define choices (list (list 'result '())
                         (list 'formal '())
                         (list 'handle '())))
@@ -510,14 +505,10 @@
   (define events
     (for*/list ([summary (in-list all-summaries)]
                 [exit (in-list (callable-summary-leaf-exits summary))]
-                #:when (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))
-                [kind (in-value (deferred-leaf-exit-exit-kind exit))]
-                #:when (memq kind '(formal unclassified)))
+                #:when (equal? (deferred-leaf-exit-source exit) '(formal 0 ())))
       exit))
-  (check-true (pair? events)
+  (check-equal? (length events) 1
               (format "summaries: ~s"
                       (map callable-summary-leaf-exits all-summaries)))
-  (for ([event (in-list events)])
-    (case (deferred-leaf-exit-exit-kind event)
-      [(formal) (check-equal? (deferred-leaf-exit-destination event) '(1 ()))]
-      [(unclassified) (check-false (deferred-leaf-exit-destination event))])))
+  (check-eq? (deferred-leaf-exit-exit-kind (first events)) 'formal)
+  (check-equal? (deferred-leaf-exit-destination (first events)) '(1 ())))
