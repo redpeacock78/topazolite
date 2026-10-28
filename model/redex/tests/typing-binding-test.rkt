@@ -3,16 +3,17 @@
 
 (define rec2 '(Rec ((a imm 1) (b imm unit))))  ; (Record ((a Int imm) (b Unit imm)))
 
-; const: 残余が空でないと型エラー（ROW-001。core-type-of は 'ill-typed を返す）
-(check-equal? (core-type-of `(Let (x const (Record ((a Int imm)))) ,rec2 x) '() '()) 'ill-typed)
-; const: 残余が空なら OK、x は必須 field のみ
-(check-equal? (core-type-of `(Let (x const (Record ((a Int imm) (b Unit imm)))) ,rec2 (Proj x a)) '() '())
-              '(Int ()))
-; let: 残余 field を保持し、現 flow で射影できる（ROW-002）
-(check-equal? (core-type-of `(Let (x let (Record ((a Int imm)))) ,rec2 (Proj x b)) '() '())
-              '(Unit ()))
-; let: 非互換 field は compat? で拒否
-(check-equal? (core-type-of `(Let (x let (Record ((a Bool imm)))) ,rec2 x) '() '()) 'ill-typed)
+; const: 残余が空でないと型エラー（ROW-001）。
+(test-case "ROW-001: const rejects residual fields"
+  (check-equal? (core-type-of `(Let (x const (Record ((a Int imm)))) ,rec2 x) '() '()) 'ill-typed)
+  ; const: 残余 field が空なら OK、x は必須 field のみ。
+  (check-equal? (core-type-of `(Let (x const (Record ((a Int imm) (b Unit imm)))) ,rec2 (Proj x a)) '() '())
+                '(Int ())))
+; let: 残余 field を保持し、互換な field は contextual type にできる（ROW-002）。
+(test-case "ROW-002: let keeps compatible residual fields and rejects incompatible ones"
+  (check-equal? (core-type-of `(Let (x let (Record ((a Int imm)))) ,rec2 (Proj x b)) '() '())
+                '(Unit ()))
+  (check-equal? (core-type-of `(Let (x let (Record ((a Bool imm)))) ,rec2 x) '() '()) 'ill-typed))
 ; 非 record の T は G1 の Let と同じ（const と let で差なし）
 (check-equal? (core-type-of '(Let (x const Int) 1 x) '() '()) '(Int ()))
 (check-equal? (core-type-of '(Let (x let Int) 1 x) '() '()) '(Int ()))

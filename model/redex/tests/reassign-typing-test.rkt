@@ -88,16 +88,13 @@
 (define ok-core '(Let (x mut Int) 1 (Reassign x Int 2)))
 
 ;; mut binding への再代入を受理し、Unit を返す。
-(check-equal? (first (type-row-of ok-core)) 'Unit)
-
-;; 再代入は Mutation を立てる。
-(check-not-false (memq 'Mutation (second (type-row-of ok-core))))
-
-;; const と let の binding へは再代入できない。
-(for ([mode (in-list '(const let))])
-  (check-equal? (key-of `(Let (x ,mode Int) 1 (Reassign x Int 2)))
-                'immutable-binding
-                (format "mode ~a" mode)))
+(test-case "SCP-001: reassignment requires mut and records Mutation"
+  (check-equal? (first (type-row-of ok-core)) 'Unit)
+  (check-not-false (memq 'Mutation (second (type-row-of ok-core))))
+  (for ([mode (in-list '(const let))])
+    (check-equal? (key-of `(Let (x ,mode Int) 1 (Reassign x Int 2)))
+                  'immutable-binding
+                  (format "mode ~a" mode))))
 
 ;; 2 要素 entry（束縛様相を持たない環境）へも再代入できない。
 (check-equal? (key-of '(Reassign x Int 2) '((x Int)))

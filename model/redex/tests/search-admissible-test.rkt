@@ -16,6 +16,7 @@
 
 ;; --- Finite ---
 ; PSR-002: (Finite, Resolved P) は完全な Σ から一意性を導出できるときだけ採択
+(test-case "PSR-002: implicit insertion requires finite unique resolution or a termination certificate"
 (check-true  (admissible? goalT Γ-pc0 'Finite (resolved PT/span) (sigma-for goalT)))
 ; 一意性導出はあるが SR の P が Σ 由来の P と食い違う → 却下
 (check-false (admissible? goalT Γ-pc0 'Finite (resolved PT2/span) (sigma-for goalT)))
@@ -48,7 +49,7 @@
 (check-false (admissible? goalT Γ-pc0 'Productive (resolved PT) #f))
 ; (Productive, Absent) / (Productive, Ambiguous) → 却下
 (check-false (admissible? goalT Γ-pc0 'Productive Absent certT))
-(check-false (admissible? goalT Γ-pc0 'Productive (ambiguous (list PT PT2)) certT))
+(check-false (admissible? goalT Γ-pc0 'Productive (ambiguous (list PT PT2)) certT)))
 
 ;; --- Unknown ---
 ; (Unknown, _): どの SearchResult でも却下（PSR-003）

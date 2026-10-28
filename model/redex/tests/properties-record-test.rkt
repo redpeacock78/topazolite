@@ -10,15 +10,17 @@
 ; TYP-003: 予約基本型（Int）と予約 Narrative（Proof φ）は structural matching の対象外。
 ; compat? の全域 dispatch で Record 枝に入らず type-equiv? 分岐のみを通るため、compat? は
 ; type-equiv? と一致する（List など閉じた型ではなく、予約型そのもので固定する）。
-(check-equal? (compat? 'Int 'Int) (type-equiv? 'Int 'Int))
-(check-equal? (compat? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait))
-              (type-equiv? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait)))
-(check-false (compat? '(Proof ValidNarrativeTrait) '(Proof TypeNarrativeCap)))
-
-; 互換性と型同値の分離: 型同値でない record が互換になりうる
-(check-true  (compat? '(Record ((a Int imm) (b Bool imm))) '(Record ((a Int imm)))))
-; 逆向きは不可（非対称）
-(check-false (compat? '(Record ((a Int imm))) '(Record ((a Int imm) (b Bool imm)))))
+(test-case "TYP-003: reserved types use definitional equality rather than record matching"
+  (check-equal? (compat? 'Int 'Int) (type-equiv? 'Int 'Int))
+  (check-equal? (compat? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait))
+                (type-equiv? '(Proof ValidNarrativeTrait) '(Proof ValidNarrativeTrait)))
+  (check-false (compat? '(Proof ValidNarrativeTrait) '(Proof TypeNarrativeCap)))
+  ;; User records do expose structural rows, but compatibility remains
+  ;; directional: the source may carry residual fields, not lack required ones.
+  (check-true
+   (compat? '(Record ((a Int imm) (b Bool imm))) '(Record ((a Int imm)))))
+  (check-false
+   (compat? '(Record ((a Int imm))) '(Record ((a Int imm) (b Bool imm))))))
 
 ; source が Record 型または Rec 項を含むかを判定する Racket tree walker。
 ; 評価文脈 C は G2gen／UCore に存在しないため redex-match は使わず、s 式を辿る。

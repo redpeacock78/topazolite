@@ -347,17 +347,19 @@
      (hash inventory-path inventory evidence-path (evidence-text #:reqs '()))))
   (check-failure result #px"参照"))
 
-(test-case "試験ファイル内に ID があるだけでは REQ 注記と認めない"
+(test-case (string-append req-one ": test source IDs follow req-coverage")
   (define inventory
     (inventory-text
      #:rows (list (inventory-row req-one "テストのみ" "-" "-"
-                                 (format "`~a`::`根拠例`" evidence-path))
+                                 (format "`~a`::`~a: 性質を assert する`"
+                                         evidence-path req-one))
                   (inventory-row req-two))))
   (define evidence
-    (string-append (evidence-text #:reqs '()) "\n;; " req-one "\n"))
-  (check-failure (run-overrides (hash inventory-path inventory
-                                     evidence-path evidence))
-                 #px"REQ 注記"))
+    (format "#lang racket\n(test-case \"~a: 性質を assert する\" (check-true #t))\n"
+            req-one))
+  (check-equal? (first (run-overrides (hash inventory-path inventory
+                                           evidence-path evidence)))
+                0))
 
 (test-case "[REQ: A, B] の二つ目の ID も参照と認める"
   (define evidence

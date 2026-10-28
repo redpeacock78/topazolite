@@ -61,66 +61,66 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 
 | 要件 ID | 状態 | 命題 | 補助の証拠 | 根拠の試験 |
 | --- | --- | --- | --- | --- |
-| NAR-001 | 未検証 | - | - | - |
-| NAR-002 | 未検証 | - | - | - |
-| NAR-003 | 未検証 | - | - | - |
+| NAR-001 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`NAR-001: nested forged origin reports its subterm`, `model/redex/tests/origins-test.rkt`::`NAR-001: reserved origin and value sort agree` |
+| NAR-002 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`NAR-002: origin-of covers every origin-bearing value`, `model/redex/tests/origins-test.rkt`::`NAR-002/CUR-002: derived curry origin is exact` |
+| NAR-003 | テストのみ | - | - | `model/redex/tests/origins-trait-test.rkt`::`NAR-003: 偽造した trait Proof の origin を拒否する`, `model/redex/tests/origins-trait-test.rkt`::`NAR-003: 正典の trait 表は全行が trait-origin-ok? を通る` |
 | NAR-004 | テストのみ | - | - | `model/redex/tests/search-compose-test.rkt`::`NAR-004: 合成 Proof の親は intersect の派生 origin である` |
 | NAR-005 | テストのみ | - | - | `model/redex/tests/own-curry-fixed-test.rkt`::`Owned の固定引数を Move 経由で固定でき、結果型が Owned<NFn 残余> になる` |
-| POL-001 | 未検証 | - | - | - |
-| POL-002 | 未検証 | - | - | - |
-| CUR-001 | 未検証 | - | - | - |
-| CUR-002 | 未検証 | - | - | - |
-| TYP-001 | 未検証 | - | - | - |
-| TYP-002 | 未検証 | - | - | - |
-| TYP-003 | 未検証 | - | - | - |
-| ROW-001 | 未検証 | - | - | - |
-| ROW-002 | 未検証 | - | - | - |
-| ROW-003 | 未検証 | - | - | - |
-| ROW-004 | 未検証 | - | - | - |
-| ROW-005 | 未検証 | - | - | - |
-| VAR-001 | 未検証 | - | - | - |
-| VAR-002 | 未検証 | - | - | - |
-| VAR-003 | 未検証 | - | - | - |
-| RFN-001 | 未検証 | - | - | - |
-| RFN-002 | 未検証 | - | - | - |
-| RFN-003 | 未検証 | - | - | - |
-| TRT-001 | 未検証 | - | - | - |
-| TRT-002 | 未検証 | - | - | - |
-| TRT-003 | 未検証 | - | - | - |
-| TRT-004 | 未検証 | - | - | - |
-| TRT-005 | 未検証 | - | - | - |
-| TRT-006 | 未検証 | - | - | - |
-| TRT-007 | 未検証 | - | - | - |
-| CMP-001 | 未検証 | - | - | - |
-| CMP-002 | 未検証 | - | - | - |
-| COH-001 | 未検証 | - | - | - |
-| PSR-001 | 未検証 | - | - | - |
-| PSR-002 | 未検証 | - | - | - |
-| PSR-003 | 未検証 | - | - | - |
+| POL-001 | テストのみ | - | - | `model/redex/tests/properties-policy-test.rkt`::`POL-001: R0 の実値が変われば正しい行も拒否される`, `model/redex/tests/policy-test.rkt`::`POL-001: policy-origin-ok? は R0 の実値まで見る` |
+| POL-002 | テストのみ | - | - | `model/redex/tests/properties-policy-test.rkt`::`POL-002: 6 操作それぞれで検査が受理と拒否の両方を出す` |
+| CUR-001 | テストのみ | - | - | `model/redex/tests/elaborate-test.rkt`::`CUR-001/CUR-002: curry preserves the latent signature`, `model/redex/tests/machine-pure-test.rkt`::`CUR-001/CUR-002: curry records provenance and completes application` |
+| CUR-002 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`NAR-002/CUR-002: derived curry origin is exact` |
+| TYP-001 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`TYP-001/TYP-002: TypeRep origin type and kind agree` |
+| TYP-002 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`TYP-001/TYP-002: TypeRep origin type and kind agree`, `model/redex/tests/elaborate-test.rkt`::`TYP-001/TYP-002: typeMake interprets saturated specifications` |
+| TYP-003 | テストのみ | - | - | `model/redex/tests/properties-record-test.rkt`::`TYP-003: reserved types use definitional equality rather than record matching` |
+| ROW-001 | テストのみ | - | - | `model/redex/tests/typing-binding-test.rkt`::`ROW-001: const rejects residual fields` |
+| ROW-002 | テストのみ | - | - | `model/redex/tests/typing-binding-test.rkt`::`ROW-002: let keeps compatible residual fields and rejects incompatible ones` |
+| ROW-003 | テストのみ | - | - | `model/redex/tests/properties-test.rkt`::`ROW-003: branch merge is structural intersection` |
+| ROW-004 | テストのみ | - | - | `model/redex/tests/properties-test.rkt`::`ROW-004: mutable fields are invariant and inhabited` |
+| ROW-005 | テストのみ | - | - | `model/redex/tests/row005-join-test.rkt`::`ROW-005 の join は可変性の食い違う欄を imm にし、片方だけの欄を落とす` |
+| VAR-001 | テストのみ | - | - | `model/redex/tests/variance-test.rkt`::`VAR-001: 引数は反変`, `model/redex/tests/variance-test.rkt`::`VAR-001: 返り値は共変` |
+| VAR-002 | テストのみ | - | - | `model/redex/tests/variance-test.rkt`::`VAR-002: latent effect は共変の集合包含`, `model/redex/tests/variance-test.rkt`::`VAR-002: Proof obligation は反変の集合包含` |
+| VAR-003 | テストのみ | - | - | `model/redex/tests/variance-test.rkt`::`VAR-003: mut field の関数型は型同値の不変に留まる` |
+| RFN-001 | テストのみ | - | - | `model/redex/tests/properties-refine-test.rkt`::`RFN-001: 性質1 validate 健全性`, `model/redex/tests/properties-refine-test.rkt`::`RFN-001: 初期項に埋めた UVal と RVal は意味検査の前に落ちる` |
+| RFN-002 | テストのみ | - | - | `model/redex/tests/properties-refine-test.rkt`::`RFN-002: 性質2 merge witness 健全性` |
+| RFN-003 | テストのみ | - | - | `model/redex/tests/properties-refine-test.rkt`::`RFN-003: 性質3 discharge 互換の方向健全性` |
+| TRT-001 | テストのみ | - | - | `model/redex/tests/properties-trait-test.rkt`::`TRT-001: 性質1 shape 一致だけでは Proof を偽造できない` |
+| TRT-002 | テストのみ | - | - | `model/redex/tests/properties-trait-test.rkt`::`TRT-002: 性質2 impl と derive の Proof は成果物検証を通る` |
+| TRT-003 | テストのみ | - | - | `model/redex/tests/properties-trait-test.rkt`::`TRT-003: 性質3 一意候補は Resolved、重複候補は Ambiguous` |
+| TRT-004 | テストのみ | - | - | `model/redex/tests/search-compose-test.rkt`::`TRT-004: 成分が合成でも同じ規則で降りる`, `model/redex/tests/search-compose-test.rkt`::`TRT-004: an invisible component makes the composite incoherent` |
+| TRT-005 | テストのみ | - | - | `model/redex/tests/search-compose-test.rkt`::`TRT-005: RequiresBoth is implicit only for a declared intersect row` |
+| TRT-006 | テストのみ | - | - | `model/redex/tests/trait-tables-test.rkt`::`TRT-006: 合成 trait は別の合成の成分になれる`, `model/redex/tests/trait-tables-test.rkt`::`TRT-006: 入れ子を足しても intersect-table は非巡回である` |
+| TRT-007 | テストのみ | - | - | `model/redex/tests/trait-tables-test.rkt`::`TRT-007: 合成 trait を対象にする impl 行は拒否される` |
+| CMP-001 | テストのみ | - | - | `model/redex/tests/properties-trait-test.rkt`::`CMP-001: 性質5 join 型は branch 順序に依らない`, `model/redex/tests/properties-trait-test.rkt`::`CMP-001: 性質6 join は全枝が mut のときだけ mut を保つ` |
+| CMP-002 | テストのみ | - | - | `model/redex/tests/type-normalize-test.rkt`::`CMP-002: intersection is erased by row composition`, `model/redex/tests/type-normalize-test.rkt`::`CMP-002: colliding intersection fails to normalize` |
+| COH-001 | テストのみ | - | - | `model/redex/tests/trait-scope-test.rkt`::`COH-001: 可視性は祖先到達で決まる` |
+| PSR-001 | テストのみ | - | - | `model/redex/tests/properties-search-test.rkt`::`class と SR は互いを導出しない` |
+| PSR-002 | テストのみ | - | - | `model/redex/tests/search-admissible-test.rkt`::`PSR-002: implicit insertion requires finite unique resolution or a termination certificate` |
+| PSR-003 | テストのみ | - | - | `model/redex/tests/properties-search-test.rkt`::`artifact 境界で Unknown 拒否が保たれる` |
 | RET-001 | テストのみ | - | - | `model/redex/tests/leave-test.rkt`::`[REQ: RET-001] 式境界より内側の FunctionBoundary は Leave を捕まえる` |
 | RET-002 | テストのみ | - | - | `model/redex/tests/leave-test.rkt`::`[REQ: RET-002] probe と型付き境界は到達不能な Leave を合流しない` |
 | RET-003 | 未検証 | - | - | - |
-| EFF-001 | 未検証 | - | - | - |
-| PRF-001 | 未検証 | - | - | - |
+| EFF-001 | テストのみ | - | - | `model/redex/tests/elaborate-test.rkt`::`EFF-001: declared rows bound fn and recur bodies` |
+| PRF-001 | テストのみ | - | - | `model/redex/tests/origins-test.rkt`::`PRF-001: only the reserved TypeNarrative proof is valid` |
 | PRF-002 | 未検証 | - | - | - |
 | PRF-003 | 未検証 | - | - | - |
-| PRF-004 | 未検証 | - | - | - |
-| REC-001 | テストのみ | - | - | `model/redex/tests/storage-ok-test.rkt`::`REC-001: value path の純粋な NFn は拒否する` |
-| REC-002 | 未検証 | - | - | - |
+| PRF-004 | テストのみ | - | - | `model/redex/tests/elaborate-discharge-test.rkt`::`PRF-004: 義務列の順序が Discharge の入れ子順になる`, `model/redex/tests/elaborate-discharge-test.rkt`::`PRF-004: 搬送した ProofRep は初期成果物の検証を通る` |
+| REC-001 | テストのみ | - | - | `model/redex/tests/classify-test.rkt`::`REC-001: no recursion and structural descent are Finite`, `model/redex/tests/classify-test.rkt`::`REC-001: Discharge 内でも減少しない自己適用は Unknown` |
+| REC-002 | テストのみ | - | - | `model/redex/tests/machine-recur-test.rkt`::`REC-002: guarded recur produces every requested observation`, `model/redex/tests/obs-test.rkt`::`REC-002: yield produces the requested observation prefix` |
 | MAC-001 | 未検証 | - | - | - |
-| SCP-001 | 未検証 | - | - | - |
+| SCP-001 | テストのみ | - | - | `model/redex/tests/reassign-typing-test.rkt`::`SCP-001: reassignment requires mut and records Mutation`, `model/redex/tests/surface-reassign-test.rkt`::`SCP-001: Surface let mut variables can be reassigned` |
 | SCP-002 | テストのみ | - | - | `model/redex/tests/pr-binding-test.rkt`::`置換は label、tag、境界名、primitive 名を書き換えない` |
-| OWN-001 | 未検証 | - | - | - |
-| OWN-002 | 未検証 | - | - | - |
+| OWN-001 | テストのみ | - | - | `model/redex/tests/machine-own-test.rkt`::`OWN-001: move succeeds once and reuse raises OwnershipError` |
+| OWN-002 | テストのみ | - | - | `model/redex/tests/machine-own-test.rkt`::`OWN-002: scope finalizes available places once in reverse order` |
 | OWN-003 | テストのみ | - | - | `model/redex/tests/abort-frame-cleanup-test.rkt`::`OWN-003/OWN-011: ScopeError は捨てる frame の leaf を Dropped にする` |
 | OWN-004 | テストのみ | - | - | `model/redex/tests/owned-narrowing-test.rkt`::`余剰 Owned 欄を落とす narrowing は Proof を求める` |
-| BOR-001 | 未検証 | - | - | - |
-| BOR-002 | 未検証 | - | - | - |
+| BOR-001 | テストのみ | - | - | `model/redex/tests/scope-escape-borrow-test.rkt`::`BOR-001: owner Let rejects a borrow escaping its body` |
+| BOR-002 | テストのみ | - | - | `model/redex/tests/projection-child-alpha-test.rkt`::`BOR-002: oracle rejects two simultaneously live mutable sibling projections` |
 | BOR-003 | テストのみ | - | - | `model/redex/tests/region-test.rkt`::`C5: golden program の Scope と分解の region を問い合わせだけで再構成できる` |
-| BOR-004 | 未検証 | - | - | - |
-| BOR-005 | 未検証 | - | - | - |
+| BOR-004 | テストのみ | - | - | `model/redex/tests/borrow-use-test.rkt`::`BOR-004: shared reads and mutable uses are permitted but shared writes are rejected`, `model/redex/tests/borrow-use-test.rkt`::`BOR-004: a live overlapping loan blocks direct owner reads and writes` |
+| BOR-005 | テストのみ | - | - | `model/redex/tests/borrow-proj-test.rkt`::`BOR-005: projected borrow mode follows parent and field mutability` |
 | BOR-006 | テストのみ | - | - | `model/redex/tests/capability-table-test.rkt`::`Construct は欄ごとの表を作る` |
-| VAR-004 | 未検証 | - | - | - |
+| VAR-004 | テストのみ | - | - | `model/redex/tests/variance-region-test.rkt`::`共有借用の region は共変である`, `model/redex/tests/variance-region-test.rkt`::`可変借用の region は不変である` |
 | BOR-007 | テストのみ | - | - | `model/redex/tests/borrow-fnbound-test.rkt`::`束縛された rp の借用は境界を越えられる` |
 | OWN-005 | テストのみ | - | - | `model/redex/tests/own-let-place-test.rkt`::`Eliminate が計算した Record を Owned の束縛へ載せる` |
 | OWN-006 | テストのみ | - | - | `model/redex/tests/own-formal-test.rkt`::`Owned の仮引数を 1 つ取る Fn が生名と Let を持つ節へ写る` |
@@ -131,18 +131,18 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | OWN-011 | テストのみ | - | - | `model/redex/tests/abort-frame-cleanup-test.rkt`::`OWN-003/OWN-011: ScopeError は捨てる frame の leaf を Dropped にする` |
 | PTR-001 | テストのみ | - | - | `model/redex/tests/properties-unsafe-test.rkt`::`型検査を通った項の raw 操作はすべて Unsafe の内側にある` |
 | PTR-002 | テストのみ | - | - | `model/redex/tests/properties-unsafe-test.rkt`::`PtrOffset の静的要求は生成域に現れる` |
-| SUR-001 | 未検証 | - | THM-002, THM-003, THM-004, THM-006, THM-007 | - |
+| SUR-001 | テストのみ | - | THM-002, THM-003, THM-004, THM-006, THM-007 | `model/redex/tests/surface-lower-test.rkt`::`constructor の lowering は式全体の span を保つ` |
 | SUR-002 | テストのみ | - | `lex_escaped_dollar_ok`, `lex_interpolation_ok`, `lex_nested_interpolation_in_hole_ok`, `lex_nested_string_in_hole_ok`, `lex_nested_unclosed_string_span_ok`, `lex_try_pipe_ok`, `lex_unclosed_hole_span_ok` | `model/redex/tests/surface-interpolation-test.rkt`::`[REQ: SUR-002] SUR-002b: 穴の値を連結した文字列へ評価する` |
 | SUR-003 | テストのみ | - | - | `model/redex/tests/surface-effect-row-test.rkt`::`SUR-003: row の省略形、括弧形、空形、重複と span` |
 | SUR-004 | 未検証 | - | - | - |
-| SUR-005 | 未検証 | - | - | - |
+| SUR-005 | テストのみ | - | - | `model/redex/tests/surface-derive-test.rkt`::`SUR-005: derive の Proof は返された台帳の下で正規に検証される` |
 | SUR-006 | テストのみ | - | - | `model/redex/tests/projrec-typing-test.rkt`::`選んだ欄だけの record になる` |
-| SUR-007 | 未検証 | - | - | - |
-| SUR-008 | 未検証 | - | - | - |
-| SUR-009 | 未検証 | - | - | - |
-| SUR-010 | 未検証 | - | - | - |
-| SUR-011 | 未検証 | - | - | - |
-| SUR-012 | 未検証 | - | - | - |
+| SUR-007 | テストのみ | - | - | `model/redex/tests/driver-test.rkt`::`関数宣言と適用が型付きの成果物になる`, `model/redex/tests/driver-test.rkt`::`record リテラルと射影が型付きの成果物になる` |
+| SUR-008 | テストのみ | - | - | `model/redex/tests/surface-return-infer-test.rkt`::`SUR-008: 合成位置の省略した戻り型は本体の型になる`, `model/redex/tests/surface-return-infer-test.rkt`::`SUR-008: 検査位置の省略した戻り型は期待型から決まる` |
+| SUR-009 | テストのみ | - | - | `model/redex/tests/surface-trait-compose-test.rkt`::`SUR-009: 二項の合成は合成 trait 行と intersect 行を 1 つずつ作る`, `model/redex/tests/surface-trait-compose-test.rkt`::`SUR-009: 三項の合成は隠れた出力を内側に持つ入れ子になる` |
+| SUR-010 | テストのみ | - | - | `model/redex/tests/surface-trait-decl-test.rkt`::`a trait declaration becomes a root trait row with a normalized field row`, `model/redex/tests/surface-trait-decl-test.rkt`::`an impl declaration becomes a row and a Let over an Apply of the primitive` |
+| SUR-011 | テストのみ | - | - | `model/redex/tests/parser-test.rkt`::`SUR-011: 明示的な戻り型を -> 無しで書くと E-SUR-005 になる` |
+| SUR-012 | テストのみ | - | - | `model/redex/tests/elaborate-lambda-infer-test.rkt`::`SUR-012: 期待の関数型から仮引数型を補う`, `model/redex/tests/elaborate-lambda-infer-test.rkt`::`SUR-012: 出力の Typed Core と Φ に #:infer が現れない` |
 | SUR-013 | 未検証 | - | `lex_operator_tokens_ok` | - |
 | SUR-014 | テストのみ | - | - | `model/redex/tests/surface-when-boundary-test.rkt`::`[REQ: SUR-014] 枝の leave は when の値になり関数の残りが実行される` |
 | SUR-015 | テストのみ | - | - | `model/redex/tests/surface-return-test.rkt`::`SUR-015: 関数宣言の return は受理され、早期に戻る` |
@@ -150,10 +150,10 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | MOD-001 | 未検証 | - | - | - |
 | BIT-001 | 未検証 | - | - | - |
 | BIT-002 | テストのみ | - | - | `model/redex/tests/lowering-arith-test.rkt`::`every shim primitive lowers to an eta expanded shim call` |
-| BIT-003 | 未検証 | - | `lex_bar_amp_ok` | - |
+| BIT-003 | テストのみ | - | `lex_bar_amp_ok` | `model/redex/tests/surface-type-op-test.rkt`::`BIT-003: Union の注釈は elaborate と typing を通る`, `model/redex/tests/surface-type-op-test.rkt`::`BIT-003: Record の Intersection は一つの Record に正規化される` |
 | BIT-004 | 未検証 | - | - | - |
-| ADT-001 | 未検証 | - | - | - |
-| PAT-001 | 未検証 | - | - | - |
+| ADT-001 | テストのみ | - | - | `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。省略した欄の p.age は none を返す`, `model/redex/tests/surface-optional-field-test.rkt`::`ADT-001。data 型の constructor の引数に optional の欄を宣言できる`, `model/redex/tests/surface-data-decl-test.rkt`::`ADT-001: recursive Owned field declarations preserve their data shape` |
+| PAT-001 | テストのみ | - | - | `model/redex/tests/owned-transit-trace-test.rkt`::`Owned Union の UnionEliminate は marker を外して非資源成分を選ぶ` |
 | PRF-005 | テストのみ | - | - | `model/redex/tests/remainder-drop-test.rkt`::`Proof 無しの narrowing は owned-narrowing-needs-proof である` |
 | BAK-001 | テストのみ | - | - | `model/redex/tests/properties-lowering-test.rkt`::`BAK-001: Union の Core の観測が lowering の前後で一致する` |
 | BAK-002 | 未検証 | - | - | - |
@@ -173,5 +173,5 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | DIA-001 | テストのみ | - | - | `model/redex/tests/typing-diagnostic-test.rkt`::`入口検査の失敗は細分類した Diagnostic を返す` |
 | DIA-002 | テストのみ | - | - | `model/redex/tests/typing-diagnostic-test.rkt`::`棄却節点が根なら primary-span は根を指す` |
 | DIA-003 | テストのみ | - | - | `model/redex/tests/typing-diagnostic-test.rkt`::`typing の source-chain は sourceId で kind を分ける` |
-| DIA-004 | 未検証 | - | - | - |
+| DIA-004 | テストのみ | - | - | `model/redex/tests/diagnostic-render-test.rkt`::`fixture 8 件で 3 形式の 10 観測量が一致する` |
 | DIA-005 | テストのみ | - | - | `model/redex/tests/diagnostic-test.rkt`::`diagnostic-of は registry から id と title を引き当てる` |

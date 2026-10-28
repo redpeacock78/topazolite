@@ -139,7 +139,7 @@
                                TypeNarrativeCap))))])
     (check-equal? (verify bad) (term (forged ,bad)))))
 
-(test-case "TYP-001/TYP-002: TypeRep origin, type, and kind agree"
+(test-case "TYP-001/TYP-002: TypeRep origin type and kind agree"
   (check-equal?
    (verify (term (TypeRep (Derived (Reserved o-type-narrative)
                                   (Make Int))

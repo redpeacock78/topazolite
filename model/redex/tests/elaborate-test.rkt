@@ -311,7 +311,7 @@
   (check-equal? drop-row '(Own))
   (check-true (tree-contains? drop-core '(Drop (Move item⟨1⟩)))))
 
-(test-case "TYP-001/TYP-002: typeMake interprets saturated specs"
+(test-case "TYP-001/TYP-002: typeMake interprets saturated specifications"
   (match-define (list raw-type-core type type-row callables)
     (elab '(TypeMake (Spec List Int))))
   (define type-core (erase-core raw-type-core))

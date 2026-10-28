@@ -56,7 +56,7 @@
      (list (- lo needle-start) (- hi needle-start))]
     [_ span]))
 
-(test-case "Surface の program と関数で mut 変数を繰り返し更新する"
+(test-case "SCP-001: Surface let mut variables can be reassigned"
   (check-equal?
    (run-source "let mut c = 0\nc = add(c, 1)\nc = add(c, 1)\nc")
    2)

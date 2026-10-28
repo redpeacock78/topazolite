@@ -177,8 +177,7 @@
         (values (append-map (lambda (line) (regexp-match* thm-rx line)) section) #t))))
 
 (define (test-req-ids source)
-  (append-map (lambda (annotation) (regexp-match* test-id-rx annotation))
-              (regexp-match* req-annotation-rx source #:match-select cadr)))
+  (regexp-match* test-id-rx source))
 
 (define (annotation-errors fst-path surface-path registry-path spec-dir repo-root)
   (define definitions (fst-declarations fst-path))
@@ -475,7 +474,7 @@
              [else
               (define source (file->string path))
               (unless (member id (test-req-ids source))
-                (report! (format "~a: 根拠の試験 ~a が REQ 注記で要件を参照しない"
+                (report! (format "~a: 根拠の試験 ~a が要件 ID を参照しない"
                                  id (car reference))))
               (unless (regexp-match? (pregexp (format "\\(test-case[[:space:]]+\"~a\""
                                                        (regexp-quote case-name)))

@@ -14,11 +14,12 @@
          "../machine.rkt")
 
 ;; spec §5.2 の表。親が共有ならば field の可変性によらず子は共有。
-(check-equal? (proj-borrow-mode 'Borrowed 'imm) 'Borrowed)
-(check-equal? (proj-borrow-mode 'Borrowed 'mut) 'Borrowed)
-;; 親が可変で field が mut のときだけ子が可変になる。
-(check-equal? (proj-borrow-mode 'BorrowedMut 'mut) 'BorrowedMut)
-(check-equal? (proj-borrow-mode 'BorrowedMut 'imm) 'Borrowed)
+(test-case "BOR-005: projected borrow mode follows parent and field mutability"
+  (check-equal? (proj-borrow-mode 'Borrowed 'imm) 'Borrowed)
+  (check-equal? (proj-borrow-mode 'Borrowed 'mut) 'Borrowed)
+  ;; 親が可変で field が mut のときだけ子が可変になる。
+  (check-equal? (proj-borrow-mode 'BorrowedMut 'mut) 'BorrowedMut)
+  (check-equal? (proj-borrow-mode 'BorrowedMut 'imm) 'Borrowed))
 
 ;; 射影は own 欄を持たず、親の capability から path を導く。
 (let ()

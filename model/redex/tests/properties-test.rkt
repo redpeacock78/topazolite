@@ -648,6 +648,11 @@
   (bounded-row-check "ROW-004: mutable fields are invariant and inhabited"
                      g-row-mut row-004?)
 
+  (test-case "ROW-003: branch merge is structural intersection"
+    (check-true (row-003? '(Rec ((a imm 1))))))
+  (test-case "ROW-004: mutable fields are invariant and inhabited"
+    (check-true (row-004? '(Rec ((a mut 1))))))
+
   (define (union-eliminate-reached? configs)
     (for/or ([before (in-list configs)]
              [after (in-list (cdr configs))])

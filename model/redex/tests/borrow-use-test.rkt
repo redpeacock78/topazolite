@@ -99,6 +99,25 @@
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir 'Int)
                 'fail))
 
+(test-case "BOR-004: shared reads and mutable uses are permitted but shared writes are rejected"
+  (for ([core (in-list '((Scope (1) (Read (Borrow 1)))
+                         (Scope (1) (Read (BorrowMut 1)))
+                         (Scope (1) (Assign (BorrowMut 1) 7))))])
+    (check-equal? (status core (build-region-ir core) 'Int) 'ok))
+  (for ([core (in-list '((Scope (1) (Assign (Borrow 1) 7))
+                         (Scope (1) (Assign 1 7))))])
+    (check-equal? (status core (build-region-ir core) 'Int) 'fail)))
+
+(test-case "BOR-004: a live overlapping loan blocks direct owner reads and writes"
+  (define (make ρ owner-use)
+    `(Scope (1)
+            (Let (b let (Borrowed Int ,ρ)) (Borrow 1)
+                 (Let (touch let Unit) ,owner-use (Read b)))))
+  (for ([owner-use (in-list '((Read 1) (Assign 1 7)))])
+    (define ir (build-region-ir (make 0 owner-use)))
+    (check-equal? (status (make (rho-at ir '(0 0)) owner-use) ir 'Int)
+                  'fail)))
+
 ;; 10。親を通した Assign も拒む。
 (let ()
   (define (make ρ_b ρ_c)
