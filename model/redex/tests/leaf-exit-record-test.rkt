@@ -18,22 +18,60 @@
 
 (define leaf-exit-sites-expected
   (set (list 'Apply '(from 1) 'formal)
+       (list 'Apply 0 'transit)
        (list 'Assign 0 'local)
        (list 'Assign 1 'storage)
        (list 'AddressOf 0 'yield)
        (list 'Curry 1 'capture)
+       (list 'Curry 0 'transit)
+       (list 'Construct '(from 0) 'transit)
        (list 'Drop 0 'local)
-       (list 'Eliminate '(from 1) 'result)
-       (list 'EliminateAt '(from 1) 'result)
-       (list 'UnionEliminate '(from 1) 'result)
-       (list 'UnionEliminateAt '(from 1) 'result)
-       (list 'Lam 0 'capture)
+       (list 'Discharge 0 'transit)
+       (list 'Eliminate 0 'transit)
+       (list 'Eliminate '(from 1) 'transit)
+       (list 'EliminateAt 0 'transit)
+       (list 'EliminateAt '(from 1) 'transit)
+       (list 'Handle 0 'transit)
+       (list 'Handle 1 'transit)
+       (list 'Lam 0 'transit)
+       (list 'Let 0 'transit)
+       (list 'Let 1 'transit)
+       (list 'OwnLeaf 0 'transit)
+       (list 'OwnedLeaf 0 'transit)
+       (list 'OwnedTransit 0 'transit)
        (list 'Perform 0 'handle)
+       (list 'Proj 0 'transit)
+       (list 'ProjBorrow 0 'transit)
+       (list 'ProjBorrowAt 0 'transit)
+       (list 'ProjOpt 0 'transit)
+       (list 'RVal 0 'transit)
+       (list 'Reborrow 0 'transit)
+       (list 'ReborrowAt 0 'transit)
+       (list 'Rec '(from 0) 'transit)
+       (list 'RecRewrite 0 'transit)
+       (list 'RecRewrite '(from 1) 'transit)
+       (list 'RecRewriteOpen '(from 0) 'transit)
+       (list 'Recur 0 'transit)
+       (list 'Recur 1 'transit)
+       (list 'RecurVal 0 'transit)
+       (list 'RegionApp 0 'transit)
+       (list 'RegionLam 0 'transit)
        (list 'Read 0 'local)
-       (list 'Recur 0 'capture)
-       (list 'RecurVal 0 'capture)
        (list 'Reassign 0 'storage)
-       (list 'Yield 0 'yield)))
+       (list 'Scope 0 'transit)
+       (list 'Suspend 0 'transit)
+       (list 'UVal 0 'transit)
+       (list 'UnionEliminate 0 'transit)
+       (list 'UnionEliminate '(from 1) 'transit)
+       (list 'UnionEliminateAt 0 'transit)
+       (list 'UnionEliminateAt '(from 1) 'transit)
+       (list 'UnionInject 0 'transit)
+       (list 'UnionVal 0 'transit)
+       (list 'Unsafe 0 'transit)
+       (list 'Yield 0 'yield)
+       (list 'Yield 1 'transit)
+       (list 'CurryVal 0 'transit)
+       (list 'CurryVal 1 'transit)))
 
 (define leaf-exit-heads-expected
   (set-union (list->set (map first core-form-features)) g2-only-heads))
@@ -75,11 +113,11 @@
   (check-equal? (set-subtract actual leaf-exit-sites-expected) (set)
                 "期待の表に無い位置"))
 
-(test-case "出口の位置の一覧は七つの出口だけを使い unclassified を含まない"
+(test-case "出口の位置の一覧は七つの出口と transit だけを使い unclassified を含まない"
   (for* ([(head sites) (in-hash leaf-exit-sites)]
          [site (in-list sites)])
     (check-not-false (memq (cdr site)
-                           '(local result formal handle yield capture storage))
+                           '(local result formal handle yield capture storage transit))
                      (format "~a の位置 ~a" head site))))
 
 (test-case "一つの head の中で一つの実際の位置に当てはまる記述子は高々一つである"
@@ -192,15 +230,111 @@
       summary))
   (define direct-summary
     (first (summaries '(Scope (1)
-                         (RegionLam (a) (Lam User recur-reader (x) (Read x))))
+                         (RegionLam
+                          (a)
+                          (RecurVal recur-reader f (x)
+                            (Let (t let Int) (Read x) (Apply f x)))))
                       `((recur-reader ,recur-reader-type)))))
   (check-not-false recur-summary
                    (format "summaries: ~s" (map callable-summary-leaf-exits all-summaries)))
+  (check-equal? (map exit-shape (callable-summary-leaf-exits recur-summary))
+                (map exit-shape (callable-summary-leaf-exits direct-summary))))
+
+(test-case "Let の束縛式と body は formal の葉を通過させる"
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User reader (x)
+           (Let (read-result let Int) (Read x) x)))))
+  (define summary (first (summaries core `((reader ,returner-type)))))
   (check-equal?
-   (map exit-shape
-        (filter (lambda (exit) (eq? (deferred-leaf-exit-exit-kind exit) 'local))
-                (callable-summary-leaf-exits recur-summary)))
-   (map exit-shape (callable-summary-leaf-exits direct-summary))))
+   (for/set ([event (in-list (callable-summary-leaf-exits summary))])
+     (deferred-leaf-exit-exit-kind event))
+   (set 'local 'result)))
+
+(test-case "分解の枝は formal の葉を通過させ、結果出口を本体の根だけに記録する"
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User identity (x)
+           (Eliminate (Construct Bool true)
+             ((true () -> x)
+              (false () -> x)))))))
+  (define summary (first (summaries core `((identity ,returner-type)))))
+  (define results
+    (filter (lambda (event) (eq? (deferred-leaf-exit-exit-kind event) 'result))
+            (callable-summary-leaf-exits summary)))
+  (check-equal? (length results) 1)
+  (check-equal? (deferred-leaf-exit-source (first results)) '(formal 0 ())))
+
+(test-case "Lam 本体の根は capture にせず自由変数だけを捕捉として記録する"
+  (define inner-type
+    '(NFn ((Borrowed Int (RParam a))) (Borrowed Int (RParam a)) () () () User))
+  (define outer-type
+    `(ForallRegion (a)
+       (NFn ((Borrowed Int (RParam a))) ,inner-type () () () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User outer (x)
+           (Lam User inner (y) y)))))
+  (define all-summaries
+    (summaries core `((outer ,outer-type) (inner ,inner-type))))
+  (define inner-summary
+    (for/first ([summary (in-list all-summaries)]
+                #:when
+                (for/or ([event (in-list (callable-summary-leaf-exits summary))])
+                  (eq? (deferred-leaf-exit-exit-kind event) 'result)))
+      summary))
+  (define outer-summary
+    (for/first ([summary (in-list all-summaries)]
+                #:unless (equal? (callable-summary-formals summary)
+                                 (callable-summary-formals inner-summary)))
+      summary))
+  (check-true (pair? all-summaries))
+  (check-not-false inner-summary)
+  (check-not-false outer-summary)
+  (check-false
+   (for/or ([summary (in-list all-summaries)])
+     (for/or ([event (in-list (callable-summary-leaf-exits summary))])
+       (eq? (deferred-leaf-exit-exit-kind event) 'capture))))
+  (check-equal? (callable-summary-leaf-exits outer-summary) '())
+  (check-true
+   (for/or ([summary (in-list all-summaries)])
+     (for/or ([event (in-list (callable-summary-leaf-exits summary))])
+       (and (equal? (deferred-leaf-exit-source event) '(formal 0 ()))
+            (eq? (deferred-leaf-exit-exit-kind event) 'result))))))
+
+(test-case "行き先の表が空のときは unclassified の印を残す"
+  (define choices (list (list 'result '())
+                        (list 'formal '())
+                        (list 'handle '())))
+  (for ([choice (in-list choices)])
+    (check-equal? (leaf-exit-destinations (first choice) (second choice))
+                  (list (list 'unclassified #f)))))
+
+(test-case "capability の取得例外は callable summary に記録漏れを残す"
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User reader (x) (Read x)))))
+  (define all-summaries
+    (parameterize ([current-leaf-exit-capability-reader
+                    (lambda (_Λ _expression)
+                      (error 'probe "強制した capability 取得失敗"))])
+      (summaries core `((reader ,reader-type)))))
+  (check-true (pair? all-summaries))
+  (check-true (callable-summary-incomplete? (first all-summaries)))
+  (define recur-summaries
+    (parameterize ([current-leaf-exit-capability-reader
+                    (lambda (_Λ _expression)
+                      (error 'probe "強制した capability 取得失敗"))])
+      (summaries '(Scope (1)
+                   (RegionLam (a)
+                     (RecurVal reader f (x) (Read x))))
+                 `((reader ,reader-type)))))
+  (check-true (pair? recur-summaries))
+  (check-true (callable-summary-incomplete? (first recur-summaries))))
 
 (test-case "Recur で読み切る枝と再帰結果を返す枝の formal 出口を併せて記録する"
   (define recurrent-type
@@ -373,10 +507,17 @@
                   0 x)))))
   (define all-summaries
     (summaries core `((outer ,outer-type) (sink ,pair-type))))
-  (check-true
-   (for*/or ([summary (in-list all-summaries)]
-             [exit (in-list (callable-summary-leaf-exits summary))])
-     (and (eq? (deferred-leaf-exit-exit-kind exit) 'formal)
-          (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))) )
-   (format "summaries: ~s"
-           (map callable-summary-leaf-exits all-summaries))))
+  (define events
+    (for*/list ([summary (in-list all-summaries)]
+                [exit (in-list (callable-summary-leaf-exits summary))]
+                #:when (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))
+                [kind (in-value (deferred-leaf-exit-exit-kind exit))]
+                #:when (memq kind '(formal unclassified)))
+      exit))
+  (check-true (pair? events)
+              (format "summaries: ~s"
+                      (map callable-summary-leaf-exits all-summaries)))
+  (for ([event (in-list events)])
+    (case (deferred-leaf-exit-exit-kind event)
+      [(formal) (check-equal? (deferred-leaf-exit-destination event) '(1 ()))]
+      [(unclassified) (check-false (deferred-leaf-exit-destination event))])))

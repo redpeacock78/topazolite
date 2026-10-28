@@ -113,6 +113,8 @@
          (struct-out deferred-leaf-exit)
          leaf-exit-sites
          current-leaf-exit-sites
+         current-leaf-exit-capability-reader
+         leaf-exit-destinations
          site-position-matches?
          normalize-leaf-exits
          callable-summary-leaf-exits
@@ -323,11 +325,24 @@
   (when (owning-frame root)
     (route-deferred! event root node fail)))
 
+(define (leaf-exit-destinations exit-kind destinations)
+  (if (null? destinations)
+      (list (list 'unclassified #f))
+      (for/list ([destination (in-list destinations)])
+        (list exit-kind destination))))
+
+(define (mark-leaf-exit-incomplete!)
+  (for ([frame (in-list (template-collectors))])
+    (set-box! (template-frame-incomplete-box frame) #t)))
+
 (define (record-formal-source-exits! Λ expression exit-kind destination-for fail)
-  ;; 記録は補助観測であり、capability 表を得られない場合に型検査の診断を変えない。
+  ;; capability 表の取得失敗は型検査を止めず、要約を不完全として残す。
   (define actual-entry
-    (with-handlers ([exn:fail? (lambda (_) #f)])
-      (typing-capability-of Λ expression)))
+    (with-handlers ([exn:fail?
+                     (lambda (_)
+                       (mark-leaf-exit-incomplete!)
+                       #f)])
+      ((current-leaf-exit-capability-reader) Λ expression)))
   (when (capability-entry? actual-entry)
     (for* ([actual-leaf (in-list (capability-entry-leaves actual-entry))]
            [cap (in-set (capability-entry-keys (cdr actual-leaf)))]
@@ -351,11 +366,15 @@
               (capability-entry-declared-lifetime formal-entry))
             (when (and mode alpha)
               (for ([destination
-                     (in-list (destination-for (car actual-leaf) formal-path alpha))])
+                     (in-list
+                      (leaf-exit-destinations
+                       exit-kind
+                       (destination-for (car actual-leaf) formal-path alpha)))])
                 (record-leaf-exit!
                  (deferred-leaf-exit
                   (list 'formal index formal-path) index formal-path '() mode alpha
-                  (append (second root) '(0)) exit-kind destination)
+                  (append (second root) '(0))
+                  (first destination) (second destination))
                  root expression fail)))))))))
 
 (define (record-formal-site-exits! core Λ child-index expression exit-kind
@@ -417,21 +436,24 @@
 ;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
 (struct template-frame
-  (formals box body parameters parameter-types return-type latent-row formal-fields)
+  (formals box body parameters parameter-types return-type latent-row formal-fields
+           incomplete-box)
   #:transparent)
 (define template-collectors (make-parameter '()))
 
 ;; §4.2。再帰専用の重ね。template-collectors と同じ形の parameter である。
 ;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、転送候補の位置、
 ;; 雛形を集める箱、仮と確定のどちらかを示す印を持つ。
-(struct recur-frame (bindings formals formal-fields result-index collector state)
+(struct recur-frame
+  (bindings formals formal-fields result-index collector incomplete-box state)
   #:transparent)
 (define recur-overlay (make-parameter '()))
 
 ;; §4.6。束縛の並びの長さは形ごとに決まる。形 i の Recur と RecurVal は 1、
 ;; 形 ii の Recur は 2 である。外れたら実装の誤りなので、黙って受理しない。
 (define (make-recur-frame bindings formals result-index collector state expected
-                          [formal-fields (make-list (length formals) #f)])
+                          [formal-fields (make-list (length formals) #f)]
+                          [incomplete-box (box #f)])
   (unless (= (length bindings) expected)
     (error 'make-recur-frame
            "束縛の並びの長さが ~a、期待は ~a" (length bindings) expected))
@@ -439,7 +461,7 @@
     (error 'make-recur-frame
            "formal の並びの長さが ~a、欄表の並びは ~a"
            (length formals) (length formal-fields)))
-  (recur-frame bindings formals formal-fields result-index collector state))
+  (recur-frame bindings formals formal-fields result-index collector incomplete-box state))
 
 ;; §4.2。環境から引いた対が、重ねが保つ束縛の並びのいずれかと eq? で
 ;; 一致する枠を返す。名前で引くと、本体の中の Let が影にした同名の束縛を
@@ -478,7 +500,8 @@
                      (reverse (unbox (recur-frame-collector frame))))
                     (recur-frame-result-index frame)
                     (hash)
-                    (recur-frame-formal-fields frame)))
+                    (recur-frame-formal-fields frame)
+                    (unbox (recur-frame-incomplete-box frame))))
 
 (define (owning-frame w)
   (for/first ([f (in-list (template-collectors))]
@@ -680,14 +703,15 @@
 ;; designator の並びであり、借用でない位置は #f である。deferred は本体で
 ;; 集めた雛形、result-index は結果の借用を転送する候補位置の並び、
 ;; region-subst は RegionApp が解いた rp から ρ への写像である。
-(struct callable-summary (formals deferred result-index region-subst formal-fields)
+(struct callable-summary
+  (formals deferred result-index region-subst formal-fields incomplete?)
   #:transparent)
 
 (struct deferred-leaf-exit
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
   #:transparent)
 
-;; 借用の起点と七種の行き先へ値を渡す Core の子位置。
+;; 借用の起点と七種の行き先、または出口ではない通過位置。
 ;; descriptor は固定位置、(from k)、または descriptor の列である。
 (define g2-only-leaf-exit-heads
   '(Absent RecRewriteOpen Borrow BorrowMut Reborrow ProjBorrow Read Assign Reassign
@@ -704,22 +728,49 @@
   (for/fold ([sites base])
             ([(head entries)
               (in-hash
-               (hash 'Apply (list (cons '(from 1) 'formal))
+               (hash 'Apply (list (cons 0 'transit) (cons '(from 1) 'formal))
                      'Assign (list (cons 0 'local) (cons 1 'storage))
                      'AddressOf (list (cons 0 'yield))
-                     'Curry (list (cons 1 'capture))
+                     'Construct (list (cons '(from 0) 'transit))
+                     'Curry (list (cons 0 'transit) (cons 1 'capture))
+                     'CurryVal (list (cons 0 'transit) (cons 1 'transit))
+                     'Discharge (list (cons 0 'transit))
                      'Drop (list (cons 0 'local))
-                     'Eliminate (list (cons '(from 1) 'result))
-                     'EliminateAt (list (cons '(from 1) 'result))
-                     'UnionEliminate (list (cons '(from 1) 'result))
-                     'UnionEliminateAt (list (cons '(from 1) 'result))
+                     'Eliminate (list (cons 0 'transit) (cons '(from 1) 'transit))
+                     'EliminateAt (list (cons 0 'transit) (cons '(from 1) 'transit))
+                     'Handle (list (cons 0 'transit) (cons 1 'transit))
+                     'Lam (list (cons 0 'transit))
+                     'Let (list (cons 0 'transit) (cons 1 'transit))
+                     'OwnLeaf (list (cons 0 'transit))
+                     'OwnedLeaf (list (cons 0 'transit))
+                     'OwnedTransit (list (cons 0 'transit))
                      'Perform (list (cons 0 'handle))
-                     'Lam (list (cons 0 'capture))
+                     'Proj (list (cons 0 'transit))
+                     'ProjBorrow (list (cons 0 'transit))
+                     'ProjBorrowAt (list (cons 0 'transit))
+                     'ProjOpt (list (cons 0 'transit))
+                     'RVal (list (cons 0 'transit))
+                     'Reborrow (list (cons 0 'transit))
+                     'ReborrowAt (list (cons 0 'transit))
+                     'Rec (list (cons '(from 0) 'transit))
+                     'RecRewrite (list (cons 0 'transit) (cons '(from 1) 'transit))
+                     'RecRewriteOpen (list (cons '(from 0) 'transit))
+                     'Recur (list (cons 0 'transit) (cons 1 'transit))
+                     'RecurVal (list (cons 0 'transit))
                      'Read (list (cons 0 'local))
-                     'Recur (list (cons 0 'capture))
-                     'RecurVal (list (cons 0 'capture))
                      'Reassign (list (cons 0 'storage))
-                     'Yield (list (cons 0 'yield))))])
+                     'RegionApp (list (cons 0 'transit))
+                     'RegionLam (list (cons 0 'transit))
+                     'Scope (list (cons 0 'transit))
+                     'Suspend (list (cons 0 'transit))
+                     'UVal (list (cons 0 'transit))
+                     'UnionEliminate (list (cons 0 'transit) (cons '(from 1) 'transit))
+                     'UnionEliminateAt
+                     (list (cons 0 'transit) (cons '(from 1) 'transit))
+                     'UnionInject (list (cons 0 'transit))
+                     'UnionVal (list (cons 0 'transit))
+                     'Unsafe (list (cons 0 'transit))
+                     'Yield (list (cons 0 'yield) (cons 1 'transit))))])
     (hash-set sites head entries))))
 
 ;; 試験で一覧から位置を除き、未分類出口の記録を検査する。
@@ -1414,6 +1465,8 @@
                  #:allow-empty-keys? allow-empty-keys?
                  #:apply-entry capability-of-typed-point))
 
+(define current-leaf-exit-capability-reader (make-parameter typing-capability-of))
+
 (define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
   (borrow-token-key Λ core locals #:fail fail
                     #:apply-entry capability-of-typed-point))
@@ -1580,8 +1633,8 @@
 (define (record-captured-formal-exits! core Λ body bound-names fail)
   (for ([name (in-set (set-subtract (core-free-vars body)
                                     (list->set bound-names)))])
-    (record-formal-site-exits!
-     core Λ 0 name 'capture
+    (record-formal-source-exits!
+     (enter-child Λ 0) name 'capture
      (lambda (_actual-path _source-path _alpha) (list (peel-node core)))
      fail)))
 
@@ -1603,7 +1656,9 @@
           [index (in-naturals)])
       (define exit-kind (leaf-exit-kind-at core Λ index))
       (define child-Λ (enter-child Λ index))
-      (if exit-kind
+      (cond
+        [(eq? exit-kind 'transit) (void)]
+        [exit-kind
           (cond
             [(and (eq? head 'Apply) (eq? exit-kind 'formal))
              (define parameter-types
@@ -1639,8 +1694,8 @@
              (record-formal-source-exits!
               child-Λ child exit-kind
               (lambda (_actual _source _alpha) (list (peel-node core)))
-              fail)])
-          (record-unclassified! child-Λ child)))
+              fail)])]
+        [else (record-unclassified! child-Λ child)]))
     (match (peel-node core)
       [`(Eliminate ,_ ,_)
        (emit-decomposition-result! ir point result-type core fail)]
@@ -4174,10 +4229,11 @@
      (define closure-psi
        (flow-pin-captures Ψ body body-environment parameters))
      (define collector (box '()))
+     (define incomplete-box (box #f))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
                        collector body parameters parameter-types return-type
-                       latent-row formal-fields))
+                       latent-row formal-fields incomplete-box))
      ;; Lam が転送できるのは自身の署名に自由に現れる region parameter だけ。
      ;; 外側の callable にしか属さない parameter を境界の外へ出すと、閉包の
      ;; ような Lam が証明の終わった lexical region を保持できてしまう。
@@ -4216,7 +4272,7 @@
       (callable-summary formals (normalize-leaf-exits (reverse (unbox collector)))
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
-                        (hash) formal-fields)
+                        (hash) formal-fields (unbox incomplete-box))
       fail)
      (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
@@ -4296,17 +4352,18 @@
   (define-values (formals formal-fields body-context)
     (formal-parameter-context Λ node parameters parameter-types))
   (define recur-binding (lookup-binding body-function-environment function))
-  (define (fixpoint Ψ_in [previous-exits '()])
+  (define (fixpoint Ψ_in [previous-exits '()] [previous-incomplete? #f])
     (define collector (box previous-exits))
+    (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame (list recur-binding) formals
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
-                        collector 'tentative 1 formal-fields))
+                        collector 'tentative 1 formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
-                      latent-row formal-fields))
+                      latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; RecurVal の本体も呼出しまで遅延する。
@@ -4341,7 +4398,7 @@
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits))]))
+           (fixpoint Ψ_next exits (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -4383,19 +4440,20 @@
         (list (lookup-binding body-function-environment function)
               (lookup-binding function-environment function))))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
-  (define (fixpoint Ψ_in [previous-exits '()])
+  (define (fixpoint Ψ_in [previous-exits '()] [previous-incomplete? #f])
     (define collector (box previous-exits))
+    (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame bindings formals
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
                         collector 'tentative
                         (if (null? binder-params) 1 2)
-                        formal-fields))
+                        formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       collector body parameters parameter-types return-type
-                      latent-row formal-fields))
+                      latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
                           [return-handler-regions '()]
                           ;; Recur の定義本体は呼出しまで遅延する。
@@ -4430,7 +4488,7 @@
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits))]))
+           (fixpoint Ψ_next exits (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
