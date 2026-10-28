@@ -9,7 +9,13 @@
          raw-free-vars raw-subst* raw-alpha-equivalent?
          raw-static-symbols raw-symbols)
 
-;; Core の意味的な子。label、束縛子、型、operation などは子ではない。
+;; 意味的な子。c の位置に来る部分項だけが子である
+;; （docs/specification/region.md §3）。
+;; span、束縛子、型注釈、label、op、O、cid、π、構築子名 K は子に数えない。
+;; 子の並びは項の書き順に従う。
+;;
+;; Construct と Rec は c 側と v 側で同じ形を持つため、1 つの節が両方を受ける。
+;; 形が同じでも production は 2 つあり、その網羅は試験の側で押さえる。
 (define (core-children t)
   (match t
     [`(Apply ,c_f ,c_a ...) (cons c_f c_a)]
@@ -87,7 +93,9 @@
      '()]
     [other (error 'core-children "Core の形ではない: ~s" other)]))
 
-;; 意味的な子を同じ位置へ戻す逆操作。
+;; core-children の逆。子の並びを差し替えた同じ形を返す。
+;; 節の並びは core-children と 1 対 1 で対応させる。片方だけ足すと
+;; annotate-regions が子を落とす。
 (define (core-with-children t children)
   (define (first-child) (first children))
   (match t
@@ -483,7 +491,7 @@
           (define-values (parameters* body**)
             (scope-subst body* parameters active-body))
           `(Recur ,cid ,f* ,parameters*
-                  ,(walk body** active-body)
+                  ,body**
                   ,(walk continuation* active-continuation)))
         (define mappings (map cons binders replacement-values))
         (define (walk term mappings)
@@ -652,5 +660,4 @@
          (define-values (markers env*) (extend (list name) env))
          `(,member-type ,(first markers) ,annotation -> ,(walk body env*))]))
     (walk core '()))
-  (with-handlers ([exn:fail? (lambda (_) #f)])
-    (equal? (normalize left) (normalize right))))
+  (equal? (normalize left) (normalize right)))

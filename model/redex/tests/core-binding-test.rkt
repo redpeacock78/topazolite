@@ -54,6 +54,18 @@
      (check-not-equal? f1 'f)]
     [other (fail (format "Recur の改名: ~s" other))]))
 
+(test-case "同時置換で挿入した値を別の置換対象として再走査しない"
+  (define replacements (list (term y) 1))
+  (check-equal?
+   (raw-subst* (term (Recur loop-id f (n) (Apply x y) 0)) '(x y) replacements)
+   (term (Recur loop-id f (n) (Apply y 1) 0)))
+  (check-equal?
+   (raw-subst* (term (Lam User g () (Apply x y))) '(x y) replacements)
+   (term (Lam User g () (Apply y 1))))
+  (check-equal?
+   (raw-subst* (term (Let (z const Int) 0 (Apply x y))) '(x y) replacements)
+   (term (Let (z const Int) 0 (Apply y 1)))))
+
 (test-case "注釈付き Data 枝の binder scope と scrutinee は分離される"
   (define eliminate
     (term (EliminateAt s
@@ -138,6 +150,11 @@
    (raw-alpha-equivalent?
     (term (Let (x const Int) 1 (Proj (Rec ((x imm x))) x)))
     (term (Let (y const Int) 1 (Proj (Rec ((y imm y))) y))))))
+
+(test-case "α 同値は不正な Core 入力を false に隠さず例外にする"
+  (check-exn exn:fail?
+             (lambda ()
+               (raw-alpha-equivalent? '(not-a-core x) '(not-a-core x)))))
 
 (test-case "移動した child API は意味上の子を往復する"
   (for ([core (in-list (list (term (Apply f x))
