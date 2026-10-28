@@ -560,6 +560,7 @@ E-* の規則が c0 を構成した後、elaboration は束縛出現の記号へ
 束縛形の scope 外の部分項を先に処理し、束縛子へ番号を割り当て、環境を拡張してから scope 内を処理する。
 縮約で Redex が記号末尾へ付ける `«N»` は、末尾に連なる列だけを取り除いて識別子へ戻す。
 型、Effect row、label、origin、CallableId の記号はこの走査で改名しない。
+簡約の置換が作用する位置と捕獲の回避は §5.3 の [REQ: SCP-002] に書く。
 
 **(E-Sub)**
 
@@ -2579,6 +2580,28 @@ RSD の証明対は、除去後の型 `σ'` について `compatible?(σ', τe)`
 この条件により、除去欄が空の shape で型だけを狭める証明も拒否する。
 
 ### 5.3 関数適用と curry
+
+**[REQ: SCP-002] 置換が作用する位置**
+
+`c[v1/x1, …, vk/xk]` は同時の置換であり、Core の項の変数の位置だけに作用する。
+変数の位置は、式の位置の変数、`Move`、`Forward`、`Borrow`、`BorrowMut`、`Reassign` の対象の変数、G2m の `BorrowAt` と `BorrowMutAt` の `w` と `(Own w fp)` の root の `w` である。
+record の label、構成子名、data 名と型名、primitive 名、effect の境界名、命題の `id`、callable の `cid`、region の parameter、region、place、token、型、origin（入れ子の `(Curry c)` を含む）は置換しない。
+region の parameter の代入は `RegionApp` の規則が別に行う。
+
+束縛子とその scope は次のとおりである。
+
+- `Lam`：仮引数が本体を束縛する。
+- `Let`：束縛子が本体だけを束縛し、束縛する式は外側の scope に置く。
+- `Eliminate` と `EliminateAt`：各枝の仮引数がその枝の本体を束縛する。
+- `UnionEliminate` と `UnionEliminateAt`：各枝の束縛子がその枝の本体を束縛する。
+- `RecRewrite`：各 entry の束縛子が、その entry の式だけを束縛する。
+- `Handle`：handler の束縛子が handler の本体だけを束縛する。
+- `Recur`：`f` が本体と継続を束縛し、仮引数は本体だけを束縛する。
+- `RecurVal`：`f` と仮引数が本体を束縛する。
+
+置換は、束縛子が `xi` と同名の scope では `xi` を置換しない。
+置換する値に自由に現れる変数を束縛する束縛子は、置換の前に、本体と値のどの記号とも異なる新しい名前へ改名する。
+束縛子と値の数が合わない置換と、同時に束縛する束縛子が重複する置換は定義されない。
 
 **(R-Delta)**
 
