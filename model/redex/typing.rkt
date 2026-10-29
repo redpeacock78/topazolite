@@ -1527,10 +1527,7 @@
                           (cond
                             [(and declared-alpha (set? source-alphas)
                                   (not (set-empty? source-alphas))
-                                  (or (set-member? origins declared-alpha)
-                                      (for/or ([source-alpha
-                                                (in-set source-alphas)])
-                                        (set-member? origins source-alpha)))
+                                  (set-member? origins declared-alpha)
                                   (match (deferred-leaf-exit-source event)
                                     [`(formal ,_ ,_)
                                      (equal? declared-alpha
