@@ -7,6 +7,7 @@
          redex/reduction-semantics
          "../borrow-gen.rkt"
          "../borrow-oracle.rkt"
+         "../borrow.rkt"
          "../diagnostic.rkt"
          "../gen.rkt"
          "../lang.rkt"
@@ -119,12 +120,12 @@
        (loop next (append configs (list next)) (sub1 fuel))]
       [steps (error 'trace-g2 "一意な次状態でない: ~s" steps)])))
 
-(define (check-live-trace typed expected)
+(define (check-live-trace typed expected [callables test-callables])
   (define start (inject-g2m (region-execution-core typed)))
   (define configs (trace-g2 start))
   (define rows
     (for/list ([config (in-list configs)])
-      (runtime-row config test-callables expected)))
+      (runtime-row config callables expected)))
   (define first-live
     (for/first ([row (in-list rows)] [index (in-naturals)] #:when row) index))
   (check-not-false first-live "trace に runtime-row がある config がある")
@@ -132,11 +133,213 @@
         [row (in-list (drop rows first-live))]
         [index (in-naturals first-live)])
     (check-not-false row (format "config ~a の runtime-row" index))
-    (check-true (config-ok? config test-callables expected row)
+    (check-true (config-ok? config callables expected row)
                 (format "config ~a の config-ok?" index)))
   (check-true (redex-match? G2m v (match (last configs)
                                    [`(cfg ,value ,_ ...) value]))
               "trace の終端が値"))
+
+(define record-owner-type '(Record ((o (Option Int) mut))))
+(define record-owner-value
+  '(Rec ((o mut (Construct (Option Int) some 1)))))
+(define record-reader-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,record-owner-type (RParam a)))
+          Unit () () () User)))
+(define record-reader-callables `((record-reader ,record-reader-type)))
+(define record-reader-return-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,record-owner-type (RParam a)))
+          (BorrowedMut (Option Int) (RParam a)) () () () User)))
+(define record-reader-return-callables
+  `((record-reader-return ,record-reader-return-type)))
+(define record-reader-body
+  '(Eliminate (ProjBorrow p o)
+     ((some (child) -> (Let (read const Int) (Read child) unit))
+      (none () -> unit))))
+(define (record-reader-call argument)
+  `(Apply
+    (RegionApp
+     (RegionLam (a) (Lam User record-reader (p) ,record-reader-body))
+     (owner-ph))
+    ,argument))
+(define (record-reader-return-call argument)
+  `(Apply
+    (RegionApp
+     (RegionLam
+      (a) (Lam User record-reader-return (p) (ProjBorrow p o)))
+     (owner-ph))
+    ,argument))
+(define nested-record-owner-type
+  `(Record ((f ,record-owner-type mut))))
+(define nested-record-owner-value
+  `(Rec ((f mut ,record-owner-value))))
+(define record-reader-core
+  `(Scope ()
+     (Let (owner let (Owned ,record-owner-type)) ,record-owner-value
+       (Let (argument let (BorrowedMut ,record-owner-type ph))
+            (BorrowMut owner)
+         (Let (called const Unit) ,(record-reader-call 'argument)
+           (Assign (ProjBorrow argument o)
+                   (Construct (Option Int) none)))))))
+(define nested-record-reader-core
+  `(Scope ()
+     (Let (owner let (Owned ,nested-record-owner-type))
+          ,nested-record-owner-value
+       (Let (root let (BorrowedMut ,nested-record-owner-type ph))
+            (BorrowMut owner)
+         (Let (argument let (BorrowedMut ,record-owner-type ph))
+              (ProjBorrow root f)
+           (Let (called const Unit) ,(record-reader-call 'argument)
+             (Assign (ProjBorrow argument o)
+                     (Construct (Option Int) none))))))))
+(define nested-record-reader-escape-core
+  `(Scope ()
+     (Let (owner let (Owned ,nested-record-owner-type))
+          ,nested-record-owner-value
+       (Let (root let (BorrowedMut ,nested-record-owner-type ph))
+            (BorrowMut owner)
+         (Let (argument let (BorrowedMut ,record-owner-type ph))
+              (ProjBorrow root f)
+           (Let (escaped let (BorrowedMut (Option Int) owner-ph))
+                ,(record-reader-return-call 'argument)
+             (Assign (ProjBorrow argument o)
+                     (Construct (Option Int) none))))))))
+
+(test-case "Record 欄を親にする出口は実引数の source alpha に対応する"
+  (define observations '())
+  (define-values (_ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (cap index alpha origins source-alphas window event)
+            (set! observations
+                  (cons (list cap index alpha origins source-alphas window event)
+                        observations)))])
+      (type-core record-reader-core '() record-reader-callables)))
+  (check-true (region-typed? typed)
+              (format "型検査: ~s; observations: ~s" typed observations))
+  (when (region-typed? typed)
+    (define mapped
+      (findf (lambda (observation)
+               (and (set? (list-ref observation 4))
+                    (not (set-empty? (list-ref observation 4)))
+                    (deferred-leaf-exit? (list-ref observation 6))))
+             observations))
+    (check-not-false mapped (format "欄の source alpha が対応する: ~s" observations))
+    (check-live-trace typed 'Unit record-reader-callables)
+    (define start (inject-g2m (region-execution-core typed)))
+    (check-equal? (check-borrow-execution start (region-typed-sidecar typed)
+                                          _ir 300 (make-bcounters))
+                  'ok "Apply 後の親欄への Assign を oracle が承認する")))
+
+(test-case "Union Payload と constructor path は寿命に合う葉の capability を一意に選ぶ"
+  (define union-type
+    '(Union (BorrowedMut Int (RParam a))
+            (BorrowedMut Bool (RParam b))))
+  (define-values (union-entry union-leaves)
+    (formal-capability-entry union-type 'formal))
+  (define union-a-path
+    (unique-formal-leaf-path-for-exit
+     union-leaves '(Payload) (set '(RParam a))))
+  (check-equal? union-a-path '((BorrowedMut Int (RParam a))))
+  (check-true (set-member? (capability-entry-keys union-entry)
+                           '(formal Payload)))
+  (check-equal? (instantiate-capability-path union-type union-a-path (hash))
+                union-a-path)
+  (check-true
+   (set-member? (capability-entry-keys
+                 (hash-ref (capability-entry-fields union-entry)
+                           (first union-a-path)))
+                '(formal Payload)))
+  (check-false
+   (unique-formal-leaf-path-for-exit
+    union-leaves '(Payload) (set '(RParam a) '(RParam b)))
+   "Union の葉が曖昧なら照合しない")
+  (check-false
+   (unique-formal-leaf-path-for-exit
+    union-leaves '(Payload) (set '(RParam missing)))
+   "Union の葉候補が無ければ照合しない")
+  (check-false
+   (and (unique-formal-leaf-path-for-exit
+         union-leaves '(Payload) (set '(RParam a) '(RParam b)))
+        (event-access-path-matches? '(union-root) '(Payload) '(Payload)))
+   "Union の候補が曖昧なら path が合っても fail closed")
+  (define-values (option-entry option-leaves)
+    (formal-capability-entry
+     '(Option (BorrowedMut Int (RParam a))) 'formal))
+  (check-equal?
+   (unique-formal-leaf-path-for-exit
+    option-leaves '(0) (set '(RParam a)))
+   '((some . 0)))
+  (check-true (set-member? (capability-entry-keys option-entry)
+                           '(formal 0)))
+  (define option-path
+    (unique-formal-leaf-path-for-exit
+     option-leaves '(0) (set '(RParam a))))
+  (check-equal? (instantiate-capability-path
+                 '(Option (BorrowedMut Int (RParam a))) option-path (hash))
+                '((some . 0)))
+  (check-true
+   (set-member? (capability-entry-keys
+                 (hash-ref (capability-entry-fields option-entry)
+                           (first option-path)))
+                '(formal 0)))
+  (check-true
+   (event-access-path-matches? '(union-root) '(Payload) '(Payload)))
+  (check-true (event-access-path-matches? '(option-root) '(0) '(0))))
+
+(test-case "出口の access path は cap path と parent path を連結し、ずれは拒否する"
+  (check-true (event-access-path-matches? '(owner f) '(f o) '(o)))
+  (check-false (event-access-path-matches? '(owner f) '(f other) '(o)))
+  (check-false (event-access-path-matches? '(owner f) '(o) '(o))))
+
+(test-case "非空の実引数 cap path でも parent path と照合し、後続の親書込みを受理する"
+  (define observations '())
+  (define-values (ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (cap index alpha origins source-alphas window event)
+            (set! observations
+                  (cons (list cap index alpha origins source-alphas window event)
+                        observations)))])
+      (type-core nested-record-reader-core '() record-reader-callables)))
+  (check-true (region-typed? typed)
+              (format "型検査: ~s; observations: ~s" typed observations))
+  (when (region-typed? typed)
+    (define matched
+      (findf (lambda (observation)
+               (and (equal? (cdar observation) '(f))
+                    (set? (list-ref observation 4))
+                    (not (set-empty? (list-ref observation 4)))
+                    (list-ref observation 5)
+                    (deferred-leaf-exit? (list-ref observation 6))))
+             observations))
+    (check-not-false matched (format "cap path が f の出口照合: ~s" observations))
+    (when matched
+      (define cap (first matched))
+      (define event (list-ref matched 6))
+      (check-equal? (cdr cap) '(f))
+      (check-equal? (deferred-leaf-exit-parent-path event)
+                    '(o))
+      (check-equal? (append (cdar matched)
+                            '(o))
+                    '(f o))
+      (check-true (event-access-path-matches? cap '(f o) '(o)))
+      (check-false (event-access-path-matches? cap '(f other) '(o))
+                   "観測した出口 path と異なる要求は probe で照合しない"))
+    (check-live-trace typed 'Unit record-reader-callables)
+    (define start (inject-g2m (region-execution-core typed)))
+    (check-equal? (check-borrow-execution start (region-typed-sidecar typed)
+                                          ir 300 (make-bcounters))
+                  'ok "非空 cap path の Apply 後も親欄の書込みを oracle が承認する")))
+
+(test-case "非空の実引数 cap path から子を逃がすと親欄への書込みを拒否する"
+  (define-values (_ir _filled typed)
+    (type-core nested-record-reader-escape-core '()
+               record-reader-return-callables))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
+                "E-BOR-025"
+                (format "type-core result: ~s" typed)))
 
 (define (window-function-body post-scope)
   `(Let (read const Int)

@@ -123,6 +123,9 @@
          leaf-exit-local-safe?
          signature-forwarding-summary
          formal-leaf-info
+         formal-leaf-paths-for-exit
+         unique-formal-leaf-path-for-exit
+         event-access-path-matches?
          instantiate-capability-path
          lookup-binding
          make-recur-frame
@@ -552,6 +555,64 @@
                            "index" index "path" path))
   (values (capability-entry-declared-lifetime formal-entry)
           (capability-entry-source-alphas actual-entry)))
+
+(define (formal-path->access-path path)
+  (for/list ([segment (in-list path)])
+    (match segment
+      [(cons 'record-field label) (peel-lbl label)]
+      [(cons _ (? exact-nonnegative-integer? index)) index]
+      [(? exact-nonnegative-integer? index) index]
+      [(or (? symbol?) (? list?)) 'Payload]
+      [_ #f])))
+
+(define (access-path-segment segment)
+  (match segment
+    [(cons 'record-field label) (peel-lbl label)]
+    [(cons _ (? exact-nonnegative-integer? index)) index]
+    [_ segment]))
+
+(define (access-path-prefix? prefix path)
+  (and (<= (length prefix) (length path))
+       (equal? prefix (take path (length prefix)))))
+
+(define (formal-leaf-paths-for-exit leaves event-path origins)
+  (if (and (hash? leaves) (set? origins))
+      (let* ([candidates
+              (for/list ([(path entry) (in-hash leaves)]
+                         #:when (and (capability-entry? entry)
+                                     (capability-entry-declared-lifetime entry)
+                                     (set-member?
+                                      origins
+                                      (capability-entry-declared-lifetime entry))
+                                     (let ([access-path
+                                            (formal-path->access-path path)])
+                                       (and (andmap values access-path)
+                                            (access-path-prefix?
+                                             access-path event-path)))))
+                path)]
+             [maximum-depth
+              (and (pair? candidates)
+                   (apply max (map length candidates)))])
+        (if maximum-depth
+            (filter (lambda (path) (= (length path) maximum-depth))
+                    candidates)
+            '()))
+      '()))
+
+(define (unique-formal-leaf-path-for-exit leaves event-path origins)
+  (match (formal-leaf-paths-for-exit leaves event-path origins)
+    [(list path) path]
+    [_ #f]))
+
+(define (event-access-path-matches? cap requested-path event-path)
+  (match cap
+    [(cons _ cap-path)
+     (and (andmap values requested-path)
+          (andmap values event-path)
+          (equal? (map access-path-segment requested-path)
+                  (append (map access-path-segment cap-path)
+                          (map access-path-segment event-path))))]
+    [_ #f]))
 
 (define (formal-key? w)
   (match w
@@ -1502,31 +1563,113 @@
       [`(formal ,index ,_) index]
       [`(binder ,_ ...) (deferred-leaf-exit-formal-index event)]
       [_ #f]))
-  (define (event-matches-cap? event cap index origins)
+  (define (event-alpha-origins event cap alpha requested-fp w)
+    (define direct (local-exit-alpha-origins alpha))
+    (define source (deferred-leaf-exit-source event))
+    (define parent-path (deferred-leaf-exit-parent-path event))
+    (define event-path
+      (match source
+        [`(formal ,_ ,_) (formal-path->access-path parent-path)]
+        [`(binder ,_ ...) (map access-path-segment parent-path)]
+        [_ #f]))
+    (define cap-path (map access-path-segment (cdr cap)))
+    (define requested-path (map access-path-segment requested-fp))
+    (define related-binder?
+      (and (match source [`(binder ,_ ...) #t] [_ #f])
+           (= 1
+              (length
+               (for/list ([item (in-list deferred)]
+                          #:when
+                          (and (deferred-constraint? item)
+                               (equal? (deferred-constraint-w item) w)
+                               (eq? (region-constraint-kind
+                                     (deferred-constraint-constraint item))
+                                    'reborrow)
+                               (equal? (region-constraint-left
+                                        (deferred-constraint-constraint item))
+                                       alpha)
+                               (equal? (region-constraint-right
+                                        (deferred-constraint-constraint item))
+                                       (deferred-leaf-exit-alpha event))
+                               (equal? (map access-path-segment
+                                            (deferred-constraint-parent-fp item))
+                                       event-path)))
+                 item)))))
+    (if (not (and related-binder?
+                  event-path
+                  (andmap values event-path)
+                  (access-path-prefix? cap-path requested-path)
+                  (equal? requested-path (append cap-path event-path))))
+        direct
+        (let walk ([current alpha] [path event-path] [seen (set)])
+          (cond
+            [(not (or (lifetime-var? current) (rparam-term? current))) (set)]
+            [(or (rparam-term? current) (set-member? seen current))
+             (local-exit-alpha-origins current)]
+            [else
+             (define incoming
+               (remove-duplicates
+                (for/list ([item (in-list deferred)]
+                           #:when
+                           (and (deferred-constraint? item)
+                                (equal? (deferred-constraint-w item) w)
+                                (eq? (region-constraint-kind
+                                      (deferred-constraint-constraint item))
+                                     'reborrow)
+                                (equal? (region-constraint-right
+                                         (deferred-constraint-constraint item))
+                                        current)
+                                (equal? (map access-path-segment
+                                             (deferred-constraint-child-fp item))
+                                        path)))
+                  item)
+                equal?))
+             (if (= (length incoming) 1)
+                 (let* ([item (first incoming)]
+                        [constraint (deferred-constraint-constraint item)])
+                   (set-union
+                    (local-exit-alpha-origins current)
+                    (walk (region-constraint-left constraint)
+                          (map access-path-segment
+                               (deferred-constraint-parent-fp item))
+                          (set-add seen current))))
+                 (local-exit-alpha-origins current))]))))
+  (define (event-matches-cap? event cap index origins requested-fp)
     (define event-index (event-formal-index event))
     (and (exact-nonnegative-integer? event-index)
          (= event-index index)
          (< index (length actuals))
-         (let* ([formal-path (deferred-leaf-exit-parent-path event)]
-                [actual-type (list-ref actuals index)]
-                [actual-path
-                 (instantiate-capability-path actual-type formal-path
-                                               region-subst)])
-           (and actual-path (equal? actual-path (cdr cap))
-                (let ([actual-entry
-                  (with-handlers ([exn:fail? (lambda (_) #f)])
-                        (actual-leaf-entry
-                          (enter-child Λ (add1 index))
-                          (list-ref arguments index) actual-type actual-path fail))])
-                  (and actual-entry
+         (let* ([parent-path (deferred-leaf-exit-parent-path event)]
+                [event-path
+                 (match (deferred-leaf-exit-source event)
+                   [`(formal ,_ ,_) (formal-path->access-path parent-path)]
+                   [`(binder ,_ ...) (map access-path-segment parent-path)]
+                   [_ #f])]
+                [formal-leaves
+                 (and event-path
+                      (list-ref (callable-summary-formal-fields summary) index))]
+                [formal-path
+                 (and formal-leaves
+                      (unique-formal-leaf-path-for-exit
+                       formal-leaves event-path origins))]
+                [actual-type (list-ref actuals index)])
+           (define (matching-source-alphas formal-path)
+             (with-handlers ([exn:fail? (lambda (_) #f)])
+               (define actual-path
+                 (instantiate-capability-path actual-type formal-path region-subst))
+               (and actual-path
+                    (let ([actual-entry
+                           (actual-leaf-entry
+                            (enter-child Λ (add1 index))
+                            (list-ref arguments index) actual-type actual-path fail)])
+                      (and (set-member? (capability-entry-keys actual-entry) cap)
                        (let-values ([(declared-alpha source-alphas)
-                                     (with-handlers ([exn:fail?
-                                                      (lambda (_) (values #f #f))])
-                                       (formal-leaf-info summary index formal-path
-                                                        actual-entry))])
-                          (cond
-                            [(and declared-alpha (set? source-alphas)
+                                     (formal-leaf-info summary index formal-path
+                                                      actual-entry)])
+                             (and declared-alpha
+                                  (set? source-alphas)
                                   (not (set-empty? source-alphas))
+                                  ;; 比較するのは同じ呼出し時点へ実体化した形式寿命と起点。
                                   (set-member? origins declared-alpha)
                                   (match (deferred-leaf-exit-source event)
                                     [`(formal ,_ ,_)
@@ -1534,30 +1677,44 @@
                                             (deferred-leaf-exit-alpha event))]
                                     [`(binder ,_ ...) #t]
                                     [_ #f])
-                                  source-alphas)
-                             source-alphas]
-                            [else #f]))))))))
-  (define (local-exit-window cap index alpha)
-    (define origins (local-exit-alpha-origins alpha))
-    (define event
-      (for/first ([event (in-list exits)]
-                  #:when (let ([source-alphas
-                                (event-matches-cap? event cap index origins)])
-                           (and (set? source-alphas)
-                                (not (callable-summary-incomplete? summary))
-                                (eq? (hash-ref exit-classifications
-                                               (leaf-exit-key event)
-                                               'fail-closed)
-                                     'local)
-                                (leaf-exit-local-safe?
-                                 (deferred-leaf-exit-source event)
-                                 (event-group event) result-type))))
-        event))
+                                  source-alphas)))))))
+           (and formal-path
+                (event-access-path-matches? cap requested-fp event-path)
+                (matching-source-alphas formal-path)))))
+  (define (local-exit-window cap index alpha requested-fp w)
+    (define matching-events
+      (for/list ([candidate (in-list exits)]
+                 #:do [(define origins
+                         (event-alpha-origins candidate cap alpha requested-fp w))
+                       (define source-alphas
+                         (event-matches-cap? candidate cap index origins requested-fp))]
+                 #:when (set? source-alphas))
+        (list candidate origins source-alphas)))
+    ;; alpha 名をまたいで比較せず、同じ実引数 path の出口がすべて local のときだけ窓を許す。
+    (define selected-match
+      (and (not (callable-summary-incomplete? summary))
+           (pair? matching-events)
+           (andmap
+            (lambda (match)
+              (define candidate (first match))
+              (and (eq? (hash-ref exit-classifications
+                                  (leaf-exit-key candidate)
+                                  'fail-closed)
+                        'local)
+                   (leaf-exit-local-safe?
+                    (deferred-leaf-exit-source candidate)
+                    (event-group candidate) result-type)))
+            matching-events)
+           (first matching-events)))
+    (define event (and selected-match (first selected-match)))
+    (define origins (if selected-match
+                        (second selected-match)
+                        (local-exit-alpha-origins alpha)))
     (define window (and event (deferred-point '())))
     (define probe (current-local-exit-window-probe))
     (when probe
       (probe cap index alpha origins
-             (and event (event-matches-cap? event cap index origins))
+             (and selected-match (third selected-match))
              window event))
     window)
   (for ([item (in-list deferred)])
@@ -1567,16 +1724,26 @@
        (define caps (actual-caps w))
        (define index (and (formal-key? w) (fourth w)))
        (define child-alpha (subst-term (borrow-request-alpha item)))
-       (define reborrow-items
+      (define reborrow-items
          (reborrow-constraints w (borrow-request-alpha item)
                                (borrow-request-fp item)))
+       (define local-alpha
+         (match (remove-duplicates
+                 (for/list ([reborrow-item (in-list reborrow-items)])
+                   (region-constraint-left
+                    (deferred-constraint-constraint reborrow-item)))
+                 equal?)
+           ['() (borrow-request-alpha item)]
+           [(list alpha) alpha]
+           [_ #f]))
        (for ([cap (in-set caps)])
          (define child-fp
            (append (cdr cap) (borrow-request-fp item)))
          (define local-window
-           (and index
+           (and index local-alpha
                 (local-exit-window cap index
-                                   (borrow-request-alpha item))))
+                                   local-alpha
+                                   child-fp w)))
          (route-request!
           (borrow-request (car cap)
                           child-fp
@@ -1604,8 +1771,13 @@
              (deferred-constraint-window-point reborrow-item))
            (define local-window
              (and index
-                  (local-exit-window
-                   cap index (region-constraint-left constraint))))
+                  (or (local-exit-window
+                       cap index (region-constraint-left constraint) parent-fp w)
+                      (local-exit-window
+                       cap index (region-constraint-left constraint)
+                       (append (cdr cap)
+                               (deferred-constraint-child-fp reborrow-item))
+                       w))))
            (define suspension-window
              (or (and window-point (deferred-point window-point))
                  local-window))
@@ -1675,8 +1847,16 @@
        (for ([cap (in-set (actual-caps w))])
          (define local-window
            (and index
-                (local-exit-window
-                 cap index (region-constraint-left c))))
+                (or (local-exit-window
+                     cap index (region-constraint-left c)
+                     (append (cdr cap)
+                             (deferred-constraint-parent-fp item))
+                     w)
+                    (local-exit-window
+                     cap index (region-constraint-left c)
+                     (append (cdr cap)
+                             (deferred-constraint-child-fp item))
+                     w))))
          (unless (and local-window
                       (eq? (region-constraint-kind c) 'contains))
            (route-constraint!
