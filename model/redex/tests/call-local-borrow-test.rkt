@@ -300,7 +300,7 @@
    (unique-formal-leaf-path-for-exit result-leaves '(0) (set '(RParam a)))
    "同じ位置と寿命を持つ別 constructor は tag 除去後に曖昧となり fail closed"))
 
-(test-case "Union payload の実要求 path は形式側の出口と一致せず窓を開かない"
+(test-case "Union payload の実要求 path は形式側の出口と一致する"
   (define union-type
     '(Union (BorrowedMut Int (RParam a))
             (BorrowedMut Bool (RParam a))))
@@ -336,9 +336,9 @@
   (check-not-false (member '((Payload)) request-paths equal?)
                    (format "実際の Union payload request path: ~s"
                            request-paths))
-  (check-false
+  (check-true
    (event-access-path-matches? '(union-root) '((Payload)) '(Payload))
-   "実要求の list segment は形式側の symbol segment に一致せず、過剰拒否になる"))
+   "実要求の list segment を形式側の symbol segment と同じ段として照合する"))
 
 (test-case "出口の access path は cap path と parent path を連結し、ずれは拒否する"
   (check-true (event-access-path-matches? '(owner f) '(f o) '(o)))

@@ -569,6 +569,7 @@
   (match segment
     [(cons 'record-field label) (peel-lbl label)]
     [(cons _ (? exact-nonnegative-integer? index)) index]
+    [(list 'Payload) 'Payload]
     [_ segment]))
 
 (define (access-path-prefix? prefix path)
