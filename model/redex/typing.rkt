@@ -3186,7 +3186,7 @@
              (first parent-capabilities)))
        (define source-root (car source-cap))
        (define ambiguous-parent?
-         (> (set-count (list->set (map car parent-capabilities))) 1))
+         (> (length parent-capabilities) 1))
        (define source-frame (and (formal-key? source-root)
                                  (owning-frame source-root)))
        (define source-fields

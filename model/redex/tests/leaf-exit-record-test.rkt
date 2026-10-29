@@ -876,3 +876,33 @@
   (check-true
    (for/or ([event (in-list projection-events)])
      (eq? (deferred-leaf-exit-exit-kind event) 'local))))
+
+(test-case "同じ仮引数の異なる欄を合流した binder は unclassified にして閉じる"
+  (define owner-type
+    '(Record ((a (Option Int) mut) (b (Option Int) mut))))
+  (define function-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,owner-type (RParam a))) Int () (Mutation) () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User same-root-different-path (p)
+           (Eliminate
+            (Eliminate (Construct Bool true)
+              ((true () -> (ProjBorrow p a))
+               (false () -> (ProjBorrow p b))))
+            ((some (child) -> (Read child))
+             (none () -> 0)))))))
+  (define events
+    (append-map binder-events
+                (summaries core `((same-root-different-path ,function-type)))))
+  (check-equal? (length events) 1)
+  (check-equal? (deferred-leaf-exit-formal-index (first events)) 0)
+  (check-not-false
+   (member (deferred-leaf-exit-parent-path (first events))
+           '((a) (b))
+           equal?)
+   (format "event: ~s" (map exit-shape events)))
+  (check-eq? (deferred-leaf-exit-exit-kind (first events)) 'unclassified
+             (format "events: ~s" (map exit-shape events)))
+  (check-false (deferred-leaf-exit-destination (first events))))
