@@ -681,3 +681,198 @@
                       (map callable-summary-leaf-exits all-summaries)))
   (check-eq? (deferred-leaf-exit-exit-kind (first events)) 'formal)
   (check-equal? (deferred-leaf-exit-destination (first events)) '(1 ())))
+
+(test-case "異なる仮引数を親に持つ binder は unclassified にして閉じる"
+  (define two-parent-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut (Option Int) (RParam a))
+             (BorrowedMut (Option Int) (RParam a)))
+            Int () (Mutation) () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User two-parent (left right)
+           (Eliminate
+            (Eliminate (Construct Bool true)
+              ((true () -> left)
+               (false () -> right)))
+            ((some (child) -> (Read child))
+             (none () -> 0)))))))
+  (define all-summaries
+    (summaries core `((two-parent ,two-parent-type))))
+  (define exits (append-map binder-events all-summaries))
+  (check-equal? (length exits) 1)
+  (check-eq? (deferred-leaf-exit-exit-kind (first exits)) 'unclassified)
+  (check-false (deferred-leaf-exit-destination (first exits))))
+
+(test-case "Let を挟んだ分解 binder の合流結果も result 出口として記録する"
+  (define merge-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut (Result (Option Int) (Option Int)) (RParam a)))
+            (BorrowedMut (Option Int) (RParam a)) () (Mutation) () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User merge-result (parent)
+           (Let (merged let (BorrowedMut (Option Int) (RParam %omitted)))
+             (Eliminate parent
+               ((ok (left) -> left)
+                (ng (right) -> right)))
+             merged)))))
+  (define ir (build-region-ir core))
+  (define analysis
+    (typing-inference (annotate-regions core ir)
+                      '((1 Int)) `((merge-result ,merge-type)) '()
+                      (region-ctx ir '() (hash 1 (region-at ir '())) (hash))))
+  (define all-summaries (sixth analysis))
+  (define typed (core-type-of/regions core '() `((merge-result ,merge-type))))
+  (define events (append-map binder-events all-summaries))
+  (check-true (pair? events)
+              (format "type: ~s, summaries: ~s, binder alphas: ~s"
+                      (first analysis)
+                      (map callable-summary-leaf-exits all-summaries)
+                      (and (region-typed? typed)
+                           (region-typed-binder-alphas typed))))
+  (check-true
+   (for/or ([event (in-list events)])
+     (eq? (deferred-leaf-exit-exit-kind event) 'result))))
+
+(test-case "分解 binder の合流結果を Apply に渡す形は owner 未解決で閉じる"
+  (define observer-type
+    '(NFn ((BorrowedMut (Option Int) (RParam a))) Int () () () User))
+  (define parent-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut (Result (Option Int) (Option Int)) (RParam a))
+             ,observer-type)
+            Int () (Mutation) () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User merge-argument (parent observer)
+           (Let (merged let (BorrowedMut (Option Int) (RParam %omitted)))
+             (Eliminate parent
+               ((ok (left) ->
+                 (Scope ()
+                   (Let (left-view let
+                                   (BorrowedMut (Option Int) (RParam a)))
+                     left left-view)))
+                (ng (right) ->
+                 (Scope ()
+                    (Let (right-view let
+                                    (BorrowedMut (Option Int) (RParam a)))
+                     right right-view)))))
+             (Apply observer merged))))))
+  (check-exn #rx"unresolved-borrow-owner"
+             (lambda ()
+               (summaries core `((merge-argument ,parent-type))))))
+
+(test-case "分解 binder の合流結果を閉包が捕捉する形は境界で拒否する"
+  (define inner-type
+    '(NFn () (BorrowedMut (Option Int) (RParam a)) () () () User))
+  (define outer-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut (Result (Option Int) (Option Int)) (RParam a)))
+            ,inner-type () (Mutation) () User)))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User merge-capture (parent)
+           (Let (merged let (BorrowedMut (Option Int) (RParam %omitted)))
+             (Eliminate parent
+               ((ok (left) -> left)
+                (ng (right) -> right)))
+             (Lam User capture-merged () merged))))))
+  (check-exn #rx"borrowed-function-capture"
+             (lambda ()
+               (summaries core
+                          `((merge-capture ,outer-type)
+                            (capture-merged ,inner-type))))))
+
+(test-case "分解 binder を Curry の固定引数にする形は owner 未解決で閉じる"
+  (define parent-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut (Result (Option Int) (Option Int)) (RParam a)))
+            Unit () (Mutation) () User)))
+  (define curry-target-type
+    '(NFn ((BorrowedMut (Option Int) (RParam a))) Unit () () () User))
+  (define core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User curry-merged (parent)
+           (Let (merged let (BorrowedMut (Option Int) (RParam %omitted)))
+             (Eliminate parent
+               ((ok (left) -> left)
+                (ng (right) -> right)))
+             (Curry (Lam User curry-target (value) unit) merged))))))
+  (check-exn #rx"unresolved-borrow-owner"
+             (lambda ()
+               (summaries core `((curry-merged ,parent-type)
+                                 (curry-target ,curry-target-type))))))
+
+(test-case "RParam と合流した借用が生存中の親への書込みを拒否する"
+  (define parent-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut (Result (Option Int) (Option Int)) (RParam a)))
+            (Option Int) () (Mutation) () User)))
+  (define result-type '(Result (Option Int) (Option Int)))
+  (define core
+    `(Scope (1)
+       (RegionLam (a)
+         (Lam User rparam-merge-write (parent)
+           (Let (merged let (BorrowedMut (Option Int) (RParam %omitted)))
+             (Eliminate parent
+               ((ok (left) -> left)
+                (ng (right) -> right)))
+             (Let (written let Unit)
+               (Assign parent
+                       (Construct ,result-type ok
+                                  (Construct (Option Int) none)))
+               (Read merged)))))))
+  (check-exn #rx"borrow-conflicting-use"
+             (lambda ()
+               (summaries core `((rparam-merge-write ,parent-type))))))
+
+(test-case "分解 binder の再借用と子射影は binder 起点の出口として追跡する"
+  (define reborrow-parent
+    '(Record ((o (Option Int) mut))))
+  (define reborrow-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,reborrow-parent (RParam a))) Unit ()
+            ((Yield Int) Mutation) () User)))
+  (define reborrow-core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User reborrow-derived (parent)
+           (Eliminate (ProjBorrow parent o)
+             ((some (child) -> (Yield (Read (Reborrow child)) unit))
+              (none () -> unit)))))))
+  (define reborrow-events
+    (append-map binder-events
+                (summaries reborrow-core `((reborrow-derived ,reborrow-type)))))
+  (check-true (pair? reborrow-events)
+              (format "reborrow events: ~s" reborrow-events))
+  (check-true
+   (for/or ([event (in-list reborrow-events)])
+     (eq? (deferred-leaf-exit-exit-kind event) 'local)))
+  (define projection-parent
+    '(Record ((o (Option (Record ((inner Int mut)))) mut))))
+  (define projection-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,projection-parent (RParam a))) Unit ()
+            ((Yield Int) Mutation) () User)))
+  (define projection-core
+    '(Scope (1)
+       (RegionLam (a)
+         (Lam User projected-derived (parent)
+           (Eliminate (ProjBorrow parent o)
+             ((some (record-ref) ->
+               (Yield (Read (ProjBorrow record-ref inner)) unit))
+              (none () -> unit)))))))
+  (define projection-events
+    (append-map binder-events
+                (summaries projection-core `((projected-derived ,projection-type)))))
+  (check-true (pair? projection-events)
+              (format "projection events: ~s" projection-events))
+  (check-true
+   (for/or ([event (in-list projection-events)])
+     (eq? (deferred-leaf-exit-exit-kind event) 'local))))

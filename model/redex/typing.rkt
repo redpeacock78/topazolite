@@ -165,6 +165,8 @@
 (define branch-binder-parent-keys (make-parameter #f))
 ;; binder source ごとの親と、出口を積む callable を保持する。
 (define branch-binder-event-info (make-parameter #f))
+;; 合流・再借用後も binder 起点の出口を追えるよう、派生 α の親を保持する。
+(define branch-binder-alpha-sources (make-parameter #f))
 
 ;; lexical binder ごとの本体 point。出口の型がどの束縛へ届くかを判定する。
 (define binder-points (make-parameter (hash)))
@@ -408,20 +410,57 @@
                       (capability-entry-declared-lifetime entry)))
       (define source-alpha (capability-entry-declared-lifetime entry))
       (for ([(key alpha) (in-hash alphas)]
-            #:when (equal? source-alpha alpha))
+            #:when (set-member? (binder-alpha-origins source-alpha) alpha))
         (match (hash-ref infos key #f)
-          [(list _frame formal-index parent-path parent-alpha mode)
-           (for ([destination
-                  (in-list
-                   (leaf-exit-destinations
-                    exit-kind
-                    (destination-for path parent-path parent-alpha)))])
+          [(list _frame formal-index parent-path parent-alpha mode ambiguous?)
+           (define observed-kind (if ambiguous? 'unclassified exit-kind))
+           (define destinations
+             (if ambiguous?
+                 (list (list 'unclassified #f))
+                 (leaf-exit-destinations
+                  exit-kind
+                  (destination-for path parent-path parent-alpha))))
+           (for ([destination (in-list destinations)])
              (record-leaf-exit!
               (deferred-leaf-exit
                (cons 'binder key) formal-index parent-path path mode alpha
-               (first key) (first destination) (second destination))
+               (first key) observed-kind (second destination))
               #f expression fail))]
           [_ (void)])))))
+
+(define (binder-alpha-origins alpha)
+  (define derived (branch-binder-alpha-sources))
+  (let expand ([current alpha] [seen (set)])
+    (cond
+      [(not (lifetime-var? current)) (set)]
+      [(set-member? seen current)
+       (error 'binder-alpha-origins "binder α の対応が循環している: ~s" current)]
+      [else
+       (define next-seen (set-add seen current))
+       (define derived-sources
+         (and (hash? derived) (hash-ref derived current #f)))
+       (define merged-sources
+         (and (hash? (merge-alpha-sources))
+              (hash-ref (merge-alpha-sources) current #f)))
+       (define sources
+         (or derived-sources
+             (and merged-sources
+                  (filter lifetime-var? (set->list merged-sources)))))
+       (if sources
+           (for/fold ([result (set)]) ([source (in-list (if (set? sources)
+                                                            (set->list sources)
+                                                            sources))])
+             (set-union result (expand source next-seen)))
+           (set current))])))
+
+(define (record-binder-alpha-descendant! alpha parent)
+  (define table (branch-binder-alpha-sources))
+  (define binders (branch-binder-alphas))
+  (when (and (hash? table) (hash? binders) (lifetime-var? parent))
+    (define origins (binder-alpha-origins parent))
+    (when (for/or ([binder-alpha (in-hash-values binders)])
+            (set-member? origins binder-alpha))
+      (hash-set! table alpha (set parent)))))
 
 (define (record-binder-result-exits-in! core Λ result-type fail)
   (define term (peel-node core))
@@ -3146,6 +3185,8 @@
                cap)
              (first parent-capabilities)))
        (define source-root (car source-cap))
+       (define ambiguous-parent?
+         (> (set-count (list->set (map car parent-capabilities))) 1))
        (define source-frame (and (formal-key? source-root)
                                  (owning-frame source-root)))
        (define source-fields
@@ -3178,7 +3219,8 @@
        (hash-set! event-info (list decomposition branch-index binder-index)
                   (list (first (template-collectors))
                         (if (formal-key? source-root) (fourth source-root) 'local)
-                        (cdr source-cap) event-parent-alpha 'mut)))
+                        (cdr source-cap) event-parent-alpha 'mut
+                        ambiguous-parent?)))
      (define branch-region (branch-region-of ir decomposition branch-index))
      (define parent-term
        (if (or (lifetime-var? parent-alpha) (rparam-term? parent-alpha))
@@ -4945,6 +4987,7 @@
                         [branch-binder-alphas (make-hash)]
                         [branch-binder-parent-keys (mutable-set)]
                         [branch-binder-event-info (make-hash)]
+                        [branch-binder-alpha-sources (make-hash)]
                         [resource-place-set (set)]
                         [resource-identity-transfers (set)]
         [merge-alpha-sources (make-hash)]
@@ -5091,6 +5134,7 @@
     [`(BorrowedMut ,τ ,α_parent)
      (define point (region-ctx-point Λ))
      (define α_child (fresh-lifetime! point))
+     (record-binder-alpha-descendant! α_child α_parent)
      ;; 型の region 欄は未解決の RVar または concrete な ρ を運ぶ。
      ;; RVar はそのまま制約へ渡し、concrete な欄だけ per-IR bridge で
      ;; region 項へ戻して、制約の寿命項の表現を揃える。
@@ -5306,6 +5350,7 @@
           (for/or ([cap (in-set tokens)]) (formal-key? (car cap))))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
+     (record-binder-alpha-descendant! α_child α)
      (define branch-born? (branch-region-enclosing? ir point))
      (define ρ_child
        (if branch-born?
@@ -5338,6 +5383,7 @@
      (when (set-empty? tokens) (fail 'unresolved-borrow-owner core))
      (define parent-designators (uniform-token-designators tokens core fail))
      (define α_child (fresh-lifetime! point))
+     (record-binder-alpha-descendant! α_child α)
      (define scrutinee-child?
        (region-decomposition-scrutinee? ir point))
      (define derived? (tracked-child-alpha? α))
@@ -7712,6 +7758,7 @@
                    [branch-binder-alphas (make-hash)]
                    [branch-binder-parent-keys (mutable-set)]
                    [branch-binder-event-info (make-hash)]
+                   [branch-binder-alpha-sources (make-hash)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries forwarding-table]
@@ -8268,6 +8315,7 @@
                    [branch-binder-alphas (make-hash)]
                    [branch-binder-parent-keys (mutable-set)]
                    [branch-binder-event-info (make-hash)]
+                   [branch-binder-alpha-sources (make-hash)]
                    [mut-binding-types-table collected-mut-types]
                    [callable-contexts-table collected-callable-contexts]
                    [resource-place-set (set)]
