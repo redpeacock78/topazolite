@@ -1724,25 +1724,16 @@
        (define caps (actual-caps w))
        (define index (and (formal-key? w) (fourth w)))
        (define child-alpha (subst-term (borrow-request-alpha item)))
-      (define reborrow-items
+       (define reborrow-items
          (reborrow-constraints w (borrow-request-alpha item)
                                (borrow-request-fp item)))
-       (define local-alpha
-         (match (remove-duplicates
-                 (for/list ([reborrow-item (in-list reborrow-items)])
-                   (region-constraint-left
-                    (deferred-constraint-constraint reborrow-item)))
-                 equal?)
-           ['() (borrow-request-alpha item)]
-           [(list alpha) alpha]
-           [_ #f]))
        (for ([cap (in-set caps)])
          (define child-fp
            (append (cdr cap) (borrow-request-fp item)))
          (define local-window
-           (and index local-alpha
+           (and index
                 (local-exit-window cap index
-                                   local-alpha
+                                   (borrow-request-alpha item)
                                    child-fp w)))
          (route-request!
           (borrow-request (car cap)
@@ -1844,6 +1835,8 @@
                                 point node)))
        (define window-point
          (deferred-constraint-window-point item))
+       ;; contains の生成箇所は path を記録しない。
+       ;; 異なる child-fp を持つ reborrow だけで再試行する。
        (for ([cap (in-set (actual-caps w))])
          (define local-window
            (and index
@@ -1852,11 +1845,12 @@
                      (append (cdr cap)
                              (deferred-constraint-parent-fp item))
                      w)
-                    (local-exit-window
-                     cap index (region-constraint-left c)
-                     (append (cdr cap)
-                             (deferred-constraint-child-fp item))
-                     w))))
+                    (and (eq? (region-constraint-kind c) 'reborrow)
+                         (local-exit-window
+                          cap index (region-constraint-left c)
+                          (append (cdr cap)
+                                  (deferred-constraint-child-fp item))
+                          w)))))
          (unless (and local-window
                       (eq? (region-constraint-kind c) 'contains))
            (route-constraint!

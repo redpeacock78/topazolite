@@ -286,12 +286,133 @@
                 '(formal 0)))
   (check-true
    (event-access-path-matches? '(union-root) '(Payload) '(Payload)))
-  (check-true (event-access-path-matches? '(option-root) '(0) '(0))))
+  (check-true (event-access-path-matches? '(option-root) '(0) '(0)))
+  (define-values (_result-entry result-leaves)
+    (formal-capability-entry
+     '(Result (BorrowedMut Int (RParam a))
+              (BorrowedMut Int (RParam a)))
+     'formal))
+  (define result-candidates
+    (formal-leaf-paths-for-exit result-leaves '(0) (set '(RParam a))))
+  (check-equal? (list->set result-candidates)
+                (set '((ng . 0)) '((ok . 0))))
+  (check-false
+   (unique-formal-leaf-path-for-exit result-leaves '(0) (set '(RParam a)))
+   "同じ位置と寿命を持つ別 constructor は tag 除去後に曖昧となり fail closed"))
+
+(test-case "Union payload の実要求 path は形式側の出口と一致せず窓を開かない"
+  (define union-type
+    '(Union (BorrowedMut Int (RParam a))
+            (BorrowedMut Bool (RParam a))))
+  (define callable-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,union-type (RParam a))) Unit () () () User)))
+  (define callable-body
+    '(UnionEliminate p
+       (((BorrowedMut Int (RParam a)) payload ->
+          (Let (child let
+                     (Borrowed (BorrowedMut Int (RParam a)) (RVar 0)))
+               (Reborrow payload)
+            unit))
+        ((BorrowedMut Bool (RParam a)) other ->
+          (Let (child2 let
+                       (Borrowed (BorrowedMut Bool (RParam a)) (RVar 1)))
+               (Reborrow other)
+            unit)))))
+  (define callables `((union-reader ,callable-type)))
+  (define core
+    `(RegionLam (a) (Lam User union-reader (p) ,callable-body)))
+  (define ir (build-region-ir core))
+  (define inferred
+    (typing-inference core '() callables '()
+                      (region-ctx ir '() (hash) (hash))))
+  (define summaries (filter callable-summary? (sixth inferred)))
+  (check-equal? (length summaries) 1)
+  (define request-paths
+    (for/list ([request (in-list
+                         (callable-summary-deferred (first summaries)))]
+               #:when (borrow-request? request))
+      (borrow-request-fp request)))
+  (check-not-false (member '((Payload)) request-paths equal?)
+                   (format "実際の Union payload request path: ~s"
+                           request-paths))
+  (check-false
+   (event-access-path-matches? '(union-root) '((Payload)) '(Payload))
+   "実要求の list segment は形式側の symbol segment に一致せず、過剰拒否になる"))
 
 (test-case "出口の access path は cap path と parent path を連結し、ずれは拒否する"
   (check-true (event-access-path-matches? '(owner f) '(f o) '(o)))
   (check-false (event-access-path-matches? '(owner f) '(f other) '(o)))
+  (check-false (event-access-path-matches? '(owner f) '(f o) '(other))
+               "child-fp の再試行でも兄弟欄の出口は一致しない")
   (check-false (event-access-path-matches? '(owner f) '(o) '(o))))
+
+(test-case "同じ仮引数 capability の局所再借用と結果へ逃げる再借用は窓を開かない"
+  (define callable-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a)))
+            (Borrowed Int (RParam a)) () () () User)))
+  (define callables `((two-exits ,callable-type)))
+  (define body
+    '(Let (ignored const Int)
+          (Scope ()
+            (Let (child let (Borrowed Int (RVar 0))) (Reborrow p)
+              (Read child)))
+       (Reborrow p)))
+  (define definition `(RegionLam (a) (Lam User two-exits (p) ,body)))
+  (define definition-ir (build-region-ir definition))
+  (define inferred
+    (typing-inference definition '() callables '()
+                      (region-ctx definition-ir '() (hash) (hash))))
+  (define definition-summaries
+    (filter callable-summary? (sixth inferred)))
+  (check-equal? (length definition-summaries) 1)
+  (define summary-events
+    (callable-summary-leaf-exits (first definition-summaries)))
+  (check-equal?
+   (list->set
+    (map deferred-leaf-exit-exit-kind summary-events))
+   (set 'local 'result)
+   "同じ仮引数 capability に局所出口と逃避出口が記録される")
+  (check-equal? (list->set (map deferred-leaf-exit-source summary-events))
+                (set '(formal 0 ()))
+                "両方の出口が同じ仮引数の同じ path を指す")
+  (check-true
+   (andmap (lambda (event)
+             (event-access-path-matches?
+              '(owner) '() (deferred-leaf-exit-parent-path event)))
+           summary-events)
+   "両出口は同じ実引数 capability path と照合される")
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (p let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Let (escaped let (Borrowed Int owner-ph))
+                (Apply (RegionApp
+                        (RegionLam (a) (Lam User two-exits (p) ,body))
+                        (owner-ph))
+                       p)
+             (Assign p 2))))))
+  (define observations '())
+  (define-values (_ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda args (set! observations (cons args observations)))])
+      (type-core core '() callables)))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
+                "E-BOR-025"
+                (format "局所出口と逃避出口が同じ capability に属する: ~s; ~s"
+                        typed observations))
+  (define call-observations
+    (filter (lambda (observation)
+              (equal? (list-ref observation 0) '(owner)))
+            observations))
+  (check-true (pair? call-observations)
+              (format "呼出し側の照合を観測する: ~s" observations))
+  (check-true (andmap (lambda (observation) (not (list-ref observation 5)))
+                      call-observations)
+              (format "escape を含む候補集合では local 窓を許さない: ~s"
+                      call-observations)))
 
 (test-case "非空の実引数 cap path でも parent path と照合し、後続の親書込みを受理する"
   (define observations '())
