@@ -158,6 +158,37 @@
   '(ForallRegion (a)
      (NFn ((Borrowed Int (RParam a))) (Borrowed Int (RParam a)) () () () User)))
 
+(define binder-owner-type
+  '(Record ((g Int mut) (o (Option Int) mut))))
+(define binder-reader-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,binder-owner-type (RParam a)))
+          Int () (Mutation) () User)))
+(define binder-returner-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,binder-owner-type (RParam a)))
+          (BorrowedMut Int (RParam a)) () (Mutation) () User)))
+(define binder-owner-value
+  '(Rec ((g mut 1) (o mut (Construct (Option Int) some 2)))))
+(define (binder-reader-core some-body [none-body 0])
+  `(Scope (1)
+     (RegionLam (a)
+       (Lam User binder-reader (p)
+         (Eliminate (ProjBorrow p o)
+           ((some (c) -> ,some-body)
+            (none () -> ,none-body)))))))
+(define (binder-source? exit)
+  (match (deferred-leaf-exit-source exit)
+    [`(binder ,_ ...) #t]
+    [_ #f]))
+(define (binder-events summary)
+  (filter binder-source? (callable-summary-leaf-exits summary)))
+
+(define (binder-reader-body some-body [none-body 0])
+  `(Eliminate (ProjBorrow p o)
+     ((some (c) -> ,some-body)
+      (none () -> ,none-body))))
+
 (define (summaries core callables)
   (define ir (build-region-ir core))
   (sixth
@@ -464,6 +495,135 @@
   (check-equal? (deferred-leaf-exit-exit-kind (first exits)) 'local)
   (check-equal? (deferred-leaf-exit-alpha (first exits))
                 (capability-entry-declared-lifetime formal-entry)))
+
+(test-case "仮引数を親に持つ分解 binder は binder 起点の local 出口を一つ記録する"
+  (define summary (first (summaries (binder-reader-core '(Read c))
+                                    `((binder-reader ,binder-reader-type)))))
+  (define exits (binder-events summary))
+  (check-equal? (length exits) 1)
+  (check-equal? (deferred-leaf-exit-formal-index (first exits)) 0)
+  (check-eq? (deferred-leaf-exit-exit-kind (first exits)) 'local)
+  (check-true (lifetime-var? (deferred-leaf-exit-alpha (first exits)))))
+
+(test-case "仮引数を親に持つ分解 binder を結果へ返すと binder 起点の result 出口を記録する"
+  (define summary
+    (first (summaries (binder-reader-core 'c '(ProjBorrow p g))
+                      `((binder-reader ,binder-returner-type)))))
+  (define exits
+    (filter (lambda (exit)
+              (eq? (deferred-leaf-exit-exit-kind exit) 'result))
+            (binder-events summary)))
+  (check-equal? (length exits) 1)
+  (check-equal? (deferred-leaf-exit-formal-index (first exits)) 0)
+  (check-equal? (deferred-leaf-exit-destination (first exits)) '()))
+
+(test-case "Recur の枠の往復で binder 起点の出口イベントを落とさない"
+  (define body (binder-reader-body '(Read c)))
+  (define recur-summary
+    (for/first ([summary
+                 (in-list
+                  (summaries
+                   `(Scope (1)
+                      (RegionLam (a)
+                        (RecurVal binder-reader f (p) ,body)))
+                   `((binder-reader ,binder-reader-type))))]
+                #:when (pair? (binder-events summary)))
+      summary))
+  (define direct-summary
+    (for/first ([summary
+                 (in-list
+                  (summaries
+                   `(Scope (1)
+                      (RegionLam (a)
+                        (Lam User binder-reader (p) ,body)))
+                   `((binder-reader ,binder-reader-type))))]
+                #:when (pair? (binder-events summary)))
+      summary))
+  (check-not-false recur-summary)
+  (check-not-false direct-summary)
+  (when (and recur-summary direct-summary)
+    (check-equal? (map exit-shape (binder-events recur-summary))
+                  (map exit-shape (binder-events direct-summary)))))
+
+(test-case "Recur で読み切る枝と再帰結果を返す枝の binder 出口を併せて記録する"
+  (define recursive-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut (Option Int) (RParam a))
+             (BorrowedMut Int (RParam a)))
+            (BorrowedMut Int (RParam a)) () (Mutation) () User)))
+  (define body
+    '(Eliminate parent
+        ((some (child) ->
+          (Let (read-result let Int) (Read child) child))
+        (none () -> (Apply f parent fallback)))))
+  (define core
+    `(Scope (1)
+       (RegionLam (a)
+         (Recur binder-reader f (parent fallback)
+           ,body
+           (Lam User continuation (next-parent next-fallback)
+             (Apply (RegionApp f ((RParam a))) next-parent next-fallback))))))
+  (define all-summaries
+    (summaries core `((binder-reader ,recursive-type)
+                      (continuation ,recursive-type))))
+  (define summary
+    (for/first ([candidate (in-list all-summaries)]
+                #:when
+                (let ([events (binder-events candidate)])
+                  (and (for/or ([event (in-list events)])
+                         (eq? (deferred-leaf-exit-exit-kind event) 'local))
+                       (for/or ([event (in-list events)])
+                         (eq? (deferred-leaf-exit-exit-kind event) 'result)))))
+      candidate))
+  (check-not-false summary
+                   (format "summary events: ~s"
+                           (map callable-summary-leaf-exits all-summaries))))
+
+(test-case "局所 owner を親に持つ分解 binder は binder 起点の local 出口を記録する"
+  (define local-reader-type '(NFn (Unit) Int () () () User))
+  (define core
+    `(Scope (1)
+       (Lam User local-reader (ignored)
+         (Let (owner let (Owned ,binder-owner-type)) ,binder-owner-value
+           (Let (p let (BorrowedMut ,binder-owner-type (RParam %omitted)))
+             (BorrowMut owner)
+             ,(binder-reader-body '(Read c)))))))
+  (define all-summaries
+    (summaries core `((local-reader ,local-reader-type))))
+  (define exits
+    (append-map binder-events all-summaries))
+  (check-equal? (length exits) 1)
+  (check-eq? (deferred-leaf-exit-exit-kind (first exits)) 'local))
+
+(test-case "Lam 本体の根に置いた自身の仮引数は capture にせず result として記録する"
+  (define inner-type
+    '(NFn ((BorrowedMut Int (RParam a)))
+          (BorrowedMut Int (RParam a)) () () () User))
+  (define outer-type
+    `(ForallRegion (a) (NFn () ,inner-type () () () User)))
+  (define all-summaries
+    (summaries
+     '(Scope (1)
+        (RegionLam (a)
+          (Lam User outer ()
+            (Lam User inner (y) y))))
+     `((outer ,outer-type) (inner ,inner-type))))
+  (define inner-summary
+    (for/first ([summary (in-list all-summaries)]
+                #:when
+                (for/or ([exit (in-list (callable-summary-leaf-exits summary))])
+                  (and (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))
+                       (eq? (deferred-leaf-exit-exit-kind exit) 'result))))
+      summary))
+  (check-not-false inner-summary)
+  (when inner-summary
+    (check-false
+     (for/or ([exit (in-list (callable-summary-leaf-exits inner-summary))])
+       (eq? (deferred-leaf-exit-exit-kind exit) 'capture)))
+    (check-true
+     (for/or ([exit (in-list (callable-summary-leaf-exits inner-summary))])
+       (and (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))
+            (eq? (deferred-leaf-exit-exit-kind exit) 'result))))))
 
 (test-case "仮引数の葉を Return payload にする Lam は handle の出口を記録する"
   (define return-type

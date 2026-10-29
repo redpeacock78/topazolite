@@ -857,7 +857,11 @@
 
 ;; spec §3.3。α 表と σ から、注釈欄を解いた寿命へ置き換えた core を返す。
 ;; point の数え方は annotate-regions と同じく core-children に従う。
-(define (materialize-regions ir core table σ [binder-alphas (hash)])
+(define (materialize-regions ir core table σ [binder-alphas (hash)]
+                            [binder-parent-keys (set)])
+  (unless (or (set? binder-parent-keys)
+              (set-mutable? binder-parent-keys))
+    (raise-argument-error 'materialize-regions "set?" binder-parent-keys))
   ;; alpha-table に載る α は fresh-lifetime! と contains 制約を同時に
   ;; 作ったものだけであり、必ず σ の鍵を持つ。既定値で隠さず不変条件を
   ;; 破ったときは hash-ref の error として検出する。
@@ -875,11 +879,13 @@
         (region->rho ir (hash-ref σ (lifetime-var-index ρ)))
         ρ))
   (define (resolve-binder-region point branch-index binder-index ρm)
-    (define α (hash-ref binder-alphas
-                        (list point branch-index binder-index) #f))
-    (if α
-        (region->rho ir (hash-ref σ (lifetime-var-index α)))
-        ρm))
+    (define key (list point branch-index binder-index))
+    (if (set-member? binder-parent-keys key)
+        ρm
+        (let ([α (hash-ref binder-alphas key #f)])
+          (if α
+              (region->rho ir (hash-ref σ (lifetime-var-index α)))
+              ρm))))
   (define (walk node point)
     (define replaced
       (match node

@@ -161,6 +161,10 @@
 
 ;; 分解 binder の α は check/infer の再走査で共有する。
 (define branch-binder-alphas (make-parameter #f))
+;; 仮引数を親に持つ binder は、materialize 時に %parent を保つ。
+(define branch-binder-parent-keys (make-parameter #f))
+;; binder source ごとの親と、出口を積む callable を保持する。
+(define branch-binder-event-info (make-parameter #f))
 
 ;; lexical binder ごとの本体 point。出口の型がどの束縛へ届くかを判定する。
 (define binder-points (make-parameter (hash)))
@@ -323,8 +327,23 @@
    equal?))
 
 (define (record-leaf-exit! event root node fail)
-  (when (owning-frame root)
-    (route-deferred! event root node fail)))
+  (match (deferred-leaf-exit-source event)
+    [`(binder ,decomposition ,branch-index ,binder-index)
+     (define info-table (branch-binder-event-info))
+     (define info
+       (and (hash? info-table)
+            (hash-ref info-table
+                      (list decomposition branch-index binder-index) #f)))
+     (when info
+       (define frame (first info))
+       (define collector (template-frame-box frame))
+       (unless (for/or ([previous (in-list (unbox collector))])
+                 (and (deferred-leaf-exit? previous)
+                      (equal? (leaf-exit-identity previous)
+                              (leaf-exit-identity event))))
+         (set-box! collector (cons event (unbox collector)))))]
+    [_ (when (owning-frame root)
+         (route-deferred! event root node fail))]))
 
 (define (leaf-exit-destinations exit-kind destinations)
   (if (null? destinations)
@@ -372,11 +391,68 @@
                        exit-kind
                        (destination-for (car actual-leaf) formal-path alpha)))])
                 (record-leaf-exit!
-                 (deferred-leaf-exit
+                (deferred-leaf-exit
                   (list 'formal index formal-path) index formal-path '() mode alpha
-                  (append (second root) '(0))
+                 (append (second root) '(0))
                   (first destination) (second destination))
                  root expression fail)))))))))
+
+(define (record-binder-type-exits! type expression exit-kind destination-for fail)
+  (define alphas (branch-binder-alphas))
+  (define infos (branch-binder-event-info))
+  (when (and (hash? alphas) (hash? infos))
+    (define-values (_root leaves)
+      (formal-capability-entry type '(binder-exit)))
+    (for ([(path entry) (in-hash leaves)]
+          #:when (and (capability-entry? entry)
+                      (capability-entry-declared-lifetime entry)))
+      (define source-alpha (capability-entry-declared-lifetime entry))
+      (for ([(key alpha) (in-hash alphas)]
+            #:when (equal? source-alpha alpha))
+        (match (hash-ref infos key #f)
+          [(list _frame formal-index parent-path parent-alpha mode)
+           (for ([destination
+                  (in-list
+                   (leaf-exit-destinations
+                    exit-kind
+                    (destination-for path parent-path parent-alpha)))])
+             (record-leaf-exit!
+              (deferred-leaf-exit
+               (cons 'binder key) formal-index parent-path path mode alpha
+               (first key) (first destination) (second destination))
+              #f expression fail))]
+          [_ (void)])))))
+
+(define (record-binder-result-exits-in! core Λ result-type fail)
+  (define term (peel-node core))
+  (define head (and (pair? term) (car term)))
+  (define child-indices
+    (match term
+      [`(Let ,_ ,_ ,_) '(1)]
+      [`(Scope ,_ ,_) '(0)]
+      [`(RegionLam ,_ ,_) '(0)]
+      [`(Unsafe ,_) '(0)]
+      [`(Suspend ,_) '(0)]
+      [`(Discharge ,_ ,_) '(0)]
+      [`(Recur ,_ ,_ ,_ ,_ ,_) '(1)]
+      [`(RecurVal ,_ ,_ ,_ ,_) '(0)]
+      [`(Eliminate ,_ ,branches) (range 1 (add1 (length branches)))]
+      [`(EliminateAt ,_ ,branches) (range 1 (add1 (length branches)))]
+      [`(UnionEliminate ,_ ,branches) (range 1 (add1 (length branches)))]
+      [`(UnionEliminateAt ,_ ,branches) (range 1 (add1 (length branches)))]
+      [_ '()]))
+  (for ([index (in-list child-indices)])
+    (define child (list-ref (core-children term) index))
+    (when (and (positive? index)
+               (memq head '(Eliminate EliminateAt
+                            UnionEliminate UnionEliminateAt)))
+      (record-binder-type-exits!
+       (typing-child-type Λ index) child 'result
+       (lambda (_actual-path _source-path parent-alpha)
+         (formal-destination-paths result-type parent-alpha))
+       fail))
+    (record-binder-result-exits-in! child (enter-child Λ index)
+                                    result-type fail)))
 
 (define (record-formal-site-exits! core Λ child-index expression exit-kind
                                    destination-for fail)
@@ -393,7 +469,16 @@
    Λ expression 'result
    (lambda (_actual-path _source-path alpha)
      (formal-destination-paths result-type alpha))
-   fail))
+   fail)
+  (match (typing-result-at Λ)
+    [(list actual-type _normal-type _row _escapes)
+     (record-binder-type-exits!
+      actual-type expression 'result
+      (lambda (_actual-path _source-path parent-alpha)
+        (formal-destination-paths result-type parent-alpha))
+      fail)]
+    [_ (void)])
+  (record-binder-result-exits-in! expression Λ result-type fail))
 
 (define (record-formal-argument-exits! Λ expression parameter-index parameter-type fail)
   (record-formal-source-exits!
@@ -1633,13 +1718,19 @@
     (when type
       (emit-decomposition-exit! ir point #f type node fail))))
 
-(define (record-captured-formal-exits! core Λ body bound-names fail)
+(define (record-captured-formal-exits! core Λ body bound-names environment fail)
   (for ([name (in-set (set-subtract (core-free-vars body)
                                     (list->set bound-names)))])
     (record-formal-source-exits!
      (enter-child Λ 0) name 'capture
      (lambda (_actual-path _source-path _alpha) (list (peel-node core)))
-     fail)))
+     fail)
+    (define type (lookup environment name))
+    (when type
+      (record-binder-type-exits!
+       type name 'capture
+       (lambda (_actual-path _source-path _alpha) (list (peel-node core)))
+       fail))))
 
 (define (emit-expression-decomposition-exits! core Λ environment places
                                               callables result-type fail)
@@ -1651,9 +1742,12 @@
       (match (peel-node core)
         [(list (? symbol? name) _ ...) name]
         [_ #f]))
-    (define (record-unclassified! child-Λ child)
+    (define (record-unclassified! child-Λ child source-type)
       (record-formal-source-exits!
        child-Λ child 'unclassified
+       (lambda (_actual-path _source-path _alpha) (list #f)) fail)
+      (record-binder-type-exits!
+       source-type child 'unclassified
        (lambda (_actual-path _source-path _alpha) (list #f)) fail))
     (for ([child (in-list (core-children (peel-node core)))]
           [index (in-naturals)])
@@ -1668,19 +1762,38 @@
                (callable-type-parameter-types (child-type 0)))
              (define parameter-index (sub1 index))
              (if (< parameter-index (length parameter-types))
-                 (record-formal-argument-exits!
-                  child-Λ child parameter-index
-                  (list-ref parameter-types parameter-index) fail)
-                 (record-unclassified! child-Λ child))]
+                 (begin
+                   (record-formal-argument-exits!
+                    child-Λ child parameter-index
+                    (list-ref parameter-types parameter-index) fail)
+                   (record-binder-type-exits!
+                    (child-type index) child exit-kind
+                    (lambda (_actual _source parent-alpha)
+                      (for/list
+                          ([path (in-list
+                                  (formal-destination-paths
+                                   (list-ref parameter-types parameter-index)
+                                   parent-alpha))])
+                        (list parameter-index path)))
+                    fail))
+                 (record-unclassified! child-Λ child (child-type index)))]
             [(eq? exit-kind 'local)
              (record-formal-source-exits!
               child-Λ child exit-kind
+              (lambda (_actual _source _alpha) (list #f)) fail)
+             (record-binder-type-exits!
+              (child-type index) child exit-kind
               (lambda (_actual _source _alpha) (list #f)) fail)]
             [(eq? exit-kind 'result)
              (record-formal-source-exits!
               child-Λ child exit-kind
               (lambda (_actual _source alpha)
                 (formal-destination-paths result-type alpha))
+              fail)
+             (record-binder-type-exits!
+              (child-type index) child exit-kind
+              (lambda (_actual _source parent-alpha)
+                (formal-destination-paths result-type parent-alpha))
               fail)]
             [(eq? exit-kind 'handle)
              (match (peel-node core)
@@ -1691,14 +1804,26 @@
                    (for/list ([path (in-list
                                      (formal-destination-paths payload-type alpha))])
                      (list 'Return path)))
+                 fail)
+                (record-binder-type-exits!
+                 (child-type index) child exit-kind
+                 (lambda (_actual _source parent-alpha)
+                   (for/list ([path (in-list
+                                     (formal-destination-paths payload-type
+                                                               parent-alpha))])
+                     (list 'Return path)))
                  fail)]
-               [_ (record-unclassified! child-Λ child)])]
+               [_ (record-unclassified! child-Λ child (child-type index))])]
             [else
              (record-formal-source-exits!
               child-Λ child exit-kind
               (lambda (_actual _source _alpha) (list (peel-node core)))
+              fail)
+             (record-binder-type-exits!
+              (child-type index) child exit-kind
+              (lambda (_actual _source _alpha) (list (peel-node core)))
               fail)])]
-        [else (record-unclassified! child-Λ child)]))
+        [else (record-unclassified! child-Λ child (child-type index))]))
     (match (peel-node core)
       [`(Eliminate ,_ ,_)
        (emit-decomposition-result! ir point result-type core fail)]
@@ -1731,15 +1856,15 @@
       [`(Lam ,_ ,_ (,parameters ...) ,body)
        (emit-captured-decomposition-exits!
         ir point body parameters environment core fail)
-       (record-captured-formal-exits! core Λ body parameters fail)]
+       (record-captured-formal-exits! core Λ body parameters environment fail)]
       [`(RecurVal ,_ ,function (,parameters ...) ,body)
        (emit-captured-decomposition-exits!
         ir point body (cons function parameters) environment core fail)
        (record-captured-formal-exits!
-        core Λ body (cons function parameters) fail)]
+        core Λ body (cons function parameters) environment fail)]
       [`(Recur ,_ ,function (,parameters ...) ,body ,_continuation)
        (record-captured-formal-exits!
-        core Λ body (cons function parameters) fail)]
+        core Λ body (cons function parameters) environment fail)]
       [`(Apply ,function ,arguments ...)
        (define function-type (child-type 0))
        (emit-latent-decomposition-exits!
@@ -2998,7 +3123,6 @@
          (not (match (normalize-type marked-type)
                 [`(BorrowedMut ,_ ,_) #t]
                 [_ #f]))
-         formal-parent?
          (and region-mark (not (eq? region-mark '%parent)))
          (not (lexical-region-ir? ir)))
      (values marked-type Ψ)]
@@ -3007,6 +3131,54 @@
     [else
      (define alpha
        (branch-binder-alpha! decomposition branch-index binder-index))
+     (when formal-parent?
+       (define parent-keys (branch-binder-parent-keys))
+       (unless (and parent-keys (set-mutable? parent-keys))
+         (error 'branch-binder-type+psi "仮引数親 binder の鍵集合が無い"))
+       (set-add! parent-keys (list decomposition branch-index binder-index)))
+     (define event-info (branch-binder-event-info))
+     (when (and (hash? event-info) (pair? (template-collectors)))
+       (define parent-capabilities
+         (sort (set->list parent-caps) string<? #:key (lambda (cap) (format "~s" cap))))
+       (define source-cap
+         (or (for/first ([cap (in-list parent-capabilities)]
+                         #:when (formal-key? (car cap)))
+               cap)
+             (first parent-capabilities)))
+       (define source-root (car source-cap))
+       (define source-frame (and (formal-key? source-root)
+                                 (owning-frame source-root)))
+       (define source-fields
+         (and source-frame
+              (< (fourth source-root)
+                 (length (template-frame-formal-fields source-frame)))
+              (list-ref (template-frame-formal-fields source-frame)
+                        (fourth source-root))))
+       (define source-leaf
+         (and (hash? source-fields)
+              (for/fold ([best #f]) ([(path entry) (in-hash source-fields)])
+                (define matching-paths
+                  (if (capability-entry? entry)
+                      (for/list ([cap (in-set (capability-entry-keys entry))]
+                                 #:when (and (equal? (car cap) source-root)
+                                             (path-prefix? (cdr cap)
+                                                           (cdr source-cap))))
+                        (cdr cap))
+                      '()))
+                (if (and (pair? matching-paths)
+                         (or (not best)
+                             (> (apply max (map length matching-paths))
+                                (car best))))
+                    (cons (apply max (map length matching-paths)) entry)
+                    best))))
+       (define event-parent-alpha
+         (or (and source-leaf
+                  (capability-entry-declared-lifetime (cdr source-leaf)))
+             parent-alpha))
+       (hash-set! event-info (list decomposition branch-index binder-index)
+                  (list (first (template-collectors))
+                        (if (formal-key? source-root) (fourth source-root) 'local)
+                        (cdr source-cap) event-parent-alpha 'mut)))
      (define branch-region (branch-region-of ir decomposition branch-index))
      (define parent-term
        (if (or (lifetime-var? parent-alpha) (rparam-term? parent-alpha))
@@ -3934,14 +4106,19 @@
         (region-constraint 'contains α_m (region-at ir point) point node))
        (for ([s (in-list shapes)])
          (define ρ (third s))
-         (if (lifetime-var? ρ)
-             ;; 合流した値は両分岐の寿命に収まる。§10.1。
-             (emit-constraint!
-              (region-constraint 'merge ρ α_m point node))
-             ;; 具体の側は下限である。§3.1。
-             (emit-constraint!
-              (region-constraint 'contains α_m (rho->region ir ρ)
-                                 point node)))))
+         (cond
+           [(lifetime-var? ρ)
+            ;; 合流した値は両分岐の寿命に収まる。§10.1。
+            (emit-constraint!
+             (region-constraint 'merge ρ α_m point node))]
+           [(rparam-term? ρ)
+            ;; 仮引数の寿命は呼出し位置で実体化するため、定義時 IR では解決しない。
+            (void)]
+           [else
+            ;; 具体の側は下限である。§3.1。
+            (emit-constraint!
+             (region-constraint 'contains α_m (rho->region ir ρ)
+                                point node))])))
      (list (list ctor payload α_m))]
     [(unify-nested-borrow-lifetimes types) => values]
     [else types]))
@@ -4766,6 +4943,8 @@
                         [region-binder-renamings '()]
                         [alpha-table (box (hash))]
                         [branch-binder-alphas (make-hash)]
+                        [branch-binder-parent-keys (mutable-set)]
+                        [branch-binder-event-info (make-hash)]
                         [resource-place-set (set)]
                         [resource-identity-transfers (set)]
         [merge-alpha-sources (make-hash)]
@@ -7531,6 +7710,8 @@
                    [region-binder-renamings '()]
                    [alpha-table tbl]
                    [branch-binder-alphas (make-hash)]
+                   [branch-binder-parent-keys (mutable-set)]
+                   [branch-binder-event-info (make-hash)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries forwarding-table]
@@ -8040,6 +8221,7 @@
                       #:sidecar [sidecar-box #f]
                       #:ptr-sidecar [ptr-box #f]
                       #:binder-alphas [binder-alphas-box #f]
+                      #:binder-parent-keys [binder-parent-keys-box #f]
                       #:mut-types [mut-types-box #f]
                       #:callable-contexts [callable-contexts-box #f]
                       #:normal-type [normal-type-box #f])
@@ -8051,6 +8233,10 @@
     (unless (box? callable-contexts-box)
       (raise-argument-error 'type-of/raw* "box?" callable-contexts-box))
     (set-box! callable-contexts-box (hash)))
+  (when binder-parent-keys-box
+    (unless (box? binder-parent-keys-box)
+      (raise-argument-error 'type-of/raw* "box?" binder-parent-keys-box))
+    (set-box! binder-parent-keys-box (set)))
   (when normal-type-box
     (unless (box? normal-type-box)
       (raise-argument-error 'type-of/raw* "box?" normal-type-box))
@@ -8060,6 +8246,7 @@
     (and callable-contexts-box (box (hash))))
   (define resolved-mut-types (box (hash)))
   (define collected-binder-alphas (box (hash)))
+  (define collected-binder-parent-keys (box (set)))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -8079,6 +8266,8 @@
                    [region-binder-renamings '()]
                    [alpha-table tbl]
                    [branch-binder-alphas (make-hash)]
+                   [branch-binder-parent-keys (mutable-set)]
+                   [branch-binder-event-info (make-hash)]
                    [mut-binding-types-table collected-mut-types]
                    [callable-contexts-table collected-callable-contexts]
                    [resource-place-set (set)]
@@ -8183,6 +8372,9 @@
               (set-box! resolved-mut-types effective-mut-types)
               (set-box! collected-binder-alphas
                         (branch-binder-alphas))
+              (set-box! collected-binder-parent-keys
+                        (for/set ([key (in-set (branch-binder-parent-keys))])
+                          key))
               ;; row も同じ σ で解く。Yield は観測値の型を (Yield τ) として、
               ;; Perform は (Return boundary τ) として row へ入れるため、
               ;; 借用をこれらで返すと row が α を運ぶ。
@@ -8206,6 +8398,10 @@
     (unless (box? binder-alphas-box)
       (raise-argument-error 'type-of/raw* "box?" binder-alphas-box))
     (set-box! binder-alphas-box (unbox collected-binder-alphas)))
+  (when (and binder-parent-keys-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (set-box! binder-parent-keys-box
+              (unbox collected-binder-parent-keys)))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
@@ -8234,13 +8430,15 @@
                               [Λ (empty-region-ctx)]
                               #:mut-types [mut-types-box #f]
                               #:callable-contexts [callable-contexts-box #f]
-                              #:binder-alphas [binder-alphas-box #f])
+                              #:binder-alphas [binder-alphas-box #f]
+                              #:binder-parent-keys [binder-parent-keys-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:sidecar sidecar-box
                        #:mut-types mut-types-box
                        #:callable-contexts callable-contexts-box
-                       #:binder-alphas binder-alphas-box)
+                       #:binder-alphas binder-alphas-box
+                       #:binder-parent-keys binder-parent-keys-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -8338,7 +8536,7 @@
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
 (struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts
-                           binder-alphas)
+                           binder-alphas binder-parent-keys)
   #:transparent)
 
 (define region-bearing-forms
@@ -8363,16 +8561,18 @@
   (define mut-types (box (hash)))
   (define callable-contexts (box (hash)))
   (define binder-alphas (box (hash)))
+  (define binder-parent-keys (box (set)))
   (match (type-of/raw*+borrows
           annotated places callables environment
           (region-ctx ir '() owners (hash))
           #:mut-types mut-types
           #:callable-contexts callable-contexts
-          #:binder-alphas binder-alphas)
+          #:binder-alphas binder-alphas
+          #:binder-parent-keys binder-parent-keys)
     [(list 'ok (list type row table σ renamed sidecar))
      (region-typed type row ir table σ renamed sidecar
                    (unbox mut-types) (unbox callable-contexts)
-                   (unbox binder-alphas))]
+                   (unbox binder-alphas) (unbox binder-parent-keys))]
     [(list 'fail key node details)
      (typing-diagnostic key node details expansion-context)]
     [other (error 'core-type-of/regions "typing の結果が不正である: ~s" other)]))
@@ -8386,7 +8586,8 @@
                           (region-typed-renamed typed))
                          (region-typed-table typed)
                          (region-typed-σ typed)
-                         (region-typed-binder-alphas typed)))
+                         (region-typed-binder-alphas typed)
+                         (region-typed-binder-parent-keys typed)))
   (annotate-callable-contexts
    (annotate-mut-binding-types core (region-typed-mut-types typed))
    (region-typed-callable-contexts typed)
@@ -8398,15 +8599,18 @@
                                    [Λ (empty-region-ctx)])
   (define contexts (box (hash)))
   (define binder-alphas (box (hash)))
+  (define binder-parent-keys (box (set)))
   (match (type-of/raw* core-in places callables environment Λ
                        #:callable-contexts contexts
-                       #:binder-alphas binder-alphas)
+                       #:binder-alphas binder-alphas
+                       #:binder-parent-keys binder-parent-keys)
     [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
      (define materialized
        (if ir
            (materialize-regions ir renamed table σ
-                                (unbox binder-alphas))
+                                (unbox binder-alphas)
+                                (unbox binder-parent-keys))
            renamed))
      (list 'ok type
            (annotate-callable-contexts materialized

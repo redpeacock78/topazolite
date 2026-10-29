@@ -844,7 +844,7 @@
          'unit)))
    "E-BOR-003" '() "escape-apply-reborrow-without-apply"))
 
-(test-case "formal parent の可変 binder は新しい alpha を作らない"
+(test-case "formal parent の可変 binder は新しい alpha を作る"
   (define core
     (with-eparent
      (param-parent-call (elim-o '(Read c) 0))))
@@ -852,8 +852,32 @@
   (check-true (region-typed? typed) (format "formal-parent binder: 型検査 ~s" typed))
   (when (region-typed? typed)
     (check-equal? (region-typed-type typed) 'Int)
-    (check-equal? (hash-count (region-typed-binder-alphas typed)) 0
-                  "formal parent では binder alpha を生成しない")
+    (define alphas (hash-values (region-typed-binder-alphas typed)))
+    (check-equal? (length alphas) 1
+                  "formal parent でも binder alpha を一つ生成する")
+    (check-true (pair? alphas)
+                "raw RVar の検査が空集合への andmap で通らない")
+    (check-true (andmap lifetime-var? alphas)
+                "型付け結果には descriptor でなく raw RVar を保持する")
+    (match typed
+      [(region-typed _ _ _ _ _ _ _ _ _ alpha-table parent-keys)
+       (check-equal? parent-keys (list->set (hash-keys alpha-table))
+                     "formal-parent の鍵は alpha と分けて保持する")])
+    (define (has-parent-binder-region? term)
+      (match term
+        [`(EliminateAt ,_ (,branches ...))
+         (or (for/or ([branch (in-list branches)])
+               (match branch
+                 [`(some (c) (,region) -> ,_)
+                  (equal? region '%parent)]
+                 [_ #f]))
+             (ormap has-parent-binder-region? branches))]
+        [(? pair? parts)
+         (or (has-parent-binder-region? (car parts))
+             (has-parent-binder-region? (cdr parts)))]
+        [_ #f]))
+    (check-true (has-parent-binder-region? (region-execution-core typed))
+                "materialize 後も formal parent の枝注釈は %parent のまま")
     (check-runtime typed ir param-parent-callables 'Int "formal-parent-binder")))
 
 (test-case "枝内で独立に作った借用は枝の後で同じ欄を書ける"
