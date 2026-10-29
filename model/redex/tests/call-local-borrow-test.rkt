@@ -3,6 +3,7 @@
 (require rackunit
          racket/list
          racket/match
+         racket/set
          redex/reduction-semantics
          "../borrow-gen.rkt"
          "../borrow-oracle.rkt"
@@ -176,12 +177,32 @@
 
 (test-case "窓のある関数を裸と Scope 包みの双方で呼べる"
   (define body (window-function-body '(Assign p 7)))
-  (for ([wrapped? (in-list '(#f #t))])
-    (define-values (_ir _filled typed)
-      (window-type (inner-scope-core body wrapped?)))
-    (check-true (region-typed? typed)
-                (format "wrapped=~s: ~s; core=~s" wrapped? typed _filled))
-    (check-live-trace typed 'Unit)))
+  (define observations '())
+  (parameterize
+      ([current-local-exit-window-probe
+        (lambda (_cap _index alpha origins source-alphas window event)
+          (set! observations
+                (cons (list alpha origins source-alphas window event)
+                      observations)))])
+    (for ([wrapped? (in-list '(#f #t))])
+      (define-values (_ir _filled typed)
+        (window-type (inner-scope-core body wrapped?)))
+      (check-true (region-typed? typed)
+                  (format "wrapped=~s: ~s; core=~s" wrapped? typed _filled))
+      (check-live-trace typed 'Unit)))
+  (define mapped
+    (findf (lambda (observation)
+             (and (set? (third observation))
+                  (not (set-empty? (third observation)))
+                  (fourth observation)
+                  (deferred-leaf-exit? (fifth observation))))
+           observations))
+  (check-not-false mapped (format "alpha の対応付け: ~s" observations))
+  (when mapped
+    (check-equal? (first mapped)
+                  (deferred-leaf-exit-alpha (fifth mapped)))
+    (check-true (set-empty? (set-intersect (second mapped) (third mapped)))
+                "定義時 alpha と実引数の source alpha の添字一致に依存しない")))
 
 (test-case "Scope の再借用を関数結果へ返す形は窓を付けず親 Assign を拒む"
   (define body
@@ -380,7 +401,13 @@
   (check-equal? (diagnostic-id handle-result) "E-BOR-008")
   (check-equal? (diagnostic-id recur-result) "E-BOR-025"))
 
-(test-case "裸の呼出しを同じ lexical Scope で続けると二度目の BorrowMut は E-BOR-003"
+(test-case "出口の無い署名要約の呼出しは従来どおり lexical loan を残す"
+  (define summary
+    (signature-forwarding-summary
+     (list '(BorrowedMut Int (RParam a))) 'Int 'sink
+     (lambda (id node) (error 'signature-forwarding-summary "~a: ~s" id node))))
+  (check-equal? (callable-summary-leaf-exits summary) '())
+  (check-true (callable-summary-incomplete? summary))
   (define core
     `(Scope ()
        (Let (x let (Owned Int)) 1

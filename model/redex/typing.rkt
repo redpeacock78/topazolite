@@ -114,10 +114,13 @@
          leaf-exit-sites
          current-leaf-exit-sites
          current-leaf-exit-capability-reader
+         current-local-exit-window-probe
          leaf-exit-destinations
          site-position-matches?
          normalize-leaf-exits
          callable-summary-leaf-exits
+         classify-leaf-exits
+         leaf-exit-local-safe?
          signature-forwarding-summary
          formal-leaf-info
          instantiate-capability-path
@@ -956,6 +959,46 @@
 (define (callable-summary-leaf-exits summary)
   (filter deferred-leaf-exit? (callable-summary-deferred summary)))
 
+(define (leaf-exit-key event)
+  (list (deferred-leaf-exit-source event)
+        (deferred-leaf-exit-alpha event)))
+
+(define (classify-leaf-exits exits)
+  (define grouped
+    (for/fold ([groups (hash)]) ([event (in-list exits)])
+      (hash-update groups (leaf-exit-key event)
+                   (lambda (previous) (cons event previous)) '())))
+  (for/hash ([(key events) (in-hash grouped)])
+    (values key
+            (if (andmap (lambda (event)
+                          (eq? (deferred-leaf-exit-exit-kind event) 'local))
+                        events)
+                'local
+                'fail-closed))))
+
+(define (leaf-exit-local-safe? source exits result-type)
+  (and (pair? exits)
+       (andmap (lambda (event)
+                 (and (deferred-leaf-exit? event)
+                      (equal? (deferred-leaf-exit-source event) source)
+                      (eq? (deferred-leaf-exit-exit-kind event) 'local)))
+               exits)
+       (match source
+         [(list 'formal _ ...) #t]
+         [(list 'binder _ ...)
+          (define result-alphas (lifetime-vars-in result-type))
+          (for/and ([event (in-list exits)])
+            (not (set-member? result-alphas
+                              (deferred-leaf-exit-alpha event))))]
+         [_ #f])))
+
+(define (local-exit-alpha-origins alpha)
+  (define merged
+    (if (lifetime-var? alpha) (alpha-set alpha) (set)))
+  (define derived
+    (if (lifetime-var? alpha) (binder-alpha-origins alpha) (set)))
+  (set-add (set-union merged derived) alpha))
+
 ;; 要約を出現ごとに溜める表。既定の #f は「収集の外」であり、書き込みを
 ;; 黙って捨てる位置と区別する。typing の入口 2 つが parameterize する。
 (define callable-summaries (make-parameter #f))
@@ -1396,9 +1439,16 @@
   (argument-source Λ operand type 0))
 
 ;; §5.4。雛形の formal 鍵、region、局所 α を呼出し位置へ置き換えて要求を出す。
-(define (instantiate-deferred! summary Λ node subst sources Ψ fail)
+(define (instantiate-deferred! summary arguments actuals result-type
+                               Λ node subst sources Ψ fail)
   (define region-subst (callable-summary-region-subst summary))
   (define deferred (callable-summary-deferred summary))
+  (define exits (callable-summary-leaf-exits summary))
+  (define exit-classifications (classify-leaf-exits exits))
+  (define (event-group event)
+    (filter (lambda (candidate)
+              (equal? (leaf-exit-key candidate) (leaf-exit-key event)))
+            exits))
   (define locals (make-hash))
   (define point (region-ctx-point Λ))
   (define ir (region-ctx-ir Λ))
@@ -1447,11 +1497,78 @@
     (append point
             (list (length (core-children (peel-node node))))
             body-point))
+  (define (event-formal-index event)
+    (match (deferred-leaf-exit-source event)
+      [`(formal ,index ,_) index]
+      [`(binder ,_ ...) (deferred-leaf-exit-formal-index event)]
+      [_ #f]))
+  (define (event-matches-cap? event cap index origins)
+    (define event-index (event-formal-index event))
+    (and (exact-nonnegative-integer? event-index)
+         (= event-index index)
+         (< index (length actuals))
+         (let* ([formal-path (deferred-leaf-exit-parent-path event)]
+                [actual-type (list-ref actuals index)]
+                [actual-path
+                 (instantiate-capability-path actual-type formal-path
+                                               region-subst)])
+           (and actual-path (equal? actual-path (cdr cap))
+                (let ([actual-entry
+                  (with-handlers ([exn:fail? (lambda (_) #f)])
+                        (actual-leaf-entry
+                          (enter-child Λ (add1 index))
+                          (list-ref arguments index) actual-type actual-path fail))])
+                  (and actual-entry
+                       (let-values ([(declared-alpha source-alphas)
+                                     (with-handlers ([exn:fail?
+                                                      (lambda (_) (values #f #f))])
+                                       (formal-leaf-info summary index formal-path
+                                                        actual-entry))])
+                          (cond
+                            [(and declared-alpha (set? source-alphas)
+                                  (not (set-empty? source-alphas))
+                                  (or (set-member? origins declared-alpha)
+                                      (for/or ([source-alpha
+                                                (in-set source-alphas)])
+                                        (set-member? origins source-alpha)))
+                                  (match (deferred-leaf-exit-source event)
+                                    [`(formal ,_ ,_)
+                                     (equal? declared-alpha
+                                            (deferred-leaf-exit-alpha event))]
+                                    [`(binder ,_ ...) #t]
+                                    [_ #f])
+                                  source-alphas)
+                             source-alphas]
+                            [else #f]))))))))
+  (define (local-exit-window cap index alpha)
+    (define origins (local-exit-alpha-origins alpha))
+    (define event
+      (for/first ([event (in-list exits)]
+                  #:when (let ([source-alphas
+                                (event-matches-cap? event cap index origins)])
+                           (and (set? source-alphas)
+                                (not (callable-summary-incomplete? summary))
+                                (eq? (hash-ref exit-classifications
+                                               (leaf-exit-key event)
+                                               'fail-closed)
+                                     'local)
+                                (leaf-exit-local-safe?
+                                 (deferred-leaf-exit-source event)
+                                 (event-group event) result-type))))
+        event))
+    (define window (and event (deferred-point '())))
+    (define probe (current-local-exit-window-probe))
+    (when probe
+      (probe cap index alpha origins
+             (and event (event-matches-cap? event cap index origins))
+             window event))
+    window)
   (for ([item (in-list deferred)])
     (cond
       [(borrow-request? item)
        (define w (borrow-request-w item))
        (define caps (actual-caps w))
+       (define index (and (formal-key? w) (fourth w)))
        (define child-alpha (subst-term (borrow-request-alpha item)))
        (define reborrow-items
          (reborrow-constraints w (borrow-request-alpha item)
@@ -1459,6 +1576,10 @@
        (for ([cap (in-set caps)])
          (define child-fp
            (append (cdr cap) (borrow-request-fp item)))
+         (define local-window
+           (and index
+                (local-exit-window cap index
+                                   (borrow-request-alpha item))))
          (route-request!
           (borrow-request (car cap)
                           child-fp
@@ -1466,9 +1587,11 @@
                           child-alpha
                           (borrow-request-rho-borrow item)
                           (borrow-request-node item)
-                          (and (borrow-request-point item)
-                               (deferred-point
-                                (borrow-request-point item))))
+                          (if local-window
+                              local-window
+                              (and (borrow-request-point item)
+                                   (deferred-point
+                                    (borrow-request-point item)))))
           node fail)
          (for ([reborrow-item (in-list reborrow-items)])
            (define constraint
@@ -1482,8 +1605,13 @@
              (deferred-point (region-constraint-point constraint)))
            (define window-point
              (deferred-constraint-window-point reborrow-item))
+           (define local-window
+             (and index
+                  (local-exit-window
+                   cap index (region-constraint-left constraint))))
            (define suspension-window
-             (and window-point (deferred-point window-point)))
+             (or (and window-point (deferred-point window-point))
+                 local-window))
            (define parent-alphas
              (for/list ([entry (in-set (psi-mut current-psi))]
                         #:when (and (equal? (first entry) (car cap))
@@ -1534,6 +1662,7 @@
       [else
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
+       (define index (and (formal-key? w) (fourth w)))
        (define c-new
          (if (eq? (region-constraint-kind c) 'contains)
              (region-constraint 'contains
@@ -1547,13 +1676,20 @@
        (define window-point
          (deferred-constraint-window-point item))
        (for ([cap (in-set (actual-caps w))])
-         (route-constraint!
-          c-new (car cap) node fail
-          (and window-point (deferred-point window-point))
-          (append (cdr cap)
-                  (deferred-constraint-parent-fp item))
-          (append (cdr cap)
-                  (deferred-constraint-child-fp item))))]))
+         (define local-window
+           (and index
+                (local-exit-window
+                 cap index (region-constraint-left c))))
+         (unless (and local-window
+                      (eq? (region-constraint-kind c) 'contains))
+           (route-constraint!
+            c-new (car cap) node fail
+            (or local-window
+                (and window-point (deferred-point window-point)))
+            (append (cdr cap)
+                    (deferred-constraint-parent-fp item))
+            (append (cdr cap)
+                    (deferred-constraint-child-fp item)))))]))
   current-psi)
 
 ;; §5.5。呼出しの結果に付く要約を出現ごとに溜める表。
@@ -1593,6 +1729,9 @@
                  #:apply-entry capability-of-typed-point))
 
 (define current-leaf-exit-capability-reader (make-parameter typing-capability-of))
+
+;; local 窓が実引数の α 起源へ対応したことを試験から確認する。
+(define current-local-exit-window-probe (make-parameter #f))
 
 (define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
   (borrow-token-key Λ core locals #:fail fail
@@ -6492,7 +6631,8 @@
                        (set-union (bound-region-params) (list->set rps))])
          (infer body (enter-child Λ 0) closure-psi
                 (without-owned environment) places callables fail)))
-     (list `(ForallRegion ,rps ,body-type) body-row closure-psi)]
+     (list `(ForallRegion ,rps ,body-type) body-row
+           (psi-with-suspended closure-psi body-psi))]
 
     [`(PrimVal ,_ ,name)
      (match (assoc name (current-Γ0))
@@ -6918,8 +7058,8 @@
                        #:when w)
               (values w (argument-source Λ a τ i))))
           (set! next-psi
-                (instantiate-deferred! summary Λ core subst sources
-                                        call-psi fail)))
+                (instantiate-deferred! summary arguments actuals return-type
+                                        Λ core subst sources call-psi fail)))
         (unless summary (set! next-psi call-psi))
         (when (formal-capability-type? return-type)
           (define result-summary

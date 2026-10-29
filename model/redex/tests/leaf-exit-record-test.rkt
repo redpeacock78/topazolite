@@ -149,6 +149,50 @@
   (check-equal? (normalize-leaf-exits (list a b))
                 (normalize-leaf-exits (list b a))))
 
+(test-case "local 以外の出口を一つでも持つ起点は fail-closed に分類する"
+  (define local (deferred-leaf-exit '(formal 0 ()) 0 '() '() 'shared
+                                    '(RParam a) '() 'local #f))
+  (define result (struct-copy deferred-leaf-exit local [exit-kind 'result]))
+  (define exits (list local result))
+  (check-equal? (hash-ref (classify-leaf-exits exits)
+                          (list '(formal 0 ()) '(RParam a)))
+                'fail-closed))
+
+(test-case "local と unclassified を併せ持つ起点は fail-closed に分類する"
+  (define local (deferred-leaf-exit '(formal 0 ()) 0 '() '() 'shared
+                                    '(RParam a) '() 'local #f))
+  (define unknown
+    (struct-copy deferred-leaf-exit local [exit-kind 'unclassified]
+                 [destination #f]))
+  (check-equal? (hash-ref (classify-leaf-exits (list local unknown))
+                          (list '(formal 0 ()) '(RParam a)))
+                'fail-closed))
+
+(test-case "local な formal は結果型に寿命が現れても local 安全である"
+  (define event (deferred-leaf-exit '(formal 0 ()) 0 '() '() 'shared
+                                    '(RParam a) '() 'local #f))
+  (check-true (leaf-exit-local-safe? '(formal 0 ()) (list event)
+                                     '(Borrowed Int (RParam a)))))
+
+(test-case "local な binder の寿命が結果型に現れる場合は local 安全でない"
+  (define alpha '(RVar 900001))
+  (define event (deferred-leaf-exit '(binder 0 0 0) 0 '() '() 'mut
+                                    alpha '() 'local #f))
+  (check-false (leaf-exit-local-safe? '(binder 0 0 0) (list event)
+                                      `(Borrowed Int ,alpha))))
+
+(test-case "local な binder の寿命が結果型に現れない場合は local 安全である"
+  (define alpha '(RVar 900002))
+  (define event (deferred-leaf-exit '(binder 0 0 0) 0 '() '() 'mut
+                                    alpha '() 'local #f))
+  (check-true (leaf-exit-local-safe? '(binder 0 0 0) (list event) 'Int)))
+
+(test-case "イベントの無い起点は local の既定値を持たない"
+  (define classifications (classify-leaf-exits '()))
+  (check-equal? (hash-ref classifications '((formal 0 ()) (RParam a))
+                           'fail-closed)
+                'fail-closed))
+
 (define borrowed-int '(Borrowed Int (RParam a)))
 (define reader-type
   '(ForallRegion (a)
@@ -203,6 +247,18 @@
      (list source formal-index parent-path binder-path mode body-point
            exit-kind destination)]))
 
+(define (mixed-exit-key events)
+  (for*/first ([local (in-list events)]
+               #:when (eq? (deferred-leaf-exit-exit-kind local) 'local)
+               [result (in-list events)]
+               #:when (and (eq? (deferred-leaf-exit-exit-kind result) 'result)
+                           (equal? (deferred-leaf-exit-source local)
+                                   (deferred-leaf-exit-source result))
+                           (equal? (deferred-leaf-exit-alpha local)
+                                   (deferred-leaf-exit-alpha result))))
+    (list (deferred-leaf-exit-source local)
+          (deferred-leaf-exit-alpha local))))
+
 (test-case "一覧にない出口位置へ流れる formal の葉を unclassified として記録する"
   (define core
     '(Scope (1)
@@ -219,7 +275,12 @@
                    #:when (eq? (deferred-leaf-exit-exit-kind exit) 'unclassified))
         exit))
     (check-not-false event)
-    (check-false (deferred-leaf-exit-destination event))))
+    (check-false (deferred-leaf-exit-destination event))
+    (check-equal?
+     (hash-ref (classify-leaf-exits (list event))
+               (list (deferred-leaf-exit-source event)
+                     (deferred-leaf-exit-alpha event)))
+     'fail-closed)))
 
 (test-case "RecurVal の枠の往復で formal の出口イベントを落とさない"
   (define recur-reader-type
@@ -401,7 +462,14 @@
       candidate))
   (check-not-false summary
                    (format "summaries: ~s"
-                           (map callable-summary-leaf-exits all-summaries))))
+                           (map callable-summary-leaf-exits all-summaries)))
+  (define key (mixed-exit-key (callable-summary-leaf-exits summary)))
+  (check-not-false key)
+  (when key
+    (check-equal? (hash-ref (classify-leaf-exits
+                             (callable-summary-leaf-exits summary))
+                            key)
+                  'fail-closed)))
 
 (test-case "出口イベントを持つ summary を呼出し側で読み飛ばせる"
   (define inner-type
@@ -426,6 +494,16 @@
    (for/or ([summary (in-list all-summaries)])
      (for/or ([exit (in-list (callable-summary-leaf-exits summary))])
        (eq? (deferred-leaf-exit-exit-kind exit) 'local)))))
+
+(test-case "出口イベントの無い sink summary は空のままである"
+  (define sink-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))
+  (define summary
+    (first
+     (summaries '(Scope (1) (RegionLam (a) (Lam User sink (x) 0)))
+                `((sink ,sink-type)))))
+  (check-equal? (callable-summary-leaf-exits summary) '()))
 
 (test-case "RegionApp 後も Union member を通る formal の葉を解決できる"
   (define (union-of a b)
@@ -563,9 +641,17 @@
            ,body
            (Lam User continuation (next-parent next-fallback)
              (Apply (RegionApp f ((RParam a))) next-parent next-fallback))))))
+  (define legacy-fallback-observed? #f)
   (define all-summaries
-    (summaries core `((binder-reader ,recursive-type)
-                      (continuation ,recursive-type))))
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (_cap _index _alpha _origins source-alphas window event)
+            (when (and (not source-alphas) (not window) (not event))
+              (set! legacy-fallback-observed? #t)))])
+      (summaries core `((binder-reader ,recursive-type)
+                        (continuation ,recursive-type)))))
+  (check-true legacy-fallback-observed?
+              "Recur の source-alphas が空なら呼出し点窓へ退避する")
   (define summary
     (for/first ([candidate (in-list all-summaries)]
                 #:when
@@ -577,7 +663,12 @@
       candidate))
   (check-not-false summary
                    (format "summary events: ~s"
-                           (map callable-summary-leaf-exits all-summaries))))
+                           (map callable-summary-leaf-exits all-summaries)))
+  (define key (mixed-exit-key (binder-events summary)))
+  (check-not-false key)
+  (when key
+    (check-equal? (hash-ref (classify-leaf-exits (binder-events summary)) key)
+                  'fail-closed)))
 
 (test-case "局所 owner を親に持つ分解 binder は binder 起点の local 出口を記録する"
   (define local-reader-type '(NFn (Unit) Int () () () User))
@@ -906,3 +997,74 @@
   (check-eq? (deferred-leaf-exit-exit-kind (first events)) 'unclassified
              (format "events: ~s" (map exit-shape events)))
   (check-false (deferred-leaf-exit-destination (first events))))
+
+(test-case "二つの寿命を持つ合流葉は実体化後に両方の local 窓へ対応する"
+  (define owner-type '(Option Int))
+  (define owner-value '(Construct (Option Int) some 1))
+  (define reader-type
+    `(ForallRegion (b)
+       (NFn ((BorrowedMut ,owner-type (RParam b))) Int () (Mutation) () User)))
+  (define reader
+    `(RegionLam (b)
+       (Lam User reader (p)
+         (Eliminate p
+           ((some (child) -> (Read child)) (none () -> 0))))))
+  (define core
+    `(Scope ()
+       (Let (left-owner let (Owned ,owner-type)) ,owner-value
+         (Let (right-owner let (Owned ,owner-type)) ,owner-value
+           (Apply
+            (RegionApp ,reader (owner-ph))
+            (Eliminate (Construct Bool true)
+              ((true () -> (BorrowMut left-owner))
+               (false () -> (BorrowMut right-owner)))))))))
+  (define ir (build-region-ir core))
+  (define owner-rho
+    (region->rho ir (owner-let-body-region ir '(0))))
+  (define (replace-owner term)
+    (cond [(eq? term 'owner-ph) owner-rho]
+          [(pair? term) (cons (replace-owner (car term))
+                              (replace-owner (cdr term)))]
+          [else term]))
+  (define filled (replace-owner core))
+  (define inner-signature `((reader ,reader-type)))
+  (define observations '())
+  (define inferred
+    (parameterize
+      ([current-local-exit-window-probe
+        (lambda (cap index alpha origins source-alphas window event)
+          (set! observations
+                (cons (list cap index alpha origins source-alphas window event)
+                      observations)))])
+      (typing-inference (annotate-regions filled ir) '() inner-signature '()
+                        (region-ctx ir '() (hash) (hash)))))
+  (define all-summaries (sixth inferred))
+  (define observed-sources
+    (for/fold ([sources (set)]) ([observation (in-list observations)]
+                                 #:when (and (set? (list-ref observation 4))
+                                             (list-ref observation 5)))
+      (set-union sources (list-ref observation 4))))
+  (check-equal? (set-count observed-sources) 2
+                (format "alpha/origins/source alphas: ~s; summaries: ~s"
+                        observations
+                        (map (lambda (summary)
+                               (list (callable-summary-formals summary)
+                                     (callable-summary-formal-fields summary)
+                                     (callable-summary-region-subst summary)
+                                     (callable-summary-leaf-exits summary)))
+                             all-summaries)))
+  (for ([source-alpha (in-set observed-sources)])
+    (check-not-false
+     (for/or ([observation (in-list observations)])
+       (and (set-member? (list-ref observation 4) source-alpha)
+            (set-member? (list-ref observation 3) (list-ref observation 2))
+            (list-ref observation 5)))
+     (format "source alpha ごとに local 窓がある: ~s / ~s"
+             source-alpha observations)))
+  (for ([observation (in-list observations)]
+        #:when (and (set? (list-ref observation 4))
+                    (list-ref observation 5)))
+    (check-true
+     (set-empty? (set-intersect (list-ref observation 3)
+                                (list-ref observation 4)))
+     "formal alpha と source alpha の添字一致に依存しない")))

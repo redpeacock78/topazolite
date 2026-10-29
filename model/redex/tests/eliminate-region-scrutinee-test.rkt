@@ -13,6 +13,7 @@
          "../machine.rkt"
          "../origins.rkt"
          "../region.rkt"
+         "../region-param.rkt"
          "../traits.rkt"
          "../typing.rkt")
 
@@ -179,8 +180,25 @@
   (define-values (ir _filled typed) (type-core core callables))
   (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
   (when (region-typed? typed)
-    (check-equal? (region-typed-type typed) expected)
+    (check-true (forall-region-types-alpha-equal?
+                 (region-typed-type typed) expected)
+                (format "~a: 型 ~s が ~s と領域束縛名以外で一致する"
+                        label (region-typed-type typed) expected))
     (check-runtime typed ir callables expected label)))
+
+(define (forall-region-types-alpha-equal? actual expected)
+  (match* (actual expected)
+    [(`(ForallRegion (,actual-rps ...) ,actual-body)
+      `(ForallRegion (,expected-rps ...) ,expected-body))
+     (and (= (length actual-rps) (length expected-rps))
+          (equal?
+           (rename-region-params
+            actual-body
+            (for/hash ([actual-rp (in-list actual-rps)]
+                       [expected-rp (in-list expected-rps)])
+              (values actual-rp expected-rp)))
+           expected-body))]
+    [(_ _) (equal? actual expected)]))
 
 (define (check-rejected core expected-id [callables '()] [label "fixture"])
   (define-values (_ir _filled result) (type-core core callables))
@@ -802,7 +820,7 @@
        ,(then shared-parent-write 'unit)))
    "E-BOR-025" callables "apply-arg-over-reject"))
 
-(test-case "可変の分解 binder を BorrowedMut の仮引数へ渡すと E-BOR-003"
+(test-case "可変の分解 binder の Reborrow を BorrowedMut 仮引数へ渡して読み切る形は受理する"
   (define reader-type
     '(ForallRegion (a)
        (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))
@@ -814,11 +832,11 @@
          (Lam User reader (argument) (Read argument)))
        (child-ph))
       c))
-  (check-rejected
+  (check-accepted
    `(RegionLam (a) ,(with-eparent (elim-o reader-call 0)))
-   "E-BOR-003" callables "escape-apply-mut-argument"))
+   '(ForallRegion (a) Int) callables "escape-apply-mut-argument"))
 
-(test-case "可変の分解 binder の Reborrow を Borrowed 仮引数へ渡すと E-BOR-003"
+(test-case "可変の分解 binder の Reborrow を Borrowed 仮引数へ渡して読み切る形は受理する"
   (define reader-type
     '(ForallRegion (a)
        (NFn ((Borrowed Int (RParam a))) Int () () () User)))
@@ -830,19 +848,90 @@
          (Lam User reader (argument) (Read argument)))
        (child-ph))
       (Reborrow c)))
-  (check-rejected
+  (check-accepted
    `(RegionLam (a) ,(with-eparent (elim-o reader-call 0)))
-   "E-BOR-003" callables "escape-apply-reborrow-argument"))
+   '(ForallRegion (a) Int) callables "escape-apply-reborrow-argument"))
 
-(test-case "Apply の無い局所 owner binder Reborrow は E-BOR-003"
-  (check-rejected
+(test-case "Apply の無い局所 owner binder Reborrow を読み切る形は受理する"
+  (check-accepted
    `(RegionLam (a)
       ,(with-eparent
         (elim-o
          '(Let (d let (Borrowed Int child-ph)) (Reborrow c)
             (Let (ignored let Int) (Read d) unit))
          'unit)))
-   "E-BOR-003" '() "escape-apply-reborrow-without-apply"))
+   '(ForallRegion (a) Unit) '() "escape-apply-reborrow-without-apply"))
+
+(test-case "RegionLam 本体で親子の借用を作っても子が生きている間の親 Assign は拒否する"
+  (check-rejected
+   `(RegionLam (a)
+      ,(with-eparent
+        (elim-o
+         '(Let (d let (Borrowed Int child-ph)) (Reborrow c)
+            (Let (written let Unit)
+                 (Assign (ProjBorrow p o) (Construct (Option Int) none))
+              (Read d)))
+         'unit)))
+   "E-BOR-025" '() "regionlam-parent-write-while-child-live"))
+
+(test-case "RegionLam を局所 Scope の region に具体化して Apply する対照は受理する"
+  (check-accepted
+   (with-eparent
+    (param-parent-call (elim-o '(Read c) 0)))
+   'Int param-parent-callables "regionlam-regionapp-local-scope-apply"))
+
+(test-case "分解 binder が BorrowedMut 仮引数の結果へ届き親 Assign 中も生存すると E-BOR-025"
+  (define identity-type
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a)))
+            (BorrowedMut Int (RParam a)) () () () User)))
+  (define call
+    '(Apply
+      (RegionApp
+       (RegionLam (a)
+         (Lam User borrow-identity (argument) argument))
+       (child-ph))
+      c))
+  (define core
+    `(RegionLam (a)
+       ,(with-eparent
+         `(EliminateAt (ProjBorrow p o)
+            ((some (c) (%parent) ->
+               (Let (escaped let (BorrowedMut Int child-ph)) ,call
+                 (Let (written let Unit)
+                      (Assign (ProjBorrow p o) (Construct (Option Int) none))
+                   (Let (observed let (BorrowedMut Int child-ph))
+                        (Read escaped)
+                     unit))))
+             (none () () -> unit))))))
+  (check-rejected
+   core
+   "E-BOR-025"
+   `((borrow-identity ,identity-type))
+   "escape-apply-mut-argument-result"))
+
+(test-case "RegionLam の RegionApp を局所 Scope で呼び、Apply 前後に親を Read できる"
+  (define body (elim-o '(Read c) 0))
+  (define (call-with-argument argument)
+    `(Apply
+      (RegionApp
+       (RegionLam (a) (Lam User param-parent (p) ,body))
+       (owner-ph))
+      ,argument))
+  (define before-read
+    (with-eparent
+     `(Let (called let Int)
+        ,(call-with-argument
+          '(Let (observed let Int) (Read (ProjBorrow p g)) p))
+        (Read (ProjBorrow p g)))))
+  (define after-read
+    (with-eparent
+     `(Let (called let Int)
+        ,(call-with-argument 'p)
+        (Read (ProjBorrow p g)))))
+  (for ([core (in-list (list before-read after-read))]
+        [label (in-list '("apply-argument-read" "let-body-read"))])
+    (check-accepted core 'Int param-parent-callables label)))
 
 (test-case "formal parent の可変 binder は新しい alpha を作る"
   (define core

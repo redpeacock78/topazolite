@@ -411,6 +411,16 @@
   (define borrows (remove-duplicates (filter borrow-request? requests)))
   (define uses (filter use-request? requests))
   (define (ρ-of r) (sigma-ref σ (borrow-request-alpha r)))
+  ;; shortcut: σ に RegionLam 内の RVar が無いときは停止を使わない。σ の
+  ;; 解決写像を呼出し側へ伝える経路が入ったら拡張する。
+  (define (resolved-suspension? entry)
+    (define (resolved-region term)
+      (and (or (not (lifetime-var? term))
+               (hash-has-key? σ (lifetime-var-index term)))
+           (sigma-ref σ term)))
+    (define resolved? (and (resolved-region (third entry))
+                           (resolved-region (fourth entry))))
+    resolved?)
   (define (inside-window? window start point include-start?)
     (and window point
          (path-prefix? window point)
@@ -419,7 +429,8 @@
   (define (request-in-window? request other)
     (define entries
       (for/list ([entry (in-set (psi-suspended Ψ))]
-                 #:when (and (equal? (borrow-request-alpha request)
+                 #:when (and (resolved-suspension? entry)
+                             (equal? (borrow-request-alpha request)
                                      (fourth entry))
                              (seventh entry)))
         entry))
@@ -433,7 +444,8 @@
                                (borrow-request-point other) #f)))))
   (define (borrow-windows? request)
     (for/or ([entry (in-set (psi-suspended Ψ))])
-      (and (equal? (borrow-request-alpha request) (fourth entry))
+      (and (resolved-suspension? entry)
+           (equal? (borrow-request-alpha request) (fourth entry))
            (seventh entry))))
   ;; Scope で終わる loan は、退場後の point と重ならない。
   (define (scope-ended-before? request later-point)
@@ -469,7 +481,8 @@
   ;; BOR-002 から除く。子の外へはみ出す要求は親が復帰する区間で
   ;; 衝突し得るため、通常どおり判定する。
   (define (suspended-pair? a b)
-    (for/or ([e (in-set (psi-suspended Ψ))])
+    (for/or ([e (in-set (psi-suspended Ψ))]
+             #:when (resolved-suspension? e))
       (define w-parent (first e))
       (define fp-parent (second e))
       (define α-parent (third e))
@@ -477,10 +490,43 @@
       (define reborrow-node (fifth e))
       (define ρ-child (sigma-ref σ α-child))
       (define window (seventh e))
+      ;; 孫にも停止を伝えるが、各辺の窓と reborrow の包含を保つ。
+      (define (suspended-descendant? target request)
+        (let loop ([pending (list α-child)] [seen (set)])
+          (match pending
+            ['() #f]
+            [(cons alpha rest)
+             (cond
+               [(equal? alpha target) #t]
+               [(set-member? seen alpha) (loop rest seen)]
+               [else
+                (define children
+                  (for/list ([edge (in-set (psi-suspended Ψ))]
+                             #:when
+                             (and (resolved-suspension? edge)
+                                  (equal? alpha (third edge))
+                                  (capability-overlap?
+                                   w-parent fp-parent
+                                   (first edge) (second edge))
+                                  (or (not (seventh edge))
+                                      (and (borrow-request-point request)
+                                           (inside-window?
+                                            (seventh edge) (sixth edge)
+                                            (borrow-request-point request) #t)))
+                                  (let ([ρ-parent (sigma-ref σ (third edge))]
+                                        [ρ-edge-child (sigma-ref σ (fourth edge))]
+                                        [ρ-request (ρ-of request)])
+                                    (and ρ-parent ρ-edge-child ρ-request
+                                         (region-outlives? ir ρ-parent
+                                                           ρ-edge-child)
+                                         (region-outlives? ir ρ-edge-child
+                                                           ρ-request)))))
+                    (fourth edge)))
+                (loop (append rest children) (set-add seen alpha))])])))
       (define (inside-child? r)
         (define ρ (ρ-of r))
         (if (and window (borrow-request-point r))
-            (and (equal? (borrow-request-alpha r) α-child)
+            (and (suspended-descendant? (borrow-request-alpha r) r)
                  (inside-window? window (sixth e)
                                  (borrow-request-point r) #t))
             (and (or (>= (alpha-order r) (alpha-term-order α-child))
@@ -505,7 +551,8 @@
   ;; source を持つ使用では、停止違反を個別の BOR-002 競合より先に調べる。
   ;; source が空の owner 使用はこの判定に当たらず、overlapping? で調べる。
   (define (source-suspended? u)
-    (for/or ([e (in-set (psi-suspended Ψ))])
+    (for/or ([e (in-set (psi-suspended Ψ))]
+             #:when (resolved-suspension? e))
       (and (set-member? (use-request-source u) (third e))
            (capability-overlap? (first e) (second e)
                                 (use-request-w u) (use-request-fp u))
@@ -553,7 +600,8 @@
                                           (borrow-request-point r))))
          (let ([windowed
                 (for/list ([e (in-set (psi-suspended Ψ))]
-                           #:when (and (equal? (borrow-request-alpha r)
+                           #:when (and (resolved-suspension? e)
+                                       (equal? (borrow-request-alpha r)
                                                (fourth e))
                                        (seventh e)))
                   e)])
@@ -579,7 +627,8 @@
            [else
             (define children
               (for/list ([e (in-set (psi-suspended Ψ))]
-                         #:when (equal? parent (third e)))
+                         #:when (and (resolved-suspension? e)
+                                     (equal? parent (third e))))
                 (fourth e)))
             (or (for/or ([child (in-list children)])
                   (set-member? (use-request-source u) child))
