@@ -318,3 +318,57 @@
   (check-projection (resource-let '(Proj x a)) 'a 'optional)
   (check-projection (resource-let '(ProjOpt Int x optional))
                     'optional 'a))
+
+(define window-pair-core
+  '(Let (left let Unit) unit (Let (right let Unit) unit unit)))
+(define window-pair-ir (build-region-ir window-pair-core))
+(define window-pair-region (region-at window-pair-ir '()))
+(define window-pair-parent-alpha '(RVar 9))
+(define window-pair-alphas (list '(RVar 0) '(RVar 1)))
+(define window-pair-sigma
+  (hash 0 window-pair-region 1 window-pair-region 9 window-pair-region))
+
+(define (window-pair-result alphas modes points
+                            [windowed (make-list (length alphas) #t)])
+  (define Ψ
+    (for/fold ([current
+                (psi-add-mut (empty-psi) 'window-owner '()
+                             window-pair-parent-alpha)])
+              ([alpha (in-list alphas)]
+               [point (in-list points)]
+               [has-window? (in-list windowed)])
+      (psi-suspend current 'window-owner '() window-pair-parent-alpha alpha
+                   'mut '(Reborrow window-owner) point
+                   (and has-window? point))))
+  (define requests
+    (for/list ([alpha (in-list alphas)]
+               [mode (in-list modes)]
+               [point (in-list points)]
+               [index (in-naturals)])
+      (borrow-request 'window-owner '(field) mode alpha window-pair-region
+                      (list 'request index) point)))
+  (let/ec escape
+    (check-borrows window-pair-ir window-pair-sigma Ψ requests sigma-ref
+                   (lambda (key _node) (escape key)))
+    'ok))
+
+(test-case "同じ開始点の二つの可変要求は窓があっても衝突する"
+  (check-equal? (window-pair-result
+                 (list (first window-pair-alphas) (first window-pair-alphas))
+                 '(mut mut) (list '() '()))
+                'borrow-conflicting-alias))
+
+(test-case "同じ開始点の可変要求と共有要求も窓があっても衝突する"
+  (check-equal? (window-pair-result window-pair-alphas '(mut shared)
+                                    (list '() '()))
+                'borrow-conflicting-alias))
+
+(test-case "同じ開始点の片側だけ窓がある可変要求も衝突する"
+  (check-equal? (window-pair-result window-pair-alphas '(mut mut)
+                                    (list '() '()) '(#t #f))
+                'borrow-conflicting-alias))
+
+(test-case "異なる開始点の兄弟窓は互いの要求を重ねない"
+  (check-equal? (window-pair-result window-pair-alphas '(mut mut)
+                                    (list '(0) '(1 0)))
+                'ok))

@@ -465,6 +465,10 @@
     (define b-window? (borrow-windows? b))
     (define points-known?
       (and (borrow-request-point a) (borrow-request-point b)))
+    ;; 同じ開始点は窓の片側包含判定から漏れるため、重なりを優先する。
+    (define same-point?
+      (and points-known?
+           (equal? (borrow-request-point a) (borrow-request-point b))))
     (define regions? (regions-overlap? ir (ρ-of a) (ρ-of b)))
     (cond
       [(and points-known?
@@ -472,10 +476,12 @@
                 (scope-ended-before? b (borrow-request-point a))))
        #f]
       [(and a-window? b-window? points-known?)
-       (or (request-in-window? a b) (request-in-window? b a))]
+       (or same-point? (request-in-window? a b) (request-in-window? b a))]
       [(and a-window? b-window?) regions?]
-      [a-window? (and regions? (request-in-window? a b))]
-      [b-window? (and regions? (request-in-window? b a))]
+      [a-window? (and regions?
+                      (or same-point? (request-in-window? a b)))]
+      [b-window? (and regions?
+                      (or same-point? (request-in-window? b a)))]
       [else regions?]))
   ;; 停止中の親は、その子の寿命に完全に含まれる要求との対だけを
   ;; BOR-002 から除く。子の外へはみ出す要求は親が復帰する区間で
