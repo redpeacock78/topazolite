@@ -32,6 +32,7 @@
          check-region-annotation
          own-agrees?
          check-borrows
+         current-borrow-conflict-probe
          psi-add-shared
          psi-add-mut
          borrow-typed?
@@ -142,6 +143,9 @@
 (struct borrow-sidecar (requests sigma) #:transparent)
 (struct use-request (w fp operation source point-region point node kind otherwise)
   #:transparent)
+
+;; Borrow 診断の試験用観測口。通常は何もしない。
+(define current-borrow-conflict-probe (make-parameter #f))
 
 (define (empty-psi) (psi (set) (set) (set) (flow-state (hash) (hash))))
 
@@ -582,6 +586,8 @@
            (not (suspended-pair? a b))
            (borrow-pair-overlaps? a b)))
     (when conflict?
+      (define probe (current-borrow-conflict-probe))
+      (when probe (probe a b))
       (fail 'borrow-conflicting-alias (borrow-request-node b))))
   ;; §8.2。所有者への直接の操作と、capability を通した操作を分ける。
   (define (overlapping? r u)

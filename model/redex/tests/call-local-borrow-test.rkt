@@ -232,6 +232,9 @@
                                           _ir 300 (make-bcounters))
                   'ok "Apply 後の親欄への Assign を oracle が承認する")))
 
+;; 同寿命 Union member の曖昧さは helper で固定する。E2E は Owned Union の
+;; borrowed member で E-OWN-022、UnionInject の直接実引数と明示型 non-Owned Let
+;; で E-TYP-023 に先に止まり、現行 Core では出口照合まで到達しない。
 (test-case "Union Payload と constructor path は寿命に合う葉の capability を一意に選ぶ"
   (define union-type
     '(Union (BorrowedMut Int (RParam a))
@@ -339,6 +342,41 @@
   (check-true
    (event-access-path-matches? '(union-root) '((Payload)) '(Payload))
    "実要求の list segment を形式側の symbol segment と同じ段として照合する"))
+
+(test-case "同寿命 Union member の明示型 non-Owned Let は E-TYP-023 で先に止まる"
+  (define union-call-site
+    '(Union (Borrowed Int (RParam %omitted))
+            (Borrowed String (RParam %omitted))))
+  (define union-formal
+    '(Union (Borrowed Int (RParam a))
+            (Borrowed String (RParam a))))
+  (define reader-type
+    `(ForallRegion (a)
+       (NFn (,union-formal) Unit () () () User)))
+  (define callables `((same-life-union-reader ,reader-type)))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (union-value let ,union-call-site)
+              (UnionInject ,union-call-site
+                           (Borrowed Int (RParam %omitted))
+                           (Borrow owner))
+           (Apply
+            (RegionApp
+             (RegionLam (a)
+               (Lam User same-life-union-reader (argument)
+                 (UnionEliminate argument
+                   (((Borrowed Int (RParam a)) int-borrow ->
+                     (Let (read-int const Int) (Read int-borrow) unit))
+                    ((Borrowed String (RParam a)) text-borrow ->
+                     (Let (read-text const String) (Read text-borrow) unit))))))
+             (owner-ph))
+            union-value)))))
+  (define-values (_ir _filled result) (type-core core '() callables))
+  (check-true (diagnostic? result)
+              (format "出口照合前に型の不一致で止まる: ~s" result))
+  (check-equal? (and (diagnostic? result) (diagnostic-id result))
+                "E-TYP-023"))
 
 (test-case "出口の access path は cap path と parent path を連結し、ずれは拒否する"
   (check-true (event-access-path-matches? '(owner f) '(f o) '(o)))

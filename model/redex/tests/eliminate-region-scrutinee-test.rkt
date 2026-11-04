@@ -186,6 +186,51 @@
                         label (region-typed-type typed) expected))
     (check-runtime typed ir callables expected label)))
 
+(define (check-accepted-window-points core expected callables label expected-points)
+  (define observed-points '())
+  (define-values (ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (_cap _index _alpha _origins _source-alphas window event)
+            (when (and window
+                       (deferred-leaf-exit? event)
+                       (match (deferred-leaf-exit-source event)
+                         [`(binder ,_ ...) #t]
+                         [_ #f]))
+              (set! observed-points (cons window observed-points))))])
+      (type-core core callables)))
+  (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
+  (when (region-typed? typed)
+    (check-true (forall-region-types-alpha-equal? (region-typed-type typed) expected)
+                (format "~a: 型 ~s が ~s と領域束縛名以外で一致する"
+                        label (region-typed-type typed) expected))
+    (check-runtime typed ir callables expected label))
+  (check-equal? (list->set observed-points) (list->set expected-points)
+                (format "~a: 枝ごとの extent window root" label)))
+
+(define (observe-decomposition-extents core callables)
+  (define observed '())
+  (define-values (ir _filled typed)
+    (parameterize
+        ([current-decomposition-extent-probe
+          (lambda (point branch root extent events _items)
+            (set! observed
+                  (cons (list point branch root extent events) observed)))])
+      (type-core core callables)))
+  (values ir typed (reverse observed)))
+
+(define (observe-local-exit-windows core callables)
+  (define observed '())
+  (define-values (_ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (_cap _index _alpha _origins _source-alphas window event)
+            (when (deferred-leaf-exit? event)
+              (set! observed
+                    (cons (list event window) observed))))])
+      (type-core core callables)))
+  (values typed (reverse observed)))
+
 (define (forall-region-types-alpha-equal? actual expected)
   (match* (actual expected)
     [(`(ForallRegion (,actual-rps ...) ,actual-body)
@@ -207,6 +252,22 @@
   (when (diagnostic? result)
     (check-equal? (diagnostic-id result) expected-id
                   (format "~a: 診断 id" label))))
+
+(define (check-rejected-conflict-pair core expected-id callables label)
+  (define pairs '())
+  (define-values (_ir _filled result)
+    (parameterize
+        ([current-borrow-conflict-probe
+          (lambda (left right) (set! pairs (cons (list left right) pairs)))])
+      (type-core core callables)))
+  (check-true (diagnostic? result)
+              (format "~a: 診断を期待したが ~s" label result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) expected-id
+                  (format "~a: 診断 id" label)))
+  (check-not-false (pair? pairs)
+                   (format "~a: borrow-conflicting-alias の対を観測する" label))
+  (reverse pairs))
 
 (define (requests-with-path typed path)
   (filter (lambda (request)
@@ -745,13 +806,13 @@
      (owner-ph))
     p))
 
-(test-case "param-parent: 逃げない枝の後の formal parent 書込みも E-BOR-025"
-  (check-rejected
+(test-case "param-parent: 逃げない枝の後の formal parent 書込みは受理"
+  (check-accepted
    (with-eparent
-    (param-parent-call
+     (param-parent-call
      (then/as 'Int (elim-o '(Read c) 0)
               (then `(Assign p ,eowner-value) 1))))
-   "E-BOR-025" param-parent-callables "param-parent-nonescape"))
+   'Int param-parent-callables "param-parent-nonescape"))
 
 (test-case "param-parent: formal projection の子を結果へ逃がす形は E-BOR-025"
   (check-rejected
@@ -1014,3 +1075,502 @@
   (check-rejected
    `(RegionLam (a) ,(with-eparent (elim-o reader-call 0)))
    "E-TYP-023" callables "escape-apply-record-argument"))
+
+(define result-int-string '(Result Int String))
+(define data-reader-type
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut (Result Int String) (RParam a)))
+          Unit () () () User)))
+(define data-reader-callables `((data-reader ,data-reader-type)))
+(define data-sibling-read-apply-core
+  `(Scope ()
+     (Let (owner let (Owned ,result-int-string))
+          (Construct ,result-int-string ok 1)
+       (Let (argument let (BorrowedMut ,result-int-string (RParam %omitted)))
+            (BorrowMut owner)
+         (Let (called const Unit)
+              (Apply
+               (RegionApp
+                (RegionLam (a)
+                  (Lam User data-reader (p)
+                    (Eliminate p
+                      ((ok (payload)
+                           -> (Let (read-value const Int) (Read payload) unit))
+                       (ng (message)
+                           -> (Let (read-message const String)
+                                    (Read message)
+                                  unit))))))
+                (owner-ph))
+               argument)
+           (Assign argument (Construct ,result-int-string ok 2)))))))
+
+(define union-reader-type
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut (Union Int String) (RParam a)))
+          Unit () () () User)))
+(define union-reader-callables `((union-reader ,union-reader-type)))
+(define union-sibling-read-apply-core
+  '(Scope ()
+     (Let (owner let (Owned (Union Int String)))
+          (UnionInject (Union Int String) Int 1)
+       (Let (argument let (BorrowedMut (Union Int String) (RParam %omitted)))
+            (BorrowMut owner)
+         (Let (called const Unit)
+              (Apply
+               (RegionApp
+                (RegionLam (a)
+                  (Lam User union-reader (p)
+                    (UnionEliminate p
+                      ((Int payload
+                            -> (Let (read-value const Int)
+                                    (Read payload)
+                                  unit))
+                       (String message
+                               -> (Let (read-message const String)
+                                        (Read message)
+                                      unit))))))
+                (owner-ph))
+               argument)
+           (Assign argument
+                   (UnionInject (Union Int String) Int 2)))))))
+
+(define child-sibling-record-type '(Record ((h Int mut))))
+(define child-sibling-sum-type
+  `(Result ,child-sibling-record-type ,child-sibling-record-type))
+(define child-sibling-owner-type
+  `(Record ((choice ,child-sibling-sum-type mut))))
+(define child-sibling-owner-value
+  `(Rec ((choice mut
+          (Construct ,child-sibling-sum-type ok
+                     (Rec ((h mut 1))))))))
+(define child-sibling-reader-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,child-sibling-owner-type (RParam a)))
+          Unit () (Mutation) () User)))
+(define child-sibling-reader-callables
+  `((child-sibling-reader ,child-sibling-reader-type)))
+(define child-sibling-body
+  `(Eliminate (ProjBorrow p choice)
+     ((ok (c) ->
+       (Let (child let (BorrowedMut Int (RParam %omitted)))
+            (ProjBorrow c h)
+         (Assign child 2)))
+      (ng (c) ->
+       (Let (child let (BorrowedMut Int (RParam %omitted)))
+            (ProjBorrow c h)
+         (Assign child 3))))))
+(define child-sibling-apply-core
+  `(Scope ()
+     (Let (owner let (Owned ,child-sibling-owner-type))
+          ,child-sibling-owner-value
+       (Let (argument let
+                       (BorrowedMut ,child-sibling-owner-type
+                                    (RParam %omitted)))
+            (BorrowMut owner)
+         (Let (called const Unit)
+              (Apply
+               (RegionApp
+                (RegionLam (a)
+                  (Lam User child-sibling-reader (p) ,child-sibling-body))
+                (owner-ph))
+               argument)
+           (Assign argument ,child-sibling-owner-value))))))
+
+(define union-int-unit '(Union Int Unit))
+(define union-payload-owner-type
+  `(Record ((u ,union-int-unit mut))))
+(define union-payload-owner-value
+  `(Rec ((u mut (UnionInject ,union-int-unit Int 1)))))
+(define union-payload-leaker-type
+  `(ForallRegion (a)
+     (NFn ((Borrowed ,union-int-unit (RParam a)))
+          (Borrowed Int (RParam a)) () ((Return dead Int)) () User)))
+(define union-payload-leaker-callables
+  `((union-payload-leaker ,union-payload-leaker-type)))
+(define union-mut-payload-leaker-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,union-int-unit (RParam a)))
+          (BorrowedMut Int (RParam a)) () ((Return dead Int)) () User)))
+(define union-mut-payload-leaker-callables
+  `((union-mut-payload-leaker ,union-mut-payload-leaker-type)))
+(define union-payload-leaker-body
+  `(Let (escaped let (Borrowed Int (RParam %omitted)))
+          (Apply
+           (RegionApp
+            (RegionLam (a)
+              (Lam User union-payload-leaker (argument)
+                (UnionEliminate argument
+                  ((Int payload -> payload)
+                   (Unit ignored -> (Perform (Return dead Int) 0))))))
+            (owner-ph))
+           (Reborrow (ProjBorrow p u)))
+       (Let (written let Unit)
+            (Assign (ProjBorrow p u)
+                    (UnionInject ,union-int-unit Int 2))
+         (Read escaped))))
+(define union-payload-leaker-core
+  `(Scope ()
+     (Let (owner let (Owned ,union-payload-owner-type))
+          ,union-payload-owner-value
+       (Let (p let (BorrowedMut ,union-payload-owner-type (RParam %omitted)))
+            (BorrowMut owner)
+         ,union-payload-leaker-body))))
+(define union-mut-payload-leaker-core
+  `(Scope ()
+     (Let (owner let (Owned ,union-payload-owner-type))
+          ,union-payload-owner-value
+       (Let (p let (BorrowedMut ,union-payload-owner-type (RParam %omitted)))
+            (BorrowMut owner)
+         (Let (escaped let (BorrowedMut Int (RParam %omitted)))
+              (Apply
+               (RegionApp
+                (RegionLam (a)
+                  (Lam User union-mut-payload-leaker (argument)
+                    (UnionEliminate argument
+                      ((Int payload -> payload)
+                       (Unit ignored -> (Perform (Return dead Int) 0))))))
+                (owner-ph))
+               (ProjBorrow p u))
+           (Let (written let Unit)
+                (Assign (ProjBorrow p u)
+                        (UnionInject ,union-int-unit Int 2))
+             (Read escaped)))))))
+
+(define binder-child-result-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,eowner-type (RParam a)))
+          (BorrowedMut Int (RParam a)) () () () User)))
+(define binder-child-result-callables
+  `((binder-child-result ,binder-child-result-type)))
+(define binder-child-result-body
+  '(Eliminate (ProjBorrow p ro)
+     ((some (c) -> (ProjBorrow c h))
+      (none () -> (ProjBorrow p g)))))
+(define binder-child-result-core
+  `(Scope (1)
+     (RegionLam (a)
+       (Lam User binder-child-result (p) ,binder-child-result-body))))
+(define binder-child-result-call
+  `(Apply
+    (RegionApp
+     (RegionLam (a)
+       (Lam User binder-child-result (p) ,binder-child-result-body))
+     (owner-ph))
+    p))
+(define binder-child-result-escape-core
+  (with-eparent
+   `(Let (escaped let (BorrowedMut Int (RParam %omitted)))
+         ,binder-child-result-call
+     (Let (written let Unit) (Assign p ,eowner-value)
+       (Read escaped)))))
+
+(define binder-child-aggregate-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,eowner-type (RParam a)))
+          (Record ((field (BorrowedMut Int (RParam a)) imm)))
+          () () () User)))
+(define binder-child-aggregate-callables
+  `((binder-child-aggregate ,binder-child-aggregate-type)))
+(define binder-child-aggregate-body
+  '(Eliminate (ProjBorrow p ro)
+     ((some (c) -> (Rec ((field imm (ProjBorrow c h)))))
+      (none () -> (Rec ((field imm (ProjBorrow p g))))))))
+(define binder-child-aggregate-core
+  (with-eparent
+   `(Apply
+     (RegionApp
+      (RegionLam (a)
+        (Lam User binder-child-aggregate (p) ,binder-child-aggregate-body))
+      (owner-ph))
+     p)))
+
+(define binder-child-capture-type
+  `(ForallRegion (a)
+     (NFn ((BorrowedMut ,eowner-type (RParam a)))
+          (NFn () (BorrowedMut Int (RParam a)) () () () User)
+          () () () User)))
+(define binder-child-capture-callables
+  `((binder-child-capture ,binder-child-capture-type)
+    (captured-child (NFn () (BorrowedMut Int (RParam a)) () () () User))))
+(define binder-child-capture-body
+  '(Eliminate (ProjBorrow p ro)
+     ((some (c) -> (Lam User captured-child () (ProjBorrow c h)))
+      (none () -> (Lam User captured-child () (ProjBorrow p g))))))
+(define binder-child-capture-core
+  (with-eparent
+   `(Apply
+     (RegionApp
+      (RegionLam (a)
+        (Lam User binder-child-capture (p) ,binder-child-capture-body))
+      (owner-ph))
+     p)))
+
+(test-case "Data の局所枝要求は Apply 後に親の使用を許す"
+  (check-accepted-window-points data-sibling-read-apply-core 'Unit
+                                data-reader-callables "data-sibling-read-apply"
+                                '((0 1 1 0 2 1) (0 1 1 0 2 2))))
+
+(test-case "Union の局所枝要求は Apply 後に親の使用を許す"
+  (check-accepted-window-points union-sibling-read-apply-core 'Unit
+                                union-reader-callables "union-sibling-read-apply"
+                                '((0 1 1 0 2 1) (0 1 1 0 2 2))))
+
+(test-case "兄弟枝の binder から射影した子を使い切れば Apply 後に親を書ける"
+  (check-accepted-window-points child-sibling-apply-core 'Unit
+                                child-sibling-reader-callables
+                                "binder-projected-child-apply"
+                                '((0 1 1 0 2)
+                                  (0 1 1 0 2 1) (0 1 1 0 2 2))))
+
+(test-case "derived scrutinee の binder 無し分解は候補無しでも要約できる"
+  (define flag-owner-type '(Record ((flag Bool mut))))
+  (define signature
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,flag-owner-type (RParam a)))
+            Unit () () () User)))
+  (define callables `((nullary-decomposition ,signature)))
+  (define core
+    '(RegionLam (a)
+       (Lam User nullary-decomposition (p)
+         (Eliminate (ProjBorrow p flag)
+           ((true () -> unit)
+            (false () -> unit))))))
+  (define-values (_ir _filled result) (type-core core callables))
+  (check-true (region-typed? result)
+              (format "全枝が binder 無しでも derived scrutinee を処理: ~s"
+                      result)))
+
+(test-case "同じ枝の二つの mut 要求は Apply 後も E-BOR-003"
+  (define body
+    (elim-ro
+     `(Let (x let (BorrowedMut Int (RParam %omitted))) (ProjBorrow c h)
+        (Let (y let (BorrowedMut Int (RParam %omitted))) (ProjBorrow c h)
+          (Let (write-x let Unit) (Assign x 2)
+            (Let (write-y let Unit) (Assign y 3) 1))))
+     0))
+  (define core (with-eparent (param-parent-call body)))
+  (define pairs
+    (check-rejected-conflict-pair
+     core "E-BOR-003" param-parent-callables "same-branch-mut-requests"))
+  (check-not-false (pair? pairs))
+  (when (pair? pairs)
+    (check-equal? (map borrow-request-point (first pairs))
+                  '((0 1 1 2 1 0) (0 1 1 2 1 1 0))
+                  (format "拒否対は同じ枝で作った x/y の要求である: ~s"
+                          (map (lambda (request)
+                                 (list (borrow-request-point request)
+                                       (borrow-request-node request)
+                                       (borrow-request-fp request)
+                                       (borrow-request-alpha request)))
+                               (first pairs)))))
+)
+
+(test-case "Recur 固定点を通って次反復まで生きる枝 loan は E-BOR-003"
+  (define recursive-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut ,eowner-type (RParam a)))
+            Int () (Mutation) () User)))
+  (define callables `((outer-recursive-window ,recursive-type)
+                      (inner-recursive-window ,recursive-type)))
+  (define recursive-body
+    '(Eliminate (ProjBorrow q ro)
+       ((some (inner-c) ->
+          (Let (inner-child let (BorrowedMut Int (RParam %omitted)))
+               (ProjBorrow inner-c h)
+            (Let (recursive-step let Int) (Apply f q)
+              (Let (write-inner let Unit) (Assign inner-child 2) 1))))
+        (none () -> 0))))
+  (define core
+    (with-eparent
+     `(Apply
+       (RegionApp
+        (RegionLam (a)
+          (Lam User outer-recursive-window (p)
+            (Eliminate (ProjBorrow p ro)
+              ((some (outer-c) ->
+                 (Let (outer-child let (BorrowedMut Int (RParam %omitted)))
+                      (ProjBorrow outer-c h)
+                   (Recur inner-recursive-window f (q)
+                     ,recursive-body
+                     (Let (inner-result let Int)
+                          (Apply (RegionApp f ((RParam a))) p)
+                       (Let (write-outer let Unit)
+                            (Assign outer-child 1)
+                         1)))))
+               (none () -> 0)))))
+        (owner-ph))
+       p)))
+  (define observations '())
+  (define conflict-pairs '())
+  (define-values (_ir _filled result)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda (_cap _index _alpha _origins _source-alphas window event)
+            (when (and window (deferred-leaf-exit? event)
+                       (match (deferred-leaf-exit-source event)
+                         [`(binder ,_ ...) #t]
+                         [_ #f]))
+              (set! observations
+                    (cons (list (deferred-leaf-exit-source event) window)
+                          observations))))]
+         [current-borrow-conflict-probe
+          (lambda (left right)
+            (set! conflict-pairs (cons (list left right) conflict-pairs)))])
+      (type-core core callables)))
+  (check-true (diagnostic? result)
+              (format "再帰 Apply 中の局所要求が重なる: ~s" result))
+  (check-equal? (and (diagnostic? result) (diagnostic-id result)) "E-BOR-003")
+  (check-true (>= (set-count (list->set (map second observations))) 2)
+              (format "再帰 activation ごとに枝 extent root が異なる: ~s"
+                      observations))
+  (check-true (pair? conflict-pairs)
+              "Recur をまたぐ alias 拒否の対を観測する")
+  (when (pair? conflict-pairs)
+    (check-equal? (map borrow-request-point (first conflict-pairs))
+                  '((0 1 1 2 1) (0 1 1 2 1 1 1 0 2 0))
+                  (format "拒否対は現行と次の Recur activation の枝要求である: ~s"
+                          (map (lambda (request)
+                                 (list (borrow-request-point request)
+                                       (borrow-request-node request)
+                                       (borrow-request-fp request)
+                                       (borrow-request-alpha request)))
+                               (first conflict-pairs)))))
+)
+
+(test-case "同じ owner への二本の BorrowMut 実引数は作成時に拒否する"
+  (define signature
+    '(NFn ((BorrowedMut Int (RParam a)) (BorrowedMut Int (RParam b)))
+         Unit () () () User))
+  (define callables `((two-mut ,signature)))
+  (check-rejected
+   '(Scope ()
+      (Let (owner let (Owned Int)) 1
+        (Apply
+         (RegionApp
+          (RegionLam (a b)
+            (Lam User two-mut (left right) unit))
+          (owner-ph owner-ph))
+         (BorrowMut owner) (BorrowMut owner))))
+   "E-BOR-003" callables "same-owner-two-mut-arguments"))
+
+;; caller は既存の p capability を二仮引数へ渡すので、二本の BorrowMut を
+;; 引数評価で作らない。拒否対の point が callee 内の左右 ProjBorrowAt と示す。
+(test-case "異なる仮引数の同じ枝から同じ欄への mut 要求は拒否する"
+  (define signature
+    `(ForallRegion (a b)
+       (NFn ((BorrowedMut ,eowner-type (RParam a))
+             (BorrowedMut ,eowner-type (RParam b)))
+            Unit () (Mutation) () User)))
+  (define callables `((two-formal-mut ,signature)))
+  (define body
+    '(Eliminate (ProjBorrow left ro)
+       ((some (left-child) ->
+          (Eliminate (ProjBorrow right ro)
+            ((some (right-child) ->
+               (Let (x let (BorrowedMut Int (RParam %omitted)))
+                    (ProjBorrow left-child h)
+                 (Let (y let (BorrowedMut Int (RParam %omitted)))
+                      (ProjBorrow right-child h)
+                   (Let (write-x let Unit) (Assign x 1)
+                     (Let (write-y let Unit) (Assign y 2) unit)))))
+             (none () -> unit))))
+        (none () -> unit))))
+  (define pairs
+    (check-rejected-conflict-pair
+     (with-eparent
+      `(Apply
+        (RegionApp
+         (RegionLam (a b)
+           (Lam User two-formal-mut (left right) ,body))
+         (owner-ph owner-ph))
+        p p))
+     "E-BOR-003" callables "same-owner-across-formal-indices"))
+  (check-equal? (length pairs) 1)
+  (when (= (length pairs) 1)
+    (define pair (first pairs))
+    (check-equal? (map borrow-request-point pair)
+                  '((0 1 1 3 1) (0 1 1 3 1 1))
+                  "拒否対は caller の引数作成ではなく callee の枝内にある")
+    (check-true
+     (andmap (lambda (request)
+               (and (eq? (borrow-request-mode request) 'mut)
+                    (equal? (borrow-request-w request) 'x)
+                    (equal? (borrow-request-fp request) '(ro))))
+             pair)
+     (format "二つの仮引数から来る同じ owner 欄への枝要求: ~s"
+             (map (lambda (request)
+                    (list (borrow-request-w request)
+                          (borrow-request-fp request)
+                          (borrow-request-node request)))
+                  pair)))
+    (check-true
+     (match (borrow-request-node (first pair))
+       [`(ProjBorrowAt ,_ left ro) #t]
+       [_ #f]))
+    (check-true
+     (match (borrow-request-node (second pair))
+       [`(ProjBorrowAt ,_ right ro) #t]
+       [_ #f]))))
+
+(test-case "Union payload の子を結果へ逃がすと親 Assign は E-BOR-025"
+  (check-rejected union-payload-leaker-core "E-BOR-025"
+                  union-payload-leaker-callables "union-payload-escape-result")
+  (define-values (_typed windows)
+    (observe-local-exit-windows union-payload-leaker-core
+                                union-payload-leaker-callables))
+  (check-equal? windows '()
+                "共有の Union payload には局所 extent の候補が無い"))
+
+(test-case "mut Union payload の結果出口には extent を付けない"
+  (define-values (_ir result records)
+    (observe-decomposition-extents union-mut-payload-leaker-core
+                                   union-mut-payload-leaker-callables))
+  (check-true (diagnostic? result)
+              "mut payload escape の兄弟要求は現行どおり拒否する")
+  (check-not-false (member #f (map fourth records))
+                   "結果へ逃げる mut Union payload の extent は #f"))
+
+(test-case "binder から射影した子が結果へ逃げると extent 窓を付けず拒否する"
+  (define observations '())
+  (define-values (_ir _filled result)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda args (set! observations (cons args observations)))])
+      (type-core binder-child-result-escape-core
+                 binder-child-result-callables)))
+  (check-true (diagnostic? result)
+              (format "親の更新は E-BOR-025: ~s" result))
+  (check-equal? (and (diagnostic? result) (diagnostic-id result))
+                "E-BOR-025")
+  (check-true
+   (for/or ([observation (in-list observations)])
+     (define event (list-ref observation 6))
+     (and (deferred-leaf-exit? event)
+          (eq? (deferred-leaf-exit-exit-kind event) 'result)
+          (not (list-ref observation 5))))
+   (format "結果へ逃げる binder の子要求に窓を付けない: ~s" observations)))
+
+(test-case "binder の子を集約値へ格納すると extent 窓を付けない"
+  (define-values (_ir result records)
+    (observe-decomposition-extents binder-child-aggregate-core
+                                   binder-child-aggregate-callables))
+  (check-true (region-typed? result)
+              (format "集約結果に binder alpha の借用が残る: ~s" result))
+  (check-true
+   (match (region-typed-type result)
+     [`(Record ((field (BorrowedMut Int ,_) imm))) #t]
+     [_ #f])
+   (format "集約の結果型に child borrow が残る: ~s"
+           (and (region-typed? result) (region-typed-type result))))
+  (check-true (and (pair? records)
+                   (andmap (lambda (record) (not (fourth record))) records))
+              (format "集約値へ逃げる binder extent: ~s" records)))
+
+(test-case "borrowed function capture は extent の実体化前に拒否する"
+  (define-values (_ir result records)
+    (observe-decomposition-extents binder-child-capture-core
+                                   binder-child-capture-callables))
+  (check-true (diagnostic? result) (format "capture の診断: ~s" result))
+  (check-equal? (and (diagnostic? result) (diagnostic-id result)) "E-BOR-011")
+  (check-equal? records '()
+                "check-function-boundary が capture を先に拒否し、extent summary は作らない"))

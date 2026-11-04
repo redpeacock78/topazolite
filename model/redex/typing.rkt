@@ -111,6 +111,7 @@
          (struct-out callable-summary)
          (struct-out forwarding-summary)
          (struct-out deferred-leaf-exit)
+         (struct-out deferred-binder-request)
          leaf-exit-sites
          current-leaf-exit-sites
          current-leaf-exit-capability-reader
@@ -121,6 +122,7 @@
          callable-summary-leaf-exits
          classify-leaf-exits
          leaf-exit-local-safe?
+         current-decomposition-extent-probe
          signature-forwarding-summary
          formal-leaf-info
          formal-leaf-paths-for-exit
@@ -820,23 +822,30 @@
      #t]))
 
 (define (route-request! r node fail)
+  (define binder-request? (deferred-binder-request? r))
+  (define request
+    (if binder-request? (deferred-binder-request-request r) r))
   (define w
-    (if (borrow-request? r) (borrow-request-w r) (use-request-w r)))
+    (if (borrow-request? request) (borrow-request-w request) (use-request-w request)))
   (define deferred-r
     (cond
-      [(and (borrow-request? r) (formal-key? w))
-       (struct-copy borrow-request r
-                    [point (and (borrow-request-point r)
+      [(and (borrow-request? request) (formal-key? w))
+       (struct-copy borrow-request request
+                    [point (and (borrow-request-point request)
                                 (template-relative-point
-                                 w (borrow-request-point r)))])]
-      [(and (use-request? r) (formal-key? w))
-       (struct-copy use-request r
-                    [point (and (use-request-point r)
+                                 w (borrow-request-point request)))])]
+      [(and (use-request? request) (formal-key? w))
+       (struct-copy use-request request
+                    [point (and (use-request-point request)
                                 (template-relative-point
-                                 w (use-request-point r)))])]
-      [else r]))
-  (unless (route-deferred! deferred-r w node fail)
-    (emit-request! r)))
+                                 w (use-request-point request)))])]
+      [else request]))
+  (define deferred-item
+    (if binder-request?
+        (struct-copy deferred-binder-request r [request deferred-r])
+        deferred-r))
+  (unless (route-deferred! deferred-item w node fail)
+    (emit-request! request)))
 
 ;; 本体の Reborrow は親が (RParam rp) であり、呼出し位置で RegionApp が
 ;; 受けた region 項へ置き換わるまで具体の region へ落とせない。
@@ -845,7 +854,10 @@
 
 ;; §5.4。region-constraint は所有者の designator を欄に持たない。
 ;; formal capability の欄 path は、呼出しで親と子の停止を結ぶため一緒に保持する。
-(struct deferred-constraint (w constraint window-point parent-fp child-fp) #:transparent)
+(struct deferred-binder-request (request extent-point) #:transparent)
+(struct deferred-constraint
+  (w constraint window-point extent-point parent-fp child-fp)
+  #:transparent)
 
 (define (route-constraint! c w node fail [window-point #f]
                            [parent-fp '()] [child-fp '()])
@@ -859,7 +871,7 @@
   (define deferred-window
     (and window-point (template-relative-point w window-point)))
   (unless (route-deferred!
-           (deferred-constraint w deferred-c deferred-window
+           (deferred-constraint w deferred-c deferred-window #f
                                 parent-fp child-fp)
            w node fail)
     (emit-constraint! c)))
@@ -1682,7 +1694,82 @@
            (and formal-path
                 (event-access-path-matches? cap requested-fp event-path)
                 (matching-source-alphas formal-path)))))
-  (define (local-exit-window cap index alpha requested-fp w)
+  (define (event-extent-point event w [explicit-extent #f])
+    (or explicit-extent
+        (match (deferred-leaf-exit-source event)
+          [`(binder ,_ ...)
+           (for/first ([item (in-list deferred)]
+                       #:when
+                       (and (deferred-binder-request? item)
+                            (equal? (borrow-request-w
+                                     (deferred-binder-request-request item))
+                                    w)
+                            (equal? (borrow-request-alpha
+                                     (deferred-binder-request-request item))
+                                    (deferred-leaf-exit-alpha event))
+                            (deferred-binder-request-extent-point item)))
+             (deferred-binder-request-extent-point item))]
+          [_ #f])))
+  (define (binder-extent-candidates alpha index w)
+    (define origins
+      (and (lifetime-var? alpha) (binder-alpha-origins alpha)))
+    (for/list ([item (in-list deferred)]
+               #:when (deferred-binder-request? item)
+               #:do [(define request
+                       (deferred-binder-request-request item))
+                     (define binder-alpha (borrow-request-alpha request))]
+               #:when (and origins
+                           (equal? (borrow-request-w request) w)
+                           (lifetime-var? binder-alpha)
+                           (not (equal? binder-alpha alpha))
+                           (set-member? origins binder-alpha)))
+      (define binder-alpha
+        (borrow-request-alpha (deferred-binder-request-request item)))
+      (define source-keys
+        (remove-duplicates
+         (for/list ([event (in-list exits)]
+                    #:when
+                    (and (match (deferred-leaf-exit-source event)
+                           [`(binder ,_ ...) #t]
+                           [_ #f])
+                         (= (or (event-formal-index event) -1) index)
+                         (set-member? (binder-alpha-origins
+                                       (deferred-leaf-exit-alpha event))
+                                      binder-alpha)))
+           (deferred-leaf-exit-source event))
+         equal?))
+      (define source-events
+        (and (= (length source-keys) 1)
+             (filter (lambda (event)
+                       (equal? (deferred-leaf-exit-source event)
+                               (first source-keys)))
+                     exits)))
+      (define extent (deferred-binder-request-extent-point item))
+      (define safe?
+        (and (not (callable-summary-incomplete? summary))
+             extent
+             (= (length source-keys) 1)
+             (pair? source-events)
+             (for/and ([event (in-list source-events)])
+               (and (eq? (hash-ref exit-classifications
+                                   (leaf-exit-key event)
+                                   'fail-closed)
+                         'local)
+                    (leaf-exit-local-safe?
+                     (deferred-leaf-exit-source event)
+                     (event-group event) result-type)))))
+      (list item extent source-events safe?)))
+  (define (selected-binder-extent alpha index w request-point)
+    (define candidates (binder-extent-candidates alpha index w))
+    (and (= (length candidates) 1)
+         (let ([candidate (first candidates)])
+           (and (list-ref candidate 1)
+                (list-ref candidate 3)
+                request-point
+                (point-prefix? (list-ref candidate 1) request-point)
+                candidate))))
+  (define (local-exit-window cap index alpha requested-fp w
+                             [explicit-extent #f] [request-point #f])
     (define matching-events
       (for/list ([candidate (in-list exits)]
                  #:do [(define origins
@@ -1707,47 +1794,90 @@
                     (event-group candidate) result-type)))
             matching-events)
            (first matching-events)))
+    (define descendant-candidates
+      (binder-extent-candidates alpha index w))
+    (define descendant-candidate
+      (selected-binder-extent alpha index w request-point))
     (define event (and selected-match (first selected-match)))
     (define origins (if selected-match
                         (second selected-match)
                         (local-exit-alpha-origins alpha)))
-    (define window (and event (deferred-point '())))
+    (define extent-points
+      (for/list ([match (in-list matching-events)])
+        (event-extent-point (first match) w explicit-extent)))
+    (define extent-point
+      (and selected-match
+           (pair? extent-points)
+           (andmap values extent-points)
+           (andmap (lambda (candidate)
+                     (equal? candidate (first extent-points)))
+                   (rest extent-points))
+           (first extent-points)))
+    (define window
+      (cond
+        [(pair? descendant-candidates)
+         (and descendant-candidate
+              (deferred-point (list-ref descendant-candidate 1)))]
+        [event (deferred-point (or extent-point '()))]
+        [else #f]))
     (define probe (current-local-exit-window-probe))
     (when probe
       (probe cap index alpha origins
              (and selected-match (third selected-match))
-             window event))
+             window
+             (or event
+                 (and (= (length descendant-candidates) 1)
+                      (pair? (list-ref (first descendant-candidates) 2))
+                      (first (list-ref (first descendant-candidates) 2))))))
     window)
   (for ([item (in-list deferred)])
     (cond
-      [(borrow-request? item)
-       (define w (borrow-request-w item))
+      [(or (borrow-request? item) (deferred-binder-request? item))
+       (define request
+         (if (deferred-binder-request? item)
+             (deferred-binder-request-request item)
+             item))
+       (define w (borrow-request-w request))
        (define caps (actual-caps w))
        (define index (and (formal-key? w) (fourth w)))
-       (define child-alpha (subst-term (borrow-request-alpha item)))
+       (define child-alpha (subst-term (borrow-request-alpha request)))
        (define reborrow-items
-         (reborrow-constraints w (borrow-request-alpha item)
-                               (borrow-request-fp item)))
+         (reborrow-constraints w (borrow-request-alpha request)
+                               (borrow-request-fp request)))
        (for ([cap (in-set caps)])
          (define child-fp
-           (append (cdr cap) (borrow-request-fp item)))
+           (append (cdr cap) (borrow-request-fp request)))
+         (define descendant-extent
+           (and (not (deferred-binder-request? item))
+                (selected-binder-extent
+                 (borrow-request-alpha request) index w
+                 (borrow-request-point request))))
+         (define descendant-window
+           (and descendant-extent
+                (deferred-point (list-ref descendant-extent 1))))
          (define local-window
            (and index
                 (local-exit-window cap index
-                                   (borrow-request-alpha item)
-                                   child-fp w)))
+                                   (borrow-request-alpha request)
+                                   child-fp w
+                                   (and (deferred-binder-request? item)
+                                        (deferred-binder-request-extent-point
+                                         item))
+                                   (borrow-request-point request))))
          (route-request!
           (borrow-request (car cap)
                           child-fp
-                          (borrow-request-mode item)
+                          (borrow-request-mode request)
                           child-alpha
-                          (borrow-request-rho-borrow item)
-                          (borrow-request-node item)
-                          (if local-window
+                          (borrow-request-rho-borrow request)
+                          (borrow-request-node request)
+                          (if descendant-window
+                              (deferred-point (borrow-request-point request))
+                              (if local-window
                               local-window
-                              (and (borrow-request-point item)
+                              (and (borrow-request-point request)
                                    (deferred-point
-                                    (borrow-request-point item)))))
+                                    (borrow-request-point request))))))
           node fail)
          (for ([reborrow-item (in-list reborrow-items)])
            (define constraint
@@ -1764,15 +1894,34 @@
            (define local-window
              (and index
                   (or (local-exit-window
-                       cap index (region-constraint-left constraint) parent-fp w)
+                       cap index (region-constraint-left constraint) parent-fp w
+                       (deferred-constraint-extent-point reborrow-item))
                       (local-exit-window
                        cap index (region-constraint-left constraint)
                        (append (cdr cap)
                                (deferred-constraint-child-fp reborrow-item))
-                       w))))
+                       w (deferred-constraint-extent-point reborrow-item)))))
            (define suspension-window
              (or (and window-point (deferred-point window-point))
+                 descendant-window
                  local-window))
+           (define suspension-extent-point
+             (and (not window-point)
+                  (or (and descendant-window
+                           (list-ref descendant-extent 1))
+                      (and local-window
+                           (deferred-constraint-extent-point reborrow-item)))))
+           (define suspension-start
+             (match (peel-node (region-constraint-node constraint))
+               [`(,(or 'EliminateAt 'UnionEliminateAt) . ,_)
+                ;; 分解の停止は親式から枝へ入る時点で始まるため、枝本体
+                ;; の root を始点にすると最初の子（通常 index 0）を誤って除く。
+                (if (pair? suspension-point)
+                    (drop-right suspension-point 1)
+                    suspension-point)]
+               [_
+                ;; Reborrow 自身の評価は親を通る必要がある。
+                suspension-point]))
            (define parent-alphas
              (for/list ([entry (in-set (psi-mut current-psi))]
                         #:when (and (equal? (first entry) (car cap))
@@ -1787,9 +1936,9 @@
                    (psi-suspend current-psi
                                 (car cap) child-fp
                                 parent-alpha child-alpha
-                                (borrow-request-mode item)
-                                (borrow-request-node item)
-                                suspension-point
+                                (borrow-request-mode request)
+                                (borrow-request-node request)
+                                suspension-start
                                 suspension-window)))))]
       [(use-request? item)
        (define w (use-request-w item))
@@ -1845,13 +1994,13 @@
                      cap index (region-constraint-left c)
                      (append (cdr cap)
                              (deferred-constraint-parent-fp item))
-                     w)
+                     w (deferred-constraint-extent-point item))
                     (and (eq? (region-constraint-kind c) 'reborrow)
                          (local-exit-window
                           cap index (region-constraint-left c)
                           (append (cdr cap)
                                   (deferred-constraint-child-fp item))
-                          w)))))
+                          w (deferred-constraint-extent-point item))))))
          (unless (and local-window
                       (eq? (region-constraint-kind c) 'contains))
            (route-constraint!
@@ -1904,6 +2053,7 @@
 
 ;; local 窓が実引数の α 起源へ対応したことを試験から確認する。
 (define current-local-exit-window-probe (make-parameter #f))
+(define current-decomposition-extent-probe (make-parameter #f))
 
 (define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
   (borrow-token-key Λ core locals #:fail fail
@@ -2082,6 +2232,154 @@
        (lambda (_actual-path _source-path _alpha) (list (peel-node core)))
        fail))))
 
+(define (update-template-deferred! frame update)
+  (define collector (template-frame-box frame))
+  (set-box! collector (map update (unbox collector))))
+
+(define (record-decomposition-extents! core Λ result-type)
+  (define term (peel-node core))
+  (define head (and (pair? term) (car term)))
+  (when (memq head '(Eliminate EliminateAt UnionEliminate UnionEliminateAt))
+    (define decomposition-point (region-ctx-point Λ))
+    (define scrutinee (second term))
+    (define scrutinee-type (typing-child-type Λ 0))
+    (define scrutinee-caps
+      (with-handlers ([exn:fail? (lambda (_) (set))])
+        (typing-borrow-token-key (enter-child Λ 0) scrutinee)))
+    (define formal-caps
+      (filter (lambda (cap) (and (pair? cap) (formal-key? (car cap))))
+              (set->list scrutinee-caps)))
+    (define derived-scrutinee?
+      (match (peel-node scrutinee)
+        [`(,(or 'ProjBorrow 'ProjBorrowAt 'Reborrow 'ReborrowAt) . ,_) #t]
+        [_ #f]))
+    (define escaped-alphas
+      (if derived-scrutinee?
+          (lifetime-vars-in scrutinee-type)
+          (set)))
+    (define result-alphas (lifetime-vars-in result-type))
+    (define binders (branch-binder-alphas))
+    (define infos (branch-binder-event-info))
+    (when (and (pair? formal-caps) (hash? binders) (hash? infos))
+      (define candidates
+        (for/list ([(key alpha) (in-hash binders)]
+                   #:when (and (list? key) (= (length key) 3)
+                               (equal? (first key) decomposition-point))
+                   #:do [(define info (hash-ref infos key #f))]
+                   #:when (and (list? info) (= (length info) 6)
+                               (exact-nonnegative-integer? (second info)))
+                   #:do [(define frame (first info))
+                         (define formal-index (second info))
+                         (define root
+                           (for/first ([cap (in-list formal-caps)]
+                                       #:when
+                                       (and (eq? (owning-frame (car cap)) frame)
+                                            (= (fourth (car cap)) formal-index)))
+                             (car cap)))
+                         (define source (cons 'binder key))
+                         (define events
+                           (filter
+                            (lambda (event)
+                              (and (deferred-leaf-exit? event)
+                                   (equal? (deferred-leaf-exit-source event)
+                                           source)))
+                            (unbox (template-frame-box frame))))
+                         (define event-alphas
+                           (for/fold ([result (set)]) ([event (in-list events)])
+                             (set-union result
+                                        (binder-alpha-origins
+                                         (deferred-leaf-exit-alpha event)))))
+                         (define forbidden-alphas
+                           (set-union (binder-alpha-origins alpha)
+                                      event-alphas escaped-alphas))
+                         (define local?
+                           (and root
+                                (not (unbox
+                                      (template-frame-incomplete-box frame)))
+                                (pair? events)
+                                (leaf-exit-local-safe? source events result-type)
+                                (set-empty?
+                                 (set-intersect result-alphas forbidden-alphas))))
+                         (define branch-point
+                           (append decomposition-point (list (add1 (second key)))))
+                         (define extent
+                           (and local?
+                                (template-relative-point root branch-point)))]
+                   #:when root)
+          (list key alpha (first info) root extent events)))
+      (for ([candidate (in-list candidates)])
+        (match-define (list key alpha frame root extent _events) candidate)
+        (define extent-probe (current-decomposition-extent-probe))
+        (update-template-deferred!
+         frame
+         (lambda (item)
+           (cond
+             [(deferred-binder-request? item)
+              (define request (deferred-binder-request-request item))
+              (if (and (equal? (borrow-request-w request) root)
+                       (equal? (borrow-request-alpha request) alpha))
+                  (struct-copy deferred-binder-request item
+                               [extent-point extent])
+                  item)]
+             [(deferred-constraint? item)
+              (define constraint
+                (deferred-constraint-constraint item))
+              (define c (region-constraint-kind constraint))
+              (if (and (equal? (deferred-constraint-w item) root)
+                       (or (and (eq? c 'contains)
+                                (equal? (region-constraint-left constraint)
+                                        alpha))
+                           (and (eq? c 'reborrow)
+                                (equal? (region-constraint-right constraint)
+                                        alpha))))
+                  (struct-copy deferred-constraint item [extent-point extent])
+                  item)]
+             [else item])))
+        (when (and extent-probe (not derived-scrutinee?))
+          (extent-probe decomposition-point (second key) root extent _events
+                        (unbox (template-frame-box frame)))))
+      (when (and derived-scrutinee? (pair? candidates))
+        (for ([candidate (in-list candidates)])
+          (define root (list-ref candidate 3))
+          (define frame (list-ref candidate 2))
+          (define extent (list-ref candidate 4))
+          (define decomposition-extent
+            (template-relative-point root decomposition-point))
+          (define scrutinee-relative-point
+            (template-relative-point root
+                                     (append decomposition-point '(0))))
+          (when (and extent
+                     (not (unbox (template-frame-incomplete-box frame)))
+                     (eq? frame (owning-frame root)))
+            (update-template-deferred!
+             frame
+             (lambda (item)
+               (if (and (deferred-constraint? item)
+                        (equal? (deferred-constraint-w item) root)
+                        (equal? (region-constraint-point
+                                 (deferred-constraint-constraint item))
+                                scrutinee-relative-point)
+                        (let ([constraint
+                               (deferred-constraint-constraint item)])
+                          (if (eq? (region-constraint-kind constraint)
+                                   'contains)
+                              (set-member? escaped-alphas
+                                           (region-constraint-left constraint))
+                              (set-member? escaped-alphas
+                                           (region-constraint-right constraint)))))
+                   (struct-copy deferred-constraint item
+                                [extent-point decomposition-extent])
+                   item)))))
+      (when (and derived-scrutinee?
+                 (current-decomposition-extent-probe))
+        (for ([candidate (in-list candidates)])
+          (define root (list-ref candidate 3))
+          (define frame (list-ref candidate 2))
+          ((current-decomposition-extent-probe)
+           decomposition-point (second (first candidate)) root
+           (list-ref candidate 4) (list-ref candidate 5)
+           (unbox (template-frame-box frame)))))))))
+
 (define (emit-expression-decomposition-exits! core Λ environment places
                                               callables result-type fail)
   (define ir (region-ctx-ir Λ))
@@ -2230,7 +2528,8 @@
         ir point (callable-latent-effects
                   (callable-signature callables callable))
         core fail)]
-      [_ (void)])))
+      [_ (void)])
+    (record-decomposition-extents! core Λ result-type)))
 
 ;; §3.2。親の書込みが variant segment より手前なら、その view が生きる間は拒む。
 (define (reject-variant-view-write! Λ target-capabilities node fail)
@@ -3582,9 +3881,13 @@
                 (region-constraint 'reborrow α-parent alpha point node)
                 w node fail #f parent-fp child-fp)
                (psi-suspend next w child-fp α-parent alpha 'mut node point))))
+         (define request
+           (borrow-request (car child-cap) (cdr child-cap) 'mut
+                           alpha branch-region node point))
          (route-request!
-          (borrow-request (car child-cap) (cdr child-cap) 'mut
-                          alpha branch-region node point)
+          (if (and formal-parent? (formal-key? (car child-cap)))
+              (deferred-binder-request request #f)
+              request)
           node fail)
          next))
      (track-child-alpha! alpha)
