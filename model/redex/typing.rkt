@@ -123,6 +123,7 @@
          classify-leaf-exits
          leaf-exit-local-safe?
          current-decomposition-extent-probe
+         current-decomposition-extent-reason-probe
          signature-forwarding-summary
          formal-leaf-info
          formal-leaf-paths-for-exit
@@ -2054,6 +2055,7 @@
 ;; local 窓が実引数の α 起源へ対応したことを試験から確認する。
 (define current-local-exit-window-probe (make-parameter #f))
 (define current-decomposition-extent-probe (make-parameter #f))
+(define current-decomposition-extent-reason-probe (make-parameter #f))
 
 (define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
   (borrow-token-key Λ core locals #:fail fail
@@ -2290,26 +2292,51 @@
                                         (binder-alpha-origins
                                          (deferred-leaf-exit-alpha event)))))
                          (define forbidden-alphas
-                           (set-union (binder-alpha-origins alpha)
+                           ;; alpha 自身も除くと、派生関係を持つ binder の
+                           ;; 値を型が返す逃避を検出できない。
+                           (set-union (set alpha) (alpha-set alpha)
+                                      (binder-alpha-origins alpha)
                                       event-alphas escaped-alphas))
+                         (define root? (and root #t))
+                         (define frame-complete?
+                           (not (unbox
+                                 (template-frame-incomplete-box frame))))
+                         (define events-nonempty? (pair? events))
+                         (define local-safe?
+                           (leaf-exit-local-safe? source events result-type))
+                         (define result-origin-alphas
+                           ;; lifetime-vars-in の合流 α は双方の起源へ展開して比べる。
+                           (for/fold ([origins (set)])
+                                     ([alpha (in-set result-alphas)])
+                             (for/fold ([origins origins])
+                                       ([source (in-set (alpha-set alpha))])
+                               (set-union origins
+                                          (binder-alpha-origins source)))))
+                         (define overlap
+                           (set-intersect result-origin-alphas
+                                          forbidden-alphas))
+                         (define reason
+                           (list root? frame-complete? events-nonempty?
+                                 local-safe? alpha
+                                 (binder-alpha-origins alpha)
+                                 result-alphas result-origin-alphas
+                                 forbidden-alphas overlap))
                          (define local?
-                           (and root
-                                (not (unbox
-                                      (template-frame-incomplete-box frame)))
-                                (pair? events)
-                                (leaf-exit-local-safe? source events result-type)
-                                (set-empty?
-                                 (set-intersect result-alphas forbidden-alphas))))
+                           (and root? frame-complete? events-nonempty?
+                                local-safe? (set-empty? overlap)))
                          (define branch-point
                            (append decomposition-point (list (add1 (second key)))))
                          (define extent
                            (and local?
                                 (template-relative-point root branch-point)))]
                    #:when root)
-          (list key alpha (first info) root extent events)))
+          (list key alpha (first info) root extent events reason)))
       (for ([candidate (in-list candidates)])
-        (match-define (list key alpha frame root extent _events) candidate)
+        (match-define (list key alpha frame root extent _events reason) candidate)
         (define extent-probe (current-decomposition-extent-probe))
+        (define reason-probe (current-decomposition-extent-reason-probe))
+        (when reason-probe
+          (reason-probe decomposition-point (second key) root reason))
         (update-template-deferred!
          frame
          (lambda (item)
@@ -2378,7 +2405,13 @@
           ((current-decomposition-extent-probe)
            decomposition-point (second (first candidate)) root
            (list-ref candidate 4) (list-ref candidate 5)
-           (unbox (template-frame-box frame)))))))))
+           (unbox (template-frame-box frame)))))
+      (when (and derived-scrutinee?
+                 (current-decomposition-extent-reason-probe))
+        (for ([candidate (in-list candidates)])
+          ((current-decomposition-extent-reason-probe)
+           decomposition-point (second (first candidate))
+           (list-ref candidate 3) (list-ref candidate 6))))))))
 
 (define (emit-expression-decomposition-exits! core Λ environment places
                                               callables result-type fail)

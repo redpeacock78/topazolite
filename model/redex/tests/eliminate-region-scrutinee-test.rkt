@@ -210,14 +210,24 @@
 
 (define (observe-decomposition-extents core callables)
   (define observed '())
+  (define reasons (make-hash))
   (define-values (ir _filled typed)
     (parameterize
         ([current-decomposition-extent-probe
           (lambda (point branch root extent events _items)
             (set! observed
-                  (cons (list point branch root extent events) observed)))])
+                  (cons (list point branch root extent events) observed)))]
+         [current-decomposition-extent-reason-probe
+          (lambda (point branch root reason)
+            (hash-set! reasons (list point branch root) reason))])
       (type-core core callables)))
-  (values ir typed (reverse observed)))
+  (values ir typed
+          (for/list ([record (in-list (reverse observed))])
+            (append record
+                    (list (hash-ref reasons
+                                    (list (first record) (second record)
+                                          (third record))
+                                    #f))))))
 
 (define (observe-local-exit-windows core callables)
   (define observed '())
@@ -709,6 +719,9 @@
      shared-parent-write))
    'Unit '() "escape-handle-matching-control"))
 
+;; 借用を含む mut slot は E-VAR-009 で先に止まり、出口照合まで届かない。
+;; E-VAR-009 を回収するときに、子を外側の mut slot へ Reassign して
+;; 親へ Assign する形の E-BOR-025 の対を足す。
 (test-case "借用型を mutable Let へ Reassign する形は E-VAR-009 で先に拒否"
   (check-rejected
    (with-shared-view-parent
@@ -806,6 +819,52 @@
      (owner-ph))
     p))
 
+(define (check-param-parent-escape core label)
+  (define-values (_ir result records)
+    (observe-decomposition-extents core param-parent-callables))
+  (check-true (diagnostic? result)
+              (format "~a: E-BOR-025 を期待したが ~s" label result))
+  (when (diagnostic? result)
+    (check-equal? (diagnostic-id result) "E-BOR-025" label))
+  (check-true (pair? records)
+              (format "~a: 分解の binder extent を観測する" label))
+  (check-true
+   (and (pair? records)
+        (andmap (lambda (record) (not (fourth record))) records))
+   (format "~a: escape を含む分解では extent が付かない: ~s"
+           label records))
+  (check-true
+   (andmap
+    (lambda (record)
+      (for/and ([event (in-list (fifth record))])
+        (and (deferred-leaf-exit? event)
+             (not (eq? (deferred-leaf-exit-exit-kind event) 'local)))))
+    records)
+   (format "~a: binder event がある場合も local の根拠にしない: ~s"
+           label records))
+  (check-true
+   (andmap
+    (lambda (record)
+      (match (sixth record)
+        [(list root? frame-complete? events-nonempty? local-safe? alpha
+               alpha-origins result-alphas result-origin-alphas
+               forbidden-alphas overlap)
+         (and root? frame-complete?
+              (eq? events-nonempty? (pair? (fifth record)))
+              (boolean? local-safe?)
+              (set-member? forbidden-alphas alpha)
+              (set-empty?
+               (set-subtract alpha-origins forbidden-alphas))
+              (equal? overlap
+                      (set-intersect result-origin-alphas
+                                     forbidden-alphas))
+              (set-member? overlap alpha)
+              (not (set-empty? overlap)))]
+        [_ #f]))
+    records)
+   (format "~a: 型の寿命と binder 起源の交差で extent を拒否する: ~s"
+           label records)))
+
 (test-case "param-parent: 逃げない枝の後の formal parent 書込みは受理"
   (check-accepted
    (with-eparent
@@ -813,6 +872,15 @@
      (then/as 'Int (elim-o '(Read c) 0)
               (then `(Assign p ,eowner-value) 1))))
    'Int param-parent-callables "param-parent-nonescape"))
+
+(test-case "param-parent: binder から射影した子を枝内で読み切ると親へ書ける"
+  (check-accepted
+   (with-eparent
+    (param-parent-call
+     (then/as 'Int
+              (elim-ro '(Read (ProjBorrow c h)) 0)
+              (then `(Assign p ,eowner-value) 1))))
+   'Int param-parent-callables "param-parent-projected-child-nonescape"))
 
 (test-case "param-parent: formal projection の子を結果へ逃がす形は E-BOR-025"
   (check-rejected
@@ -823,6 +891,30 @@
        (Let (written let Unit) (Assign p ,eowner-value)
          (Read escaped)))))
    "E-BOR-025" param-parent-callables "param-parent-escape"))
+
+(test-case "param-parent: 枝 Scope の結果へ子を逃がすと E-BOR-025"
+  (check-param-parent-escape
+   (with-eparent
+    (param-parent-call
+     `(Let (escaped let (BorrowedMut Int (RParam a)))
+           ,(elim-ro '(Scope () (ProjBorrow c h))
+                     '(Scope () (ProjBorrow p g)))
+       (Let (written let Unit) (Assign p ,eowner-value)
+         (Read escaped)))))
+   "param-parent-scope-escape"))
+
+(test-case "param-parent: 分解の子を record に格納して親へ書くと E-BOR-025"
+  (define escaped-record
+    '(Record ((payload (BorrowedMut Int (RParam %omitted)) imm))))
+  (check-param-parent-escape
+   (with-eparent
+    (param-parent-call
+     `(Let (escaped let ,escaped-record)
+           ,(elim-ro '(Rec ((payload imm (ProjBorrow c h))))
+                     '(Rec ((payload imm (ProjBorrow p g)))))
+       (Let (written let Unit) (Assign p ,eowner-value)
+         (Read (Proj escaped payload))))))
+   "param-parent-record-escape"))
 
 (test-case "escape-apply: identity の結果を分解の外へ出すと E-BOR-025"
   (define identity-type
