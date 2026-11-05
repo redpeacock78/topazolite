@@ -46,6 +46,7 @@
          execution-core
          typing-visited-points
          config-ok?
+         structural-tokens observed-tokens
          elimination-annotations-well-formed?
          config-view-compatible?
          config-runtime-borrow-types
