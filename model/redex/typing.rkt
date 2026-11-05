@@ -110,6 +110,8 @@
          collected-region-args
          check-region-args
          (struct-out callable-summary)
+         (struct-out deferred-outlives-check)
+         reject-pending-callable-summary!
          (struct-out forwarding-summary)
          (struct-out deferred-leaf-exit)
          (struct-out deferred-binder-request)
@@ -632,7 +634,9 @@
 ;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
 (struct template-frame
-  (formals region-params point box body parameters parameter-types return-type latent-row
+  ;; region-params は所有者の文脈、outlives-params は現在の ForallRegion の
+  ;; binder だけ。Recur は前者に外側の RParam も含める。
+  (formals region-params outlives-params point box body parameters parameter-types return-type latent-row
            formal-fields incomplete-box)
   #:transparent)
 (define template-collectors (make-parameter '()))
@@ -724,6 +728,7 @@
        (drop point (length body-root))))
 
 (struct deferred-owner-check (alpha body-point) #:transparent)
+(struct deferred-outlives-check (long short body-point) #:transparent)
 
 (define (template-frame-for-region alpha)
   (match alpha
@@ -732,6 +737,52 @@
                  #:when (set-member? (template-frame-region-params frame) rp))
        frame)]
     [_ #f]))
+
+;; infer-read だけが新しい obligation を作る。初回の保留は現在の frame が
+;; 束縛する二つの RParam に限定し、内側 Apply から戻る項目だけは外側の
+;; frame に属する RParam と具体項の組も再保留できる。
+(define (route-outlives-check! long short point node fail
+                               #:allow-one-param? [allow-one-param? #f]
+                               #:current-only? [current-only? #f])
+  (define params
+    (filter values
+            (list (match long [`(RParam ,rp) rp] [_ #f])
+                  (match short [`(RParam ,rp) rp] [_ #f]))))
+  (define frames
+    (if (and current-only? (pair? (template-collectors)))
+        (list (first (template-collectors)))
+        (template-collectors)))
+  (define owners
+    (for/list ([rp (in-list (remove-duplicates params))])
+      (for/first ([candidate (in-list frames)] [index (in-naturals)]
+                  #:when (set-member? (template-frame-outlives-params candidate)
+                                      rp))
+        index)))
+  (define allowed-count?
+    (or (= (length params) 2)
+        (and allow-one-param? (= (length params) 1))))
+  ;; 初回は両端を同じ callable が束縛する場合だけ保留する。実体化後は、
+  ;; 両端の owner frame が揃っていれば最内 frame が外側の RParam を預かる。
+  (define frame-index
+    (and allowed-count?
+         (pair? owners)
+         (andmap exact-nonnegative-integer? owners)
+         (if allow-one-param?
+             (apply min owners)
+             (and (andmap (lambda (index) (= index (first owners))) owners)
+                  (first owners)))))
+  (define frame (and frame-index (list-ref frames frame-index)))
+  (cond
+    [frame
+     (define relative-point (template-frame-relative-point frame point))
+     (unless relative-point
+       (fail 'borrow-unknown-owner-region node))
+     (define item (deferred-outlives-check long short relative-point))
+     (define collector (template-frame-box frame))
+     (unless (member item (unbox collector) equal?)
+       (set-box! collector (cons item (unbox collector))))
+     #t]
+    [else #f]))
 
 (define (route-owner-check! alpha point node fail)
   (define frame (template-frame-for-region alpha))
@@ -846,13 +897,14 @@
      (define f (owning-frame w))
      (unless f (fail 'unresolved-borrow-owner node))
      (define b (template-frame-box f))
-     (if (deferred-leaf-exit? item)
-         (unless (for/or ([previous (in-list (unbox b))])
-                   (and (deferred-leaf-exit? previous)
-                        (equal? (leaf-exit-identity previous)
-                                (leaf-exit-identity item))))
-           (set-box! b (cons item (unbox b))))
-         (set-box! b (cons item (unbox b))))
+     (cond
+       [(deferred-leaf-exit? item)
+        (unless (for/or ([previous (in-list (unbox b))])
+                  (and (deferred-leaf-exit? previous)
+                       (equal? (leaf-exit-identity previous)
+                               (leaf-exit-identity item))))
+          (set-box! b (cons item (unbox b))))]
+       [else (set-box! b (cons item (unbox b)))])
      #t]))
 
 (define (route-request! r node fail)
@@ -943,12 +995,11 @@
   (formals deferred result-index region-subst formal-fields incomplete?)
   #:transparent)
 
-(define (callable-summary-owner-checks summary)
-  (filter deferred-owner-check? (callable-summary-deferred summary)))
-
-(define (callable-summary-has-pending-owner? summary)
+(define (callable-summary-has-pending-check? summary)
   (and (callable-summary? summary)
-       (pair? (callable-summary-owner-checks summary))))
+       (for/or ([item (in-list (callable-summary-deferred summary))])
+         (or (deferred-owner-check? item)
+             (deferred-outlives-check? item)))))
 
 (struct deferred-leaf-exit
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
@@ -1170,8 +1221,8 @@
          summary)]
     [(_ _) summary]))
 
-(define (reject-pending-owner-summary! boundary position summary location fail)
-  (when (callable-summary-has-pending-owner? summary)
+(define (reject-pending-callable-summary! boundary position summary location fail)
+  (when (callable-summary-has-pending-check? summary)
     (define probe (current-callable-summary-boundary-probe))
     (when probe
       (probe (match (peel-node boundary)
@@ -1636,6 +1687,16 @@
          ;; lifetime-owner-region と route-owner-check! が E-BOR-006 に閉じる。
          [else alpha])]
       [_ alpha]))
+  ;; Outlives は呼出し側の RVar 自身を制約する。Reborrow 用 subst-term と違い、
+  ;; RVar を新しい局所 alpha にせず、外側の RParam も次の summary へ残す。
+  (define (subst-outlives-term term)
+    (match term
+      [`(RParam ,rp)
+       (define mapped (hash-ref region-subst rp #f))
+       (if mapped (subst-outlives-term mapped) term)]
+      [_ (if (and ir (exact-nonnegative-integer? term))
+             (rho->region ir term)
+             term)]))
   (define (actual-caps w)
     (hash-ref subst w
               (lambda () (fail 'unresolved-borrow-owner node))))
@@ -2067,6 +2128,17 @@
           (when probe (probe alpha owner point node))]
          [(not (route-owner-check! alpha point node fail))
           (fail 'borrow-unknown-owner-region node)])]
+      [(deferred-outlives-check? item)
+       (define long (subst-outlives-term
+                     (deferred-outlives-check-long item)))
+       (define short (subst-outlives-term
+                      (deferred-outlives-check-short item)))
+       (if (or (rparam-term? long) (rparam-term? short))
+           (unless (route-outlives-check! long short point node
+                                          fail #:allow-one-param? #t)
+             (fail 'borrow-unknown-owner-region node))
+           (emit-constraint!
+            (region-constraint 'outlives long short point node)))]
       [else
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
@@ -5153,7 +5225,7 @@
   (for ([entry (in-list environment)]
         #:when (set-member? free-names (first entry)))
     (define summary (region-ctx-summary Λ (first entry)))
-    (reject-pending-owner-summary! node 'capture summary node fail))
+    (reject-pending-callable-summary! node 'capture summary node fail))
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
   (define signature (resolve-region-params raw-signature))
@@ -5176,6 +5248,14 @@
      (define signature-region-params
        (set-intersect (bound-region-params)
                       (region-free-params expanded)))
+     (define outlives-region-params
+       (match raw-signature
+         [`(ForallRegion (,rps ...) ,_)
+          (define context (region-binder-context))
+          (if (and (list? context) (= (length context) (length rps)))
+              (list->set context)
+              (set))]
+         [_ (set)]))
      (parameterize ([bound-region-params signature-region-params])
        (check-function-boundary parameter-types return-type obligations
                                 body parameters environment node fail))
@@ -5206,7 +5286,8 @@
      (define incomplete-box (box #f))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                       signature-region-params (region-ctx-point Λ)
+                       signature-region-params outlives-region-params
+                       (region-ctx-point Λ)
                        collector body parameters parameter-types return-type
                        latent-row formal-fields incomplete-box))
      ;; Lam が転送できるのは自身の署名に自由に現れる region parameter だけ。
@@ -5237,7 +5318,7 @@
                   (define result
                     (check-as body return-type body-context closure-psi body-environment
                               places callables fail))
-                  (reject-pending-owner-summary!
+                  (reject-pending-callable-summary!
                    body 'result
                    (callable-summary-for-expression body-context body)
                    body fail)
@@ -5332,8 +5413,11 @@
     (formal-parameter-context Λ node parameters parameter-types))
   (define recur-binding (lookup-binding body-function-environment function))
   (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
+                    [previous-outlives-checks '()]
                     [previous-incomplete? #f])
-    (define collector (box (append previous-exits previous-owner-checks)))
+    (define collector
+      (box (append previous-exits previous-owner-checks
+                   previous-outlives-checks)))
     (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame (list recur-binding) formals
@@ -5342,7 +5426,8 @@
                         collector 'tentative 1 formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                      region-params (region-ctx-point Λ)
+                      region-params (list->set binder-params)
+                      (region-ctx-point Λ)
                       collector body parameters parameter-types return-type
                       latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
@@ -5375,17 +5460,23 @@
          (filter deferred-leaf-exit? (unbox collector)))
        (define owner-checks
          (filter deferred-owner-check? (unbox collector)))
+       (define outlives-checks
+         (filter deferred-outlives-check? (unbox collector)))
        (define exits-unchanged?
          (set=? (list->set (map leaf-exit-identity exits))
                 (list->set (map leaf-exit-identity previous-exits))))
        (define owner-checks-unchanged?
          (set=? (list->set owner-checks)
                 (list->set previous-owner-checks)))
+       (define outlives-checks-unchanged?
+         (set=? (list->set outlives-checks)
+                (list->set previous-outlives-checks)))
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
-                owner-checks-unchanged?)
+                owner-checks-unchanged? outlives-checks-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits owner-checks (unbox incomplete-box)))]))
+           (fixpoint Ψ_next exits owner-checks outlives-checks
+                     (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -5428,8 +5519,11 @@
               (lookup-binding function-environment function))))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
+                    [previous-outlives-checks '()]
                     [previous-incomplete? #f])
-    (define collector (box (append previous-exits previous-owner-checks)))
+    (define collector
+      (box (append previous-exits previous-owner-checks
+                   previous-outlives-checks)))
     (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame bindings formals
@@ -5440,7 +5534,8 @@
                         formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
-                      region-params (region-ctx-point Λ)
+                      region-params (list->set binder-params)
+                      (region-ctx-point Λ)
                       collector body parameters parameter-types return-type
                       latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
@@ -5473,17 +5568,23 @@
          (filter deferred-leaf-exit? (unbox collector)))
        (define owner-checks
          (filter deferred-owner-check? (unbox collector)))
+       (define outlives-checks
+         (filter deferred-outlives-check? (unbox collector)))
        (define exits-unchanged?
          (set=? (list->set (map leaf-exit-identity exits))
                 (list->set (map leaf-exit-identity previous-exits))))
        (define owner-checks-unchanged?
          (set=? (list->set owner-checks)
                 (list->set previous-owner-checks)))
+       (define outlives-checks-unchanged?
+         (set=? (list->set outlives-checks)
+                (list->set previous-outlives-checks)))
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
-                owner-checks-unchanged?)
+                owner-checks-unchanged? outlives-checks-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits owner-checks (unbox incomplete-box)))]))
+           (fixpoint Ψ_next exits owner-checks outlives-checks
+                     (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -6319,8 +6420,10 @@
   ;; borrow.md §12。読み出した値の中の借用は view の region を超えない。
   ;; BOR-001 と同じ形の上限制約であり、違反は borrow-escapes-owner で報告される。
   (for ([α (in-list α_inner)])
-    (emit-constraint!
-     (region-constraint 'outlives α_view α (region-ctx-point Λ) core)))
+    (unless (route-outlives-check! α_view α (region-ctx-point Λ) core fail
+                                   #:current-only? #t)
+      (emit-constraint!
+       (region-constraint 'outlives α_view α (region-ctx-point Λ) core))))
   (define source (use-source Λ operand τ_operand))
   (for ([cap (in-set
               (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))])
@@ -6892,7 +6995,7 @@
              #:do [(define summary
                      (callable-summary-for-expression
                       (enter-child Λ index) child))]
-             #:when (callable-summary-has-pending-owner? summary))
+             #:when (callable-summary-has-pending-check? summary))
     (list index child summary)))
 
 (define (summary-input-allowed? core index)
@@ -6917,7 +7020,7 @@
 (define (propagate-callable-summary! core Λ fail)
   (for ([input (in-list (summary-inputs core Λ))])
     (unless (summary-input-allowed? core (first input))
-      (reject-pending-owner-summary!
+      (reject-pending-callable-summary!
        core (first input) (third input) core fail)))
   (define output-child (summary-output-child core))
   (when output-child
@@ -7362,7 +7465,7 @@
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
-        (reject-pending-owner-summary! core 'function summary function fail)
+        (reject-pending-callable-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
               (ormap borrowed-type-anywhere? remaining-types)))
@@ -8383,7 +8486,7 @@
        [else
         (define type (lookup environment w))
         (unless type (fail 'unbound-variable core))
-        (reject-pending-owner-summary!
+        (reject-pending-callable-summary!
          core 'target (region-ctx-summary Λ w) core fail)
         (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
         (when (borrow-typed? type) (fail 'move-borrowed core))
@@ -8476,7 +8579,7 @@
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
-        (reject-pending-owner-summary! core 'function summary function fail)
+        (reject-pending-callable-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
               (ormap borrowed-type-anywhere? remaining-types)))
