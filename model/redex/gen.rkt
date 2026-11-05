@@ -737,7 +737,7 @@
   (match-define `(cfg ,_ ,_ ,_ ,_tokens ,events) configuration)
   events)
 
-(define (runtime-row configuration callables type)
+(define (runtime-row configuration callables type #:region-ir [region-ir #f])
   ;; Runtime heap entries may contain callable values whose root type is not
   ;; Res.  Reconstruct the same Ξ and configuration-only typing scope used by
   ;; config-ok? before checking the row.
@@ -763,7 +763,8 @@
                                  type
                                  #:declared (config-declared-types configuration)
                                  #:states (config-states configuration)
-                                 #:heap (config-heap configuration))))))))
+                                 #:heap (config-heap configuration)))))
+        #:region-ir region-ir)))
 
 (define (row-subset? left right)
   (term (row-⊆ ,left ,right)))

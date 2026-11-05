@@ -499,11 +499,13 @@ operand が借用でなければ `E-BOR-018` で落とす。
 payload に含まれる借用は、すべての lifetime から所有者の region を引けなければならない。
 payload のどこかに `BorrowedMut` があれば、同じ可変 loan を指す参照を複製するため `E-BOR-014` で落とす。
 共有の `Borrowed` を欄に持つ payload は読み出せる。
-所有者を引けない借用は `E-BOR-006`、view の region を超える借用は `E-BOR-004` で落とす。
+所有者を引けない借用は `E-BOR-006` で落とす。
 その結果の capability 集合と欄表は、borrowed operand が指す place の token の欄表から、operand の capability path をたどって得る。
 これにより共有参照の capability を保持するが、新しい loan として再束縛することはない。
 読み出す値の中の共有借用の欄が、その参照先の型にさらに借用を持つ形（借用の入れ子）は、内側の参照を再束縛する規則が無いため `E-BOR-014` で落とす。
-借用の所有者は lifetime と region の上限制約から引き当てるため、値の側へ新しい token の台帳を置かない。
+payload に含まれる共有借用の lifetime は元の値のまま複製し、外側の view の lifetime へ再束縛しない。
+その lifetime は BOR-001 の owner outlives 制約と実際の使用点の下限制約で検査する。`Read` 自体は新しい loan を作らないため、view との outlives 上限制約は加えない。
+借用の所有者は lifetime と region の制約から引き当てるため、値の側へ新しい token の台帳を置かない。
 
 `(Assign c v)` は capability が指す先へ値を書き込む。 [REQ: BOR-004]
 対象は可変借用でなければならない。

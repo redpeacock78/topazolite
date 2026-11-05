@@ -117,35 +117,44 @@
   (check-equal? (second result) 'read-uncopyable-payload))
 
 (define nested-read-constraint-core
-  '(Scope (1)
-     (Let (b let (Borrowed (Record ((f (Borrowed Int (RVar 0)) imm)))
-                           (RVar 0)))
-          (Borrow 1)
-          (Read (Borrow 1)))))
+  '(Scope ()
+     (Let (y let (Owned Res)) (resource 20)
+       (Let (owner let
+                   (Record ((g (Option (Owned Res)) mut)
+                            (slot (Borrowed Res (RVar 0)) mut))))
+            (Rec ((g mut (Construct (Option (Owned Res)) some
+                                    (OwnLeaf (resource 21))))
+                  (slot mut (Borrow y))))
+         (Scope () (Read (ProjBorrow (Borrow owner) slot)))))))
 (define nested-read-constraint-ir
   (build-region-ir nested-read-constraint-core))
 (define nested-read-constraint-Λ
   (region-ctx nested-read-constraint-ir
               '()
-              (hash 1 (region-at nested-read-constraint-ir '()))
+              (hash)
               (hash)))
 
-(test-case "読み出しは view と payload の lifetime 間に outlives を出す"
+(test-case "Read は view 上限を出さず payload の元 owner outlives を保つ"
   (define inference
     (typing-inference
      (annotate-regions nested-read-constraint-core nested-read-constraint-ir)
-     (list (list 1 nested-read-type))
+     '()
      '()
      '()
      nested-read-constraint-Λ))
   (define alpha-table (second inference))
-  (define view-alpha (hash-ref alpha-table '(0 1 0)))
-  (define payload-alpha (hash-ref alpha-table '(0 0)))
+  (define view-alpha (hash-ref alpha-table '(0 1 1 0 0 0)))
+  (define payload-alpha (hash-ref alpha-table '(0 1 0 1)))
   (define outlives-pairs
     (for/list ([c (in-list (third inference))]
                #:when (eq? (region-constraint-kind c) 'outlives))
       (cons (region-constraint-left c) (region-constraint-right c))))
-  (check-not-false (member (cons view-alpha payload-alpha) outlives-pairs)))
+  (check-false (member (cons view-alpha payload-alpha) outlives-pairs))
+  (check-not-false
+   (member (cons (owner-let-body-region nested-read-constraint-ir '(0))
+                 payload-alpha)
+           outlives-pairs)
+   "BOR-001 の元 owner から payload α への制約は残る"))
 
 (define escaping-view-core
   '(Scope (1)

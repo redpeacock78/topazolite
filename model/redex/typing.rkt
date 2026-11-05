@@ -196,13 +196,19 @@
 ;; 通常の型検査入口では #f のままなので BorrowRef は ill-typed である。
 (define config-runtime-borrow-types (make-parameter #f))
 
+;; 実行時再型付けで借用の所有者を引くため、静的検査時の Region IR を受け取る。
+(define config-runtime-region-ir (make-parameter #f))
+
 ;; config の再型付けでは Λ に region IR が無いので、検査する Core 全体の
 ;; place 位置の射影の point を保持する。
 (define config-projborrow-place-points (make-parameter #f))
 
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
-(define (with-config-typing thunk)
-  (parameterize ([deriving-config? #t])
+(define (with-config-typing thunk
+                            #:region-ir [region-ir
+                                         (config-runtime-region-ir)])
+  (parameterize ([deriving-config? #t]
+                 [config-runtime-region-ir region-ir])
     (thunk)))
 
 ;; 制約の収集器（spec §5.2）。既定は #f であり、その場合は何も記録しない。
@@ -6506,6 +6512,12 @@
       (and (exact-nonnegative-integer? alpha)
            (lexical-region-ir? ir)
            (set-member? (region-ir-regions ir) (region alpha))
+           alpha)
+      (and (deriving-config?)
+           (exact-nonnegative-integer? alpha)
+           (lexical-region-ir? (config-runtime-region-ir))
+           (set-member? (region-ir-regions (config-runtime-region-ir))
+                        (region alpha))
            alpha)))
 
 ;; Read には内側の可変 loan を再借用する規則がなく、複製は排他参照を二つにする。
@@ -6555,21 +6567,14 @@
     (typing-normal-child-type core Λ 0 (first operand-result)))
   (define ε_operand (second operand-result))
   (define Ψ_1 (third operand-result))
-  (define-values (τ_payload α_view)
+  (define-values (τ_payload _α_view)
     (match (normalize-type τ_operand)
       [`(Borrowed ,τ ,α) (values τ α)]
       [`(BorrowedMut ,τ ,α) (values τ α)]
       [_ (fail 'read-non-borrow core)]))
-  (define α_inner
-    (payload-borrows-traceable? τ_payload 'read-uncopyable-payload
-                                core Λ fail))
-  ;; borrow.md §12。読み出した値の中の借用は view の region を超えない。
-  ;; BOR-001 と同じ形の上限制約であり、違反は borrow-escapes-owner で報告される。
-  (for ([α (in-list α_inner)])
-    (unless (route-outlives-check! α_view α (region-ctx-point Λ) core fail
-                                   #:current-only? #t)
-      (emit-constraint!
-       (region-constraint 'outlives α_view α (region-ctx-point Λ) core))))
+  (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core Λ fail)
+  ;; 読み出す loan は既存の共有借用の複製なので、元の所有者と使用点で制約し、
+  ;; このアクセス view の寿命には結び付けない。
   (define source (use-source Λ operand τ_operand))
   (for ([cap (in-set
               (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))])
@@ -10337,7 +10342,8 @@
                 [_ #t]))])
     (walk core)))
 
-(define (config-ok? configuration callables expected row)
+(define (config-ok? configuration callables expected row
+                   #:region-ir [region-ir #f])
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
   ;; root/leaf 位置と token 状態も検査する。places は heap から導出するが、
   ;; own 注釈の整合は entry-violation と同じ検査で確かめる。
@@ -10478,7 +10484,8 @@
                                         [(Observed) (and (= s 0) (= o 1))]
                                         [(Dropped) (and (= s 0) (<= o 1))]
                                         [else #f]))))))))))))))]
-           [_ #f])))))
+           [_ #f])))
+                     #:region-ir region-ir))
 
 (module+ test
   (require rackunit)
