@@ -9,11 +9,11 @@ version=$("$fstar" --version)
 printf '%s\n' "$version"
 case "$version" in
   *"$ci_version"*) ;;
-  *) echo "警告: F* の版が CI（v$ci_version）と異なる。結果が CI と食い違いうる。CI の結果を最終の基準とする。" >&2 ;;
+  *) echo "エラー: F* の版が CI（v$ci_version）と異なる。CI と同じ版で再実行してください。" >&2; exit 1 ;;
 esac
 "$fstar" --include model/fstar model/fstar/Topazolite.Surface.fst
 "$fstar" --include model/fstar model/fstar/Topazolite.Parity.fst
 "$fstar" --include model/fstar model/fstar/Topazolite.Core.State.fst
-"$fstar" --z3rlimit 30 --split_queries always --include model/fstar model/fstar/Topazolite.Core.Token.fst
+"$fstar" --z3rlimit 30 --include model/fstar model/fstar/Topazolite.Core.Token.fst
 racket tools/fstar-parity.rkt
 sh tools/check-fstar-no-admit.sh model/fstar
