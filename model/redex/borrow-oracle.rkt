@@ -432,6 +432,9 @@
     [`(cfg ,core ,H ,Ω ,Λtok ,θ) (list core H Ω Λtok θ)]
     [_ #f]))
 
+(define (available-heap-values parts)
+  (map second (available-place-values (second parts) (third parts))))
+
 (define (table-keys tbl)
   (for/set ([entry (in-list tbl)]) (first entry)))
 
@@ -773,7 +776,8 @@
   (and parts
        (map normalize-borrow
             (append (collect-borrow-values (first parts))
-                    (collect-borrow-values (second parts))))))
+                    (append-map collect-borrow-values
+                                (available-heap-values parts))))))
 
 ;; θ の obs payload にしか現れない借用がある実行は捨てる。
 (define (obs-only-borrow? config)
@@ -782,8 +786,9 @@
        (let ([live (list->set (map normalize-borrow
                                    (append (collect-borrow-values
                                             (first parts))
-                                           (collect-borrow-values
-                                            (second parts)))))]
+                                           (append-map
+                                            collect-borrow-values
+                                            (available-heap-values parts)))))]
              [in-trace (map normalize-borrow
                             (collect-borrow-values (fifth parts)))])
          (for/or ([b (in-list in-trace)]) (not (set-member? live b))))))
@@ -803,7 +808,7 @@
 (define (check-no-move-of-live pre post)
   (define pre-parts (cfg-parts pre))
   (define post-parts (cfg-parts post))
-  (define live (live-borrows pre))
+  (define live (live-borrows post))
   (define invalidated
     (for/list ([entry (in-list (third post-parts))]
                #:when (and (memq (second entry) '(Moved Dropped))

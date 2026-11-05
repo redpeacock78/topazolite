@@ -97,6 +97,15 @@
     (check-false (config-ok? cfg '() '(BorrowedMut Int 3) '()))
     (check-equal? (raw-steps-g2/named cfg) '())))
 
+(test-case "runtime-row は Available 値から Dropped place への BorrowRef を拒否する"
+  (define cfg
+    '(cfg unit
+          ((0 (BorrowRef 1 () 3) (declared (Borrowed Int 3)))
+           (1 7 (declared (Owned Int))))
+          ((0 Available) (1 Dropped)) () ()))
+  (check-false (runtime-row cfg '() 'Unit))
+  (check-false (config-ok? cfg '() 'Unit '())))
+
 (test-case "所有値の注釈付き分解は内側の可変借用 region を変更しない"
   (define (check-preserved core expected-rule)
     (match (raw-steps-g2/named `(cfg ,core () () () ()))

@@ -27,6 +27,7 @@
          inject-g2
          inject-g2m
          substitute*/g2
+         available-place-values
          heap-walk-path
          heap-path-type
          place-root-type
@@ -41,6 +42,14 @@
          run
          run-g2
          g2-primitive-name?)
+
+;; Available place だけを、型検査と oracle が共有する走査対象として返す。
+(define (available-place-values heap states)
+  (for/list ([entry (in-list heap)]
+             #:when (match (assoc (first entry) states)
+                       [(list _ 'Available) #t]
+                       [_ #f]))
+    (list (first entry) (second entry))))
 
 (define-metafunction G1m
   δ : nm v ... -> any

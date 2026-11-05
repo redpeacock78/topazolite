@@ -545,6 +545,38 @@
      (check-equal? place 0)]
     [other (fail (format "unexpected: ~e" other))]))
 
+(test-case "Dropped place の stale BorrowRef は生きている loan に数えない"
+  (define heap
+    '((0 7) (1 (BorrowRef 0 () 0))))
+  (define pre
+    `(cfg unit ,heap ((0 Available) (1 Dropped)) () ()))
+  (define post
+    `(cfg unit ,heap ((0 Dropped) (1 Dropped)) () ()))
+  (check-false (check-no-move-of-live pre post)))
+
+(test-case "同じ Scope 遷移で owner と BorrowRef holder が Dropped になる"
+  (define heap
+    '((0 7) (1 (BorrowRef 0 () 0))))
+  (define pre
+    `(cfg (Scope (0 1) unit) ,heap ((0 Available) (1 Available)) () ()))
+  (define post
+    `(cfg unit ,heap ((0 Dropped) (1 Dropped)) () ()))
+  ;; Scope の終了後には両 place の値へ到達できず、post に live loan は無い。
+  (check-false (check-no-move-of-live pre post)))
+
+(test-case "Available 値の BorrowRef 先を Move すると move-of-live-borrow"
+  (define heap
+    '((0 7) (1 (BorrowRef 0 () 0))))
+  (define pre
+    `(cfg unit ,heap ((0 Available) (1 Available)) () ()))
+  (define post
+    `(cfg unit ,heap ((0 Moved) (1 Available)) () ()))
+  (match (check-no-move-of-live pre post)
+    [(list 'fail reason place)
+     (check-equal? reason 'move-of-live-borrow)
+     (check-equal? place 0)]
+    [other (fail (format "unexpected: ~e" other))]))
+
 (test-case "同じ可変借用値の二つの出現は check-mut-exclusive で失敗しない"
   ;; 同じ 4 つ組の二つの出現は一つの借用の複製である（borrow.md §4）。
   (define config

@@ -112,11 +112,18 @@
               [_ #f])))))
   (define call-rho
     (and call-point (region->rho ir (region-at ir call-point))))
+  (define slot-borrow-point
+    (and (contains? core 'slot-borrow-ph)
+         (find-core-point core (lambda (node) (equal? node '(Borrow y))))))
+  (define slot-borrow-rho
+    (and slot-borrow-point
+         (region->rho ir (region-at ir slot-borrow-point))))
   (define filled
     (let walk ([value (fill-region-placeholders (erase-core core) ir)])
       (cond [(eq? value 'owner-ph) owner-rho]
             [(eq? value 'child-ph) child-rho]
             [(eq? value 'call-ph) call-rho]
+            [(eq? value 'slot-borrow-ph) slot-borrow-rho]
             [(pair? value) (cons (walk (car value)) (walk (cdr value)))]
             [else value])))
   (values ir filled
@@ -152,11 +159,18 @@
             (match node [`(BorrowMut ,_) #t] [_ #f])))))
   (define call-rho
     (and call-point (region->rho ir (region-at ir call-point))))
+  (define slot-borrow-point
+    (and (contains? core 'slot-borrow-ph)
+         (find-core-point core (lambda (node) (equal? node '(Borrow y))))))
+  (define slot-borrow-rho
+    (and slot-borrow-point
+         (region->rho ir (region-at ir slot-borrow-point))))
   (define filled
     (let walk ([value (fill-region-placeholders (erase-core core) ir)])
       (cond [(eq? value 'owner-ph) owner-rho]
             [(eq? value 'child-ph) child-rho]
             [(eq? value 'call-ph) call-rho]
+            [(eq? value 'slot-borrow-ph) slot-borrow-rho]
             [(pair? value) (cons (walk (car value)) (walk (cdr value)))]
             [else value])))
   (values
@@ -185,7 +199,8 @@
                 (format "~a config ~a が config-ok? でない: ~s" label index cfg)))
   (check-equal? (check-borrow-execution start (region-typed-sidecar typed) ir
                                          300 (make-bcounters))
-                'ok (format "~a: borrow oracle" label)))
+                'ok (format "~a: borrow oracle" label))
+  configs)
 
 (define (config-borrow-mut-refs cfg)
   (define (walk term)
@@ -239,6 +254,19 @@
                 (format "~a: 型 ~s が ~s と領域束縛名以外で一致する"
                         label (region-typed-type typed) expected))
     (check-runtime typed ir callables expected label)))
+
+(define (check-runtime-if-accepted typed ir callables expected label)
+  (when (region-typed? typed)
+    (check-runtime typed ir callables expected label)))
+
+;; Read を含む BorrowedMut view の旧受理期待は、borrow.md §12 の上限制約で
+;; 現状 E-BOR-004 になる。§12 の緩和（Task 4e）で反転するまでこの理由を固定する。
+(define (check-read-upper-bound-rejection core callables typed label)
+  (check-true (contains-form? core 'Read)
+              (format "~a: fixture は BorrowedMut payload を Read する" label))
+  (check-true (diagnostic? typed) (format "~a: 拒否診断 ~s" label typed))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-004"
+                (format "~a: §12 の診断 key" label)))
 
 (define (check-accepted-window-points core expected callables label expected-points)
   (define observed-points '())
@@ -835,18 +863,18 @@
        (Let (slot-value let (Borrowed Res (RParam slot)))
             (Read (ProjBorrow p slot))
          unit))))
+(define borrowed-slot-resource-unused-writer
+  '(RegionLam (root slot)
+     (Lam User resource-slot-writer (p) unit)))
 (define borrowed-slot-resource-callables
   `((resource-slot-writer ,borrowed-slot-resource-parameter-type)))
 
 (define borrowed-slot-single-lifetime-parameter-type
-  `(ForallRegion (a)
-     (NFn ((BorrowedMut ,(borrowed-slot-resource-owner-type-at '(RParam a))
-                        (RParam a)))
-          Unit () (Mutation) () User)))
+  borrowed-slot-resource-parameter-type)
 (define borrowed-slot-single-lifetime-writer
-  '(RegionLam (a)
+  '(RegionLam (root slot)
      (Lam User single-lifetime-slot-writer (p)
-       (Let (slot-value let (Borrowed Res (RParam a)))
+       (Let (slot-value let (Borrowed Res (RParam slot)))
             (Read (ProjBorrow p slot))
          unit))))
 
@@ -908,8 +936,10 @@
     (single-lifetime-owner-scope
      `(Let (writer let ,writer-type) ,borrowed-slot-single-lifetime-writer
         (Let (resolved let Unit)
-             (Apply (RegionApp writer (call-ph)) (BorrowMut owner))
-          (Apply ,(wrapper `(RegionApp writer ((RParam external)))
+             (Apply (RegionApp writer (call-ph slot-borrow-ph))
+                    (BorrowMut owner))
+          (Apply ,(wrapper `(RegionApp writer
+                                       ((RParam external) (RParam external)))
                             monomorphic-type)
                  q)))))
   (define ir (build-region-ir core))
@@ -920,8 +950,14 @@
   (define call-rho (region->rho ir (region-at ir call-point)))
   (define filled
     (let walk ([value (fill-region-placeholders (erase-core core) ir)])
-      (cond [(eq? value 'call-ph) call-rho]
-            [(pair? value) (cons (walk (car value)) (walk (cdr value)))]
+              (cond [(eq? value 'call-ph) call-rho]
+                    [(eq? value 'slot-borrow-ph)
+                     (region->rho ir (region-at ir
+                                                (find-core-point
+                                                 core
+                                                 (lambda (node)
+                                                   (equal? node '(Borrow y))))))]
+                    [(pair? value) (cons (walk (car value)) (walk (cdr value)))]
             [else value])))
   (define-values (formal-entry _leaves)
     (formal-capability-entry external-borrow-type 'q-root))
@@ -950,39 +986,40 @@
 
 (define (check-single-lifetime-owner-call core label)
   (define observations '())
-  (define-values (_ir _filled typed)
+  (define-values (ir _filled typed)
     (parameterize
         ([current-deferred-owner-check-probe
           (lambda (alpha owner point _node)
             (set! observations (cons (list alpha owner point) observations)))])
       (type-core core single-lifetime-callables)))
-  (check-true (region-typed? typed)
-              (format "~a: 静的な型検査 ~s" label typed))
+  (check-read-upper-bound-rejection core single-lifetime-callables typed label)
   (check-true
    (and (= (length observations) 1)
         (exact-nonnegative-integer? (first (first observations)))
         (exact-nonnegative-integer? (second (first observations)))
         (equal? (first (first observations)) (second (first observations))))
-   (format "~a: 呼出しで owner 判定を具体化 ~s" label observations)))
+   (format "~a: 呼出しで owner 判定を具体化 ~s" label observations))
+  (check-runtime-if-accepted typed ir single-lifetime-callables 'Unit label))
 
 (define (check-owner-call-resolves core callables label)
   (define observations '())
-  (define-values (_ir _filled typed)
+  (define-values (ir _filled typed)
     (parameterize
         ([current-deferred-owner-check-probe
           (lambda (alpha owner point _node)
             (set! observations (cons (list alpha owner point) observations)))])
       (type-core core callables)))
-  (check-true (region-typed? typed)
-              (format "~a: 静的な型検査 ~s" label typed))
+  (check-read-upper-bound-rejection core callables typed label)
   (check-true
    (and (= (length observations) 1)
         (exact-nonnegative-integer? (first (first observations)))
         (exact-nonnegative-integer? (second (first observations)))
         (equal? (first (first observations)) (second (first observations))))
-   (format "~a: RegionApp 後の owner 判定 ~s" label observations)))
+   (format "~a: RegionApp 後の owner 判定 ~s" label observations))
+  (check-runtime-if-accepted typed ir callables 'Unit label))
 
-(define (resource-slot-owner-call root-rho slot-rho)
+(define (resource-slot-owner-call root-rho slot-rho
+                                  [writer borrowed-slot-resource-writer])
   `(Scope ()
      (Let (y let (Owned Res)) (resource 20)
        (Let (owner let ,(borrowed-slot-resource-owner-type-at
@@ -992,9 +1029,23 @@
                                (OwnLeaf (resource 21))))
                   (slot mut (Borrow y))))
          (Apply
-          (RegionApp ,borrowed-slot-resource-writer
-                     (,root-rho ,slot-rho))
+          (RegionApp ,writer (,root-rho ,slot-rho))
           (BorrowMut owner))))))
+
+;; The referenced value outlives the owner view, and the callee does not Read
+;; through that view.  This isolates the A' invariant check from §12's separate
+;; read-copy upper bound.
+(define (resource-slot-owner-call/outer-y root-rho slot-rho writer)
+  `(Let (y let (Owned Res)) (resource 20)
+     (Let (owner let ,(borrowed-slot-resource-owner-type-at
+                       '(RParam %omitted)))
+          (Rec ((g mut
+                  (Construct (Option (Owned Res)) some
+                             (OwnLeaf (resource 21))))
+                (slot mut (Borrow y))))
+       (Apply
+        (RegionApp ,writer (,root-rho ,slot-rho))
+        (BorrowMut owner)))))
 
 (define (outlives-at-point constraints point)
   (filter (lambda (constraint)
@@ -1012,6 +1063,12 @@
                    [_ #f])))
           constraints))
 
+(define (borrowed-mut-payload-outlives constraints)
+  (filter (lambda (constraint)
+            (or (lifetime-var? (region-constraint-left constraint))
+                (lifetime-var? (region-constraint-right constraint))))
+          constraints))
+
 (test-case "二寿命の nested slot reader は未呼出し定義を受理する"
   (define-values (_ir _filled typed)
     (type-core borrowed-slot-resource-writer
@@ -1024,50 +1081,70 @@
       (region-typed-type typed) borrowed-slot-resource-parameter-type))))
 
 (test-case "二寿命 outlives は満たす実引数の Apply で具体化する"
+  (define callables `((resource-slot-writer
+                       ,borrowed-slot-resource-parameter-type)))
+  (define core
+    (resource-slot-owner-call/outer-y
+     'call-ph 'slot-borrow-ph borrowed-slot-resource-unused-writer))
+  (define-values (ir filled inference)
+    (stage-one-inference core callables))
+  (define apply-point
+    (find-core-point core
+                     (lambda (node)
+                       (match node [`(Apply ,_ ,_) #t] [_ #f]))))
+  (define instantiated
+    (outlives-at-point (third inference) apply-point))
+  (check-equal? (length instantiated) 2
+                (format "Apply 位置に outlives を実体化: ~s" instantiated))
+  (define payload-checks
+    (borrowed-mut-payload-outlives instantiated))
+  (check-equal? (length payload-checks) 2
+                (format "payload の二方向制約を確認: ~s" instantiated))
+  (when (= (length payload-checks) 2)
+    (check-equal?
+     (list (region-constraint-left (first payload-checks))
+           (region-constraint-right (first payload-checks)))
+     (reverse (list (region-constraint-left (second payload-checks))
+                    (region-constraint-right (second payload-checks))))
+     (format "同じ寿命対を両方向で検査: ~s" payload-checks)))
+  (define-values (accepted-ir _filled typed)
+    (type-core core callables))
+  (check-true (region-typed? typed)
+              (format "満たす実引数で静的受理: ~s" typed))
+  (check-runtime-if-accepted typed accepted-ir callables
+                             'Unit "二寿命 outlives satisfied call"))
+
+(test-case "BorrowedMut slot が内側 region なら Apply で E-BOR-004"
   (define core (resource-slot-owner-call 'call-ph 'call-ph))
   (define-values (ir filled inference)
     (stage-one-inference core borrowed-slot-resource-callables))
   (define apply-point
-    (find-core-point filled
+    (find-core-point core
                      (lambda (node)
                        (match node [`(Apply ,_ ,_) #t] [_ #f]))))
   (define instantiated
     (outlives-at-point (third inference) apply-point))
-  (check-equal? (length instantiated) 1
-                (format "Apply 位置に outlives を実体化: ~s" instantiated))
-  (when (= (length instantiated) 1)
-    (check-true (equal? (region-constraint-left (first instantiated))
-                        (region-constraint-right (first instantiated)))
-                (format "等しい実引数なら outlives を満たす: ~s"
-                        (first instantiated))))
-  (define-values (_ir _filled typed)
-    (type-core core borrowed-slot-resource-callables))
-  (check-true (region-typed? typed)
-              (format "満たす実引数で静的受理: ~s" typed)))
-
-(test-case "二寿命 outlives の違反は Apply で E-BOR-004 となり owner 判定と分かれる"
-  (define core (resource-slot-owner-call 'call-ph 'owner-ph))
-  (define-values (ir filled inference)
-    (stage-one-inference core borrowed-slot-resource-callables))
-  (define apply-point
-    (find-core-point filled
-                     (lambda (node)
-                       (match node [`(Apply ,_ ,_) #t] [_ #f]))))
-  (define instantiated
-    (outlives-at-point (third inference) apply-point))
-  (check-equal? (length instantiated) 1
+  (check-equal? (length instantiated) 3
                 (format "違反する outlives を Apply で観測: ~s" instantiated))
-  (when (= (length instantiated) 1)
-    (define constraint (first instantiated))
+  (when (= (length instantiated) 3)
+    (define constraints
+      (borrowed-mut-payload-outlives instantiated))
+    (check-equal? (length constraints) 2)
+    (define slot-point
+      (find-core-point core (lambda (node) (equal? node '(Borrow y)))))
+    (define call-point
+      (find-core-point core
+                       (lambda (node)
+                         (match node [`(BorrowMut ,_) #t] [_ #f]))))
     (check-false
-     (region-outlives? ir (region-constraint-left constraint)
-                       (region-constraint-right constraint))
-     (format "Apply の outlives 関係は破れる: ~s" constraint))
+     (region-outlives? ir (region-at ir call-point)
+                       (region-at ir slot-point))
+     (format "内側の slot 寿命との双方向制約は破れる: ~s" constraints))
     (check-true
-     (match (erase-core (region-constraint-node constraint))
+     (match (erase-core (region-constraint-node (first instantiated)))
        [`(Apply ,_ ,_) #t]
        [_ #f])
-     (format "制約の node は Apply: ~s" constraint)))
+     (format "制約の node は Apply: ~s" instantiated)))
   (define-values (_ir _filled typed)
     (type-core core borrowed-slot-resource-callables))
   (check-true (diagnostic? typed)
@@ -1075,6 +1152,29 @@
   (when (diagnostic? typed)
     (check-equal? (diagnostic-id typed) "E-BOR-004"
                   (format "outlives 項目由来で E-BOR-004: ~s" typed))))
+
+(test-case "BorrowedMut view の Read 上限は §12 の summary obligation（Task 4e で反転予定）"
+  (define core
+    (resource-slot-owner-call 'call-ph 'slot-borrow-ph
+                              borrowed-slot-resource-writer))
+  (define-values (_ir _filled inference)
+    (stage-one-inference core borrowed-slot-resource-callables))
+  (define read-obligations
+    (append-map
+     (lambda (summary)
+       (filter deferred-outlives-check?
+               (callable-summary-deferred summary)))
+     (sixth inference)))
+  (define unique-read-obligations
+    (remove-duplicates read-obligations equal?))
+  ;; actual/expected の BorrowedMut payload は同じ slot-borrow-ph なので、
+  ;; A′ の両向き制約は増えず、残る obligation は infer-read の §12 制約。
+  (check-equal? (length unique-read-obligations) 1
+                (format "Read の上限を summary に保持: ~s" read-obligations))
+  (define-values (_accepted-ir _accepted-filled typed)
+    (type-core core borrowed-slot-resource-callables))
+  (check-true (diagnostic? typed) (format "§12 の現行診断: ~s" typed))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-004"))
 
 (test-case "outlives だけの保留 summary も Curry 境界で E-BOR-006"
   (define summary
@@ -1111,11 +1211,20 @@
          (Apply
           (RegionApp writer ((RParam outer-root) (RParam outer-slot)))
           p)))))
+(define two-lifetime-forwarder-unused
+  `(RegionLam (outer-root outer-slot)
+     (Lam User two-lifetime-forwarder (p)
+       (Let (writer let ,borrowed-slot-resource-parameter-type)
+            ,borrowed-slot-resource-unused-writer
+         (Apply
+          (RegionApp writer ((RParam outer-root) (RParam outer-slot)))
+          p)))))
 (define two-lifetime-forwarder-callables
   `((resource-slot-writer ,borrowed-slot-resource-parameter-type)
     (two-lifetime-forwarder ,two-lifetime-forwarder-type)))
 
-(define (outer-generic-resource-slot-call slot-rho)
+(define (outer-generic-resource-slot-call
+         slot-rho [forwarder two-lifetime-forwarder])
   `(Scope ()
      (Let (y let (Owned Res)) (resource 20)
        (Let (owner let ,(borrowed-slot-resource-owner-type-at
@@ -1124,8 +1233,8 @@
                     (Construct (Option (Owned Res)) some
                                (OwnLeaf (resource 21))))
                   (slot mut (Borrow y))))
-         (Apply
-          (RegionApp ,two-lifetime-forwarder
+        (Apply
+          (RegionApp ,forwarder
                      (call-ph ,slot-rho))
           (BorrowMut owner))))))
 
@@ -1154,12 +1263,26 @@
                               ((RParam outer-root) (RParam inner-slot)))
                    q))))
          (Apply (RegionApp inner ((RParam outer-slot))) p)))))
+(define nested-slot-forwarder-unused
+  `(RegionLam (outer-root outer-slot)
+     (Lam User nested-slot-forwarder (p)
+       (Let (inner let ,nested-slot-inner-type)
+            (RegionLam (inner-slot)
+              (Lam User nested-slot-inner (q)
+                (Let (writer let ,borrowed-slot-resource-parameter-type)
+                     ,borrowed-slot-resource-unused-writer
+                  (Apply
+                   (RegionApp writer
+                              ((RParam outer-root) (RParam inner-slot)))
+                   q))))
+         (Apply (RegionApp inner ((RParam outer-slot))) p)))))
 (define nested-slot-forwarder-callables
   `((resource-slot-writer ,borrowed-slot-resource-parameter-type)
     (nested-slot-inner ,nested-slot-inner-type)
     (nested-slot-forwarder ,nested-slot-forwarder-type)))
 
-(define (nested-slot-forwarder-call slot-rho)
+(define (nested-slot-forwarder-call
+         slot-rho [forwarder nested-slot-forwarder])
   `(Scope ()
      (Let (y let (Owned Res)) (resource 20)
        (Let (owner let ,(borrowed-slot-resource-owner-type-at
@@ -1169,33 +1292,37 @@
                                (OwnLeaf (resource 21))))
                   (slot mut (Borrow y))))
          (Apply
-          (RegionApp ,nested-slot-forwarder
+          (RegionApp ,forwarder
                      (call-ph ,slot-rho))
           (BorrowMut owner))))))
 
-(test-case "nested frame の二寿命 outlives は満たす外側 Apply で受理する"
-  (define core (nested-slot-forwarder-call 'call-ph))
-  (define-values (_ir _filled typed)
+(test-case "nested frame の outlives は満たすが Read は §12 E-BOR-004（4e で反転予定）"
+  (define core (nested-slot-forwarder-call 'slot-borrow-ph))
+  (define-values (ir _filled typed)
     (type-core core nested-slot-forwarder-callables))
-  (check-true (region-typed? typed)
-              (format "内側 frame から外側 frame へ再保留: ~s" typed)))
+  (check-read-upper-bound-rejection
+   core nested-slot-forwarder-callables typed "nested deferred outlives")
+  (check-runtime-if-accepted typed ir nested-slot-forwarder-callables 'Unit
+                             "nested deferred outlives"))
+
+(test-case "nested frame の no-Read A′ outlives は Apply 後も runtime まで受理"
+  (check-accepted
+   (nested-slot-forwarder-call 'slot-borrow-ph nested-slot-forwarder-unused)
+   'Unit nested-slot-forwarder-callables "nested frame A′ runtime"))
 
 (test-case "nested frame の二寿命 outlives 違反は外側 Apply で E-BOR-004"
-  (define core (nested-slot-forwarder-call 'owner-ph))
+  (define core (nested-slot-forwarder-call 'call-ph))
   (define-values (ir filled inference)
     (stage-one-inference core nested-slot-forwarder-callables))
   (define apply-point
-    (find-core-point filled
+    (find-core-point core
                      (lambda (node)
                        (match node [`(Apply ,_ ,_) #t] [_ #f]))))
   (define instantiated
     (outlives-at-point (third inference) apply-point))
-  (check-equal? (length instantiated) 1
+  (check-equal? (length instantiated) 3
                 (format "外側 Apply の outlives: ~s" instantiated))
-  (when (= (length instantiated) 1)
-    (check-false
-     (region-outlives? ir (region-constraint-left (first instantiated))
-                       (region-constraint-right (first instantiated)))))
+  (check-equal? (length (borrowed-mut-payload-outlives instantiated)) 2)
   (define-values (_ir _filled typed)
     (type-core core nested-slot-forwarder-callables))
   (check-true (diagnostic? typed)
@@ -1203,37 +1330,37 @@
   (when (diagnostic? typed)
     (check-equal? (diagnostic-id typed) "E-BOR-004")))
 
-(test-case "内側の二寿命 outlives を外側 generic summary へ再保留する"
+(test-case "外側 generic への二寿命再保留は保つが Read は §12 E-BOR-004（4e で反転予定）"
+  (define core (outer-generic-resource-slot-call 'slot-borrow-ph))
+  (define-values (ir filled inference)
+    (stage-one-inference core two-lifetime-forwarder-callables))
+  (define instantiated
+    (apply-outlives-constraints (third inference) filled))
+  (check-equal? (length instantiated) 3
+                (format "外側 Apply で再保留項目を実体化: ~s" instantiated))
+  (check-equal? (length (borrowed-mut-payload-outlives instantiated)) 2)
+  (define-values (accepted-ir _filled typed)
+    (type-core core two-lifetime-forwarder-callables))
+  (check-read-upper-bound-rejection
+   core two-lifetime-forwarder-callables typed "outer generic deferred outlives")
+  (check-runtime-if-accepted typed accepted-ir two-lifetime-forwarder-callables
+                             'Unit "outer generic deferred outlives"))
+
+(test-case "外側 generic の no-Read A′ 再保留は Apply 後も runtime まで受理"
+  (check-accepted
+   (outer-generic-resource-slot-call 'slot-borrow-ph
+                                     two-lifetime-forwarder-unused)
+   'Unit two-lifetime-forwarder-callables "outer generic A′ runtime"))
+
+(test-case "外側 generic の不適合な再保留 outlives は Apply で E-BOR-004"
   (define core (outer-generic-resource-slot-call 'call-ph))
   (define-values (ir filled inference)
     (stage-one-inference core two-lifetime-forwarder-callables))
   (define instantiated
     (apply-outlives-constraints (third inference) filled))
-  (check-equal? (length instantiated) 1
-                (format "外側 Apply で再保留項目を実体化: ~s" instantiated))
-  (when (= (length instantiated) 1)
-    (check-true
-     (region-outlives? ir (region-constraint-left (first instantiated))
-                       (region-constraint-right (first instantiated)))
-     (format "外側 Apply の実引数が関係を満たす: ~s" instantiated)))
-  (define-values (_ir _filled typed)
-    (type-core core two-lifetime-forwarder-callables))
-  (check-true (region-typed? typed)
-              (format "外側 RParam へ再保留した満足呼出し: ~s" typed)))
-
-(test-case "外側 generic の不適合な再保留 outlives は Apply で E-BOR-004"
-  (define core (outer-generic-resource-slot-call 'owner-ph))
-  (define-values (ir filled inference)
-    (stage-one-inference core two-lifetime-forwarder-callables))
-  (define instantiated
-    (apply-outlives-constraints (third inference) filled))
-  (check-equal? (length instantiated) 1
+  (check-equal? (length instantiated) 3
                 (format "外側 Apply の outlives 制約: ~s" instantiated))
-  (when (= (length instantiated) 1)
-    (check-false
-     (region-outlives? ir (region-constraint-left (first instantiated))
-                       (region-constraint-right (first instantiated)))
-     (format "外側実引数の関係は不成立: ~s" instantiated)))
+  (check-equal? (length (borrowed-mut-payload-outlives instantiated)) 2)
   (define-values (_ir _filled typed)
     (type-core core two-lifetime-forwarder-callables))
   (check-true (diagnostic? typed)
@@ -1242,6 +1369,9 @@
     (check-equal? (diagnostic-id typed) "E-BOR-004")))
 
 (test-case "同じ callee の outlives 判定は呼出しごとに独立する"
+  (define unused-writer
+    '(RegionLam (root slot)
+       (Lam User resource-slot-writer (p) unit)))
   (define core
     `(Scope ()
        (Let (y let (Owned Res)) (resource 20)
@@ -1251,34 +1381,44 @@
                       (Construct (Option (Owned Res)) some
                                  (OwnLeaf (resource 21))))
                     (slot mut (Borrow y))))
-           (Let (writer let ,borrowed-slot-resource-parameter-type)
-               ,borrowed-slot-resource-writer
+          (Let (writer let ,borrowed-slot-resource-parameter-type)
+               ,unused-writer
              (Let (satisfied let Unit)
-                  (Apply (RegionApp writer (call-ph call-ph))
+                  (Apply (RegionApp writer (call-ph slot-borrow-ph))
                          (BorrowMut owner))
-               (Apply (RegionApp writer (call-ph owner-ph))
+               (Apply (RegionApp writer (call-ph call-ph))
                       (BorrowMut owner))))))))
   (define-values (ir filled inference)
     (stage-one-inference core borrowed-slot-resource-callables))
   (define apply-points
-    (for/list ([point (in-list (core-points filled))]
-               #:when (match (core-node filled point)
+    (for/list ([point (in-list (core-points core))]
+               #:when (match (core-node core point)
                         [`(Apply ,_ ,_) #t]
                         [_ #f]))
       point))
   (define instantiated
     (for/list ([point (in-list apply-points)])
       (outlives-at-point (third inference) point)))
+  (define slot-point
+    (find-core-point core (lambda (node) (equal? node '(Borrow y)))))
+  (define slot-rho (region->rho ir (region-at ir slot-point)))
+  (define call-point
+    (find-core-point core
+                     (lambda (node)
+                       (match node [`(BorrowMut ,_) #t] [_ #f]))))
+  (define call-rho (region->rho ir (region-at ir call-point)))
   (check-equal? (length apply-points) 2)
-  (check-equal? (map length instantiated) '(1 1)
+  (check-equal? (map length instantiated) '(2 2)
                 (format "各 Apply に個別の制約を持つ: ~s" instantiated))
   (when (and (= (length instantiated) 2)
-             (andmap (lambda (items) (= (length items) 1)) instantiated))
+             (andmap (lambda (items) (= (length items) 2)) instantiated))
     (define relations
-      (for/list ([items (in-list instantiated)])
-        (define constraint (first items))
-        (region-outlives? ir (region-constraint-left constraint)
-                          (region-constraint-right constraint))))
+      (for/list ([expected-slot (in-list (list slot-rho call-rho))])
+        (and (region-outlives? ir slot-rho expected-slot)
+             (region-outlives? ir expected-slot slot-rho))))
+    (check-equal?
+     (map length (map borrowed-mut-payload-outlives instantiated)) '(2 2)
+     (format "各呼出しに両向きの payload 制約がある: ~s" instantiated))
     (check-equal? relations '(#t #f)
                   (format "先の充足結果が後の違反へ漏れない: ~s" relations)))
   (define-values (_ir _filled typed)
@@ -1286,9 +1426,32 @@
   (check-true (diagnostic? typed)
               (format "二度目の不適合 call は拒否: ~s" typed))
   (when (diagnostic? typed)
-    (check-equal? (diagnostic-id typed) "E-BOR-004")))
+    (check-equal? (diagnostic-id typed) "E-BOR-004"))
+  (define first-core
+    (resource-slot-owner-call 'call-ph 'slot-borrow-ph unused-writer))
+  (define-values (first-ir _first-filled first-typed)
+    (type-core first-core borrowed-slot-resource-callables))
+  (check-true (region-typed? first-typed)
+              (format "first call's independently satisfied type: ~s" first-typed))
+  (when (region-typed? first-typed)
+    (define configs
+      (check-runtime first-typed first-ir borrowed-slot-resource-callables
+                     'Unit "first call's independently satisfied runtime"))
+    (define final (last configs))
+    (match final
+      [`(cfg ,_ ,_ ,states ,_ ,_)
+       (check-true (and (pair? states)
+                        (andmap (lambda (entry)
+                                  (eq? (second entry) 'Dropped))
+                                states))
+                   (format "終端 tombstone で全 place が Dropped: ~s" final))
+       (define row (runtime-row final borrowed-slot-resource-callables 'Unit))
+       (check-not-false row "終端 tombstone の runtime-row")
+       (check-true (config-ok? final borrowed-slot-resource-callables 'Unit row)
+                   "終端 tombstone の config-ok?")]
+      [other (fail (format "終端 config を期待、実測: ~s" other))])))
 
-(test-case "Recur fixed point は二寿命 outlives を seed し Apply で判定する"
+(test-case "Recur の二寿命 outlives seed は保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define recur-body
     '(Let (slot-value let (Borrowed Res (RParam slot)))
           (Read (ProjBorrow p slot))
@@ -1303,7 +1466,7 @@
                                  (OwnLeaf (resource 21))))
                     (slot mut (Borrow y))))
            (Recur resource-slot-recur loop (p) ,recur-body
-             (Apply (RegionApp loop (call-ph call-ph))
+             (Apply (RegionApp loop (call-ph slot-borrow-ph))
                     (BorrowMut owner)))))))
   (define callables `((resource-slot-recur
                        ,borrowed-slot-resource-parameter-type)))
@@ -1311,18 +1474,33 @@
     (stage-one-inference core callables))
   (define recur-constraints
     (apply-outlives-constraints (third inference) filled))
-  (check-equal? (length recur-constraints) 1
+  (check-equal? (length recur-constraints) 3
                 (format "Recur summary が Apply へ outlives を運ぶ: ~s"
                         recur-constraints))
-  (when (= (length recur-constraints) 1)
-    (check-true
-     (region-outlives? ir (region-constraint-left (first recur-constraints))
-                       (region-constraint-right (first recur-constraints)))))
-  (define-values (_ir _filled typed) (type-core core callables))
-  (check-true (region-typed? typed)
-              (format "Recur の固定点を通した outlives: ~s" typed)))
+  (check-equal? (length (borrowed-mut-payload-outlives recur-constraints)) 2)
+  (define-values (accepted-ir _filled typed) (type-core core callables))
+  (check-read-upper-bound-rejection core callables typed "Recur outlives")
+  (check-runtime-if-accepted typed accepted-ir callables 'Unit "Recur outlives runtime"))
 
-(test-case "RecurVal は二寿命 outlives を summary に運ぶ"
+(test-case "Recur の no-Read A′ Apply は全 trace で受理"
+  (define core
+    `(Scope ()
+       (Let (y let (Owned Res)) (resource 20)
+         (Let (owner let ,(borrowed-slot-resource-owner-type-at
+                           '(RParam %omitted)))
+              (Rec ((g mut
+                      (Construct (Option (Owned Res)) some
+                                 (OwnLeaf (resource 21))))
+                    (slot mut (Borrow y))))
+           (Recur resource-slot-recur loop (p) unit
+             (Apply (RegionApp loop (call-ph slot-borrow-ph))
+                    (BorrowMut owner)))))))
+  (check-accepted
+   core 'Unit
+   `((resource-slot-recur ,borrowed-slot-resource-parameter-type))
+   "Recur A′ runtime"))
+
+(test-case "RecurVal の二寿命 outlives summary は保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define recur-body
     '(Let (slot-value let (Borrowed Res (RParam slot)))
           (Read (ProjBorrow p slot))
@@ -1339,7 +1517,7 @@
            (Apply
             (RegionApp
              (RecurVal resource-slot-recur loop (p) ,recur-body)
-             (call-ph call-ph))
+             (call-ph slot-borrow-ph))
             (BorrowMut owner))))))
   (define callables `((resource-slot-recur
                        ,borrowed-slot-resource-parameter-type)))
@@ -1347,16 +1525,34 @@
     (stage-one-inference core callables))
   (define recur-constraints
     (apply-outlives-constraints (third inference) filled))
-  (check-equal? (length recur-constraints) 1
+  (check-equal? (length recur-constraints) 3
                 (format "RecurVal summary が Apply へ outlives を運ぶ: ~s"
                         recur-constraints))
-  (when (= (length recur-constraints) 1)
-    (check-true
-     (region-outlives? ir (region-constraint-left (first recur-constraints))
-                       (region-constraint-right (first recur-constraints)))))
-  (define-values (_ir _filled typed) (type-core core callables))
-  (check-true (region-typed? typed)
-              (format "RecurVal summary の outlives: ~s" typed)))
+  (check-equal? (length (borrowed-mut-payload-outlives recur-constraints)) 2)
+  (define-values (accepted-ir _filled typed) (type-core core callables))
+  (check-read-upper-bound-rejection core callables typed "RecurVal outlives")
+  (check-runtime-if-accepted typed accepted-ir callables 'Unit
+                             "RecurVal outlives runtime"))
+
+(test-case "RecurVal の no-Read A′ Apply は全 trace で受理"
+  (define core
+    `(Scope ()
+       (Let (y let (Owned Res)) (resource 20)
+         (Let (owner let ,(borrowed-slot-resource-owner-type-at
+                           '(RParam %omitted)))
+              (Rec ((g mut
+                      (Construct (Option (Owned Res)) some
+                                 (OwnLeaf (resource 21))))
+                    (slot mut (Borrow y))))
+           (Apply
+            (RegionApp
+             (RecurVal resource-slot-recur loop (p) unit)
+             (call-ph slot-borrow-ph))
+            (BorrowMut owner))))))
+  (check-accepted
+   core 'Unit
+   `((resource-slot-recur ,borrowed-slot-resource-parameter-type))
+   "RecurVal A′ runtime"))
 
 (define (resource-slot-writer-with-region-names root-rp slot-rp lambda-name)
   `(RegionLam (,root-rp ,slot-rp)
@@ -1365,10 +1561,10 @@
             (Read (ProjBorrow p slot))
          unit))))
 
-(define (single-lifetime-slot-writer-with-region-name rp lambda-name)
-  `(RegionLam (,rp)
+(define (single-lifetime-slot-writer-with-region-name root-rp slot-rp lambda-name)
+  `(RegionLam (,root-rp ,slot-rp)
      (Lam User ,lambda-name (p)
-       (Let (slot-value let (Borrowed Res (RParam ,rp)))
+       (Let (slot-value let (Borrowed Res (RParam ,slot-rp)))
             (Read (ProjBorrow p slot))
          unit))))
 
@@ -1423,7 +1619,7 @@
     (check-true (forall-region-types-alpha-equal?
                  (region-typed-type typed) borrowed-slot-forwarder-type))))
 
-(test-case "単一寿命の nested slot は RegionApp で所有者へ解決する"
+(test-case "nested slot owner summary は保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define callables
     `((single-lifetime-slot-writer
        ,borrowed-slot-single-lifetime-parameter-type)))
@@ -1438,26 +1634,29 @@
                                  (OwnLeaf (resource 21))))
                     (slot mut (Borrow y))))
            (Apply
-            (RegionApp ,borrowed-slot-single-lifetime-writer (call-ph))
+            (RegionApp ,borrowed-slot-single-lifetime-writer
+                       (call-ph slot-borrow-ph))
             (BorrowMut owner))))))
   (define observations '())
-  (define-values (_ir _filled typed)
+  (define-values (ir _filled typed)
     (parameterize
         ([current-deferred-owner-check-probe
           (lambda (alpha owner point _node)
             (set! observations (cons (list alpha owner point) observations)))])
       (type-core core callables)))
-  (check-true (region-typed? typed)
-              (format "単一寿命の所有者解決: ~s" typed))
+  (check-read-upper-bound-rejection
+   core callables typed "単一寿命の所有者解決")
   (check-true
    (and (= (length observations) 1)
         (exact-nonnegative-integer? (first (first observations)))
         (exact-nonnegative-integer? (second (first observations)))
         (equal? (first (first observations)) (second (first observations))))
    (format "呼出し側の alpha から BorrowMut owner を解決する: ~s"
-           observations)))
+           observations))
+  (check-runtime-if-accepted typed ir callables 'Unit
+                             "two-lifetime nested slot runtime"))
 
-(test-case "RecurVal frame は nested owner 判定を呼出しまで運ぶ"
+(test-case "RecurVal frame は owner を運ぶが Read は §12 E-BOR-004（4e で反転予定）"
   (define recur-type borrowed-slot-single-lifetime-parameter-type)
   (define callables `((single-lifetime-slot-recur ,recur-type)))
   (define owner-type
@@ -1473,26 +1672,27 @@
            (Apply
             (RegionApp
              (RecurVal single-lifetime-slot-recur loop (p)
-               (Let (slot-value let (Borrowed Res (RParam a)))
+               (Let (slot-value let (Borrowed Res (RParam slot)))
                     (Read (ProjBorrow p slot))
                  unit))
-            (call-ph))
+             (call-ph slot-borrow-ph))
             (BorrowMut owner))))))
   (define observations '())
-  (define-values (_ir _filled typed)
+  (define-values (ir _filled typed)
     (parameterize
         ([current-deferred-owner-check-probe
           (lambda (alpha owner point _node)
             (set! observations (cons (list alpha owner point) observations)))])
       (type-core core callables)))
-  (check-true (region-typed? typed)
-              (format "RecurVal summary: ~s" typed))
+  (check-read-upper-bound-rejection core callables typed "RecurVal summary")
   (check-true
    (and (= (length observations) 1)
         (exact-nonnegative-integer? (first (first observations)))
         (exact-nonnegative-integer? (second (first observations)))
         (equal? (first (first observations)) (second (first observations))))
-   (format "RecurVal owner check の具体化: ~s" observations)))
+   (format "RecurVal owner check の具体化: ~s" observations))
+  (check-runtime-if-accepted typed ir callables 'Unit
+                             "RecurVal nested owner runtime"))
 
 (test-case "RecurVal frame の保留 owner summary は別名を E-BOR-006 にする"
   (define recur-type borrowed-slot-single-lifetime-parameter-type)
@@ -1504,10 +1704,10 @@
     `(Apply
       (RegionApp
        (RecurVal single-lifetime-slot-recur loop (p)
-         (Let (slot-value let (Borrowed Res (RParam a)))
+         (Let (slot-value let (Borrowed Res (RParam slot)))
               (Read (ProjBorrow p slot))
            unit))
-       ((RParam external)))
+       ((RParam external) (RParam external)))
       q))
   (define ir (build-region-ir core))
   (define-values (formal-entry _leaves)
@@ -1528,13 +1728,13 @@
   (check-equal? (second result) 'borrow-unknown-owner-region
                 "RecurVal の保留 summary は呼出しで owner 不明を拒否"))
 
-(test-case "Recur frame は fixed-point の owner 判定を呼出しまで運ぶ"
+(test-case "Recur frame は owner を運ぶが Read は §12 E-BOR-004（4e で反転予定）"
   (define recur-type borrowed-slot-single-lifetime-parameter-type)
   (define callables `((single-lifetime-slot-recur ,recur-type)))
   (define owner-type
     (borrowed-slot-resource-owner-type-at '(RParam %omitted)))
   (define body
-    `(Let (slot-value let (Borrowed Res (RParam a)))
+    `(Let (slot-value let (Borrowed Res (RParam slot)))
           (Read (ProjBorrow p slot))
        unit))
   (define core
@@ -1547,23 +1747,24 @@
                     (slot mut (Borrow y))))
            (Recur single-lifetime-slot-recur loop (p) ,body
              (Apply
-              (RegionApp loop (call-ph))
+              (RegionApp loop (call-ph slot-borrow-ph))
               (BorrowMut owner)))))))
   (define observations '())
-  (define-values (_ir _filled typed)
+  (define-values (ir _filled typed)
     (parameterize
         ([current-deferred-owner-check-probe
           (lambda (alpha owner point _node)
             (set! observations (cons (list alpha owner point) observations)))])
       (type-core core callables)))
-  (check-true (region-typed? typed)
-              (format "Recur summary: ~s" typed))
+  (check-read-upper-bound-rejection core callables typed "Recur summary")
   (check-true
    (and (= (length observations) 1)
         (exact-nonnegative-integer? (first (first observations)))
         (exact-nonnegative-integer? (second (first observations)))
         (equal? (first (first observations)) (second (first observations))))
-   (format "Recur owner check の具体化: ~s" observations)))
+   (format "Recur owner check の具体化: ~s" observations))
+  (check-runtime-if-accepted typed ir callables 'Unit
+                             "Recur nested owner runtime"))
 
 (test-case "Let-bound RegionLam の RegionApp は保留 summary を引き継ぐ"
   (define writer-type (borrowed-slot-parameter-type-at 'b))
@@ -1594,25 +1795,64 @@
     (check-true (forall-region-types-alpha-equal?
                  (region-typed-type typed) wrapper-type))))
 
-(test-case "Let 注釈と RegionLam の ForallRegion 名が異なっても owner を解決する"
+(test-case "Let と Scope の no-Read A′ summary 伝播は runtime まで受理"
+  (define wrapper-type borrowed-slot-resource-parameter-type)
+  (define callables
+    `((resource-slot-writer ,borrowed-slot-resource-parameter-type)
+      (let-scope-forwarder ,wrapper-type)))
+  (define writer
+    `(RegionLam (outer-root outer-slot)
+       (Lam User let-scope-forwarder (p)
+         (Scope ()
+           (Let (writer let ,borrowed-slot-resource-parameter-type)
+                ,borrowed-slot-resource-unused-writer
+             (Apply
+              (RegionApp writer
+                         ((RParam outer-root) (RParam outer-slot)))
+              p))))))
+  (check-accepted
+   (resource-slot-owner-call/outer-y
+    'call-ph 'slot-borrow-ph writer)
+   'Unit callables "Let/Scope A′ runtime"))
+
+(define (single-lifetime-slot-unused-writer-with-region-name
+         root-rp slot-rp lambda-name)
+  `(RegionLam (,root-rp ,slot-rp)
+     (Lam User ,lambda-name (p) unit)))
+
+(test-case "Forall 名を対応づけて owner summary を保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define writer-type borrowed-slot-single-lifetime-parameter-type)
   (define writer
     (single-lifetime-slot-writer-with-region-name
-     'source-region 'renamed-slot-writer))
+     'source-region 'source-slot 'renamed-slot-writer))
   (define core
     (single-lifetime-owner-scope
      `(Let (writer let ,writer-type) ,writer
-        (Apply (RegionApp writer (call-ph))
+        (Apply (RegionApp writer (call-ph slot-borrow-ph))
                (BorrowMut owner)))))
   (check-owner-call-resolves
    core `((renamed-slot-writer ,writer-type))
    "Let 注釈名と RegionLam binder 名の対応"))
 
+(test-case "Forall 名を対応づけた no-Read A′ Apply は全 trace で受理"
+  (define writer-type borrowed-slot-single-lifetime-parameter-type)
+  (define writer
+    (single-lifetime-slot-unused-writer-with-region-name
+     'source-region 'source-slot 'renamed-slot-writer))
+  (define core
+    (single-lifetime-owner-scope
+     `(Let (writer let ,writer-type) ,writer
+        (Apply (RegionApp writer (call-ph slot-borrow-ph))
+               (BorrowMut owner)))))
+  (check-accepted
+   core 'Unit `((renamed-slot-writer ,writer-type))
+   "Forall alpha A′ runtime"))
+
 (test-case "注釈名が異なる writer は同じ本体の owner alias だけ E-BOR-006"
   (define writer-type borrowed-slot-single-lifetime-parameter-type)
   (define writer
     (single-lifetime-slot-writer-with-region-name
-     'source-region 'renamed-slot-writer))
+     'source-region 'source-slot 'renamed-slot-writer))
   (define external-owner-type
     (borrowed-slot-resource-owner-type-at '(RParam external)))
   (define external-borrow-type
@@ -1629,9 +1869,11 @@
                     (slot mut (Borrow y))))
            (Let (writer let ,writer-type) ,writer
              (Let (resolved let Unit)
-                  (Apply (RegionApp writer (call-ph))
+                  (Apply (RegionApp writer (call-ph slot-borrow-ph))
                          (BorrowMut owner))
-               (Apply (RegionApp writer ((RParam external))) q)))))))
+               (Apply (RegionApp writer
+                                 ((RParam external) (RParam external)))
+                      q)))))))
   ;; q には capability key と field table を与えるが、RParam external の
   ;; owner 制約は与えない。従って失敗は token 欠落でなく owner 判定である。
   (define ir (build-region-ir core))
@@ -1640,9 +1882,14 @@
                      (lambda (node)
                        (match node [`(BorrowMut ,_) #t] [_ #f]))))
   (define call-rho (region->rho ir (region-at ir call-point)))
+  (define slot-borrow-point
+    (find-core-point core (lambda (node) (equal? node '(Borrow y)))))
+  (define slot-borrow-rho
+    (region->rho ir (region-at ir slot-borrow-point)))
   (define filled
     (let walk ([value (fill-region-placeholders (erase-core core) ir)])
       (cond [(eq? value 'call-ph) call-rho]
+            [(eq? value 'slot-borrow-ph) slot-borrow-rho]
             [(pair? value) (cons (walk (car value)) (walk (cdr value)))]
             [else value])))
   (define-values (formal-entry _leaves)
@@ -1673,24 +1920,24 @@
     (check-equal? (first (first owners)) (second (first owners))
                   "同じ本体の受理側は owner region へ解決する")))
 
-(test-case "内側 ForallRegion の同名 binder は外側 owner RParam を捕獲しない"
+(test-case "内側 Forall の shadowing を保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define inner-type borrowed-slot-single-lifetime-parameter-type)
   (define inner-writer
     (single-lifetime-slot-writer-with-region-name
-     'a 'shadowed-inner-writer))
+     'a 'b 'shadowed-inner-writer))
   (define outer-type
     `(ForallRegion (a b)
        (NFn ((BorrowedMut ,(borrowed-slot-resource-owner-type-at '(RParam b))
-                          (RParam b)))
+                          (RParam a)))
             Unit () (Mutation) () User)))
   (define outer-writer
     `(RegionLam (a b)
        (Lam User shadowed-outer-writer (p)
          (Let (inner let ,inner-type) ,inner-writer
-           (Apply (RegionApp inner ((RParam b))) p)))))
+           (Apply (RegionApp inner ((RParam a) (RParam b))) p)))))
   (define core
     (single-lifetime-owner-scope
-     `(Apply (RegionApp ,outer-writer ((RVar 0) call-ph))
+     `(Apply (RegionApp ,outer-writer (call-ph slot-borrow-ph))
              (BorrowMut owner))))
   (check-owner-call-resolves
    core
@@ -1698,44 +1945,47 @@
      (shadowed-outer-writer ,outer-type))
    "同名 ForallRegion の lexical shadowing"))
 
-(test-case "外側 RParam を RegionApp 実引数にした owner 項目を外側 summary へ合成する"
+(test-case "外側 RParam への owner 合成を保つが Read は §12 E-BOR-004（4e で反転予定）"
   (define inner-type borrowed-slot-single-lifetime-parameter-type)
   (define inner-writer
     (single-lifetime-slot-writer-with-region-name
-     'source-region 'composed-inner-writer))
+     'source-root 'source-slot 'composed-inner-writer))
   (define outer-type
-    `(ForallRegion (outer)
-       (NFn ((BorrowedMut ,(borrowed-slot-resource-owner-type-at '(RParam outer))
-                          (RParam outer)))
+    `(ForallRegion (outer-root outer-slot)
+       (NFn ((BorrowedMut ,(borrowed-slot-resource-owner-type-at
+                            '(RParam outer-slot))
+                          (RParam outer-root)))
             Unit () (Mutation) () User)))
   (define outer-writer
-    `(RegionLam (outer)
+    `(RegionLam (outer-root outer-slot)
        (Lam User composed-outer-writer (p)
          (Let (inner let ,inner-type) ,inner-writer
            (Apply
-            (RegionApp inner ((RParam outer)))
+            (RegionApp inner ((RParam outer-root) (RParam outer-slot)))
             p)))))
   (define core
     (single-lifetime-owner-scope
-     `(Apply (RegionApp ,outer-writer (call-ph)) (BorrowMut owner))))
+     `(Apply (RegionApp ,outer-writer (call-ph slot-borrow-ph))
+             (BorrowMut owner))))
   (check-owner-call-resolves
    core
    `((composed-inner-writer ,inner-type)
      (composed-outer-writer ,outer-type))
    "RegionApp の置換合成で owner を外側へ再保留"))
 
-(test-case "Let の束縛式から callable summary を変数へ引き継ぐ"
+(test-case "Let 束縛の summary を引き継ぐが Read は §12 E-BOR-004（4e で反転予定）"
   (check-single-lifetime-owner-call
    (single-lifetime-owner-scope
     `(Let (writer let ,borrowed-slot-single-lifetime-parameter-type)
           ,borrowed-slot-single-lifetime-writer
-       (Apply (RegionApp writer (call-ph)) (BorrowMut owner))))
+       (Apply (RegionApp writer (call-ph slot-borrow-ph))
+              (BorrowMut owner))))
    "Let binding summary"))
 
-(test-case "Let の結果位置から callable summary を引き継ぐ"
+(test-case "Let 結果の summary を引き継ぐが Read は §12 E-BOR-004（4e で反転予定）"
   (define monomorphic-type
     `(NFn ((BorrowedMut
-            ,(borrowed-slot-resource-owner-type-at 'call-ph)
+            ,(borrowed-slot-resource-owner-type-at 'slot-borrow-ph)
             call-ph))
           Unit () (Mutation) () User))
   (check-single-lifetime-owner-call
@@ -1743,40 +1993,41 @@
     `(Let (writer let ,borrowed-slot-single-lifetime-parameter-type)
           ,borrowed-slot-single-lifetime-writer
        (Let (monomorphic let ,monomorphic-type)
-            (RegionApp writer (call-ph))
+            (RegionApp writer (call-ph slot-borrow-ph))
          (Apply monomorphic (BorrowMut owner)))))
    "Let result summary"))
 
-(test-case "Let の直接結果変数から外側 Apply へ callable summary を引き継ぐ"
+(test-case "Let 直接結果の summary を引き継ぐが Read は §12 E-BOR-004（4e で反転予定）"
   (define monomorphic-type
     `(NFn ((BorrowedMut
-            ,(borrowed-slot-resource-owner-type-at 'call-ph)
+            ,(borrowed-slot-resource-owner-type-at 'slot-borrow-ph)
             call-ph))
           Unit () (Mutation) () User))
   (check-single-lifetime-owner-call
    (single-lifetime-owner-scope
     `(Apply
       (Let (forwarded let ,monomorphic-type)
-           (RegionApp ,borrowed-slot-single-lifetime-writer (call-ph))
+           (RegionApp ,borrowed-slot-single-lifetime-writer
+                      (call-ph slot-borrow-ph))
         forwarded)
       (BorrowMut owner)))
    "Let direct result summary"))
 
-(test-case "Scope の結果位置から callable summary を引き継ぐ"
+(test-case "Scope 結果の summary を引き継ぐが Read は §12 E-BOR-004（4e で反転予定）"
   (check-single-lifetime-owner-call
    (single-lifetime-owner-scope
     `(Let (writer let ,borrowed-slot-single-lifetime-parameter-type)
           ,borrowed-slot-single-lifetime-writer
-       (Apply (Scope () (RegionApp writer (call-ph)))
+       (Apply (Scope () (RegionApp writer (call-ph slot-borrow-ph)))
               (BorrowMut owner))))
    "Scope output summary"))
 
-(test-case "Unsafe の本体から callable summary を引き継ぐ"
+(test-case "Unsafe 本体の summary を引き継ぐが Read は §12 E-BOR-004（4e で反転予定）"
   (check-single-lifetime-owner-call
    (single-lifetime-owner-scope
     `(Let (writer let ,borrowed-slot-single-lifetime-parameter-type)
           ,borrowed-slot-single-lifetime-writer
-       (Apply (Unsafe (RegionApp writer (call-ph)))
+       (Apply (Unsafe (RegionApp writer (call-ph slot-borrow-ph)))
               (BorrowMut owner))))
    "Unsafe output summary"))
 
@@ -1954,7 +2205,7 @@
        (Lam User returns-pending-writer ()
          (Let (writer let ,borrowed-slot-single-lifetime-parameter-type)
               ,borrowed-slot-single-lifetime-writer
-           (RegionApp writer ((RParam a)))))))
+           (RegionApp writer ((RParam a) (RParam a)))))))
   (check-pending-owner-boundary-rejected
    core
    `((single-lifetime-slot-writer
@@ -1997,11 +2248,20 @@
                                      (OwnLeaf (resource 21))))
                     (slot mut (Borrow y))))
            (Apply
-            (RegionApp ,unused-writer (call-ph call-ph))
+            (RegionApp ,unused-writer (call-ph slot-borrow-ph))
             (BorrowMut owner))))))
-  (define-values (_ir _filled typed) (type-core core callables))
+  (define-values (ir _filled typed) (type-core core callables))
   (check-true (region-typed? typed)
-              (format "unused nested owner call: ~s" typed)))
+              (format "unused nested owner call: ~s" typed))
+  (check-runtime-if-accepted typed ir callables 'Unit
+                             "unused nested owner runtime control")
+  (define wrong-core (resource-slot-owner-call 'call-ph 'call-ph unused-writer))
+  (define-values (_wrong-ir _wrong-filled wrong)
+    (type-core wrong-core callables))
+  (check-true (diagnostic? wrong)
+              (format "wrong BorrowedMut slot lifetime is rejected: ~s" wrong))
+  (when (diagnostic? wrong)
+    (check-equal? (diagnostic-id wrong) "E-BOR-004")))
 
 (test-case "escape-curry: borrowed parameter を固定する Curry は E-BOR-020"
   (define curry-type

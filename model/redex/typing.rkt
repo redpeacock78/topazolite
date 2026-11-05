@@ -2880,6 +2880,21 @@
 (struct region-arg-request (rho point node bound) #:transparent)
 (define region-arg-collector (make-parameter #f))
 
+;; BorrowedMut の payload は不変である。型付け中は caller の寿命変数が
+;; σ で解ける前なので、名前を比べず、段 3 で RegionApp 置換後の両寿命を
+;; 解いて等値を検査する。
+(define borrowed-mut-call-site (make-parameter #f))
+
+(define (borrowed-mut-region-outlives? ir long short)
+  (cond
+    [(equal? long short) #t]
+    [(and (exact-nonnegative-integer? long)
+          (exact-nonnegative-integer? short))
+     (region-outlives? ir (rho->region ir long) (rho->region ir short))]
+    [(and (region? long) (region? short))
+     (region-outlives? ir long short)]
+    [else #f]))
+
 (define (emit-region-arg-request! rho point node)
   (define collector (region-arg-collector))
   (unless collector
@@ -5751,8 +5766,9 @@
     [(`(Borrowed ,d-payload ,_) `(Borrowed ,a-payload ,a-rho))
      `(Borrowed ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
     [(`(BorrowedMut ,d-payload ,d-rho) `(BorrowedMut ,a-payload ,a-rho))
-     `(BorrowedMut ,(adopt-inferred-lifetimes d-payload a-payload)
-                   ,(adopt-region d-rho a-rho))]
+     ;; VAR-004: BorrowedMut payloads are invariant; only the outer owner region
+     ;; follows the existing adoption rule.
+     `(BorrowedMut ,d-payload ,(adopt-region d-rho a-rho))]
     [(`(Record ,declared-row) `(Record ,actual-row))
      `(Record
        ,(for/list ([field (in-list declared-row)])
@@ -7958,9 +7974,11 @@
                    (unbound-boundary-borrowed-type? return-type))
           (fail 'borrowed-function-result function))
         (define argument-result
-          (check-many/full arguments parameter-types Λ function-psi
-                           environment places callables core fail 1
-                           #:adopt? #f))
+          (parameterize ([borrowed-mut-call-site
+                          (cons core (region-ctx-point Λ))])
+            (check-many/full arguments parameter-types Λ function-psi
+                             environment places callables core fail 1
+                             #:adopt? #f)))
         (define actuals (third argument-result))
         (define borrow-parameters?
           (ormap formal-capability-type? parameter-types))
@@ -8901,10 +8919,101 @@
     (unless owner (fail 'unresolved-borrow-owner core))
     (region->rho ir owner)))
 
+;; BorrowedMut の payload は型の構造を保ったまま全 region slot を集める。
+;; ForallRegion は束縛名だけ expected 側へ alpha rename して比較する。
+(define (emit-borrowed-mut-region-pair! left right core Λ fail)
+  (define site (borrowed-mut-call-site))
+  (define node (if site (car site) core))
+  (define point (if site (cdr site) (region-ctx-point Λ)))
+  (define ir (region-ctx-ir Λ))
+  (define (solver-term term)
+    (if (and ir (exact-nonnegative-integer? term))
+        (rho->region ir term)
+        term))
+  (define left* (solver-term left))
+  (define right* (solver-term right))
+  (unless (equal? left* right*)
+    (for ([pair (in-list (list (list left* right*)
+                              (list right* left*)))])
+      (define long (first pair))
+      (define short (second pair))
+      (unless (route-outlives-check! long short point node fail
+                                     #:allow-one-param? #t)
+        (cond
+          [(lifetime-collector)
+           (emit-constraint!
+            (region-constraint 'outlives long short point node))]
+          [ir
+           (unless (borrowed-mut-region-outlives?
+                    ir long short)
+             (fail 'borrow-escapes-owner node))]
+          [else (fail 'borrow-unknown-owner-region node)])))))
+
+(define (borrowed-mut-payload-compatible? actual expected core Λ fail)
+  (define (walk left right)
+    (match* (left right)
+      [(`(ForallRegion (,left-rps ...) ,left-body)
+        `(ForallRegion (,right-rps ...) ,right-body))
+       #:when (= (length left-rps) (length right-rps))
+       (define renamed-left
+         (rename-region-params
+          left-body
+          (for/hash ([left-rp (in-list left-rps)]
+                     [right-rp (in-list right-rps)])
+            (values left-rp right-rp))))
+       (define body (walk renamed-left right-body))
+       (and body
+            (list `(ForallRegion ,right-rps ,(first body))
+                  `(ForallRegion ,right-rps ,(second body))
+                  (third body)))]
+      [(`(,(and ctor (or 'Borrowed 'BorrowedMut)) ,left-payload ,left-rho)
+        `(,same-ctor ,right-payload ,right-rho))
+       #:when (eq? ctor same-ctor)
+       (define payload (walk left-payload right-payload))
+       (and payload
+            (list `(,ctor ,(first payload) invariant-borrow-region)
+                  `(,ctor ,(second payload) invariant-borrow-region)
+                  (append (third payload) (list (list left-rho right-rho)))))]
+      [((? list? left-items) (? list? right-items))
+       #:when (= (length left-items) (length right-items))
+       (define children
+         (for/list ([left-item (in-list left-items)]
+                    [right-item (in-list right-items)])
+           (walk left-item right-item)))
+       (and (andmap values children)
+            (list (map first children)
+                  (map second children)
+                  (append-map third children)))]
+      [(_ _) (list left right '())]))
+  (define shape (walk actual expected))
+  (and shape
+       (type-equiv? (first shape) (second shape))
+       (for ([pair (in-list (third shape))])
+       (emit-borrowed-mut-region-pair!
+          (first pair) (second pair) core Λ fail))
+       #t))
+
 (define (call-argument-compatible? actual expected core Λ compatible? fail)
   (define actual* (normalize-type actual))
   (define expected* (normalize-type expected))
   (match* (actual* expected*)
+    [(`(BorrowedMut ,actual-payload ,actual-rho)
+      `(BorrowedMut ,expected-payload ,expected-rho))
+     (define owner-compatible?
+       (or (equal? actual-rho expected-rho)
+           (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
+                    (for/or ([owner-rho
+                              (in-list (argument-owner-rhos Λ core fail))])
+                      (equal? owner-rho expected-rho))))))
+     (define outer-expected
+       (third (adopt-inferred-lifetimes
+               `(BorrowedMut Unit ,expected-rho)
+               `(BorrowedMut Unit ,actual-rho))))
+     (and owner-compatible?
+          (compatible? `(BorrowedMut Unit ,actual-rho)
+                       `(BorrowedMut Unit ,outer-expected))
+          (borrowed-mut-payload-compatible?
+           actual-payload expected-payload core Λ fail))]
     [((list ctor actual-payload actual-rho)
       (list same-ctor _ expected-rho))
      #:when (and (memq ctor '(Borrowed BorrowedMut))
@@ -9970,13 +10079,6 @@
 (define (available-root-values heap states)
   (map second (available-place-values heap states)))
 
-(define (available-place-values heap states)
-  (for/list ([entry (in-list heap)]
-             #:when (match (assoc (first entry) states)
-                       [(list _ 'Available) #t]
-                       [_ #f]))
-    (list (first entry) (second entry))))
-
 (define (config-owned-place? place declared)
   ;; Owned の declared metadata は R-LetOwnedB 由来で、mut binder ではない。
   (match (assoc place declared)
@@ -10192,7 +10294,9 @@
        (when (list? term)
          (for-each visit term))]))
   (visit core)
-  (for ([entry (in-list heap)])
+  ;; Moved/Dropped heap entries are stale and cannot be reached at runtime;
+  ;; share the same live-root contract used by runtime capability analysis.
+  (for ([entry (in-list (available-place-values heap states))])
     (visit (second entry)))
   (and valid? recovered))
 
@@ -10272,7 +10376,9 @@
                            (and
                             (config-mut-views-supported?
                              core heap states places declared-types)
-                            (for/and ([entry (in-list heap)])
+                            (for/and ([entry (in-list
+                                              (available-place-values
+                                               heap states))])
                               (define declared
                                 (second (assoc (first entry) places)))
                               (define declared-entry
@@ -10322,12 +10428,14 @@
                                  (resource-producer-positions-ok? core)
                                  (andmap (lambda (entry)
                                            (resource-producer-positions-ok?
-                                            (second entry) #t))
-                                         heap)
+                                            entry #t))
+                                         (available-root-values
+                                          heap states))
                                  ;; H の leaf は走査で辿れる位置に限る。
                                  (andmap (lambda (entry)
-                                           (leaf-positions-ok? (second entry)))
-                                         heap)
+                                           (leaf-positions-ok? entry))
+                                         (available-root-values
+                                          heap states))
                                  ;; 移送 marker は制御項と Available place の値で数える。
                                  ;; Moved/Dropped の heap 値は stale なので数えず、θ も履歴として数えない。
                                  (let ([transits
