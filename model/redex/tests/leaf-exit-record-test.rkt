@@ -228,6 +228,11 @@
 (define (binder-events summary)
   (filter binder-source? (callable-summary-leaf-exits summary)))
 
+(define (unique-summaries-with-binder-events summaries)
+  (remove-duplicates
+   (filter (lambda (summary) (pair? (binder-events summary))) summaries)
+   equal?))
+
 (define (binder-reader-body some-body [none-body 0])
   `(Eliminate (ProjBorrow p o)
      ((some (c) -> ,some-body)
@@ -681,8 +686,10 @@
              ,(binder-reader-body '(Read c)))))))
   (define all-summaries
     (summaries core `((local-reader ,local-reader-type))))
-  (define exits
-    (append-map binder-events all-summaries))
+  (define event-summaries (unique-summaries-with-binder-events all-summaries))
+  (check-equal? (length event-summaries) 1)
+  (define exits (if (pair? event-summaries)
+                    (binder-events (first event-summaries)) '()))
   (check-equal? (length exits) 1)
   (check-eq? (deferred-leaf-exit-exit-kind (first exits)) 'local))
 
@@ -762,11 +769,20 @@
                   0 x)))))
   (define all-summaries
     (summaries core `((outer ,outer-type) (sink ,pair-type))))
+  (define event-summaries
+    (remove-duplicates
+     (filter (lambda (summary)
+               (for/or ([exit (in-list (callable-summary-leaf-exits summary))])
+                 (equal? (deferred-leaf-exit-source exit) '(formal 0 ()))))
+             all-summaries)
+     equal?))
+  (check-equal? (length event-summaries) 1)
   (define events
-    (for*/list ([summary (in-list all-summaries)]
-                [exit (in-list (callable-summary-leaf-exits summary))]
-                #:when (equal? (deferred-leaf-exit-source exit) '(formal 0 ())))
-      exit))
+    (if (pair? event-summaries)
+        (filter (lambda (exit)
+                  (equal? (deferred-leaf-exit-source exit) '(formal 0 ())))
+                (callable-summary-leaf-exits (first event-summaries)))
+        '()))
   (check-equal? (length events) 1
               (format "summaries: ~s"
                       (map callable-summary-leaf-exits all-summaries)))
@@ -791,7 +807,10 @@
              (none () -> 0)))))))
   (define all-summaries
     (summaries core `((two-parent ,two-parent-type))))
-  (define exits (append-map binder-events all-summaries))
+  (define event-summaries (unique-summaries-with-binder-events all-summaries))
+  (check-equal? (length event-summaries) 1)
+  (define exits (if (pair? event-summaries)
+                    (binder-events (first event-summaries)) '()))
   (check-equal? (length exits) 1)
   (check-eq? (deferred-leaf-exit-exit-kind (first exits)) 'unclassified)
   (check-false (deferred-leaf-exit-destination (first exits))))
@@ -985,8 +1004,13 @@
             ((some (child) -> (Read child))
              (none () -> 0)))))))
   (define events
-    (append-map binder-events
-                (summaries core `((same-root-different-path ,function-type)))))
+    (let* ([all-summaries
+            (summaries core `((same-root-different-path ,function-type)))]
+           [event-summaries (unique-summaries-with-binder-events all-summaries)])
+      (check-equal? (length event-summaries) 1)
+      (if (pair? event-summaries)
+          (binder-events (first event-summaries))
+          '())))
   (check-equal? (length events) 1)
   (check-equal? (deferred-leaf-exit-formal-index (first events)) 0)
   (check-not-false

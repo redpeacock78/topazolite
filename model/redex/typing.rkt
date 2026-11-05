@@ -116,6 +116,8 @@
          current-leaf-exit-sites
          current-leaf-exit-capability-reader
          current-local-exit-window-probe
+         current-callable-summary-boundary-probe
+         current-deferred-owner-check-probe
          leaf-exit-destinations
          site-position-matches?
          normalize-leaf-exits
@@ -629,8 +631,8 @@
 ;; 外側の仮引数を実引数として内側の呼出しへ渡すと、内側を実体化した結果が
 ;; 外側の鍵を持つ要求になる。その要求を受けるのは外側の段である。
 (struct template-frame
-  (formals box body parameters parameter-types return-type latent-row formal-fields
-           incomplete-box)
+  (formals region-params point box body parameters parameter-types return-type latent-row
+           formal-fields incomplete-box)
   #:transparent)
 (define template-collectors (make-parameter '()))
 
@@ -713,6 +715,36 @@
      (and frame (point-prefix? body-root point)
           (drop point (length body-root)))]
     [_ point]))
+
+(define (template-frame-relative-point frame point)
+  (define body-root
+    (append (template-frame-point frame) '(0)))
+  (and (point-prefix? body-root point)
+       (drop point (length body-root))))
+
+(struct deferred-owner-check (alpha body-point) #:transparent)
+
+(define (template-frame-for-region alpha)
+  (match alpha
+    [`(RParam ,rp)
+     (for/first ([frame (in-list (template-collectors))]
+                 #:when (set-member? (template-frame-region-params frame) rp))
+       frame)]
+    [_ #f]))
+
+(define (route-owner-check! alpha point node fail)
+  (define frame (template-frame-for-region alpha))
+  (cond
+    [frame
+     (define relative-point (template-frame-relative-point frame point))
+     (unless relative-point
+       (fail 'borrow-unknown-owner-region node))
+     (define item (deferred-owner-check alpha relative-point))
+     (define collector (template-frame-box frame))
+     (unless (member item (unbox collector) equal?)
+       (set-box! collector (cons item (unbox collector))))
+     #t]
+    [else #f]))
 
 (define (core-at-point core point)
   (with-handlers ([exn:fail? (lambda (_) #f)])
@@ -910,6 +942,13 @@
   (formals deferred result-index region-subst formal-fields incomplete?)
   #:transparent)
 
+(define (callable-summary-owner-checks summary)
+  (filter deferred-owner-check? (callable-summary-deferred summary)))
+
+(define (callable-summary-has-pending-owner? summary)
+  (and (callable-summary? summary)
+       (pair? (callable-summary-owner-checks summary))))
+
 (struct deferred-leaf-exit
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
   #:transparent)
@@ -1101,6 +1140,44 @@
 (define (lookup-callable-summary Λ node)
   (define table (callable-summaries))
   (and table (hash-ref table (summary-key Λ node) #f)))
+
+(define (callable-summary-for-expression Λ expression)
+  (or (lookup-callable-summary Λ expression)
+      (let ([name (peel-node expression)])
+        (and (symbol? name) (region-ctx-summary Λ name)))
+      (match (peel-node expression)
+        [`(RegionLam ,_ ,body)
+         (lookup-callable-summary (enter-child Λ 0) body)]
+        [_ #f])))
+
+;; Let の注釈が RegionLam の binder 名を alpha 等価な別名に置き換える場合、
+;; summary の RParam もその型側の binder へ対応づけてから RegionApp に渡す。
+(define (callable-summary-for-binding summary expression type)
+  (match* ((peel-node expression) (normalize-type (peel-ty type)))
+    [(`(RegionLam (,source-rps ...) ,_)
+      `(ForallRegion (,declared-rps ...) ,_))
+     (if (and summary (= (length source-rps) (length declared-rps)))
+         (let ([aliases
+                (for/hash ([source (in-list source-rps)]
+                           [declared (in-list declared-rps)])
+                  (values source `(RParam ,declared)))])
+           (struct-copy callable-summary summary
+                        [region-subst
+                         (for/fold ([result (callable-summary-region-subst summary)])
+                                   ([(source target) (in-hash aliases)])
+                           (hash-set result source target))]))
+         summary)]
+    [(_ _) summary]))
+
+(define (reject-pending-owner-summary! boundary position summary location fail)
+  (when (callable-summary-has-pending-owner? summary)
+    (define probe (current-callable-summary-boundary-probe))
+    (when probe
+      (probe (match (peel-node boundary)
+               [(list (? symbol? head) _ ...) head]
+               [_ #f])
+             position summary))
+    (fail 'borrow-unknown-owner-region location)))
 
 ;; 借用型の region 欄を返す。借用型でなければ #f を返す。
 (define (borrow-region type)
@@ -1548,6 +1625,16 @@
            ;; 橋を通して整数を戻してから制約を振り分ける。
            [(and ir (exact-nonnegative-integer? t)) (rho->region ir t)]
            [else t])]))
+  (define (subst-owner-alpha alpha)
+    (match alpha
+      [`(RParam ,rp)
+       (define mapped (hash-ref region-subst rp #f))
+       (cond
+         [mapped (subst-owner-alpha mapped)]
+         ;; 呼出し元の RParam は次の外側 frame へ渡す。frame が無ければ
+         ;; lifetime-owner-region と route-owner-check! が E-BOR-006 に閉じる。
+         [else alpha])]
+      [_ alpha]))
   (define (actual-caps w)
     (hash-ref subst w
               (lambda () (fail 'unresolved-borrow-owner node))))
@@ -1970,6 +2057,15 @@
                        (use-request-otherwise item))
           node fail))]
       [(deferred-leaf-exit? item) (void)]
+      [(deferred-owner-check? item)
+       (define alpha (subst-owner-alpha (deferred-owner-check-alpha item)))
+       (define owner (lifetime-owner-region alpha (region-ctx-ir Λ)))
+       (cond
+         [owner
+          (define probe (current-deferred-owner-check-probe))
+          (when probe (probe alpha owner point node))]
+         [(not (route-owner-check! alpha point node fail))
+          (fail 'borrow-unknown-owner-region node)])]
       [else
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
@@ -2054,6 +2150,8 @@
 
 ;; local 窓が実引数の α 起源へ対応したことを試験から確認する。
 (define current-local-exit-window-probe (make-parameter #f))
+(define current-callable-summary-boundary-probe (make-parameter #f))
+(define current-deferred-owner-check-probe (make-parameter #f))
 (define current-decomposition-extent-probe (make-parameter #f))
 (define current-decomposition-extent-reason-probe (make-parameter #f))
 
@@ -5049,6 +5147,12 @@
                    environment places callables node fail)
   (define raw-signature (callable-signature callables callable))
   (unless raw-signature (fail 'unknown-callable node))
+  (define free-names
+    (set-subtract (core-free-vars body) (list->set parameters)))
+  (for ([entry (in-list environment)]
+        #:when (set-member? free-names (first entry)))
+    (define summary (region-ctx-summary Λ (first entry)))
+    (reject-pending-owner-summary! node 'capture summary node fail))
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
   (define signature (resolve-region-params raw-signature))
@@ -5101,6 +5205,7 @@
      (define incomplete-box (box #f))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                       signature-region-params (region-ctx-point Λ)
                        collector body parameters parameter-types return-type
                        latent-row formal-fields incomplete-box))
      ;; Lam が転送できるのは自身の署名に自由に現れる region parameter だけ。
@@ -5131,6 +5236,10 @@
                   (define result
                     (check-as body return-type body-context closure-psi body-environment
                               places callables fail))
+                  (reject-pending-owner-summary!
+                   body 'result
+                   (callable-summary-for-expression body-context body)
+                   body fail)
                   (record-formal-result-exits! body-context body return-type fail)
                   result))))))
      (unless (row-subset? (first body-result) latent-row)
@@ -5221,8 +5330,9 @@
   (define-values (formals formal-fields body-context)
     (formal-parameter-context Λ node parameters parameter-types))
   (define recur-binding (lookup-binding body-function-environment function))
-  (define (fixpoint Ψ_in [previous-exits '()] [previous-incomplete? #f])
-    (define collector (box previous-exits))
+  (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
+                    [previous-incomplete? #f])
+    (define collector (box (append previous-exits previous-owner-checks)))
     (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame (list recur-binding) formals
@@ -5231,6 +5341,7 @@
                         collector 'tentative 1 formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                      region-params (region-ctx-point Λ)
                       collector body parameters parameter-types return-type
                       latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
@@ -5261,13 +5372,19 @@
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (define exits
          (filter deferred-leaf-exit? (unbox collector)))
+       (define owner-checks
+         (filter deferred-owner-check? (unbox collector)))
        (define exits-unchanged?
          (set=? (list->set (map leaf-exit-identity exits))
                 (list->set (map leaf-exit-identity previous-exits))))
-       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
+       (define owner-checks-unchanged?
+         (set=? (list->set owner-checks)
+                (list->set previous-owner-checks)))
+       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
+                owner-checks-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits (unbox incomplete-box)))]))
+           (fixpoint Ψ_next exits owner-checks (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -5309,8 +5426,9 @@
         (list (lookup-binding body-function-environment function)
               (lookup-binding function-environment function))))
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
-  (define (fixpoint Ψ_in [previous-exits '()] [previous-incomplete? #f])
-    (define collector (box previous-exits))
+  (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
+                    [previous-incomplete? #f])
+    (define collector (box (append previous-exits previous-owner-checks)))
     (define incomplete-box (box previous-incomplete?))
     (define tentative
       (make-recur-frame bindings formals
@@ -5321,6 +5439,7 @@
                         formal-fields incomplete-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
+                      region-params (region-ctx-point Λ)
                       collector body parameters parameter-types return-type
                       latent-row formal-fields incomplete-box))
     (match (parameterize ([region-binder-context #f]
@@ -5351,13 +5470,19 @@
        (define Ψ_next (psi-join Ψ_in Ψ_1))
        (define exits
          (filter deferred-leaf-exit? (unbox collector)))
+       (define owner-checks
+         (filter deferred-owner-check? (unbox collector)))
        (define exits-unchanged?
          (set=? (list->set (map leaf-exit-identity exits))
                 (list->set (map leaf-exit-identity previous-exits))))
-       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?)
+       (define owner-checks-unchanged?
+         (set=? (list->set owner-checks)
+                (list->set previous-owner-checks)))
+       (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
+                owner-checks-unchanged?)
            (list body-row Ψ_next
                  (struct-copy recur-frame tentative [state 'final]))
-           (fixpoint Ψ_next exits (unbox incomplete-box)))]))
+           (fixpoint Ψ_next exits owner-checks (unbox incomplete-box)))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -5377,6 +5502,20 @@
         declared-region
         actual-region))
   (match* (declared actual)
+    [(`(ForallRegion (,declared-rps ...) ,declared-body)
+      `(ForallRegion (,actual-rps ...) ,actual-body))
+     #:when (= (length declared-rps) (length actual-rps))
+     ;; ForallRegion の内側では、推論側の束縛名を宣言側へ揃えてから
+     ;; 寿命を採る。名前を揃えずに再帰すると BorrowedMut の region が
+     ;; fresh な RParam へ置き換わり、束縛外の変数として型照合に失敗する。
+     `(ForallRegion ,declared-rps
+                    ,(adopt-inferred-lifetimes
+                      declared-body
+                      (rename-region-params
+                       actual-body
+                       (for/hash ([declared-rp (in-list declared-rps)]
+                                  [actual-rp (in-list actual-rps)])
+                         (values actual-rp declared-rp))))) ]
     [(`(Borrowed ,d-payload ,_) `(Borrowed ,a-payload ,a-rho))
      `(Borrowed ,(adopt-inferred-lifetimes d-payload a-payload) ,a-rho)]
     [(`(BorrowedMut ,d-payload ,d-rho) `(BorrowedMut ,a-payload ,a-rho))
@@ -6111,11 +6250,15 @@
 ;; spec §4 分岐 2。α から所有者の region を引く。
 ;; 借用の生成は BOR-001 の上限制約 (outlives ρ_owner α) を必ず出すため、
 ;; 収集器の中に α を右辺とする outlives があれば、その左辺が所有者の region である。
-(define (lifetime-owner-region alpha)
-  (for/first ([c (in-list (collected-constraints))]
-              #:when (and (eq? (region-constraint-kind c) 'outlives)
-                          (equal? (region-constraint-right c) alpha)))
-    (region-constraint-left c)))
+(define (lifetime-owner-region alpha [ir #f])
+  (or (for/first ([c (in-list (collected-constraints))]
+                  #:when (and (eq? (region-constraint-kind c) 'outlives)
+                              (equal? (region-constraint-right c) alpha)))
+        (region-constraint-left c))
+      (and (exact-nonnegative-integer? alpha)
+           (lexical-region-ir? ir)
+           (set-member? (region-ir-regions ir) (region alpha))
+           alpha)))
 
 ;; Read には内側の可変 loan を再借用する規則がなく、複製は排他参照を二つにする。
 (define (borrow-payload-borrow-free? type #:reject-borrowed-mut? [reject-borrowed-mut? #t])
@@ -6140,7 +6283,7 @@
 ;; 借用以外の複製できない構成子は reason で落とす。
 ;; 所有者が引けない借用は関数の境界を越えて入ってきたものであり、
 ;; borrow.md 14 節 1 項により本サイクルでは受け取らない。
-(define (payload-borrows-traceable? type reason core fail
+(define (payload-borrows-traceable? type reason core Λ fail
                                     #:reject-borrowed-mut? [reject-borrowed-mut? #t])
   (define scanned (copy-out-scan type))
   (unless scanned (fail reason core))
@@ -6148,8 +6291,11 @@
            type #:reject-borrowed-mut? reject-borrowed-mut?)
     (fail reason core))
   (for ([alpha (in-list scanned)])
-    (unless (lifetime-owner-region alpha)
-      (fail 'borrow-unknown-owner-region core)))
+    (unless (lifetime-owner-region alpha (region-ctx-ir Λ))
+      (unless (route-owner-check! alpha
+                                  (region-ctx-point Λ)
+                                  core fail)
+        (fail 'borrow-unknown-owner-region core))))
   scanned)
 
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
@@ -6167,7 +6313,8 @@
       [`(BorrowedMut ,τ ,α) (values τ α)]
       [_ (fail 'read-non-borrow core)]))
   (define α_inner
-    (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core fail))
+    (payload-borrows-traceable? τ_payload 'read-uncopyable-payload
+                                core Λ fail))
   ;; borrow.md §12。読み出した値の中の借用は view の region を超えない。
   ;; BOR-001 と同じ形の上限制約であり、違反は borrow-escapes-owner で報告される。
   (for ([α (in-list α_inner)])
@@ -6196,14 +6343,14 @@
       [`(Borrowed ,_ ,_) (fail 'assign-through-shared core)]
       [_ (fail 'assign-non-borrow core)]))
   ;; Assign は lifetime を追跡するが、Read の copy-out 判定は適用しない。
-  (payload-borrows-traceable? τ_payload 'assign-owned-payload core fail
+  (payload-borrows-traceable? τ_payload 'assign-owned-payload core Λ fail
                                #:reject-borrowed-mut? #f)
   (match-define (list τ_value ε_value Ψ_2)
     (infer value (enter-child Λ 1) Ψ_1 environment places callables fail))
   ;; 書き込む値の借用は、書き込み先の view より長く生きなければならない。
   ;; 短ければ view を通じて解放済みの借用を読み出せる。
   (define α_value
-    (payload-borrows-traceable? τ_value 'assign-owned-payload core fail
+    (payload-borrows-traceable? τ_value 'assign-owned-payload core Λ fail
                                  #:reject-borrowed-mut? #f))
   (for ([α (in-list α_value)])
     (emit-constraint!
@@ -6738,6 +6885,54 @@
   ;; wrapper は入口で E を消すため、restore 前の Ψ に局所 E だけが残る。
   (hash-keys (flow-state-escapes (psi-flow Ψ))))
 
+(define (summary-inputs core Λ)
+  (for/list ([child (in-list (core-children (peel-node core)))]
+             [index (in-naturals)]
+             #:do [(define summary
+                     (callable-summary-for-expression
+                      (enter-child Λ index) child))]
+             #:when (callable-summary-has-pending-owner? summary))
+    (list index child summary)))
+
+(define (summary-input-allowed? core index)
+  (match (peel-node core)
+    [`(Let ,_ ,_ ,_) (memv index '(0 1))]
+    [`(RegionLam ,_ ,_) (= index 0)]
+    [`(RegionApp ,_ ,_) (= index 0)]
+    [`(Apply ,_ . ,_) (= index 0)]
+    [`(Move ,_) (= index 0)]
+    [`(Unsafe ,_) (= index 0)]
+    [`(Scope ,_ ,_) (= index 0)]
+    [_ #f]))
+
+(define (summary-output-child core)
+  (match (peel-node core)
+    [`(Let ,_ ,_ ,body) (cons 1 body)]
+    [`(Move ,name) (cons 0 name)]
+    [`(Unsafe ,body) (cons 0 body)]
+    [`(Scope ,_ ,body) (cons 0 body)]
+    [_ #f]))
+
+(define (propagate-callable-summary! core Λ fail)
+  (for ([input (in-list (summary-inputs core Λ))])
+    (unless (summary-input-allowed? core (first input))
+      (reject-pending-owner-summary!
+       core (first input) (third input) core fail)))
+  (define output-child (summary-output-child core))
+  (when output-child
+    (define summary
+      (match (peel-node core)
+        [`(Let (,name ,_mode ,type) ,bound ,body)
+         #:when (eq? (peel-node body) (peel-bind name))
+         ;; 直接返す変数の token は Let の局所 Λ にだけある。
+         (callable-summary-for-binding
+          (callable-summary-for-expression (enter-child Λ 0) bound)
+          bound type)]
+        [_ (callable-summary-for-expression
+            (enter-child Λ (car output-child)) (cdr output-child))]))
+    (when summary
+      (record-callable-summary! Λ core summary fail))))
+
 (define (infer core Λ Ψ environment places callables fail)
   (if (not (typing-normal-results))
       (parameterize ([typing-normal-results (make-hash)])
@@ -6753,6 +6948,7 @@
              [result-psi (flow-restore-output input-psi (third raw-result)
                                               normal-type fail core)]
              [result (list result-type (second raw-result) result-psi)])
+        (propagate-callable-summary! core Λ fail)
         ((typing-point-probe) (region-ctx-point Λ))
         (record-typing-result! Λ result-type normal-type (second result)
                                (psi-escape-operations (third raw-result)))
@@ -7165,6 +7361,7 @@
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
+        (reject-pending-owner-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
               (ormap borrowed-type-anywhere? remaining-types)))
@@ -7461,14 +7658,22 @@
                (recur-frame-for (lookup-binding environment function-name))))
         (define inner
           (or (lookup-callable-summary inner-point inner-node)
+              (and (symbol? function-name)
+                   (region-ctx-summary (enter-child Λ 0) function-name))
               (and frame
                    (eq? (recur-frame-state frame) 'final)
                    (recur-frame->summary frame))))
         (when inner
+          (define summary-region-subst
+            (for/fold ([resolved actual-regions])
+                      ([(rp target)
+                        (in-hash (callable-summary-region-subst inner))])
+              (hash-set resolved rp
+                        (subst-region-params target actual-regions))))
           (record-callable-summary!
            Λ core
            (struct-copy callable-summary inner
-                        [region-subst actual-regions])
+                        [region-subst summary-region-subst])
            fail))
         (list substituted-body function-row function-psi)]
        [_ (fail 'region-app-non-forall core function-type)])]
@@ -7690,7 +7895,10 @@
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
-        (define callable (lookup-callable-summary (enter-child Λ 0) bound))
+        (define callable
+          (callable-summary-for-binding
+           (callable-summary-for-expression (enter-child Λ 0) bound)
+           bound binding-type))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
         (define token
           (cond
@@ -7763,7 +7971,10 @@
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
-     (define callable (lookup-callable-summary (enter-child Λ 0) bound))
+     (define callable
+       (callable-summary-for-binding
+        (callable-summary-for-expression (enter-child Λ 0) bound)
+        bound binding-type))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
      (define token
        (cond
@@ -8171,6 +8382,8 @@
        [else
         (define type (lookup environment w))
         (unless type (fail 'unbound-variable core))
+        (reject-pending-owner-summary!
+         core 'target (region-ctx-summary Λ w) core fail)
         (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
         (when (borrow-typed? type) (fail 'move-borrowed core))
         (match type
@@ -8262,6 +8475,7 @@
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
                      (region-ctx-summary Λ w)))))
+        (reject-pending-owner-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
               (ormap borrowed-type-anywhere? remaining-types)))
@@ -8588,7 +8802,10 @@
         (define x (peel-bind name))
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
-        (define callable (lookup-callable-summary (enter-child Λ 0) bound))
+        (define callable
+          (callable-summary-for-binding
+           (callable-summary-for-expression (enter-child Λ 0) bound)
+           bound binding-type))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
         (define token
           (cond
@@ -8657,7 +8874,10 @@
      (define binding-type (peel-ty type))
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
-     (define callable (lookup-callable-summary (enter-child Λ 0) bound))
+     (define callable
+       (callable-summary-for-binding
+        (callable-summary-for-expression (enter-child Λ 0) bound)
+        bound binding-type))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
      (define token
        (cond
@@ -8864,6 +9084,7 @@
              [result-type
               (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
              [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
+        (propagate-callable-summary! core Λ fail)
         (record-typing-result! Λ result-type normal-type row
                                (psi-escape-operations raw-psi))
         (emit-expression-decomposition-exits!

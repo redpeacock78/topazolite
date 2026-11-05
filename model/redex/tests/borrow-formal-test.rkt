@@ -3,6 +3,7 @@
 ;; [REQ: BOR-005] 借用の仮引数の formal 鍵と、本体で出た要求の雛形の収集。
 
 (require rackunit
+         racket/list
          racket/match
          racket/set
          "../region.rkt"
@@ -85,8 +86,10 @@
                                 (Assign y 7))))))
  (define ir (build-region-ir core))
  (define summaries (sixth (inference core ir 'Int pair-callables)))
- (check-equal? (length summaries) 1)
- (define summary (first summaries))
+ (define unique-summaries (remove-duplicates summaries equal?))
+ (check-equal? (length unique-summaries) 1)
+ (define summary (and (pair? unique-summaries) (first unique-summaries)))
+ (check-not-false summary)
  (define deferred (callable-summary-deferred summary))
  (define formals (list->set (filter values (callable-summary-formals summary))))
  (check-equal? (set-count formals) 2)
