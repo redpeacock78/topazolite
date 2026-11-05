@@ -56,6 +56,7 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | THM-005 | `keyword_word_reserved` |
 | THM-006 | `lower_block_root_span` |
 | THM-007 | `lower_decl_bind`, `lower_decl_fn`, `lower_decl_try_bind`, `lower_fields_labels`, `lower_fn_fields`, `lower_proj_label`, `lower_projrec_fields`, `lower_rec_labels`, `proj_fields_spans` |
+| THM-008 | `delta_acquire_preserves_tok_inv`, `ownleaf_pass_preserves_tok_inv`, `ownleaf_preserves_tok_inv`, `ownleaf_transit_preserves_tok_inv` |
 
 ### 要件ごとの状態と証拠
 
@@ -126,7 +127,7 @@ F* の `core` は span と項の形を表す模型であり、型検査はしな
 | OWN-006 | テストのみ | - | - | `model/redex/tests/own-formal-test.rkt`::`Owned の仮引数を 1 つ取る Fn が生名と Let を持つ節へ写る` |
 | OWN-007 | テストのみ | - | - | `model/redex/tests/own-capture-test.rkt`::`Owned を 1 件捕捉する closure を elaborate でき、型が Owned<NFn> になる` |
 | OWN-008 | テストのみ | - | - | `model/redex/tests/own-curry-fixed-test.rkt`::`Owned の固定引数を Move 経由で固定でき、結果型が Owned<NFn 残余> になる` |
-| OWN-009 | テストのみ | - | - | `model/redex/tests/typing-test.rkt`::`config-ok? の拒否理由 owned-duplicate` |
+| OWN-009 | テストのみ | - | THM-008 | `model/redex/tests/typing-test.rkt`::`config-ok? の拒否理由 owned-duplicate` |
 | OWN-010 | テストのみ | - | - | `model/redex/tests/typing-test.rkt`::`config-ok? の拒否理由 path-shape-mismatch` |
 | OWN-011 | テストのみ | - | - | `model/redex/tests/abort-frame-cleanup-test.rkt`::`OWN-003/OWN-011: ScopeError は捨てる frame の leaf を Dropped にする` |
 | PTR-001 | テストのみ | - | - | `model/redex/tests/properties-unsafe-test.rkt`::`型検査を通った項の raw 操作はすべて Unsafe の内側にある` |

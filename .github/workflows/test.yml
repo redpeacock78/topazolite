@@ -72,6 +72,12 @@ jobs:
       - name: check Topazolite.Parity
         run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Parity.fst
 
+      - name: check Topazolite.Core.State
+        run: ./fstar/bin/fstar.exe --include model/fstar model/fstar/Topazolite.Core.State.fst
+
+      - name: check Topazolite.Core.Token
+        run: ./fstar/bin/fstar.exe --z3rlimit 30 --split_queries always --include model/fstar model/fstar/Topazolite.Core.Token.fst
+
       - name: parity check
         run: racket tools/fstar-parity.rkt
 

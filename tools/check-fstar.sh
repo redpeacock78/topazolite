@@ -13,5 +13,7 @@ case "$version" in
 esac
 "$fstar" --include model/fstar model/fstar/Topazolite.Surface.fst
 "$fstar" --include model/fstar model/fstar/Topazolite.Parity.fst
+"$fstar" --include model/fstar model/fstar/Topazolite.Core.State.fst
+"$fstar" --z3rlimit 30 --split_queries always --include model/fstar model/fstar/Topazolite.Core.Token.fst
 racket tools/fstar-parity.rkt
 sh tools/check-fstar-no-admit.sh model/fstar
