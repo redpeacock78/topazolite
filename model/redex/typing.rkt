@@ -2143,11 +2143,126 @@
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
        (define index (and (formal-key? w) (fourth w)))
+       (define (contains-result-exit? index alpha)
+         (and index
+              (for/or ([edge (in-list deferred)])
+                (and (deferred-constraint? edge)
+                     (equal? (deferred-constraint-w edge) w)
+                     (eq? (region-constraint-kind
+                           (deferred-constraint-constraint edge))
+                          'reborrow)
+                     (equal? (region-constraint-right
+                              (deferred-constraint-constraint edge))
+                             alpha)
+                     (for/or ([event (in-list exits)])
+                       (and (eq? (deferred-leaf-exit-exit-kind event) 'result)
+                            (equal? (event-formal-index event) index)
+                            (equal? (deferred-leaf-exit-alpha event)
+                                    (region-constraint-left
+                                     (deferred-constraint-constraint edge)))
+                            (equal? (deferred-leaf-exit-parent-path event)
+                                    (deferred-constraint-parent-fp edge))))))))
+       (define (formal-contains-lower-bound item index)
+         (define constraint (deferred-constraint-constraint item))
+         (define alpha (region-constraint-left constraint))
+         (unless (and (exact-nonnegative-integer? index)
+                      (< index (length actuals))
+                      (< index (length (callable-summary-formal-fields summary))))
+           (fail 'unresolved-borrow-owner node))
+         ;; contains 自体に path は無い。対応する reborrow の親 path と
+         ;; 寿命の系譜から、formal-fields の最深 canonical leaf を一つ選ぶ。
+         (define (formal-roots current seen)
+           (if (member current seen equal?)
+               '()
+               (append-map
+                (lambda (edge)
+                  (define edge-constraint
+                    (deferred-constraint-constraint edge))
+                  (define parent
+                    (region-constraint-left edge-constraint))
+                  (define path (deferred-constraint-parent-fp edge))
+                  (if (rparam-term? parent)
+                      (list (cons parent path))
+                      (formal-roots parent (cons current seen))))
+                (filter
+                 (lambda (edge)
+                   (and (deferred-constraint? edge)
+                        (equal? (deferred-constraint-w edge)
+                                (deferred-constraint-w item))
+                        (eq? (region-constraint-kind
+                              (deferred-constraint-constraint edge))
+                             'reborrow)
+                        (equal? (region-constraint-right
+                                 (deferred-constraint-constraint edge))
+                                current)))
+                 deferred))))
+         (define roots (formal-roots alpha '()))
+         (define formal-fields
+           (list-ref (callable-summary-formal-fields summary) index))
+         (unless (hash? formal-fields)
+           (fail 'unresolved-borrow-owner node))
+         (define formal-paths
+           (remove-duplicates
+            (append-map
+             (lambda (root)
+               (formal-leaf-paths-for-exit
+                formal-fields
+                (map access-path-segment (cdr root))
+                (set (car root))))
+             roots)
+            equal?))
+         ;; Borrow のように対応する reborrow edge がない項目は、item の
+         ;; parent path を使う。葉が一意にならない formal は fail closed。
+         (define candidate-paths
+           (if (pair? roots)
+               formal-paths
+               (formal-leaf-paths-for-exit
+                formal-fields
+                (map access-path-segment
+                     (deferred-constraint-parent-fp item))
+                (for/set ([entry (in-hash-values formal-fields)]
+                          #:when (and (capability-entry? entry)
+                                      (capability-entry-declared-lifetime entry)))
+                  (capability-entry-declared-lifetime entry)))))
+         (define formal-path
+           (match candidate-paths
+             [(list path) path]
+             [_ (fail 'unresolved-borrow-owner node)]))
+         (define actual-type (list-ref actuals index))
+         (define actual-path
+           (instantiate-capability-path actual-type formal-path region-subst))
+         (unless actual-path
+           (fail 'unresolved-borrow-owner node))
+         (define actual-entry
+           (actual-leaf-entry (enter-child Λ (add1 index))
+                              (list-ref arguments index)
+                              actual-type actual-path
+                              (lambda (_reason _location)
+                                (fail 'unresolved-borrow-owner node))))
+         (with-handlers ([exn:fail?
+                          (lambda (_)
+                            (fail 'unresolved-borrow-owner node))])
+           (define-values (formal-alpha _source-alphas)
+             (formal-leaf-info summary index formal-path actual-entry))
+           (unless formal-alpha
+             (fail 'unresolved-borrow-owner node))
+           (define actual-lifetime
+             (capability-entry-declared-lifetime actual-entry))
+           (unless actual-lifetime
+             (fail 'unresolved-borrow-owner node))
+           actual-lifetime))
        (define c-new
          (if (eq? (region-constraint-kind c) 'contains)
              (region-constraint 'contains
                                 (subst-term (region-constraint-left c))
-                                (region-at (region-ctx-ir Λ) point)
+                                (cond
+                                  [(contains-result-exit?
+                                    index (region-constraint-left c))
+                                   (hash-ref (current-apply-result-lower-bounds)
+                                             point
+                                             (lambda ()
+                                               (region-at ir point)))]
+                                  [else (formal-contains-lower-bound item index)])
                                 point node)
              (region-constraint 'reborrow
                                 (subst-term (region-constraint-left c))
@@ -2227,6 +2342,21 @@
 (define current-deferred-owner-check-probe (make-parameter #f))
 (define current-decomposition-extent-probe (make-parameter #f))
 (define current-decomposition-extent-reason-probe (make-parameter #f))
+
+;; Only a direct Apply in a Let's bound expression receives the result's
+;; lifetime lower bound from that Let body. This is private inference context,
+;; not a test observation hook.
+(define current-apply-result-lower-bounds (make-parameter (hash)))
+
+(define (apply-result-let-body-regions core ir)
+  (if (not ir)
+      (hash)
+      (for/fold ([result (hash)]) ([point (in-list (core-points core))])
+        (match (core-node core point)
+          [`(Let ,_ (Apply ,_ ,_ ...) ,_)
+           (hash-set result (append point '(0))
+                     (region-at ir (append point '(1))))]
+          [_ result]))))
 
 (define (typing-borrow-token-key Λ core [locals (hash)] #:fail [fail #f])
   (borrow-token-key Λ core locals #:fail fail
@@ -8715,6 +8845,8 @@
   (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([lifetime-collector cs]
+                   [current-apply-result-lower-bounds
+                    (apply-result-let-body-regions core-in ir)]
                    [request-collector rs]
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
@@ -9277,6 +9409,8 @@
   (define ir (region-ctx-ir Λ))
   (define result
     (parameterize ([typing-normal-results normal-results]
+                   [current-apply-result-lower-bounds
+                    (apply-result-let-body-regions core-in ir)]
                    [lifetime-collector cs]
                    [request-collector rs]
                    [ptr-request-collector (and ptr-box ptr-rs)]

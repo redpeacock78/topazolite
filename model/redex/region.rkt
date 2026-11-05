@@ -248,18 +248,20 @@
    ;; 必要があるため、選び方は決定的でなければならない。
    ;; lexical では最小共通祖先が唯一の極小解になるので自動的に満たされる。
    (define (region-solve ir constraints)
-     ;; 下限を寿命変数ごとに集める。並びは制約の順であり、決定的である。
+     ;; 具体 region の下限だけを初期値にする。寿命変数を右辺に持つ
+     ;; contains は依存辺として固定点の伝播で解く。
      (define lowers
        (for/fold ([acc (hash)]) ([c (in-list constraints)])
-         (cond
-           [(eq? (region-constraint-kind c) 'contains)
-            (define k (lifetime-var-index (region-constraint-left c)))
-            (hash-update acc k (lambda (rs) (cons (region-constraint-right c) rs))
-                         '())]
-           [else acc])))
-     ;; 極小解は下限の最小共通祖先である。上限制約の左辺が寿命変数なら、
-     ;; 右辺もその寿命の下限になる。制約どうしの依存を走査順に反映し、
-     ;; すべての寿命が安定するまで繰り返す（spec §4.3）。
+         (if (and (eq? (region-constraint-kind c) 'contains)
+                  (region? (region-constraint-right c)))
+             (let ([k (lifetime-var-index (region-constraint-left c))])
+               (hash-update acc k
+                            (lambda (rs)
+                              (cons (region-constraint-right c) rs))
+                            '()))
+            acc)))
+     ;; 極小解は下限の最小共通祖先である。寿命変数を左辺とする上限制約と
+     ;; 寿命変数を右辺とする contains の依存を固定点まで伝播する（spec §4.3）。
      (define (resolve-term σ t)
        (if (lifetime-var? t)
            (hash-ref σ (lifetime-var-index t) #f)
@@ -274,18 +276,16 @@
                   (list (region-constraint-left c)
                         (region-constraint-right c))))))
      (define (propagate σ c)
-       (if (eq? (region-constraint-kind c) 'contains)
-           σ
-           (let* ([left (region-constraint-left c)]
-                  [right (resolve-term σ (region-constraint-right c))])
-             (if (and (lifetime-var? left) right)
-                 (let* ([k (lifetime-var-index left)]
-                        [current (hash-ref σ k #f)]
-                        [next (if current
-                                  (lexical-join ir (list current right))
-                                  right)])
-                   (if (equal? current next) σ (hash-set σ k next)))
-                 σ))))
+       (define left (region-constraint-left c))
+       (define right (resolve-term σ (region-constraint-right c)))
+       (if (and (lifetime-var? left) right)
+           (let* ([k (lifetime-var-index left)]
+                  [current (hash-ref σ k #f)]
+                  [next (if current
+                            (lexical-join ir (list current right))
+                            right)])
+             (if (equal? current next) σ (hash-set σ k next)))
+           σ))
      (define σ
        (let loop ([σ (initial-sigma)]
                   [fuel (max 1 (* (add1 variable-count)

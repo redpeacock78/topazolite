@@ -15,6 +15,7 @@
          "../origins.rkt"
          "../region.rkt"
          "../traits.rkt"
+         "../type-equiv.rkt"
          "../typing.rkt")
 
 (define-runtime-path core-language-source "../lang.rkt")
@@ -92,6 +93,56 @@
                (region-ctx ir '() (for/hash ([place (in-list places)])
                                    (values (first place) (region-at ir '())))
                            (hash))))
+
+(define (inference-for-call-ph core callables)
+  (define ir (build-region-ir core))
+  (define borrow-point
+    (for/first ([point (in-list (core-points core))]
+                #:when (match (core-node core point)
+                         [`(BorrowMut ,_) #t]
+                         [_ #f]))
+      point))
+  (define decomposition-point
+    (for/first ([point (in-list (core-points core))]
+                #:when (match (core-node core point)
+                         [`(Eliminate ,_ ,_) #t]
+                         [`(UnionEliminate ,_ ,_) #t]
+                         [_ #f]))
+      point))
+  (define call-rho
+    (and borrow-point (region->rho ir (region-at ir borrow-point))))
+  (define branch-rho
+    (and decomposition-point
+         (region->rho ir (region-at/eliminate ir decomposition-point))))
+  (define filled
+    (replace-symbol
+     (replace-symbol (fill-region-placeholders core ir) 'call-ph call-rho)
+     'branch-ph branch-rho))
+  (values ir filled
+          (typing-inference (annotate-regions filled ir) '() callables '()
+                            (region-ctx ir '() (hash) (hash)))))
+
+(define (constraint-at constraints kind point)
+  (remove-duplicates
+   (filter (lambda (constraint)
+             (and (region-constraint? constraint)
+                  (eq? (region-constraint-kind constraint) kind)
+                  (equal? (region-constraint-point constraint) point)))
+           constraints)
+   (lambda (left right)
+     (equal? (list (region-constraint-kind left)
+                   (region-constraint-left left)
+                   (region-constraint-right left)
+                   (region-constraint-point left))
+             (list (region-constraint-kind right)
+                   (region-constraint-left right)
+                   (region-constraint-right right)
+                   (region-constraint-point right))))))
+
+(define (point-matching core predicate)
+  (for/first ([point (in-list (core-points core))]
+              #:when (predicate (core-node core point)))
+    point))
 
 (define (prepare-execution core callables)
   (match (prepare-borrow-term* core #:callables callables)
@@ -1072,3 +1123,244 @@
     (check-live-trace configs callables expected)
     (check-equal? (check-borrow-execution start sidecar ir 300 (make-bcounters))
                   'ok)))
+
+(define result-lower-bound-type
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut Int (RParam a)))
+          (Borrowed Int (RParam a)) () () () User)))
+(define result-lower-bound-callables
+  `((result-lower-bound ,result-lower-bound-type)))
+(define result-lower-bound-value
+  '(RegionLam (a)
+     (Lam User result-lower-bound (p) (Reborrow p))))
+(define (result-lower-bound-core wrap-apply?)
+  `(Scope ()
+     (Let (owner let (Owned Int)) 1
+       (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+         ,(if wrap-apply?
+              `(Scope ()
+                 (Apply (RegionApp ,result-lower-bound-value (call-ph))
+                        parent))
+              `(Let (result let (Borrowed Int ph))
+                    (Apply (RegionApp ,result-lower-bound-value (call-ph))
+                           parent)
+                 (Scope () (Read result))))))))
+
+(test-case "Apply の result contains は直接束縛する Let body の Scope を下限にする"
+  (define core (result-lower-bound-core #f))
+  (define-values (ir filled inference)
+    (inference-for-call-ph core result-lower-bound-callables))
+  (define apply-point
+    (point-matching filled
+                    (lambda (node)
+                      (match node [`(Apply ,_ ,_) #t] [_ #f]))))
+  (define result-let-point
+    (point-matching
+     filled
+     (lambda (node)
+       (match node
+         [`(Let (result let ,_) (Apply ,_ ,_) ,_) #t]
+         [_ #f]))))
+  (define constraints
+    (constraint-at (third inference) 'contains apply-point))
+  (define expected (region-at ir (append result-let-point '(1))))
+  (check-equal? (length constraints) 1
+                (format "result Apply の contains: ~s" constraints))
+  (when (= (length constraints) 1)
+    (check-equal? (region-constraint-right (first constraints)) expected
+                  (format "Let body Scope を下限にする: ~s" (first constraints))))
+  (check-not-equal? expected (region-at ir apply-point)
+                    "試験は Apply point と body Scope の region を区別する"))
+
+(test-case "Let RHS でない Scope 内の Apply は call point の contains を保つ"
+  (define core (result-lower-bound-core #t))
+  (define-values (ir filled inference)
+    (inference-for-call-ph core result-lower-bound-callables))
+  (define apply-point
+    (point-matching filled
+                    (lambda (node)
+                      (match node [`(Apply ,_ ,_) #t] [_ #f]))))
+  (define constraints
+    (constraint-at (third inference) 'contains apply-point))
+  (check-equal? (length constraints) 1
+                (format "Scope に包まれた Apply の contains: ~s" constraints))
+  (when (= (length constraints) 1)
+    (check-equal? (region-constraint-right (first constraints))
+                  (region-at ir apply-point)
+                  (format "直接の Let RHS でないため call point: ~s"
+                          (first constraints)))))
+
+(test-case "result の Scope escape は下限を下げても親 Assign を拒否する"
+  (define callable-type
+    `(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a)))
+            (Borrowed Int (RParam a)) () () () User)))
+  (define callable-value
+    `(RegionLam (a)
+       (Lam User scope-result-borrow (p)
+         (Reborrow p))))
+  (define callables `((scope-result-borrow ,callable-type)))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph))
+              (BorrowMut owner)
+           (Let (escaped let (Borrowed Int owner-ph))
+                (Scope ()
+                  (Let (result let (Borrowed Int owner-ph))
+                       (Apply (RegionApp ,callable-value (owner-ph)) parent)
+                    result))
+               (Let (write let Unit)
+                    (Assign parent 2)
+                 (Read escaped)))))))
+  (define ir (build-region-ir core))
+  (define owner-rho (region->rho ir (owner-let-body-region ir '(0))))
+  (define filled
+    (replace-symbol (fill-region-placeholders core ir) 'owner-ph owner-rho))
+  (define typed (core-type-of/regions filled '() callables #:ir ir))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-025"
+                (format "Scope escape の拒否: ~s" typed)))
+
+(define formal-lower-bound-type
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut Int (RParam a))) Unit () () () User)))
+(define formal-lower-bound-callables
+  `((formal-lower-bound ,formal-lower-bound-type)))
+(define formal-lower-bound-value
+  '(RegionLam (a)
+     (Lam User formal-lower-bound (p)
+       (Let (child let (Borrowed Int (RParam a))) (Reborrow p)
+         (Let (read let Int) (Read child) unit)))))
+
+(test-case "formal contains は実引数の葉の宣言寿命を下限にする"
+  (define owner-type '(Record ((o (Option Int) mut))))
+  (define owner-value '(Rec ((o mut (Construct (Option Int) some 1)))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned ,owner-type)) ,owner-value
+         (Let (parent let (BorrowedMut ,owner-type ph))
+              (BorrowMut owner)
+           (Eliminate (ProjBorrow parent o)
+             ((some (c) ->
+                (Scope ()
+                  (Apply
+                   (RegionApp ,formal-lower-bound-value (branch-ph)) c)))
+              (none () -> unit)))))))
+  (define-values (ir filled inference)
+    (inference-for-call-ph core formal-lower-bound-callables))
+  (define apply-point
+    (point-matching filled
+                    (lambda (node)
+                      (match node [`(Apply ,_ ,_) #t] [_ #f]))))
+  (define constraints
+    (constraint-at (third inference) 'contains apply-point))
+  (define binder-bound
+    (filter (lambda (constraint)
+              (region? (region-constraint-right constraint)))
+            constraints))
+  (define expected
+    (and (= (length binder-bound) 1)
+         (region-constraint-left (first binder-bound))))
+  (define formal-constraints
+    (filter (lambda (constraint)
+              (equal? (region-constraint-right constraint) expected))
+            constraints))
+  (check-equal? (length binder-bound) 1
+                (format "分解 binder の実引数 leaf lifetime: ~s" constraints))
+  (check-true (pair? constraints)
+              (format "formal Apply の contains: ~s" constraints))
+  (check-equal? (length formal-constraints) 2
+                (format "callee の contains は binder leaf を下限にする: ~s"
+                        constraints))
+  (when (pair? formal-constraints)
+    (check-true
+     (andmap (lambda (constraint)
+               (equal? (region-constraint-right constraint) expected))
+             formal-constraints)
+     (format "実引数の declared lifetime を下限にする: ~s"
+             formal-constraints))
+    (check-not-equal? expected (region-at ir apply-point)
+                      "Scope 内の Apply は親の実引数より短い region にある")))
+
+(define formal-field-lower-bound-type
+  '(ForallRegion (a)
+     (NFn ((Record ((view (BorrowedMut Int (RParam a)) imm))))
+          Unit () () () User)))
+(define formal-field-lower-bound-value
+  '(RegionLam (a)
+     (Lam User formal-field-lower-bound (record)
+       (Let (child let (Borrowed Int (RParam a)))
+            (Reborrow (Proj record view))
+         (Let (read let Int) (Read child) unit)))))
+(define formal-field-lower-bound-callables
+  `((formal-field-lower-bound ,formal-field-lower-bound-type)))
+
+(test-case "formal field path は canonical leaf を通して実引数寿命へ解決する"
+  (define actual-type
+    '(Record ((view (BorrowedMut Int (RVar 0)) imm))))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (source let (BorrowedMut Int (RVar 0))) (BorrowMut owner)
+           (Let (argument let ,actual-type) (Rec ((view imm source)))
+             (Apply
+              (RegionApp ,formal-field-lower-bound-value ((RVar 0)))
+              argument))))))
+  (define ir (build-region-ir core))
+  (define filled (fill-region-placeholders core ir))
+  (define inference
+    (typing-inference (annotate-regions filled ir) '()
+                      formal-field-lower-bound-callables '()
+                      (region-ctx ir '() (hash) (hash))))
+  (define apply-point
+    (point-matching filled
+                    (lambda (node)
+                      (match node [`(Apply ,_ ,_) #t] [_ #f]))))
+  (define constraints
+    (constraint-at (third inference) 'contains apply-point))
+  (check-equal? (length constraints) 1
+                (format "field reborrow の contains: ~s" constraints))
+  (when (= (length constraints) 1)
+    (check-equal? (region-constraint-right (first constraints)) '(RVar 0)
+                  (format "canonical field leaf の宣言寿命が下限: ~s"
+                          constraints))))
+
+(test-case "formal field path が曖昧なら unresolved-borrow-owner で閉じる"
+  (define ambiguous-union
+    (normalize-type
+     '(Union (BorrowedMut Int (RParam a))
+             (BorrowedMut Bool (RParam a)))))
+  (define ambiguous-callable
+    `(ForallRegion (a)
+       (NFn (,ambiguous-union) Unit () () () User)))
+  (define ambiguous-value
+    '(RegionLam (a)
+       (Lam User ambiguous-formal (argument)
+         (UnionEliminate argument
+           (((BorrowedMut Int (RParam a)) int-borrow ->
+             (Let (child let (Borrowed Int (RParam a)))
+                  (Reborrow int-borrow)
+               (Let (read let Int) (Read child) unit)))
+            ((BorrowedMut Bool (RParam a)) bool-borrow ->
+             (Let (child let (Borrowed Bool (RParam a)))
+                  (Reborrow bool-borrow)
+               (Let (read let Bool) (Read child) unit))))))))
+  (define actual-union
+    #f)
+  (define core
+    `(Apply (RegionApp ,ambiguous-value (formal-rho-hole)) argument))
+  (define ir (build-region-ir core))
+  (define rho (region->rho ir (region-at ir '())))
+  (set! actual-union
+        (normalize-type
+         `(Union (BorrowedMut Int ,rho)
+                 (BorrowedMut Bool ,rho))))
+  (define filled
+    (replace-symbol core 'formal-rho-hole rho))
+  (define result
+    (type-of/raw (annotate-regions filled ir) '()
+                 `((ambiguous-formal ,ambiguous-callable))
+                 `((argument ,actual-union))
+                 (region-ctx ir '() (hash) (hash))))
+  (check-equal? (failure-key result) 'unresolved-borrow-owner
+                (format "曖昧な formal leaf は拒否: ~s" result)))

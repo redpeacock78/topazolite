@@ -84,6 +84,65 @@
   (match-define (list 'ok σ-reverse) (region-solve ir cs-reverse))
   (check-equal? σ-forward σ-reverse))
 
+;; 寿命変数を右辺に持つ contains は、その寿命の解を下限として伝播する。
+;; 中間変数への下限より先に依存辺を読む順でも、固定点で同じ σ になる。
+(let ()
+  (define core '(Scope () (Scope () 0)))
+  (define ir (build-region-ir core))
+  (define ρ (region-at ir '(0 0)))
+  (define α3-lower
+    (region-constraint 'contains '(RVar 3) '(RVar 1) '() #f))
+  (define α1-lower
+    (region-constraint 'contains '(RVar 1) ρ '() #f))
+  (match-define
+    (list 'ok σ-forward)
+    (region-solve ir (list α3-lower α1-lower)))
+  (match-define
+    (list 'ok σ-reverse)
+    (region-solve ir (list α1-lower α3-lower)))
+  (check-equal? σ-forward (hash 1 ρ 3 ρ))
+  (check-equal? σ-reverse σ-forward)
+  (check-true (region-outlives? ir (hash-ref σ-forward 3) ρ)))
+
+;; 具体下限を持つ依存サイクルも有限の固定点で解ける。
+(let ()
+  (define core '(Scope () (Scope () 0)))
+  (define ir (build-region-ir core))
+  (define ρ (region-at ir '(0 0)))
+  (define cs
+    (list (region-constraint 'contains '(RVar 0) '(RVar 1) '() #f)
+          (region-constraint 'contains '(RVar 1) '(RVar 0) '() #f)
+          (region-constraint 'contains '(RVar 0) ρ '() #f)))
+  (check-equal? (region-solve ir cs)
+                (list 'ok (hash 0 ρ 1 ρ))))
+
+;; concrete 下限と寿命変数への依存が合流すると、lexical join が最小解になる。
+(let ()
+  (define core '(Scope () (Yield (Scope () 0) (Scope () 0))))
+  (define ir (build-region-ir core))
+  (define ρ-left (region-at ir '(0 0 0)))
+  (define ρ-right (region-at ir '(0 1 0)))
+  (define ρ-outer (region-at ir '(0)))
+  (define cs
+    (list (region-constraint 'contains '(RVar 1) ρ-left '() #f)
+          (region-constraint 'contains '(RVar 0) '(RVar 1) '() #f)
+          (region-constraint 'contains '(RVar 0) ρ-right '() #f)))
+  (match-define (list 'ok σ) (region-solve ir cs))
+  (check-equal? (hash-ref σ 1) ρ-left)
+  (check-equal? (hash-ref σ 0) ρ-outer)
+  (check-true (region-outlives? ir (hash-ref σ 0) ρ-right)))
+
+;; 制約に lower-bound の無い右辺寿命変数が残る場合、solver は未解決の
+;; contains を broken として返す。通常の型検査では各 fresh alpha が
+;; 生成時に concrete lower bound を受けるため、この形は不変条件違反である。
+(let ()
+  (define core '(Scope () 0))
+  (define ir (build-region-ir core))
+  (define unresolved
+    (region-constraint 'contains '(RVar 0) '(RVar 1) '() #f))
+  (check-equal? (region-solve ir (list unresolved))
+                (list 'error (list unresolved))))
+
 ;; 寿命項の判別。
 (check-true (lifetime-var? '(RVar 3)))
 (check-equal? (lifetime-var-index '(RVar 3)) 3)

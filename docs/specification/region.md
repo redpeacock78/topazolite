@@ -94,6 +94,9 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
   `σ` は寿命変数から region への immutable hash であり、決定的かつ極小である。
   極小解が一意であることは要求しない。
   `broken` は満たせなかった制約を入力の並び順で返す。
+  `contains α r` の下限 `r` は region または寿命変数でよい。
+  `r` が寿命変数なら、その解を `α` の下限へ伝播する依存として固定点で解く。
+  `r` が region なら、そのまま具体下限として扱う。
 
 破れた制約が複数あるとき、solver は `collected-constraints` の発生順を保った並びで返す。
 診断はその先頭 1 件だけを報告する。
