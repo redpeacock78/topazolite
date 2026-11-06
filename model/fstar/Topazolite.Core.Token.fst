@@ -771,8 +771,9 @@ let example_ownleaf_fresh () : Lemma
 let example_ownleaf_pass () : Lemma
   (ensures
     (let e = EScope "" EHole in
-     let v = OwnedLeaf 4 (Resource 1) in
-     let s:state = { control = plug e (OwnLeaf v); heap = []; roots = [];
+     let v = Resource 1 in
+     let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
+                     heap = []; roots = [];
                      ledger = [(4, Available)]; trace = [] } in
      let after = step_ownleaf_pass e 4 v
        s in
@@ -780,10 +781,11 @@ let example_ownleaf_pass () : Lemma
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])) =
   let e = EScope "" EHole in
-  let v = OwnedLeaf 4 (Resource 1) in
-  let s:state = { control = plug e (OwnLeaf v); heap = []; roots = [];
+  let v = Resource 1 in
+  let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
+                  heap = []; roots = [];
                   ledger = [(4, Available)]; trace = [] } in
-  assert_norm (s.control = plug e (OwnLeaf (OwnedLeaf 4 (Resource 1))));
+  assert_norm (s.control = plug e (OwnLeaf (OwnedLeaf 4 v)));
   let after = step_ownleaf_pass e 4 v s in
   assert_norm
     (after.control = Scope "" (OwnedLeaf 4 (Resource 1)) /\
