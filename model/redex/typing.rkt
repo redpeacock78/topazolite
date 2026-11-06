@@ -2431,7 +2431,7 @@
                           w (deferred-constraint-extent-point item))))))
          (unless (and local-window
                       (eq? (region-constraint-kind c) 'contains))
-            (route-constraint!
+           (route-constraint!
             c-new (car cap) node fail
             (or local-window
                 (and window-point (deferred-point window-point)))
@@ -8104,7 +8104,7 @@
               (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
-                  (region-ctx-summary Λ w)))))
+                     (region-ctx-summary Λ w)))))
         ;; 義務は呼出しの出現へ provenance を結び付けられるため、束縛済みの
         ;; RParam は呼出し側で運べる。ここでは既定の bound-region-params を
         ;; 尊重し、未束縛の借用だけを借用結果として拒む。
@@ -8459,10 +8459,7 @@
        (check-as/full argument type* (enter-child Λ 0)
                       Ψ environment places callables fail))
      (define ir (region-ctx-ir Λ))
-     (define handler-entry
-       (for/first ([entry (in-list (return-handler-regions))]
-                   #:when (equal? operation* (third entry)))
-         entry))
+     (define handler-entry (return-handler-entry operation*))
      (define handler-point (and handler-entry (second handler-entry)))
      (when (and ir handler-point)
        (collect-use-regions-at!

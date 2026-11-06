@@ -842,8 +842,9 @@
                        (capability-entry-declared-lifetime entry))
                (capability-entry-declared-lifetime result))))))
 
-;; capability-entry-join treats a missing field table as unknown. During Handle
-;; capture, however, an empty syntax-only path contributes no table information.
+;; capability-entry-join は欄表の無い entry を未知として扱う。
+;; Handle の捕捉では、syntax だけの空経路は欄表の情報を持たないため、
+;; 情報を持つ entry が一つだけならその欄表を採る。
 (define (capability-entry-join/known-fields entries)
   (define present (map capability-value (filter values entries)))
   (define joined (capability-entry-join present))
