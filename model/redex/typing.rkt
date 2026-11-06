@@ -1649,7 +1649,7 @@
   (argument-source Λ operand type 0))
 
 ;; §5.4。雛形の formal 鍵、region、局所 α を呼出し位置へ置き換えて要求を出す。
-(define (instantiate-deferred! summary arguments actuals result-type
+(define (instantiate-deferred! summary arguments actuals result-type latent-out
                                Λ node subst sources Ψ fail)
   (define region-subst (callable-summary-region-subst summary))
   (define deferred (callable-summary-deferred summary))
@@ -1732,6 +1732,143 @@
       [`(formal ,index ,_) index]
       [`(binder ,_ ...) (deferred-leaf-exit-formal-index event)]
       [_ #f]))
+  ;; Apply 越しの Return payload は、latent row の型と leaf-exit の source を
+  ;; 同じ handler entry へ送る。payload の借用 leaf ごとに、summary の event
+  ;; destination path と actual formal leaf の capability を対応づける。
+  (define (capture-handle-exits!)
+    (define (unresolved _reason . _details)
+      (fail 'unresolved-borrow-owner node))
+    (define effects
+      (for/list ([effect (in-list latent-out)]
+                 #:when (match effect [`(Return ,_ ,_) #t] [_ #f]))
+        (match-define `(Return ,boundary ,raw-payload-type) effect)
+        (define payload-type
+          (normalize-type
+           (subst-region-params raw-payload-type region-subst)))
+        (define operation (erase-core `(Return ,boundary ,payload-type)))
+        (define handler (return-handler-entry operation))
+        (and handler
+             (let-values ([(template leaves)
+                           (formal-capability-entry payload-type
+                                                    '(handle-payload))])
+               (list operation payload-type handler template leaves)))))
+    (define active-effects (filter values effects))
+    (define events-by-effect (make-hasheq))
+    (define (destination-path event)
+      (match (deferred-leaf-exit-destination event)
+        [`(Return ,path) (subst-region-params path region-subst)]
+        [_ #f]))
+    (define (event-alpha-origins-at-call event)
+      (for/set ([alpha (in-set
+                        (local-exit-alpha-origins
+                         (deferred-leaf-exit-alpha event)))])
+        (subst-region-params alpha region-subst)))
+    (for ([event (in-list exits)]
+          #:when (and (eq? (deferred-leaf-exit-exit-kind event) 'handle)
+                      (destination-path event)))
+      (define path (destination-path event))
+      (define origins (event-alpha-origins-at-call event))
+      (define candidates
+        (for/list ([effect-info (in-list active-effects)]
+                   #:do [(define leaves (fifth effect-info))
+                         (define leaf (and (hash? leaves)
+                                           (hash-ref leaves path #f)))]
+                   #:when (and (capability-entry? leaf)
+                               (capability-entry-declared-lifetime leaf)
+                               (set-member? origins
+                                            (capability-entry-declared-lifetime
+                                             leaf))))
+          effect-info))
+      (when (> (length candidates) 1)
+        ;; summary event に boundary が含まれないため、同じ leaf が複数の
+        ;; active Return operation に対応する場合は境界を推測しない。
+        (unresolved 'ambiguous-event path candidates))
+      (when (= (length candidates) 1)
+        (hash-update! events-by-effect (first candidates)
+                      (lambda (previous) (cons (cons path event) previous))
+                      '())))
+    (for ([effect-info (in-list active-effects)])
+      (define payload-type (second effect-info))
+      (define handler (third effect-info))
+      (define template (fourth effect-info))
+      (define leaves (fifth effect-info))
+      (define events (hash-ref events-by-effect effect-info '()))
+      (define borrowed-paths
+        (for/list ([(path leaf) (in-hash leaves)]
+                   #:when (and (capability-entry? leaf)
+                               (capability-entry-declared-lifetime leaf)))
+          path))
+      (when (pair? borrowed-paths)
+        (define leaf-entries (make-hash))
+        (for ([path (in-list borrowed-paths)])
+          (define matching-events
+            (for/list ([entry (in-list events)]
+                       #:when (equal? (car entry) path))
+              (cdr entry)))
+          (when (null? matching-events)
+            ;; 局所 owner など実引数へ戻せない payload は、空の capability
+            ;; として通さず呼出し境界で fail-closed にする。
+            (unresolved 'missing-path-event path events))
+          (define actual-entries
+            (for/list ([event (in-list matching-events)])
+              (define source-index (event-formal-index event))
+              (unless (and (exact-nonnegative-integer? source-index)
+                           (< source-index (length actuals)))
+                (unresolved 'bad-source-index source-index event))
+              (define source-path (deferred-leaf-exit-parent-path event))
+              (define formal-fields
+                (and (< source-index
+                        (length (callable-summary-formal-fields summary)))
+                     (list-ref (callable-summary-formal-fields summary)
+                               source-index)))
+              (unless (and (hash? formal-fields)
+                           (hash-has-key? formal-fields source-path))
+                (unresolved 'missing-formal-path source-index source-path
+                            formal-fields event))
+              (define source-type (list-ref actuals source-index))
+              (define actual-path
+                (instantiate-capability-path source-type source-path region-subst))
+              (unless actual-path
+                (unresolved 'missing-actual-path source-type source-path event))
+              (define actual-entry
+                (actual-leaf-entry
+                 (enter-child Λ (add1 source-index))
+                 (list-ref arguments source-index) source-type actual-path
+                 (lambda (_reason _location)
+                   (fail 'unresolved-borrow-owner node))))
+              (when (set-empty? (capability-entry-keys actual-entry))
+                (unresolved 'empty-actual-capability actual-path event))
+              actual-entry))
+          (hash-set! leaf-entries path (capability-entry-join actual-entries)))
+        (define empty-entry
+          (capability-entry (set) (set) #f #f (set) #f))
+        (define (replace-leaves entry path)
+          (define fields (capability-entry-fields entry))
+          (if (hash? fields)
+              (let* ([replaced
+                      (for/hash ([(key child) (in-hash fields)])
+                        (values key
+                                (replace-leaves child (append path (list key)))))]
+                     [children (hash-values replaced)])
+                (capability-entry
+                 (for/fold ([keys (set)])
+                           ([child (in-list children)])
+                   (set-union keys (capability-entry-keys child)))
+                 (for/fold ([variants (set)])
+                           ([child (in-list children)])
+                   (set-union variants (capability-entry-variants child)))
+                 replaced #f
+                 (for/fold ([alphas (set)])
+                           ([child (in-list children)])
+                   (set-union alphas
+                              (capability-entry-source-alphas child)))
+                 #f))
+              (hash-ref leaf-entries path empty-entry)))
+        (define payload-capability (replace-leaves template '()))
+        (set-box! (fourth handler)
+                  (cons payload-type (unbox (fourth handler))))
+        (set-box! (fifth handler)
+                  (cons payload-capability (unbox (fifth handler)))))))
   (define (event-alpha-origins event cap alpha requested-fp w)
     (define direct (local-exit-alpha-origins alpha))
     (define source (deferred-leaf-exit-source event))
@@ -2294,7 +2431,7 @@
                           w (deferred-constraint-extent-point item))))))
          (unless (and local-window
                       (eq? (region-constraint-kind c) 'contains))
-           (route-constraint!
+            (route-constraint!
             c-new (car cap) node fail
             (or local-window
                 (and window-point (deferred-point window-point)))
@@ -2302,6 +2439,7 @@
                     (deferred-constraint-parent-fp item))
             (append (cdr cap)
                     (deferred-constraint-child-fp item)))))]))
+  (capture-handle-exits!)
   current-psi)
 
 ;; §5.5。呼出しの結果に付く要約を出現ごとに溜める表。
@@ -2473,11 +2611,15 @@
         (emit-constraint!
          (region-constraint 'contains alpha outer point node))))))
 
-(define (return-handler-destination boundary type)
-  (define operation (erase-core `(Return ,boundary ,type)))
+(define (return-handler-entry operation)
   (for/first ([entry (in-list (return-handler-regions))]
               #:when (equal? operation (third entry)))
-    (second entry)))
+    entry))
+
+(define (return-handler-destination boundary type)
+  (define entry
+    (return-handler-entry (erase-core `(Return ,boundary ,type))))
+  (and entry (second entry)))
 
 (define (emit-latent-decomposition-exits! ir point effects node fail)
   (for ([effect (in-list effects)])
@@ -7962,7 +8104,7 @@
               (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
-                     (region-ctx-summary Λ w)))))
+                  (region-ctx-summary Λ w)))))
         ;; 義務は呼出しの出現へ provenance を結び付けられるため、束縛済みの
         ;; RParam は呼出し側で運べる。ここでは既定の bound-region-params を
         ;; 尊重し、未束縛の借用だけを借用結果として拒む。
@@ -8029,7 +8171,8 @@
               (values w (argument-source Λ a τ i))))
           (set! next-psi
                 (instantiate-deferred! summary arguments actuals return-type
-                                        Λ core subst sources call-psi fail)))
+                                        latent-out Λ core subst sources
+                                        call-psi fail)))
         (unless summary (set! next-psi call-psi))
         (when (formal-capability-type? return-type)
           (define result-summary
@@ -8340,11 +8483,13 @@
      (define type* (peel-ty type))
      (define operation* (erase-core `(Return ,boundary ,type*)))
      (define captured-types-box (box '()))
+     (define captured-capabilities-box (box '()))
      (define body-result
        (parameterize
            ([return-handler-regions
              (cons (list boundary (region-ctx-point Λ)
-                         operation* captured-types-box)
+                         operation* captured-types-box
+                         captured-capabilities-box)
                    (return-handler-regions))])
          (check-as/full body type* (enter-child Λ 1)
                         Ψ environment places callables fail)))
@@ -8375,10 +8520,12 @@
          [`(,name -> ,_) (peel-bind name)]
          [_ #f]))
      (define captured-capability
-       (handle-return-capability
-        (capability-flow-of (enter-child Λ 1) body
-                            #:apply-entry capability-of-typed-point)
-        operation*))
+       (capability-entry-join/known-fields
+        (cons (handle-return-capability
+               (capability-flow-of (enter-child Λ 1) body
+                                   #:apply-entry capability-of-typed-point)
+               operation*)
+              (unbox captured-capabilities-box))))
      (define handler-Λ
        (region-ctx-add-token
         (enter-child Λ 0) handler-binder
@@ -8505,6 +8652,28 @@
              [multiple-types
               (tagged-branch-upper-bound multiple-types Λ core fail)])
            type*))
+     (when (and caught-state
+                (pair? (unbox captured-capabilities-box))
+                (borrowed-type-anywhere? result-type))
+       (define handler-expression
+         (match (peel-branch handler-clause)
+           [`(,_ -> ,handler) handler]
+           [_ #f]))
+       (when handler-expression
+         (define result-capability
+           (typing-capability-of handler-Λ handler-expression))
+         (when (and (capability-entry? result-capability)
+                    (not (set-empty? (capability-entry-keys
+                                      result-capability))))
+           (record-forwarding-summary!
+            Λ core
+            (forwarding-summary
+             (if (borrow-region result-type) (hash '() '()) (hash))
+             (capability-entry-keys result-capability)
+             (capability-entry-source-alphas result-capability)
+             (capability-entry-fields result-capability)
+             (capability-entry-variants result-capability))
+            fail))))
      (list result-type
            (row-union
             (row-difference (first body-result)

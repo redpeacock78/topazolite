@@ -45,7 +45,7 @@
          capability-union-binding
          capability-flow-of handle-return-capability
          capability-projection-bindings
-         table-join capability-entry-join
+         table-join capability-entry-join capability-entry-join/known-fields
          path-wf? record-path? owner-path?
          collect-tokens owned-leaf? contains-owned-leaf?
          owned-transit? contains-owned-transit? transit-places
@@ -842,6 +842,28 @@
                        (capability-entry-declared-lifetime entry))
                (capability-entry-declared-lifetime result))))))
 
+;; capability-entry-join treats a missing field table as unknown. During Handle
+;; capture, however, an empty syntax-only path contributes no table information.
+(define (capability-entry-join/known-fields entries)
+  (define present (map capability-value (filter values entries)))
+  (define joined (capability-entry-join present))
+  (define informative
+    (filter
+     (lambda (entry)
+       (or (not (set-empty? (capability-entry-keys entry)))
+           (not (set-empty? (capability-entry-variants entry)))
+           (hash? (capability-entry-fields entry))
+           (not (set-empty? (capability-entry-source-alphas entry)))
+           (capability-entry-declared-lifetime entry)))
+     present))
+  (if (and joined
+           (not (hash? (capability-entry-fields joined)))
+           (= (length informative) 1)
+           (hash? (capability-entry-fields (first informative))))
+      (struct-copy capability-entry joined
+                   [fields (capability-entry-fields (first informative))])
+      joined))
+
 (define (capability-table-entry-at-path table path)
   (define (select-field fields segment)
     (cond
@@ -1125,10 +1147,18 @@
        (define effects
          (capability-effects-join
           (list (capability-flow #f propagated) handler-flow)))
+       (define syntax-normal
+         (capability-entry-join
+          (list (capability-flow-normal body-flow)
+                (capability-flow-normal handler-flow))))
+       (define summarized-normal (and apply-entry (apply-entry Λ* c*)))
+       (define normal
+         (cond
+           [(not summarized-normal) syntax-normal]
+           [else (capability-entry-join/known-fields
+                  (list syntax-normal summarized-normal))]))
        (capability-flow
-        (capability-entry-join
-         (list (capability-flow-normal body-flow)
-               (capability-flow-normal handler-flow)))
+        normal
         effects)]
       [`(Let (,binder ,rest ...) ,bound ,body)
        (define bound-flow (child-flow bound 0))

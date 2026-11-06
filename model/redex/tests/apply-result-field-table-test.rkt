@@ -835,7 +835,9 @@
      (set-box! flow-points
                (append (unbox flow-points) (list (region-ctx-point Λ))))
      record-entry))
-  (check-equal? (unbox flow-points) '((1 0) (0) (0) (0) (1))))
+  ;; Handle の通常結果も出口 capability summary で補うため、節点自身の
+  ;; root point でも apply-entry を一度照会する。
+  (check-equal? (unbox flow-points) '((1 0) (0) () (0) (0) (1))))
 
 (test-case "要約のない関数値も署名から借用欄の転送を記録する"
   (define leaf-a '(BorrowedMut Int (RParam a)))
