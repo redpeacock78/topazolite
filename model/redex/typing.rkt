@@ -170,6 +170,9 @@
 ;; Return payload の寿命と実型を対応する Handle へ返す。関数本体へは引き継がない。
 (define return-handler-regions (make-parameter '()))
 
+;; Handle の捕捉 payload が結果へ流れないときに閉じる loan の記録先。
+(define handle-loan-closures (make-parameter #f))
+
 ;; 分解の scrutinee から派生した借用 α を同じ型付け走査内で追う。
 (define scrutinee-child-alphas (make-parameter #f))
 
@@ -1011,6 +1014,11 @@
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
   #:transparent)
 
+(struct handle-return-loan
+  (apply-point source formal-index formal-path payload-path node point owner path alpha suspension)
+  #:transparent)
+(struct handle-loan-closure (loans result-leaves complete?) #:transparent)
+
 ;; 借用の起点と七種の行き先、または出口ではない通過位置。
 ;; descriptor は固定位置、(from k)、または descriptor の列である。
 (define g2-only-leaf-exit-heads
@@ -1758,12 +1766,140 @@
       (match (deferred-leaf-exit-destination event)
         [`(Return ,path) (subst-region-params path region-subst)]
         [_ #f]))
-    (define (event-alpha-origins-at-call event)
-      (for/set ([alpha (in-set
+  (define (event-alpha-origins-at-call event)
+    (for/set ([alpha (in-set
                         (local-exit-alpha-origins
                          (deferred-leaf-exit-alpha event)))])
         (subst-region-params alpha region-subst)))
-    (for ([event (in-list exits)]
+  (define (captured-return-loans event payload-path actual-entry)
+    (define index (event-formal-index event))
+    (define formal-parent-path
+      (formal-path->access-path
+       (deferred-leaf-exit-parent-path event)))
+    (define request-edges
+      (for*/list ([request-item (in-list deferred)]
+                  #:do [(define request
+                          (if (deferred-binder-request? request-item)
+                              (deferred-binder-request-request request-item)
+                              request-item))]
+                  #:when (and (borrow-request? request)
+                              (formal-key? (borrow-request-w request))
+                              (equal? (fourth (borrow-request-w request)) index))
+                  [edge-item (in-list deferred)]
+                  #:when (deferred-constraint? edge-item)
+                  #:when (and
+                              (eq? (region-constraint-kind
+                                    (deferred-constraint-constraint edge-item))
+                                   'reborrow)
+                              (equal? (deferred-constraint-w edge-item)
+                                      (borrow-request-w request))
+                              (equal? (region-constraint-left
+                                       (deferred-constraint-constraint edge-item))
+                                      (deferred-leaf-exit-alpha event))
+                              (equal? (region-constraint-right
+                                       (deferred-constraint-constraint edge-item))
+                                      (borrow-request-alpha request))
+                              (equal? (map access-path-segment
+                                           (deferred-constraint-parent-fp edge-item))
+                                      formal-parent-path)
+                              (equal? (map access-path-segment
+                                           (deferred-constraint-child-fp edge-item))
+                                      (map access-path-segment
+                                           (borrow-request-fp request)))
+                              (equal? (region-constraint-node
+                                       (deferred-constraint-constraint edge-item))
+                                      (borrow-request-node request))
+                              (equal? (region-constraint-point
+                                       (deferred-constraint-constraint edge-item))
+                                      (borrow-request-point request))))
+        (list request edge-item)))
+    (define links
+      (append-map
+       (lambda (request-edge)
+         (define request (first request-edge))
+         (define edge-item (second request-edge))
+         (define edge (deferred-constraint-constraint edge-item))
+         (define w (borrow-request-w request))
+         (define child-alpha (subst-term (borrow-request-alpha request)))
+         (define request-point (deferred-point (borrow-request-point request)))
+         (define (link-for-cap cap)
+           (define owner (car cap))
+           (define parent-path
+             (append (cdr cap) formal-parent-path))
+           (define child-path
+             (append (cdr cap) (borrow-request-fp request)))
+           (define parent-key-path
+             (map access-path-segment parent-path))
+           (define actual-parent?
+             (for/or ([key (in-set (capability-entry-keys actual-entry))])
+               (and (pair? key)
+                    (equal? (car key) owner)
+                    (equal? (map access-path-segment (cdr key))
+                            parent-key-path))))
+           (define request-box (request-collector))
+           (define emitted-requests
+             (if request-box
+                 (remove-duplicates
+                  (for/list ([candidate (in-list (unbox request-box))]
+                             #:when
+                             (and (borrow-request? candidate)
+                                  (equal? (borrow-request-w candidate) owner)
+                                  (equal? (map access-path-segment
+                                               (borrow-request-fp candidate))
+                                          (map access-path-segment child-path))
+                                  (equal? (borrow-request-alpha candidate)
+                                          child-alpha)
+                                  (equal? (borrow-request-node candidate)
+                                          (borrow-request-node request))
+                                  (equal? (borrow-request-point candidate)
+                                          request-point)))
+                    candidate)
+                  equal?)
+                 '()))
+           (define suspension-point
+             (deferred-point (region-constraint-point edge)))
+           (define suspension-start
+             (match (peel-node (region-constraint-node edge))
+               [`(,(or 'EliminateAt 'UnionEliminateAt) . ,_)
+                (if (pair? suspension-point)
+                    (drop-right suspension-point 1)
+                    suspension-point)]
+               [_ suspension-point]))
+           (define suspensions
+             (for/list ([suspension (in-set (psi-suspended current-psi))]
+                        #:when
+                        (and (equal? (first suspension) owner)
+                             (equal? (map access-path-segment
+                                          (second suspension))
+                                     (map access-path-segment child-path))
+                             (equal? (fourth suspension) child-alpha)
+                             (equal? (fifth suspension)
+                                     (borrow-request-node request))
+                             (equal? (sixth suspension) suspension-start)))
+               suspension))
+           (and actual-parent?
+                (= (length emitted-requests) 1)
+                (= (length suspensions) 1)
+                (let ([emitted (first emitted-requests)])
+                  (handle-return-loan
+                   point
+                   (deferred-leaf-exit-source event)
+                   (event-formal-index event)
+                   (deferred-leaf-exit-parent-path event)
+                   payload-path
+                   (borrow-request-node emitted)
+                   (borrow-request-point emitted)
+                   owner
+                   (map access-path-segment (borrow-request-fp emitted))
+                   (borrow-request-alpha emitted)
+                   (first suspensions)))))
+         (filter values
+                 (map link-for-cap (set->list (actual-caps w)))))
+       request-edges))
+    ;; A source event and its instantiated request must identify one path-specific
+    ;; loan. Ambiguous or missing links stay live (fail closed).
+    (if (= (length links) 1) links '()))
+  (for ([event (in-list exits)]
           #:when (and (eq? (deferred-leaf-exit-exit-kind event) 'handle)
                       (destination-path event)))
       (define path (destination-path event))
@@ -1809,7 +1945,7 @@
             ;; 局所 owner など実引数へ戻せない payload は、空の capability
             ;; として通さず呼出し境界で fail-closed にする。
             (unresolved 'missing-path-event path events))
-          (define actual-entries
+          (define event-actuals
             (for/list ([event (in-list matching-events)])
               (define source-index (event-formal-index event))
               (unless (and (exact-nonnegative-integer? source-index)
@@ -1838,7 +1974,17 @@
                    (fail 'unresolved-borrow-owner node))))
               (when (set-empty? (capability-entry-keys actual-entry))
                 (unresolved 'empty-actual-capability actual-path event))
-              actual-entry))
+              (cons event actual-entry)))
+          (define actual-entries (map cdr event-actuals))
+          (define captured-loans
+            (append-map
+             (lambda (event-actual)
+               (captured-return-loans (car event-actual) path
+                                      (cdr event-actual)))
+             event-actuals))
+          (when (pair? captured-loans)
+            (set-box! (sixth handler)
+                      (append captured-loans (unbox (sixth handler)))))
           (hash-set! leaf-entries path (capability-entry-join actual-entries)))
         (define empty-entry
           (capability-entry (set) (set) #f #f (set) #f))
@@ -2477,6 +2623,136 @@
   (capability-of Λ core locals #:fail fail
                  #:allow-empty-keys? allow-empty-keys?
                  #:apply-entry capability-of-typed-point))
+
+;; 出口へ流れる借用を owner・canonical path・寿命の組で保つ。
+(define (handle-capability-leaf-tuples type entry)
+  (define-values (_template typed-leaves)
+    (formal-capability-entry type '(handle-result)))
+  (define actual-leaves (capability-entry-leaves entry))
+  (define actual-by-path (make-hash actual-leaves))
+  (define borrowed-leaves
+    (for/list ([(path typed-leaf) (in-hash typed-leaves)]
+               #:when (capability-entry-declared-lifetime typed-leaf))
+      (cons path typed-leaf)))
+  (define complete?
+    (and (= (length borrowed-leaves) (length actual-leaves))
+         (andmap
+          (lambda (typed-leaf)
+            (define actual-leaf (hash-ref actual-by-path (car typed-leaf) #f))
+            (and actual-leaf
+                 (not (set-empty? (capability-entry-keys actual-leaf)))
+                 (andmap pair?
+                         (set->list
+                          (capability-entry-keys actual-leaf)))))
+          borrowed-leaves)))
+  (define tuples
+    (append-map
+     (lambda (typed-leaf)
+       (define path (car typed-leaf))
+       (define alpha (capability-entry-declared-lifetime (cdr typed-leaf)))
+       (define actual-leaf (hash-ref actual-by-path path #f))
+       (if actual-leaf
+           (for/list ([key (in-set (capability-entry-keys actual-leaf))]
+                      #:when (pair? key))
+             (list (car key)
+                   (map access-path-segment (cdr key))
+                   alpha))
+           '()))
+     borrowed-leaves))
+  (values tuples complete?))
+
+;; region 解決後にのみ結果との寿命同一性が分かるため、正確に対応付けた
+;; Handle loan を段 3 で閉じる。曖昧なリンクは記録されず、保守側に残る。
+(define (close-handle-return-loans Ψ σ closures)
+  (define loans
+    (append-map handle-loan-closure-loans closures))
+  (define (flows-to-result? closure loan)
+    (or (not (handle-loan-closure-complete? closure))
+        (for/or ([leaf (in-list (handle-loan-closure-result-leaves closure))])
+          (define loan-alpha
+            (if (lifetime-var? (handle-return-loan-alpha loan))
+                (hash-ref σ (lifetime-var-index
+                             (handle-return-loan-alpha loan)) #f)
+                (handle-return-loan-alpha loan)))
+          (define result-alpha
+            (if (lifetime-var? (third leaf))
+                (hash-ref σ (lifetime-var-index (third leaf)) #f)
+                (third leaf)))
+          (and loan-alpha result-alpha
+               (equal? (handle-return-loan-owner loan) (first leaf))
+               (path-prefix? (handle-return-loan-path loan) (second leaf))
+               (equal? loan-alpha result-alpha)))))
+  (define suspensions
+    (remove-duplicates (map handle-return-loan-suspension loans) equal?))
+  (define closed-suspensions
+    (for/set ([suspension (in-list suspensions)]
+              #:unless
+                (for/or ([closure (in-list closures)])
+                  (for/or ([loan (in-list
+                                (handle-loan-closure-loans closure))]
+                         #:when (equal? suspension
+                                        (handle-return-loan-suspension loan)))
+                     (flows-to-result? closure loan))))
+      suspension))
+  (if (set-empty? closed-suspensions)
+      Ψ
+      (let* ([suspended
+              (set-subtract (psi-suspended Ψ) closed-suspensions)]
+             [retained-child-entries
+              (for/set ([entry (in-set suspended)])
+                (list (first entry) (second entry) (fourth entry)))]
+             [closed-child-entries
+              (for/set ([entry (in-set closed-suspensions)]
+                        #:unless
+                        (set-member? retained-child-entries
+                                     (list (first entry) (second entry)
+                                           (fourth entry))))
+                (list (first entry) (second entry) (fourth entry)))]
+             [shared
+              (set-subtract (psi-shared Ψ) closed-child-entries)]
+             [mut
+              (set-subtract (psi-mut Ψ) closed-child-entries)]
+             [restored-parents
+              (for/set ([entry (in-set closed-suspensions)]
+                        #:unless
+                        (for/or ([live (in-set suspended)])
+                          (and (equal? (first entry) (first live))
+                               (capability-overlap?
+                                (first entry) (second entry)
+                                (first live) (second live)))))
+                (list (first entry) (second entry) (third entry)))])
+        (struct-copy psi Ψ
+                     [shared shared]
+                     [mut (set-union mut restored-parents)]
+                     [suspended suspended]))))
+
+(define (close-handle-return-requests Ψ σ requests closures)
+  (define closed-suspensions
+    (set-subtract (psi-suspended Ψ)
+                  (psi-suspended (close-handle-return-loans Ψ σ closures))))
+  (define closed-loans
+    (for*/list ([closure (in-list closures)]
+                [loan (in-list (handle-loan-closure-loans closure))]
+                #:when (set-member? closed-suspensions
+                                    (handle-return-loan-suspension loan)))
+      loan))
+  (filter
+   (lambda (request)
+     (not
+      (and (borrow-request? request)
+           (for/or ([loan (in-list closed-loans)])
+             (and (equal? (borrow-request-w request)
+                          (handle-return-loan-owner loan))
+                  (equal? (map access-path-segment
+                               (borrow-request-fp request))
+                          (handle-return-loan-path loan))
+                  (equal? (borrow-request-alpha request)
+                          (handle-return-loan-alpha loan))
+                  (equal? (borrow-request-node request)
+                          (handle-return-loan-node loan))
+                  (equal? (borrow-request-point request)
+                          (handle-return-loan-point loan)))))))
+   requests))
 
 (define current-leaf-exit-capability-reader (make-parameter typing-capability-of))
 
@@ -6148,6 +6424,7 @@
   (define cs (box '()))
   (define rs (box '()))
   (define ras (box '()))
+  (define handle-closures-box (box '()))
   (define origins (make-hash))
   (define ir (region-ctx-ir Λ))
   (define erased-core (erase-core core))
@@ -6161,6 +6438,7 @@
           (build-region-ir erased-core))))
   (match (parameterize ([lifetime-collector cs]
                         [request-collector rs]
+                        [handle-loan-closures handle-closures-box]
                         [region-arg-collector ras]
                         [lifetime-counter (box 0)]
                         [region-param-origins origins]
@@ -6203,7 +6481,14 @@
                    ;; 段 3。ir が無い Λ では emit-use-request! が要求を作らない
                    ;; ため、届くのは RegionApp の要求だけである。
                    (check-region-args ir σ (collected-region-args) relation fail)
-                   (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+                   (define handle-closures
+                     (remove-duplicates (unbox handle-closures-box) equal?))
+                   (check-borrows
+                    ir σ
+                    (close-handle-return-loans Ψ σ handle-closures)
+                    (close-handle-return-requests
+                     Ψ σ (reverse (unbox rs)) handle-closures)
+                    sigma-ref fail)
                    (subst-type-regions row σ ir)])))))
     [(list 'ok row) row]
     [_ #f]))
@@ -8481,12 +8766,13 @@
      (define operation* (erase-core `(Return ,boundary ,type*)))
      (define captured-types-box (box '()))
      (define captured-capabilities-box (box '()))
+     (define captured-loans-box (box '()))
      (define body-result
        (parameterize
            ([return-handler-regions
              (cons (list boundary (region-ctx-point Λ)
                          operation* captured-types-box
-                         captured-capabilities-box)
+                         captured-capabilities-box captured-loans-box)
                    (return-handler-regions))])
          (check-as/full body type* (enter-child Λ 1)
                         Ψ environment places callables fail)))
@@ -8598,6 +8884,10 @@
                                callables
                                fail)))))]
          [_ (fail 'ill-typed core)]))
+     (define handler-expression
+       (match (peel-branch handler-clause)
+         [`(,_ -> ,handler) handler]
+         [_ #f]))
      (define handler-psi (second handler-result))
      (define handler-row (first handler-result))
      (define handler-flow (psi-flow handler-psi))
@@ -8647,15 +8937,37 @@
              ['() type*]
              [(list only-type) only-type]
              [multiple-types
-              (tagged-branch-upper-bound multiple-types Λ core fail)])
+             (tagged-branch-upper-bound multiple-types Λ core fail)])
            type*))
+     (define closure-box (handle-loan-closures))
+     (when (and caught-state closure-box (pair? (unbox captured-loans-box)))
+       (define body-capability
+         (and normal-result-type
+              (typing-capability-of (enter-child Λ 1) body)))
+       (define handler-capability
+         (and handled-result-type handler-expression
+              (typing-capability-of handler-Λ handler-expression)))
+       (define (branch-leaves type entry)
+         (cond
+           [(not type) (values '() #t)]
+           [(not (borrowed-type-anywhere? type)) (values '() #t)]
+           [(and (capability-entry? entry)
+                 (not (set-empty? (capability-entry-keys entry))))
+            (handle-capability-leaf-tuples type entry)]
+           [else (values '() #f)]))
+       (define-values (body-leaves body-complete?)
+         (branch-leaves normal-result-type body-capability))
+       (define-values (handler-leaves handler-complete?)
+         (branch-leaves handled-result-type handler-capability))
+       (define closure
+         (handle-loan-closure
+          (remove-duplicates (unbox captured-loans-box) equal?)
+          (append body-leaves handler-leaves)
+          (and body-complete? handler-complete?)))
+       (set-box! closure-box (cons closure (unbox closure-box))))
      (when (and caught-state
                 (pair? (unbox captured-capabilities-box))
                 (borrowed-type-anywhere? result-type))
-       (define handler-expression
-         (match (peel-branch handler-clause)
-           [`(,_ -> ,handler) handler]
-           [_ #f]))
        (when handler-expression
          (define result-capability
            (typing-capability-of handler-Λ handler-expression))
@@ -9683,6 +9995,7 @@
   (define rs (box '()))
   (define ptr-rs (box '()))
   (define ras (box '()))
+  (define handle-closures-box (box '()))
   (define tbl (box (hash)))
   (define origins (make-hash))
   (define normal-results (make-hash))
@@ -9693,6 +10006,7 @@
                     (apply-result-let-body-regions core-in ir)]
                    [lifetime-collector cs]
                    [request-collector rs]
+                   [handle-loan-closures handle-closures-box]
                    [ptr-request-collector (and ptr-box ptr-rs)]
                    [region-arg-collector ras]
                    [lifetime-counter (box 0)]
@@ -9741,7 +10055,17 @@
              [(list 'ok σ)
               ;; 段 3。
               (check-region-args ir σ (collected-region-args) relation fail)
-              (check-borrows ir σ Ψ (reverse (unbox rs)) sigma-ref fail)
+              (define handle-closures
+                (remove-duplicates (unbox handle-closures-box) equal?))
+              (define raw-requests (reverse (unbox rs)))
+              (define handle-requests
+                (close-handle-return-requests
+                 Ψ σ raw-requests handle-closures))
+              (check-borrows
+               ir σ
+               (close-handle-return-loans Ψ σ handle-closures)
+               handle-requests
+               sigma-ref fail)
               ;; spec §4.4。段 3 が受理した時点の要求と σ を一度だけ写し取る。
               ;; infer-eliminate は attempts と check-as の双方で枝を走査する
               ;; ため同じ要求が重複する。check-borrows と同じ remove-duplicates
@@ -9750,7 +10074,7 @@
                 (set-box! sidecar-box
                           (borrow-sidecar
                            (remove-duplicates
-                            (filter borrow-request? (reverse (unbox rs))))
+                            (filter borrow-request? raw-requests))
                            σ)))
               (when ptr-box
                 (set-box! ptr-box

@@ -242,10 +242,9 @@
     [(list `(Recur ,_ ,_ ,_ ,_ ,continuation) contractum)
      #:when (equal? continuation contractum)
      '()]
-    ;; R-HandleValue は handler を使わず、結果値をそのまま返す。
+    ;; R-HandleValue は handler を捨てて値を返すため、handler 内の借用値は実行されない。
     [(list `(Handle ,_ (,x -> ,handler) ,value) contractum)
-     #:when (and (equal? value contractum)
-                 (null? (collect-borrow-values handler)))
+     #:when (equal? value contractum)
      '()]
     ;; R-HandleSkip は空の内側文脈にある Perform と payload をそのまま返す。
     [(list `(Handle ,op-handler (,x -> ,handler)
@@ -856,22 +855,13 @@
          (not (related? a b))
          (list 'fail 'mut-not-exclusive (list a b)))))
 
-;; 条件 3。reborrow の子が生きている間、親の可変借用は現れない。
+;; reborrow の子と親の同時の出現は許す。親を使う段は別に判定する。
 (define (check-reborrow-parents config parents)
   (define live (list->set (live-borrows config)))
-  (define projection-children
-    (for/set ([edge (in-list parents)]
-              #:when (match edge [(list 'derived _ _) #t] [_ #f]))
-      (second edge)))
   (for/or ([edge (in-list parents)])
     (match edge
-      [(list 'reborrow child parent)
-       ;; 射影からの再借用では、parent の後続出現だけで拒否しない。
-       ;; 実際に親を消費した step は derived-parent-use-failure で判定する。
-       (and (not (set-member? projection-children parent))
-            (set-member? live child)
-            (set-member? live parent)
-            (list 'fail 'reborrow-parent-live (list child parent)))]
+      ;; 直接の Reborrow も射影の子と同じく、実際の親の使用段で判定する。
+      [(list 'reborrow _child _parent) #f]
       [(list child parent)
        (and (set-member? live child)
             (set-member? live parent)

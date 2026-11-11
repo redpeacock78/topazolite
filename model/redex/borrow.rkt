@@ -407,6 +407,8 @@
     [_ #f]))
 
 ;; 段 3。σ の上で BOR-002 と使用を判定する。spec §7.3 と §8。
+;; Handle の出口で閉じた要求は静的検査の入力から外し、oracle 用 sidecar には
+;; raw の要求を残す。
 ;; sigma-ref は typing 側から渡す。borrow.rkt は typing.rkt を require しない。
 (define (check-borrows ir σ Ψ requests sigma-ref fail)
   ;; infer-eliminate は attempts と check-as の双方で枝を走査するため、

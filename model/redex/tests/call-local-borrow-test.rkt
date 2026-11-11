@@ -85,21 +85,24 @@
           (BorrowMut ,owner)
        ,(sink-call 'temporary))))
 
-(define (type-core core [places '()] [callables test-callables])
+(define (type-core core [places '()] [callables test-callables]
+                   [owner-points (hash 'owner-ph '(0))])
   (define ir (build-region-ir core))
   (define (contains-marker? term marker)
     (or (eq? term marker)
         (and (pair? term)
              (or (contains-marker? (car term) marker)
                  (contains-marker? (cdr term) marker)))))
-  (define owner-rho
-    (and (contains-marker? core 'owner-ph)
-         (region->rho ir (owner-let-body-region ir '(0)))))
+  (define owner-rhos
+    (for/hash ([(marker point) (in-hash owner-points)]
+               #:when (contains-marker? core marker))
+      (values marker
+              (region->rho ir (owner-let-body-region ir point)))))
   (define scope-rho (region->rho ir (region-at ir '())))
   (define filled
     (let replace ([term (fill-region-placeholders core ir)])
       (cond
-        [(eq? term 'owner-ph) owner-rho]
+        [(hash-ref owner-rhos term #f) => values]
         [(eq? term 'scope-ph) scope-rho]
         [(pair? term) (cons (replace (car term)) (replace (cdr term)))]
         [else term])))
@@ -139,8 +142,10 @@
                                    [`(cfg ,value ,_ ...) value]))
               "trace の終端が値"))
 
-(define (check-return-handle-accepted core callables expected label)
-  (define-values (ir _filled typed) (type-core core '() callables))
+(define (check-return-handle-accepted core callables expected label
+                                      [owner-points (hash 'owner-ph '(0))])
+  (define-values (ir _filled typed)
+    (type-core core '() callables owner-points))
   (check-true (region-typed? typed) (format "~a: typed ~s" label typed))
   (when (region-typed? typed)
     (define start (inject-g2m (region-execution-core typed)))
@@ -164,6 +169,38 @@
     (check-equal? (check-borrow-execution start (region-typed-sidecar typed)
                                           ir 300 (make-bcounters))
                   'ok (format "~a: borrow oracle" label))))
+
+(define task5b-return-borrow-callables
+  '((return-borrow
+     (ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a))) Never ()
+            ((Return boundary (Borrowed Int (RParam a)))) () User)))))
+
+(define (task5b-return-borrow-apply argument)
+  `(Apply
+    (RegionApp
+     (RegionLam
+      (a)
+      (Lam User return-borrow (p)
+        (Perform (Return boundary (Borrowed Int (RParam a)))
+                 (Reborrow p))))
+     (owner-ph))
+    ,argument))
+
+(define (task5b-inner-result-core handler-expression)
+  `(Scope ()
+     (Let (owner let (Owned Int)) 1
+       (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+         (Let (result let (Borrowed Int owner-ph))
+           (Handle (Return boundary (Borrowed Int owner-ph))
+             (captured -> ,handler-expression)
+             ,(task5b-return-borrow-apply 'parent))
+           (Let (_ const Unit) (Assign parent 2)
+             (Let (_ const Int) (Read result) unit)))))))
+
+(define (task5b-diagnostic-id core [callables task5b-return-borrow-callables])
+  (define-values (_ir _filled typed) (type-core core '() callables))
+  (and (diagnostic? typed) (diagnostic-id typed)))
 
 (define record-owner-type '(Record ((o (Option Int) mut))))
 (define record-owner-value
@@ -1073,43 +1110,72 @@
   (check-equal? (capability-entry-keys without-summary) expected-keys)
   (check-equal? (capability-entry-keys with-inner-summary) expected-keys))
 
-(test-case "Apply 越しの内側 Handle loan が外側 Assign を拒否する形は Task 5b で受理へ反転予定"
+(test-case "内側 Handle で結果へ流れない Return loan は外側 Assign の前に閉じる"
+  (define callables task5b-return-borrow-callables)
+  (define core
+    `(Scope ()
+       (Let (other let (Owned Int)) 3
+         (Let (other-parent let (BorrowedMut Int other-ph))
+              (BorrowMut other)
+           (Scope ()
+             (Let (owner let (Owned Int)) 1
+               (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+                 (Let (_ const (Borrowed Int other-ph))
+                      (Handle (Return boundary (Borrowed Int owner-ph))
+                        (outer ->
+                          (Let (_ const Unit) (Assign parent 2)
+                            (Reborrow other-parent)))
+                        (Handle (Return boundary (Borrowed Int owner-ph))
+                          (inner -> (Reborrow other-parent))
+                          ,(task5b-return-borrow-apply 'parent)))
+                 unit))))))))
+  (check-return-handle-accepted core callables 'Unit
+                                "inner Handle loan ends at the inner handler"
+                                (hash 'other-ph '(0)
+                                      'owner-ph '(0 1 1 0))))
+
+(test-case "内側 Handle が捕捉 payload を結果に返すと外側 Assign は拒否する"
+  (define core (task5b-inner-result-core 'captured))
+  (check-equal? (task5b-diagnostic-id core) "E-BOR-025"))
+
+(test-case "内側 Handle の捕捉 payload を Let で返すと外側 Assign は拒否する"
+  (define core
+    (task5b-inner-result-core
+     '(Let (alias let (Borrowed Int owner-ph)) captured alias)))
+  (check-equal? (task5b-diagnostic-id core) "E-BOR-025"))
+
+(test-case "内側 Handle の捕捉 Record 欄を返すと外側 Assign は拒否する"
   (define callables
-    '((return-borrow
+    '((return-borrow-record
        (ForallRegion (a)
-         (NFn ((BorrowedMut Int (RParam a))) Never ()
-              ((Return boundary (Borrowed Int (RParam a)))) () User)))))
+       (NFn ((BorrowedMut Int (RParam a))) Never ()
+              ((Return boundary
+                       (Record ((h (Borrowed Int (RParam a)) imm)))))
+              () User)))))
+  (define call
+    `(Apply
+      (RegionApp
+       (RegionLam
+        (a)
+        (Lam User return-borrow-record (p)
+          (Perform
+           (Return boundary (Record ((h (Borrowed Int (RParam a)) imm))))
+           (Rec ((h imm (Reborrow p)))))))
+       (owner-ph))
+      parent))
   (define core
     `(Scope ()
        (Let (owner let (Owned Int)) 1
-         (Let (other let (Owned Int)) 3
-           (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
-             (Handle (Return boundary (Borrowed Int owner-ph))
-               (outer -> (Let (_ const Unit) (Assign parent 2)
-                             (Borrow other)))
-               (Handle (Return boundary (Borrowed Int owner-ph))
-                 (inner -> inner)
-                 (Apply
-                  (RegionApp
-                   (RegionLam
-                    (a)
-                    (Lam User return-borrow (p)
-                      (Perform (Return boundary (Borrowed Int (RParam a)))
-                               (Reborrow p))))
-                   (owner-ph))
-                  parent))))))))
-  (define-values (ir filled typed) (type-core core '() callables))
-  (check-true (diagnostic? typed) (format "typed: ~s" typed))
-  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-025"
-                "outer handler Assign remains rejected pending Task 5b")
-  ;; oracle は実行 trace を独立に歩くため、内側で捕捉される Return と
-  ;; 到達不能な外側 handler の Assign は 'ok として通る。
-  (check-equal?
-   (check-borrow-execution
-    (inject-g2m filled) (borrow-sidecar '() (hash)) ir 300
-    (make-bcounters))
-   'ok
-   "runtime oracle follows the inner handler"))
+         (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+           (Let (result let (Record ((h (Borrowed Int owner-ph) imm))))
+             (Handle
+              (Return boundary
+                      (Record ((h (Borrowed Int owner-ph) imm))))
+              (captured -> (Rec ((h imm (Proj captured h)))))
+              ,call)
+             (Let (_ const Unit) (Assign parent 2)
+               (Let (_ const Int) (Read (Proj result h)) unit)))))))
+  (check-equal? (task5b-diagnostic-id core callables) "E-BOR-025"))
 
 (test-case "Handle Return payload の owner を Assign してから捕捉値を Read するのは衝突する"
   (define callables
@@ -1137,6 +1203,37 @@
              (Read result))))))
   (define-values (_ir _filled typed) (type-core core '() callables))
   (check-true (diagnostic? typed) (format "typed: ~s" typed))
-  (check-not-false (member (diagnostic-id typed)
-                           '("E-BOR-025" "E-BOR-003"))
-                   (format "collision rather than missing owner: ~s" typed)))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-025"
+                (format "collision rather than missing owner: ~s" typed)))
+
+(test-case "外側 handler で payload を未使用 Let に置いて Assign しても拒否する"
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (other let (Owned Int)) 3
+           (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+             (Let (result let (Borrowed Int owner-ph))
+               (Handle (Return boundary (Borrowed Int owner-ph))
+                 (captured ->
+                   (Let (unused let (Borrowed Int owner-ph)) captured
+                     (Let (_ const Unit) (Assign parent 2)
+                       (Borrow other))))
+                 ,(task5b-return-borrow-apply 'parent))
+               (Read result)))))))
+  (define-values (ir filled typed)
+    (type-core core '() task5b-return-borrow-callables))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-025"
+                (format "unused Let comparison: ~s" typed))
+  (check-equal?
+   (check-borrow-execution (inject-g2m filled) (borrow-sidecar '() (hash))
+                           ir 300 (make-bcounters))
+   'ok))
+
+(test-case "通常の Let でも未使用の子借用がある間の親 Assign は拒否する"
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Let (child let (Borrowed Int owner-ph)) (Reborrow parent)
+             (Let (_ const Unit) (Assign parent 2) unit))))))
+  (check-equal? (failure-code core) "E-BOR-025"))

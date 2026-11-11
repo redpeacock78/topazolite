@@ -166,18 +166,16 @@
      (check-not-equal? a b)]
     [other (fail (format "unexpected: ~e" other))]))
 
-(test-case "可変借用とその reborrow の子が生きていると reborrow-parent-live になる"
+(test-case "直接 Reborrow の子と親が同時に現れるだけでは失敗しない"
   (define parent '(mut 1 () 3))
   (define child '(shared 1 () 4))
-  (match (check-reborrow-parents
-          '(cfg (Scope (3 4) (Let (u const Unit)
-                               (Assign (BorrowMutRef 1 () 3) 1)
-                               (Read (BorrowRef 1 () 4))))
-                ((1 (resource 1000))) ((1 Available)) () ())
-          (list (list child parent)))
-    [(list 'fail reason _)
-     (check-equal? reason 'reborrow-parent-live)]
-    [other (fail (format "unexpected: ~e" other))]))
+  (check-false
+   (check-reborrow-parents
+    '(cfg (Scope (3 4) (Let (u const Unit)
+                         (Assign (BorrowMutRef 1 () 3) 1)
+                         (Read (BorrowRef 1 () 4))))
+          ((1 (resource 1000))) ((1 Available)) () ())
+    (list (list 'reborrow child parent)))))
 
 ;; spec §5.4。型を付けない config を sidecar 無しで実行する。
 (define (run config)

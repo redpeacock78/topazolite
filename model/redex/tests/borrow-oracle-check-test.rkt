@@ -118,6 +118,15 @@
     #:rule 'R-UnionEliminateAtMutRef)
    '((derived mut 0 (2 (Payload)) 7 0 (2) 7))))
 
+(test-case "通常値を返す Handle は未実行 handler の借用参照を捨てる"
+  (define config
+    '(cfg (Handle (Return boundary (Borrowed Int 0))
+            (captured -> (Read (BorrowMutRef 0 () 0)))
+            1)
+          ((0 (resource 1000))) ((0 Available)) () ()))
+  (check-equal? (check-borrow-execution config #f #f 20 (make-bcounters))
+                'ok))
+
 (test-case "派生 binder の生存中は親の同じ path の消費だけを拒否する"
   (define (run-parent-use path)
     (check-borrow-execution (annotated-eliminate-config path)
@@ -585,14 +594,36 @@
           ((0 (resource 1000))) ((0 Available)) () ()))
   (check-false (check-mut-exclusive config)))
 
-(test-case "reborrow の子が生きている間に親が現れると fail になる"
-  ;; 条件 3。update-parents が積む (子 親) の対をそのまま渡す。
+(test-case "直接 Reborrow の子と親の同時出現だけでは失敗しない"
   ;; 子は共有で ρ が 0、親は可変で ρ が 1 であり、place と欄 path は同じ。
   (define config
     '(cfg (Scope (0) (Assign (BorrowMutRef 0 () 1)
                              (Read (BorrowRef 0 () 0))))
           ((0 (resource 1000))) ((0 Available)) () ()))
-  (define parents (list (list '(shared 0 () 0) '(mut 0 () 1))))
-  (match (check-reborrow-parents config parents)
-    [(list 'fail reason _pair) (check-equal? reason 'reborrow-parent-live)]
-    [other (fail (format "unexpected: ~e" other))]))
+  (check-false
+   (check-reborrow-parents
+    config (list (list 'reborrow '(shared 0 () 0) '(mut 0 () 1))))))
+
+(define (direct-reborrow-parent-use-result parent-use)
+  (define sidecar
+    (borrow-sidecar
+     (list (borrow-request 0 '() 'shared 'oracle-alpha 1 'child '(0 0)))
+     (hash)))
+  (define config
+    `(cfg
+      (Scope (0)
+        (Let (child let (Borrowed Int 1))
+             (ReborrowAt 1 (BorrowMutRef 0 () 0))
+          (Let (ignored const Unit) ,parent-use (Read child))))
+      ((0 (resource 1000))) ((0 Available)) () ()))
+  (check-borrow-execution config sidecar #f 100 (make-bcounters)))
+
+(test-case "直接 Reborrow の子が生きている間の親 Assign は拒否する"
+  (match (direct-reborrow-parent-use-result '(Assign (BorrowMutRef 0 () 0) 9))
+    [(list 'fail 'reborrow-parent-live _detail) (check-true #t)]
+    [other (fail (format "expected Assign rejection, got ~e" other))]))
+
+(test-case "直接 Reborrow の子が生きている間の親 Read は Task 6 で反転予定"
+  (match (direct-reborrow-parent-use-result '(Read (BorrowMutRef 0 () 0)))
+    [(list 'fail 'reborrow-parent-live _detail) (check-true #t)]
+    [other (fail (format "expected Read rejection, got ~e" other))]))
