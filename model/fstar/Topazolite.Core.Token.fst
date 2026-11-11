@@ -801,7 +801,7 @@ let example_ownleaf_transit () : Lemma
      let s:state = { control = plug e (OwnLeaf transit);
                      heap = [(0, payload)]; roots = [(0, RMoved)];
                      ledger = [(4, Available)]; trace = [] } in
-     let after = step_ownleaf_transit e 0 transit
+     let after = step_ownleaf_transit e 0 payload
        s in
      after.control = Scope "" (OwnedTransit 0 payload) /\
      after.ledger = [(4, Available)] /\
@@ -814,7 +814,7 @@ let example_ownleaf_transit () : Lemma
      let s:state = { control = plug e (OwnLeaf transit);
                      heap = [(0, payload)]; roots = [(0, RMoved)];
                      ledger = [(4, Available)]; trace = [] } in
-     let after = step_ownleaf_transit e 0 transit s in
+  let after = step_ownleaf_transit e 0 payload s in
      after.control = Scope "" (OwnedTransit 0 payload) /\
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])
