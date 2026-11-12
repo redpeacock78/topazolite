@@ -4553,7 +4553,6 @@
     [else
      (define alpha
        (branch-binder-alpha! decomposition branch-index binder-index))
-     (define binder-mode 'mut)
      (when formal-parent?
        (define parent-keys (branch-binder-parent-keys))
        (unless (and parent-keys (set-mutable? parent-keys))
@@ -4603,7 +4602,7 @@
        (hash-set! event-info (list decomposition branch-index binder-index)
                   (list (first (template-collectors))
                         (if (formal-key? source-root) (fourth source-root) 'local)
-                        (cdr source-cap) event-parent-alpha binder-mode
+                        (cdr source-cap) event-parent-alpha 'mut
                         ambiguous-parent?)))
      (define branch-region (branch-region-of ir decomposition branch-index))
      (define parent-term
@@ -4654,7 +4653,7 @@
                (route-constraint!
                 (region-constraint 'reborrow α-parent alpha point node)
                 w node fail #f parent-fp child-fp)
-               (psi-suspend next w child-fp α-parent alpha binder-mode
+               (psi-suspend next w child-fp α-parent alpha 'mut
                             node point))))
          (define request
            (borrow-request (car child-cap) (cdr child-cap) 'mut

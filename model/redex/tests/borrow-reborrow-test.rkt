@@ -273,6 +273,34 @@
   (check-equal? (diagnostic-id control) "E-BOR-025")
   (check-equal? (diagnostic-primary-span control) '(#:span src 70 78)))
 
+;; 親の停止解除後の書込みも、独立した共有 loan があれば拒否される。
+(let ()
+  (define skeleton
+    '(Scope ()
+       (Let (x let (Owned Int)) 1
+         (Let (p let (BorrowedMut Int 0)) (BorrowMut x)
+           (Let (r let (Borrowed Int 1)) (Reborrow p)
+             (Let (s let (Borrowed Int 2)) (Borrow (#:span src 60 69) x)
+               (Let (_a let Int) (Read r)
+                 (Let (_b let Unit) (Assign (#:span src 80 87) p 9)
+                   (Read (#:span src 70 78) s)))))))))
+  (define ir (build-region-ir skeleton))
+  (define ρ_p (region->rho ir (region-at ir '(0 1 1 1 1 1 0))))
+  (define ρ_r (region->rho ir (region-at ir '(0 1 1 1 1 0))))
+  (define ρ_s (region->rho ir (region-at ir '(0 1 1 1 1 1 1))))
+  (define core
+    (let fill ([t skeleton])
+      (cond [(equal? t '(BorrowedMut Int 0)) `(BorrowedMut Int ,ρ_p)]
+            [(equal? t '(Borrowed Int 1)) `(Borrowed Int ,ρ_r)]
+            [(equal? t '(Borrowed Int 2)) `(Borrowed Int ,ρ_s)]
+            [(pair? t) (cons (fill (car t)) (fill (cdr t)))]
+            [else t])))
+  (define diagnostic (core-type-of/regions core '() '()))
+  (check-true (diagnostic? diagnostic))
+  (check-equal? (diagnostic-id diagnostic) "E-BOR-025")
+  (check-equal? (diagnostic-primary-span diagnostic)
+                '(#:span src 80 87)))
+
 ;; Let 経由で停止、子退場後の復帰、Drop の拒否を通す。
 (let ()
   (define (core-with ρ_num body)

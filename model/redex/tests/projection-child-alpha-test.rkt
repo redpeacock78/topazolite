@@ -226,6 +226,15 @@
                   '(Read (ProjBorrow r h))))))
    'Int '() "direct-reborrow-parent-read"))
 
+(test-case "共有 Reborrow の間は可変欄の子を再使用できず E-BOR-025"
+  (check-rejected
+   (with-parent
+    (with-mut-child
+     `(Let (r let (Borrowed ,inner-type (RParam %omitted))) (Reborrow c)
+        ,(then/as 'Int '(Read (ProjBorrow c h))
+                  '(Read (ProjBorrow r h))))))
+   "E-BOR-025" '() "§5.1-8"))
+
 (test-case "共有 Reborrow 子が生きている間の親 Assign は E-BOR-025"
   (check-rejected
    (with-parent

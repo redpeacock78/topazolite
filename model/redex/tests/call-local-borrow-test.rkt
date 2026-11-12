@@ -690,6 +690,18 @@
   (check-false (window-failure-code core)
                 (format "~s" (window-result core))))
 
+(test-case "二つの共有 Reborrow の間に親 Assign をすると E-BOR-025"
+  (define body
+    '(Scope ()
+       (Let (first let (Borrowed Int ph)) (Reborrow p)
+         (Let (write-parent const Unit) (Assign p 7)
+           (Let (second let (Borrowed Int ph)) (Reborrow p)
+             (Let (read-first const Int) (Read first)
+               (Let (read-second const Int) (Read second) unit)))))))
+  (define core (inner-scope-core body #t))
+  (check-equal? (window-failure-code core) "E-BOR-025"
+                (format "~s" (window-result core))))
+
 (test-case "先行する親の書込みは Reborrow の開始窓に止められない"
   (define body
     '(Scope ()

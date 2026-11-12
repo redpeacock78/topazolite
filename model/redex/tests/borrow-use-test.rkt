@@ -88,16 +88,27 @@
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir NEST)
                 'fail))
 
-;; 9。共有の子が生きているあいだ、親を通した Read は許可する。
+;; 9。共有の子が生きているあいだ、親を通した Read は許可し、Assign は拒む。
 (let ()
-  (define (make ρ_b ρ_c)
+  (define (make ρ_b ρ_c [use '(Read b)])
     `(Scope (1)
             (Let (b let (BorrowedMut Int ,ρ_b)) (BorrowMut 1)
                  (Let (c let (Borrowed Int ,ρ_c)) (Reborrow b)
-                      (Read b)))))
-  (define ir (build-region-ir (make 0 0)))
-  (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir 'Int)
-                'ok))
+                      ,use))))
+  (define read-ir (build-region-ir (make 0 0 '(Read b))))
+  (define read-ρ_b (rho-at read-ir '(0 0)))
+  (define read-ρ_c (rho-at read-ir '(0 1 0)))
+  (check-equal? (status (make read-ρ_b read-ρ_c '(Read b)) read-ir 'Int) 'ok)
+  (define assign-skeleton
+    (make 0 0 '(Let (_ const Unit) (Assign b 7) (Read c))))
+  (define assign-ir (build-region-ir assign-skeleton))
+  (define assign-ρ_b (rho-at assign-ir '(0 0)))
+  (define assign-ρ_c (rho-at assign-ir '(0 1 0)))
+  (check-equal?
+   (status (make assign-ρ_b assign-ρ_c
+                 '(Let (_ const Unit) (Assign b 7) (Read c)))
+           assign-ir 'Int)
+   'fail))
 
 (test-case "BOR-004: 共有 Read と可変借用の利用は許し、共有借用への書込みは拒む"
   (for ([core (in-list '((Scope (1) (Read (Borrow 1)))
