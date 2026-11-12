@@ -80,12 +80,24 @@ G5b では、局所束縛にも `tokens` にも無い designator をそれ自身
 
 1. owner の region `ρ_owner` を引く。
 2. 借用の region `ρ_borrow` を `region-at ir point` で引く。
+   §4 の短縮条件を満たす消費位置の直接の借用式では、消費節点に対応する一時 region を下限にする。
 3. `region-outlives? ir ρ_owner ρ_borrow` を要求する。
 
-`ρ_borrow` を最も内側の Scope にするのは lexical な近似である。
+通常の `ρ_borrow` を最も内側の Scope にするのは lexical な近似である。
 NLL solver へ置き換われば `ρ_borrow` は短くなり、通るプログラムが増える。
 判定の式は変わらない。
 この判定は段 3 で、解決済みの σ を用いて行う。
+
+`Borrow`、`BorrowMut`、`Reborrow` が `Apply` の実引数、`Read` の operand、`Assign` の target に直接現れる場合、その消費位置の評価完了で loan を終える候補にできる。
+その候補の寿命変数を α とする。
+`Apply` では対応する仮引数の callable summary が完全で、当該実引数に由来する出口がすべて `local` であり、結果型、結果 capability、結果 callable summary にその loan の寿命が現れない場合に限り、一時 region を寿命の下限にする。
+`Read` では結果型、結果 capability、結果 callable summary にその寿命が現れない場合に限り、一時 region を下限にする。
+`Assign` では代入値の型、capability、provenance にその寿命が現れず、他の生きた capability entry に target と owner/path が重なるものが無い場合に限り、一時 region を下限にする。
+callee の callable summary が欠落、不完全、曖昧、または未分類の場合や、当該実引数の出口に `local` 以外が含まれる場合は短縮しない。
+借用を直接消費位置に書かず `Let` で名前へ束縛した場合、その借用の region は現行どおり lexical scope の終わりまで続き、last-use では短縮しない。
+一時 region は `region.md` の lexical adapter が消費位置ごとに設ける候補であり、通常の `region-at` はこれを返さない。
+型付けは消費節点の型を確定した後に短縮条件を再確認し、事前判定と食い違えば `E-BOR-020` で fail closed にする。
+名前付き借用の last-use による短縮は、borrow.md §14 第 5 項と `requirements.md` §4 の Phase 4 への申し送りに記した control-flow と last-use による region 推論の段階で扱う。
 
 `w` の型は所有でなければならない。
 結果の型は `(Borrowed τ ρ_borrow)` または `(BorrowedMut τ ρ_borrow)` であり、`Owned` は剥がす。
@@ -117,7 +129,7 @@ NLL solver へ置き換われば `ρ_borrow` は短くなり、通るプログ�
 
 `(Reborrow c)` は、可変借用をより短い region の共有借用へ落とす。
 `c` の型は `(BorrowedMut τ ρ_parent)` でなければならない。
-子の region `ρ_child` は `Reborrow` の節点で有効な region である。
+子の region `ρ_child` は `Reborrow` の節点で有効な region であり、§4 の条件を満たす消費位置に直接現れる場合は対応する一時 region を下限にする。
 `ρ_parent` が `ρ_child` を包むことを要求する。
 結果の型は `(Borrowed τ ρ_child)` である。
 親子の寿命と停止窓の判定は段 3 で、解決済みの σ を用いて行う。
@@ -326,8 +338,8 @@ callable の本体から仮引数を親とする分解 binder や再借用を生
 未分類の出口、収集漏れ、不完全な summary、曖昧または欠落した owner/path は fail closed とする。
 `yield`、`capture`、`storage` の出口は本サイクルでは呼出し側へ解決せず、呼出し点への畳み込みを保って fail closed とする。
 `capture` は §14-1 で回収する。
-`storage` は §14-7（`E-OWN-022`）で回収する。
-`yield` は `AddressOf` と `Yield` の消費者へ届く借用の owner と寿命を呼出し側で解決する未回収であり、raw-pointer の規則（`unsafe.md` §§2.2、4.3、5.3）を borrow summary へ接続する段階で §14-9 を回収する。
+`storage` は §14-6（`E-OWN-022`）で回収する。
+`yield` は `AddressOf` と `Yield` の消費者へ届く借用の owner と寿命を呼出し側で解決する未回収であり、raw-pointer の規則（`unsafe.md` §§2.2、4.3、5.3）を borrow summary へ接続する段階で §14-8 を回収する。
 owner/outlives の保留項目を持つ callable 値の summary を運べる位置は、`Let` の束縛式と結果、直書きまたは `Let` 束縛の `RegionLam` への `RegionApp`、`Move`、`Unsafe` の本体、`Scope` の結果、`Apply` の callee、および `Recur` / `RecurVal` の枠に限る。
 部分適用、capture、`Apply` の実引数または結果、集約値・構成子・`UnionInject`、分解の枝、`Handle` の Return payload、`Yield`、`Discharge`、`Forward`、未知の親位置で保留項目が失われる場合は、その境界で `E-BOR-006` にする。
 これは callable 値に付いた保留項目の transport 規則である。後述する `Apply` の `handle` 出口イベントを Return-handler entry へ実体化する経路は、この拒否には含めない。
@@ -356,10 +368,11 @@ Handle の出口では、捕捉 payload に由来する停止と要求のうち�
 ### 呼出しを Scope で包む借用の実引数
 
 Core の `Apply` に専用の呼出し region は無い。
-`Borrow` または `BorrowMut` で新たに作る実引数の loan は、その式を包む最も内側の Scope の region に入り、その Scope の退場まで生きる。
-`Apply` 自体は loan を短くしないため、直接の借用式を渡す裸の `Apply` では、loan は呼出しを含む外側の Scope の残りの範囲にも重なる。
+ただし §4 の条件を満たす直接の借用式は、一時 region を下限にして `Apply` の評価完了で loan を終える。
+`Let` で名前に束縛した借用や条件を満たさない借用式は、引き続き最も内側の `Scope` の region を下限とし、その Scope の退場まで生きる。
 
-次の条件をすべて満たす Core では、呼出しのために新たに作った実引数の loan は、`Apply` を含む Scope の退場で終わる。
+名前付きの借用を `Scope` の中で作って `Apply` へ渡す形は、loan をその Scope の退場で終える方法として使える。
+次の条件をすべて満たす Core では、この形の loan は `Apply` を含む Scope の退場で終わる。
 
 1. 借用を作るすべての実引数を同じ一つの Scope の中で作り、その Scope の中に `Apply` を置く。
    実引数ごとに別の Scope へ分けると、同じ呼出しへ渡す借用どうしの重なりを判定できない。
@@ -369,7 +382,7 @@ Core の `Apply` に専用の呼出し region は無い。
 4. latent row の `Return` operation の payload は再帰的に借用を含まない。
    `Option` で包まれた payload も同じである。
 5. 借用済みの値を包んでも、その値の loan は短くならない。
-   呼出しの間だけ有効にするには、Scope の中で `Reborrow` してから渡す。
+   直接の `Reborrow` を実引数に書いた場合は、§4 の条件を満たすときに限り `Apply` の評価完了でその子の loan を終える。
 
 ```text
 (Scope ()
@@ -701,6 +714,8 @@ Phase 4 以降で扱う。
 3. 性質 8 の bounded 検査が覆わない範囲。
 関数境界を含む項（BOR-007）と variance と subtyping を含む項（VAR-004）を本サイクルの生成器は作らない。
 どちらも生成域を広げる作業であり、要件そのものの規定は G5 で終えている。
+この生成器は `Apply` を作らないため、消費位置の直接の借用式も生成しない。
+その形は、§4 と §8 の条件ごとの決定的な E2E 試験で覆う。
 ただし `Recur` は生成域を広げるだけでは足りない。
 R-RecurUnfold が本体の借用値を複製するため、oracle が複製された出現を承認済みの形へ照合できる必要がある。
 Phase 4 以降で扱う。
@@ -713,21 +728,20 @@ oracle は所有値の place を裸の自然数として見るため、同じ値
 本サイクルの生成器は整数リテラルを 1000 以上に限って衝突を避けるので、小さい整数を含む項は検査を通らない。
 余分な対応は provenance を上位集合にするだけであり、oracle の fail-closed な消費のもとでは偽の合格を生まない。
 Phase 未定である。
-5. variant に依存する view の保護を最後の使用で終える精度。
+5. 名前に束縛した借用と variant に依存する view の保護を最後の使用で終える精度。
 現行の保護は束縛の lexical scope の終わりまで続く。
 その精度を上げるには使用区間の解析が要る。
 これは §4 の借用 region を最も内側の Scope にする lexical な近似とは別の近似である。
 回収時期は、BOR-003 の置換先として想定する control-flow と last-use による region 推論を導入する段階と同じとする。
+名前に束縛した借用の region も last-use では短縮せず、同じ段階で扱う。
 分解 binder 由来の借用も、binder の最後の使用後を含めて枝 region 全体で親の対応する欄を停止する lexical な近似である。
 最後の使用で停止を終える精度は control-flow と last-use による region 推論を導入する段階で回収する。
 停止は binder の path に限るため、親の別の欄はこの近似の対象にならない。
-6. 一時式の `Reborrow` を同じ `Scope` 内で直ちに使い切っても、`Scope` の退場まで生存させる過剰な制約。
-暗黙の短い再借用を扱い、first-class な借用値の region を実際の使用範囲に合わせて定める段階で回収する。
-7. `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形。
+6. `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形。
 回収には、計算値の place 化を定める OWN-005 の範囲を借用を含む値へ明示的に広げる必要がある（OWN-005、BOR-001、BOR-006）。
-8. `E-VAR-009`：借用型を持つ `mut` 束縛への再代入。
+7. `E-VAR-009`：借用型を持つ `mut` 束縛への再代入。
 回収には、旧借用の終了と再代入後の新しい所有者の寿命を扱う必要がある（SCP-001、BOR-002）。
-9. callable summary の `yield` 出口で、`AddressOf` と `Yield` の消費者へ届く借用の owner と寿命を呼出し側で解決すること。
+8. callable summary の `yield` 出口で、`AddressOf` と `Yield` の消費者へ届く借用の owner と寿命を呼出し側で解決すること。
 現行は呼出し点へ畳み込んで fail closed とする。
 raw-pointer の規則を借用 summary へ接続するサイクルで回収する（`unsafe.md` §§2.2、4.3、5.3）。
 

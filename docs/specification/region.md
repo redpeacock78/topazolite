@@ -108,8 +108,9 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 
 ### 4.2 Inspection API
 
-次の問い合わせは lexical adapter の検査で使う。
-将来の solver の利用側はこれらを読まない。
+次の補助問い合わせは lexical adapter 固有であり、全ての region solver に実装を要求しない。
+lexical region の検査と、一時 region を使う型付けで使う。
+非 lexical solver では一時 region の問い合わせは `#f` を返し、`region-at/branch` は `region-at` の結果を返す。
 
 - `region-parent ir ρ`：`ρ` の親 region を返す。
   root region では `#f` を返す。
@@ -118,6 +119,10 @@ spanful な Core と spanless な Core は、`erase-core` を通した後に同�
 - `region-ir-regions ir`：region の集合を返す。
 - `region-at/branch ir point`：枝 region を含めた point の最も内側の region を返す。
   callable の本体では、その本体の境界における基点を使い、外側の枝 region を越える。
+- `region-at/temporary ir consumer-point`：消費節点に対応する一時 region を返す。
+  lexical adapter で該当する消費節点が無い場合、および非 lexical solver では `#f` を返す。
+- `temporary-consumer-point ir borrow-point`：直接の借用式が属する消費節点の point を返す。
+  borrow point が消費節点の直接の借用位置でない場合、および非 lexical solver では `#f` を返す。
 - `branch-region-of ir decomposition-point branch-index`：分解 point と 0 始まりの枝番号に対応する枝 region を返す。
 - `branch-region? ir ρ`：`ρ` が枝 region なら真を返す。
 
@@ -181,7 +186,7 @@ materialize 後の注釈欄は起点ではなく寿命なので、寿命が起�
 
 ## 6. Lexical adapter
 
-lexical adapter は Core を `erase-core` へ通し、その像を 1 回走査して IR を作る。
+lexical adapter は Core を `erase-core` へ通し、その像を走査して通常 region を割り当てた後、消費位置を再走査して一時 region を IR に加える。
 root region を走査の開始時に作り、各 `Scope`、owner 型を束縛する `Let` の本体、`Eliminate`、`UnionEliminate`、および分解の各枝にそれぞれ 1 つの region を割り当てる。
 Scope へ入るとき、現在の region を親として新しい region を作り、`outlives` へ親から子への直接の対を加える。
 Scope の π を新しい region の `owners` の値にする。
@@ -192,6 +197,19 @@ owner-body region の `owners` は空であり、その `Let` の本体だけで
 scrutinee は分解 region の下に置く。
 各枝には分解 region を親とする owners が空の枝 region を作り、枝本体をその枝 region の下に置く。
 分解節点の評価完了時には分解 region と全ての枝 region を退場させる。
+
+通常の lexical region を割り当てた後、adapter は `Apply` の実引数、`Read` の operand、`Assign` の target に直接の借用式がある各消費節点へ一時 region を一つ割り当てる。
+一時 region は owners が空で、消費節点の評価が始まってからその節点の評価が完了するまでを表し、その消費節点自身の point で退場する。
+一時 region は通常の `region-at`、`region-at/branch`、`region-at/eliminate` の返値には含めず、§4.2 の一時 region 用問い合わせだけで得る。
+
+消費節点の子は §3 の順序で評価する。
+`Apply` は callee と実引数を左から右へ評価し、`Read` は operand を評価してから借用を作り、`Assign` は target を値より先に評価する。
+消費節点内の入れ子の消費節点について、親の最初の直接借用式が評価を始めた後に評価される子の一時 region は、親の一時 region の子とする。
+最初の直接借用式より前に評価される子と、その借用式の operand 内にある消費節点の一時 region は、親の一時 region と同じ親を持つ。
+この判定を内側から行い、そのような親がなければ消費節点の `region-at/branch` が返す region を親とする。
+一時 region には構造上の親からの `outlives` 対を加える。
+`region-at/branch` が返す lexical region から一時 region への `outlives` 対も加えるため、Scope、owner-body、枝の内側で入れ子になった消費節点でも、その lexical region が一時 region を outlive する。
+同じ `Apply` の複数の直接借用実引数は一時 region を共有する。
 
 `Lam`、`RecurVal`、`Recur` の本体へ入るときは、現在の region の祖先に分解 region が無ければ現在の region を基点とする。
 祖先に分解 region がある場合は、最も外側の分解 region の親を基点として本体を歩く。
@@ -208,6 +226,7 @@ scrutinee は分解 region の下に置く。
 `region-contains?` は親の連鎖で答える。
 `regions-overlap?` は一方が他方を構造として包むときに真である。
 `regions-exiting-at` は `Scope` 自身の point でその `Scope` の region 1 件を返し、`Eliminate` と `UnionEliminate` 自身の point でその分解 region と全ての枝 region を返す。
+直接の借用式を持つ消費節点の point では、その節点の一時 region も返す。
 それ以外では空集合を返す。
 
 lexical adapter は次の性質を満たす。
@@ -217,8 +236,13 @@ lexical adapter は次の性質を満たす。
   分解 region はその point を囲む最も内側の現行 region の子であり、各枝 region はその分解 region の子である。
   callable の本体の境界を越えない枝の部分木にある Scope、owner-body、入れ子の分解、枝 region は、その枝 region の子孫である。
   callable 本体の region は §6 の基点から始まるため、構文的に囲む分解や枝を祖先に持たない。
-- **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数、および全分解の枝数の合計に一致する。
-- **C4**：`regions-exiting-at` は `Scope` の point で対応する Scope region を返し、`Eliminate` と `UnionEliminate` の point で分解 region と全ての枝 region を返す。それ以外の point で空集合を返す。
+  一時 region は §6 の評価順に従う親を持ち、親の最初の直接借用式より後の子にある消費節点は親の一時 region の子になる。
+  最初の直接借用式より前の子とその operand の消費節点は、親の一時 region の兄弟になる。
+  対応する親が無ければ `region-at/branch` の region を親にする。
+  `region-at/branch` の lexical region から一時 region への `outlives` 対は、owner の lexical region が一時借用を包む関係を保つ。
+- **C3**：root 以外の region の個数は、Core の `Scope` の個数、owner 型を束縛する `Let` の個数、`Eliminate` と `UnionEliminate` の個数、全分解の枝数、および直接の借用式を持つ消費節点の個数の合計に一致する。
+- **C4**：`regions-exiting-at` は `Scope` の point で対応する Scope region を返し、`Eliminate` と `UnionEliminate` の point で分解 region と全ての枝 region を返す。
+  直接の借用式を持つ消費節点の point では、その節点に対応する一時 region も返し、それ以外の point では空集合を返す。
   root region はどの point でも返さず、owner-body の point では空集合を返す。
 - **C5**：core-calculus.md §8 の golden program `findPositive` と `map` について、`Scope`、owner-body、分解、枝 region の親子関係、outlives、退場を問い合わせだけで再構成できる。
 - **C6**：spanful な Core と `erase-core` 済みの Core から作った IR は、point ごとの `region-at`、退場、`region-outlives?`、`regions-overlap?` が一致する外延的同型を持つ。
