@@ -22,6 +22,7 @@
          region-at/eliminate region-at/branch branch-region-of branch-region?
          region-decomposition-point?
          region-enclosing-decompositions region-decomposition-scrutinee?
+         region-at/temporary temporary-consumer-point
          region->rho rho->region region-solve
          lifetime-var? lifetime-var-index
          region-parent region-contains? owner-let-body-region
@@ -187,7 +188,8 @@
 (struct lexical-region-ir region-ir
   (parents at-table exit-table owner-body-table points control-order-barriers
            projborrow-place-points eliminate-table callable-body-points
-           branch-table)
+           ;; 直接借用の child index 列（先頭が k）を保持し、親を再計算する。
+           branch-table temporary-start-table temporary-table)
   #:transparent
   #:methods gen:region-solver
   [(define (region-at ir point)
@@ -343,6 +345,28 @@
             (lexical-root ir)))
       (region-at ir point)))
 
+;; 型付けの候補としてのみ使う一時 region は、通常の lexical extent から分離する。
+(define (region-at/temporary ir consumer-point)
+  (and (lexical-region-ir? ir)
+       (begin
+         (check-point ir consumer-point)
+         (hash-ref (lexical-region-ir-temporary-table ir) consumer-point #f))))
+
+;; borrow-point は消費節点の直接の借用式を指す。
+(define (temporary-consumer-point ir borrow-point)
+  (and (lexical-region-ir? ir)
+       (begin
+         (check-point ir borrow-point)
+         (and (pair? borrow-point)
+              (let ([consumer-point
+                     (take borrow-point (sub1 (length borrow-point)))])
+                (and (member (last borrow-point)
+                             (hash-ref
+                              (lexical-region-ir-temporary-start-table ir)
+                              consumer-point
+                              '()))
+                     consumer-point))))))
+
 ;; 枝本体の point は分解の child 0 が scrutinee であるため、1 から始まる。
 (define (branch-body-point decomposition-point branch-index)
   (append decomposition-point (list (add1 branch-index))))
@@ -464,10 +488,27 @@
           (set-member? regions (region-at ir point))))))
 
 ;; docs/specification/region.md §5 の 2 条件。lexical adapter だけが満たす。
+(define (temporary-parent-for ir consumer-point)
+  (define starts (lexical-region-ir-temporary-start-table ir))
+  (define-values (depth parent)
+    (for/fold ([best-depth -1] [best-parent #f])
+              ([(ancestor ρ) (in-hash (lexical-region-ir-temporary-table ir))]
+               #:when (and (< (length ancestor) (length consumer-point))
+                           (point-prefix? ancestor consumer-point)
+                           (> (list-ref consumer-point (length ancestor))
+                              (first (hash-ref starts ancestor)))))
+      (values (length ancestor) ρ)))
+  (or parent (region-at/branch ir consumer-point)))
+
 (define (lexical-region-ir-ok? ir)
   (define regions (region-ir-regions ir))
   (define parents (lexical-region-ir-parents ir))
   (define points (lexical-region-ir-points ir))
+  (define temporary-start-table
+    (lexical-region-ir-temporary-start-table ir))
+  (define temporary-table (lexical-region-ir-temporary-table ir))
+  (define temporary-regions
+    (if (hash? temporary-table) (list->set (hash-values temporary-table)) (set)))
   (and
    (for/and ([(point ρ) (in-hash (lexical-region-ir-at-table ir))])
      (and (set-member? points point) (set-member? regions ρ)))
@@ -519,6 +560,42 @@
                           (hash-ref (lexical-region-ir-eliminate-table ir) point))
                   (set-member? (regions-exiting-at ir point) ρ))]
             [_ #f])))
+   (and (hash? temporary-start-table)
+        (hash? temporary-table)
+        (equal? (list->set (hash-keys temporary-start-table))
+                (list->set (hash-keys temporary-table)))
+        (= (set-count temporary-regions) (hash-count temporary-table))
+        (for/and ([(point child-indices) (in-hash temporary-start-table)])
+          (and (set-member? points point)
+               (pair? child-indices)
+               (andmap exact-nonnegative-integer? child-indices)
+               (= (length child-indices)
+                  (length (remove-duplicates child-indices)))
+               (andmap (lambda (index)
+                         (set-member? points (append point (list index))))
+                       child-indices)))
+        (for/and ([(point ρ) (in-hash temporary-table)])
+          (and (set-member? points point)
+               (region? ρ)
+               (set-member? regions ρ)
+               (hash-has-key? parents ρ)
+               (equal? (region-parent ir ρ)
+                       (temporary-parent-for ir point))
+               (set-member? (regions-exiting-at ir point) ρ)))
+        (for/and ([(point exits*) (in-hash (lexical-region-ir-exit-table ir))])
+          (define exits (if (set? exits*) exits* (set exits*)))
+          (for/and ([ρ (in-set exits)])
+            (or (not (set-member? temporary-regions ρ))
+                (equal? (hash-ref temporary-table point #f) ρ))))
+        (= (set-count regions)
+           (+ 1
+              (for/sum ([exits* (in-hash-values
+                                 (lexical-region-ir-exit-table ir))])
+                (set-count
+                 (set-subtract (if (set? exits*) exits* (set exits*))
+                               temporary-regions)))
+              (hash-count (lexical-region-ir-owner-body-table ir))
+              (hash-count temporary-table))))
    (for/and ([(child parent) (in-hash parents)])
      (and (set-member? regions child) (set-member? regions parent)))
    (let ([roots (for/list ([ρ (in-set regions)]
@@ -654,20 +731,92 @@
                          current)])
                 (walk body (cons 1 prefix) body-region)))])
     (walk erased '() root))
-  (lexical-region-ir
-   (list->set (cons root (hash-keys parents)))
-   (list->set (set->list outlives))
-   (freeze owners)
-   (freeze parents)
-   (freeze at-table)
-   (freeze exit-table)
-   (freeze owner-body-table)
-   (list->set (core-points erased))
-   (list->set (core-control-order-barriers erased))
-   (list->set (set->list projborrow-place-points))
-   (freeze eliminate-table)
-   (list->set (set->list callable-body-points))
-   (freeze branch-table)))
+  (let* ([temporary-start-table (make-hash)]
+         [temporary-table (make-hash)])
+    (define base-ir
+      (lexical-region-ir
+       (list->set (cons root (hash-keys parents)))
+       (list->set (set->list outlives))
+       (freeze owners)
+       (freeze parents)
+       (freeze at-table)
+       (freeze exit-table)
+       (freeze owner-body-table)
+       (list->set (core-points erased))
+       (list->set (core-control-order-barriers erased))
+       (list->set (set->list projborrow-place-points))
+       (freeze eliminate-table)
+       (list->set (set->list callable-body-points))
+       (freeze branch-table)
+       (hash)
+       (hash)))
+    (define (borrow-expression? node)
+      (match node
+        [`(Borrow ,_) #t]
+        [`(BorrowMut ,_) #t]
+        [`(Reborrow ,_) #t]
+        [_ #f]))
+    (define (direct-borrow-child-indices node)
+      (define children (core-children node))
+      (define eligible-indices
+        (cond
+          [(and (pair? node) (eq? (first node) 'Apply))
+           (range 1 (length children))]
+          [(and (pair? node) (eq? (first node) 'Read)) '(0)]
+          [(and (pair? node) (eq? (first node) 'Assign)) '(0)]
+          [else '()]))
+      (for/list ([index (in-list eligible-indices)]
+                 #:when (and (< index (length children))
+                             (borrow-expression? (list-ref children index))))
+        index))
+    (define (add-exit! point ρ)
+      (define previous (hash-ref exit-table point #f))
+      (hash-set! exit-table point
+                 (cond
+                   [(not previous) ρ]
+                   [(set? previous) (set-add previous ρ)]
+                   [else (set previous ρ)])))
+    (letrec ([walk-temporary
+              (lambda (node point active)
+                (define direct-indices (direct-borrow-child-indices node))
+                (define temporary-region
+                  (and (pair? direct-indices)
+                       (let* ([parent (or active (region-at/branch base-ir point))]
+                              [ρ (fresh-region!)])
+                         (hash-set! temporary-start-table point
+                                    direct-indices)
+                         (hash-set! temporary-table point ρ)
+                         (hash-set! parents ρ parent)
+                         (hash-set! owners ρ '())
+                         (set-add! outlives (list parent ρ))
+                         (add-exit! point ρ)
+                         ρ)))
+                (define start-index
+                  (and temporary-region (first direct-indices)))
+                (for ([child (in-list (core-children node))]
+                      [index (in-naturals)])
+                  (walk-temporary
+                   child (append point (list index))
+                   (if (and temporary-region (> index start-index))
+                       temporary-region
+                       active))))])
+      (walk-temporary erased '() #f))
+    (lexical-region-ir
+     (list->set (cons root (hash-keys parents)))
+     (list->set (set->list outlives))
+     (freeze owners)
+     (freeze parents)
+     (freeze at-table)
+     (freeze exit-table)
+     (freeze owner-body-table)
+     (list->set (core-points erased))
+     (list->set (core-control-order-barriers erased))
+     (list->set (set->list projborrow-place-points))
+     (freeze eliminate-table)
+     (list->set (set->list callable-body-points))
+     (freeze branch-table)
+     (freeze temporary-start-table)
+     (freeze temporary-table))))
 
 ;; 注釈の環境。借用の型を持つ束縛名から own への写像である。
 (define (annotation-borrow-type? τ)

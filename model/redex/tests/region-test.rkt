@@ -201,7 +201,8 @@
   (lexical-region-ir regions outlives owners parents at-table exit-table
                      owner-body-table points control-order-barriers
                      projborrow-place-points eliminate-table
-                     callable-body-points branch-table))
+                     callable-body-points branch-table
+                     (hash) (hash)))
 
 (test-case "既定の手組み IR は 8 条件と 2 条件を満たす"
   (check-true (region-ir-ok? (hand-ir) nested))
