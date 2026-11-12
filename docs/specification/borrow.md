@@ -324,6 +324,7 @@ callable の本体から仮引数を親とする分解 binder や再借用を生
 
 `local` は既定値ではない。イベントが無いことだけでは local と判定しない。
 未分類の出口、収集漏れ、不完全な summary、曖昧または欠落した owner/path は fail closed とする。
+`yield`、`capture`、`storage` の出口は本サイクルでは呼出し側へ解決せず、呼出し点への畳み込みを保って fail closed とする。`capture` は §14-1、`storage` は §14-7（`E-OWN-022`）で回収する。`yield` の `AddressOf` と `Yield` consumer は raw-pointer の正典 `unsafe.md` §§2.2、4.3、5.3 が関連箇所だが、borrow summary の出口解決に対応する `requirements.md` §4 の行は無い。
 owner/outlives の保留項目を持つ callable 値の summary を運べる位置は、`Let` の束縛式と結果、直書きまたは `Let` 束縛の `RegionLam` への `RegionApp`、`Move`、`Unsafe` の本体、`Scope` の結果、`Apply` の callee、および `Recur` / `RecurVal` の枠に限る。
 部分適用、capture、`Apply` の実引数または結果、集約値・構成子・`UnionInject`、分解の枝、`Handle` の Return payload、`Yield`、`Discharge`、`Forward`、未知の親位置で保留項目が失われる場合は、その境界で `E-BOR-006` にする。
 これは callable 値に付いた保留項目の transport 規則である。後述する `Apply` の `handle` 出口イベントを Return-handler entry へ実体化する経路は、この拒否には含めない。
@@ -375,6 +376,7 @@ Core の `Apply` に専用の呼出し region は無い。
 
 上の 3 を満たさず、Scope 内で新たに作った借用が呼出し結果として Scope の外へ届く形は、loan を Scope の退場で短縮せず、`E-BOR-020` で拒否する。
 借用を含む `Return` payload は、対応する Handle が捕捉する `handle` 出口として summary から owner と capability を解決できる場合に限り、その Handle の結果へ渡せる。
+条件 4 は Scope の退場で loan を終えられる条件であり、これを満たさない payload でも `handle` 出口として解決できれば loan は Scope 退場では終わらず、§8 のとおり対応する Handle の region まで生きる。
 その出口を解決できない payload は `E-BOR-020` で拒否する。
 
 部分適用は借用が現れる署名を運べない。
