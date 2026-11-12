@@ -97,7 +97,7 @@ callee の callable summary が欠落、不完全、曖昧、または未分類�
 借用を直接消費位置に書かず `Let` で名前へ束縛した場合、その借用の region は現行どおり lexical scope の終わりまで続き、last-use では短縮しない。
 一時 region は `region.md` の lexical adapter が消費位置ごとに設ける候補であり、通常の `region-at` はこれを返さない。
 型付けは消費節点の型を確定した後に短縮条件を再確認し、事前判定と食い違えば `E-BOR-020` で fail closed にする。
-名前付き借用の last-use による短縮は、borrow.md §14 第 5 項と `requirements.md` §4 の Phase 4 への申し送りに記した control-flow と last-use による region 推論の段階で扱う。
+名前付き借用の last-use による短縮は、上記の lexical な近似を `region.md` §7 の NLL solver へ置き換える段階（BOR-003）で得る。
 
 `w` の型は所有でなければならない。
 結果の型は `(Borrowed τ ρ_borrow)` または `(BorrowedMut τ ρ_borrow)` であり、`Owned` は剥がす。
@@ -728,12 +728,11 @@ oracle は所有値の place を裸の自然数として見るため、同じ値
 本サイクルの生成器は整数リテラルを 1000 以上に限って衝突を避けるので、小さい整数を含む項は検査を通らない。
 余分な対応は provenance を上位集合にするだけであり、oracle の fail-closed な消費のもとでは偽の合格を生まない。
 Phase 未定である。
-5. 名前に束縛した借用と variant に依存する view の保護を最後の使用で終える精度。
+5. variant に依存する view の保護を最後の使用で終える精度。
 現行の保護は束縛の lexical scope の終わりまで続く。
 その精度を上げるには使用区間の解析が要る。
 これは §4 の借用 region を最も内側の Scope にする lexical な近似とは別の近似である。
 回収時期は、BOR-003 の置換先として想定する control-flow と last-use による region 推論を導入する段階と同じとする。
-名前に束縛した借用の region も last-use では短縮せず、同じ段階で扱う。
 分解 binder 由来の借用も、binder の最後の使用後を含めて枝 region 全体で親の対応する欄を停止する lexical な近似である。
 最後の使用で停止を終える精度は control-flow と last-use による region 推論を導入する段階で回収する。
 停止は binder の path に限るため、親の別の欄はこの近似の対象にならない。
