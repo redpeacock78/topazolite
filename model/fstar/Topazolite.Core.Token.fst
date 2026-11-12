@@ -728,3 +728,93 @@ let ownleaf_transit_preserves_tok_inv (e:ctx) (place:nat) (v:value) (s:state)
       (ensures (tok_inv (step_ownleaf_transit e place v s))) =
   ownleaf_transit_preserves_token_list e place v s;
   assert (tok_inv (step_ownleaf_transit e place v s))
+
+//@ AUX: example OWN-009
+let example_delta_acquire () : Lemma
+  (ensures
+    (let r = Apply [PrimVal "o-acquire" "acquire"; Resource 7] in
+     let s:state = { control = plug EHole r; heap = []; roots = [];
+                     ledger = []; trace = [] } in
+     let after = step_delta_acquire EHole r s 0 in
+     after.control = OwnedLeaf 0 (Resource 7) /\
+     after.ledger = [(0, Available)] /\
+     structural_tokens after = [0] /\ observed_tokens after = [])) =
+  assert_norm
+    (let r = Apply [PrimVal "o-acquire" "acquire"; Resource 7] in
+     let s:state = { control = plug EHole r; heap = []; roots = [];
+                     ledger = []; trace = [] } in
+     let after = step_delta_acquire EHole r s 0 in
+     after.control = OwnedLeaf 0 (Resource 7) /\
+     after.ledger = [(0, Available)] /\
+     structural_tokens after = [0] /\ observed_tokens after = [])
+
+//@ AUX: example OWN-009
+let example_ownleaf_fresh () : Lemma
+  (ensures
+    (let e = EScope "" EHole in
+     let s:state = { control = plug e (OwnLeaf (Resource 1));
+                     heap = []; roots = []; ledger = []; trace = [] } in
+     let after = step_ownleaf e (Resource 1) s 0 in
+     after.control = Scope "" (OwnedLeaf 0 (Resource 1)) /\
+     after.ledger = [(0, Available)] /\
+     structural_tokens after = [0] /\ observed_tokens after = [])) =
+  assert_norm
+    (let e = EScope "" EHole in
+     let s:state = { control = plug e (OwnLeaf (Resource 1));
+                     heap = []; roots = []; ledger = []; trace = [] } in
+     let after = step_ownleaf e (Resource 1) s 0 in
+     after.control = Scope "" (OwnedLeaf 0 (Resource 1)) /\
+     after.ledger = [(0, Available)] /\
+     structural_tokens after = [0] /\ observed_tokens after = [])
+
+//@ AUX: example OWN-009
+let example_ownleaf_pass () : Lemma
+  (ensures
+    (let e = EScope "" EHole in
+     let v = Resource 1 in
+     let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
+                     heap = []; roots = [];
+                     ledger = [(4, Available)]; trace = [] } in
+     let after = step_ownleaf_pass e 4 v
+       s in
+     after.control = Scope "" (OwnedLeaf 4 (Resource 1)) /\
+     after.ledger = [(4, Available)] /\
+     structural_tokens after = [4] /\ observed_tokens after = [])) =
+  assert_norm
+    (let e = EScope "" EHole in
+     let v = Resource 1 in
+     let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
+                     heap = []; roots = [];
+                     ledger = [(4, Available)]; trace = [] } in
+     let after = step_ownleaf_pass e 4 v s in
+     after.control = Scope "" (OwnedLeaf 4 (Resource 1)) /\
+     after.ledger = [(4, Available)] /\
+     structural_tokens after = [4] /\ observed_tokens after = [])
+
+//@ AUX: example OWN-009
+let example_ownleaf_transit () : Lemma
+  (ensures
+    (let payload = Construct "Option (Owned Res)" "some"
+                     [OwnedLeaf 4 (Resource 1)] in
+     let transit = OwnedTransit 0 payload in
+     let e = EScope "" EHole in
+     let s:state = { control = plug e (OwnLeaf transit);
+                     heap = [(0, payload)]; roots = [(0, RMoved)];
+                     ledger = [(4, Available)]; trace = [] } in
+     let after = step_ownleaf_transit e 0 payload
+       s in
+     after.control = Scope "" (OwnedTransit 0 payload) /\
+     after.ledger = [(4, Available)] /\
+     structural_tokens after = [4] /\ observed_tokens after = [])) =
+  assert_norm
+    (let payload = Construct "Option (Owned Res)" "some"
+                    [OwnedLeaf 4 (Resource 1)] in
+     let transit = OwnedTransit 0 payload in
+     let e = EScope "" EHole in
+     let s:state = { control = plug e (OwnLeaf transit);
+                     heap = [(0, payload)]; roots = [(0, RMoved)];
+                     ledger = [(4, Available)]; trace = [] } in
+  let after = step_ownleaf_transit e 0 payload s in
+     after.control = Scope "" (OwnedTransit 0 payload) /\
+     after.ledger = [(4, Available)] /\
+     structural_tokens after = [4] /\ observed_tokens after = [])
