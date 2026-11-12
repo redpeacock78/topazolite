@@ -138,6 +138,100 @@
           ((0 Available) (1 Available)) () ()))
   (check-false (config-ok? cfg '() 'Int '())))
 
+(test-case "構成検査の Let 注釈では BorrowedMut の region 不一致を保つ"
+  (define cfg
+    '(cfg (Let (child let (BorrowedMut (Borrowed Int 2) 2))
+           (BorrowMutRef 1 () 4)
+           0)
+          ((0 7 (declared Int))
+           (1 (BorrowRef 0 () 2) (declared (Borrowed Int 2))))
+          ((0 Available) (1 Available)) () ()))
+  (check-equal? (config-type-failure-key cfg) 'type-mismatch)
+  (check-false (config-ok? cfg '() 'Int '())))
+
+(test-case "Apply の BorrowedMut 実引数は外側 region 差を除いて検査する"
+  (define callables
+    '((payload-sink
+       (NFn ((BorrowedMut (Borrowed Int 2) 2))
+            Int () () () User))))
+  (define cfg
+    '(cfg
+      (Apply
+       (RegionApp
+        (RegionLam (a) (Lam User payload-sink (p) 0))
+        (2))
+       (BorrowMutRef 1 () 4))
+      ((0 7 (declared Int))
+       (1 (BorrowRef 0 () 2) (declared (Borrowed Int 2))))
+      ((0 Available) (1 Available)) () ()))
+  (define configs
+    (let loop ([current cfg] [configs (list cfg)] [fuel 200])
+      (check-true (positive? fuel) "評価 fuel")
+      (match (raw-steps-g2/named current)
+        ['() configs]
+        [(list (list _ next))
+         (loop next (append configs (list next)) (sub1 fuel))]
+        [steps (fail (format "一意な次構成: ~s" steps))])))
+  (define row (runtime-row (first configs) callables 'Int))
+  (check-not-false row)
+  (for ([current (in-list configs)] [index (in-naturals)])
+    (check-true (config-ok? current callables 'Int row)
+                (format "構成 ~a の config-ok?: key=~s type=~s row=~s"
+                        index (config-type-failure-key current callables)
+                        (config-type-result current callables)
+                        (runtime-row current callables 'Int)))
+    (check-equal? (runtime-row current callables 'Int) row
+                  (format "構成 ~a の runtime-row" index)))
+  (define (contains-mut-ref? term)
+    (or (equal? term '(BorrowMutRef 1 () 4))
+        (and (pair? term)
+             (or (contains-mut-ref? (car term))
+                 (contains-mut-ref? (cdr term))))))
+  (match (last configs)
+    [`(cfg ,core ,heap ,states ,_tokens ,_trace)
+     (check-true (redex-match? G2m v core))
+     (define available-values
+       (for/list ([entry (in-list heap)]
+                  #:when (equal? (second (assoc (first entry) states))
+                                 'Available))
+         (second entry)))
+     (check-false (contains-mut-ref? (list core available-values))
+                  "Apply 完了後に短い BorrowMutRef が残らない")]
+    [configuration
+     (check-true #f (format "終端構成: ~s" configuration))]))
+
+(test-case "Apply の借用実引数は payload と mode の不一致を拒否する"
+  (define callables
+    '((payload-sink
+       (NFn ((BorrowedMut (Borrowed Int 2) 2)) Int () () () User))))
+  (define (config argument heap)
+    `(cfg (Apply (Lam User payload-sink (p) 0) ,argument)
+          ,heap
+          ((0 Available) (1 Available)) () ()))
+  (define bad-payload
+    (config '(BorrowMutRef 1 () 4)
+            '((0 7 (declared Int))
+              (1 (BorrowRef 0 () 3) (declared (Borrowed Int 3))))))
+  (define bad-mode
+    (config '(BorrowRef 1 () 4)
+            '((0 7 (declared Int))
+              (1 (BorrowRef 0 () 2) (declared (Borrowed Int 2))))))
+  (for ([cfg (in-list (list bad-payload bad-mode))])
+    (check-false (runtime-row cfg callables 'Int))
+    (check-false (config-ok? cfg callables 'Int '()))))
+
+(test-case "Apply の共有借用実引数も外側 region 差だけ許す"
+  (define callables
+    '((shared-sink
+       (NFn ((Borrowed (Borrowed Int 2) 2)) Int () () () User))))
+  (define cfg
+    '(cfg (Apply (Lam User shared-sink (p) 0) (BorrowRef 1 () 4))
+          ((0 7 (declared Int))
+           (1 (BorrowRef 0 () 2) (declared (Borrowed Int 2))))
+          ((0 Available) (1 Available)) () ()))
+  (check-not-false (runtime-row cfg callables 'Int))
+  (check-true (config-ok? cfg callables 'Int '())))
+
 (test-case "構成検査は ReborrowAt の注釈を共有借用の寿命として型へ置く"
   (define cfg
     `(cfg (Read (ReborrowAt 4 (BorrowMutRef 0 () 2)))
@@ -294,29 +388,29 @@
           (region-ctx ir '() owners (hash))
           #:callable-contexts callable-contexts)
     [`(ok (,type ,_row ,table ,sigma ,renamed ,_sidecar))
-     (list type
+     (list ir type
            (annotate-callable-contexts
             (materialize-regions ir renamed table sigma)
             (unbox callable-contexts) 'renamed))]
     [other (error 'typed-machine-core "source 型検査に失敗した: ~s" other)]))
 
 (define (trace-with-initial-int-place source callables)
-  (match-define (list expected machine-core)
+  (match-define (list ir expected machine-core)
     (typed-machine-core source callables '((1 Int))))
   (define start
     (match (inject-g2m machine-core)
       [`(cfg ,core ,_heap ,_states ,tokens ,events)
        `(cfg ,core ((1 0 (declared Int))) ((1 Available)) ,tokens ,events)]))
   (define-values (configs rules) (apply values (trace-config start)))
-  (list expected configs rules))
+  (list ir expected configs rules))
 
-(define (check-config-trace configs callables expected)
-  (define row (runtime-row (first configs) callables expected))
+(define (check-config-trace configs callables expected #:region-ir [ir #f])
+  (define row (runtime-row (first configs) callables expected #:region-ir ir))
   (check-not-false row "起点の runtime-row")
   (for ([cfg (in-list configs)] [index (in-naturals)])
-    (check-true (config-ok? cfg callables expected row)
+    (check-true (config-ok? cfg callables expected row #:region-ir ir)
                 (format "構成 ~a の config-ok?" index))
-    (check-equal? (runtime-row cfg callables expected) row
+    (check-equal? (runtime-row cfg callables expected #:region-ir ir) row
                   (format "構成 ~a の runtime-row" index))))
 
 (define (collect-inst-cids term)
@@ -550,10 +644,10 @@
          0))))
 
 (test-case "RecurBind 後の region 多相な RecurVal が Inst を保つ"
-  (match-define (list expected configs rules)
+  (match-define (list ir expected configs rules)
     (trace-with-initial-int-place recur-forall-source recur-forall-callables))
   (check-not-false (index-of rules 'R-RecurBind))
-  (check-config-trace configs recur-forall-callables expected)
+  (check-config-trace configs recur-forall-callables expected #:region-ir ir)
   (define region-app-index (index-of rules 'R-RegionAppRecur))
   (check-not-false region-app-index)
   (define before-cids
@@ -650,10 +744,10 @@
              (Let (inner-y let (BorrowedMut Int (RParam a))) inner-x 0)
              0))
          (Apply (RegionApp outerf ((RVar 0))) (BorrowMut 1)))))
-  (match-define (list expected configs rules)
+  (match-define (list ir expected configs rules)
     (trace-with-initial-int-place source callables))
   (check-not-false (index-of rules 'R-RegionAppRecur))
-  (check-config-trace configs callables expected)
+  (check-config-trace configs callables expected #:region-ir ir)
   (define region-app-index (index-of rules 'R-RegionAppRecur))
   (define before-cids
     (collect-inst-cids (config-core (list-ref configs region-app-index))))
@@ -697,9 +791,9 @@
               (Apply f (Construct (Option Int) none)))))
          (Apply (RegionApp f (ph))
                 (Construct (Option Int) some 1)))))
-  (match-define (list expected configs rules)
+  (match-define (list ir expected configs rules)
     (trace-with-initial-int-place source callables))
-  (check-config-trace configs callables expected)
+  (check-config-trace configs callables expected #:region-ir ir)
   (check-equal?
    ;; Task 4 classifies annotated elimination steps directly in the oracle.
    (check-borrow-execution
@@ -726,8 +820,8 @@
 
 (test-case "入れ子の region 多相 Recur の両 cid が Poly binder を持つ"
   (define machine-core
-    (second (typed-machine-core nested-poly-source nested-poly-callables
-                                '((1 Int)))))
+    (third (typed-machine-core nested-poly-source nested-poly-callables
+                               '((1 Int)))))
   (define cids (collect-inst-cids machine-core))
   (check-equal? (map cid-base cids) '(outer inner))
   (check-equal? (map cid-poly cids) '((Poly (a)) (Poly (a)))))

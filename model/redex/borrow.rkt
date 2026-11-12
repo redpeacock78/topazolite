@@ -465,9 +465,19 @@
          (borrow-request-point request)
          later-point
          (for/or ([scope-point (in-set (lexical-region-ir-points ir))])
-           (and (set-member? (regions-exiting-at ir scope-point)
-                             (ρ-of request))
+           (define exits-request?
+             (set-member? (regions-exiting-at ir scope-point)
+                          (ρ-of request)))
+           (define temporary-consumer?
+             (equal? (hash-ref (lexical-region-ir-temporary-table ir)
+                               scope-point #f)
+                     (ρ-of request)))
+           (and exits-request?
                 (path-prefix? scope-point (borrow-request-point request))
+                ;; 一時 loan は消費節点の完了時に終わるため、同じ節点の
+                ;; 子を評価中はまだ有効である。
+                (or (not temporary-consumer?)
+                    (not (path-prefix? scope-point later-point)))
                 (if (region-decomposition-point? ir scope-point)
                     (point-after-decomposition? ir scope-point later-point)
                     (and (linear-point-order? ir scope-point later-point)

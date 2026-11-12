@@ -1014,6 +1014,51 @@
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
   #:transparent)
 
+(define (callable-summary-local-argument? summary argument-index)
+  (and (callable-summary? summary)
+       (not (callable-summary-incomplete? summary))
+       (< argument-index (length (callable-summary-formals summary)))
+       (list-ref (callable-summary-formals summary) argument-index)
+       (for/and ([event (in-list (callable-summary-leaf-exits summary))]
+                 #:when (equal? (deferred-leaf-exit-formal-index event)
+                                argument-index))
+         (eq? (deferred-leaf-exit-exit-kind event) 'local))
+       (for*/and ([candidates
+                   (in-hash-values (callable-summary-result-index summary))]
+                  [candidate (in-list candidates)])
+         (not (= (car candidate) argument-index)))))
+
+(define (temporary-alpha-in-term? alpha term)
+  (define seen (make-hasheq))
+  (define (walk value)
+    (cond
+      [(equal? value alpha) #t]
+      [(lifetime-var? value)
+       (set-member? (alpha-set value) alpha)]
+      [(or (symbol? value) (number? value) (string? value)
+           (boolean? value) (null? value)) #f]
+      [(hash? value)
+       (or (for/or ([(key item) (in-hash value)])
+             (or (walk key) (walk item))))]
+      [(set? value) (for/or ([item (in-set value)]) (walk item))]
+      [(pair? value) (or (walk (car value)) (walk (cdr value)))]
+      [(vector? value)
+       (for/or ([item (in-vector value)]) (walk item))]
+      [(struct? value)
+       (and (not (hash-ref seen value #f))
+            (begin
+              (hash-set! seen value #t)
+              (for/or ([item (in-vector (struct->vector value))])
+                (walk item))))]
+      [else #f]))
+  (walk term))
+
+(define (temporary-alpha-from-type type)
+  (match (normalize-type type)
+    [`(,(or 'Borrowed 'BorrowedMut) ,_ ,alpha)
+     (and (lifetime-var? alpha) alpha)]
+    [_ #f]))
+
 (struct handle-return-loan
   (apply-point source formal-index formal-path payload-path node point owner path alpha suspension)
   #:transparent)
@@ -1182,6 +1227,90 @@
 ;; 要約を出現ごとに溜める表。既定の #f は「収集の外」であり、書き込みを
 ;; 黙って捨てる位置と区別する。typing の入口 2 つが parameterize する。
 (define callable-summaries (make-parameter #f))
+
+;; 消費節点で評価し切る直接の借用式だけ、一時 region を候補にする。
+(define temporary-borrow-points (make-parameter (set)))
+(define temporary-borrow-argument? (make-parameter #f))
+
+(define (direct-borrow-expression? core)
+  (match (peel-node core)
+    [`(,(or 'Borrow 'BorrowMut 'Reborrow
+            'BorrowAt 'BorrowMutAt 'ReborrowAt) . ,_) #t]
+    [_ #f]))
+
+(define (direct-borrow-payload-type core environment places)
+  (define (designator-type designator)
+    (if (exact-nonnegative-integer? designator)
+        (lookup places designator)
+        (lookup environment (peel-node designator))))
+  (match (peel-node core)
+    [`(,(or 'Borrow 'BorrowMut) ,designator)
+     (match (designator-type designator)
+       [`(Owned ,payload) payload]
+       [type type])]
+    [`(,(or 'BorrowAt 'BorrowMutAt) ,_ ,_ ,designator)
+     (match (designator-type designator)
+       [`(Owned ,payload) payload]
+       [type type])]
+    [`(Reborrow ,parent)
+     (match (designator-type parent)
+       [`(BorrowedMut ,payload ,_) payload]
+       [_ #f])]
+    [`(ReborrowAt ,_ ,parent)
+     (match (designator-type parent)
+       [`(BorrowedMut ,payload ,_) payload]
+       [_ #f])]
+    [_ #f]))
+
+(define (region-ctx-has-capability-alias? Λ designator capabilities)
+  (define (all-keys entry)
+    (for/fold ([keys (capability-entry-keys entry)])
+              ([( _field value) (in-hash (or (capability-entry-fields entry)
+                                              (hash)))])
+      (if (capability-entry? value)
+          (set-union keys (all-keys value))
+          keys)))
+  ;; 欄表だけが運ぶ借用も、target の短縮で既存の衝突判定から落とさない。
+  (for/or ([(name token) (in-hash (region-ctx-tokens Λ))]
+           #:unless (equal? name designator))
+    (define keys
+      (cond
+        [(borrow-capability? token)
+         (for/fold ([keys (borrow-capability-keys token)])
+                   ([( _field value) (in-hash
+                                      (or (borrow-capability-fields token)
+                                          (hash)))])
+           (if (capability-entry? value)
+               (set-union keys (all-keys value))
+               keys))]
+        [(set? token) token]
+        [else (set)]))
+    (for*/or ([alias (in-set keys)]
+              [candidate (in-set capabilities)])
+      (capability-overlap? (car alias) (cdr alias)
+                           (car candidate) (cdr candidate)))))
+
+(define (with-temporary-borrow-child Λ index expression selected? thunk)
+  (define child-Λ (enter-child Λ index))
+  (define point (region-ctx-point child-Λ))
+  (parameterize ([temporary-borrow-points
+                  (if (and selected? (not (deriving-config?)))
+                      (set-add (temporary-borrow-points) point)
+                      (temporary-borrow-points))])
+    (thunk child-Λ)))
+
+(define (temporary-borrow-lower-bound Λ)
+  (define ir (region-ctx-ir Λ))
+  (define point (region-ctx-point Λ))
+  (define temporary
+    (and ir
+         (set-member? (temporary-borrow-points) point)
+         (let ([consumer (temporary-consumer-point ir point)])
+           (and consumer (region-at/temporary ir consumer)))))
+  (or temporary
+      (if (and ir (branch-region-enclosing? ir point))
+          (region-at/branch ir point)
+          (region-at ir point))))
 
 ;; 鍵は point と node の対である。point だけでは足りない。同じ point へ別の
 ;; 節点が来る形が 2 つある。1 つは再推論であり、check-as が落ちた後に infer が
@@ -3380,14 +3509,21 @@
 ;; 値の流れを別に追う解析を書くと、型の側と二重に管理することになる。
 (define (collect-use-regions-at! type ir ρ point [scrutinee-child-ρ #f])
   (when (and ir ρ (lifetime-collector))
+    (define temporary-rho
+      (and (set-member? (temporary-borrow-points) point)
+           (let ([consumer (temporary-consumer-point ir point)])
+             (define temporary
+               (and consumer (region-at/temporary ir consumer)))
+             temporary)))
     (let walk ([t type])
       (match t
        [`(RVar ,k)
         (define alpha `(RVar ,k))
         (define lower-bound
-          (if (tracked-child-alpha? alpha)
-              (or scrutinee-child-ρ (region-at/branch ir point))
-              ρ))
+          (or temporary-rho
+              (if (tracked-child-alpha? alpha)
+                  (or scrutinee-child-ρ (region-at/branch ir point))
+                  ρ)))
         (emit-constraint!
          (region-constraint 'contains alpha lower-bound point #f))]
         [(? list? ts) (for-each walk ts)]
@@ -3465,6 +3601,12 @@
         (unless merge-point?
           (when table (set-box! table (hash-set (unbox table) point α))))
         α)))
+
+(define (fresh-lifetime-candidate point)
+  (define table (alpha-table))
+  (or (and table (hash-ref (unbox table) point #f))
+      (let ([counter (lifetime-counter)])
+        (and counter `(RVar ,(unbox counter))))))
 
 (define (lookup table key)
   (match (assoc key table)
@@ -4285,7 +4427,10 @@
 
 (define (check-many/full cores types Λ Ψ environment places callables node fail
                          [start-index 0]
-                         #:adopt? [adopt? #t])
+                         #:adopt? [adopt? #t]
+                         #:config-apply-arguments? [config-apply-arguments? #f]
+                         #:temporary-borrow-predicate
+                         [temporary-borrow? (lambda (_core _index) #f)])
   (unless (= (length cores) (length types))
     (fail 'arity-mismatch node (length types) (length cores)))
   (let loop ([cores cores]
@@ -4295,27 +4440,43 @@
              [rows '()]
              [actuals '()])
     (if (null? cores)
-        (list (reverse rows) current-psi (reverse actuals))
-        (match (check-as/full (first cores)
-                              (first types)
-                              (enter-child Λ i)
-                              current-psi
-                              environment places callables fail
-                              #:adopt? adopt?)
-          [(list row next-psi actual)
-           (loop (rest cores)
-                 (rest types)
-                 (add1 i)
-                 next-psi
-                 (cons row rows)
-                 (cons actual actuals))]))))
+        (list (reverse rows) current-psi (reverse actuals) '())
+        (let* ([temporary?
+                (and (not (deriving-config?))
+                     (direct-borrow-expression? (first cores))
+                     (temporary-borrow? (first cores) (- i start-index)))])
+          (match (with-temporary-borrow-child
+                  Λ i (first cores) temporary?
+                  (lambda (argument-Λ)
+                    (parameterize ([temporary-borrow-argument? temporary?])
+                      (check-as/full (first cores)
+                                     (first types)
+                                     argument-Λ
+                                     current-psi
+                                     environment places callables fail
+                                     #:adopt? adopt?
+                                     #:config-apply-argument?
+                                     config-apply-arguments?))))
+            [(list row next-psi actual)
+             (match (loop (rest cores)
+                          (rest types)
+                          (add1 i)
+                          next-psi
+                          (cons row rows)
+                          (cons actual actuals))
+               [(list next-rows final-psi next-actuals temporary-arguments)
+                (list next-rows final-psi next-actuals
+                      (if temporary?
+                          (cons (cons (- i start-index) actual)
+                                temporary-arguments)
+                          temporary-arguments))])])))))
 
 ;; 既存の呼び出しは実引数の型を要らない。第 3 要素を落として渡す。
 (define (check-many cores types Λ Ψ environment places callables node fail
                     [start-index 0])
   (match (check-many/full cores types Λ Ψ environment places callables node fail
                           start-index)
-    [(list rows psi _) (list rows psi)]))
+    [(list rows psi _ _) (list rows psi)]))
 
 ;; config の型導出のときだけ、runtime の leaf をそのまま欄へ許す。
 ;; Rec の欄は既存の deriving-config? 節が同じ役目を別に持つ。
@@ -4510,7 +4671,7 @@
   (match (parameterize ([ownleaf-permitted permitted])
            (check-many/full fields field-types Λ Ψ environment places callables
                             node fail))
-    [(list rows next-psi actual-field-types)
+    [(list rows next-psi actual-field-types _temporary-arguments)
      (list (rows-union rows) next-psi
            (construct-result-type actual-type constructor actual-field-types
                                   Λ node fail))]))
@@ -6556,8 +6717,7 @@
   (unless ρ_owner (fail 'borrow-unknown-owner-region core))
   (define point (region-ctx-point Λ))
   (define branch-born? (branch-region-enclosing? ir point))
-  (define ρ_borrow
-    (if branch-born? (region-at/branch ir point) (region-at ir point)))
+  (define ρ_borrow (temporary-borrow-lower-bound Λ))
   (define α (fresh-lifetime! point))
   (when branch-born? (track-child-alpha! α))
   ;; 借用の起点は α の下限である。使わない借用の解はこの 1 本で決まり、
@@ -6614,10 +6774,7 @@
            (rho->region ir α_parent)))
      (define derived? (tracked-child-alpha? α_parent))
      (define branch-born? (branch-region-enclosing? ir point))
-     (define ρ_child
-       (if (or derived? branch-born?)
-           (region-at/branch ir point)
-           (region-at ir point)))
+     (define ρ_child (temporary-borrow-lower-bound Λ))
      (when (or derived? branch-born?) (track-child-alpha! α_child))
      (define tokens
        (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))
@@ -7000,8 +7157,33 @@
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
 ;; ρ は結果の型に現れない（spec §6.1）。
 (define (infer-read core operand Λ Ψ environment places callables fail)
+  ;; pointee 型は place または binder の型から先に引ける。
+  (define pointee-type (direct-borrow-payload-type operand environment places))
+  (define temporary-candidate?
+    (and (direct-borrow-expression? operand)
+         (not (deriving-config?))
+         pointee-type))
+  (define alpha-candidate
+    (and temporary-candidate?
+         (fresh-lifetime-candidate
+          (region-ctx-point (enter-child Λ 0)))))
+  (define result-capability
+    (and alpha-candidate
+         (typing-capability-of Λ core #:allow-empty-keys? #t)))
+  (define temporary?
+    (and temporary-candidate?
+         alpha-candidate
+         (not (temporary-alpha-in-term? alpha-candidate pointee-type))
+         (not (temporary-alpha-in-term? alpha-candidate result-capability))
+         (not (temporary-alpha-in-term?
+               alpha-candidate (lookup-forwarding-summary Λ core)))
+         (not (temporary-alpha-in-term?
+               alpha-candidate (lookup-callable-summary Λ core)))))
   (define operand-result
-    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+    (with-temporary-borrow-child
+     Λ 0 operand temporary?
+     (lambda (operand-Λ)
+       (infer operand operand-Λ Ψ environment places callables fail))))
   (define τ_operand
     (typing-normal-child-type core Λ 0 (first operand-result)))
   (define ε_operand (second operand-result))
@@ -7012,6 +7194,18 @@
       [`(BorrowedMut ,τ ,α) (values τ α)]
       [_ (fail 'read-non-borrow core)]))
   (payload-borrows-traceable? τ_payload 'read-uncopyable-payload core Λ fail)
+  (when temporary?
+    (define alpha (temporary-alpha-from-type τ_operand))
+    (define result-capability
+      (typing-capability-of Λ core #:allow-empty-keys? #t))
+    (unless (and alpha
+                 (not (temporary-alpha-in-term? alpha τ_payload))
+                 (not (temporary-alpha-in-term? alpha result-capability))
+                 (not (temporary-alpha-in-term?
+                       alpha (lookup-forwarding-summary Λ core)))
+                 (not (temporary-alpha-in-term?
+                       alpha (lookup-callable-summary Λ core))))
+      (fail 'unresolved-borrow-owner core)))
   ;; 読み出す loan は既存の共有借用の複製なので、元の所有者と使用点で制約し、
   ;; このアクセス view の寿命には結び付けない。
   (define source (use-source Λ operand τ_operand))
@@ -7024,8 +7218,29 @@
 ;; [REQ: BOR-004] 可変借用 capability を通じた代入だけを許す。
 ;; Union payload は値全体の tag 保存互換で照合する。
 (define (infer-assign core target value Λ Ψ environment places callables fail)
+  (define direct-mut-borrow?
+    (match (peel-node target)
+      [`(,(or 'BorrowMut 'BorrowMutAt) . ,_) #t]
+      [_ #f]))
+  (define target-candidates
+    (and direct-mut-borrow?
+         (not (deriving-config?))
+         (typing-borrow-token-key (enter-child Λ 0) target #:fail fail)))
+  (define target-designator
+    (match (peel-node target)
+      [`(BorrowMut ,w) (peel-node w)]
+      [`(BorrowMutAt ,_ ,_ ,w) (peel-node w)]
+      [_ #f]))
+  (define temporary?
+    (and (set? target-candidates)
+         (not (set-empty? target-candidates))
+         (not (region-ctx-has-capability-alias?
+               Λ target-designator target-candidates))))
   (define target-result
-    (infer target (enter-child Λ 0) Ψ environment places callables fail))
+    (with-temporary-borrow-child
+     Λ 0 target temporary?
+     (lambda (target-Λ)
+       (infer target target-Λ Ψ environment places callables fail))))
   (define τ_target
     (typing-normal-child-type core Λ 0 (first target-result)))
   (define ε_target (second target-result))
@@ -7046,6 +7261,24 @@
   (define α_value
     (payload-borrows-traceable? τ_value 'assign-owned-payload core Λ fail
                                  #:reject-borrowed-mut? #f))
+  (define temporary-alpha
+    (and temporary? (temporary-alpha-from-type τ_target)))
+  (when temporary-alpha
+    (define value-capability
+      (typing-capability-of (enter-child Λ 1) value #:allow-empty-keys? #t))
+    (define value-source
+      (use-source (enter-child Λ 1) value τ_value))
+    (define value-forwarding
+      (lookup-forwarding-summary (enter-child Λ 1) value))
+    (define value-callable
+      (lookup-callable-summary (enter-child Λ 1) value))
+    (when (or (temporary-alpha-in-term? temporary-alpha τ_value)
+              (temporary-alpha-in-term? temporary-alpha α_value)
+              (temporary-alpha-in-term? temporary-alpha value-capability)
+              (temporary-alpha-in-term? temporary-alpha value-source)
+              (temporary-alpha-in-term? temporary-alpha value-forwarding)
+              (temporary-alpha-in-term? temporary-alpha value-callable))
+      (fail 'unresolved-borrow-owner core)))
   (for ([α (in-list α_value)])
     (emit-constraint!
      (region-constraint 'outlives α α_target (region-ctx-point Λ) core)))
@@ -8422,8 +8655,14 @@
                           (cons core (region-ctx-point Λ))])
             (check-many/full arguments parameter-types Λ function-psi
                              environment places callables core fail 1
-                             #:adopt? #f)))
+                             #:adopt? #f
+                             #:config-apply-arguments? #t
+                             #:temporary-borrow-predicate
+                             (lambda (_argument index)
+                               (callable-summary-local-argument?
+                                summary index)))))
         (define actuals (third argument-result))
+        (define temporary-arguments (fourth argument-result))
         (define borrow-parameters?
           (ormap formal-capability-type? parameter-types))
         ;; 既存の concrete NFn は本体の出現要約を持たないため、従来の
@@ -8471,6 +8710,7 @@
                                         latent-out Λ core subst sources
                                         call-psi fail)))
         (unless summary (set! next-psi call-psi))
+        (define result-entry #f)
         (when (formal-capability-type? return-type)
           (define result-summary
             (or summary
@@ -8478,8 +8718,8 @@
                 (and (not (borrow-region return-type))
                      (signature-forwarding-summary parameter-types
                                                    return-type core fail))))
-          (define result-entry
-            (cond
+          (set! result-entry
+                (cond
               [result-summary
                (result-capability-entry result-summary return-type arguments
                                         actuals Λ core fail)]
@@ -8510,6 +8750,25 @@
             (capability-entry-fields result-entry)
             (capability-entry-variants result-entry))
            fail))
+        ;; eligible は引数の型付け前に証明するが、型・capability・summary を
+        ;; 実際に得た後にも α が結果へ漏れていないことを確認する。
+        (for ([temporary-argument (in-list temporary-arguments)])
+          (define index (car temporary-argument))
+          (define actual-type (cdr temporary-argument))
+          (define alpha (temporary-alpha-from-type actual-type))
+          (define result-capability
+            (typing-capability-of Λ core #:allow-empty-keys? #t))
+          (unless (and alpha
+                       (callable-summary-local-argument? summary index)
+                       (not (temporary-alpha-in-term? alpha return-type))
+                       (not (temporary-alpha-in-term? alpha result-entry))
+                       (not (temporary-alpha-in-term?
+                             alpha result-capability))
+                       (not (temporary-alpha-in-term?
+                             alpha (lookup-forwarding-summary Λ core)))
+                       (not (temporary-alpha-in-term?
+                             alpha (lookup-callable-summary Λ core))))
+            (fail 'unresolved-borrow-owner core)))
         (unless (obligations-dischargeable? obligations (current-Γ-pc0))
           (fail 'unsatisfied-proof-obligation core))
         (define argument-rows-union (rows-union (first argument-result)))
@@ -9488,14 +9747,22 @@
           (first pair) (second pair) core Λ fail))
        #t))
 
-(define (call-argument-compatible? actual expected core Λ compatible? fail)
+(define (call-argument-compatible? actual expected core Λ compatible? fail
+                                   [config-apply-argument? #f])
   (define actual* (normalize-type actual))
   (define expected* (normalize-type expected))
   (match* (actual* expected*)
     [(`(BorrowedMut ,actual-payload ,actual-rho)
       `(BorrowedMut ,expected-payload ,expected-rho))
+     ;; 構成検査では Apply の借用実引数に限り、外側 region は owner と照合しない。
+     (define config-outer-region-mismatch?
+       (and config-apply-argument?
+            (deriving-config?)
+            (not (equal? actual-rho expected-rho))))
      (define owner-compatible?
-       (or (equal? actual-rho expected-rho)
+       (or config-outer-region-mismatch?
+           (temporary-borrow-argument?)
+           (equal? actual-rho expected-rho)
            (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
                     (for/or ([owner-rho
                               (in-list (argument-owner-rhos Λ core fail))])
@@ -9505,27 +9772,38 @@
                `(BorrowedMut Unit ,expected-rho)
                `(BorrowedMut Unit ,actual-rho))))
      (and owner-compatible?
-          (compatible? `(BorrowedMut Unit ,actual-rho)
-                       `(BorrowedMut Unit ,outer-expected))
-          (borrowed-mut-payload-compatible?
-           actual-payload expected-payload core Λ fail))]
+          (or config-outer-region-mismatch?
+              (compatible? `(BorrowedMut Unit ,actual-rho)
+                           `(BorrowedMut Unit ,outer-expected)))
+          (if config-outer-region-mismatch?
+              ;; runtime の payload region は具体値なので不一致を solver へ送らない。
+              (type-equiv? actual-payload expected-payload)
+              (borrowed-mut-payload-compatible?
+               actual-payload expected-payload core Λ fail)))]
     [((list ctor actual-payload actual-rho)
-      (list same-ctor _ expected-rho))
+      (list same-ctor expected-payload expected-rho))
      #:when (and (memq ctor '(Borrowed BorrowedMut))
                  (eq? ctor same-ctor))
      (if (equal? actual-rho expected-rho)
          (compatible? actual expected)
-         (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
+         (and (or (and config-apply-argument?
+                       (deriving-config?))
+                  (temporary-borrow-argument?)
+                  (and (deriving-config?) (not (region-ctx-ir Λ)))
                   (for/or ([owner-rho
                             (in-list (argument-owner-rhos Λ core fail))])
                     (equal? owner-rho expected-rho)))
-              (compatible? actual
-                           (adopt-inferred-lifetimes expected actual))))]
+              (let ([adopted (adopt-inferred-lifetimes expected actual)])
+                (if (and config-apply-argument? (deriving-config?))
+                    ;; Apply の構成再型付けでは mode と payload だけを照合する。
+                    (compatible? actual-payload (second adopted))
+                    (compatible? actual adopted)))))]
     [(_ _) (compatible? actual expected)]))
 
 (define (check-as/full/body core expected Λ Ψ environment places callables fail
                             [compatible? type-compatible?]
-                            #:adopt? [adopt? #t])
+                            #:adopt? [adopt? #t]
+                            #:config-apply-argument? [config-apply-argument? #f])
   ((typing-point-probe) (region-ctx-point Λ))
   (match (peel-node core)
     [`(Construct ,data-type ,constructor ,fields ...)
@@ -9895,7 +10173,8 @@
         (unless (if adopt?
                    (compatible? actual expected*)
                    (call-argument-compatible? actual expected core Λ
-                                              compatible? fail))
+                                              compatible? fail
+                                              config-apply-argument?))
           (fail 'type-mismatch core expected actual))
         (check-borrow-hiding! actual expected* core fail compatible?)
         (match (owned-narrowing-kind actual expected* compatible?)
@@ -9907,16 +10186,20 @@
 
 (define (check-as/full core expected Λ Ψ environment places callables fail
                        [compatible? type-compatible?]
-                       #:adopt? [adopt? #t])
+                       #:adopt? [adopt? #t]
+                       #:config-apply-argument? [config-apply-argument? #f])
   (if (not (typing-normal-results))
       (parameterize ([typing-normal-results (make-hash)])
         (check-as/full core expected Λ Ψ environment places callables fail
-                       compatible? #:adopt? adopt?))
+                       compatible? #:adopt? adopt?
+                       #:config-apply-argument? config-apply-argument?))
       (let* ([input-psi Ψ]
              [local-psi (flow-clear-escapes Ψ)]
              [raw-result
               (check-as/full/body core expected Λ local-psi environment places callables
-                                  fail compatible? #:adopt? adopt?)]
+                                  fail compatible? #:adopt? adopt?
+                                  #:config-apply-argument?
+                                  config-apply-argument?)]
              [row (first raw-result)]
              [raw-psi (second raw-result)]
              [raw-type (third raw-result)]

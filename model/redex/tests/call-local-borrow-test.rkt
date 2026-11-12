@@ -667,7 +667,7 @@
            (Assign p 8)))))
   (check-false (window-failure-code (inner-scope-core body #t))))
 
-(test-case "包んだ呼出し後は再借用でき、裸の呼出し後は lexical loan が残る"
+(test-case "裸の直接借用を使う呼出しの完了後は再借用できる"
   (define body (window-function-body '(Assign p 7)))
   (define wrapped
     (inner-scope-core
@@ -677,7 +677,8 @@
   (define bare
     (inner-scope-core
      body #f '(Let (again let (BorrowedMut Int ph)) (BorrowMut owner) unit)))
-  (check-equal? (window-failure-code bare) "E-BOR-003"))
+  (check-false (window-failure-code bare)
+               (format "direct argument ends at Apply: ~s" (window-result bare))))
 
 (test-case "子が生きている Scope 内で二つ目の共有 Reborrow を作れる"
   (define body
@@ -840,27 +841,29 @@
   (check-equal? (diagnostic-id handle-result) "E-BOR-008")
   (check-equal? (diagnostic-id recur-result) "E-BOR-025"))
 
-(test-case "出口の無い署名要約の呼出しは従来どおり lexical loan を残す"
-  (define summary
-    (signature-forwarding-summary
-     (list '(BorrowedMut Int (RParam a))) 'Int 'sink
-     (lambda (id node) (error 'signature-forwarding-summary "~a: ~s" id node))))
-  (check-equal? (callable-summary-leaf-exits summary) '())
-  (check-true (callable-summary-incomplete? summary))
+(test-case "外部calleeに借用仮引数のsummaryが無ければfail closed"
+  (define callables
+    '((wrapper
+       (NFn ((NFn ((Borrowed Int 0)) Int () () () User)
+             (BorrowedMut Int 0))
+            Unit () () () User))))
   (define core
-    `(Scope ()
-       (Let (x let (Owned Int)) 1
-         (Let (first const Int) ,(sink-call '(BorrowMut x))
-           ,(sink-call '(BorrowMut x))))))
-  (check-equal? (failure-code core) "E-BOR-003"))
+    '(Lam User wrapper (sink parent)
+       (Let (called const Int) (Apply sink (Reborrow parent))
+         (Assign parent 7))))
+  (define-values (_ir _filled typed) (type-core core '() callables))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-012"))
 
-(test-case "裸の呼出しの lexical loan は Scope 全体に残り Move は E-BOR-008"
+(test-case "裸の呼出しの直接借用は完了後に終わり Move できる"
   (define core
     `(Scope ()
        (Let (x let (Owned Int)) 1
          (Let (called const Int) ,(sink-call '(BorrowMut x))
            (Move x)))))
-  (check-equal? (failure-code core) "E-BOR-008"))
+  (define-values (_ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "region typing: ~s" typed))
+  (when (region-typed? typed)
+    (check-live-trace typed '(Owned Int))))
 
 (test-case "兄弟 Scope で呼出しを包むと loan が終わり Move できる"
   (define core
@@ -883,22 +886,28 @@
   (define-values (_ir _filled typed) (type-core core))
   (check-true (region-typed? typed) (format "region typing: ~s" typed)))
 
-(test-case "裸の呼出しを先に置くと後の Scope 包みも E-BOR-003"
+(test-case "裸の直接借用呼出しの後も Scope 包みを呼べる"
   (define core
     `(Scope ()
        (Let (x let (Owned Int)) 1
          (Let (first const Int) ,(sink-call '(BorrowMut x))
            ,(scoped-sink-call 'x)))))
-  (check-equal? (failure-code core) "E-BOR-003"))
+  (define-values (_ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "region typing: ~s" typed))
+  (when (region-typed? typed)
+    (check-live-trace typed 'Int)))
 
-(test-case "包んだ呼出しの後は裸の借用が Move を妨げる"
+(test-case "包んだ呼出しと裸の直接借用の後に Move できる"
   (define core
     `(Scope ()
        (Let (x let (Owned Int)) 1
          (Let (first const Int) ,(scoped-sink-call 'x)
            (Let (second const Int) ,(sink-call '(BorrowMut x))
              (Move x))))))
-  (check-equal? (failure-code core) "E-BOR-008"))
+  (define-values (_ir _filled typed) (type-core core))
+  (check-true (region-typed? typed) (format "region typing: ~s" typed))
+  (when (region-typed? typed)
+    (check-live-trace typed '(Owned Int))))
 
 (define (two-argument-core right-owner)
   `(Scope (1 2)
