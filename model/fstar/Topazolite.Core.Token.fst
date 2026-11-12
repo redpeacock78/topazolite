@@ -10,6 +10,7 @@ let rec term_size (t:term) : Tot nat (decreases t) =
   | OwnedTransit _ v -> 1 + term_size v
   | Apply cs -> 1 + terms_size cs
   | Let _ _ rhs body -> 1 + term_size rhs + term_size body
+  | LetB _ _ _ rhs body -> 1 + term_size rhs + term_size body
   | Construct _ _ cs -> 1 + terms_size cs
   | Rec fs -> 1 + fields_size fs
   | OwnLeaf c -> 1 + term_size c
@@ -28,8 +29,14 @@ let rec collect_tokens (t:term) : Tot (list token) (decreases (term_size t)) =
   match t with
   | OwnedLeaf tk v -> tk :: collect_tokens v
   | OwnedTransit _ v -> collect_tokens v
+  | Place _ -> []
+  | Move _ -> []
+  | Forward _ -> []
+  | Error _ -> []
+  | MutSlot _ -> []
   | Apply cs -> collect_terms cs
   | Let _ _ rhs body -> collect_tokens rhs @ collect_tokens body
+  | LetB _ _ _ rhs body -> collect_tokens rhs @ collect_tokens body
   | Construct _ _ cs -> collect_terms cs
   | Rec fs -> collect_fields fs
   | OwnLeaf c -> collect_tokens c
@@ -57,6 +64,7 @@ let rec ctx_tokens (e:ctx) : Tot (list token) (decreases e) =
   | EApply vs inner cs ->
       collect_terms (map value_to_term vs) @ ctx_tokens inner @ collect_terms cs
   | ELet _ _ inner body -> ctx_tokens inner @ collect_tokens body
+  | ELetB _ _ _ inner body -> ctx_tokens inner @ collect_tokens body
   | EConstruct _ _ vs inner cs ->
       collect_terms (map value_to_term vs) @ ctx_tokens inner @ collect_terms cs
   | ERec vfs _ _ inner cfs ->
@@ -138,6 +146,15 @@ let rec plug_tokens (e:ctx) (r:term) : Lemma
         append_count (ctx_tokens inner) (collect_terms cs) tk
       in FStar.Classical.forall_intro aux
   | ELet x ty inner body ->
+      plug_tokens inner r;
+      let aux (tk:token) : Lemma
+        (ensures count tk (collect_tokens (plug e r)) =
+          count tk (ctx_tokens e) + count tk (collect_tokens r)) =
+        append_count (collect_tokens (plug inner r))
+          (collect_tokens body) tk;
+        append_count (ctx_tokens inner) (collect_tokens body) tk
+      in FStar.Classical.forall_intro aux
+  | ELetB x mode ty inner body ->
       plug_tokens inner r;
       let aux (tk:token) : Lemma
         (ensures count tk (collect_tokens (plug e r)) =
@@ -240,6 +257,12 @@ let rec plug_tokens_congruent (e:ctx) (left right:term) : Lemma
               collect_tokens (plug inner left) @ collect_tokens body);
       assert (collect_tokens (plug e right) =
               collect_tokens (plug inner right) @ collect_tokens body)
+  | ELetB x mode ty inner body ->
+      plug_tokens_congruent inner left right;
+      assert (collect_tokens (plug e left) =
+              collect_tokens (plug inner left) @ collect_tokens body);
+      assert (collect_tokens (plug e right) =
+              collect_tokens (plug inner right) @ collect_tokens body)
   | EConstruct ty k vs inner cs ->
       plug_tokens_congruent inner left right;
       let prefix = map value_to_term vs in
@@ -251,6 +274,75 @@ let rec plug_tokens_congruent (e:ctx) (left right:term) : Lemma
         (plug inner left) (plug inner right) cfs
   | EOwnLeaf inner -> plug_tokens_congruent inner left right
   | EScope pi inner -> plug_tokens_congruent inner left right
+
+let subst_wref (x:name) (r:term) (w:wref) : wref =
+  match w with
+  | WVar y ->
+      if y = x then
+        (match r with
+         | Place p -> WPlace p
+         | MutSlot p -> WMutSlot p
+         | _ -> w)
+      else w
+  | _ -> w
+
+let rec subst_binder (x:name) (r:term) (t:term)
+  : Tot term (decreases (term_size t)) =
+  match t with
+  | OwnedLeaf tk v -> OwnedLeaf tk (subst_binder x r v)
+  | OwnedTransit p v -> OwnedTransit p (subst_binder x r v)
+  | Apply cs -> Apply (subst_terms x r cs)
+  | Let y ty rhs body ->
+      Let y ty (subst_binder x r rhs)
+        (if y = x then body else subst_binder x r body)
+  | LetB y mode ty rhs body ->
+      LetB y mode ty (subst_binder x r rhs)
+        (if y = x then body else subst_binder x r body)
+  | Construct ty tag cs -> Construct ty tag (subst_terms x r cs)
+  | Rec fields -> Rec (subst_fields x r fields)
+  | OwnLeaf c -> OwnLeaf (subst_binder x r c)
+  | Scope pi c -> Scope pi (subst_binder x r c)
+  | Move w -> Move (subst_wref x r w)
+  | Forward w -> Forward (subst_wref x r w)
+  | Opaque _ -> t
+  | Resource _ -> t
+  | PrimVal _ _ -> t
+  | Var y -> if y = x then r else t
+  | Place _ -> t
+  | Error _ -> t
+  | MutSlot _ -> t
+and subst_terms (x:name) (r:term) (ts:list term)
+  : Tot (list term) (decreases (terms_size ts)) =
+  match ts with
+  | [] -> []
+  | head :: rest -> subst_binder x r head :: subst_terms x r rest
+and subst_fields (x:name) (r:term) (fields:list (name & name & term))
+  : Tot (list (name & name & term)) (decreases (fields_size fields)) =
+  match fields with
+  | [] -> []
+  | (label, mode, field) :: rest ->
+      (label, mode, subst_binder x r field) :: subst_fields x r rest
+
+let subst_binder_shadow_check : unit =
+  assert_norm (subst_binder "x" (Place 3)
+                 (Let "x" "T" (Var "x") (Move (WVar "x")))
+               == Let "x" "T" (Place 3) (Move (WVar "x")))
+
+let subst_binder_move_check : unit =
+  assert_norm (subst_binder "x" (Place 3) (Move (WVar "x"))
+               == Move (WPlace 3))
+
+let subst_binder_mutslot_check : unit =
+  assert_norm (subst_binder "x" (MutSlot 3) (Move (WVar "x"))
+               == Move (WMutSlot 3))
+
+let subst_binder_forward_check : unit =
+  assert_norm (subst_binder "x" (Place 3) (Forward (WVar "x"))
+               == Forward (WPlace 3))
+
+let subst_binder_forward_mutslot_check : unit =
+  assert_norm (subst_binder "x" (MutSlot 3) (Forward (WVar "x"))
+               == Forward (WMutSlot 3))
 
 let rec heap_tokens (heap:list (nat & term)) : Tot (list token) (decreases heap) =
   match heap with
@@ -751,43 +843,43 @@ let example_delta_acquire () : Lemma
 //@ AUX: example OWN-009
 let example_ownleaf_fresh () : Lemma
   (ensures
-    (let e = EScope "" EHole in
+    (let e = EScope [] EHole in
      let s:state = { control = plug e (OwnLeaf (Resource 1));
                      heap = []; roots = []; ledger = []; trace = [] } in
      let after = step_ownleaf e (Resource 1) s 0 in
-     after.control = Scope "" (OwnedLeaf 0 (Resource 1)) /\
+     after.control = Scope [] (OwnedLeaf 0 (Resource 1)) /\
      after.ledger = [(0, Available)] /\
      structural_tokens after = [0] /\ observed_tokens after = [])) =
   assert_norm
-    (let e = EScope "" EHole in
+    (let e = EScope [] EHole in
      let s:state = { control = plug e (OwnLeaf (Resource 1));
                      heap = []; roots = []; ledger = []; trace = [] } in
      let after = step_ownleaf e (Resource 1) s 0 in
-     after.control = Scope "" (OwnedLeaf 0 (Resource 1)) /\
+     after.control = Scope [] (OwnedLeaf 0 (Resource 1)) /\
      after.ledger = [(0, Available)] /\
      structural_tokens after = [0] /\ observed_tokens after = [])
 
 //@ AUX: example OWN-009
 let example_ownleaf_pass () : Lemma
   (ensures
-    (let e = EScope "" EHole in
+    (let e = EScope [] EHole in
      let v = Resource 1 in
      let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
                      heap = []; roots = [];
                      ledger = [(4, Available)]; trace = [] } in
      let after = step_ownleaf_pass e 4 v
        s in
-     after.control = Scope "" (OwnedLeaf 4 (Resource 1)) /\
+     after.control = Scope [] (OwnedLeaf 4 (Resource 1)) /\
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])) =
   assert_norm
-    (let e = EScope "" EHole in
+    (let e = EScope [] EHole in
      let v = Resource 1 in
      let s:state = { control = plug e (OwnLeaf (OwnedLeaf 4 v));
                      heap = []; roots = [];
                      ledger = [(4, Available)]; trace = [] } in
      let after = step_ownleaf_pass e 4 v s in
-     after.control = Scope "" (OwnedLeaf 4 (Resource 1)) /\
+     after.control = Scope [] (OwnedLeaf 4 (Resource 1)) /\
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])
 
@@ -797,24 +889,24 @@ let example_ownleaf_transit () : Lemma
     (let payload = Construct "Option (Owned Res)" "some"
                      [OwnedLeaf 4 (Resource 1)] in
      let transit = OwnedTransit 0 payload in
-     let e = EScope "" EHole in
+     let e = EScope [] EHole in
      let s:state = { control = plug e (OwnLeaf transit);
                      heap = [(0, payload)]; roots = [(0, RMoved)];
                      ledger = [(4, Available)]; trace = [] } in
      let after = step_ownleaf_transit e 0 payload
        s in
-     after.control = Scope "" (OwnedTransit 0 payload) /\
+     after.control = Scope [] (OwnedTransit 0 payload) /\
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])) =
   assert_norm
     (let payload = Construct "Option (Owned Res)" "some"
                     [OwnedLeaf 4 (Resource 1)] in
      let transit = OwnedTransit 0 payload in
-     let e = EScope "" EHole in
+     let e = EScope [] EHole in
      let s:state = { control = plug e (OwnLeaf transit);
                      heap = [(0, payload)]; roots = [(0, RMoved)];
                      ledger = [(4, Available)]; trace = [] } in
   let after = step_ownleaf_transit e 0 payload s in
-     after.control = Scope "" (OwnedTransit 0 payload) /\
+     after.control = Scope [] (OwnedTransit 0 payload) /\
      after.ledger = [(4, Available)] /\
      structural_tokens after = [4] /\ observed_tokens after = [])
