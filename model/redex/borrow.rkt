@@ -165,10 +165,18 @@
   (unless (memq child-mode '(shared mut))
     (raise-argument-error 'psi-suspend "(or/c 'shared 'mut)" child-mode))
   (define held?
-    (for/or ([entry (in-set (psi-mut Ψ))])
-      (and (equal? (first entry) w)
-           (equal? (third entry) α_parent)
-           (path-prefix? (second entry) fp))))
+    (or (for/or ([entry (in-set (psi-mut Ψ))])
+          (and (equal? (first entry) w)
+               (equal? (third entry) α_parent)
+               (path-prefix? (second entry) fp)))
+        ;; 最初の共有子で親が mut から外れても、親は停止辺に残る。
+        ;; 共有の再借用ではその辺から兄弟子への停止も記録する。
+        (for/or ([entry (in-set (psi-suspended Ψ))])
+          (and (= (length entry) 8)
+               (eq? (eighth entry) 'shared)
+               (equal? (first entry) w)
+               (equal? (second entry) fp)
+               (equal? (third entry) α_parent)))))
   (define child-entry (list w fp α_child))
   (psi (if (eq? child-mode 'shared)
            (set-add (psi-shared Ψ) child-entry)
@@ -182,7 +190,7 @@
                (psi-mut Ψ)))
        (if held?
            (set-add (psi-suspended Ψ)
-                    (list w fp α_parent α_child node point window))
+                    (list w fp α_parent α_child node point window child-mode))
            (psi-suspended Ψ))
        (psi-flow Ψ)))
 
@@ -566,6 +574,9 @@
       (and (set-member? (use-request-source u) (third e))
            (capability-overlap? (first e) (second e)
                                 (use-request-w u) (use-request-fp u))
+           (not (and (equal? (length e) 8)
+                     (eq? (eighth e) 'shared)
+                     (eq? (use-request-operation u) 'read)))
            (if (and (seventh e) (use-request-point u))
                (inside-window? (seventh e) (sixth e)
                                (use-request-point u) #f)

@@ -4553,6 +4553,7 @@
     [else
      (define alpha
        (branch-binder-alpha! decomposition branch-index binder-index))
+     (define binder-mode 'mut)
      (when formal-parent?
        (define parent-keys (branch-binder-parent-keys))
        (unless (and parent-keys (set-mutable? parent-keys))
@@ -4602,7 +4603,7 @@
        (hash-set! event-info (list decomposition branch-index binder-index)
                   (list (first (template-collectors))
                         (if (formal-key? source-root) (fourth source-root) 'local)
-                        (cdr source-cap) event-parent-alpha 'mut
+                        (cdr source-cap) event-parent-alpha binder-mode
                         ambiguous-parent?)))
      (define branch-region (branch-region-of ir decomposition branch-index))
      (define parent-term
@@ -4653,7 +4654,8 @@
                (route-constraint!
                 (region-constraint 'reborrow α-parent alpha point node)
                 w node fail #f parent-fp child-fp)
-               (psi-suspend next w child-fp α-parent alpha 'mut node point))))
+               (psi-suspend next w child-fp α-parent alpha binder-mode
+                            node point))))
          (define request
            (borrow-request (car child-cap) (cdr child-cap) 'mut
                            alpha branch-region node point))
@@ -6628,9 +6630,8 @@
        (uniform-token-designators tokens core fail))
      ;; 合流後は operand の全実起点だけを停止し、同じ capability の古い要求を拾わない。
      (define parent-sources (capability-source τ_operand))
-     ;; Reborrow 自体も親可変 capability の使用である。二つ目の Reborrow が
-     ;; 窓の中で親を使うことを、停止中の親への通常の使用として判定する。
-     ;; 窓なしの経路は従来どおり σ だけで判定する。
+     ;; Reborrow 自体も共有子を作る親の使用として記録する。停止中の共有親は
+     ;; 読み取り扱いで許可し、停止中の可変親は通常の停止判定で拒否する。
      (define (existing-mut cap)
        (define matches
          (for/list ([entry (in-set (psi-mut Ψ_1))]
@@ -6663,8 +6664,17 @@
        (define w (car cap))
        (define fp (cdr cap))
        (define reborrow-window (reborrow-window-point w point))
-       (when reborrow-window
-         ;; operand は Reborrow の停止開始より先に評価される。
+       (define already-suspended?
+         (for/or ([entry (in-set (psi-suspended Ψ_1))])
+           (match entry
+             [(list entry-w entry-fp entry-parent
+                    _child _node _point _window _mode)
+              (and (equal? entry-w w)
+                   (equal? entry-fp fp)
+                   (equal? entry-parent α_parent))]
+             [_ #f])))
+       ;; operand は Reborrow の停止開始より先に評価される。
+       (when already-suspended?
          (emit-use-request! operand-Λ w fp 'read parent-sources
                            core 'borrow-conflicting-use #f fail))
        (for ([α_parent (in-list (hash-ref parent-terms cap))])
@@ -6796,14 +6806,15 @@
   ;; spec §5.4 の例外。直接の Owned payload は Borrowed の禁止形になる。
   (when (match (normalize-type τ_f) [`(Owned ,_) #t] [_ #f])
     (fail 'borrowed-owned-payload core))
+  (define projected-name (proj-borrow-mode m_parent m_f))
+  (define child-mode (if (eq? projected-name 'BorrowedMut) 'mut 'shared))
   (define source (use-source Λ operand τ_operand))
   (define tokens
     (typing-borrow-token-key (enter-child Λ 0) operand #:fail fail))
   (for ([cap (in-set tokens)])
-    (emit-use-request! Λ (car cap) (append (cdr cap) (list field-label)) 'read source
+    (emit-use-request! Λ (car cap) (append (cdr cap) (list field-label))
+                       (if (eq? child-mode 'shared) 'read 'borrow) source
                        core 'borrow-conflicting-use #f fail))
-  (define projected-name (proj-borrow-mode m_parent m_f))
-  (define child-mode (if (eq? projected-name 'BorrowedMut) 'mut 'shared))
   (cond
     [(deriving-config?)
      ;; 現在の machine 値は注釈 ρ を持つ一時 view である。place mark はこの

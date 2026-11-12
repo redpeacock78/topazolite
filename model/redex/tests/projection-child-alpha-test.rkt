@@ -34,6 +34,12 @@
   `(Let (s let (Borrowed Int (RParam %omitted))) (ProjBorrow p k)
      ,body))
 
+(define (with-shared-projected-child body)
+  (with-parent
+   `(Let (q let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+      (Let (s let (Borrowed Int (RParam %omitted))) (ProjBorrow q g)
+        ,body))))
+
 (define (with-shared-parent body)
   `(Scope ()
      (Let (x let (Owned ,owner-type)) ,owner-value
@@ -148,12 +154,52 @@
      (then `(Assign p ,owner-value) '(Read s))))
    "E-BOR-025" '() "§5.1-3"))
 
-(test-case "0b0b3 で受理へ反転する共有の欄の子の間の親 Read"
-  (check-rejected
+(test-case "共有の欄の子が生きている間に親を Read できる"
+  (check-accepted
    (with-parent
     (with-shared-child
      (then/as owner-type '(Read p) '(Read s))))
-   "E-BOR-025" '() "§5.1-4"))
+   'Int '() "§5.1-4"))
+
+(test-case "共有の射影子が生きている間の同じ欄の可変 ProjBorrow は拒否"
+  (check-rejected
+   (with-shared-projected-child
+    `(Let (m let (BorrowedMut Int (RParam %omitted))) (ProjBorrow p g)
+       ,(then '(Assign m 9) '(Read s))))
+   "E-BOR-003" '() "focus4-projborrow"))
+
+(test-case "共有の射影子が生きている間に可変親を再 Reborrow できる"
+  (check-accepted
+   (with-shared-projected-child
+    `(Let (again let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+       ,(then/as 'Int '(Read (ProjBorrow again g)) '(Read s))))
+   'Int '() "focus4-reborrow"))
+
+(test-case "共有 Reborrow の兄弟を二つ生かしたまま親を再 Reborrow できる"
+  (check-accepted
+   (with-parent
+    `(Let (first let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+       (Let (second let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+         ,(then/as 'Int '(Read (ProjBorrow first g))
+                   '(Read (ProjBorrow second g))))))
+   'Int '() "focus4-direct-reborrow-siblings"))
+
+(test-case "二つの共有 Reborrow が生きている間の親 Assign は E-BOR-025"
+  (check-rejected
+   (with-parent
+    `(Let (first let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+       (Let (second let (Borrowed ,owner-type (RParam %omitted))) (Reborrow p)
+         ,(then `(Assign p ,owner-value)
+                (then/as owner-type '(Read first)
+                  (then/as 'Int '(Read (ProjBorrow second g)) 0))))))
+   "E-BOR-025" '() "focus4-reborrow-parent-assign"))
+
+(test-case "共有の射影子が生きている間に owner を BorrowMut してはならない"
+  (check-rejected
+   (with-shared-projected-child
+    `(Let (again let (BorrowedMut ,owner-type (RParam %omitted))) (BorrowMut x)
+       ,(then/as 'Int '(Read (ProjBorrow again g)) '(Read s))))
+   "E-BOR-003" '() "focus4-borrow-mut"))
 
 (test-case "可変の欄の子と親の Reborrow は重なり E-BOR-025"
   (check-rejected
@@ -171,14 +217,22 @@
              `(Assign p ,owner-value)))
    "E-BOR-025" '() "§5.1-6"))
 
-(test-case "Reborrow の間は可変の欄の子を再使用できない"
+(test-case "共有 Reborrow 子が生きている間に親欄を Read できる"
+  (check-accepted
+   (with-parent
+    (with-mut-child
+     `(Let (r let (Borrowed ,inner-type (RParam %omitted))) (Reborrow c)
+        ,(then/as inner-type '(Read c)
+                  '(Read (ProjBorrow r h))))))
+   'Int '() "direct-reborrow-parent-read"))
+
+(test-case "共有 Reborrow 子が生きている間の親 Assign は E-BOR-025"
   (check-rejected
    (with-parent
     (with-mut-child
      `(Let (r let (Borrowed ,inner-type (RParam %omitted))) (Reborrow c)
-        ,(then/as 'Int '(Read (ProjBorrow c h))
-                  '(Read (ProjBorrow r h))))))
-   "E-BOR-025" '() "§5.1-8"))
+        ,(then `(Assign c (Rec ((h mut 9)))) '(Read (ProjBorrow r h))))))
+   "E-BOR-025" '() "direct-reborrow-parent-assign"))
 
 (test-case "Reborrow の間は親から同じ path を射影して Read できない"
   (check-rejected
@@ -288,7 +342,7 @@
     [other (fail (format "expected reborrow-parent-live for sibling projections, got ~e"
                          other))]))
 
-(test-case "oracle は共有射影子の間の可変親 Read も保守的に拒否する"
+(test-case "oracle は共有射影子の間の可変親 Read を受理する"
   (define config
     '(cfg
       (Scope (0 1)
@@ -300,8 +354,8 @@
          (declared (Record ((f Int imm) (g Int mut))))))
       ((0 Available) (1 Available)) () ()))
   (match (check-borrow-execution config #f #f 100 (make-bcounters))
-    [(list 'fail 'reborrow-parent-live _detail) (check-true #t)]
-    [other (fail (format "expected reborrow-parent-live, got ~e" other))]))
+    ['ok (check-true #t)]
+    [other (fail (format "expected ok, got ~e" other))]))
 
 (test-case "可変子の内側 Scope 後に子を使い直す"
   (check-accepted
@@ -526,14 +580,15 @@
   (check-accepted (with-parent (projection-call body))
                   'Int projection-callables "§5.1-7-other-field"))
 
-(test-case "仮引数の射影を Reborrow した子の間に親 view を使うと E-BOR-025"
-  (check-rejected
+(test-case "仮引数の射影を Reborrow した子の間に親欄を Read できる"
+  (check-accepted
    (with-parent
     (projection-call
      `(Let (c let (BorrowedMut ,inner-type (RParam a))) (ProjBorrow p f)
         (Let (r let (Borrowed ,inner-type (RParam a))) (Reborrow c)
-          ,(then/as inner-type '(Read c) '(Read (ProjBorrow r h)))))))
-   "E-BOR-025" projection-callables "§5.1-11-parent-view"))
+          ,(then/as inner-type '(Read c)
+                    '(Read (ProjBorrow r h)))))))
+   'Int projection-callables "shared-reborrow-formal-parent-read"))
 
 (test-case "仮引数射影の Reborrow 中も別欄の Read は通る"
   (define body

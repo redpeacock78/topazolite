@@ -331,9 +331,10 @@
       tag p fp ρ (borrowed-eliminate-children redex contractum rule-name))]
     [(list `(Read (,tag ,p ,fp ,ρ)) _)
      #:when (memq tag '(BorrowRef BorrowMutRef))
-     (list (list 'use (if (eq? tag 'BorrowMutRef) 'mut 'shared) p fp ρ))]
+     (list (list 'use 'read
+                 (if (eq? tag 'BorrowMutRef) 'mut 'shared) p fp ρ))]
     [(list `(Assign (BorrowMutRef ,p ,fp ,ρ) ,_) 'unit)
-     (list (list 'use 'mut p fp ρ))]
+     (list (list 'use 'assign 'mut p fp ρ))]
     [_ #f]))
 
 ;; contractum の中の借用値をすべて拾う。
@@ -822,9 +823,11 @@
 ;; 同じ正規化借用の複数の出現は、取得ではなく同じ loan の複製である。
 (define (parent-edge-pair edge)
   (match edge
-    [(list 'derived child parent) (list child parent)]
-    [(list 'reborrow child parent) (list child parent)]
-    [(list child parent) (list child parent)]
+    [(list 'derived child parent mode) (list child parent mode)]
+    [(list 'derived child parent) (list child parent (first child))]
+    [(list 'reborrow child parent mode) (list child parent mode)]
+    [(list 'reborrow child parent) (list child parent (first child))]
+    [(list child parent) (list child parent (first child))]
     [_ #f]))
 
 (define (loan-ancestor? descendant ancestor edges)
@@ -862,6 +865,7 @@
     (match edge
       ;; 直接の Reborrow も射影の子と同じく、実際の親の使用段で判定する。
       [(list 'reborrow _child _parent) #f]
+      [(list 'reborrow _child _parent _mode) #f]
       [(list child parent)
        (and (set-member? live child)
             (set-member? live parent)
@@ -886,17 +890,21 @@
   (define edges (filter values (map parent-edge-pair parents)))
   (define (source candidate)
     (match candidate
-      [(list 'use 'mut p fp ρ)
-       (list (list 'mut p fp ρ) (list 'mut p fp ρ))]
+      [(list 'use operation _mode p fp ρ)
+       (list (list 'mut p fp ρ) (list 'mut p fp ρ) operation)]
       [(list 'derived _mode p fp _ρ pp pfp pρ)
-       (list (list 'mut pp pfp pρ) (list 'mut p fp pρ))]
+       (list (list 'mut pp pfp pρ)
+             (list 'mut p fp pρ)
+             (if (eq? _mode 'shared) 'read 'borrow))]
       [(list 'reborrow p fp _ρ ρ-parent)
-       (list (list 'mut p fp ρ-parent) (list 'mut p fp ρ-parent))]
+       (list (list 'mut p fp ρ-parent)
+             (list 'mut p fp ρ-parent) 'read)]
       [_ #f]))
   (for/or ([candidate (in-list candidates)])
     (define source-pair (source candidate))
     (define parent (and source-pair (first source-pair)))
     (define operation (and source-pair (second source-pair)))
+    (define operation-kind (and source-pair (third source-pair)))
     (and parent
          (set-member? live parent)
          (for/or ([edge (in-list edges)])
@@ -905,6 +913,8 @@
                 (set-member? live child)
                 (loan-ancestor? child parent edges)
                 (borrows-overlap? child operation)
+                (not (and (eq? (third edge) 'shared)
+                          (eq? operation-kind 'read)))
                 (list 'fail 'reborrow-parent-live (list child parent)))))))
 
 ;; spec §4.6。static request の designator が動的な place へ解けるかを調べる。
@@ -1051,7 +1061,7 @@
      (if (derived-matches? candidate pre)
          (begin (bump! counters 'proj) #f)
          (list 'fail 'unmatched-derived candidate))]
-    [(list 'use _mode _p _fp _ρ) (bump! counters 'use) #f]
+    [(list 'use _operation _mode _p _fp _ρ) (bump! counters 'use) #f]
     [_ (list 'fail 'unknown-candidate candidate)]))
 
 (define (classify-all! candidates statics prov pre counters)
@@ -1077,7 +1087,8 @@
     [(list 'reborrow p fp ρ ρ-parent)
      (cons (list 'reborrow
                  (list 'shared p fp ρ)
-                 (list 'mut p fp ρ-parent))
+                 (list 'mut p fp ρ-parent)
+                 'shared)
            parents)]
     [(list 'derived mode p fp ρ pp pfp pρ)
      (append
@@ -1085,6 +1096,6 @@
                  #:when (and (equal? (second parent) pp)
                              (equal? (third parent) pfp)
                              (equal? (fourth parent) pρ)))
-        (list 'derived (list mode p fp ρ) parent))
+        (list 'derived (list mode p fp ρ) parent mode))
       parents)]
     [_ parents]))

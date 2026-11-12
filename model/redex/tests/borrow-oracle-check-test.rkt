@@ -618,12 +618,46 @@
       ((0 (resource 1000))) ((0 Available)) () ()))
   (check-borrow-execution config sidecar #f 100 (make-bcounters)))
 
+(define (two-direct-reborrows-result parent-use)
+  (define sidecar
+    (borrow-sidecar
+     (list (borrow-request 0 '() 'shared 'oracle-alpha-first 1
+                           'first-child '(0 0))
+           (borrow-request 0 '() 'shared 'oracle-alpha-second 2
+                           'second-child '(0 1)))
+     (hash)))
+  (define after
+    '(Let (first-use const Unit) (Read first)
+       (Read second)))
+  (define body
+    (if parent-use
+        `(Let (parent-use const Unit) ,parent-use ,after)
+        after))
+  (define config
+    `(cfg
+      (Scope (0 1 2)
+        (Let (first let (Borrowed Int 1))
+             (ReborrowAt 1 (BorrowMutRef 0 () 0))
+          (Let (second let (Borrowed Int 2))
+               (ReborrowAt 2 (BorrowMutRef 0 () 0))
+            ,body)))
+      ((0 (resource 1000))) ((0 Available)) () ()))
+  (check-borrow-execution config sidecar #f 100 (make-bcounters)))
+
 (test-case "直接 Reborrow の子が生きている間の親 Assign は拒否する"
   (match (direct-reborrow-parent-use-result '(Assign (BorrowMutRef 0 () 0) 9))
     [(list 'fail 'reborrow-parent-live _detail) (check-true #t)]
     [other (fail (format "expected Assign rejection, got ~e" other))]))
 
-(test-case "直接 Reborrow の子が生きている間の親 Read は Task 6 で反転予定"
+(test-case "直接 Reborrow の子が生きている間の親 Read は受理"
   (match (direct-reborrow-parent-use-result '(Read (BorrowMutRef 0 () 0)))
+    ['ok (check-true #t)]
+    [other (fail (format "expected Read acceptance, got ~e" other))]))
+
+(test-case "oracle は共有子の生存中に直接 Reborrow をもう一つ作れる"
+  (check-equal? (two-direct-reborrows-result #f) 'ok))
+
+(test-case "oracle は共有 Reborrow 子の生存中の親 Assign を拒否する"
+  (match (two-direct-reborrows-result '(Assign (BorrowMutRef 0 () 0) 9))
     [(list 'fail 'reborrow-parent-live _detail) (check-true #t)]
-    [other (fail (format "expected Read rejection, got ~e" other))]))
+    [other (fail (format "expected reborrow-parent-live, got ~e" other))]))

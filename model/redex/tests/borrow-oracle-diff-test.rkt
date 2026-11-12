@@ -119,11 +119,11 @@
    (borrow-form-candidates
     '(Read (BorrowRef 3 () 0))
     'unit)
-   (list (list 'use 'shared 3 '() 0))))
+   (list (list 'use 'read 'shared 3 '() 0))))
 
 (test-case "Assign は可変借用の使用を分類する"
   (check-equal?
    (borrow-form-candidates
     '(Assign (BorrowMutRef 3 () 0) 1)
     'unit)
-   (list (list 'use 'mut 3 '() 0))))
+   (list (list 'use 'assign 'mut 3 '() 0))))

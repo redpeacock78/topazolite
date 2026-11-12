@@ -46,6 +46,21 @@
      (Let (p let (BorrowedMut ,eowner-type (RParam %omitted))) (BorrowMut x)
        ,body)))
 
+(define shared-ro-owner-type
+  `(Record ((g Int mut) (o ,opt-int mut) (ro ,opt-inner imm)
+            (u ,union-int-string mut))))
+(define shared-ro-owner-value
+  `(Rec ((g mut 2)
+         (o mut (Construct ,opt-int some 1))
+         (ro imm (Construct ,opt-inner some (Rec ((h mut 1)))))
+         (u mut (UnionInject ,union-int-string Int 1)))))
+(define (with-shared-ro-parent body)
+  `(Scope ()
+     (Let (x let (Owned ,shared-ro-owner-type)) ,shared-ro-owner-value
+       (Let (p let (BorrowedMut ,shared-ro-owner-type (RParam %omitted)))
+            (BorrowMut x)
+         ,body))))
+
 (define write-o `(Assign (ProjBorrow p o) (Construct ,opt-int none)))
 (define read-o '(Read (ProjBorrow p o)))
 (define (elim-u int-body [string-body 'unit])
@@ -2624,6 +2639,24 @@
        (Let (written let Unit) (Assign p ,eowner-value)
          (Read (Proj escaped payload))))))
    "param-parent-record-escape"))
+
+(test-case "共有の分解 binder が生きている枝で親を Read できる"
+  (check-accepted
+   (with-shared-ro-parent
+    (elim-ro
+     `(Let (view let ,opt-inner) (Read (ProjBorrow p ro))
+        (Read (ProjBorrow c h)))
+     0))
+   'Int '() "focus5-shared-binder"))
+
+(test-case "可変の分解 binder が生きている枝で親を Read すると E-BOR-025"
+  (check-rejected
+   (with-eparent
+    (elim-ro
+     `(Let (view let ,opt-inner) (Read (ProjBorrow p ro))
+        (Read (ProjBorrow c h)))
+     0))
+   "E-BOR-025" '() "focus5-mut-binder"))
 
 (test-case "escape-apply: identity の結果を分解の外へ出すと E-BOR-025"
   (define identity-type

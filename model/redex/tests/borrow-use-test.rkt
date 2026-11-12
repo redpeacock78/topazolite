@@ -88,7 +88,7 @@
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir NEST)
                 'fail))
 
-;; 9。子が生きているあいだ、親を通した Read を拒む。
+;; 9。共有の子が生きているあいだ、親を通した Read は許可する。
 (let ()
   (define (make ρ_b ρ_c)
     `(Scope (1)
@@ -97,7 +97,7 @@
                       (Read b)))))
   (define ir (build-region-ir (make 0 0)))
   (check-equal? (status (make (rho-at ir '(0 0)) (rho-at ir '(0 1 0))) ir 'Int)
-                'fail))
+                'ok))
 
 (test-case "BOR-004: 共有 Read と可変借用の利用は許し、共有借用への書込みは拒む"
   (for ([core (in-list '((Scope (1) (Read (Borrow 1)))

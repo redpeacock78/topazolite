@@ -679,7 +679,7 @@
      body #f '(Let (again let (BorrowedMut Int ph)) (BorrowMut owner) unit)))
   (check-equal? (window-failure-code bare) "E-BOR-003"))
 
-(test-case "子が生きている Scope 内の二つ目の Reborrow は拒否"
+(test-case "子が生きている Scope 内で二つ目の共有 Reborrow を作れる"
   (define body
     '(Scope ()
        (Let (first let (Borrowed Int ph)) (Reborrow p)
@@ -687,7 +687,7 @@
            (Let (read-first const Int) (Read first)
              (Let (read-second const Int) (Read second) unit))))))
   (define core (inner-scope-core body #t))
-  (check-equal? (window-failure-code core) "E-BOR-025"
+  (check-false (window-failure-code core)
                 (format "~s" (window-result core))))
 
 (test-case "先行する親の書込みは Reborrow の開始窓に止められない"

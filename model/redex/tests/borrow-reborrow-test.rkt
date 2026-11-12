@@ -231,7 +231,7 @@
             [else t])))
   (check-equal? (first (type-of/raw core '() '() '() (Λ-of ir))) 'ok))
 
-;; 親の再開後まで共有借用を使うと、親の可変 loan と衝突する。
+;; 停止中の親 Read は許し、後続の独立した owner 借用の使用は拒否する。
 (let ()
   (define (skeleton resume-parent?)
     `(Scope ()
@@ -266,7 +266,7 @@
   (define diagnostic (core-type-of/regions with-resumption '() '()))
   (check-true (diagnostic? diagnostic))
   (check-equal? (diagnostic-id diagnostic) "E-BOR-025")
-  (check-equal? (diagnostic-primary-span diagnostic) '(#:span src 80 87))
+  (check-equal? (diagnostic-primary-span diagnostic) '(#:span src 70 78))
   (define-values (without-resumption _ir-without) (prepare #f))
   (define control (core-type-of/regions without-resumption '() '()))
   (check-true (diagnostic? control))
