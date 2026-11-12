@@ -6483,6 +6483,8 @@
                    (check-region-args ir σ (collected-region-args) relation fail)
                    (define handle-closures
                      (remove-duplicates (unbox handle-closures-box) equal?))
+                   ;; 静的検査には Handle 出口で閉じた入力を渡す。
+                   ;; sidecar には oracle 用の raw 要求を残す。
                    (check-borrows
                     ir σ
                     (close-handle-return-loans Ψ σ handle-closures)
@@ -10061,6 +10063,8 @@
               (define handle-requests
                 (close-handle-return-requests
                  Ψ σ raw-requests handle-closures))
+              ;; 静的検査には Handle 出口で閉じた入力を渡す。
+              ;; sidecar には oracle 用の raw 要求を残す。
               (check-borrows
                ir σ
                (close-handle-return-loans Ψ σ handle-closures)

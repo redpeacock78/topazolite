@@ -198,8 +198,10 @@
            (Let (_ const Unit) (Assign parent 2)
              (Let (_ const Int) (Read result) unit)))))))
 
-(define (task5b-diagnostic-id core [callables task5b-return-borrow-callables])
-  (define-values (_ir _filled typed) (type-core core '() callables))
+(define (task5b-diagnostic-id core [callables task5b-return-borrow-callables]
+                              [owner-points (hash 'owner-ph '(0))])
+  (define-values (_ir _filled typed)
+    (type-core core '() callables owner-points))
   (and (diagnostic? typed) (diagnostic-id typed)))
 
 (define record-owner-type '(Record ((o (Option Int) mut))))
@@ -1137,6 +1139,79 @@
 (test-case "内側 Handle が捕捉 payload を結果に返すと外側 Assign は拒否する"
   (define core (task5b-inner-result-core 'captured))
   (check-equal? (task5b-diagnostic-id core) "E-BOR-025"))
+
+(test-case "単独 Handle handler の Assign 後 Read は親の loan と衝突する"
+  (define core
+    `(Scope ()
+       (Let (other let (Owned Int)) 3
+         (Let (other-parent let (BorrowedMut Int other-ph))
+              (BorrowMut other)
+           (Scope ()
+             (Let (owner let (Owned Int)) 1
+               (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+                 (Let (_ const (Borrowed Int other-ph))
+                      (Handle (Return boundary (Borrowed Int owner-ph))
+                        (captured ->
+                          (Let (_ const Unit) (Assign parent 2)
+                            (Let (_ const Int) (Read captured)
+                              (Reborrow other-parent))))
+                        ,(task5b-return-borrow-apply 'parent))
+                   0))))))))
+  (check-equal?
+   (task5b-diagnostic-id
+    core task5b-return-borrow-callables
+    (hash 'other-ph '(0) 'owner-ph '(0 1 1 0)))
+   "E-BOR-025"))
+
+(test-case "内側 handler の親 Assign 後に捕捉値を Read すると E-BOR-025"
+  (define core
+    `(Scope ()
+       (Let (other let (Owned Int)) 3
+         (Let (other-parent let (BorrowedMut Int other-ph))
+              (BorrowMut other)
+           (Scope ()
+             (Let (owner let (Owned Int)) 1
+               (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+                 (Let (_ const (Borrowed Int other-ph))
+                      (Handle (Return boundary (Borrowed Int owner-ph))
+                        (outer ->
+                          (Let (_ const Unit) (Assign parent 2)
+                            (Reborrow other-parent)))
+                        (Handle (Return boundary (Borrowed Int owner-ph))
+                          (inner ->
+                            (Let (_ const Unit) (Assign parent 2)
+                              (Let (_ const Int) (Read inner)
+                                (Reborrow other-parent))))
+                          ,(task5b-return-borrow-apply 'parent)))
+                 unit))))))))
+  (check-equal?
+   (task5b-diagnostic-id
+    core task5b-return-borrow-callables
+    (hash 'other-ph '(0) 'owner-ph '(0 1 1 0)))
+   "E-BOR-025"))
+
+(test-case "Handle handler は捕捉値を Read してからの親 Assign を判定する"
+  (define core
+    `(Scope ()
+       (Let (other let (Owned Int)) 3
+         (Let (other-parent let (BorrowedMut Int other-ph))
+              (BorrowMut other)
+           (Scope ()
+             (Let (owner let (Owned Int)) 1
+               (Let (parent let (BorrowedMut Int ph)) (BorrowMut owner)
+                 (Let (_ const (Borrowed Int other-ph))
+                      (Handle (Return boundary (Borrowed Int owner-ph))
+                        (captured ->
+                          (Let (_ const Int) (Read captured)
+                            (Let (_ const Unit) (Assign parent 2)
+                              (Reborrow other-parent))))
+                        ,(task5b-return-borrow-apply 'parent))
+                   0))))))))
+  (check-equal?
+   (task5b-diagnostic-id
+    core task5b-return-borrow-callables
+    (hash 'other-ph '(0) 'owner-ph '(0 1 1 0)))
+   "E-BOR-025"))
 
 (test-case "内側 Handle の捕捉 payload を Let で返すと外側 Assign は拒否する"
   (define core
