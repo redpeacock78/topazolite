@@ -121,6 +121,7 @@
          current-local-exit-window-probe
          current-callable-summary-boundary-probe
          current-deferred-owner-check-probe
+         current-typing-normal-result-probe
          leaf-exit-destinations
          site-position-matches?
          normalize-leaf-exits
@@ -7182,6 +7183,7 @@
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
 ;; ρ は結果の型に現れない（spec §6.1）。
 (define (infer-read core operand Λ Ψ environment places callables fail)
+  (define local-psi (flow-clear-escapes Ψ))
   (define direct-pointee-type
     (direct-borrow-payload-type operand environment places))
   ;; 計算式を親に持つ Reborrow は、親を一度だけ先に synth して型を調べる。
@@ -7195,7 +7197,7 @@
             (define reborrow-Λ (enter-child Λ 0))
             (list parent
                   (infer parent (enter-child reborrow-Λ 0)
-                         Ψ environment places callables fail))]
+                         local-psi environment places callables fail))]
            [`(ReborrowAt ,ρ ,parent)
             #:when (not (or (symbol? parent)
                             (exact-nonnegative-integer? parent)))
@@ -7203,7 +7205,7 @@
             (check-region-annotation reborrow-Λ ρ operand fail)
             (list parent
                   (infer parent (enter-child reborrow-Λ 0)
-                         Ψ environment places callables fail))]
+                         local-psi environment places callables fail))]
            [_ #f])))
   (define reborrow-parent-type
     (and reborrow-parent-result
@@ -7245,7 +7247,7 @@
             operand operand-Λ Ψ environment places callables fail
             (infer-reborrow/operand-result
              operand (first reborrow-parent-result) operand-Λ
-             Ψ environment places callables fail
+             local-psi environment places callables fail
              (second reborrow-parent-result)))
            (infer operand operand-Λ Ψ environment places callables fail)))))
   (define τ_operand
@@ -7716,6 +7718,7 @@
     (Unsafe (0) ())))
 
 (define typing-normal-results (make-parameter #f))
+(define current-typing-normal-result-probe (make-parameter #f))
 
 (define (typing-context-rule core)
   (define term (peel-node core))
@@ -7869,8 +7872,10 @@
 (define (record-typing-result! Λ actual-type normal-type row escape-operations)
   (define table (typing-normal-results))
   (when table
-    (hash-set! table (region-ctx-point Λ)
-               (list actual-type normal-type row escape-operations))))
+    (define result (list actual-type normal-type row escape-operations))
+    (hash-set! table (region-ctx-point Λ) result)
+    (define probe (current-typing-normal-result-probe))
+    (when probe (probe (region-ctx-point Λ) result))))
 
 (define (psi-escape-operations Ψ)
   ;; wrapper は入口で E を消すため、restore 前の Ψ に局所 E だけが残る。

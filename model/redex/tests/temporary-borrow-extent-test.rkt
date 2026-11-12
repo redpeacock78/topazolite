@@ -294,6 +294,45 @@
      (check-equal? core `(BorrowRef 0 () ,beta))]
     [config (check-true #f (format "terminal config: ~s" config))]))
 
+(test-case "一時借用_計算式の親を読むReborrow pointへ以前のReturn escapeを記録しない"
+  (define callables
+    `((earlier-return (NFn () Int () ((Return prior-boundary Int)) () User))
+      (escape-before-read
+       (ForallRegion (a)
+         (NFn ((BorrowedMut Int (RParam a))) Int ()
+              ((Return prior-boundary Int)) () User)))))
+  (define core
+    '(RegionLam (a)
+       (Lam User escape-before-read (parent)
+         (Let (earlier-return const
+                              (NFn () Int ()
+                                   ((Return prior-boundary Int)) () User))
+              (Lam User earlier-return ()
+                (Perform (Return prior-boundary Int) 0))
+           (Let (prior const Int) (Apply earlier-return)
+             (Read
+              (Reborrow
+               (Let (seen const Int) 0 parent))))))))
+  (define results (make-hash))
+  (define-values (_ir _filled typed)
+    (parameterize
+        ([current-typing-normal-result-probe
+          (lambda (point result) (hash-set! results point result))])
+      (type-core core '() callables)))
+  (check-true (region-typed? typed) (format "escape/read typing: ~s" typed))
+  (when (region-typed? typed)
+    (define earlier-apply-point
+      (core-point core
+                  (lambda (node) (equal? node '(Apply earlier-return)))))
+    (define reborrow-point
+      (core-point core
+                  (lambda (node)
+                    (match node [`(Reborrow ,_) #t] [_ #f]))))
+    (check-not-false (pair? (fourth (hash-ref results earlier-apply-point)))
+                     "先行する latent Return は Apply point に記録される")
+    (check-equal? (fourth (hash-ref results reborrow-point)) '()
+                  "Reborrow point の escape 欄は局所分だけである")))
+
 (test-case "一時借用_計算式の親は一度だけ型付けする"
   (define core
     `(Scope ()
@@ -832,6 +871,54 @@
     (type-core core '() callable-temporary-read-write-callables))
   (check-runtime typed ir callable-temporary-read-write-callables 'Unit
                  "callable computed-parent Reborrow Read then Assign"))
+
+(define reusable-temporary-read-write-signature
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+
+(define (reusable-temporary-read-write-value name)
+  `(RegionLam (a)
+     (Lam User ,name (p)
+       (Let (read-result const Int)
+         (Read (Reborrow (Let (seen const Int) 0 p)))
+         (Assign p 7)))))
+
+(define (reusable-temporary-read-write-apply)
+  '(Apply (RegionApp reusable (owner-ph)) (BorrowMut owner)))
+
+(test-case "一時借用_Let束縛したcallableを後の位置でApply"
+  (define callables
+    (cons (list 'reusable-temporary-read-write
+                reusable-temporary-read-write-signature)
+          temporary-callables))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (reusable const ,reusable-temporary-read-write-signature)
+           ,(reusable-temporary-read-write-value
+             'reusable-temporary-read-write)
+           ,(reusable-temporary-read-write-apply)))))
+  (define-values (ir _filled typed)
+    (type-core core '() callables))
+  (check-runtime typed ir callables 'Unit "Let-bound callable Apply"))
+
+(test-case "一時借用同じLet束縛callableを二度Apply"
+  (define callables
+    (cons (list 'reusable-temporary-read-write
+                reusable-temporary-read-write-signature)
+          temporary-callables))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (reusable const ,reusable-temporary-read-write-signature)
+           ,(reusable-temporary-read-write-value
+             'reusable-temporary-read-write)
+           (Let (first-call const Unit)
+             ,(reusable-temporary-read-write-apply)
+             ,(reusable-temporary-read-write-apply))))))
+  (define-values (ir _filled typed)
+    (type-core core '() callables))
+  (check-runtime typed ir callables 'Unit "same Let-bound callable twice"))
 
 (test-case "一時借用_callable本体でLet束縛したReborrowの生存中に仮引数へAssignしApply"
   (define core
