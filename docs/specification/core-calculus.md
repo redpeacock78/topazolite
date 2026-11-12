@@ -3169,6 +3169,12 @@ F は純粋文脈なので、Perform と handler の間に Scope があれば R-
 op の一致は境界 ID b と型 τ の両方の一致である。
 型の異なる境界が Return を横取りすることはない（§7 性質 4）。
 
+上記は実行時の規則であり、borrow の型検査では呼出し越しの Return payload の capability も扱う。
+callee の callable summary にある `handle` 出口イベントを `Apply` で実引数へ実体化し、境界 ID と payload 型が一致する最も内側の Return-handler entry へ payload の型と capability を一緒に渡す。
+Handle の束縛子と結果の capability は、entry の capability と構文から得た capability を合併する。
+payload の出口イベントが無い、仮引数を起点としない、または owner/path が曖昧である場合は capability を推測せず fail closed にする。
+この静的な対応づけは `R-HandleReturn` の動的な代入と frame の drop 規則を変更しない。
+
 ## 6. 観測と計算分類
 
 ### 6.1 観測関係

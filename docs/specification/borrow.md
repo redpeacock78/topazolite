@@ -305,6 +305,50 @@ path は型の構造をたどり、record 欄、構成子の欄位置、Union me
 結果の capability 表は、各結果 leaf について候補となる実引数の対応欄の capability を合わせて作る。
 結果値そのものは、実際に返った `BorrowRef` または `BorrowMutRef` の root と path を保つ。
 
+### callable summary の出口と呼出し側の実体化
+
+callable の本体から仮引数を親とする分解 binder や再借用を生じるとき、定義位置では実引数の owner と path が分からない。
+その要求は仮引数の形式キー（仮引数 index と入力型の canonical path）、親の相対 path、借用 mode、寿命変数、本体内の point と結び付けた deferred summary として保持する。
+分解 binder は仮引数起点とは別の source として識別し、binder の寿命変数と出口イベントを保持する。
+再帰呼出しでは summary を有限集合として seed と本体の情報を合併し、出口イベントも等値と停止の判定対象にする。
+
+本体の全出口を次の七種類に分類する。
+
+- `local`：本体内で使い切り、外へ届かない。
+- `result`：関数の結果へ届く。
+- `formal`：別の仮引数の欄へ届く。
+- `handle`：`Perform(Return, payload)` として呼出し側の `Handle` へ届く。
+- `yield`：`Yield` などの観測先へ届く。
+- `capture`：閉包または部分適用へ捕捉される。
+- `storage`：`Owned` の slot へ格納される。
+
+`local` は既定値ではない。イベントが無いことだけでは local と判定しない。
+未分類の出口、収集漏れ、不完全な summary、曖昧または欠落した owner/path は fail closed とする。
+owner/outlives の保留項目を持つ callable 値の summary を運べる位置は、`Let` の束縛式と結果、直書きまたは `Let` 束縛の `RegionLam` への `RegionApp`、`Move`、`Unsafe` の本体、`Scope` の結果、`Apply` の callee、および `Recur` / `RecurVal` の枠に限る。
+部分適用、capture、`Apply` の実引数または結果、集約値・構成子・`UnionInject`、分解の枝、`Handle` の Return payload、`Yield`、`Discharge`、`Forward`、未知の親位置で保留項目が失われる場合は、その境界で `E-BOR-006` にする。
+これは callable 値に付いた保留項目の transport 規則である。後述する `Apply` の `handle` 出口イベントを Return-handler entry へ実体化する経路は、この拒否には含めない。
+外部または宣言のみの callable は本体由来の summary を持たないため、summary の無い `Apply` に型ベースの代替判定は加えない。
+
+`Apply` では `RegionApp` の実引数で `RParam` を置換し、formal key の path を実引数の capability 欄へ解決してから要求と停止を検査する。
+owner または path を一意に引けない場合は呼出し点で `E-BOR-006` にする。
+分類済み出口の下限は、`local` なら Apply の実行 subtree、`formal` なら行き先の実引数の葉の宣言寿命、`handle` なら対応する `Handle` の region である。
+`result` の下限を結果を束縛する `Let` の body region にするのは、Apply がその `Let` の束縛式そのものである場合に限る。それ以外（`Let` の body や `Scope` 内の Apply を含む）は Apply の point を使う。
+`formal` の葉を引けない場合は呼出し点へ戻さず `E-BOR-006` にする。
+callee の枝 binder の extent は枝の subtree を使う。`ProjBorrow` / `Reborrow` を scrutinee とする分解では、その分解の edge に分解全体の extent を、binder の項目に各枝の extent を記録する。仮引数そのものを scrutinee とする分解では edge の extent は無く、binder の項目だけが枝の extent を持つ。
+枝の extent を子の要求へ伝えるのは、summary が完全で、対応する出口イベントが一つの binder 起源に一意に結び付き、すべて `local` かつ局所使用として安全で、要求 point が枝の subtree 内にあり、結果型および（射影・再借用 scrutinee では）scrutinee 型の寿命起源と交わらない場合に限る。
+欠落・複数候補・曖昧さ・escape がある場合は extent を付けず、局所窓または呼出し点へ後退する。
+
+`ForallRegion` が束縛する二つの `RParam` の outlives は、両方が現在の callable の binder である場合だけ summary へ保留する。
+呼出しで region 実引数を代入し、具体 region と `RVar` の制約は通常の region solver で解く。外側 callable の `RParam` が残る関係は外側の summary へ保留し直す。
+ほかの outlives は定義時または呼出し側で通常の制約として解き、違反は `E-BOR-004` とする。
+
+`handle` 出口イベントは operation（現在は `Return`）と payload 内の path を持つ。
+呼出し越しの `Apply` は、payload の型と capability を同じ出口イベントから最も内側の一致する Return-handler entry へ渡す。
+Handle の束縛子と結果の capability は entry の capability と構文から得た capability を合併するため、entry が無い経路の構文上の capability は失われない。
+イベントまたは owner の対応が無い・曖昧な場合は fail closed にする。
+Handle の出口では、捕捉 payload に由来する停止と要求のうち、handler の結果にも Handle body の通常結果にも対応 leaf（同じ owner/path/lifetime、または path 上の子孫）が現れないものだけを閉じる。
+外側 handler の出口イベントと通常結果に流れる要求は残す。
+
 ### 呼出しを Scope で包む借用の実引数
 
 Core の `Apply` に専用の呼出し region は無い。
@@ -329,8 +373,9 @@ Core の `Apply` に専用の呼出し region は無い。
     (Apply sink t)))
 ```
 
-上の 3 または 4 を満たさず、Scope 内で新たに作った借用が呼出し結果または `Return` payload として Scope の外へ届く形は、loan を Scope の退場で短縮せず、`E-BOR-020` で拒否する。
-結果型に借用を含む呼出しと、借用を含む `Return` payload を持つ呼出しを、それぞれこの形で型検査すると `E-BOR-020` になる。
+上の 3 を満たさず、Scope 内で新たに作った借用が呼出し結果として Scope の外へ届く形は、loan を Scope の退場で短縮せず、`E-BOR-020` で拒否する。
+借用を含む `Return` payload は、対応する Handle が捕捉する `handle` 出口として summary から owner と capability を解決できる場合に限り、その Handle の結果へ渡せる。
+その出口を解決できない payload は `E-BOR-020` で拒否する。
 
 部分適用は借用が現れる署名を運べない。
 置き換えは呼出しの出現に結び付いており、部分適用が作る関数値には出現の情報が残らない。
@@ -484,7 +529,11 @@ Union の可変借用を分解するときは、payload の `(Payload)` segment 
 binder の可変要求と親の停止は、親の path に data の欄番号または Union の `Payload` を足した path に限る。
 したがって、分解した親の別の欄は枝の中でもこの停止の対象にならない。
 共有借用を親とする binder は従来どおり親の region を共有し、寿命変数を新設しない。
-関数の可変仮引数を親とする binder も寿命変数を新設せず、呼出し時に親と path を確定する扱いを保つ。
+関数の可変仮引数を親とする binder にも、枝ごとに新しい寿命変数 α を与える。
+α の下限は枝の region とし、親の宣言寿命が α を outlive する制約を保つ。親の `RParam` は定義時に具体 region へ置き換えてはならない。
+親の capability、path、停止、借用要求は出口イベントとして callable summary に記録し、呼出し側で実引数の欄と path を確定してから判定する（§8）。
+分解 binder の停止は枝の subtree の範囲で終える。子へ射影した要求にこの extent を伝えるのは、対応する出口イベントが一意な binder 起源を持ち、summary が完全で、すべてのイベントが `local` かつ局所使用として安全であり、要求点がその枝の subtree 内にあり、binder・派生 binder・イベントの寿命起源が分解の結果型（射影・再借用 scrutinee では scrutinee 型も含む）に現れない場合に限る。
+path の曖昧さ、欠落、複数候補、または `result` / `formal` / `handle` / `yield` / `capture` / `storage` への escape があれば extent を付けず、fail closed にする。
 
 ## 12. 読み出しと書き込み
 
@@ -586,7 +635,15 @@ place 位置の `ProjBorrow` はこの読み出し要求だけを出し、借用
 
 枝内で作る借用の下限は `region-at/branch` が返す region である。
 対象は `Borrow`、`BorrowMut`、`Reborrow`、値位置の `ProjBorrow` と §11 の可変 binder であり、内側の `Scope`、owner-body、入れ子の分解またはその枝の region があれば、その region が下限になる。
-関数の可変仮引数を親とする分解 binder は新しい寿命変数を持たず、その親子関係と要求は既存の延期処理に従う。
+関数の可変仮引数を親とする分解 binder も新しい寿命変数 α を持つ。
+親、相対 path、再借用制約、使用要求と停止は callable summary に保持し、呼出しで実引数の capability に対して実体化する（§8）。
+定義時に owner と path を解決できない形、または許可されない境界で summary が失われる形は `E-BOR-006` とする。
+
+停止は子の mode と親に対する使用で判定する。
+共有の子が生きている間、親を通す `Read` は許すが、親への `Assign` は `E-BOR-025` で拒否する。
+共有の再借用どうしは通常の mode 競合で許されるが、その間の可変射影や新しい可変借用は `E-BOR-003` または `E-BOR-025` で拒否する。
+可変の子が生きている間の親の `Read` と `Assign` は `E-BOR-025` で拒否する。
+停止記録は子の mode を保持し、分解 binder の停止にも binder 自身の mode を用いる。
 
 出口制約の追跡対象は、callable 本体の境界を越えない枝の部分木で生成した直接の借用の α、可変 binder の α、およびそこから派生する α である。
 派生には `Reborrow` と値位置の `ProjBorrow` による子、ならびにそれらを合流元に持つ寿命変数を含む。
@@ -659,21 +716,11 @@ Phase 未定である。
 分解 binder 由来の借用も、binder の最後の使用後を含めて枝 region 全体で親の対応する欄を停止する lexical な近似である。
 最後の使用で停止を終える精度は control-flow と last-use による region 推論を導入する段階で回収する。
 停止は binder の path に限るため、親の別の欄はこの近似の対象にならない。
-6. 共有の子が生きている間に親を通して `Read` する形を拒む過剰な制約。
-可変の親からの射影や共有 `Reborrow` の子が生きている間、現行の停止判定は子の mode によらず親を通す `Read` を拒む。
-子の mode と使用の種類を考慮して停止中の親の使用を判定する段階で、許可条件を精密化する。
-分解 binder の停止も親の対応する欄を通す `Read` を拒むため、この過剰な制約は分解 binder にも及ぶ。
-7. 一時式の `Reborrow` を同じ `Scope` 内で直ちに使い切っても、`Scope` の退場まで生存させる過剰な制約。
+6. 一時式の `Reborrow` を同じ `Scope` 内で直ちに使い切っても、`Scope` の退場まで生存させる過剰な制約。
 暗黙の短い再借用を扱い、first-class な借用値の region を実際の使用範囲に合わせて定める段階で回収する。
-8. 仮引数を親とする分解 binder の寿命変数と、実引数・仮引数の escape 精度。
-callable summary が分解 binder の親、相対 path、寿命および escape 条件を呼出し側へ運び、仮引数を親とする binder を実体化する必要がある（BOR-001、BOR-002、BOR-007）。
-`RegionLam` 本体で局所 owner を region 仮引数で借り、その分解 binder を `Reborrow` して読み切る形では、局所射影の借用と region 仮引数の借用が deferred summary を経て最終の `check-borrows` で衝突し、`E-BOR-003` になる。
-この形も callable summary で親、相対 path、寿命および escape 条件を呼出し側へ運ぶ段階で回収する。
-9. `E-BOR-006` のうち、仮引数の入れ子の path が呼出し時に確定する形。
-所有者と path を呼出し側で確定できるようにする必要がある（BOR-006、BOR-007）。
-10. `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形。
+7. `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形。
 回収には、計算値の place 化を定める OWN-005 の範囲を借用を含む値へ明示的に広げる必要がある（OWN-005、BOR-001、BOR-006）。
-11. `E-VAR-009`：借用型を持つ `mut` 束縛への再代入。
+8. `E-VAR-009`：借用型を持つ `mut` 束縛への再代入。
 回収には、旧借用の終了と再代入後の新しい所有者の寿命を扱う必要がある（SCP-001、BOR-002）。
 
 所有資源が leaf に対して token の台帳を持つのに対し、借用と region には同じ機構を置かない。
