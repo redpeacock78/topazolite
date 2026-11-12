@@ -6750,10 +6750,9 @@
 
 ;; [REQ: BOR-002] Reborrow は可変借用を子 region の共有借用へ落とし、
 ;; 親 capability を子の生存期間だけ停止する。判定は段 3 で行う。
-(define (infer-reborrow core operand Λ Ψ environment places callables fail)
+(define (infer-reborrow/operand-result
+         core operand Λ Ψ environment places callables fail operand-result)
   (define operand-Λ (enter-child Λ 0))
-  (define operand-result
-    (infer operand operand-Λ Ψ environment places callables fail))
   (define τ_operand
     (typing-normal-child-type core Λ 0 (first operand-result)))
   (define ε_operand (second operand-result))
@@ -6881,6 +6880,12 @@
                         point))))
      (list `(Borrowed ,τ ,α_child) ε_operand Ψ_2)]
     [_ (fail 'reborrow-non-mutable core)]))
+
+(define (infer-reborrow core operand Λ Ψ environment places callables fail)
+  (define operand-result
+    (infer operand (enter-child Λ 0) Ψ environment places callables fail))
+  (infer-reborrow/operand-result
+   core operand Λ Ψ environment places callables fail operand-result))
 
 ;; 構成検査では入力の実行時借用値から capability を得て、注釈 ρ の共有借用へ落とす。
 (define (infer-reborrow/config core operand ρ Λ Ψ environment
@@ -7157,8 +7162,39 @@
 ;; [REQ: BOR-005] 借用が指す先の値を複製する。結果は借用でも所有値でもない。
 ;; ρ は結果の型に現れない（spec §6.1）。
 (define (infer-read core operand Λ Ψ environment places callables fail)
-  ;; pointee 型は place または binder の型から先に引ける。
-  (define pointee-type (direct-borrow-payload-type operand environment places))
+  (define direct-pointee-type
+    (direct-borrow-payload-type operand environment places))
+  ;; 計算式を親に持つ Reborrow は、親を一度だけ先に synth して型を調べる。
+  ;; 後段へ同じ結果を渡し、summary event や評価順を二重に記録しない。
+  (define reborrow-parent-result
+    (and (not (deriving-config?))
+         (match (peel-node operand)
+           [`(Reborrow ,parent)
+            #:when (not (or (symbol? parent)
+                            (exact-nonnegative-integer? parent)))
+            (define reborrow-Λ (enter-child Λ 0))
+            (list parent
+                  (infer parent (enter-child reborrow-Λ 0)
+                         Ψ environment places callables fail))]
+           [`(ReborrowAt ,ρ ,parent)
+            #:when (not (or (symbol? parent)
+                            (exact-nonnegative-integer? parent)))
+            (define reborrow-Λ (enter-child Λ 0))
+            (check-region-annotation reborrow-Λ ρ operand fail)
+            (list parent
+                  (infer parent (enter-child reborrow-Λ 0)
+                         Ψ environment places callables fail))]
+           [_ #f])))
+  (define reborrow-parent-type
+    (and reborrow-parent-result
+         (typing-normal-child-type
+          operand (enter-child Λ 0) 0
+          (first (second reborrow-parent-result)))))
+  (define pointee-type
+    (or direct-pointee-type
+        (match (normalize-type reborrow-parent-type)
+          [`(BorrowedMut ,payload ,_) payload]
+          [_ #f])))
   (define temporary-candidate?
     (and (direct-borrow-expression? operand)
          (not (deriving-config?))
@@ -7183,7 +7219,12 @@
     (with-temporary-borrow-child
      Λ 0 operand temporary?
      (lambda (operand-Λ)
-       (infer operand operand-Λ Ψ environment places callables fail))))
+       (if reborrow-parent-result
+           (infer-reborrow/operand-result
+            operand (first reborrow-parent-result) operand-Λ
+            Ψ environment places callables fail
+            (second reborrow-parent-result))
+           (infer operand operand-Λ Ψ environment places callables fail)))))
   (define τ_operand
     (typing-normal-child-type core Λ 0 (first operand-result)))
   (define ε_operand (second operand-result))

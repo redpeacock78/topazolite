@@ -159,6 +159,169 @@
   (define-values (ir _filled typed) (type-core core))
   (check-runtime typed ir temporary-callables 'Unit "Read/Reborrow"))
 
+(test-case "名前付き借用_計算式の親式のBorrowMutはlexicalに残る"
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Let (read-result const Int)
+             (Read (Reborrow (Let (observed const Int) 0 parent)))
+             (Move owner))))))
+  (check-equal? (diagnostic-code core) "E-BOR-008"))
+
+(test-case "一時借用_計算式の親をReborrowしたReadの後で親の源へ書込み"
+  (define signature
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+  (define callables (cons (list 'computed-read-write signature)
+                          temporary-callables))
+  (define core
+    '(RegionLam (a)
+       (Lam User computed-read-write (p)
+         (Let (read-result const Int)
+           (Read (Reborrow (Let (seen const Int) 0 p)))
+           (Assign p 7)))))
+  (define-values (ir _filled typed) (type-core core '() callables))
+  (check-true (region-typed? typed)
+              (format "computed Reborrow Read then parent write: ~s" typed))
+  (when (region-typed? typed)
+    (define borrow-point
+      (core-point core
+                  (lambda (node)
+                    (match node [`(Reborrow ,_) #t] [_ #f]))))
+    (define consumer-point (temporary-consumer-point ir borrow-point))
+    (define read-point
+      (core-point core
+                  (lambda (node)
+                    (match node [`(Read ,_) #t] [_ #f]))))
+    (check-true
+     (lifetime-var? (hash-ref (region-typed-table typed) borrow-point)))
+    (check-equal? consumer-point read-point)
+    (check-not-false (region-at/temporary ir consumer-point))))
+
+(test-case "一時借用_計算式の親のReborrowでReadの結果にβを残す"
+  (define core
+    '(RegionLam (a b)
+       (Lam User nested-reader (parent)
+         (Read
+          (Reborrow
+           (Let (alias let
+                      (BorrowedMut (Borrowed Int (RParam b)) (RParam a)))
+                parent
+             alias))))))
+  (define callables
+    '((nested-reader
+       (ForallRegion (a b)
+         (NFn ((BorrowedMut (Borrowed Int (RParam b)) (RParam a)))
+              (Borrowed Int (RParam b)) () () () User)))))
+  (define-values (ir _filled typed)
+    (type-core core '() callables))
+  (check-true (region-typed? typed)
+              (format "computed nested Borrowed Read: ~s" typed))
+  (when (region-typed? typed)
+    (define borrow-point
+      (core-point core
+                  (lambda (node)
+                    (match node [`(Reborrow ,_) #t] [_ #f]))))
+    (check-true (hash-has-key? (region-typed-table typed) borrow-point)
+                "Reborrow の寿命が型付け結果に記録される")
+    (match (region-typed-type typed)
+      [`(ForallRegion (,a ,b)
+          (NFn ((BorrowedMut (Borrowed Int (RParam ,payload-rp))
+                              (RParam ,owner-rp)))
+               (Borrowed Int (RParam ,result-rp)) ,_ ,_ ,_ User))
+       (check-equal? payload-rp b)
+       (check-equal? owner-rp a)
+       (check-equal? result-rp b)]
+      [type (check-true #f (format "computed nested Borrowed Read type: ~s"
+                                   type))]))
+  ;; Runtime 側でも Read/Reborrow の一時 region は α だけに使い、
+  ;; pointee の共有借用 β は結果と trace に残す。
+  (define source
+    '(Scope (0)
+       (Read
+        (Reborrow
+         (Let (parent let (BorrowedMut (Borrowed Int 0) 0))
+              (BorrowMut 1)
+           parent)))))
+  (define runtime-ir (build-region-ir source))
+  (define runtime-borrow-point
+    (core-point source
+                (lambda (node) (match node [`(Reborrow ,_) #t] [_ #f]))))
+  (define consumer-point
+    (temporary-consumer-point runtime-ir runtime-borrow-point))
+  (define beta (region->rho runtime-ir (region-owning runtime-ir 0)))
+  (define alpha
+    (region->rho runtime-ir (region-at/temporary runtime-ir consumer-point)))
+  (define start
+    `(cfg (Read
+           (ReborrowAt ,alpha
+             (Let (parent let (BorrowedMut (Borrowed Int ,beta) ,beta))
+                  (BorrowMutRef 1 () ,beta)
+               parent)))
+          ((0 7 (declared Int))
+           (1 (BorrowRef 0 () ,beta)
+              (declared (Borrowed Int ,beta))))
+          ((0 Available) (1 Available)) () ()))
+  (define configs (trace-g2 start))
+  (define rows
+    (for/list ([config (in-list configs)])
+      (runtime-row config '() `(Borrowed Int ,beta) #:region-ir runtime-ir)))
+  (check-not-false (first rows) (format "runtime-row rows: ~s" rows))
+  (for ([config (in-list configs)] [row (in-list rows)] [index (in-naturals)])
+    (check-not-false row (format "config ~a runtime-row" index))
+    (when row
+      (check-true (config-ok? config '() `(Borrowed Int ,beta) row
+                              #:region-ir runtime-ir)
+                  (format "config ~a config-ok?" index))))
+  (check-false (member alpha (flatten rows)) "α が runtime-row に漏れない")
+  (match (last configs)
+    [`(cfg ,core ,_heap ,_states ,_tokens ,_trace)
+     (check-equal? core `(BorrowRef 0 () ,beta))]
+    [config (check-true #f (format "terminal config: ~s" config))]))
+
+(test-case "一時借用_計算式の親は一度だけ型付けする"
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Let (scratch let (Owned Int)) 2
+             (Let (read-result const Int)
+               (Read
+                (Reborrow
+                 (Let (dropped const Unit) (Drop (Move scratch)) parent)))
+               (Assign parent 7)))))))
+  (define-values (ir _filled typed)
+    (type-core core))
+  (check-runtime typed ir temporary-callables 'Unit
+                 "single synthesis of computed Reborrow parent"))
+
+(test-case "一時借用_計算式の親がBorrowedMutでない"
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Read
+          (Reborrow
+           (Let (parent let (Borrowed Int owner-ph))
+                (Borrow owner)
+             parent))))))
+  (check-equal? (diagnostic-code core) "E-BOR-009"))
+
+(test-case "一時借用_Applyの実引数に計算式の親のReborrow"
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (parent let (BorrowedMut Int owner-ph)) (BorrowMut owner)
+           (Let (called const Int)
+             ,(shared-sink-call
+               '(Reborrow
+                 (Let (observed const Int) (Read parent) parent))
+               'scope-ph)
+             (Assign parent 7))))))
+  (define-values (ir _filled typed) (type-core core))
+  (check-runtime typed ir temporary-callables 'Unit
+                 "Apply computed Reborrow parent"))
+
 (test-case "一時借用_Read(BorrowとBorrowMut)直後にMove"
   (for ([borrow (in-list (list '(Borrow 1) '(BorrowMut 1)))])
     (define operation
