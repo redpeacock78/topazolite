@@ -225,7 +225,7 @@
  (check-equal? (failure (core ρ) ir 'Int pair-callables #:places '(1 2)) 'ok))
 
 (test-case
- "同じ借用を 2 つの仮引数へ渡す形を落とす"
+ "同じ借用を 2 つの仮引数へ渡し使用が重ならない形は通す"
  (define (core ρ)
    `(Scope (1)
            (Let (p let (BorrowedMut Int ,ρ))
@@ -242,7 +242,43 @@
                        p p))))
  (define ir (build-region-ir (core 0)))
  (define ρ (region->rho ir (region-at ir '(0 0))))
- (check-not-equal? (failure (core ρ) ir 'Int pair-callables) 'ok))
+ (check-equal? (failure (core ρ) ir 'Int pair-callables) 'ok))
+
+(test-case
+ "同じ借用を二つの仮引数へ渡すと名前付きReborrowの使用が重なり拒否する"
+ (define body
+   '(Let (r let (Borrowed Int (RParam a)))
+      (Reborrow x)
+      (Let (u let Unit) (Assign y 7) (Read r))))
+ (define (core ρ)
+   `(Scope (1)
+      (Let (p let (BorrowedMut Int ,ρ)) (BorrowMut 1)
+        (Apply
+         (RegionApp
+          (RegionLam (a) (Lam User pairb (x y) ,body))
+          (,ρ))
+         p p))))
+ (define ir (build-region-ir (core 0)))
+ (define ρ (region->rho ir (region-at ir '(0 0))))
+ (check-equal? (failure (core ρ) ir 'Int pair-callables)
+               'borrow-conflicting-use))
+
+(test-case
+ "別々の実引数なら同じ名前付きReborrowとAssignは通す"
+ (define body
+   '(Let (r let (Borrowed Int (RParam a)))
+      (Reborrow x)
+      (Let (u let Unit) (Assign y 7) (Read r))))
+ (define (core ρ)
+   `(Scope (1 2)
+      (Apply
+       (RegionApp
+        (RegionLam (a) (Lam User pairb (x y) ,body))
+        (,ρ))
+       (BorrowMut 1) (BorrowMut 2))))
+ (define ir (build-region-ir (core 0)))
+ (define ρ (region->rho ir (region-at ir '(0 0))))
+ (check-equal? (failure (core ρ) ir 'Int pair-callables #:places '(1 2)) 'ok))
 
 (test-case
  "借用の仮引数を持つ署名の部分適用を落とす"

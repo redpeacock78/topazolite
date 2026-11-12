@@ -98,11 +98,17 @@
 (define (check-runtime typed ir callables expected label)
   (check-true (region-typed? typed) (format "~a: 型検査 ~s" label typed))
   (when (region-typed? typed)
-    (define start (inject-g2m (region-execution-core typed)))
+    (define execution-core (region-execution-core typed))
+    (define start (inject-g2m execution-core))
     (define configs (trace-g2 start))
     (define rows
-      (for/list ([config (in-list configs)])
-        (runtime-row config callables expected #:region-ir ir)))
+      (for/list ([config (in-list configs)] [index (in-naturals)])
+        (with-handlers
+            ([exn:fail?
+              (lambda (exception)
+                (error 'check-runtime "~a: runtime-row config ~a: ~a"
+                       label index (exn-message exception)))])
+          (runtime-row config callables expected #:region-ir ir))))
     (define first-live
       (for/first ([row (in-list rows)] [index (in-naturals)] #:when row)
         index))
@@ -116,9 +122,17 @@
       (check-not-false row (format "~a config ~a: runtime-row" label index))
       (check-true (config-ok? config callables expected row #:region-ir ir)
                   (format "~a config ~a: config-ok?" label index)))
-    (check-equal? (check-borrow-execution start (region-typed-sidecar typed)
-                                          ir 300 (make-bcounters))
-                  'ok (format "~a: borrow oracle" label))))
+    (define oracle-result
+      (check-borrow-execution start (region-typed-sidecar typed)
+                              ir 300 (make-bcounters)))
+    (check-equal? oracle-result 'ok
+                  (format "~a: borrow oracle ~s; static ~s; requests ~s; sigma ~s"
+                          label oracle-result
+                          (static-borrow-set (region-typed-sidecar typed) ir)
+                          (borrow-sidecar-requests
+                           (region-typed-sidecar typed))
+                          (borrow-sidecar-sigma
+                           (region-typed-sidecar typed))))))
 
 (define (core-point core predicate)
   (let walk ([node (erase-core core)] [point '()])
@@ -778,3 +792,112 @@
   (define-values (_ir _filled typed) (type-core core places callables))
   (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
                 "E-TYP-023"))
+
+(define callable-temporary-read-write-signature
+  '(ForallRegion (a)
+     (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+
+(define callable-temporary-read-write-callables
+  (cons (list 'callable-temporary-read-write
+              callable-temporary-read-write-signature)
+        temporary-callables))
+
+(define (callable-temporary-read-write-core read-expression)
+  `(Scope ()
+     (Let (owner let (Owned Int)) 1
+       (Let (called const Unit)
+         (Apply
+          (RegionApp
+           (RegionLam (a)
+             (Lam User callable-temporary-read-write (p)
+               (Let (read-result const Int) ,read-expression
+                 (Assign p 7))))
+           (owner-ph))
+         (BorrowMut owner))
+         unit))))
+
+(test-case "一時借用_callable本体の直接ReborrowのReadの後で仮引数へAssignしApply"
+  (define core
+    (callable-temporary-read-write-core '(Read (Reborrow p))))
+  (define-values (ir _filled typed)
+    (type-core core '() callable-temporary-read-write-callables))
+  (check-runtime typed ir callable-temporary-read-write-callables 'Unit
+                 "callable direct Reborrow Read then Assign"))
+
+(test-case "一時借用_callable本体の計算式の親のReborrowのReadの後で仮引数へAssignしApply"
+  (define core
+    (callable-temporary-read-write-core
+     '(Read (Reborrow (Let (seen const Int) 0 p)))))
+  (define-values (ir _filled typed)
+    (type-core core '() callable-temporary-read-write-callables))
+  (check-runtime typed ir callable-temporary-read-write-callables 'Unit
+                 "callable computed-parent Reborrow Read then Assign"))
+
+(test-case "一時借用_callable本体でLet束縛したReborrowの生存中に仮引数へAssignしApply"
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (called const Unit)
+           (Apply
+            (RegionApp
+             (RegionLam (a)
+               (Lam User callable-temporary-read-write (p)
+                 (Let (child let (Borrowed Int (RParam a))) (Reborrow p)
+                   (Let (read-result const Int) (Read child)
+                     (Assign p 7)))))
+             (owner-ph))
+           (BorrowMut owner))
+         unit))))
+  (define-values (_ir _filled typed)
+    (type-core core '() callable-temporary-read-write-callables))
+  (check-equal?
+   (and (diagnostic? typed) (diagnostic-id typed)) "E-BOR-025"))
+
+(test-case "一時借用_callable本体の短縮しないReborrowの停止窓はcall-body root"
+  (define callables
+    (cons '(callable-named-reborrow
+            (ForallRegion (a)
+              (NFn ((BorrowedMut Int (RParam a))) Unit () (Mutation) () User)))
+          temporary-callables))
+  (define core
+    `(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (called const Unit)
+           (Apply
+            (RegionApp
+             (RegionLam (a)
+               (Lam User callable-named-reborrow (p)
+                 (Let (child let (Borrowed Int (RParam a))) (Reborrow p)
+                   (Let (read-result const Int) (Read child) unit))))
+             (owner-ph))
+           (BorrowMut owner))
+         unit))))
+  (define observations '())
+  (define-values (_ir _filled typed)
+    (parameterize
+        ([current-local-exit-window-probe
+          (lambda args (set! observations (cons args observations)))])
+      (type-core core '() callables)))
+  (check-true (region-typed? typed)
+              (format "named Reborrow Apply: ~s" typed))
+  (when (region-typed? typed)
+    (define apply-point
+      (core-point core
+                  (lambda (node) (match node [`(Apply . ,_) #t] [_ #f]))))
+    (define apply-node
+      (let walk ([node (erase-core core)])
+        (or (and (match node [`(Apply . ,_) #t] [_ #f]) node)
+            (for/or ([child (in-list (core-children node))]) (walk child)))))
+    (define call-body-root
+      (append apply-point (list (length (core-children apply-node)))))
+    (define matched
+      (findf (lambda (observation)
+               (and (set? (list-ref observation 4))
+                    (not (set-empty? (list-ref observation 4)))
+                    (deferred-leaf-exit? (list-ref observation 6))))
+             observations))
+    (check-not-false matched
+                     (format "formal local event window: ~s" observations))
+    (when matched
+      (check-equal? (list-ref matched 5) call-body-root
+                    "extent の無い Reborrow は call-body root のまま"))))

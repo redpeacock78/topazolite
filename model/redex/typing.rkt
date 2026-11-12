@@ -955,7 +955,8 @@
   #:transparent)
 
 (define (route-constraint! c w node fail [window-point #f]
-                           [parent-fp '()] [child-fp '()])
+                           [parent-fp '()] [child-fp '()]
+                           [extent-point #f])
   (define deferred-c
     (if (formal-key? w)
         (struct-copy region-constraint c
@@ -966,7 +967,10 @@
   (define deferred-window
     (and window-point (template-relative-point w window-point)))
   (unless (route-deferred!
-           (deferred-constraint w deferred-c deferred-window #f
+           (deferred-constraint
+            w deferred-c deferred-window
+            (and (formal-key? w) extent-point
+                 (template-relative-point w extent-point))
                                 parent-fp child-fp)
            w node fail)
     (emit-constraint! c)))
@@ -1299,14 +1303,20 @@
                       (temporary-borrow-points))])
     (thunk child-Λ)))
 
+(define (temporary-borrow-extent-point Λ)
+  (define ir (region-ctx-ir Λ))
+  (define point (region-ctx-point Λ))
+  (and ir
+       (set-member? (temporary-borrow-points) point)
+       (temporary-consumer-point ir point)))
+
 (define (temporary-borrow-lower-bound Λ)
   (define ir (region-ctx-ir Λ))
   (define point (region-ctx-point Λ))
   (define temporary
     (and ir
-         (set-member? (temporary-borrow-points) point)
-         (let ([consumer (temporary-consumer-point ir point)])
-           (and consumer (region-at/temporary ir consumer)))))
+         (temporary-borrow-extent-point Λ)
+         (region-at/temporary ir (temporary-borrow-extent-point Λ))))
   (or temporary
       (if (and ir (branch-region-enclosing? ir point))
           (region-at/branch ir point)
@@ -2561,6 +2571,12 @@
        (define w (deferred-constraint-w item))
        (define c (deferred-constraint-constraint item))
        (define index (and (formal-key? w) (fourth w)))
+       (define temporary-reborrow-extent?
+         (and (deferred-constraint-extent-point item)
+              (eq? (region-constraint-kind c) 'contains)
+              (match (peel-node (region-constraint-node c))
+                [`(,(or 'Reborrow 'ReborrowAt) . ,_) #t]
+                [_ #f])))
        (define (contains-result-exit? index alpha)
          (and index
               (for/or ([edge (in-list deferred)])
@@ -2680,6 +2696,8 @@
                                              point
                                              (lambda ()
                                                (region-at ir point)))]
+                                  [temporary-reborrow-extent?
+                                   (subst-term (region-constraint-right c))]
                                   [else (formal-contains-lower-bound item index)])
                                 point node)
              (region-constraint 'reborrow
@@ -2705,7 +2723,8 @@
                                   (deferred-constraint-child-fp item))
                           w (deferred-constraint-extent-point item))))))
          (unless (and local-window
-                      (eq? (region-constraint-kind c) 'contains))
+                      (eq? (region-constraint-kind c) 'contains)
+                      (not temporary-reborrow-extent?))
            (route-constraint!
             c-new (car cap) node fail
             (or local-window
@@ -6814,7 +6833,7 @@
      (for ([w (in-list parent-designators)])
        (route-constraint!
         (region-constraint 'contains α_child ρ_child point core)
-        w core fail))
+        w core fail #f '() '() (temporary-borrow-extent-point Λ)))
      (for ([cap (in-set tokens)])
        (define w (car cap))
        (define fp (cdr cap))
@@ -6835,7 +6854,8 @@
        (for ([α_parent (in-list (hash-ref parent-terms cap))])
          (route-constraint!
           (region-constraint 'reborrow α_parent α_child point core)
-          w core fail reborrow-window fp fp))
+          w core fail reborrow-window fp fp
+          (temporary-borrow-extent-point Λ)))
        ;; 外部から渡された concrete な可変借用は、借用要求を core 内で
        ;; 生成していない。各 token を親の要求として記録し、境界の先でも
        ;; Move/Drop の判定へ届かせる。core 内ですでに Ψ にある要求は
@@ -7220,10 +7240,13 @@
      Λ 0 operand temporary?
      (lambda (operand-Λ)
        (if reborrow-parent-result
-           (infer-reborrow/operand-result
-            operand (first reborrow-parent-result) operand-Λ
-            Ψ environment places callables fail
-            (second reborrow-parent-result))
+           ;; 親を再推論せず、通常の infer と同じ結果後処理だけを行う。
+           (finish-infer-result
+            operand operand-Λ Ψ environment places callables fail
+            (infer-reborrow/operand-result
+             operand (first reborrow-parent-result) operand-Λ
+             Ψ environment places callables fail
+             (second reborrow-parent-result)))
            (infer operand operand-Λ Ψ environment places callables fail)))))
   (define τ_operand
     (typing-normal-child-type core Λ 0 (first operand-result)))
@@ -7901,31 +7924,34 @@
     (when summary
       (record-callable-summary! Λ core summary fail))))
 
+(define (finish-infer-result core Λ input-psi environment places callables fail
+                             raw-result)
+  (define raw-type (first raw-result))
+  (define normal-type (typing-normal-from-infer core Λ raw-type))
+  (define result-type
+    (if (typing-result-never? core Λ raw-type) 'Never raw-type))
+  (define result-psi
+    (flow-restore-output input-psi (third raw-result) normal-type fail core))
+  (define result (list result-type (second raw-result) result-psi))
+  (propagate-callable-summary! core Λ fail)
+  ((typing-point-probe) (region-ctx-point Λ))
+  (record-typing-result! Λ result-type normal-type (second result)
+                         (psi-escape-operations (third raw-result)))
+  (emit-expression-decomposition-exits!
+   core Λ environment places callables normal-type fail)
+  (collect-use-regions! result-type
+                        (region-ctx-ir Λ)
+                        (region-ctx-point Λ))
+  result)
+
 (define (infer core Λ Ψ environment places callables fail)
   (if (not (typing-normal-results))
       (parameterize ([typing-normal-results (make-hash)])
         (infer core Λ Ψ environment places callables fail))
-      (let* ([input-psi Ψ]
-             [local-psi (flow-clear-escapes Ψ)]
-             [raw-result
-              (infer/body core Λ local-psi environment places callables fail)]
-             [raw-type (first raw-result)]
-             [normal-type (typing-normal-from-infer core Λ raw-type)]
-             [result-type
-              (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
-             [result-psi (flow-restore-output input-psi (third raw-result)
-                                              normal-type fail core)]
-             [result (list result-type (second raw-result) result-psi)])
-        (propagate-callable-summary! core Λ fail)
-        ((typing-point-probe) (region-ctx-point Λ))
-        (record-typing-result! Λ result-type normal-type (second result)
-                               (psi-escape-operations (third raw-result)))
-        (emit-expression-decomposition-exits!
-         core Λ environment places callables normal-type fail)
-        (collect-use-regions! result-type
-                              (region-ctx-ir Λ)
-                              (region-ctx-point Λ))
-        result)))
+      (finish-infer-result
+       core Λ Ψ environment places callables fail
+       (infer/body core Λ (flow-clear-escapes Ψ)
+                   environment places callables fail))))
 
 ;; producer 位置から入ったときだけ OwnLeaf を許す。許可は節点そのものを
 ;; memq で保持するため、兄弟の位置へ漏れない。既定は拒否である。
