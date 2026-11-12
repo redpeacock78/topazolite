@@ -1044,6 +1044,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 直ちに消費する `Reborrow` の一時式が `Scope` の退場まで生存する制約 | `borrow.md` §14 | SUR-004 完了前（暗黙の再借用と使用位置に応じた寿命を扱う） | §4.8 |
 | `E-OWN-022`：借用を含む計算値を `Owned` の slot へ格納する形（OWN-005、BOR-001、BOR-006） | `borrow.md` §14 | Phase 未定（OWN-005 の計算値 place 化を借用を含む値へ広げる段階） | §4.8 |
 | `E-VAR-009`：借用型を持つ `mut` 束縛への再代入（SCP-001、BOR-002） | `borrow.md` §14 | Phase 未定（旧借用の終了と再代入後の新しい所有者の寿命を扱う段階） | §4.8 |
+| callable summary の `yield` 出口から観測消費者へ届く借用の owner と寿命を呼出し側で解決すること（`AddressOf` と `Yield`） | `borrow.md` §14 | raw-pointer の規則を借用 summary へ接続するサイクル（`unsafe.md` §§2.2、4.3、5.3） | §4.8 |
 | region 引数どうしの関係の宣言 | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `ForallRegion` を `NFn` 以外の位置へ置くこと | `structural-row.md` §7 | Phase 4 以降 | §4.8 |
 | `Untrusted` を包む Record の `mut` Union 欄の拡幅 | `structural-row.md` §7 | Phase 4 以降 | §4.6 |
@@ -1077,7 +1078,7 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | `Const` の raw pointer を作る式 | `unsafe.md` §6 | Phase 3 以降 | §4.10 |
 
 structural-row.md と trait.md から G5 へ送っていた 3 件は、G5c2 が借用と代入を同時に規定して閉じた。
-borrow.md §14 の未回収 8 項目のうち 6 項目は本表に対応する行を持つ。
+borrow.md §14 の未回収 9 項目のうち 7 項目は本表に対応する行を持つ。
 残る性質 8 の bounded 検査範囲は BOR-003、BOR-007、VAR-004 が覆うため、重複する行を置かない。
 借用規則の backend 写し先は BAK-010 が覆うため、重複する行を置かない。
 余剰 Owned field の救済策は構造 row の制限に属するため、`structural-row.md` §3.3 へ三行で記載している。
