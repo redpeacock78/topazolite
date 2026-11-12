@@ -79,6 +79,50 @@
   (check-equal? (region-parent ir inner) outer)
   (check-true (regions-overlap? ir inner outer)))
 
+(test-case "一時region_後のScope内ownerはNをoutliveする"
+  (define core
+    '(Apply h (BorrowMut x)
+       (Scope ()
+         (Let (o let (Owned Int)) 1
+           (Apply g (BorrowMut o))))))
+  (define ir (checked-ir core))
+  (define outer (temporary ir '()))
+  (define nested (temporary ir '(2 0 1)))
+  (define owner-region (region-at/branch ir '(2 0 1)))
+  (check-equal? (region-parent ir nested) outer)
+  (check-true (region-outlives? ir owner-region nested)))
+
+(test-case "一時region_後の子の枝内NはCと重なる"
+  (define core
+    '(Apply h (BorrowMut x)
+       (Eliminate y
+         ((none () -> (Apply g (BorrowMut x)))
+          (some (v) -> unit)))))
+  (define ir (checked-ir core))
+  (define outer (temporary ir '()))
+  (define nested (temporary ir '(2 1)))
+  (define branch-region (branch-region-of ir '(2) 0))
+  (check-equal? (region-parent ir nested) outer)
+  (check-true (regions-overlap? ir outer nested))
+  (check-true (region-outlives? ir branch-region nested)))
+
+(test-case "一時region_後のLamではCの退場がNを終えない"
+  (define core
+    '(Let (f const Unit)
+       (Apply h (BorrowMut x)
+         (Scope ()
+           (Lam User c0 (p) (Apply g (BorrowMut p)))))
+       (Apply f 0)))
+  (define ir (checked-ir core))
+  (define outer (temporary ir '(0)))
+  (define nested (temporary ir '(0 2 0 0)))
+  (define callable-region (region-at/branch ir '(0 2 0 0)))
+  (check-equal? (region-parent ir nested) outer)
+  (check-true (region-outlives? ir callable-region nested))
+  (check-true (set-member? (regions-exiting-at ir '(0)) outer))
+  (check-false (set-member? (regions-exiting-at ir '(0)) nested))
+  (check-true (set-member? (regions-exiting-at ir '(0 2 0 0)) nested)))
+
 (test-case "一時region_Assignの値は子"
   (define ir
     (checked-ir '(Assign (BorrowMut x) (Apply g (BorrowMut y)))))

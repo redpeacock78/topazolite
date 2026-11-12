@@ -502,6 +502,7 @@
 
 (define (lexical-region-ir-ok? ir)
   (define regions (region-ir-regions ir))
+  (define outlives (region-ir-outlives ir))
   (define parents (lexical-region-ir-parents ir))
   (define points (lexical-region-ir-points ir))
   (define temporary-start-table
@@ -581,6 +582,10 @@
                (hash-has-key? parents ρ)
                (equal? (region-parent ir ρ)
                        (temporary-parent-for ir point))
+               (set-member? outlives
+                            (list (region-parent ir ρ) ρ))
+               (set-member? outlives
+                            (list (region-at/branch ir point) ρ))
                (set-member? (regions-exiting-at ir point) ρ)))
         (for/and ([(point exits*) (in-hash (lexical-region-ir-exit-table ir))])
           (define exits (if (set? exits*) exits* (set exits*)))
@@ -781,7 +786,8 @@
                 (define direct-indices (direct-borrow-child-indices node))
                 (define temporary-region
                   (and (pair? direct-indices)
-                       (let* ([parent (or active (region-at/branch base-ir point))]
+                       (let* ([lexical-parent (region-at/branch base-ir point)]
+                              [parent (or active lexical-parent)]
                               [ρ (fresh-region!)])
                          (hash-set! temporary-start-table point
                                     direct-indices)
@@ -789,6 +795,8 @@
                          (hash-set! parents ρ parent)
                          (hash-set! owners ρ '())
                          (set-add! outlives (list parent ρ))
+                         ;; 一時親と別の lexical region が並ぶ入れ子の下限を残す。
+                         (set-add! outlives (list lexical-parent ρ))
                          (add-exit! point ρ)
                          ρ)))
                 (define start-index
