@@ -1095,6 +1095,11 @@
     (check-parse-error-at source "E-SUR-005"
                           (source-span-of-char source #\&))))
 
+(test-case "関数型記法は明示 region の束縛子を受理しない"
+  (define source "let f: fn<r>(&r Int) -> Int = x\n0")
+  (check-parse-error-at source "E-SUR-005"
+                        (source-span-of-char source #\<)))
+
 (test-case "明示 region 名と関数の束縛子を Surface に保持する"
   (check-match
    (p "fn choose<r>(left: &r Int, right: &r Int, c: Bool) -> &r Int { return left }\n0")
@@ -1140,6 +1145,25 @@
   (define empty-binders "fn f<>() -> Int { return 0 }\n0")
   (check-parse-error-at empty-binders "E-SUR-005"
                         (source-span-of-char empty-binders #\>)))
+
+(test-case "明示 region 名と関数の束縛子の span を保持する"
+  (define borrow-source "let b: &r Int = x\n0")
+  (match (p-binding-type borrow-source)
+    [`(TBorrow ,borrow-span (SName ,region-span r) (TName ,_ Int))
+     (check-equal? borrow-span (sp 7 13))
+     (check-equal? region-span (source-span-of-char borrow-source #\r))]
+    [other (fail-check (format "名前付き借用型を期待したが ~s" other))])
+  (define nested-source "let b: &r (&Int) = x\n0")
+  (match (p-binding-type nested-source)
+    [`(TBorrow ,borrow-span (SName ,_ r) (TBorrow ,_ #:none (TName ,_ Int)))
+     (check-equal? borrow-span (sp 7 16))]
+    [other (fail-check (format "括弧を含む名前付き借用型を期待したが ~s" other))])
+  (define choose-source
+    "fn choose<r>(left: &r Int, right: &r Int, c: Bool) -> &r Int { return left }\n0")
+  (match (p choose-source)
+    [`(SProgram ,_ ((SFnDecl ,_ ,_ ((SName ,binding-span r)) ,_ ,_ ,_ ,_)) ,_)
+     (check-equal? binding-span (source-span-of-char choose-source #\r))]
+    [other (fail-check (format "choose の binder span を期待したが ~s" other))]))
 
 (define (p-block-statement source)
   (match (p (format "fn f() {\n  ~a\n  ()\n}\n0" source))

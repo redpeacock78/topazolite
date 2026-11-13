@@ -121,9 +121,17 @@
    (cons 'STryBind  (redex-match? Surface spitem `(STryBind ,s0 (SName ,s0 x) (SInt ,s0 1))))
    (cons 'SReassign (redex-match? Surface spitem `(SReassign ,s0 (SName ,s0 x) (SInt ,s0 1))))
    (cons 'SExprStmt (redex-match? Surface spitem `(SExprStmt ,s0 (SInt ,s0 1))))
-   (cons 'SFnDecl   (redex-match? Surface spitem `(SFnDecl ,s0 (SName ,s0 f) ()
-                                                           ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
-                                                           (TName ,s0 Int) #:none (SInt ,s0 1))))
+   (cons 'SFnDecl
+         (and (redex-match? Surface spitem
+                             `(SFnDecl ,s0 (SName ,s0 f) ()
+                                       ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
+                                       (TName ,s0 Int) #:none (SInt ,s0 1)))
+              (redex-match? Surface spitem
+                             `(SFnDecl ,s0 (SName ,s0 f) ((SName ,s0 r))
+                                       ((SParam ,s0 (SName ,s0 x)
+                                                 (TBorrow ,s0 (SName ,s0 r) (TName ,s0 Int))))
+                                       (TBorrow ,s0 (SName ,s0 r) (TName ,s0 Int))
+                                       #:none (SInt ,s0 1)))))
    (cons 'STypeDecl (redex-match? Surface spitem `(STypeDecl ,s0 (SName ,s0 A) (TName ,s0 Int))))
    (cons 'STraitDecl (redex-match? Surface spitem `(STraitDecl ,s0 (SName ,s0 P) ())))
    (cons 'SImplDecl  (redex-match? Surface spitem `(SImplDecl ,s0 (SName ,s0 P) (TName ,s0 Int) (SRec ,s0 ()))))
@@ -154,8 +162,16 @@
                                             ((,s0 (SVar ,s0 c)
                                                   (SBlock ,s0 () (SInt ,s0 1))))
                                             ,s0)))
-   (cons 'SFn       (redex-match? Surface sexpr `(SFn ,s0 () ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
-                                                      (TName ,s0 Int) #:none expr (SInt ,s0 1))))
+   (cons 'SFn
+         (and (redex-match? Surface sexpr
+                             `(SFn ,s0 () ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
+                                   (TName ,s0 Int) #:none expr (SInt ,s0 1)))
+              (redex-match? Surface sexpr
+                             `(SFn ,s0 ((SName ,s0 r))
+                                   ((SParam ,s0 (SName ,s0 x)
+                                             (TBorrow ,s0 (SName ,s0 r) (TName ,s0 Int))))
+                                   (TBorrow ,s0 (SName ,s0 r) (TName ,s0 Int))
+                                   #:none expr (SVar ,s0 x)))))
    (cons 'SApply    (redex-match? Surface sexpr `(SApply ,s0 (SVar ,s0 f) ((SInt ,s0 1)))))
    (cons 'SConstruct (redex-match? Surface sexpr
                                    `(SConstruct ,s0 (SName ,s0 k) ((SInt ,s0 1)))))
@@ -175,8 +191,12 @@
    (cons 'TUnion    (redex-match? Surface sty `(TUnion ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TInter    (redex-match? Surface sty `(TInter ,s0 (TName ,s0 Int) (TName ,s0 String))))
    (cons 'TApp      (redex-match? Surface sty `(TApp ,s0 (SName ,s0 List) ((TName ,s0 Int)))))
-   (cons 'TBorrow   (redex-match? Surface sty `(TBorrow ,s0 #:none (TName ,s0 Int))))
-   (cons 'TBorrowMut (redex-match? Surface sty `(TBorrowMut ,s0 #:none (TName ,s0 Int))))
+   (cons 'TBorrow
+         (and (redex-match? Surface sty `(TBorrow ,s0 #:none (TName ,s0 Int)))
+              (redex-match? Surface sty `(TBorrow ,s0 (SName ,s0 r) (TName ,s0 Int)))))
+   (cons 'TBorrowMut
+         (and (redex-match? Surface sty `(TBorrowMut ,s0 #:none (TName ,s0 Int)))
+              (redex-match? Surface sty `(TBorrowMut ,s0 (SName ,s0 r) (TName ,s0 Int)))))
    (cons 'SDerefAssign (redex-match? Surface spitem
                                     `(SDerefAssign ,s0 (SDeref ,s0 (SVar ,s0 x)) (SInt ,s0 1))))
    (cons 'SName     (redex-match? Surface sname `(SName ,s0 x)))
