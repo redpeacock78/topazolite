@@ -78,6 +78,15 @@
            (omitted-regions->core (cdr term)))]
     [_ term]))
 
+(define (check-adapter-core adapter-core callables expansion-context)
+  (if (borrow-bearing-program? adapter-core callables)
+      (core-type-of/regions
+       (omitted-regions->core adapter-core)
+       '()
+       (omitted-regions->core callables)
+       #:expansion-context expansion-context)
+      (core-type-of/diagnostic adapter-core '() callables)))
+
 ;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
 (struct resolved-type-argument (type) #:transparent)
 
@@ -2290,20 +2299,15 @@
                       core-binders expected-return boundary body-result
                       signature callable reserved-with-formals))
          (define adapter-core (judgment-core adapter-lambda))
+         (define checked-adapter
+           (check-adapter-core adapter-core
+                               (reverse reversed-callables)
+                               expansion-context))
          (define adapter-result
-           (if (borrow-bearing-program? adapter-core
-                                        (reverse reversed-callables))
-               (let ([checked
-                      (core-type-of/regions
-                       (omitted-regions->core adapter-core)
-                       '()
-                       (omitted-regions->core (reverse reversed-callables))
-                       #:expansion-context expansion-context)])
-                 (if (region-typed? checked)
-                     (list (region-typed-type checked) (region-typed-row checked))
-                     checked))
-               (core-type-of/diagnostic
-                adapter-core '() (reverse reversed-callables))))
+           (if (region-typed? checked-adapter)
+               (list (region-typed-type checked-adapter)
+                     (region-typed-row checked-adapter))
+               checked-adapter))
          (match adapter-result
            [(list adapter-type _row)
             (unless (type-equiv? adapter-type signature)
@@ -6829,6 +6833,7 @@
 ;; reject は provide しないため、内部から検査する。
 (module+ test
   (require rackunit)
+  (provide check-adapter-core)
 
   (define ok-span '(#:span src 3 7))
 

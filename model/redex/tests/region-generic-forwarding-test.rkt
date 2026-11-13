@@ -8,7 +8,9 @@
          "../gen.rkt"
          "../machine.rkt"
          "../region.rkt"
-         "../typing.rkt")
+         "../typing.rkt"
+         (only-in (submod "../elaborate.rkt" test)
+                  check-adapter-core))
 
 (define source
   (string-append
@@ -88,4 +90,9 @@
     (check-equal? (length adapters) 1)
     (check-false (borrow-bearing-core? (first adapters)))
     (check-true (borrow-bearing-core? callables))
-    (check-true (borrow-bearing-program? (first adapters) callables))))
+    (check-true (borrow-bearing-program? (first adapters) callables))
+    (define adapter-lambda (caddr (first adapters)))
+    (check-true
+     (region-typed?
+      (check-adapter-core adapter-lambda callables (hash)))
+     "adapter の borrowing-program 判定は region-typed 経路を選ぶ")))
