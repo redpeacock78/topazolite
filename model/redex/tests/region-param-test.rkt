@@ -122,6 +122,21 @@
  (check-equal? (core-free-vars (term (RegionLam (a) x))) (set 'x))
  (check-equal? (core-free-vars (term (RegionApp x ((RParam a))))) (set 'x)))
 
+(test-case "RegionApp の region 置換は借用 payload の入れ子まで届く"
+  (define replacement (hash 'a '(RParam outer)))
+  (check-equal? (subst-region-params
+                 '(Option (Borrowed Int (RParam a))) replacement)
+                '(Option (Borrowed Int (RParam outer))))
+  (check-equal? (subst-region-params
+                 '(BorrowedMut (Borrowed Int (RParam a)) (RParam a))
+                 replacement)
+                '(BorrowedMut (Borrowed Int (RParam outer))
+                              (RParam outer)))
+  (check-equal? (subst-region-params
+                 '(NFn ((Borrowed Int (RParam a))) Int () () () User)
+                 replacement)
+                '(NFn ((Borrowed Int (RParam outer))) Int () () () User)))
+
 ;; ForallRegion の束縛名を region-free-params から除く。
 (test-case
  "region-free-params が束縛名を除く"

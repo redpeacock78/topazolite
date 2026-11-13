@@ -23,6 +23,11 @@
      (ForallRegion (a)
        (NFn ((Borrowed Int (RParam a))) Int () () () User)))))
 
+(define nested-forward-type
+  '(ForallRegion (a)
+     (NFn ((Record ((a (Borrowed Int (RParam a)) imm))))
+          Int () () () User)))
+
 (define returning-forall-callables
   '((id
      (ForallRegion (a)
@@ -150,6 +155,15 @@
              (collect-annotated-regions form (cdr pair)))]
     [_ '()]))
 
+(define (collect-region-app-arguments term)
+  (match term
+    [`(RegionApp ,callee (,rhos ...))
+     (cons rhos (collect-region-app-arguments callee))]
+    [(? pair? pair)
+     (append (collect-region-app-arguments (car pair))
+             (collect-region-app-arguments (cdr pair)))]
+    [_ '()]))
+
 (define (check-runtime-trace core callables expected)
   (define ir (build-region-ir core))
   (define typed (core-type-of/regions core '() callables #:ir ir))
@@ -226,6 +240,41 @@
         [_ term])))
   (values ir filled))
 
+(test-case "Eliminate の再推論でも同じ Apply の RParam 候補は安定する"
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 7
+         (Apply
+          (RegionLam (outer)
+            (Lam User outer-call (p)
+              (Eliminate (Construct (Option Int) some 1)
+                ((some (ignored) ->
+                   (Apply
+                    (RegionLam (inner)
+                      (Lam User inner-call (q) 11))
+                    p))
+                 (none () -> 0)))))
+          (Borrow owner)))))
+  (define outer-type
+    '(ForallRegion (outer)
+       (NFn ((Borrowed Int (RParam outer))) Int () () () User)))
+  (define inner-type
+    '(ForallRegion (inner)
+       (NFn ((Borrowed Int (RParam inner))) Int () () () User)))
+  (define callables `((outer-call ,outer-type) (inner-call ,inner-type)))
+  (check-runtime-trace core callables 'Int)
+  (define ir (build-region-ir core))
+  (define typed (core-type-of/regions core '() callables #:ir ir))
+  (check-true (region-typed? typed)
+              (format "Eliminate 枝内の同一 Apply point を再型付け: ~s" typed))
+  (when (region-typed? typed)
+    (check-equal?
+     (check-borrow-execution
+      (inject-g2m (erase-core (region-execution-core typed)))
+      (region-typed-sidecar typed) ir 300 (make-bcounters))
+     'ok
+     "再推論を含む trace で borrow oracle を通る")))
+
 (test-case "len(&x) の直後は owner を書け、RegionApp は R2、BorrowAt は R3"
   (define ir (build-region-ir simple-forall-call))
   (define typed
@@ -247,6 +296,114 @@
   (check-equal? (first (collect-annotated-regions 'BorrowAt machine-core))
                 (region->rho ir (region-at/temporary ir '(0 1 0))))
   (check-runtime-trace simple-forall-call simple-forall-callables 'Unit))
+
+(test-case "同じ呼出しで仮引数 RParam と局所 region を別々に実体化する"
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 7
+         (Apply
+          (RegionLam (outer)
+            (Lam User forward (p)
+              (Let (local let (Owned Int)) 9
+                (Apply
+                 (RegionLam (a b) (Lam User consume (x y) 11))
+                 p
+                 (Borrow local)))))
+          (Borrow owner)))))
+  (define outer-type
+    '(ForallRegion (outer)
+       (NFn ((Borrowed Int (RParam outer))) Int () () () User)))
+  (define inner-type
+    '(ForallRegion (a b)
+       (NFn ((Borrowed Int (RParam a))
+             (Borrowed Int (RParam b)))
+            Int () () () User)))
+  (define callables `((forward ,outer-type) (consume ,inner-type)))
+  (define ir (build-region-ir core))
+  (define typed (core-type-of/regions core '() callables #:ir ir))
+  (check-true (region-typed? typed)
+              (format "混在する implicit RegionApp を型付け: ~s" typed))
+  (when (region-typed? typed)
+    (define machine-core (region-execution-core typed))
+    (match (collect-region-app-arguments machine-core)
+      [(list _ (list `(RParam ,_) (? exact-nonnegative-integer?))) (void)]
+      [other (fail (format "外側 RParam と局所 region の組を期待: ~s" other))])
+    (define start (inject-g2m (erase-core machine-core)))
+    (define configs (trace-g2 start))
+    (for ([config (in-list configs)] [index (in-naturals)])
+      (define row (runtime-row config callables (region-typed-type typed)
+                               #:region-ir ir))
+      (check-not-false row (format "mixed config ~a runtime-row" index))
+      (when row
+        (check-true (config-ok? config callables (region-typed-type typed) row
+                                #:region-ir ir)
+                    (format "mixed config ~a config-ok?" index))))
+    (check-equal? (check-borrow-execution start (region-typed-sidecar typed)
+                                          ir 300 (make-bcounters))
+                  'ok
+                  "mixed trace passes borrow oracle")))
+
+(test-case "明示 RegionApp の nested borrowed argument は静的に型付けできる"
+  (define core
+    '(RegionLam (a)
+       (Lam User forward (p)
+         (Apply
+          (RegionApp
+           (RegionLam (b) (Lam User ignore (q) 11))
+           ((RParam a)))
+          p))))
+  (define callables
+    `((forward ,nested-forward-type)
+      (ignore ,nested-forward-type)))
+  (define typed (core-type-of/regions core '() callables))
+  (check-true (region-typed? typed)
+              (format "明示 RegionApp の静的型付け: ~s" typed)))
+
+(define ambiguous-two-rparams-core
+  '(RegionLam (a b)
+     (Lam User outer (p q)
+       (Apply
+        (RegionLam (c) (Lam User inner (x y) 11)) p q))))
+
+(define ambiguous-rparam-and-local-core
+  '(RegionLam (a)
+     (Lam User outer (p)
+       (Let (owner let (Owned Int)) 7
+         (Apply
+          (RegionLam (c) (Lam User inner (x y) 11))
+          p
+          (Borrow owner))))))
+
+(define (check-ambiguous-region-app core callables label)
+  (define typed #f)
+  (check-not-exn
+   (lambda ()
+     (set! typed (core-type-of/regions core '() callables)))
+   (format "~a: 内部例外にしない" label))
+  (check-true (diagnostic? typed) (format "~a: 曖昧な実体化を拒否: ~s" label typed))
+  (when (diagnostic? typed)
+    (check-equal? (diagnostic-id typed) "E-BOR-020" label)))
+
+(test-case "一つの alpha が二つの RParam に対応する場合は拒否する"
+  (check-ambiguous-region-app
+   ambiguous-two-rparams-core
+   `((outer (ForallRegion (a b)
+                (NFn ((Borrowed Int (RParam a))
+                      (Borrowed Int (RParam b))) Int () () () User)))
+     (inner (ForallRegion (c)
+                (NFn ((Borrowed Int (RParam c))
+                      (Borrowed Int (RParam c))) Int () () () User))))
+   "alpha と二つの RParam"))
+
+(test-case "一つの alpha が RParam と局所 region に対応する場合は拒否する"
+  (check-ambiguous-region-app
+   ambiguous-rparam-and-local-core
+   `((outer (ForallRegion (a)
+                (NFn ((Borrowed Int (RParam a))) Int () () () User)))
+     (inner (ForallRegion (c)
+                (NFn ((Borrowed Int (RParam c))
+                      (Borrowed Int (RParam c))) Int () () () User))))
+   "alpha と RParam / concrete region"))
 
 (test-case "返された借用は owner の Scope を越えない"
   (define core
