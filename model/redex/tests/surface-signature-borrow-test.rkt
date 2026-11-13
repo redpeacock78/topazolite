@@ -6,7 +6,13 @@
          racket/list
          racket/match
          "../diagnostic.rkt"
-         "../driver.rkt")
+         "../driver.rkt"
+         "../erase.rkt"
+         "../gen.rkt"
+         "../machine.rkt"
+         "../origins.rkt"
+         "../region.rkt"
+         "../typing.rkt")
 
 (define (compile source) (compile-source/string 'src source))
 
@@ -55,6 +61,48 @@
 (define (contains-form? tree wanted)
   (or (and (pair? tree) (eq? (car tree) wanted))
       (and (pair? tree) (ormap (lambda (part) (contains-form? part wanted)) tree))))
+
+(define (trace-compiled artifact)
+  (define core (compiled-core artifact))
+  (define callables (compiled-callables artifact))
+  (define ir (build-region-ir core))
+  (define typed (core-type-of/regions core '() callables #:ir ir))
+  (check-true (region-typed? typed)
+              (format "Surface Core の region 型付け成功: ~s" typed))
+  (if (not (region-typed? typed))
+      '()
+      (call-with-trait-ledger
+       (compiled-ledger artifact)
+       (lambda ()
+         (define start
+           (inject-g2m (erase-core (compiled-execution-core artifact))))
+         (define trace (bounded-trace-g2 start 10000))
+         (check-equal? (execution-outcome trace) 'terminal)
+         (define expected (region-typed-type typed))
+         (for ([config (in-list (execution-configs trace))]
+               [index (in-naturals)])
+           (define row
+             (runtime-row config callables expected #:region-ir ir))
+           (check-not-false row (format "config ~a has runtime-row" index))
+           (when row
+             (check-true
+              (config-ok? config callables expected row #:region-ir ir)
+              (format "config ~a passes config-ok?" index))))
+         (execution-configs trace)))))
+
+(define (trace-value artifact)
+  (match (last (trace-compiled artifact))
+    [`(cfg ,value ,_heap ,_states ,_tokens ,_events) value]
+    [other (fail-check (format "terminal config expected, got ~s" other))]))
+
+(define (region-app-arguments tree)
+  (match tree
+    [`(RegionApp ,callee (,regions ...))
+     (append (list regions)
+             (region-app-arguments callee)
+             (append-map region-app-arguments regions))]
+    [(? pair? parts) (append-map region-app-arguments parts)]
+    [_ '()]))
 
 (test-case "借用位置ごとに別の region 束縛子を割り当てる"
   (define result
@@ -241,4 +289,152 @@
       "let holder = {h: get}\n"
       "let owner: Owned<Int> = 1\n"
       "deref(holder.h({a: &owner}))")))
-  (check-true (contains-form? (compiled-execution-core result) 'RegionApp)))
+  (check-true (contains-form? (compiled-execution-core result) 'RegionApp))
+  (check-equal? (trace-value result) 1))
+
+(test-case "借用した record の欄を返す署名を呼んで値を読む"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn head(p: &{head: Int, tail: Int}) -> &Int { return p.head }\n"
+      "let pair: Owned<{head: Int, tail: Int}> = {head: 1, tail: 2}\n"
+      "deref(head(&pair))")))
+  (check-equal? (trace-value result) 1))
+
+(test-case "BorrowedMut から共有を再借用し可変借用を転送する"
+  (define shared
+    (compile-accepted
+     (string-append
+      "fn share(p: &mut Int) -> &Int { return reborrow(p) }\n"
+      "let owner: Owned<Int> = 1\n"
+      "deref(share(&mut owner))")))
+  (check-equal? (trace-value shared) 1)
+  (define mutable
+    (compile-accepted
+     (string-append
+      "fn forward(p: &mut Int) -> &mut Int { return p }\n"
+      "let owner: Owned<Int> = 1\n"
+      "{ let r = forward(&mut owner)\n"
+      "  deref(r) = 9\n"
+      "  () }\n"
+      "deref(&owner)")))
+  (check-equal? (trace-value mutable) 9))
+
+(test-case "欄の内側の借用を署名から返す"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn get(p: {a: &Int}) -> &Int ! {Own, Partial} { return p.a }\n"
+      "let owner: Owned<Int> = 7\n"
+      "deref(get({a: &owner}))")))
+  (check-equal? (trace-value result) 7))
+
+(test-case "複数の借用入力でも借用を返さない署名を呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn ignore(p: &Int, q: &Int) -> Int { return 3 }\n"
+      "let left: Owned<Int> = 1\n"
+      "let right: Owned<Int> = 2\n"
+      "ignore(&left, &right)")))
+  (check-equal? (trace-value result) 3))
+
+(test-case "型注釈付き無名関数の借用署名を呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "let id = fn(p: &Int) -> &Int { return p }\n"
+      "let owner: Owned<Int> = 4\n"
+      "deref(id(&owner))")))
+  (check-equal? (trace-value result) 4))
+
+(test-case "借用署名の自己再帰を実体化して呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn choose(p: &Int, again: Bool) -> &Int ! {Own, Partial} {\n"
+      "  return if again { p } else { choose(p, true) }\n"
+      "}\n"
+      "let owner: Owned<Int> = 5\n"
+      "deref(choose(&owner, false))")))
+  (check-equal? (trace-value result) 5))
+
+(test-case "let で別名にした region 多相関数を呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn id(p: &Int) -> &Int { return p }\n"
+      "let g = id\n"
+      "let owner: Owned<Int> = 6\n"
+      "deref(g(&owner))")))
+  (check-equal? (trace-value result) 6))
+
+(test-case "record 欄から取り出した record borrow callable を呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn head(p: &{head: Int, tail: Int}) -> &Int { return p.head }\n"
+      "let holder = {h: head}\n"
+      "let pair: Owned<{head: Int, tail: Int}> = {head: 8, tail: 9}\n"
+      "deref(holder.h(&pair))")))
+  (check-equal? (trace-value result) 8))
+
+(test-case "同じ関数を二度呼ぶ一式は呼出しごとの region を保つ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn head(p: &{head: Int, tail: Int}) -> &Int { return p.head }\n"
+      "let right: Owned<{head: Int, tail: Int}> = {head: 2, tail: 0}\n"
+      "add({ let inner: Owned<{head: Int, tail: Int}> = {head: 1, tail: 0}\n"
+      "  deref(head(&inner)) }, deref(head(&right)))")))
+  (check-equal? (trace-value result) 3)
+  (define rhos (region-app-arguments (compiled-execution-core result)))
+  (check-equal? (length rhos) 2)
+  (check-not-equal? (first rhos) (second rhos)))
+
+(test-case "入れ子の借用位置を別々に束縛する署名を定義だけで検査する（呼出しは実行しない）"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn ignore(x: &{a: &Int}) -> Int { return 11 }\n"
+      "0")))
+  (define binders (forall-binders result))
+  (check-equal? (length binders) 2)
+  (check-not-equal? (first binders) (second binders))
+  (check-equal? (trace-value result) 0))
+
+(test-case "Scope を越える借用戻りは E-BOR-004"
+  (compile-rejected
+   (string-append
+    "fn id(p: &Int) -> &Int { return p }\n"
+    "let result = { let owner: Owned<Int> = 7\n id(&owner) }\n"
+    "deref(result)")
+   "E-BOR-004"))
+
+(test-case "返した可変借用の生存中の owner write は E-BOR-003"
+  (compile-rejected
+   (string-append
+    "fn idm(p: &mut Int) -> &mut Int { return p }\n"
+    "fn bad() -> Unit ! {Own, Partial, Mutation} {\n"
+    "  let owner: Owned<Int> = 1\n"
+    "  let result = idm(&mut owner)\n"
+    "  deref(&mut owner) = 2\n"
+    "  ()\n"
+    "}\n"
+    "bad()")
+   "E-BOR-003"))
+
+(test-case "共有借用を受け可変借用を返す署名は E-TYP-012"
+  (compile-rejected
+   "fn bad(p: &Int) -> &mut Int { return p }\n0"
+   "E-TYP-012"))
+
+(test-case "署名内の借用を捕捉する無名関数は E-BOR-027"
+  (compile-rejected
+   (string-append
+    "fn outer(p: &Int) -> Int ! {Own, Partial} {\n"
+    "  let inner = fn(q: &Int) -> &Int { return p }\n"
+    "  return 0\n"
+    "}\n"
+    "0")
+   "E-BOR-027"))

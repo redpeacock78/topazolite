@@ -633,10 +633,12 @@ shared borrow と lexical region の Surface 表記は、既存の borrow と re
 narrowing で view から隠れる借用残余は、Core と同じ RemainderSafelyDropped の義務を満たすか、既存の診断または Core typing の拒否を保って lowering されなければならない。
 RSD が残余を除く場合、推論結果の型は expected の row と field mode を保ち、残る欄の省略された借用 region だけを actual の推論結果から採る。
 実行時の Union 値は member tag と payload の型を region を除いた形で照合し、対応する member が一意なときに限り payload の借用 region をその member の型へ反映して config を再型付けする。
-現状は局所の借用型注釈と借用式、読み出し、再借用、射影、書込み、および適格な借用残余の RSD を受理し、region によって owner より長く生きる借用を拒否する部分実装である。
+現状は局所の借用型注釈と借用式、読み出し、再借用、射影、書込み、および適格な借用残余の RSD に加え、関数宣言と型注釈付き無名関数の仮引数および戻り型の借用署名を受理する部分実装である。
+省略した戻りの借用は入力の借用位置が一つの場合にその位置へ対応させ、owner より長く生きる借用と入れ子関数による外側の借用の捕捉を拒否する。
 RSD で値から除かれた借用の loan は静的な記録に残るため、同じ owner の再利用を `E-BOR-003` で過剰に拒否する形がある。
-現在の Surface 経路から `E-BOR-027` には到達しない。
-関数署名の借用型と明示の region は未対応であり、型別名と data の欄に借用型を許すかどうかは SUR-004 の完了前に再判定する。
+明示の region を複数の入力借用位置で共有する署名と、呼出し時に実引数から共通の region を解決する機能は b2 に残る。
+借用の署名を持つ trait の要求欄の呼出しは `E-BOR-012` の制限を含め b3 に残る。
+関数型の表記内、型別名の右辺、および data の欄の借用型は `E-SUR-005` で拒否する。
 
 ### SUR-005
 
@@ -1052,7 +1054,8 @@ P2g では、表の Phase 2 行のうち 1 件が実装規模の縮約ではな�
 | 戻り値だけに `Self` を持つ要求欄の受け手型の推論 | `trait.md` §9 | Phase 4 以降 | §8.1、§10.3 |
 | method-call sugar `x.l()` による要求欄の呼出し | `trait.md` §9 | Phase 未定 | §10.3 |
 | 借用の署名を持つ要求欄の呼出し（射影した関数値への適用が `E-BOR-012` になる制限。Surface の借用注釈の導入時に回収する） | `trait.md` §9 | Phase 2 以降 | §8.1 |
-| 関数署名の借用型と明示の region、および型別名と data の欄の借用型を拒否する扱いの再判定 | `surface.md` §3.9、`borrow.md` §1.1 | SUR-004 完了前（関数署名と明示の region の導入、および借用型を許す位置の再判定） | §4.8 |
+| 関数署名での明示 region（複数の入力借用位置で一つを共有する署名と、呼出し時の共通 region 解決を含む） | `surface.md` §3.9、`borrow.md` §1.1 | SUR-004 の b2（明示 region） | §4.8 |
+| 添字構文（ホワイトペーパー §4.8 の `items[0]`） | `surface.md` §3.1 | Phase 未定（collection access を定める要件の導入時） | §4.8 |
 | `Owned` を捕捉する `Recur` と `RecurVal` | `core-calculus.md` §4.6 | Phase 4 以降 | §4.7 |
 | 継続を再開する algebraic effect handler | `core-calculus.md` §3.3 | Phase 未定 | §5.2 |
 | Suspend を corecursion の生産性 guard として使う設計 | `core-calculus.md` §5.4 | Phase 4 以降 | 無し |

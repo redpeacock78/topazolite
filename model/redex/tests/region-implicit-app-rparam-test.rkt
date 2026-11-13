@@ -91,3 +91,42 @@
       [`(cfg 11 ,_heap ,_states ,_tokens ,_events) (void)]
       [other (fail (format "forward -> implicit RegionApp ignore trace expected 11, got ~s"
                            other))])))
+
+(test-case "外側借用と欄内借用の異なる region を持つ実引数を受ける"
+  (define sink-type
+    '(NFn ((Borrowed
+            (Record ((a (Borrowed Int 4) imm)))
+            2))
+          Int () () () User))
+  (define core
+    '(Apply
+      (RegionApp
+       (RegionLam (outer inner) (Lam User ignore (q) 11))
+       (2 4))
+      (BorrowRef 0 () 2)))
+  (define callables `((ignore ,sink-type)))
+  (define heap
+    '((0 (Rec ((a imm (BorrowRef 1 () 4))))
+         (declared (Record ((a (Borrowed Int 4) imm)))))))
+  (define states '((0 Available) (1 Available)))
+  (define start `(cfg ,core ,(append heap '((1 7 (declared Int)))) ,states () ()))
+  (define configs (trace-g2 start))
+  (check-equal? (collect-region-app-arguments core) '((2 4)))
+  (define initial-row (runtime-row start callables 'Int))
+  (check-not-false initial-row "initial config has runtime-row")
+  (for ([config (in-list configs)] [index (in-naturals)])
+    (define row (runtime-row config callables 'Int))
+    (check-not-false
+     row
+     (format "config ~a has runtime-row: ~s" index config))
+    (when row
+      (check-true (config-ok? config callables 'Int row)
+                  (format "config ~a passes config-ok?" index))
+      (check-equal? row initial-row
+                    (format "config ~a preserves runtime-row" index))))
+  (check-equal? (check-borrow-execution start #f #f 300 (make-bcounters))
+                'ok
+                "different outer and field regions pass the borrow oracle")
+  (match (last configs)
+    [`(cfg 11 ,_heap ,_states ,_tokens ,_events) (void)]
+    [other (fail (format "expected result 11, got ~s" other))]))
