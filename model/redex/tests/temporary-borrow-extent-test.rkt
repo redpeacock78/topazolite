@@ -588,10 +588,48 @@
     (check-equal? (alpha-region typed point) (region-at ir point))
     (check-runtime typed ir temporary-callables 'Int "result-flow")))
 
-(test-case "一時借用_no-summary calleeの借用引数はfail-closed"
+(test-case "一時借用_summary の無い callee は署名 fallback で借用引数を呼出しで終える"
   (define signature
     '(ForallRegion (a)
        (NFn ((BorrowedMut Int (RParam a))) Int () () () User)))
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Apply (RegionApp f (owner-ph)) (BorrowMut owner)))))
+  (define-values (ir _filled typed)
+    (type-core core '() `((f ,signature))
+               (hash 'owner-ph '(0))
+               `((f ,signature))))
+  (check-true (region-typed? typed) (format "signature fallback: ~s" typed))
+  (when (region-typed? typed)
+    (define point
+      (core-point core (lambda (node) (equal? node '(BorrowMut owner)))))
+    (check-equal? (alpha-region typed point) (region-at ir point))))
+
+(test-case "一時借用_summary の無い callee が返す借用は owner access と衝突する"
+  (define signature
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a)))
+            (BorrowedMut Int (RParam a)) () () () User)))
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Let (result let (BorrowedMut Int owner-ph))
+              (Apply (RegionApp f (owner-ph)) (BorrowMut owner))
+           (Let (written const Unit) (Assign (BorrowMut owner) 2)
+             (Read (Reborrow result)))))))
+  (define-values (_ir _filled typed)
+    (type-core core '() `((f ,signature))
+               (hash 'owner-ph '(0))
+               `((f ,signature))))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
+                "E-BOR-003"))
+
+(test-case "一時借用_summary の無い callee の Yield payload は fail-closed"
+  (define signature
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a))) Int ()
+            ((Yield (Borrowed Int (RParam a)))) () User)))
   (define core
     '(Scope ()
        (Let (owner let (Owned Int)) 1
@@ -601,7 +639,23 @@
                (hash 'owner-ph '(0))
                `((f ,signature))))
   (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
-                "E-BOR-012"))
+                "E-BOR-020"))
+
+(test-case "一時借用_summary の無い callee の Return payload は fail-closed"
+  (define signature
+    '(ForallRegion (a)
+       (NFn ((BorrowedMut Int (RParam a))) Int ()
+            ((Return boundary (Borrowed Int (RParam a)))) () User)))
+  (define core
+    '(Scope ()
+       (Let (owner let (Owned Int)) 1
+         (Apply (RegionApp f (owner-ph)) (BorrowMut owner)))))
+  (define-values (_ir _filled typed)
+    (type-core core '() `((f ,signature))
+               (hash 'owner-ph '(0))
+               `((f ,signature))))
+  (check-equal? (and (diagnostic? typed) (diagnostic-id typed))
+                "E-BOR-020"))
 
 (test-case "一時借用_ReadのBorrowed payload寿命βを保つ"
   (define core

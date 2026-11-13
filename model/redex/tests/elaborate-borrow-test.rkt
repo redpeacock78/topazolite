@@ -303,15 +303,14 @@
   (check-typed-acceptance
    '(FnDecl f ((b (Borrowed Int Omitted))) Int () (Read b) 0)))
 
-(test-case "Loop の borrowed binder は Task 2 で反転予定: 多相 Apply 未対応で E-APP-001"
-  (check-typed-diagnostic
+(test-case "Loop の borrowed binder を多相 Apply で実体化する"
+  (check-typed-acceptance
    '(Fn ((p (Owned Int))) Int (Own)
       (LexicalScope
        (Let (x let (Owned Int)) (Move p)
          (Let (borrowed let (Borrowed Int Omitted)) (Borrow x)
            (Loop loop ((b (Borrowed Int Omitted))) Int ()
-                 (Read b) (borrowed))))))
-   "E-APP-001"))
+                 (Read b) (borrowed))))))))
 
 (test-case "入力借用が無い明示戻り値の借用は E-BOR-020"
   (match (elab

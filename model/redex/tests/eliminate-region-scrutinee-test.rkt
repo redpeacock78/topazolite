@@ -2844,7 +2844,7 @@
     (check-true (andmap lifetime-var? alphas)
                 "型付け結果には descriptor でなく raw RVar を保持する")
     (match typed
-      [(region-typed _ _ _ _ _ _ _ _ _ alpha-table parent-keys)
+      [(region-typed _ _ _ _ _ _ _ _ _ alpha-table parent-keys _)
        (check-equal? parent-keys (list->set (hash-keys alpha-table))
                      "formal-parent の鍵は alpha と分けて保持する")])
     (define (has-parent-binder-region? term)

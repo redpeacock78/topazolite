@@ -213,3 +213,32 @@
   (compile-rejected
    "fn f(p: &mut {h: Int, t: Int}) -> &Int { return reborrow(p.h) }\n0"
    "E-BOR-009"))
+
+(test-case "借用署名の呼出しを Apply で暗黙に実体化する"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn head(p: &Int) -> &Int { return p }\n"
+      "let owner: Owned<Int> = 1\n"
+      "let value = head(&owner)\n"
+      "deref(value)")))
+  (check-true (contains-form? (compiled-execution-core result) 'RegionApp)))
+
+(test-case "借用署名の forwarding 呼出しは束縛子をそのまま伝える"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn head(p: &Int) -> &Int { return p }\n"
+      "fn forward(p: &Int) -> &Int ! {Own, Partial} { return head(p) }\n"
+      "0")))
+  (check-true (contains-form? (compiled-execution-core result) 'RegionApp)))
+
+(test-case "record 欄から取り出した借用署名を呼ぶ"
+  (define result
+    (compile-accepted
+     (string-append
+      "fn get(p: {a: &Int}) -> &Int ! {Own, Partial} { return p.a }\n"
+      "let holder = {h: get}\n"
+      "let owner: Owned<Int> = 1\n"
+      "deref(holder.h({a: &owner}))")))
+  (check-true (contains-form? (compiled-execution-core result) 'RegionApp)))

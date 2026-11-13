@@ -1476,6 +1476,13 @@
    ;; 本体を見ていない署名要約は出口イベントを欠くため、局所として扱わない。
    #t))
 
+(define (latent-row-has-borrowed-payload? row)
+  (for/or ([effect (in-list row)])
+    (match effect
+      [`(Yield ,payload) (borrowed-type-anywhere? payload)]
+      [`(Return ,_ ,payload) (borrowed-type-anywhere? payload)]
+      [_ #f])))
+
 ;; RegionApp が Union member を潰す場合だけ π の member segment を実体化後の
 ;; 鍵から除く。Record と constructor の segment は型引数を含まない。
 (define (instantiate-capability-path type path region-subst)
@@ -3458,6 +3465,23 @@
 ;; 解いて等値を検査する。
 (define borrowed-mut-call-site (make-parameter #f))
 
+;; ForallRegion の Apply で束縛した寿命変数だけ、実引数の外側 region との
+;; 照合を一時的に許す。check-many/full は各実引数の境界でこの集合を設定する。
+(define implicit-region-apply-alphas (make-parameter '()))
+(define implicit-region-apps-table (make-parameter #f))
+
+(define (record-implicit-region-app! Λ rps node fail)
+  (define table (implicit-region-apps-table))
+  (define point (region-ctx-point Λ))
+  (define previous (and table (hash-ref table point #f)))
+  (define alphas
+    (or previous
+        (for/list ([_rp (in-list rps)]) (fresh-local-lifetime!))))
+  (when (and previous (not (= (length previous) (length rps))))
+    (fail 'unresolved-borrow-owner node))
+  (when table (hash-set! table point alphas))
+  alphas)
+
 (define (borrowed-mut-region-outlives? ir long short)
   (cond
     [(equal? long short) #t]
@@ -4449,6 +4473,7 @@
                          [start-index 0]
                          #:adopt? [adopt? #t]
                          #:config-apply-arguments? [config-apply-arguments? #f]
+                         #:implicit-region-alphas [implicit-alphas '()]
                          #:temporary-borrow-predicate
                          [temporary-borrow? (lambda (_core _index) #f)])
   (unless (= (length cores) (length types))
@@ -4468,7 +4493,9 @@
           (match (with-temporary-borrow-child
                   Λ i (first cores) temporary?
                   (lambda (argument-Λ)
-                    (parameterize ([temporary-borrow-argument? temporary?])
+                    (parameterize ([temporary-borrow-argument? temporary?]
+                                   [implicit-region-apply-alphas
+                                    implicit-alphas])
                       (check-as/full (first cores)
                                      (first types)
                                      argument-Λ
@@ -8662,16 +8689,28 @@
               (and frame
                    (eq? (recur-frame-state frame) 'final)
                    (recur-frame->summary frame))))
-        (when inner
+        (define summary
+          (or inner
+              (match body-type
+                [`(NFn (,parameter-types ...)
+                       ,return-type ,latent-in ,latent-out ,_ ,_)
+                 (and (or (ormap formal-capability-type? parameter-types)
+                          (formal-capability-type? return-type))
+                      (not (latent-row-has-borrowed-payload? latent-in))
+                      (not (latent-row-has-borrowed-payload? latent-out))
+                      (signature-forwarding-summary
+                       parameter-types return-type core fail))]
+                [_ #f])))
+        (when summary
           (define summary-region-subst
             (for/fold ([resolved actual-regions])
                       ([(rp target)
-                        (in-hash (callable-summary-region-subst inner))])
+                        (in-hash (callable-summary-region-subst summary))])
               (hash-set resolved rp
                         (subst-region-params target actual-regions))))
           (record-callable-summary!
            Λ core
-           (struct-copy callable-summary inner
+           (struct-copy callable-summary summary
                         [region-subst summary-region-subst])
            fail))
         (list substituted-body function-row function-psi)]
@@ -8687,7 +8726,21 @@
      (define function-psi (third function-result))
      (define-values (peeled _function-owned?)
        (peel-owned-function function-type function fail))
-     (match (list peeled function-row function-psi)
+     (define-values (callable implicit-rps implicit-alphas implicit-region-subst)
+       (match peeled
+         [`(ForallRegion (,rps ...) (NFn ,_ ...))
+          (define alphas (record-implicit-region-app! Λ rps core fail))
+          (define substitution
+            (for/hash ([rp (in-list rps)] [alpha (in-list alphas)])
+              (values rp alpha)))
+          (for ([alpha (in-list alphas)])
+            (emit-region-arg-request! alpha (region-ctx-point Λ) core))
+          (values (subst-region-params
+                   (match peeled [`(ForallRegion ,_ ,body) body])
+                   substitution)
+                  rps alphas substitution)]
+         [_ (values peeled #f '() (hash))]))
+     (match (list callable function-row function-psi)
        [(list `(NFn ,parameter-types
                     ,return-type ,latent-in ,latent-out ,obligations ,function-origin)
               _ _)
@@ -8700,13 +8753,41 @@
           (and (symbol? function-name)
                (recur-frame-for (lookup-binding environment function-name))))
         (define summary
-          (or (and frame
-                   (eq? (recur-frame-state frame) 'final)
-                   (recur-frame->summary frame))
-              (lookup-callable-summary (enter-child Λ 0) function)
-              (let ([w (peel-node function)])
-                (and (borrow-designator? w)
-                     (region-ctx-summary Λ w)))))
+          (if implicit-rps
+              (let-values ([(inner-point inner-node)
+                            (match (peel-node function)
+                              [`(RegionLam ,_ ,body)
+                               (values (enter-child (enter-child Λ 0) 0) body)]
+                              [_ (values (enter-child Λ 0) function)])])
+                (define inner
+                  (or (lookup-callable-summary inner-point inner-node)
+                      (and (symbol? function-name)
+                           (region-ctx-summary (enter-child Λ 0) function-name))
+                      (and frame
+                           (eq? (recur-frame-state frame) 'final)
+                           (recur-frame->summary frame))))
+                (and inner
+                     (struct-copy
+                      callable-summary inner
+                      [region-subst
+                       (for/fold ([resolved implicit-region-subst])
+                                 ([(rp target)
+                                   (in-hash
+                                    (callable-summary-region-subst inner))])
+                         (hash-set resolved rp
+                                   (subst-region-params
+                                    target implicit-region-subst)))])))
+              (or (and frame
+                       (eq? (recur-frame-state frame) 'final)
+                       (recur-frame->summary frame))
+                  (lookup-callable-summary (enter-child Λ 0) function)
+                  (let ([w (peel-node function)])
+                    (and (borrow-designator? w)
+                         (region-ctx-summary Λ w))))))
+        (when (and (not summary)
+                   (or (latent-row-has-borrowed-payload? latent-in)
+                       (latent-row-has-borrowed-payload? latent-out)))
+          (fail 'unresolved-borrow-owner core))
         ;; 義務は呼出しの出現へ provenance を結び付けられるため、束縛済みの
         ;; RParam は呼出し側で運べる。ここでは既定の bound-region-params を
         ;; 尊重し、未束縛の借用だけを借用結果として拒む。
@@ -8716,10 +8797,12 @@
         ;; 照合より先に返す。summary のある callable だけ実体化へ進む。
         (when (and (not summary)
                    (not frame)
+                   (not implicit-rps)
                    (ormap unbound-boundary-borrowed-type? parameter-types))
           (fail 'borrowed-function-parameter function))
         (when (and (not summary)
                    (not frame)
+                   (not implicit-rps)
                    (unbound-boundary-borrowed-type? return-type))
           (fail 'borrowed-function-result function))
         (define argument-result
@@ -8729,17 +8812,23 @@
                              environment places callables core fail 1
                              #:adopt? #f
                              #:config-apply-arguments? #t
+                             #:implicit-region-alphas implicit-alphas
                              #:temporary-borrow-predicate
                              (lambda (_argument index)
                                (callable-summary-local-argument?
                                 summary index)))))
         (define actuals (third argument-result))
         (define temporary-arguments (fourth argument-result))
+        (when implicit-rps
+          (emit-implicit-region-constraints! parameter-types actuals
+                                             implicit-alphas temporary-arguments
+                                             Λ core fail))
         (define borrow-parameters?
           (ormap formal-capability-type? parameter-types))
         ;; 既存の concrete NFn は本体の出現要約を持たないため、従来の
         ;; unbound 診断を保つ。ForallRegion の要約欠落だけを fail-closed にする。
-        (when (and (not summary) (not frame) borrow-parameters?)
+        (when (and (not summary) (not frame) (not implicit-rps)
+                   borrow-parameters?)
           (unless (or (not (borrow-region return-type))
                       (forwarding-index parameter-types return-type))
             (fail 'unresolved-borrow-owner core)))
@@ -8787,6 +8876,9 @@
           (define result-summary
             (or summary
                 (and frame (recur-frame->summary frame))
+                (and implicit-rps
+                     (signature-forwarding-summary parameter-types
+                                                   return-type core fail))
                 (and (not (borrow-region return-type))
                      (signature-forwarding-summary parameter-types
                                                    return-type core fail))))
@@ -9819,6 +9911,216 @@
           (first pair) (second pair) core Λ fail))
        #t))
 
+(define (implicit-region-alpha? rho)
+  (and (match rho [`(RVar ,_) #t] [_ #f])
+       (member rho (implicit-region-apply-alphas) equal?)))
+
+(define (borrow-region-shape type)
+  (match type
+    [`(Borrowed ,payload ,_) `(Borrowed ,(borrow-region-shape payload) _)]
+    [`(BorrowedMut ,payload ,_) `(BorrowedMut ,(borrow-region-shape payload) _)]
+    [`(Record ,row)
+     `(Record ,(for/list ([field (in-list row)])
+                 (list (first field) (borrow-region-shape (second field))
+                       (third field))))]
+    [`(Union ,left ,right)
+     `(Union ,(borrow-region-shape left) ,(borrow-region-shape right))]
+    [(? list? items) (map borrow-region-shape items)]
+    [_ type]))
+
+(define (align-borrow-region-types formal actual)
+  (define formal* (normalize-type formal))
+  (define actual* (normalize-type actual))
+  (define (unique-match type candidates)
+    (define matches
+      (filter (lambda (candidate)
+                (equal? (borrow-region-shape type)
+                        (borrow-region-shape candidate)))
+              candidates))
+    (and (= (length matches) 1) (first matches)))
+  (match* (formal* actual*)
+    [(`(Union ,_ ,_) `(Union ,_ ,_))
+     (define formal-members (union-members formal*))
+     (define actual-members (union-members actual*))
+     (define pairs
+       (for/list ([member (in-list formal-members)])
+         (define match (unique-match member actual-members))
+         (and match (cons member match))))
+     (and (andmap values pairs)
+          (= (length formal-members) (length actual-members))
+          (= (length (remove-duplicates (map cdr pairs) equal?))
+             (length actual-members))
+          pairs)]
+    [(`(Union ,_ ,_) _)
+     (define member (unique-match actual* (union-members formal*)))
+     (and member (list (cons member actual*)))]
+    [(_ `(Union ,_ ,_))
+     (define member (unique-match formal* (union-members actual*)))
+     (and member (list (cons formal* member)))]
+    [(_ _)
+     (and (or (equal? formal* actual*)
+              (and (list? formal*) (list? actual*)
+                   (= (length formal*) (length actual*))
+                   (equal? (first formal*) (first actual*))))
+          (list (cons formal* actual*))) ]))
+
+(define (emit-implicit-region-constraints! parameter-types actual-types alphas
+                                           temporary-arguments Λ node fail)
+  (define seen (mutable-set))
+  (define point (region-ctx-point Λ))
+  (define ir (region-ctx-ir Λ))
+  (define temporary-indices
+    (list->set (map car temporary-arguments)))
+  (define (emit-outlives long short)
+    (unless (equal? long short)
+      (unless (route-outlives-check! long short point node fail
+                                     #:allow-one-param? #t)
+        (emit-constraint! (region-constraint 'outlives long short point node)))))
+  (when ir
+    (for ([alpha (in-list alphas)])
+      (emit-constraint!
+       (region-constraint 'contains alpha (region-at ir point) point node))))
+  (define (emit-region formal-rho actual-rho invariant?)
+    (when (and (match formal-rho [`(RVar ,_) #t] [_ #f])
+               (member formal-rho alphas equal?))
+      (when (eq? actual-rho 'Omitted)
+        (fail 'unresolved-borrow-owner node))
+      (set-add! seen formal-rho)
+      (emit-outlives actual-rho formal-rho)
+      (when invariant?
+        (emit-outlives formal-rho actual-rho))))
+  (define (walk formal actual invariant? [bound (set)]
+                [temporary-root? #f])
+    (match* (formal actual)
+      [(`(Borrowed ,formal-payload ,formal-rho)
+        `(Borrowed ,actual-payload ,actual-rho))
+       (unless (set-member? bound (match formal-rho [`(RParam ,rp) rp] [_ #f]))
+         (if (and temporary-root?
+                  (match formal-rho [`(RVar ,_) #t] [_ #f])
+                  (member formal-rho alphas equal?))
+             (begin
+               ;; この借用は呼出し完了までの一時 actual である。RegionApp
+               ;; の束縛は callee 評価時点で生存している必要があるため、
+               ;; signature alpha は consumer region に下限を置く。
+               (set-add! seen formal-rho)
+               (unless ir (fail 'unresolved-borrow-owner node))
+               (void))
+             (emit-region formal-rho actual-rho invariant?)))
+       (walk formal-payload actual-payload invariant? bound #f)]
+      [(`(BorrowedMut ,formal-payload ,formal-rho)
+        `(BorrowedMut ,actual-payload ,actual-rho))
+       (unless (set-member? bound (match formal-rho [`(RParam ,rp) rp] [_ #f]))
+         (if (and temporary-root?
+                  (match formal-rho [`(RVar ,_) #t] [_ #f])
+                  (member formal-rho alphas equal?))
+             (begin
+               (set-add! seen formal-rho)
+               (unless ir (fail 'unresolved-borrow-owner node))
+               (void))
+             (emit-region formal-rho actual-rho invariant?)))
+       (walk formal-payload actual-payload #t bound #f)]
+      [(`(Record ,formal-row) `(Record ,actual-row))
+       (for ([field (in-list formal-row)])
+         (match (field-row-lookup actual-row (first field))
+           [(list actual-type actual-mutability)
+           (walk (second field) actual-type
+                  (or invariant? (eq? (third field) 'mut)
+                      (eq? actual-mutability 'mut))
+                  bound #f)]
+           [_ (void)]))]
+      [(`(ForallRegion (,formal-rps ...) ,formal-body)
+        `(ForallRegion (,actual-rps ...) ,actual-body))
+       #:when (= (length formal-rps) (length actual-rps))
+       (walk formal-body
+             (rename-region-params actual-body
+                                   (for/hash ([actual-rp (in-list actual-rps)]
+                                              [formal-rp (in-list formal-rps)])
+                                     (values actual-rp `(RParam ,formal-rp))))
+             invariant? (set-union bound (list->set formal-rps)) #f)]
+      [(_ _)
+       (define aligned (align-borrow-region-types formal actual))
+       (when aligned
+         (for ([pair (in-list aligned)])
+           (define formal* (car pair))
+           (define actual* (cdr pair))
+           (if (and (equal? formal* formal) (equal? actual* actual))
+               (match* (formal* actual*)
+                 [((? list? formal-items) (? list? actual-items))
+                  #:when (and (= (length formal-items) (length actual-items))
+                              (> (length formal-items) 1)
+                              (equal? (first formal-items) (first actual-items)))
+                  (for ([formal-child (in-list (rest formal-items))]
+                        [actual-child (in-list (rest actual-items))])
+                    (walk formal-child actual-child invariant? bound #f))]
+                 [(_ _) (void)])
+               (walk formal* actual* invariant? bound #f))))]))
+  (for ([formal (in-list parameter-types)] [actual (in-list actual-types)]
+        [index (in-naturals)])
+    (walk formal actual #f (set) (set-member? temporary-indices index)))
+  (for ([alpha (in-list alphas)])
+    (unless (set-member? seen alpha)
+      (fail 'unresolved-borrow-owner node))))
+
+;; Apply の暗黙 alpha は、実引数の同じ型位置と照合してから solver へ送る。
+;; compat? に fresh RVar を直接渡すと、Record 欄など top-level でない借用を
+;; 通常の region-relation が判定できず、制約を追加する前に拒否する。
+(define (instantiate-implicit-region-alpha-positions expected actual)
+  (define (adopt expected actual)
+    (match* (expected actual)
+      [(`(Borrowed ,expected-payload ,expected-rho)
+        `(Borrowed ,actual-payload ,actual-rho))
+       `(Borrowed ,(adopt expected-payload actual-payload)
+                  ,(if (implicit-region-alpha? expected-rho)
+                       actual-rho expected-rho))]
+      [(`(BorrowedMut ,expected-payload ,expected-rho)
+        `(BorrowedMut ,actual-payload ,actual-rho))
+       `(BorrowedMut ,(adopt expected-payload actual-payload)
+                     ,(if (implicit-region-alpha? expected-rho)
+                          actual-rho expected-rho))]
+      [(`(Record ,expected-row) `(Record ,actual-row))
+       `(Record
+         ,(for/list ([field (in-list expected-row)])
+            (define actual-field (assq (first field) actual-row))
+            (if actual-field
+                (list* (first field)
+                       (adopt (second field) (second actual-field))
+                       (cddr field))
+                field)))]
+      [(`(Union ,left ,right) _)
+       (define aligned (align-borrow-region-types expected actual))
+       (define (actual-member formal)
+         (for/or ([pair (in-list (or aligned '()))]
+                  #:when (equal? formal (car pair)))
+           (cdr pair)))
+       `(Union ,(let ([member (actual-member left)])
+                  (if member (adopt left member) left))
+               ,(let ([member (actual-member right)])
+                  (if member (adopt right member) right)))]
+      [(_ `(Union ,_ ,_))
+       (match (align-borrow-region-types expected actual)
+         [(list (cons _ actual-member)) (adopt expected actual-member)]
+         [_ expected])]
+      [(`(ForallRegion (,expected-rps ...) ,expected-body)
+        `(ForallRegion (,actual-rps ...) ,actual-body))
+       #:when (= (length expected-rps) (length actual-rps))
+       `(ForallRegion ,expected-rps
+                      ,(adopt
+                        expected-body
+                        (rename-region-params
+                         actual-body
+                         (for/hash ([actual-rp (in-list actual-rps)]
+                                    [expected-rp (in-list expected-rps)])
+                           (values actual-rp `(RParam ,expected-rp))))))]
+      [((? list? expected-items) (? list? actual-items))
+       #:when (and (pair? expected-items)
+                   (pair? actual-items)
+                   (= (length expected-items) (length actual-items))
+                   (equal? (first expected-items) (first actual-items)))
+       (cons (first expected-items)
+             (map adopt (rest expected-items) (rest actual-items)))]
+      [(_ _) expected]))
+  (adopt expected actual))
+
 (define (call-argument-compatible? actual expected core Λ compatible? fail
                                    [config-apply-argument? #f])
   (define actual* (normalize-type actual))
@@ -9833,6 +10135,7 @@
             (not (equal? actual-rho expected-rho))))
      (define owner-compatible?
        (or config-outer-region-mismatch?
+           (implicit-region-alpha? expected-rho)
            (temporary-borrow-argument?)
            (equal? actual-rho expected-rho)
            (and (or (and (deriving-config?) (not (region-ctx-ir Λ)))
@@ -9860,6 +10163,7 @@
          (compatible? actual expected)
          (and (or (and config-apply-argument?
                        (deriving-config?))
+                  (implicit-region-alpha? expected-rho)
                   (temporary-borrow-argument?)
                   (and (deriving-config?) (not (region-ctx-ir Λ)))
                   (for/or ([owner-rho
@@ -9870,7 +10174,10 @@
                     ;; Apply の構成再型付けでは mode と payload だけを照合する。
                     (compatible? actual-payload (second adopted))
                     (compatible? actual adopted)))))]
-    [(_ _) (compatible? actual expected)]))
+    [(_ _)
+     (compatible?
+      actual
+      (instantiate-implicit-region-alpha-positions expected actual))]))
 
 (define (check-as/full/body core expected Λ Ψ environment places callables fail
                             [compatible? type-compatible?]
@@ -9967,7 +10274,11 @@
                  (third result))))
      (define actual `(Record ,actual-row))
      (define expected*
-       (if adopt? (adopt-inferred-lifetimes expected actual) expected))
+       (cond
+         [adopt? (adopt-inferred-lifetimes expected actual)]
+         [config-apply-argument?
+          (instantiate-implicit-region-alpha-positions expected actual)]
+         [else expected]))
      (unless (compatible? actual expected*)
        (fail 'type-mismatch core expected actual))
      (check-borrow-hiding! actual expected* core fail compatible?)
@@ -10335,6 +10646,7 @@
                       #:binder-parent-keys [binder-parent-keys-box #f]
                       #:mut-types [mut-types-box #f]
                       #:callable-contexts [callable-contexts-box #f]
+                      #:implicit-region-apps-box [implicit-region-apps-box #f]
                       #:normal-type [normal-type-box #f])
   (when mut-types-box
     (unless (box? mut-types-box)
@@ -10352,12 +10664,17 @@
     (unless (box? normal-type-box)
       (raise-argument-error 'type-of/raw* "box?" normal-type-box))
     (set-box! normal-type-box #f))
+  (when implicit-region-apps-box
+    (unless (box? implicit-region-apps-box)
+      (raise-argument-error 'type-of/raw* "box?" implicit-region-apps-box))
+    (set-box! implicit-region-apps-box (hash)))
   (define collected-mut-types (and mut-types-box (box (hash))))
   (define collected-callable-contexts
     (and callable-contexts-box (box (hash))))
   (define resolved-mut-types (box (hash)))
   (define collected-binder-alphas (box (hash)))
   (define collected-binder-parent-keys (box (set)))
+  (define collected-implicit-region-apps (make-hash))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -10391,6 +10708,7 @@
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
+                   [implicit-region-apps-table collected-implicit-region-apps]
                    [template-collectors '()]
                    [recur-overlay '()]
                    [scrutinee-child-alphas (mutable-set)]
@@ -10530,6 +10848,9 @@
              (match completed [`(ok ,_) #t] [_ #f]))
     (set-box! binder-parent-keys-box
               (unbox collected-binder-parent-keys)))
+  (when (and implicit-region-apps-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (set-box! implicit-region-apps-box collected-implicit-region-apps))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
@@ -10559,14 +10880,17 @@
                               #:mut-types [mut-types-box #f]
                               #:callable-contexts [callable-contexts-box #f]
                               #:binder-alphas [binder-alphas-box #f]
-                              #:binder-parent-keys [binder-parent-keys-box #f])
+                              #:binder-parent-keys [binder-parent-keys-box #f]
+                              #:implicit-region-apps-box
+                              [implicit-region-apps-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:sidecar sidecar-box
                        #:mut-types mut-types-box
                        #:callable-contexts callable-contexts-box
                        #:binder-alphas binder-alphas-box
-                       #:binder-parent-keys binder-parent-keys-box)
+                       #:binder-parent-keys binder-parent-keys-box
+                       #:implicit-region-apps-box implicit-region-apps-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -10648,6 +10972,37 @@
            (walk child (append point (list index)))))))
   (walk spanless '()))
 
+(define (wrap-implicit-region-apps core table σ ir)
+  (unless (hash? table)
+    (raise-argument-error 'wrap-implicit-region-apps "hash?" table))
+  (define spanless (erase-core/region-annotations core))
+  (define (walk node point)
+    (define children
+      (for/list ([child (in-list (core-children node))]
+                 [index (in-naturals)])
+        (walk child (append point (list index)))))
+    (define rebuilt
+      (if (null? children) node (core-with-children node children)))
+    (match rebuilt
+      [`(Apply ,function ,arguments ...)
+       (define alphas (hash-ref table point #f))
+       (if alphas
+           (begin
+             (unless (or ir (null? alphas))
+               (error 'wrap-implicit-region-apps
+                      "借用署名の Apply には region-ir が必要: ~s" point))
+             (let ([rhos
+                    (for/list ([alpha (in-list alphas)])
+                      (match alpha
+                        [`(RVar ,index)
+                         (region->rho ir (hash-ref σ index))]
+                        [_ (error 'wrap-implicit-region-apps
+                                  "Apply の寿命変数が不正: ~s" alpha)]))])
+               `(Apply (RegionApp ,function ,rhos) ,@arguments)))
+           rebuilt)]
+      [_ rebuilt]))
+  (walk spanless '()))
+
 ;; machine と lowering へ渡す Core は、型付け時に得た有効な束縛型を持つ。
 ;; 型欄を置き換えた結果は再型検査しない。OWN-004 の判定には元の宣言型が要る。
 (define (execution-core core callables)
@@ -10664,7 +11019,7 @@
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
 (struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts
-                           binder-alphas binder-parent-keys)
+                           binder-alphas binder-parent-keys implicit-region-apps)
   #:transparent)
 
 (define region-bearing-forms
@@ -10690,17 +11045,20 @@
   (define callable-contexts (box (hash)))
   (define binder-alphas (box (hash)))
   (define binder-parent-keys (box (set)))
+  (define implicit-region-apps (box (hash)))
   (match (type-of/raw*+borrows
           annotated places callables environment
           (region-ctx ir '() owners (hash))
           #:mut-types mut-types
           #:callable-contexts callable-contexts
           #:binder-alphas binder-alphas
-          #:binder-parent-keys binder-parent-keys)
+          #:binder-parent-keys binder-parent-keys
+          #:implicit-region-apps-box implicit-region-apps)
     [(list 'ok (list type row table σ renamed sidecar))
      (region-typed type row ir table σ renamed sidecar
                    (unbox mut-types) (unbox callable-contexts)
-                   (unbox binder-alphas) (unbox binder-parent-keys))]
+                   (unbox binder-alphas) (unbox binder-parent-keys)
+                   (unbox implicit-region-apps))]
     [(list 'fail key node details)
      (typing-diagnostic key node details expansion-context)]
     [other (error 'core-type-of/regions "typing の結果が不正である: ~s" other)]))
@@ -10716,10 +11074,14 @@
                          (region-typed-σ typed)
                          (region-typed-binder-alphas typed)
                          (region-typed-binder-parent-keys typed)))
-  (annotate-callable-contexts
-   (annotate-mut-binding-types core (region-typed-mut-types typed))
-   (region-typed-callable-contexts typed)
-   'renamed))
+  (wrap-implicit-region-apps
+   (annotate-callable-contexts
+    (annotate-mut-binding-types core (region-typed-mut-types typed))
+    (region-typed-callable-contexts typed)
+    'renamed)
+   (region-typed-implicit-region-apps typed)
+   (region-typed-σ typed)
+   (region-typed-ir typed)))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
 (define (core-type-of/materialized core-in places callables
@@ -10728,10 +11090,12 @@
   (define contexts (box (hash)))
   (define binder-alphas (box (hash)))
   (define binder-parent-keys (box (set)))
+  (define implicit-region-apps (box (hash)))
   (match (type-of/raw* core-in places callables environment Λ
                        #:callable-contexts contexts
                        #:binder-alphas binder-alphas
-                       #:binder-parent-keys binder-parent-keys)
+                       #:binder-parent-keys binder-parent-keys
+                       #:implicit-region-apps-box implicit-region-apps)
     [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
      (define materialized
@@ -10741,8 +11105,10 @@
                                 (unbox binder-parent-keys))
            renamed))
      (list 'ok type
-           (annotate-callable-contexts materialized
-                                       (unbox contexts) 'renamed))]
+           (wrap-implicit-region-apps
+            (annotate-callable-contexts materialized
+                                        (unbox contexts) 'renamed)
+            (unbox implicit-region-apps) σ ir))]
     [other other]))
 
 ;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。
@@ -10756,7 +11122,10 @@
      (match (and ir (pair? cs) (typing-solve ir cs))
        [(list 'ok σ)
         (list 'fail key node
-              (map (lambda (d) (subst-type-regions d σ ir)) details))]
+              (filter values
+                      (for/list ([detail (in-list details)])
+                        (with-handlers ([exn:fail? (lambda (_) #f)])
+                          (subst-type-regions detail σ ir)))))]
        ;; ir が無い形と制約が空の形では α を採らない。details はそのままでよい。
        [#f result]
        ;; 段 1 が棄却した時点の制約集合は不完全である。出口の下限が欠けると

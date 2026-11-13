@@ -291,8 +291,11 @@ producer の位置で `OwnLeaf` を通して token を割り当て、`OwnedLeaf`
 
 借用の仮引数は呼出し側の借用の別名である。
 本体の再借用と使用は定義位置では要求にならず、仮引数の位置ごとの鍵を持つ雛形として残る。
-`Apply` が実引数の capability と起点で鍵を置き換え、`RegionApp` が受けた region 項で
-`(RParam rp)` を置き換えてから、初めて要求になる。
+`RegionApp` は受け取った region 項で `(RParam rp)` を置き換える。
+`ForallRegion` 署名を直接呼ぶ `Apply` は仮引数型と実引数型の借用位置を対応づけ、各束縛子を実引数から得た寿命変数へ置き換える。
+結果の借用 leaf と仮引数の候補は BOR-007 の callable summary と同じく宣言 region の等値で対応づける。
+`Apply` が決めた置換は callable summary の `region-subst` に合成し、遅延要求と event を同じ region で実体化する。
+実行用 Core では、暗黙の実体化を callee を包む `RegionApp` として表し、対応する `RegionLam` または `RecurVal` の束縛子へ適用する。
 再借用の遅延制約も、親の capability に含まれる各 formal key に対応づけて残す。
 `Apply` は各 key を対応する実引数の capability へ展開する。
 
@@ -343,7 +346,8 @@ callable の本体から仮引数を親とする分解 binder や再借用を生
 owner/outlives の保留項目を持つ callable 値の summary を運べる位置は、`Let` の束縛式と結果、直書きまたは `Let` 束縛の `RegionLam` への `RegionApp`、`Move`、`Unsafe` の本体、`Scope` の結果、`Apply` の callee、および `Recur` / `RecurVal` の枠に限る。
 部分適用、capture、`Apply` の実引数または結果、集約値・構成子・`UnionInject`、分解の枝、`Handle` の Return payload、`Yield`、`Discharge`、`Forward`、未知の親位置で保留項目が失われる場合は、その境界で `E-BOR-006` にする。
 これは callable 値に付いた保留項目の transport 規則である。後述する `Apply` の `handle` 出口イベントを Return-handler entry へ実体化する経路は、この拒否には含めない。
-外部または宣言のみの callable は本体由来の summary を持たないため、summary の無い `Apply` に型ベースの代替判定は加えない。
+外部または宣言のみの callable は本体由来の summary を持たないため、結果型の provenance に限り署名から決める。
+latent row の借用 payload と、summary で path を解決できない結果は、従来どおり fail closed とする。
 
 `Apply` では `RegionApp` の実引数で `RParam` を置換し、formal key の path を実引数の capability 欄へ解決してから要求と停止を検査する。
 owner または path を一意に引けない場合は呼出し点で `E-BOR-006` にする。

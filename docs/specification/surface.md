@@ -612,6 +612,8 @@ region 名は Surface に書けず、借用型の region は省略する。
 局所借用の型注釈で省略した region は Core では `(RParam %omitted)` となる。
 Core の typing は束縛子の型で推論した寿命を採用して検査し、実行用 Core の注釈には `(RParam %omitted)` が残りうる。
 関数署名の省略 region は §3.3 の規則で `ForallRegion` の束縛子へ置き換える。
+呼出し時は `Apply` が仮引数型と実引数型の借用位置を対応づけ、束縛子を実引数から暗黙に実体化する。
+実行用 Core では callee を `RegionApp` で包み、対応する `RegionLam` または `RecurVal` の束縛子へ同じ region を適用する。
 注釈付き `let` の宣言型が `Owned<T>` の場合、右辺の型が宣言型に直接適合しないときは、Core の `owned-lift-compatible?` が許す非 `Owned` 値を `Owned<T>` へ持ち上げる。
 この持ち上げは注釈付き `let` だけに適用し、関数の実引数や分岐合流、汎用の型変換には適用しない。
 

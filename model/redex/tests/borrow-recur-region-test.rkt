@@ -186,9 +186,10 @@
   '(ForallRegion (a.0)
      (NFn ((BorrowedMut Int (RParam a.0))) Int () () () User)) ))
 
-;; 10。継続で包みを剥がさずに呼ぶと、関数の型が ForallRegion のままである。
+;; 10。Task 2 で ForallRegion は暗黙に実体化するが、この実引数の寿命は
+;; 継続の owner を outlive できない。
 (test-case
- "形 ii の継続が RegionApp を経ずに呼ぶと落ちる"
+ "形 ii の継続は暗黙実体化後も短い owner から借用を逃がせない"
  (check-both-fail
   '(Scope (1)
      (RegionLam (a)
@@ -198,7 +199,7 @@
   '() '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
   forall-callables
   '(NFn ((BorrowedMut Int (RParam a))) Int () () () User)
-  'apply-non-function))
+  'borrow-escapes-owner))
 
 ;; 11。Let を挟まない RegionApp。関数の位置が名前でも RegionLam でもない。
 (test-case

@@ -234,6 +234,113 @@
          expected)]
     [_ expected]))
 
+;; Apply の region 多相署名を実引数から具体化するときは、record 欄を
+;; label で対応させ、Union は寿命を消した型形状の一意一致だけを採る。
+(define (signature-borrow-region-shape type)
+  (match type
+    [`(Borrowed ,payload ,_) `(Borrowed ,(signature-borrow-region-shape payload))]
+    [`(BorrowedMut ,payload ,_)
+     `(BorrowedMut ,(signature-borrow-region-shape payload))]
+    [`(Record ,fields)
+     `(Record ,(sort
+                (for/list ([field (in-list fields)])
+                  (list (first field)
+                        (signature-borrow-region-shape (second field))
+                        (third field)))
+                symbol<? #:key first))]
+    [`(Union ,left ,right)
+     `(Union ,(sort (list (signature-borrow-region-shape left)
+                          (signature-borrow-region-shape right))
+                    string<? #:key (lambda (shape) (format "~s" shape))))]
+    [(? pair? pair)
+     (cons (signature-borrow-region-shape (car pair))
+           (signature-borrow-region-shape (cdr pair)))]
+    [_ type]))
+
+(define (signature-union-pairs formal actual)
+  (define formal-members (if (match formal [`(Union ,_ ,_) #t] [_ #f])
+                             (union-members formal) (list formal)))
+  (define actual-members (if (match actual [`(Union ,_ ,_) #t] [_ #f])
+                             (union-members actual) (list actual)))
+  (define pairs
+    (for/list ([formal-member (in-list formal-members)])
+      (define matches
+        (filter (lambda (actual-member)
+                  (equal? (signature-borrow-region-shape formal-member)
+                          (signature-borrow-region-shape actual-member)))
+                actual-members))
+      (and (= (length matches) 1)
+           (cons formal-member (first matches)))))
+  (and (andmap values pairs)
+       (= (length formal-members) (length actual-members))
+       (= (length (remove-duplicates (map cdr pairs) equal?))
+          (length actual-members))
+       pairs))
+
+(define (signature-borrow-region-pairs formal actual)
+  (define (walk formal actual [bound (set)])
+    (match* (formal actual)
+      [(`(Borrowed ,formal-payload ,formal-rho)
+        `(Borrowed ,actual-payload ,actual-rho))
+       (append
+        (match formal-rho
+          [`(RParam ,rp)
+           (if (set-member? bound rp) '() (list (cons rp actual-rho)))]
+          [_ '()])
+        (walk formal-payload actual-payload bound))]
+      [(`(BorrowedMut ,formal-payload ,formal-rho)
+        `(BorrowedMut ,actual-payload ,actual-rho))
+       (append
+        (match formal-rho
+          [`(RParam ,rp)
+           (if (set-member? bound rp) '() (list (cons rp actual-rho)))]
+          [_ '()])
+        (walk formal-payload actual-payload bound))]
+      [(`(Record ,formal-fields) `(Record ,actual-fields))
+       (append-map
+        (lambda (field)
+          (define actual-field (assq (first field) actual-fields))
+          (if actual-field
+              (walk (second field) (second actual-field) bound)
+              '()))
+        formal-fields)]
+      [(`(Union ,_ ,_) _)
+       (append-map (lambda (pair) (walk (car pair) (cdr pair) bound))
+                   (or (signature-union-pairs formal actual) '()))]
+      [(_ `(Union ,_ ,_))
+       (append-map (lambda (pair) (walk (car pair) (cdr pair) bound))
+                   (or (signature-union-pairs formal actual) '()))]
+      [(`(ForallRegion (,formal-rps ...) ,formal-body)
+        `(ForallRegion (,actual-rps ...) ,actual-body))
+       #:when (= (length formal-rps) (length actual-rps))
+       (walk formal-body
+             (rename-region-params actual-body
+                                   (for/hash ([actual-rp (in-list actual-rps)]
+                                              [formal-rp (in-list formal-rps)])
+                                     (values actual-rp `(RParam ,formal-rp))))
+             (set-union bound (list->set formal-rps)))]
+      [((? pair? formal-pair) (? pair? actual-pair))
+       #:when (and (equal? (car formal-pair) (car actual-pair))
+                   (= (length formal-pair) (length actual-pair)))
+       (append-map walk (cdr formal-pair) (cdr actual-pair))]
+      [(_ _) '()]))
+  (walk (normalize-type formal) (normalize-type actual)))
+
+(define (instantiate-signature-regions binders parameter-types argument-types)
+  (define candidates
+    (append-map signature-borrow-region-pairs parameter-types argument-types))
+  (for/hash ([rp (in-list binders)])
+    (define regions
+      (remove-duplicates
+       (for/list ([candidate (in-list candidates)]
+                  #:when (equal? (car candidate) rp))
+         (cdr candidate))
+       equal?))
+    (values rp
+            (match regions
+              [(list region) region]
+              [_ 'Omitted]))))
+
 (define (map-signature-omitted-borrows type region-for-position)
   (match type
     [`(Borrowed ,payload Omitted)
@@ -5620,7 +5727,34 @@
                               (judgment-type function-result)
                               (judgment-core function-result))])
                  type)))
-         (match function-type
+         (define apply-function-type
+           (match function-type
+             [`(ForallRegion (,binders ...)
+                 (NFn (,parameter-types ...) ,return-type ,latent-in
+                      ,latent-row ,obligations ,origin))
+              (define actual-types
+                (if (= (length parameter-types) (length arguments))
+                    (let ([reachable? (and (current-escape-reachable?)
+                                           (judgment-completes?
+                                            function-result))])
+                      (for/list ([argument (in-list arguments)])
+                        (define result
+                          (with-handlers ([exn:fail:elab? (λ (_) #f)])
+                            (call-with-restored-state
+                             (λ ()
+                               (parameterize
+                                   ([current-escape-reachable? reachable?])
+                                 (synth argument environment delta
+                                        propositions boundaries))))))
+                        (and result (judgment-core-type result))))
+                    '()))
+              (subst-region-params
+               `(NFn ,parameter-types ,return-type ,latent-in ,latent-row
+                     ,obligations ,origin)
+               (instantiate-signature-regions binders parameter-types
+                                              actual-types))]
+             [_ function-type]))
+         (match apply-function-type
            [`(NFn ,parameter-types ,return-type ,_latent-in ,latent-row ,obligations ,_origin)
             ;; PRF-004: 判定と搬送で探索を二重に走らせない。obligation-proofs は
             ;; 各義務を一度だけ解き、充足できない義務と搬送できない P をどちらも
