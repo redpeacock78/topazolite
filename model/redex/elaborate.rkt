@@ -87,6 +87,9 @@
        #:expansion-context expansion-context)
       (core-type-of/diagnostic adapter-core '() callables)))
 
+(module+ elaborate-internal
+  (provide check-adapter-core))
+
 ;; IfSome が解決した型を Surface 注釈の再解決へ戻さず constructor へ渡す。
 (struct resolved-type-argument (type) #:transparent)
 
@@ -6833,7 +6836,6 @@
 ;; reject は provide しないため、内部から検査する。
 (module+ test
   (require rackunit)
-  (provide check-adapter-core)
 
   (define ok-span '(#:span src 3 7))
 

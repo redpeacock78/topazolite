@@ -9,7 +9,7 @@
          "../machine.rkt"
          "../region.rkt"
          "../typing.rkt"
-         (only-in (submod "../elaborate.rkt" test)
+         (only-in (submod "../elaborate.rkt" elaborate-internal)
                   check-adapter-core))
 
 (define source
