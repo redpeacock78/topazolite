@@ -370,7 +370,7 @@
 
 (define typing-entries-v39
   '(("E-BOR-027" borrow-hidden-by-narrowing
-                 "借用を含む余剰欄を view から隠す narrowing に RSD が無い")))
+                 "借用を view から隠す narrowing に RSD が無いか、RegionLam が binder 外の借用 region を捕捉する")))
 
 (define borrow-entries-v30
   '(("E-BOR-026" projborrow-optional-field

@@ -228,8 +228,8 @@ key と番号は `docs/specification/diagnostic.md` の registry に従う。
 `E-BOR-027` `borrow-hidden-by-narrowing` は、borrow-hiding-kind が拒否を返す narrowing、または RSD の義務があるのに有効な `Discharge` が無い Core を拒否する。
 `RegionLam` が自由変数として捕捉する可視環境項目の型に、bound set で束縛されない借用 region が含まれる場合も同じ診断で拒否する。
 その bound set は当該 `RegionLam` の alpha-renamed binder と、捕捉する環境項目自身の `ForallRegion` binder だけから作り、外側の region binder は引き継がない。
-現在の Surface の lowering と narrowing 経路では `E-BOR-027` に到達しない。
-この診断は owner と借用 region の outlives 関係違反を報告する `E-BOR-004` とは異なり、borrowed value を narrowing で view から隠す根拠が無いことを示す。
+現在の Surface lowering では、内側の `RegionLam` が binder 外の借用 region を持つ外側の環境項目を捕捉する形もこの診断で拒否する。
+この診断は owner と借用 region の outlives 関係違反を報告する `E-BOR-004` とは異なり、借用を view から隠す narrowing に RSD が無いこと、または `RegionLam` が binder 外の借用 region を捕捉することを示す。
 
 ## 8. 関数境界の受け渡し
 

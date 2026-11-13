@@ -302,6 +302,8 @@ registry version 39 で typing に `E-BOR-027` `borrow-hidden-by-narrowing` を 
 
 registry version 40 で elaborate に `E-RET-006` `leave-outside-expression-boundary` を 1 行足した。
 
+`E-BOR-027` の title は、narrowing に加えて `RegionLam` による binder 外の借用 region の捕捉も表す文面へ広げた。code 集合は変わらないため、registry version と凍結 fixture は変更しない。
+
 `E-SUR-015` の title は要求欄の呼出しにも適用する文面へ広げた。診断 code 集合は変わらないため、registry version と凍結 fixture は変更しない。
 
 現在の registry は 232 行である。

@@ -156,13 +156,17 @@
    "fn f(p: &Int) { let x: Owned<Int> = 1\nreturn &x }\n0"
    "E-TYP-012"))
 
-(test-case "入れ子の RegionLam は外側借用を読むだけの捕捉も E-BOR-027 で拒否する"
-  (void
-   (compile-accepted
-    "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return q }\nreturn 0 }\n0"))
-  (compile-rejected
-   "fn outer(p: &Int) -> Int ! {Own, Partial} { let inner = fn(q: &Int) -> Int { return deref(p) }\nreturn inner(p) }\n0"
-   "E-BOR-027"))
+(test-case "捕捉の無い入れ子 RegionLam は外側からの borrowed 引数を受け取れる"
+  (compile-accepted
+   "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return q }\nreturn 0 }\n0"))
+
+(test-case "内側 RegionLam が外側の借用引数を読むだけの捕捉も E-BOR-027 で拒否する"
+  (define source
+    "fn outer(p: &Int) -> Int ! {Own, Partial} { let inner = fn(q: &Int) -> Int { return deref(p) }\nreturn inner(p) }\n0")
+  (define diagnostic (compile-rejected source "E-BOR-027"))
+  (check-equal?
+   (diagnostic-title diagnostic)
+   "借用を view から隠す narrowing に RSD が無いか、RegionLam が binder 外の借用 region を捕捉する"))
 
 (test-case "借用を持たない関数は ForallRegion で包まない"
   (define result
