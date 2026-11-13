@@ -3470,6 +3470,7 @@
 ;; 照合を一時的に許す。check-many/full は各実引数の境界でこの集合を設定する。
 (define implicit-region-apply-alphas (make-parameter '()))
 (define implicit-region-apps-table (make-parameter #f))
+(define implicit-region-app-rparams-table (make-parameter #f))
 
 (define (record-implicit-region-app! Λ rps node fail)
   (define table (implicit-region-apps-table))
@@ -3482,6 +3483,33 @@
     (fail 'unresolved-borrow-owner node))
   (when table (hash-set! table point alphas))
   alphas)
+
+(define (record-implicit-region-app-rparam! Λ alpha rho node fail)
+  (define table (implicit-region-app-rparams-table))
+  (when table
+    (define point (region-ctx-point Λ))
+    (define candidate
+      (match rho
+        [`(RParam ,rp)
+         (unless (set-member? (bound-region-params) rp)
+           (fail 'unresolved-borrow-owner node))
+         rho]
+        [_ 'concrete]))
+    (define candidates (hash-ref table point (hash)))
+    (when (and (hash-has-key? candidates alpha)
+               (not (equal? (hash-ref candidates alpha) candidate)))
+      (fail 'unresolved-borrow-owner node))
+    (hash-set! table point (hash-set candidates alpha candidate))))
+
+(define (implicit-region-app-rparams candidates)
+  (for/fold ([result (hash)]) ([(point alphas) (in-hash candidates)])
+    (define rparams
+      (for/hash ([(alpha rho) (in-hash alphas)]
+                 #:when (match rho [`(RParam ,_) #t] [_ #f]))
+        (values alpha rho)))
+    (if (zero? (hash-count rparams))
+        result
+        (hash-set result point rparams))))
 
 (define (borrowed-mut-region-outlives? ir long short)
   (cond
@@ -9987,6 +10015,7 @@
       (when (eq? actual-rho 'Omitted)
         (fail 'unresolved-borrow-owner node))
       (set-add! seen formal-rho)
+      (record-implicit-region-app-rparam! Λ formal-rho actual-rho node fail)
       (emit-outlives actual-rho formal-rho)
       (when invariant?
         (emit-outlives formal-rho actual-rho))))
@@ -10004,6 +10033,8 @@
                ;; の束縛は callee 評価時点で生存している必要があるため、
                ;; signature alpha は consumer region に下限を置く。
                (set-add! seen formal-rho)
+               (record-implicit-region-app-rparam!
+                Λ formal-rho actual-rho node fail)
                (unless ir (fail 'unresolved-borrow-owner node))
                (void))
              (emit-region formal-rho actual-rho invariant?)))
@@ -10016,6 +10047,8 @@
                   (member formal-rho alphas equal?))
              (begin
                (set-add! seen formal-rho)
+               (record-implicit-region-app-rparam!
+                Λ formal-rho actual-rho node fail)
                (unless ir (fail 'unresolved-borrow-owner node))
                (void))
              (emit-region formal-rho actual-rho invariant?)))
@@ -10648,6 +10681,8 @@
                       #:mut-types [mut-types-box #f]
                       #:callable-contexts [callable-contexts-box #f]
                       #:implicit-region-apps-box [implicit-region-apps-box #f]
+                      #:implicit-region-app-rparams-box
+                      [implicit-region-app-rparams-box #f]
                       #:normal-type [normal-type-box #f])
   (when mut-types-box
     (unless (box? mut-types-box)
@@ -10669,6 +10704,10 @@
     (unless (box? implicit-region-apps-box)
       (raise-argument-error 'type-of/raw* "box?" implicit-region-apps-box))
     (set-box! implicit-region-apps-box (hash)))
+  (when implicit-region-app-rparams-box
+    (unless (box? implicit-region-app-rparams-box)
+      (raise-argument-error 'type-of/raw* "box?" implicit-region-app-rparams-box))
+    (set-box! implicit-region-app-rparams-box (hash)))
   (define collected-mut-types (and mut-types-box (box (hash))))
   (define collected-callable-contexts
     (and callable-contexts-box (box (hash))))
@@ -10676,6 +10715,7 @@
   (define collected-binder-alphas (box (hash)))
   (define collected-binder-parent-keys (box (set)))
   (define collected-implicit-region-apps (make-hash))
+  (define collected-implicit-region-app-rparams (make-hash))
   (define cs (box '()))
   (define rs (box '()))
   (define ptr-rs (box '()))
@@ -10710,6 +10750,8 @@
                    [callable-summaries (make-hash)]
                    [forwarding-summaries (make-hash)]
                    [implicit-region-apps-table collected-implicit-region-apps]
+                   [implicit-region-app-rparams-table
+                    collected-implicit-region-app-rparams]
                    [template-collectors '()]
                    [recur-overlay '()]
                    [scrutinee-child-alphas (mutable-set)]
@@ -10852,6 +10894,11 @@
   (when (and implicit-region-apps-box
              (match completed [`(ok ,_) #t] [_ #f]))
     (set-box! implicit-region-apps-box collected-implicit-region-apps))
+  (when (and implicit-region-app-rparams-box
+             (match completed [`(ok ,_) #t] [_ #f]))
+    (set-box! implicit-region-app-rparams-box
+              (implicit-region-app-rparams
+               collected-implicit-region-app-rparams)))
   completed)
 
 ;; 既存の呼び出しは結果の型を要らない。第 3 要素以降を落として渡す。
@@ -10883,7 +10930,9 @@
                               #:binder-alphas [binder-alphas-box #f]
                               #:binder-parent-keys [binder-parent-keys-box #f]
                               #:implicit-region-apps-box
-                              [implicit-region-apps-box #f])
+                              [implicit-region-apps-box #f]
+                              #:implicit-region-app-rparams-box
+                              [implicit-region-app-rparams-box #f])
   (define sidecar-box (box #f))
   (match (type-of/raw* core-in places callables environment Λ
                        #:sidecar sidecar-box
@@ -10891,7 +10940,9 @@
                        #:callable-contexts callable-contexts-box
                        #:binder-alphas binder-alphas-box
                        #:binder-parent-keys binder-parent-keys-box
-                       #:implicit-region-apps-box implicit-region-apps-box)
+                       #:implicit-region-apps-box implicit-region-apps-box
+                       #:implicit-region-app-rparams-box
+                       implicit-region-app-rparams-box)
     [(list 'ok (list type row table σ renamed))
      (list 'ok (list type row table σ renamed (unbox sidecar-box)))]
     [other other]))
@@ -10973,9 +11024,11 @@
            (walk child (append point (list index)))))))
   (walk spanless '()))
 
-(define (wrap-implicit-region-apps core table σ ir)
+(define (wrap-implicit-region-apps core table σ ir rparams)
   (unless (hash? table)
     (raise-argument-error 'wrap-implicit-region-apps "hash?" table))
+  (unless (hash? rparams)
+    (raise-argument-error 'wrap-implicit-region-apps "hash?" rparams))
   (define spanless (erase-core/region-annotations core))
   (define (walk node point)
     (define children
@@ -10992,13 +11045,15 @@
              (unless (or ir (null? alphas))
                (error 'wrap-implicit-region-apps
                       "借用署名の Apply には region-ir が必要: ~s" point))
-             (let ([rhos
+             (let* ([apply-rparams (hash-ref rparams point (hash))]
+                    [rhos
                     (for/list ([alpha (in-list alphas)])
-                      (match alpha
-                        [`(RVar ,index)
-                         (region->rho ir (hash-ref σ index))]
-                        [_ (error 'wrap-implicit-region-apps
-                                  "Apply の寿命変数が不正: ~s" alpha)]))])
+                      (or (hash-ref apply-rparams alpha #f)
+                          (match alpha
+                            [`(RVar ,index)
+                             (region->rho ir (hash-ref σ index))]
+                            [_ (error 'wrap-implicit-region-apps
+                                      "Apply の寿命変数が不正: ~s" alpha)])))])
                `(Apply (RegionApp ,function ,rhos) ,@arguments)))
            rebuilt)]
       [_ rebuilt]))
@@ -11020,7 +11075,8 @@
      (error 'execution-core "型検査に失敗した Core: ~s" failure)]))
 
 (struct region-typed (type row ir table σ renamed sidecar mut-types callable-contexts
-                           binder-alphas binder-parent-keys implicit-region-apps)
+                           binder-alphas binder-parent-keys implicit-region-apps
+                           implicit-region-app-rparams)
   #:transparent)
 
 (define region-bearing-forms
@@ -11051,6 +11107,7 @@
   (define binder-alphas (box (hash)))
   (define binder-parent-keys (box (set)))
   (define implicit-region-apps (box (hash)))
+  (define implicit-region-app-rparams (box (hash)))
   (match (type-of/raw*+borrows
           annotated places callables environment
           (region-ctx ir '() owners (hash))
@@ -11058,12 +11115,14 @@
           #:callable-contexts callable-contexts
           #:binder-alphas binder-alphas
           #:binder-parent-keys binder-parent-keys
-          #:implicit-region-apps-box implicit-region-apps)
+          #:implicit-region-apps-box implicit-region-apps
+          #:implicit-region-app-rparams-box implicit-region-app-rparams)
     [(list 'ok (list type row table σ renamed sidecar))
      (region-typed type row ir table σ renamed sidecar
                    (unbox mut-types) (unbox callable-contexts)
                    (unbox binder-alphas) (unbox binder-parent-keys)
-                   (unbox implicit-region-apps))]
+                   (unbox implicit-region-apps)
+                   (unbox implicit-region-app-rparams))]
     [(list 'fail key node details)
      (typing-diagnostic key node details expansion-context)]
     [other (error 'core-type-of/regions "typing の結果が不正である: ~s" other)]))
@@ -11086,7 +11145,8 @@
     'renamed)
    (region-typed-implicit-region-apps typed)
    (region-typed-σ typed)
-   (region-typed-ir typed)))
+   (region-typed-ir typed)
+   (region-typed-implicit-region-app-rparams typed)))
 
 ;; 機械へ渡すため、型付けと同じ σ で core の注釈を materialize する。
 (define (core-type-of/materialized core-in places callables
@@ -11096,11 +11156,14 @@
   (define binder-alphas (box (hash)))
   (define binder-parent-keys (box (set)))
   (define implicit-region-apps (box (hash)))
+  (define implicit-region-app-rparams (box (hash)))
   (match (type-of/raw* core-in places callables environment Λ
                        #:callable-contexts contexts
                        #:binder-alphas binder-alphas
                        #:binder-parent-keys binder-parent-keys
-                       #:implicit-region-apps-box implicit-region-apps)
+                       #:implicit-region-apps-box implicit-region-apps
+                       #:implicit-region-app-rparams-box
+                       implicit-region-app-rparams)
     [(list 'ok (list type _row table σ renamed))
      (define ir (region-ctx-ir Λ))
      (define materialized
@@ -11113,7 +11176,8 @@
            (wrap-implicit-region-apps
             (annotate-callable-contexts materialized
                                         (unbox contexts) 'renamed)
-            (unbox implicit-region-apps) σ ir))]
+            (unbox implicit-region-apps) σ ir
+            (unbox implicit-region-app-rparams)))]
     [other other]))
 
 ;; 失敗の details は、型と effect row に続く 3 つ目の σ の経路である（spec §6.3）。
