@@ -156,12 +156,12 @@
    "fn f(p: &Int) { let x: Owned<Int> = 1\nreturn &x }\n0"
    "E-TYP-012"))
 
-(test-case "入れ子署名の閉じた region は外側の借用を隠さず捕捉も許さない"
+(test-case "入れ子の RegionLam は外側借用を読むだけの捕捉も E-BOR-027 で拒否する"
   (void
    (compile-accepted
     "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return q }\nreturn 0 }\n0"))
   (compile-rejected
-   "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return p }\nreturn 0 }\n0"
+   "fn outer(p: &Int) -> Int ! {Own, Partial} { let inner = fn(q: &Int) -> Int { return deref(p) }\nreturn inner(p) }\n0"
    "E-BOR-027"))
 
 (test-case "借用を持たない関数は ForallRegion で包まない"
@@ -429,12 +429,7 @@
    "fn bad(p: &Int) -> &mut Int { return p }\n0"
    "E-TYP-012"))
 
-(test-case "署名内の借用を捕捉する無名関数は E-BOR-027"
+(test-case "捕捉の無い複数入力からの省略戻りは E-BOR-020"
   (compile-rejected
-   (string-append
-    "fn outer(p: &Int) -> Int ! {Own, Partial} {\n"
-    "  let inner = fn(q: &Int) -> &Int { return p }\n"
-    "  return 0\n"
-    "}\n"
-    "0")
-   "E-BOR-027"))
+   "fn bad(p: &Int, q: &Int) -> Int { let f = fn(x: &Int, y: &Int) -> &Int { return x }\nreturn 0 }\n0"
+   "E-BOR-020"))
