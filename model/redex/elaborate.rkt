@@ -32,7 +32,7 @@
                   branch-types-upper-bound
                   merge-record-types/impl
                   owned-lift-compatible?
-                  borrow-bearing-core?
+                  borrow-bearing-program?
                   core-type-of/regions
                   core-type-of
                   core-type-of/diagnostic
@@ -2291,7 +2291,8 @@
                       signature callable reserved-with-formals))
          (define adapter-core (judgment-core adapter-lambda))
          (define adapter-result
-           (if (borrow-bearing-core? adapter-core)
+           (if (borrow-bearing-program? adapter-core
+                                        (reverse reversed-callables))
                (let ([checked
                       (core-type-of/regions
                        (omitted-regions->core adapter-core)

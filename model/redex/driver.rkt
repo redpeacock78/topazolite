@@ -5,7 +5,7 @@
          "surface-lower.rkt"
          "elaborate.rkt"
          (only-in "typing.rkt"
-                  borrow-bearing-core?
+                  borrow-bearing-program?
                   core-type-of/regions
                   execution-core
                   region-execution-core
@@ -98,8 +98,7 @@
          (match (elab (lowered-term low) #:expansion-context ctx)
            [`(err ,d) d]
            [(list core type row callables)
-            (if (or (borrow-bearing-core? core)
-                    (borrow-bearing-core? callables))
+            (if (borrow-bearing-program? core callables)
                 (let ([typed
                        (core-type-of/regions
                         core '() callables #:expansion-context ctx)])

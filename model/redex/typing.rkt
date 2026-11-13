@@ -38,6 +38,7 @@
          type-of/raw*+ptr
          (struct-out region-typed)
          borrow-bearing-core?
+         borrow-bearing-program?
          core-type-of/regions
          region-execution-core
          annotate-mut-binding-types
@@ -11031,6 +11032,10 @@
   (let walk ([node (erase-core core)])
     (or (and (pair? node) (memq (first node) region-bearing-forms) #t)
         (and (list? node) (ormap walk node)))))
+
+(define (borrow-bearing-program? core callables)
+  (or (borrow-bearing-core? core)
+      (borrow-bearing-core? callables)))
 
 (define (core-type-of/regions core places callables [environment '()]
                               #:expansion-context [expansion-context (hash)]
