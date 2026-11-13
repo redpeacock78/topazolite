@@ -725,14 +725,16 @@
 (define (unbound-borrowed-type? type [bound-params (bound-region-params)]
                                #:concrete-regions-bound? [concrete-regions-bound? #f])
   (parameterize ([unbound-borrowed-visited (set)])
-    (let walk ([t type])
+    (let walk ([t type] [bound bound-params])
       (match t
         [`(Borrowed ,payload ,ρ)
-         (or (not (bound-region-param? ρ bound-params concrete-regions-bound?))
-             (walk payload))]
+         (or (not (bound-region-param? ρ bound concrete-regions-bound?))
+             (walk payload bound))]
         [`(BorrowedMut ,payload ,ρ)
-         (or (not (bound-region-param? ρ bound-params concrete-regions-bound?))
-             (walk payload))]
+         (or (not (bound-region-param? ρ bound concrete-regions-bound?))
+             (walk payload bound))]
+        [`(ForallRegion (,rps ...) ,body)
+         (walk body (set-union bound (list->set rps)))]
         [`(Data ,name (,arguments ...))
          (define key (cons name arguments))
          (define schema (data-schema name arguments))
@@ -742,8 +744,9 @@
            [else
             (parameterize ([unbound-borrowed-visited
                             (set-add (unbound-borrowed-visited) key)])
-              (ormap walk (data-field-types name arguments)))])]
-        [(? list? ts) (ormap walk ts)]
+              (ormap (lambda (field) (walk field bound))
+                     (data-field-types name arguments)))])]
+        [(? list? ts) (ormap (lambda (item) (walk item bound)) ts)]
         [_ #f]))))
 
 (define (bound-region-param? ρ bound-params concrete-regions-bound?)

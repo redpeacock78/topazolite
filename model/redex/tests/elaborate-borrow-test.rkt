@@ -277,6 +277,24 @@
   (check-true (region-typed? typed)
               (format "Core region 型付けが拒否した: ~s" typed)))
 
+(test-case "ForallRegion の入力寿命を局所 owner の借用で満たせない"
+  (define core
+    '(Scope ()
+       (RegionLam (a)
+         (Lam User f (p)
+           (Scope ()
+             (Let (x let (Owned Int)) 17
+               (Borrow x)))))))
+  (define signature
+    '(ForallRegion (a)
+       (NFn ((Borrowed Int (RParam a)))
+            (Borrowed Int (RParam a)) () () () User)))
+  (define result
+    (core-type-of/regions core '() (list (list 'f signature))))
+  (check-true (diagnostic? result)
+              (format "Core の拒否を期待した: ~s" result))
+  (check-equal? (diagnostic-id result) "E-BOR-004"))
+
 (test-case "再帰宣言の借用仮引数を region 署名へ lowering する"
   (check-typed-acceptance
    '(Recur f ((b (Borrowed Int Omitted))) Int () (Read b) 0)))

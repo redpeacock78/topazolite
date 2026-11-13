@@ -201,6 +201,39 @@
          (signature-has-omitted-borrow? (cdr type)))]
     [_ #f]))
 
+(define (adopt-omitted-borrow-regions expected actual)
+  (match expected
+    [`(Borrowed ,payload ,region)
+     (match actual
+       [`(Borrowed ,actual-payload ,actual-region)
+        `(Borrowed ,(adopt-omitted-borrow-regions payload actual-payload)
+                   ,(if (eq? region 'Omitted) actual-region region))]
+       [_ expected])]
+    [`(BorrowedMut ,payload ,region)
+     (match actual
+       [`(BorrowedMut ,actual-payload ,actual-region)
+        `(BorrowedMut ,(adopt-omitted-borrow-regions payload actual-payload)
+                      ,(if (eq? region 'Omitted) actual-region region))]
+       [_ expected])]
+    [`(Record ,row)
+     (match actual
+       [`(Record ,actual-row)
+        `(Record
+          ,(for/list ([field (in-list row)])
+             (define actual-field (assoc (first field) actual-row))
+             (if actual-field
+                 (list* (first field)
+                        (adopt-omitted-borrow-regions
+                         (second field) (second actual-field))
+                        (cddr field))
+                 field)))]
+       [_ expected])]
+    [(? pair? expected-parts)
+     (if (and (list? actual) (= (length expected-parts) (length actual)))
+         (map adopt-omitted-borrow-regions expected actual)
+         expected)]
+    [_ expected]))
+
 (define (map-signature-omitted-borrows type region-for-position)
   (match type
     [`(Borrowed ,payload Omitted)
@@ -4680,15 +4713,17 @@
     (define (elaborate-mut-compatible-value s binding-mode declared-type value
                                             environment delta propositions
                                             boundaries
-                                            #:mismatch-key [mismatch-key #f])
+                                            #:mismatch-key [mismatch-key #f]
+                                            #:pre-synthesized [pre-synthesized #f])
       (define owned-binding-payload
         (match* (binding-mode declared-type)
           [('let `(Owned ,payload)) payload]
           [(_ _) #f]))
       (define (elaborate-at expected)
-        (if (expected-type-checkable? value expected)
-            (check value expected environment delta propositions boundaries)
-            (synth value environment delta propositions boundaries)))
+        (or pre-synthesized
+            (if (expected-type-checkable? value expected)
+                (check value expected environment delta propositions boundaries)
+                (synth value environment delta propositions boundaries))))
       (define (trial expected)
         (with-handlers ([exn:fail:elab? (lambda (_) #f)])
           (define restore! (hole-trial-snapshot boundaries))
@@ -5250,19 +5285,28 @@
     (define (elaborate-annotated-let-bound s binding-mode raw-type bound
                                            environment delta propositions
                                            boundaries)
-      (define declared-type (resolve-annotation raw-type delta s))
+      (define raw-declared-type (resolve-annotation raw-type delta s))
       (when (and (eq? binding-mode 'mut)
-                 (or (not (owned-free? declared-type))
-                     (unbound-borrowed-type? declared-type (set))))
+                 (or (not (owned-free? raw-declared-type))
+                     (unbound-borrowed-type? raw-declared-type (set))))
         ;; 宣言型だけで明らかな affine/borrowed binding は bound を合成する
         ;; 前に拒むため、elaborate と typing が同じ key を返す。
-        (reject s 'mut-binding-unsupported-type declared-type))
+        (reject s 'mut-binding-unsupported-type raw-declared-type))
+      (define pre-synthesized
+        (and (signature-has-omitted-borrow? raw-declared-type)
+             (not (expected-type-checkable? bound raw-declared-type))
+             (synth bound environment delta propositions boundaries)))
+      (define declared-type
+        (if pre-synthesized
+            (adopt-omitted-borrow-regions
+             raw-declared-type (judgment-core-type pre-synthesized))
+            raw-declared-type))
       (call-with-loop-trial-catch
        boundaries
        (λ ()
          (elaborate-mut-compatible-value
           s binding-mode declared-type bound environment delta propositions
-          boundaries))
+          boundaries #:pre-synthesized pre-synthesized))
        (λ ()
          (define placeholder-core `(#:lit unit ,s))
          (define placeholder

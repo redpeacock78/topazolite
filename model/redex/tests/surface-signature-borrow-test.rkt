@@ -92,6 +92,30 @@
   (match-define (list binder) (forall-binders result))
   (check-equal? (return-type result) `(Borrowed Int (RParam ,binder))))
 
+(test-case "注釈付き let は右辺の省略 region を採る"
+  (compile-accepted
+   "fn f(p: &Int) -> &Int { let q: &Int = p\nreturn q }\n0")
+  (compile-accepted
+   "fn f(p: &Int) -> &Int { let q = p\nreturn q }\n0")
+  (compile-accepted
+   "fn f(p: &{h: Int, t: Int}) -> &Int { let q: &{h: Int, t: Int} = p\nreturn q.h }\n0"))
+
+(test-case "局所 owner の借用は入力寿命の戻りに偽装できない"
+  (compile-rejected
+   "fn f(p: &Int) -> &Int { let x: Owned<Int> = 1\nreturn &x }\n0"
+   "E-TYP-012")
+  (compile-rejected
+   "fn f(p: &Int) { let x: Owned<Int> = 1\nreturn &x }\n0"
+   "E-TYP-012"))
+
+(test-case "入れ子署名の閉じた region は外側の借用を隠さず捕捉も許さない"
+  (void
+   (compile-accepted
+    "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return q }\nreturn 0 }\n0"))
+  (compile-rejected
+   "fn f(p: &Int) -> Int ! {Own, Partial} { let g = fn(q: &Int) -> &Int { return p }\nreturn 0 }\n0"
+   "E-BOR-027"))
+
 (test-case "借用を持たない関数は ForallRegion で包まない"
   (define result
     (compile-accepted "fn g(x: Int) -> Int { return x }\n0"))

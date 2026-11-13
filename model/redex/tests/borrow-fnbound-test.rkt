@@ -28,6 +28,26 @@
                      (Option (BorrowedMut Int (RParam a))) () () () User)
                (set 'a))))
 
+(test-case
+ "ForallRegion の束縛子を自由な借用として数えない"
+ (check-false
+  (unbound-borrowed-type?
+   '(ForallRegion (a)
+      (NFn ((Borrowed Int (RParam a))) Int () () () User))
+   (set)))
+ (check-true
+  (unbound-borrowed-type?
+   '(ForallRegion (a)
+      (NFn ((Borrowed Int (RParam a)))
+           (Borrowed Int (RParam outer)) () () () User))
+   (set)))
+ (check-false
+  (unbound-borrowed-type?
+   '(ForallRegion (a)
+      (ForallRegion (a) (Borrowed Int (RParam a))))
+   (set)))
+ (void))
+
 ;; payload の内側も走査する。外側が束縛されていても、内側が未束縛なら違反。
 (check-true
  (unbound-borrowed-type?
