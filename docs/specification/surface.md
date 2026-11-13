@@ -12,9 +12,13 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、局所借用の型注釈 `&T` と `&mut T`、借用の式 `&x`、`&mut x`、`deref(e)`、`reborrow(e)`、`deref(e) = v` の書込み、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 局所借用は `SUR-004` の部分達成範囲として受理する。
+関数宣言 `fn f<r>(...)` と型注釈付き無名関数 `fn<r>(...)` は、region 束縛子の並びを持てる。
+借用型は `&T`、`&mut T`、`&r T`、`&mut r T` と書ける。
+`&` または `&mut` の直後の識別子は、その次が識別子または `(` なら region 名として読み、それ以外は payload 型の先頭として読む。
+record payload の region 指定は `&r ({a: T})` のように括弧で囲む。
 関数宣言と型注釈付き無名関数の仮引数型および戻り型には借用型を書ける。
 関数型の表記、型別名、data の欄、trait の要求欄に書いた借用型は `E-SUR-005` で拒否する。
-明示の region、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）は受理しない。
+明示 region の意味処理、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）は未対応である。
 型別名と data の欄の借用型は、data 宣言の region 束縛位置を定める段階まで受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
@@ -343,6 +347,8 @@ trait 宣言はすべて impl 宣言より先に環境へ登録するため、im
 式位置の `?=` は、複合 token 全体の span で `E-SUR-005` になる。
 `List<>` は `>` の位置で `E-SUR-005` になる。
 `|` は型位置と data 型宣言の variant の区切りで受理し、`&` は型位置だけで受理する。
+借用型の region 名は `&[mut] r T` と書き、`&` または `mut` の次の識別子に続いて型の始まり（識別子または `(`）がある場合に読む。
+`&r ({a: T})` のように括弧で囲めば record 型を region 指定の payload にできる。
 式の位置の `x | y` と `x & y` は `E-SUR-005` になる。
 
 `while` は予約語ではなく `ident` になる。
@@ -588,10 +594,12 @@ elaborate は資源型の枝 binder を消費する encoding などで UCore の
 
 ### 3.9 局所借用
 
-Surface の借用型は `&T` と `&mut T` であり、`let` の型注釈、関数宣言および型注釈付き無名関数の仮引数型と戻り型に書ける。
+Surface の借用型は `&T`、`&mut T`、`&r T`、`&mut r T` であり、`let` の型注釈、関数宣言および型注釈付き無名関数の仮引数型と戻り型に書ける。
+関数宣言の束縛子は関数名の直後の `fn f<r>(...)`、無名関数の束縛子は `fn<r>(...)` と書く。
+parser は束縛子列と各借用位置の region 名を Surface AST に保持するが、名前付き region の lower-surface は Task 1 の中間状態では `E-SUR-005` を返し、意味処理は次段で行う。
 仮引数型と戻り型の内部では、record の欄、型適用の引数、Union の成員、借用の payload へ再帰的に書ける。
 借用型の各位置には別の region 束縛子を割り当てる。
-region 名は Surface に書けず、借用型の region は省略する。
+region 名を省略した位置には別々の束縛子を割り当てる。
 
 戻り型に借用がある場合、入力の借用位置がちょうど一つなら、戻り型のすべての借用にその位置の束縛子を割り当てる。
 入力の借用位置が二つ以上なら `E-BOR-020` を返し、「入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する」と示す。
@@ -1231,6 +1239,8 @@ F* 側の構成子の増減は F* の網羅性検査で、Racket 側の構成子
 - `STraitDecl`、`SImplDecl`、`SDeriveDecl` は trait 環境、impl 行、derive 行へそれぞれ消費されるため、対応する F* 構成子を持たない。
 - `SName`、`SArm`、`SParam`、`SField`、`SLabel`、`TField` は、親の構成子の欄へ展開するため、独立した F* 構成子を持たない。
   `SFn` の `SParam` は、F* 側では仮引数名の span と `option sty` の組として表す。
+  `SFn` と `SFnDecl` の region 束縛子 list は、F* 側で `(span & string)` の list として欄に残る。
+  `TBorrow` と `TBorrowMut` の region 欄は、F* 側で `None` または `(span & string)` として残る。
   `SFn` の `body-kind` は F* 側の補助型 `sbodykind` の `BExpr` または `BBlock` として保持し、構成子数には加えない。
   `SArm` の `body-kind` も同じ補助型の `BExpr` または `BBlock` として保持し、構成子数には加えない。
   `SFnDecl` の `SParam` は仮引数名の span と `sty` の組、`SName` は `SDecl` の束縛名の span、`SField` と `SLabel` は label の span と式または label 名の組として、F* の欄に残る。
@@ -1267,6 +1277,7 @@ SUR-002c2 は UCore+ に `StrHole` を加え、F* に対応構成子を持たな
 SUR-004a1a は UCore+ に `LexicalScope` を加え、F* に対応構成子を持たないため parity 件数を 43/22/42 とする。
 SUR-004a1b は UCore+ に借用の型と式の 7 構成子を加え、F* に対応構成子を持たないため parity 件数を 43/29/42 とする。
 SUR-004a1b Task 5 は Surface と F* に `TBorrow`、`TBorrowMut`、`SBorrow`、`SBorrowMut`、`SDeref`、`SReborrow`、`SDerefAssign` の 7 構成子を加え、`deref` と `reborrow` を予約語へ加えたため、parity 件数を 50/29/49、予約語数を 22 とする。
+SUR-004b2a Task 1 は `TBorrow`、`TBorrowMut`、`SFn`、`SFnDecl` の欄を拡張するが、構成子一覧、対応表、件数 50/29/49 は変えない。
 `STryBind` は Racket Surface の構成子であり、F* では `DTryBind` を持つ `SDecl` へ対応する。
 F* の lexer の `keyword_word` は、Racket の `lexer.rkt` と同じ 22 語を予約し、`match` を識別子として扱う。
 `SMatch` の枝は constructor pattern と member pattern の二形を持ち、F* は補助型 `sarm` の tag で区別する。

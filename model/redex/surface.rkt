@@ -24,6 +24,7 @@
   (sbool ::= true false)
   (sbmode ::= const let mut)
   (sname ::= (SName s ident))
+  (sregion ::= #:none sname)
   (slabel ::= (SLabel s label))
   (sty-or-none ::= sty #:none)
   (seffl ::= (SEffLabel s ident sty-or-none))
@@ -41,8 +42,8 @@
            (TUnion s sty sty)
            (TInter s sty sty)
            (TApp s sname (sty sty ...))
-           (TBorrow s sty)
-           (TBorrowMut s sty))
+           (TBorrow s sregion sty)
+           (TBorrowMut s sregion sty))
   (sbind ::= (SBind s sbmode sname sty-or-none sexpr)
              (STryBind s sname sexpr)
              (SReassign s sname sexpr)
@@ -62,7 +63,7 @@
              (SMatch s sexpr (sarm sarm ...))
              ;; SUR-014b1。最後まで else が無い if の連鎖である。
              (SIfSome s (sifclause sifclause ...) s)
-             (SFn s (slparam ...) sty-or-none srow-or-none body-kind sexpr)
+             (SFn s (sname ...) (slparam ...) sty-or-none srow-or-none body-kind sexpr)
              (SApply s sexpr (sexpr ...))
              ;; P2l2b2 spec §9.3.5。parser では作らず、名前解決が作る。
              (SConstruct s sname (sexpr ...))
@@ -85,7 +86,7 @@
               (SDeriveDecl s sname sty)
               ;; P2l2b1 spec §9.3.1。型仮引数の並びと、1 個以上の constructor である。
               (SDataDecl s sname (sname ...) (sname (sty ...)) (sname (sty ...)) ...)
-              (SFnDecl s sname (sparam ...) sty-or-none srow-or-none sexpr)
+              (SFnDecl s sname (sname ...) (sparam ...) sty-or-none srow-or-none sexpr)
               sbind)
   (sprog ::= (SProgram s (spitem ...) sexpr)))
 

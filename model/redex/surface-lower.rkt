@@ -218,7 +218,7 @@
            [(memq k gamma0-names)
             (fail 'surface-constructor-value-name-collision s)]
            [else (values (hash-set ctors k s) fns)]))]
-      [`(SFnDecl ,_ (SName ,s ,f) ,_ ,_ ,_ ,_)
+      [`(SFnDecl ,_ (SName ,s ,f) ,_ ,_ ,_ ,_ ,_)
        (cond
          [(hash-ref ctors f #f)
           => (λ (s0) (fail 'surface-constructor-value-name-collision s
@@ -521,9 +521,13 @@
        [else (fail 'surface-unknown-type-name s_h)])]
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
-    [`(TBorrow ,_ ,inner)
+    [`(TBorrow ,s ,region ,inner)
+     (unless (eq? region '#:none)
+       (fail 'surface-unexpected-token (node-span region)))
      `(Borrowed ,(lower-sty inner env fail stack #:self? self?) Omitted)]
-    [`(TBorrowMut ,_ ,inner)
+    [`(TBorrowMut ,s ,region ,inner)
+     (unless (eq? region '#:none)
+       (fail 'surface-unexpected-token (node-span region)))
      `(BorrowedMut ,(lower-sty inner env fail stack #:self? self?) Omitted)]
     [`(TFn ,_ ,arguments ,result ,row)
      `(NFn ,(for/list ([a (in-list arguments)])
@@ -801,8 +805,8 @@
       [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
        `(SFor ,s (SName ,s_x ,x) ,(r iterable)
               ,(expr body (set-add bound x)))]
-      [`(SFn ,s ,params ,ty ,row ,body-kind ,body)
-       `(SFn ,s ,params ,ty ,row ,body-kind
+      [`(SFn ,s ,region-params ,params ,ty ,row ,body-kind ,body)
+       `(SFn ,s ,region-params ,params ,ty ,row ,body-kind
              ,(expr body (set-union bound (list->seteq (param-names params)))))]
       ;; P2m spec §6。枝の本体では束縛子が同名 constructor を隠す。
       [`(SMatch ,s ,scrutinee ,arms)
@@ -861,10 +865,10 @@
                    scope)]
           [`(SExprStmt ,s ,value)
            (values (cons `(SExprStmt ,s ,(expr value scope)) reversed) scope)]
-          [`(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row ,body)
+          [`(SFnDecl ,s (SName ,s_f ,f) ,region-params ,params ,ty ,row ,body)
            (define inner
              (set-union (set-add scope f) (list->seteq (param-names params))))
-           (values (cons `(SFnDecl ,s (SName ,s_f ,f) ,params ,ty ,row
+           (values (cons `(SFnDecl ,s (SName ,s_f ,f) ,region-params ,params ,ty ,row
                                    ,(expr body inner))
                          reversed)
                    (set-add scope f))]
@@ -956,7 +960,9 @@
     [`(SFor ,s (SName ,s_x ,x) ,iterable ,body)
      (lower-for-loop s s_x x (lower-sexpr iterable env fail) body env fail
                      #:expression? #t)]
-    [`(SFn ,s ,params ,result-ty ,row ,body-kind ,body)
+    [`(SFn ,s ,region-params ,params ,result-ty ,row ,body-kind ,body)
+     (when (pair? region-params)
+       (fail 'surface-unexpected-token (node-span (first region-params))))
      (define result-core
        (if (eq? result-ty '#:none)
            `(#:infer ,s)
@@ -1174,7 +1180,9 @@
         (let ([value-core (lower-stmt value env fail)])
           (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
                           ,value-core ,rest)))])]
-    [`(SFnDecl ,s (SName ,s_f ,f) ,params ,result-ty ,row ,body)
+    [`(SFnDecl ,s (SName ,s_f ,f) ,region-params ,params ,result-ty ,row ,body)
+     (when (pair? region-params)
+       (fail 'surface-unexpected-token (node-span (first region-params))))
      (define params-core (lower-params params env fail))
      (define result-core
        (if (eq? result-ty '#:none)

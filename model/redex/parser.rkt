@@ -187,7 +187,11 @@
 (define (parse-fn-decl ts fail i)
   (define start (span-at ts i))
   (let*-values ([(name name-span name-j) (expect-ident ts fail (add1 i))]
-                [(open open-j) (expect-punct ts fail name-j '|(|)]
+                [(region-params params-open-j)
+                 (if (punct? ts name-j '<)
+                     (parse-type-params ts fail name-j)
+                     (values '() name-j))]
+                [(open open-j) (expect-punct ts fail params-open-j '|(|)]
                 [(params params-j) (parse-params ts fail open-j)]
                 [(close close-j) (expect-punct ts fail params-j '|)|)]
                 [(return-type type-j)
@@ -198,7 +202,7 @@
                 [(row row-j) (parse-opt-row ts fail type-j)]
                 [(body body-j) (parse-block ts fail row-j)])
     (values `(SFnDecl ,(hull start (node-span body))
-                      (SName ,name-span ,name) ,params ,return-type ,row ,body)
+                      (SName ,name-span ,name) ,region-params ,params ,return-type ,row ,body)
             body-j)))
 
 (define (parse-opt-row ts fail i)
@@ -289,7 +293,7 @@
      (define param `(SParam ,x-span (SName ,x-span ,(value-at ts i)) #:none))
      (let-values ([(body body-j) (parse-expr ts fail (+ i 2))])
        (define body-kind (expression-body-kind ts (+ i 2) body))
-       (values `(SFn ,(hull x-span (node-span body)) (,param) #:none #:none
+       (values `(SFn ,(hull x-span (node-span body)) () (,param) #:none #:none
                      ,body-kind ,body)
                body-j))]
     [(kw? ts i 'fn)
@@ -675,7 +679,11 @@
 
 (define (parse-anon-fn ts fail i)
   (define start (span-at ts i))
-  (let*-values ([(open open-j) (expect-punct ts fail (add1 i) '|(|)]
+  (let*-values ([(region-params params-open-j)
+                 (if (punct? ts (add1 i) '<)
+                     (parse-type-params ts fail (add1 i))
+                     (values '() (add1 i)))]
+                [(open open-j) (expect-punct ts fail params-open-j '|(|)]
                 [(params params-j) (parse-lparams ts fail open-j)]
                 [(close close-j) (expect-punct ts fail params-j '|)|)])
     (let*-values ([(return-type type-j)
@@ -689,11 +697,11 @@
           (let-values ([(_arrow arrow-j) (expect-punct ts fail row-j '=>)])
             (let-values ([(body body-j) (parse-expr ts fail arrow-j)])
               (define body-kind (expression-body-kind ts arrow-j body))
-              (values `(SFn ,(hull start (node-span body)) ,params #:none ,row
+              (values `(SFn ,(hull start (node-span body)) ,region-params ,params #:none ,row
                             ,body-kind ,body)
                       body-j #t)))
           (let-values ([(body body-j) (parse-block ts fail row-j)])
-            (values `(SFn ,(hull start (node-span body)) ,params ,return-type ,row
+            (values `(SFn ,(hull start (node-span body)) ,region-params ,params ,return-type ,row
                           block ,body)
                     body-j #f))))))
 
@@ -894,12 +902,21 @@
     [(punct? ts i '&)
      (unless borrow? (fail 'surface-unexpected-token (span-at ts i)))
      (define mutable? (kw? ts (add1 i) 'mut))
-     (define inner-index (+ i (if mutable? 2 1)))
+     (define payload-index (+ i (if mutable? 2 1)))
+     (define named-region?
+       (and (eq? (kind-at ts payload-index) 'ident)
+            (or (eq? (kind-at ts (add1 payload-index)) 'ident)
+                (punct? ts (add1 payload-index) '|(|))))
+     (define region
+       (if named-region?
+           `(SName ,(span-at ts payload-index) ,(value-at ts payload-index))
+           '#:none))
+     (define inner-index (+ payload-index (if named-region? 1 0)))
      (when (punct? ts inner-index '&)
        (fail 'surface-unexpected-token (span-at ts inner-index)))
      (let-values ([(inner end-j) (parse-tyatom ts fail inner-index borrow?)])
        (values `(,(if mutable? 'TBorrowMut 'TBorrow)
-                 ,(hull (span-at ts i) (node-span inner)) ,inner)
+                 ,(hull (span-at ts i) (span-at ts (sub1 end-j))) ,region ,inner)
                end-j))]
     [(kw? ts i 'fn) (parse-function-type ts fail i)]
     [(punct? ts i '|(|)

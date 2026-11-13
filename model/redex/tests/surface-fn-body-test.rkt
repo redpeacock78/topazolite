@@ -165,7 +165,7 @@
   (for ([source (in-list '("x => {}" "x => { a: 1 }"))])
     (define parsed (parse (lex/string 'src source)))
     (match parsed
-      [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,expr ,body))
+      [`(SProgram ,_ () (SFn ,_ () ,_ #:none #:none ,expr ,body))
        (check-eq? expr 'expr)
        (check-false (contains-form? (lowered-term (lower source)) 'BlockBody))]
       [other (fail-check (format "arrow の expr 本体を期待したが ~s" other))])))
@@ -214,7 +214,7 @@
                         ("x => (if true { x } else { 2 })" expr)
                         ("x => { a: 1 }" expr)))])
     (match (parse (lex/string 'src (first source-kind)))
-      [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none ,kind ,_))
+      [`(SProgram ,_ () (SFn ,_ () ,_ #:none #:none ,kind ,_))
        (check-eq? kind (second source-kind))]
       [other (fail-check (format "SFn body-kind を得られない: ~s" other))])))
 

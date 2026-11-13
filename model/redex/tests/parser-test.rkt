@@ -72,7 +72,7 @@
     [other other]))
 (define (p-block-binding source)
   (match (p (format "fn f() {\n  ~a\n  0\n}\n0" source))
-    [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_ (SBlock ,_ (,binding) ,_))) ,_)
+    [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ ,_ ,_ (SBlock ,_ (,binding) ,_))) ,_)
      binding]
     [other other]))
 (define (question-eq-span source)
@@ -173,31 +173,31 @@
 (test-case
  "[REQ: SUR-003] 関数宣言、無名関数、関数型が Effect row を持つ"
  (match (p "fn f(x: Int) -> Int ! Partial { x }\n0")
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ ,_
                              (SEffRow ,row-span ((SEffLabel ,label-span Partial #:none))) ,_)) ,_)
     (check-equal? row-span (sp 20 29))
     (check-equal? label-span (sp 22 29))]
    [other (fail-check (format "row 付き SFnDecl を期待したが ~s" other))])
  (match (p "fn f(x: Int) ! {Partial, Yield<Int>} { x }\n0")
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ #:none
                              (SEffRow ,_ ((SEffLabel ,_ Partial #:none)
                                          (SEffLabel ,_ Yield (TName ,_ Int)))) ,_)) ,_)
     (void)]
    [other (fail-check (format "複数ラベルの SFnDecl を期待したが ~s" other))])
  (match (p "fn f() ! {} { 0 }\n0")
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,_ ()) ,_)) ,_) (void)]
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ #:none (SEffRow ,_ ()) ,_)) ,_) (void)]
    [other (fail-check (format "空 row の SFnDecl を期待したが ~s" other))])
  (match (p "fn(x) ! Partial => x")
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none
+   [`(SProgram ,_ () (SFn ,_ () ,_ #:none
                            (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) expr ,_))
     (void)]
    [other (fail-check (format "row 付き arrow Fn を期待したが ~s" other))])
  (match (p "fn(x: Int) -> Int ! Partial { x }")
-   [`(SProgram ,_ () (SFn ,_ ,_ ,_ (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) block ,_))
+   [`(SProgram ,_ () (SFn ,_ () ,_ ,_ (SEffRow ,_ ((SEffLabel ,_ Partial #:none))) block ,_))
     (void)]
    [other (fail-check (format "row 付き block Fn を期待したが ~s" other))])
  (match (p "x => x")
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr ,_)) (void)]
+   [`(SProgram ,_ () (SFn ,_ () ,_ #:none #:none expr ,_)) (void)]
    [other (fail-check (format "row 省略の SFn を期待したが ~s" other))]))
 
 (test-case
@@ -215,11 +215,11 @@
 (test-case
  "[REQ: SUR-003] row の span は ! から閉じ記号またはラベル末尾までである"
  (match (p "fn f() ! Partial { 0 }\n0")
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
     (check-equal? row-span (sp 7 16))]
    [other (fail-check (format "単一ラベル row を期待したが ~s" other))])
  (match (p "fn f() ! {A} { 0 }\n0")
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ #:none (SEffRow ,row-span ,_labels) ,_)) ,_)
     (check-equal? row-span (sp 7 12))]
    [other (fail-check (format "brace row を期待したが ~s" other))]))
 
@@ -288,10 +288,10 @@
  (check-equal? (p-code "fn main() -> Int {\n  fn (y: Int) -> Int { y } |> f\n}")
                "E-SUR-005")
  (check-match (p-expr "(fn (y: Int) -> Int { y }) |> f")
-              `(SApply ,_ (SVar ,_ f) ((SFn ,_ ,_ ,_ ,_ block ,_))))
+              `(SApply ,_ (SVar ,_ f) ((SFn ,_ () ,_ ,_ ,_ block ,_))))
  ;; => の本体は expr なので pipe を含む。
  (check-match (p-expr "y => y |> f")
-              `(SFn ,_ ,_ ,_ ,_ expr (SApply ,_ (SVar ,_ f) ((SVar ,_ y))))))
+              `(SFn ,_ () ,_ ,_ ,_ expr (SApply ,_ (SVar ,_ f) ((SVar ,_ y))))))
 
 (test-case
  "SUR-002a: pipe の右辺の欠落と改行は拒否する"
@@ -414,7 +414,7 @@
  (check-equal? (p "fn(a: Int) -> Int { a }")
                '(SProgram
                  (#:span src 0 23) ()
-                 (SFn (#:span src 0 23)
+                 (SFn (#:span src 0 23) ()
                       ((SParam (#:span src 3 9)
                                (SName (#:span src 3 4) a)
                                (TName (#:span src 6 9) Int)))
@@ -429,12 +429,12 @@
  (define decl (p "fn f(x: Int) { x }\n0"))
  (check-true (redex-match? Surface sprog decl))
  (match decl
-   [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ #:none #:none ,_)) ,_) (void)]
+   [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ #:none #:none ,_)) ,_) (void)]
    [other (fail-check (format "省略した SFnDecl を期待したが ~s" other))])
  (define anon (p "fn(x: Int) { x }"))
  (check-true (redex-match? Surface sprog anon))
  (match anon
-   [`(SProgram ,_ () (SFn ,_ ,_ #:none #:none block ,_)) (void)]
+   [`(SProgram ,_ () (SFn ,_ () ,_ #:none #:none block ,_)) (void)]
    [other (fail-check (format "省略した SFn を期待したが ~s" other))]))
 
 (test-case
@@ -445,7 +445,7 @@
  "SUR-012: x => x は仮引数一つの SFn"
  (match (p "x => x")
    [`(SProgram ,_ ()
-               (SFn ,s ((SParam ,sx (SName ,sx2 x) #:none))
+               (SFn ,s () ((SParam ,sx (SName ,sx2 x) #:none))
                     #:none #:none expr (SVar ,_ x)))
     (check-equal? sx (sp 0 1))
     (check-equal? sx2 sx)
@@ -456,29 +456,29 @@
  "SUR-012: fn(x, y: Int) => x"
  (check-match (p "fn(x, y: Int) => x")
               `(SProgram ,_ ()
-                         (SFn ,_ ((SParam ,_ (SName ,_ x) #:none)
+                         (SFn ,_ () ((SParam ,_ (SName ,_ x) #:none)
                                   (SParam ,_ (SName ,_ y) (TName ,_ Int)))
                               #:none #:none expr ,_))))
 
 (test-case
  "SUR-012: fn() => a"
  (check-match (p "fn() => a")
-              `(SProgram ,_ () (SFn ,_ () #:none #:none expr (SVar ,_ a)))))
+              `(SProgram ,_ () (SFn ,_ () () #:none #:none expr (SVar ,_ a)))))
 
 (test-case
  "SUR-012: 本体は postfix まで伸びる"
  (check-match (p "x => x(1)")
-              `(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr (SApply ,_ ,_ ,_)))))
+              `(SProgram ,_ () (SFn ,_ () ,_ #:none #:none expr (SApply ,_ ,_ ,_)))))
 
 (test-case
  "SUR-012: => は右結合"
  (check-match (p "x => y => x")
               `(SProgram ,_ ()
-                         (SFn ,_ ,_
+                         (SFn ,_ () ,_
                               #:none
                               #:none
                               expr
-                              (SFn ,_ ,_
+                              (SFn ,_ () ,_
                                    #:none #:none expr (SVar ,_ x))))))
 
 (test-case
@@ -486,11 +486,11 @@
  (check-match (p "f(x => x, 1)")
               `(SProgram ,_ ()
                          (SApply ,_ ,_
-                                 ((SFn ,_ ,_ #:none #:none expr ,_) (SInt ,_ 1)))))
+                                 ((SFn ,_ () ,_ #:none #:none expr ,_) (SInt ,_ 1)))))
  (check-match (p "{ a: x => x, b: 1 }")
               `(SProgram ,_ ()
                          (SRec ,_
-                               ((SField ,_ ,_ (SFn ,_ ,_ #:none #:none expr ,_))
+                               ((SField ,_ ,_ (SFn ,_ () ,_ #:none #:none expr ,_))
                                 (SField ,_ ,_ (SInt ,_ 1)))))))
 
 (test-case
@@ -709,7 +709,7 @@
  (check-match (p "when c { zero => 1 }.f")
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_)))
  (check-match (p "fn f() { let n = when c { zero => 1 }\n n }\n0")
-              `(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_
+              `(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ ,_ ,_
                                        (SBlock ,_ ((SBind ,_ let (SName ,_ n) #:none
                                                             (SMatch ,_ ,_ ,_)))
                                                 (SVar ,_ n)))) ,_))
@@ -743,8 +743,8 @@
                                              (SArm ,_ (SName ,_ false) () expr ,_)))))
  ;; 本体が無名関数でも、枝間の改行で止まる。
  (check-match (p "when c {\n  red => x => x\n  green => y => y\n}")
-              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () expr (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ x)))
-                                             (SArm ,_ ,_ () expr (SFn ,_ ,_ ,_ ,_ expr (SVar ,_ y)))))))
+              `(SProgram ,_ () (SMatch ,_ ,_ ((SArm ,_ ,_ () expr (SFn ,_ () ,_ ,_ ,_ expr (SVar ,_ x)))
+                                             (SArm ,_ ,_ () expr (SFn ,_ () ,_ ,_ ,_ expr (SVar ,_ y)))))))
  ;; when は primary なので suffix を続けられる。
  (check-match (p "when c { red => r }.a")
               `(SProgram ,_ () (SProj ,_ (SMatch ,_ ,_ ,_) ,_))))
@@ -820,7 +820,7 @@
  (check-match (p "return f(1).a")
               `(SProgram ,_ () (SReturn ,_ (SProj ,_ (SApply ,_ ,_ ,_) ,_))))
  (check-match (p "return x => x")
-              `(SProgram ,_ () (SReturn ,_ (SFn ,_ ,_ ,_ ,_ expr ,_))))
+              `(SProgram ,_ () (SReturn ,_ (SFn ,_ () ,_ ,_ ,_ expr ,_))))
  (check-match (p "return return 1")
               `(SProgram ,_ () (SReturn ,_ (SReturn ,_ (SInt ,_ 1)))))
  (check-equal? (second (fourth (p "return 1"))) '(#:span src 0 8)))
@@ -839,7 +839,7 @@
  (check-match (p "leave f(1).a")
               `(SProgram ,_ () (SLeave ,_ (SProj ,_ (SApply ,_ ,_ ,_) ,_))))
  (check-match (p "leave x => x")
-              `(SProgram ,_ () (SLeave ,_ (SFn ,_ ,_ ,_ ,_ expr ,_))))
+              `(SProgram ,_ () (SLeave ,_ (SFn ,_ () ,_ ,_ ,_ expr ,_))))
  (check-match (p "leave leave 1")
               `(SProgram ,_ () (SLeave ,_ (SLeave ,_ (SInt ,_ 1)))))
  (check-equal? (second (fourth (p "leave 1"))) '(#:span src 0 7)))
@@ -993,7 +993,7 @@
                              (SReassign ,(== (sp 14 19)) (SName ,(== (sp 14 15)) x) (SInt ,_ 1)))
                          (SInt ,_ 2)))
  (check-match (p "fn f() {\n  let mut x = 0\n  x = 1\n  x\n}\n0")
-              `(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_
+              `(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ ,_ ,_
                                       (SBlock ,_ ((SBind ,_ mut ,_ ,_ ,_)
                                                   (SReassign ,_ (SName ,_ x) (SInt ,_ 1)))
                                                  (SVar ,_ x))))
@@ -1022,7 +1022,7 @@
  "SUR-014c0a: 再代入文は式位置ではなく、既存の arrow と ?= は保つ"
  (for ([src (in-list '("x = = 1" "x => x = 1" "f(x = 1)"))])
    (check-equal? (p-code src) "E-SUR-005" src))
- (check-match (p "x => x") `(SProgram ,_ () (SFn ,_ ,_ #:none #:none expr ,_)))
+ (check-match (p "x => x") `(SProgram ,_ () (SFn ,_ () ,_ #:none #:none expr ,_)))
  (check-match (p "let x ?= some(1)\n0")
               `(SProgram ,_ ((STryBind ,_ (SName ,_ x) ,_)) (SInt ,_ 0))))
 
@@ -1048,19 +1048,19 @@
 
 (test-case "借用型は let 注釈の再帰位置で読み、中置 Intersection より強く結合する"
   (check-match (p-binding-type "let b: &Int = x\n0")
-               `(TBorrow ,_ (TName ,_ Int)))
+               `(TBorrow ,_ #:none (TName ,_ Int)))
   (check-match (p-binding-type "let b: &mut Res = x\n0")
-               `(TBorrowMut ,_ (TName ,_ Res)))
+               `(TBorrowMut ,_ #:none (TName ,_ Res)))
   (check-match (p-binding-type "let b: &(T & U) = x\n0")
-               `(TBorrow ,_ (TInter ,_ (TName ,_ T) (TName ,_ U))))
+               `(TBorrow ,_ #:none (TInter ,_ (TName ,_ T) (TName ,_ U))))
   (check-match (p-binding-type "let b: &(&T) = x\n0")
-               `(TBorrow ,_ (TBorrow ,_ (TName ,_ T))))
+               `(TBorrow ,_ #:none (TBorrow ,_ #:none (TName ,_ T))))
   (check-match (p-binding-type "let b: { n: &Int } = x\n0")
-               `(TRec ,_ ((TField ,_ (SLabel ,_ n) (TBorrow ,_ (TName ,_ Int))))))
+               `(TRec ,_ ((TField ,_ (SLabel ,_ n) (TBorrow ,_ #:none (TName ,_ Int))))))
   (check-match (p-binding-type "let b: Option<&Int> = x\n0")
-               `(TApp ,_ (SName ,_ Option) ((TBorrow ,_ (TName ,_ Int)))))
+               `(TApp ,_ (SName ,_ Option) ((TBorrow ,_ #:none (TName ,_ Int)))))
   (check-match (p-binding-type "let b: &Int & Unit = x\n0")
-               `(TInter ,_ (TBorrow ,_ (TName ,_ Int)) (TName ,_ Unit))))
+               `(TInter ,_ (TBorrow ,_ #:none (TName ,_ Int)) (TName ,_ Unit))))
 
 (test-case "借用型の二重 prefix は二つ目の ampersand で拒否する"
   (for ([source (in-list '("let x: &&Int = y\n0"
@@ -1070,20 +1070,20 @@
 
 (test-case "関数宣言と注釈付き無名関数の借用型を parse する"
   (check-match (p "fn f(x: &Int) { () }\n0")
-               `(SProgram ,_ ((SFnDecl ,_ ,_
-                                         ((SParam ,_ ,_ (TBorrow ,_ (TName ,_ Int))))
+               `(SProgram ,_ ((SFnDecl ,_ ,_ ()
+                                         ((SParam ,_ ,_ (TBorrow ,_ #:none (TName ,_ Int))))
                                          #:none #:none ,_)) ,_))
   (check-match (p "fn f() -> &Int { () }\n0")
-               `(SProgram ,_ ((SFnDecl ,_ ,_ ()
-                                         (TBorrow ,_ (TName ,_ Int))
+               `(SProgram ,_ ((SFnDecl ,_ ,_ () ()
+                                         (TBorrow ,_ #:none (TName ,_ Int))
                                          #:none ,_)) ,_))
   (check-match (p "fn(x: &Int) => x")
                `(SProgram ,_ ()
-                          (SFn ,_ ((SParam ,_ ,_ (TBorrow ,_ (TName ,_ Int))))
+                          (SFn ,_ () ((SParam ,_ ,_ (TBorrow ,_ #:none (TName ,_ Int))))
                                #:none #:none expr ,_)))
   (check-match (p "fn() -> &Int { () }")
                `(SProgram ,_ ()
-                          (SFn ,_ () (TBorrow ,_ (TName ,_ Int))
+                          (SFn ,_ () () (TBorrow ,_ #:none (TName ,_ Int))
                                #:none block ,_))))
 
 (test-case "型別名、data 欄、関数型記法内の借用型は拒否する"
@@ -1095,9 +1095,55 @@
     (check-parse-error-at source "E-SUR-005"
                           (source-span-of-char source #\&))))
 
+(test-case "明示 region 名と関数の束縛子を Surface に保持する"
+  (check-match
+   (p "fn choose<r>(left: &r Int, right: &r Int, c: Bool) -> &r Int { return left }\n0")
+   `(SProgram ,_ ((SFnDecl ,_ ,_ ((SName ,_ r))
+                            ((SParam ,_ ,_ (TBorrow ,_ (SName ,_ r) (TName ,_ Int)))
+                             (SParam ,_ ,_ (TBorrow ,_ (SName ,_ r) (TName ,_ Int)))
+                             (SParam ,_ ,_ (TName ,_ Bool)))
+                            (TBorrow ,_ (SName ,_ r) (TName ,_ Int))
+                            #:none ,_)) ,_))
+  (check-match
+   (p "fn f(p: &mut r Int) -> Int { return 0 }\n0")
+   `(SProgram ,_ ((SFnDecl ,_ ,_ ()
+                            ((SParam ,_ ,_ (TBorrowMut ,_ (SName ,_ r) (TName ,_ Int))))
+                            (TName ,_ Int) #:none ,_)) ,_))
+  (check-match
+   (p "let pick = fn<r>(a: &r Int) -> &r Int { return a }\n0")
+   `(SProgram ,_ ((SBind ,_ let (SName ,_ pick) #:none
+                          (SFn ,_ ((SName ,_ r))
+                                ((SParam ,_ ,_ (TBorrow ,_ (SName ,_ r) (TName ,_ Int))))
+                                (TBorrow ,_ (SName ,_ r) (TName ,_ Int))
+                                #:none block ,_))) (SInt ,_ 0)))
+  (check-match (p-binding-type "let b: &r Int = x\n0")
+               `(TBorrow ,_ (SName ,_ r) (TName ,_ Int)))
+  (check-match (p-binding-type "let b: &mut r Int = x\n0")
+               `(TBorrowMut ,_ (SName ,_ r) (TName ,_ Int)))
+  (check-match (p-binding-type "let b: &r (&Int) = x\n0")
+               `(TBorrow ,_ (SName ,_ r) (TBorrow ,_ #:none (TName ,_ Int))))
+  (check-match (p-binding-type "let b: &r ({a: Int}) = x\n0")
+               `(TBorrow ,_ (SName ,_ r) (TRec ,_ ,_)))
+  (check-match (p-binding-type "let b: &r Int & U = x\n0")
+               `(TInter ,_ (TBorrow ,_ (SName ,_ r) (TName ,_ Int)) (TName ,_ U)))
+  (check-match (p-binding-type "let b: &Int & U = x\n0")
+               `(TInter ,_ (TBorrow ,_ #:none (TName ,_ Int)) (TName ,_ U)))
+  (check-match (p "fn f(p: &Int) -> &Int { return p }\n0")
+               `(SProgram ,_ ((SFnDecl ,_ ,_ ()
+                                           ((SParam ,_ ,_ (TBorrow ,_ #:none (TName ,_ Int))))
+                                           (TBorrow ,_ #:none (TName ,_ Int)) #:none ,_)) ,_))
+  (check-match (p "fn(p: &Int) -> &Int { return p }")
+               `(SProgram ,_ ()
+                          (SFn ,_ ()
+                               ((SParam ,_ ,_ (TBorrow ,_ #:none (TName ,_ Int))))
+                               (TBorrow ,_ #:none (TName ,_ Int)) #:none block ,_)))
+  (define empty-binders "fn f<>() -> Int { return 0 }\n0")
+  (check-parse-error-at empty-binders "E-SUR-005"
+                        (source-span-of-char empty-binders #\>)))
+
 (define (p-block-statement source)
   (match (p (format "fn f() {\n  ~a\n  ()\n}\n0" source))
-    [`(SProgram ,_ ((SFnDecl ,_ ,_ ,_ ,_ ,_ (SBlock ,_ (,statement) ,_))) ,_)
+    [`(SProgram ,_ ((SFnDecl ,_ ,_ () ,_ ,_ ,_ (SBlock ,_ (,statement) ,_))) ,_)
      statement]
     [other other]))
 

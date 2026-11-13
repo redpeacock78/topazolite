@@ -114,7 +114,7 @@
  ;; parser は Fn の本体を必ず SBlock にするので、Surface の項を手で組む。
  (define r
    (lower-term
-    (prog '() `(SFn ,s0 ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
+    (prog '() `(SFn ,s0 () ((SParam ,s0 (SName ,s0 x) (TName ,s0 Int)))
                     (TName ,s0 Int)
                     #:none
                     expr
@@ -125,6 +125,11 @@
        (#:ef #:infer ,s0)
        (#:var x ,s0)))
  (check-true (redex-match? UCore+ e r)))
+
+(test-case
+ "named region と束縛子は lower-surface ではまだ E-SUR-005"
+ (check-equal? (diagnostic-id (low "fn f<r>(p: &r Int) { () }\n0")) "E-SUR-005")
+ (check-equal? (diagnostic-id (low "fn f(p: &Int) -> &r Int { return p }\n0")) "E-SUR-005"))
 
 (test-case
  "SUR-008: 省略した戻り型は関数全体の span を持つ #:infer へ落ちる"
