@@ -287,9 +287,10 @@
       (check-equal? (count-form (compiled-core result) 'RemainderSafelyDropped) 1)
       (check-equal? (trace-value result) 1)))
 
-(test-case "Surface の関数借用型は convert-adapter-value より前に E-SUR-005 で拒否する"
+(test-case "Surface の関数借用型を host error にせず受理する"
   (define source "fn f(p: &Int) -> Int { return deref(p) }\n0")
-  (compile-rejected source "E-SUR-005" "&"))
+  (void (compile-accepted source))
+  (compile-rejected "let f: fn(&Int) -> Int = x\n0" "E-SUR-005" "&"))
 
 (test-case "merge-branches と decompose の narrowing 試行は host error にならない"
   (for ([source

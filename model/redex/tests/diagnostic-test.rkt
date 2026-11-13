@@ -976,7 +976,8 @@
                  (typing projborrow-optional-field)
                  (typing projborrow-unknown-field)
                  (typing read-non-borrow)
-                 (typing reborrow-non-mutable)))
+                 (typing reborrow-non-mutable)
+                 (typing unresolved-borrow-owner)))
  ;; resolve-proposition の第 3 引数として渡る reason は (reject '...) の
  ;; 字面で現れない。走査の対象外なので明示の許容表で確かめる。
  (for ([reason (in-list '(invalid-obligation invalid-proposition))])

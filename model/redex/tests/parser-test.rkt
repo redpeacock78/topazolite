@@ -1068,13 +1068,27 @@
     (check-parse-error-at source "E-SUR-005"
                           (source-span-of-char source #\& 1))))
 
-(test-case "let 注釈以外の借用型と入れ子の関数型内の借用型は拒否する"
+(test-case "関数宣言と注釈付き無名関数の借用型を parse する"
+  (check-match (p "fn f(x: &Int) { () }\n0")
+               `(SProgram ,_ ((SFnDecl ,_ ,_
+                                         ((SParam ,_ ,_ (TBorrow ,_ (TName ,_ Int))))
+                                         #:none #:none ,_)) ,_))
+  (check-match (p "fn f() -> &Int { () }\n0")
+               `(SProgram ,_ ((SFnDecl ,_ ,_ ()
+                                         (TBorrow ,_ (TName ,_ Int))
+                                         #:none ,_)) ,_))
+  (check-match (p "fn(x: &Int) => x")
+               `(SProgram ,_ ()
+                          (SFn ,_ ((SParam ,_ ,_ (TBorrow ,_ (TName ,_ Int))))
+                               #:none #:none expr ,_)))
+  (check-match (p "fn() -> &Int { () }")
+               `(SProgram ,_ ()
+                          (SFn ,_ () (TBorrow ,_ (TName ,_ Int))
+                               #:none block ,_))))
+
+(test-case "型別名、data 欄、関数型記法内の借用型は拒否する"
   (for ([source (in-list
-                 '("fn f(x: &Int) { () }\n0"
-                   "fn f() -> &Int { () }\n0"
-                   "fn(x: &Int) => x"
-                   "fn() -> &Int { () }"
-                   "type Borrow = &Int\n0"
+                 '("type Borrow = &Int\n0"
                    "type BorrowBox =\n | box<&Int>\n0"
                    "let f: fn(&Int) -> Int = x\n0"
                    "let f: fn(Int) -> &Int = x\n0"))])
