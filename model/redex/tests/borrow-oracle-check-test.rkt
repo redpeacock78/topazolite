@@ -500,6 +500,70 @@
                           (make-bcounters))
    'ok))
 
+(test-case "R-RecurBind は借用の無い本体から同じ継続への置換だけを承認する"
+  (define redex
+    `(Recur (Inst recf () (Poly (a))) loop (b) (Read b)
+            (Apply (RegionApp loop (8)) ,borrowed-value)))
+  (define contractum
+    `(Apply
+      (RegionApp
+       (RecurVal (Inst recf () (Poly (a))) loop (b) (Read b))
+       (8))
+      ,borrowed-value))
+  (define step
+    (findf (lambda (tagged) (eq? (first tagged) 'R-RecurBind))
+           (raw-steps-g2/named `(cfg ,redex () () () ()))))
+  (check-not-false step "machine の R-RecurBind で継続が置換される")
+  (when step
+    (match (second step)
+      [`(cfg ,after ,_ ...) (check-equal? after contractum)]
+      [other (fail (format "cfg を期待した: ~s" other))]))
+  (check-equal? (borrow-form-candidates redex contractum #:rule 'R-RecurBind)
+                '())
+  (for ([bad (in-list
+              (list
+               `(Apply (RegionApp (RecurVal (Inst recf () (Poly (a)))
+                                          loop (b) (Read b)) (8))
+                       (BorrowRef 4 (a) 7))
+               `(Apply (RegionApp (RecurVal (Inst recf () (Poly (a)))
+                                          loop (b) (Read b)) (8))
+                       (BorrowRef 3 (b) 7))
+               `(Apply (RegionApp (RecurVal (Inst recf () (Poly (a)))
+                                          loop (b) (Read b)) (8))
+                       (BorrowRef 3 (a) 8))
+               `(Apply (RegionApp (RecurVal (Inst other () (Poly (a)))
+                                          loop (b) (Read b)) (8))
+                       ,borrowed-value)
+               `(Apply (RegionApp (RecurVal (Inst recf () (Poly (a)))
+                                          loop (q) (Read b)) (8))
+                       ,borrowed-value)
+               `(Apply (RegionApp (RecurVal (Inst recf () (Poly (a)))
+                                          loop (b) 0) (8))
+                       ,borrowed-value)
+               `(Apply (RegionApp loop (8)) ,borrowed-value)))])
+    (check-equal? (borrow-form-candidates redex bad #:rule 'R-RecurBind)
+                  '((unverified)) (format "改変した contractum: ~s" bad)))
+  (define body-borrow-redex
+    `(Recur (Inst recf () (Poly (a))) loop (b)
+            (Read ,borrowed-value)
+            (Apply (RegionApp loop (8)) ,borrowed-value)))
+  (define body-borrow-contractum
+    `(Apply
+      (RegionApp
+       (RecurVal (Inst recf () (Poly (a))) loop (b)
+                 (Read ,borrowed-value))
+       (8))
+      ,borrowed-value))
+  (check-equal?
+   (borrow-form-candidates body-borrow-redex body-borrow-contractum
+                           #:rule 'R-RecurBind)
+   '((unverified)) "本体内の BorrowRef は複製の恐れがあるため拒否")
+  (for ([wrong-rule (in-list '(R-RegionApp R-RegionAppRecur R-RecurUnfold))])
+    (check-equal? (borrow-form-candidates redex contractum #:rule wrong-rule)
+                  '((unverified)) (symbol->string wrong-rule)))
+  (check-equal? (borrow-form-candidates redex contractum)
+                '((unverified)) "規則名なし"))
+
 (test-case "R-RegionAppRecur は同じ実引数の搬送だけを承認する"
   (define redex
     `(Apply

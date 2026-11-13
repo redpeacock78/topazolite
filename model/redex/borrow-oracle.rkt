@@ -185,6 +185,12 @@
                  (term (scope-abort-preserves-perform?
                         ,redex ,contractum)))
      '()]
+    ;; R-RecurBind は借用を持たない本体の束縛だけを継続へ置換する。
+    [(list redex contractum)
+     #:when (and (eq? rule-name 'R-RecurBind)
+                 (term (recur-bind-preserves-continuation?
+                        ,redex ,contractum)))
+     '()]
     ;; RegionApp は callee を実体化するが、Apply の実引数は変えない。
     [(list redex contractum)
      #:when (and (eq? rule-name 'R-RegionApp)
@@ -256,9 +262,10 @@
                  (equal? τu τu2) (equal? τm τm2) (equal? v v2)
                  (equal? branches branches2))
      '()]
-    ;; R-RecurBind で再帰関数を使わない継続は、そのまま contractum になる。
-    [(list `(Recur ,_ ,_ ,_ ,_ ,continuation) contractum)
-     #:when (equal? continuation contractum)
+    ;; R-RecurBind で再帰関数を使わない継続だけがそのまま残る。
+    [(list `(Recur ,_ ,f ,_ ,_ ,continuation) contractum)
+     #:when (and (equal? continuation contractum)
+                 (not (set-member? (raw-free-vars continuation) f)))
      '()]
     ;; R-HandleValue は handler を捨てて値を返すため、handler 内の借用値は実行されない。
     [(list `(Handle ,_ (,x -> ,handler) ,value) contractum)
@@ -369,6 +376,20 @@
     (Perform op v))
    #t]
   [(scope-abort-preserves-perform? c_0 c_1) #f])
+
+(define-metafunction G2m
+  recur-bind-preserves-continuation? : c c -> boolean
+  [(recur-bind-preserves-continuation?
+    (Recur cid f (x ...) c_body c_next) c_after)
+   ,(let ([recur-value
+           `(RecurVal ,(term cid) ,(term f) ,(term (x ...))
+                      ,(term c_body))])
+      (and (null? (collect-borrow-values (term c_body)))
+           (equal? (term c_after)
+                   (raw-subst* (term c_next)
+                               (list (term f))
+                               (list recur-value)))))]
+  [(recur-bind-preserves-continuation? c_0 c_1) #f])
 
 (define-metafunction G2m
   region-app-preserves-apply-arguments? : c c -> boolean
