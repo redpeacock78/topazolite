@@ -179,6 +179,12 @@
 ;; 分類は根、派生、再借用、使用、未検証のいずれかである。
 (define (approved-forms redex contractum rule-name)
   (match (list redex contractum)
+    ;; R-ScopeAbort は F 内の同じ operation と payload を外へ運ぶだけ。
+    [(list `(Scope ,_π ,_) `(Perform ,_op ,_payload))
+     #:when (and (eq? rule-name 'R-ScopeAbort)
+                 (term (scope-abort-preserves-perform?
+                        ,redex ,contractum)))
+     '()]
     ;; R-RecRewrite-Open は入力欄を作業列へ一度ずつ移す。
     [(list `(RecRewrite ,_ ,_) `(RecRewriteOpen ,_)) '()]
     ;; R-RecRewrite-Close は作業欄の値を保ったまま Rec へ戻す。
@@ -343,6 +349,14 @@
     [(borrow-value? t) (list t)]
     [(list? t) (append* (map collect-borrow-values t))]
     [else '()]))
+
+(define-metafunction G2m
+  scope-abort-preserves-perform? : c c -> boolean
+  [(scope-abort-preserves-perform?
+    (Scope π (in-hole F (Perform op v)))
+    (Perform op v))
+   #t]
+  [(scope-abort-preserves-perform? c_0 c_1) #f])
 
 ;; spec §4.6。照合できず、しかも redex か contractum に借用値が現れるなら
 ;; unverified を返して失敗させる。借用値が無い遷移は非借用遷移として扱う。

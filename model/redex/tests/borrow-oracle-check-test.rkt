@@ -5,7 +5,9 @@
          racket/set
          "../borrow.rkt"
          "../borrow-gen.rkt"
-         "../borrow-oracle.rkt")
+         "../borrow-oracle.rkt"
+         "../gen.rkt"
+         "../machine.rkt")
 
 (define shared-skeleton
   '(Scope ()
@@ -342,6 +344,41 @@
 (define borrowed-value '(BorrowRef 3 (a) 7))
 (define transit-union-value
   `(UnionVal (Union Int (Borrowed Int 7)) (Borrowed Int 7) ,borrowed-value))
+
+(test-case "R-ScopeAbort は同じ operation と payload の搬送だけを承認する"
+  (define operation '(Return abort-boundary (Borrowed Int 7)))
+  (define redex
+    `(Scope (0)
+       (Let (result const Never)
+            (Perform ,operation ,borrowed-value)
+            unit)))
+  (define (candidates perform #:rule [rule 'R-ScopeAbort])
+    (borrow-form-candidates redex perform #:rule rule))
+  (check-equal? (candidates `(Perform ,operation ,borrowed-value)) '())
+  (for ([wrong (in-list
+                (list `(Perform (Return other-boundary (Borrowed Int 7))
+                                ,borrowed-value)
+                      `(Perform ,operation (BorrowRef 4 (a) 7))
+                      `(Perform ,operation (BorrowRef 3 (b) 7))
+                      `(Perform ,operation (BorrowRef 3 (a) 8))))])
+    (check-equal? (candidates wrong) '((unverified))))
+  (check-equal? (candidates `(Perform ,operation ,borrowed-value)
+                            #:rule 'R-ScopeValue)
+                '((unverified))))
+
+(test-case "R-ScopeAbort 後の局所 owner を指す payload は runtime-row が拒否する"
+  (define operation '(Return abort-boundary (Borrowed Int 0)))
+  (define before-abort
+    `(cfg (Scope (0) (Perform ,operation (BorrowRef 0 () 0)))
+          ((0 7)) ((0 Available)) () ()))
+  (match (raw-steps-g2/named before-abort)
+    [(list (list 'R-ScopeAbort after-abort))
+     (check-equal? (match after-abort
+                     [`(cfg ,_ ,_ ,states ,_ ,_) states])
+                   '((0 Dropped)))
+     ;; ScopeAbort 後も payload が残るが、Dropped owner を指すため fail closed。
+     (check-false (runtime-row after-abort '() 'Never))]
+    [steps (fail (format "expected a single R-ScopeAbort step, got ~s" steps))]))
 
 (define (check-approved-shape label redex contractum wrong-contractum)
   (check-equal? (borrow-form-candidates redex contractum) '()
