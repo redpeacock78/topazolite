@@ -185,6 +185,18 @@
                  (term (scope-abort-preserves-perform?
                         ,redex ,contractum)))
      '()]
+    ;; RegionApp は callee を実体化するが、Apply の実引数は変えない。
+    [(list redex contractum)
+     #:when (and (eq? rule-name 'R-RegionApp)
+                 (term (region-app-preserves-apply-arguments?
+                        ,redex ,contractum)))
+     '()]
+    ;; R-RegionAppRecur も RecurVal だけを実体化し、実引数を保つ。
+    [(list redex contractum)
+     #:when (and (eq? rule-name 'R-RegionAppRecur)
+                 (term (region-app-recur-preserves-apply-arguments?
+                        ,redex ,contractum)))
+     '()]
     ;; R-RecRewrite-Open は入力欄を作業列へ一度ずつ移す。
     [(list `(RecRewrite ,_ ,_) `(RecRewriteOpen ,_)) '()]
     ;; R-RecRewrite-Close は作業欄の値を保ったまま Rec へ戻す。
@@ -357,6 +369,29 @@
     (Perform op v))
    #t]
   [(scope-abort-preserves-perform? c_0 c_1) #f])
+
+(define-metafunction G2m
+  region-app-preserves-apply-arguments? : c c -> boolean
+  [(region-app-preserves-apply-arguments?
+    (Apply (RegionApp (RegionLam (rp ...) c_body) (ρ ...)) c_before ...)
+    (Apply c_result c_after ...))
+   ,(equal? (term (c_before ...)) (term (c_after ...)))]
+  [(region-app-preserves-apply-arguments? c_0 c_1) #f])
+
+(define-metafunction G2m
+  region-app-recur-preserves-apply-arguments? : c c -> boolean
+  [(region-app-recur-preserves-apply-arguments?
+    (Apply
+     (RegionApp
+      (RecurVal (Inst cid ((rp_c ρ_c) ...) (Poly (rp ...))) f (x ...) c_body)
+      (ρ ...))
+     c_before ...)
+    (Apply
+     (RecurVal (Inst cid ((rp_c ρ_c) ... (rp ρ) ...) Mono)
+               f (x ...) c_result)
+     c_after ...))
+   ,(equal? (term (c_before ...)) (term (c_after ...)))]
+  [(region-app-recur-preserves-apply-arguments? c_0 c_1) #f])
 
 ;; spec §4.6。照合できず、しかも redex か contractum に借用値が現れるなら
 ;; unverified を返して失敗させる。借用値が無い遷移は非借用遷移として扱う。

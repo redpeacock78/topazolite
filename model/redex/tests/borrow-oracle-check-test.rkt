@@ -500,6 +500,84 @@
                           (make-bcounters))
    'ok))
 
+(test-case "R-RegionAppRecur は同じ実引数の搬送だけを承認する"
+  (define redex
+    `(Apply
+      (RegionApp
+       (RecurVal (Inst recf () (Poly (a))) f () (Read f))
+       (8))
+      ,borrowed-value (BorrowRef 3 (b) 9)))
+  (define contractum
+    `(Apply
+      (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+      ,borrowed-value (BorrowRef 3 (b) 9)))
+  (check-equal? (borrow-form-candidates redex contractum
+                                        #:rule 'R-RegionAppRecur)
+                '())
+  (for ([bad (in-list
+              (list
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+                       (BorrowRef 4 (a) 7) (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+                       (BorrowRef 3 (b) 7) (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+                       (BorrowRef 3 (a) 8) (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+                       (BorrowRef 3 (b) 9) ,borrowed-value)
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+                       ,borrowed-value)))])
+    (check-equal? (borrow-form-candidates redex bad
+                                          #:rule 'R-RegionAppRecur)
+                  '((unverified))))
+  (for ([wrong-rule (in-list '(R-RegionApp R-AppRecur R-RecurUnfold))])
+    (check-equal? (borrow-form-candidates redex contractum
+                                          #:rule wrong-rule)
+                  '((unverified)) (symbol->string wrong-rule)))
+  (check-equal? (borrow-form-candidates redex contractum)
+                '((unverified)) "規則名なし"))
+
+(test-case "R-RegionApp は同じ実引数を保つ BorrowRef の置換を運ぶ"
+  (define redex
+    `(Apply
+      (RegionApp
+       (RegionLam (a) (BorrowRef 1 () (RParam a)))
+       (8))
+      ,borrowed-value (BorrowRef 3 (b) 9)))
+  (define contractum
+    `(Apply (BorrowRef 1 () 8) ,borrowed-value (BorrowRef 3 (b) 9)))
+  (define start `(cfg ,redex () () () ()))
+  (define step
+    (findf (lambda (tagged) (eq? (first tagged) 'R-RegionApp))
+           (raw-steps-g2/named start)))
+  (check-not-false step "R-RegionApp が BorrowRef を含む本体で発火する")
+  (when step
+    (match (second step)
+      [`(cfg ,after ,_ ...)
+       (check-equal? after contractum "実際の R-RegionApp が BorrowRef の rho だけを置換する")]
+      [other (fail (format "cfg を期待した: ~s" other))]))
+  (check-equal? (borrow-form-candidates redex contractum
+                                        #:rule 'R-RegionApp)
+                '())
+  (for ([bad (in-list
+              (list
+               `(Apply (BorrowRef 1 () 8) (BorrowRef 4 (a) 7)
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (b) 7)
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (a) 8)
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (b) 9)
+                       ,borrowed-value)
+               `(Apply (BorrowRef 1 () 8) ,borrowed-value)))])
+    (check-equal? (borrow-form-candidates redex bad #:rule 'R-RegionApp)
+                  '((unverified))))
+  (for ([wrong-rule (in-list '(R-RegionAppRecur R-AppRecur))])
+    (check-equal? (borrow-form-candidates redex contractum
+                                          #:rule wrong-rule)
+                  '((unverified)) (symbol->string wrong-rule)))
+  (check-equal? (borrow-form-candidates redex contractum)
+                '((unverified)) "規則名なし"))
+
 (test-case "R-UnionEliminateTransit は UnionVal 全体を保つ移送だけを承認する"
   (define redex `(OwnedTransit p ,transit-union-value))
   (check-equal? (borrow-form-candidates redex transit-union-value
