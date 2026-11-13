@@ -98,7 +98,8 @@
          (match (elab (lowered-term low) #:expansion-context ctx)
            [`(err ,d) d]
            [(list core type row callables)
-            (if (borrow-bearing-core? core)
+            (if (or (borrow-bearing-core? core)
+                    (borrow-bearing-core? callables))
                 (let ([typed
                        (core-type-of/regions
                         core '() callables #:expansion-context ctx)])
