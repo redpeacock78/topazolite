@@ -1180,7 +1180,7 @@ and wf_decl (d: sdecl) : Tot bool (decreases d) =
   | SDecl s k sx region_params ps r row v ->
       contains s sx
       && spans_in s (map fst region_params)
-      && (match k with DFnDecl -> true | _ -> region_params == [])
+      && (match k with DFnDecl -> true | _ -> (match region_params with [] -> true | _ -> false))
       && spans_in s (map fst ps)
       && (match k with
           | DBind -> (match ps with [] -> true | _ -> false)
