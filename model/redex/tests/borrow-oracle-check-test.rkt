@@ -568,27 +568,55 @@
   (define redex
     `(Apply
       (RegionApp
-       (RecurVal (Inst recf () (Poly (a))) f () (Read f))
+       (RecurVal (Inst recf () (Poly (a))) f ()
+                 (BorrowRef 1 () (RParam a)))
        (8))
       ,borrowed-value (BorrowRef 3 (b) 9)))
   (define contractum
     `(Apply
-      (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+      (RecurVal (Inst recf ((a 8)) Mono) f () (BorrowRef 1 () 8))
       ,borrowed-value (BorrowRef 3 (b) 9)))
+  (define step
+    (findf (lambda (tagged) (eq? (first tagged) 'R-RegionAppRecur))
+           (raw-steps-g2/named `(cfg ,redex () () () ()))))
+  (check-not-false step "R-RegionAppRecur が BorrowRef の rho と Inst を実体化する")
+  (when step
+    (match (second step)
+      [`(cfg ,after ,_ ...) (check-equal? after contractum)]
+      [other (fail (format "cfg を期待した: ~s" other))]))
   (check-equal? (borrow-form-candidates redex contractum
                                         #:rule 'R-RegionAppRecur)
                 '())
   (for ([bad (in-list
               (list
-               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 8))
                        (BorrowRef 4 (a) 7) (BorrowRef 3 (b) 9))
-               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 8))
                        (BorrowRef 3 (b) 7) (BorrowRef 3 (b) 9))
-               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 8))
                        (BorrowRef 3 (a) 8) (BorrowRef 3 (b) 9))
-               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 2 () 8))
+                       ,borrowed-value (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 (z) 8))
+                       ,borrowed-value (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 9))
+                       ,borrowed-value (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () 0)
+                       ,borrowed-value (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 9)) Mono) f ()
+                                 (BorrowRef 1 () 8))
+                       ,borrowed-value (BorrowRef 3 (b) 9))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 8))
                        (BorrowRef 3 (b) 9) ,borrowed-value)
-               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f () (Read f))
+               `(Apply (RecurVal (Inst recf ((a 8)) Mono) f ()
+                                 (BorrowRef 1 () 8))
                        ,borrowed-value)))])
     (check-equal? (borrow-form-candidates redex bad
                                           #:rule 'R-RegionAppRecur)
@@ -629,6 +657,12 @@
                `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (b) 7)
                        (BorrowRef 3 (b) 9))
                `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (a) 8)
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 2 () 8) ,borrowed-value
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 1 (z) 8) ,borrowed-value
+                       (BorrowRef 3 (b) 9))
+               `(Apply (BorrowRef 1 () 9) ,borrowed-value
                        (BorrowRef 3 (b) 9))
                `(Apply (BorrowRef 1 () 8) (BorrowRef 3 (b) 9)
                        ,borrowed-value)

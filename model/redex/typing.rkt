@@ -11121,11 +11121,17 @@
     [(list 'fail key node details)
      (match (and ir (pair? cs) (typing-solve ir cs))
        [(list 'ok σ)
+        (define (has-unresolved-rvar? term)
+          (match term
+            [`(RVar ,index) (not (hash-has-key? σ index))]
+            [(? pair? items) (ormap has-unresolved-rvar? items)]
+            [_ #f]))
         (list 'fail key node
               (filter values
                       (for/list ([detail (in-list details)])
-                        (with-handlers ([exn:fail? (lambda (_) #f)])
-                          (subst-type-regions detail σ ir)))))]
+                        ;; 段 1 の未解決 alpha を含む詳細だけ落とし、予期しない代入失敗は隠さない。
+                        (and (not (has-unresolved-rvar? detail))
+                             (subst-type-regions detail σ ir)))))]
        ;; ir が無い形と制約が空の形では α を採らない。details はそのままでよい。
        [#f result]
        ;; 段 1 が棄却した時点の制約集合は不完全である。出口の下限が欠けると

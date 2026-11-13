@@ -96,6 +96,34 @@
              (Borrow owner))
          (Assign (BorrowMut owner) 8)))))
 
+(test-case "NFn の借用仮引数 region が暗黙寿命と異なる高階実引数は fail-closed"
+  (define core
+    '(Scope ()
+       (Let (long-owner let (Owned Int)) 7
+         (Scope ()
+           (Let (short-owner let (Owned Int)) 8
+             (Apply
+              (RegionLam (a) (Lam User f (p k) 0))
+              (Borrow short-owner)
+              callback))))))
+  (define ir (build-region-ir core))
+  (define long-rho
+    (region->rho ir (owner-let-body-region ir '(0))))
+  (define f-type
+    '(ForallRegion (a)
+       (NFn ((Borrowed Int (RParam a))
+             (NFn ((Borrowed Int (RParam a))) Int () () () User))
+            Int () () () User)))
+  (define callback-type
+    `(NFn ((Borrowed Int ,long-rho)) Int () () () User))
+  (define typed
+    (core-type-of/regions core '() `((f ,f-type))
+                          `((callback ,callback-type)) #:ir ir))
+  (check-true (diagnostic? typed)
+              (format "分散の不一致を受理しない: ~s" typed))
+  (check-equal? (diagnostic-id typed) "E-TYP-023"
+                "check-many/full の型照合で拒否され、制約生成へ進まない"))
+
 (define (trace-g2 start)
   (let loop ([current start] [configs (list start)] [fuel 300])
     (when (zero? fuel)

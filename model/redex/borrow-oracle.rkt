@@ -9,6 +9,7 @@
          "core-binding.rkt"
          "machine.rkt"
          "region.rkt"
+         "region-param.rkt"
          "span-core.rkt"
          "type-equiv.rkt")
 
@@ -391,12 +392,23 @@
                                (list recur-value)))))]
   [(recur-bind-preserves-continuation? c_0 c_1) #f])
 
+(define (region-application-result body binders regions)
+  (and (= (length binders) (length regions))
+       (subst-region-params
+        body
+        (for/hash ([binder (in-list binders)] [region (in-list regions)])
+          (values binder region)))))
+
 (define-metafunction G2m
   region-app-preserves-apply-arguments? : c c -> boolean
   [(region-app-preserves-apply-arguments?
     (Apply (RegionApp (RegionLam (rp ...) c_body) (ρ ...)) c_before ...)
     (Apply c_result c_after ...))
-   ,(equal? (term (c_before ...)) (term (c_after ...)))]
+   ,(and (equal? (term (c_before ...)) (term (c_after ...)))
+         (equal? (term c_result)
+                 (region-application-result (term c_body)
+                                            (term (rp ...))
+                                            (term (ρ ...)))))]
   [(region-app-preserves-apply-arguments? c_0 c_1) #f])
 
 (define-metafunction G2m
@@ -411,7 +423,11 @@
      (RecurVal (Inst cid ((rp_c ρ_c) ... (rp ρ) ...) Mono)
                f (x ...) c_result)
      c_after ...))
-   ,(equal? (term (c_before ...)) (term (c_after ...)))]
+   ,(and (equal? (term (c_before ...)) (term (c_after ...)))
+         (equal? (term c_result)
+                 (region-application-result (term c_body)
+                                            (term (rp ...))
+                                            (term (ρ ...)))))]
   [(region-app-recur-preserves-apply-arguments? c_0 c_1) #f])
 
 ;; spec §4.6。照合できず、しかも redex か contractum に借用値が現れるなら
