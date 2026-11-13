@@ -57,6 +57,24 @@
      (check-diagnostic (core-type-of/regions core '() callables))]
     [`(err ,diagnostic) (check-diagnostic diagnostic)]))
 
+(define (check-typed-acceptance source)
+  (match (elab (annotate-surface source))
+    [(list core _type _row callables)
+     (define result (core-type-of/regions core '() callables))
+     (check-true (region-typed? result)
+                 (format "region 型付けが拒否した: ~s" result))]
+    [`(err ,diagnostic)
+     (fail (format "elaboration が拒否した: ~a" (diagnostic-id diagnostic)))]))
+
+(define (check-typed-diagnostic source expected-id)
+  (match (elab (annotate-surface source))
+    [(list core _type _row callables)
+     (define result (core-type-of/regions core '() callables))
+     (check-true (diagnostic? result) (format "診断を期待: ~s" result))
+     (check-equal? (diagnostic-id result) expected-id)]
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) expected-id)]))
+
 (define (borrowed-field-function)
   `(Fn ((p ,owner-type)) Int (Own)
        (LexicalScope
@@ -232,50 +250,60 @@
   (check-true (contains? core 'some))
   (region-check core callables function-type))
 
-(test-case "関数の合成戻り値に借用が残る場合は E-BOR-013 で宣言全体を指す"
+(test-case "入力借用が無い関数の推論戻り値に借用が残る場合は E-BOR-020"
   (define surface
     `(Fn ((p ,owner-type)) #:infer #:infer (Borrow p)))
-  (define annotated (annotate-surface surface))
-  (define fn-span (second annotated))
-  (match (elab annotated)
-    [(list core _function-type _row callables)
-     (define result (core-type-of/regions core '() callables))
-     (check-true (diagnostic? result) (format "診断を期待: ~s" result))
-     (check-equal? (diagnostic-id result) "E-BOR-013")
-     (check-equal? (diagnostic-primary-span result) fn-span)]
+  (match (elab (annotate-surface surface))
     [`(err ,diagnostic)
-     (fail (format "elaboration が先に拒否した: ~a"
-                   (diagnostic-id diagnostic)))]))
+     (check-equal? (diagnostic-id diagnostic) "E-BOR-020")
+     (check-equal? (diagnostic-found diagnostic)
+                   "戻りの借用に対応する入力の借用位置が無い")]
+    [other (fail (format "E-BOR-020 を期待: ~s" other))]))
 
-(test-case "004a2: Fn の借用仮引数は E-BOR-012 で関数節点を指す"
-  (check-typed-rejection
-   '(Fn ((b (Borrowed Int Omitted))) Int () (Read b))
-   'Fn "E-BOR-012"))
+(test-case "関数式の借用仮引数を region 署名へ lowering する"
+  (check-typed-acceptance
+   '(Fn ((b (Borrowed Int Omitted))) Int () (Read b))))
 
-(test-case "004a2: Recur の借用仮引数は E-BOR-012 で宣言節点を指す"
-  (check-typed-rejection
-   '(Recur f ((b (Borrowed Int Omitted))) Int () (Read b) 0)
-   'Recur "E-BOR-012"))
+(test-case "Core の Reborrow child は署名の戻り region と整合する"
+  (define-values (core function-type _row callables)
+    (elab-success
+     '(Fn ((p (BorrowedMut Int Omitted)))
+          (Borrowed Int Omitted) () (Reborrow p))))
+  (check-match function-type
+    `(ForallRegion (,binder)
+       (NFn ((BorrowedMut Int (RParam ,binder)))
+            (Borrowed Int (RParam ,binder)) . ,_)))
+  (define typed (core-type-of/regions core '() callables))
+  (check-true (region-typed? typed)
+              (format "Core region 型付けが拒否した: ~s" typed)))
 
-(test-case "004a2: FnDecl の借用仮引数は E-BOR-012 で宣言節点を指す"
-  (check-typed-rejection
-   '(FnDecl f ((b (Borrowed Int Omitted))) Int () (Read b) 0)
-   'FnDecl "E-BOR-012"))
+(test-case "再帰宣言の借用仮引数を region 署名へ lowering する"
+  (check-typed-acceptance
+   '(Recur f ((b (Borrowed Int Omitted))) Int () (Read b) 0)))
 
-(test-case "004a2: Loop の借用仮引数は E-BOR-012 で宣言節点を指す"
-  (check-typed-rejection
+(test-case "関数宣言の借用仮引数を region 署名へ lowering する"
+  (check-typed-acceptance
+   '(FnDecl f ((b (Borrowed Int Omitted))) Int () (Read b) 0)))
+
+(test-case "Loop の borrowed binder は Task 2 で反転予定: 多相 Apply 未対応で E-APP-001"
+  (check-typed-diagnostic
    '(Fn ((p (Owned Int))) Int (Own)
       (LexicalScope
        (Let (x let (Owned Int)) (Move p)
          (Let (borrowed let (Borrowed Int Omitted)) (Borrow x)
            (Loop loop ((b (Borrowed Int Omitted))) Int ()
                  (Read b) (borrowed))))))
-   'Loop "E-BOR-012"))
+   "E-APP-001"))
 
-(test-case "004a2: 明示戻り値の借用は E-BOR-013 で関数節点を指す"
-  (check-typed-rejection
-   '(Fn ((x (Owned Int))) (Borrowed Int Omitted) (Own) (Borrow x))
-   'Fn "E-BOR-013"))
+(test-case "入力借用が無い明示戻り値の借用は E-BOR-020"
+  (match (elab
+          (annotate-surface
+           '(Fn ((x (Owned Int))) (Borrowed Int Omitted) (Own) (Borrow x))))
+    [`(err ,diagnostic)
+     (check-equal? (diagnostic-id diagnostic) "E-BOR-020")
+     (check-equal? (diagnostic-found diagnostic)
+                   "戻りの借用に対応する入力の借用位置が無い")]
+    [other (fail (format "E-BOR-020 を期待: ~s" other))]))
 
 (test-case "借用を含む元関数の adapter は region-aware 型付けを通る"
   (define source

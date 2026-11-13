@@ -86,7 +86,7 @@
   (define result (core-type-of/regions core '() '()))
   (check-rejected result "E-BOR-025"))
 
-(test-case "Loop の借用仮引数は E-BOR-012 で止まり再借用を次反復へ持ち越せない"
+(test-case "Loop の borrowed binder は Task 2 で反転予定: 多相 Apply 未対応で E-APP-001"
   (define source
     `(Fn ((p (Owned ,owner-type))) Int (Partial Mutation Own)
        (LexicalScope
@@ -110,4 +110,4 @@
       [_ (fail (format "予期しない elab 結果: ~s" result))]))
   (check-true (diagnostic? diagnostic)
               (format "診断を期待: ~s" diagnostic))
-  (check-equal? (diagnostic-id diagnostic) "E-BOR-012"))
+  (check-equal? (diagnostic-id diagnostic) "E-APP-001"))

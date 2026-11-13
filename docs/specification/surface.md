@@ -12,9 +12,10 @@ lexer と parser は canonical source span を保持し、Surface 構文から�
 この版が扱う構文は、整数、文字列、真偽値のリテラル、**文字列補間**、変数、`=>` の式本体を含む無名関数、Effect row 注釈、関数宣言、関数適用、**pipe** による関数適用、`if`、`else if`、else の無い `if`、`when`、`return`、`leave`、`const`、`let`、`let mut`、`let x ?= e` の束縛、`let mut` 束縛への**再代入文**、**式文**、record リテラル、射影、局所借用の型注釈 `&T` と `&mut T`、借用の式 `&x`、`&mut x`、`deref(e)`、`reborrow(e)`、`deref(e) = v` の書込み、`type` による型別名と data 型宣言、`trait` と `impl` の宣言、および block である。
 
 局所借用は `SUR-004` の部分達成範囲として受理する。
-関数署名の借用型と明示の region、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）は受理しない。
-関数署名の借用型は 004a2 で扱う。
-型別名と data の欄に書いた借用型は拒否し、`SUR-004` の完了前に再判定する。
+関数宣言と型注釈付き無名関数の仮引数型および戻り型には借用型を書ける。
+関数型の表記、型別名、data の欄、trait の要求欄に書いた借用型は `E-SUR-005` で拒否する。
+明示の region、bit 演算子（`BIT-001`）、モジュール（`MOD-001`）は受理しない。
+型別名と data の欄の借用型は、data 宣言の region 束縛位置を定める段階まで受理しない。
 data 型の宣言とその型仮引数、型の位置での data 型の参照は受理する。
 constructor の式は受理する。
 record 型の欄の `label?: τ` は受理する（`ADT-001`）。
@@ -587,11 +588,20 @@ elaborate は資源型の枝 binder を消費する encoding などで UCore の
 
 ### 3.9 局所借用
 
-Surface の借用型は `&T` と `&mut T` であり、`let` の型注釈だけに書ける。
-型適用の引数と record の欄では再帰的に書けるが、function type の仮引数と戻り値の内部には書けない。
-型別名と data の欄も現在は借用型を受理しない。
-これらの位置で借用型を書くと `E-SUR-005` になる。
-region 名は Surface に書けず、借用型の region 欄は省略する。
+Surface の借用型は `&T` と `&mut T` であり、`let` の型注釈、関数宣言および型注釈付き無名関数の仮引数型と戻り型に書ける。
+仮引数型と戻り型の内部では、record の欄、型適用の引数、Union の成員、借用の payload へ再帰的に書ける。
+借用型の各位置には別の region 束縛子を割り当てる。
+region 名は Surface に書けず、借用型の region は省略する。
+
+戻り型に借用がある場合、入力の借用位置がちょうど一つなら、戻り型のすべての借用にその位置の束縛子を割り当てる。
+入力の借用位置が二つ以上なら `E-BOR-020` を返し、「入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する」と示す。
+入力に借用位置が無い場合も `E-BOR-020` を返し、「戻りの借用に対応する入力の借用位置が無い」と示す。
+いずれの診断も primary span は戻り型全体である。
+戻り型に借用が無ければ、入力の借用位置の数は問わない。
+
+関数型の表記、型別名、data の欄、trait の要求欄に借用型を書くと `E-SUR-005` になる。
+これらの位置では、関数型内の region binder、data 宣言の region 引数、trait の借用署名をまだ定めていない。
+関数署名の呼出し時の region 実体化は未対応であり、SUR-004b1 の次段で扱う。
 
 `&x` と `&mut x` は識別子 `x` を共有または可変に借りる。
 対象は `Owned` の束縛であり、`let mut` が作る `MutSlot` は対象にならない。
@@ -599,8 +609,9 @@ region 名は Surface に書けず、借用型の region 欄は省略する。
 借用した record の `b.l` は欄の借用を返し、欄の値を読む式は `deref(b.l)` である。
 書込み文は `deref(e) = v` に限り、左辺は `deref(e)` だけを許す。
 
-借用型の省略された region は Core では `(RParam %omitted)` となる。
+局所借用の型注釈で省略した region は Core では `(RParam %omitted)` となる。
 Core の typing は束縛子の型で推論した寿命を採用して検査し、実行用 Core の注釈には `(RParam %omitted)` が残りうる。
+関数署名の省略 region は §3.3 の規則で `ForallRegion` の束縛子へ置き換える。
 注釈付き `let` の宣言型が `Owned<T>` の場合、右辺の型が宣言型に直接適合しないときは、Core の `owned-lift-compatible?` が許す非 `Owned` 値を `Owned<T>` へ持ち上げる。
 この持ち上げは注釈付き `let` だけに適用し、関数の実引数や分岐合流、汎用の型変換には適用しない。
 

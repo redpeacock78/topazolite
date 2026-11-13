@@ -14,6 +14,7 @@
          "origins.rkt"
          "ownership.rkt"
          "resource-type.rkt"
+         "region-param.rkt"
          "rows.rkt"
          "schema.rkt"
          "search.rkt"
@@ -190,6 +191,65 @@
     reason
     details
     related)))
+
+(define (signature-has-omitted-borrow? type)
+  (match type
+    [`(Borrowed ,_ Omitted) #t]
+    [`(BorrowedMut ,_ Omitted) #t]
+    [(? pair?)
+     (or (signature-has-omitted-borrow? (car type))
+         (signature-has-omitted-borrow? (cdr type)))]
+    [_ #f]))
+
+(define (map-signature-omitted-borrows type region-for-position)
+  (match type
+    [`(Borrowed ,payload Omitted)
+     (define rp (region-for-position))
+     `(Borrowed ,(map-signature-omitted-borrows payload region-for-position)
+                (RParam ,rp))]
+    [`(BorrowedMut ,payload Omitted)
+     (define rp (region-for-position))
+     `(BorrowedMut ,(map-signature-omitted-borrows payload region-for-position)
+                   (RParam ,rp))]
+    [(? pair?)
+     (cons (map-signature-omitted-borrows (car type) region-for-position)
+           (map-signature-omitted-borrows (cdr type) region-for-position))]
+    [_ type]))
+
+(define (elide-signature-input-regions parameter-types)
+  (call-with-region-params
+   (λ ()
+     (define binders '())
+     (define (fresh-position)
+       (define rp (fresh-region-param 'elided))
+       (set! binders (cons rp binders))
+       rp)
+     (define rewritten
+       (for/list ([type (in-list parameter-types)])
+         (map-signature-omitted-borrows type fresh-position)))
+     (values (reverse binders) rewritten))))
+
+(define (elide-signature-return-region binders return-type return-span)
+  (if (not (signature-has-omitted-borrow? return-type))
+      return-type
+      (match binders
+        [(list rp)
+         (map-signature-omitted-borrows return-type (λ () rp))]
+        ['()
+         (reject return-span 'unresolved-borrow-owner #:phase 'typing
+                 "戻りの借用に対応する入力の借用位置が無い")]
+        [_
+         (reject return-span 'unresolved-borrow-owner #:phase 'typing
+                 "入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する")])))
+
+(define (judgment-region-lam result binders)
+  (if (null? binders)
+      result
+      (judgment `(RegionLam ,binders ,(judgment-core result))
+                (judgment-type result)
+                (judgment-row result)
+                (judgment-core-type result)
+                (judgment-normal-type result))))
 
 ;; c2b1 spec §4.1。欄の型を ROW-005 の規則で合流する。
 (define (row005-field-join left right)
@@ -3583,20 +3643,28 @@
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta
                     #:expected-parameter-types expected-parameter-types))
+      (define-values (region-binders signature-parameter-types)
+        (elide-signature-input-regions parameter-types))
       (define _capture-flow-pin
         (flow-pin-captures! body parameters environment))
-      (define return-type (resolve-return))
+      (define return-type
+        (elide-signature-return-region
+         region-binders (resolve-return) (or return-span s)))
       (define declared-row
         (or inherited-row
             (resolve-declaration-row raw-row delta boundaries s)))
       (define boundary (fresh-boundary))
       (define-values (capture-raw-names raw-names capture-binders core-binders
                                         reserved-with-formals)
-        (prepare-fn-binders s parameter-binders parameters parameter-types
+        (prepare-fn-binders s parameter-binders parameters signature-parameter-types
                             captures capture-types body environment))
-      (define signature
-        `(NFn ,(append capture-types parameter-types)
+      (define function-type
+        `(NFn ,(append capture-types signature-parameter-types)
              ,return-type () ,declared-row () User))
+      (define signature
+        (if (null? region-binders)
+            function-type
+            `(ForallRegion ,region-binders ,function-type)))
       (define callable (fresh-callable signature))
       (define body-result
         (parameterize ([current-escape-reachable? #t])
@@ -3604,16 +3672,18 @@
            (λ ()
              (check-function-body
               body return-type return-span
-              (extend environment parameters parameter-types #f
-                      (map resource-type? parameter-types))
+              (extend environment parameters signature-parameter-types #f
+                      (map resource-type? signature-parameter-types))
               delta propositions
               (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries))))))
       (check-function-body-row s body-result return-type boundary declared-row)
-      (finish-fn s parameter-binders parameter-types
-                 captures capture-types capture-raw-names raw-names
-                 capture-binders core-binders
-                 return-type boundary body-result
-                 signature callable reserved-with-formals))
+      (judgment-region-lam
+       (finish-fn s parameter-binders signature-parameter-types
+                  captures capture-types capture-raw-names raw-names
+                  capture-binders core-binders
+                  return-type boundary body-result
+                  signature callable reserved-with-formals)
+       region-binders))
 
     (define (elaboration-state)
       (list boundary-counter callable-counter owned-counter union-counter
@@ -4022,13 +4092,15 @@
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta))
+      (define-values (region-binders signature-parameter-types)
+        (elide-signature-input-regions parameter-types))
       (define _capture-flow-pin
         (flow-pin-captures! body parameters environment))
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
       (define parameter-environment
-        (extend environment parameters parameter-types #f
-                (map resource-type? parameter-types)))
+        (extend environment parameters signature-parameter-types #f
+                (map resource-type? signature-parameter-types)))
       (define inferred-return-type
         (parameterize ([current-escape-reachable? #t])
           (if (block-body? body)
@@ -4053,21 +4125,31 @@
                           (cons `(FunctionBoundary ,boundary #:infer ,s)
                                 boundaries))))))
             (define return-type (judgment-type body-result))
-            (check-function-body-row s body-result return-type boundary declared-row)
+            (define signature-return-type
+              (elide-signature-return-region region-binders return-type s))
+            (check-function-body-row s body-result signature-return-type
+                                     boundary declared-row)
             (define-values (capture-raw-names raw-names capture-binders core-binders
                                               reserved-with-formals)
-              (prepare-fn-binders s parameter-binders parameters parameter-types
+              (prepare-fn-binders s parameter-binders parameters
+                                  signature-parameter-types
                                   captures capture-types body environment))
+            (define function-type
+              `(NFn ,(append capture-types signature-parameter-types)
+                   ,signature-return-type () ,declared-row () User))
             (define signature
-              `(NFn ,(append capture-types parameter-types)
-                   ,return-type () ,declared-row () User))
+              (if (null? region-binders)
+                  function-type
+                  `(ForallRegion ,region-binders ,function-type)))
             ;; 省略時は、本体が作る入れ子の CallableId の後に割り当てる。
             (define callable (fresh-callable signature))
-          (finish-fn s parameter-binders parameter-types
-                     captures capture-types capture-raw-names raw-names
-                     capture-binders core-binders
-                     return-type boundary body-result
-                     signature callable reserved-with-formals))))
+            (judgment-region-lam
+             (finish-fn s parameter-binders signature-parameter-types
+                        captures capture-types capture-raw-names raw-names
+                        capture-binders core-binders
+                        signature-return-type boundary body-result
+                        signature callable reserved-with-formals)
+             region-binders))))
 
     ;; 注釈付きの Recur と FnDecl は、関数宣言境界の有無だけを共有する。
     (define (elaborate-recur-annotated
@@ -4099,17 +4181,27 @@
                 (reject s 'owned-recur-capture))
               (values function parameters parameter-types))))
       (define return-type (resolve-return))
+      (define-values (region-binders signature-parameter-types)
+        (elide-signature-input-regions parameter-types))
+      (define signature-return-type
+        (elide-signature-return-region
+         region-binders return-type (or return-span s)))
       (define declared-row
         (or inherited-row
             (resolve-declaration-row raw-row delta boundaries s
                                      #:loop-row? loop-row?)))
+      (define function-type
+        `(NFn ,signature-parameter-types ,signature-return-type
+             () ,declared-row () User))
       (define signature
-        `(NFn ,parameter-types ,return-type () ,declared-row () User))
+        (if (null? region-binders)
+            function-type
+            `(ForallRegion ,region-binders ,function-type)))
       (define boundary (and boundary? (fresh-boundary)))
       (define callable (fresh-callable signature))
       (define raw-names
         (fresh-resource-names
-         parameter-types
+         signature-parameter-types
          (set-union (form-symbols body)
                     (list->set parameters)
                     (set function)
@@ -4119,12 +4211,12 @@
       (define function-environment
         (extend environment (list function) (list signature)))
       (define body-environment
-        (extend function-environment parameters parameter-types #f
-                (map resource-type? parameter-types)))
+        (extend function-environment parameters signature-parameter-types #f
+                (map resource-type? signature-parameter-types)))
       (define body-boundaries
         (cond
           [boundary
-           (cons `(FunctionBoundary ,boundary ,return-type ,s) boundaries)]
+           (cons `(FunctionBoundary ,boundary ,signature-return-type ,s) boundaries)]
           [loop-row? boundaries]
           [else
            ;; 関数境界を作らない FnDecl / Recur 本体から Leave を外へ漏らさない。
@@ -4137,7 +4229,8 @@
           (call-with-flow-rollback
            (λ ()
              (define result
-               (check-function-body body return-type return-span body-environment
+               (check-function-body body signature-return-type return-span
+                                    body-environment
                                     delta propositions body-boundaries))
              (when on-body-result (on-body-result result))
              (when row-trial
@@ -4152,7 +4245,8 @@
            #:preserve-escapes? #t)))
       (unless row-trial
         (if boundary
-            (check-function-body-row s body-result return-type boundary declared-row)
+            (check-function-body-row s body-result signature-return-type
+                                     boundary declared-row)
             (unless (row-subset? (judgment-row body-result) declared-row)
               (reject s 'undeclared-recur-effect
                       declared-row (judgment-row body-result)))))
@@ -4167,7 +4261,7 @@
       (define handled-body
         (if (and boundary
                  (row-member-return? (judgment-row body-result) boundary))
-            `(Handle ,s (Return ,boundary (#:ty ,return-type ,s))
+            `(Handle ,s (Return ,boundary (#:ty ,signature-return-type ,s))
                      (,s (#:bind return-value ,s) ->
                          (#:var return-value ,s))
                      (Scope ,s () ,(judgment-core body-result)))
@@ -4179,7 +4273,7 @@
       (define wrapped-body
         (if (ormap values raw-names)
             `(Scope ,s ()
-                    ,(wrap-resource-lets parameter-binders parameter-types
+                    ,(wrap-resource-lets parameter-binders signature-parameter-types
                                       raw-names handled-body))
             handled-body))
       (define recur-core
@@ -4227,6 +4321,11 @@
       (define-values (function parameters parameter-types parameter-environment)
         (prepare-inferred-recur-header
          s raw-function parameter-binders raw-parameter-types body environment delta))
+      (define-values (region-binders signature-parameter-types)
+        (elide-signature-input-regions parameter-types))
+      (define parameter-environment*
+        (extend environment parameters signature-parameter-types #f
+                (map resource-type? signature-parameter-types)))
       (define declared-row
         (resolve-declaration-row raw-row delta boundaries s))
       (define body-boundary (and body-boundary? (fresh-boundary)))
@@ -4239,18 +4338,25 @@
                         (or body-boundary? (current-escape-reachable?))])
           (call-with-flow-rollback
            (λ ()
-             (synth body parameter-environment delta propositions body-boundaries))
+             (synth body parameter-environment* delta propositions body-boundaries))
            #:preserve-escapes? #t)))
       (define return-type (judgment-type body-result))
+      (define signature-return-type
+        (elide-signature-return-region region-binders return-type s))
       (unless (row-subset? (judgment-row body-result) declared-row)
         (reject s 'undeclared-recur-effect
                 declared-row (judgment-row body-result)))
+      (define function-type
+        `(NFn ,signature-parameter-types ,signature-return-type
+             () ,declared-row () User))
       (define signature
-        `(NFn ,parameter-types ,return-type () ,declared-row () User))
+        (if (null? region-binders)
+            function-type
+            `(ForallRegion ,region-binders ,function-type)))
       (define callable (fresh-callable signature))
       (define raw-names
         (fresh-resource-names
-         parameter-types
+         signature-parameter-types
          (set-union (form-symbols body)
                     (list->set parameters)
                     (set function)
@@ -4265,7 +4371,7 @@
       (define wrapped-body
         (if (ormap values raw-names)
             `(Scope ,s ()
-                    ,(wrap-resource-lets parameter-binders parameter-types
+                    ,(wrap-resource-lets parameter-binders signature-parameter-types
                                       raw-names (judgment-core body-result)))
             (judgment-core body-result)))
       (define recur-core
@@ -4274,7 +4380,7 @@
       (check-recur-body-gate s function parameters
                              (classification-view
                               (judgment-core body-result))
-                             parameter-environment
+                             parameter-environment*
                              (reverse reversed-callables)
                              declared-row)
       (judgment recur-core
@@ -5590,7 +5696,7 @@
                   (judgment `(Proj ,s ,(judgment-core record-result) ,raw-label)
                             'Never (judgment-row record-result) 'Never '⊥)]
                  [(list (and borrow-kind (or 'Borrowed 'BorrowedMut))
-                        payload _)
+                        payload parent-region)
                   (match payload
                     [`(Record ,row)
                      (define field (assoc label row))
@@ -5607,7 +5713,7 @@
                           `(ProjBorrow ,s ,(judgment-core record-result)
                                        ,raw-label)
                           `(,(proj-borrow-mode borrow-kind mutability)
-                            ,field-type Omitted)
+                            ,field-type ,parent-region)
                           (judgment-row record-result))
                          (list record-result))]
                        [_ (reject s 'projborrow-unknown-field
@@ -5852,13 +5958,13 @@
         [`(Reborrow ,operand)
          (define result
            (synth operand environment delta propositions boundaries))
-         (define payload
+         (define-values (payload parent-region)
            (match (type-for-context result)
-             [`(BorrowedMut ,inner ,_) inner]
+             [`(BorrowedMut ,inner ,region) (values inner region)]
              [_ (reject s 'reborrow-non-mutable #:phase 'typing)]))
          (propagate-context-never
           (judgment `(Reborrow ,s ,(judgment-core result))
-                    `(Borrowed ,payload Omitted) (judgment-row result))
+                    `(Borrowed ,payload ,parent-region) (judgment-row result))
           (list result))]
 
         [`(Assign ,target ,value)

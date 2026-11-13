@@ -193,7 +193,7 @@
                 [(return-type type-j)
                  (if (punct? ts close-j '->)
                      (let-values ([(_arrow arrow-j) (expect-punct ts fail close-j '->)])
-                       (parse-ty ts fail arrow-j))
+                       (parse-ty ts fail arrow-j #:borrow? #t))
                      (values '#:none close-j))]
                 [(row row-j) (parse-opt-row ts fail type-j)]
                 [(body body-j) (parse-block ts fail row-j)])
@@ -682,7 +682,7 @@
                    (if (punct? ts close-j '->)
                        (let-values ([(_arrow arrow-j)
                                      (expect-punct ts fail close-j '->)])
-                         (parse-ty ts fail arrow-j))
+                         (parse-ty ts fail arrow-j #:borrow? #t))
                        (values '#:none close-j))]
                   [(row row-j) (parse-opt-row ts fail type-j)])
       (if (and (eq? return-type '#:none) (punct? ts row-j '=>))
@@ -963,7 +963,7 @@
       (let loop ([j i] [params '()])
         (let*-values ([(name name-span name-j) (expect-ident ts fail j)]
                      [(colon colon-j) (expect-punct ts fail name-j '|:|)]
-                     [(ty ty-j) (parse-ty ts fail colon-j)])
+                     [(ty ty-j) (parse-ty ts fail colon-j #:borrow? #t)])
           (define param
             `(SParam ,(hull name-span (node-span ty))
                      (SName ,name-span ,name) ,ty))
@@ -978,7 +978,9 @@
         (let*-values ([(name name-span name-j) (expect-ident ts fail j)]
                       [(param ty-j)
                        (if (punct? ts name-j '|:|)
-                           (let-values ([(ty end-j) (parse-ty ts fail (add1 name-j))])
+                           (let-values ([(ty end-j)
+                                         (parse-ty ts fail (add1 name-j)
+                                                   #:borrow? #t)])
                              (values `(SParam ,(hull name-span (node-span ty))
                                               (SName ,name-span ,name) ,ty)
                                      end-j))
