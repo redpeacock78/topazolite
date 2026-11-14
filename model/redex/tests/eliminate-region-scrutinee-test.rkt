@@ -1213,7 +1213,7 @@
     (callable-summary '()
                       (list (deferred-outlives-check
                              '(RParam long) '(RParam short) '(0 1)))
-                      '() (hash) '() #f))
+                      '() (hash) '() #f #f (hash)))
   (define observed '())
   (define failures '())
   (parameterize

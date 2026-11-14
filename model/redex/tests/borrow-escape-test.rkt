@@ -364,9 +364,11 @@
               ,(capture-expression)))
   (if handler-inside-scope?
       `(Scope (1)
-         (Handle (Return leave-boundary ,captured-closure-type/owner)
-                 (returned -> (Apply returned 0))
-                 ,leave))
+         (Apply
+          (Handle (Return leave-boundary ,captured-closure-type/owner)
+                  (returned -> returned)
+                  ,leave)
+          0))
       `(Handle (Return leave-boundary ,captured-closure-type/owner)
          (returned -> returned)
          (Scope (1) ,leave))))
@@ -380,12 +382,163 @@
                      loop-leave-callables)
    "E-BOR-004"))
 
-(test-case "既存の縮約 (Task 2c0b): owner Scope 内の handler binder から捕捉閉包を呼ぶと E-BOR-020"
+(test-case "既存縮約の反転: owner Scope 内の handler binder から捕捉閉包を呼べる"
   ;; Perform payload の callable summary が handler binder へ渡らない既存経路。
-  (check-diagnostic-id
+  (check-region-typed
    (typed-owner-core (loop-leave-core #t)
-                     loop-leave-callables)
+                     loop-leave-callables)))
+
+(test-case "Apply の結果を Let で受けた捕捉閉包も呼べる"
+  (check-region-typed
+   (typed-owner-core
+    `(Scope (1)
+       (Let (produced let ,captured-closure-type/owner)
+            ,(capture-expression)
+         (Apply produced 0))))))
+
+(test-case "Apply 結果を Record に入れて Proj 後に呼ぶと summary を保持する"
+  (define record-type
+    `(Record ((callback ,captured-closure-type/owner imm))))
+  (check-region-typed
+   (typed-owner-core
+    `(Scope (1)
+       (Let (holder let ,record-type)
+            (Rec ((callback imm ,(capture-expression))))
+         (Apply (Proj holder callback) 0))))))
+
+(test-case "when の Union binder から捕捉閉包を呼べる"
+  (define union-type `(Union ,captured-closure-type/owner Int))
+  (check-region-typed
+   (typed-owner-core
+    `(Scope (1)
+       (UnionEliminate
+        (UnionInject ,union-type ,captured-closure-type/owner
+                     ,(capture-expression))
+        ((,captured-closure-type/owner callback -> (Apply callback 0))
+         (Int ignored -> 0)))))))
+
+(test-case "data の Eliminate binder から捕捉閉包を呼べる"
+  (with-capture-box
+   (lambda ()
+     (check-region-typed
+      (typed-owner-core
+       `(Scope (1)
+          (Eliminate
+           (Construct (Data CaptureBox (,captured-closure-type/owner)) box
+                      ,(capture-expression))
+           ((box (callback) -> (Apply callback 0))))))))))
+
+(test-case "Eliminate の両枝から来る捕捉閉包の summary を合流する"
+  (check-region-typed
+   (typed-owner-core
+    `(Scope (1)
+       (Apply
+        (Eliminate flag
+          ((true () -> ,(capture-expression))
+           (false () -> ,(capture-expression))))
+        0))
+    capture-callables '((flag Bool)))))
+
+(test-case "summary の無い枝を含む closure 合流は E-BOR-020 のまま"
+  (check-diagnostic-id
+   (typed-owner-core
+    `(Scope (1)
+       (Apply
+        (Eliminate flag
+          ((true () -> ,(capture-expression))
+           (false () -> unknown-captured)))
+        0))
+    capture-callables
+    `((flag Bool) (unknown-captured ,captured-closure-type/owner)))
    "E-BOR-020"))
+
+(test-case "同じ operation を捕まえる内側 Handle の payload を外側 summary に混ぜない"
+  (define inner-handle
+    `(Handle (Return boundary ,captured-closure-type/owner)
+       (inner -> ,(capture-expression))
+       ,(capture-return 'unknown-captured)))
+  (check-region-typed
+   (typed-owner-core
+    `(Scope (1)
+       (Apply
+        (Handle (Return boundary ,captured-closure-type/owner)
+          (outer -> outer)
+          (Eliminate flag
+            ((true () -> ,(capture-return (capture-expression)))
+             (false () -> ,inner-handle))))
+        0))
+       capture-callables
+       `((flag Bool) (unknown-captured ,captured-closure-type/owner)))))
+
+(test-case "複数の Return payload の一つに summary が無ければ handler 呼出しを拒む"
+  (check-diagnostic-id
+   (typed-owner-core
+    `(Scope (1)
+       (Handle (Return boundary ,captured-closure-type/owner)
+         (returned -> (Apply returned 0))
+         (Eliminate flag
+           ((true () -> ,(capture-return (capture-expression)))
+            (false () -> ,(capture-return 'unknown-captured))))))
+    capture-callables
+    `((flag Bool) (unknown-captured ,captured-closure-type/owner)))
+   "E-BOR-020"))
+
+(test-case "再帰 Apply の借用結果を直接返す枝との有限合流で転送する"
+  (define recursive-type
+    '(NFn ((Borrowed Int (RParam a)) Bool)
+          (Borrowed Int (RParam a))
+          () () () User))
+  (check-region-typed
+   (typed-owner-core
+    '(Scope (1)
+       (Read
+        (Apply
+         (RegionApp
+          (RegionLam (a)
+            (Recur recursive-forward loop (p again)
+              (Eliminate again
+                ((true () -> p)
+                 (false () -> (Apply loop p (Construct Bool false))))
+              )
+              loop))
+          (owner-ph))
+         (Borrow 1)
+         (Construct Bool true))))
+    (append capture-callables `((recursive-forward ,recursive-type))))))
+
+(test-case "非空の再帰 callable 結果 summary は固定点で収束する"
+  (define recursive-maker-type
+    `(ForallRegion (a)
+       (NFn ((Borrowed Int (RParam a)) Bool)
+            ,captured-closure-type () () () User)))
+  (define core
+    `(Scope (1)
+       (Apply
+        (Apply
+         (RegionApp
+          (RecurVal recursive-maker loop (p again)
+            (Eliminate again
+              ((true () -> (Lam User captured (q) (Read p)))
+               (false () -> (Apply loop p (Construct Bool true))))))
+          (ph))
+         (Borrow 1)
+         (Construct Bool false))
+        0)))
+  (check-region-typed
+   (typed-owner-core core
+                     (append capture-callables
+                             `((recursive-maker ,recursive-maker-type))))))
+
+(test-case "本体不明 callee が borrowed-row closure を返す形は既存 E-BOR-013 gate"
+  (define opaque-maker-type
+    `(NFn () ,captured-closure-type/owner () () () User))
+  (check-diagnostic-id
+   (typed-owner-core
+    `(Scope (1)
+       (Apply (Apply opaque-maker) 0))
+    capture-callables
+    `((opaque-maker ,opaque-maker-type)))
+   "E-BOR-013"))
 
 (define recur-int-signature '(NFn () Int () () () User))
 (define recur-int-callables

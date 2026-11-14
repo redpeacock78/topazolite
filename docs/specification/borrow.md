@@ -369,6 +369,19 @@ Handle の束縛子と結果の capability は entry の capability と構文か
 Handle の出口では、捕捉 payload に由来する停止と要求のうち、handler の結果にも Handle body の通常結果にも対応 leaf（同じ owner/path/lifetime、または path 上の子孫）が現れないものだけを閉じる。
 外側 handler の出口イベントと通常結果に流れる要求は残す。
 
+### callable 値に付く summary の運搬
+
+上記の owner/outlives 要求とは別に、callable 値自体にも、その呼出し時に必要な deferred summary を付ける。
+この summary は point と Core node の組を鍵にした値 metadata として記録し、`Let` の束縛と結果、`Move`、`Forward`、`Unsafe`、`Scope`、`RegionApp`、`Apply` の結果、Record と構成子の欄、射影、Union と data の枝 binder、`Handle` の Return payload、`Recur` / `RecurVal` を通じて運ぶ。
+欄と枝は型の path に沿って区別し、Apply の結果では本体が分かる callee の返す値 summary を仮引数 index と path の相対参照から実引数で実体化する。
+本体の分からない callee から summary が必要な値を得る形は推測で補わず、既存の fail-closed 診断を使う。
+
+複数の到達枝や同じ Return operation の複数 payload を合流するときは、遅延要求と借用結果の owner 候補を和にする。
+枝の一つでも summary が無い、不完全、または同じ point key に矛盾する metadata がある場合、その合流は summary 無しとして扱う。summary 無しを空の summary と同一視して要求を消してはならない。
+Handle の Return binder は、その Handle に届くすべての payload summary の合流を受け、同じ operation を捕まえる入れ子の Handle の payload は外側へ混ぜない。
+`Recur` / `RecurVal` は通常結果と Return payload の summary も有限の仮引数 index/path の候補上で固定点へ含める。到達していない再帰枝だけを表す bottom は、到達枝との合流で除く。
+config の再型付けも通常の型付けと同じ inference 経路を使うため、callable summary は実行用 Core から再構築される。
+
 ### 呼出しを Scope で包む借用の実引数
 
 Core の `Apply` に専用の呼出し region は無い。

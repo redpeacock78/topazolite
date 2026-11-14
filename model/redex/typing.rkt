@@ -289,15 +289,20 @@
     (map (lambda (entry) (and entry (third entry))) entries))
   (define body-context
     (for/fold ([Λ_body (enter-child Λ 0)])
-              ([name (in-list parameters)] [entry (in-list entries)]
-               #:when entry)
-      (define capability (second entry))
-      (region-ctx-add-token Λ_body name
-                            (capability-entry-keys capability)
-                            #f #f
-                            (capability-entry-fields capability)
-                            (capability-entry-variants capability)
-                            (capability-entry-borrowed-view? capability))))
+              ([name (in-list parameters)] [type (in-list parameter-types)]
+               [entry (in-list entries)] [index (in-naturals)])
+      (define capability (and entry (second entry)))
+      (if (or capability (callable-type-anywhere? type))
+          (region-ctx-add-token
+           Λ_body name
+           (if capability (capability-entry-keys capability) (set))
+           #f
+           (and (callable-type-anywhere? type)
+                (callable-value-for-formal index type))
+           (and capability (capability-entry-fields capability))
+           (if capability (capability-entry-variants capability) (set))
+           (and capability (capability-entry-borrowed-view? capability)))
+          Λ_body)))
   (values formals formal-fields body-context))
 
 (define (formal-leaf-mode type path)
@@ -663,7 +668,8 @@
 ;; 要素は再帰の束縛の並び、借用の仮引数の位置ごとの鍵、転送候補の位置、
 ;; 雛形を集める箱、仮と確定のどちらかを示す印を持つ。
 (struct recur-frame
-  (bindings formals formal-fields result-index collector incomplete-box state)
+  (bindings formals formal-fields result-index collector incomplete-box
+            result-value-box return-values-box state)
   #:transparent)
 (define recur-overlay (make-parameter '()))
 
@@ -671,7 +677,9 @@
 ;; 形 ii の Recur は 2 である。外れたら実装の誤りなので、黙って受理しない。
 (define (make-recur-frame bindings formals result-index collector state expected
                           [formal-fields (make-list (length formals) #f)]
-                          [incomplete-box (box #f)])
+                          [incomplete-box (box #f)]
+                          [result-value-box (box (callable-value-bottom))]
+                          [return-values-box (box (make-hash))])
   (unless (= (length bindings) expected)
     (error 'make-recur-frame
            "束縛の並びの長さが ~a、期待は ~a" (length bindings) expected))
@@ -679,7 +687,8 @@
     (error 'make-recur-frame
            "formal の並びの長さが ~a、欄表の並びは ~a"
            (length formals) (length formal-fields)))
-  (recur-frame bindings formals formal-fields result-index collector incomplete-box state))
+  (recur-frame bindings formals formal-fields result-index collector incomplete-box
+               result-value-box return-values-box state))
 
 ;; §4.2。環境から引いた対が、重ねが保つ束縛の並びのいずれかと eq? で
 ;; 一致する枠を返す。名前で引くと、本体の中の Let が影にした同名の束縛を
@@ -719,7 +728,9 @@
                     (recur-frame-result-index frame)
                     (hash)
                     (recur-frame-formal-fields frame)
-                    (unbox (recur-frame-incomplete-box frame))))
+                    (unbox (recur-frame-incomplete-box frame))
+                    (unbox (recur-frame-result-value-box frame))
+                    (unbox (recur-frame-return-values-box frame))))
 
 (define (owning-frame w)
   (for/first ([f (in-list (template-collectors))]
@@ -1014,14 +1025,165 @@
 ;; 集めた雛形、result-index は結果の借用を転送する候補位置の並び、
 ;; region-subst は RegionApp が解いた rp から ρ への写像である。
 (struct callable-summary
-  (formals deferred result-index region-subst formal-fields incomplete?)
+  (formals deferred result-index region-subst formal-fields incomplete?
+           result-value return-values)
   #:transparent)
 
+;; callable summary は呼出し時の要求、value metadata はその summary が値の
+;; どの欄・枝・束縛子へ運ばれたかを表す。
+(struct callable-value-meta (complete? summary fields variants sources) #:transparent)
+(define callable-values (make-parameter #f))
+(define callable-return-value-collectors (make-parameter '()))
+
+(define (missing-callable-value)
+  (callable-value-meta #f #f #f #f (set)))
+
+(define (callable-value-bottom)
+  (callable-value-meta 'bottom #f #f #f (set)))
+
+(define (callable-value-bottom? value)
+  (and (callable-value-meta? value)
+       (eq? (callable-value-meta-complete? value) 'bottom)))
+
+(define (direct-callable-value summary)
+  (callable-value-meta #t (if summary (list summary) '()) #f #f (set)))
+
+(define (formal-callable-value index [path '()])
+  (callable-value-meta #t '() #f #f (set (cons index path))))
+
+(define (callable-value-summaries value)
+  (and (callable-value-meta? value)
+       (eq? (callable-value-meta-complete? value) #t)
+       (callable-value-meta-summary value)))
+
+(define (callable-type-anywhere? term)
+  (let walk ([current (normalize-type term)])
+    (match current
+      [`(NFn . ,_) #t]
+      [(? pair?) (or (walk (car current)) (walk (cdr current)))]
+      [_ #f])))
+
+(define (callable-value-for-formal index type [path '()] [seen (set)])
+  (define normalized (normalize-type type))
+  (match normalized
+    [`(NFn . ,_) (formal-callable-value index path)]
+    [`(Record ,row)
+     (define fields
+       (for/hash ([field (in-list row)]
+                  #:when (callable-type-anywhere? (second field)))
+         (define label (first field))
+         (values label
+                 (callable-value-for-formal
+                  index (second field)
+                  (append path (list (cons 'record-field label))) seen))))
+     (and (positive? (hash-count fields))
+          (callable-value-meta #t '() fields #f (set)))]
+    [`(Union ,_ ,_)
+     (define variants
+       (for/hash ([member (in-list (union-members normalized))]
+                  #:when (callable-type-anywhere? member))
+         (values member
+                 (callable-value-for-formal
+                  index member (append path (list member)) seen))))
+     (and (positive? (hash-count variants))
+          (callable-value-meta #t '() #f variants (set)))]
+    [`(,(or 'Owned 'Untrusted 'Refined) ,inner . ,_)
+     (callable-value-for-formal index inner path seen)]
+    [_
+     (define schema (constructor-schema normalized))
+     (cond
+       [(or (not schema) (set-member? seen normalized)) #f]
+       [else
+        (define variants
+          (for/hash ([constructor (in-list schema)]
+                     #:do [(define label (first constructor))
+                           (define children (second constructor))]
+                     #:when (ormap callable-type-anywhere? children))
+            (values
+             label
+             (callable-value-meta
+              #t '() #f
+              (for/hash ([child (in-list children)] [field (in-naturals)]
+                         #:when (callable-type-anywhere? child))
+                (values field
+                        (callable-value-for-formal
+                         index child
+                         (append path (list (cons label field)))
+                         (set-add seen normalized))))
+              (set)))))
+        (and (positive? (hash-count variants))
+             (callable-value-meta #t '() #f variants (set)))])]))
+
+(define (callable-value-at-path value path)
+  (if (callable-value-bottom? value)
+      value
+      (for/fold ([current value]) ([segment (in-list path)]
+                                   #:break (not current))
+        (match segment
+          [(cons 'record-field label)
+           (and (hash? (callable-value-meta-fields current))
+                (hash-ref (callable-value-meta-fields current) label #f))]
+          [(cons constructor (? exact-nonnegative-integer? index))
+           (define variant
+             (and (hash? (callable-value-meta-variants current))
+                  (hash-ref (callable-value-meta-variants current) constructor #f)))
+           (and variant
+                (hash? (callable-value-meta-fields variant))
+                (hash-ref (callable-value-meta-fields variant) index #f))]
+          [_
+           (and (hash? (callable-value-meta-variants current))
+                (hash-ref (callable-value-meta-variants current) segment #f))]))))
+
+(define (map-callable-value value transform)
+  (and (callable-value-meta? value)
+       (callable-value-meta
+        (callable-value-meta-complete? value)
+        (callable-value-meta-summary value)
+        (and (hash? (callable-value-meta-fields value))
+             (for/hash ([(key child) (in-hash (callable-value-meta-fields value))])
+               (values key (transform child))))
+        (and (hash? (callable-value-meta-variants value))
+             (for/hash ([(key child) (in-hash (callable-value-meta-variants value))])
+               (values key (transform child))))
+        (callable-value-meta-sources value))))
+
+(define (instantiate-callable-value value actual-values)
+  (cond
+    [(callable-value-bottom? value) value]
+    [(not (and (callable-value-meta? value)
+               (eq? (callable-value-meta-complete? value) #t)))
+     (missing-callable-value)]
+    [else
+     (let* ([own0 (map-callable-value value
+                                      (lambda (child)
+                                        (instantiate-callable-value
+                                         child actual-values)))]
+            [own (struct-copy callable-value-meta own0 [sources (set)])]
+            [sources
+             (for/list ([source (in-set (callable-value-meta-sources value))])
+               (match source
+                 [(cons (? exact-nonnegative-integer? index) path)
+                  (and (< index (length actual-values))
+                       (callable-value-at-path (list-ref actual-values index)
+                                               path))]
+                 [_ #f]))])
+       (merge-callable-values
+        (cons own (if (ormap not sources)
+                      (list (missing-callable-value))
+                      sources))))]))
+
+(define (callable-value-summary value)
+  (match (callable-value-summaries value)
+    [(list summary) summary]
+    [_ #f]))
+
 (define (callable-summary-has-pending-check? summary)
-  (and (callable-summary? summary)
-       (for/or ([item (in-list (callable-summary-deferred summary))])
-         (or (deferred-owner-check? item)
-             (deferred-outlives-check? item)))))
+  (if (list? summary)
+      (ormap callable-summary-has-pending-check? summary)
+      (and (callable-summary? summary)
+           (for/or ([item (in-list (callable-summary-deferred summary))])
+             (or (deferred-owner-check? item)
+                 (deferred-outlives-check? item))))))
 
 (struct deferred-leaf-exit
   (source formal-index parent-path binder-path mode alpha body-point exit-kind destination)
@@ -1349,20 +1511,254 @@
       [(equal? previous summary) (void)]
       ;; 別の要約が来たら鍵が出現を一意に指していない。黙って上書きすると、
       ;; 後から読む Apply が別の関数の雛形を実体化する。
-      [else (fail 'unresolved-borrow-owner node)])))
+      [else (fail 'unresolved-borrow-owner node)]))
+    (record-callable-value! Λ node (direct-callable-value summary)))
 
 (define (lookup-callable-summary Λ node)
   (define table (callable-summaries))
   (and table (hash-ref table (summary-key Λ node) #f)))
 
-(define (callable-summary-for-expression Λ expression)
-  (or (lookup-callable-summary Λ expression)
+(define (callable-value-key Λ node)
+  (summary-key Λ node))
+
+(define (lookup-callable-value Λ node)
+  (define table (callable-values))
+  (and table (hash-ref table (callable-value-key Λ node) #f)))
+
+(define (merge-callable-values items)
+  (cond
+    [(or (null? items) (ormap not items)) (missing-callable-value)]
+    [else
+     ;; Bottom は再帰固定点の未到達枝だけを表す。通常の欠落値とは異なり、
+     ;; 既知の到達枝と合流するときは捨てられる。
+     (define reachable (filter (lambda (value)
+                                 (not (callable-value-bottom? value)))
+                               items))
+     (cond
+       [(null? reachable) (callable-value-bottom)]
+       [(ormap (lambda (value)
+                 (or (not (callable-value-meta? value))
+                     (not (eq? (callable-value-meta-complete? value) #t))))
+               reachable)
+        (missing-callable-value)]
+       [else
+     (define summaries
+       (remove-duplicates
+        (append-map (lambda (value)
+                      (or (callable-value-meta-summary value) '()))
+                    reachable)
+        equal?))
+     (define field-labels
+       (remove-duplicates
+        (append-map (lambda (value)
+                      (hash-keys (or (callable-value-meta-fields value) (hash))))
+                    reachable)
+        equal?))
+     (define fields
+       (for/hash ([label (in-list field-labels)])
+         (values label
+                 (merge-callable-values
+                  (for/list ([value (in-list reachable)])
+                    (hash-ref (or (callable-value-meta-fields value) (hash))
+                              label #f))))))
+     (define variant-keys
+       (remove-duplicates
+        (append-map (lambda (value)
+                      (hash-keys (or (callable-value-meta-variants value) (hash))))
+                    reachable)
+        equal?))
+     (define variants
+       (for/hash ([variant (in-list variant-keys)])
+         (values variant
+                 (merge-callable-values
+                  (for/list ([value (in-list reachable)]
+                             #:when
+                             (hash-has-key?
+                              (or (callable-value-meta-variants value) (hash))
+                              variant))
+                    (hash-ref (callable-value-meta-variants value) variant))))))
+     (define sources
+       (for/fold ([result (set)])
+                 ([value (in-list reachable)])
+         (set-union result (callable-value-meta-sources value))))
+     (callable-value-meta #t summaries
+                          (and (positive? (hash-count fields)) fields)
+                          (and (positive? (hash-count variants)) variants)
+                          sources)])]))
+
+(define (record-callable-return-value! operation value)
+  (define handler (return-handler-entry operation))
+  (cond
+    [handler
+     (define payload-values (list-ref handler 6))
+     (set-box! payload-values (cons value (unbox payload-values)))]
+    [(pair? (callable-return-value-collectors))
+     (define table (unbox (car (callable-return-value-collectors))))
+     (define previous (hash-ref table operation #f))
+     (hash-set! table operation
+                (if previous
+                    (merge-callable-values (list previous value))
+                    value))]))
+
+(define (record-callable-value! Λ node value)
+  (define table (callable-values))
+  (when (and table value)
+    (define key (callable-value-key Λ node))
+    (hash-update! table key
+                  (lambda (previous)
+                    (if (equal? previous value)
+                        previous
+                        (merge-callable-values (list previous value))))
+                  value)))
+
+(define (callable-value-for-expression Λ expression)
+  (or (lookup-callable-value Λ expression)
+      (let ([summary (lookup-callable-summary Λ expression)])
+        (and summary (direct-callable-value summary)))
       (let ([name (peel-node expression)])
-        (and (symbol? name) (region-ctx-summary Λ name)))
+        (and (symbol? name)
+             (let ([entry (region-ctx-summary Λ name)])
+               (cond
+                 [(callable-value-meta? entry) entry]
+                 [(callable-summary? entry) (direct-callable-value entry)]
+                 [else #f]))))
       (match (peel-node expression)
         [`(RegionLam ,_ ,body)
-         (lookup-callable-summary (enter-child Λ 0) body)]
+         (callable-value-for-expression (enter-child Λ 0) body)]
+        [`(Let (,name ,_mode ,type) ,bound ,body)
+         (if (eq? (peel-node body) (peel-bind name))
+             (callable-value-for-binding
+              (callable-value-for-expression (enter-child Λ 0) bound)
+              bound type)
+             (callable-value-for-expression (enter-child Λ 1) body))]
+        [`(Move ,value)
+         (callable-value-for-expression (enter-child Λ 0) value)]
+        [`(Forward ,value)
+         (callable-value-for-expression (enter-child Λ 0) value)]
+        [`(Unsafe ,value)
+         (callable-value-for-expression (enter-child Λ 0) value)]
+        [`(Scope ,_ ,value)
+         (callable-value-for-expression (enter-child Λ 0) value)]
+        [`(Rec (,fields ...))
+         (define metas
+           (for/hash ([field (in-list fields)] [index (in-naturals)]
+                      #:when
+                      (callable-type-anywhere?
+                       (typing-child-normal-type Λ index)))
+             (values (peel-lbl (first field))
+                     (or (callable-value-for-expression
+                          (enter-child Λ index) (third field))
+                         (missing-callable-value)))))
+         (and (positive? (hash-count metas))
+              (callable-value-meta #t '() metas #f (set)))]
+        [`(Proj ,record ,label)
+         (or (callable-value-at-path
+              (callable-value-for-expression (enter-child Λ 0) record)
+              (list (cons 'record-field (peel-lbl label))))
+             (missing-callable-value))]
+        [`(ProjOpt ,type ,record ,label)
+         (define payload
+           (callable-value-for-expression (enter-child Λ 0) record))
+         (define field-value
+           (or (callable-value-at-path
+                payload (list (cons 'record-field (peel-lbl label))))
+               (missing-callable-value)))
+         (define schema (constructor-schema `(Option ,(peel-ty type))))
+         (callable-value-meta
+          #t '() #f
+          (for/hash ([constructor (in-list schema)])
+            (define name (first constructor))
+            (define children (second constructor))
+            (values name
+                    (callable-value-meta
+                     #t '()
+                     (and (pair? children)
+                          (callable-type-anywhere? (first children))
+                          (hash 0 field-value))
+                     #f (set))))
+          (set))]
+        [`(UnionInject ,_ ,member ,payload)
+         (define value
+           (or (callable-value-for-expression (enter-child Λ 0) payload)
+               (missing-callable-value)))
+         (callable-value-meta #t '() #f (hash member value) (set))]
+        [`(UnionVal ,_ ,member ,payload)
+         (define value
+           (or (callable-value-for-expression (enter-child Λ 0) payload)
+               (missing-callable-value)))
+         (callable-value-meta #t '() #f (hash member value) (set))]
+        [`(Construct ,data-type ,constructor ,fields ...)
+         (define schema (constructor-schema (peel-ty data-type)))
+         (define field-types (and schema (lookup schema constructor)))
+         (and field-types
+              (let ([field-values
+                     (for/hash ([type (in-list field-types)]
+                                [field (in-list fields)]
+                                [index (in-naturals)]
+                                #:when (callable-type-anywhere? type))
+                       (values index
+                               (or (callable-value-for-expression
+                                    (enter-child Λ index) field)
+                                   (missing-callable-value))))])
+                (callable-value-meta
+                 #t '() #f
+                 (hash constructor
+                       (callable-value-meta #t '() field-values #f (set)))
+                 (set))))]
+        [`(Handle (Return ,boundary ,type) (,name -> ,handler) ,body)
+         (define operation (erase-core `(Return ,boundary ,(peel-ty type))))
+         (define body-result (typing-result-at (enter-child Λ 1)))
+         (define body-value
+           (and body-result
+                (not (eq? (first body-result) 'Never))
+                (callable-value-for-expression (enter-child Λ 1) body)))
+         (define handled?
+           (and body-result (member operation (fourth body-result) equal?)))
+         (define handler-value
+           (and handled?
+                (callable-value-for-expression (enter-child Λ 0) handler)))
+         (merge-callable-values
+          (filter values
+                  (list (and body-value body-value)
+                        (and handled?
+                             (or handler-value (missing-callable-value))))))]
+        [`(Recur ,_ ,_ ,_ ,_ ,continuation)
+         (callable-value-for-expression (enter-child Λ 1) continuation)]
+        [`(Yield ,_ ,continuation)
+         (callable-value-for-expression (enter-child Λ 1) continuation)]
         [_ #f])))
+
+(define (callable-summaries-for-expression Λ expression)
+  (or (callable-value-summaries
+       (callable-value-for-expression Λ expression))
+      (let ([summary (lookup-callable-summary Λ expression)])
+        (and summary (list summary)))
+      '()))
+
+(define (callable-summary-for-expression Λ expression)
+  (match (callable-summaries-for-expression Λ expression)
+    [(list summary) summary]
+    [_ #f]))
+
+(define (propagate-callable-value! core Λ result-type)
+  (when (callable-type-anywhere? result-type)
+    (record-callable-value!
+     Λ core
+     (or (callable-value-for-expression Λ core)
+         (missing-callable-value)))))
+
+(define (record-callable-branch-merge! Λ node result-type contexts results
+                                       result-type-index)
+  (when (callable-type-anywhere? result-type)
+    (record-callable-value!
+     Λ node
+     (merge-callable-values
+      (for/list ([context (in-list contexts)] [result (in-list results)])
+        (if (eq? (list-ref result result-type-index) 'Never)
+            (callable-value-bottom)
+            (or (callable-value-for-expression
+                 (third context) (first context))
+                (missing-callable-value))))))))
 
 ;; Let の注釈が RegionLam の binder 名を alpha 等価な別名に置き換える場合、
 ;; summary の RParam もその型側の binder へ対応づけてから RegionApp に渡す。
@@ -1383,15 +1779,26 @@
          summary)]
     [(_ _) summary]))
 
+(define (callable-value-for-binding value expression type)
+  (and value
+       (callable-value-meta? value)
+       (struct-copy callable-value-meta value
+                    [summary
+                     (map (lambda (summary)
+                            (callable-summary-for-binding
+                             summary expression type))
+                          (or (callable-value-meta-summary value) '()))])))
+
 (define (reject-pending-callable-summary! boundary position summary location fail)
-  (when (callable-summary-has-pending-check? summary)
-    (define probe (current-callable-summary-boundary-probe))
-    (when probe
-      (probe (match (peel-node boundary)
-               [(list (? symbol? head) _ ...) head]
-               [_ #f])
-             position summary))
-    (fail 'borrow-unknown-owner-region location)))
+  (for ([candidate (in-list (if (list? summary) summary (list summary)))])
+    (when (callable-summary-has-pending-check? candidate)
+      (define probe (current-callable-summary-boundary-probe))
+      (when probe
+        (probe (match (peel-node boundary)
+                 [(list (? symbol? head) _ ...) head]
+                 [_ #f])
+               position candidate))
+      (fail 'borrow-unknown-owner-region location))))
 
 ;; 借用型の region 欄を返す。借用型でなければ #f を返す。
 (define (borrow-region type)
@@ -1482,13 +1889,21 @@
        (formal-capability-entry type '(formal)))
      leaves)
    ;; 本体を見ていない署名要約は出口イベントを欠くため、局所として扱わない。
-   #t))
+   #t
+   #f
+   (hash)))
 
 (define (latent-row-has-borrowed-payload? row)
   (for/or ([effect (in-list row)])
     (match effect
       [`(Yield ,payload) (borrowed-type-anywhere? payload)]
       [`(Return ,_ ,payload) (borrowed-type-anywhere? payload)]
+      [_ #f])))
+
+(define (latent-row-has-callable-return? row)
+  (for/or ([effect (in-list row)])
+    (match effect
+      [`(Return ,_ ,payload) (callable-type-anywhere? payload)]
       [_ #f])))
 
 ;; RegionApp が Union member を潰す場合だけ π の member segment を実体化後の
@@ -4975,6 +5390,8 @@
   (define field-table
     (and carries?
          (typing-capability-field-entries (enter-child Λ 0) scrutinee)))
+  (define callable-value
+    (callable-value-for-expression (enter-child Λ 0) scrutinee))
   ;; 表が無い scrutinee でも、借用そのものが所有者を運んでいれば欄へ辿れる。
   ;; その場合は capability の path の末尾へ欄の位置を積む。
   (define scrutinee-ws
@@ -5026,12 +5443,24 @@
     (define Λ_branch
       (for/fold ([Λ_acc Λ])
                 ([x (in-list binders)] [τ (in-list typed-field-types)]
-                 [entry (in-list bindings)])
+                 [entry (in-list bindings)] [field-index (in-naturals)])
+        (define constructor-value
+          (and (callable-value-meta? callable-value)
+               (hash? (callable-value-meta-variants callable-value))
+               (hash-ref (callable-value-meta-variants callable-value)
+                         constructor #f)))
+        (define callable
+          (and (callable-type-anywhere? τ)
+               (or (and constructor-value
+                        (hash? (callable-value-meta-fields constructor-value))
+                        (hash-ref (callable-value-meta-fields constructor-value)
+                                  field-index #f))
+                   (missing-callable-value))))
         (region-ctx-add-token (register-owner Λ_acc x τ)
                               x
                               (capability-entry-keys entry)
                               #f
-                              #f
+                              callable
                               (capability-entry-fields entry)
                               (capability-entry-variants entry)
                               (capability-entry-borrowed-view? entry))))
@@ -5321,6 +5750,8 @@
   (define borrowed? (pair? wrapper))
   (define field-table
     (typing-capability-field-entries (enter-child Λ 0) scrutinee))
+  (define callable-value
+    (callable-value-for-expression (enter-child Λ 0) scrutinee))
   (define parent-caps
     (and borrowed?
          (typing-borrow-token-key (enter-child Λ 0) scrutinee #:fail fail)))
@@ -5377,7 +5808,15 @@
       (region-ctx-add-token (register-owner Λ x typed-binding-type)
                             x
                             (capability-entry-keys capability)
-                            #f #f
+                            #f
+                            (and (callable-type-anywhere? typed-binding-type)
+                                 (or (and (callable-value-meta? callable-value)
+                                          (hash? (callable-value-meta-variants
+                                                  callable-value))
+                                          (hash-ref
+                                           (callable-value-meta-variants callable-value)
+                                           member #f))
+                                     (missing-callable-value)))
                             (capability-entry-fields capability)
                             (capability-entry-variants capability)
                             (capability-entry-borrowed-view? capability)))
@@ -5453,6 +5892,7 @@
        'Never]
       [(= (length unified) 1) (first unified)]
       [else expected]))
+  (record-callable-branch-merge! Λ node merged contexts branch-results 2)
   (list (rows-union
          (cons (second scrutinee-result) (map first branch-results)))
         branch-psi
@@ -5489,6 +5929,7 @@
          (check-as/full (first context) result-type (third context)
                         (sixth context) (second context)
                         places callables fail type-compatible?)))))
+  (record-callable-branch-merge! Λ node result-type contexts branch-results 2)
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
                           (map second branch-results)))
@@ -5582,6 +6023,7 @@
                         callables
                         fail
                         compatible?)))))
+  (record-callable-branch-merge! Λ node expected contexts branch-results 2)
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
                           (map second branch-results)))
@@ -5981,6 +6423,7 @@
                    callables
                    fail
                    type-compatible?)))))
+  (record-callable-branch-merge! Λ node result-type contexts attempts 0)
   (define branch-psi
     (psi-flow-branch-join fail node (third scrutinee-result)
                           (map second branch-rows)))
@@ -6038,7 +6481,8 @@
     (set-subtract (core-free-vars body) (list->set parameters)))
   (for ([entry (in-list environment)]
         #:when (set-member? free-names (first entry)))
-    (define summary (region-ctx-summary Λ (first entry)))
+    (define summary
+      (callable-summaries-for-expression Λ (first entry)))
     (reject-pending-callable-summary! node 'capture summary node fail))
   ;; callables は入力側の名前を保持する。core の RegionLam は入口で fresh 名へ
   ;; 付け替えるため、署名の RParam だけ同じ対応表で型検査側へ写す。
@@ -6098,6 +6542,7 @@
        (flow-pin-captures Ψ body body-environment parameters))
      (define collector (box '()))
      (define incomplete-box (box #f))
+     (define return-values-box (box (make-hash)))
      (define frame
        (template-frame (for/set ([w (in-list formals)] #:when w) w)
                        signature-region-params outlives-region-params
@@ -6119,6 +6564,9 @@
                       [bound-region-params signature-region-params]
                       [template-collectors
                        (cons frame (template-collectors))]
+                      [callable-return-value-collectors
+                       (cons return-values-box
+                             (callable-return-value-collectors))]
                       [scrutinee-child-alphas (mutable-set)]
                       [binder-points
                        (binder-points+ parameters
@@ -6134,19 +6582,22 @@
                               places callables fail))
                   (reject-pending-callable-summary!
                    body 'result
-                   (callable-summary-for-expression body-context body)
+                   (callable-summaries-for-expression body-context body)
                    body fail)
                   (record-formal-result-exits! body-context body return-type fail)
                   result))))))
      (unless (row-subset? (first body-result) latent-row)
        (fail 'undeclared-function-effect body latent-row (first body-result)))
      ;; §5.4。出現局所の要約を登録する。Apply はこの要約を引いて実体化する。
+     (define result-value
+       (callable-value-for-expression body-context body))
      (record-callable-summary!
       Λ node
       (callable-summary formals (normalize-leaf-exits (reverse (unbox collector)))
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
-                        (hash) formal-fields (unbox incomplete-box))
+                        (hash) formal-fields (unbox incomplete-box)
+                        result-value (unbox return-values-box))
       fail)
      (list expanded '() (psi-with-suspended closure-psi (second body-result)))]
     ;; 表の行が ForallRegion に包まれた署名で、binder 文脈が無い形はここへ来る。
@@ -6228,16 +6679,23 @@
   (define recur-binding (lookup-binding body-function-environment function))
   (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
                     [previous-outlives-checks '()]
-                    [previous-incomplete? #f])
+                    [previous-incomplete? #f]
+                    [previous-result-value
+                     (and (callable-type-anywhere? return-type)
+                          (callable-value-bottom))]
+                    [previous-return-values (hash)])
     (define collector
       (box (append previous-exits previous-owner-checks
                    previous-outlives-checks)))
     (define incomplete-box (box previous-incomplete?))
+    (define result-value-box (box previous-result-value))
+    (define return-values-box (box (hash-copy previous-return-values)))
     (define tentative
       (make-recur-frame (list recur-binding) formals
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
-                        collector 'tentative 1 formal-fields incomplete-box))
+                        collector 'tentative 1 formal-fields incomplete-box
+                        result-value-box return-values-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       region-params (list->set binder-params)
@@ -6250,6 +6708,9 @@
                           [bound-region-params region-params]
                           [template-collectors
                            (cons template (template-collectors))]
+                          [callable-return-value-collectors
+                           (cons return-values-box
+                                 (callable-return-value-collectors))]
                           [recur-overlay
                            (cons tentative (recur-overlay))]
                           [scrutinee-child-alphas (mutable-set)]
@@ -6270,6 +6731,13 @@
       [(list body-row Ψ_1)
        (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
+       (define result-value-next
+         (and (callable-type-anywhere? return-type)
+              (merge-callable-values
+               (list previous-result-value
+                     (or (callable-value-for-expression body-context body)
+                         (missing-callable-value))))))
+       (define return-values-next (unbox return-values-box))
        (define exits
          (filter deferred-leaf-exit? (unbox collector)))
        (define owner-checks
@@ -6285,12 +6753,21 @@
        (define outlives-checks-unchanged?
          (set=? (list->set outlives-checks)
                 (list->set previous-outlives-checks)))
+       (define result-value-unchanged?
+         (or (not (callable-type-anywhere? return-type))
+             (equal? previous-result-value result-value-next)))
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
-                owner-checks-unchanged? outlives-checks-unchanged?)
-           (list body-row Ψ_next
-                 (struct-copy recur-frame tentative [state 'final]))
+                owner-checks-unchanged? outlives-checks-unchanged?
+                result-value-unchanged?
+                (equal? previous-return-values return-values-next))
+           (begin
+             (when result-value-next
+               (set-box! result-value-box result-value-next))
+             (list body-row Ψ_next
+                   (struct-copy recur-frame tentative [state 'final])))
            (fixpoint Ψ_next exits owner-checks outlives-checks
-                     (unbox incomplete-box)))]))
+                     (unbox incomplete-box) result-value-next
+                     return-values-next))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -6334,18 +6811,25 @@
   ;; 本体を Ψ が動かなくなるまで解析し直す。集合は単調に増えるため停止する。
   (define (fixpoint Ψ_in [previous-exits '()] [previous-owner-checks '()]
                     [previous-outlives-checks '()]
-                    [previous-incomplete? #f])
+                    [previous-incomplete? #f]
+                    [previous-result-value
+                     (and (callable-type-anywhere? return-type)
+                          (callable-value-bottom))]
+                    [previous-return-values (hash)])
     (define collector
       (box (append previous-exits previous-owner-checks
                    previous-outlives-checks)))
     (define incomplete-box (box previous-incomplete?))
+    (define result-value-box (box previous-result-value))
+    (define return-values-box (box (hash-copy previous-return-values)))
     (define tentative
       (make-recur-frame bindings formals
                         (forwarding-leaf-candidates parameter-types return-type
                                                      node fail)
                         collector 'tentative
                         (if (null? binder-params) 1 2)
-                        formal-fields incomplete-box))
+                        formal-fields incomplete-box result-value-box
+                        return-values-box))
     (define template
       (template-frame (for/set ([w (in-list formals)] #:when w) w)
                       region-params (list->set binder-params)
@@ -6358,6 +6842,9 @@
                           [bound-region-params region-params]
                           [template-collectors
                            (cons template (template-collectors))]
+                          [callable-return-value-collectors
+                           (cons return-values-box
+                                 (callable-return-value-collectors))]
                           [recur-overlay
                            (cons tentative (recur-overlay))]
                           [scrutinee-child-alphas (mutable-set)]
@@ -6378,6 +6865,13 @@
       [(list body-row Ψ_1)
        (flow-check-backedge fail body Ψ_in Ψ_1)
        (define Ψ_next (psi-join Ψ_in Ψ_1))
+       (define result-value-next
+         (and (callable-type-anywhere? return-type)
+              (merge-callable-values
+               (list previous-result-value
+                     (or (callable-value-for-expression body-context body)
+                         (missing-callable-value))))))
+       (define return-values-next (unbox return-values-box))
        (define exits
          (filter deferred-leaf-exit? (unbox collector)))
        (define owner-checks
@@ -6393,12 +6887,21 @@
        (define outlives-checks-unchanged?
          (set=? (list->set outlives-checks)
                 (list->set previous-outlives-checks)))
+       (define result-value-unchanged?
+         (or (not (callable-type-anywhere? return-type))
+             (equal? previous-result-value result-value-next)))
        (if (and (equal? Ψ_next Ψ_in) exits-unchanged?
-                owner-checks-unchanged? outlives-checks-unchanged?)
-           (list body-row Ψ_next
-                 (struct-copy recur-frame tentative [state 'final]))
+                owner-checks-unchanged? outlives-checks-unchanged?
+                result-value-unchanged?
+                (equal? previous-return-values return-values-next))
+           (begin
+             (when result-value-next
+               (set-box! result-value-box result-value-next))
+             (list body-row Ψ_next
+                   (struct-copy recur-frame tentative [state 'final])))
            (fixpoint Ψ_next exits owner-checks outlives-checks
-                     (unbox incomplete-box)))]))
+                     (unbox incomplete-box) result-value-next
+                     return-values-next))]))
   (match-define (list body-row Ψ_body frame) (fixpoint closure-psi))
   (unless (row-subset? body-row latent-row)
     (fail 'undeclared-function-effect body latent-row body-row))
@@ -6697,6 +7200,7 @@
                         [resource-identity-transfers (set)]
         [merge-alpha-sources (make-hash)]
         [callable-summaries (make-hash)]
+        [callable-values (make-hash)]
         [forwarding-summaries (make-hash)]
         [template-collectors '()]
         [recur-overlay '()]
@@ -8634,7 +9138,7 @@
   (for/list ([child (in-list (core-children (peel-node core)))]
              [index (in-naturals)]
              #:do [(define summary
-                     (callable-summary-for-expression
+                     (callable-summaries-for-expression
                       (enter-child Λ index) child))]
              #:when (callable-summary-has-pending-check? summary))
     (list index child summary)))
@@ -8688,6 +9192,7 @@
     (flow-restore-output input-psi (third raw-result) normal-type fail core))
   (define result (list result-type (second raw-result) result-psi))
   (propagate-callable-summary! core Λ fail)
+  (propagate-callable-value! core Λ result-type)
   ((typing-point-probe) (region-ctx-point Λ))
   (record-typing-result! Λ result-type normal-type (second result)
                          (psi-escape-operations (third raw-result)))
@@ -9108,7 +9613,7 @@
           (or (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
-                     (region-ctx-summary Λ w)))))
+                     (callable-summary-for-expression Λ w)))))
         (reject-pending-callable-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
@@ -9404,37 +9909,49 @@
         (define frame
           (and (symbol? function-name)
                (recur-frame-for (lookup-binding environment function-name))))
-        (define inner
-          (or (lookup-callable-summary inner-point inner-node)
+        (define inner-summaries
+          (or (let ([found
+                     (callable-summaries-for-expression inner-point inner-node)])
+                (and (pair? found) found))
               (and (symbol? function-name)
-                   (region-ctx-summary (enter-child Λ 0) function-name))
+                   (let ([found
+                          (callable-summaries-for-expression
+                           (enter-child Λ 0) function-name)])
+                     (and (pair? found) found)))
               (and frame
                    (eq? (recur-frame-state frame) 'final)
-                   (recur-frame->summary frame))))
-        (define summary
-          (or inner
-              (match body-type
-                [`(NFn (,parameter-types ...)
-                       ,return-type ,latent-in ,latent-out ,_ ,_)
-                 (and (or (ormap formal-capability-type? parameter-types)
-                          (formal-capability-type? return-type))
-                      (not (latent-row-has-borrowed-payload? latent-in))
-                      (not (latent-row-has-borrowed-payload? latent-out))
-                      (signature-forwarding-summary
-                       parameter-types return-type core fail))]
-                [_ #f])))
-        (when summary
-          (define summary-region-subst
-            (for/fold ([resolved actual-regions])
-                      ([(rp target)
-                        (in-hash (callable-summary-region-subst summary))])
-              (hash-set resolved rp
-                        (subst-region-params target actual-regions))))
-          (record-callable-summary!
-           Λ core
-           (struct-copy callable-summary summary
-                        [region-subst summary-region-subst])
-           fail))
+                   (list (recur-frame->summary frame)))
+              '()))
+        (define fallback-summary
+          (match body-type
+            [`(NFn (,parameter-types ...)
+                   ,return-type ,latent-in ,latent-out ,_ ,_)
+             (and (or (ormap formal-capability-type? parameter-types)
+                      (formal-capability-type? return-type))
+                  (not (latent-row-has-borrowed-payload? latent-in))
+                  (not (latent-row-has-borrowed-payload? latent-out))
+                  (signature-forwarding-summary
+                   parameter-types return-type core fail))]
+            [_ #f]))
+        (define summaries
+          (if (pair? inner-summaries)
+              inner-summaries
+              (if fallback-summary (list fallback-summary) '())))
+        (define instantiated-summaries
+          (for/list ([summary (in-list summaries)])
+            (define summary-region-subst
+              (for/fold ([resolved actual-regions])
+                        ([(rp target)
+                          (in-hash (callable-summary-region-subst summary))])
+                (hash-set resolved rp
+                          (subst-region-params target actual-regions))))
+            (struct-copy callable-summary summary
+                         [region-subst summary-region-subst])))
+        (when (= (length instantiated-summaries) 1)
+          (record-callable-summary! Λ core (first instantiated-summaries) fail))
+        (when (> (length instantiated-summaries) 1)
+          (record-callable-value!
+           Λ core (callable-value-meta #t instantiated-summaries #f #f (set))))
         (list substituted-body function-row function-psi)]
        [_ (fail 'region-app-non-forall core function-type)])]
 
@@ -9474,39 +9991,52 @@
         (define frame
           (and (symbol? function-name)
                (recur-frame-for (lookup-binding environment function-name))))
-        (define summary
+        (define summaries
           (if implicit-rps
               (let-values ([(inner-point inner-node)
                             (match (peel-node function)
                               [`(RegionLam ,_ ,body)
                                (values (enter-child (enter-child Λ 0) 0) body)]
                               [_ (values (enter-child Λ 0) function)])])
-                (define inner
-                  (or (lookup-callable-summary inner-point inner-node)
+                (define inner-summaries
+                  (or (let ([found
+                             (callable-summaries-for-expression
+                              inner-point inner-node)])
+                        (and (pair? found) found))
                       (and (symbol? function-name)
-                           (region-ctx-summary (enter-child Λ 0) function-name))
+                           (let ([found
+                                  (callable-summaries-for-expression
+                                   (enter-child Λ 0) function-name)])
+                             (and (pair? found) found)))
                       (and frame
                            (eq? (recur-frame-state frame) 'final)
-                           (recur-frame->summary frame))))
-                (and inner
-                     (struct-copy
-                      callable-summary inner
-                      [region-subst
-                       (for/fold ([resolved implicit-region-subst])
-                                 ([(rp target)
-                                   (in-hash
-                                    (callable-summary-region-subst inner))])
-                         (hash-set resolved rp
-                                   (subst-region-params
-                                    target implicit-region-subst)))])))
+                           (list (recur-frame->summary frame)))
+                      '()))
+                (for/list ([inner (in-list inner-summaries)])
+                  (struct-copy
+                   callable-summary inner
+                   [region-subst
+                    (for/fold ([resolved implicit-region-subst])
+                              ([(rp target)
+                                (in-hash
+                                 (callable-summary-region-subst inner))])
+                      (hash-set resolved rp
+                                (subst-region-params
+                                 target implicit-region-subst)))])))
               (or (and frame
                        (eq? (recur-frame-state frame) 'final)
-                       (recur-frame->summary frame))
-                  (lookup-callable-summary (enter-child Λ 0) function)
+                       (list (recur-frame->summary frame)))
+                  (callable-summaries-for-expression (enter-child Λ 0) function)
                   (let ([w (peel-node function)])
-                    (and (borrow-designator? w)
-                         (region-ctx-summary Λ w))))))
-        (when (and (not summary)
+                    (if (borrow-designator? w)
+                        (callable-summaries-for-expression Λ w)
+                        '())))))
+        (define summary-known? (pair? summaries))
+        (define summary (and summary-known? (first summaries)))
+        (when (and (not summary-known?)
+                   (not (and frame
+                             (eq? (recur-frame-state frame) 'tentative)
+                             (latent-row-has-callable-return? latent-out)))
                    (or (latent-row-has-borrowed-payload? latent-in)
                        (latent-row-has-borrowed-payload? latent-out)))
           (fail 'unresolved-borrow-owner core))
@@ -9517,12 +10047,12 @@
           (fail 'borrowed-function-result function obligations))
         ;; summary の無い concrete NFn は、従来の関数境界の診断を引数の
         ;; 照合より先に返す。summary のある callable だけ実体化へ進む。
-        (when (and (not summary)
+        (when (and (not summary-known?)
                    (not frame)
                    (not implicit-rps)
                    (ormap unbound-boundary-borrowed-type? parameter-types))
           (fail 'borrowed-function-parameter function))
-        (when (and (not summary)
+        (when (and (not summary-known?)
                    (not frame)
                    (not implicit-rps)
                    (unbound-boundary-borrowed-type? return-type))
@@ -9537,9 +10067,16 @@
                              #:implicit-region-alphas implicit-alphas
                              #:temporary-borrow-predicate
                              (lambda (_argument index)
-                               (callable-summary-local-argument?
-                                summary index)))))
+                               (and summary-known?
+                                    (andmap
+                                     (lambda (candidate)
+                                       (callable-summary-local-argument?
+                                        candidate index))
+                                     summaries))))))
         (define actuals (third argument-result))
+        (define actual-callable-values
+          (for/list ([argument (in-list arguments)] [index (in-naturals 1)])
+            (callable-value-for-expression (enter-child Λ index) argument)))
         (define temporary-arguments (fourth argument-result))
         (when implicit-rps
           (emit-implicit-region-constraints! parameter-types actuals
@@ -9549,7 +10086,7 @@
           (ormap formal-capability-type? parameter-types))
         ;; 既存の concrete NFn は本体の出現要約を持たないため、従来の
         ;; unbound 診断を保つ。ForallRegion の要約欠落だけを fail-closed にする。
-        (when (and (not summary) (not frame) (not implicit-rps)
+        (when (and (not summary-known?) (not frame) (not implicit-rps)
                    borrow-parameters?)
           (unless (or (not (borrow-region return-type))
                       (forwarding-index parameter-types return-type))
@@ -9573,30 +10110,44 @@
                                    (return-operation-key boundary type)
                                    fail core)]
               [_ state])))
-        (when summary
-          (define formals (callable-summary-formals summary))
-          (define subst
-            (for/hash ([w (in-list formals)] [caps (in-list argument-caps)]
-                       #:when w)
-              (when (set-empty? caps)
-                (fail 'unresolved-borrow-owner core))
-              (values w caps)))
-          (define sources
-            (for/hash ([w (in-list formals)]
-                       [a (in-list arguments)]
-                       [τ (in-list actuals)]
-                       [i (in-naturals 1)]
-                       #:when w)
-              (values w (argument-source Λ a τ i))))
+        (define return-value-summaries
+          (cond
+            [summary-known? summaries]
+            [(and frame (eq? (recur-frame-state frame) 'tentative))
+             (list (recur-frame->summary frame))]
+            [else '()]))
+        (when summary-known?
           (set! next-psi
-                (instantiate-deferred! summary arguments actuals return-type
-                                        latent-out Λ core subst sources
-                                        call-psi fail)))
-        (unless summary (set! next-psi call-psi))
+                (for/fold ([state call-psi])
+                          ([candidate (in-list summaries)])
+                  (define formals (callable-summary-formals candidate))
+                  (define subst
+                    (for/hash ([w (in-list formals)] [caps (in-list argument-caps)]
+                               #:when w)
+                      (when (set-empty? caps)
+                        (fail 'unresolved-borrow-owner core))
+                      (values w caps)))
+                  (define sources
+                    (for/hash ([w (in-list formals)]
+                               [a (in-list arguments)]
+                               [τ (in-list actuals)]
+                               [i (in-naturals 1)]
+                               #:when w)
+                      (values w (argument-source Λ a τ i))))
+                  (instantiate-deferred! candidate arguments actuals return-type
+                                         latent-out Λ core subst sources
+                                         state fail))))
+        (for ([candidate (in-list return-value-summaries)])
+          (for ([(operation returned)
+                 (in-hash (callable-summary-return-values candidate))])
+            (record-callable-return-value!
+             operation
+             (instantiate-callable-value returned actual-callable-values))))
+        (unless summary-known? (set! next-psi call-psi))
         (define result-entry #f)
         (when (formal-capability-type? return-type)
           (define result-summary
-            (or summary
+            (or (and (= (length summaries) 1) summary)
                 (and frame (recur-frame->summary frame))
                 (and implicit-rps
                      (signature-forwarding-summary parameter-types
@@ -9604,30 +10155,50 @@
                 (and (not (borrow-region return-type))
                      (signature-forwarding-summary parameter-types
                                                    return-type core fail))))
+          (define result-summaries
+            (cond
+              [summary-known? summaries]
+              [result-summary (list result-summary)]
+              [else '()]))
+          (define result-index
+            (for/fold ([combined (hash)])
+                      ([candidate (in-list result-summaries)])
+              (for/fold ([combined combined])
+                        ([(path sources)
+                          (in-hash
+                           (callable-summary-result-index candidate))])
+                (hash-update combined path
+                             (lambda (previous)
+                               (remove-duplicates
+                                (append previous sources) equal?))
+                             sources))))
           (set! result-entry
                 (cond
-              [result-summary
-               (result-capability-entry result-summary return-type arguments
-                                        actuals Λ core fail)]
-              [(borrow-region return-type)
-               (define index (forwarding-index parameter-types return-type))
-               (unless index (fail 'unresolved-borrow-owner core))
-               (define actual-type (list-ref actuals index))
-               (define entry
-               (actual-leaf-entry (enter-child Λ (add1 index))
-                                  (list-ref arguments index) actual-type
-                                  '() fail))
-               (when (set-empty? (capability-entry-keys entry))
-                 (fail 'unresolved-borrow-owner core))
-               (struct-copy capability-entry entry
-                            [borrowed-view? #t]
-                            [declared-lifetime (borrow-region return-type)])]
-              [else (fail 'unresolved-borrow-owner core)]))
+                  [(pair? result-summaries)
+                   (capability-entry-join
+                    (for/list ([candidate (in-list result-summaries)])
+                      (result-capability-entry candidate return-type arguments
+                                               actuals Λ core fail)))]
+                  [(borrow-region return-type)
+                   (define index (forwarding-index parameter-types return-type))
+                   (unless index (fail 'unresolved-borrow-owner core))
+                   (define actual-type (list-ref actuals index))
+                   (define entry
+                     (actual-leaf-entry (enter-child Λ (add1 index))
+                                        (list-ref arguments index) actual-type
+                                        '() fail))
+                   (when (set-empty? (capability-entry-keys entry))
+                     (fail 'unresolved-borrow-owner core))
+                   (struct-copy capability-entry entry
+                                [borrowed-view? #t]
+                                [declared-lifetime
+                                 (borrow-region return-type)])]
+                  [else (fail 'unresolved-borrow-owner core)]))
           (record-forwarding-summary!
            Λ core
            (forwarding-summary
-            (if result-summary
-                (callable-summary-result-index result-summary)
+            (if (pair? result-summaries)
+                result-index
                 (hash '() (list (cons (forwarding-index parameter-types
                                                         return-type)
                                       '()))))
@@ -9636,6 +10207,25 @@
             (capability-entry-fields result-entry)
             (capability-entry-variants result-entry))
            fail))
+        (when (callable-type-anywhere? return-type)
+          (define result-value
+            (cond
+              [summary-known?
+               (merge-callable-values
+                (for/list ([candidate (in-list summaries)])
+                  (define returned
+                    (callable-summary-result-value candidate))
+                  (if returned
+                      (instantiate-callable-value
+                       returned actual-callable-values)
+                      (missing-callable-value))))]
+              [(and frame (eq? (recur-frame-state frame) 'tentative))
+               (instantiate-callable-value
+                (unbox (recur-frame-result-value-box frame))
+                actual-callable-values)]
+              [else (missing-callable-value)]))
+          (record-callable-value!
+           Λ core result-value))
         ;; eligible は引数の型付け前に証明するが、型・capability・summary を
         ;; 実際に得た後にも α が結果へ漏れていないことを確認する。
         (for ([temporary-argument (in-list temporary-arguments)])
@@ -9645,7 +10235,11 @@
           (define result-capability
             (typing-capability-of Λ core #:allow-empty-keys? #t))
           (unless (and alpha
-                       (callable-summary-local-argument? summary index)
+                       summary-known?
+                       (andmap (lambda (candidate)
+                                 (callable-summary-local-argument?
+                                  candidate index))
+                               summaries)
                        (not (temporary-alpha-in-term? alpha return-type))
                        (not (temporary-alpha-in-term? alpha result-entry))
                        (not (temporary-alpha-in-term?
@@ -9738,8 +10332,8 @@
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
         (define callable
-          (callable-summary-for-binding
-           (callable-summary-for-expression (enter-child Λ 0) bound)
+          (callable-value-for-binding
+           (callable-value-for-expression (enter-child Λ 0) bound)
            bound binding-type))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
         (define token
@@ -9814,8 +10408,8 @@
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
      (define callable
-       (callable-summary-for-binding
-        (callable-summary-for-expression (enter-child Λ 0) bound)
+       (callable-value-for-binding
+        (callable-value-for-expression (enter-child Λ 0) bound)
         bound binding-type))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
      (define token
@@ -9912,6 +10506,12 @@
        (define payload-types (fourth handler-entry))
        (set-box! payload-types
                  (cons (third argument-result) (unbox payload-types))))
+     (when (and (not (eq? (third argument-result) 'Never))
+                (callable-type-anywhere? type*))
+       (define payload-value
+         (or (callable-value-for-expression (enter-child Λ 0) argument)
+             (missing-callable-value)))
+       (record-callable-return-value! operation* payload-value))
      (define argument-psi (second argument-result))
      (list 'Never
            (row-union (first argument-result)
@@ -9924,12 +10524,14 @@
      (define captured-types-box (box '()))
      (define captured-capabilities-box (box '()))
      (define captured-loans-box (box '()))
+     (define captured-callables-box (box '()))
      (define body-result
        (parameterize
            ([return-handler-regions
              (cons (list boundary (region-ctx-point Λ)
                          operation* captured-types-box
-                         captured-capabilities-box captured-loans-box)
+                         captured-capabilities-box captured-loans-box
+                         captured-callables-box)
                    (return-handler-regions))])
          (check-as/full body type* (enter-child Λ 1)
                         Ψ environment places callables fail)))
@@ -9947,6 +10549,11 @@
          [else
           (tagged-branch-upper-bound captured-types
                                      (enter-child Λ 0) core fail)]))
+     (define handler-callable
+       (if (null? (unbox captured-callables-box))
+           (and (callable-type-anywhere? handler-payload-type)
+                (missing-callable-value))
+           (merge-callable-values (unbox captured-callables-box))))
      (define handler-base
        (psi-join Ψ body-psi))
      (define handler-input
@@ -9971,7 +10578,7 @@
         (enter-child Λ 0) handler-binder
         (capability-entry-keys captured-capability)
         (capability-source handler-payload-type)
-        #f
+        handler-callable
         (capability-entry-fields captured-capability)
         (capability-entry-variants captured-capability)
         (borrow-typed? (normalize-type handler-payload-type))))
@@ -10096,6 +10703,18 @@
              [multiple-types
              (tagged-branch-upper-bound multiple-types Λ core fail)])
            type*))
+     (when (callable-type-anywhere? result-type)
+       (define body-value
+         (and normal-result-type
+              (or (callable-value-for-expression (enter-child Λ 1) body)
+                  (missing-callable-value))))
+       (define handler-value
+         (and caught-state handled-result-type
+              (or (callable-value-for-expression handler-Λ handler-expression)
+                  (missing-callable-value))))
+       (record-callable-value!
+        Λ core
+        (merge-callable-values (filter values (list body-value handler-value)))))
      (define closure-box (handle-loan-closures))
      (when (and caught-state closure-box (pair? (unbox captured-loans-box)))
        (define body-capability
@@ -10277,7 +10896,7 @@
         (define type (lookup environment w))
         (unless type (fail 'unbound-variable core))
         (reject-pending-callable-summary!
-         core 'target (region-ctx-summary Λ w) core fail)
+         core 'target (callable-summary-for-expression Λ w) core fail)
         (emit-use-request! Λ w '() 'move (set) core 'move-borrowed)
         (when (borrow-typed? type) (fail 'move-borrowed core))
         (match type
@@ -10368,7 +10987,7 @@
           (or (lookup-callable-summary (enter-child Λ 0) function)
               (let ([w (peel-node function)])
                 (and (borrow-designator? w)
-                     (region-ctx-summary Λ w)))))
+                     (callable-summary-for-expression Λ w)))))
         (reject-pending-callable-summary! core 'function summary function fail)
         (define borrowed-parameter?
           (or (borrowed-type-anywhere? first-type)
@@ -10519,6 +11138,7 @@
                    [branch-binder-alpha-sources (make-hash)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
+                   [callable-values (make-hash)]
                    [forwarding-summaries forwarding-table]
                    [template-collectors '()]
                    [recur-overlay '()]
@@ -11033,8 +11653,8 @@
         (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
         (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
         (define callable
-          (callable-summary-for-binding
-           (callable-summary-for-expression (enter-child Λ 0) bound)
+          (callable-value-for-binding
+           (callable-value-for-expression (enter-child Λ 0) bound)
            bound binding-type))
         (define borrowed? (borrow-typed? (normalize-type binding-type)))
         (define token
@@ -11105,8 +11725,8 @@
      (define Λ_owner (register-owner Λ x binding-type #:let-place? #t))
      (define summary (lookup-forwarding-summary (enter-child Λ 0) bound))
      (define callable
-       (callable-summary-for-binding
-        (callable-summary-for-expression (enter-child Λ 0) bound)
+       (callable-value-for-binding
+        (callable-value-for-expression (enter-child Λ 0) bound)
         bound binding-type))
      (define borrowed? (borrow-typed? (normalize-type binding-type)))
      (define token
@@ -11322,6 +11942,7 @@
               (if (typing-result-never? core Λ raw-type) 'Never raw-type)]
              [psi (flow-restore-output input-psi raw-psi normal-type fail core)])
         (propagate-callable-summary! core Λ fail)
+        (propagate-callable-value! core Λ result-type)
         (record-typing-result! Λ result-type normal-type row
                                (psi-escape-operations raw-psi))
         (emit-expression-decomposition-exits!
@@ -11445,6 +12066,7 @@
                    [resource-identity-transfers (set)]
                    [merge-alpha-sources (make-hash)]
                    [callable-summaries (make-hash)]
+                   [callable-values (make-hash)]
                    [forwarding-summaries (make-hash)]
                    [implicit-region-apps-table collected-implicit-region-apps]
                    [implicit-region-app-rparams-table
