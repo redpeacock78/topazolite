@@ -100,15 +100,28 @@
 (define current-named-region-failure-detail
   (make-parameter "region の束縛子に対応する入力の借用位置が無い"))
 
-(define (signature-borrow-regions type)
+(define (signature-borrow-regions type [bound-region-params '()])
   (match type
+    [`(ForallRegion (,region-params ...) ,body)
+     (signature-borrow-regions body
+                               (append region-params bound-region-params))]
     [`(Borrowed ,payload ,region)
-     (cons region (signature-borrow-regions payload))]
+     (append (if (match region
+                   [`(RParam ,rp) (memq rp bound-region-params)]
+                   [_ #f])
+                 '()
+                 (list region))
+             (signature-borrow-regions payload bound-region-params))]
     [`(BorrowedMut ,payload ,region)
-     (cons region (signature-borrow-regions payload))]
+     (append (if (match region
+                   [`(RParam ,rp) (memq rp bound-region-params)]
+                   [_ #f])
+                 '()
+                 (list region))
+             (signature-borrow-regions payload bound-region-params))]
     [(? pair?)
-     (append (signature-borrow-regions (car type))
-             (signature-borrow-regions (cdr type)))]
+     (append (signature-borrow-regions (car type) bound-region-params)
+             (signature-borrow-regions (cdr type) bound-region-params))]
     [_ '()]))
 
 (define (signature-named-borrow-regions type)

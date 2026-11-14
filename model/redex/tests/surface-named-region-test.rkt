@@ -6,7 +6,11 @@
          racket/list
          racket/match
          "../diagnostic.rkt"
-         "../driver.rkt")
+         "../driver.rkt"
+         "../lexer.rkt"
+         "../parser.rkt"
+         "../surface-lower.rkt"
+         (only-in "../origins.rkt" current-trait-env))
 
 (define (compile source) (compile-source/string 'src source))
 
@@ -53,6 +57,40 @@
 (define (no-surface-region-name? result)
   (and (not (contains-form? (compiled-core result) 'RName))
        (not (contains-form? (compiled-callables result) 'RName))))
+
+(define nested-decl-span '(#:span src 0 1))
+
+(define (nested-region-decl name)
+  `(SFnDecl ,nested-decl-span
+            (SName ,nested-decl-span inner)
+            ((SName ,nested-decl-span ,name))
+            ((SParam ,nested-decl-span
+                     (SName ,nested-decl-span q)
+                     (TBorrow ,nested-decl-span
+                              (SName ,nested-decl-span ,name)
+                              (TName ,nested-decl-span Int))))
+            (TBorrow ,nested-decl-span
+                     (SName ,nested-decl-span ,name)
+                     (TName ,nested-decl-span Int))
+            #:none
+            (SBlock ,nested-decl-span ()
+                    (SReturn ,nested-decl-span (SVar ,nested-decl-span q)))))
+
+(define (lower-with-nested-decl source nested-decl)
+  ;; The parser rejects block-local SFnDecl, so exercise this lowerer case directly.
+  (define parsed (parse (lex/string 'src source)))
+  (match parsed
+    [`(SProgram ,program-span
+        ((SFnDecl ,fn-span ,fn-name ,region-params ,parameters ,result ,row
+                  (SBlock ,block-span ,bindings ,tail)))
+        ,program-tail)
+     (lower-surface
+      `(SProgram ,program-span
+         ((SFnDecl ,fn-span ,fn-name ,region-params ,parameters ,result ,row
+                   (SBlock ,block-span ,(cons nested-decl bindings) ,tail)))
+         ,program-tail)
+      (current-trait-env))]
+    [other (fail-check (format "注入対象の Surface FnDecl を期待した: ~s" other))]))
 
 (test-case "choose の仮引数と戻りは一つの名前付き binder を共有する"
   (define result
@@ -160,3 +198,30 @@
                 "宣言の無い型または region の名前を参照した")
   (check-equal? (diagnostic-title duplicate)
                 "data 型または関数の宣言で同じ束縛子を 2 度書いた"))
+
+(test-case "入れ子の SFnDecl は独自の region binder を解決する"
+  (define lowered
+    (lower-with-nested-decl
+     "fn outer(x: Int) -> Int { return 0 }\n0"
+     (nested-region-decl 's)))
+  (check-true (lowered? lowered)
+              (format "nested SFnDecl lowers: ~s" lowered))
+  (when (lowered? lowered)
+    (check-true (contains-form? (lowered-term lowered) 'FnDecl))))
+
+(test-case "入れ子の SFnDecl の同名 binder は外側の未使用判定を隠す"
+  (define source "fn f<r>() -> Int { return 0 }\n0")
+  (define lowered (lower-with-nested-decl source (nested-region-decl 'r)))
+  (check-true (diagnostic? lowered))
+  (when (diagnostic? lowered)
+    (check-equal? (diagnostic-id lowered) "E-SUR-005")
+    (check-equal? (diagnostic-primary-span lowered)
+                  (source-span source "r"))))
+
+(test-case "閉じた ForallRegion を E-BOR-020 と誤認せず callable 縮約で拒否する"
+  (for ([source
+         (in-list
+          (list "fn mk() ! {Own, Partial} { return fn(p: &Int) -> Int { return 0 } }\n0"
+                "let mk = fn() ! {Own, Partial} => fn(p: &Int) => 0\n0"))])
+    (define diagnostic (compile-rejected source "E-TYP-018"))
+    (check-equal? (diagnostic-title diagnostic) "callable 表の形が不正である")))

@@ -78,7 +78,7 @@
        (define hidden* (append (surface-region-param-names region-params) hidden))
        (for-each (lambda (part) (walk part hidden*))
                  (list parameters result row body))]
-      [`(SFnDecl ,_ _ ,region-params ,parameters ,result ,row ,body)
+      [`(SFnDecl ,_ ,_ ,region-params ,parameters ,result ,row ,body)
        (define hidden* (append (surface-region-param-names region-params) hidden))
        (for-each (lambda (part) (walk part hidden*))
                  (list parameters result row body))]
@@ -110,7 +110,7 @@
            (hash-set names name #t)))
        (for-each (lambda (part) (walk part nested-names))
                  (list parameters result row body))]
-      [`(SFnDecl ,_ _ ,region-params ,parameters ,result ,row ,body)
+      [`(SFnDecl ,_ ,_ ,region-params ,parameters ,result ,row ,body)
        (define nested-names
          (for/fold ([names visible-names]) ([name (in-list (surface-region-param-names region-params))])
            (hash-set names name #t)))
