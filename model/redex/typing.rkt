@@ -7965,6 +7965,17 @@
                      scope-capture-unknown)
            (unresolved-projection base-value))]
       [_ scope-capture-unknown]))
+  (define (transfer-value place values)
+    (define root (place-name place))
+    ;; An unmodified managed root predates this Scope; its Move is not a new loan.
+    (if (and root
+             (member root managed)
+             (not (hash-has-key? updates root))
+             (not (match (assoc root values)
+                    [(cons _ (? scope-capture-value?)) #t]
+                    [_ #f])))
+        scope-capture-empty
+        (place-value place values)))
   (define (return-value? value)
     (eq? (scope-capture-value-kind value) 'return))
   (define (perform-return! operation payload-type payload-point)
@@ -8158,9 +8169,9 @@
                     value)
                 scope-capture-empty)))]
       [`(Move ,place)
-       (finish (place-value place values))]
+       (finish (transfer-value place values))]
       [`(Forward ,place)
-       (finish (place-value place values))]
+       (finish (transfer-value place values))]
       [`(Reborrow ,parent)
        (finish (eval parent (child context 0) values))]
       [`(ReborrowAt ,_ ,parent)

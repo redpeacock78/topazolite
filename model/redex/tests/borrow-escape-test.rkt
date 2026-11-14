@@ -503,6 +503,13 @@
     `((1 ,opaque-captured-closure-type)))
    "E-BOR-004"))
 
+(test-case "管理 owner の未更新値を Move するだけでは借用捕捉にならない"
+  (check-region-typed
+   (typed-owner-core
+    '(Scope (1) (Move 1))
+    capture-callables '()
+    `((1 ,opaque-captured-closure-type)))))
+
 (test-case "BorrowMut Assign で owner に格納した捕捉閉包も Read 後に E-BOR-004"
   (define storable-closure-type
     '(NFn (Int) Int () (Partial (Yield (Borrowed Int owner-ph))) () User))
