@@ -446,7 +446,7 @@
     ("E-SUR-005" surface-unexpected-token "構文が合わないトークンがある")
     ("E-SUR-006" surface-unexpected-eof "入力が構文の途中で終わった")
     ("E-SUR-007" surface-duplicate-field "record または record 型の同じフィールドを 2 度書いた")
-    ("E-SUR-008" surface-unknown-type-name "宣言の無い型の名前を参照した")
+    ("E-SUR-008" surface-unknown-type-name "宣言の無い型または region の名前を参照した")
     ("E-SUR-009" surface-duplicate-type-alias "同じ型別名を 2 度宣言した")
     ("E-SUR-010" surface-recursive-type-alias "型別名の参照に循環がある")
     ("E-SUR-011" surface-reserved-type-name "基本型の名前を型別名として宣言した")))
@@ -492,7 +492,7 @@
     ("E-SUR-029" surface-duplicate-constructor
      "constructor の名前が組み込み、基底、または他の宣言の constructor と重なった")
     ("E-SUR-030" surface-duplicate-type-parameter
-     "data 型の宣言で同じ型仮引数を 2 度書いた")
+     "data 型または関数の宣言で同じ束縛子を 2 度書いた")
     ("E-SUR-031" surface-type-data-name-collision
      "data 型の名前と型別名の名前が重なった")
     ("E-SUR-032" surface-constructor-value-name-collision

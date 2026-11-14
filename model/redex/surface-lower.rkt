@@ -41,6 +41,121 @@
 (define (node-span n) (second n))
 
 (define current-trait-outputs (make-parameter (hasheq)))
+(define current-region-names (make-parameter (hash)))
+
+(define (surface-region-param-names parameters)
+  (for/list ([parameter (in-list parameters)]) (third parameter)))
+
+;; 型の名前位置と借用 region 位置だけを集める。入れ子の関数が同じ名前を
+;; 宣言したときは、その名前についてだけ内側の scope を優先する。
+(define (surface-region-name-occurrences nodes targets)
+  (define type-uses '())
+  (define region-uses '())
+  (define (record! sink name span hidden)
+    (when (and (memq name targets) (not (memq name hidden)))
+      (set! sink (cons (cons name span) sink)))
+    sink)
+  (define (walk node hidden)
+    (match node
+      [`(TName ,span ,name)
+       (set! type-uses (record! type-uses name span hidden))]
+      [`(TApp ,_ (SName ,span ,name) ,arguments)
+       (set! type-uses (record! type-uses name span hidden))
+       (walk arguments hidden)]
+      [`(TBorrow ,_ ,region ,inner)
+       (match region
+         [`(SName ,span ,name)
+          (set! region-uses (record! region-uses name span hidden))]
+         [_ (void)])
+       (walk inner hidden)]
+      [`(TBorrowMut ,_ ,region ,inner)
+       (match region
+         [`(SName ,span ,name)
+          (set! region-uses (record! region-uses name span hidden))]
+         [_ (void)])
+       (walk inner hidden)]
+      [`(SFn ,_ ,region-params ,parameters ,result ,row ,_ ,body)
+       (define hidden* (append (surface-region-param-names region-params) hidden))
+       (for-each (lambda (part) (walk part hidden*))
+                 (list parameters result row body))]
+      [`(SFnDecl ,_ _ ,region-params ,parameters ,result ,row ,body)
+       (define hidden* (append (surface-region-param-names region-params) hidden))
+       (for-each (lambda (part) (walk part hidden*))
+                 (list parameters result row body))]
+      [(? list? parts) (for-each (lambda (part) (walk part hidden)) parts)]
+      [_ (void)]))
+  (for-each (lambda (node) (walk node '())) nodes)
+  (values (reverse type-uses) (reverse region-uses)))
+
+(define (check-surface-region-names nodes visible fail)
+  (define (walk node visible-names)
+    (match node
+      [`(TBorrow ,_ ,region ,inner)
+       (match region
+         [`(SName ,span ,name)
+          (unless (hash-has-key? visible-names name)
+            (fail 'surface-unknown-type-name span))]
+         [_ (void)])
+       (walk inner visible-names)]
+      [`(TBorrowMut ,_ ,region ,inner)
+       (match region
+         [`(SName ,span ,name)
+          (unless (hash-has-key? visible-names name)
+            (fail 'surface-unknown-type-name span))]
+         [_ (void)])
+       (walk inner visible-names)]
+      [`(SFn ,_ ,region-params ,parameters ,result ,row ,_ ,body)
+       (define nested-names
+         (for/fold ([names visible-names]) ([name (in-list (surface-region-param-names region-params))])
+           (hash-set names name #t)))
+       (for-each (lambda (part) (walk part nested-names))
+                 (list parameters result row body))]
+      [`(SFnDecl ,_ _ ,region-params ,parameters ,result ,row ,body)
+       (define nested-names
+         (for/fold ([names visible-names]) ([name (in-list (surface-region-param-names region-params))])
+           (hash-set names name #t)))
+       (for-each (lambda (part) (walk part nested-names))
+                 (list parameters result row body))]
+      [(? list? parts) (for-each (lambda (part) (walk part visible-names)) parts)]
+      [_ (void)]))
+  (for-each (lambda (node) (walk node visible)) nodes))
+
+(define (with-surface-region-scope region-params nodes fail thunk)
+  (define seen (make-hasheq))
+  (for ([parameter (in-list region-params)])
+    (match-define `(SName ,span ,name) parameter)
+    (when (hash-has-key? seen name)
+      (fail 'surface-duplicate-type-parameter span
+            #:related (list (list 'type-parameter-declaration
+                                  (hash-ref seen name)
+                                  (format "region 束縛子 ~a の宣言" name)))))
+    (hash-set! seen name span))
+  (define names (surface-region-param-names region-params))
+  (define local-names
+    (for/hash ([parameter (in-list region-params)])
+      (values (third parameter) (gensym (third parameter)))))
+  (define visible-names
+    (for/fold ([visible (current-region-names)])
+              ([(name unique) (in-hash local-names)])
+      (hash-set visible name unique)))
+  (parameterize ([current-region-names visible-names])
+    (define-values (type-uses region-uses)
+      (surface-region-name-occurrences nodes names))
+    ;; 未宣言名を binder 種別の検査より先に報告する。
+    (check-surface-region-names nodes visible-names fail)
+    (for ([parameter (in-list region-params)])
+      (define name (third parameter))
+      (define has-type-use? (ormap (lambda (use) (eq? (car use) name)) type-uses))
+      (define region-use
+        (for/first ([use (in-list region-uses)] #:when (eq? (car use) name)) use))
+      (cond
+        [has-type-use?
+         (if region-use
+             (fail 'surface-unknown-type-name (cdr region-use))
+             (fail 'surface-unexpected-token (second parameter)))]
+        [region-use (void)]
+        [else (fail 'surface-unexpected-token (second parameter))]))
+    (thunk)))
 
 (define (span-through-end start end)
   (list '#:span (second start) (third start) (fourth end)))
@@ -522,13 +637,23 @@
     [`(TRec ,_ ,fields)
      `(Record ,(lower-ty-fields fields env fail stack #:self? self?))]
     [`(TBorrow ,s ,region ,inner)
-     (unless (eq? region '#:none)
-       (fail 'surface-unexpected-token (node-span region)))
-     `(Borrowed ,(lower-sty inner env fail stack #:self? self?) Omitted)]
+     (define region-core
+       (match region
+         ['#:none 'Omitted]
+         [`(SName ,s_r ,name)
+          (match (hash-ref (current-region-names) name #f)
+            [#f (fail 'surface-unknown-type-name s_r)]
+            [unique `(RName ,unique)])]))
+     `(Borrowed ,(lower-sty inner env fail stack #:self? self?) ,region-core)]
     [`(TBorrowMut ,s ,region ,inner)
-     (unless (eq? region '#:none)
-       (fail 'surface-unexpected-token (node-span region)))
-     `(BorrowedMut ,(lower-sty inner env fail stack #:self? self?) Omitted)]
+     (define region-core
+       (match region
+         ['#:none 'Omitted]
+         [`(SName ,s_r ,name)
+          (match (hash-ref (current-region-names) name #f)
+            [#f (fail 'surface-unknown-type-name s_r)]
+            [unique `(RName ,unique)])]))
+     `(BorrowedMut ,(lower-sty inner env fail stack #:self? self?) ,region-core)]
     [`(TFn ,_ ,arguments ,result ,row)
      `(NFn ,(for/list ([a (in-list arguments)])
               (lower-sty a env fail stack #:self? self?))
@@ -961,23 +1086,24 @@
      (lower-for-loop s s_x x (lower-sexpr iterable env fail) body env fail
                      #:expression? #t)]
     [`(SFn ,s ,region-params ,params ,result-ty ,row ,body-kind ,body)
-     (when (pair? region-params)
-       (fail 'surface-unexpected-token (node-span (first region-params))))
-     (define result-core
-       (if (eq? result-ty '#:none)
-           `(#:infer ,s)
-           `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
-     (define effect-row
-       (if (eq? row '#:none)
-           `(#:ef #:infer ,s)
-           `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
-                  ,(node-span row))))
-     `(Fn ,s ,(lower-params params env fail)
-          ,result-core
-          ,effect-row
-          ,(if (eq? body-kind 'block)
-               (lower-block-body body env fail)
-               (lower-sexpr body env fail)))]
+     (with-surface-region-scope
+      region-params (list params result-ty row body) fail
+      (λ ()
+        (define result-core
+          (if (eq? result-ty '#:none)
+              `(#:infer ,s)
+              `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
+        (define effect-row
+          (if (eq? row '#:none)
+              `(#:ef #:infer ,s)
+              `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
+                     ,(node-span row))))
+        `(Fn ,s ,(lower-params params env fail)
+             ,result-core
+             ,effect-row
+             ,(if (eq? body-kind 'block)
+                  (lower-block-body body env fail)
+                  (lower-sexpr body env fail)))))]
     [`(SApply ,s (SVar ,_ %interp) (,e))
      `(StrHole ,s ,(lower-sexpr e env fail))]
     [`(SApply ,s ,f ,arguments)
@@ -1181,22 +1307,23 @@
           (λ (rest) `(Let ,s_tail ((#:bind %stmt ,s) const (#:ty Unit ,s))
                           ,value-core ,rest)))])]
     [`(SFnDecl ,s (SName ,s_f ,f) ,region-params ,params ,result-ty ,row ,body)
-     (when (pair? region-params)
-       (fail 'surface-unexpected-token (node-span (first region-params))))
-     (define params-core (lower-params params env fail))
-     (define result-core
-       (if (eq? result-ty '#:none)
-           `(#:infer ,s)
-           `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
-     ;; 明示 row は row 節の span、省略時は関数宣言全体の span を使う。
-     (define effect-row
-       `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
-              ,(if (eq? row '#:none) s (node-span row))))
-     (define body-core (lower-block-body body env fail))
-     (λ (rest) `(FnDecl ,s_tail (#:bind ,f ,s_f) ,params-core
-                       ,result-core
-                       ,effect-row
-                       ,body-core ,rest))]))
+     (with-surface-region-scope
+      region-params (list params result-ty row body) fail
+      (λ ()
+        (define params-core (lower-params params env fail))
+        (define result-core
+          (if (eq? result-ty '#:none)
+              `(#:infer ,s)
+              `(#:ty ,(lower-sty result-ty env fail) ,(node-span result-ty))))
+        ;; 明示 row は row 節の span、省略時は関数宣言全体の span を使う。
+        (define effect-row
+          `(#:ef ,(lower-row row env fail '() #f #:type-row? #f)
+                 ,(if (eq? row '#:none) s (node-span row))))
+        (define body-core (lower-block-body body env fail))
+        (λ (rest) `(FnDecl ,s_tail (#:bind ,f ,s_f) ,params-core
+                          ,result-core
+                          ,effect-row
+                          ,body-core ,rest))))]))
 
 ;; spec §7.2。畳み込みは右である。lower [b1 b2] e = L(b1, L(b2, lower e))。
 ;; spec §6.1。診断は 1 件だけ返すので、どれが返るかは走る順序で決まる。

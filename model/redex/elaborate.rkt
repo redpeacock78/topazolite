@@ -96,6 +96,51 @@
 (define current-when-arm-fallthroughs (make-parameter #f))
 (define current-deferred-when-fallthroughs (make-parameter #f))
 (define current-trait-providers (make-parameter (hasheq)))
+(define current-named-region-params (make-parameter (hash)))
+(define current-named-region-failure-detail
+  (make-parameter "region の束縛子に対応する入力の借用位置が無い"))
+
+(define (signature-borrow-regions type)
+  (match type
+    [`(Borrowed ,payload ,region)
+     (cons region (signature-borrow-regions payload))]
+    [`(BorrowedMut ,payload ,region)
+     (cons region (signature-borrow-regions payload))]
+    [(? pair?)
+     (append (signature-borrow-regions (car type))
+             (signature-borrow-regions (cdr type)))]
+    [_ '()]))
+
+(define (signature-named-borrow-regions type)
+  (match type
+    [`(Borrowed ,payload (RName ,name))
+     (cons name (signature-named-borrow-regions payload))]
+    [`(BorrowedMut ,payload (RName ,name))
+     (cons name (signature-named-borrow-regions payload))]
+    [`(Borrowed ,payload ,_) (signature-named-borrow-regions payload)]
+    [`(BorrowedMut ,payload ,_) (signature-named-borrow-regions payload)]
+    [(? pair?)
+     (append (signature-named-borrow-regions (car type))
+             (signature-named-borrow-regions (cdr type)))]
+    [_ '()]))
+
+(define (call-with-named-region-params parameter-types thunk)
+  (define inherited (current-named-region-params))
+  (define names
+    (remove-duplicates
+     (append-map signature-named-borrow-regions parameter-types)))
+  (call-with-region-params
+   (λ ()
+     (define binders '())
+     (define mapping
+       (for/fold ([mapping inherited]) ([name (in-list names)])
+         (if (hash-has-key? mapping name)
+             mapping
+             (let ([rp (fresh-region-param name)])
+               (set! binders (append binders (list rp)))
+               (hash-set mapping name `(RParam ,rp))))))
+     (parameterize ([current-named-region-params mapping])
+       (thunk binders)))))
 
 (define (provider-visible-trait-ledger environment)
   (define ledger (current-trait-ledger))
@@ -358,11 +403,11 @@
     [`(Borrowed ,payload Omitted)
      (define rp (region-for-position))
      `(Borrowed ,(map-signature-omitted-borrows payload region-for-position)
-                (RParam ,rp))]
+                ,rp)]
     [`(BorrowedMut ,payload Omitted)
      (define rp (region-for-position))
      `(BorrowedMut ,(map-signature-omitted-borrows payload region-for-position)
-                   (RParam ,rp))]
+                   ,rp)]
     [(? pair?)
      (cons (map-signature-omitted-borrows (car type) region-for-position)
            (map-signature-omitted-borrows (cdr type) region-for-position))]
@@ -375,24 +420,34 @@
      (define (fresh-position)
        (define rp (fresh-region-param 'elided))
        (set! binders (cons rp binders))
-       rp)
+       `(RParam ,rp))
      (define rewritten
        (for/list ([type (in-list parameter-types)])
          (map-signature-omitted-borrows type fresh-position)))
      (values (reverse binders) rewritten))))
 
-(define (elide-signature-return-region binders return-type return-span)
-  (if (not (signature-has-omitted-borrow? return-type))
-      return-type
-      (match binders
-        [(list rp)
-         (map-signature-omitted-borrows return-type (λ () rp))]
-        ['()
-         (reject return-span 'unresolved-borrow-owner #:phase 'typing
-                 "戻りの借用に対応する入力の借用位置が無い")]
-        [_
-         (reject return-span 'unresolved-borrow-owner #:phase 'typing
-                 "入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する")])))
+(define (elide-signature-return-region parameter-types return-type return-span)
+  (define input-regions
+    (append-map signature-borrow-regions parameter-types))
+  (define resolved
+    (if (not (signature-has-omitted-borrow? return-type))
+        return-type
+        (match input-regions
+          [(list region)
+           (map-signature-omitted-borrows return-type (λ () region))]
+          ['()
+           (reject return-span 'unresolved-borrow-owner #:phase 'typing
+                   "戻りの借用に対応する入力の借用位置が無い")]
+          [_
+           (reject return-span 'unresolved-borrow-owner #:phase 'typing
+                   "入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する")]))
+  )
+  (for ([region (in-list (signature-borrow-regions resolved))])
+    (when (and (match region [`(RParam ,_) #t] [_ #f])
+               (not (member region input-regions equal?)))
+      (reject return-span 'unresolved-borrow-owner #:phase 'typing
+              "戻りの借用に対応する入力の借用位置が無い")))
+  resolved)
 
 (define (judgment-region-lam result binders)
   (if (null? binders)
@@ -1192,6 +1247,20 @@
        `(Borrowed ,(resolve-annotation inner delta span) Omitted)]
       [`(BorrowedMut ,inner Omitted)
        `(BorrowedMut ,(resolve-annotation inner delta span) Omitted)]
+      [`(Borrowed ,inner (RName ,name))
+       (define region
+         (hash-ref (current-named-region-params) name
+                   (λ ()
+                     (reject span 'unresolved-borrow-owner #:phase 'typing
+                             (current-named-region-failure-detail)))))
+       `(Borrowed ,(resolve-annotation inner delta span) ,region)]
+      [`(BorrowedMut ,inner (RName ,name))
+       (define region
+         (hash-ref (current-named-region-params) name
+                   (λ ()
+                     (reject span 'unresolved-borrow-owner #:phase 'typing
+                             (current-named-region-failure-detail)))))
+       `(BorrowedMut ,(resolve-annotation inner delta span) ,region)]
       [`(Untrusted ,inner)
        `(Untrusted ,(resolve-annotation inner delta span))]
       [`(Refined ,inner ,proposition)
@@ -1230,6 +1299,12 @@
   (if (and normalized (type? normalized))
       normalized
       (reject span 'invalid-resolved-type resolved)))
+
+(define (resolve-signature-return-annotation raw delta span)
+  (parameterize
+      ([current-named-region-failure-detail
+        "戻りの借用に対応する入力の借用位置が無い"])
+    (resolve-annotation raw delta span)))
 
 (define (resolve-type-row raw-row delta inherited-span)
   (define span (nearest-span raw-row inherited-span))
@@ -3786,18 +3861,22 @@
                                    [expected-parameter-types #f]
                                    #:inherited-row
                                    [inherited-row #f]
+                                   #:named-region-binders
+                                   [named-region-binders '()]
                                    #:return-span [return-span #f])
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta
                     #:expected-parameter-types expected-parameter-types))
-      (define-values (region-binders signature-parameter-types)
+      (define-values (elided-region-binders signature-parameter-types)
         (elide-signature-input-regions parameter-types))
+      (define region-binders
+        (append named-region-binders elided-region-binders))
       (define _capture-flow-pin
         (flow-pin-captures! body parameters environment))
       (define return-type
         (elide-signature-return-region
-         region-binders (resolve-return) (or return-span s)))
+         signature-parameter-types (resolve-return) (or return-span s)))
       (define declared-row
         (or inherited-row
             (resolve-declaration-row raw-row delta boundaries s)))
@@ -4236,12 +4315,16 @@
 
     (define (elaborate-inferred-fn s parameter-binders raw-parameter-types
                                   raw-row body
-                                  environment delta propositions boundaries)
+                                  environment delta propositions boundaries
+                                  #:named-region-binders
+                                  [named-region-binders '()])
       (define-values (parameters parameter-types captures capture-types)
         (prepare-fn s parameter-binders raw-parameter-types body
                     environment delta))
-      (define-values (region-binders signature-parameter-types)
+      (define-values (elided-region-binders signature-parameter-types)
         (elide-signature-input-regions parameter-types))
+      (define region-binders
+        (append named-region-binders elided-region-binders))
       (define _capture-flow-pin
         (flow-pin-captures! body parameters environment))
       (define declared-row
@@ -4261,7 +4344,8 @@
           (elaborate-annotated-fn
            s parameter-binders raw-parameter-types
            (λ () inferred-return-type)
-           raw-row body environment delta propositions boundaries)
+           raw-row body environment delta propositions boundaries
+           #:named-region-binders named-region-binders)
           (let ()
             (define boundary (fresh-boundary))
             (define body-result
@@ -4274,7 +4358,8 @@
                                 boundaries))))))
             (define return-type (judgment-type body-result))
             (define signature-return-type
-              (elide-signature-return-region region-binders return-type s))
+              (elide-signature-return-region
+               signature-parameter-types return-type s))
             (check-function-body-row s body-result signature-return-type
                                      boundary declared-row)
             (define-values (capture-raw-names raw-names capture-binders core-binders
@@ -4312,7 +4397,8 @@
              #:on-body-result [on-body-result #f]
              #:exclude-loop-trial [exclude-loop-trial #f]
              #:row-trial [row-trial #f]
-             #:loop-row? [loop-row? #f])
+             #:loop-row? [loop-row? #f]
+             #:named-region-binders [named-region-binders '()])
       (when (and (block-body? body) (not allow-block-body?))
         (reject (block-body-span body) 'invalid-syntax))
       (define-values (function parameters parameter-types)
@@ -4329,11 +4415,13 @@
                 (reject s 'owned-recur-capture))
               (values function parameters parameter-types))))
       (define return-type (resolve-return))
-      (define-values (region-binders signature-parameter-types)
+      (define-values (elided-region-binders signature-parameter-types)
         (elide-signature-input-regions parameter-types))
+      (define region-binders
+        (append named-region-binders elided-region-binders))
       (define signature-return-type
         (elide-signature-return-region
-         region-binders return-type (or return-span s)))
+         signature-parameter-types return-type (or return-span s)))
       (define declared-row
         (or inherited-row
             (resolve-declaration-row raw-row delta boundaries s
@@ -4465,12 +4553,15 @@
              s raw-function parameter-binders raw-parameter-types
              raw-row body continuation
              environment delta propositions boundaries
-             #:body-boundary? [body-boundary? #f])
+             #:body-boundary? [body-boundary? #f]
+             #:named-region-binders [named-region-binders '()])
       (define-values (function parameters parameter-types parameter-environment)
         (prepare-inferred-recur-header
          s raw-function parameter-binders raw-parameter-types body environment delta))
-      (define-values (region-binders signature-parameter-types)
+      (define-values (elided-region-binders signature-parameter-types)
         (elide-signature-input-regions parameter-types))
+      (define region-binders
+        (append named-region-binders elided-region-binders))
       (define parameter-environment*
         (extend environment parameters signature-parameter-types #f
                 (map resource-type? signature-parameter-types)))
@@ -4490,7 +4581,7 @@
            #:preserve-escapes? #t)))
       (define return-type (judgment-type body-result))
       (define signature-return-type
-        (elide-signature-return-region region-binders return-type s))
+        (elide-signature-return-region signature-parameter-types return-type s))
       (unless (row-subset? (judgment-row body-result) declared-row)
         (reject s 'undeclared-recur-effect
                 declared-row (judgment-row body-result)))
@@ -4539,7 +4630,8 @@
     (define (elaborate-inferred-fndecl
              s raw-function parameter-binders raw-parameter-types
              raw-row body continuation
-             environment delta propositions boundaries)
+             environment delta propositions boundaries
+             #:named-region-binders [named-region-binders '()])
       (if (block-body? body)
           (let-values ([(function parameters parameter-types parameter-environment)
                         (prepare-inferred-recur-header
@@ -4558,11 +4650,13 @@
              #:boundary? (mentions-return? (list raw-row body))
              #:allow-block-body? #t
              #:prepared-header (list function parameters parameter-types)
-             #:inherited-row declared-row))
+             #:inherited-row declared-row
+             #:named-region-binders named-region-binders))
           (if (not (mentions-return? (list raw-row body)))
               (elaborate-recur-inferred
                s raw-function parameter-binders raw-parameter-types
-               raw-row body continuation environment delta propositions boundaries)
+               raw-row body continuation environment delta propositions boundaries
+               #:named-region-binders named-region-binders)
               (let-values ([(function parameters parameter-types parameter-environment)
                             (prepare-inferred-recur-header
                              s raw-function parameter-binders raw-parameter-types
@@ -4579,12 +4673,14 @@
                      (λ () inferred-return-type)
                      raw-row body continuation
                      environment delta propositions boundaries
-                     #:boundary? #t)
+                     #:boundary? #t
+                     #:named-region-binders named-region-binders)
                     (elaborate-recur-inferred
                      s raw-function parameter-binders raw-parameter-types
                      raw-row body continuation
                      environment delta propositions boundaries
-                     #:body-boundary? #t))))))
+                     #:body-boundary? #t
+                     #:named-region-binders named-region-binders))))))
 
     (define (synth expression environment delta propositions boundaries)
       (define s (span-of expression))
@@ -5238,7 +5334,7 @@
                           function)])
                  (elaborate-recur-annotated
                   s raw-function parameter-binders loop-parameter-types
-                  (λ () (resolve-annotation raw-return-type delta s))
+                  (λ () (resolve-signature-return-annotation raw-return-type delta s))
                   raw-row loop-body
                   `(Apply ,s (#:var ,function ,s) ,@initial-arguments)
                   environment delta propositions boundaries
@@ -5373,7 +5469,7 @@
               (and (for-generated-name? function "%for-loop") function)])
           (elaborate-recur-annotated
            s raw-function parameter-binders loop-parameter-types
-           (λ () (resolve-annotation raw-return-type delta s))
+           (λ () (resolve-signature-return-annotation raw-return-type delta s))
            raw-row loop-body
            `(Apply ,s (#:var ,function ,s) ,@initial-arguments)
            environment delta propositions boundaries
@@ -5568,21 +5664,29 @@
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                   ,raw-return-type ,raw-row ,body ,continuation)
          #:when (not (inferred? raw-return-type))
-         (elaborate-recur-annotated
-          s raw-function parameter-binders raw-parameter-types
-          (λ () (resolve-annotation raw-return-type delta s))
-          raw-row body continuation
-          environment delta propositions boundaries
-          #:boundary? (mentions-return? (list raw-row body))
-          #:allow-block-body? #t
-          #:return-span (nearest-span raw-return-type s))]
+         (call-with-named-region-params
+          raw-parameter-types
+          (λ (named-region-binders)
+            (elaborate-recur-annotated
+             s raw-function parameter-binders raw-parameter-types
+             (λ () (resolve-signature-return-annotation raw-return-type delta s))
+             raw-row body continuation
+             environment delta propositions boundaries
+             #:boundary? (mentions-return? (list raw-row body))
+             #:allow-block-body? #t
+             #:named-region-binders named-region-binders
+             #:return-span (nearest-span raw-return-type s))))]
 
         [`(FnDecl ,raw-function ((,parameter-binders ,raw-parameter-types) ...)
                   (#:infer ,_) ,raw-row ,body ,continuation)
-         (elaborate-inferred-fndecl
-          s raw-function parameter-binders raw-parameter-types
-          raw-row body continuation
-          environment delta propositions boundaries)]
+         (call-with-named-region-params
+          raw-parameter-types
+          (λ (named-region-binders)
+            (elaborate-inferred-fndecl
+             s raw-function parameter-binders raw-parameter-types
+             raw-row body continuation
+             environment delta propositions boundaries
+             #:named-region-binders named-region-binders)))]
 
         [`(FnDecl ,fields ...)
          (synth/raw `(Recur ,s ,@fields)
@@ -5605,18 +5709,27 @@
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               (#:infer ,_) ,raw-row ,body)
-         (elaborate-inferred-fn s parameter-binders raw-parameter-types raw-row
-                                body environment delta propositions boundaries)]
+         (call-with-named-region-params
+          raw-parameter-types
+          (λ (named-region-binders)
+            (elaborate-inferred-fn
+             s parameter-binders raw-parameter-types raw-row
+             body environment delta propositions boundaries
+             #:named-region-binders named-region-binders)))]
 
         [`(Fn ((,parameter-binders ,raw-parameter-types) ...)
               ,raw-return-type ,raw-row ,body)
-         (elaborate-annotated-fn
-          s parameter-binders raw-parameter-types
-          (λ () (resolve-annotation raw-return-type delta s))
-          raw-row body environment delta propositions boundaries
-          #:return-span
-          (and (not (inferred? raw-return-type))
-               (nearest-span raw-return-type s)))]
+         (call-with-named-region-params
+          raw-parameter-types
+          (λ (named-region-binders)
+            (elaborate-annotated-fn
+             s parameter-binders raw-parameter-types
+             (λ () (resolve-signature-return-annotation raw-return-type delta s))
+             raw-row body environment delta propositions boundaries
+             #:named-region-binders named-region-binders
+             #:return-span
+             (and (not (inferred? raw-return-type))
+                  (nearest-span raw-return-type s)))))]
 
         [`(BlockBody ,inner)
          (synth-when-arm-block-body (block-body-span expression) inner environment delta
@@ -6064,7 +6177,7 @@
                  ,raw-return-type ,raw-row ,body ,continuation)
          (elaborate-recur-annotated
           s raw-function parameter-binders raw-parameter-types
-          (λ () (resolve-annotation raw-return-type delta s))
+          (λ () (resolve-signature-return-annotation raw-return-type delta s))
           raw-row body continuation
           environment delta propositions boundaries
           #:boundary? #f)]
@@ -6799,21 +6912,25 @@
                        (not (= (length parameter-types)
                                (length raw-parameter-types))))
               (reject infer-span 'parameter-type-not-inferable 'arity-mismatch))
-            (check-against-expected
-             (elaborate-annotated-fn
-              s parameter-binders raw-parameter-types
-              (if (inferred? raw-return-type)
-                  (λ () return-type)
-                  (λ () (resolve-annotation raw-return-type delta s)))
-              raw-row body environment delta propositions boundaries
-              #:expected-parameter-types
-              (and omitted-parameters? parameter-types)
-              #:inherited-row
-              (and (inferred-row? raw-row) expected-row)
-              #:return-span
-              (and (not (inferred? raw-return-type))
-                   (nearest-span raw-return-type s)))
-             expected s propositions)]
+            (call-with-named-region-params
+             raw-parameter-types
+             (λ (named-region-binders)
+               (check-against-expected
+                (elaborate-annotated-fn
+                 s parameter-binders raw-parameter-types
+                 (if (inferred? raw-return-type)
+                     (λ () return-type)
+                     (λ () (resolve-signature-return-annotation raw-return-type delta s)))
+                 raw-row body environment delta propositions boundaries
+                 #:named-region-binders named-region-binders
+                 #:expected-parameter-types
+                 (and omitted-parameters? parameter-types)
+                 #:inherited-row
+                 (and (inferred-row? raw-row) expected-row)
+                 #:return-span
+                 (and (not (inferred? raw-return-type))
+                      (nearest-span raw-return-type s)))
+                expected s propositions)))]
            [_
             (check-against-expected
              (synth expression environment delta propositions boundaries)

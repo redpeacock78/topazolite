@@ -16,6 +16,12 @@
   (define r (lower-surface p (current-trait-env)))
   (if (lowered? r) (lowered-term r) r))
 (define (low str) (lower-term (parse (lex/string 'src str))))
+(define (contains-form? tree wanted)
+  (or (and (pair? tree) (eq? (car tree) wanted))
+      (and (pair? tree) (ormap (lambda (part) (contains-form? part wanted)) tree))))
+(define (source-span source needle)
+  (match (car (regexp-match-positions* (regexp (regexp-quote needle)) source))
+    [(cons start end) `(#:span src ,start ,end)]))
 
 (define (block-body source)
   (match (low source)
@@ -127,9 +133,17 @@
  (check-true (redex-match? UCore+ e r)))
 
 (test-case
- "named region と束縛子は lower-surface ではまだ E-SUR-005"
- (check-equal? (diagnostic-id (low "fn f<r>(p: &r Int) { () }\n0")) "E-SUR-005")
- (check-equal? (diagnostic-id (low "fn f(p: &Int) -> &r Int { return p }\n0")) "E-SUR-005"))
+ "named region は束縛子へ lower し、未宣言名は E-SUR-008"
+ (define accepted (low "fn f<r>(p: &r Int) { () }\n0"))
+ (check-false (diagnostic? accepted))
+ (check-true (redex-match? UCore+ e accepted))
+ (check-true (contains-form? accepted 'RName))
+ (define source "fn f(p: &Int) -> &r Int { return p }\n0")
+ (define rejected (low source))
+ (define region-span (source-span source "r Int"))
+ (check-equal? (diagnostic-id rejected) "E-SUR-008")
+ (check-equal? (diagnostic-primary-span rejected)
+               `(#:span src ,(third region-span) ,(add1 (third region-span)))))
 
 (test-case
  "SUR-008: 省略した戻り型は関数全体の span を持つ #:infer へ落ちる"

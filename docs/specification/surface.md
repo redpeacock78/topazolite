@@ -596,10 +596,13 @@ elaborate は資源型の枝 binder を消費する encoding などで UCore の
 
 Surface の借用型は `&T`、`&mut T`、`&r T`、`&mut r T` であり、`let` の型注釈、関数宣言および型注釈付き無名関数の仮引数型と戻り型に書ける。
 関数宣言の束縛子は関数名の直後の `fn f<r>(...)`、無名関数の束縛子は `fn<r>(...)` と書く。
-parser は束縛子列と各借用位置の region 名を Surface AST に保持するが、名前付き region の lower-surface は Task 1 の中間状態では `E-SUR-005` を返し、意味処理は次段で行う。
 仮引数型と戻り型の内部では、record の欄、型適用の引数、Union の成員、借用の payload へ再帰的に書ける。
 借用型の各位置には別の region 束縛子を割り当てる。
 region 名を省略した位置には別々の束縛子を割り当てる。
+名前付き region は関数の仮引数の借用位置で導入し、同じ宣言の戻り型と本体の注釈で参照できる。
+一つの名前付き region の複数の借用位置は同じ束縛子を共有し、名前を省略した位置はそれぞれ独立した束縛子を持つ。
+入れ子の関数は外側の名前付き region を型に参照できるが、外側の借用値を捕捉する場合は `E-BOR-027` で拒否する。
+入力の借用位置に現れない名前付き region は、戻り型では `E-BOR-020`、本体の注釈では `E-BOR-020` とする。
 
 戻り型に借用がある場合、入力の借用位置がちょうど一つなら、戻り型のすべての借用にその位置の束縛子を割り当てる。
 入力の借用位置が二つ以上なら `E-BOR-020` を返し、「入力の借用位置が複数あるため戻りの region を省略できない。明示の region を指定する」と示す。
@@ -609,7 +612,8 @@ region 名を省略した位置には別々の束縛子を割り当てる。
 
 関数型の表記、型別名、data の欄、trait の要求欄に借用型を書くと `E-SUR-005` になる。
 これらの位置では、関数型内の region binder、data 宣言の region 引数、trait の借用署名をまだ定めていない。
-関数署名の呼出し時の region 実体化は未対応であり、SUR-004b1 の次段で扱う。
+名前付き region を含む関数の呼出しでは、実引数から共通 region を解く。
+generic な関数本体の `RParam` と局所 region の両方から共通 region を解く範囲は SUR-004 の後続段階で扱う。
 
 `&x` と `&mut x` は識別子 `x` を共有または可変に借りる。
 対象は `Owned` の束縛であり、`let mut` が作る `MutSlot` は対象にならない。
@@ -1105,7 +1109,7 @@ Surface から到達する借用規則の違反には `E-BOR-003`、`E-BOR-004`�
 - `E-SUR-005` `surface-unexpected-token`：構文が合わないトークン
 - `E-SUR-006` `surface-unexpected-eof`：入力が構文の途中で終わる
 - `E-SUR-007` `surface-duplicate-field`：record または record 型の同じフィールドを 2 度書いた
-- `E-SUR-008` `surface-unknown-type-name`：宣言の無い型の名前
+- `E-SUR-008` `surface-unknown-type-name`：宣言の無い型または region の名前
 - `E-SUR-009` `surface-duplicate-type-alias`：同じ型別名を 2 度宣言した
 - `E-SUR-010` `surface-recursive-type-alias`：型別名の参照に循環がある
 - `E-SUR-011` `surface-reserved-type-name`：基本型の名前を型別名として宣言した
@@ -1127,7 +1131,7 @@ Surface から到達する借用規則の違反には `E-BOR-003`、`E-BOR-004`�
 - `E-SUR-027` `surface-duplicate-data-type`：同じ名前の data 型を 2 度宣言した、または基底の data 型と同じ名前の data 型を宣言した
 - `E-SUR-028` `surface-reserved-data-type-name`：組み込み型の名前を data 型の名前として宣言した
 - `E-SUR-029` `surface-duplicate-constructor`：constructor の名前が組み込み、基底、または他の宣言の constructor と重なった
-- `E-SUR-030` `surface-duplicate-type-parameter`：data 型の宣言で同じ型仮引数を 2 度書いた
+- `E-SUR-030` `surface-duplicate-type-parameter`：data 型または関数の宣言で同じ束縛子を 2 度書いた
 - `E-SUR-031` `surface-type-data-name-collision`：data 型の名前と型別名の名前が重なった
 - `E-SUR-032` `surface-constructor-value-name-collision`：constructor の名前が top-level の関数、基底の constructor、または kernel の `Γ0` の名前と重なった。組み込み constructor と top-level 関数の重なりも含む
 - `E-SUR-033` `surface-irregular-data-recursion`：data 型の再帰的な出現の型引数が宣言の型仮引数の並びと一致しない

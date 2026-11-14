@@ -25,8 +25,8 @@
           (Implements uτ tn)
           (RequiresBoth tn tn))
   (uQ ::= (uφ ...))
-  ;; SUR-004a1。region は a1b では省略のみを表す。
-  (uω ::= Omitted)
+  ;; SUR-004b2a。named region は elaboration で RParam へ解決される。
+  (uω ::= Omitted (RName x))
   (uτ ::= Int Bool Unit String Never Res
           T
           (Data T (uτ ...))

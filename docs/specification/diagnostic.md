@@ -306,6 +306,8 @@ registry version 40 で elaborate に `E-RET-006` `leave-outside-expression-boun
 
 `E-SUR-015` の title は要求欄の呼出しにも適用する文面へ広げた。診断 code 集合は変わらないため、registry version と凍結 fixture は変更しない。
 
+`E-SUR-008` と `E-SUR-030` の title は、region 名と関数宣言の束縛子にも適用する文面へ広げる。診断 code 集合は変わらないため、registry version と凍結 fixture は変更しない。
+
 現在の registry は 232 行である。
 
 `deprecated-in` を持つのは 8 行である。
