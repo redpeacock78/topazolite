@@ -204,6 +204,10 @@
 ;; 実行時再型付けで借用の所有者を引くため、静的検査時の Region IR を受け取る。
 (define config-runtime-region-ir (make-parameter #f))
 
+;; Scope 脱出検査で managed root の実値を調べる。構成から渡すのは
+;; Available root だけにし、Moved/Dropped の stale heap 値は見せない。
+(define config-scope-capture-values (make-parameter '()))
+
 ;; config の再型付けでは Λ に region IR が無いので、検査する Core 全体の
 ;; place 位置の射影の point を保持する。
 (define config-projborrow-place-points (make-parameter #f))
@@ -211,9 +215,12 @@
 ;; configuration の型導出と runtime-row が同じ抑止範囲を共有する。
 (define (with-config-typing thunk
                             #:region-ir [region-ir
-                                         (config-runtime-region-ir)])
+                                         (config-runtime-region-ir)]
+                            #:heap-values [heap-values
+                                           (config-scope-capture-values)])
   (parameterize ([deriving-config? #t]
-                 [config-runtime-region-ir region-ir])
+                 [config-runtime-region-ir region-ir]
+                 [config-scope-capture-values heap-values])
     (thunk)))
 
 ;; 制約の収集器（spec §5.2）。既定は #f であり、その場合は何も記録しない。
@@ -7967,14 +7974,22 @@
       [_ scope-capture-unknown]))
   (define (transfer-value place values)
     (define root (place-name place))
-    ;; An unmodified managed root predates this Scope; its Move is not a new loan.
+    ;; An unmodified root's Move is not itself a loan, but its config value may
+    ;; contain a closure that still refers to another managed owner.
     (if (and root
              (member root managed)
              (not (hash-has-key? updates root))
              (not (match (assoc root values)
                     [(cons _ (? scope-capture-value?)) #t]
                     [_ #f])))
-        scope-capture-empty
+        (match (assoc root (config-scope-capture-values))
+          [(list _ value)
+           (scope-capture-value
+            'aggregate #f
+            (managed-owner-references value
+                                      (list->set (core-free-vars value)))
+            #f)]
+          [_ scope-capture-empty])
         (place-value place values)))
   (define (return-value? value)
     (eq? (scope-capture-value-kind value) 'return))
@@ -12332,6 +12347,11 @@
   ;; entry-violation と共通の型・形状検査に加え、config-ok? は構成固有の
   ;; root/leaf 位置と token 状態も検査する。places は heap から導出するが、
   ;; own 注釈の整合は entry-violation と同じ検査で確かめる。
+  (define heap-values
+    (match configuration
+      [`(cfg ,_ ,heap ,states ,_ ,_)
+       (available-place-values heap states)]
+      [_ '()]))
   (with-config-typing (lambda ()
     (and (redex-match? G2m config configuration)
          (core-types-normal? configuration)
@@ -12470,7 +12490,8 @@
                                         [(Dropped) (and (= s 0) (<= o 1))]
                                         [else #f]))))))))))))))]
            [_ #f])))
-                     #:region-ir region-ir))
+                     #:region-ir region-ir
+                     #:heap-values heap-values))
 
 (module+ test
   (require rackunit)

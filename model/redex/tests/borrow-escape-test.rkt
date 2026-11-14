@@ -10,6 +10,7 @@
          "../borrow.rkt"
          "../origins.rkt"
          "../traits.rkt"
+         "../gen.rkt"
          "../typing.rkt")
 
 ;; 内側 Scope の結果は外側 owner の生存中に消費できる。
@@ -502,6 +503,49 @@
     capture-callables '()
     `((1 ,opaque-captured-closure-type)))
    "E-BOR-004"))
+
+(test-case "heap closure が Scope 管理 owner を参照していれば Move 脱出を拒否する"
+  (define function-type '(NFn () Int () () () User))
+  (define core '(Scope (0 1) (Move 0)))
+  (define ir (build-region-ir core))
+  (define callables `((heap-reader ,function-type)))
+  (define (config closure)
+    `(cfg ,core
+          ((0 ,closure (declared ,function-type))
+           (1 23 (declared Int)))
+          ((0 Available) (1 Available)) () ()))
+  (define (type-failure-key closure)
+    (match
+        (with-config-typing
+         (lambda ()
+           (type-of/raw core `((0 ,function-type) (1 Int)) callables))
+         #:region-ir ir
+         #:heap-values `((0 ,closure) (1 23)))
+      [(list 'fail key _node _details ...) key]
+      [_ #f]))
+  (define (check-config closure escapes?)
+    (define cfg (config closure))
+    (define row (runtime-row cfg callables function-type #:region-ir ir))
+    (if escapes?
+        (begin
+          (check-eq? (type-failure-key closure) 'borrow-escapes-owner)
+          (check-false row "heap capture は runtime-row の再型付けで拒否する")
+          (check-false (config-ok? cfg callables function-type '(Own)
+                                  #:region-ir ir)
+                       "config-ok? も heap capture を拒否する"))
+        (begin
+          (check-equal? row '(Own))
+          (check-true (config-ok? cfg callables function-type row
+                                  #:region-ir ir)))))
+  ;; BorrowAt は実行 Core の注釈形。裸の Borrow は config の region IR なしでは
+  ;; 型付けできないため、この形で place 1 への参照を表す。
+  (check-config
+   '(Lam User heap-reader () (Read (BorrowAt 0 (Own 1 ()) 1)))
+   #t)
+  (check-config
+   '(Lam User heap-reader () (Read (BorrowRef 1 () 0)))
+   #t)
+  (check-config '(Lam User heap-reader () 17) #f))
 
 (test-case "管理 owner の未更新値を Move するだけでは借用捕捉にならない"
   (check-region-typed
