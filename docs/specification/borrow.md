@@ -399,6 +399,12 @@ Core の `Apply` に専用の呼出し region は無い。
 条件 4 は Scope の退場で loan を終えられる条件であり、これを満たさない payload でも `handle` 出口として解決できれば loan は Scope 退場では終わらず、§8 のとおり対応する Handle の region まで生きる。
 その出口を解決できない payload は `E-BOR-020` で拒否する。
 
+Scope の通常結果または Scope 内の `Perform(Return, payload)` が、そこで管理する owner の借用を実際に捕捉した関数値を外へ運ぶ場合は `E-BOR-004` で拒否する。
+判定は型に region が現れることだけでは行わず、値の capture provenance が管理対象の owner に結び付くかを見る。
+`Perform(Return, payload)` は Scope 内の対応する handler の下にない各出現を検査する。関数本体の `Perform` は latent event であり、関数値を作るだけでは Scope の出口に数えず、Scope 内で呼び出した場合にその評価中の出現を検査する。
+関数を含む値の provenance を Scope 内で追えない場合は、その Scope が owner を管理するときに限り fail closed とする。本文が分からない callee の Apply 結果は callee の値と実引数の値の provenance を合流する。
+対応する handler が Scope 内で payload を受け取り、その関数値を Scope 内で消費する形は Scope を越えないため、この拒否の対象ではない。
+
 部分適用は借用が現れる署名を運べない。
 置き換えは呼出しの出現に結び付いており、部分適用が作る関数値には出現の情報が残らない。
 借用が現れる署名を `Curry` と `CurryVal` へ渡すと落とす。

@@ -7817,6 +7817,673 @@
 (define (typing-child-result Λ index)
   (typing-result-at (enter-child Λ index)))
 
+(struct scope-capture-value (kind data owners unknown?) #:transparent)
+(struct scope-capture-function (kind parameters body environment context)
+  #:transparent)
+(struct scope-capture-perform-event
+  (operation payload-type payload-point handled-by)
+  #:transparent)
+
+(define current-scope-capture-handlers (make-parameter '()))
+(define current-scope-capture-active-recur (make-parameter '()))
+
+(define scope-capture-empty (scope-capture-value 'plain #f (set) #f))
+(define scope-capture-unknown (scope-capture-value 'unknown #f (set) #t))
+
+(define (scope-capture-join values)
+  (define normal-values
+    (filter (lambda (value)
+              (not (eq? (scope-capture-value-kind value) 'return)))
+            values))
+  (if (null? normal-values)
+      (or (findf (lambda (value)
+                   (eq? (scope-capture-value-kind value) 'return))
+                 values)
+          scope-capture-empty)
+      (scope-capture-value
+       'aggregate #f
+       (for/fold ([owners (set)]) ([value (in-list normal-values)])
+         (set-union owners (scope-capture-value-owners value)))
+       (ormap scope-capture-value-unknown? normal-values))))
+
+(define (scope-capture-function-type? type)
+  (let walk ([term (peel-ty type)])
+    (cond
+      [(pair? term)
+       (or (eq? (car term) 'NFn)
+           (for/or ([part (in-list term)]) (walk part)))]
+      [else #f])))
+
+(define (scope-capture-return? value)
+  (eq? (scope-capture-value-kind value) 'return))
+
+(define (scope-capture-value-at core Λ environment managed table
+                                [updates (make-hash)]
+                                [perform-events (box '())])
+  (define (record! context node value)
+    (hash-update! table (region-ctx-point context)
+                  (lambda (previous) (cons value previous))
+                  (list value))
+    value)
+  (define (child context index) (enter-child context index))
+  (define (type-at context)
+    (match (typing-result-at context)
+      [(list actual normal _ _)
+       (if (eq? actual 'Never) normal actual)]
+      [_ #f]))
+  (define (environment-value values name)
+    (hash-ref updates name
+              (lambda ()
+                (match (assoc name values)
+                  [(cons _ (? scope-capture-value? value)) value]
+                  [_ scope-capture-empty]))))
+  (define (extend-values values name value [binding-updates updates])
+    (hash-remove! binding-updates name)
+    (cons (cons name value)
+          (filter (lambda (entry) (not (eq? (car entry) name))) values)))
+  (define (place-name place)
+    (match (peel-node place)
+      [(? symbol? name) name]
+      [(? exact-nonnegative-integer? place) place]
+      [`(MutSlot ,place) place]
+      [`(Proj ,base ,_) (place-name base)]
+      [_ #f]))
+  (define (root-value root values)
+    (cond
+      [(hash-has-key? updates root) (hash-ref updates root)]
+      [(not (member root managed)) scope-capture-empty]
+      [(assoc root values)
+       => (lambda (entry)
+            (if (scope-capture-value? (cdr entry))
+                (cdr entry)
+                scope-capture-unknown))]
+      [else scope-capture-unknown]))
+  (define (managed-place-roots place free-names)
+    (match (peel-node place)
+      [(? exact-nonnegative-integer? root)
+       (if (member root managed) (set root) (set))]
+      [(? symbol? root)
+       (if (and (set-member? free-names root) (member root managed))
+           (set root)
+           (set))]
+      [`(Proj ,base ,_) (managed-place-roots base free-names)]
+      [`(MutSlot ,base) (managed-place-roots base free-names)]
+      [_ (set)]))
+  (define (managed-owner-references core free-names)
+    (define term (peel-node core))
+    (define own-roots
+      (match term
+        [`(,(or 'Borrow 'BorrowMut 'Read 'Move 'Forward) ,place)
+         (managed-place-roots place free-names)]
+        [`(,(or 'BorrowAt 'BorrowMutAt) ,_ ,_ ,place)
+         (managed-place-roots place free-names)]
+        [`(,(or 'BorrowRef 'BorrowMutRef) ,owner ,_ ,_)
+         (managed-place-roots owner free-names)]
+        [`(Assign ,target ,_)
+         (managed-place-roots target free-names)]
+        [`(Reassign ,target ,_ ,_)
+         (managed-place-roots target free-names)]
+        [_ (set)]))
+    (for/fold ([roots own-roots]) ([child (in-list (core-children term))])
+      (set-union roots (managed-owner-references child free-names))))
+  (define (unresolved-projection value)
+    (scope-capture-value 'aggregate #f
+                         (scope-capture-value-owners value)
+                         (scope-capture-value-unknown? value)))
+  (define (update-place! place value)
+    (define name (place-name place))
+    (when name (hash-set! updates name value)))
+  (define (update-borrow-roots! target capability value values)
+    (when (eq? (scope-capture-value-kind capability) 'borrow)
+      (define direct-root?
+        (match (peel-node target)
+          [`(,(or 'BorrowMut 'BorrowMutAt 'BorrowMutRef) . ,_) #t]
+          [_ #f]))
+      (for ([root (in-set (scope-capture-value-owners capability))])
+        (hash-set! updates root
+                   (if direct-root?
+                       value
+                       (scope-capture-join (list (root-value root values)
+                                                 value)))))))
+  (define (owner-of place values)
+    (match (peel-node place)
+      [(? exact-nonnegative-integer? owner) owner]
+      [(? symbol? name) name]
+      [`(Proj ,base ,_) (owner-of base values)]
+      [_ (peel-node place)]))
+  (define (place-value place values)
+    (match (peel-node place)
+      [(? exact-nonnegative-integer? root) (root-value root values)]
+      [(? symbol? name)
+       (if (member name managed)
+           (root-value name values)
+           (environment-value values name))]
+      [`(Proj ,base ,label)
+       (define base-value (place-value base values))
+       (if (eq? (scope-capture-value-kind base-value) 'record)
+           (hash-ref (scope-capture-value-data base-value) label
+                     scope-capture-unknown)
+           (unresolved-projection base-value))]
+      [_ scope-capture-unknown]))
+  (define (return-value? value)
+    (eq? (scope-capture-value-kind value) 'return))
+  (define (perform-return! operation payload-type payload-point)
+    (define handled-by
+      (for/first ([frame (in-list (current-scope-capture-handlers))]
+                  #:when (equal? operation (car frame)))
+        (cdr frame)))
+    (set-box! perform-events
+              (cons (scope-capture-perform-event
+                     operation payload-type payload-point handled-by)
+                    (unbox perform-events))))
+  (define (values-at-point point)
+    (define values (hash-ref table point '()))
+    (if (pair? values) (scope-capture-join values) scope-capture-unknown))
+  (define (capture-free-vars body bound values)
+    (define free-names
+      (set-subtract (core-free-vars body) (list->set bound)))
+    (define captures
+      (for/list ([name (in-set free-names)])
+        (if (member name managed)
+            (scope-capture-value 'owner #f (set name) #f)
+            ;; A free value absent from this local environment predates this Scope.
+            (environment-value values name))))
+    (define direct-owners (managed-owner-references body free-names))
+    (scope-capture-join
+     (if (set-empty? direct-owners)
+         captures
+         (cons (scope-capture-value 'owner #f direct-owners #f) captures))))
+  (define (make-function kind parameters body values context)
+    (define captures (capture-free-vars body parameters values))
+    (scope-capture-value
+     'callable
+     (scope-capture-function kind parameters body values (child context 0))
+     (scope-capture-value-owners captures)
+     (scope-capture-value-unknown? captures)))
+  (define (record-value fields)
+    (define values (hash-values fields))
+    (define joined
+      (if (pair? values) (scope-capture-join values) scope-capture-empty))
+    (scope-capture-value 'record fields
+                         (scope-capture-value-owners joined)
+                         (scope-capture-value-unknown? joined)))
+  (define (option-value constructor values)
+    (define joined
+      (if (pair? values) (scope-capture-join values) scope-capture-empty))
+    (scope-capture-value 'construct (list constructor values)
+                         (scope-capture-value-owners joined)
+                         (scope-capture-value-unknown? joined)))
+  (define (apply-function function arguments context)
+    (match (scope-capture-value-data function)
+      [(scope-capture-function 'lambda parameters body values body-context)
+       (if (= (length parameters) (length arguments))
+           (scope-capture-value-at
+            body body-context
+            (for/fold ([next values]) ([name (in-list parameters)]
+                                      [argument (in-list arguments)])
+              (extend-values next name argument))
+            managed table updates perform-events)
+           scope-capture-unknown)]
+      [(scope-capture-function 'recur (cons recursive-name parameters)
+                               body values body-context)
+       (cond
+         [(not (= (length parameters) (length arguments)))
+          scope-capture-unknown]
+         [(memq function (current-scope-capture-active-recur))
+          (scope-capture-join (cons function arguments))]
+         [else
+          (parameterize
+              ([current-scope-capture-active-recur
+                (cons function (current-scope-capture-active-recur))])
+            (scope-capture-value-at
+             body body-context
+             (for/fold ([next (extend-values values recursive-name function)])
+                       ([name (in-list parameters)]
+                        [argument (in-list arguments)])
+               (extend-values next name argument))
+             managed table updates perform-events))])]
+      [(scope-capture-function 'region _ body values body-context)
+       (apply-function
+        (scope-capture-value-at body body-context values managed table
+                                updates perform-events)
+        arguments context)]
+      [(list 'curry curried fixed-argument)
+       (apply-function curried (cons fixed-argument arguments) context)]
+      [_ (scope-capture-join (cons function arguments))]))
+  (define (branch-binders branch)
+    (match (peel-branch branch)
+      [`(,_ (,binders ...) -> ,_) (map peel-bind binders)]
+      [`(,_ (,binders ...) (,_ ...) -> ,_) (map peel-bind binders)]
+      [`(,_ ,binder ,_ -> ,_) (list (peel-bind binder))]
+      [_ '()]))
+  (define (eval-branches branches context values scrutinee)
+    (define baseline (hash-copy updates))
+    (define branches+updates
+      (for/list ([branch (in-list branches)] [index (in-naturals)]
+                 #:when
+                 (match scrutinee
+                   [(scope-capture-value 'construct (list constructor _) _ _)
+                    (equal? constructor (first (peel-branch branch)))]
+                   [_ #t]))
+        (define binders (branch-binders branch))
+        (define payload-values
+          (match scrutinee
+            [(scope-capture-value 'union payload _ _) (list payload)]
+            [(scope-capture-value 'construct (list constructor fields) _ _)
+             (if (equal? constructor (first (peel-branch branch)))
+                 fields
+                 '())]
+            [_ '()]))
+        (define unknown-payload
+          (scope-capture-value
+           'aggregate #f
+           (scope-capture-value-owners scrutinee)
+           (scope-capture-value-unknown? scrutinee)))
+        (define branch-updates (hash-copy baseline))
+        (define branch-values
+          (for/fold ([next values]) ([name (in-list binders)]
+                                     [binder-index (in-naturals)])
+            (extend-values
+             next name
+             (if (< binder-index (length payload-values))
+                 (list-ref payload-values binder-index)
+                 unknown-payload)
+             branch-updates)))
+        (cons (scope-capture-value-at
+               (last (peel-branch branch)) (child context (add1 index))
+               branch-values managed table branch-updates perform-events)
+              branch-updates)))
+    (define keys
+      (for/fold ([keys (hash-keys baseline)])
+                ([branch (in-list branches+updates)])
+        (remove-duplicates (append keys (hash-keys (cdr branch))) eq?)))
+    (for ([name (in-list keys)])
+      (define previous-present? (hash-has-key? baseline name))
+      (define previous (hash-ref baseline name scope-capture-empty))
+      (define branch-values
+        (for/list ([branch (in-list branches+updates)])
+          (hash-ref (cdr branch) name previous)))
+      (when (or (not previous-present?)
+                (ormap (lambda (value) (not (eq? value previous))) branch-values))
+        (hash-set! updates name (scope-capture-join branch-values))))
+    (scope-capture-join (map car branches+updates)))
+  (define (eval core context values)
+    (define term (peel-node core))
+    (define (finish value) (record! context core value))
+    (match term
+      [(? exact-integer?) (finish scope-capture-empty)]
+      [(? string?) (finish scope-capture-empty)]
+      [(? symbol? name) (finish (environment-value values name))]
+      ['unit (finish scope-capture-empty)]
+      [`(Borrow ,place)
+       (finish (scope-capture-value 'borrow #f
+                                    (set (owner-of place values)) #f))]
+      [`(BorrowMut ,place)
+       (finish (scope-capture-value 'borrow #f
+                                    (set (owner-of place values)) #f))]
+      [`(BorrowAt ,_ ,_ ,place)
+       (finish (scope-capture-value 'borrow #f
+                                    (set (owner-of place values)) #f))]
+      [`(BorrowMutAt ,_ ,_ ,place)
+       (finish (scope-capture-value 'borrow #f
+                                    (set (owner-of place values)) #f))]
+      [`(BorrowRef ,owner ,_ ,_)
+       (finish (scope-capture-value 'borrow #f (set owner) #f))]
+      [`(BorrowMutRef ,owner ,_ ,_)
+       (finish (scope-capture-value 'borrow #f (set owner) #f))]
+      [`(PrimVal ,_ ,_)
+       (finish (if (scope-capture-function-type? (type-at context))
+                   (scope-capture-value 'callable #f (set) #f)
+                   scope-capture-empty))]
+      [`(Absent ,_)
+       (finish (scope-capture-value 'absent #f (set) #f))]
+      [`(Read ,place)
+       (define value (eval place (child context 0) values))
+       (define target-type (type-at (child context 0)))
+       (define borrowed-target?
+         (match target-type
+           [`(,(or 'Borrowed 'BorrowedMut) . ,_) #t]
+           [_ #f]))
+       (finish
+        (if (return-value? value)
+            value
+            (if (scope-capture-function-type? (type-at context))
+                (if borrowed-target?
+                    (if (scope-capture-value-unknown? value)
+                        value
+                        (scope-capture-join
+                         (for/list ([root (in-set
+                                           (scope-capture-value-owners value))])
+                           (place-value root values))))
+                    value)
+                scope-capture-empty)))]
+      [`(Move ,place)
+       (finish (place-value place values))]
+      [`(Forward ,place)
+       (finish (place-value place values))]
+      [`(Reborrow ,parent)
+       (finish (eval parent (child context 0) values))]
+      [`(ReborrowAt ,_ ,parent)
+       (finish (eval parent (child context 0) values))]
+      [`(ProjBorrow ,parent ,_)
+       (finish (eval parent (child context 0) values))]
+      [`(ProjBorrowAt ,_ ,parent ,_)
+       (finish (eval parent (child context 0) values))]
+      [`(Lam ,_ ,_ (,parameters ...) ,body)
+       (finish (make-function 'lambda (map peel-bind parameters) body
+                              values context))]
+      [`(RegionLam (,parameters ...) ,body)
+       (finish (make-function 'region parameters body values context))]
+      [`(RecurVal ,_ ,function (,parameters ...) ,body)
+       (finish (make-function 'recur
+                              (cons (peel-bind function)
+                                    (map peel-bind parameters))
+                              body values context))]
+      [`(RegionApp ,function ,_)
+       (finish (eval function (child context 0) values))]
+      [`(Discharge ,_ ,inner)
+       (finish (eval inner (child context 0) values))]
+      [`(OwnLeaf ,payload)
+       (finish (eval payload (child context 0) values))]
+      [`(OwnedLeaf ,_ ,payload)
+       (finish (eval payload (child context 0) values))]
+      [`(OwnedTransit ,_ ,payload)
+       (finish (eval payload (child context 0) values))]
+      [`(UVal ,payload)
+       (finish (eval payload (child context 0) values))]
+      [`(RVal ,_ ,payload)
+       (finish (eval payload (child context 0) values))]
+      [`(Curry ,function ,argument)
+       (define function-value (eval function (child context 0) values))
+       (if (return-value? function-value)
+           (finish function-value)
+           (let ([argument-value (eval argument (child context 1) values)])
+             (if (return-value? argument-value)
+                 (finish argument-value)
+                 (let ([captures
+                        (scope-capture-join
+                         (list function-value argument-value))])
+                   (finish
+                    (scope-capture-value
+                     'callable
+                     (list 'curry function-value argument-value)
+                     (scope-capture-value-owners captures)
+                     (scope-capture-value-unknown? captures)))))))]
+      [`(CurryVal ,_ ,function ,argument)
+       (define function-value (eval function (child context 0) values))
+       (define argument-value (eval argument (child context 1) values))
+       (define captures
+         (scope-capture-join (list function-value argument-value)))
+       (finish
+        (scope-capture-value
+         'callable (list 'curry function-value argument-value)
+         (scope-capture-value-owners captures)
+         (scope-capture-value-unknown? captures)))]
+      [`(Apply ,function ,arguments ...)
+       (define function-value (eval function (child context 0) values))
+       (if (return-value? function-value)
+           (finish function-value)
+           (let loop ([remaining arguments] [index 1] [argument-values '()])
+             (if (null? remaining)
+                 (finish (apply-function function-value
+                                         (reverse argument-values) context))
+                 (let ([argument-value
+                        (eval (car remaining) (child context index) values)])
+                   (if (return-value? argument-value)
+                       (finish argument-value)
+                       (loop (cdr remaining) (add1 index)
+                             (cons argument-value argument-values)))))))]
+      [`(Let (,binder ,_ ...) ,bound ,body)
+       (define name (peel-bind binder))
+       (define bound-value (eval bound (child context 0) values))
+       (finish (if (return-value? bound-value)
+                   bound-value
+                   (eval body (child context 1)
+                         (extend-values values name bound-value))))]
+      [`(Rec ((,labels ,_ ,expressions) ...))
+       (define fields
+         (for/fold ([result (hash)])
+                   ([label (in-list labels)] [expression (in-list expressions)]
+                    [index (in-naturals)])
+           (hash-set result label
+                     (eval expression (child context index) values))))
+       (finish (record-value fields))]
+      [`(Proj ,record ,label)
+       (define value (eval record (child context 0) values))
+       (finish (if (return-value? value)
+                   value
+                   (if (eq? (scope-capture-value-kind value) 'record)
+                       (hash-ref (scope-capture-value-data value) label
+                                 scope-capture-unknown)
+                       (unresolved-projection value))))]
+      [`(ProjOpt ,_ ,record ,label)
+       (define record-value (eval record (child context 0) values))
+       (finish
+        (cond
+          [(return-value? record-value) record-value]
+          [(eq? (scope-capture-value-kind record-value) 'record)
+           (define field
+             (hash-ref (scope-capture-value-data record-value) label #f))
+           (if (or (not field)
+                   (eq? (scope-capture-value-kind field) 'absent))
+               (option-value 'none '())
+               (option-value 'some (list field)))]
+          [else (unresolved-projection record-value)]))]
+      [`(UnionInject ,_ ,_ ,payload)
+       (define value (eval payload (child context 0) values))
+       (finish (if (return-value? value)
+                   value
+                   (scope-capture-value 'union value
+                                        (scope-capture-value-owners value)
+                                        (scope-capture-value-unknown? value))))]
+      [`(UnionVal ,_ ,_ ,payload)
+       (define value (eval payload (child context 0) values))
+       (finish (if (return-value? value)
+                   value
+                   (scope-capture-value 'union value
+                                        (scope-capture-value-owners value)
+                                        (scope-capture-value-unknown? value))))]
+      [`(Eliminate ,scrutinee ,branches)
+       (define value (eval scrutinee (child context 0) values))
+       (finish (if (return-value? value) value
+                   (eval-branches branches context values value)))]
+      [`(EliminateAt ,scrutinee ,branches)
+       (define value (eval scrutinee (child context 0) values))
+       (finish (if (return-value? value) value
+                   (eval-branches branches context values value)))]
+      [`(UnionEliminate ,scrutinee ,branches)
+       (define value (eval scrutinee (child context 0) values))
+       (finish (if (return-value? value) value
+                   (eval-branches branches context values value)))]
+      [`(UnionEliminateAt ,scrutinee ,branches)
+       (define value (eval scrutinee (child context 0) values))
+       (finish (if (return-value? value) value
+                   (eval-branches branches context values value)))]
+      [`(Handle (Return ,boundary ,type) ,clause ,body)
+       (define operation (erase-core `(Return ,boundary ,type)))
+       (define handle-point (region-ctx-point context))
+       (define previous-events (unbox perform-events))
+       (define value
+         (parameterize
+             ([current-scope-capture-handlers
+               (cons (cons operation handle-point)
+                     (current-scope-capture-handlers))])
+           (eval body (child context 1) values)))
+       (define new-events
+         (take (unbox perform-events)
+               (- (length (unbox perform-events))
+                  (length previous-events))))
+       (define handled-values
+         (for/list ([event (in-list new-events)]
+                    #:when (and (equal? operation
+                                       (scope-capture-perform-event-operation event))
+                                (equal? handle-point
+                                        (scope-capture-perform-event-handled-by event))))
+           (values-at-point
+            (scope-capture-perform-event-payload-point event))))
+       (define handler-value
+         (if (null? handled-values)
+             scope-capture-empty
+             (match (peel-branch clause)
+               [`(,binder -> ,handler)
+                (eval handler (child context 0)
+                      (extend-values values (peel-bind binder)
+                                     (scope-capture-join handled-values)))]
+               [_ scope-capture-unknown])))
+       (finish (if (null? handled-values)
+                   value
+                   (scope-capture-join
+                    (append (if (return-value? value) '() (list value))
+                            (list handler-value)))))]
+      [`(Perform (Return ,boundary ,type) ,payload)
+       (define value (eval payload (child context 0) values))
+       (if (return-value? value)
+           (finish value)
+           (let ([operation (erase-core `(Return ,boundary ,type))]
+                 [payload-point (region-ctx-point (child context 0))])
+             (perform-return! operation (peel-ty type) payload-point)
+             (finish (scope-capture-value
+                      'return
+                      (list operation (peel-ty type) value payload-point)
+                      (scope-capture-value-owners value)
+                      (scope-capture-value-unknown? value)))))]
+      [`(Recur ,_ ,function (,parameters ...) ,body ,continuation)
+       (define recursive-value
+         (make-function 'recur
+                        (cons (peel-bind function)
+                              (map peel-bind parameters))
+                        body values context))
+       (finish
+        (eval continuation (child context 1)
+             (extend-values values (peel-bind function) recursive-value)))]
+      [`(Scope ,_ ,body) (finish (eval body (child context 0) values))]
+      [`(Unsafe ,body)
+       (finish (eval body (child context 0) values))]
+      [`(Suspend ,body)
+       (finish (eval body (child context 0) values))]
+      [`(Yield ,observed ,next)
+       (define observed-value (eval observed (child context 0) values))
+       (if (return-value? observed-value)
+           (finish observed-value)
+           (let ([next-value (eval next (child context 1) values)])
+             (finish next-value)))]
+      [`(Construct ,_ ,_ ,arguments ...)
+       (let loop ([remaining arguments] [index 0] [captured-values '()])
+         (if (null? remaining)
+             (let ([joined (scope-capture-join (reverse captured-values))])
+               (finish
+                (scope-capture-value
+                 'construct (list (third term) (reverse captured-values))
+                 (scope-capture-value-owners joined)
+                 (scope-capture-value-unknown? joined))))
+             (let ([value (eval (car remaining) (child context index) values)])
+               (if (return-value? value)
+                   (finish value)
+                   (loop (cdr remaining) (add1 index)
+                         (cons value captured-values))))))]
+      [`(RecRewrite ,input (,entries ...))
+       (define input-value (eval input (child context 0) values))
+       (cond
+         [(return-value? input-value) (finish input-value)]
+         [(scope-capture-value-unknown? input-value)
+          (finish scope-capture-unknown)]
+         [else
+          (define result-fields
+            (if (eq? (scope-capture-value-kind input-value) 'record)
+                (hash-copy (scope-capture-value-data input-value))
+                (match (type-at context)
+                  [`(Record ,row)
+                   (make-hash
+                    (for/list ([field (in-list row)])
+                      (cons (first field) scope-capture-empty)))]
+                  [_ (hash)])))
+          (define rewrite-return #f)
+          (for ([entry (in-list entries)] [index (in-naturals)])
+            (match-define (list label binder _input-type _output-mode
+                                _output-type body) entry)
+            (define label* (peel-lbl label))
+            (define input-field
+              (hash-ref result-fields label* scope-capture-empty))
+            (define rewritten
+              (if (eq? (scope-capture-value-kind input-field) 'absent)
+                  input-field
+                  (eval body (child context (add1 index))
+                        (extend-values '() (peel-bind binder) input-field))))
+            (if (return-value? rewritten)
+                (set! rewrite-return rewritten)
+                (hash-set! result-fields label* rewritten)))
+          (finish (or rewrite-return (record-value result-fields)))])]
+      [`(RecRewriteOpen (,fields ...))
+       (define values-by-label (make-hash))
+       (define rewrite-return #f)
+       (for ([field (in-list fields)] [index (in-naturals)])
+         (define label (peel-lbl (first field)))
+         (define work (last field))
+         (define field-value (eval work (child context index) values))
+         (if (return-value? field-value)
+             (set! rewrite-return field-value)
+             (hash-set! values-by-label label field-value)))
+       (finish (or rewrite-return (record-value values-by-label)))]
+      [`(Assign ,target ,value)
+       (define capability (eval target (child context 0) values))
+       (if (return-value? capability)
+           (finish capability)
+           (let ([assigned (eval value (child context 1) values)])
+             (unless (return-value? assigned)
+               (update-place! target assigned)
+               (update-borrow-roots! target capability assigned values))
+             (finish (if (return-value? assigned)
+                         assigned scope-capture-empty))))]
+      [`(Reassign ,target ,_ ,value)
+       (define assigned (eval value (child context 0) values))
+       (unless (return-value? assigned) (update-place! target assigned))
+       (finish (if (return-value? assigned) assigned scope-capture-empty))]
+      [`(,head ,children ...)
+       (define child-values
+         (for/list ([child-core (in-list (core-children term))]
+                    [index (in-naturals)])
+           (eval child-core (child context index) values)))
+       (define type (type-at context))
+       (define escaped-child (findf return-value? child-values))
+       (finish (or escaped-child
+                   (if (scope-capture-function-type? type)
+                       scope-capture-unknown
+                       scope-capture-empty)))]
+      [_ (finish scope-capture-unknown)]))
+  (eval core Λ environment))
+
+(define (scope-capture-escapes? value type managed)
+  (and (pair? managed)
+       (scope-capture-function-type? type)
+       (or (scope-capture-value-unknown? value)
+           (not (set-empty?
+                 (set-intersect (list->set managed)
+                                (scope-capture-value-owners value)))))))
+
+(define (check-scope-capture-exits! body Λ environment managed node result-type fail)
+  (when (pair? managed)
+    (define provenance (make-hash))
+    (define perform-events (box '()))
+    (define body-context (enter-child Λ 0))
+    (define body-value
+      (parameterize ([current-scope-capture-handlers '()])
+        (scope-capture-value-at body body-context environment managed
+                                provenance (make-hash) perform-events)))
+    (define unhandled-return-escapes?
+      (for/or ([event (in-list (unbox perform-events))]
+               #:when (not (scope-capture-perform-event-handled-by event)))
+        (define payload-value
+          (scope-capture-join
+           (hash-ref provenance
+                     (scope-capture-perform-event-payload-point event)
+                     (list scope-capture-unknown))))
+        (scope-capture-escapes?
+         payload-value (scope-capture-perform-event-payload-type event) managed)))
+    (when (or unhandled-return-escapes?
+              (and (not (scope-capture-return? body-value))
+                   (scope-capture-escapes? body-value result-type managed)))
+      (fail 'borrow-escapes-owner node))))
+
 (define (typing-child-normal-type Λ index)
   (match (typing-child-result Λ index)
     [(list _ normal-type _ _) normal-type]
@@ -9462,6 +10129,8 @@
      (define ir (region-ctx-ir Λ))
      (define body-result
        (infer body (enter-child Λ 0) Ψ environment places callables fail))
+     (check-scope-capture-exits! body Λ environment managed-places core
+                                 (first body-result) fail)
      (when ir
        (collect-use-regions-at!
         (first body-result) ir
@@ -10511,6 +11180,8 @@
      (define body-result
        (check-as/full body expected (enter-child Λ 0)
                       Ψ environment places callables fail compatible?))
+     (check-scope-capture-exits! body Λ environment managed-places core
+                                 (third body-result) fail)
      (when ir
        (collect-use-regions-at!
         (third body-result) ir
