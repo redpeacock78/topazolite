@@ -384,11 +384,13 @@
 
 (test-case "既存縮約の反転: owner Scope 内の handler binder から捕捉閉包を呼べる"
   ;; Perform payload の callable summary が handler binder へ渡らない既存経路。
+  ;; runtime core-check-row の既知課題があるため、全 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core (loop-leave-core #t)
                      loop-leave-callables)))
 
 (test-case "Apply の結果を Let で受けた捕捉閉包も呼べる"
+  ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core
     `(Scope (1)
@@ -399,6 +401,7 @@
 (test-case "Apply 結果を Record に入れて Proj 後に呼ぶと summary を保持する"
   (define record-type
     `(Record ((callback ,captured-closure-type/owner imm))))
+  ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core
     `(Scope (1)
@@ -408,6 +411,7 @@
 
 (test-case "when の Union binder から捕捉閉包を呼べる"
   (define union-type `(Union ,captured-closure-type/owner Int))
+  ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core
     `(Scope (1)
@@ -420,6 +424,7 @@
 (test-case "data の Eliminate binder から捕捉閉包を呼べる"
   (with-capture-box
    (lambda ()
+     ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
      (check-region-typed
       (typed-owner-core
        `(Scope (1)
@@ -429,6 +434,7 @@
            ((box (callback) -> (Apply callback 0))))))))))
 
 (test-case "Eliminate の両枝から来る捕捉閉包の summary を合流する"
+  ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core
     `(Scope (1)
@@ -457,6 +463,7 @@
     `(Handle (Return boundary ,captured-closure-type/owner)
        (inner -> ,(capture-expression))
        ,(capture-return 'unknown-captured)))
+  ;; RegionApp と内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core
     `(Scope (1)
@@ -467,8 +474,8 @@
             ((true () -> ,(capture-return (capture-expression)))
              (false () -> ,inner-handle))))
         0))
-       capture-callables
-       `((flag Bool) (unknown-captured ,captured-closure-type/owner)))))
+   capture-callables
+   `((flag Bool) (unknown-captured ,captured-closure-type/owner)))))
 
 (test-case "複数の Return payload の一つに summary が無ければ handler 呼出しを拒む"
   (check-diagnostic-id
@@ -524,6 +531,7 @@
          (Borrow 1)
          (Construct Bool false))
         0)))
+  ;; RecurVal 内の内側 Lam の実行 trace は Task 2c で固定する。
   (check-region-typed
    (typed-owner-core core
                      (append capture-callables
